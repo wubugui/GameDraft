@@ -161,10 +161,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private tryUnlockCharacterByNpc(npcId: string): void {
     this.characterDefs.forEach((def) => {
-      if (def.id === npcId && !this.unlockedCharacters.has(npcId)) {
+      const matchesNpc = def.id === npcId || def.name === npcId;
+      if (matchesNpc && !this.unlockedCharacters.has(def.id)) {
         if (this.checkConditions(def.unlockConditions)) {
-          this.unlockedCharacters.add(npcId);
-          this.emitUpdate('character', npcId);
+          this.unlockedCharacters.add(def.id);
+          this.emitUpdate('character', def.id);
         }
       }
     });

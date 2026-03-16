@@ -7,6 +7,14 @@
   },
   "entries": [
     {
+      "id": "lore_li_tiangou_story",
+      "title": "李天狗除魃的说书段子",
+      "content": "张叨叨今日摆的，是崂山道士李天狗捡天书、上神仙顶途中撞见倒斗客放出旱魃的故事。张叨叨说那道士与旱魃大战三百回合，最后拂袖而去，连赏钱都不收。听着像胡吹，可也怪勾人。",
+      "source": "说书人张叨叨",
+      "category": "legend",
+      "unlockConditions": [{ "flag": "heard_teahouse_story" }]
+    },
+    {
       "id": "lore_ghost_mountain",
       "title": "城隍庙后山怪谈",
       "content": "据说城隍庙后山每到三更天就有白色身影出没，还会唱戏。有个胆大的人去看了，回来之后疯了，整天嘟囔着《红楼》里的曲词。老百姓都说那是鬼在唱堂会。",

@@ -1,6 +1,6 @@
 {
   "id": "temple",
-  "name": "城隍庙",
+  "name": "破烂城隍庙",
   "width": 1200,
   "height": 1000,
   "backgrounds": [],
@@ -18,12 +18,66 @@
   },
   "hotspots": [
     {
-      "id": "incense_altar",
+      "id": "city_god_altar",
       "type": "inspect",
       "x": 550, "y": 200, "width": 100, "height": 60,
       "interactionRange": 90,
       "label": "香案",
-      "data": { "text": "香案上供着三炷已经燃尽的残香，灰烬散落一地。城隍爷的泥塑金身已经斑驳，一只手还缺了半截指头。香案前的蒲团上积了一层灰，看样子有段日子没人来上香了。" }
+      "data": { "text": "香案上只剩些断香和灰烬。城隍爷的泥身斑驳得厉害，半边脸都裂开了，看着比庙外的夜色还阴。" }
+    },
+    {
+      "id": "hide_iron_box",
+      "type": "inspect",
+      "x": 730, "y": 250, "width": 80, "height": 100,
+      "interactionRange": 80,
+      "label": "城隍像后的暗角",
+      "conditions": [
+        { "flag": "got_iron_box" },
+        { "flag": "box_hidden_in_temple", "op": "!=", "value": true }
+      ],
+      "data": {
+        "text": "城隍像后头积了厚厚一层灰，砖缝里正好塞得下一只半巴掌大的铁盒。你左右看看，咬咬牙，把盒子推进去藏好了。",
+        "actions": [
+          { "type": "setFlag", "params": { "key": "box_hidden_in_temple", "value": true } },
+          { "type": "startCutscene", "params": { "id": "temple_strangers_arrive" } }
+        ]
+      }
+    },
+    {
+      "id": "moonlit_wall",
+      "type": "inspect",
+      "x": 300, "y": 520, "width": 90, "height": 140,
+      "interactionRange": 90,
+      "label": "斜照在墙上的月影",
+      "conditions": [
+        { "flag": "strangers_entered_temple" },
+        { "flag": "saw_standing_shadow", "op": "!=", "value": true }
+      ],
+      "data": {
+        "text": "你屏着气，又慢慢摸回庙门口。月光从屋顶的破洞漏下来，斜斜照在墙上。墙边明明该趴着一具倒地的人影，可你看见的，却是个直挺挺站着的女人影子。\n\n你头皮一炸，连盒子都不敢再想，转身就跑，直到冲回街巷才敢喘气。今晚这事，怎么都得等天亮以后再回来看个明白。",
+        "actions": [
+          { "type": "setFlag", "params": { "key": "saw_standing_shadow", "value": true } },
+          { "type": "setFlag", "params": { "key": "first_night_escape", "value": true } },
+          { "type": "switchScene", "params": { "targetScene": "test_room_a", "targetSpawnPoint": "from_temple" } }
+        ]
+      }
+    },
+    {
+      "id": "hanged_woman_day2",
+      "type": "inspect",
+      "x": 480, "y": 180, "width": 120, "height": 180,
+      "interactionRange": 100,
+      "label": "梁下",
+      "conditions": [
+        { "flag": "day_2_started" },
+        { "flag": "saw_hanged_woman", "op": "!=", "value": true }
+      ],
+      "data": {
+        "text": "你抬头一看，浑身都僵了。梁上吊着一具女尸，正是昨晚那女人。她脸朝外，舌头微微伸着，眼珠子已经不会动了。\n\n你强撑着挪开眼，往城隍像后头摸——砖缝里的铁盒还在。你一把抓起来揣进怀里，头也不回地冲出了庙门。",
+        "actions": [
+          { "type": "setFlag", "params": { "key": "saw_hanged_woman", "value": true } }
+        ]
+      }
     },
     {
       "id": "stone_tablet",
@@ -32,30 +86,12 @@
       "interactionRange": 80,
       "label": "石碑",
       "data": {
-        "text": "一块石碑立在角落里，碑文记载着城隍庙始建于明洪武年间。碑面已经风化得厉害，最后几行字依稀可辨：\"阎王岭下，阴阳交汇，城隍镇之，百鬼不侵。\"你把这段话默默记了下来。",
+        "text": "角落里立着块旧石碑，碑文风化得只剩最后几句还能认：\"阎王岭下，阴阳交汇，城隍镇之。\"你看完只觉背后更凉了。",
         "actions": [
           { "type": "setFlag", "params": { "key": "inspected_stone_tablet", "value": true } },
           { "type": "addArchiveEntry", "params": { "bookType": "lore", "entryId": "lore_temple_history" } }
         ]
       }
-    },
-    {
-      "id": "temple_back_path",
-      "type": "encounter",
-      "x": 1050, "y": 500, "width": 60, "height": 80,
-      "interactionRange": 80,
-      "label": "后山小径",
-      "conditions": [{ "flag": "talked_wang_about_ghost" }],
-      "data": { "encounterId": "ghost_encounter" }
-    },
-    {
-      "id": "temple_document",
-      "type": "pickup",
-      "x": 900, "y": 300, "width": 30, "height": 30,
-      "interactionRange": 70,
-      "label": "庙祝手札",
-      "conditions": [{ "flag": "encounter_ghost_done" }],
-      "data": { "itemId": "temple_notes", "itemName": "庙祝手札", "count": 1 }
     },
     {
       "id": "exit_to_street_from_temple",

@@ -24,7 +24,7 @@
       "x": 100, "y": 100, "width": 60, "height": 80,
       "interactionRange": 80,
       "label": "告示板",
-      "data": { "text": "告示板上贴满了各种启事。有寻人启事、有招工告示，还有一张用红纸写的：\"近日城隍庙后山频传怪声，夜间勿近。城防署示。\"" }
+      "data": { "text": "告示板上贴着几张旧启事，大多是招工、寻人和催债。最上头一张红纸写得扎眼：\"近日夜里少往城隍庙方向去，若闻怪声，切勿停步。\"" }
     },
     {
       "id": "teahouse_table_items",
@@ -32,7 +32,7 @@
       "x": 350, "y": 260, "width": 40, "height": 30,
       "interactionRange": 70,
       "label": "桌上的茶碗",
-      "data": { "text": "几个粗瓷茶碗摆在桌上，茶水还冒着热气。旁边搁着几个花生壳和一把蒲扇。" }
+      "data": { "text": "几个粗瓷茶碗摆得东倒西歪，花生壳和瓜子皮堆在一处。屋里人多，偏偏让人觉得越热闹越藏得住闲话。" }
     },
     {
       "id": "exit_to_street",
@@ -54,10 +54,19 @@
       "interactionRange": 100
     },
     {
+      "id": "blind_li",
+      "name": "瞎子李",
+      "x": 760,
+      "y": 520,
+      "dialogueFile": "/assets/dialogues/blind_li.ink",
+      "dialogueKnot": "start",
+      "interactionRange": 100
+    },
+    {
       "id": "waiter_xiaoer",
       "name": "小二",
-      "x": 900,
-      "y": 400,
+      "x": 980,
+      "y": 420,
       "dialogueFile": "/assets/dialogues/waiter.ink",
       "dialogueKnot": "start",
       "interactionRange": 90

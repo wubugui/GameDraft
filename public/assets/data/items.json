@@ -34,11 +34,15 @@
     "id": "iron_box",
     "name": "铁盒子",
     "type": "key",
-    "description": "瞎子李给的铁盒子，上面锈迹斑斑，沉甸甸的，不知道里面装着什么。",
+    "description": "瞎子李交给你的铁盒子。盒面摸上去光滑异常，明明不大，揣在怀里却总让人心里发毛。瞎子李特地叮嘱：七天之内，千万别打开。",
     "dynamicDescriptions": [
       {
         "conditions": [{ "flag": "box_opened" }],
         "text": "打开过的铁盒子，里面是……一面古旧的小铜镜。镜面模糊，照不出人影。"
+      },
+      {
+        "conditions": [{ "flag": "box_hidden_in_temple" }],
+        "text": "你已经把铁盒藏进了城隍庙。可自从离开那里以后，你总忍不住怀疑自己是不是藏错了地方。"
       }
     ],
     "maxStack": 1

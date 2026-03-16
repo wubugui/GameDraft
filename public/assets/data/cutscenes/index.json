@@ -92,5 +92,33 @@
       { "type": "set_flag", "key": "met_mysterious_visitor", "value": true },
       { "type": "camera_move", "x": 600, "y": 500, "duration": 500 }
     ]
+  },
+  {
+    "id": "temple_strangers_arrive",
+    "commands": [
+      { "type": "show_dialogue", "speaker": "旁白", "text": "你刚把铁盒塞进城隍像后的砖缝里，庙门外忽然传来细碎的脚步声。" },
+      { "type": "entity_spawn", "id": "temple_tall_man", "name": "高个汉子", "x": 520, "y": 930 },
+      { "type": "entity_spawn", "id": "temple_short_man", "name": "矮汉子", "x": 650, "y": 930 },
+      { "type": "entity_spawn", "id": "temple_woman", "name": "女人", "x": 585, "y": 955 },
+      { "type": "entity_move", "target": "temple_woman", "x": 600, "y": 760, "speed": 80 },
+      { "type": "entity_move", "target": "temple_tall_man", "x": 520, "y": 790, "speed": 90, "parallel": true },
+      { "type": "entity_move", "target": "temple_short_man", "x": 690, "y": 805, "speed": 85, "parallel": true },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "你赶紧缩到柱子后头，只听见两个汉子压着嗓子和那女人争执，字句听不真切。" },
+      { "type": "show_dialogue", "speaker": "女人", "text": "你们到底想做什么！" },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "下一瞬，一声短促的惨叫在空庙里炸开，听得你后背一麻。" },
+      { "type": "entity_remove", "id": "temple_woman" },
+      { "type": "entity_remove", "id": "temple_tall_man" },
+      { "type": "entity_remove", "id": "temple_short_man" },
+      { "type": "set_flag", "key": "strangers_entered_temple", "value": true },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "庙里很快又静了下来。你既想立刻逃走，又实在惦记砖缝里的铁盒还在不在。" }
+    ]
+  },
+  {
+    "id": "day_2_dawn",
+    "commands": [
+      { "type": "fade_black", "duration": 800 },
+      { "type": "show_title", "text": "第二天", "duration": 2000 },
+      { "type": "fade_in", "duration": 1000 }
+    ]
   }
 ]

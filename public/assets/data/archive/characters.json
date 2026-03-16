@@ -54,5 +54,19 @@
       { "text": "声称在翻八面山的路上碰到过不干净的东西，靠糯米逃过一劫。", "conditions": [{ "flag": "peddler_story_heard" }] }
     ],
     "unlockConditions": []
+  },
+  {
+    "id": "blind_li",
+    "name": "瞎子李",
+    "title": "走南闯北的老瞎子",
+    "impressions": [
+      { "text": "一个拄着竹竿的老瞎子，眼虽看不见，话里却总像藏着钩子。", "conditions": [] },
+      { "text": "你越和他搭话，越觉得这人像是故意把你往什么地方引。", "conditions": [{ "flag": "got_iron_box" }] }
+    ],
+    "knownInfo": [
+      { "text": "常在茶馆和街口晃荡，算命、胡扯、骗人，哪样像真哪样像假都分不清。", "conditions": [] },
+      { "text": "把一个七天不能开的铁盒子交给了你，并约你最后一晚带着盒子去桥下见他。", "conditions": [{ "flag": "got_iron_box" }] }
+    ],
+    "unlockConditions": []
   }
 ]

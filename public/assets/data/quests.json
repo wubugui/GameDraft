@@ -1,72 +1,73 @@
 [
   {
-    "id": "main_01",
+    "id": "opening_01",
     "type": "main",
-    "title": "与王大爷交谈",
-    "description": "王大爷就在街巷里，去和他聊聊，也许能打听到些什么。",
+    "title": "听张叨叨摆书",
+    "description": "张叨叨又在茶馆里说书。先坐下听一耳朵，看看今天城里又传什么怪话。",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "talked_wang_about_ghost" }
-    ],
-    "rewards": [
-      { "type": "giveCurrency", "params": { "amount": 10 } }
-    ],
-    "nextQuestId": "main_02"
-  },
-  {
-    "id": "main_02",
-    "type": "main",
-    "title": "打听白影子的消息",
-    "description": "去茶馆找说书人张叨叨打听打听城隍庙后山的事。或许城隍庙本身也值得去看看。",
-    "preconditions": [],
-    "completionConditions": [
-      { "flag": "heard_ghost_story" }
+      { "flag": "heard_teahouse_story" }
     ],
     "rewards": [],
-    "nextQuestId": "main_03"
+    "nextQuestId": "opening_02"
   },
   {
-    "id": "main_03",
+    "id": "opening_02",
     "type": "main",
-    "title": "调查城隍庙后山",
-    "description": "各种传闻都指向城隍庙后山，该去亲眼看看了。",
+    "title": "和瞎子李搭话",
+    "description": "瞎子李刚进茶馆。你早听说这老瞎子走南闯北，嘴里没几句真话，但也许真能教你一门吃饭的手艺。",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "encounter_ghost_done" }
+      { "flag": "got_iron_box" }
     ],
-    "rewards": [
-      { "type": "giveCurrency", "params": { "amount": 20 } },
-      { "type": "giveRule", "params": { "id": "rule_ghost_verified" } }
-    ]
+    "rewards": [],
+    "nextQuestId": "opening_03"
   },
   {
-    "id": "side_01",
-    "type": "side",
-    "sideType": "errand",
-    "title": "寻找散落的铜钱",
-    "description": "听说街巷角落里有人丢了几文铜钱，去看看。",
-    "preconditions": [
-      { "flag": "talked_wang_about_ghost" }
-    ],
+    "id": "opening_03",
+    "type": "main",
+    "title": "把铁盒子藏去城隍庙",
+    "description": "盒子揣在身上总让人心里发痒。先把它藏到破烂城隍庙里，七天后再来取。",
+    "preconditions": [],
     "completionConditions": [
-      { "flag": "picked_up_corner_coins" }
+      { "flag": "box_hidden_in_temple" }
+    ],
+    "rewards": [],
+    "nextQuestId": "opening_04"
+  },
+  {
+    "id": "opening_04",
+    "type": "main",
+    "title": "摸进去瞧一眼",
+    "description": "刚才那三个人进庙时古里古怪。等动静过去了，再摸进去看看盒子还在不在。",
+    "preconditions": [],
+    "completionConditions": [
+      { "flag": "saw_standing_shadow" }
+    ],
+    "rewards": [],
+    "nextQuestId": "opening_05"
+  },
+  {
+    "id": "opening_05",
+    "type": "main",
+    "title": "等天亮再回城隍庙",
+    "description": "今晚这事太邪门了。天一亮，再回城隍庙看看盒子和那个女人到底怎么回事。",
+    "preconditions": [],
+    "completionConditions": [
+      { "flag": "day_2_started" }
+    ],
+    "rewards": [],
+    "nextQuestId": "opening_06"
+  },
+  {
+    "id": "opening_06",
+    "type": "main",
+    "title": "回城隍庙看看",
+    "description": "天亮了，该回去看看昨晚那地方到底怎么了。盒子和那女人……",
+    "preconditions": [],
+    "completionConditions": [
+      { "flag": "saw_hanged_woman" }
     ],
     "rewards": []
-  },
-  {
-    "id": "side_02",
-    "type": "side",
-    "sideType": "inquiry",
-    "title": "戏班旧事",
-    "description": "说书人提到了一个柳家戏班子，小二好像也知道些什么。多方打听，也许能拼凑出白影子的来历。",
-    "preconditions": [
-      { "flag": "heard_opera_rumor" }
-    ],
-    "completionConditions": [
-      { "flag": "rule_rule_ghost_origin_acquired" }
-    ],
-    "rewards": [
-      { "type": "giveCurrency", "params": { "amount": 15 } }
-    ]
   }
 ]

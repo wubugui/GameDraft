@@ -1,6 +1,6 @@
 {
   "id": "test_room_a",
-  "name": "测试房间A",
+  "name": "街巷",
   "width": 1200,
   "height": 900,
   "backgrounds": [],
@@ -19,36 +19,20 @@
   },
   "hotspots": [
     {
-      "id": "desk_note",
+      "id": "street_notice",
       "type": "inspect",
       "x": 200, "y": 200, "width": 40, "height": 40,
       "interactionRange": 80,
-      "label": "桌上的纸条",
-      "data": { "text": "一张泛黄的纸条，上面用毛笔歪歪扭扭地写着：\"城隍庙后山，三更勿去。\"字迹潦草，像是匆忙间写下的。" }
+      "label": "墙角的旧告示",
+      "data": { "text": "墙角糊着一层又一层旧告示，纸边都被夜露泡软了。最底下一张写着：\"夜里少往城隍庙后头去。\"" }
     },
     {
-      "id": "corner_coins",
-      "type": "pickup",
-      "x": 800, "y": 700, "width": 30, "height": 30,
-      "interactionRange": 70,
-      "label": "铜钱",
-      "data": { "itemId": "copper_coins", "itemName": "铜钱", "count": 5, "isCurrency": true }
-    },
-    {
-      "id": "wall_scroll",
+      "id": "night_breeze",
       "type": "inspect",
       "x": 500, "y": 100, "width": 50, "height": 80,
       "interactionRange": 90,
-      "label": "墙上的字画",
-      "data": { "text": "一幅褪色的山水画挂在墙上，落款已经模糊不清。画中远山如黛，一条小路蜿蜒消失在雾气中。" }
-    },
-    {
-      "id": "exit_to_b",
-      "type": "transition",
-      "x": 1130, "y": 400, "width": 40, "height": 100,
-      "interactionRange": 60,
-      "label": "通往房间B",
-      "data": { "targetScene": "test_room_b", "targetSpawnPoint": "from_a" }
+      "label": "穿堂风",
+      "data": { "text": "巷子里一阵穿堂风吹过，天色比方才又暗了些。越往城隍庙那头望，越觉得那边静得不像有人气。" }
     },
     {
       "id": "exit_to_teahouse",
@@ -67,75 +51,25 @@
       "data": { "targetScene": "temple", "targetSpawnPoint": "from_street" }
     },
     {
-      "id": "alley_shadow",
+      "id": "rest_until_dawn",
       "type": "inspect",
-      "x": 1000, "y": 200, "width": 40, "height": 40,
-      "interactionRange": 80,
-      "label": "巷口的阴影",
-      "conditions": [{ "flag": "met_mysterious_visitor", "op": "!=", "value": true }],
+      "x": 600, "y": 400, "width": 80, "height": 60,
+      "interactionRange": 90,
+      "label": "找个角落捱到天亮",
+      "conditions": [
+        { "flag": "first_night_escape" },
+        { "flag": "day_2_started", "op": "!=", "value": true }
+      ],
       "data": {
-        "text": "巷口隐约有个人影在晃动……",
-        "actions": [{ "type": "startCutscene", "params": { "id": "mysterious_visitor" } }]
+        "text": "你找了个避风的墙角缩了一夜，半睡半醒间总觉得有什么在盯着自己。天终于亮了。",
+        "actions": [
+          { "type": "endDay", "params": {} },
+          { "type": "setFlag", "params": { "key": "day_2_started", "value": true } },
+          { "type": "startCutscene", "params": { "id": "day_2_dawn" } }
+        ]
       }
     }
   ],
-  "npcs": [
-    {
-      "id": "wang_grandpa",
-      "name": "王大爷",
-      "x": 700,
-      "y": 350,
-      "dialogueFile": "/assets/dialogues/test_npc.ink",
-      "dialogueKnot": "start",
-      "interactionRange": 90
-    },
-    {
-      "id": "peddler",
-      "name": "货郎",
-      "x": 200,
-      "y": 600,
-      "dialogueFile": "/assets/dialogues/peddler.ink",
-      "dialogueKnot": "start",
-      "interactionRange": 90
-    }
-  ],
-  "zones": [
-    {
-      "id": "haunted_corner",
-      "x": 350, "y": 250, "width": 200, "height": 150,
-      "conditions": [{ "flag": "encounter_ghost_done", "value": true }],
-      "onEnter": [{ "type": "setFlag", "params": { "key": "in_haunted_area", "value": true } }],
-      "onExit": [{ "type": "setFlag", "params": { "key": "in_haunted_area", "value": false } }],
-      "ruleSlots": [
-        {
-          "ruleId": "rule_no_go_night",
-          "resultActions": [
-            { "type": "setFlag", "params": { "key": "used_taboo_rule", "value": true } }
-          ],
-          "resultText": "你回想起王大爷的话——三更勿去。你警觉地后退了几步，隐约看到远处有个白色的影子飘过。"
-        }
-      ]
-    },
-    {
-      "id": "market_area",
-      "x": 100, "y": 500, "width": 300, "height": 200,
-      "onEnter": [{ "type": "setFlag", "params": { "key": "visited_market", "value": true } }],
-      "ruleSlots": [
-        {
-          "ruleId": "rule_no_go_night",
-          "resultActions": [
-            { "type": "setFlag", "params": { "key": "used_taboo_market", "value": true } }
-          ],
-          "resultText": "你环顾四周，想起王大爷说的三更勿去。可这才大白天的，集市上人来人往，倒也没什么好怕的。不过你注意到角落里有个影子一闪而过……"
-        },
-        {
-          "ruleId": "rule_zombie_fire",
-          "resultActions": [
-            { "type": "setFlag", "params": { "key": "used_fire_rule_market", "value": true } }
-          ],
-          "resultText": "你在集市的角落里摸出桃木片，火光一闪，旁边摆摊的大爷吓了一跳：小子你干啥呢！"
-        }
-      ]
-    }
-  ]
+  "npcs": [],
+  "zones": []
 }
