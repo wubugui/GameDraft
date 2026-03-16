@@ -1,0 +1,34 @@
+# Dependencies and package manager
+node_modules/
+
+# Build and cache
+dist/
+build/
+coverage/
+.vite/
+*.log
+*.tmp
+*.temp
+*.cache
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Python (tools)
+__pycache__/
+*.pyc
+.Python
+venv/
+.venv/
+
+# Env and secrets
+.env
+.env.local
+.env.*.local
+
+# Cursor agent 导出包（体积大，按需备份）
+cursor-agent-history-*.zip
+
+# 对话编译产物（源文件为 .ink）
+public/assets/dialogues/*.ink.json

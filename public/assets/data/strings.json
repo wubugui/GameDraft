@@ -1,0 +1,16 @@
+{
+  "notifications": {
+    "ruleAcquired": "规矩本新增：{name}",
+    "fragmentAcquired": "获得规矩碎片",
+    "fragmentSynthesized": "碎片合成：{name}",
+    "archiveUpdated": "档案更新",
+    "inventoryFull": "包袱满了！",
+    "questAccepted": "新任务：{title}",
+    "questCompleted": "任务完成：{title}"
+  },
+  "encounter": {
+    "unknownRule": "未知规矩",
+    "fragmentInsufficient": "碎片不足 {collected}/{total}",
+    "itemInsufficient": "道具不足"
+  }
+}

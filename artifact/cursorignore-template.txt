@@ -1,0 +1,34 @@
+# Dependencies and package manager internals
+node_modules/
+
+# Build outputs and temporary files
+dist/
+build/
+coverage/
+.vite/
+*.log
+*.tmp
+*.temp
+*.cache
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# Python caches from tooling
+__pycache__/
+*.pyc
+
+# Generated dialogue outputs
+public/assets/dialogues/*.ink.json
+
+# Binary assets that usually add noise to code search
+public/assets/**/*.png
+public/assets/**/*.jpg
+public/assets/**/*.jpeg
+public/assets/**/*.webp
+public/assets/**/*.gif
+public/assets/**/*.mp3
+public/assets/**/*.wav
+public/assets/**/*.ogg
+public/assets/**/*.mp4

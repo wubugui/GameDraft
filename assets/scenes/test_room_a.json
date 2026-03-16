@@ -1,0 +1,52 @@
+{
+  "id": "test_room_a",
+  "name": "测试房间A",
+  "width": 1200,
+  "height": 900,
+  "backgrounds": [],
+  "collisions": [
+    { "x": 0, "y": 0, "width": 1200, "height": 40 },
+    { "x": 0, "y": 0, "width": 40, "height": 900 },
+    { "x": 1160, "y": 0, "width": 40, "height": 900 },
+    { "x": 0, "y": 860, "width": 1200, "height": 40 },
+    { "x": 400, "y": 300, "width": 160, "height": 120 }
+  ],
+  "spawnPoint": { "x": 600, "y": 500 },
+  "spawnPoints": {
+    "from_b": { "x": 1100, "y": 450 }
+  },
+  "hotspots": [
+    {
+      "id": "desk_note",
+      "type": "inspect",
+      "x": 200, "y": 200, "width": 40, "height": 40,
+      "interactionRange": 80,
+      "label": "桌上的纸条",
+      "data": { "text": "一张泛黄的纸条，上面用毛笔歪歪扭扭地写着：\"城隍庙后山，三更勿去。\"字迹潦草，像是匆忙间写下的。" }
+    },
+    {
+      "id": "corner_coins",
+      "type": "pickup",
+      "x": 800, "y": 700, "width": 30, "height": 30,
+      "interactionRange": 70,
+      "label": "铜钱",
+      "data": { "itemId": "copper_coins", "itemName": "铜钱", "count": 5 }
+    },
+    {
+      "id": "wall_scroll",
+      "type": "inspect",
+      "x": 500, "y": 100, "width": 50, "height": 80,
+      "interactionRange": 90,
+      "label": "墙上的字画",
+      "data": { "text": "一幅褪色的山水画挂在墙上，落款已经模糊不清。画中远山如黛，一条小路蜿蜒消失在雾气中。" }
+    },
+    {
+      "id": "exit_to_b",
+      "type": "transition",
+      "x": 1130, "y": 400, "width": 40, "height": 100,
+      "interactionRange": 60,
+      "label": "通往房间B",
+      "data": { "targetScene": "test_room_b", "targetSpawnPoint": "from_a" }
+    }
+  ]
+}

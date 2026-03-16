@@ -1,0 +1,6 @@
+{
+  "initialScene": "test_room_a",
+  "initialQuest": "main_01",
+  "fallbackScene": "test_room_a",
+  "playerScale": 2
+}

@@ -1,0 +1,58 @@
+[
+  {
+    "id": "wang_grandpa",
+    "name": "王大爷",
+    "title": "街巷老住户",
+    "impressions": [
+      { "text": "一个精神矍铄的老头，牙齿掉了好几颗，说话漏风但中气十足。", "conditions": [] },
+      { "text": "看起来对渝都卫的老事知道不少。", "conditions": [{ "flag": "talked_wang_about_ghost" }] }
+    ],
+    "knownInfo": [
+      { "text": "住在街巷里，没事就晒太阳。", "conditions": [] },
+      { "text": "告诉过你城隍庙后山三更天不能去的事。", "conditions": [{ "flag": "talked_wang_about_ghost" }] }
+    ],
+    "unlockConditions": []
+  },
+  {
+    "id": "storyteller_zhang",
+    "name": "说书人张叨叨",
+    "title": "茶馆说书先生",
+    "impressions": [
+      { "text": "一个瘦巴巴的中年人，留着山羊胡子，声音洪亮，说起故事来眉飞色舞。", "conditions": [] },
+      { "text": "对渝都卫的各种传说如数家珍，也不知道哪些是真的哪些是编的。", "conditions": [{ "flag": "heard_ghost_story" }] }
+    ],
+    "knownInfo": [
+      { "text": "每天下午在茶馆说书，靠茶客的赏钱过活。", "conditions": [] },
+      { "text": "知道城隍庙后山闹鬼的详细经过。", "conditions": [{ "flag": "heard_ghost_story" }] },
+      { "text": "提到过一个柳家戏班子。", "conditions": [{ "flag": "heard_opera_rumor" }] }
+    ],
+    "unlockConditions": []
+  },
+  {
+    "id": "waiter_xiaoer",
+    "name": "小二",
+    "title": "茶馆跑堂",
+    "impressions": [
+      { "text": "一个麻利的年轻人，嘴甜腿快。", "conditions": [] }
+    ],
+    "knownInfo": [
+      { "text": "在茶馆跑堂，消息灵通。", "conditions": [] },
+      { "text": "转述了书生看到白影子的经历，说她'不是在害人，是在找人'。", "conditions": [{ "flag": "heard_waiter_ghost_talk" }] }
+    ],
+    "unlockConditions": []
+  },
+  {
+    "id": "peddler",
+    "name": "货郎",
+    "title": "南边来的行商",
+    "impressions": [
+      { "text": "一个黑瘦的汉子，挑着个沉甸甸的担子，嗓门很大。", "conditions": [] },
+      { "text": "卖的都是些桃木片、糯米之类的驱邪物件，看来是专做这行买卖的。", "conditions": [{ "flag": "peddler_met" }] }
+    ],
+    "knownInfo": [
+      { "text": "从南边翻八面山过来的行商。", "conditions": [] },
+      { "text": "声称在翻八面山的路上碰到过不干净的东西，靠糯米逃过一劫。", "conditions": [{ "flag": "peddler_story_heard" }] }
+    ],
+    "unlockConditions": []
+  }
+]

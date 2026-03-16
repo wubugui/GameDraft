@@ -1,0 +1,70 @@
+{
+  "id": "temple",
+  "name": "城隍庙",
+  "width": 1200,
+  "height": 1000,
+  "backgrounds": [],
+  "collisions": [
+    { "x": 0, "y": 0, "width": 1200, "height": 40 },
+    { "x": 0, "y": 0, "width": 40, "height": 1000 },
+    { "x": 1160, "y": 0, "width": 40, "height": 1000 },
+    { "x": 0, "y": 960, "width": 1200, "height": 40 },
+    { "x": 400, "y": 300, "width": 400, "height": 200 },
+    { "x": 200, "y": 100, "width": 800, "height": 40 }
+  ],
+  "spawnPoint": { "x": 600, "y": 800 },
+  "spawnPoints": {
+    "from_street": { "x": 600, "y": 900 }
+  },
+  "hotspots": [
+    {
+      "id": "incense_altar",
+      "type": "inspect",
+      "x": 550, "y": 200, "width": 100, "height": 60,
+      "interactionRange": 90,
+      "label": "香案",
+      "data": { "text": "香案上供着三炷已经燃尽的残香，灰烬散落一地。城隍爷的泥塑金身已经斑驳，一只手还缺了半截指头。香案前的蒲团上积了一层灰，看样子有段日子没人来上香了。" }
+    },
+    {
+      "id": "stone_tablet",
+      "type": "inspect",
+      "x": 150, "y": 400, "width": 60, "height": 100,
+      "interactionRange": 80,
+      "label": "石碑",
+      "data": {
+        "text": "一块石碑立在角落里，碑文记载着城隍庙始建于明洪武年间。碑面已经风化得厉害，最后几行字依稀可辨：\"阎王岭下，阴阳交汇，城隍镇之，百鬼不侵。\"你把这段话默默记了下来。",
+        "actions": [
+          { "type": "setFlag", "params": { "key": "inspected_stone_tablet", "value": true } },
+          { "type": "addArchiveEntry", "params": { "bookType": "lore", "entryId": "lore_temple_history" } }
+        ]
+      }
+    },
+    {
+      "id": "temple_back_path",
+      "type": "encounter",
+      "x": 1050, "y": 500, "width": 60, "height": 80,
+      "interactionRange": 80,
+      "label": "后山小径",
+      "conditions": [{ "flag": "talked_wang_about_ghost" }],
+      "data": { "encounterId": "ghost_encounter" }
+    },
+    {
+      "id": "temple_document",
+      "type": "pickup",
+      "x": 900, "y": 300, "width": 30, "height": 30,
+      "interactionRange": 70,
+      "label": "庙祝手札",
+      "conditions": [{ "flag": "encounter_ghost_done" }],
+      "data": { "itemId": "temple_notes", "itemName": "庙祝手札", "count": 1 }
+    },
+    {
+      "id": "exit_to_street_from_temple",
+      "type": "transition",
+      "x": 560, "y": 930, "width": 80, "height": 40,
+      "interactionRange": 60,
+      "label": "出门 (街巷)",
+      "data": { "targetScene": "test_room_a", "targetSpawnPoint": "from_temple" }
+    }
+  ],
+  "npcs": []
+}

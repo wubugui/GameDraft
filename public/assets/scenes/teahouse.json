@@ -1,0 +1,66 @@
+{
+  "id": "teahouse",
+  "name": "茶馆",
+  "width": 1400,
+  "height": 900,
+  "backgrounds": [],
+  "collisions": [
+    { "x": 0, "y": 0, "width": 1400, "height": 40 },
+    { "x": 0, "y": 0, "width": 40, "height": 900 },
+    { "x": 1360, "y": 0, "width": 40, "height": 900 },
+    { "x": 0, "y": 860, "width": 1400, "height": 40 },
+    { "x": 300, "y": 200, "width": 200, "height": 120 },
+    { "x": 700, "y": 200, "width": 200, "height": 120 },
+    { "x": 500, "y": 500, "width": 200, "height": 120 }
+  ],
+  "spawnPoint": { "x": 700, "y": 700 },
+  "spawnPoints": {
+    "from_street": { "x": 700, "y": 800 }
+  },
+  "hotspots": [
+    {
+      "id": "teahouse_notice",
+      "type": "inspect",
+      "x": 100, "y": 100, "width": 60, "height": 80,
+      "interactionRange": 80,
+      "label": "告示板",
+      "data": { "text": "告示板上贴满了各种启事。有寻人启事、有招工告示，还有一张用红纸写的：\"近日城隍庙后山频传怪声，夜间勿近。城防署示。\"" }
+    },
+    {
+      "id": "teahouse_table_items",
+      "type": "inspect",
+      "x": 350, "y": 260, "width": 40, "height": 30,
+      "interactionRange": 70,
+      "label": "桌上的茶碗",
+      "data": { "text": "几个粗瓷茶碗摆在桌上，茶水还冒着热气。旁边搁着几个花生壳和一把蒲扇。" }
+    },
+    {
+      "id": "exit_to_street",
+      "type": "transition",
+      "x": 660, "y": 830, "width": 80, "height": 40,
+      "interactionRange": 60,
+      "label": "出门 (街巷)",
+      "data": { "targetScene": "test_room_a", "targetSpawnPoint": "from_teahouse" }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "storyteller_zhang",
+      "name": "说书人张叨叨",
+      "x": 400,
+      "y": 400,
+      "dialogueFile": "/assets/dialogues/storyteller.ink",
+      "dialogueKnot": "start",
+      "interactionRange": 100
+    },
+    {
+      "id": "waiter_xiaoer",
+      "name": "小二",
+      "x": 900,
+      "y": 400,
+      "dialogueFile": "/assets/dialogues/waiter.ink",
+      "dialogueKnot": "start",
+      "interactionRange": 90
+    }
+  ]
+}

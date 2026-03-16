@@ -1,0 +1,30 @@
+[
+  {
+    "sceneId": "test_room_a",
+    "name": "街巷",
+    "x": 250,
+    "y": 180,
+    "unlockConditions": []
+  },
+  {
+    "sceneId": "test_room_b",
+    "name": "后巷",
+    "x": 400,
+    "y": 180,
+    "unlockConditions": [{ "flag": "prologue_started" }]
+  },
+  {
+    "sceneId": "teahouse",
+    "name": "茶馆",
+    "x": 150,
+    "y": 280,
+    "unlockConditions": [{ "flag": "prologue_started" }]
+  },
+  {
+    "sceneId": "temple",
+    "name": "城隍庙",
+    "x": 350,
+    "y": 280,
+    "unlockConditions": [{ "flag": "talked_wang_about_ghost" }]
+  }
+]

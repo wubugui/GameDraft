@@ -1,0 +1,74 @@
+[
+  {
+    "id": "copper_coins",
+    "name": "铜钱",
+    "type": "consumable",
+    "description": "几文铜钱，在渝都卫能买碗面。",
+    "maxStack": 99
+  },
+  {
+    "id": "taomu",
+    "name": "桃木片",
+    "type": "consumable",
+    "description": "一小片桃木，据说能驱邪避凶。老辈人出门都爱带一块。",
+    "buyPrice": 3,
+    "maxStack": 10
+  },
+  {
+    "id": "nuomi",
+    "name": "糯米",
+    "type": "consumable",
+    "description": "一把糯米，粘乎乎的。听说洒在不干净的东西上有奇效。",
+    "buyPrice": 2,
+    "maxStack": 10
+  },
+  {
+    "id": "shaojiu",
+    "name": "烧酒",
+    "type": "consumable",
+    "description": "一壶土烧酒，辣得很。既能壮胆，据说泼在邪物上也管用。",
+    "buyPrice": 5,
+    "maxStack": 5
+  },
+  {
+    "id": "iron_box",
+    "name": "铁盒子",
+    "type": "key",
+    "description": "瞎子李给的铁盒子，上面锈迹斑斑，沉甸甸的，不知道里面装着什么。",
+    "dynamicDescriptions": [
+      {
+        "conditions": [{ "flag": "box_opened" }],
+        "text": "打开过的铁盒子，里面是……一面古旧的小铜镜。镜面模糊，照不出人影。"
+      }
+    ],
+    "maxStack": 1
+  },
+  {
+    "id": "mugwort",
+    "name": "艾草",
+    "type": "consumable",
+    "description": "一把晒干的艾草，点燃后烟气呛人。老人说挂在门上能辟邪。",
+    "maxStack": 10
+  },
+  {
+    "id": "talisman",
+    "name": "黄纸符",
+    "type": "consumable",
+    "description": "城东道士画的符，歪歪扭扭的，也不知道灵不灵。",
+    "buyPrice": 8,
+    "maxStack": 5
+  },
+  {
+    "id": "temple_notes",
+    "name": "庙祝手札",
+    "type": "key",
+    "description": "城隍庙庙祝留下的手札，上面记载着一些庙里的旧事和禁忌。字迹工整，看得出庙祝是个有学问的人。",
+    "dynamicDescriptions": [
+      {
+        "conditions": [{ "flag": "read_temple_notes" }],
+        "text": "庙祝手札里提到：庙后山本是义冢，安葬无主之骨。城隍镇百鬼，但义冢中有一坟，年年不长草，庙祝说那坟里的人'心有不甘'。"
+      }
+    ],
+    "maxStack": 1
+  }
+]

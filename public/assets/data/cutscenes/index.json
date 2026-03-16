@@ -1,0 +1,96 @@
+[
+  {
+    "id": "prologue_opening",
+    "commands": [
+      { "type": "fade_black", "duration": 0 },
+      { "type": "wait_time", "duration": 500 },
+      { "type": "show_title", "text": "渝都卫", "duration": 2500 },
+      { "type": "wait_time", "duration": 300 },
+      { "type": "show_title", "text": "第一天", "duration": 1500 },
+      { "type": "set_flag", "key": "prologue_started", "value": true },
+      { "type": "fade_in", "duration": 1200 },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "渝都卫，地处西南山区盆地。时值军阀割据，外面没个太平日子，城里也好不到哪里去。" },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "你——关二狗，从小没爹没娘，混迹于街头，靠帮人跑腿混口饭吃。今天你照例在城里转悠，想看看有什么营生可做。" }
+    ]
+  },
+  {
+    "id": "prologue_day_end",
+    "commands": [
+      { "type": "fade_black", "duration": 1000 },
+      { "type": "show_title", "text": "第一天结束", "duration": 2000 },
+      { "type": "set_flag", "key": "day_1_done", "value": true },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "天色渐暗，你回到了住处。今天发生了不少事，得好好想想。" },
+      { "type": "wait_time", "duration": 500 },
+      { "type": "show_title", "text": "第二天", "duration": 1500 },
+      { "type": "fade_in", "duration": 1000 }
+    ]
+  },
+  {
+    "id": "ghost_flashback",
+    "commands": [
+      { "type": "fade_black", "duration": 600 },
+      { "type": "flash_white", "duration": 300 },
+      { "type": "show_dialogue", "speaker": "???", "text": "好一似食尽鸟投林……落了片白茫茫大地真干净……" },
+      { "type": "camera_zoom", "scale": 1.5, "duration": 800 },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "一个模糊的白色身影在月光下轻轻摇摆，唱腔婉转凄凉。你看不清她的脸，但那声音……像是在对你说话。" },
+      { "type": "flash_white", "duration": 150 },
+      { "type": "wait_time", "duration": 300 },
+      { "type": "show_title", "text": "她是谁？", "duration": 2000 },
+      { "type": "camera_zoom", "scale": 1.0, "duration": 600 },
+      { "type": "fade_in", "duration": 800 }
+    ]
+  },
+  {
+    "id": "peddler_arrives",
+    "commands": [
+      { "type": "show_dialogue", "speaker": "旁白", "text": "街巷口传来一阵吆喝声。" },
+      { "type": "camera_move", "x": 200, "y": 700, "duration": 1000 },
+      { "type": "show_dialogue", "speaker": "货郎", "text": "桃木片嘞——糯米嘞——艾草嘞——驱邪避凶保平安嘞——" },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "一个挑着担子的汉子出现在街口。看他那担子上的东西，倒都是些驱邪辟邪的玩意儿。" },
+      { "type": "camera_move", "x": 600, "y": 500, "duration": 800 },
+      { "type": "set_flag", "key": "peddler_arrived", "value": true },
+      { "type": "wait_click" },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "也许该去看看他卖的是什么。" }
+    ]
+  },
+  {
+    "id": "test_parallel",
+    "commands": [
+      { "type": "fade_black", "duration": 500 },
+      { "type": "show_title", "text": "演出系统测试", "duration": 2000 },
+      { "type": "fade_in", "duration": 500 },
+      { "type": "camera_move", "x": 300, "y": 300, "duration": 1500 },
+      { "type": "camera_zoom", "scale": 1.3, "duration": 1500, "parallel": true },
+      { "type": "show_dialogue", "speaker": "系统", "text": "摄像机移动和缩放同时执行（parallel测试）。" },
+      { "type": "flash_white", "duration": 200 },
+      { "type": "wait_click" },
+      { "type": "camera_move", "x": 600, "y": 500, "duration": 1000 },
+      { "type": "camera_zoom", "scale": 1.0, "duration": 1000, "parallel": true },
+      { "type": "show_title", "text": "测试结束", "duration": 1500 },
+      { "type": "set_flag", "key": "test_cutscene_done", "value": true }
+    ]
+  },
+  {
+    "id": "mysterious_visitor",
+    "commands": [
+      { "type": "show_dialogue", "speaker": "旁白", "text": "街巷尽头传来脚步声……" },
+      { "type": "entity_spawn", "id": "cloaked_figure", "name": "???", "x": 1100, "y": 500 },
+      { "type": "entity_emote", "target": "player", "emote": "?", "duration": 1200 },
+      { "type": "entity_move", "target": "cloaked_figure", "x": 700, "y": 500, "speed": 80 },
+      { "type": "camera_move", "x": 850, "y": 500, "duration": 2000, "parallel": true },
+      { "type": "entity_face", "target": "cloaked_figure", "faceTarget": "player" },
+      { "type": "entity_face", "target": "player", "faceTarget": "cloaked_figure" },
+      { "type": "entity_emote", "target": "cloaked_figure", "emote": "!", "duration": 1000 },
+      { "type": "show_dialogue", "speaker": "???", "text": "小子，你就是关二狗？" },
+      { "type": "show_dialogue", "speaker": "关二狗", "text": "你谁啊？找我有事？" },
+      { "type": "show_dialogue", "speaker": "???", "text": "有件事……算了，时候未到。" },
+      { "type": "entity_move", "target": "cloaked_figure", "x": 1100, "y": 500, "speed": 120 },
+      { "type": "entity_move", "target": "player", "x": 500, "y": 500, "speed": 100, "parallel": true },
+      { "type": "entity_emote", "target": "player", "emote": "...", "duration": 1500 },
+      { "type": "show_dialogue", "speaker": "旁白", "text": "那人转身快步离去，消失在巷子尽头。这是谁？他怎么知道你的名字？" },
+      { "type": "entity_remove", "id": "cloaked_figure" },
+      { "type": "set_flag", "key": "met_mysterious_visitor", "value": true },
+      { "type": "camera_move", "x": 600, "y": 500, "duration": 500 }
+    ]
+  }
+]

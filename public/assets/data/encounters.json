@@ -1,0 +1,78 @@
+[
+  {
+    "id": "old_box_encounter",
+    "narrative": "旧木箱的锁已经锈得不成样子，用力一拽就断了。打开箱盖，里面大部分都是些发霉的破烂，但有一页发黄的纸引起了你的注意。",
+    "options": [
+      {
+        "text": "仔细看看那页纸",
+        "type": "general",
+        "conditions": [],
+        "resultActions": [
+          { "type": "giveFragment", "params": { "id": "frag_zombie_fire_02" } },
+          { "type": "setFlag", "params": { "key": "read_box_note", "value": true } }
+        ],
+        "resultText": "纸页上的字迹已经模糊，但仔细辨认还能看出几行：\"遇白毛，速点桃木，火光所及，其不敢进。\"末尾有个印章，依稀是\"赶尸匠\"三个字。你把这页纸小心地收了起来。"
+      },
+      {
+        "text": "算了，不碰这些发霉的东西",
+        "type": "general",
+        "conditions": [],
+        "resultActions": [
+          { "type": "setFlag", "params": { "key": "old_box_checked", "value": true } }
+        ],
+        "resultText": "你合上了箱盖。那些发霉的味道让你不想继续翻了。"
+      }
+    ]
+  },
+  {
+    "id": "ghost_encounter",
+    "narrative": "夜色浓重，你小心翼翼地摸到了后山。果然，一个白色的身影在不远处飘来飘去，隐约传来咿咿呀呀的唱腔，听不真切，却莫名让人头皮发麻。怎么办？",
+    "options": [
+      {
+        "text": "硬着头皮走上去看看",
+        "type": "general",
+        "conditions": [],
+        "resultActions": [
+          { "type": "setFlag", "params": { "key": "encounter_ghost_done", "value": true } },
+          { "type": "setFlag", "params": { "key": "ghost_approach_direct", "value": true } }
+        ],
+        "resultText": "你鼓起勇气走了上去，那白影子忽然转过头来，惨白的脸上没有五官……你吓得一屁股坐在地上，再看时，什么都没了。只有风吹过枯枝的声音。"
+      },
+      {
+        "text": "[规矩] 按王大爷说的，三更天不该来这儿，先找个地方躲起来观察",
+        "type": "rule",
+        "conditions": [
+          { "flag": "rule_rule_no_go_night_acquired" }
+        ],
+        "requiredRuleId": "rule_no_go_night",
+        "resultActions": [
+          { "type": "setFlag", "params": { "key": "encounter_ghost_done", "value": true } },
+          { "type": "setFlag", "params": { "key": "ghost_watched_safe", "value": true } }
+        ],
+        "resultText": "你想起王大爷的话，赶紧躲到一块大石头后面。那白影子在原地飘了一会儿，唱了几句没听清的戏词，然后……就那么消散了。像雾一样。你松了口气，至少全须全尾。"
+      },
+      {
+        "text": "扔一块桃木片试试",
+        "type": "special",
+        "conditions": [],
+        "consumeItems": [{ "id": "taomu", "count": 1 }],
+        "resultActions": [
+          { "type": "setFlag", "params": { "key": "encounter_ghost_done", "value": true } },
+          { "type": "setFlag", "params": { "key": "ghost_used_taomu", "value": true } },
+          { "type": "giveFragment", "params": { "id": "frag_zombie_fire_01" } }
+        ],
+        "resultText": "你把桃木片朝那白影子扔了过去。桃木片穿过了白影子，啪嗒落在地上。但白影子似乎受了些影响，唱腔变得更加凄厉，然后渐渐淡去了。你捡回桃木片，发现上面多了一道焦痕。"
+      },
+      {
+        "text": "撒腿就跑",
+        "type": "general",
+        "conditions": [],
+        "resultActions": [
+          { "type": "setFlag", "params": { "key": "encounter_ghost_done", "value": true } },
+          { "type": "setFlag", "params": { "key": "ghost_ran_away", "value": true } }
+        ],
+        "resultText": "你转身就跑，跑得鞋都快甩掉了。一直跑到大路上，才敢回头看。后山黑漆漆的，什么也看不见了。心脏砰砰直跳，但至少……人没事。"
+      }
+    ]
+  }
+]

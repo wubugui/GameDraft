@@ -1,0 +1,72 @@
+[
+  {
+    "id": "main_01",
+    "type": "main",
+    "title": "与王大爷交谈",
+    "description": "王大爷就在街巷里，去和他聊聊，也许能打听到些什么。",
+    "preconditions": [],
+    "completionConditions": [
+      { "flag": "talked_wang_about_ghost" }
+    ],
+    "rewards": [
+      { "type": "giveCurrency", "params": { "amount": 10 } }
+    ],
+    "nextQuestId": "main_02"
+  },
+  {
+    "id": "main_02",
+    "type": "main",
+    "title": "打听白影子的消息",
+    "description": "去茶馆找说书人张叨叨打听打听城隍庙后山的事。或许城隍庙本身也值得去看看。",
+    "preconditions": [],
+    "completionConditions": [
+      { "flag": "heard_ghost_story" }
+    ],
+    "rewards": [],
+    "nextQuestId": "main_03"
+  },
+  {
+    "id": "main_03",
+    "type": "main",
+    "title": "调查城隍庙后山",
+    "description": "各种传闻都指向城隍庙后山，该去亲眼看看了。",
+    "preconditions": [],
+    "completionConditions": [
+      { "flag": "encounter_ghost_done" }
+    ],
+    "rewards": [
+      { "type": "giveCurrency", "params": { "amount": 20 } },
+      { "type": "giveRule", "params": { "id": "rule_ghost_verified" } }
+    ]
+  },
+  {
+    "id": "side_01",
+    "type": "side",
+    "sideType": "errand",
+    "title": "寻找散落的铜钱",
+    "description": "听说街巷角落里有人丢了几文铜钱，去看看。",
+    "preconditions": [
+      { "flag": "talked_wang_about_ghost" }
+    ],
+    "completionConditions": [
+      { "flag": "picked_up_corner_coins" }
+    ],
+    "rewards": []
+  },
+  {
+    "id": "side_02",
+    "type": "side",
+    "sideType": "inquiry",
+    "title": "戏班旧事",
+    "description": "说书人提到了一个柳家戏班子，小二好像也知道些什么。多方打听，也许能拼凑出白影子的来历。",
+    "preconditions": [
+      { "flag": "heard_opera_rumor" }
+    ],
+    "completionConditions": [
+      { "flag": "rule_rule_ghost_origin_acquired" }
+    ],
+    "rewards": [
+      { "type": "giveCurrency", "params": { "amount": 15 } }
+    ]
+  }
+]
