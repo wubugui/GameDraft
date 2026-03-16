@@ -31,3 +31,6 @@ venv/
 
 # 对话编译产物（源文件为 .ink）
 public/assets/dialogues/*.ink.json
+
+# Temp / read zip folder
+_read_zip/

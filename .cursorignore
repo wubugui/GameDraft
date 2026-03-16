@@ -1,0 +1,11 @@
+# Build output  
+dist  
+  
+# Dependencies  
+node_modules  
+  
+# Temp / read zip folder  
+_read_zip  
+  
+# Cursor agent history archives  
+cursor-agent-history-*.zip 
