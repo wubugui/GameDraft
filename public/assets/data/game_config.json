@@ -1,6 +1,5 @@
 {
   "initialScene": "teahouse",
   "initialQuest": "opening_01",
-  "fallbackScene": "test_room_a",
-  "playerScale": 2
+  "fallbackScene": "test_room_a"
 }

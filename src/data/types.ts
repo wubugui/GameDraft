@@ -58,11 +58,21 @@ export interface ActionDef {
 // 场景数据
 // ============================================================
 
+/** 场景 JSON 可省略 width/height，由首张背景图尺寸与 backgroundScale 推导 */
+export type SceneDataRaw = Omit<SceneData, 'width' | 'height'> & {
+  width?: number;
+  height?: number;
+};
+
 export interface SceneData {
   id: string;
   name: string;
+  /** 场景逻辑宽；未写时由首张背景图宽度 * backgroundScale 推导 */
   width: number;
+  /** 场景逻辑高；未写时由首张背景图高度 * backgroundScale 推导 */
   height: number;
+  /** 背景缩放系数，默认 1。场景边界默认与背景图同尺寸，设为其他值时场景尺寸 = 背景图尺寸 * backgroundScale */
+  backgroundScale?: number;
   backgrounds: BackgroundLayer[];
   collisions: Rect[];
   spawnPoint: Position;
@@ -128,6 +138,7 @@ export interface NpcDef {
   dialogueFile: string;
   dialogueKnot?: string;
   interactionRange: number;
+  animFile?: string;
 }
 
 // ============================================================
@@ -254,6 +265,9 @@ export interface AnimationSetDef {
   spritesheet: string;
   frameWidth: number;
   frameHeight: number;
+  cols?: number;
+  rows?: number;
+  scale?: number;
   states: Record<string, AnimationStateDef>;
 }
 
@@ -419,7 +433,6 @@ export interface GameConfig {
   initialScene: string;
   initialQuest: string;
   fallbackScene: string;
-  playerScale: number;
 }
 
 // ============================================================

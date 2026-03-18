@@ -10,6 +10,7 @@ export class SpriteEntity {
   private baseTexture: Texture | null = null;
   private animDef: AnimationSetDef | null = null;
   private frames: Map<string, Texture[]> = new Map();
+  private baseScale: number = 1;
 
   private currentState: string = '';
   private currentFrames: Texture[] = [];
@@ -31,17 +32,26 @@ export class SpriteEntity {
     this.animDef = animDef;
     this.frames.clear();
 
+    const cols = animDef.cols ?? Math.floor(texture.width / animDef.frameWidth);
+    const rows = animDef.rows ?? Math.floor(texture.height / animDef.frameHeight);
+    const srcFrameW = texture.width / cols;
+    const srcFrameH = texture.height / rows;
+
+    this.baseScale = Math.min(
+      animDef.frameWidth / srcFrameW,
+      animDef.frameHeight / srcFrameH,
+    );
+
     for (const [stateName, stateDef] of Object.entries(animDef.states)) {
       const textures: Texture[] = [];
       for (const frameIdx of stateDef.frames) {
-        const cols = Math.floor(texture.width / animDef.frameWidth);
         const col = frameIdx % cols;
         const row = Math.floor(frameIdx / cols);
         const rect = new Rectangle(
-          col * animDef.frameWidth,
-          row * animDef.frameHeight,
-          animDef.frameWidth,
-          animDef.frameHeight
+          col * srcFrameW,
+          row * srcFrameH,
+          srcFrameW,
+          srcFrameH,
         );
         const frameTex = new Texture({ source: texture.source, frame: rect });
         textures.push(frameTex);
@@ -112,6 +122,7 @@ export class SpriteEntity {
 
   setScale(s: number): void {
     const dir = this.sprite.scale.x >= 0 ? 1 : -1;
-    this.sprite.scale.set(dir * s, s);
+    const effective = this.baseScale * s;
+    this.sprite.scale.set(dir * effective, effective);
   }
 }

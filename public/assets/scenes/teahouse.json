@@ -3,7 +3,12 @@
   "name": "茶馆",
   "width": 1400,
   "height": 900,
-  "backgrounds": [],
+  "backgrounds": [
+    { "image": "/assets/images/backgrounds/normal_teahouse_bg.png", "x": 0, "y": 0 }
+  ],
+  "foregrounds": [
+    { "image": "/assets/images/backgrounds/normal_teahouse_fg.png", "x": 0, "y": 0 }
+  ],
   "collisions": [
     { "x": 0, "y": 0, "width": 1400, "height": 40 },
     { "x": 0, "y": 0, "width": 40, "height": 900 },
@@ -47,20 +52,22 @@
     {
       "id": "storyteller_zhang",
       "name": "说书人张叨叨",
-      "x": 400,
-      "y": 400,
+      "x": 600,
+      "y": 840,
       "dialogueFile": "/assets/dialogues/storyteller.ink",
       "dialogueKnot": "start",
-      "interactionRange": 100
+      "interactionRange": 100,
+      "animFile": "/assets/data/npc_storyteller_anim.json"
     },
     {
       "id": "blind_li",
       "name": "瞎子李",
-      "x": 760,
-      "y": 520,
+      "x": 363,
+      "y": 352,
       "dialogueFile": "/assets/dialogues/blind_li.ink",
       "dialogueKnot": "start",
-      "interactionRange": 100
+      "interactionRange": 100,
+      "animFile": "/assets/data/npc_blind_li_anim.json"
     },
     {
       "id": "waiter_xiaoer",

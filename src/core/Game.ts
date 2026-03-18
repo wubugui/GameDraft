@@ -89,6 +89,9 @@ export class Game {
   private stateController: GameStateController;
   private lastTime: number = 0;
   private playTimeMs: number = 0;
+  private positionDebugMode: boolean = false;
+  private positionDebugKeyHandler: (e: KeyboardEvent) => void = () => {};
+  private positionDebugPointerHandler: (e: PointerEvent) => void = () => {};
 
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
@@ -97,7 +100,6 @@ export class Game {
     initialScene: 'test_room_a',
     initialQuest: 'main_01',
     fallbackScene: 'test_room_a',
-    playerScale: 2,
   };
 
   constructor() {
@@ -195,6 +197,8 @@ export class Game {
     this.addWindowListener('resize', () => {
       this.camera.setScreenSize(this.renderer.screenWidth, this.renderer.screenHeight);
     });
+
+    this.setupPositionDebugTool();
 
     this.registerActionHandlers();
     this.setupSceneManager();
@@ -353,7 +357,6 @@ export class Game {
       if (cfg.initialScene) this.gameConfig.initialScene = cfg.initialScene;
       if (cfg.initialQuest) this.gameConfig.initialQuest = cfg.initialQuest;
       if (cfg.fallbackScene) this.gameConfig.fallbackScene = cfg.fallbackScene;
-      if (cfg.playerScale !== undefined) this.gameConfig.playerScale = cfg.playerScale;
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
     }
@@ -366,8 +369,13 @@ export class Game {
     try {
       const resp = await fetch('/assets/data/player_anim.json');
       animDef = await resp.json() as AnimationSetDef;
-      const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
-      texture = placeholder.texture;
+
+      if (animDef.spritesheet) {
+        texture = await this.assetManager.loadTexture(animDef.spritesheet);
+      } else {
+        const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
+        texture = placeholder.texture;
+      }
     } catch {
       const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
       texture = placeholder.texture;
@@ -385,12 +393,45 @@ export class Game {
 
     this.player.sprite.loadFromDef(texture, animDef);
     this.player.sprite.playAnimation('idle');
-    this.player.sprite.setScale(this.gameConfig.playerScale);
+    this.player.sprite.setScale(animDef.scale ?? 1);
     this.renderer.entityLayer.addChild(this.player.sprite.container);
 
     const playerPosGetter = () => ({ x: this.player.x, y: this.player.y });
     this.interactionSystem.setPlayerPositionGetter(playerPosGetter);
     this.zoneSystem.setPlayerPositionGetter(playerPosGetter);
+  }
+
+  private setupPositionDebugTool(): void {
+    const canvas = this.renderer.app.canvas as HTMLCanvasElement;
+    if (!canvas) return;
+
+    this.positionDebugKeyHandler = (e: KeyboardEvent) => {
+      if (e.key === 'F10') {
+        e.preventDefault();
+        this.positionDebugMode = !this.positionDebugMode;
+        const msg = this.positionDebugMode ? 'Position debug: ON (click to log world x,y)' : 'Position debug: OFF';
+        console.log(msg);
+        this.eventBus.emit('notification:show', { text: msg, type: 'info' });
+      }
+    };
+    window.addEventListener('keydown', this.positionDebugKeyHandler);
+
+    this.positionDebugPointerHandler = (e: PointerEvent) => {
+      if (!this.positionDebugMode) return;
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = this.renderer.app.screen.width / rect.width;
+      const scaleY = this.renderer.app.screen.height / rect.height;
+      const stageX = (e.clientX - rect.left) * scaleX;
+      const stageY = (e.clientY - rect.top) * scaleY;
+      const world = this.renderer.worldContainer.toLocal({ x: stageX, y: stageY });
+      const x = Math.round(world.x);
+      const y = Math.round(world.y);
+      const text = `x: ${x}, y: ${y}`;
+      console.log(text);
+      this.eventBus.emit('notification:show', { text, type: 'info' });
+    };
+    canvas.addEventListener('pointerdown', this.positionDebugPointerHandler);
   }
 
   private setupSceneManager(): void {
@@ -600,6 +641,10 @@ export class Game {
     }
     this.boundWindowListeners = [];
 
+    window.removeEventListener('keydown', this.positionDebugKeyHandler);
+    const canvas = this.renderer.app?.canvas as HTMLCanvasElement | undefined;
+    if (canvas) canvas.removeEventListener('pointerdown', this.positionDebugPointerHandler);
+
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.destroy();
     }
@@ -695,6 +740,9 @@ export class Game {
       this.player.update(dt);
       this.interactionSystem.update(dt);
       this.zoneSystem.update(dt);
+      for (const npc of this.sceneManager.getCurrentNpcs()) {
+        npc.cutsceneUpdate(dt);
+      }
       this.camera.follow(this.player.x, this.player.y);
     }
 

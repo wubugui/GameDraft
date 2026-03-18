@@ -1,12 +1,24 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Sprite } from 'pixi.js';
 import type { AssetManager } from '../core/AssetManager';
 import type { EventBus } from '../core/EventBus';
 import type { Renderer } from '../rendering/Renderer';
 import { Hotspot } from '../entities/Hotspot';
 import { Npc } from '../entities/Npc';
 import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
-import type { SceneData, SceneRuntimeState, Position, GameContext } from '../data/types';
+import type { SceneData, SceneRuntimeState, Position, GameContext, AnimationSetDef } from '../data/types';
 import type { IGameSystem } from '../data/types';
+
+const SCENE_BOUNDARY_MARGIN = 40;
+
+function sceneBoundaryCollisions(width: number, height: number): { x: number; y: number; width: number; height: number }[] {
+  const m = SCENE_BOUNDARY_MARGIN;
+  return [
+    { x: 0, y: 0, width, height: m },
+    { x: 0, y: 0, width: m, height },
+    { x: width - m, y: 0, width: m, height },
+    { x: 0, y: height - m, width, height: m },
+  ];
+}
 
 interface SceneMemory {
   inspectedHotspots: string[];
@@ -100,15 +112,57 @@ export class SceneManager implements IGameSystem {
     const sceneData = await this.assetManager.loadSceneData(sceneId);
     this.currentScene = sceneData;
 
-    this.sceneContainerBg = createPlaceholderBackground(
-      this.renderer.app,
-      sceneData.width,
-      sceneData.height,
-      sceneData.collisions,
-    );
+    if (sceneData.backgrounds.length > 0) {
+      this.sceneContainerBg = new Container();
+      const scale = sceneData.backgroundScale ?? 1;
+      const layers = [...sceneData.backgrounds].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+      for (const layer of layers) {
+        try {
+          const texture = await this.assetManager.loadTexture(layer.image);
+          const sprite = new Sprite(texture);
+          sprite.x = layer.x ?? 0;
+          sprite.y = layer.y ?? 0;
+          sprite.scale.set(scale);
+          this.sceneContainerBg.addChild(sprite);
+        } catch (_e) {
+          // 加载失败时跳过该层
+        }
+      }
+    } else {
+      this.sceneContainerBg = createPlaceholderBackground(
+        this.renderer.app,
+        sceneData.width,
+        sceneData.height,
+        sceneData.collisions,
+      );
+    }
     this.renderer.backgroundLayer.addChild(this.sceneContainerBg);
 
-    this.collisionSetter?.(sceneData.collisions);
+    if (sceneData.foregrounds && sceneData.foregrounds.length > 0) {
+      this.sceneContainerFg = new Container();
+      const fgLayers = [...sceneData.foregrounds].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+      for (const layer of fgLayers) {
+        try {
+          const texture = await this.assetManager.loadTexture(layer.image);
+          const sprite = new Sprite(texture);
+          sprite.x = layer.x ?? 0;
+          sprite.y = layer.y ?? 0;
+          sprite.scale.set(
+            sceneData.width / texture.width,
+            sceneData.height / texture.height,
+          );
+          this.sceneContainerFg.addChild(sprite);
+        } catch (_e) {
+          // 加载失败时跳过该层
+        }
+      }
+      this.renderer.foregroundLayer.addChild(this.sceneContainerFg);
+    } else {
+      this.sceneContainerFg = null;
+    }
+
+    const boundary = sceneBoundaryCollisions(sceneData.width, sceneData.height);
+    this.collisionSetter?.([...boundary, ...sceneData.collisions]);
 
     const memory = this.sceneMemory.get(sceneId);
 
@@ -125,6 +179,15 @@ export class SceneManager implements IGameSystem {
     if (sceneData.npcs) {
       for (const npcDef of sceneData.npcs) {
         const npc = new Npc(npcDef);
+        if (npcDef.animFile) {
+          try {
+            const animDef = await this.assetManager.loadJson<AnimationSetDef>(npcDef.animFile);
+            const tex = await this.assetManager.loadTexture(animDef.spritesheet);
+            npc.loadSprite(tex, animDef);
+          } catch (_e) {
+            // 加载失败时保留占位外观
+          }
+        }
         this.currentNpcs.push(npc);
         this.renderer.entityLayer.addChild(npc.container);
       }

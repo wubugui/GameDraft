@@ -1,12 +1,14 @@
-import { Container, Graphics, Text } from 'pixi.js';
-import type { NpcDef, ICutsceneActor } from '../data/types';
+import { Container, Graphics, Text, Texture } from 'pixi.js';
+import type { NpcDef, AnimationSetDef, ICutsceneActor } from '../data/types';
+import { SpriteEntity } from '../rendering/SpriteEntity';
 
 const MARKER_SIZE = 20;
 
 export class Npc implements ICutsceneActor {
   public readonly def: NpcDef;
   public container: Container;
-  private marker: Graphics;
+  private sprite: SpriteEntity | null = null;
+  private marker: Graphics | null = null;
   private nameLabel: Text;
   private promptIcon: Text | null = null;
   private showingPrompt: boolean = false;
@@ -39,6 +41,23 @@ export class Npc implements ICutsceneActor {
     this.container.addChild(this.nameLabel);
   }
 
+  loadSprite(texture: Texture, animDef: AnimationSetDef): void {
+    if (this.marker) {
+      this.container.removeChild(this.marker);
+      this.marker.destroy();
+      this.marker = null;
+    }
+
+    this.sprite = new SpriteEntity();
+    this.sprite.loadFromDef(texture, animDef);
+    const scale = animDef.scale ?? 1;
+    this.sprite.setScale(scale);
+    this.sprite.playAnimation('idle');
+    this.container.addChildAt(this.sprite.container, 0);
+    this.sprite.container.x = 0;
+    this.sprite.container.y = 0;
+  }
+
   get entityId(): string { return this.def.id; }
 
   get x(): number { return this._x; }
@@ -61,10 +80,11 @@ export class Npc implements ICutsceneActor {
   }
 
   setFacing(dx: number, _dy: number): void {
-    if (dx > 0) {
-      this.marker.scale.x = 1;
-    } else if (dx < 0) {
-      this.marker.scale.x = -1;
+    if (this.sprite) {
+      this.sprite.setDirection(dx, _dy);
+    } else if (this.marker) {
+      if (dx > 0) this.marker.scale.x = 1;
+      else if (dx < 0) this.marker.scale.x = -1;
     }
   }
 
@@ -72,8 +92,8 @@ export class Npc implements ICutsceneActor {
     this.container.visible = visible;
   }
 
-  playAnimation(_name: string): void {
-    // placeholder NPC has no frame animation; reserved for future sprite integration
+  playAnimation(name: string): void {
+    this.sprite?.playAnimation(name);
   }
 
   moveTo(targetX: number, targetY: number, speed: number): Promise<void> {
@@ -84,29 +104,33 @@ export class Npc implements ICutsceneActor {
       this.moveTarget = { x: targetX, y: targetY, speed, resolve };
       const dx = targetX - this._x;
       this.setFacing(dx, 0);
+      this.playAnimation('walk');
     });
   }
 
   cutsceneUpdate(dt: number): void {
-    if (!this.moveTarget) return;
-    const t = this.moveTarget;
-    const dx = t.x - this._x;
-    const dy = t.y - this._y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const step = t.speed * dt;
+    if (this.moveTarget) {
+      const t = this.moveTarget;
+      const dx = t.x - this._x;
+      const dy = t.y - this._y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const step = t.speed * dt;
 
-    if (dist <= step) {
-      this.x = t.x;
-      this.y = t.y;
-      const resolve = t.resolve;
-      this.moveTarget = null;
-      resolve();
-    } else {
-      const nx = dx / dist;
-      const ny = dy / dist;
-      this.x += nx * step;
-      this.y += ny * step;
+      if (dist <= step) {
+        this.x = t.x;
+        this.y = t.y;
+        this.playAnimation('idle');
+        const resolve = t.resolve;
+        this.moveTarget = null;
+        resolve();
+      } else {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        this.x += nx * step;
+        this.y += ny * step;
+      }
     }
+    this.sprite?.update(dt);
   }
 
   showPrompt(): void {

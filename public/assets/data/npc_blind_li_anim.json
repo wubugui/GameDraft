@@ -1,0 +1,13 @@
+{
+  "spritesheet": "/assets/images/characters/npc_blind_li.png",
+  "cols": 5,
+  "rows": 2,
+  "frameWidth": 32,
+  "frameHeight": 48,
+  "scale": 5.5,
+  "states": {
+    "idle": { "frames": [0, 1], "frameRate": 2, "loop": true },
+    "walk": { "frames": [2, 3, 4, 5], "frameRate": 8, "loop": true },
+    "run": { "frames": [6, 7, 8, 9], "frameRate": 12, "loop": true }
+  }
+}
