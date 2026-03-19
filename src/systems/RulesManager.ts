@@ -1,6 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { RuleDef, RuleFragmentDef, IGameSystem, GameContext, IRulesDataProvider } from '../data/types';
+import { resolveAssetPath } from '../core/assetPath';
 
 export class RulesManager implements IGameSystem, IRulesDataProvider {
   private eventBus: EventBus;
@@ -28,7 +29,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/rules.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/rules.json'));
       const data = await resp.json() as {
         rules: RuleDef[];
         fragments: RuleFragmentDef[];

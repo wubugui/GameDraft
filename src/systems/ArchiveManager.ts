@@ -1,5 +1,6 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
+import { resolveAssetPath } from '../core/assetPath';
 import type { CharacterEntry, LoreEntry, DocumentEntry, BookDef, Condition, IGameSystem, GameContext, IArchiveDataProvider } from '../data/types';
 
 type BookType = 'character' | 'lore' | 'document' | 'book';
@@ -54,7 +55,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadCharacters(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/archive/characters.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/archive/characters.json'));
       const list: CharacterEntry[] = await resp.json();
       for (const e of list) this.characterDefs.set(e.id, e);
     } catch { /* no data yet */ }
@@ -62,7 +63,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadLore(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/archive/lore.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/archive/lore.json'));
       const data = await resp.json();
       const list: LoreEntry[] = Array.isArray(data) ? data : data.entries ?? [];
       for (const e of list) this.loreDefs.set(e.id, e);
@@ -74,7 +75,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadDocuments(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/archive/documents.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/archive/documents.json'));
       const list: DocumentEntry[] = await resp.json();
       for (const e of list) this.documentDefs.set(e.id, e);
     } catch { /* no data yet */ }
@@ -82,7 +83,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadBooks(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/archive/books.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/archive/books.json'));
       const list: BookDef[] = await resp.json();
       for (const b of list) this.bookDefs.set(b.id, b);
     } catch { /* no data yet */ }

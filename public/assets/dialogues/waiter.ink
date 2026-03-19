@@ -29,6 +29,14 @@ EXTERNAL getFlag(key)
     # speaker:小二
     谁知道呢，那老瞎子看着和气，真要不顺心，嘴比刀子还快。你自己掂量着点说。
     -> END
++ [城隍庙那边最近闹什么怪]
+    # speaker:小二
+    你还真问着了。前些天有人翻出一张旧戏单，说当年柳家班就在城隍庙戏台唱过堂会，后来班里那个最红的旦角，说没就没了。
+    # speaker:小二
+    这几日城里又有人说，夜里从庙后头过，能听见女人吊着嗓子唱戏。有人说她是在害人，也有人说她像是在找人。
+    # action:setFlag:heard_waiter_ghost_talk:true
+    # action:setFlag:heard_opera_rumor:true
+    -> END
 + [没事，我随便转转]
     # speaker:小二
     转吧转吧，别碰翻茶碗就成。

@@ -1,5 +1,6 @@
-import { Container } from 'pixi.js';
+import { Container, Assets } from 'pixi.js';
 import type { EventBus } from '../core/EventBus';
+import { resolveAssetPath } from '../core/assetPath';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
@@ -8,6 +9,15 @@ import type { CutsceneDef, CutsceneCommand, ICutsceneActor, NpcDef, IGameSystem,
 import { Npc } from '../entities/Npc';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
+
+export type ChangeSceneParams = {
+  targetScene: string;
+  targetSpawnPoint?: string;
+  cameraX?: number;
+  cameraY?: number;
+};
+
+export type SceneSwitcher = (params: ChangeSceneParams) => Promise<void>;
 
 export class CutsceneManager implements IGameSystem {
   private eventBus: EventBus;
@@ -22,6 +32,7 @@ export class CutsceneManager implements IGameSystem {
   private onClickBound: () => void;
 
   private entityResolver: EntityResolver | null = null;
+  private sceneSwitcher: SceneSwitcher | null = null;
   private tempActors: Map<string, Npc> = new Map();
   private emoteBubbleManager: EmoteBubbleManager | null = null;
 
@@ -61,12 +72,29 @@ export class CutsceneManager implements IGameSystem {
     this.emoteBubbleManager = manager;
   }
 
+  setSceneSwitcher(switcher: SceneSwitcher): void {
+    this.sceneSwitcher = switcher;
+  }
+
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/cutscenes/index.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/cutscenes/index.json'));
       const list: CutsceneDef[] = await resp.json();
+      const imagePaths = new Set<string>();
       for (const def of list) {
         this.cutsceneDefs.set(def.id, def);
+        for (const cmd of def.commands || []) {
+          if (cmd.type === 'show_img' && typeof cmd.image === 'string') {
+            imagePaths.add(resolveAssetPath(cmd.image));
+          }
+        }
+      }
+      for (const path of imagePaths) {
+        try {
+          await Assets.load(path);
+        } catch (err) {
+          console.warn(`[CutsceneManager] 预加载失败: ${path}`, err);
+        }
       }
     } catch {
       // no cutscene data yet
@@ -170,6 +198,38 @@ export class CutsceneManager implements IGameSystem {
         break;
       case 'switch_scene':
         this.actionExecutor.execute({ type: 'switchScene', params: { targetScene: cmd.sceneId as string, targetSpawnPoint: cmd.spawnPoint as string | undefined } });
+        break;
+      case 'change_scene': {
+        const params: ChangeSceneParams = {
+          targetScene: cmd.sceneId as string,
+          targetSpawnPoint: cmd.spawnPoint as string | undefined,
+          cameraX: cmd.cameraX as number | undefined,
+          cameraY: cmd.cameraY as number | undefined,
+        };
+        if (this.sceneSwitcher) {
+          await this.sceneSwitcher(params);
+        } else {
+          this.actionExecutor.execute({ type: 'changeScene', params });
+        }
+        break;
+      }
+      case 'show_character':
+        this.entitySetVisible('player', cmd.visible as boolean ?? true);
+        break;
+      case 'show_img':
+        await this.cutsceneRenderer.showImg(cmd.image as string, cmd.id as string);
+        break;
+      case 'hide_img':
+        this.cutsceneRenderer.hideImg(cmd.id as string);
+        break;
+      case 'show_movie_bar':
+        this.cutsceneRenderer.showMovieBar((cmd.heightPercent as number) ?? 0.1);
+        break;
+      case 'hide_movie_bar':
+        this.cutsceneRenderer.hideMovieBar();
+        break;
+      case 'show_subtitle':
+        await this.showSubtitleText(cmd.text as string, cmd.position as string | number | undefined);
         break;
       case 'execute_action':
         this.actionExecutor.execute({ type: cmd.actionType as string, params: (cmd.params as Record<string, unknown>) ?? {} });
@@ -290,6 +350,15 @@ export class CutsceneManager implements IGameSystem {
     const box = this.cutsceneRenderer.showDialogueBox(text, speaker);
     await new Promise<void>(resolve => { this.dialogueResolve = resolve; });
     this.cutsceneRenderer.dismissDialogueBox(box);
+  }
+
+  private async showSubtitleText(text: string, position?: string | number): Promise<void> {
+    const pos = position === 'top' || position === 'center' || position === 'bottom' || typeof position === 'number'
+      ? position
+      : 'bottom';
+    const container = this.cutsceneRenderer.showSubtitle(text, pos);
+    await new Promise<void>(resolve => { this.dialogueResolve = resolve; });
+    this.cutsceneRenderer.dismissSubtitle(container);
   }
 
   private cleanup(): void {

@@ -42,6 +42,7 @@ import { StringsProvider } from './StringsProvider';
 import { GameState } from '../data/types';
 import type { HotspotDef, InspectData, PickupData, TransitionData, EncounterTriggerData, IGameSystem, AnimationSetDef, GameConfig } from '../data/types';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
+import { resolveAssetPath } from './assetPath';
 import type { Hotspot } from '../entities/Hotspot';
 import type { Npc } from '../entities/Npc';
 
@@ -183,6 +184,18 @@ export class Game {
       return this.sceneManager.getNpcById(id);
     });
     this.cutsceneManager.setEmoteBubbleManager(this.emoteBubbleManager);
+    this.cutsceneManager.setSceneSwitcher(async (params) => {
+      this.pickupNotification.forceCleanup();
+      if (this.inspectBox.isOpen) this.inspectBox.close();
+      const cameraPos = typeof params.cameraX === 'number' && typeof params.cameraY === 'number'
+        ? { x: params.cameraX, y: params.cameraY }
+        : undefined;
+      await this.sceneManager.switchScene(
+        params.targetScene,
+        params.targetSpawnPoint,
+        cameraPos,
+      );
+    });
 
     this.saveManager = new SaveManager(
       () => this.collectSaveData(),
@@ -227,6 +240,7 @@ export class Game {
     this.questManager.acceptQuest(this.gameConfig.initialQuest);
 
     await this.sceneManager.loadScene(this.gameConfig.initialScene);
+    await this.tryStartInitialPrologue();
 
     this.lastTime = performance.now();
     this.renderer.app.ticker.add(() => {
@@ -348,11 +362,27 @@ export class Game {
         this.stateController.setState(GameState.Exploring);
       });
     });
+
+    this.actionExecutor.register('changeScene', (params) => {
+      this.stateController.setState(GameState.Cutscene);
+      this.pickupNotification.forceCleanup();
+      if (this.inspectBox.isOpen) this.inspectBox.close();
+      const cameraPos = typeof params.cameraX === 'number' && typeof params.cameraY === 'number'
+        ? { x: params.cameraX as number, y: params.cameraY as number }
+        : undefined;
+      this.sceneManager.switchScene(
+        params.targetScene as string,
+        params.targetSpawnPoint as string | undefined,
+        cameraPos,
+      ).then(() => {
+        this.stateController.setState(GameState.Exploring);
+      });
+    });
   }
 
   private async loadGameConfig(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/game_config.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/game_config.json'));
       const cfg = await resp.json() as Partial<GameConfig>;
       if (cfg.initialScene) this.gameConfig.initialScene = cfg.initialScene;
       if (cfg.initialQuest) this.gameConfig.initialQuest = cfg.initialQuest;
@@ -367,7 +397,7 @@ export class Game {
     let texture: any;
 
     try {
-      const resp = await fetch('/assets/data/player_anim.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/player_anim.json'));
       animDef = await resp.json() as AnimationSetDef;
 
       if (animDef.spritesheet) {
@@ -432,6 +462,30 @@ export class Game {
       this.eventBus.emit('notification:show', { text, type: 'info' });
     };
     canvas.addEventListener('pointerdown', this.positionDebugPointerHandler);
+  }
+
+  private runNpcPatrol(
+    npc: Npc,
+    route: { x: number; y: number }[],
+    speed: number,
+  ): void {
+    const run = async () => {
+      let i = 0;
+      let step = 1;
+      while (this.sceneManager.getCurrentNpcs().includes(npc)) {
+        await npc.moveTo(route[i].x, route[i].y, speed);
+        if (!this.sceneManager.getCurrentNpcs().includes(npc)) break;
+        i += step;
+        if (i >= route.length) {
+          i = Math.max(0, route.length - 1);
+          step = -1;
+        } else if (i < 0) {
+          i = 0;
+          step = 1;
+        }
+      }
+    };
+    run();
   }
 
   private setupSceneManager(): void {
@@ -587,7 +641,22 @@ export class Game {
 
     this.listenEvent('scene:ready', () => {
       this.interactionSystem.update(0);
+      for (const npc of this.sceneManager.getCurrentNpcs()) {
+        const patrol = npc.def.patrol;
+        if (patrol?.route && patrol.route.length > 0) {
+          this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60);
+        }
+      }
     });
+  }
+
+  private async tryStartInitialPrologue(): Promise<void> {
+    if (this.gameConfig.initialScene !== 'teahouse') return;
+    if (this.flagStore.get('prologue_started')) return;
+
+    this.stateController.setState(GameState.Cutscene);
+    await this.cutsceneManager.startCutscene('prologue_opening');
+    this.stateController.setState(GameState.Exploring);
   }
 
   private collectSaveData(): Record<string, object> {

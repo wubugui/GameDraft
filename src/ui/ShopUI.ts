@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IInventoryDataProvider, ShopDef } from '../data/types';
+import { resolveAssetPath } from '../core/assetPath';
 
 const PANEL_W = 500;
 const PADDING = 20;
@@ -24,7 +25,7 @@ export class ShopUI {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/shops.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/shops.json'));
       const list: ShopDef[] = await resp.json();
       for (const s of list) this.shopDefs.set(s.id, s);
     } catch { /* no shops yet */ }

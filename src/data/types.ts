@@ -130,6 +130,11 @@ export interface NpcHotspotData {
 // NPC 数据
 // ============================================================
 
+export interface PatrolDef {
+  route: { x: number; y: number }[];
+  speed?: number;
+}
+
 export interface NpcDef {
   id: string;
   name: string;
@@ -139,6 +144,7 @@ export interface NpcDef {
   dialogueKnot?: string;
   interactionRange: number;
   animFile?: string;
+  patrol?: PatrolDef;
 }
 
 // ============================================================

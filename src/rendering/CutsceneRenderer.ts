@@ -1,6 +1,10 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Text, Sprite, Assets, Texture } from 'pixi.js';
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
+import { resolveAssetPath } from '../core/assetPath';
+
+/** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
+export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
 
 export class CutsceneRenderer {
   private renderer: Renderer;
@@ -9,6 +13,8 @@ export class CutsceneRenderer {
   private fadeOverlay: Graphics | null = null;
   private titleContainer: Container | null = null;
   private activeEmotes: Container[] = [];
+  private images: Map<string, { sprite: Sprite | Graphics; imagePath: string; isPlaceholder?: boolean }> = new Map();
+  private movieBarContainer: Container | null = null;
 
   constructor(renderer: Renderer, camera: Camera) {
     this.renderer = renderer;
@@ -202,6 +208,119 @@ export class CutsceneRenderer {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  /** 显示图片：居中无拉伸填满视口（cover 模式），id 作为句柄供 hideImg 使用 */
+  async showImg(imagePath: string, id: string): Promise<void> {
+    this.hideImg(id);
+    const resolvedPath = resolveAssetPath(imagePath);
+    let texture: Texture;
+    try {
+      texture = await Assets.load<Texture>(resolvedPath);
+    } catch (err) {
+      console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
+      const sw = this.screenWidth;
+      const sh = this.screenHeight;
+      const placeholder = new Graphics();
+      placeholder.rect(0, 0, sw, sh);
+      placeholder.fill({ color: 0x333344, alpha: 0.9 });
+      placeholder.label = id;
+      this.renderer.cutsceneOverlay.addChild(placeholder);
+      this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
+      return;
+    }
+    if (!texture || texture.width <= 0 || texture.height <= 0) {
+      console.warn(`[CutsceneRenderer] 图片尺寸异常: ${resolvedPath} (${texture?.width}x${texture?.height})`);
+    }
+    const sprite = new Sprite(texture);
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const iw = Math.max(1, texture.width);
+    const ih = Math.max(1, texture.height);
+    const scale = Math.max(sw / iw, sh / ih);
+    sprite.scale.set(scale);
+    sprite.anchor.set(0.5);
+    sprite.x = sw / 2;
+    sprite.y = sh / 2;
+    sprite.label = id;
+    this.renderer.cutsceneOverlay.addChild(sprite);
+    this.images.set(id, { sprite, imagePath: resolvedPath });
+  }
+
+  /** 隐藏并卸载指定 id 的图片 */
+  hideImg(id: string): void {
+    const entry = this.images.get(id);
+    if (!entry) return;
+    if (entry.sprite.parent) entry.sprite.parent.removeChild(entry.sprite);
+    entry.sprite.destroy();
+    if (!entry.isPlaceholder) void Assets.unload(entry.imagePath);
+    this.images.delete(id);
+  }
+
+  /** 显示电影黑边：上下黑色边界，heightPercent 为单边占屏幕高度的比例（0-1） */
+  showMovieBar(heightPercent: number): void {
+    this.hideMovieBar();
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const barHeight = Math.round(sh * Math.max(0, Math.min(1, heightPercent)));
+    this.movieBarContainer = new Container();
+    const top = new Graphics();
+    top.rect(0, 0, sw, barHeight);
+    top.fill(0x000000);
+    this.movieBarContainer.addChild(top);
+    const bottom = new Graphics();
+    bottom.rect(0, sh - barHeight, sw, barHeight);
+    bottom.fill(0x000000);
+    this.movieBarContainer.addChild(bottom);
+    this.renderer.cutsceneOverlay.addChild(this.movieBarContainer);
+  }
+
+  hideMovieBar(): void {
+    if (!this.movieBarContainer) return;
+    if (this.movieBarContainer.parent) this.movieBarContainer.parent.removeChild(this.movieBarContainer);
+    this.movieBarContainer.destroy({ children: true });
+    this.movieBarContainer = null;
+  }
+
+  /** 显示字幕：无背景框，可指定位置。返回的 container 供 dismissSubtitle 关闭 */
+  showSubtitle(text: string, position: SubtitlePosition = 'bottom'): Container {
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const container = new Container();
+    const t = new Text({
+      text,
+      style: {
+        fontSize: 18,
+        fill: 0xffffff,
+        fontFamily: 'sans-serif',
+        wordWrap: true,
+        wordWrapWidth: sw - 80,
+        align: 'center',
+      },
+    });
+    t.anchor.set(0.5);
+    t.x = sw / 2;
+    let y: number;
+    if (position === 'top') {
+      y = 60;
+    } else if (position === 'center') {
+      y = sh / 2;
+    } else if (position === 'bottom') {
+      y = sh - 80;
+    } else if (typeof position === 'number') {
+      y = position >= 0 && position <= 1 ? sh * (1 - position) : sh - 80;
+    } else {
+      y = sh - 80;
+    }
+    t.y = y;
+    container.addChild(t);
+    this.renderer.uiLayer.addChild(container);
+    return container;
+  }
+
+  dismissSubtitle(container: Container): void {
+    if (container.parent) container.parent.removeChild(container);
+    container.destroy({ children: true });
+  }
+
   animateAlpha(target: { alpha: number }, from: number, to: number, duration: number): Promise<void> {
     return new Promise(resolve => {
       const startTime = performance.now();
@@ -226,6 +345,10 @@ export class CutsceneRenderer {
       this.titleContainer.destroy({ children: true });
       this.titleContainer = null;
     }
+    for (const id of Array.from(this.images.keys())) {
+      this.hideImg(id);
+    }
+    this.hideMovieBar();
     for (const emote of this.activeEmotes) {
       if (emote.parent) emote.parent.removeChild(emote);
       emote.destroy({ children: true });

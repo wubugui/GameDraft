@@ -2,6 +2,7 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { EncounterDef, EncounterOptionDef, IGameSystem, GameContext, RuleDef, RuleFragmentDef } from '../data/types';
+import { resolveAssetPath } from '../core/assetPath';
 
 export interface ResolvedOption {
   index: number;
@@ -42,7 +43,7 @@ export class EncounterManager implements IGameSystem {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/encounters.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/encounters.json'));
       const defs: EncounterDef[] = await resp.json();
       for (const def of defs) {
         this.encounterDefs.set(def.id, def);
@@ -52,7 +53,7 @@ export class EncounterManager implements IGameSystem {
     }
 
     try {
-      const resp = await fetch('/assets/data/rules.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/rules.json'));
       const data = await resp.json() as { rules: RuleDef[]; fragments: RuleFragmentDef[] };
       for (const r of data.rules) {
         this.ruleDefs.set(r.id, { name: r.name, incompleteName: r.incompleteName, fragmentCount: r.fragmentCount });

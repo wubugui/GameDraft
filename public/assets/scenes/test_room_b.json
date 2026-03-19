@@ -4,13 +4,7 @@
   "width": 1000,
   "height": 800,
   "backgrounds": [],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 1000, "height": 40 },
-    { "x": 0, "y": 0, "width": 40, "height": 800 },
-    { "x": 960, "y": 0, "width": 40, "height": 800 },
-    { "x": 0, "y": 760, "width": 1000, "height": 40 },
-    { "x": 500, "y": 250, "width": 120, "height": 100 }
-  ],
+  "collisions": [],
   "spawnPoint": { "x": 500, "y": 400 },
   "spawnPoints": {
     "from_a": { "x": 80, "y": 400 }

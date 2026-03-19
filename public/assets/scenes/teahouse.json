@@ -9,41 +9,48 @@
   "foregrounds": [
     { "image": "/assets/images/backgrounds/normal_teahouse_fg.png", "x": 0, "y": 0 }
   ],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 1400, "height": 40 },
-    { "x": 0, "y": 0, "width": 40, "height": 900 },
-    { "x": 1360, "y": 0, "width": 40, "height": 900 },
-    { "x": 0, "y": 860, "width": 1400, "height": 40 },
-    { "x": 300, "y": 200, "width": 200, "height": 120 },
-    { "x": 700, "y": 200, "width": 200, "height": 120 },
-    { "x": 500, "y": 500, "width": 200, "height": 120 }
-  ],
-  "spawnPoint": { "x": 700, "y": 700 },
+  "ambientSounds": ["teahouse_roomtone"],
+  "collisions": [],
+  "spawnPoint": { "x": 200, "y": 380 },
   "spawnPoints": {
-    "from_street": { "x": 700, "y": 800 }
+    "from_street": { "x": 200, "y": 380 }
   },
   "hotspots": [
     {
       "id": "teahouse_notice",
       "type": "inspect",
-      "x": 100, "y": 100, "width": 60, "height": 80,
-      "interactionRange": 80,
+      "x": 1000, "y": 80, "width": 120, "height": 80,
+      "interactionRange": 90,
       "label": "告示板",
       "data": { "text": "告示板上贴着几张旧启事，大多是招工、寻人和催债。最上头一张红纸写得扎眼：\"近日夜里少往城隍庙方向去，若闻怪声，切勿停步。\"" }
     },
     {
       "id": "teahouse_table_items",
       "type": "inspect",
-      "x": 350, "y": 260, "width": 40, "height": 30,
-      "interactionRange": 70,
+      "x": 600, "y": 520, "width": 80, "height": 80,
+      "interactionRange": 80,
       "label": "桌上的茶碗",
       "data": { "text": "几个粗瓷茶碗摆得东倒西歪，花生壳和瓜子皮堆在一处。屋里人多，偏偏让人觉得越热闹越藏得住闲话。" }
     },
     {
+      "id": "teahouse_door_too_early",
+      "type": "inspect",
+      "x": 120, "y": 240, "width": 100, "height": 100,
+      "interactionRange": 70,
+      "conditions": [
+        { "flag": "got_iron_box", "op": "!=", "value": true }
+      ],
+      "label": "门口",
+      "data": { "text": "你本想先出去转转，可耳边还响着张叨叨那段书，瞎子李也刚进门。真要想学门糊口的本事，还是先把这段缘由听明白再走。" }
+    },
+    {
       "id": "exit_to_street",
       "type": "transition",
-      "x": 660, "y": 830, "width": 80, "height": 40,
-      "interactionRange": 60,
+      "x": 120, "y": 240, "width": 100, "height": 100,
+      "interactionRange": 70,
+      "conditions": [
+        { "flag": "got_iron_box" }
+      ],
       "label": "出门 (街巷)",
       "data": { "targetScene": "test_room_a", "targetSpawnPoint": "from_teahouse" }
     }
@@ -52,18 +59,25 @@
     {
       "id": "storyteller_zhang",
       "name": "说书人张叨叨",
-      "x": 600,
-      "y": 840,
+      "x": 680,
+      "y": 520,
       "dialogueFile": "/assets/dialogues/storyteller.ink",
       "dialogueKnot": "start",
       "interactionRange": 100,
-      "animFile": "/assets/data/npc_storyteller_anim.json"
+      "animFile": "/assets/data/npc_storyteller_anim.json",
+      "patrol": {
+        "route": [
+          { "x": 680, "y": 520 },
+          { "x": 750, "y": 420 }
+        ],
+        "speed": 80
+      }
     },
     {
       "id": "blind_li",
       "name": "瞎子李",
-      "x": 363,
-      "y": 352,
+      "x": 600,
+      "y": 600,
       "dialogueFile": "/assets/dialogues/blind_li.ink",
       "dialogueKnot": "start",
       "interactionRange": 100,
@@ -72,8 +86,8 @@
     {
       "id": "waiter_xiaoer",
       "name": "小二",
-      "x": 980,
-      "y": 420,
+      "x": 780,
+      "y": 280,
       "dialogueFile": "/assets/dialogues/waiter.ink",
       "dialogueKnot": "start",
       "interactionRange": 90

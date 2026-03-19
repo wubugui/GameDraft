@@ -1,5 +1,13 @@
 {
   "bgm": {},
-  "ambient": {},
-  "sfx": {}
+  "ambient": {
+    "teahouse_roomtone": { "src": "/assets/audio/teahouse_roomtone.wav" },
+    "night_alley_wind": { "src": "/assets/audio/night_alley_wind.wav" },
+    "temple_rumble": { "src": "/assets/audio/temple_rumble.wav" }
+  },
+  "sfx": {
+    "story_intro": { "src": "/assets/audio/story_intro.wav" },
+    "iron_box_chime": { "src": "/assets/audio/iron_box_chime.wav" },
+    "reveal_sting": { "src": "/assets/audio/reveal_sting.wav" }
+  }
 }

@@ -6,13 +6,6 @@
   "backgrounds": [
     { "image": "/assets/images/backgrounds/test_bg.png", "x": 0, "y": 0 }
   ],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 1600, "height": 40 },
-    { "x": 0, "y": 0, "width": 40, "height": 1200 },
-    { "x": 1560, "y": 0, "width": 40, "height": 1200 },
-    { "x": 0, "y": 1160, "width": 1600, "height": 40 },
-    { "x": 600, "y": 400, "width": 200, "height": 150 },
-    { "x": 1000, "y": 700, "width": 150, "height": 100 }
-  ],
+  "collisions": [],
   "spawnPoint": { "x": 800, "y": 600 }
 }

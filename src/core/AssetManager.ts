@@ -1,5 +1,6 @@
 import { Assets, Texture } from 'pixi.js';
 import type { SceneData, SceneDataRaw } from '../data/types';
+import { resolveAssetPath } from './assetPath';
 
 const DEFAULT_SCENE_WIDTH = 800;
 const DEFAULT_SCENE_HEIGHT = 600;
@@ -9,31 +10,34 @@ export class AssetManager {
   private textCache: Map<string, string> = new Map();
 
   async loadTexture(path: string): Promise<Texture> {
-    return await Assets.load(path);
+    const resolved = resolveAssetPath(path);
+    return await Assets.load(resolved);
   }
 
   async loadJson<T = unknown>(path: string): Promise<T> {
-    if (this.jsonCache.has(path)) {
-      return this.jsonCache.get(path) as T;
+    const resolved = resolveAssetPath(path);
+    if (this.jsonCache.has(resolved)) {
+      return this.jsonCache.get(resolved) as T;
     }
-    const response = await fetch(path);
+    const response = await fetch(resolved);
     const data = await response.json();
-    this.jsonCache.set(path, data);
+    this.jsonCache.set(resolved, data);
     return data as T;
   }
 
   async loadText(path: string): Promise<string> {
-    if (this.textCache.has(path)) {
-      return this.textCache.get(path)!;
+    const resolved = resolveAssetPath(path);
+    if (this.textCache.has(resolved)) {
+      return this.textCache.get(resolved)!;
     }
-    const response = await fetch(path);
+    const response = await fetch(resolved);
     const text = await response.text();
-    this.textCache.set(path, text);
+    this.textCache.set(resolved, text);
     return text;
   }
 
   async loadSceneData(sceneId: string): Promise<SceneData> {
-    const raw = await this.loadJson<SceneDataRaw>(`/assets/scenes/${sceneId}.json`);
+    const raw = await this.loadJson<SceneDataRaw>(`assets/scenes/${sceneId}.json`);
     const scale = raw.backgroundScale ?? 1;
 
     if (raw.backgrounds && raw.backgrounds.length > 0) {

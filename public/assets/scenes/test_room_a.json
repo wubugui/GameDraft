@@ -3,33 +3,31 @@
   "name": "街巷",
   "width": 1200,
   "height": 900,
-  "backgrounds": [],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 1200, "height": 40 },
-    { "x": 0, "y": 0, "width": 40, "height": 900 },
-    { "x": 1160, "y": 0, "width": 40, "height": 900 },
-    { "x": 0, "y": 860, "width": 1200, "height": 40 },
-    { "x": 400, "y": 300, "width": 160, "height": 120 }
+  "backgroundScale": 1.171875,
+  "backgrounds": [
+    { "image": "/assets/images/backgrounds/night_alley_bg.png", "x": 0, "y": 0 }
   ],
-  "spawnPoint": { "x": 600, "y": 500 },
+  "ambientSounds": ["night_alley_wind"],
+  "collisions": [],
+  "spawnPoint": { "x": 600, "y": 820 },
   "spawnPoints": {
-    "from_b": { "x": 1100, "y": 450 },
-    "from_teahouse": { "x": 300, "y": 800 },
-    "from_temple": { "x": 900, "y": 800 }
+    "from_b": { "x": 1100, "y": 600 },
+    "from_teahouse": { "x": 320, "y": 820 },
+    "from_temple": { "x": 650, "y": 220 }
   },
   "hotspots": [
     {
       "id": "street_notice",
       "type": "inspect",
-      "x": 200, "y": 200, "width": 40, "height": 40,
-      "interactionRange": 80,
+      "x": 180, "y": 580, "width": 80, "height": 80,
+      "interactionRange": 90,
       "label": "墙角的旧告示",
       "data": { "text": "墙角糊着一层又一层旧告示，纸边都被夜露泡软了。最底下一张写着：\"夜里少往城隍庙后头去。\"" }
     },
     {
       "id": "night_breeze",
       "type": "inspect",
-      "x": 500, "y": 100, "width": 50, "height": 80,
+      "x": 600, "y": 520, "width": 100, "height": 100,
       "interactionRange": 90,
       "label": "穿堂风",
       "data": { "text": "巷子里一阵穿堂风吹过，天色比方才又暗了些。越往城隍庙那头望，越觉得那边静得不像有人气。" }
@@ -37,23 +35,23 @@
     {
       "id": "exit_to_teahouse",
       "type": "transition",
-      "x": 250, "y": 830, "width": 80, "height": 40,
-      "interactionRange": 60,
+      "x": 340, "y": 720, "width": 100, "height": 80,
+      "interactionRange": 70,
       "label": "去茶馆",
       "data": { "targetScene": "teahouse", "targetSpawnPoint": "from_street" }
     },
     {
       "id": "exit_to_temple",
       "type": "transition",
-      "x": 850, "y": 830, "width": 80, "height": 40,
-      "interactionRange": 60,
+      "x": 540, "y": 120, "width": 100, "height": 80,
+      "interactionRange": 70,
       "label": "去城隍庙",
       "data": { "targetScene": "temple", "targetSpawnPoint": "from_street" }
     },
     {
       "id": "rest_until_dawn",
       "type": "inspect",
-      "x": 600, "y": 400, "width": 80, "height": 60,
+      "x": 380, "y": 800, "width": 120, "height": 60,
       "interactionRange": 90,
       "label": "找个角落捱到天亮",
       "conditions": [

@@ -1,5 +1,6 @@
 import { Howl, Howler } from 'howler';
 import type { EventBus } from '../core/EventBus';
+import { resolveAssetPath } from '../core/assetPath';
 import type { IGameSystem, GameContext, IAudioSettingsProvider } from '../data/types';
 
 interface AudioEntry {
@@ -35,8 +36,20 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   async loadConfig(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/audio_config.json');
-      this.config = await resp.json();
+      const resp = await fetch(resolveAssetPath('/assets/data/audio_config.json'));
+      const raw = await resp.json();
+      const resolveSrc = (obj: Record<string, { src: string }>) => {
+        const out: Record<string, { src: string }> = {};
+        for (const [k, v] of Object.entries(obj)) {
+          out[k] = { src: resolveAssetPath((v as { src: string }).src) };
+        }
+        return out;
+      };
+      this.config = {
+        bgm: resolveSrc(raw.bgm ?? {}),
+        ambient: resolveSrc(raw.ambient ?? {}),
+        sfx: resolveSrc(raw.sfx ?? {}),
+      };
       this.loaded = true;
     } catch {
       console.warn('AudioManager: audio_config.json not found, running silent');

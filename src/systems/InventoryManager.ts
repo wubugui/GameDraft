@@ -1,6 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ItemDef, IGameSystem, GameContext, IInventoryDataProvider } from '../data/types';
+import { resolveAssetPath } from '../core/assetPath';
 
 const MAX_SLOTS = 12;
 
@@ -26,7 +27,7 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/items.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/items.json'));
       const defs: ItemDef[] = await resp.json();
       for (const def of defs) {
         this.itemDefs.set(def.id, def);

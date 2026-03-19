@@ -1,3 +1,5 @@
+import { resolveAssetPath } from './assetPath';
+
 type StringCategory = Record<string, string>;
 
 export class StringsProvider {
@@ -5,7 +7,7 @@ export class StringsProvider {
 
   async load(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/strings.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/strings.json'));
       this.data = await resp.json();
     } catch {
       console.warn('StringsProvider: strings.json not found, using fallback strings');

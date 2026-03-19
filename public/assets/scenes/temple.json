@@ -3,16 +3,13 @@
   "name": "破烂城隍庙",
   "width": 1200,
   "height": 1000,
-  "backgrounds": [],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 1200, "height": 40 },
-    { "x": 0, "y": 0, "width": 40, "height": 1000 },
-    { "x": 1160, "y": 0, "width": 40, "height": 1000 },
-    { "x": 0, "y": 960, "width": 1200, "height": 40 },
-    { "x": 400, "y": 300, "width": 400, "height": 200 },
-    { "x": 200, "y": 100, "width": 800, "height": 40 }
+  "backgroundScale": 1.3020833333,
+  "backgrounds": [
+    { "image": "/assets/images/backgrounds/temple_bg.png", "x": 0, "y": 0 }
   ],
-  "spawnPoint": { "x": 600, "y": 800 },
+  "ambientSounds": ["temple_rumble"],
+  "collisions": [],
+  "spawnPoint": { "x": 600, "y": 900 },
   "spawnPoints": {
     "from_street": { "x": 600, "y": 900 }
   },
@@ -20,7 +17,7 @@
     {
       "id": "city_god_altar",
       "type": "inspect",
-      "x": 550, "y": 200, "width": 100, "height": 60,
+      "x": 520, "y": 700, "width": 160, "height": 100,
       "interactionRange": 90,
       "label": "香案",
       "data": { "text": "香案上只剩些断香和灰烬。城隍爷的泥身斑驳得厉害，半边脸都裂开了，看着比庙外的夜色还阴。" }
@@ -28,8 +25,8 @@
     {
       "id": "hide_iron_box",
       "type": "inspect",
-      "x": 730, "y": 250, "width": 80, "height": 100,
-      "interactionRange": 80,
+      "x": 300, "y": 360, "width": 100, "height": 140,
+      "interactionRange": 90,
       "label": "城隍像后的暗角",
       "conditions": [
         { "flag": "got_iron_box" },
@@ -46,9 +43,9 @@
     {
       "id": "moonlit_wall",
       "type": "inspect",
-      "x": 300, "y": 520, "width": 90, "height": 140,
-      "interactionRange": 90,
-      "label": "斜照在墙上的月影",
+      "x": 820, "y": 360, "width": 180, "height": 240,
+      "interactionRange": 130,
+      "label": "墙边月影",
       "conditions": [
         { "flag": "strangers_entered_temple" },
         { "flag": "saw_standing_shadow", "op": "!=", "value": true }
@@ -65,7 +62,7 @@
     {
       "id": "hanged_woman_day2",
       "type": "inspect",
-      "x": 480, "y": 180, "width": 120, "height": 180,
+      "x": 480, "y": 120, "width": 140, "height": 160,
       "interactionRange": 100,
       "label": "梁下",
       "conditions": [
@@ -75,14 +72,15 @@
       "data": {
         "text": "你抬头一看，浑身都僵了。梁上吊着一具女尸，正是昨晚那女人。她脸朝外，舌头微微伸着，眼珠子已经不会动了。\n\n你强撑着挪开眼，往城隍像后头摸——砖缝里的铁盒还在。你一把抓起来揣进怀里，头也不回地冲出了庙门。",
         "actions": [
-          { "type": "setFlag", "params": { "key": "saw_hanged_woman", "value": true } }
+          { "type": "setFlag", "params": { "key": "saw_hanged_woman", "value": true } },
+          { "type": "startCutscene", "params": { "id": "prologue_demo_end" } }
         ]
       }
     },
     {
       "id": "stone_tablet",
       "type": "inspect",
-      "x": 150, "y": 400, "width": 60, "height": 100,
+      "x": 80, "y": 420, "width": 80, "height": 120,
       "interactionRange": 80,
       "label": "石碑",
       "data": {
@@ -96,8 +94,8 @@
     {
       "id": "exit_to_street_from_temple",
       "type": "transition",
-      "x": 560, "y": 930, "width": 80, "height": 40,
-      "interactionRange": 60,
+      "x": 520, "y": 910, "width": 120, "height": 50,
+      "interactionRange": 70,
       "label": "出门 (街巷)",
       "data": { "targetScene": "test_room_a", "targetSpawnPoint": "from_temple" }
     }

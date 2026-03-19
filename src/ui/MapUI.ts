@@ -3,6 +3,7 @@ import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { MapNodeDef } from '../data/types';
+import { resolveAssetPath } from '../core/assetPath';
 
 const PANEL_W = 600;
 const PANEL_H = 450;
@@ -25,7 +26,7 @@ export class MapUI {
 
   async loadConfig(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/map_config.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/map_config.json'));
       this.nodes = await resp.json();
     } catch { /* no map config yet */ }
   }

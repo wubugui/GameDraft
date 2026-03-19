@@ -3,6 +3,7 @@ import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { QuestDef, IGameSystem, GameContext, IQuestDataProvider } from '../data/types';
 import { QuestStatus } from '../data/types';
+import { resolveAssetPath } from '../core/assetPath';
 
 export class QuestManager implements IGameSystem, IQuestDataProvider {
   private eventBus: EventBus;
@@ -33,7 +34,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch('/assets/data/quests.json');
+      const resp = await fetch(resolveAssetPath('/assets/data/quests.json'));
       const defs: QuestDef[] = await resp.json();
       for (const def of defs) {
         this.questDefs.set(def.id, def);

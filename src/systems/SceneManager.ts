@@ -108,7 +108,7 @@ export class SceneManager implements IGameSystem {
     return this.isSwitching;
   }
 
-  async loadScene(sceneId: string, spawnPointId?: string): Promise<void> {
+  async loadScene(sceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }): Promise<void> {
     const sceneData = await this.assetManager.loadSceneData(sceneId);
     this.currentScene = sceneData;
 
@@ -198,8 +198,10 @@ export class SceneManager implements IGameSystem {
     if (spawnPointId && sceneData.spawnPoints?.[spawnPointId]) {
       spawn = sceneData.spawnPoints[spawnPointId];
     }
-    this.playerPositionSetter?.(spawn.x, spawn.y);
-    this.cameraSetter?.(sceneData.width, sceneData.height, spawn.x, spawn.y);
+    const posX = cameraPosition?.x ?? spawn.x;
+    const posY = cameraPosition?.y ?? spawn.y;
+    this.playerPositionSetter?.(posX, posY);
+    this.cameraSetter?.(sceneData.width, sceneData.height, posX, posY);
 
     this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds);
     this.zoneSetter?.(sceneData.zones ?? []);
@@ -238,7 +240,7 @@ export class SceneManager implements IGameSystem {
     this.currentScene = null;
   }
 
-  async switchScene(targetSceneId: string, spawnPointId?: string): Promise<void> {
+  async switchScene(targetSceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }): Promise<void> {
     if (this.isSwitching) return;
     this.isSwitching = true;
 
@@ -248,7 +250,7 @@ export class SceneManager implements IGameSystem {
 
     const fromSceneId = this.currentScene?.id ?? null;
     this.unloadScene();
-    await this.loadScene(targetSceneId, spawnPointId);
+    await this.loadScene(targetSceneId, spawnPointId, cameraPosition);
 
     if (fromSceneId) {
       this.eventBus.emit('scene:enter', { sceneId: targetSceneId, fromSceneId, sceneName: this.currentScene?.name ?? targetSceneId });

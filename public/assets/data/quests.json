@@ -39,7 +39,7 @@
     "id": "opening_04",
     "type": "main",
     "title": "摸进去瞧一眼",
-    "description": "刚才那三个人进庙时古里古怪。等动静过去了，再摸进去看看盒子还在不在。",
+    "description": "动静过去了。摸回庙门口，看看墙边月影下有什么——然后赶紧离开。",
     "preconditions": [],
     "completionConditions": [
       { "flag": "saw_standing_shadow" }
