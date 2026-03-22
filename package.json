@@ -6,7 +6,8 @@
     "ink:compile": "node scripts/compile-ink.cjs",
     "dev": "node scripts/compile-ink.cjs && vite",
     "build": "node scripts/compile-ink.cjs && tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "filter-tool": "python -m tools.filter_tool"
   },
   "type": "module",
   "dependencies": {

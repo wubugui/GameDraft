@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 420" font-family="sans-serif" font-size="11">
+  <defs>
+    <style>
+      .mod { fill: #2a3540; stroke: #4a5a6a; stroke-width: 1; }
+      .core { fill: #1e2d3a; stroke: #3a5a7a; }
+      .dep { stroke: #6a7a8a; stroke-width: 1; fill: none; stroke-dasharray: 4 2; }
+      .use { stroke: #5a8a6a; stroke-width: 1; fill: none; }
+    </style>
+    <marker id="arr" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+      <polygon points="0 0, 6 2, 0 4" fill="#6a7a8a"/>
+    </marker>
+  </defs>
+  
+  <text x="390" y="22" text-anchor="middle" fill="#ccc" font-size="13" font-weight="bold">Rendering Layer - Module Architecture</text>
+  
+  <!-- Renderer (core) -->
+  <rect x="280" y="45" width="220" height="70" rx="4" class="core"/>
+  <text x="390" y="65" text-anchor="middle" fill="#eee" font-weight="bold">Renderer</text>
+  <text x="390" y="80" text-anchor="middle" fill="#aaa" font-size="10">PixiJS Application, layers, worldFilterPipeline</text>
+  <text x="390" y="95" text-anchor="middle" fill="#aaa" font-size="9">backgroundLayer / entityLayer / foregroundLayer</text>
+  <text x="390" y="108" text-anchor="middle" fill="#aaa" font-size="9">cutsceneOverlay / uiLayer</text>
+  
+  <!-- Camera -->
+  <rect x="60" y="140" width="160" height="55" rx="3" class="mod"/>
+  <text x="140" y="160" text-anchor="middle" fill="#eee">Camera</text>
+  <text x="140" y="175" text-anchor="middle" fill="#aaa" font-size="9">worldContainer.x/y/scale</text>
+  <text x="140" y="188" text-anchor="middle" fill="#aaa" font-size="9">follow, bounds, zoom</text>
+  
+  <!-- SpriteEntity -->
+  <rect x="280" y="140" width="160" height="55" rx="3" class="mod"/>
+  <text x="360" y="160" text-anchor="middle" fill="#eee">SpriteEntity</text>
+  <text x="360" y="175" text-anchor="middle" fill="#aaa" font-size="9">Container + Sprite, animation</text>
+  <text x="360" y="188" text-anchor="middle" fill="#aaa" font-size="9">Player, NPC inherit</text>
+  
+  <!-- CutsceneRenderer -->
+  <rect x="500" y="140" width="220" height="55" rx="3" class="mod"/>
+  <text x="610" y="160" text-anchor="middle" fill="#eee">CutsceneRenderer</text>
+  <text x="610" y="175" text-anchor="middle" fill="#aaa" font-size="9">fade, title, dialogue, emote</text>
+  <text x="610" y="188" text-anchor="middle" fill="#aaa" font-size="9">uses Renderer + Camera</text>
+  
+  <!-- PlaceholderFactory -->
+  <rect x="60" y="220" width="160" height="45" rx="3" class="mod"/>
+  <text x="140" y="240" text-anchor="middle" fill="#eee">PlaceholderFactory</text>
+  <text x="140" y="255" text-anchor="middle" fill="#aaa" font-size="9">placeholder bg, player texture</text>
+  
+  <!-- filter subpackage -->
+  <rect x="280" y="220" width="440" height="55" rx="3" class="mod"/>
+  <text x="500" y="238" text-anchor="middle" fill="#eee">filter/ (optional)</text>
+  <text x="500" y="253" text-anchor="middle" fill="#aaa" font-size="9">WorldFilterPipeline: Container.filters</text>
+  <text x="500" y="268" text-anchor="middle" fill="#aaa" font-size="9">FilterLoader: loadFilter(id) from JSON -&gt; ColorMatrixFilter</text>
+  
+  <!-- Who uses what -->
+  <line x1="360" y1="115" x2="360" y2="140" class="use" marker-end="url(#arr)"/>
+  <line x1="390" y1="115" x2="390" y2="140" class="use" marker-end="url(#arr)"/>
+  <line x1="500" y1="115" x2="560" y2="140" class="use" marker-end="url(#arr)"/>
+  <line x1="360" y1="115" x2="390" y2="140" class="use" marker-end="url(#arr)"/>
+  
+  <line x1="300" y1="115" x2="220" y2="140" class="dep" marker-end="url(#arr)"/>
+  <text x="240" y="132" fill="#8a9aaa" font-size="9">worldContainer</text>
+  
+  <!-- Callers (above) -->
+  <rect x="60" y="300" width="660" height="100" rx="3" fill="#1a1a2e" stroke="#3a3a5a"/>
+  <text x="390" y="322" text-anchor="middle" fill="#aaa" font-size="11">Callers (Core / Systems / UI)</text>
+  <text x="390" y="345" text-anchor="middle" fill="#888" font-size="9">Game: creates Renderer, Camera, wires them</text>
+  <text x="390" y="360" text-anchor="middle" fill="#888" font-size="9">SceneManager: adds bg/fg/hotspots/NPCs to Renderer layers</text>
+  <text x="390" y="375" text-anchor="middle" fill="#888" font-size="9">CutsceneManager: calls CutsceneRenderer, Camera</text>
+  <text x="390" y="390" text-anchor="middle" fill="#888" font-size="9">UI components: add to renderer.uiLayer</text>
+</svg>

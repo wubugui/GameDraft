@@ -4,8 +4,7 @@ import { resolveAssetPath } from '../core/assetPath';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
-import type { EmoteBubbleManager } from './EmoteBubbleManager';
-import type { CutsceneDef, CutsceneCommand, ICutsceneActor, NpcDef, IGameSystem, GameContext } from '../data/types';
+import type { CutsceneDef, CutsceneCommand, ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext } from '../data/types';
 import { Npc } from '../entities/Npc';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
@@ -34,7 +33,7 @@ export class CutsceneManager implements IGameSystem {
   private entityResolver: EntityResolver | null = null;
   private sceneSwitcher: SceneSwitcher | null = null;
   private tempActors: Map<string, Npc> = new Map();
-  private emoteBubbleManager: EmoteBubbleManager | null = null;
+  private emoteBubbleProvider: IEmoteBubbleProvider | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -68,8 +67,8 @@ export class CutsceneManager implements IGameSystem {
     this.entityResolver = resolver;
   }
 
-  setEmoteBubbleManager(manager: EmoteBubbleManager): void {
-    this.emoteBubbleManager = manager;
+  setEmoteBubbleProvider(provider: IEmoteBubbleProvider): void {
+    this.emoteBubbleProvider = provider;
   }
 
   setSceneSwitcher(switcher: SceneSwitcher): void {
@@ -328,8 +327,8 @@ export class CutsceneManager implements IGameSystem {
       console.warn(`CutsceneManager entity_emote: entity "${targetId}" not found`);
       return;
     }
-    if (this.emoteBubbleManager) {
-      await this.emoteBubbleManager.showAndWait(actor, emote, duration ?? 1500);
+    if (this.emoteBubbleProvider) {
+      await this.emoteBubbleProvider.showAndWait(actor, emote, duration ?? 1500);
     }
   }
 
@@ -363,7 +362,7 @@ export class CutsceneManager implements IGameSystem {
 
   private cleanup(): void {
     this.cutsceneRenderer.cleanup();
-    this.emoteBubbleManager?.cleanup();
+    this.emoteBubbleProvider?.cleanup();
     for (const [, npc] of this.tempActors) {
       npc.destroy();
     }
@@ -384,6 +383,16 @@ export class CutsceneManager implements IGameSystem {
   }
 
   destroy(): void {
+    if (this.waitClickResolve) {
+      const r = this.waitClickResolve;
+      this.waitClickResolve = null;
+      r();
+    }
+    if (this.dialogueResolve) {
+      const r = this.dialogueResolve;
+      this.dialogueResolve = null;
+      r();
+    }
     window.removeEventListener('click', this.onClickBound);
     window.removeEventListener('keydown', this.onClickBound);
     this.cleanup();

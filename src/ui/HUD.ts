@@ -1,10 +1,12 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
+import type { StringsProvider } from '../core/StringsProvider';
 
 export class HUD {
   private renderer: Renderer;
   private eventBus: EventBus;
+  private strings: StringsProvider;
   private container: Container;
 
   private coinText: Text;
@@ -24,9 +26,10 @@ export class HUD {
   private zoneEnterCb: () => void;
   private zoneExitCb: () => void;
 
-  constructor(renderer: Renderer, eventBus: EventBus) {
+  constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
+    this.strings = strings;
 
     this.container = new Container();
 
@@ -38,7 +41,7 @@ export class HUD {
     this.container.addChild(coinBg);
 
     this.coinText = new Text({
-      text: '铜钱: 0',
+      text: `${this.strings.get('hud', 'coins')} 0`,
       style: { fontSize: 13, fill: 0xffcc66, fontFamily: 'sans-serif' },
     });
     this.coinText.x = 20;
@@ -70,7 +73,7 @@ export class HUD {
     this.container.addChild(this.ruleHintBg);
 
     this.ruleHintText = new Text({
-      text: '[F] 使用规矩',
+      text: this.strings.get('hud', 'ruleUseHint'),
       style: { fontSize: 13, fill: 0xffaa44, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     this.ruleHintText.x = (this.renderer.screenWidth - this.ruleHintText.width) / 2;
@@ -94,7 +97,7 @@ export class HUD {
     };
 
     this.currencyCb = (p) => {
-      this.coinText.text = `铜钱: ${p.newTotal}`;
+      this.coinText.text = `${this.strings.get('hud', 'coins')} ${p.newTotal}`;
     };
     this.questAcceptedCb = (p) => {
       this.setQuestHint(p.title);
@@ -114,12 +117,12 @@ export class HUD {
   }
 
   setCoins(amount: number): void {
-    this.coinText.text = `铜钱: ${amount}`;
+    this.coinText.text = `${this.strings.get('hud', 'coins')} ${amount}`;
   }
 
   setQuestHint(title: string): void {
     if (title) {
-      this.questText.text = `当前：${title}`;
+      this.questText.text = `${this.strings.get('hud', 'current')}${title}`;
       this.questBg.visible = true;
     } else {
       this.questText.text = '';

@@ -41,7 +41,11 @@ export class Npc implements ICutsceneActor {
     this.container.addChild(this.nameLabel);
   }
 
-  loadSprite(texture: Texture, animDef: AnimationSetDef): void {
+  loadSprite(
+    texture: Texture,
+    animDef: AnimationSetDef,
+    options?: { sceneScaleFactor: number; overrideSceneScale: boolean },
+  ): void {
     if (this.marker) {
       this.container.removeChild(this.marker);
       this.marker.destroy();
@@ -50,8 +54,11 @@ export class Npc implements ICutsceneActor {
 
     this.sprite = new SpriteEntity();
     this.sprite.loadFromDef(texture, animDef);
-    const scale = animDef.scale ?? 1;
-    this.sprite.setScale(scale);
+    const baseScale = animDef.scale ?? 1;
+    const effectiveScale = options && !options.overrideSceneScale
+      ? baseScale * options.sceneScaleFactor
+      : baseScale;
+    this.sprite.setScale(effectiveScale);
     this.sprite.playAnimation('idle');
     this.container.addChildAt(this.sprite.container, 0);
     this.sprite.container.x = 0;

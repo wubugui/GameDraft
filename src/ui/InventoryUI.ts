@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
+import type { StringsProvider } from '../core/StringsProvider';
 import type { IInventoryDataProvider } from '../data/types';
 
 const GRID_COLS = 4;
@@ -11,15 +12,17 @@ const MAX_SLOTS = 12;
 export class InventoryUI {
   private renderer: Renderer;
   private eventBus: EventBus;
+  private strings: StringsProvider;
   private inventoryData: IInventoryDataProvider;
   private container: Container | null = null;
   private detailContainer: Container | null = null;
   private _isOpen: boolean = false;
 
-  constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider) {
+  constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.inventoryData = inventoryData;
+    this.strings = strings;
   }
 
   get isOpen(): boolean {
@@ -71,7 +74,7 @@ export class InventoryUI {
     this.container.addChild(panel);
 
     const title = new Text({
-      text: '包袱',
+      text: this.strings.get('inventory', 'title'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + 20;
@@ -79,7 +82,7 @@ export class InventoryUI {
     this.container.addChild(title);
 
     const coinLabel = new Text({
-      text: `铜钱: ${this.inventoryData.getCoins()}`,
+      text: `${this.strings.get('inventory', 'coins')} ${this.inventoryData.getCoins()}`,
       style: { fontSize: 13, fill: 0xffcc66, fontFamily: 'sans-serif' },
     });
     coinLabel.x = px + 100;
@@ -141,7 +144,7 @@ export class InventoryUI {
     }
 
     const hint = new Text({
-      text: '按 I 关闭',
+      text: this.strings.get('inventory', 'closeHint'),
       style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
     });
     hint.x = px + panelW - 70;
@@ -170,7 +173,7 @@ export class InventoryUI {
     this.detailContainer.addChild(bg);
 
     const nameText = new Text({
-      text: name + (def?.type === 'key' ? ' [关键]' : ` x${count}`),
+      text: name + (def?.type === 'key' ? ` ${this.strings.get('inventory', 'keyItem')}` : ` x${count}`),
       style: { fontSize: 14, fill: def?.type === 'key' ? 0xffcc88 : 0xdddddd, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     nameText.x = x + 12;
@@ -178,7 +181,7 @@ export class InventoryUI {
     this.detailContainer.addChild(nameText);
 
     const descText = new Text({
-      text: desc || '(无描述)',
+      text: desc || this.strings.get('inventory', 'noDesc'),
       style: { fontSize: 12, fill: 0x999999, fontFamily: 'sans-serif', wordWrap: true, wordWrapWidth: 176, lineHeight: 18 },
     });
     descText.x = x + 12;
@@ -201,7 +204,7 @@ export class InventoryUI {
       this.detailContainer.addChild(btnBg);
 
       const btnText = new Text({
-        text: '丢弃',
+        text: this.strings.get('inventory', 'discard'),
         style: { fontSize: 12, fill: 0xff8866, fontFamily: 'sans-serif' },
       });
       btnText.x = x + 30;

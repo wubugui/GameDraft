@@ -1,15 +1,19 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
+import type { StringsProvider } from '../core/StringsProvider';
 
 export class InspectBox {
   private renderer: Renderer;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private resolveClose: (() => void) | null = null;
   private onKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private onClickHandler: ((e: MouseEvent) => void) | null = null;
+  private showTimerId: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(renderer: Renderer) {
+  constructor(renderer: Renderer, strings: StringsProvider) {
     this.renderer = renderer;
+    this.strings = strings;
   }
 
   show(text: string): Promise<void> {
@@ -45,7 +49,7 @@ export class InspectBox {
       this.container.addChild(textObj);
 
       const hint = new Text({
-        text: '[ 点击或按任意键关闭 ]',
+        text: this.strings.get('inspectBox', 'closeHint'),
         style: { fontSize: 11, fill: 0x888888, fontFamily: 'sans-serif' },
       });
       hint.anchor.set(0.5, 1);
@@ -55,7 +59,8 @@ export class InspectBox {
 
       this.renderer.uiLayer.addChild(this.container);
 
-      setTimeout(() => {
+      this.showTimerId = setTimeout(() => {
+        this.showTimerId = null;
         this.onKeyHandler = () => this.close();
         this.onClickHandler = () => this.close();
         window.addEventListener('keydown', this.onKeyHandler, { once: true });
@@ -65,6 +70,10 @@ export class InspectBox {
   }
 
   close(): void {
+    if (this.showTimerId !== null) {
+      clearTimeout(this.showTimerId);
+      this.showTimerId = null;
+    }
     if (this.onKeyHandler) {
       window.removeEventListener('keydown', this.onKeyHandler);
       this.onKeyHandler = null;

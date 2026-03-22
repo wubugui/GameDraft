@@ -6,11 +6,133 @@
     "archiveUpdated": "档案更新",
     "inventoryFull": "包袱满了！",
     "questAccepted": "新任务：{title}",
-    "questCompleted": "任务完成：{title}"
+    "questCompleted": "任务完成：{title}",
+    "currencyInsufficient": "铜钱不足!",
+    "shopPurchased": "购买了 {name}"
+  },
+  "menu": {
+    "gameTitle": "渝都卫",
+    "gameSubtitle": "旧梦惊尘",
+    "newGame": "新游戏",
+    "continueGame": "继续游戏",
+    "settings": "设置",
+    "returnToMain": "返回主菜单",
+    "saveSlot": "存档到槽位 {slot}",
+    "loadSlot": "读取槽位 {slot}",
+    "pause": "暂停",
+    "resume": "继续",
+    "save": "存档",
+    "load": "读档",
+    "back": "[返回]",
+    "slotEmpty": "槽位 {slot}: (空)",
+    "slotInfo": "槽位 {slot}: {scene}  第{day}天  {date}  {minutes}分钟",
+    "unknownScene": "未知",
+    "bgm": "背景音乐",
+    "sfx": "音效",
+    "ambient": "环境音"
   },
   "encounter": {
     "unknownRule": "未知规矩",
     "fragmentInsufficient": "碎片不足 {collected}/{total}",
-    "itemInsufficient": "道具不足"
+    "itemInsufficient": "道具不足",
+    "ruleTag": "[规矩]",
+    "specialTag": "[特殊]"
+  },
+  "bookshelf": {
+    "title": "书架",
+    "closeHint": "按 B 关闭",
+    "rules": "规矩本",
+    "characters": "人物簿",
+    "lore": "见闻录",
+    "documents": "杂书匣"
+  },
+  "characterBook": {
+    "title": "人物簿",
+    "back": "[返回书架]",
+    "empty": "(暂无人物记录)",
+    "impression": "印象:",
+    "knownIntel": "已知情报:"
+  },
+  "loreBook": {
+    "title": "见闻录",
+    "back": "[返回书架]",
+    "empty": "(暂无见闻)",
+    "source": "-- 来源:"
+  },
+  "documentBox": {
+    "title": "杂书匣",
+    "back": "[返回书架]",
+    "empty": "(暂无文件)",
+    "note": "[注]"
+  },
+  "bookReader": {
+    "back": "[返回书架]",
+    "pageMissing": "此页缺失",
+    "pageHint": "< > 翻页"
+  },
+  "hud": {
+    "coins": "铜钱:",
+    "ruleUseHint": "[F] 使用规矩",
+    "current": "当前："
+  },
+  "inspectBox": {
+    "closeHint": "[ 点击或按任意键关闭 ]"
+  },
+  "inventory": {
+    "title": "包袱",
+    "coins": "铜钱:",
+    "keyItem": "[关键]",
+    "noDesc": "(无描述)",
+    "discard": "丢弃",
+    "closeHint": "按 I 关闭"
+  },
+  "map": {
+    "title": "渝都卫城区图",
+    "closeHint": "按 M 关闭",
+    "noData": "(地图数据暂未配置)",
+    "locked": "???"
+  },
+  "pickup": {
+    "acquired": "获得了 {name} x{count}"
+  },
+  "quest": {
+    "title": "任务",
+    "mainline": "-- 主线 --",
+    "sideline": "-- 支线 ({count}) --",
+    "completed": "-- 已完成 ({count}) --",
+    "done": "[Done]",
+    "empty": "(暂无)",
+    "closeHint": "按 Tab 关闭"
+  },
+  "rulesPanel": {
+    "title": "规矩本",
+    "mastered": "== 已掌握 ==",
+    "collecting": "== 搜集中 ==",
+    "source": "来源:",
+    "fragments": "碎片:",
+    "empty": "(尚未习得任何规矩)",
+    "closeHint": "按 R 关闭",
+    "unknown": "未知规矩",
+    "hidden": "???"
+  },
+  "ruleUse": {
+    "title": "使用规矩",
+    "closeHint": "按 Esc 关闭",
+    "unknown": "未知规矩"
+  },
+  "shop": {
+    "coins": "铜钱:",
+    "unit": "文",
+    "buy": "[购买]",
+    "insufficient": "[不足]",
+    "leave": "[离开]"
+  },
+  "dialogueLog": {
+    "title": "对话记录",
+    "empty": "(暂无对话记录)",
+    "closeHint": "按 L 关闭"
+  },
+  "dialogue": {
+    "ruleTag": "[规]"
   }
 }

@@ -94,24 +94,28 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       case 'character':
         if (this.characterDefs.has(entryId) && !this.unlockedCharacters.has(entryId)) {
           this.unlockedCharacters.add(entryId);
+          this.flagStore.set(`archive_character_${entryId}`, true);
           this.emitUpdate('character', entryId);
         }
         break;
       case 'lore':
         if (this.loreDefs.has(entryId) && !this.unlockedLore.has(entryId)) {
           this.unlockedLore.add(entryId);
+          this.flagStore.set(`archive_lore_${entryId}`, true);
           this.emitUpdate('lore', entryId);
         }
         break;
       case 'document':
         if (this.documentDefs.has(entryId) && !this.unlockedDocuments.has(entryId)) {
           this.unlockedDocuments.add(entryId);
+          this.flagStore.set(`archive_document_${entryId}`, true);
           this.emitUpdate('document', entryId);
         }
         break;
       case 'book':
         if (this.bookDefs.has(entryId) && !this.unlockedBooks.has(entryId)) {
           this.unlockedBooks.add(entryId);
+          this.flagStore.set(`archive_book_${entryId}`, true);
           this.emitUpdate('book', entryId);
         }
         break;
@@ -166,6 +170,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       if (matchesNpc && !this.unlockedCharacters.has(def.id)) {
         if (this.checkConditions(def.unlockConditions)) {
           this.unlockedCharacters.add(def.id);
+          this.flagStore.set(`archive_character_${def.id}`, true);
           this.emitUpdate('character', def.id);
         }
       }
@@ -176,6 +181,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.loreDefs.forEach((def, id) => {
       if (!this.unlockedLore.has(id) && this.checkConditions(def.unlockConditions)) {
         this.unlockedLore.add(id);
+        this.flagStore.set(`archive_lore_${id}`, true);
         this.emitUpdate('lore', id);
       }
     });
@@ -183,6 +189,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.documentDefs.forEach((def, id) => {
       if (!this.unlockedDocuments.has(id) && this.checkConditions(def.discoverConditions)) {
         this.unlockedDocuments.add(id);
+        this.flagStore.set(`archive_document_${id}`, true);
         this.emitUpdate('document', id);
       }
     });

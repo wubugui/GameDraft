@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
+import type { StringsProvider } from '../core/StringsProvider';
 import type { IQuestDataProvider } from '../data/types';
 
 const PANEL_W_MAX = 600;
@@ -10,12 +11,14 @@ const ITEM_GAP = 4;
 export class QuestPanelUI {
   private renderer: Renderer;
   private questData: IQuestDataProvider;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private _isOpen: boolean = false;
 
-  constructor(renderer: Renderer, questData: IQuestDataProvider) {
+  constructor(renderer: Renderer, questData: IQuestDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
     this.questData = questData;
+    this.strings = strings;
   }
 
   get isOpen(): boolean {
@@ -98,20 +101,20 @@ export class QuestPanelUI {
     };
 
     // -- Main quest --
-    addSectionLabel('-- \u4e3b\u7ebf --');
+    addSectionLabel(this.strings.get('quest', 'mainline'));
     const mainQuest = this.questData.getCurrentMainQuest();
     if (mainQuest) {
       addQuestEntry(mainQuest.title, mainQuest.description, 0xffcc66, 0xaaaaaa);
     } else {
-      addEmpty('(\u6682\u65e0)');
+      addEmpty(this.strings.get('quest', 'empty'));
     }
     cy += SECTION_GAP;
 
     // -- Active side quests --
     const sideQuests = this.questData.getActiveQuests().filter(q => q.def.type === 'side');
-    addSectionLabel(`-- \u652f\u7ebf (${sideQuests.length}) --`);
+    addSectionLabel(this.strings.get('quest', 'sideline', { count: sideQuests.length }));
     if (sideQuests.length === 0) {
-      addEmpty('(\u6682\u65e0)');
+      addEmpty(this.strings.get('quest', 'empty'));
     } else {
       for (const q of sideQuests) {
         addQuestEntry(q.def.title, q.def.description, 0xaaddcc, 0x999999);
@@ -121,12 +124,12 @@ export class QuestPanelUI {
 
     // -- Completed quests --
     const completedQuests = this.questData.getCompletedQuests();
-    addSectionLabel(`-- \u5df2\u5b8c\u6210 (${completedQuests.length}) --`);
+    addSectionLabel(this.strings.get('quest', 'completed', { count: completedQuests.length }));
     if (completedQuests.length === 0) {
-      addEmpty('(\u6682\u65e0)');
+      addEmpty(this.strings.get('quest', 'empty'));
     } else {
       for (const q of completedQuests) {
-        addQuestEntry(q.def.title, q.def.description, 0x777788, 0x555566, '[Done]');
+        addQuestEntry(q.def.title, q.def.description, 0x777788, 0x555566, this.strings.get('quest', 'done'));
       }
     }
 
@@ -149,7 +152,7 @@ export class QuestPanelUI {
     this.container.addChild(panel);
 
     const title = new Text({
-      text: '\u4efb\u52a1',
+      text: this.strings.get('quest', 'title'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + PADDING;
@@ -169,7 +172,7 @@ export class QuestPanelUI {
     this.container.addChild(content);
 
     const hint = new Text({
-      text: '\u6309 Tab \u5173\u95ed',
+      text: this.strings.get('quest', 'closeHint'),
       style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
     });
     hint.x = px + panelW - 80;

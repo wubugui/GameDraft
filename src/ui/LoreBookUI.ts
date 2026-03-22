@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { IArchiveDataProvider } from '../data/types';
+import type { StringsProvider } from '../core/StringsProvider';
 
 const PANEL_W = 650;
 const PANEL_H = 500;
@@ -12,11 +13,17 @@ export class LoreBookUI {
   private archiveData: IArchiveDataProvider;
   private container: Container | null = null;
   private onClose: () => void;
+  private strings: StringsProvider;
 
-  constructor(renderer: Renderer, archiveData: IArchiveDataProvider, onClose: () => void) {
+  constructor(renderer: Renderer, archiveData: IArchiveDataProvider, onClose: () => void, strings: StringsProvider) {
     this.renderer = renderer;
     this.archiveData = archiveData;
     this.onClose = onClose;
+    this.strings = strings;
+  }
+
+  destroy(): void {
+    this.close();
   }
 
   open(): void { this.build(); }
@@ -38,7 +45,7 @@ export class LoreBookUI {
     this.container.addChild(bg);
 
     const title = new Text({
-      text: '见闻录',
+      text: this.strings.get('loreBook', 'title'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + PADDING;
@@ -46,7 +53,7 @@ export class LoreBookUI {
     this.container.addChild(title);
 
     const backBtn = new Text({
-      text: '[返回书架]',
+      text: this.strings.get('loreBook', 'back'),
       style: { fontSize: 13, fill: 0x8888aa, fontFamily: 'sans-serif' },
     });
     backBtn.x = px + PANEL_W - 100;
@@ -61,7 +68,7 @@ export class LoreBookUI {
 
     if (lore.length === 0) {
       const empty = new Text({
-        text: '(暂无见闻)',
+        text: this.strings.get('loreBook', 'empty'),
         style: { fontSize: 12, fill: 0x555566, fontFamily: 'sans-serif' },
       });
       empty.x = px + PADDING;
@@ -92,7 +99,7 @@ export class LoreBookUI {
 
   private showContent(content: string, source: string, x: number, y: number): void {
     const ct = new Text({
-      text: content + `\n\n-- 来源: ${source}`,
+      text: content + `\n\n${this.strings.get('loreBook', 'source')} ${source}`,
       style: { fontSize: 12, fill: 0xaaaacc, fontFamily: 'sans-serif', wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 },
     });
     ct.x = x;

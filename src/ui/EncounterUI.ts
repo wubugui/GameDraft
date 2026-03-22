@@ -1,7 +1,8 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
-import type { ResolvedOption } from '../systems/EncounterManager';
+import type { StringsProvider } from '../core/StringsProvider';
+import type { ResolvedOption } from '../data/types';
 
 const BOX_MARGIN = 20;
 const TEXT_PADDING = 20;
@@ -17,6 +18,7 @@ enum EncounterPhase {
 export class EncounterUI {
   private renderer: Renderer;
   private eventBus: EventBus;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private phase: EncounterPhase = EncounterPhase.Inactive;
 
@@ -37,9 +39,10 @@ export class EncounterUI {
   private resultCb: (payload: { text: string }) => void;
   private endCb: () => void;
 
-  constructor(renderer: Renderer, eventBus: EventBus) {
+  constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
+    this.strings = strings;
 
     this.onClickBound = this.onClick.bind(this);
     this.onKeyBound = this.onKey.bind(this);
@@ -135,8 +138,8 @@ export class EncounterUI {
       };
       const typeLabel: Record<string, string> = {
         general: '',
-        rule: '[规矩] ',
-        special: '[特殊] ',
+        rule: `${this.strings.get('encounter', 'ruleTag')} `,
+        special: `${this.strings.get('encounter', 'specialTag')} `,
       };
 
       const color = opt.enabled ? (typeColors[opt.type] ?? 0xdddddd) : 0x666666;

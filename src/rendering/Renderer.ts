@@ -1,4 +1,5 @@
-import { Application, Container } from 'pixi.js';
+import { Application, Container, type Filter } from 'pixi.js';
+import { WorldFilterPipeline, loadFilter } from './filter';
 
 export class Renderer {
   public app: Application;
@@ -10,6 +11,9 @@ export class Renderer {
   public cutsceneOverlay: Container;
   public uiLayer: Container;
 
+  /** 世界滤镜管线：仅作用于 worldContainer（场景+实体+前景），GUI 不受影响 */
+  public worldFilterPipeline: WorldFilterPipeline;
+
   private initialized = false;
 
   constructor() {
@@ -20,6 +24,7 @@ export class Renderer {
     this.foregroundLayer = new Container();
     this.cutsceneOverlay = new Container();
     this.uiLayer = new Container();
+    this.worldFilterPipeline = new WorldFilterPipeline(this.worldContainer);
   }
 
   async init(): Promise<void> {
@@ -61,6 +66,39 @@ export class Renderer {
   }
 
   destroy(): void {
+    this.worldFilterPipeline.clear();
     this.app.destroy(true);
+  }
+
+  // ---------- 世界滤镜 API（仅作用于 worldContainer，GUI 不受影响） ----------
+
+  /**
+   * 设置世界滤镜栈，支持多个 shader 效果串联
+   */
+  setWorldFilters(filters: Filter[]): void {
+    this.worldFilterPipeline.setFilters(filters);
+  }
+
+  /**
+   * 设置单个世界滤镜
+   */
+  setWorldFilter(filter: Filter | null): void {
+    this.worldFilterPipeline.setFilters(filter ? [filter] : []);
+  }
+
+  /**
+   * 加载滤镜 JSON 并应用到世界
+   * @param filterId assets/data/filters/{filterId}.json
+   */
+  async loadAndSetWorldFilter(filterId: string): Promise<void> {
+    const filter = await loadFilter(filterId);
+    this.setWorldFilter(filter);
+  }
+
+  /**
+   * 清除世界滤镜
+   */
+  clearWorldFilter(): void {
+    this.worldFilterPipeline.clear();
   }
 }

@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { IRulesDataProvider } from '../data/types';
+import type { StringsProvider } from '../core/StringsProvider';
 
 const PANEL_W_MAX = 600;
 const PADDING = 20;
@@ -16,13 +17,15 @@ const VERIFIED_COLORS: Record<string, number> = {
 export class RulesPanelUI {
   private renderer: Renderer;
   private rulesData: IRulesDataProvider;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private _isOpen: boolean = false;
   private expandedRules: Set<string> = new Set();
 
-  constructor(renderer: Renderer, rulesData: IRulesDataProvider) {
+  constructor(renderer: Renderer, rulesData: IRulesDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
     this.rulesData = rulesData;
+    this.strings = strings;
   }
 
   get isOpen(): boolean {
@@ -95,11 +98,11 @@ export class RulesPanelUI {
     const discoveredRules = this.rulesData.getDiscoveredRules();
 
     if (acquiredRules.length === 0 && discoveredRules.length === 0) {
-      addEmpty('(尚未习得任何规矩)');
+      addEmpty(this.strings.get('rulesPanel', 'empty'));
     } else {
       // ---- Area 1: Completed rules ----
       if (acquiredRules.length > 0) {
-        addSectionLabel('== 已掌握 ==');
+        addSectionLabel(this.strings.get('rulesPanel', 'mastered'));
 
         const categories = ['ward', 'taboo', 'jargon', 'streetwise'] as const;
         for (const cat of categories) {
@@ -143,7 +146,7 @@ export class RulesPanelUI {
 
             if (r.def.source) {
               const srcText = new Text({
-                text: `来源: ${r.def.source}`,
+                text: `${this.strings.get('rulesPanel', 'source')} ${r.def.source}`,
                 style: { fontSize: 10, fill: 0x777766, fontFamily: 'sans-serif' },
               });
               srcText.x = 10;
@@ -155,7 +158,7 @@ export class RulesPanelUI {
             const progress = this.rulesData.getFragmentProgress(r.def.id);
             if (progress.total > 0) {
               const progText = new Text({
-                text: `碎片: ${progress.collected}/${progress.total}`,
+                text: `${this.strings.get('rulesPanel', 'fragments')} ${progress.collected}/${progress.total}`,
                 style: { fontSize: 10, fill: 0x888877, fontFamily: 'sans-serif' },
               });
               progText.x = 10;
@@ -173,10 +176,10 @@ export class RulesPanelUI {
 
       // ---- Area 2: Discovering (incomplete) rules ----
       if (discoveredRules.length > 0) {
-        addSectionLabel('== 搜集中 ==');
+        addSectionLabel(this.strings.get('rulesPanel', 'collecting'));
 
         for (const entry of discoveredRules) {
-          const displayName = entry.def.incompleteName ?? '未知规矩';
+          const displayName = entry.def.incompleteName ?? this.strings.get('rulesPanel', 'unknown');
           const isExpanded = this.expandedRules.has(entry.def.id);
           const arrow = isExpanded ? '▼' : '▶';
 
@@ -256,7 +259,7 @@ export class RulesPanelUI {
                 }
               } else {
                 const unknownText = new Text({
-                  text: '???',
+                  text: this.strings.get('rulesPanel', 'hidden'),
                   style: { fontSize: 11, fill: 0x555555, fontFamily: 'sans-serif' },
                 });
                 unknownText.x = 20;
@@ -291,7 +294,7 @@ export class RulesPanelUI {
     this.container.addChild(panel);
 
     const title = new Text({
-      text: '规矩本',
+      text: this.strings.get('rulesPanel', 'title'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + PADDING;
@@ -310,7 +313,7 @@ export class RulesPanelUI {
     this.container.addChild(content);
 
     const hint = new Text({
-      text: '按 R 关闭',
+      text: this.strings.get('rulesPanel', 'closeHint'),
       style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
     });
     hint.x = px + panelW - 70;

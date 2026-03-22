@@ -1,19 +1,8 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
-import type { EncounterDef, EncounterOptionDef, IGameSystem, GameContext, RuleDef, RuleFragmentDef } from '../data/types';
+import type { EncounterDef, EncounterOptionDef, IGameSystem, GameContext, RuleDef, RuleFragmentDef, ResolvedOption } from '../data/types';
 import { resolveAssetPath } from '../core/assetPath';
-
-export interface ResolvedOption {
-  index: number;
-  text: string;
-  type: 'general' | 'rule' | 'special';
-  enabled: boolean;
-  disableReason?: string;
-  consumeItems?: { id: string; count: number }[];
-  resultActions: EncounterOptionDef['resultActions'];
-  resultText?: string;
-}
 
 export class EncounterManager implements IGameSystem {
   private eventBus: EventBus;

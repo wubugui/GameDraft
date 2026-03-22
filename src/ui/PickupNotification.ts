@@ -1,18 +1,21 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
+import type { StringsProvider } from '../core/StringsProvider';
 
 export class PickupNotification {
   private renderer: Renderer;
+  private strings: StringsProvider;
   private activeNotifications: Container[] = [];
 
-  constructor(renderer: Renderer) {
+  constructor(renderer: Renderer, strings: StringsProvider) {
     this.renderer = renderer;
+    this.strings = strings;
   }
 
   show(itemName: string, count: number): void {
     const container = new Container();
 
-    const label = count > 1 ? `获得了 ${itemName} x${count}` : `获得了 ${itemName}`;
+    const label = this.strings.get('pickup', 'acquired', { name: itemName, count });
 
     const text = new Text({
       text: label,
@@ -40,6 +43,7 @@ export class PickupNotification {
     const fadeStart = 1500;
 
     const tick = () => {
+      if (!this.activeNotifications.includes(container)) return;
       const elapsed = performance.now() - startTime;
       if (elapsed >= duration) {
         this.removeNotification(container);

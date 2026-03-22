@@ -26,5 +26,26 @@
     "x": 350,
     "y": 280,
     "unlockConditions": [{ "flag": "talked_wang_about_ghost" }]
+  },
+  {
+    "sceneId": "bridge_underpass",
+    "name": "桥下",
+    "x": 200,
+    "y": 240,
+    "unlockConditions": []
+  },
+  {
+    "sceneId": "mountain_pass",
+    "name": "山路",
+    "x": 300,
+    "y": 220,
+    "unlockConditions": []
+  },
+  {
+    "sceneId": "temple_exterior",
+    "name": "庙宇",
+    "x": 450,
+    "y": 200,
+    "unlockConditions": []
   }
 ]

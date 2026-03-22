@@ -1,63 +1,106 @@
 {
   "id": "test_room_b",
-  "name": "测试房间B",
+  "name": "后巷",
   "width": 1000,
   "height": 800,
-  "backgrounds": [],
-  "collisions": [],
-  "spawnPoint": { "x": 500, "y": 400 },
+  "backgrounds": [
+    { "image": "/assets/images/backgrounds/back_alley_dock_bg.png", "x": 0, "y": 0 }
+  ],
+  "collisions": [
+    { "x": 0, "y": 0, "width": 200, "height": 800 },
+    { "x": 800, "y": 0, "width": 200, "height": 800 },
+    { "x": 0, "y": 0, "width": 1000, "height": 200 }
+  ],
+  "spawnPoint": { "x": 500, "y": 700 },
   "spawnPoints": {
-    "from_a": { "x": 80, "y": 400 }
+    "from_a": { "x": 500, "y": 700 }
   },
   "hotspots": [
     {
       "id": "old_box",
       "type": "encounter",
-      "x": 700, "y": 300, "width": 40, "height": 40,
-      "interactionRange": 80,
       "label": "旧木箱",
-      "data": { "encounterId": "old_box_encounter" }
+      "x": 300,
+      "y": 250,
+      "width": 60,
+      "height": 60,
+      "interactionRange": 80,
+      "data": {
+        "encounterId": "old_box_encounter"
+      }
     },
     {
       "id": "herb_bundle",
       "type": "pickup",
-      "x": 300, "y": 600, "width": 30, "height": 30,
-      "interactionRange": 70,
       "label": "艾草",
-      "data": { "itemId": "mugwort", "itemName": "艾草", "count": 2 }
+      "x": 700,
+      "y": 400,
+      "width": 40,
+      "height": 40,
+      "interactionRange": 70,
+      "data": {
+        "itemId": "mugwort",
+        "itemName": "艾草",
+        "count": 2
+      }
     },
     {
       "id": "exit_to_a",
       "type": "transition",
-      "x": 10, "y": 350, "width": 40, "height": 100,
+      "label": "回到街巷",
+      "x": 500,
+      "y": 750,
+      "width": 100,
+      "height": 80,
       "interactionRange": 60,
-      "label": "回到房间A",
-      "data": { "targetScene": "test_room_a", "targetSpawnPoint": "from_b" }
+      "data": {
+        "targetScene": "test_room_a",
+        "targetSpawnPoint": "from_b"
+      }
     },
     {
       "id": "taomu_pickup",
       "type": "pickup",
-      "x": 800, "y": 500, "width": 30, "height": 30,
-      "interactionRange": 70,
       "label": "桃木片",
-      "data": { "itemId": "taomu", "itemName": "桃木片", "count": 2 }
+      "x": 300,
+      "y": 600,
+      "width": 40,
+      "height": 40,
+      "interactionRange": 70,
+      "data": {
+        "itemId": "taomu",
+        "itemName": "桃木片",
+        "count": 2
+      }
     },
     {
       "id": "ghost_area",
       "type": "encounter",
-      "x": 500, "y": 150, "width": 80, "height": 60,
-      "interactionRange": 80,
       "label": "后山小路",
-      "conditions": [{ "flag": "talked_wang_about_ghost" }],
-      "data": { "encounterId": "ghost_encounter" }
+      "x": 500,
+      "y": 300,
+      "width": 80,
+      "height": 80,
+      "interactionRange": 80,
+      "conditions": [
+        { "flag": "talked_wang_about_ghost" }
+      ],
+      "data": {
+        "encounterId": "ghost_encounter"
+      }
     },
     {
       "id": "strange_mark",
       "type": "inspect",
-      "x": 900, "y": 200, "width": 40, "height": 40,
-      "interactionRange": 80,
       "label": "墙上的奇怪痕迹",
-      "conditions": [{ "flag": "encounter_ghost_done" }],
+      "x": 700,
+      "y": 250,
+      "width": 60,
+      "height": 60,
+      "interactionRange": 80,
+      "conditions": [
+        { "flag": "encounter_ghost_done" }
+      ],
       "data": {
         "text": "墙上有几道深深的抓痕，像是什么东西拼命想要抓住什么。抓痕旁边用暗红色的东西写着一个\"寻\"字。看到这个字的瞬间，你脑海中闪过一个白色的身影……",
         "actions": [
@@ -69,31 +112,38 @@
   "zones": [
     {
       "id": "dark_alley",
-      "x": 600, "y": 100, "width": 300, "height": 200,
-      "onEnter": [{ "type": "setFlag", "params": { "key": "entered_dark_alley", "value": true } }],
-      "onExit": [{ "type": "setFlag", "params": { "key": "entered_dark_alley", "value": false } }],
+      "x": 300,
+      "y": 200,
+      "width": 400,
+      "height": 300,
+      "onEnter": [
+        { "type": "setFlag", "params": { "key": "entered_dark_alley", "value": true } }
+      ],
+      "onExit": [
+        { "type": "setFlag", "params": { "key": "entered_dark_alley", "value": false } }
+      ],
       "ruleSlots": [
         {
           "ruleId": "rule_no_go_night",
+          "resultText": "你默念着\"三更勿去\"，小心翼翼地环顾四周。果然，墙角处有一缕若有若无的白烟正在消散。你停下脚步，那白烟便没了踪影。看来王大爷的话不是随便说说的。",
           "resultActions": [
             { "type": "setFlag", "params": { "key": "used_rule_dark_alley", "value": true } },
             { "type": "giveRule", "params": { "id": "rule_ghost_verified" } }
-          ],
-          "resultText": "你默念着\"三更勿去\"，小心翼翼地环顾四周。果然，墙角处有一缕若有若无的白烟正在消散。你停下脚步，那白烟便没了踪影。看来王大爷的话不是随便说说的。"
+          ]
         },
         {
           "ruleId": "rule_zombie_fire",
+          "resultText": "你掏出桃木片在角落里点燃，火光照亮了阴暗的巷道。你注意到墙壁上有些奇怪的刮痕，像是什么东西挣扎留下的。火光闪烁间，刮痕处渗出了一丝暗红色的液体……",
           "resultActions": [
             { "type": "setFlag", "params": { "key": "used_fire_dark_alley", "value": true } }
-          ],
-          "resultText": "你掏出桃木片在角落里点燃，火光照亮了阴暗的巷道。你注意到墙壁上有些奇怪的刮痕，像是什么东西挣扎留下的。火光闪烁间，刮痕处渗出了一丝暗红色的液体……"
+          ]
         },
         {
           "ruleId": "rule_ghost_origin",
+          "resultText": "你想起那些关于柳家戏班的传闻——\"她不是在害人，她是在找人。\"你轻声说道。风停了。四周忽然安静得出奇，仿佛有什么东西在听你说话。",
           "resultActions": [
             { "type": "setFlag", "params": { "key": "used_origin_dark_alley", "value": true } }
-          ],
-          "resultText": "你想起那些关于柳家戏班的传闻——\"她不是在害人，她是在找人。\"你轻声说道。风停了。四周忽然安静得出奇，仿佛有什么东西在听你说话。"
+          ]
         }
       ]
     }

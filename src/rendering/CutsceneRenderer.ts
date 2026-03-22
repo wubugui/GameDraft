@@ -15,6 +15,8 @@ export class CutsceneRenderer {
   private activeEmotes: Container[] = [];
   private images: Map<string, { sprite: Sprite | Graphics; imagePath: string; isPlaceholder?: boolean }> = new Map();
   private movieBarContainer: Container | null = null;
+  private pendingRafIds = new Set<number>();
+  private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(renderer: Renderer, camera: Camera) {
     this.renderer = renderer;
@@ -171,6 +173,14 @@ export class CutsceneRenderer {
     if (idx >= 0) this.activeEmotes.splice(idx, 1);
   }
 
+  private trackRaf(fn: () => void): void {
+    const id = requestAnimationFrame(() => {
+      this.pendingRafIds.delete(id);
+      fn();
+    });
+    this.pendingRafIds.add(id);
+  }
+
   async cameraMove(x: number, y: number, duration: number): Promise<void> {
     const startX = this.camera.getX();
     const startY = this.camera.getY();
@@ -184,9 +194,9 @@ export class CutsceneRenderer {
           startX + (x - startX) * ease,
           startY + (y - startY) * ease,
         );
-        if (t < 1) requestAnimationFrame(tick); else resolve();
+        if (t < 1) this.trackRaf(tick); else resolve();
       };
-      requestAnimationFrame(tick);
+      this.trackRaf(tick);
     });
   }
 
@@ -198,14 +208,20 @@ export class CutsceneRenderer {
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / duration, 1);
         this.camera.setZoom(startScale + (scale - startScale) * t);
-        if (t < 1) requestAnimationFrame(tick); else resolve();
+        if (t < 1) this.trackRaf(tick); else resolve();
       };
-      requestAnimationFrame(tick);
+      this.trackRaf(tick);
     });
   }
 
   wait(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => {
+      const id = setTimeout(() => {
+        this.pendingTimerIds.delete(id);
+        resolve();
+      }, ms);
+      this.pendingTimerIds.add(id);
+    });
   }
 
   /** 显示图片：居中无拉伸填满视口（cover 模式），id 作为句柄供 hideImg 使用 */
@@ -328,13 +344,18 @@ export class CutsceneRenderer {
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / duration, 1);
         target.alpha = from + (to - from) * t;
-        if (t < 1) requestAnimationFrame(tick); else resolve();
+        if (t < 1) this.trackRaf(tick); else resolve();
       };
-      requestAnimationFrame(tick);
+      this.trackRaf(tick);
     });
   }
 
   cleanup(): void {
+    this.pendingRafIds.forEach(id => cancelAnimationFrame(id));
+    this.pendingRafIds.clear();
+    this.pendingTimerIds.forEach(id => clearTimeout(id));
+    this.pendingTimerIds.clear();
+
     if (this.fadeOverlay) {
       if (this.fadeOverlay.parent) this.fadeOverlay.parent.removeChild(this.fadeOverlay);
       this.fadeOverlay.destroy();

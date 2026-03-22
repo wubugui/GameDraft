@@ -1,8 +1,9 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
+import type { StringsProvider } from '../core/StringsProvider';
 import type { DialogueLogEntry } from '../data/types';
-import type { DialogueLine } from '../systems/DialogueManager';
+import type { DialogueLine } from '../data/types';
 
 const MAX_ENTRIES = 200;
 const PANEL_W_MAX = 700;
@@ -13,6 +14,7 @@ const VISIBLE_LINES = 20;
 export class DialogueLogUI {
   private renderer: Renderer;
   private eventBus: EventBus;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private _isOpen = false;
   private entries: DialogueLogEntry[] = [];
@@ -23,9 +25,10 @@ export class DialogueLogUI {
   private onKeyBound: (e: KeyboardEvent) => void;
   private onWheelBound: (e: WheelEvent) => void;
 
-  constructor(renderer: Renderer, eventBus: EventBus) {
+  constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
+    this.strings = strings;
 
     this.lineCb = (line) => {
       this.addEntry({ type: 'line', speaker: line.speaker, text: line.text });
@@ -101,7 +104,7 @@ export class DialogueLogUI {
     this.container.addChild(panel);
 
     const title = new Text({
-      text: '对话记录',
+      text: this.strings.get('dialogueLog', 'title'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + PADDING;
@@ -146,7 +149,7 @@ export class DialogueLogUI {
 
     if (this.entries.length === 0) {
       const empty = new Text({
-        text: '(暂无对话记录)',
+        text: this.strings.get('dialogueLog', 'empty'),
         style: { fontSize: 12, fill: 0x555566, fontFamily: 'sans-serif' },
       });
       empty.x = px + PADDING + 10;
@@ -158,7 +161,7 @@ export class DialogueLogUI {
       ? `${this.scrollOffset + 1}-${endIdx} / ${this.entries.length}`
       : '';
     const hint = new Text({
-      text: `${scrollInfo}  按 L 关闭`,
+      text: `${scrollInfo}  ${this.strings.get('dialogueLog', 'closeHint')}`,
       style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
     });
     hint.x = px + panelW - hint.width - 16;

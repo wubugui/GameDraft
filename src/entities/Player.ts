@@ -21,8 +21,22 @@ export class Player implements ICutsceneActor {
 
   get entityId(): string { return 'player'; }
 
+  private collisionsEnabled = true;
+
   setCollisions(collisions: Rect[]): void {
     this.collisions = collisions;
+  }
+
+  getCollisions(): readonly Rect[] {
+    return this.collisions;
+  }
+
+  setCollisionsEnabled(enabled: boolean): void {
+    this.collisionsEnabled = enabled;
+  }
+
+  get collisionsEnabledState(): boolean {
+    return this.collisionsEnabled;
   }
 
   get x(): number { return this.sprite.x; }
@@ -115,6 +129,7 @@ export class Player implements ICutsceneActor {
   }
 
   private collidesAt(px: number, py: number): boolean {
+    if (!this.collisionsEnabled) return false;
     const left = px - this.colliderHalfWidth;
     const right = px + this.colliderHalfWidth;
     const top = py - this.colliderHeight;

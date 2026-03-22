@@ -4,21 +4,7 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
-import type { ActionDef, IGameSystem, GameContext } from '../data/types';
-
-export interface DialogueLine {
-  speaker: string;
-  text: string;
-  tags: string[];
-}
-
-export interface DialogueChoice {
-  index: number;
-  text: string;
-  tags: string[];
-  enabled: boolean;
-  ruleHintId?: string;
-}
+import type { ActionDef, IGameSystem, GameContext, DialogueLine, DialogueChoice } from '../data/types';
 
 const ACTION_PARAM_NAMES: Record<string, string[]> = {
   setFlag: ['key', 'value'],

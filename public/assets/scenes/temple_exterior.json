@@ -1,0 +1,28 @@
+{
+  "id": "temple_exterior",
+  "name": "庙宇",
+  "backgrounds": [
+    { "image": "/assets/images/backgrounds/temple_exterior_bg.png", "x": 0, "y": 0 }
+  ],
+  "collisions": [],
+  "spawnPoint": { "x": 700, "y": 800 },
+  "spawnPoints": {
+    "from_mountain_pass": { "x": 700, "y": 800 }
+  },
+  "hotspots": [
+    {
+      "id": "exit_to_mountain_pass",
+      "type": "transition",
+      "label": "回山路",
+      "x": 350,
+      "y": 850,
+      "width": 120,
+      "height": 80,
+      "interactionRange": 70,
+      "data": {
+        "targetScene": "mountain_pass",
+        "targetSpawnPoint": "from_temple_exterior"
+      }
+    }
+  ]
+}

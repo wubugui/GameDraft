@@ -1,5 +1,7 @@
 {
   "initialScene": "teahouse",
   "initialQuest": "opening_01",
-  "fallbackScene": "test_room_a"
+  "fallbackScene": "test_room_a",
+  "initialCutscene": "prologue_opening",
+  "initialCutsceneDoneFlag": "prologue_started"
 }

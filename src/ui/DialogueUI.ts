@@ -1,7 +1,8 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
-import type { DialogueLine, DialogueChoice } from '../systems/DialogueManager';
+import type { StringsProvider } from '../core/StringsProvider';
+import type { DialogueLine, DialogueChoice } from '../data/types';
 
 const BOX_HEIGHT = 140;
 const BOX_MARGIN = 20;
@@ -11,6 +12,7 @@ const TYPEWRITER_SPEED = 30;
 export class DialogueUI {
   private renderer: Renderer;
   private eventBus: EventBus;
+  private strings: StringsProvider;
   private container: Container | null = null;
 
   private speakerText: Text | null = null;
@@ -32,9 +34,10 @@ export class DialogueUI {
   private dialogueWillEndCb: () => void;
   private dialogueEndCb: () => void;
 
-  constructor(renderer: Renderer, eventBus: EventBus) {
+  constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
+    this.strings = strings;
 
     this.onClickBound = this.onClick.bind(this);
     this.onKeyBound = this.onKey.bind(this);
@@ -132,7 +135,7 @@ export class DialogueUI {
       bg.stroke({ color: choice.enabled ? 0x555577 : 0x333344, width: 1 });
       row.addChild(bg);
 
-      const prefix = choice.ruleHintId ? `[规] ${i + 1}. ` : `${i + 1}. `;
+      const prefix = choice.ruleHintId ? `${this.strings.get('dialogue', 'ruleTag')} ${i + 1}. ` : `${i + 1}. `;
       const fillColor = choice.ruleHintId
         ? (choice.enabled ? 0xffaa44 : 0x886633)
         : (choice.enabled ? 0xdddddd : 0x666666);

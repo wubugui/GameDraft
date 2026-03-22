@@ -1,0 +1,43 @@
+{
+  "id": "mountain_pass",
+  "name": "山路",
+  "backgrounds": [
+    { "image": "/assets/images/backgrounds/mountain_pass_bg.png", "x": 0, "y": 0 }
+  ],
+  "collisions": [],
+  "spawnPoint": { "x": 800, "y": 700 },
+  "spawnPoints": {
+    "from_street": { "x": 200, "y": 650 },
+    "from_temple_exterior": { "x": 1400, "y": 500 }
+  },
+  "hotspots": [
+    {
+      "id": "exit_to_street",
+      "type": "transition",
+      "label": "回街巷",
+      "x": 150,
+      "y": 700,
+      "width": 120,
+      "height": 80,
+      "interactionRange": 70,
+      "data": {
+        "targetScene": "test_room_a",
+        "targetSpawnPoint": "from_mountain_pass"
+      }
+    },
+    {
+      "id": "exit_to_temple",
+      "type": "transition",
+      "label": "去庙宇",
+      "x": 1450,
+      "y": 450,
+      "width": 100,
+      "height": 100,
+      "interactionRange": 70,
+      "data": {
+        "targetScene": "temple_exterior",
+        "targetSpawnPoint": "from_mountain_pass"
+      }
+    }
+  ]
+}

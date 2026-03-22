@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { ISaveDataProvider, IAudioSettingsProvider } from '../data/types';
+import type { StringsProvider } from '../core/StringsProvider';
 
 type MenuMode = 'main' | 'pause' | 'save' | 'load' | 'settings';
 
@@ -14,6 +15,7 @@ export class MenuUI {
   private eventBus: EventBus;
   private saveData: ISaveDataProvider;
   private audioSettings: IAudioSettingsProvider;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private _isOpen = false;
   private mode: MenuMode = 'main';
@@ -23,11 +25,13 @@ export class MenuUI {
     eventBus: EventBus,
     saveData: ISaveDataProvider,
     audioSettings: IAudioSettingsProvider,
+    strings: StringsProvider,
   ) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.saveData = saveData;
     this.audioSettings = audioSettings;
+    this.strings = strings;
   }
 
   get isOpen(): boolean { return this._isOpen; }
@@ -74,7 +78,7 @@ export class MenuUI {
     this.container.addChild(bg);
 
     const gameName = new Text({
-      text: '渝都卫',
+      text: this.strings.get('menu', 'gameTitle'),
       style: { fontSize: 48, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
     });
     gameName.x = (sw - gameName.width) / 2;
@@ -82,7 +86,7 @@ export class MenuUI {
     this.container.addChild(gameName);
 
     const subtitle = new Text({
-      text: '旧梦惊尘',
+      text: this.strings.get('menu', 'gameSubtitle'),
       style: { fontSize: 20, fill: 0x888899, fontFamily: 'serif' },
     });
     subtitle.x = (sw - subtitle.width) / 2;
@@ -90,13 +94,13 @@ export class MenuUI {
     this.container.addChild(subtitle);
 
     const buttons: { label: string; action: () => void }[] = [
-      { label: '新游戏', action: () => this.eventBus.emit('menu:newGame', {}) },
+      { label: this.strings.get('menu', 'newGame'), action: () => this.eventBus.emit('menu:newGame', {}) },
     ];
 
     if (this.saveData.hasAnySave()) {
-      buttons.push({ label: '继续游戏', action: () => { this.mode = 'load'; this.build(); } });
+      buttons.push({ label: this.strings.get('menu', 'continueGame'), action: () => { this.mode = 'load'; this.build(); } });
     }
-    buttons.push({ label: '设置', action: () => { this.mode = 'settings'; this.build(); } });
+    buttons.push({ label: this.strings.get('menu', 'settings'), action: () => { this.mode = 'settings'; this.build(); } });
 
     this.buildButtonColumn(buttons, sw, sh * 0.5);
     this.renderer.uiLayer.addChild(this.container);
@@ -113,7 +117,7 @@ export class MenuUI {
     this.container.addChild(overlay);
 
     const title = new Text({
-      text: '暂停',
+      text: this.strings.get('menu', 'pause'),
       style: { fontSize: 24, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
     });
     title.x = (sw - title.width) / 2;
@@ -121,11 +125,11 @@ export class MenuUI {
     this.container.addChild(title);
 
     const buttons: { label: string; action: () => void }[] = [
-      { label: '继续', action: () => this.close() },
-      { label: '存档', action: () => { this.mode = 'save'; this.build(); } },
-      { label: '读档', action: () => { this.mode = 'load'; this.build(); } },
-      { label: '设置', action: () => { this.mode = 'settings'; this.build(); } },
-      { label: '返回主菜单', action: () => { this.close(); this.eventBus.emit('menu:returnToMain', {}); } },
+      { label: this.strings.get('menu', 'resume'), action: () => this.close() },
+      { label: this.strings.get('menu', 'save'), action: () => { this.mode = 'save'; this.build(); } },
+      { label: this.strings.get('menu', 'load'), action: () => { this.mode = 'load'; this.build(); } },
+      { label: this.strings.get('menu', 'settings'), action: () => { this.mode = 'settings'; this.build(); } },
+      { label: this.strings.get('menu', 'returnToMain'), action: () => { this.close(); this.eventBus.emit('menu:returnToMain', {}); } },
     ];
 
     this.buildButtonColumn(buttons, sw, sh * 0.35);
@@ -152,7 +156,7 @@ export class MenuUI {
     this.container.addChild(bg);
 
     const title = new Text({
-      text: action === 'save' ? '存档' : '读档',
+      text: action === 'save' ? this.strings.get('menu', 'save') : this.strings.get('menu', 'load'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + 20;
@@ -176,7 +180,7 @@ export class MenuUI {
         const playMin = Math.floor(meta.playTimeMs / 60000);
 
         const info = new Text({
-          text: `槽位 ${i + 1}: ${meta.sceneName}  第${meta.dayNumber}天  ${dateStr}  ${playMin}分钟`,
+          text: this.strings.get('menu', 'slotInfo', { slot: String(i + 1), scene: meta.sceneName, day: String(meta.dayNumber), date: dateStr, minutes: String(playMin) }),
           style: { fontSize: 12, fill: 0xaaaacc, fontFamily: 'sans-serif' },
         });
         info.x = px + 28;
@@ -184,7 +188,7 @@ export class MenuUI {
         this.container.addChild(info);
       } else {
         const empty = new Text({
-          text: `槽位 ${i + 1}: (空)`,
+          text: this.strings.get('menu', 'slotEmpty', { slot: i + 1 }),
           style: { fontSize: 12, fill: 0x555566, fontFamily: 'sans-serif' },
         });
         empty.x = px + 28;
@@ -199,12 +203,18 @@ export class MenuUI {
         slotBg.on('pointerdown', () => {
           if (action === 'save') {
             this.saveData.save(i);
-            this.eventBus.emit('notification:show', { text: `存档到槽位 ${i + 1}`, type: 'info' });
+            this.eventBus.emit('notification:show', {
+              text: this.strings.get('menu', 'saveSlot', { slot: i + 1 }),
+              type: 'info',
+            });
             this.build();
           } else {
             this.saveData.load(i).then(() => {
               this.close();
-              this.eventBus.emit('notification:show', { text: `读取槽位 ${i + 1}`, type: 'info' });
+              this.eventBus.emit('notification:show', {
+                text: this.strings.get('menu', 'loadSlot', { slot: i + 1 }),
+                type: 'info',
+              });
             });
           }
         });
@@ -212,7 +222,7 @@ export class MenuUI {
     }
 
     const backBtn = new Text({
-      text: '[返回]',
+      text: this.strings.get('menu', 'back'),
       style: { fontSize: 13, fill: 0x8888aa, fontFamily: 'sans-serif' },
     });
     backBtn.x = px + PANEL_W - 60;
@@ -248,7 +258,7 @@ export class MenuUI {
     this.container.addChild(bg);
 
     const title = new Text({
-      text: '设置',
+      text: this.strings.get('menu', 'settings'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + 20;
@@ -256,9 +266,9 @@ export class MenuUI {
     this.container.addChild(title);
 
     const channels: { label: string; channel: 'bgm' | 'sfx' | 'ambient' }[] = [
-      { label: '背景音乐', channel: 'bgm' },
-      { label: '音效', channel: 'sfx' },
-      { label: '环境音', channel: 'ambient' },
+      { label: this.strings.get('menu', 'bgm'), channel: 'bgm' },
+      { label: this.strings.get('menu', 'sfx'), channel: 'sfx' },
+      { label: this.strings.get('menu', 'ambient'), channel: 'ambient' },
     ];
 
     channels.forEach(({ label, channel }, idx) => {
@@ -286,7 +296,7 @@ export class MenuUI {
     });
 
     const backBtn = new Text({
-      text: '[返回]',
+      text: this.strings.get('menu', 'back'),
       style: { fontSize: 13, fill: 0x8888aa, fontFamily: 'sans-serif' },
     });
     backBtn.x = px + PANEL_W - 60;

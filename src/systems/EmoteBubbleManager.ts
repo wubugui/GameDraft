@@ -9,6 +9,7 @@ interface ActiveBubble {
 
 export class EmoteBubbleManager {
   private activeBubbles: ActiveBubble[] = [];
+  private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   show(actor: ICutsceneActor, emote: string, durationMs: number = 1500): void {
     const displayObj = actor.getDisplayObject() as Container;
@@ -44,7 +45,13 @@ export class EmoteBubbleManager {
 
   showAndWait(actor: ICutsceneActor, emote: string, durationMs: number = 1500): Promise<void> {
     this.show(actor, emote, durationMs);
-    return new Promise(resolve => setTimeout(resolve, durationMs));
+    return new Promise(resolve => {
+      const id = setTimeout(() => {
+        this.pendingTimers.delete(id);
+        resolve();
+      }, durationMs);
+      this.pendingTimers.add(id);
+    });
   }
 
   update(dt: number): void {
@@ -66,6 +73,8 @@ export class EmoteBubbleManager {
   }
 
   cleanup(): void {
+    for (const id of this.pendingTimers) clearTimeout(id);
+    this.pendingTimers.clear();
     for (const entry of this.activeBubbles) {
       this.removeBubble(entry);
     }

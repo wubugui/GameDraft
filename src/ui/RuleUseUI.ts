@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, ActionDef } from '../data/types';
+import type { StringsProvider } from '../core/StringsProvider';
 
 interface ResolvedRuleSlot {
   slot: ZoneRuleSlot;
@@ -15,6 +16,7 @@ export class RuleUseUI {
   private eventBus: EventBus;
   private zoneData: IZoneDataProvider;
   private rulesData: IRulesDataProvider;
+  private strings: StringsProvider;
 
   private container: Container | null = null;
   private _isOpen: boolean = false;
@@ -24,11 +26,13 @@ export class RuleUseUI {
     eventBus: EventBus,
     zoneData: IZoneDataProvider,
     rulesData: IRulesDataProvider,
+    strings: StringsProvider,
   ) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.zoneData = zoneData;
     this.rulesData = rulesData;
+    this.strings = strings;
   }
 
   get isOpen(): boolean { return this._isOpen; }
@@ -60,7 +64,7 @@ export class RuleUseUI {
         result.push({ slot, ruleName: ruleDef.name, enabled: true });
       } else if (this.rulesData.isDiscovered(slot.ruleId)) {
         const progress = this.rulesData.getFragmentProgress(slot.ruleId);
-        const displayName = ruleDef.incompleteName ?? '未知规矩';
+        const displayName = ruleDef.incompleteName ?? this.strings.get('ruleUse', 'unknown');
         result.push({
           slot,
           ruleName: displayName,
@@ -95,7 +99,7 @@ export class RuleUseUI {
     this.container.addChild(bg);
 
     const title = new Text({
-      text: '使用规矩',
+      text: this.strings.get('ruleUse', 'title'),
       style: { fontSize: 16, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
     });
     title.x = px + (panelW - title.width) / 2;
@@ -140,7 +144,7 @@ export class RuleUseUI {
     }
 
     const hint = new Text({
-      text: '按 Esc 关闭',
+      text: this.strings.get('ruleUse', 'closeHint'),
       style: { fontSize: 11, fill: 0x777777, fontFamily: 'sans-serif' },
     });
     hint.x = px + (panelW - hint.width) / 2;

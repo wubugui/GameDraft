@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { BookDef, IArchiveDataProvider } from '../data/types';
+import type { StringsProvider } from '../core/StringsProvider';
 
 const PANEL_W = 600;
 const PANEL_H = 480;
@@ -14,11 +15,13 @@ export class BookReaderUI {
   private currentPage = 0;
   private onCloseCb: (() => void) | null = null;
   private onKeyBound: (e: KeyboardEvent) => void;
+  private strings: StringsProvider;
 
-  constructor(renderer: Renderer, archiveData: IArchiveDataProvider) {
+  constructor(renderer: Renderer, archiveData: IArchiveDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
     this.archiveData = archiveData;
     this.onKeyBound = this.onKey.bind(this);
+    this.strings = strings;
   }
 
   openBook(book: BookDef, onClose: () => void): void {
@@ -34,6 +37,10 @@ export class BookReaderUI {
     this.destroyUI();
     this.currentBook = null;
     this.onCloseCb = null;
+  }
+
+  destroy(): void {
+    this.close();
   }
 
   private build(): void {
@@ -62,7 +69,7 @@ export class BookReaderUI {
     this.container.addChild(title);
 
     const backBtn = new Text({
-      text: '[返回书架]',
+      text: this.strings.get('bookReader', 'back'),
       style: { fontSize: 13, fill: 0x8888aa, fontFamily: 'sans-serif' },
     });
     backBtn.x = px + PANEL_W - 100;
@@ -103,7 +110,7 @@ export class BookReaderUI {
         this.container.addChild(content);
       } else {
         const missing = new Text({
-          text: '此页缺失',
+          text: this.strings.get('bookReader', 'pageMissing'),
           style: { fontSize: 16, fill: 0x555555, fontFamily: 'serif', fontStyle: 'italic' },
         });
         missing.x = px + (PANEL_W - missing.width) / 2;
@@ -113,7 +120,7 @@ export class BookReaderUI {
     }
 
     const pageInfo = new Text({
-      text: `${this.currentPage + 1} / ${pages.length}    < > 翻页`,
+      text: `${this.currentPage + 1} / ${pages.length}    ${this.strings.get('bookReader', 'pageHint')}`,
       style: { fontSize: 11, fill: 0x666677, fontFamily: 'sans-serif' },
     });
     pageInfo.x = px + (PANEL_W - pageInfo.width) / 2;

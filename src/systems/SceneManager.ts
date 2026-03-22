@@ -39,6 +39,7 @@ export class SceneManager implements IGameSystem {
 
   private fadeOverlay: Graphics | null = null;
   private isSwitching: boolean = false;
+  private animRafId: number = 0;
 
   private collisionSetter: ((collisions: { x: number; y: number; width: number; height: number }[]) => void) | null = null;
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
@@ -108,7 +109,7 @@ export class SceneManager implements IGameSystem {
     return this.isSwitching;
   }
 
-  async loadScene(sceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }): Promise<void> {
+  async loadScene(sceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }, fromSceneId?: string | null): Promise<void> {
     const sceneData = await this.assetManager.loadSceneData(sceneId);
     this.currentScene = sceneData;
 
@@ -176,6 +177,7 @@ export class SceneManager implements IGameSystem {
       }
     }
 
+    const sceneSpriteScale = sceneData.spriteScaleFactor ?? 1;
     if (sceneData.npcs) {
       for (const npcDef of sceneData.npcs) {
         const npc = new Npc(npcDef);
@@ -183,7 +185,8 @@ export class SceneManager implements IGameSystem {
           try {
             const animDef = await this.assetManager.loadJson<AnimationSetDef>(npcDef.animFile);
             const tex = await this.assetManager.loadTexture(animDef.spritesheet);
-            npc.loadSprite(tex, animDef);
+            const overrideSceneScale = npcDef.overrideSceneScale ?? animDef.overrideSceneScale ?? false;
+            npc.loadSprite(tex, animDef, { sceneScaleFactor: sceneSpriteScale, overrideSceneScale });
           } catch (_e) {
             // 加载失败时保留占位外观
           }
@@ -206,7 +209,17 @@ export class SceneManager implements IGameSystem {
     this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds);
     this.zoneSetter?.(sceneData.zones ?? []);
 
-    this.eventBus.emit('scene:enter', { sceneId, fromSceneId: null, sceneName: sceneData.name });
+    if (sceneData.filterId) {
+      try {
+        await this.renderer.loadAndSetWorldFilter(sceneData.filterId);
+      } catch (_e) {
+        this.renderer.clearWorldFilter();
+      }
+    } else {
+      this.renderer.clearWorldFilter();
+    }
+
+    this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fromSceneId ?? null, sceneName: sceneData.name });
     this.eventBus.emit('scene:ready');
   }
 
@@ -250,11 +263,7 @@ export class SceneManager implements IGameSystem {
 
     const fromSceneId = this.currentScene?.id ?? null;
     this.unloadScene();
-    await this.loadScene(targetSceneId, spawnPointId, cameraPosition);
-
-    if (fromSceneId) {
-      this.eventBus.emit('scene:enter', { sceneId: targetSceneId, fromSceneId, sceneName: this.currentScene?.name ?? targetSceneId });
-    }
+    await this.loadScene(targetSceneId, spawnPointId, cameraPosition, fromSceneId);
 
     await this.fadeIn(300);
 
@@ -339,6 +348,8 @@ export class SceneManager implements IGameSystem {
   }
 
   private animateAlpha(target: { alpha: number }, from: number, to: number, durationMs: number): Promise<void> {
+    cancelAnimationFrame(this.animRafId);
+    this.animRafId = 0;
     return new Promise(resolve => {
       const startTime = performance.now();
       target.alpha = from;
@@ -348,12 +359,13 @@ export class SceneManager implements IGameSystem {
         const t = Math.min(elapsed / durationMs, 1);
         target.alpha = from + (to - from) * t;
         if (t < 1) {
-          requestAnimationFrame(tick);
+          this.animRafId = requestAnimationFrame(tick);
         } else {
+          this.animRafId = 0;
           resolve();
         }
       };
-      requestAnimationFrame(tick);
+      this.animRafId = requestAnimationFrame(tick);
     });
   }
 
@@ -379,6 +391,8 @@ export class SceneManager implements IGameSystem {
   }
 
   destroy(): void {
+    cancelAnimationFrame(this.animRafId);
+    this.animRafId = 0;
     this.eventBus.off('hotspot:pickup:done', this.onHotspotPickup);
     this.eventBus.off('hotspot:inspected', this.onHotspotInspected);
     this.unloadScene();

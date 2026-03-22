@@ -3,6 +3,7 @@ import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IInventoryDataProvider, ShopDef } from '../data/types';
 import { resolveAssetPath } from '../core/assetPath';
+import type { StringsProvider } from '../core/StringsProvider';
 
 const PANEL_W = 500;
 const PADDING = 20;
@@ -12,15 +13,18 @@ export class ShopUI {
   private renderer: Renderer;
   private eventBus: EventBus;
   private inventoryData: IInventoryDataProvider;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private _isOpen = false;
   private currentShop: ShopDef | null = null;
   private shopDefs: Map<string, ShopDef> = new Map();
+  private rebuildTimerId: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider) {
+  constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.inventoryData = inventoryData;
+    this.strings = strings;
   }
 
   async loadDefs(): Promise<void> {
@@ -89,7 +93,7 @@ export class ShopUI {
 
     const coins = this.inventoryData.getCoins();
     const coinText = new Text({
-      text: `铜钱: ${coins}`,
+      text: `${this.strings.get('shop', 'coins')} ${coins}`,
       style: { fontSize: 13, fill: 0xccaa66, fontFamily: 'sans-serif' },
     });
     coinText.x = px + PANEL_W - 100;
@@ -117,7 +121,7 @@ export class ShopUI {
       this.container.addChild(nameT);
 
       const priceT = new Text({
-        text: `${price} 文`,
+        text: `${price} ${this.strings.get('shop', 'unit')}`,
         style: { fontSize: 13, fill: canBuy ? 0xccaa66 : 0x666655, fontFamily: 'sans-serif' },
       });
       priceT.x = px + PANEL_W - PADDING - 120;
@@ -125,7 +129,7 @@ export class ShopUI {
       this.container.addChild(priceT);
 
       const buyBtn = new Text({
-        text: canBuy ? '[购买]' : '[不足]',
+        text: canBuy ? this.strings.get('shop', 'buy') : this.strings.get('shop', 'insufficient'),
         style: { fontSize: 13, fill: canBuy ? 0x88cc88 : 0x555555, fontFamily: 'sans-serif' },
       });
       buyBtn.x = px + PANEL_W - PADDING - 50;
@@ -143,7 +147,7 @@ export class ShopUI {
     }
 
     const closeBtn = new Text({
-      text: '[离开]',
+      text: this.strings.get('shop', 'leave'),
       style: { fontSize: 14, fill: 0x8888aa, fontFamily: 'sans-serif' },
     });
     closeBtn.x = px + (PANEL_W - closeBtn.width) / 2;
@@ -158,7 +162,11 @@ export class ShopUI {
 
   private doPurchase(itemId: string, price: number): void {
     this.eventBus.emit('shop:purchase', { itemId, price });
-    setTimeout(() => this.build(), 50);
+    if (this.rebuildTimerId !== null) clearTimeout(this.rebuildTimerId);
+    this.rebuildTimerId = setTimeout(() => {
+      this.rebuildTimerId = null;
+      this.build();
+    }, 50);
   }
 
   private destroyUI(): void {
@@ -170,6 +178,10 @@ export class ShopUI {
   }
 
   destroy(): void {
+    if (this.rebuildTimerId !== null) {
+      clearTimeout(this.rebuildTimerId);
+      this.rebuildTimerId = null;
+    }
     this.destroyUI();
     this.shopDefs.clear();
   }

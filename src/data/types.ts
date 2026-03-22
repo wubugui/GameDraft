@@ -73,6 +73,8 @@ export interface SceneData {
   height: number;
   /** 背景缩放系数，默认 1。场景边界默认与背景图同尺寸，设为其他值时场景尺寸 = 背景图尺寸 * backgroundScale */
   backgroundScale?: number;
+  /** 场景精灵缩放因子，默认 1。放入该场景的实体层精灵（Player、NPC）会按此因子缩放；可被实体的 overrideSceneScale 跳过 */
+  spriteScaleFactor?: number;
   backgrounds: BackgroundLayer[];
   collisions: Rect[];
   spawnPoint: Position;
@@ -83,6 +85,8 @@ export interface SceneData {
   zones?: ZoneDef[];
   bgm?: string;
   ambientSounds?: string[];
+  /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
+  filterId?: string;
 }
 
 // ============================================================
@@ -145,6 +149,8 @@ export interface NpcDef {
   interactionRange: number;
   animFile?: string;
   patrol?: PatrolDef;
+  /** 为 true 时跳过场景的 spriteScaleFactor，使用动画定义中的原始 scale */
+  overrideSceneScale?: boolean;
 }
 
 // ============================================================
@@ -274,6 +280,8 @@ export interface AnimationSetDef {
   cols?: number;
   rows?: number;
   scale?: number;
+  /** 为 true 时跳过场景的 spriteScaleFactor，使用本定义的 scale */
+  overrideSceneScale?: boolean;
   states: Record<string, AnimationStateDef>;
 }
 
@@ -291,6 +299,31 @@ export interface DialogueLogEntry {
   type: 'line' | 'choice';
   speaker?: string;
   text: string;
+}
+
+export interface DialogueLine {
+  speaker: string;
+  text: string;
+  tags: string[];
+}
+
+export interface DialogueChoice {
+  index: number;
+  text: string;
+  tags: string[];
+  enabled: boolean;
+  ruleHintId?: string;
+}
+
+export interface ResolvedOption {
+  index: number;
+  text: string;
+  type: 'general' | 'rule' | 'special';
+  enabled: boolean;
+  disableReason?: string;
+  consumeItems?: { id: string; count: number }[];
+  resultActions: EncounterOptionDef['resultActions'];
+  resultText?: string;
 }
 
 // ============================================================
@@ -316,6 +349,12 @@ export interface ICutsceneActor {
   setVisible(visible: boolean): void;
   getDisplayObject(): unknown;
   cutsceneUpdate(dt: number): void;
+}
+
+/** 演出气泡提供者接口，用于 CutsceneManager 解耦对 EmoteBubbleManager 的直接依赖 */
+export interface IEmoteBubbleProvider {
+  showAndWait(actor: ICutsceneActor, emote: string, durationMs?: number): Promise<void>;
+  cleanup(): void;
 }
 
 export interface CutsceneDef {
@@ -439,6 +478,10 @@ export interface GameConfig {
   initialScene: string;
   initialQuest: string;
   fallbackScene: string;
+  /** 首次进入 initialScene 时播放的演出 ID，未配置则不播放 */
+  initialCutscene?: string;
+  /** 判断 initialCutscene 是否已播放的 FlagStore key，未配置则每次启动都播放 */
+  initialCutsceneDoneFlag?: string;
 }
 
 // ============================================================

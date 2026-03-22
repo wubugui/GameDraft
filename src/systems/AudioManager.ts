@@ -26,6 +26,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private bgmVolume = 0.6;
   private sfxVolume = 0.8;
   private ambientVolume = 0.4;
+  private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
@@ -69,7 +70,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     if (this.currentBgm) {
       const old = this.currentBgm;
       old.fade(old.volume(), 0, fadeMs);
-      setTimeout(() => { old.stop(); old.unload(); }, fadeMs);
+      this.scheduleCleanup(() => { old.stop(); old.unload(); }, fadeMs);
     }
 
     const howl = new Howl({
@@ -88,7 +89,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     if (!this.currentBgm) return;
     const bgm = this.currentBgm;
     bgm.fade(bgm.volume(), 0, fadeMs);
-    setTimeout(() => { bgm.stop(); bgm.unload(); }, fadeMs);
+    this.scheduleCleanup(() => { bgm.stop(); bgm.unload(); }, fadeMs);
     this.currentBgm = null;
     this.currentBgmId = null;
   }
@@ -116,14 +117,14 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     const howl = this.ambientLayers.get(id);
     if (!howl) return;
     howl.fade(howl.volume(), 0, fadeMs);
-    setTimeout(() => { howl.stop(); howl.unload(); }, fadeMs);
+    this.scheduleCleanup(() => { howl.stop(); howl.unload(); }, fadeMs);
     this.ambientLayers.delete(id);
   }
 
   clearAmbient(fadeMs: number = 500): void {
     this.ambientLayers.forEach((howl) => {
       howl.fade(howl.volume(), 0, fadeMs);
-      setTimeout(() => { howl.stop(); howl.unload(); }, fadeMs);
+      this.scheduleCleanup(() => { howl.stop(); howl.unload(); }, fadeMs);
     });
     this.ambientLayers.clear();
   }
@@ -195,8 +196,24 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     if (data.ambientVolume !== undefined) this.ambientVolume = data.ambientVolume;
   }
 
+  private scheduleCleanup(fn: () => void, ms: number): void {
+    const id = setTimeout(() => {
+      this.pendingTimers.delete(id);
+      fn();
+    }, ms);
+    this.pendingTimers.add(id);
+  }
+
   destroy(): void {
-    this.stopBgm(0);
+    if (this.currentBgm) {
+      const bgm = this.currentBgm;
+      this.currentBgm = null;
+      this.currentBgmId = null;
+      bgm.stop();
+      bgm.unload();
+    }
+    this.pendingTimers.forEach(id => clearTimeout(id));
+    this.pendingTimers.clear();
     this.ambientLayers.forEach((howl) => { howl.stop(); howl.unload(); });
     this.ambientLayers.clear();
     this.sfxCache.forEach((howl) => howl.unload());

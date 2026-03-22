@@ -1,4 +1,5 @@
 import type { SaveSlotMeta, ISaveDataProvider } from '../data/types';
+import type { StringsProvider } from './StringsProvider';
 
 const STORAGE_PREFIX = 'gamedraft_save_';
 const MAX_SLOTS = 3;
@@ -12,16 +13,19 @@ export class SaveManager implements ISaveDataProvider {
   private distributor: DeserializeDistributor;
   private sceneReloader: SceneReloader;
   private fallbackScene: string;
+  private strings: StringsProvider;
 
   constructor(
     collector: SerializeCollector,
     distributor: DeserializeDistributor,
     sceneReloader: SceneReloader,
+    strings: StringsProvider,
     fallbackScene: string = 'test_room_a',
   ) {
     this.collector = collector;
     this.distributor = distributor;
     this.sceneReloader = sceneReloader;
+    this.strings = strings;
     this.fallbackScene = fallbackScene;
   }
 
@@ -80,7 +84,7 @@ export class SaveManager implements ISaveDataProvider {
         slot,
         timestamp: payload.timestamp ?? 0,
         sceneId: scene?.currentSceneId ?? 'unknown',
-        sceneName: game?.sceneName ?? scene?.currentSceneId ?? '未知',
+        sceneName: game?.sceneName ?? scene?.currentSceneId ?? this.strings.get('menu', 'unknownScene'),
         dayNumber: day?.currentDay ?? 1,
         playTimeMs: game?.playTimeMs ?? 0,
       };

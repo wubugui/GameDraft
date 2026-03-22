@@ -4,6 +4,7 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { MapNodeDef } from '../data/types';
 import { resolveAssetPath } from '../core/assetPath';
+import type { StringsProvider } from '../core/StringsProvider';
 
 const PANEL_W = 600;
 const PANEL_H = 450;
@@ -13,15 +14,17 @@ export class MapUI {
   private renderer: Renderer;
   private eventBus: EventBus;
   private flagStore: FlagStore;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private _isOpen = false;
   private nodes: MapNodeDef[] = [];
   private currentSceneId: string = '';
 
-  constructor(renderer: Renderer, eventBus: EventBus, flagStore: FlagStore) {
+  constructor(renderer: Renderer, eventBus: EventBus, flagStore: FlagStore, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.flagStore = flagStore;
+    this.strings = strings;
   }
 
   async loadConfig(): Promise<void> {
@@ -70,7 +73,7 @@ export class MapUI {
     this.container.addChild(bg);
 
     const title = new Text({
-      text: '渝都卫城区图',
+      text: this.strings.get('map', 'title'),
       style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
     });
     title.x = px + 20;
@@ -78,7 +81,7 @@ export class MapUI {
     this.container.addChild(title);
 
     const hint = new Text({
-      text: '按 M 关闭',
+      text: this.strings.get('map', 'closeHint'),
       style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
     });
     hint.x = px + PANEL_W - 80;
@@ -87,7 +90,7 @@ export class MapUI {
 
     if (this.nodes.length === 0) {
       const empty = new Text({
-        text: '(地图数据暂未配置)',
+        text: this.strings.get('map', 'noData'),
         style: { fontSize: 13, fill: 0x555566, fontFamily: 'sans-serif' },
       });
       empty.x = px + (PANEL_W - empty.width) / 2;
@@ -128,7 +131,7 @@ export class MapUI {
       this.container.addChild(circle);
 
       const label = new Text({
-        text: unlocked ? node.name : '???',
+        text: unlocked ? node.name : this.strings.get('map', 'locked'),
         style: {
           fontSize: 11,
           fill: isCurrent ? 0xffee88 : (unlocked ? 0xaabbcc : 0x444455),

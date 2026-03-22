@@ -1,10 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
-import type { IArchiveDataProvider } from '../data/types';
-import { CharacterBookUI } from './CharacterBookUI';
-import { LoreBookUI } from './LoreBookUI';
-import { DocumentBoxUI } from './DocumentBoxUI';
-import type { BookReaderUI } from './BookReaderUI';
+import type { IArchiveDataProvider, BookDef } from '../data/types';
+import type { StringsProvider } from '../core/StringsProvider';
 
 const PANEL_W = 700;
 const PANEL_H = 520;
@@ -20,27 +17,42 @@ interface BookSlot {
   hasUnread: boolean;
 }
 
+/** 打开子面板的回调类型，返回带 close 的句柄 */
+export type OnOpenSubPanel = (onClose: () => void) => { close(): void };
+/** 打开独立书籍时的回调，返回带 close 的句柄供书架在关闭子面板时使用 */
+export type OnOpenBook = (book: BookDef, onClose: () => void) => { close(): void };
+
 export class BookshelfUI {
   private renderer: Renderer;
   private archiveData: IArchiveDataProvider;
   private container: Container | null = null;
   private _isOpen = false;
   private activeSubPanel: { close(): void } | null = null;
-  private bookReaderUI: BookReaderUI | null = null;
   private onOpenRules: () => void;
+  private onOpenBook: OnOpenBook;
+  private onOpenCharacters: OnOpenSubPanel;
+  private onOpenLore: OnOpenSubPanel;
+  private onOpenDocuments: OnOpenSubPanel;
+  private strings: StringsProvider;
 
   constructor(
     renderer: Renderer,
     archiveData: IArchiveDataProvider,
     onOpenRules: () => void,
+    onOpenBook: OnOpenBook,
+    onOpenCharacters: OnOpenSubPanel,
+    onOpenLore: OnOpenSubPanel,
+    onOpenDocuments: OnOpenSubPanel,
+    strings: StringsProvider,
   ) {
     this.renderer = renderer;
     this.archiveData = archiveData;
     this.onOpenRules = onOpenRules;
-  }
-
-  setBookReaderUI(ui: BookReaderUI): void {
-    this.bookReaderUI = ui;
+    this.onOpenBook = onOpenBook;
+    this.onOpenCharacters = onOpenCharacters;
+    this.onOpenLore = onOpenLore;
+    this.onOpenDocuments = onOpenDocuments;
+    this.strings = strings;
   }
 
   get isOpen(): boolean { return this._isOpen; }
@@ -79,7 +91,7 @@ export class BookshelfUI {
     this.container.addChild(bg);
 
     const title = new Text({
-      text: '书架',
+      text: this.strings.get('bookshelf', 'title'),
       style: { fontSize: 20, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
     });
     title.x = px + PADDING;
@@ -87,7 +99,7 @@ export class BookshelfUI {
     this.container.addChild(title);
 
     const hint = new Text({
-      text: '按 B 关闭',
+      text: this.strings.get('bookshelf', 'closeHint'),
       style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
     });
     hint.x = px + PANEL_W - 80;
@@ -95,10 +107,10 @@ export class BookshelfUI {
     this.container.addChild(hint);
 
     const fixedBooks: BookSlot[] = [
-      { id: 'rules', label: '规矩本', color: 0x8b4513, hasUnread: false },
-      { id: 'character', label: '人物簿', color: 0x2e4057, hasUnread: this.archiveData.hasUnread('character') },
-      { id: 'lore', label: '见闻录', color: 0x3e5641, hasUnread: this.archiveData.hasUnread('lore') },
-      { id: 'document', label: '杂书匣', color: 0x5c4033, hasUnread: this.archiveData.hasUnread('document') },
+      { id: 'rules', label: this.strings.get('bookshelf', 'rules'), color: 0x8b4513, hasUnread: false },
+      { id: 'character', label: this.strings.get('bookshelf', 'characters'), color: 0x2e4057, hasUnread: this.archiveData.hasUnread('character') },
+      { id: 'lore', label: this.strings.get('bookshelf', 'lore'), color: 0x3e5641, hasUnread: this.archiveData.hasUnread('lore') },
+      { id: 'document', label: this.strings.get('bookshelf', 'documents'), color: 0x5c4033, hasUnread: this.archiveData.hasUnread('document') },
     ];
 
     const dynamicBooks = this.archiveData.getUnlockedBooks();
@@ -163,48 +175,41 @@ export class BookshelfUI {
     }
 
     if (bookId === 'character') {
-      const sub = new CharacterBookUI(this.renderer, this.archiveData, () => {
+      this.activeSubPanel = this.onOpenCharacters(() => {
         this.closeSubPanel();
         this.buildShelf();
       });
-      sub.open();
-      this.activeSubPanel = sub;
       this.destroyShelfOnly();
       return;
     }
 
     if (bookId === 'lore') {
-      const sub = new LoreBookUI(this.renderer, this.archiveData, () => {
+      this.activeSubPanel = this.onOpenLore(() => {
         this.closeSubPanel();
         this.buildShelf();
       });
-      sub.open();
-      this.activeSubPanel = sub;
       this.destroyShelfOnly();
       return;
     }
 
     if (bookId === 'document') {
-      const sub = new DocumentBoxUI(this.renderer, this.archiveData, () => {
+      this.activeSubPanel = this.onOpenDocuments(() => {
         this.closeSubPanel();
         this.buildShelf();
       });
-      sub.open();
-      this.activeSubPanel = sub;
       this.destroyShelfOnly();
       return;
     }
 
-    if (bookId.startsWith('book_') && this.bookReaderUI) {
+    if (bookId.startsWith('book_')) {
       const realId = bookId.substring(5);
       const books = this.archiveData.getBooks();
       const book = books.find(b => b.id === realId);
       if (book) {
-        this.bookReaderUI.openBook(book, () => {
+        this.activeSubPanel = this.onOpenBook(book, () => {
           this.closeSubPanel();
           this.buildShelf();
         });
-        this.activeSubPanel = this.bookReaderUI;
         this.destroyShelfOnly();
       }
     }
@@ -227,5 +232,9 @@ export class BookshelfUI {
 
   private destroyUI(): void {
     this.destroyShelfOnly();
+  }
+
+  destroy(): void {
+    this.close();
   }
 }
