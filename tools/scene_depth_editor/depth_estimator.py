@@ -20,6 +20,7 @@ class DepthResult:
     image: Image.Image
     min_value: float
     max_value: float
+    raw_normalized: object  # numpy float32 ndarray [0,1], near=bright(high)
 
 
 class DepthEstimator:
@@ -59,15 +60,19 @@ class DepthEstimator:
         max_value = float(prediction.max())
 
         if max_value - min_value < 1e-8:
+            import numpy as np
+            normalized = np.full(prediction.shape, 0.5, dtype=np.float32)
             depth_image = Image.new("L", rgb.size, color=128)
         else:
             normalized = (prediction - min_value) / (max_value - min_value)
             depth_image = Image.fromarray((normalized * 255.0).clip(0, 255).astype("uint8"), mode="L")
+            normalized = normalized.astype("float32")
 
         if status:
             status("深度图生成完成。")
 
-        return DepthResult(depth_image, min_value=min_value, max_value=max_value)
+        return DepthResult(depth_image, min_value=min_value, max_value=max_value,
+                           raw_normalized=normalized)
 
     def _ensure_model(self, model_id: str, status: StatusCallback | None):
         if self._model_id == model_id and self._processor is not None and self._model is not None:

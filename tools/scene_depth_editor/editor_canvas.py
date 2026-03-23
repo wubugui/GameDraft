@@ -11,6 +11,7 @@ from .mask_utils import apply_mask_to_image
 
 
 MaskChangedCallback = Callable[[], None]
+PositionCallback = Callable[[float, float], None]
 
 
 class EditorCanvas(tk.Canvas):
@@ -26,6 +27,12 @@ class EditorCanvas(tk.Canvas):
         self._overlay_alpha = 110
         self._show_edge_overlay = False
         self._edge_overlay_alpha = 150
+
+        self._extra_previews: dict[str, Image.Image] = {}
+        self._interaction_mode = "paint"
+        self._billboard_moved_cb: PositionCallback | None = None
+        self._point_picked_cb: PositionCallback | None = None
+        self._billboard_dragging = False
 
         self._zoom = 1.0
         self._min_zoom = 0.1
@@ -128,6 +135,24 @@ class EditorCanvas(tk.Canvas):
     def set_fill_radius(self, fill_radius: int) -> None:
         self._fill_radius = max(1, fill_radius)
 
+    def set_extra_preview(self, mode: str, image: Image.Image | None) -> None:
+        if image is not None:
+            self._extra_previews[mode] = image
+        elif mode in self._extra_previews:
+            del self._extra_previews[mode]
+        if self._preview_mode == mode:
+            self._invalidate_preview_cache()
+            self.refresh()
+
+    def set_interaction_mode(self, mode: str) -> None:
+        self._interaction_mode = mode
+
+    def set_billboard_moved_callback(self, cb: PositionCallback | None) -> None:
+        self._billboard_moved_cb = cb
+
+    def set_point_picked_callback(self, cb: PositionCallback | None) -> None:
+        self._point_picked_cb = cb
+
     def fit_to_view(self) -> None:
         self._fit_pending = True
         self.refresh()
@@ -208,6 +233,9 @@ class EditorCanvas(tk.Canvas):
         if self._source_image is None:
             return None
 
+        if self._preview_mode in self._extra_previews:
+            return self._extra_previews[self._preview_mode].convert("RGB")
+
         if self._preview_mode == "depth" and self._depth_image is not None:
             return self._depth_image.convert("RGB")
 
@@ -255,6 +283,18 @@ class EditorCanvas(tk.Canvas):
         point = self._canvas_to_image(event.x, event.y)
         if point is None:
             return
+
+        if self._interaction_mode == "billboard":
+            self._billboard_dragging = True
+            if self._billboard_moved_cb:
+                self._billboard_moved_cb(point[0], point[1])
+            return
+
+        if self._interaction_mode == "pick_floor":
+            if self._point_picked_cb:
+                self._point_picked_cb(point[0], point[1])
+            return
+
         self._push_history_state()
         self._stroke_seed_point = point
         self._stroke_reference_depth = self._depth_at_point(point) if self._depth_image else None
@@ -271,12 +311,28 @@ class EditorCanvas(tk.Canvas):
 
     def _on_left_drag(self, event: tk.Event) -> None:
         point = self._canvas_to_image(event.x, event.y)
-        if point is None or self._last_paint_point is None:
+        if point is None:
+            return
+
+        if self._interaction_mode == "billboard" and self._billboard_dragging:
+            if self._billboard_moved_cb:
+                self._billboard_moved_cb(point[0], point[1])
+            return
+
+        if self._interaction_mode == "pick_floor":
+            return
+
+        if self._last_paint_point is None:
             return
         self._paint_line(self._last_paint_point, point)
         self._last_paint_point = point
 
     def _on_left_up(self, _event: tk.Event) -> None:
+        if self._interaction_mode == "billboard":
+            self._billboard_dragging = False
+            return
+        if self._interaction_mode == "pick_floor":
+            return
         self._last_paint_point = None
         self._stroke_seed_point = None
         self._stroke_reference_depth = None
@@ -483,9 +539,20 @@ class EditorCanvas(tk.Canvas):
         if point is None:
             return
 
+        cx, cy = self._cursor_canvas_pos
+
+        if self._interaction_mode in ("billboard", "pick_floor"):
+            arm = 10
+            color = "#ff6644" if self._interaction_mode == "pick_floor" else "#66d9ef"
+            ids = [
+                self.create_line(cx - arm, cy, cx + arm, cy, fill=color, width=1),
+                self.create_line(cx, cy - arm, cx, cy + arm, fill=color, width=1),
+            ]
+            self._cursor_item_ids.extend(ids)
+            return
+
         radius = self._fill_radius if self._tool_mode == "depth_fill" else max(1, self._brush_size // 2)
         radius_px = radius * self._zoom
-        cx, cy = self._cursor_canvas_pos
         outline = "#66d9ef" if self._tool_mode != "normal" else "#f8f8f2"
         dash = (4, 2) if self._tool_mode == "depth_fill" else None
         oval_id = self.create_oval(
