@@ -1,0 +1,46 @@
+{
+  "depth_map": "raw_depth_rg.png",
+  "collision_map": "collision.png",
+  "M": {
+    "R": [
+      [
+        0.0,
+        -0.5299192642332049,
+        -0.848048096156426
+      ],
+      [
+        0.0,
+        0.848048096156426,
+        -0.5299192642332049
+      ],
+      [
+        -1.0,
+        0.0,
+        -0.0
+      ]
+    ],
+    "ppu": 409.0,
+    "cx": 600.0,
+    "cy": 448.0
+  },
+  "depth_mapping": {
+    "invert": true,
+    "scale": 4.69,
+    "offset": -3.6
+  },
+  "shader": {
+    "depth_per_sy": 0.0015277979264286734,
+    "floor_depth_A": 0.003912798359513571,
+    "floor_depth_B": 1.7529336650620797
+  },
+  "depth_tolerance": 0.0,
+  "floor_offset": 0.0,
+  "collision": {
+    "x_min": -1.4568284797968425,
+    "z_min": -1.4572127139364304,
+    "cell_size": 0.024085983072081395,
+    "grid_width": 201,
+    "grid_height": 123,
+    "height_offset": 0.03
+  }
+}

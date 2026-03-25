@@ -36,10 +36,20 @@ export class AssetManager {
     return text;
   }
 
+  resolveSceneAssetPath(sceneId: string, imagePath: string): string {
+    if (!imagePath || imagePath.startsWith('/') || imagePath.startsWith('assets/')) return imagePath;
+    return `assets/scenes/${sceneId}/${imagePath}`;
+  }
+
   async loadSceneData(sceneId: string): Promise<SceneData> {
     const raw = await this.loadJson<SceneDataRaw>(`assets/scenes/${sceneId}.json`);
     const scale = raw.backgroundScale ?? 1;
 
+    if (raw.backgrounds) {
+      for (const layer of raw.backgrounds) {
+        layer.image = this.resolveSceneAssetPath(sceneId, layer.image);
+      }
+    }
     if (raw.backgrounds && raw.backgrounds.length > 0) {
       try {
         const texture = await this.loadTexture(raw.backgrounds[0].image);

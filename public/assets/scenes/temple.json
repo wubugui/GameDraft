@@ -1,22 +1,26 @@
 {
   "id": "temple",
   "name": "破烂城隍庙",
+  "spriteScaleFactor": 1,
   "width": 1400,
   "height": 1000,
-  "backgroundScale": 1.3020833333,
+  "backgroundScale": 1,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/temple_bg.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 1400, "height": 300 },
-    { "x": 0, "y": 900, "width": 1400, "height": 100 },
-    { "x": 0, "y": 0, "width": 200, "height": 1000 },
-    { "x": 1200, "y": 0, "width": 200, "height": 1000 },
-    { "x": 500, "y": 300, "width": 400, "height": 100 }
-  ],
-  "spawnPoint": { "x": 700, "y": 800 },
+  "spawnPoint": {
+    "x": 700,
+    "y": 800
+  },
   "spawnPoints": {
-    "from_street": { "x": 700, "y": 800 }
+    "from_street": {
+      "x": 700,
+      "y": 800
+    }
   },
   "hotspots": [
     {
@@ -42,14 +46,31 @@
       "height": 100,
       "interactionRange": 90,
       "conditions": [
-        { "flag": "got_iron_box" },
-        { "flag": "box_hidden_in_temple", "op": "!=", "value": true }
+        {
+          "flag": "got_iron_box"
+        },
+        {
+          "flag": "box_hidden_in_temple",
+          "op": "!=",
+          "value": true
+        }
       ],
       "data": {
         "text": "城隍像后头积了厚厚一层灰，砖缝里正好塞得下一只半巴掌大的铁盒。你左右看看，咬咬牙，把盒子推进去藏好了。",
         "actions": [
-          { "type": "setFlag", "params": { "key": "box_hidden_in_temple", "value": true } },
-          { "type": "startCutscene", "params": { "id": "temple_strangers_arrive" } }
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "box_hidden_in_temple",
+              "value": true
+            }
+          },
+          {
+            "type": "startCutscene",
+            "params": {
+              "id": "temple_strangers_arrive"
+            }
+          }
         ]
       }
     },
@@ -63,15 +84,39 @@
       "height": 180,
       "interactionRange": 130,
       "conditions": [
-        { "flag": "strangers_entered_temple" },
-        { "flag": "saw_standing_shadow", "op": "!=", "value": true }
+        {
+          "flag": "strangers_entered_temple"
+        },
+        {
+          "flag": "saw_standing_shadow",
+          "op": "!=",
+          "value": true
+        }
       ],
       "data": {
         "text": "你屏着气，又慢慢摸回庙门口。月光从屋顶的破洞漏下来，斜斜照在墙上。墙边明明该趴着一具倒地的人影，可你看见的，却是个直挺挺站着的女人影子。\n\n你头皮一炸，连盒子都不敢再想，转身就跑，直到冲回街巷才敢喘气。今晚这事，怎么都得等天亮以后再回来看个明白。",
         "actions": [
-          { "type": "setFlag", "params": { "key": "saw_standing_shadow", "value": true } },
-          { "type": "setFlag", "params": { "key": "first_night_escape", "value": true } },
-          { "type": "switchScene", "params": { "targetScene": "test_room_a", "targetSpawnPoint": "from_temple" } }
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "saw_standing_shadow",
+              "value": true
+            }
+          },
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "first_night_escape",
+              "value": true
+            }
+          },
+          {
+            "type": "switchScene",
+            "params": {
+              "targetScene": "test_room_a",
+              "targetSpawnPoint": "from_temple"
+            }
+          }
         ]
       }
     },
@@ -85,14 +130,31 @@
       "height": 140,
       "interactionRange": 100,
       "conditions": [
-        { "flag": "day_2_started" },
-        { "flag": "saw_hanged_woman", "op": "!=", "value": true }
+        {
+          "flag": "day_2_started"
+        },
+        {
+          "flag": "saw_hanged_woman",
+          "op": "!=",
+          "value": true
+        }
       ],
       "data": {
         "text": "你抬头一看，浑身都僵了。梁上吊着一具女尸，正是昨晚那女人。她脸朝外，舌头微微伸着，眼珠子已经不会动了。\n\n你强撑着挪开眼，往城隍像后头摸——砖缝里的铁盒还在。你一把抓起来揣进怀里，头也不回地冲出了庙门。",
         "actions": [
-          { "type": "setFlag", "params": { "key": "saw_hanged_woman", "value": true } },
-          { "type": "startCutscene", "params": { "id": "prologue_demo_end" } }
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "saw_hanged_woman",
+              "value": true
+            }
+          },
+          {
+            "type": "startCutscene",
+            "params": {
+              "id": "prologue_demo_end"
+            }
+          }
         ]
       }
     },
@@ -108,8 +170,20 @@
       "data": {
         "text": "角落里立着块旧石碑，碑文风化得只剩最后几句还能认：\"阎王岭下，阴阳交汇，城隍镇之。\"你看完只觉背后更凉了。",
         "actions": [
-          { "type": "setFlag", "params": { "key": "inspected_stone_tablet", "value": true } },
-          { "type": "addArchiveEntry", "params": { "bookType": "lore", "entryId": "lore_temple_history" } }
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "inspected_stone_tablet",
+              "value": true
+            }
+          },
+          {
+            "type": "addArchiveEntry",
+            "params": {
+              "bookType": "lore",
+              "entryId": "lore_temple_history"
+            }
+          }
         ]
       }
     },
@@ -127,5 +201,51 @@
         "targetSpawnPoint": "from_temple"
       }
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.5877852522924731,
+          -0.8090169943749475
+        ],
+        [
+          0.0,
+          0.8090169943749475,
+          -0.5877852522924731
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 384.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.1,
+      "offset": -3.45
+    },
+    "shader": {
+      "depth_per_sy": 0.001892037833347294,
+      "floor_depth_A": -0.003584327917893681,
+      "floor_depth_B": 1.3763819204711736
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -0.8722069777211495,
+      "z_min": -1.78125,
+      "cell_size": 0.020977115194501645,
+      "grid_width": 201,
+      "grid_height": 172,
+      "height_offset": 0.05
+    }
+  }
 }

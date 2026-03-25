@@ -1,15 +1,11 @@
 {
   "id": "test_room_b",
   "name": "后巷",
+  "spriteScaleFactor": 1,
   "width": 1000,
   "height": 800,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/back_alley_dock_bg.png", "x": 0, "y": 0 }
-  ],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 200, "height": 800 },
-    { "x": 800, "y": 0, "width": 200, "height": 800 },
-    { "x": 0, "y": 0, "width": 1000, "height": 200 }
+    { "image": "background.png", "x": 0, "y": 0 }
   ],
   "spawnPoint": { "x": 500, "y": 700 },
   "spawnPoints": {

@@ -1,26 +1,42 @@
 {
   "id": "test_room_a",
   "name": "街巷",
+  "spriteScaleFactor": 1,
   "width": 1600,
   "height": 1000,
-  "backgroundScale": 1.171875,
+  "backgroundScale": 1,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/night_alley_bg.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "collisions": [
-    { "x": 0, "y": 0, "width": 1600, "height": 300 },
-    { "x": 0, "y": 800, "width": 1600, "height": 200 },
-    { "x": 0, "y": 0, "width": 200, "height": 1000 },
-    { "x": 1400, "y": 0, "width": 200, "height": 1000 },
-    { "x": 600, "y": 400, "width": 400, "height": 200 }
-  ],
-  "spawnPoint": { "x": 800, "y": 700 },
+  "spawnPoint": {
+    "x": 800,
+    "y": 700
+  },
   "spawnPoints": {
-    "from_b": { "x": 1200, "y": 400 },
-    "from_teahouse": { "x": 600, "y": 650 },
-    "from_temple": { "x": 1300, "y": 200 },
-    "from_bridge": { "x": 900, "y": 650 },
-    "from_mountain_pass": { "x": 400, "y": 600 }
+    "from_b": {
+      "x": 1200,
+      "y": 400
+    },
+    "from_teahouse": {
+      "x": 600,
+      "y": 650
+    },
+    "from_temple": {
+      "x": 1300,
+      "y": 200
+    },
+    "from_bridge": {
+      "x": 900,
+      "y": 650
+    },
+    "from_mountain_pass": {
+      "x": 400,
+      "y": 600
+    }
   },
   "hotspots": [
     {
@@ -115,21 +131,89 @@
       "height": 80,
       "interactionRange": 90,
       "conditions": [
-        { "flag": "first_night_escape" },
-        { "flag": "day_2_started", "op": "!=", "value": true }
+        {
+          "flag": "first_night_escape"
+        },
+        {
+          "flag": "day_2_started",
+          "op": "!=",
+          "value": true
+        }
       ],
       "data": {
         "text": "你找了个避风的墙角缩了一夜，半睡半醒间总觉得有什么在盯着自己。天终于亮了。",
         "actions": [
-          { "type": "endDay", "params": {} },
-          { "type": "setFlag", "params": { "key": "day_2_started", "value": true } },
-          { "type": "startCutscene", "params": { "id": "day_2_dawn" } }
+          {
+            "type": "endDay",
+            "params": {}
+          },
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "day_2_started",
+              "value": true
+            }
+          },
+          {
+            "type": "startCutscene",
+            "params": {
+              "id": "day_2_dawn"
+            }
+          }
         ]
       }
     }
   ],
   "npcs": [],
   "zones": [],
-  "ambientSounds": ["night_alley_wind"],
-  "filterId": "night"
+  "ambientSounds": [
+    "night_alley_wind"
+  ],
+  "filterId": "night",
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.6427876096865394,
+          -0.766044443118978
+        ],
+        [
+          0.0,
+          0.7660444431189781,
+          -0.6427876096865393
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 229.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.69,
+      "offset": -2.94
+    },
+    "shader": {
+      "depth_per_sy": 0.0036641905291584283,
+      "floor_depth_A": -0.0052041641598000446,
+      "floor_depth_B": 1.9983990373632174
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -2.418212061104043,
+      "z_min": -2.986899563318777,
+      "cell_size": 0.02995633187772926,
+      "grid_width": 192,
+      "grid_height": 201,
+      "height_offset": 0.1
+    }
+  }
 }

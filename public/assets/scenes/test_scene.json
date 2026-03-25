@@ -1,11 +1,11 @@
 {
   "id": "test_scene",
   "name": "测试场景",
+  "spriteScaleFactor": 1,
   "width": 1600,
   "height": 1200,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/test_bg.png", "x": 0, "y": 0 }
+    { "image": "background.png", "x": 0, "y": 0 }
   ],
-  "collisions": [],
   "spawnPoint": { "x": 800, "y": 600 }
 }

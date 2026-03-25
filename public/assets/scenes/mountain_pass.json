@@ -1,22 +1,35 @@
 {
   "id": "mountain_pass",
   "name": "山路",
+  "spriteScaleFactor": 1,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/mountain_pass_bg.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "collisions": [],
-  "spawnPoint": { "x": 800, "y": 700 },
+  "spawnPoint": {
+    "x": 228,
+    "y": 717
+  },
   "spawnPoints": {
-    "from_street": { "x": 200, "y": 650 },
-    "from_temple_exterior": { "x": 1400, "y": 500 }
+    "from_street": {
+      "x": 228,
+      "y": 717
+    },
+    "from_temple_exterior": {
+      "x": 1261,
+      "y": 689
+    }
   },
   "hotspots": [
     {
       "id": "exit_to_street",
       "type": "transition",
       "label": "回街巷",
-      "x": 150,
-      "y": 700,
+      "x": 221,
+      "y": 743,
       "width": 120,
       "height": 80,
       "interactionRange": 70,
@@ -29,8 +42,8 @@
       "id": "exit_to_temple",
       "type": "transition",
       "label": "去庙宇",
-      "x": 1450,
-      "y": 450,
+      "x": 1313,
+      "y": 709,
       "width": 100,
       "height": 100,
       "interactionRange": 70,
@@ -39,5 +52,51 @@
         "targetSpawnPoint": "from_mountain_pass"
       }
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.9961946980917455,
+          -0.08715574274765814
+        ],
+        [
+          0.0,
+          0.08715574274765814,
+          -0.9961946980917455
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 10.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 0.001,
+      "offset": 0.0
+    },
+    "shader": {
+      "depth_per_sy": 1.1430052302761349,
+      "floor_depth_A": -0.008748866352592397,
+      "floor_depth_B": 3.3595646793954805
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -38.25394957373098,
+      "z_min": -68.4,
+      "cell_size": 0.6859999999999999,
+      "grid_width": 112,
+      "grid_height": 201,
+      "height_offset": 0.67
+    }
+  }
 }

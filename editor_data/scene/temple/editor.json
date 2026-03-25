@@ -1,0 +1,27 @@
+{
+  "depth_model": "base - LiheYoung/depth-anything-base-hf",
+  "subsample": 4,
+  "wireframe": false,
+  "view": {
+    "show_grid": true,
+    "show_axes": false,
+    "show_labels": false,
+    "show_collision": true
+  },
+  "collision_edit": {
+    "stretch_factor": 3.0,
+    "height_offset": 0.05,
+    "collision_alpha": 0.3,
+    "brush_radius": 0.11
+  },
+  "billboard": {
+    "enabled": true,
+    "scale": 1.0
+  },
+  "occlusion": {
+    "step": 10,
+    "scale": 1.0,
+    "tolerance": 0.0,
+    "floor_offset": 0.0
+  }
+}

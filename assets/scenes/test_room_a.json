@@ -1,6 +1,7 @@
 {
   "id": "test_room_a",
   "name": "测试房间A",
+  "spriteScaleFactor": 1,
   "width": 1200,
   "height": 900,
   "backgrounds": [],

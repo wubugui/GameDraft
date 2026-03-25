@@ -4,7 +4,6 @@ export function createPlaceholderBackground(
   _app: Application,
   width: number,
   height: number,
-  collisions: { x: number; y: number; width: number; height: number }[]
 ): Container {
   const container = new Container();
 
@@ -23,12 +22,6 @@ export function createPlaceholderBackground(
   }
   grid.stroke({ width: 1, color: 0x3a3a4e });
   container.addChild(grid);
-
-  for (const rect of collisions) {
-    const obs = new Graphics();
-    obs.rect(rect.x, rect.y, rect.width, rect.height).fill({ color: 0x5a4a3e, alpha: 0.7 });
-    container.addChild(obs);
-  }
 
   return container;
 }

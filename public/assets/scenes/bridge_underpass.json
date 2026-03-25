@@ -1,15 +1,25 @@
 {
   "id": "bridge_underpass",
   "name": "桥下",
+  "spriteScaleFactor": 1,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/bridge_underpass_bg.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "collisions": [],
   "width": 1600,
   "height": 1000,
-  "spawnPoint": { "x": 800, "y": 820 },
+  "spawnPoint": {
+    "x": 800,
+    "y": 820
+  },
   "spawnPoints": {
-    "from_street": { "x": 800, "y": 820 }
+    "from_street": {
+      "x": 800,
+      "y": 820
+    }
   },
   "hotspots": [
     {
@@ -26,5 +36,51 @@
         "targetSpawnPoint": "from_bridge"
       }
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.3420201433256687,
+          -0.9396926207859084
+        ],
+        [
+          0.0,
+          0.9396926207859084,
+          -0.3420201433256687
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 436.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.69,
+      "offset": -3.65
+    },
+    "shader": {
+      "depth_per_sy": 0.0008347941152894549,
+      "floor_depth_A": -0.006301553714345464,
+      "floor_depth_B": 2.419796626308658
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -1.2783960517272075,
+      "z_min": -1.5688073394495412,
+      "cell_size": 0.0249007379057395,
+      "grid_width": 201,
+      "grid_height": 128,
+      "height_offset": 0.03
+    }
+  }
 }

@@ -1,21 +1,31 @@
 {
   "id": "temple_exterior",
   "name": "庙宇",
+  "spriteScaleFactor": 1,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/temple_exterior_bg.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "collisions": [],
-  "spawnPoint": { "x": 700, "y": 800 },
+  "spawnPoint": {
+    "x": 120,
+    "y": 151
+  },
   "spawnPoints": {
-    "from_mountain_pass": { "x": 700, "y": 800 }
+    "from_mountain_pass": {
+      "x": 120,
+      "y": 151
+    }
   },
   "hotspots": [
     {
       "id": "exit_to_mountain_pass",
       "type": "transition",
       "label": "回山路",
-      "x": 350,
-      "y": 850,
+      "x": 93,
+      "y": 136,
       "width": 120,
       "height": 80,
       "interactionRange": 70,
@@ -24,5 +34,51 @@
         "targetSpawnPoint": "from_temple_exterior"
       }
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.6293203910498374,
+          -0.7771459614569709
+        ],
+        [
+          0.0,
+          0.7771459614569709,
+          -0.6293203910498374
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 198.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.1,
+      "offset": -2.65
+    },
+    "shader": {
+      "depth_per_sy": 0.004089818349469733,
+      "floor_depth_A": -0.006236854325934604,
+      "floor_depth_B": 2.394952061158888
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -2.347361796451686,
+      "z_min": -3.4545454545454546,
+      "cell_size": 0.03464646464646465,
+      "grid_width": 161,
+      "grid_height": 201,
+      "height_offset": 0.05
+    }
+  }
 }

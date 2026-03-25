@@ -1,6 +1,6 @@
-numpy>=2.0.0
-Pillow>=11.0.0
-torch>=2.6.0
-transformers>=4.48.0
-matplotlib>=3.8.0
-
+torch
+transformers
+Pillow
+numpy
+PyOpenGL
+pyopengltk

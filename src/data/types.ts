@@ -64,6 +64,20 @@ export type SceneDataRaw = Omit<SceneData, 'width' | 'height'> & {
   height?: number;
 };
 
+export interface SceneDepthConfig {
+  depth_map: string;
+  collision_map: string;
+  M: { R: number[][]; ppu: number; cx: number; cy: number };
+  depth_mapping: { invert: boolean; scale: number; offset: number };
+  shader: { depth_per_sy: number; floor_depth_A: number; floor_depth_B: number };
+  collision?: {
+    x_min: number; z_min: number; cell_size: number;
+    grid_width: number; grid_height: number; height_offset: number;
+  };
+  depth_tolerance: number;
+  floor_offset: number;
+}
+
 export interface SceneData {
   id: string;
   name: string;
@@ -76,10 +90,8 @@ export interface SceneData {
   /** 场景精灵缩放因子，默认 1。放入该场景的实体层精灵（Player、NPC）会按此因子缩放；可被实体的 overrideSceneScale 跳过 */
   spriteScaleFactor?: number;
   backgrounds: BackgroundLayer[];
-  collisions: Rect[];
   spawnPoint: Position;
   spawnPoints?: Record<string, Position>;
-  foregrounds?: BackgroundLayer[];
   hotspots?: HotspotDef[];
   npcs?: NpcDef[];
   zones?: ZoneDef[];
@@ -87,6 +99,7 @@ export interface SceneData {
   ambientSounds?: string[];
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
+  depthConfig?: SceneDepthConfig;
 }
 
 // ============================================================
@@ -167,13 +180,6 @@ export interface BackgroundLayer {
   x?: number;
   y?: number;
   z?: number;
-}
-
-export interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 export interface Position {

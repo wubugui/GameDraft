@@ -1,6 +1,6 @@
 import { SpriteEntity } from '../rendering/SpriteEntity';
 import type { InputManager } from '../core/InputManager';
-import type { Rect, ICutsceneActor } from '../data/types';
+import type { ICutsceneActor } from '../data/types';
 
 const WALK_SPEED = 120;
 const RUN_SPEED = 200;
@@ -8,11 +8,11 @@ const RUN_SPEED = 200;
 export class Player implements ICutsceneActor {
   public sprite: SpriteEntity;
   private inputManager: InputManager;
-  private collisions: Rect[] = [];
-  private colliderHalfWidth: number = 10;
-  private colliderHeight: number = 8;
+  private depthCollision: ((sx: number, sy: number) => boolean) | null = null;
 
   private moveTarget: { x: number; y: number; speed: number; resolve: () => void } | null = null;
+
+  private collisionsEnabled = true;
 
   constructor(inputManager: InputManager) {
     this.sprite = new SpriteEntity();
@@ -21,14 +21,8 @@ export class Player implements ICutsceneActor {
 
   get entityId(): string { return 'player'; }
 
-  private collisionsEnabled = true;
-
-  setCollisions(collisions: Rect[]): void {
-    this.collisions = collisions;
-  }
-
-  getCollisions(): readonly Rect[] {
-    return this.collisions;
+  setDepthCollision(fn: ((sx: number, sy: number) => boolean) | null): void {
+    this.depthCollision = fn;
   }
 
   setCollisionsEnabled(enabled: boolean): void {
@@ -130,21 +124,6 @@ export class Player implements ICutsceneActor {
 
   private collidesAt(px: number, py: number): boolean {
     if (!this.collisionsEnabled) return false;
-    const left = px - this.colliderHalfWidth;
-    const right = px + this.colliderHalfWidth;
-    const top = py - this.colliderHeight;
-    const bottom = py;
-
-    for (const rect of this.collisions) {
-      if (
-        right > rect.x &&
-        left < rect.x + rect.width &&
-        bottom > rect.y &&
-        top < rect.y + rect.height
-      ) {
-        return true;
-      }
-    }
-    return false;
+    return this.depthCollision?.(px, py) ?? false;
   }
 }

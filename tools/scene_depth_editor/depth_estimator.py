@@ -89,13 +89,22 @@ class DepthEstimator:
                 "python -m pip install -r tools\\scene_depth_editor\\requirements.txt"
             ) from exc
 
+        # 优先从本地缓存加载，无缓存时才从网络下载
         if status:
-            status(f"正在加载深度模型：{model_id}")
-
-        self._processor = AutoImageProcessor.from_pretrained(model_id)
-        self._model = AutoModelForDepthEstimation.from_pretrained(model_id)
+            status("正在加载深度模型...")
+        try:
+            self._processor = AutoImageProcessor.from_pretrained(model_id, local_files_only=True)
+            self._model = AutoModelForDepthEstimation.from_pretrained(model_id, local_files_only=True)
+            if status:
+                status("已从本地缓存加载模型。")
+        except (OSError, ValueError) as _e:
+            if status:
+                status(f"本地无缓存，正在下载模型：{model_id}")
+            self._processor = AutoImageProcessor.from_pretrained(model_id)
+            self._model = AutoModelForDepthEstimation.from_pretrained(model_id)
+            if status:
+                status("模型下载完成。")
         self._model.eval()
         self._model_id = model_id
-
         return torch
 

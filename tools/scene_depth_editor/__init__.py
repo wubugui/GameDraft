@@ -1,2 +1,2 @@
-"""Scene depth and foreground extraction editor."""
+"""Scene depth reconstruction and collision editor."""
 

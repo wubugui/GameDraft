@@ -8,18 +8,6 @@ import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
 import type { SceneData, SceneRuntimeState, Position, GameContext, AnimationSetDef } from '../data/types';
 import type { IGameSystem } from '../data/types';
 
-const SCENE_BOUNDARY_MARGIN = 40;
-
-function sceneBoundaryCollisions(width: number, height: number): { x: number; y: number; width: number; height: number }[] {
-  const m = SCENE_BOUNDARY_MARGIN;
-  return [
-    { x: 0, y: 0, width, height: m },
-    { x: 0, y: 0, width: m, height },
-    { x: width - m, y: 0, width: m, height },
-    { x: 0, y: height - m, width, height: m },
-  ];
-}
-
 interface SceneMemory {
   inspectedHotspots: string[];
   pickedUpHotspots: string[];
@@ -34,19 +22,19 @@ export class SceneManager implements IGameSystem {
   private currentHotspots: Hotspot[] = [];
   private currentNpcs: Npc[] = [];
   private sceneContainerBg: Container | null = null;
-  private sceneContainerFg: Container | null = null;
   private sceneMemory: Map<string, SceneMemory> = new Map();
 
   private fadeOverlay: Graphics | null = null;
   private isSwitching: boolean = false;
   private animRafId: number = 0;
 
-  private collisionSetter: ((collisions: { x: number; y: number; width: number; height: number }[]) => void) | null = null;
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((w: number, h: number, x: number, y: number) => void) | null = null;
   private audioApplier: ((bgm?: string, ambient?: string[]) => void) | null = null;
   private zoneSetter: ((zones: import('../data/types').ZoneDef[]) => void) | null = null;
   private interactionSetter: ((hotspots: Hotspot[], npcs: Npc[]) => void) | null = null;
+  private depthLoader: ((sceneId: string, sceneData: SceneData) => Promise<void>) | null = null;
+  private depthUnloader: (() => void) | null = null;
 
   private onHotspotPickup: (payload: { hotspotId: string }) => void;
   private onHotspotInspected: (payload: { hotspotId: string }) => void;
@@ -71,10 +59,6 @@ export class SceneManager implements IGameSystem {
 
   update(_dt: number): void {}
 
-  setCollisionSetter(fn: (collisions: { x: number; y: number; width: number; height: number }[]) => void): void {
-    this.collisionSetter = fn;
-  }
-
   setPlayerPositionSetter(fn: (x: number, y: number) => void): void {
     this.playerPositionSetter = fn;
   }
@@ -93,6 +77,14 @@ export class SceneManager implements IGameSystem {
 
   setInteractionSetter(fn: (hotspots: Hotspot[], npcs: Npc[]) => void): void {
     this.interactionSetter = fn;
+  }
+
+  setDepthLoader(fn: (sceneId: string, sceneData: SceneData) => Promise<void>): void {
+    this.depthLoader = fn;
+  }
+
+  setDepthUnloader(fn: () => void): void {
+    this.depthUnloader = fn;
   }
 
   get currentSceneData() { return this.currentScene; }
@@ -134,36 +126,9 @@ export class SceneManager implements IGameSystem {
         this.renderer.app,
         sceneData.width,
         sceneData.height,
-        sceneData.collisions,
       );
     }
     this.renderer.backgroundLayer.addChild(this.sceneContainerBg);
-
-    if (sceneData.foregrounds && sceneData.foregrounds.length > 0) {
-      this.sceneContainerFg = new Container();
-      const fgLayers = [...sceneData.foregrounds].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
-      for (const layer of fgLayers) {
-        try {
-          const texture = await this.assetManager.loadTexture(layer.image);
-          const sprite = new Sprite(texture);
-          sprite.x = layer.x ?? 0;
-          sprite.y = layer.y ?? 0;
-          sprite.scale.set(
-            sceneData.width / texture.width,
-            sceneData.height / texture.height,
-          );
-          this.sceneContainerFg.addChild(sprite);
-        } catch (_e) {
-          // 加载失败时跳过该层
-        }
-      }
-      this.renderer.foregroundLayer.addChild(this.sceneContainerFg);
-    } else {
-      this.sceneContainerFg = null;
-    }
-
-    const boundary = sceneBoundaryCollisions(sceneData.width, sceneData.height);
-    this.collisionSetter?.([...boundary, ...sceneData.collisions]);
 
     const memory = this.sceneMemory.get(sceneId);
 
@@ -209,6 +174,10 @@ export class SceneManager implements IGameSystem {
     this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds);
     this.zoneSetter?.(sceneData.zones ?? []);
 
+    if (this.depthLoader) {
+      await this.depthLoader(sceneId, sceneData);
+    }
+
     if (sceneData.filterId) {
       try {
         await this.renderer.loadAndSetWorldFilter(sceneData.filterId);
@@ -242,13 +211,7 @@ export class SceneManager implements IGameSystem {
       this.sceneContainerBg = null;
     }
 
-    if (this.sceneContainerFg) {
-      this.renderer.foregroundLayer.removeChild(this.sceneContainerFg);
-      this.sceneContainerFg.destroy({ children: true });
-      this.sceneContainerFg = null;
-    }
-
-    this.collisionSetter?.([]);
+    this.depthUnloader?.();
     this.zoneSetter?.([]);
     this.currentScene = null;
   }
@@ -398,11 +361,12 @@ export class SceneManager implements IGameSystem {
     this.unloadScene();
     this.removeFadeOverlay();
     this.sceneMemory.clear();
-    this.collisionSetter = null;
     this.playerPositionSetter = null;
     this.cameraSetter = null;
     this.audioApplier = null;
     this.zoneSetter = null;
     this.interactionSetter = null;
+    this.depthLoader = null;
+    this.depthUnloader = null;
   }
 }

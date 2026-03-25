@@ -6,12 +6,11 @@ export class Renderer {
   public worldContainer: Container;
   public backgroundLayer: Container;
   public entityLayer: Container;
-  public foregroundLayer: Container;
   /** 演出用覆盖层：图片、电影黑边等，位于世界之上、UI之下 */
   public cutsceneOverlay: Container;
   public uiLayer: Container;
 
-  /** 世界滤镜管线：仅作用于 worldContainer（场景+实体+前景），GUI 不受影响 */
+  /** 世界滤镜管线：仅作用于 worldContainer（场景+实体），GUI 不受影响 */
   public worldFilterPipeline: WorldFilterPipeline;
 
   private initialized = false;
@@ -21,7 +20,6 @@ export class Renderer {
     this.worldContainer = new Container();
     this.backgroundLayer = new Container();
     this.entityLayer = new Container();
-    this.foregroundLayer = new Container();
     this.cutsceneOverlay = new Container();
     this.uiLayer = new Container();
     this.worldFilterPipeline = new WorldFilterPipeline(this.worldContainer);
@@ -40,7 +38,6 @@ export class Renderer {
 
     this.worldContainer.addChild(this.backgroundLayer);
     this.worldContainer.addChild(this.entityLayer);
-    this.worldContainer.addChild(this.foregroundLayer);
 
     this.app.stage.addChild(this.worldContainer);
     this.app.stage.addChild(this.cutsceneOverlay);

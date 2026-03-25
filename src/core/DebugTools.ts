@@ -1,4 +1,4 @@
-import { Container, Graphics } from 'pixi.js';
+import { Graphics } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from './EventBus';
 import type { Player } from '../entities/Player';
@@ -21,8 +21,6 @@ export class DebugTools {
   private positionDebugMode = false;
   private positionDebugKeyHandler: (e: KeyboardEvent) => void = () => {};
   private positionDebugPointerHandler: (e: PointerEvent) => void = () => {};
-  private showCollisionsDebug = false;
-  private collisionDebugOverlay: Container | null = null;
 
   constructor(deps: DebugToolsDeps) {
     this.deps = deps;
@@ -33,9 +31,7 @@ export class DebugTools {
     this.setupDebugPanelSections();
   }
 
-  update(_dt: number): void {
-    if (this.showCollisionsDebug) this.updateCollisionOverlay();
-  }
+  update(_dt: number): void {}
 
   private setupPositionDebugTool(): void {
     const { renderer, eventBus } = this.deps;
@@ -97,23 +93,10 @@ export class DebugTools {
     }));
 
     debugPanelUI.addSection('Collisions', () => {
-      const count = player.getCollisions().length;
       const enabled = player.collisionsEnabledState;
       return {
-        text: `Count: ${count}\nEnabled: ${enabled}`,
+        text: `Enabled: ${enabled}\n(depth-based collision)`,
         actions: [
-          {
-            label: this.showCollisionsDebug ? 'Hide Collisions' : 'Show Collisions',
-            fn: () => {
-              this.showCollisionsDebug = !this.showCollisionsDebug;
-              if (!this.showCollisionsDebug && this.collisionDebugOverlay) {
-                renderer.foregroundLayer.removeChild(this.collisionDebugOverlay);
-                this.collisionDebugOverlay.destroy({ children: true });
-                this.collisionDebugOverlay = null;
-              }
-              debugPanelUI.log(`Collision display: ${this.showCollisionsDebug ? 'on' : 'off'}`);
-            },
-          },
           {
             label: enabled ? 'Disable Collisions' : 'Enable Collisions',
             fn: () => {
@@ -126,40 +109,10 @@ export class DebugTools {
     });
   }
 
-  private updateCollisionOverlay(): void {
-    const { player, renderer } = this.deps;
-    const rects = player.getCollisions();
-    if (rects.length === 0 && !this.collisionDebugOverlay) return;
-    if (!this.collisionDebugOverlay) {
-      this.collisionDebugOverlay = new Container();
-      renderer.foregroundLayer.addChild(this.collisionDebugOverlay);
-    }
-    const g = this.collisionDebugOverlay.children[0] as Graphics | undefined;
-    let graphics: Graphics;
-    if (g) {
-      graphics = g;
-      graphics.clear();
-    } else {
-      graphics = new Graphics();
-      this.collisionDebugOverlay.addChild(graphics);
-    }
-    for (const r of rects) {
-      graphics.rect(r.x, r.y, r.width, r.height);
-      graphics.fill({ color: 0xff0000, alpha: 0.35 });
-      graphics.rect(r.x, r.y, r.width, r.height);
-      graphics.stroke({ color: 0xff4444, width: 1 });
-    }
-  }
-
   destroy(): void {
     window.removeEventListener('keydown', this.positionDebugKeyHandler);
     const canvas = this.deps.renderer.app?.canvas as HTMLCanvasElement | undefined;
     if (canvas) canvas.removeEventListener('pointerdown', this.positionDebugPointerHandler);
 
-    if (this.collisionDebugOverlay?.parent) {
-      this.collisionDebugOverlay.parent.removeChild(this.collisionDebugOverlay);
-    }
-    this.collisionDebugOverlay?.destroy({ children: true });
-    this.collisionDebugOverlay = null;
   }
 }

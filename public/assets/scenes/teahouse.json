@@ -1,58 +1,94 @@
 {
   "id": "teahouse",
   "name": "茶馆",
+  "spriteScaleFactor": 1,
   "width": 1400,
   "height": 900,
   "backgrounds": [
-    { "image": "/assets/images/backgrounds/normal_teahouse_bg.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "foregrounds": [
-    { "image": "/assets/images/backgrounds/normal_teahouse_fg.png", "x": 0, "y": 0 }
+  "ambientSounds": [
+    "teahouse_roomtone"
   ],
-  "ambientSounds": ["teahouse_roomtone"],
-  "collisions": [],
-  "spawnPoint": { "x": 200, "y": 380 },
+  "spawnPoint": {
+    "x": 200,
+    "y": 380
+  },
   "spawnPoints": {
-    "from_street": { "x": 200, "y": 380 }
+    "from_street": {
+      "x": 200,
+      "y": 380
+    }
   },
   "hotspots": [
     {
       "id": "teahouse_notice",
       "type": "inspect",
-      "x": 1000, "y": 80, "width": 120, "height": 80,
+      "x": 1000,
+      "y": 80,
+      "width": 120,
+      "height": 80,
       "interactionRange": 90,
       "label": "告示板",
-      "data": { "text": "告示板上贴着几张旧启事，大多是招工、寻人和催债。最上头一张红纸写得扎眼：\"近日夜里少往城隍庙方向去，若闻怪声，切勿停步。\"" }
+      "data": {
+        "text": "告示板上贴着几张旧启事，大多是招工、寻人和催债。最上头一张红纸写得扎眼：\"近日夜里少往城隍庙方向去，若闻怪声，切勿停步。\""
+      }
     },
     {
       "id": "teahouse_table_items",
       "type": "inspect",
-      "x": 600, "y": 520, "width": 80, "height": 80,
+      "x": 600,
+      "y": 520,
+      "width": 80,
+      "height": 80,
       "interactionRange": 80,
       "label": "桌上的茶碗",
-      "data": { "text": "几个粗瓷茶碗摆得东倒西歪，花生壳和瓜子皮堆在一处。屋里人多，偏偏让人觉得越热闹越藏得住闲话。" }
+      "data": {
+        "text": "几个粗瓷茶碗摆得东倒西歪，花生壳和瓜子皮堆在一处。屋里人多，偏偏让人觉得越热闹越藏得住闲话。"
+      }
     },
     {
       "id": "teahouse_door_too_early",
       "type": "inspect",
-      "x": 120, "y": 240, "width": 100, "height": 100,
+      "x": 120,
+      "y": 240,
+      "width": 100,
+      "height": 100,
       "interactionRange": 70,
       "conditions": [
-        { "flag": "got_iron_box", "op": "!=", "value": true }
+        {
+          "flag": "got_iron_box",
+          "op": "!=",
+          "value": true
+        }
       ],
       "label": "门口",
-      "data": { "text": "你本想先出去转转，可耳边还响着张叨叨那段书，瞎子李也刚进门。真要想学门糊口的本事，还是先把这段缘由听明白再走。" }
+      "data": {
+        "text": "你本想先出去转转，可耳边还响着张叨叨那段书，瞎子李也刚进门。真要想学门糊口的本事，还是先把这段缘由听明白再走。"
+      }
     },
     {
       "id": "exit_to_street",
       "type": "transition",
-      "x": 120, "y": 240, "width": 100, "height": 100,
+      "x": 120,
+      "y": 240,
+      "width": 100,
+      "height": 100,
       "interactionRange": 70,
       "conditions": [
-        { "flag": "got_iron_box" }
+        {
+          "flag": "got_iron_box"
+        }
       ],
       "label": "出门 (街巷)",
-      "data": { "targetScene": "test_room_a", "targetSpawnPoint": "from_teahouse" }
+      "data": {
+        "targetScene": "test_room_a",
+        "targetSpawnPoint": "from_teahouse"
+      }
     }
   ],
   "npcs": [
@@ -67,8 +103,14 @@
       "animFile": "/assets/data/npc_storyteller_anim.json",
       "patrol": {
         "route": [
-          { "x": 680, "y": 520 },
-          { "x": 750, "y": 420 }
+          {
+            "x": 680,
+            "y": 520
+          },
+          {
+            "x": 750,
+            "y": 420
+          }
         ],
         "speed": 80
       }
@@ -92,5 +134,51 @@
       "dialogueKnot": "start",
       "interactionRange": 90
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.5299192642332049,
+          -0.848048096156426
+        ],
+        [
+          0.0,
+          0.848048096156426,
+          -0.5299192642332049
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 409.0,
+      "cx": 600.0,
+      "cy": 448.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.69,
+      "offset": -3.6
+    },
+    "shader": {
+      "depth_per_sy": 0.0015277979264286734,
+      "floor_depth_A": -0.003912798359513571,
+      "floor_depth_B": 1.7529336650620797
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -1.4568284797968425,
+      "z_min": -1.4572127139364304,
+      "cell_size": 0.024085983072081395,
+      "grid_width": 201,
+      "grid_height": 123,
+      "height_offset": 0.03
+    }
+  }
 }

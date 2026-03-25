@@ -52,6 +52,9 @@ import { registerActionHandlers } from './ActionRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
 import { DebugTools } from './DebugTools';
+import { SceneDepthSystem } from './SceneDepthSystem';
+import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
+import { depthLog, depthError } from './depthLog';
 
 export class Game {
   private eventBus: EventBus;
@@ -104,6 +107,8 @@ export class Game {
   private interactionCoordinator!: InteractionCoordinator;
   private eventBridge!: EventBridge;
   private debugTools!: DebugTools;
+  private sceneDepthSystem: SceneDepthSystem;
+  private playerDepthFilter: DepthOcclusionFilter | null = null;
 
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
@@ -137,6 +142,7 @@ export class Game {
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor);
+    this.sceneDepthSystem = new SceneDepthSystem();
 
     const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider };
     this.registeredSystems = [
@@ -413,10 +419,6 @@ export class Game {
   }
 
   private setupSceneManager(): void {
-    this.sceneManager.setCollisionSetter((collisions) => {
-      this.player.setCollisions(collisions);
-    });
-
     this.sceneManager.setPlayerPositionSetter((x, y) => {
       this.player.x = x;
       this.player.y = y;
@@ -438,6 +440,25 @@ export class Game {
     this.sceneManager.setInteractionSetter((hotspots, npcs) => {
       this.interactionSystem.setHotspots(hotspots);
       this.interactionSystem.setNpcs(npcs);
+    });
+
+    this.sceneManager.setDepthLoader(async (sceneId, sceneData) => {
+      if (sceneData.depthConfig) {
+        await this.sceneDepthSystem.load(
+          sceneId, sceneData.depthConfig, this.assetManager,
+          sceneData.width, sceneData.height,
+        );
+        this.player.setDepthCollision((sx, sy) => this.sceneDepthSystem.isCollision(sx, sy));
+      } else {
+        this.sceneDepthSystem.loadDefault();
+        this.player.setDepthCollision(null);
+      }
+    });
+
+    this.sceneManager.setDepthUnloader(() => {
+      this.sceneDepthSystem.unload();
+      this.player.setDepthCollision(null);
+      this.playerDepthFilter = null;
     });
   }
 
@@ -466,7 +487,32 @@ export class Game {
     this.listenEvent('scene:ready', () => {
       this.applyPlayerSceneScale();
       this.interactionSystem.update(0);
+
+      try {
+        this.playerDepthFilter = this.sceneDepthSystem.createFilterForEntity();
+        if (this.playerDepthFilter) {
+          depthLog('Game', 'attaching depth filter to player');
+          this.player.sprite.container.filters = [this.playerDepthFilter];
+        } else {
+          depthLog('Game', 'no depth filter for player (disabled or no data)');
+          this.player.sprite.container.filters = [];
+        }
+      } catch (e) {
+        depthError('Game', 'player filter FAILED', e);
+        this.playerDepthFilter = null;
+        this.player.sprite.container.filters = [];
+      }
+
       for (const npc of this.sceneManager.getCurrentNpcs()) {
+        try {
+          const npcFilter = this.sceneDepthSystem.createFilterForEntity();
+          if (npcFilter) {
+            depthLog('Game', 'attaching depth filter to NPC:', npc.id);
+            npc.container.filters = [npcFilter];
+          }
+        } catch (e) {
+          depthError('Game', 'NPC filter FAILED', npc.id, e);
+        }
         const patrol = npc.def.patrol;
         if (patrol?.route && patrol.route.length > 0) {
           this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60);
@@ -605,6 +651,27 @@ export class Game {
     this.notificationUI.update(dt);
     this.camera.update(dt);
     this.debugTools?.update(dt);
+
+    if (this.sceneDepthSystem.isEnabled) {
+      this.sceneDepthSystem.updatePerFrame(
+        this.renderer.worldContainer.x,
+        this.renderer.worldContainer.y,
+      );
+      if (this.playerDepthFilter) {
+        this.sceneDepthSystem.updateEntityFootY(this.playerDepthFilter, this.player.y);
+      }
+      for (const child of this.renderer.entityLayer.children) {
+        const c = child as unknown as { filters?: readonly { _isDepthOcclusion?: boolean }[]; y: number };
+        if (c.filters) {
+          for (const f of c.filters) {
+            if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
+              this.sceneDepthSystem.updateEntityFootY(f as unknown as DepthOcclusionFilter, c.y);
+            }
+          }
+        }
+      }
+    }
+
     this.renderer.sortEntityLayer();
     this.inputManager.endFrame();
   }
