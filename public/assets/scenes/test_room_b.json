@@ -2,6 +2,9 @@
   "id": "test_room_b",
   "name": "后巷",
   "spriteScaleFactor": 1,
+  "floor_offset": 0,
+  "playerWalkSpeed": 120,
+  "playerRunSpeed": 200,
   "width": 1000,
   "height": 800,
   "backgrounds": [

@@ -100,6 +100,12 @@ export interface SceneData {
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
   depthConfig?: SceneDepthConfig;
+  /** 场景级地板深度偏移（遮挡 shader）。有 depthConfig 时以 depthConfig.floor_offset 为准，未写时回落到此字段，默认 0 */
+  floor_offset?: number;
+  /** 本场景玩家行走速度（逻辑像素/秒），未写则 120 */
+  playerWalkSpeed?: number;
+  /** 本场景玩家奔跑速度（逻辑像素/秒），未写则 200 */
+  playerRunSpeed?: number;
 }
 
 // ============================================================
@@ -488,6 +494,8 @@ export interface GameConfig {
   initialCutscene?: string;
   /** 判断 initialCutscene 是否已播放的 FlagStore key，未配置则每次启动都播放 */
   initialCutsceneDoneFlag?: string;
+  /** 开局写入 FlagStore，用于跳过开场演出时补齐地图等依赖的标记 */
+  startupFlags?: Record<string, boolean | number>;
 }
 
 // ============================================================

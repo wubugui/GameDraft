@@ -339,6 +339,14 @@ export class Game {
       if (cfg.initialQuest) this.gameConfig.initialQuest = cfg.initialQuest;
       if (cfg.fallbackScene) this.gameConfig.fallbackScene = cfg.fallbackScene;
       if (cfg.initialCutscene !== undefined) this.gameConfig.initialCutscene = cfg.initialCutscene;
+      if (cfg.initialCutsceneDoneFlag !== undefined) {
+        this.gameConfig.initialCutsceneDoneFlag = cfg.initialCutsceneDoneFlag;
+      }
+      if (cfg.startupFlags) {
+        for (const [k, v] of Object.entries(cfg.startupFlags)) {
+          this.flagStore.set(k, v as boolean | number);
+        }
+      }
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
     }
@@ -444,8 +452,13 @@ export class Game {
 
     this.sceneManager.setDepthLoader(async (sceneId, sceneData) => {
       if (sceneData.depthConfig) {
+        const dc = sceneData.depthConfig;
+        const depthCfg = {
+          ...dc,
+          floor_offset: dc.floor_offset ?? sceneData.floor_offset ?? 0,
+        };
         await this.sceneDepthSystem.load(
-          sceneId, sceneData.depthConfig, this.assetManager,
+          sceneId, depthCfg, this.assetManager,
           sceneData.width, sceneData.height,
         );
         this.player.setDepthCollision((sx, sy) => this.sceneDepthSystem.isCollision(sx, sy));
@@ -486,6 +499,7 @@ export class Game {
   private setupSceneReadyHandler(): void {
     this.listenEvent('scene:ready', () => {
       this.applyPlayerSceneScale();
+      this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
       this.interactionSystem.update(0);
 
       try {

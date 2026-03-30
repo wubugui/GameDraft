@@ -2,6 +2,9 @@
   "id": "mountain_pass",
   "name": "山路",
   "spriteScaleFactor": 1,
+  "floor_offset": 0,
+  "playerWalkSpeed": 120,
+  "playerRunSpeed": 200,
   "backgrounds": [
     {
       "image": "background.png",

@@ -1,7 +1,10 @@
 {
   "id": "test_room_a",
   "name": "街巷",
-  "spriteScaleFactor": 1,
+  "spriteScaleFactor": 0.3,
+  "floor_offset": 0,
+  "playerWalkSpeed": 36,
+  "playerRunSpeed": 60,
   "width": 1600,
   "height": 1000,
   "backgroundScale": 1,
@@ -206,7 +209,7 @@
       "floor_depth_B": 1.9983990373632174
     },
     "depth_tolerance": 0.0,
-    "floor_offset": 0.0,
+    "floor_offset": -0.1,
     "collision": {
       "x_min": -2.418212061104043,
       "z_min": -2.986899563318777,

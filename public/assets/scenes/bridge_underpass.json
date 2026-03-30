@@ -1,7 +1,10 @@
 {
   "id": "bridge_underpass",
   "name": "桥下",
-  "spriteScaleFactor": 1,
+  "spriteScaleFactor": 0.6,
+  "floor_offset": 0,
+  "playerWalkSpeed": 120,
+  "playerRunSpeed": 200,
   "backgrounds": [
     {
       "image": "background.png",

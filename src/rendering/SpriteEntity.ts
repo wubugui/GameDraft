@@ -11,6 +11,9 @@ export class SpriteEntity {
   private animDef: AnimationSetDef | null = null;
   private frames: Map<string, Texture[]> = new Map();
   private baseScale: number = 1;
+  /** 动画 scale * 场景 spriteScaleFactor 等外部乘子；切换 texture 后需重新套到 sprite 上 */
+  private logicalScale: number = 1;
+  private facingX: 1 | -1 = 1;
 
   private currentState: string = '';
   private currentFrames: Texture[] = [];
@@ -75,11 +78,13 @@ export class SpriteEntity {
     this.playing = true;
     this.onCompleteCallback = onComplete ?? null;
     this.sprite.texture = textures[0];
+    this.applySpriteScale();
   }
 
   setDirection(dx: number, _dy: number): void {
-    if (dx > 0) this.sprite.scale.x = Math.abs(this.sprite.scale.x);
-    else if (dx < 0) this.sprite.scale.x = -Math.abs(this.sprite.scale.x);
+    if (dx > 0) this.facingX = 1;
+    else if (dx < 0) this.facingX = -1;
+    this.applySpriteScale();
   }
 
   update(dt: number): void {
@@ -108,6 +113,7 @@ export class SpriteEntity {
     }
 
     this.sprite.texture = this.currentFrames[this.frameIndex];
+    this.applySpriteScale();
     this.syncPosition();
   }
 
@@ -121,8 +127,12 @@ export class SpriteEntity {
   }
 
   setScale(s: number): void {
-    const dir = this.sprite.scale.x >= 0 ? 1 : -1;
-    const effective = this.baseScale * s;
-    this.sprite.scale.set(dir * effective, effective);
+    this.logicalScale = s;
+    this.applySpriteScale();
+  }
+
+  private applySpriteScale(): void {
+    const mag = this.baseScale * this.logicalScale;
+    this.sprite.scale.set(this.facingX * mag, mag);
   }
 }

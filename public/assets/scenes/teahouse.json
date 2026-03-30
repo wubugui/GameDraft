@@ -2,6 +2,9 @@
   "id": "teahouse",
   "name": "茶馆",
   "spriteScaleFactor": 1,
+  "floor_offset": 0,
+  "playerWalkSpeed": 120,
+  "playerRunSpeed": 200,
   "width": 1400,
   "height": 900,
   "backgrounds": [

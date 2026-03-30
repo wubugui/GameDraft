@@ -1,9 +1,9 @@
 import { SpriteEntity } from '../rendering/SpriteEntity';
 import type { InputManager } from '../core/InputManager';
-import type { ICutsceneActor } from '../data/types';
+import type { ICutsceneActor, SceneData } from '../data/types';
 
-const WALK_SPEED = 120;
-const RUN_SPEED = 200;
+export const DEFAULT_PLAYER_WALK_SPEED = 120;
+export const DEFAULT_PLAYER_RUN_SPEED = 200;
 
 export class Player implements ICutsceneActor {
   public sprite: SpriteEntity;
@@ -13,6 +13,8 @@ export class Player implements ICutsceneActor {
   private moveTarget: { x: number; y: number; speed: number; resolve: () => void } | null = null;
 
   private collisionsEnabled = true;
+  private walkSpeed = DEFAULT_PLAYER_WALK_SPEED;
+  private runSpeed = DEFAULT_PLAYER_RUN_SPEED;
 
   constructor(inputManager: InputManager) {
     this.sprite = new SpriteEntity();
@@ -27,6 +29,12 @@ export class Player implements ICutsceneActor {
 
   setCollisionsEnabled(enabled: boolean): void {
     this.collisionsEnabled = enabled;
+  }
+
+  /** 按场景数据同步行走/奔跑速度；未配置字段时保持默认 120/200 */
+  syncMovementFromScene(scene: SceneData | null): void {
+    this.walkSpeed = scene?.playerWalkSpeed ?? DEFAULT_PLAYER_WALK_SPEED;
+    this.runSpeed = scene?.playerRunSpeed ?? DEFAULT_PLAYER_RUN_SPEED;
   }
 
   get collisionsEnabledState(): boolean {
@@ -95,7 +103,7 @@ export class Player implements ICutsceneActor {
     const dir = this.inputManager.getMovementDirection();
     const isMoving = dir.x !== 0 || dir.y !== 0;
     const isRunning = this.inputManager.isRunning();
-    const speed = isRunning ? RUN_SPEED : WALK_SPEED;
+    const speed = isRunning ? this.runSpeed : this.walkSpeed;
 
     if (isMoving) {
       const newX = this.sprite.x + dir.x * speed * dt;
