@@ -35,15 +35,33 @@ export class SpriteEntity {
     this.animDef = animDef;
     this.frames.clear();
 
-    const cols = animDef.cols ?? Math.floor(texture.width / animDef.frameWidth);
-    const rows = animDef.rows ?? Math.floor(texture.height / animDef.frameHeight);
+    const fw = animDef.frameWidth;
+    const fh = animDef.frameHeight;
+    let cols: number;
+    let rows: number;
+    if (animDef.cols != null && animDef.rows != null) {
+      cols = animDef.cols;
+      rows = animDef.rows;
+    } else if (fw != null && fh != null) {
+      cols = Math.floor(texture.width / fw);
+      rows = Math.floor(texture.height / fh);
+    } else {
+      throw new Error('AnimationSetDef requires cols+rows and/or frameWidth+frameHeight for grid layout');
+    }
+
     const srcFrameW = texture.width / cols;
     const srcFrameH = texture.height / rows;
 
-    this.baseScale = Math.min(
-      animDef.frameWidth / srcFrameW,
-      animDef.frameHeight / srcFrameH,
-    );
+    if (animDef.worldFrameWidth != null && animDef.worldFrameHeight != null) {
+      this.baseScale = Math.min(
+        animDef.worldFrameWidth / srcFrameW,
+        animDef.worldFrameHeight / srcFrameH,
+      );
+    } else if (fw != null && fh != null) {
+      this.baseScale = Math.min(fw / srcFrameW, fh / srcFrameH);
+    } else {
+      this.baseScale = 1;
+    }
 
     for (const [stateName, stateDef] of Object.entries(animDef.states)) {
       const textures: Texture[] = [];

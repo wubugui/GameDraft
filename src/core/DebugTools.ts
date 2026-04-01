@@ -1,5 +1,6 @@
 import { Graphics } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
+import type { Camera } from '../rendering/Camera';
 import type { EventBus } from './EventBus';
 import type { Player } from '../entities/Player';
 import type { InventoryManager } from '../systems/InventoryManager';
@@ -7,6 +8,7 @@ import type { DebugPanelUI } from '../ui/DebugPanelUI';
 
 export interface DebugToolsDeps {
   renderer: Renderer;
+  camera: Camera;
   eventBus: EventBus;
   player: Player;
   inventoryManager: InventoryManager;
@@ -57,7 +59,7 @@ export class DebugTools {
       const scaleY = renderer.app.screen.height / rect.height;
       const stageX = (e.clientX - rect.left) * scaleX;
       const stageY = (e.clientY - rect.top) * scaleY;
-      const world = renderer.worldContainer.toLocal({ x: stageX, y: stageY });
+      const world = this.deps.camera.screenToWorld(stageX, stageY);
       const x = Math.round(world.x);
       const y = Math.round(world.y);
       const text = `x: ${x}, y: ${y}`;

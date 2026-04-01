@@ -5,6 +5,7 @@
   "floor_offset": 0,
   "playerWalkSpeed": 120,
   "playerRunSpeed": 200,
+  "backgroundWorldWidth": 1376,
   "backgrounds": [
     {
       "image": "background.png",

@@ -375,5 +375,6 @@ export class CutsceneRenderer {
       emote.destroy({ children: true });
     }
     this.activeEmotes.length = 0;
+    this.camera.setZoom(1);
   }
 }

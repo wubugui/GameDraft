@@ -7,7 +7,6 @@
   "playerRunSpeed": 200,
   "width": 1400,
   "height": 1000,
-  "backgroundScale": 1,
   "backgrounds": [
     {
       "image": "background.png",

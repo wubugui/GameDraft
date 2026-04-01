@@ -293,6 +293,7 @@ export class Game {
 
     this.debugTools = new DebugTools({
       renderer: this.renderer,
+      camera: this.camera,
       eventBus: this.eventBus,
       player: this.player,
       inventoryManager: this.inventoryManager,
@@ -371,6 +372,10 @@ export class Game {
       texture = placeholder.texture;
       animDef = {
         spritesheet: '',
+        cols: 6,
+        rows: 1,
+        worldFrameWidth: placeholder.frameWidth,
+        worldFrameHeight: placeholder.frameHeight,
         frameWidth: placeholder.frameWidth,
         frameHeight: placeholder.frameHeight,
         states: {

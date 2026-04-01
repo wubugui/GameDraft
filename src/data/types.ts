@@ -58,8 +58,8 @@ export interface ActionDef {
 // 场景数据
 // ============================================================
 
-/** 场景 JSON 可省略 width/height，由首张背景图尺寸与 backgroundScale 推导 */
-export type SceneDataRaw = Omit<SceneData, 'width' | 'height'> & {
+/** 场景 JSON 可省略 width/height，由背景世界宽度或 backgroundScale 等推导 */
+export type SceneDataRaw = Omit<SceneData, 'width' | 'height' | 'backgroundDrawScale'> & {
   width?: number;
   height?: number;
 };
@@ -81,11 +81,20 @@ export interface SceneDepthConfig {
 export interface SceneData {
   id: string;
   name: string;
-  /** 场景逻辑宽；未写时由首张背景图宽度 * backgroundScale 推导 */
+  /** 世界单位：场景边界宽（有背景且首张图加载成功时由纹理与缩放推导，JSON 中的 width 会被忽略） */
   width: number;
-  /** 场景逻辑高；未写时由首张背景图高度 * backgroundScale 推导 */
+  /** 世界单位：场景边界高（同上，仅由纹理宽高比与缩放推导，JSON 的 height 不单独生效） */
   height: number;
-  /** 背景缩放系数，默认 1。场景边界默认与背景图同尺寸，设为其他值时场景尺寸 = 背景图尺寸 * backgroundScale */
+  /**
+   * 世界单位：首张背景图在世界中的宽度；与纹理像素无关，运行时 scale = backgroundWorldWidth / texWidth。
+   * 优先于 legacy 的 backgroundScale。
+   */
+  backgroundWorldWidth?: number;
+  /**
+   * 仅运行时填充：首张背景绘制 scale，与 loadSceneData 中推导一致；SceneManager 绘制背景层时使用。
+   */
+  backgroundDrawScale?: number;
+  /** @deprecated 兼容旧数据：等效于纹理像素倍数；优先使用 backgroundWorldWidth */
   backgroundScale?: number;
   /** 场景精灵缩放因子，默认 1。放入该场景的实体层精灵（Player、NPC）会按此因子缩放；可被实体的 overrideSceneScale 跳过 */
   spriteScaleFactor?: number;
@@ -287,10 +296,18 @@ export interface EncounterTriggerData {
 
 export interface AnimationSetDef {
   spritesheet: string;
-  frameWidth: number;
-  frameHeight: number;
+  /**
+   * @deprecated 仅兼容旧数据：曾同时表示图集格子像素与显示基准；请改用 cols/rows + worldFrameWidth/Height。
+   */
+  frameWidth?: number;
+  frameHeight?: number;
+  /** 世界单位：单帧在场景中的目标宽（运行时结合图集格子像素推 scale） */
+  worldFrameWidth?: number;
+  /** 世界单位：单帧在场景中的目标高 */
+  worldFrameHeight?: number;
   cols?: number;
   rows?: number;
+  /** 无量纲额外倍率，非像素 */
   scale?: number;
   /** 为 true 时跳过场景的 spriteScaleFactor，使用本定义的 scale */
   overrideSceneScale?: boolean;

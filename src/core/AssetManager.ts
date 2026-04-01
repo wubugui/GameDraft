@@ -41,28 +41,44 @@ export class AssetManager {
     return `assets/scenes/${sceneId}/${imagePath}`;
   }
 
+  /**
+   * 有首张背景且加载成功时：世界宽高恒为「纹理像素 × 同一 drawScale」，与深度图/碰撞 1:1。
+   * drawScale 只来自 backgroundWorldWidth 或 backgroundScale；JSON 里的 width/height 不参与（与迭代前行为一致）。
+   */
   async loadSceneData(sceneId: string): Promise<SceneData> {
     const raw = await this.loadJson<SceneDataRaw>(`assets/scenes/${sceneId}.json`);
-    const scale = raw.backgroundScale ?? 1;
 
     if (raw.backgrounds) {
       for (const layer of raw.backgrounds) {
         layer.image = this.resolveSceneAssetPath(sceneId, layer.image);
       }
     }
+
+    const hasExplicitSize =
+      typeof raw.width === 'number' && typeof raw.height === 'number' && raw.width > 0 && raw.height > 0;
+
     if (raw.backgrounds && raw.backgrounds.length > 0) {
       try {
         const texture = await this.loadTexture(raw.backgrounds[0].image);
-        const w = Math.round(texture.width * scale);
-        const h = Math.round(texture.height * scale);
-        return { ...raw, width: w, height: h } as SceneData;
+        const texW = texture.width;
+        const texH = texture.height;
+
+        let backgroundDrawScale: number;
+        if (typeof raw.backgroundWorldWidth === 'number' && raw.backgroundWorldWidth > 0) {
+          backgroundDrawScale = raw.backgroundWorldWidth / texW;
+        } else {
+          backgroundDrawScale = raw.backgroundScale ?? 1;
+        }
+
+        const width = Math.round(texW * backgroundDrawScale);
+        const height = Math.round(texH * backgroundDrawScale);
+
+        return { ...raw, width, height, backgroundDrawScale } as SceneData;
       } catch (_e) {
         // 首张背景加载失败时用 JSON 或默认尺寸
       }
     }
 
-    const hasExplicitSize =
-      typeof raw.width === 'number' && typeof raw.height === 'number' && raw.width > 0 && raw.height > 0;
     if (hasExplicitSize) {
       return raw as SceneData;
     }

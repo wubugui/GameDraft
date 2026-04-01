@@ -107,7 +107,7 @@ export class SceneManager implements IGameSystem {
 
     if (sceneData.backgrounds.length > 0) {
       this.sceneContainerBg = new Container();
-      const scale = sceneData.backgroundScale ?? 1;
+      const scale = sceneData.backgroundDrawScale ?? sceneData.backgroundScale ?? 1;
       const layers = [...sceneData.backgrounds].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
       for (const layer of layers) {
         try {
