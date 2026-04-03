@@ -1,12 +1,10 @@
 {
   "id": "teahouse",
   "name": "茶馆",
-  "spriteScaleFactor": 1,
-  "floor_offset": 0,
-  "playerWalkSpeed": 120,
-  "playerRunSpeed": 200,
-  "width": 1400,
-  "height": 900,
+  "worldWidth": 1000,
+  "worldHeight": 747,
+  "playerWalkSpeed": 100,
+  "playerRunSpeed": 180,
   "backgrounds": [
     {
       "image": "background.png",
@@ -18,24 +16,24 @@
     "teahouse_roomtone"
   ],
   "spawnPoint": {
-    "x": 200,
-    "y": 380
+    "x": 142.9,
+    "y": 315.4
   },
   "spawnPoints": {
     "from_street": {
-      "x": 200,
-      "y": 380
+      "x": 142.9,
+      "y": 315.4
     }
   },
   "hotspots": [
     {
       "id": "teahouse_notice",
       "type": "inspect",
-      "x": 1000,
-      "y": 80,
-      "width": 120,
-      "height": 80,
-      "interactionRange": 90,
+      "x": 714.3,
+      "y": 66.4,
+      "width": 85.7,
+      "height": 66.4,
+      "interactionRange": 64.3,
       "label": "告示板",
       "data": {
         "text": "告示板上贴着几张旧启事，大多是招工、寻人和催债。最上头一张红纸写得扎眼：\"近日夜里少往城隍庙方向去，若闻怪声，切勿停步。\""
@@ -44,11 +42,11 @@
     {
       "id": "teahouse_table_items",
       "type": "inspect",
-      "x": 600,
-      "y": 520,
-      "width": 80,
-      "height": 80,
-      "interactionRange": 80,
+      "x": 428.6,
+      "y": 431.6,
+      "width": 57.1,
+      "height": 66.4,
+      "interactionRange": 57.1,
       "label": "桌上的茶碗",
       "data": {
         "text": "几个粗瓷茶碗摆得东倒西歪，花生壳和瓜子皮堆在一处。屋里人多，偏偏让人觉得越热闹越藏得住闲话。"
@@ -57,11 +55,11 @@
     {
       "id": "teahouse_door_too_early",
       "type": "inspect",
-      "x": 120,
-      "y": 240,
-      "width": 100,
-      "height": 100,
-      "interactionRange": 70,
+      "x": 85.7,
+      "y": 199.2,
+      "width": 71.4,
+      "height": 83,
+      "interactionRange": 50,
       "conditions": [
         {
           "flag": "got_iron_box",
@@ -77,11 +75,11 @@
     {
       "id": "exit_to_street",
       "type": "transition",
-      "x": 120,
-      "y": 240,
-      "width": 100,
-      "height": 100,
-      "interactionRange": 70,
+      "x": 85.7,
+      "y": 199.2,
+      "width": 71.4,
+      "height": 83,
+      "interactionRange": 50,
       "conditions": [
         {
           "flag": "got_iron_box"
@@ -98,21 +96,21 @@
     {
       "id": "storyteller_zhang",
       "name": "说书人张叨叨",
-      "x": 680,
-      "y": 520,
+      "x": 485.7,
+      "y": 431.6,
       "dialogueFile": "/assets/dialogues/storyteller.ink",
       "dialogueKnot": "start",
-      "interactionRange": 100,
+      "interactionRange": 71.4,
       "animFile": "/assets/data/npc_storyteller_anim.json",
       "patrol": {
         "route": [
           {
-            "x": 680,
-            "y": 520
+            "x": 485.7,
+            "y": 431.6
           },
           {
-            "x": 750,
-            "y": 420
+            "x": 535.7,
+            "y": 348.6
           }
         ],
         "speed": 80
@@ -121,21 +119,21 @@
     {
       "id": "blind_li",
       "name": "瞎子李",
-      "x": 600,
-      "y": 600,
+      "x": 428.6,
+      "y": 498,
       "dialogueFile": "/assets/dialogues/blind_li.ink",
       "dialogueKnot": "start",
-      "interactionRange": 100,
+      "interactionRange": 71.4,
       "animFile": "/assets/data/npc_blind_li_anim.json"
     },
     {
       "id": "waiter_xiaoer",
       "name": "小二",
-      "x": 780,
-      "y": 280,
+      "x": 557.1,
+      "y": 232.4,
       "dialogueFile": "/assets/dialogues/waiter.ink",
       "dialogueKnot": "start",
-      "interactionRange": 90
+      "interactionRange": 64.3
     }
   ],
   "depthConfig": {
@@ -144,24 +142,24 @@
     "M": {
       "R": [
         [
-          0.0,
+          0,
           -0.5299192642332049,
           -0.848048096156426
         ],
         [
-          0.0,
+          0,
           0.848048096156426,
           -0.5299192642332049
         ],
         [
-          -1.0,
-          0.0,
-          -0.0
+          -1,
+          0,
+          0
         ]
       ],
-      "ppu": 409.0,
-      "cx": 600.0,
-      "cy": 448.0
+      "ppu": 409,
+      "cx": 600,
+      "cy": 448
     },
     "depth_mapping": {
       "invert": true,
@@ -173,8 +171,8 @@
       "floor_depth_A": -0.003912798359513571,
       "floor_depth_B": 1.7529336650620797
     },
-    "depth_tolerance": 0.0,
-    "floor_offset": 0.0,
+    "depth_tolerance": 0,
+    "floor_offset": 0,
     "collision": {
       "x_min": -1.4568284797968425,
       "z_min": -1.4572127139364304,

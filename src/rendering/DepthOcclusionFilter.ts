@@ -39,7 +39,7 @@ out vec4 finalColor;
 uniform sampler2D uTexture;
 uniform sampler2D uDepthMap;
 
-uniform vec2  uSceneSize;
+uniform vec2  uSceneSize;      // 背景图像素尺寸
 uniform float uInvert;
 uniform float uScale;
 uniform float uOffset;
@@ -49,15 +49,33 @@ uniform float uFloorB;
 uniform float uFloorOffset;
 uniform float uTolerance;
 uniform vec2  uWorldContainerPos;
-uniform float uEntityFootY;
+uniform float uEntityFootY;    // 精灵脚部Y（像素坐标）
+uniform float uDebug;          // 调试模式：1=输出调试颜色
+
+// M矩阵参数（像素→伪3D，仅调试用）
+uniform float uM_ppu;
+uniform float uM_cx;
+uniform float uM_cy;
+uniform float uM_R00; uniform float uM_R01; uniform float uM_R02;
+uniform float uM_R20; uniform float uM_R21; uniform float uM_R22;
+uniform float uCol_xMin;
+uniform float uCol_zMin;
+uniform float uCol_cellSize;
+uniform float uCol_gridW;
+uniform float uCol_gridH;
+uniform sampler2D uCollisionMap;
 
 void main(void) {
     vec4 color = texture(uTexture, vTextureCoord);
     if (color.a < 0.004) { discard; }
 
+    // vScreenPos 是精灵在屏幕上的像素位置
+    // uWorldContainerPos 是世界容器的屏幕偏移
+    // sx, sy = 精灵在世界容器中的像素位置（= 世界坐标 × pixelsPerUnit）
     float sx = vScreenPos.x - uWorldContainerPos.x;
     float sy = vScreenPos.y - uWorldContainerPos.y;
 
+    // 像素坐标 → 深度图UV（深度图与背景图1:1对应）
     vec2 depthUV = vec2(sx / uSceneSize.x, sy / uSceneSize.y);
 
     if (depthUV.x < 0.0 || depthUV.x > 1.0 || depthUV.y < 0.0 || depthUV.y > 1.0) {
@@ -71,10 +89,41 @@ void main(void) {
     float d_raw = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
     float sceneDepth = d_raw * uScale + uOffset;
 
+    // 精灵深度计算（基于像素坐标）
     float footSy = uEntityFootY;
     float d_base = uFloorA * footSy + uFloorB + uFloorOffset;
-
     float spriteDepth = d_base + uDepthPerSy * (sy - footSy);
+
+    // ========== 调试模式 ==========
+    if (uDebug > 0.5) {
+        vec3 dbgColor = vec3(0.0);
+
+        // 碰撞检测
+        float ppx = (sx - uM_cx) / uM_ppu;
+        float ppy = (uM_cy - sy) / uM_ppu;
+        float dFloor = uFloorA * sy + uFloorB;
+        float wx = uM_R00 * ppx + uM_R01 * ppy + uM_R02 * dFloor;
+        float wz = uM_R20 * ppx + uM_R21 * ppy + uM_R22 * dFloor;
+        float gx = (wx - uCol_xMin) / uCol_cellSize;
+        float gz = (wz - uCol_zMin) / uCol_cellSize;
+
+        float isCollision = 0.0;
+        if (gx >= 0.0 && gx < uCol_gridW && gz >= 0.0 && gz < uCol_gridH) {
+            vec2 colUV = vec2(gx / uCol_gridW, gz / uCol_gridH);
+            vec4 colSample = texture(uCollisionMap, colUV);
+            isCollision = colSample.r > 0.5 ? 1.0 : 0.0;
+        }
+
+        // 遮挡检测
+        float isOccluded = sceneDepth + uTolerance < spriteDepth ? 1.0 : 0.0;
+
+        dbgColor.r = isOccluded;
+        dbgColor.g = isCollision;
+
+        finalColor = vec4(dbgColor, 0.7);
+        return;
+    }
+    // ========== 正常渲染 ==========
 
     if (sceneDepth + uTolerance < spriteDepth) {
         discard;
@@ -124,8 +173,28 @@ export class DepthOcclusionFilter extends Filter {
                     uTolerance: { value: cfg.depth_tolerance, type: 'f32' },
                     uWorldContainerPos: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
                     uEntityFootY: { value: 0, type: 'f32' },
+                    uDebug: { value: 0, type: 'f32' },
+                    // M矩阵（调试用）
+                    uM_ppu: { value: cfg.M.ppu, type: 'f32' },
+                    uM_cx: { value: cfg.M.cx, type: 'f32' },
+                    uM_cy: { value: cfg.M.cy, type: 'f32' },
+                    uM_R00: { value: cfg.M.R[0][0], type: 'f32' },
+                    uM_R01: { value: cfg.M.R[0][1], type: 'f32' },
+                    uM_R02: { value: cfg.M.R[0][2], type: 'f32' },
+                    uM_R20: { value: cfg.M.R[2][0], type: 'f32' },
+                    uM_R21: { value: cfg.M.R[2][1], type: 'f32' },
+                    uM_R22: { value: cfg.M.R[2][2], type: 'f32' },
+                    // 碰撞网格（调试用）
+                    uCol_xMin: { value: cfg.collision?.x_min ?? 0, type: 'f32' },
+                    uCol_zMin: { value: cfg.collision?.z_min ?? 0, type: 'f32' },
+                    uCol_cellSize: { value: cfg.collision?.cell_size ?? 1, type: 'f32' },
+                    uCol_gridW: { value: cfg.collision?.grid_width ?? 0, type: 'f32' },
+                    uCol_gridH: { value: cfg.collision?.grid_height ?? 0, type: 'f32' },
                 },
                 uDepthMap: depthTexture.source,
+                // collision texture set later via setCollisionTexture
+                // using depth texture as placeholder so the shader has a valid sampler
+                uCollisionMap: depthTexture.source,
             },
         });
 
@@ -185,5 +254,14 @@ export class DepthOcclusionFilter extends Filter {
     setFloorOffset(v: number): void {
         const u = this._du;
         if (u) u['uFloorOffset'] = v;
+    }
+
+    setDebug(on: boolean): void {
+        const u = this._du;
+        if (u) u['uDebug'] = on ? 1.0 : 0.0;
+    }
+
+    setCollisionTexture(tex: Texture): void {
+        (this.resources as Record<string, unknown>)['uCollisionMap'] = tex.source;
     }
 }

@@ -1,6 +1,14 @@
 import { Container, Sprite, Texture, Rectangle } from 'pixi.js';
 import type { AnimationSetDef, AnimationStateDef } from '../data/types';
 
+/**
+ * 精灵实体
+ *
+ * 坐标系统（与 Camera View-Projection 管线一致）：
+ * - container.x/y = worldX/Y（纯世界坐标）
+ * - sprite.scale = worldSize / framePixelSize（图集帧 → 世界尺寸映射）
+ * - worldContainer 的 scale 统一处理 Projection 缩放
+ */
 export class SpriteEntity {
   public container: Container;
   public x: number = 0;
@@ -10,10 +18,10 @@ export class SpriteEntity {
   private baseTexture: Texture | null = null;
   private animDef: AnimationSetDef | null = null;
   private frames: Map<string, Texture[]> = new Map();
-  private baseScale: number = 1;
-  /** 动画 scale * 场景 spriteScaleFactor 等外部乘子；切换 texture 后需重新套到 sprite 上 */
-  private logicalScale: number = 1;
   private facingX: 1 | -1 = 1;
+
+  private worldWidth: number = 0;
+  private worldHeight: number = 0;
 
   private currentState: string = '';
   private currentFrames: Texture[] = [];
@@ -34,34 +42,13 @@ export class SpriteEntity {
     this.baseTexture = texture;
     this.animDef = animDef;
     this.frames.clear();
+    this.worldWidth = animDef.worldWidth;
+    this.worldHeight = animDef.worldHeight;
 
-    const fw = animDef.frameWidth;
-    const fh = animDef.frameHeight;
-    let cols: number;
-    let rows: number;
-    if (animDef.cols != null && animDef.rows != null) {
-      cols = animDef.cols;
-      rows = animDef.rows;
-    } else if (fw != null && fh != null) {
-      cols = Math.floor(texture.width / fw);
-      rows = Math.floor(texture.height / fh);
-    } else {
-      throw new Error('AnimationSetDef requires cols+rows and/or frameWidth+frameHeight for grid layout');
-    }
-
+    const cols = animDef.cols;
+    const rows = animDef.rows;
     const srcFrameW = texture.width / cols;
     const srcFrameH = texture.height / rows;
-
-    if (animDef.worldFrameWidth != null && animDef.worldFrameHeight != null) {
-      this.baseScale = Math.min(
-        animDef.worldFrameWidth / srcFrameW,
-        animDef.worldFrameHeight / srcFrameH,
-      );
-    } else if (fw != null && fh != null) {
-      this.baseScale = Math.min(fw / srcFrameW, fh / srcFrameH);
-    } else {
-      this.baseScale = 1;
-    }
 
     for (const [stateName, stateDef] of Object.entries(animDef.states)) {
       const textures: Texture[] = [];
@@ -79,6 +66,8 @@ export class SpriteEntity {
       }
       this.frames.set(stateName, textures);
     }
+
+    this.applySpriteScale();
   }
 
   playAnimation(stateName: string, onComplete?: () => void): void {
@@ -96,7 +85,6 @@ export class SpriteEntity {
     this.playing = true;
     this.onCompleteCallback = onComplete ?? null;
     this.sprite.texture = textures[0];
-    this.applySpriteScale();
   }
 
   setDirection(dx: number, _dy: number): void {
@@ -144,13 +132,17 @@ export class SpriteEntity {
     return this.currentState;
   }
 
-  setScale(s: number): void {
-    this.logicalScale = s;
-    this.applySpriteScale();
+  getWorldSize(): { width: number; height: number } {
+    return { width: this.worldWidth, height: this.worldHeight };
   }
 
   private applySpriteScale(): void {
-    const mag = this.baseScale * this.logicalScale;
-    this.sprite.scale.set(this.facingX * mag, mag);
+    const frameW = this.animDef ? (this.baseTexture!.width / this.animDef.cols) : 1;
+    const frameH = this.animDef ? (this.baseTexture!.height / this.animDef.rows) : 1;
+
+    this.sprite.scale.set(
+      (this.worldWidth / frameW) * this.facingX,
+      this.worldHeight / frameH,
+    );
   }
 }

@@ -1,10 +1,10 @@
-import { Graphics } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { Camera } from '../rendering/Camera';
 import type { EventBus } from './EventBus';
 import type { Player } from '../entities/Player';
 import type { InventoryManager } from '../systems/InventoryManager';
 import type { DebugPanelUI } from '../ui/DebugPanelUI';
+import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
 
 export interface DebugToolsDeps {
   renderer: Renderer;
@@ -13,6 +13,7 @@ export interface DebugToolsDeps {
   player: Player;
   inventoryManager: InventoryManager;
   debugPanelUI: DebugPanelUI;
+  depthDebugVisualizer: DepthDebugVisualizer;
   getCurrentSceneId: () => string | undefined;
   fallbackScene: string;
   reloadScene: (sceneId: string) => void;
@@ -60,8 +61,8 @@ export class DebugTools {
       const stageX = (e.clientX - rect.left) * scaleX;
       const stageY = (e.clientY - rect.top) * scaleY;
       const world = this.deps.camera.screenToWorld(stageX, stageY);
-      const x = Math.round(world.x);
-      const y = Math.round(world.y);
+      const x = world.x.toFixed(1);
+      const y = world.y.toFixed(1);
       const text = `x: ${x}, y: ${y}`;
       console.log(text);
       eventBus.emit('notification:show', { text, type: 'info' });
@@ -109,6 +110,23 @@ export class DebugTools {
         ],
       };
     });
+
+    const viz = this.deps.depthDebugVisualizer;
+    const modes: BgDebugMode[] = ['off', 'depth', 'collision', 'uv'];
+    const modeLabels: Record<BgDebugMode, string> = {
+      off: 'Off', depth: 'Depth', collision: 'Collision', uv: 'UV',
+    };
+
+    debugPanelUI.addSection('Background Debug', () => ({
+      text: `Mode: ${viz.mode}`,
+      actions: modes.map(m => ({
+        label: modeLabels[m],
+        fn: () => {
+          viz.setMode(m);
+          debugPanelUI.log(`BG debug: ${m}`);
+        },
+      })),
+    }));
   }
 
   destroy(): void {

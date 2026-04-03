@@ -58,10 +58,10 @@ export interface ActionDef {
 // 场景数据
 // ============================================================
 
-/** 场景 JSON 可省略 width/height，由背景世界宽度或 backgroundScale 等推导 */
-export type SceneDataRaw = Omit<SceneData, 'width' | 'height' | 'backgroundDrawScale'> & {
-  width?: number;
-  height?: number;
+/** 场景 JSON 原始格式，worldWidth/worldHeight 可缺省一个（按背景图比例推导） */
+export type SceneDataRaw = Omit<SceneData, 'worldWidth' | 'worldHeight'> & {
+  worldWidth?: number;
+  worldHeight?: number;
 };
 
 export interface SceneDepthConfig {
@@ -81,23 +81,10 @@ export interface SceneDepthConfig {
 export interface SceneData {
   id: string;
   name: string;
-  /** 世界单位：场景边界宽（有背景且首张图加载成功时由纹理与缩放推导，JSON 中的 width 会被忽略） */
-  width: number;
-  /** 世界单位：场景边界高（同上，仅由纹理宽高比与缩放推导，JSON 的 height 不单独生效） */
-  height: number;
-  /**
-   * 世界单位：首张背景图在世界中的宽度；与纹理像素无关，运行时 scale = backgroundWorldWidth / texWidth。
-   * 优先于 legacy 的 backgroundScale。
-   */
-  backgroundWorldWidth?: number;
-  /**
-   * 仅运行时填充：首张背景绘制 scale，与 loadSceneData 中推导一致；SceneManager 绘制背景层时使用。
-   */
-  backgroundDrawScale?: number;
-  /** @deprecated 兼容旧数据：等效于纹理像素倍数；优先使用 backgroundWorldWidth */
-  backgroundScale?: number;
-  /** 场景精灵缩放因子，默认 1。放入该场景的实体层精灵（Player、NPC）会按此因子缩放；可被实体的 overrideSceneScale 跳过 */
-  spriteScaleFactor?: number;
+  /** 世界单位：场景宽度 */
+  worldWidth: number;
+  /** 世界单位：场景高度（可从 worldWidth 和背景图比例推导） */
+  worldHeight: number;
   backgrounds: BackgroundLayer[];
   spawnPoint: Position;
   spawnPoints?: Record<string, Position>;
@@ -109,12 +96,22 @@ export interface SceneData {
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
   depthConfig?: SceneDepthConfig;
-  /** 场景级地板深度偏移（遮挡 shader）。有 depthConfig 时以 depthConfig.floor_offset 为准，未写时回落到此字段，默认 0 */
-  floor_offset?: number;
-  /** 本场景玩家行走速度（逻辑像素/秒），未写则 120 */
+  /** 相机配置 */
+  camera?: SceneCameraConfig;
+  /** 世界整体缩放（用于背景图分辨率不够时整体缩小），默认1 */
+  worldScale?: number;
+  /** 本场景玩家行走速度（世界单位/秒），未写则使用默认值 */
   playerWalkSpeed?: number;
-  /** 本场景玩家奔跑速度（逻辑像素/秒），未写则 200 */
+  /** 本场景玩家奔跑速度（世界单位/秒），未写则使用默认值 */
   playerRunSpeed?: number;
+}
+
+/** 场景相机配置 */
+export interface SceneCameraConfig {
+  /** 相机缩放，默认1 */
+  zoom?: number;
+  /** 1世界单位对应多少像素，默认1 */
+  pixelsPerUnit?: number;
 }
 
 // ============================================================
@@ -177,8 +174,6 @@ export interface NpcDef {
   interactionRange: number;
   animFile?: string;
   patrol?: PatrolDef;
-  /** 为 true 时跳过场景的 spriteScaleFactor，使用动画定义中的原始 scale */
-  overrideSceneScale?: boolean;
 }
 
 // ============================================================
@@ -296,21 +291,12 @@ export interface EncounterTriggerData {
 
 export interface AnimationSetDef {
   spritesheet: string;
-  /**
-   * @deprecated 仅兼容旧数据：曾同时表示图集格子像素与显示基准；请改用 cols/rows + worldFrameWidth/Height。
-   */
-  frameWidth?: number;
-  frameHeight?: number;
-  /** 世界单位：单帧在场景中的目标宽（运行时结合图集格子像素推 scale） */
-  worldFrameWidth?: number;
-  /** 世界单位：单帧在场景中的目标高 */
-  worldFrameHeight?: number;
-  cols?: number;
-  rows?: number;
-  /** 无量纲额外倍率，非像素 */
-  scale?: number;
-  /** 为 true 时跳过场景的 spriteScaleFactor，使用本定义的 scale */
-  overrideSceneScale?: boolean;
+  cols: number;
+  rows: number;
+  /** 世界单位：精灵在世界中的宽度 */
+  worldWidth: number;
+  /** 世界单位：精灵在世界中的高度（可从 worldWidth 和图集帧比例推导） */
+  worldHeight: number;
   states: Record<string, AnimationStateDef>;
 }
 

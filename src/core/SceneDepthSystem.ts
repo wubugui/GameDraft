@@ -28,6 +28,11 @@ export class SceneDepthSystem {
 
     private sceneW = 0;
     private sceneH = 0;
+    private sceneId = '';
+
+    /** 世界坐标 → 像素坐标 的转换比例 */
+    private worldToPixelX = 1;
+    private worldToPixelY = 1;
 
     get depthTolerance(): number { return this._depthTolerance; }
     set depthTolerance(v: number) {
@@ -42,16 +47,30 @@ export class SceneDepthSystem {
     }
 
     get isEnabled(): boolean { return this.enabled; }
+    get currentConfig(): SceneDepthConfig | null { return this.config; }
+    get currentDepthTexture(): Texture | null { return this.depthTexture; }
+    get currentSceneId(): string { return this.sceneId; }
 
-    async load(sceneId: string, depthConfig: SceneDepthConfig, assetManager: AssetManager, sceneW: number, sceneH: number): Promise<void> {
+    async load(
+        sceneId: string,
+        depthConfig: SceneDepthConfig,
+        assetManager: AssetManager,
+        sceneW: number,
+        sceneH: number,
+        worldToPixelX: number,
+        worldToPixelY: number,
+    ): Promise<void> {
         depthLog(T, 'load() scene:', sceneId, 'size:', sceneW, 'x', sceneH);
         depthLog(T, 'depthConfig:', depthConfig);
 
         this.unload();
         this.config = depthConfig;
         this.enabled = true;
+        this.sceneId = sceneId;
         this.sceneW = sceneW;
         this.sceneH = sceneH;
+        this.worldToPixelX = worldToPixelX;
+        this.worldToPixelY = worldToPixelY;
 
         const basePath = `assets/scenes/${sceneId}/`;
 
@@ -112,6 +131,8 @@ export class SceneDepthSystem {
         this.config = null;
         this.enabled = false;
         this.filters = [];
+        this.worldToPixelX = 1;
+        this.worldToPixelY = 1;
     }
 
     private async loadCollisionBitmap(path: string): Promise<void> {
@@ -135,9 +156,19 @@ export class SceneDepthSystem {
         bitmap.close();
     }
 
-    isCollision(sx: number, sy: number): boolean {
+    /**
+     * 碰撞检测
+     * @param worldX 世界坐标 X
+     * @param worldY 世界坐标 Y
+     */
+    isCollision(worldX: number, worldY: number): boolean {
         if (!this.enabled || !this.collisionData) return false;
 
+        // 世界坐标 → 像素坐标
+        const sx = worldX * this.worldToPixelX;
+        const sy = worldY * this.worldToPixelY;
+
+        // 像素坐标 → 伪3D空间 → 碰撞网格（逻辑不变）
         const dFloor = this.floorA * sy + this.floorB;
         const px = (sx - this.cx) / this.ppu;
         const py = (this.cy - sy) / this.ppu;
@@ -157,14 +188,24 @@ export class SceneDepthSystem {
         if (!this.enabled || !this.depthTexture || !this.config) return null;
         try {
             const f = DepthOcclusionFilter.createForEntity(this.depthTexture, this.config);
+            // uSceneSize = 背景渲染后的像素尺寸 = 纹理尺寸 * 缩放
+            // = worldWidth（因为 background.scale = worldWidth / textureWidth）
             f.setSceneSize(this.sceneW, this.sceneH);
             this.filters.push(f);
-            depthLog(T, 'filter created, sceneSize:', this.sceneW, 'x', this.sceneH, 'total:', this.filters.length);
+            depthLog(T, 'filter created, sceneSize (rendered):', this.sceneW, 'x', this.sceneH, 'total:', this.filters.length);
             return f;
         } catch (e) {
             depthError(T, 'createFilter FAILED', e);
             return null;
         }
+    }
+
+    setCollisionTextureOnFilters(tex: Texture): void {
+        for (const f of this.filters) f.setCollisionTexture(tex);
+    }
+
+    setDebugOnFilters(on: boolean): void {
+        for (const f of this.filters) f.setDebug(on);
     }
 
     private _logCounter = 0;

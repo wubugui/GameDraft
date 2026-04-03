@@ -5,7 +5,7 @@ import type { Renderer } from '../rendering/Renderer';
 import { Hotspot } from '../entities/Hotspot';
 import { Npc } from '../entities/Npc';
 import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
-import type { SceneData, SceneRuntimeState, Position, GameContext, AnimationSetDef } from '../data/types';
+import type { SceneData, SceneRuntimeState, Position, GameContext, AnimationSetDef, SceneCameraConfig } from '../data/types';
 import type { IGameSystem } from '../data/types';
 
 interface SceneMemory {
@@ -29,11 +29,11 @@ export class SceneManager implements IGameSystem {
   private animRafId: number = 0;
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
-  private cameraSetter: ((w: number, h: number, x: number, y: number) => void) | null = null;
+  private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
   private audioApplier: ((bgm?: string, ambient?: string[]) => void) | null = null;
   private zoneSetter: ((zones: import('../data/types').ZoneDef[]) => void) | null = null;
   private interactionSetter: ((hotspots: Hotspot[], npcs: Npc[]) => void) | null = null;
-  private depthLoader: ((sceneId: string, sceneData: SceneData) => Promise<void>) | null = null;
+  private depthLoader: ((sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>) | null = null;
   private depthUnloader: (() => void) | null = null;
 
   private onHotspotPickup: (payload: { hotspotId: string }) => void;
@@ -63,7 +63,7 @@ export class SceneManager implements IGameSystem {
     this.playerPositionSetter = fn;
   }
 
-  setCameraSetter(fn: (boundsW: number, boundsH: number, snapX: number, snapY: number) => void): void {
+  setCameraSetter(fn: (boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void): void {
     this.cameraSetter = fn;
   }
 
@@ -79,7 +79,7 @@ export class SceneManager implements IGameSystem {
     this.interactionSetter = fn;
   }
 
-  setDepthLoader(fn: (sceneId: string, sceneData: SceneData) => Promise<void>): void {
+  setDepthLoader(fn: (sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>): void {
     this.depthLoader = fn;
   }
 
@@ -105,17 +105,34 @@ export class SceneManager implements IGameSystem {
     const sceneData = await this.assetManager.loadSceneData(sceneId);
     this.currentScene = sceneData;
 
+    // 计算世界→像素的转换比例（用于碰撞检测）
+    let worldToPixelX = 1;
+    let worldToPixelY = 1;
+
     if (sceneData.backgrounds.length > 0) {
       this.sceneContainerBg = new Container();
-      const scale = sceneData.backgroundDrawScale ?? sceneData.backgroundScale ?? 1;
       const layers = [...sceneData.backgrounds].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
-      for (const layer of layers) {
+
+      let firstTexWidth = 0;
+      let firstTexHeight = 0;
+
+      for (let i = 0; i < layers.length; i++) {
+        const layer = layers[i];
         try {
           const texture = await this.assetManager.loadTexture(layer.image);
+          if (i === 0) {
+            firstTexWidth = texture.width;
+            firstTexHeight = texture.height;
+            worldToPixelX = texture.width / sceneData.worldWidth;
+            worldToPixelY = texture.height / sceneData.worldHeight;
+          }
           const sprite = new Sprite(texture);
           sprite.x = layer.x ?? 0;
           sprite.y = layer.y ?? 0;
-          sprite.scale.set(scale);
+          sprite.scale.set(
+            sceneData.worldWidth / texture.width,
+            sceneData.worldHeight / texture.height,
+          );
           this.sceneContainerBg.addChild(sprite);
         } catch (_e) {
           // 加载失败时跳过该层
@@ -124,8 +141,8 @@ export class SceneManager implements IGameSystem {
     } else {
       this.sceneContainerBg = createPlaceholderBackground(
         this.renderer.app,
-        sceneData.width,
-        sceneData.height,
+        sceneData.worldWidth,
+        sceneData.worldHeight,
       );
     }
     this.renderer.backgroundLayer.addChild(this.sceneContainerBg);
@@ -142,7 +159,6 @@ export class SceneManager implements IGameSystem {
       }
     }
 
-    const sceneSpriteScale = sceneData.spriteScaleFactor ?? 1;
     if (sceneData.npcs) {
       for (const npcDef of sceneData.npcs) {
         const npc = new Npc(npcDef);
@@ -150,8 +166,7 @@ export class SceneManager implements IGameSystem {
           try {
             const animDef = await this.assetManager.loadJson<AnimationSetDef>(npcDef.animFile);
             const tex = await this.assetManager.loadTexture(animDef.spritesheet);
-            const overrideSceneScale = npcDef.overrideSceneScale ?? animDef.overrideSceneScale ?? false;
-            npc.loadSprite(tex, animDef, { sceneScaleFactor: sceneSpriteScale, overrideSceneScale });
+            npc.loadSprite(tex, animDef);
           } catch (_e) {
             // 加载失败时保留占位外观
           }
@@ -169,13 +184,13 @@ export class SceneManager implements IGameSystem {
     const posX = cameraPosition?.x ?? spawn.x;
     const posY = cameraPosition?.y ?? spawn.y;
     this.playerPositionSetter?.(posX, posY);
-    this.cameraSetter?.(sceneData.width, sceneData.height, posX, posY);
+    this.cameraSetter?.(sceneData.worldWidth, sceneData.worldHeight, posX, posY, sceneData.camera, sceneData.worldScale);
 
     this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds);
     this.zoneSetter?.(sceneData.zones ?? []);
 
     if (this.depthLoader) {
-      await this.depthLoader(sceneId, sceneData);
+      await this.depthLoader(sceneId, sceneData, worldToPixelX, worldToPixelY);
     }
 
     if (sceneData.filterId) {

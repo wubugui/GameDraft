@@ -42,8 +42,9 @@ export class AssetManager {
   }
 
   /**
-   * 有首张背景且加载成功时：世界宽高恒为「纹理像素 × 同一 drawScale」，与深度图/碰撞 1:1。
-   * drawScale 只来自 backgroundWorldWidth 或 backgroundScale；JSON 里的 width/height 不参与（与迭代前行为一致）。
+   * 加载场景数据。
+   * worldWidth/worldHeight 定义场景的世界尺寸。
+   * 如果某个为 0 或缺失，用背景图尺寸按比例计算。
    */
   async loadSceneData(sceneId: string): Promise<SceneData> {
     const raw = await this.loadJson<SceneDataRaw>(`assets/scenes/${sceneId}.json`);
@@ -54,39 +55,47 @@ export class AssetManager {
       }
     }
 
-    const hasExplicitSize =
-      typeof raw.width === 'number' && typeof raw.height === 'number' && raw.width > 0 && raw.height > 0;
+    // 已有完整的世界尺寸
+    if (raw.worldWidth && raw.worldHeight && raw.worldWidth > 0 && raw.worldHeight > 0) {
+      return raw as SceneData;
+    }
 
+    // 需要从背景图推导尺寸
     if (raw.backgrounds && raw.backgrounds.length > 0) {
       try {
         const texture = await this.loadTexture(raw.backgrounds[0].image);
         const texW = texture.width;
         const texH = texture.height;
+        const ratio = texH / texW;
 
-        let backgroundDrawScale: number;
-        if (typeof raw.backgroundWorldWidth === 'number' && raw.backgroundWorldWidth > 0) {
-          backgroundDrawScale = raw.backgroundWorldWidth / texW;
+        let worldWidth: number;
+        let worldHeight: number;
+
+        if (raw.worldWidth && raw.worldWidth > 0) {
+          // 有宽度，按比例计算高度
+          worldWidth = raw.worldWidth;
+          worldHeight = Math.round(worldWidth * ratio);
+        } else if (raw.worldHeight && raw.worldHeight > 0) {
+          // 有高度，按比例计算宽度
+          worldHeight = raw.worldHeight;
+          worldWidth = Math.round(worldHeight / ratio);
         } else {
-          backgroundDrawScale = raw.backgroundScale ?? 1;
+          // 都没有，使用背景图像素作为世界尺寸
+          worldWidth = texW;
+          worldHeight = texH;
         }
 
-        const width = Math.round(texW * backgroundDrawScale);
-        const height = Math.round(texH * backgroundDrawScale);
-
-        return { ...raw, width, height, backgroundDrawScale } as SceneData;
+        return { ...raw, worldWidth, worldHeight } as SceneData;
       } catch (_e) {
-        // 首张背景加载失败时用 JSON 或默认尺寸
+        // 背景加载失败，使用默认尺寸
       }
     }
 
-    if (hasExplicitSize) {
-      return raw as SceneData;
-    }
-
+    // 无背景或加载失败，使用默认尺寸
     return {
       ...raw,
-      width: raw.width ?? DEFAULT_SCENE_WIDTH,
-      height: raw.height ?? DEFAULT_SCENE_HEIGHT,
+      worldWidth: raw.worldWidth ?? DEFAULT_SCENE_WIDTH,
+      worldHeight: raw.worldHeight ?? DEFAULT_SCENE_HEIGHT,
     } as SceneData;
   }
 

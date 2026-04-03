@@ -1,12 +1,8 @@
 {
   "id": "test_room_a",
   "name": "街巷",
-  "spriteScaleFactor": 0.3,
-  "floor_offset": 0,
-  "playerWalkSpeed": 36,
-  "playerRunSpeed": 60,
-  "width": 1600,
-  "height": 1000,
+  "worldWidth": 20000,
+  "worldHeight": 11163,
   "backgrounds": [
     {
       "image": "background.png",
@@ -15,29 +11,29 @@
     }
   ],
   "spawnPoint": {
-    "x": 800,
-    "y": 700
+    "x": 10000,
+    "y": 7814.1
   },
   "spawnPoints": {
     "from_b": {
-      "x": 1200,
-      "y": 400
+      "x": 15000,
+      "y": 4465.2
     },
     "from_teahouse": {
-      "x": 600,
-      "y": 650
+      "x": 7500,
+      "y": 7256
     },
     "from_temple": {
-      "x": 1300,
-      "y": 200
+      "x": 16250,
+      "y": 2232.6
     },
     "from_bridge": {
-      "x": 900,
-      "y": 650
+      "x": 11250,
+      "y": 7256
     },
     "from_mountain_pass": {
-      "x": 400,
-      "y": 600
+      "x": 5000,
+      "y": 6697.8
     }
   },
   "hotspots": [
@@ -45,11 +41,11 @@
       "id": "street_notice",
       "type": "inspect",
       "label": "墙角的旧告示",
-      "x": 400,
-      "y": 450,
-      "width": 80,
-      "height": 80,
-      "interactionRange": 90,
+      "x": 5000,
+      "y": 5023.4,
+      "width": 1000,
+      "height": 893,
+      "interactionRange": 1125,
       "data": {
         "text": "墙角糊着一层又一层旧告示，纸边都被夜露泡软了。最底下一张写着：\"夜里少往城隍庙后头去。\""
       }
@@ -58,11 +54,11 @@
       "id": "night_breeze",
       "type": "inspect",
       "label": "穿堂风",
-      "x": 1000,
-      "y": 300,
-      "width": 100,
-      "height": 100,
-      "interactionRange": 90,
+      "x": 12500,
+      "y": 3348.9,
+      "width": 1250,
+      "height": 1116.3,
+      "interactionRange": 1125,
       "data": {
         "text": "巷子里一阵穿堂风吹过，天色比方才又暗了些。越往城隍庙那头望，越觉得那边静得不像有人气。"
       }
@@ -71,11 +67,11 @@
       "id": "exit_to_teahouse",
       "type": "transition",
       "label": "去茶馆",
-      "x": 550,
-      "y": 650,
-      "width": 120,
-      "height": 100,
-      "interactionRange": 70,
+      "x": 6875,
+      "y": 7256,
+      "width": 1500,
+      "height": 1116.3,
+      "interactionRange": 875,
       "data": {
         "targetScene": "teahouse",
         "targetSpawnPoint": "from_street"
@@ -85,11 +81,11 @@
       "id": "exit_to_mountain_pass",
       "type": "transition",
       "label": "去山路",
-      "x": 350,
-      "y": 600,
-      "width": 120,
-      "height": 100,
-      "interactionRange": 70,
+      "x": 4375,
+      "y": 6697.8,
+      "width": 1500,
+      "height": 1116.3,
+      "interactionRange": 875,
       "data": {
         "targetScene": "mountain_pass",
         "targetSpawnPoint": "from_street"
@@ -99,11 +95,11 @@
       "id": "exit_to_bridge",
       "type": "transition",
       "label": "去桥",
-      "x": 950,
-      "y": 650,
-      "width": 120,
-      "height": 100,
-      "interactionRange": 70,
+      "x": 11875,
+      "y": 7256,
+      "width": 1500,
+      "height": 1116.3,
+      "interactionRange": 875,
       "data": {
         "targetScene": "bridge_underpass",
         "targetSpawnPoint": "from_street"
@@ -113,11 +109,11 @@
       "id": "exit_to_b",
       "type": "transition",
       "label": "去后巷",
-      "x": 1300,
-      "y": 450,
-      "width": 100,
-      "height": 100,
-      "interactionRange": 70,
+      "x": 16250,
+      "y": 5023.4,
+      "width": 1250,
+      "height": 1116.3,
+      "interactionRange": 875,
       "data": {
         "targetScene": "test_room_b",
         "targetSpawnPoint": "from_a"
@@ -127,11 +123,11 @@
       "id": "rest_until_dawn",
       "type": "inspect",
       "label": "找个角落捱到天亮",
-      "x": 250,
-      "y": 700,
-      "width": 120,
-      "height": 80,
-      "interactionRange": 90,
+      "x": 3125,
+      "y": 7814.1,
+      "width": 1500,
+      "height": 893,
+      "interactionRange": 1125,
       "conditions": [
         {
           "flag": "first_night_escape"
@@ -178,24 +174,24 @@
     "M": {
       "R": [
         [
-          0.0,
+          0,
           -0.6427876096865394,
           -0.766044443118978
         ],
         [
-          0.0,
+          0,
           0.7660444431189781,
           -0.6427876096865393
         ],
         [
-          -1.0,
-          0.0,
-          -0.0
+          -1,
+          0,
+          0
         ]
       ],
-      "ppu": 229.0,
-      "cx": 688.0,
-      "cy": 384.0
+      "ppu": 229,
+      "cx": 688,
+      "cy": 384
     },
     "depth_mapping": {
       "invert": true,
@@ -207,7 +203,7 @@
       "floor_depth_A": -0.0052041641598000446,
       "floor_depth_B": 1.9983990373632174
     },
-    "depth_tolerance": 0.0,
+    "depth_tolerance": 0,
     "floor_offset": -0.1,
     "collision": {
       "x_min": -2.418212061104043,

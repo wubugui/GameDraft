@@ -53,6 +53,7 @@ import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
 import { DebugTools } from './DebugTools';
 import { SceneDepthSystem } from './SceneDepthSystem';
+import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import { depthLog, depthError } from './depthLog';
 
@@ -108,6 +109,7 @@ export class Game {
   private eventBridge!: EventBridge;
   private debugTools!: DebugTools;
   private sceneDepthSystem: SceneDepthSystem;
+  private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: DepthOcclusionFilter | null = null;
 
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
@@ -291,6 +293,13 @@ export class Game {
 
     this.setupSceneReadyHandler();
 
+    this.depthDebugVisualizer = new DepthDebugVisualizer(
+      this.sceneDepthSystem,
+      this.camera,
+      this.renderer,
+      this.assetManager,
+    );
+
     this.debugTools = new DebugTools({
       renderer: this.renderer,
       camera: this.camera,
@@ -298,6 +307,7 @@ export class Game {
       player: this.player,
       inventoryManager: this.inventoryManager,
       debugPanelUI: this.debugPanelUI,
+      depthDebugVisualizer: this.depthDebugVisualizer,
       getCurrentSceneId: () => this.sceneManager.currentSceneData?.id,
       fallbackScene: this.gameConfig.fallbackScene,
       reloadScene: (id) => this.reloadScene(id),
@@ -374,10 +384,8 @@ export class Game {
         spritesheet: '',
         cols: 6,
         rows: 1,
-        worldFrameWidth: placeholder.frameWidth,
-        worldFrameHeight: placeholder.frameHeight,
-        frameWidth: placeholder.frameWidth,
-        frameHeight: placeholder.frameHeight,
+        worldWidth: placeholder.frameWidth,
+        worldHeight: placeholder.frameHeight,
         states: {
           idle: { frames: [0, 1], frameRate: 2, loop: true },
           walk: { frames: [2, 3, 4, 5], frameRate: 8, loop: true },
@@ -389,22 +397,11 @@ export class Game {
     this.playerAnimDef = animDef;
     this.player.sprite.loadFromDef(texture, animDef);
     this.player.sprite.playAnimation('idle');
-    this.applyPlayerSceneScale();
     this.renderer.entityLayer.addChild(this.player.sprite.container);
 
     const playerPosGetter = () => ({ x: this.player.x, y: this.player.y });
     this.interactionSystem.setPlayerPositionGetter(playerPosGetter);
     this.zoneSystem.setPlayerPositionGetter(playerPosGetter);
-  }
-
-  private applyPlayerSceneScale(): void {
-    if (!this.playerAnimDef) return;
-    const sceneData = this.sceneManager.currentSceneData;
-    const spriteScaleFactor = sceneData?.spriteScaleFactor ?? 1;
-    const overrideSceneScale = this.playerAnimDef.overrideSceneScale ?? false;
-    const baseScale = this.playerAnimDef.scale ?? 1;
-    const effectiveScale = overrideSceneScale ? baseScale : baseScale * spriteScaleFactor;
-    this.player.sprite.setScale(effectiveScale);
   }
 
   private runNpcPatrol(
@@ -437,8 +434,17 @@ export class Game {
       this.player.y = y;
     });
 
-    this.sceneManager.setCameraSetter((boundsW, boundsH, snapX, snapY) => {
+    this.sceneManager.setCameraSetter((boundsW, boundsH, snapX, snapY, cameraConfig, worldScale) => {
       this.camera.setBounds(boundsW, boundsH);
+      if (cameraConfig?.pixelsPerUnit) {
+        this.camera.setPixelsPerUnit(cameraConfig.pixelsPerUnit);
+      }
+      if (cameraConfig?.zoom) {
+        this.camera.setZoom(cameraConfig.zoom);
+      }
+      if (worldScale !== undefined) {
+        this.camera.setWorldScale(worldScale);
+      }
       this.camera.snapTo(snapX, snapY);
     });
 
@@ -455,18 +461,15 @@ export class Game {
       this.interactionSystem.setNpcs(npcs);
     });
 
-    this.sceneManager.setDepthLoader(async (sceneId, sceneData) => {
+    this.sceneManager.setDepthLoader(async (sceneId, sceneData, worldToPixelX, worldToPixelY) => {
       if (sceneData.depthConfig) {
         const dc = sceneData.depthConfig;
-        const depthCfg = {
-          ...dc,
-          floor_offset: dc.floor_offset ?? sceneData.floor_offset ?? 0,
-        };
         await this.sceneDepthSystem.load(
-          sceneId, depthCfg, this.assetManager,
-          sceneData.width, sceneData.height,
+          sceneId, dc, this.assetManager,
+          sceneData.worldWidth, sceneData.worldHeight,
+          worldToPixelX, worldToPixelY,
         );
-        this.player.setDepthCollision((sx, sy) => this.sceneDepthSystem.isCollision(sx, sy));
+        this.player.setDepthCollision((wx, wy) => this.sceneDepthSystem.isCollision(wx, wy));
       } else {
         this.sceneDepthSystem.loadDefault();
         this.player.setDepthCollision(null);
@@ -503,7 +506,6 @@ export class Game {
 
   private setupSceneReadyHandler(): void {
     this.listenEvent('scene:ready', () => {
-      this.applyPlayerSceneScale();
       this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
       this.interactionSystem.update(0);
 
@@ -536,6 +538,22 @@ export class Game {
         if (patrol?.route && patrol.route.length > 0) {
           this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60);
         }
+      }
+
+      // 背景调试可视化：传递当前场景的深度纹理和配置
+      const dTex = this.sceneDepthSystem.currentDepthTexture;
+      const dCfg = this.sceneDepthSystem.currentConfig;
+      if (dTex && dCfg) {
+        const sd = this.sceneManager.currentSceneData!;
+        this.depthDebugVisualizer.onSceneLoaded(
+          this.sceneDepthSystem.currentSceneId,
+          dTex,
+          dTex.width,
+          dTex.height,
+          sd.worldWidth,
+          sd.worldHeight,
+          dCfg,
+        );
       }
     });
   }
@@ -620,6 +638,7 @@ export class Game {
     this.interactionCoordinator?.destroy();
     this.eventBridge?.destroy();
     this.debugTools?.destroy();
+    this.depthDebugVisualizer?.destroy();
 
     this.stateController.destroy();
 
@@ -670,21 +689,23 @@ export class Game {
     this.notificationUI.update(dt);
     this.camera.update(dt);
     this.debugTools?.update(dt);
+    this.depthDebugVisualizer?.update();
 
     if (this.sceneDepthSystem.isEnabled) {
       this.sceneDepthSystem.updatePerFrame(
         this.renderer.worldContainer.x,
         this.renderer.worldContainer.y,
       );
+      const S = this.camera.getProjectionScale();
       if (this.playerDepthFilter) {
-        this.sceneDepthSystem.updateEntityFootY(this.playerDepthFilter, this.player.y);
+        this.sceneDepthSystem.updateEntityFootY(this.playerDepthFilter, this.player.y * S);
       }
       for (const child of this.renderer.entityLayer.children) {
         const c = child as unknown as { filters?: readonly { _isDepthOcclusion?: boolean }[]; y: number };
         if (c.filters) {
           for (const f of c.filters) {
             if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
-              this.sceneDepthSystem.updateEntityFootY(f as unknown as DepthOcclusionFilter, c.y);
+              this.sceneDepthSystem.updateEntityFootY(f as unknown as DepthOcclusionFilter, c.y * S);
             }
           }
         }

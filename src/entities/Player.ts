@@ -2,19 +2,23 @@ import { SpriteEntity } from '../rendering/SpriteEntity';
 import type { InputManager } from '../core/InputManager';
 import type { ICutsceneActor, SceneData } from '../data/types';
 
-export const DEFAULT_PLAYER_WALK_SPEED = 120;
-export const DEFAULT_PLAYER_RUN_SPEED = 200;
+/** 默认行走速度（世界单位/秒） */
+export const DEFAULT_PLAYER_WALK_SPEED = 100;
+/** 默认奔跑速度（世界单位/秒） */
+export const DEFAULT_PLAYER_RUN_SPEED = 180;
 
 export class Player implements ICutsceneActor {
   public sprite: SpriteEntity;
   private inputManager: InputManager;
-  private depthCollision: ((sx: number, sy: number) => boolean) | null = null;
+  private depthCollision: ((worldX: number, worldY: number) => boolean) | null = null;
 
   private moveTarget: { x: number; y: number; speed: number; resolve: () => void } | null = null;
 
   private collisionsEnabled = true;
   private walkSpeed = DEFAULT_PLAYER_WALK_SPEED;
   private runSpeed = DEFAULT_PLAYER_RUN_SPEED;
+  private worldWidth = 0;
+  private worldHeight = 0;
 
   constructor(inputManager: InputManager) {
     this.sprite = new SpriteEntity();
@@ -23,7 +27,7 @@ export class Player implements ICutsceneActor {
 
   get entityId(): string { return 'player'; }
 
-  setDepthCollision(fn: ((sx: number, sy: number) => boolean) | null): void {
+  setDepthCollision(fn: ((worldX: number, worldY: number) => boolean) | null): void {
     this.depthCollision = fn;
   }
 
@@ -31,10 +35,12 @@ export class Player implements ICutsceneActor {
     this.collisionsEnabled = enabled;
   }
 
-  /** 按场景数据同步行走/奔跑速度；未配置字段时保持默认 120/200 */
+  /** 按场景数据同步行走/奔跑速度和世界边界；未配置字段时保持默认值 */
   syncMovementFromScene(scene: SceneData | null): void {
     this.walkSpeed = scene?.playerWalkSpeed ?? DEFAULT_PLAYER_WALK_SPEED;
     this.runSpeed = scene?.playerRunSpeed ?? DEFAULT_PLAYER_RUN_SPEED;
+    this.worldWidth = scene?.worldWidth ?? 0;
+    this.worldHeight = scene?.worldHeight ?? 0;
   }
 
   get collisionsEnabledState(): boolean {
@@ -109,10 +115,10 @@ export class Player implements ICutsceneActor {
       const newX = this.sprite.x + dir.x * speed * dt;
       const newY = this.sprite.y + dir.y * speed * dt;
 
-      if (!this.collidesAt(newX, this.sprite.y)) {
+      if (!this.collidesAt(newX, this.sprite.y) && !this.isOutOfBounds(newX, this.sprite.y)) {
         this.sprite.x = newX;
       }
-      if (!this.collidesAt(this.sprite.x, newY)) {
+      if (!this.collidesAt(this.sprite.x, newY) && !this.isOutOfBounds(this.sprite.x, newY)) {
         this.sprite.y = newY;
       }
 
@@ -130,8 +136,14 @@ export class Player implements ICutsceneActor {
     this.sprite.update(dt);
   }
 
-  private collidesAt(px: number, py: number): boolean {
+  private collidesAt(worldX: number, worldY: number): boolean {
     if (!this.collisionsEnabled) return false;
-    return this.depthCollision?.(px, py) ?? false;
+    return this.depthCollision?.(worldX, worldY) ?? false;
+  }
+
+  /** 检测是否超出世界边界 */
+  private isOutOfBounds(x: number, y: number): boolean {
+    if (this.worldWidth <= 0 || this.worldHeight <= 0) return false;
+    return x < 0 || x > this.worldWidth || y < 0 || y > this.worldHeight;
   }
 }

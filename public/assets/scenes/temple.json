@@ -1,12 +1,8 @@
 {
   "id": "temple",
   "name": "破烂城隍庙",
-  "spriteScaleFactor": 1,
-  "floor_offset": 0,
-  "playerWalkSpeed": 120,
-  "playerRunSpeed": 200,
-  "width": 1400,
-  "height": 1000,
+  "worldWidth": 2000,
+  "worldHeight": 1116,
   "backgrounds": [
     {
       "image": "background.png",
@@ -15,13 +11,13 @@
     }
   ],
   "spawnPoint": {
-    "x": 700,
-    "y": 800
+    "x": 1000,
+    "y": 892.8
   },
   "spawnPoints": {
     "from_street": {
-      "x": 700,
-      "y": 800
+      "x": 1000,
+      "y": 892.8
     }
   },
   "hotspots": [
@@ -29,11 +25,11 @@
       "id": "city_god_altar",
       "type": "inspect",
       "label": "香案",
-      "x": 700,
-      "y": 450,
-      "width": 160,
-      "height": 100,
-      "interactionRange": 90,
+      "x": 1000,
+      "y": 502.2,
+      "width": 228.6,
+      "height": 111.6,
+      "interactionRange": 128.6,
       "data": {
         "text": "香案上只剩些断香和灰烬。城隍爷的泥身斑驳得厉害，半边脸都裂开了，看着比庙外的夜色还阴。"
       }
@@ -42,11 +38,11 @@
       "id": "hide_iron_box",
       "type": "inspect",
       "label": "城隍像后的暗角",
-      "x": 700,
-      "y": 250,
-      "width": 100,
-      "height": 100,
-      "interactionRange": 90,
+      "x": 1000,
+      "y": 279,
+      "width": 142.9,
+      "height": 111.6,
+      "interactionRange": 128.6,
       "conditions": [
         {
           "flag": "got_iron_box"
@@ -80,11 +76,11 @@
       "id": "moonlit_wall",
       "type": "inspect",
       "label": "墙边月影",
-      "x": 1100,
-      "y": 600,
-      "width": 180,
-      "height": 180,
-      "interactionRange": 130,
+      "x": 1571.4,
+      "y": 669.6,
+      "width": 257.1,
+      "height": 200.9,
+      "interactionRange": 185.7,
       "conditions": [
         {
           "flag": "strangers_entered_temple"
@@ -126,11 +122,11 @@
       "id": "hanged_woman_day2",
       "type": "inspect",
       "label": "梁下",
-      "x": 700,
-      "y": 600,
-      "width": 140,
-      "height": 140,
-      "interactionRange": 100,
+      "x": 1000,
+      "y": 669.6,
+      "width": 200,
+      "height": 156.2,
+      "interactionRange": 142.9,
       "conditions": [
         {
           "flag": "day_2_started"
@@ -164,11 +160,11 @@
       "id": "stone_tablet",
       "type": "inspect",
       "label": "石碑",
-      "x": 300,
-      "y": 350,
-      "width": 80,
-      "height": 120,
-      "interactionRange": 80,
+      "x": 428.6,
+      "y": 390.6,
+      "width": 114.3,
+      "height": 133.9,
+      "interactionRange": 114.3,
       "data": {
         "text": "角落里立着块旧石碑，碑文风化得只剩最后几句还能认：\"阎王岭下，阴阳交汇，城隍镇之。\"你看完只觉背后更凉了。",
         "actions": [
@@ -193,11 +189,11 @@
       "id": "exit_to_street_from_temple",
       "type": "transition",
       "label": "出门 (街巷)",
-      "x": 700,
-      "y": 850,
-      "width": 120,
-      "height": 80,
-      "interactionRange": 70,
+      "x": 1000,
+      "y": 948.6,
+      "width": 171.4,
+      "height": 89.3,
+      "interactionRange": 100,
       "data": {
         "targetScene": "test_room_a",
         "targetSpawnPoint": "from_temple"
@@ -210,24 +206,24 @@
     "M": {
       "R": [
         [
-          0.0,
+          0,
           -0.5877852522924731,
           -0.8090169943749475
         ],
         [
-          0.0,
+          0,
           0.8090169943749475,
           -0.5877852522924731
         ],
         [
-          -1.0,
-          0.0,
-          -0.0
+          -1,
+          0,
+          0
         ]
       ],
-      "ppu": 384.0,
-      "cx": 688.0,
-      "cy": 384.0
+      "ppu": 384,
+      "cx": 688,
+      "cy": 384
     },
     "depth_mapping": {
       "invert": true,
@@ -239,8 +235,8 @@
       "floor_depth_A": -0.003584327917893681,
       "floor_depth_B": 1.3763819204711736
     },
-    "depth_tolerance": 0.0,
-    "floor_offset": 0.0,
+    "depth_tolerance": 0,
+    "floor_offset": 0,
     "collision": {
       "x_min": -0.8722069777211495,
       "z_min": -1.78125,

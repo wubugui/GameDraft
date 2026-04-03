@@ -2,11 +2,8 @@
   "spritesheet": "/assets/images/characters/npc_storyteller.png",
   "cols": 5,
   "rows": 2,
-  "worldFrameWidth": 32,
-  "worldFrameHeight": 48,
-  "frameWidth": 32,
-  "frameHeight": 48,
-  "scale": 6,
+  "worldWidth": 100,
+  "worldHeight": 160,
   "states": {
     "idle": { "frames": [0, 1], "frameRate": 2, "loop": true },
     "walk": { "frames": [2, 3, 4, 5], "frameRate": 8, "loop": true },

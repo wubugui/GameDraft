@@ -21,14 +21,17 @@ export class Hotspot {
     this.container = new Container();
 
     const color = TYPE_COLORS[def.type] ?? 0xffffff;
-
     this.marker = new Graphics();
     this.marker.circle(0, 0, 8).fill({ color, alpha: 0.6 });
     this.marker.circle(0, 0, 12).stroke({ color, width: 1, alpha: 0.3 });
     this.container.addChild(this.marker);
 
-    this.container.x = def.x + def.width / 2;
-    this.container.y = def.y + def.height / 2;
+    this._syncContainerPosition();
+  }
+
+  private _syncContainerPosition(): void {
+    this.container.x = this.def.x + this.def.width / 2;
+    this.container.y = this.def.y + this.def.height / 2;
   }
 
   get centerX(): number {

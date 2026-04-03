@@ -22,8 +22,7 @@ export class Npc implements ICutsceneActor {
     this._x = def.x;
     this._y = def.y;
     this.container = new Container();
-    this.container.x = def.x;
-    this.container.y = def.y;
+    this._syncContainerPosition();
 
     this.marker = new Graphics();
     this.marker.circle(0, -MARKER_SIZE, MARKER_SIZE);
@@ -41,11 +40,7 @@ export class Npc implements ICutsceneActor {
     this.container.addChild(this.nameLabel);
   }
 
-  loadSprite(
-    texture: Texture,
-    animDef: AnimationSetDef,
-    options?: { sceneScaleFactor: number; overrideSceneScale: boolean },
-  ): void {
+  loadSprite(texture: Texture, animDef: AnimationSetDef): void {
     if (this.marker) {
       this.container.removeChild(this.marker);
       this.marker.destroy();
@@ -54,15 +49,15 @@ export class Npc implements ICutsceneActor {
 
     this.sprite = new SpriteEntity();
     this.sprite.loadFromDef(texture, animDef);
-    const baseScale = animDef.scale ?? 1;
-    const effectiveScale = options && !options.overrideSceneScale
-      ? baseScale * options.sceneScaleFactor
-      : baseScale;
-    this.sprite.setScale(effectiveScale);
     this.sprite.playAnimation('idle');
     this.container.addChildAt(this.sprite.container, 0);
     this.sprite.container.x = 0;
     this.sprite.container.y = 0;
+  }
+
+  private _syncContainerPosition(): void {
+    this.container.x = this._x;
+    this.container.y = this._y;
   }
 
   get entityId(): string { return this.def.id; }
@@ -70,13 +65,13 @@ export class Npc implements ICutsceneActor {
   get x(): number { return this._x; }
   set x(v: number) {
     this._x = v;
-    this.container.x = v;
+    this._syncContainerPosition();
   }
 
   get y(): number { return this._y; }
   set y(v: number) {
     this._y = v;
-    this.container.y = v;
+    this._syncContainerPosition();
   }
 
   get interactionRange(): number { return this.def.interactionRange; }

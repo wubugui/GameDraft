@@ -1,10 +1,8 @@
 {
   "id": "bridge_underpass",
   "name": "桥下",
-  "spriteScaleFactor": 0.6,
-  "floor_offset": 0,
-  "playerWalkSpeed": 120,
-  "playerRunSpeed": 200,
+  "worldWidth": 5000,
+  "worldHeight": 2791,
   "backgrounds": [
     {
       "image": "background.png",
@@ -12,16 +10,14 @@
       "y": 0
     }
   ],
-  "width": 1600,
-  "height": 1000,
   "spawnPoint": {
-    "x": 800,
-    "y": 820
+    "x": 2500,
+    "y": 2288.6
   },
   "spawnPoints": {
     "from_street": {
-      "x": 800,
-      "y": 820
+      "x": 2500,
+      "y": 2288.6
     }
   },
   "hotspots": [
@@ -29,11 +25,11 @@
       "id": "exit_to_street",
       "type": "transition",
       "label": "回街巷",
-      "x": 650,
-      "y": 750,
-      "width": 300,
-      "height": 150,
-      "interactionRange": 130,
+      "x": 2031.3,
+      "y": 2093.3,
+      "width": 937.5,
+      "height": 418.7,
+      "interactionRange": 406.3,
       "data": {
         "targetScene": "test_room_a",
         "targetSpawnPoint": "from_bridge"
@@ -46,24 +42,24 @@
     "M": {
       "R": [
         [
-          0.0,
+          0,
           -0.3420201433256687,
           -0.9396926207859084
         ],
         [
-          0.0,
+          0,
           0.9396926207859084,
           -0.3420201433256687
         ],
         [
-          -1.0,
-          0.0,
-          -0.0
+          -1,
+          0,
+          0
         ]
       ],
-      "ppu": 436.0,
-      "cx": 688.0,
-      "cy": 384.0
+      "ppu": 436,
+      "cx": 688,
+      "cy": 384
     },
     "depth_mapping": {
       "invert": true,
@@ -75,8 +71,8 @@
       "floor_depth_A": -0.006301553714345464,
       "floor_depth_B": 2.419796626308658
     },
-    "depth_tolerance": 0.0,
-    "floor_offset": 0.0,
+    "depth_tolerance": 0,
+    "floor_offset": 0,
     "collision": {
       "x_min": -1.2783960517272075,
       "z_min": -1.5688073394495412,

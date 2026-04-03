@@ -1,12 +1,8 @@
 {
   "id": "test_scene",
   "name": "测试场景",
-  "spriteScaleFactor": 1,
-  "floor_offset": 0,
-  "playerWalkSpeed": 120,
-  "playerRunSpeed": 200,
-  "width": 1600,
-  "height": 1200,
+  "worldWidth": 1600,
+  "worldHeight": 1200,
   "backgrounds": [
     { "image": "background.png", "x": 0, "y": 0 }
   ],
