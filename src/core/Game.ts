@@ -311,6 +311,7 @@ export class Game {
       getCurrentSceneId: () => this.sceneManager.currentSceneData?.id,
       fallbackScene: this.gameConfig.fallbackScene,
       reloadScene: (id) => this.reloadScene(id),
+      isExploring: () => this.stateController.currentState === GameState.Exploring,
     });
     this.debugTools.init();
 

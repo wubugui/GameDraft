@@ -6,6 +6,10 @@ import type { InventoryManager } from '../systems/InventoryManager';
 import type { DebugPanelUI } from '../ui/DebugPanelUI';
 import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
 
+/** 调试缩放下限。原先 0.25 过小幅度就顶死，表现为「只能放大不能缩小」 */
+const DEBUG_CAMERA_ZOOM_MIN = 0.05;
+const DEBUG_CAMERA_ZOOM_MAX = 4;
+
 export interface DebugToolsDeps {
   renderer: Renderer;
   camera: Camera;
@@ -17,6 +21,8 @@ export interface DebugToolsDeps {
   getCurrentSceneId: () => string | undefined;
   fallbackScene: string;
   reloadScene: (sceneId: string) => void;
+  /** 仅探索态允许调试缩放，避免演出/对话/UI 覆写镜头时被干扰 */
+  isExploring: () => boolean;
 }
 
 export class DebugTools {
@@ -25,13 +31,94 @@ export class DebugTools {
   private positionDebugKeyHandler: (e: KeyboardEvent) => void = () => {};
   private positionDebugPointerHandler: (e: PointerEvent) => void = () => {};
 
+  private debugMiddleButtonCameraZoomEnabled = false;
+  private middleZoomDragActive = false;
+  private middleZoomLastY = 0;
+  private middleZoomPointerId: number | null = null;
+  private cameraZoomWheelHandler: (e: WheelEvent) => void = () => {};
+  private middleZoomPointerDownHandler: (e: PointerEvent) => void = () => {};
+  private middleZoomPointerMoveHandler: (e: PointerEvent) => void = () => {};
+  private middleZoomPointerUpHandler: (e: PointerEvent) => void = () => {};
+
   constructor(deps: DebugToolsDeps) {
     this.deps = deps;
   }
 
   init(): void {
     this.setupPositionDebugTool();
+    this.setupMiddleButtonCameraZoom();
     this.setupDebugPanelSections();
+  }
+
+  private clampDebugCameraZoom(z: number): number {
+    return Math.max(DEBUG_CAMERA_ZOOM_MIN, Math.min(DEBUG_CAMERA_ZOOM_MAX, z));
+  }
+
+  private normalizeWheelDeltaY(e: WheelEvent): number {
+    let dy = e.deltaY;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) dy *= 16;
+    else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) dy *= 800;
+    return dy;
+  }
+
+  /** 避免只靠 e.target === canvas（部分环境下 target 不是画布元素，滚轮会漏接） */
+  private isEventOnCanvas(canvas: HTMLCanvasElement, clientX: number, clientY: number): boolean {
+    const r = canvas.getBoundingClientRect();
+    return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+  }
+
+  private setupMiddleButtonCameraZoom(): void {
+    const { renderer } = this.deps;
+    const canvas = renderer.app.canvas as HTMLCanvasElement;
+    if (!canvas) return;
+
+    this.cameraZoomWheelHandler = (e: WheelEvent) => {
+      if (!this.debugMiddleButtonCameraZoomEnabled || !this.deps.isExploring()) return;
+      if (!this.isEventOnCanvas(canvas, e.clientX, e.clientY)) return;
+      e.preventDefault();
+      const dy = this.normalizeWheelDeltaY(e);
+      const cam = this.deps.camera;
+      const factor = Math.exp(-dy * 0.002);
+      cam.setZoom(this.clampDebugCameraZoom(cam.getZoom() * factor));
+    };
+
+    this.middleZoomPointerDownHandler = (e: PointerEvent) => {
+      if (!this.debugMiddleButtonCameraZoomEnabled || !this.deps.isExploring()) return;
+      if (e.button !== 1) return;
+      if (!this.isEventOnCanvas(canvas, e.clientX, e.clientY)) return;
+      e.preventDefault();
+      this.middleZoomDragActive = true;
+      this.middleZoomLastY = e.clientY;
+      this.middleZoomPointerId = e.pointerId;
+      canvas.setPointerCapture(e.pointerId);
+    };
+
+    this.middleZoomPointerMoveHandler = (e: PointerEvent) => {
+      if (!this.middleZoomDragActive || e.pointerId !== this.middleZoomPointerId) return;
+      e.preventDefault();
+      const dy = e.clientY - this.middleZoomLastY;
+      this.middleZoomLastY = e.clientY;
+      const cam = this.deps.camera;
+      const factor = Math.exp(dy * 0.008);
+      cam.setZoom(this.clampDebugCameraZoom(cam.getZoom() * factor));
+    };
+
+    this.middleZoomPointerUpHandler = (e: PointerEvent) => {
+      if (e.pointerId !== this.middleZoomPointerId) return;
+      this.middleZoomDragActive = false;
+      this.middleZoomPointerId = null;
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore if already released
+      }
+    };
+
+    canvas.addEventListener('wheel', this.cameraZoomWheelHandler, { passive: false });
+    canvas.addEventListener('pointerdown', this.middleZoomPointerDownHandler);
+    canvas.addEventListener('pointermove', this.middleZoomPointerMoveHandler);
+    canvas.addEventListener('pointerup', this.middleZoomPointerUpHandler);
+    canvas.addEventListener('pointercancel', this.middleZoomPointerUpHandler);
   }
 
   update(_dt: number): void {}
@@ -127,12 +214,33 @@ export class DebugTools {
         },
       })),
     }));
+
+    debugPanelUI.addSection('Camera', () => ({
+      text: this.debugMiddleButtonCameraZoomEnabled
+        ? `中键摄像机缩放：开启\n仅在探索模式下生效。\n滚轮 / 中键拖动缩放；调试范围约 ${DEBUG_CAMERA_ZOOM_MIN}～${DEBUG_CAMERA_ZOOM_MAX}（场景配置的 zoom 过低时，继续缩小会先被夹到最小值）。`
+        : '中键摄像机缩放：关闭\n开启后可在探索模式下用滚轮或中键拖动缩放镜头。',
+      actions: [
+        {
+          label: this.debugMiddleButtonCameraZoomEnabled ? '关闭中键缩放' : '开启中键缩放',
+          fn: () => {
+            this.debugMiddleButtonCameraZoomEnabled = !this.debugMiddleButtonCameraZoomEnabled;
+            debugPanelUI.log(`中键摄像机缩放: ${this.debugMiddleButtonCameraZoomEnabled ? 'on' : 'off'}`);
+          },
+        },
+      ],
+    }));
   }
 
   destroy(): void {
     window.removeEventListener('keydown', this.positionDebugKeyHandler);
     const canvas = this.deps.renderer.app?.canvas as HTMLCanvasElement | undefined;
-    if (canvas) canvas.removeEventListener('pointerdown', this.positionDebugPointerHandler);
-
+    if (canvas) {
+      canvas.removeEventListener('pointerdown', this.positionDebugPointerHandler);
+      canvas.removeEventListener('wheel', this.cameraZoomWheelHandler);
+      canvas.removeEventListener('pointerdown', this.middleZoomPointerDownHandler);
+      canvas.removeEventListener('pointermove', this.middleZoomPointerMoveHandler);
+      canvas.removeEventListener('pointerup', this.middleZoomPointerUpHandler);
+      canvas.removeEventListener('pointercancel', this.middleZoomPointerUpHandler);
+    }
   }
 }

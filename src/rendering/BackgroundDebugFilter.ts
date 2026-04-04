@@ -63,6 +63,29 @@ uniform float uCol_cellSize;
 uniform float uCol_gridW;
 uniform float uCol_gridH;
 
+// 仅深度调试用：线性深度空间归一化区间（由 depth_mapping 推导）
+uniform float uDbgDepthLo;
+uniform float uDbgDepthHi;
+
+float asinh_fast(float x) {
+    return log(x + sqrt(x * x + 1.0));
+}
+
+/** 近似 Viridis：保序，突出全局深浅 */
+vec3 depth_debug_colormap(float t) {
+    t = clamp(t, 0.0, 1.0);
+    vec3 c0 = vec3(0.05, 0.02, 0.38);
+    vec3 c1 = vec3(0.02, 0.40, 0.72);
+    vec3 c2 = vec3(0.18, 0.75, 0.55);
+    vec3 c3 = vec3(0.85, 0.75, 0.20);
+    vec3 c4 = vec3(0.92, 0.35, 0.12);
+    float p = t * 4.0;
+    if (p < 1.0) return mix(c0, c1, smoothstep(0.0, 1.0, p));
+    if (p < 2.0) return mix(c1, c2, smoothstep(0.0, 1.0, p - 1.0));
+    if (p < 3.0) return mix(c2, c3, smoothstep(0.0, 1.0, p - 2.0));
+    return mix(c3, c4, smoothstep(0.0, 1.0, p - 3.0));
+}
+
 void main(void) {
     if (uMode < 0.5) {
         finalColor = texture(uTexture, vTextureCoord);
@@ -80,13 +103,16 @@ void main(void) {
     }
 
     if (uMode < 1.5) {
-        // --- 深度可视化（分层色带, 每 5 个深度单位循环一次） ---
+        // --- 深度调试可视化：单调 asinh + 全局线性区间归一化 + colormap（不改采样与深度逻辑） ---
         vec4 depthSample = texture(uDepthMap, uv);
         float rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
         float d = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
         float depth = d * uScale + uOffset;
-        float band = fract(depth);
-        finalColor = vec4(band, band * 0.3, 0.0, 1.0);
+        float z = asinh_fast(depth);
+        float z0 = asinh_fast(uDbgDepthLo);
+        float z1 = asinh_fast(uDbgDepthHi);
+        float t = clamp((z - z0) / max(z1 - z0, 1e-6), 0.0, 1.0);
+        finalColor = vec4(depth_debug_colormap(t), 1.0);
 
     } else if (uMode < 2.5) {
         // --- 碰撞可视化 ---
@@ -158,6 +184,8 @@ export class BackgroundDebugFilter extends Filter {
                     uCol_cellSize: { value: 1, type: 'f32' },
                     uCol_gridW: { value: 0, type: 'f32' },
                     uCol_gridH: { value: 0, type: 'f32' },
+                    uDbgDepthLo: { value: -1, type: 'f32' },
+                    uDbgDepthHi: { value: 1, type: 'f32' },
                 },
                 uDepthMap: placeholder.source,
                 uCollisionMap: placeholder.source,
@@ -196,6 +224,27 @@ export class BackgroundDebugFilter extends Filter {
         u['uInvert'] = dm.invert ? 1.0 : 0.0;
         u['uScale'] = dm.scale;
         u['uOffset'] = dm.offset;
+
+        // d∈[0,1] → depth = d*scale+offset；推导显示归一化区间，仅影响 F2 深度着色
+        const o = dm.offset;
+        const s = dm.scale;
+        let lo = Math.min(o, s + o);
+        let hi = Math.max(o, s + o);
+        if (lo > hi) [lo, hi] = [hi, lo];
+        const span = hi - lo;
+        const pad = Math.max(span * 0.12, Math.max(Math.abs(s), 1e-6) * 0.05, 1e-3);
+        let nLo = lo - pad;
+        let nHi = hi + pad;
+        if (span < 1e-8) {
+            nLo = o - 1;
+            nHi = o + 1;
+        }
+        if (nHi - nLo < 1e-6) {
+            nLo -= 1;
+            nHi += 1;
+        }
+        u['uDbgDepthLo'] = nLo;
+        u['uDbgDepthHi'] = nHi;
 
         const M = cfg.M;
         u['uM_ppu'] = M.ppu;
