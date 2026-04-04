@@ -14,6 +14,9 @@ export class Renderer {
   public worldFilterPipeline: WorldFilterPipeline;
 
   private initialized = false;
+  /** Application 已 destroy 后为 true，尺寸访问需降级避免异常 */
+  private tornDown = false;
+  private mountObserver: ResizeObserver | null = null;
 
   constructor() {
     this.app = new Application();
@@ -26,15 +29,19 @@ export class Renderer {
   }
 
   async init(): Promise<void> {
+    const mount = document.getElementById('game-mount');
+
     await this.app.init({
       background: '#1a1a2e',
-      resizeTo: window,
+      resizeTo: mount ?? window,
       antialias: false,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
     });
 
-    document.body.appendChild(this.app.canvas as HTMLCanvasElement);
+    const canvas = this.app.canvas as HTMLCanvasElement;
+    if (mount) mount.appendChild(canvas);
+    else document.body.appendChild(canvas);
 
     this.worldContainer.addChild(this.backgroundLayer);
     this.worldContainer.addChild(this.entityLayer);
@@ -42,6 +49,15 @@ export class Renderer {
     this.app.stage.addChild(this.worldContainer);
     this.app.stage.addChild(this.cutsceneOverlay);
     this.app.stage.addChild(this.uiLayer);
+
+    if (mount) {
+      this.mountObserver = new ResizeObserver(() => {
+        if (this.initialized && !this.tornDown) {
+          this.app.resize();
+        }
+      });
+      this.mountObserver.observe(mount);
+    }
 
     this.initialized = true;
   }
@@ -51,11 +67,29 @@ export class Renderer {
   }
 
   get screenWidth(): number {
-    return this.app.screen.width;
+    if (this.tornDown || !this.initialized) {
+      return typeof window !== 'undefined' ? window.innerWidth : 800;
+    }
+    try {
+      const w = this.app.screen.width;
+      if (Number.isFinite(w)) return w;
+    } catch {
+      /* Application 正在或已 teardown 时 Pixi 可能抛错 */
+    }
+    return typeof window !== 'undefined' ? window.innerWidth : 800;
   }
 
   get screenHeight(): number {
-    return this.app.screen.height;
+    if (this.tornDown || !this.initialized) {
+      return typeof window !== 'undefined' ? window.innerHeight : 600;
+    }
+    try {
+      const h = this.app.screen.height;
+      if (Number.isFinite(h)) return h;
+    } catch {
+      /* 同上 */
+    }
+    return typeof window !== 'undefined' ? window.innerHeight : 600;
   }
 
   isInitialized(): boolean {
@@ -63,8 +97,37 @@ export class Renderer {
   }
 
   destroy(): void {
+    if (this.tornDown) return;
+    this.tornDown = true;
+    this.initialized = false;
+
+    if (this.mountObserver) {
+      this.mountObserver.disconnect();
+      this.mountObserver = null;
+    }
+
     this.worldFilterPipeline.clear();
-    this.app.destroy(true);
+
+    const app = this.app as Application & {
+      cancelResize?: () => void;
+      resizeTo?: Window | HTMLElement | null;
+    };
+    try {
+      app.cancelResize?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      // 先断开 resizeTo，避免 ResizePlugin.destroy 里 _cancelResize 已不可靠（Pixi v8 + HMR/重复卸载）
+      app.resizeTo = null;
+    } catch {
+      /* ignore */
+    }
+    try {
+      app.destroy(true);
+    } catch (e) {
+      console.warn('Renderer: Application.destroy failed', e);
+    }
   }
 
   // ---------- 世界滤镜 API（仅作用于 worldContainer，GUI 不受影响） ----------

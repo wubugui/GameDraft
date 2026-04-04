@@ -7,10 +7,14 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #111; }
-    canvas { display: block; }
+    canvas { display: block; width: 100%; height: 100%; }
   </style>
 </head>
 <body>
+  <div id="app-shell">
+    <div id="game-mount"></div>
+    <aside id="debug-dock" aria-hidden="true"></aside>
+  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

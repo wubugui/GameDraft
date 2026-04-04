@@ -233,7 +233,12 @@ export class DebugTools {
 
   destroy(): void {
     window.removeEventListener('keydown', this.positionDebugKeyHandler);
-    const canvas = this.deps.renderer.app?.canvas as HTMLCanvasElement | undefined;
+    let canvas: HTMLCanvasElement | undefined;
+    try {
+      canvas = this.deps.renderer.app?.canvas as HTMLCanvasElement | undefined;
+    } catch {
+      canvas = undefined;
+    }
     if (canvas) {
       canvas.removeEventListener('pointerdown', this.positionDebugPointerHandler);
       canvas.removeEventListener('wheel', this.cameraZoomWheelHandler);

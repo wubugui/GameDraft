@@ -115,6 +115,8 @@ export class Game {
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
   private boundWindowListeners: { event: string; fn: EventListener }[] = [];
+  /** 避免 beforeunload 与 pagehide 接连触发时重复销毁（第二次会踩已 teardown 的 Pixi Application） */
+  private tearDownComplete = false;
   private gameConfig: GameConfig = {
     initialScene: 'test_room_a',
     initialQuest: 'main_01',
@@ -235,7 +237,7 @@ export class Game {
     );
     this.menuUI = new MenuUI(this.renderer, this.eventBus, this.saveManager, this.audioManager, this.stringsProvider);
     this.ruleUseUI = new RuleUseUI(this.renderer, this.eventBus, this.zoneSystem, this.rulesManager, this.stringsProvider);
-    this.debugPanelUI = new DebugPanelUI(this.renderer, () => ({
+    this.debugPanelUI = new DebugPanelUI(() => ({
       fps: this.lastFps,
       sceneId: this.sceneManager.currentSceneData?.id ?? undefined,
       state: this.stateController.currentState,
@@ -496,7 +498,7 @@ export class Game {
     this.stateController.registerPanel('menu', this.menuUI);
     this.stateController.registerPanel('debug', this.debugPanelUI, 'F2', {
       alwaysOpenable: true,
-      additionalKeys: ['Backquote'],
+      overlaysGameState: false,
     });
 
     this.stateController.setEscapeFallback(() => {
@@ -615,6 +617,9 @@ export class Game {
   }
 
   destroy(): void {
+    if (this.tearDownComplete) return;
+    this.tearDownComplete = true;
+
     for (const { event, fn } of this.boundCallbacks) {
       this.eventBus.off(event, fn);
     }
@@ -693,20 +698,21 @@ export class Game {
     this.depthDebugVisualizer?.update();
 
     if (this.sceneDepthSystem.isEnabled) {
+      const S = this.camera.getProjectionScale();
       this.sceneDepthSystem.updatePerFrame(
         this.renderer.worldContainer.x,
         this.renderer.worldContainer.y,
+        S,
       );
-      const S = this.camera.getProjectionScale();
       if (this.playerDepthFilter) {
-        this.sceneDepthSystem.updateEntityFootY(this.playerDepthFilter, this.player.y * S);
+        this.sceneDepthSystem.updateEntityFootY(this.playerDepthFilter, this.player.y);
       }
       for (const child of this.renderer.entityLayer.children) {
         const c = child as unknown as { filters?: readonly { _isDepthOcclusion?: boolean }[]; y: number };
         if (c.filters) {
           for (const f of c.filters) {
             if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
-              this.sceneDepthSystem.updateEntityFootY(f as unknown as DepthOcclusionFilter, c.y * S);
+              this.sceneDepthSystem.updateEntityFootY(f as unknown as DepthOcclusionFilter, c.y);
             }
           }
         }

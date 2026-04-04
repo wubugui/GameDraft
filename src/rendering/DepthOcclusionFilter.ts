@@ -39,7 +39,10 @@ out vec4 finalColor;
 uniform sampler2D uTexture;
 uniform sampler2D uDepthMap;
 
-uniform vec2  uSceneSize;      // 背景图像素尺寸
+uniform vec2  uSceneSize;      // 场景世界宽高（worldWidth / worldHeight）
+uniform float uProjectionScale; // Camera 投影 S，世界单位→屏幕像素
+uniform float uWorldToPixelX;   // 世界X → 背景纹理像素
+uniform float uWorldToPixelY;   // 世界Y → 背景纹理像素（与 isCollision 一致）
 uniform float uInvert;
 uniform float uScale;
 uniform float uOffset;
@@ -49,7 +52,7 @@ uniform float uFloorB;
 uniform float uFloorOffset;
 uniform float uTolerance;
 uniform vec2  uWorldContainerPos;
-uniform float uEntityFootY;    // 精灵脚部Y（像素坐标）
+uniform float uEntityFootWorldY; // 精灵脚部世界坐标 Y
 uniform float uDebug;          // 调试模式：1=输出调试颜色
 
 // M矩阵参数（像素→伪3D，仅调试用）
@@ -69,14 +72,16 @@ void main(void) {
     vec4 color = texture(uTexture, vTextureCoord);
     if (color.a < 0.004) { discard; }
 
-    // vScreenPos 是精灵在屏幕上的像素位置
-    // uWorldContainerPos 是世界容器的屏幕偏移
-    // sx, sy = 精灵在世界容器中的像素位置（= 世界坐标 × pixelsPerUnit）
+    // 世界容器内位移（屏幕像素）≈ 世界坐标 × S
+    float S = max(uProjectionScale, 1e-6);
     float sx = vScreenPos.x - uWorldContainerPos.x;
     float sy = vScreenPos.y - uWorldContainerPos.y;
 
-    // 像素坐标 → 深度图UV（深度图与背景图1:1对应）
-    vec2 depthUV = vec2(sx / uSceneSize.x, sy / uSceneSize.y);
+    float wx = sx / S;
+    float wy = sy / S;
+
+    // 深度图与背景按世界归一化 UV 对齐
+    vec2 depthUV = vec2(wx / uSceneSize.x, wy / uSceneSize.y);
 
     if (depthUV.x < 0.0 || depthUV.x > 1.0 || depthUV.y < 0.0 || depthUV.y > 1.0) {
         finalColor = color;
@@ -89,19 +94,22 @@ void main(void) {
     float d_raw = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
     float sceneDepth = d_raw * uScale + uOffset;
 
-    // 精灵深度计算（基于像素坐标）
-    float footSy = uEntityFootY;
-    float d_base = uFloorA * footSy + uFloorB + uFloorOffset;
-    float spriteDepth = d_base + uDepthPerSy * (sy - footSy);
+    // 精灵立面深度：floor / depth_per_sy 按背景纹理像素 sy 标定（与 isCollision 一致）
+    float footWy = uEntityFootWorldY;
+    float syTexFoot = footWy * uWorldToPixelY;
+    float syTex = wy * uWorldToPixelY;
+    float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset;
+    float spriteDepth = d_base + uDepthPerSy * (syTex - syTexFoot);
 
     // ========== 调试模式 ==========
     if (uDebug > 0.5) {
         vec3 dbgColor = vec3(0.0);
 
-        // 碰撞检测
-        float ppx = (sx - uM_cx) / uM_ppu;
-        float ppy = (uM_cy - sy) / uM_ppu;
-        float dFloor = uFloorA * sy + uFloorB;
+        float sxTex = wx * uWorldToPixelX;
+        float syTexDbg = wy * uWorldToPixelY;
+        float ppx = (sxTex - uM_cx) / uM_ppu;
+        float ppy = (uM_cy - syTexDbg) / uM_ppu;
+        float dFloor = uFloorA * syTexDbg + uFloorB;
         float wx = uM_R00 * ppx + uM_R01 * ppy + uM_R02 * dFloor;
         float wz = uM_R20 * ppx + uM_R21 * ppy + uM_R22 * dFloor;
         float gx = (wx - uCol_xMin) / uCol_cellSize;
@@ -163,6 +171,9 @@ export class DepthOcclusionFilter extends Filter {
             resources: {
                 depthUniforms: {
                     uSceneSize: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
+                    uProjectionScale: { value: 1, type: 'f32' },
+                    uWorldToPixelX: { value: 1, type: 'f32' },
+                    uWorldToPixelY: { value: 1, type: 'f32' },
                     uInvert: { value: cfg.depth_mapping.invert ? 1.0 : 0.0, type: 'f32' },
                     uScale: { value: cfg.depth_mapping.scale, type: 'f32' },
                     uOffset: { value: cfg.depth_mapping.offset, type: 'f32' },
@@ -172,7 +183,7 @@ export class DepthOcclusionFilter extends Filter {
                     uFloorOffset: { value: cfg.floor_offset, type: 'f32' },
                     uTolerance: { value: cfg.depth_tolerance, type: 'f32' },
                     uWorldContainerPos: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
-                    uEntityFootY: { value: 0, type: 'f32' },
+                    uEntityFootWorldY: { value: 0, type: 'f32' },
                     uDebug: { value: 0, type: 'f32' },
                     // M矩阵（调试用）
                     uM_ppu: { value: cfg.M.ppu, type: 'f32' },
@@ -241,9 +252,23 @@ export class DepthOcclusionFilter extends Filter {
         }
     }
 
-    setEntityFootY(y: number): void {
+    setProjectionScale(s: number): void {
         const u = this._du;
-        if (u) u['uEntityFootY'] = y;
+        if (u) u['uProjectionScale'] = s;
+    }
+
+    setWorldToPixel(tx: number, ty: number): void {
+        const u = this._du;
+        if (u) {
+            u['uWorldToPixelX'] = tx;
+            u['uWorldToPixelY'] = ty;
+        }
+    }
+
+    /** 脚部世界坐标 Y（与 Player/NPC 的 y 一致） */
+    setEntityFootY(worldY: number): void {
+        const u = this._du;
+        if (u) u['uEntityFootWorldY'] = worldY;
     }
 
     setTolerance(v: number): void {

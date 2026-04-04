@@ -188,9 +188,8 @@ export class SceneDepthSystem {
         if (!this.enabled || !this.depthTexture || !this.config) return null;
         try {
             const f = DepthOcclusionFilter.createForEntity(this.depthTexture, this.config);
-            // uSceneSize = 背景渲染后的像素尺寸 = 纹理尺寸 * 缩放
-            // = worldWidth（因为 background.scale = worldWidth / textureWidth）
             f.setSceneSize(this.sceneW, this.sceneH);
+            f.setWorldToPixel(this.worldToPixelX, this.worldToPixelY);
             this.filters.push(f);
             depthLog(T, 'filter created, sceneSize (rendered):', this.sceneW, 'x', this.sceneH, 'total:', this.filters.length);
             return f;
@@ -210,21 +209,26 @@ export class SceneDepthSystem {
 
     private _logCounter = 0;
 
-    updatePerFrame(worldContainerX: number, worldContainerY: number): void {
+    updatePerFrame(worldContainerX: number, worldContainerY: number, projectionScale: number): void {
         if (!this.enabled) return;
-        for (const f of this.filters) f.setWorldContainerPos(worldContainerX, worldContainerY);
+        for (const f of this.filters) {
+            f.setWorldContainerPos(worldContainerX, worldContainerY);
+            f.setProjectionScale(projectionScale);
+        }
         if (this._logCounter % 300 === 0) {
             depthLog(T, 'perFrame wcPos:', worldContainerX.toFixed(1), worldContainerY.toFixed(1));
         }
     }
 
-    updateEntityFootY(filter: DepthOcclusionFilter, y: number): void {
-        filter.setEntityFootY(y);
+    /** @param worldY 脚部世界坐标 Y */
+    updateEntityFootY(filter: DepthOcclusionFilter, worldY: number): void {
+        filter.setEntityFootY(worldY);
         if (this._logCounter % 300 === 0) {
             const floorA = this.config?.shader.floor_depth_A ?? 0;
             const floorB = this.config?.shader.floor_depth_B ?? 0;
-            const dBase = floorA * y + floorB + this._floorOffset;
-            depthLog(T, 'footY:', y.toFixed(1), 'floorA:', floorA, 'floorB:', floorB.toFixed(4), 'd_base:', dBase.toFixed(4));
+            const syTex = worldY * this.worldToPixelY;
+            const dBase = floorA * syTex + floorB + this._floorOffset;
+            depthLog(T, 'footWorldY:', worldY.toFixed(2), 'syTex:', syTex.toFixed(2), 'd_base:', dBase.toFixed(4));
             this._logCounter++;
         } else {
             this._logCounter++;

@@ -11,6 +11,11 @@ export interface RegisterPanelOptions {
   alwaysOpenable?: boolean;
   /** 额外快捷键（除 shortcutKey 外） */
   additionalKeys?: string[];
+  /**
+   * 为 true（默认）时打开面板会进入 UIOverlay，关闭时恢复先前状态。
+   * 为 false 时（如 DOM 侧栏调试面板）不改变 GameState，不阻挡探索/操作。
+   */
+  overlaysGameState?: boolean;
 }
 
 interface PanelEntry {
@@ -18,6 +23,7 @@ interface PanelEntry {
   shortcutKey?: string;
   alwaysOpenable?: boolean;
   additionalKeys?: string[];
+  overlaysGameState: boolean;
 }
 
 export class GameStateController {
@@ -57,6 +63,7 @@ export class GameStateController {
       shortcutKey,
       alwaysOpenable: options?.alwaysOpenable,
       additionalKeys: options?.additionalKeys,
+      overlaysGameState: options?.overlaysGameState !== false,
     });
   }
 
@@ -79,28 +86,35 @@ export class GameStateController {
 
     if (entry.panel.isOpen) {
       entry.panel.close();
-      this._currentState = this._previousState;
+      if (entry.overlaysGameState) {
+        this._currentState = this._previousState;
+      }
       return;
     }
 
     const canOpen = entry.alwaysOpenable || this._currentState === GameState.Exploring;
     if (!canOpen) return;
-    this._previousState = this._currentState;
-    this._currentState = GameState.UIOverlay;
+    if (entry.overlaysGameState) {
+      this._previousState = this._currentState;
+      this._currentState = GameState.UIOverlay;
+    }
     entry.panel.open();
 
-    if (!entry.panel.isOpen) {
+    if (!entry.panel.isOpen && entry.overlaysGameState) {
       this._currentState = this._previousState;
     }
   }
 
   private handleKeyDown(e: KeyboardEvent): void {
+    // 避免按住键时首拍打开、重复 keydown 立即再关（如 F2 调试侧栏）
+    if (e.repeat) return;
+
     for (const [name, entry] of this.panels) {
       const matches =
         (entry.shortcutKey && e.code === entry.shortcutKey) ||
         (entry.additionalKeys && entry.additionalKeys.includes(e.code));
       if (matches) {
-        if (e.code === 'Tab' || e.code === 'Backquote') e.preventDefault();
+        e.preventDefault();
         this.togglePanel(name);
         return;
       }
@@ -114,11 +128,17 @@ export class GameStateController {
   private handleEscape(): void {
     if (this._currentState === GameState.UIOverlay) {
       for (const [, entry] of Array.from(this.panels.entries()).reverse()) {
-        if (entry.panel.isOpen) {
+        if (entry.panel.isOpen && entry.overlaysGameState) {
           entry.panel.close();
           this._currentState = this._previousState;
           return;
         }
+      }
+    }
+    for (const [, entry] of Array.from(this.panels.entries()).reverse()) {
+      if (entry.panel.isOpen && !entry.overlaysGameState) {
+        entry.panel.close();
+        return;
       }
     }
     if (this._currentState === GameState.Exploring && this.escapeFallback) {
