@@ -1,0 +1,16 @@
+{
+  "calibration": {
+    "camera": {
+      "elevation_deg": 39.0,
+      "azimuth_deg": 0.0,
+      "pixels_per_unit": 198.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.1,
+      "offset": -2.65
+    }
+  }
+}

@@ -83,6 +83,12 @@ export class DepthDebugVisualizer {
     }
   }
 
+  /** 调试：仅更新世界尺寸（与 applyDebugWorldSize 一致时背景调试叠加仍对齐） */
+  updateSceneWorldSize(worldWidth: number, worldHeight: number): void {
+    this.sceneW = worldWidth;
+    this.sceneH = worldHeight;
+  }
+
   /** 场景卸载时重置（filter 保留在 backgroundLayer 上，mode=off 即透传） */
   onSceneUnloaded(): void {
     this.collisionTextureLoaded = false;

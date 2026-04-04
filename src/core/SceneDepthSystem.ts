@@ -1,13 +1,13 @@
 import { Texture } from 'pixi.js';
 import type { AssetManager } from './AssetManager';
-import type { SceneDepthConfig } from '../data/types';
+import type { SceneDepthConfig, IGameSystem, GameContext } from '../data/types';
 import { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import { resolveAssetPath } from './assetPath';
 import { depthLog, depthError } from './depthLog';
 
 const T = 'DepthSystem';
 
-export class SceneDepthSystem {
+export class SceneDepthSystem implements IGameSystem {
     private enabled = false;
     private config: SceneDepthConfig | null = null;
     private depthTexture: Texture | null = null;
@@ -45,6 +45,11 @@ export class SceneDepthSystem {
         this._floorOffset = v;
         for (const f of this.filters) f.setFloorOffset(v);
     }
+
+    init(_ctx: GameContext): void {}
+    update(_dt: number): void {}
+    serialize(): object { return {}; }
+    deserialize(_data: object): void {}
 
     get isEnabled(): boolean { return this.enabled; }
     get currentConfig(): SceneDepthConfig | null { return this.config; }
@@ -116,6 +121,19 @@ export class SceneDepthSystem {
         this._floorOffset = depthConfig.floor_offset;
 
         depthLog(T, 'load() done. enabled:', this.enabled, 'depthTex:', !!this.depthTexture, 'collisionData:', !!this.collisionData);
+    }
+
+    /** 调试：场景 world 尺寸在运行时被修改后，同步深度滤镜与碰撞采样比例（不重载纹理） */
+    applyRuntimeSceneSize(sceneW: number, sceneH: number, worldToPixelX: number, worldToPixelY: number): void {
+        if (!this.enabled) return;
+        this.sceneW = sceneW;
+        this.sceneH = sceneH;
+        this.worldToPixelX = worldToPixelX;
+        this.worldToPixelY = worldToPixelY;
+        for (const f of this.filters) {
+            f.setSceneSize(sceneW, sceneH);
+            f.setWorldToPixel(worldToPixelX, worldToPixelY);
+        }
     }
 
     loadDefault(): void {
@@ -233,5 +251,9 @@ export class SceneDepthSystem {
         } else {
             this._logCounter++;
         }
+    }
+
+    destroy(): void {
+        this.unload();
     }
 }

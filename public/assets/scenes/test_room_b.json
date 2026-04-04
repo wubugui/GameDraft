@@ -3,6 +3,10 @@
   "name": "后巷",
   "worldWidth": 5000,
   "worldHeight": 2791,
+  "camera": {
+    "zoom": 1,
+    "pixelsPerUnit": 1
+  },
   "backgrounds": [
     {
       "image": "background.png",
@@ -27,8 +31,6 @@
       "label": "旧木箱",
       "x": 1500,
       "y": 872.2,
-      "width": 300,
-      "height": 209.3,
       "interactionRange": 400,
       "data": {
         "encounterId": "old_box_encounter"
@@ -40,8 +42,6 @@
       "label": "艾草",
       "x": 3500,
       "y": 1395.5,
-      "width": 200,
-      "height": 139.6,
       "interactionRange": 350,
       "data": {
         "itemId": "mugwort",
@@ -55,8 +55,6 @@
       "label": "回到街巷",
       "x": 2500,
       "y": 2616.6,
-      "width": 500,
-      "height": 279.1,
       "interactionRange": 300,
       "data": {
         "targetScene": "test_room_a",
@@ -69,8 +67,6 @@
       "label": "桃木片",
       "x": 1500,
       "y": 2093.3,
-      "width": 200,
-      "height": 139.6,
       "interactionRange": 350,
       "data": {
         "itemId": "taomu",
@@ -84,8 +80,6 @@
       "label": "后山小路",
       "x": 2500,
       "y": 1046.6,
-      "width": 400,
-      "height": 279.1,
       "interactionRange": 400,
       "conditions": [
         {
@@ -102,8 +96,6 @@
       "label": "墙上的奇怪痕迹",
       "x": 3500,
       "y": 872.2,
-      "width": 300,
-      "height": 209.3,
       "interactionRange": 400,
       "conditions": [
         {

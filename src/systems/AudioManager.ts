@@ -1,5 +1,6 @@
 import { Howl, Howler } from 'howler';
 import type { EventBus } from '../core/EventBus';
+import type { AssetManager } from '../core/AssetManager';
 import { resolveAssetPath } from '../core/assetPath';
 import type { IGameSystem, GameContext, IAudioSettingsProvider } from '../data/types';
 
@@ -28,17 +29,20 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private ambientVolume = 0.4;
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
+  private assetManager!: AssetManager;
+
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
   }
 
-  init(_ctx: GameContext): void {}
+  init(ctx: GameContext): void {
+    this.assetManager = ctx.assetManager;
+  }
   update(_dt: number): void {}
 
   async loadConfig(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/audio_config.json'));
-      const raw = await resp.json();
+      const raw = await this.assetManager.loadJson<Record<string, Record<string, { src: string }>>>('/assets/data/audio_config.json');
       const resolveSrc = (obj: Record<string, { src: string }>) => {
         const out: Record<string, { src: string }> = {};
         for (const [k, v] of Object.entries(obj)) {

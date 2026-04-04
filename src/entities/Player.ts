@@ -7,6 +7,10 @@ export const DEFAULT_PLAYER_WALK_SPEED = 100;
 /** 默认奔跑速度（世界单位/秒） */
 export const DEFAULT_PLAYER_RUN_SPEED = 180;
 
+export const ANIM_IDLE = 'idle';
+export const ANIM_WALK = 'walk';
+export const ANIM_RUN = 'run';
+
 export class Player implements ICutsceneActor {
   public sprite: SpriteEntity;
   private inputManager: InputManager;
@@ -72,7 +76,7 @@ export class Player implements ICutsceneActor {
       this.moveTarget = { x: targetX, y: targetY, speed, resolve };
       const dx = targetX - this.sprite.x;
       this.sprite.setDirection(dx, 0);
-      this.sprite.playAnimation('walk');
+      this.sprite.playAnimation(ANIM_WALK);
     });
   }
 
@@ -91,7 +95,7 @@ export class Player implements ICutsceneActor {
       if (dist <= step) {
         this.sprite.x = t.x;
         this.sprite.y = t.y;
-        this.sprite.playAnimation('idle');
+        this.sprite.playAnimation(ANIM_IDLE);
         const resolve = t.resolve;
         this.moveTarget = null;
         resolve();
@@ -125,12 +129,12 @@ export class Player implements ICutsceneActor {
       this.sprite.setDirection(dir.x, dir.y);
 
       if (isRunning) {
-        this.sprite.playAnimation('run');
+        this.sprite.playAnimation(ANIM_RUN);
       } else {
-        this.sprite.playAnimation('walk');
+        this.sprite.playAnimation(ANIM_WALK);
       }
     } else {
-      this.sprite.playAnimation('idle');
+      this.sprite.playAnimation(ANIM_IDLE);
     }
 
     this.sprite.update(dt);

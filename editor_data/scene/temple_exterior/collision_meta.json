@@ -1,0 +1,11 @@
+{
+  "x_min": -2.347361796451686,
+  "z_min": -3.4545454545454546,
+  "cell_size": 0.03464646464646465,
+  "grid_width": 161,
+  "grid_height": 201,
+  "height_offset": 0.05,
+  "stretch_factor": 3.0,
+  "collision_alpha": 0.3,
+  "brush_radius": 0.11
+}

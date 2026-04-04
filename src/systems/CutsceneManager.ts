@@ -1,8 +1,8 @@
-import { Container, Assets } from 'pixi.js';
 import type { EventBus } from '../core/EventBus';
-import { resolveAssetPath } from '../core/assetPath';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
+import type { AssetManager } from '../core/AssetManager';
+import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
 import type { CutsceneDef, CutsceneCommand, ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext } from '../data/types';
 import { Npc } from '../entities/Npc';
@@ -34,6 +34,9 @@ export class CutsceneManager implements IGameSystem {
   private sceneSwitcher: SceneSwitcher | null = null;
   private tempActors: Map<string, Npc> = new Map();
   private emoteBubbleProvider: IEmoteBubbleProvider | null = null;
+  private inputManager: InputManager | null = null;
+  private assetManager!: AssetManager;
+  private unsubInput: (() => void) | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -60,8 +63,14 @@ export class CutsceneManager implements IGameSystem {
     };
   }
 
-  init(_ctx: GameContext): void {}
+  init(ctx: GameContext): void {
+    this.assetManager = ctx.assetManager;
+  }
   update(_dt: number): void {}
+
+  setInputManager(im: InputManager): void {
+    this.inputManager = im;
+  }
 
   setEntityResolver(resolver: EntityResolver): void {
     this.entityResolver = resolver;
@@ -77,20 +86,19 @@ export class CutsceneManager implements IGameSystem {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/cutscenes/index.json'));
-      const list: CutsceneDef[] = await resp.json();
+      const list = await this.assetManager.loadJson<CutsceneDef[]>('/assets/data/cutscenes/index.json');
       const imagePaths = new Set<string>();
       for (const def of list) {
         this.cutsceneDefs.set(def.id, def);
         for (const cmd of def.commands || []) {
           if (cmd.type === 'show_img' && typeof cmd.image === 'string') {
-            imagePaths.add(resolveAssetPath(cmd.image));
+            imagePaths.add(cmd.image);
           }
         }
       }
       for (const path of imagePaths) {
         try {
-          await Assets.load(path);
+          await this.assetManager.loadTexture(path);
         } catch (err) {
           console.warn(`[CutsceneManager] 预加载失败: ${path}`, err);
         }
@@ -110,13 +118,12 @@ export class CutsceneManager implements IGameSystem {
     if (this.playing) return;
     this.playing = true;
     this.eventBus.emit('cutscene:start', { id });
-    window.addEventListener('click', this.onClickBound);
-    window.addEventListener('keydown', this.onClickBound);
+    this.unsubInput = this.inputManager?.subscribeAnyInput(this.onClickBound) ?? null;
 
     await this.executeCommands(def.commands);
 
-    window.removeEventListener('click', this.onClickBound);
-    window.removeEventListener('keydown', this.onClickBound);
+    this.unsubInput?.();
+    this.unsubInput = null;
     this.cleanup();
     this.playing = false;
     this.eventBus.emit('cutscene:end', { id });
@@ -375,8 +382,8 @@ export class CutsceneManager implements IGameSystem {
 
   deserialize(_data: any): void {
     if (this.playing) {
-      window.removeEventListener('click', this.onClickBound);
-      window.removeEventListener('keydown', this.onClickBound);
+      this.unsubInput?.();
+      this.unsubInput = null;
       this.cleanup();
     }
     this.playing = false;
@@ -393,8 +400,8 @@ export class CutsceneManager implements IGameSystem {
       this.dialogueResolve = null;
       r();
     }
-    window.removeEventListener('click', this.onClickBound);
-    window.removeEventListener('keydown', this.onClickBound);
+    this.unsubInput?.();
+    this.unsubInput = null;
     this.cleanup();
     this.cutsceneDefs.clear();
   }

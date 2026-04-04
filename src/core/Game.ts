@@ -6,7 +6,7 @@ import { ActionExecutor } from './ActionExecutor';
 import { SaveManager } from './SaveManager';
 import { Renderer } from '../rendering/Renderer';
 import { Camera } from '../rendering/Camera';
-import { Player } from '../entities/Player';
+import { Player, ANIM_IDLE, ANIM_WALK, ANIM_RUN } from '../entities/Player';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { SceneManager } from '../systems/SceneManager';
 import { DialogueManager } from '../systems/DialogueManager';
@@ -46,7 +46,6 @@ import { StringsProvider } from './StringsProvider';
 import { GameState } from '../data/types';
 import type { IGameSystem, AnimationSetDef, GameConfig } from '../data/types';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
-import { resolveAssetPath } from './assetPath';
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
@@ -115,21 +114,22 @@ export class Game {
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
   private boundWindowListeners: { event: string; fn: EventListener }[] = [];
+  private unsubRendererResize: (() => void) | null = null;
   /** 避免 beforeunload 与 pagehide 接连触发时重复销毁（第二次会踩已 teardown 的 Pixi Application） */
   private tearDownComplete = false;
   private gameConfig: GameConfig = {
-    initialScene: 'test_room_a',
-    initialQuest: 'main_01',
-    fallbackScene: 'test_room_a',
+    initialScene: '',
+    initialQuest: '',
+    fallbackScene: '',
   };
 
   constructor() {
-    this.stateController = new GameStateController();
     this.eventBus = new EventBus();
     this.flagStore = new FlagStore(this.eventBus);
     this.stringsProvider = new StringsProvider();
     this.inputManager = new InputManager();
     this.assetManager = new AssetManager();
+    this.stateController = new GameStateController(this.inputManager);
     this.actionExecutor = new ActionExecutor(this.eventBus, this.flagStore);
     this.renderer = new Renderer();
     this.camera = new Camera(this.renderer.worldContainer);
@@ -148,7 +148,7 @@ export class Game {
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor);
     this.sceneDepthSystem = new SceneDepthSystem();
 
-    const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider };
+    const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager };
     this.registeredSystems = [
       { name: 'sceneManager', system: this.sceneManager },
       { name: 'interactionSystem', system: this.interactionSystem },
@@ -162,6 +162,8 @@ export class Game {
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'zoneSystem', system: this.zoneSystem },
+      { name: 'emoteBubbleManager', system: this.emoteBubbleManager },
+      { name: 'sceneDepthSystem', system: this.sceneDepthSystem },
     ];
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.init(ctx);
@@ -170,7 +172,7 @@ export class Game {
 
   async start(): Promise<void> {
     await this.renderer.init();
-    await this.stringsProvider.load();
+    await this.stringsProvider.load(this.assetManager);
 
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
     this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider);
@@ -203,11 +205,13 @@ export class Game {
     this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider);
 
     const cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera);
+    cutsceneRenderer.setZoomRestoreProvider(() => this.sceneManager.currentSceneData?.camera?.zoom ?? 1);
     this.cutsceneManager = new CutsceneManager(
       this.eventBus, this.flagStore, this.actionExecutor,
       cutsceneRenderer,
     );
-    this.cutsceneManager.init({ eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider });
+    this.cutsceneManager.init({ eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager });
+    this.cutsceneManager.setInputManager(this.inputManager);
     const cmEntry = this.registeredSystems.find(e => e.name === 'cutsceneManager');
     if (cmEntry) cmEntry.system = this.cutsceneManager;
     this.cutsceneManager.setEntityResolver((id: string) => {
@@ -241,15 +245,28 @@ export class Game {
       fps: this.lastFps,
       sceneId: this.sceneManager.currentSceneData?.id ?? undefined,
       state: this.stateController.currentState,
+      worldWidth: this.sceneManager.currentSceneData?.worldWidth,
+      worldHeight: this.sceneManager.currentSceneData?.worldHeight,
     }));
 
     this.camera.setScreenSize(this.renderer.screenWidth, this.renderer.screenHeight);
+    this.unsubRendererResize = this.renderer.subscribeAfterResize(() => {
+      if (this.tearDownComplete) return;
+      this.camera.setScreenSize(this.renderer.screenWidth, this.renderer.screenHeight);
+    });
     this.addWindowListener('resize', () => {
+      if (this.tearDownComplete) return;
       this.camera.setScreenSize(this.renderer.screenWidth, this.renderer.screenHeight);
     });
 
     this.setupSceneManager();
     this.registerUIPanels();
+
+    this.encounterManager.setRuleNameResolver((ruleId) => {
+      const def = this.rulesManager.getRuleDef(ruleId);
+      if (!def) return undefined;
+      return { name: def.name, incompleteName: def.incompleteName };
+    });
 
     registerActionHandlers(this.actionExecutor, {
       inventoryManager: this.inventoryManager,
@@ -314,6 +331,12 @@ export class Game {
       fallbackScene: this.gameConfig.fallbackScene,
       reloadScene: (id) => this.reloadScene(id),
       isExploring: () => this.stateController.currentState === GameState.Exploring,
+      getDebugSceneWorldSize: () => {
+        const s = this.sceneManager.currentSceneData;
+        if (!s) return undefined;
+        return { width: s.worldWidth, height: s.worldHeight };
+      },
+      applyDebugSceneWorldSize: (w, h) => this.applyDebugSceneWorldSize(w, h),
     });
     this.debugTools.init();
 
@@ -330,8 +353,15 @@ export class Game {
       this.mapUI.loadConfig(),
     ]);
 
+    if (!this.gameConfig.initialScene) {
+      console.error('Game: initialScene not configured in game_config.json');
+    }
+    this.saveManager.setFallbackScene(this.gameConfig.fallbackScene || this.gameConfig.initialScene);
+
     await this.setupPlayer();
-    this.questManager.acceptQuest(this.gameConfig.initialQuest);
+    if (this.gameConfig.initialQuest) {
+      this.questManager.acceptQuest(this.gameConfig.initialQuest);
+    }
 
     await this.sceneManager.loadScene(this.gameConfig.initialScene);
     await this.tryStartInitialPrologue();
@@ -347,8 +377,7 @@ export class Game {
 
   private async loadGameConfig(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/game_config.json'));
-      const cfg = await resp.json() as Partial<GameConfig>;
+      const cfg = await this.assetManager.loadJson<Partial<GameConfig>>('/assets/data/game_config.json');
       if (cfg.initialScene) this.gameConfig.initialScene = cfg.initialScene;
       if (cfg.initialQuest) this.gameConfig.initialQuest = cfg.initialQuest;
       if (cfg.fallbackScene) this.gameConfig.fallbackScene = cfg.fallbackScene;
@@ -371,8 +400,7 @@ export class Game {
     let texture: any;
 
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/player_anim.json'));
-      animDef = await resp.json() as AnimationSetDef;
+      animDef = await this.assetManager.loadJson<AnimationSetDef>('/assets/data/player_anim.json');
 
       if (animDef.spritesheet) {
         texture = await this.assetManager.loadTexture(animDef.spritesheet);
@@ -390,16 +418,16 @@ export class Game {
         worldWidth: placeholder.frameWidth,
         worldHeight: placeholder.frameHeight,
         states: {
-          idle: { frames: [0, 1], frameRate: 2, loop: true },
-          walk: { frames: [2, 3, 4, 5], frameRate: 8, loop: true },
-          run:  { frames: [2, 3, 4, 5], frameRate: 12, loop: true },
+          [ANIM_IDLE]: { frames: [0, 1], frameRate: 2, loop: true },
+          [ANIM_WALK]: { frames: [2, 3, 4, 5], frameRate: 8, loop: true },
+          [ANIM_RUN]:  { frames: [2, 3, 4, 5], frameRate: 12, loop: true },
         },
       };
     }
 
     this.playerAnimDef = animDef;
     this.player.sprite.loadFromDef(texture, animDef);
-    this.player.sprite.playAnimation('idle');
+    this.player.sprite.playAnimation(ANIM_IDLE);
     this.renderer.entityLayer.addChild(this.player.sprite.container);
 
     const playerPosGetter = () => ({ x: this.player.x, y: this.player.y });
@@ -449,6 +477,9 @@ export class Game {
         this.camera.setWorldScale(worldScale);
       }
       this.camera.snapTo(snapX, snapY);
+    });
+    this.sceneManager.setBoundsOnlySetter((boundsW, boundsH) => {
+      this.camera.setBounds(boundsW, boundsH);
     });
 
     this.sceneManager.setAudioApplier((bgm, ambient) => {
@@ -593,6 +624,26 @@ export class Game {
     if (data['game']) this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
   }
 
+  /**
+   * 调试：只改内存中的当前场景 worldWidth / worldHeight；不写 JSON。「重载场景」可恢复数据文件数值。
+   */
+  private applyDebugSceneWorldSize(width: number, height: number): void {
+    const r = this.sceneManager.applyDebugWorldSize(width, height);
+    if (!r.ok) return;
+    const sd = this.sceneManager.currentSceneData;
+    if (!sd) return;
+    this.player.syncMovementFromScene(sd);
+    this.sceneDepthSystem.applyRuntimeSceneSize(
+      sd.worldWidth,
+      sd.worldHeight,
+      r.worldToPixelX,
+      r.worldToPixelY,
+    );
+    if (this.sceneDepthSystem.currentDepthTexture && this.sceneDepthSystem.currentConfig) {
+      this.depthDebugVisualizer.updateSceneWorldSize(sd.worldWidth, sd.worldHeight);
+    }
+  }
+
   private async reloadScene(sceneId: string): Promise<void> {
     this.sceneManager.unloadScene();
     await this.sceneManager.loadScene(sceneId);
@@ -630,6 +681,11 @@ export class Game {
     }
     this.boundWindowListeners = [];
 
+    this.unsubRendererResize?.();
+    this.unsubRendererResize = null;
+
+    this.eventBus.clear();
+
     this.stateController.closeAllPanels();
 
     this.inspectBox?.destroy();
@@ -639,7 +695,16 @@ export class Game {
     this.hud?.destroy();
     this.notificationUI?.destroy();
     this.bookReaderUI?.destroy();
-    this.emoteBubbleManager?.destroy();
+    this.questPanelUI?.destroy();
+    this.inventoryUI?.destroy();
+    this.rulesPanelUI?.destroy();
+    this.dialogueLogUI?.destroy();
+    this.bookshelfUI?.destroy();
+    this.shopUI?.destroy();
+    this.mapUI?.destroy();
+    this.menuUI?.destroy();
+    this.ruleUseUI?.destroy();
+    this.debugPanelUI?.destroy();
 
     this.interactionCoordinator?.destroy();
     this.eventBridge?.destroy();
@@ -654,7 +719,6 @@ export class Game {
 
     this.actionExecutor.destroy();
     this.flagStore.destroy();
-    this.eventBus.clear();
     this.inputManager.destroy();
     this.renderer.destroy();
   }

@@ -11,6 +11,9 @@ export class InputManager {
   private onMouseDownBound: (e: MouseEvent) => void;
   private onMouseUpBound: (e: MouseEvent) => void;
 
+  private keyDownSubscribers: ((e: KeyboardEvent) => void)[] = [];
+  private anyInputSubscribers: (() => void)[] = [];
+
   constructor() {
     this.onKeyDownBound = this.onKeyDown.bind(this);
     this.onKeyUpBound = this.onKeyUp.bind(this);
@@ -30,6 +33,8 @@ export class InputManager {
       this.keyJustPressed.add(e.code);
     }
     this.keysDown.add(e.code);
+    for (const cb of this.keyDownSubscribers) cb(e);
+    for (const cb of this.anyInputSubscribers) cb();
   }
 
   private onKeyUp(e: KeyboardEvent): void {
@@ -44,6 +49,7 @@ export class InputManager {
   private onMouseDown(_e: MouseEvent): void {
     this.mouseDown = true;
     this.mouseJustClicked = true;
+    for (const cb of this.anyInputSubscribers) cb();
   }
 
   private onMouseUp(_e: MouseEvent): void {
@@ -97,11 +103,29 @@ export class InputManager {
     return this.isKeyDown('ShiftLeft') || this.isKeyDown('ShiftRight');
   }
 
+  subscribeKeyDown(cb: (e: KeyboardEvent) => void): () => void {
+    this.keyDownSubscribers.push(cb);
+    return () => {
+      const idx = this.keyDownSubscribers.indexOf(cb);
+      if (idx >= 0) this.keyDownSubscribers.splice(idx, 1);
+    };
+  }
+
+  subscribeAnyInput(cb: () => void): () => void {
+    this.anyInputSubscribers.push(cb);
+    return () => {
+      const idx = this.anyInputSubscribers.indexOf(cb);
+      if (idx >= 0) this.anyInputSubscribers.splice(idx, 1);
+    };
+  }
+
   destroy(): void {
     window.removeEventListener('keydown', this.onKeyDownBound);
     window.removeEventListener('keyup', this.onKeyUpBound);
     window.removeEventListener('mousemove', this.onMouseMoveBound);
     window.removeEventListener('mousedown', this.onMouseDownBound);
     window.removeEventListener('mouseup', this.onMouseUpBound);
+    this.keyDownSubscribers.length = 0;
+    this.anyInputSubscribers.length = 0;
   }
 }

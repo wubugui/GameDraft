@@ -17,6 +17,8 @@ export class Renderer {
   /** Application 已 destroy 后为 true，尺寸访问需降级避免异常 */
   private tornDown = false;
   private mountObserver: ResizeObserver | null = null;
+  /** app.resize() 之后通知（此时 app.screen 已更新），供 Camera 等与画布像素对齐 */
+  private afterResizeCallbacks = new Set<() => void>();
 
   constructor() {
     this.app = new Application();
@@ -54,12 +56,32 @@ export class Renderer {
       this.mountObserver = new ResizeObserver(() => {
         if (this.initialized && !this.tornDown) {
           this.app.resize();
+          this.notifyAfterResize();
         }
       });
       this.mountObserver.observe(mount);
     }
 
     this.initialized = true;
+  }
+
+  /**
+   * 在画布尺寸变化且已 app.resize() 后调用回调（例如 #game-mount 被 flex 侧栏挤压）。
+   * @returns 取消订阅
+   */
+  subscribeAfterResize(cb: () => void): () => void {
+    this.afterResizeCallbacks.add(cb);
+    return () => this.afterResizeCallbacks.delete(cb);
+  }
+
+  private notifyAfterResize(): void {
+    for (const cb of this.afterResizeCallbacks) {
+      try {
+        cb();
+      } catch (e) {
+        console.warn('Renderer: afterResize callback failed', e);
+      }
+    }
   }
 
   sortEntityLayer(): void {
@@ -100,6 +122,7 @@ export class Renderer {
     if (this.tornDown) return;
     this.tornDown = true;
     this.initialized = false;
+    this.afterResizeCallbacks.clear();
 
     if (this.mountObserver) {
       this.mountObserver.disconnect();

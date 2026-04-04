@@ -12,7 +12,7 @@
     "stretch_factor": 3.0,
     "height_offset": 0.1,
     "collision_alpha": 0.3,
-    "brush_radius": 0.1
+    "brush_radius": 0.11
   },
   "billboard": {
     "enabled": true,
@@ -23,5 +23,6 @@
     "scale": 1.0,
     "tolerance": 0.0,
     "floor_offset": 0.0
-  }
+  },
+  "game_export_path": "public/assets/scenes/test_room_a"
 }

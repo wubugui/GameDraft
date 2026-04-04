@@ -23,10 +23,17 @@ const TAB_LOG = 'log';
 type TabId = typeof TAB_SYSTEM | typeof TAB_TOOLS | typeof TAB_LOG;
 
 export class DebugPanelUI implements IDebugPanelAPI {
-  private systemInfoProvider?: () => { fps?: number; sceneId?: string; state?: string };
+  private systemInfoProvider?: () => {
+    fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+  };
   private sections = new Map<string, () => DebugSectionContent>();
   private logLines: string[] = [];
   private _isOpen = false;
+  /** 当前选中的标签（用于系统页实时刷新） */
+  private activeTab: TabId = TAB_TOOLS;
+  /** 系统信息 `<pre>`，复用节点只改 textContent */
+  private systemStatsPre: HTMLPreElement | null = null;
+  private systemLiveRafId: number | null = null;
 
   private root: HTMLElement;
   private panelSystem: HTMLElement;
@@ -35,7 +42,9 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private logPre: HTMLElement;
   private tabButtons: Map<TabId, HTMLButtonElement> = new Map();
 
-  constructor(systemInfoProvider?: () => { fps?: number; sceneId?: string; state?: string }) {
+  constructor(systemInfoProvider?: () => {
+    fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+  }) {
     this.systemInfoProvider = systemInfoProvider;
 
     const shell = document.getElementById('app-shell');
@@ -135,6 +144,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
   }
 
   private selectTab(id: TabId): void {
+    this.activeTab = id;
     for (const [tid, btn] of this.tabButtons) {
       const on = tid === id;
       btn.classList.toggle('is-active', on);
@@ -143,11 +153,35 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelSystem.classList.toggle('is-active', id === TAB_SYSTEM);
     this.panelTools.classList.toggle('is-active', id === TAB_TOOLS);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
+    this.updateSystemLiveLoop();
   }
 
-  setSystemInfoProvider(provider: () => { fps?: number; sceneId?: string; state?: string }): void {
+  /** 打开且停在「系统」标签时，每帧刷新 FPS 等；切走或收起则停止 */
+  private updateSystemLiveLoop(): void {
+    if (this.systemLiveRafId != null) {
+      cancelAnimationFrame(this.systemLiveRafId);
+      this.systemLiveRafId = null;
+    }
+    if (!this._isOpen || this.activeTab !== TAB_SYSTEM || !this.systemInfoProvider) return;
+
+    this.renderSystem();
+    const tick = (): void => {
+      this.systemLiveRafId = null;
+      if (!this._isOpen || this.activeTab !== TAB_SYSTEM || !this.systemInfoProvider) return;
+      this.renderSystem();
+      this.systemLiveRafId = requestAnimationFrame(tick);
+    };
+    this.systemLiveRafId = requestAnimationFrame(tick);
+  }
+
+  setSystemInfoProvider(provider: () => {
+    fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+  }): void {
     this.systemInfoProvider = provider;
-    if (this._isOpen) this.render();
+    if (this._isOpen) {
+      this.render();
+      this.updateSystemLiveLoop();
+    }
   }
 
   get isOpen(): boolean {
@@ -160,10 +194,15 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.root.classList.add('is-open');
     this.root.setAttribute('aria-hidden', 'false');
     this.render();
+    this.updateSystemLiveLoop();
   }
 
   close(): void {
     if (!this._isOpen) return;
+    if (this.systemLiveRafId != null) {
+      cancelAnimationFrame(this.systemLiveRafId);
+      this.systemLiveRafId = null;
+    }
     this._isOpen = false;
     this.root.classList.remove('is-open');
     this.root.setAttribute('aria-hidden', 'true');
@@ -196,6 +235,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
   }
 
   private clearPanelBodies(): void {
+    this.systemStatsPre = null;
     this.panelSystem.replaceChildren();
     this.panelTools.replaceChildren();
     this.logPre.textContent = '';
@@ -212,11 +252,11 @@ export class DebugPanelUI implements IDebugPanelAPI {
   }
 
   private renderSystem(): void {
-    this.panelSystem.replaceChildren();
-    const scroll = document.createElement('div');
-    scroll.className = 'debug-dock__scroll';
-
     if (!this.systemInfoProvider) {
+      this.systemStatsPre = null;
+      this.panelSystem.replaceChildren();
+      const scroll = document.createElement('div');
+      scroll.className = 'debug-dock__scroll';
       scroll.appendChild(this.p('无系统信息。'));
       this.panelSystem.appendChild(scroll);
       return;
@@ -227,16 +267,23 @@ export class DebugPanelUI implements IDebugPanelAPI {
     if (info.fps != null) lines.push(`FPS: ${Math.round(info.fps)}`);
     if (info.sceneId) lines.push(`Scene: ${info.sceneId}`);
     if (info.state) lines.push(`State: ${info.state}`);
+    if (info.worldWidth != null) lines.push(`worldWidth: ${info.worldWidth}`);
+    if (info.worldHeight != null) lines.push(`worldHeight: ${info.worldHeight}`);
+    const text = lines.length === 0 ? '（暂无）' : lines.join('\n');
 
-    if (lines.length === 0) {
-      scroll.appendChild(this.p('（暂无）'));
-    } else {
-      const pre = document.createElement('pre');
+    let pre = this.systemStatsPre;
+    const scrollEl = pre?.parentElement;
+    if (!pre || !scrollEl || scrollEl.parentElement !== this.panelSystem) {
+      this.panelSystem.replaceChildren();
+      const scroll = document.createElement('div');
+      scroll.className = 'debug-dock__scroll';
+      pre = document.createElement('pre');
       pre.className = 'debug-dock__pre';
-      pre.textContent = lines.join('\n');
       scroll.appendChild(pre);
+      this.panelSystem.appendChild(scroll);
+      this.systemStatsPre = pre;
     }
-    this.panelSystem.appendChild(scroll);
+    pre.textContent = text;
   }
 
   private renderTools(): void {
@@ -308,6 +355,10 @@ export class DebugPanelUI implements IDebugPanelAPI {
   }
 
   destroy(): void {
+    if (this.systemLiveRafId != null) {
+      cancelAnimationFrame(this.systemLiveRafId);
+      this.systemLiveRafId = null;
+    }
     this.close();
     this.sections.clear();
     this.logLines = [];

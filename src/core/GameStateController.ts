@@ -1,4 +1,5 @@
 import { GameState } from '../data/types';
+import type { InputManager } from './InputManager';
 
 export interface ToggleablePanel {
   readonly isOpen: boolean;
@@ -31,13 +32,12 @@ export class GameStateController {
   private _previousState: GameState = GameState.Exploring;
   private panels = new Map<string, PanelEntry>();
   private escapeFallback: (() => void) | null = null;
-  private boundKeyHandler: EventListener;
+  private unsubKeyDown: (() => void) | null = null;
 
-  constructor() {
-    this.boundKeyHandler = ((e: KeyboardEvent) => {
+  constructor(inputManager: InputManager) {
+    this.unsubKeyDown = inputManager.subscribeKeyDown((e) => {
       this.handleKeyDown(e);
-    }) as EventListener;
-    window.addEventListener('keydown', this.boundKeyHandler);
+    });
   }
 
   get currentState(): GameState { return this._currentState; }
@@ -155,6 +155,7 @@ export class GameStateController {
       }
     }
     this.panels.clear();
-    window.removeEventListener('keydown', this.boundKeyHandler);
+    this.unsubKeyDown?.();
+    this.unsubKeyDown = null;
   }
 }

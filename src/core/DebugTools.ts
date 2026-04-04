@@ -1,3 +1,4 @@
+import { Graphics } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import type { Camera } from '../rendering/Camera';
 import type { EventBus } from './EventBus';
@@ -23,6 +24,8 @@ export interface DebugToolsDeps {
   reloadScene: (sceneId: string) => void;
   /** 仅探索态允许调试缩放，避免演出/对话/UI 覆写镜头时被干扰 */
   isExploring: () => boolean;
+  getDebugSceneWorldSize: () => { width: number; height: number } | undefined;
+  applyDebugSceneWorldSize: (width: number, height: number) => void;
 }
 
 export class DebugTools {
@@ -80,6 +83,7 @@ export class DebugTools {
       const cam = this.deps.camera;
       const factor = Math.exp(-dy * 0.002);
       cam.setZoom(this.clampDebugCameraZoom(cam.getZoom() * factor));
+      this.deps.debugPanelUI.refresh();
     };
 
     this.middleZoomPointerDownHandler = (e: PointerEvent) => {
@@ -101,6 +105,7 @@ export class DebugTools {
       const cam = this.deps.camera;
       const factor = Math.exp(dy * 0.008);
       cam.setZoom(this.clampDebugCameraZoom(cam.getZoom() * factor));
+      this.deps.debugPanelUI.refresh();
     };
 
     this.middleZoomPointerUpHandler = (e: PointerEvent) => {
@@ -139,19 +144,50 @@ export class DebugTools {
     };
     window.addEventListener('keydown', this.positionDebugKeyHandler);
 
+    let debugMarker: Graphics | null = null;
+
     this.positionDebugPointerHandler = (e: PointerEvent) => {
       if (!this.positionDebugMode) return;
       e.preventDefault();
+
       const rect = canvas.getBoundingClientRect();
-      const scaleX = renderer.app.screen.width / rect.width;
-      const scaleY = renderer.app.screen.height / rect.height;
-      const stageX = (e.clientX - rect.left) * scaleX;
-      const stageY = (e.clientY - rect.top) * scaleY;
-      const world = this.deps.camera.screenToWorld(stageX, stageY);
-      const x = world.x.toFixed(1);
-      const y = world.y.toFixed(1);
+      const res = renderer.app.renderer.resolution;
+      const stageX = (e.clientX - rect.left) / rect.width * canvas.width / res;
+      const stageY = (e.clientY - rect.top) / rect.height * canvas.height / res;
+
+      const wc = renderer.worldContainer;
+      const worldX = (stageX - wc.x) / wc.scale.x;
+      const worldY = (stageY - wc.y) / wc.scale.y;
+
+      console.log('[F10 debug]',
+        'DOM:', e.clientX.toFixed(0), e.clientY.toFixed(0),
+        '| rect:', rect.width.toFixed(0), rect.height.toFixed(0),
+        '| canvas:', canvas.width, canvas.height,
+        '| res:', res,
+        '| screen:', renderer.app.screen.width.toFixed(0), renderer.app.screen.height.toFixed(0),
+        '| stage:', stageX.toFixed(1), stageY.toFixed(1),
+        '| wc.pos:', wc.x.toFixed(1), wc.y.toFixed(1),
+        '| wc.scale:', wc.scale.x.toFixed(4),
+        '| world:', worldX.toFixed(1), worldY.toFixed(1),
+        '| player:', this.deps.player.x.toFixed(1), this.deps.player.y.toFixed(1),
+      );
+
+      if (debugMarker) {
+        debugMarker.destroy();
+        debugMarker = null;
+      }
+      debugMarker = new Graphics();
+      const arm = 12;
+      debugMarker.moveTo(-arm, 0).lineTo(arm, 0).stroke({ color: 0xff0000, width: 2 });
+      debugMarker.moveTo(0, -arm).lineTo(0, arm).stroke({ color: 0xff0000, width: 2 });
+      debugMarker.circle(0, 0, 4).fill({ color: 0xff0000, alpha: 0.7 });
+      debugMarker.x = worldX;
+      debugMarker.y = worldY;
+      renderer.entityLayer.addChild(debugMarker);
+
+      const x = worldX.toFixed(1);
+      const y = worldY.toFixed(1);
       const text = `x: ${x}, y: ${y}`;
-      console.log(text);
       eventBus.emit('notification:show', { text, type: 'info' });
     };
     canvas.addEventListener('pointerdown', this.positionDebugPointerHandler);
@@ -215,20 +251,68 @@ export class DebugTools {
       })),
     }));
 
-    debugPanelUI.addSection('Camera', () => ({
-      text: this.debugMiddleButtonCameraZoomEnabled
+    debugPanelUI.addSection('Scene world 尺寸', () => {
+      const sz = this.deps.getDebugSceneWorldSize();
+      const wCur = sz != null ? String(Math.round(sz.width)) : '—';
+      const hCur = sz != null ? String(Math.round(sz.height)) : '—';
+      const need = (): { width: number; height: number } | null => {
+        const s = this.deps.getDebugSceneWorldSize();
+        if (!s) {
+          debugPanelUI.log('无当前场景，无法修改 world 尺寸');
+          return null;
+        }
+        return s;
+      };
+      const apply = (nextW: number, nextH: number) => {
+        if (!need()) return;
+        this.deps.applyDebugSceneWorldSize(nextW, nextH);
+        const after = this.deps.getDebugSceneWorldSize();
+        debugPanelUI.log(
+          after
+            ? `world -> ${Math.round(after.width)} × ${Math.round(after.height)}`
+            : `world -> ${nextW} × ${nextH}`,
+        );
+        debugPanelUI.refresh();
+      };
+      return {
+        text:
+          `当前（内存）worldWidth × worldHeight：${wCur} × ${hCur}\n` +
+          '「WH」按钮同时改宽高；「仅W」「仅H」只改一维。仅拉伸背景与相机/深度；热点与 NPC 坐标不变。\n' +
+          '系统页可实时看数值。「重载场景」从 JSON 恢复。',
+        actions: [
+          { label: 'WH−1000', fn: () => { const s = need(); if (s) apply(s.width - 1000, s.height - 1000); } },
+          { label: 'WH−100', fn: () => { const s = need(); if (s) apply(s.width - 100, s.height - 100); } },
+          { label: 'WH+100', fn: () => { const s = need(); if (s) apply(s.width + 100, s.height + 100); } },
+          { label: 'WH+1000', fn: () => { const s = need(); if (s) apply(s.width + 1000, s.height + 1000); } },
+          { label: '宽高×0.95', fn: () => { const s = need(); if (s) apply(s.width * 0.95, s.height * 0.95); } },
+          { label: '宽高×1.05', fn: () => { const s = need(); if (s) apply(s.width * 1.05, s.height * 1.05); } },
+          { label: '仅W−100', fn: () => { const s = need(); if (s) apply(s.width - 100, s.height); } },
+          { label: '仅W+100', fn: () => { const s = need(); if (s) apply(s.width + 100, s.height); } },
+          { label: '仅H−100', fn: () => { const s = need(); if (s) apply(s.width, s.height - 100); } },
+          { label: '仅H+100', fn: () => { const s = need(); if (s) apply(s.width, s.height + 100); } },
+        ],
+      };
+    });
+
+    debugPanelUI.addSection('Camera', () => {
+      const z = this.deps.camera.getZoom();
+      const zoomLine = `当前 camera.zoom：${z.toFixed(4)}（有效投影另含 pixelsPerUnit × worldScale）`;
+      const hint = this.debugMiddleButtonCameraZoomEnabled
         ? `中键摄像机缩放：开启\n仅在探索模式下生效。\n滚轮 / 中键拖动缩放；调试范围约 ${DEBUG_CAMERA_ZOOM_MIN}～${DEBUG_CAMERA_ZOOM_MAX}（场景配置的 zoom 过低时，继续缩小会先被夹到最小值）。`
-        : '中键摄像机缩放：关闭\n开启后可在探索模式下用滚轮或中键拖动缩放镜头。',
-      actions: [
-        {
-          label: this.debugMiddleButtonCameraZoomEnabled ? '关闭中键缩放' : '开启中键缩放',
-          fn: () => {
-            this.debugMiddleButtonCameraZoomEnabled = !this.debugMiddleButtonCameraZoomEnabled;
-            debugPanelUI.log(`中键摄像机缩放: ${this.debugMiddleButtonCameraZoomEnabled ? 'on' : 'off'}`);
+        : '中键摄像机缩放：关闭\n开启后可在探索模式下用滚轮或中键拖动缩放镜头。';
+      return {
+        text: `${zoomLine}\n\n${hint}`,
+        actions: [
+          {
+            label: this.debugMiddleButtonCameraZoomEnabled ? '关闭中键缩放' : '开启中键缩放',
+            fn: () => {
+              this.debugMiddleButtonCameraZoomEnabled = !this.debugMiddleButtonCameraZoomEnabled;
+              debugPanelUI.log(`中键摄像机缩放: ${this.debugMiddleButtonCameraZoomEnabled ? 'on' : 'off'}`);
+            },
           },
-        },
-      ],
-    }));
+        ],
+      };
+    });
   }
 
   destroy(): void {

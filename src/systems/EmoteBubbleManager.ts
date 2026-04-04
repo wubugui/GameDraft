@@ -1,5 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
-import type { ICutsceneActor } from '../data/types';
+import type { ICutsceneActor, IGameSystem, GameContext } from '../data/types';
 
 interface ActiveBubble {
   bubble: Container;
@@ -7,9 +7,13 @@ interface ActiveBubble {
   remainingMs: number;
 }
 
-export class EmoteBubbleManager {
+export class EmoteBubbleManager implements IGameSystem {
   private activeBubbles: ActiveBubble[] = [];
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  init(_ctx: GameContext): void {}
+  serialize(): object { return {}; }
+  deserialize(_data: object): void { this.cleanup(); }
 
   show(actor: ICutsceneActor, emote: string, durationMs: number = 1500): void {
     const displayObj = actor.getDisplayObject() as Container;

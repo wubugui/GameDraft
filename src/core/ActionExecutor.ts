@@ -6,6 +6,7 @@ type ActionHandler = (params: Record<string, unknown>) => void;
 
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
+  private paramNamesMap: Map<string, string[]> = new Map();
   private eventBus: EventBus;
   private flagStore: FlagStore;
 
@@ -18,15 +19,20 @@ export class ActionExecutor {
   private registerBuiltinHandlers(): void {
     this.register('setFlag', (params) => {
       this.flagStore.set(params.key as string, params.value as boolean | number);
-    });
+    }, ['key', 'value']);
 
     this.register('showNotification', (params) => {
       this.eventBus.emit('notification:show', { text: params.text as string, type: params.type as string });
-    });
+    }, ['text', 'type']);
   }
 
-  register(type: string, handler: ActionHandler): void {
+  register(type: string, handler: ActionHandler, paramNames?: string[]): void {
     this.handlers.set(type, handler);
+    if (paramNames) this.paramNamesMap.set(type, paramNames);
+  }
+
+  getParamNames(type: string): string[] | undefined {
+    return this.paramNamesMap.get(type);
   }
 
   execute(action: ActionDef): void {
@@ -46,5 +52,6 @@ export class ActionExecutor {
 
   destroy(): void {
     this.handlers.clear();
+    this.paramNamesMap.clear();
   }
 }

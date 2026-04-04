@@ -3,6 +3,10 @@
   "name": "测试场景",
   "worldWidth": 1600,
   "worldHeight": 1200,
+  "camera": {
+    "zoom": 1,
+    "pixelsPerUnit": 1
+  },
   "backgrounds": [
     { "image": "background.png", "x": 0, "y": 0 }
   ],

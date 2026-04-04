@@ -1,7 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { RuleDef, RuleFragmentDef, IGameSystem, GameContext, IRulesDataProvider } from '../data/types';
-import { resolveAssetPath } from '../core/assetPath';
+import type { AssetManager } from '../core/AssetManager';
 
 export class RulesManager implements IGameSystem, IRulesDataProvider {
   private eventBus: EventBus;
@@ -21,21 +21,22 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   }
 
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
+  private assetManager!: AssetManager;
 
   init(ctx: GameContext): void {
     this.strings = ctx.strings;
+    this.assetManager = ctx.assetManager;
   }
   update(_dt: number): void {}
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/rules.json'));
-      const data = await resp.json() as {
+      const data = await this.assetManager.loadJson<{
         rules: RuleDef[];
         fragments: RuleFragmentDef[];
         categories?: Record<string, string>;
         verifiedLabels?: Record<string, string>;
-      };
+      }>('/assets/data/rules.json');
       for (const r of data.rules) {
         this.ruleDefs.set(r.id, r);
       }

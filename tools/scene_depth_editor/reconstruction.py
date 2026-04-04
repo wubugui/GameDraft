@@ -326,11 +326,16 @@ class WorldHeightMap:
         with open(meta_path, "r") as f:
             meta = json.load(f)
         img = Image.open(img_path).convert("L")
-        covered = np.array(img) > 127
         grid_path = os.path.join(directory, "collision_grid.npy")
         if os.path.exists(grid_path):
             grid = np.load(grid_path).astype(np.float64)
+            covered_png = np.array(img) > 127
+            if covered_png.shape == grid.shape:
+                covered = covered_png
+            else:
+                covered = grid > 1e-12
         else:
+            covered = np.array(img) > 127
             grid = np.where(covered, 1e6, 0.0)
         return WorldHeightMap(
             grid=grid, covered=covered,

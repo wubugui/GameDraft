@@ -64,6 +64,16 @@ except ImportError as exc:
     ) from exc
 
 
+def _repo_root() -> Path:
+    """GameDraft 仓库根目录（tools 的上一级）。"""
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _workspace_scenes_dir() -> Path:
+    """编辑器工程场景根目录（打开/新建场景对话框默认从此处浏览）。"""
+    return _repo_root() / "editor_data" / "scene"
+
+
 class SceneDepthEditorApp:
     """Scene depth reconstruction tool.
 
@@ -87,6 +97,9 @@ class SceneDepthEditorApp:
 
         self.camera = OrthoCamera()
         self.depth_mapping = DepthMapping()
+
+        # 游戏资源导出目录（写入当前场景 editor.json 的 game_export_path）
+        self._game_export_path: str | None = None
 
         # -- tk variables --
         self.status_var = tk.StringVar(value="新建或打开场景开始工作。")
@@ -580,14 +593,75 @@ class SceneDepthEditorApp:
         self._cached_mesh_xyz = None
         self._collision_locked = False
         self._world_xz_cache = None
+        self._game_export_path = None
         self.gl_viewer.clear_mesh()
         self.image_label.configure(text="无背景图")
         self._thumb_photo = None
         self.thumb_label.configure(image="")
         self.mesh_info_label.configure(text="")
 
+    def _workspace_scenes_initialdir(self) -> str:
+        d = _workspace_scenes_dir()
+        return str(d) if d.is_dir() else str(_repo_root())
+
+    def _game_export_picker_initialdir(self) -> str:
+        root = _repo_root()
+        if self._game_export_path:
+            resolved = self._resolve_game_export_dir()
+            if resolved is not None and resolved.parent.is_dir():
+                return str(resolved.parent)
+        for rel in ("public/assets/scenes", "assets/scenes"):
+            cand = root / rel
+            if cand.is_dir():
+                return str(cand)
+        return str(root)
+
+    def _normalize_path_for_config(self, p: Path) -> str:
+        p = p.resolve()
+        try:
+            rel = p.relative_to(_repo_root())
+            return rel.as_posix()
+        except ValueError:
+            return str(p)
+
+    def _resolve_game_export_dir(self) -> Path | None:
+        if not self._game_export_path:
+            return None
+        raw = self._game_export_path.strip()
+        if not raw:
+            return None
+        p = Path(raw)
+        if not p.is_absolute():
+            p = _repo_root() / p
+        return p.resolve()
+
+    def _persist_game_export_path(self, folder: Path) -> None:
+        if self._scene_path is None:
+            return
+        self._game_export_path = self._normalize_path_for_config(folder)
+        editor_path = self._scene_path / self._EDITOR_JSON
+        data: dict = {}
+        if editor_path.exists():
+            data = json.loads(editor_path.read_text(encoding="utf-8"))
+        data["game_export_path"] = self._game_export_path
+        editor_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def _validate_export_target(self, dst_path: Path) -> tuple[bool, str]:
+        if not dst_path.is_dir():
+            return False, f"不是有效文件夹:\n{dst_path}"
+        scene_id = dst_path.name
+        scene_json_path = dst_path.parent / f"{scene_id}.json"
+        if not scene_json_path.exists():
+            return False, (
+                f"未找到场景 JSON:\n{scene_json_path}\n\n"
+                f"请确保选择的文件夹名与同目录下的场景 JSON 文件名一致。")
+        return True, str(scene_json_path)
+
     def _new_scene(self) -> None:
-        path = filedialog.askdirectory(title="选择新场景文件夹位置")
+        path = filedialog.askdirectory(
+            title="选择新场景文件夹位置",
+            initialdir=self._workspace_scenes_initialdir())
         if not path:
             return
         from tkinter import simpledialog
@@ -607,7 +681,9 @@ class SceneDepthEditorApp:
         self._set_status(f"新建场景: {scene_dir}")
 
     def _open_scene(self) -> None:
-        path = filedialog.askdirectory(title="打开场景文件夹")
+        path = filedialog.askdirectory(
+            title="打开场景文件夹",
+            initialdir=self._workspace_scenes_initialdir())
         if not path:
             return
         scene_dir = Path(path)
@@ -732,6 +808,7 @@ class SceneDepthEditorApp:
                 "tolerance": self.occlusion_tolerance_var.get(),
                 "floor_offset": self.occlusion_floor_offset_var.get(),
             },
+            "game_export_path": self._game_export_path,
         }
 
     def _apply_editor_data(self, data: dict) -> None:
@@ -772,6 +849,10 @@ class SceneDepthEditorApp:
                        ("floor_offset", self.occlusion_floor_offset_var)]:
             if k in occ:
                 var.set(occ[k])
+        if "game_export_path" in data and data["game_export_path"]:
+            self._game_export_path = str(data["game_export_path"])
+        else:
+            self._game_export_path = None
         self._sync_viewer_from_vars()
 
     def _sync_viewer_from_vars(self) -> None:
@@ -1182,20 +1263,32 @@ class SceneDepthEditorApp:
             messagebox.showinfo("提示", "请先打开或新建场景。")
             return
 
-        dst = filedialog.askdirectory(title="选择场景资源文件夹 (如 public/assets/scenes/teahouse)")
-        if not dst:
-            return
-        dst_path = Path(dst)
-        dst_path.mkdir(parents=True, exist_ok=True)
+        dst_path: Path | None = None
+        scene_json_path: Path | None = None
+        resolved = self._resolve_game_export_dir()
+        if resolved is not None and resolved.is_dir():
+            ok, msg_or_json = self._validate_export_target(resolved)
+            if ok:
+                dst_path = resolved
+                scene_json_path = Path(msg_or_json)
 
-        scene_id = dst_path.name
-        scene_json_path = dst_path.parent / f"{scene_id}.json"
-        if not scene_json_path.exists():
-            messagebox.showerror(
-                "错误",
-                f"未找到场景 JSON:\n{scene_json_path}\n\n"
-                f"请确保选择的文件夹名与场景 JSON 文件名对应。")
-            return
+        if dst_path is None:
+            picked = filedialog.askdirectory(
+                title="选择游戏资源目录（与同名的场景 JSON 在同一上级目录下，如 .../scenes/teahouse）",
+                initialdir=self._game_export_picker_initialdir())
+            if not picked:
+                return
+            dst_path = Path(picked)
+            dst_path.mkdir(parents=True, exist_ok=True)
+            ok, msg_or_json = self._validate_export_target(dst_path)
+            if not ok:
+                messagebox.showerror("错误", msg_or_json)
+                return
+            scene_json_path = Path(msg_or_json)
+            self._persist_game_export_path(dst_path)
+            self._set_status(f"已记录导出目录到工程配置: {self._game_export_path}")
+
+        assert dst_path is not None and scene_json_path is not None
 
         M = self._build_M()
 

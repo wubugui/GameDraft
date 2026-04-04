@@ -3,7 +3,7 @@ import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { QuestDef, IGameSystem, GameContext, IQuestDataProvider } from '../data/types';
 import { QuestStatus } from '../data/types';
-import { resolveAssetPath } from '../core/assetPath';
+import type { AssetManager } from '../core/AssetManager';
 
 export class QuestManager implements IGameSystem, IQuestDataProvider {
   private eventBus: EventBus;
@@ -15,6 +15,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   private evaluating: boolean = false;
   private pendingEvaluate: boolean = false;
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
+  private assetManager!: AssetManager;
   private onFlagChanged: (payload: { key: string; value: boolean | number }) => void;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
@@ -27,6 +28,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
   init(ctx: GameContext): void {
     this.strings = ctx.strings;
+    this.assetManager = ctx.assetManager;
     this.eventBus.on('flag:changed', this.onFlagChanged);
   }
 
@@ -34,8 +36,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/quests.json'));
-      const defs: QuestDef[] = await resp.json();
+      const defs = await this.assetManager.loadJson<QuestDef[]>('/assets/data/quests.json');
       for (const def of defs) {
         this.questDefs.set(def.id, def);
         if (!this.questStatus.has(def.id)) {

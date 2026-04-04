@@ -1,6 +1,6 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import { resolveAssetPath } from '../core/assetPath';
+import type { AssetManager } from '../core/AssetManager';
 import type { CharacterEntry, LoreEntry, DocumentEntry, BookDef, Condition, IGameSystem, GameContext, IArchiveDataProvider } from '../data/types';
 
 type BookType = 'character' | 'lore' | 'document' | 'book';
@@ -22,6 +22,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private readEntries: Set<string> = new Set();
   private loreCategoryNames: Record<string, string> = {};
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
+  private assetManager!: AssetManager;
 
   private onFlagChanged: () => void;
   private onDialogueStart: (payload: { npcName?: string }) => void;
@@ -38,6 +39,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   init(ctx: GameContext): void {
     this.strings = ctx.strings;
+    this.assetManager = ctx.assetManager;
     this.eventBus.on('flag:changed', this.onFlagChanged);
     this.eventBus.on('dialogue:start', this.onDialogueStart);
   }
@@ -55,16 +57,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadCharacters(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/archive/characters.json'));
-      const list: CharacterEntry[] = await resp.json();
+      const list = await this.assetManager.loadJson<CharacterEntry[]>('/assets/data/archive/characters.json');
       for (const e of list) this.characterDefs.set(e.id, e);
     } catch { /* no data yet */ }
   }
 
   private async loadLore(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/archive/lore.json'));
-      const data = await resp.json();
+      const data = await this.assetManager.loadJson<LoreEntry[] | { entries?: LoreEntry[]; categories?: Record<string, string> }>('/assets/data/archive/lore.json');
       const list: LoreEntry[] = Array.isArray(data) ? data : data.entries ?? [];
       for (const e of list) this.loreDefs.set(e.id, e);
       if (!Array.isArray(data) && data.categories) {
@@ -75,16 +75,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadDocuments(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/archive/documents.json'));
-      const list: DocumentEntry[] = await resp.json();
+      const list = await this.assetManager.loadJson<DocumentEntry[]>('/assets/data/archive/documents.json');
       for (const e of list) this.documentDefs.set(e.id, e);
     } catch { /* no data yet */ }
   }
 
   private async loadBooks(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/archive/books.json'));
-      const list: BookDef[] = await resp.json();
+      const list = await this.assetManager.loadJson<BookDef[]>('/assets/data/archive/books.json');
       for (const b of list) this.bookDefs.set(b.id, b);
     } catch { /* no data yet */ }
   }

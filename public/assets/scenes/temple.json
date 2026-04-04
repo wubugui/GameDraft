@@ -3,6 +3,10 @@
   "name": "破烂城隍庙",
   "worldWidth": 2000,
   "worldHeight": 1116,
+  "camera": {
+    "zoom": 1,
+    "pixelsPerUnit": 1
+  },
   "backgrounds": [
     {
       "image": "background.png",
@@ -27,8 +31,6 @@
       "label": "香案",
       "x": 1000,
       "y": 502.2,
-      "width": 228.6,
-      "height": 111.6,
       "interactionRange": 128.6,
       "data": {
         "text": "香案上只剩些断香和灰烬。城隍爷的泥身斑驳得厉害，半边脸都裂开了，看着比庙外的夜色还阴。"
@@ -40,8 +42,6 @@
       "label": "城隍像后的暗角",
       "x": 1000,
       "y": 279,
-      "width": 142.9,
-      "height": 111.6,
       "interactionRange": 128.6,
       "conditions": [
         {
@@ -78,8 +78,6 @@
       "label": "墙边月影",
       "x": 1571.4,
       "y": 669.6,
-      "width": 257.1,
-      "height": 200.9,
       "interactionRange": 185.7,
       "conditions": [
         {
@@ -124,8 +122,6 @@
       "label": "梁下",
       "x": 1000,
       "y": 669.6,
-      "width": 200,
-      "height": 156.2,
       "interactionRange": 142.9,
       "conditions": [
         {
@@ -162,8 +158,6 @@
       "label": "石碑",
       "x": 428.6,
       "y": 390.6,
-      "width": 114.3,
-      "height": 133.9,
       "interactionRange": 114.3,
       "data": {
         "text": "角落里立着块旧石碑，碑文风化得只剩最后几句还能认：\"阎王岭下，阴阳交汇，城隍镇之。\"你看完只觉背后更凉了。",
@@ -191,8 +185,6 @@
       "label": "出门 (街巷)",
       "x": 1000,
       "y": 948.6,
-      "width": 171.4,
-      "height": 89.3,
       "interactionRange": 100,
       "data": {
         "targetScene": "test_room_a",
@@ -206,24 +198,24 @@
     "M": {
       "R": [
         [
-          0,
+          0.0,
           -0.5877852522924731,
           -0.8090169943749475
         ],
         [
-          0,
+          0.0,
           0.8090169943749475,
           -0.5877852522924731
         ],
         [
-          -1,
-          0,
-          0
+          -1.0,
+          0.0,
+          -0.0
         ]
       ],
-      "ppu": 384,
-      "cx": 688,
-      "cy": 384
+      "ppu": 384.0,
+      "cx": 688.0,
+      "cy": 384.0
     },
     "depth_mapping": {
       "invert": true,
@@ -235,8 +227,8 @@
       "floor_depth_A": -0.003584327917893681,
       "floor_depth_B": 1.3763819204711736
     },
-    "depth_tolerance": 0,
-    "floor_offset": 0,
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
     "collision": {
       "x_min": -0.8722069777211495,
       "z_min": -1.78125,

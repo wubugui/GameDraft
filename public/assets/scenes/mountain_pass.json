@@ -1,8 +1,11 @@
 {
   "id": "mountain_pass",
   "name": "山路",
-  "worldWidth": 4000,
-  "worldHeight": 2233,
+  "worldWidth": 1500,
+  "camera": {
+    "zoom": 1,
+    "pixelsPerUnit": 1
+  },
   "backgrounds": [
     {
       "image": "background.png",
@@ -11,17 +14,17 @@
     }
   ],
   "spawnPoint": {
-    "x": 662.8,
-    "y": 2084.7
+    "x": 534.8,
+    "y": 346.7
   },
   "spawnPoints": {
     "from_street": {
-      "x": 662.8,
-      "y": 2084.7
+      "x": 188.8,
+      "y": 821.7
     },
     "from_temple_exterior": {
-      "x": 3665.7,
-      "y": 2003.3
+      "x": 1437.7,
+      "y": 786.3
     }
   },
   "hotspots": [
@@ -29,10 +32,8 @@
       "id": "exit_to_street",
       "type": "transition",
       "label": "回街巷",
-      "x": 642.4,
-      "y": 2160.3,
-      "width": 348.8,
-      "height": 232.6,
+      "x": 188,
+      "y": 821.3,
       "interactionRange": 203.5,
       "data": {
         "targetScene": "test_room_a",
@@ -43,10 +44,8 @@
       "id": "exit_to_temple",
       "type": "transition",
       "label": "去庙宇",
-      "x": 3816.9,
-      "y": 2061.5,
-      "width": 290.7,
-      "height": 290.8,
+      "x": 1437.9,
+      "y": 786.5,
       "interactionRange": 203.5,
       "data": {
         "targetScene": "temple_exterior",
@@ -60,37 +59,37 @@
     "M": {
       "R": [
         [
-          0,
+          0.0,
           -0.9961946980917455,
           -0.08715574274765814
         ],
         [
-          0,
+          0.0,
           0.08715574274765814,
           -0.9961946980917455
         ],
         [
-          -1,
-          0,
-          0
+          -1.0,
+          0.0,
+          -0.0
         ]
       ],
-      "ppu": 10,
-      "cx": 688,
-      "cy": 384
+      "ppu": 10.0,
+      "cx": 688.0,
+      "cy": 384.0
     },
     "depth_mapping": {
       "invert": true,
       "scale": 0.001,
-      "offset": 0
+      "offset": 0.0
     },
     "shader": {
       "depth_per_sy": 1.1430052302761349,
       "floor_depth_A": -0.008748866352592397,
       "floor_depth_B": 3.3595646793954805
     },
-    "depth_tolerance": 0,
-    "floor_offset": 0,
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
     "collision": {
       "x_min": -38.25394957373098,
       "z_min": -68.4,

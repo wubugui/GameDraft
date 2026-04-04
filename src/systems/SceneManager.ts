@@ -8,6 +8,11 @@ import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
 import type { SceneData, SceneRuntimeState, Position, GameContext, AnimationSetDef, SceneCameraConfig } from '../data/types';
 import type { IGameSystem } from '../data/types';
 
+/** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
+export type ApplyDebugWorldSizeResult =
+  | { ok: true; worldToPixelX: number; worldToPixelY: number }
+  | { ok: false };
+
 interface SceneMemory {
   inspectedHotspots: string[];
   pickedUpHotspots: string[];
@@ -30,6 +35,7 @@ export class SceneManager implements IGameSystem {
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
+  private boundsOnlySetter: ((boundsW: number, boundsH: number) => void) | null = null;
   private audioApplier: ((bgm?: string, ambient?: string[]) => void) | null = null;
   private zoneSetter: ((zones: import('../data/types').ZoneDef[]) => void) | null = null;
   private interactionSetter: ((hotspots: Hotspot[], npcs: Npc[]) => void) | null = null;
@@ -67,6 +73,11 @@ export class SceneManager implements IGameSystem {
     this.cameraSetter = fn;
   }
 
+  /** 仅更新相机边界（不 snap），供调试改 world 尺寸时用 */
+  setBoundsOnlySetter(fn: (boundsW: number, boundsH: number) => void): void {
+    this.boundsOnlySetter = fn;
+  }
+
   setAudioApplier(fn: (bgm?: string, ambient?: string[]) => void): void {
     this.audioApplier = fn;
   }
@@ -99,6 +110,57 @@ export class SceneManager implements IGameSystem {
 
   get switching(): boolean {
     return this.isSwitching;
+  }
+
+  /**
+   * 调试：在内存中修改当前场景的 worldWidth / worldHeight（不写 JSON）。
+   * 重算背景精灵缩放与相机边界；热点/NPC 世界坐标不变。
+   */
+  applyDebugWorldSize(width: number, height: number): ApplyDebugWorldSizeResult {
+    const scene = this.currentScene;
+    const bg = this.sceneContainerBg;
+    if (!scene || !bg || !Number.isFinite(width) || !Number.isFinite(height)) return { ok: false };
+
+    const minSz = 50;
+    const maxSz = 10_000_000;
+    const w = Math.max(minSz, Math.min(maxSz, width));
+    const h = Math.max(minSz, Math.min(maxSz, height));
+
+    const oldW = scene.worldWidth;
+    const oldH = scene.worldHeight;
+    if (oldW <= 0 || oldH <= 0) return { ok: false };
+
+    scene.worldWidth = w;
+    scene.worldHeight = h;
+
+    let worldToPixelX = 1;
+    let worldToPixelY = 1;
+
+    let foundSprite = false;
+    for (const child of bg.children) {
+      if (child instanceof Sprite && child.texture?.width > 0 && child.texture?.height > 0) {
+        foundSprite = true;
+        child.scale.set(w / child.texture.width, h / child.texture.height);
+      }
+    }
+    if (!foundSprite && oldW > 0 && oldH > 0) {
+      bg.scale.x *= w / oldW;
+      bg.scale.y *= h / oldH;
+    }
+
+    if (foundSprite) {
+      const first = bg.children.find(
+        (c): c is Sprite => c instanceof Sprite && c.texture?.width > 0 && c.texture?.height > 0,
+      );
+      if (first) {
+        worldToPixelX = first.texture.width / w;
+        worldToPixelY = first.texture.height / h;
+      }
+    }
+
+    this.boundsOnlySetter?.(w, h);
+
+    return { ok: true, worldToPixelX, worldToPixelY };
   }
 
   async loadScene(sceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }, fromSceneId?: string | null): Promise<void> {
@@ -378,6 +440,7 @@ export class SceneManager implements IGameSystem {
     this.sceneMemory.clear();
     this.playerPositionSetter = null;
     this.cameraSetter = null;
+    this.boundsOnlySetter = null;
     this.audioApplier = null;
     this.zoneSetter = null;
     this.interactionSetter = null;

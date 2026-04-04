@@ -6,26 +6,6 @@ import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { ActionDef, IGameSystem, GameContext, DialogueLine, DialogueChoice } from '../data/types';
 
-const ACTION_PARAM_NAMES: Record<string, string[]> = {
-  setFlag: ['key', 'value'],
-  giveItem: ['id', 'count'],
-  removeItem: ['id', 'count'],
-  giveCurrency: ['amount'],
-  removeCurrency: ['amount'],
-  giveRule: ['id'],
-  giveFragment: ['id'],
-  updateQuest: ['id'],
-  startEncounter: ['id'],
-  showNotification: ['text', 'type'],
-  playBgm: ['id', 'fadeMs'],
-  stopBgm: ['fadeMs'],
-  playSfx: ['id'],
-  endDay: [],
-  startCutscene: ['id'],
-  addArchiveEntry: ['bookType', 'entryId'],
-  openShop: ['shopId'],
-};
-
 function parseTagValue(s: string): string | number | boolean {
   if (s === 'true') return true;
   if (s === 'false') return false;
@@ -167,7 +147,7 @@ export class DialogueManager implements IGameSystem {
 
     const actionType = withoutPrefix.substring(0, colonIdx);
     const paramStr = withoutPrefix.substring(colonIdx + 1);
-    const paramNames = ACTION_PARAM_NAMES[actionType];
+    const paramNames = this.actionExecutor.getParamNames(actionType);
 
     if (!paramNames) {
       console.warn(`DialogueManager: unknown action tag type "${actionType}"`);

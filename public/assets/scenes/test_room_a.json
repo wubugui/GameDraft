@@ -1,8 +1,11 @@
 {
   "id": "test_room_a",
   "name": "街巷",
-  "worldWidth": 20000,
-  "worldHeight": 11163,
+  "worldWidth": 4000,
+  "camera": {
+    "zoom": 0.54,
+    "pixelsPerUnit": 1
+  },
   "backgrounds": [
     {
       "image": "background.png",
@@ -11,8 +14,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 10000,
-    "y": 7814.1
+    "x": 2011,
+    "y": 2141
   },
   "spawnPoints": {
     "from_b": {
@@ -20,20 +23,20 @@
       "y": 4465.2
     },
     "from_teahouse": {
-      "x": 7500,
-      "y": 7256
+      "x": 1738,
+      "y": 1912
     },
     "from_temple": {
       "x": 16250,
       "y": 2232.6
     },
     "from_bridge": {
-      "x": 11250,
-      "y": 7256
+      "x": 3903,
+      "y": 2160
     },
     "from_mountain_pass": {
-      "x": 5000,
-      "y": 6697.8
+      "x": 3810,
+      "y": 176.8
     }
   },
   "hotspots": [
@@ -43,8 +46,6 @@
       "label": "墙角的旧告示",
       "x": 5000,
       "y": 5023.4,
-      "width": 1000,
-      "height": 893,
       "interactionRange": 1125,
       "data": {
         "text": "墙角糊着一层又一层旧告示，纸边都被夜露泡软了。最底下一张写着：\"夜里少往城隍庙后头去。\""
@@ -56,8 +57,6 @@
       "label": "穿堂风",
       "x": 12500,
       "y": 3348.9,
-      "width": 1250,
-      "height": 1116.3,
       "interactionRange": 1125,
       "data": {
         "text": "巷子里一阵穿堂风吹过，天色比方才又暗了些。越往城隍庙那头望，越觉得那边静得不像有人气。"
@@ -67,10 +66,8 @@
       "id": "exit_to_teahouse",
       "type": "transition",
       "label": "去茶馆",
-      "x": 6875,
-      "y": 7256,
-      "width": 1500,
-      "height": 1116.3,
+      "x": 1738,
+      "y": 1912,
       "interactionRange": 875,
       "data": {
         "targetScene": "teahouse",
@@ -81,10 +78,8 @@
       "id": "exit_to_mountain_pass",
       "type": "transition",
       "label": "去山路",
-      "x": 4375,
-      "y": 6697.8,
-      "width": 1500,
-      "height": 1116.3,
+      "x": 3831,
+      "y": 95.8,
       "interactionRange": 875,
       "data": {
         "targetScene": "mountain_pass",
@@ -95,10 +90,8 @@
       "id": "exit_to_bridge",
       "type": "transition",
       "label": "去桥",
-      "x": 11875,
-      "y": 7256,
-      "width": 1500,
-      "height": 1116.3,
+      "x": 3903,
+      "y": 2160,
       "interactionRange": 875,
       "data": {
         "targetScene": "bridge_underpass",
@@ -111,8 +104,6 @@
       "label": "去后巷",
       "x": 16250,
       "y": 5023.4,
-      "width": 1250,
-      "height": 1116.3,
       "interactionRange": 875,
       "data": {
         "targetScene": "test_room_b",
@@ -125,8 +116,6 @@
       "label": "找个角落捱到天亮",
       "x": 3125,
       "y": 7814.1,
-      "width": 1500,
-      "height": 893,
       "interactionRange": 1125,
       "conditions": [
         {
@@ -167,31 +156,31 @@
   "ambientSounds": [
     "night_alley_wind"
   ],
-  "filterId": "night",
+  "filterId": "day",
   "depthConfig": {
     "depth_map": "raw_depth_rg.png",
     "collision_map": "collision.png",
     "M": {
       "R": [
         [
-          0,
+          0.0,
           -0.6427876096865394,
           -0.766044443118978
         ],
         [
-          0,
+          0.0,
           0.7660444431189781,
           -0.6427876096865393
         ],
         [
-          -1,
-          0,
-          0
+          -1.0,
+          0.0,
+          -0.0
         ]
       ],
-      "ppu": 229,
-      "cx": 688,
-      "cy": 384
+      "ppu": 229.0,
+      "cx": 688.0,
+      "cy": 384.0
     },
     "depth_mapping": {
       "invert": true,
@@ -203,8 +192,8 @@
       "floor_depth_A": -0.0052041641598000446,
       "floor_depth_B": 1.9983990373632174
     },
-    "depth_tolerance": 0,
     "floor_offset": -0.1,
+    "depth_tolerance": 0.0,
     "collision": {
       "x_min": -2.418212061104043,
       "z_min": -2.986899563318777,

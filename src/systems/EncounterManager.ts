@@ -1,8 +1,8 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
-import type { EncounterDef, EncounterOptionDef, IGameSystem, GameContext, RuleDef, RuleFragmentDef, ResolvedOption } from '../data/types';
-import { resolveAssetPath } from '../core/assetPath';
+import type { AssetManager } from '../core/AssetManager';
+import type { EncounterDef, IGameSystem, GameContext, ResolvedOption } from '../data/types';
 
 export class EncounterManager implements IGameSystem {
   private eventBus: EventBus;
@@ -14,8 +14,7 @@ export class EncounterManager implements IGameSystem {
   private currentOptions: ResolvedOption[] = [];
   private active: boolean = false;
 
-  private ruleDefs: Map<string, { name: string; incompleteName?: string; fragmentCount?: number }> = new Map();
-  private fragmentDefs: Map<string, { id: string; ruleId: string }> = new Map();
+  private ruleNameResolver: ((ruleId: string) => { name: string; incompleteName?: string } | undefined) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -24,34 +23,26 @@ export class EncounterManager implements IGameSystem {
   }
 
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
+  private assetManager!: AssetManager;
 
   init(ctx: GameContext): void {
     this.strings = ctx.strings;
+    this.assetManager = ctx.assetManager;
   }
   update(_dt: number): void {}
 
+  setRuleNameResolver(fn: (ruleId: string) => { name: string; incompleteName?: string } | undefined): void {
+    this.ruleNameResolver = fn;
+  }
+
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/encounters.json'));
-      const defs: EncounterDef[] = await resp.json();
+      const defs = await this.assetManager.loadJson<EncounterDef[]>('/assets/data/encounters.json');
       for (const def of defs) {
         this.encounterDefs.set(def.id, def);
       }
     } catch {
       console.warn('EncounterManager: encounters.json not found');
-    }
-
-    try {
-      const resp = await fetch(resolveAssetPath('/assets/data/rules.json'));
-      const data = await resp.json() as { rules: RuleDef[]; fragments: RuleFragmentDef[] };
-      for (const r of data.rules) {
-        this.ruleDefs.set(r.id, { name: r.name, incompleteName: r.incompleteName, fragmentCount: r.fragmentCount });
-      }
-      for (const f of data.fragments) {
-        this.fragmentDefs.set(f.id, { id: f.id, ruleId: f.ruleId });
-      }
-    } catch {
-      // rules.json not available
     }
   }
 
@@ -85,7 +76,7 @@ export class EncounterManager implements IGameSystem {
         if (ruleAcquired) {
           // rule acquired -- show normally
         } else if (ruleDiscovered) {
-          const ruleInfo = this.ruleDefs.get(ruleId);
+          const ruleInfo = this.ruleNameResolver?.(ruleId);
           const collected = (this.flagStore.get(`rule_${ruleId}_fragments_collected`) as number) ?? 0;
           const total = (this.flagStore.get(`rule_${ruleId}_fragments_total`) as number) ?? 0;
           const displayName = ruleInfo?.incompleteName ?? this.strings.get('encounter', 'unknownRule');

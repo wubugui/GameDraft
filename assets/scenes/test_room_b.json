@@ -23,7 +23,7 @@
     {
       "id": "old_box",
       "type": "inspect",
-      "x": 700, "y": 300, "width": 40, "height": 40,
+      "x": 700, "y": 300,
       "interactionRange": 80,
       "label": "旧木箱",
       "data": { "text": "一个布满灰尘的旧木箱，锁已经锈死了。箱子上刻着一个奇怪的符号，像是某种封印。" }
@@ -31,7 +31,7 @@
     {
       "id": "herb_bundle",
       "type": "pickup",
-      "x": 300, "y": 600, "width": 30, "height": 30,
+      "x": 300, "y": 600,
       "interactionRange": 70,
       "label": "艾草",
       "data": { "itemId": "mugwort", "itemName": "艾草", "count": 2 }
@@ -39,7 +39,7 @@
     {
       "id": "exit_to_a",
       "type": "transition",
-      "x": 10, "y": 350, "width": 40, "height": 100,
+      "x": 10, "y": 350,
       "interactionRange": 60,
       "label": "回到房间A",
       "data": { "targetScene": "test_room_a", "targetSpawnPoint": "from_b" }

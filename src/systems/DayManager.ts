@@ -15,10 +15,11 @@ export class DayManager implements IGameSystem {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.actionExecutor = actionExecutor;
-    this.syncFlag();
   }
 
-  init(_ctx: GameContext): void {}
+  init(_ctx: GameContext): void {
+    this.syncFlag();
+  }
   update(_dt: number): void {}
 
   get currentDay(): number {

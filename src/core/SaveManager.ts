@@ -20,13 +20,17 @@ export class SaveManager implements ISaveDataProvider {
     distributor: DeserializeDistributor,
     sceneReloader: SceneReloader,
     strings: StringsProvider,
-    fallbackScene: string = 'test_room_a',
+    fallbackScene: string,
   ) {
     this.collector = collector;
     this.distributor = distributor;
     this.sceneReloader = sceneReloader;
     this.strings = strings;
     this.fallbackScene = fallbackScene;
+  }
+
+  setFallbackScene(scene: string): void {
+    this.fallbackScene = scene;
   }
 
   save(slot: number): void {

@@ -6,6 +6,7 @@ export interface GameContext {
   eventBus: EventBus;
   flagStore: FlagStore;
   strings: StringsProvider;
+  assetManager: AssetManager;
 }
 
 export interface IGameSystem {
@@ -21,6 +22,7 @@ export interface IGameSystem {
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { FlagStore } from '../core/FlagStore';
+import type { AssetManager } from '../core/AssetManager';
 
 // ============================================================
 // 游戏状态枚举
@@ -125,8 +127,6 @@ export interface HotspotDef {
   type: HotspotType;
   x: number;
   y: number;
-  width: number;
-  height: number;
   interactionRange: number;
   conditions?: Condition[];
   label?: string;

@@ -1,8 +1,11 @@
 {
   "id": "temple_exterior",
   "name": "庙宇",
-  "worldWidth": 8000,
-  "worldHeight": 4465,
+  "worldWidth": 1500,
+  "camera": {
+    "zoom": 1,
+    "pixelsPerUnit": 1
+  },
   "backgrounds": [
     {
       "image": "background.png",
@@ -11,13 +14,13 @@
     }
   ],
   "spawnPoint": {
-    "x": 697.7,
-    "y": 877.9
+    "x": 658.7,
+    "y": 672.9
   },
   "spawnPoints": {
     "from_mountain_pass": {
-      "x": 697.7,
-      "y": 877.9
+      "x": 148.7,
+      "y": 178.9
     }
   },
   "hotspots": [
@@ -25,10 +28,8 @@
       "id": "exit_to_mountain_pass",
       "type": "transition",
       "label": "回山路",
-      "x": 540.7,
-      "y": 790.7,
-      "width": 697.7,
-      "height": 465.1,
+      "x": 148.7,
+      "y": 178.9,
       "interactionRange": 407,
       "data": {
         "targetScene": "mountain_pass",
@@ -42,24 +43,24 @@
     "M": {
       "R": [
         [
-          0,
+          0.0,
           -0.6293203910498374,
           -0.7771459614569709
         ],
         [
-          0,
+          0.0,
           0.7771459614569709,
           -0.6293203910498374
         ],
         [
-          -1,
-          0,
-          0
+          -1.0,
+          0.0,
+          -0.0
         ]
       ],
-      "ppu": 198,
-      "cx": 688,
-      "cy": 384
+      "ppu": 198.0,
+      "cx": 688.0,
+      "cy": 384.0
     },
     "depth_mapping": {
       "invert": true,
@@ -71,8 +72,8 @@
       "floor_depth_A": -0.006236854325934604,
       "floor_depth_B": 2.394952061158888
     },
-    "depth_tolerance": 0,
-    "floor_offset": 0,
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
     "collision": {
       "x_min": -2.347361796451686,
       "z_min": -3.4545454545454546,

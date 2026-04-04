@@ -30,16 +30,16 @@ export class Hotspot {
   }
 
   private _syncContainerPosition(): void {
-    this.container.x = this.def.x + this.def.width / 2;
-    this.container.y = this.def.y + this.def.height / 2;
+    this.container.x = this.def.x;
+    this.container.y = this.def.y;
   }
 
   get centerX(): number {
-    return this.def.x + this.def.width / 2;
+    return this.def.x;
   }
 
   get centerY(): number {
-    return this.def.y + this.def.height / 2;
+    return this.def.y;
   }
 
   showPrompt(): void {

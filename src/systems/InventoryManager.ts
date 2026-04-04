@@ -1,7 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ItemDef, IGameSystem, GameContext, IInventoryDataProvider } from '../data/types';
-import { resolveAssetPath } from '../core/assetPath';
+import type { AssetManager } from '../core/AssetManager';
 
 const MAX_SLOTS = 12;
 
@@ -14,6 +14,7 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   private coins: number = 0;
   private loaded: boolean = false;
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
+  private assetManager!: AssetManager;
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
@@ -22,13 +23,13 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
 
   init(ctx: GameContext): void {
     this.strings = ctx.strings;
+    this.assetManager = ctx.assetManager;
   }
   update(_dt: number): void {}
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/items.json'));
-      const defs: ItemDef[] = await resp.json();
+      const defs = await this.assetManager.loadJson<ItemDef[]>('/assets/data/items.json');
       for (const def of defs) {
         this.itemDefs.set(def.id, def);
       }
