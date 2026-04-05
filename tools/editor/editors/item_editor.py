@@ -14,10 +14,11 @@ from ..shared.condition_editor import ConditionEditor
 
 class DynDescWidget(QGroupBox):
     def __init__(self, idx: int, data: dict, flags: list[str],
-                 parent: QWidget | None = None):
+                 model: ProjectModel | None = None, parent: QWidget | None = None):
         super().__init__(f"Dynamic Desc {idx + 1}", parent)
         lay = QVBoxLayout(self)
         self._cond = ConditionEditor("Conditions")
+        self._cond.set_flag_pattern_context(model, None)
         self._cond.set_flags(flags)
         self._cond.set_data(data.get("conditions", []))
         lay.addWidget(self._cond)
@@ -107,15 +108,15 @@ class ItemEditor(QWidget):
             self._dyn_layout.removeWidget(w)
             w.deleteLater()
         self._dyn_widgets.clear()
-        flags = sorted(self._model.all_flags())
+        flags = self._model.registry_flag_choices(None)
         for i, d in enumerate(dyns):
-            dw = DynDescWidget(i, d, flags)
+            dw = DynDescWidget(i, d, flags, self._model)
             self._dyn_widgets.append(dw)
             self._dyn_layout.addWidget(dw)
 
     def _add_dyn(self) -> None:
-        flags = sorted(self._model.all_flags())
-        dw = DynDescWidget(len(self._dyn_widgets), {"conditions": [], "text": ""}, flags)
+        flags = self._model.registry_flag_choices(None)
+        dw = DynDescWidget(len(self._dyn_widgets), {"conditions": [], "text": ""}, flags, self._model)
         self._dyn_widgets.append(dw)
         self._dyn_layout.addWidget(dw)
 

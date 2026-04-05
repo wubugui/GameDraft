@@ -1,0 +1,132 @@
+{
+  "static": [
+    "box_hidden_in_temple",
+    "box_opened",
+    "box_taboo_active",
+    "coins",
+    "current_day",
+    "day_1_done",
+    "day_2_started",
+    "encounter_ghost_done",
+    "entered_dark_alley",
+    "first_night_escape",
+    "ghost_approach_direct",
+    "ghost_ran_away",
+    "ghost_used_taomu",
+    "ghost_watched_safe",
+    "got_iron_box",
+    "heard_city_news",
+    "heard_ghost_story",
+    "heard_opera_rumor",
+    "heard_teahouse_story",
+    "heard_waiter_ghost_talk",
+    "heard_yanwang_story",
+    "inspected_stone_tablet",
+    "know_city_strange",
+    "know_ghost_opera",
+    "met_blind_li",
+    "met_mysterious_visitor",
+    "old_box_checked",
+    "peddler_arrived",
+    "peddler_met",
+    "peddler_story_heard",
+    "prologue_demo_complete",
+    "prologue_started",
+    "read_box_note",
+    "read_temple_notes",
+    "rule_rule_ghost_origin_acquired",
+    "rule_rule_no_go_night_acquired",
+    "saw_hanged_woman",
+    "saw_standing_shadow",
+    "strangers_entered_temple",
+    "talked_wang_about_ghost",
+    "test_cutscene_done",
+    "used_fire_dark_alley",
+    "used_origin_dark_alley",
+    "used_rule_dark_alley",
+    "waiter_met"
+  ],
+  "patterns": [
+    {
+      "id": "picked_up",
+      "prefix": "picked_up_",
+      "idSource": "hotspot_any_scene"
+    },
+    {
+      "id": "rule_used",
+      "prefix": "rule_used_",
+      "idSource": "rule"
+    },
+    {
+      "id": "rule_acquired",
+      "prefix": "rule_",
+      "suffix": "_acquired",
+      "idSource": "rule"
+    },
+    {
+      "id": "rule_discovered",
+      "prefix": "rule_",
+      "suffix": "_discovered",
+      "idSource": "rule"
+    },
+    {
+      "id": "rule_fragments_collected",
+      "prefix": "rule_",
+      "suffix": "_fragments_collected",
+      "idSource": "rule"
+    },
+    {
+      "id": "rule_fragments_total",
+      "prefix": "rule_",
+      "suffix": "_fragments_total",
+      "idSource": "rule"
+    },
+    {
+      "id": "fragment_acquired",
+      "prefix": "fragment_",
+      "suffix": "_acquired",
+      "idSource": "fragment"
+    },
+    {
+      "id": "quest_status",
+      "prefix": "quest_",
+      "suffix": "_status",
+      "idSource": "quest"
+    },
+    {
+      "id": "item_count",
+      "prefix": "item_count_",
+      "idSource": "item"
+    },
+    {
+      "id": "has_item",
+      "prefix": "has_item_",
+      "idSource": "item"
+    },
+    {
+      "id": "archive_character",
+      "prefix": "archive_character_",
+      "idSource": "archive_character"
+    },
+    {
+      "id": "archive_lore",
+      "prefix": "archive_lore_",
+      "idSource": "archive_lore"
+    },
+    {
+      "id": "archive_document",
+      "prefix": "archive_document_",
+      "idSource": "archive_document"
+    },
+    {
+      "id": "archive_book",
+      "prefix": "archive_book_",
+      "idSource": "archive_book"
+    }
+  ],
+  "migrations": {},
+  "runtime": {
+    "warnUnknownInDev": true,
+    "stripUnknown": false
+  }
+}

@@ -1,12 +1,14 @@
 """Reusable ActionDef[] editor with dynamic params forms."""
 from __future__ import annotations
 
-import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QComboBox, QLabel, QSpinBox, QCheckBox, QFormLayout, QFrame,
 )
+
 from PySide6.QtCore import Signal
+
+from .flag_key_selector import populate_flag_key_combo
 
 ACTION_TYPES = [
     "setFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
@@ -48,9 +50,11 @@ class ActionRow(QWidget):
     removed = Signal(object)
     changed = Signal()
 
-    def __init__(self, data: dict | None = None, parent: QWidget | None = None):
+    def __init__(self, data: dict | None = None, parent: QWidget | None = None,
+                 shared_flag_keys: list[str] | None = None):
         super().__init__(parent)
         self._param_widgets: dict[str, QWidget] = {}
+        self._shared_flag_keys = shared_flag_keys or []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -111,6 +115,13 @@ class ActionRow(QWidget):
                 w = QLineEdit(str(val) if val != "" else "true")
                 w.setPlaceholderText("true / false / number")
                 w.textChanged.connect(self.changed)
+            elif act_type == "setFlag" and pname == "key":
+                w = QComboBox()
+                w.setEditable(False)
+                w.setMinimumWidth(180)
+                cur = str(val) if val is not None else ""
+                populate_flag_key_combo(w, self._shared_flag_keys, cur)
+                w.currentIndexChanged.connect(self.changed)
             else:
                 w = QLineEdit(str(val))
                 w.textChanged.connect(self.changed)
@@ -140,9 +151,21 @@ class ActionRow(QWidget):
                         params[pname] = int(raw)
                     except ValueError:
                         params[pname] = raw
+            elif act_type == "setFlag" and pname == "key" and isinstance(w, QComboBox):
+                raw_k = w.currentData()
+                params[pname] = raw_k if isinstance(raw_k, str) else (str(raw_k) if raw_k else "")
             else:
                 params[pname] = w.text()
         return {"type": act_type, "params": params}
+
+    def refresh_setflag_key_combo(self) -> None:
+        w = self._param_widgets.get("key")
+        if w is None or self.type_combo.currentText() != "setFlag":
+            return
+        if isinstance(w, QComboBox):
+            cur = w.currentData()
+            cur_s = str(cur) if cur else ""
+            populate_flag_key_combo(w, self._shared_flag_keys, cur_s)
 
 
 class ActionEditor(QWidget):
@@ -151,6 +174,7 @@ class ActionEditor(QWidget):
     def __init__(self, label: str = "Actions", parent: QWidget | None = None):
         super().__init__(parent)
         self._rows: list[ActionRow] = []
+        self._shared_flag_keys: list[str] = []
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(QLabel(f"<b>{label}</b>"))
@@ -160,6 +184,18 @@ class ActionEditor(QWidget):
         add_btn = QPushButton(f"+ {label}")
         add_btn.clicked.connect(self._add_empty)
         root.addWidget(add_btn)
+
+    def set_flag_keys(self, keys: list[str]) -> None:
+        """Allowed flag keys from registry only (expanded)."""
+        self._shared_flag_keys.clear()
+        self._shared_flag_keys.extend(keys)
+        for r in self._rows:
+            r._shared_flag_keys = self._shared_flag_keys
+            r.refresh_setflag_key_combo()
+
+    def set_flag_completions(self, keys: list[str]) -> None:
+        """Backward-compatible name; keys must be registry-expanded list."""
+        self.set_flag_keys(keys)
 
     def set_data(self, actions: list[dict]) -> None:
         self._clear()
@@ -176,7 +212,7 @@ class ActionEditor(QWidget):
         self._rows.clear()
 
     def _add_row(self, data: dict | None = None) -> None:
-        row = ActionRow(data)
+        row = ActionRow(data, shared_flag_keys=self._shared_flag_keys)
         row.removed.connect(self._remove_row)
         row.changed.connect(self.changed)
         self._rows.append(row)

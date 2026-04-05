@@ -1,12 +1,66 @@
 import type { Condition } from '../data/types';
 import type { EventBus } from './EventBus';
 
+/** Shape of public/assets/data/flag_registry.json. */
+export interface FlagRegistryJson {
+  static?: string[];
+  patterns?: { prefix: string; suffix?: string; [k: string]: unknown }[];
+  migrations?: Record<string, string>;
+  runtime?: {
+    warnUnknownInDev?: boolean;
+    stripUnknown?: boolean;
+  };
+}
+
+type RegistryRuntime = {
+  staticKeys: Set<string>;
+  patterns: { prefix: string; suffix?: string }[];
+  migrations: Record<string, string>;
+  stripUnknown: boolean;
+  warnUnknown: boolean;
+};
+
 export class FlagStore {
   private flags: Map<string, boolean | number> = new Map();
   private eventBus: EventBus;
+  private registryRuntime: RegistryRuntime | null = null;
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
+  }
+
+  /** Optional: enables save-time migrations / dev warnings / stripUnknown for deserialized keys. */
+  configureRegistry(data: FlagRegistryJson | null): void {
+    if (!data) {
+      this.registryRuntime = null;
+      return;
+    }
+    const rt = data.runtime ?? {};
+    this.registryRuntime = {
+      staticKeys: new Set(data.static ?? []),
+      patterns: (data.patterns ?? []).map(p => ({ prefix: p.prefix, suffix: p.suffix })),
+      migrations: data.migrations ?? {},
+      stripUnknown: !!rt.stripUnknown,
+      warnUnknown: rt.warnUnknownInDev !== false,
+    };
+  }
+
+  private isKeyAllowed(key: string, r: RegistryRuntime): boolean {
+    if (r.staticKeys.has(key)) return true;
+    for (const p of r.patterns) {
+      if (p.suffix) {
+        if (
+          key.startsWith(p.prefix) &&
+          key.endsWith(p.suffix) &&
+          key.length > p.prefix.length + p.suffix.length
+        ) {
+          return true;
+        }
+      } else if (key.startsWith(p.prefix) && key.length > p.prefix.length) {
+        return true;
+      }
+    }
+    return false;
   }
 
   set(key: string, value: boolean | number): void {
@@ -66,8 +120,20 @@ export class FlagStore {
   }
 
   deserialize(data: Record<string, boolean | number>): void {
+    const r = this.registryRuntime;
+    const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV === true;
     this.flags.clear();
-    for (const [k, v] of Object.entries(data)) {
+    for (const [rawKey, v] of Object.entries(data)) {
+      let k = rawKey;
+      if (r?.migrations?.[k]) {
+        k = r.migrations[k];
+      }
+      if (r && !this.isKeyAllowed(k, r)) {
+        if (r.stripUnknown) continue;
+        if (r.warnUnknown && isDev) {
+          console.warn(`[FlagStore] unknown flag key in save: ${k}`);
+        }
+      }
       this.flags.set(k, v);
     }
   }

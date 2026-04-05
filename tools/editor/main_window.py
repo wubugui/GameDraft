@@ -117,6 +117,7 @@ class MainWindow(QMainWindow):
         from .editors.anim_editor import AnimEditor
         from .editors.string_editor import StringEditor
         from .editors.game_config_editor import GameConfigEditor
+        from .editors.flag_registry_editor import FlagRegistryEditor
 
         editors = [
             ("Scene", SceneEditor),
@@ -133,6 +134,7 @@ class MainWindow(QMainWindow):
             ("Animation", AnimEditor),
             ("Strings", StringEditor),
             ("Config", GameConfigEditor),
+            ("Flags", FlagRegistryEditor),
         ]
         for label, cls in editors:
             ed = cls(self._model)

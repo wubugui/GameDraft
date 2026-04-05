@@ -92,7 +92,9 @@ class MapEditor(QWidget):
         self._m_name.setText(n.get("name", ""))
         self._m_x.setValue(n.get("x", 0))
         self._m_y.setValue(n.get("y", 0))
-        self._m_cond.set_flags(sorted(self._model.all_flags()))
+        mf = self._model.registry_flag_choices(None)
+        self._m_cond.set_flag_pattern_context(self._model, None)
+        self._m_cond.set_flags(mf)
         self._m_cond.set_data(n.get("unlockConditions", []))
 
     def _apply(self) -> None:

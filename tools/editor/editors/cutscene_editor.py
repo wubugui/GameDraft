@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
+from ..shared.flag_key_selector import populate_flag_key_combo
 
 COMMAND_TYPES = [
     "fade_black", "fade_in", "flash_white", "wait_time", "wait_click",
@@ -52,10 +53,12 @@ _CMD_PARAMS: dict[str, list[tuple[str, str]]] = {
 
 
 class CommandWidget(QFrame):
-    def __init__(self, cmd: dict, parent: QWidget | None = None):
+    def __init__(self, cmd: dict, shared_flag_keys: list[str] | None = None,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self._widgets: dict[str, QWidget] = {}
+        self._shared_flag_keys = shared_flag_keys or []
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
 
@@ -98,6 +101,11 @@ class CommandWidget(QFrame):
                 w.setMaximumHeight(50)
             elif ptype == "flag_val":
                 w = QLineEdit(str(val) if val != "" else "true")
+            elif ct == "set_flag" and pname == "key":
+                w = QComboBox()
+                w.setEditable(False)
+                w.setMinimumWidth(180)
+                populate_flag_key_combo(w, self._shared_flag_keys, str(val) if val else "")
             else:
                 w = QLineEdit(str(val))
             self._widgets[pname] = w
@@ -130,6 +138,9 @@ class CommandWidget(QFrame):
                         d[pname] = int(raw)
                     except ValueError:
                         d[pname] = raw
+            elif ct == "set_flag" and pname == "key" and isinstance(w, QComboBox):
+                raw_k = w.currentData()
+                d[pname] = raw_k if isinstance(raw_k, str) else (str(raw_k) if raw_k else "")
             else:
                 d[pname] = w.text()
         return d
@@ -181,6 +192,7 @@ class CutsceneEditor(QWidget):
         splitter.setSizes([220, 700])
         root.addWidget(splitter)
         self._cmd_widgets: list[CommandWidget] = []
+        self._shared_flag_keys: list[str] = []
         self._refresh()
 
     def _refresh(self) -> None:
@@ -194,6 +206,8 @@ class CutsceneEditor(QWidget):
         self._current_idx = row
         cs = self._model.cutscenes[row]
         self._c_id.setText(cs.get("id", ""))
+        self._shared_flag_keys.clear()
+        self._shared_flag_keys.extend(self._model.registry_flag_choices(None))
         self._rebuild_commands(cs.get("commands", []))
 
     def _rebuild_commands(self, commands: list[dict]) -> None:
@@ -202,12 +216,12 @@ class CutsceneEditor(QWidget):
             w.deleteLater()
         self._cmd_widgets.clear()
         for cmd in commands:
-            cw = CommandWidget(cmd)
+            cw = CommandWidget(cmd, self._shared_flag_keys)
             self._cmd_widgets.append(cw)
             self._cmds_layout.addWidget(cw)
 
     def _add_cmd(self) -> None:
-        cw = CommandWidget({"type": "wait_click"})
+        cw = CommandWidget({"type": "wait_click"}, self._shared_flag_keys)
         self._cmd_widgets.append(cw)
         self._cmds_layout.addWidget(cw)
 

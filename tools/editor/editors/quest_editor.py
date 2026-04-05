@@ -119,11 +119,14 @@ class QuestEditor(QWidget):
         self._q_title.setText(q.get("title", ""))
         self._q_desc.setPlainText(q.get("description", ""))
         self._q_next.set_current(q.get("nextQuestId", ""))
-        flags = sorted(self._model.all_flags())
+        flags = self._model.registry_flag_choices(None)
+        self._q_pre.set_flag_pattern_context(self._model, None)
+        self._q_comp.set_flag_pattern_context(self._model, None)
         self._q_pre.set_flags(flags)
         self._q_comp.set_flags(flags)
         self._q_pre.set_data(q.get("preconditions", []))
         self._q_comp.set_data(q.get("completionConditions", []))
+        self._q_rewards.set_flag_completions(flags)
         self._q_rewards.set_data(q.get("rewards", []))
 
     def _apply(self) -> None:

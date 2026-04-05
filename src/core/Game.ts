@@ -1,5 +1,5 @@
 import { EventBus } from './EventBus';
-import { FlagStore } from './FlagStore';
+import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { InputManager } from './InputManager';
 import { AssetManager } from './AssetManager';
 import { ActionExecutor } from './ActionExecutor';
@@ -342,6 +342,7 @@ export class Game {
 
     await Promise.all([
       this.loadGameConfig(),
+      this.loadFlagRegistry(),
       this.inventoryManager.loadDefs(),
       this.rulesManager.loadDefs(),
       this.questManager.loadDefs(),
@@ -373,6 +374,15 @@ export class Game {
       this.lastTime = now;
       this.tick(dt);
     });
+  }
+
+  private async loadFlagRegistry(): Promise<void> {
+    try {
+      const reg = await this.assetManager.loadJson<FlagRegistryJson>('/assets/data/flag_registry.json');
+      this.flagStore.configureRegistry(reg);
+    } catch {
+      this.flagStore.configureRegistry(null);
+    }
   }
 
   private async loadGameConfig(): Promise<void> {

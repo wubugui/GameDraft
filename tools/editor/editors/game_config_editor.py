@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView,
+    QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
 )
 
 from ..project_model import ProjectModel
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.flag_key_selector import populate_flag_key_combo
 
 
 class GameConfigEditor(QWidget):
@@ -34,11 +35,13 @@ class GameConfigEditor(QWidget):
         self._initial_cutscene.set_items(model.all_cutscene_ids())
         f.addRow("initialCutscene", self._initial_cutscene)
 
-        self._cutscene_flag = QLineEdit()
+        self._cutscene_flag = QComboBox()
+        self._cutscene_flag.setEditable(False)
+        self._cutscene_flag.setMinimumWidth(220)
         f.addRow("initialCutsceneDoneFlag", self._cutscene_flag)
         lay.addLayout(f)
 
-        lay.addWidget(QLabel("<b>startupFlags</b>"))
+        lay.addWidget(QLabel("<b>startupFlags</b>（key 仅能从 Flags 登记中选择）"))
         self._flags_table = QTableWidget(0, 2)
         self._flags_table.setHorizontalHeaderLabels(["key", "value"])
         self._flags_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -54,23 +57,37 @@ class GameConfigEditor(QWidget):
         lay.addStretch()
         self._load()
 
+    def _flag_choices(self) -> list[str]:
+        return self._model.registry_flag_choices(None)
+
     def _load(self) -> None:
         cfg = self._model.game_config
+        allowed = self._flag_choices()
         self._initial_scene.set_current(cfg.get("initialScene", ""))
         self._initial_quest.set_current(cfg.get("initialQuest", ""))
         self._fallback_scene.set_current(cfg.get("fallbackScene", ""))
         self._initial_cutscene.set_current(cfg.get("initialCutscene", ""))
-        self._cutscene_flag.setText(cfg.get("initialCutsceneDoneFlag", ""))
+        populate_flag_key_combo(
+            self._cutscene_flag, allowed, str(cfg.get("initialCutsceneDoneFlag", "") or "")
+        )
         sf = cfg.get("startupFlags", {})
-        self._flags_table.setRowCount(len(sf))
-        for i, (k, v) in enumerate(sf.items()):
-            self._flags_table.setItem(i, 0, QTableWidgetItem(k))
-            self._flags_table.setItem(i, 1, QTableWidgetItem(str(v)))
+        self._flags_table.setRowCount(0)
+        for k, v in sf.items():
+            r = self._flags_table.rowCount()
+            self._flags_table.insertRow(r)
+            cb = QComboBox()
+            cb.setEditable(False)
+            populate_flag_key_combo(cb, allowed, str(k))
+            self._flags_table.setCellWidget(r, 0, cb)
+            self._flags_table.setItem(r, 1, QTableWidgetItem(str(v)))
 
     def _add_flag(self) -> None:
         r = self._flags_table.rowCount()
         self._flags_table.insertRow(r)
-        self._flags_table.setItem(r, 0, QTableWidgetItem(""))
+        cb = QComboBox()
+        cb.setEditable(False)
+        populate_flag_key_combo(cb, self._flag_choices(), "")
+        self._flags_table.setCellWidget(r, 0, cb)
         self._flags_table.setItem(r, 1, QTableWidgetItem("true"))
 
     def _apply(self) -> None:
@@ -83,26 +100,32 @@ class GameConfigEditor(QWidget):
             cfg["initialCutscene"] = cs
         elif "initialCutscene" in cfg:
             del cfg["initialCutscene"]
-        cf = self._cutscene_flag.text().strip()
-        if cf:
-            cfg["initialCutsceneDoneFlag"] = cf
+        cf = self._cutscene_flag.currentData()
+        cf_s = str(cf).strip() if cf else ""
+        if cf_s:
+            cfg["initialCutsceneDoneFlag"] = cf_s
         elif "initialCutsceneDoneFlag" in cfg:
             del cfg["initialCutsceneDoneFlag"]
         sf: dict = {}
         for i in range(self._flags_table.rowCount()):
-            k_item = self._flags_table.item(i, 0)
+            cw = self._flags_table.cellWidget(i, 0)
             v_item = self._flags_table.item(i, 1)
-            if k_item and k_item.text().strip():
-                raw = v_item.text().strip() if v_item else "true"
-                if raw == "true":
-                    sf[k_item.text().strip()] = True
-                elif raw == "false":
-                    sf[k_item.text().strip()] = False
-                else:
-                    try:
-                        sf[k_item.text().strip()] = int(raw)
-                    except ValueError:
-                        sf[k_item.text().strip()] = raw
+            k = ""
+            if isinstance(cw, QComboBox):
+                raw = cw.currentData()
+                k = str(raw).strip() if raw else ""
+            if not k:
+                continue
+            raw = v_item.text().strip() if v_item else "true"
+            if raw == "true":
+                sf[k] = True
+            elif raw == "false":
+                sf[k] = False
+            else:
+                try:
+                    sf[k] = int(raw)
+                except ValueError:
+                    sf[k] = raw
         if sf:
             cfg["startupFlags"] = sf
         elif "startupFlags" in cfg:

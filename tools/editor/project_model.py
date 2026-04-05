@@ -63,6 +63,7 @@ class ProjectModel(QObject):
         self.animations: dict[str, dict] = {}
         self.scenes: dict[str, dict] = {}
         self.filter_defs: dict[str, dict] = {}
+        self.flag_registry: dict = {}
 
         self._dirty: set[str] = set()
 
@@ -128,6 +129,9 @@ class ProjectModel(QObject):
             for p in list_json_files(filters_dir):
                 self.filter_defs[p.stem] = self._load(p, {})
 
+        from .flag_registry import flag_registry_path, load_flag_registry
+        self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
+
         self._dirty.clear()
         self.undo_stack.clear()
         self.dirty_changed.emit(False)
@@ -164,6 +168,8 @@ class ProjectModel(QObject):
             write_json(dp / f"{name}.json", data)
         for sid, data in self.scenes.items():
             write_json(sp / f"{sid}.json", data)
+        from .flag_registry import flag_registry_path
+        write_json(flag_registry_path(self.assets_path), self.flag_registry)
         self._dirty.clear()
         self.dirty_changed.emit(False)
 
@@ -275,6 +281,11 @@ class ProjectModel(QObject):
                         flags.add(cond["flag"])
         return flags
 
+    def registry_flag_choices(self, scene_id: str | None = None) -> list[str]:
+        """Editor-only: static + pattern-expanded keys from flag_registry (single source)."""
+        from .flag_registry import expand_registry_flag_keys
+        return expand_registry_flag_keys(self.flag_registry, self, scene_id=scene_id)
+
     # ---- private helpers --------------------------------------------------
 
     @staticmethod
@@ -313,3 +324,13 @@ class ProjectModel(QObject):
             for cond in zone.get("conditions", []):
                 if "flag" in cond:
                     flags.add(cond["flag"])
+            for ev in ("onEnter", "onExit"):
+                for act in zone.get(ev, []) or []:
+                    p = act.get("params", {})
+                    if act.get("type") == "setFlag" and "key" in p:
+                        flags.add(p["key"])
+            for slot in zone.get("ruleSlots", []) or []:
+                for act in slot.get("resultActions", []) or []:
+                    p = act.get("params", {})
+                    if act.get("type") == "setFlag" and "key" in p:
+                        flags.add(p["key"])
