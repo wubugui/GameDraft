@@ -11,6 +11,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageTk
 
+from .paths import filters_json_dir, project_root_from_filter_package
+from .presets import BUILTIN_PRESETS, IDENTITY
+
 try:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -18,20 +21,10 @@ except ImportError:
     tk = None
 
 TOOL_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = TOOL_DIR.parent.parent
-FILTERS_DIR = PROJECT_ROOT / "public" / "assets" / "data" / "filters"
+PROJECT_ROOT = project_root_from_filter_package()
+FILTERS_DIR = filters_json_dir(PROJECT_ROOT)
 CUSTOM_PRESETS_FILE = TOOL_DIR / "custom_presets.json"
 FILTER_ID_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
-
-IDENTITY = [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]
-
-BUILTIN_PRESETS = {
-    "identity": ("还原", IDENTITY.copy()),
-    "night": ("夜晚", [0.4, 0, 0, 0, 0, 0, 0.4, 0, 0, 0, 0, 0, 0.7, 0, 0.1, 0, 0, 0, 1, 0]),
-    "dusk": ("黄昏", [0.9, 0.1, 0, 0, 0.05, 0.2, 0.7, 0.1, 0, 0.05, 0, 0.1, 0.5, 0, 0, 0, 0, 0, 1, 0]),
-    "cloudy": ("阴天", [0.85, 0.1, 0.1, 0, 0, 0.1, 0.85, 0.1, 0, 0, 0.1, 0.1, 0.85, 0, 0, 0, 0, 0, 1, 0]),
-    "vintage": ("复古", [0.9, 0.15, 0.05, 0, 0.02, 0.1, 0.8, 0.1, 0, 0.02, 0.05, 0.1, 0.75, 0, 0.02, 0, 0, 0, 1, 0]),
-}
 
 
 def _load_custom_presets() -> dict[str, list[float]]:

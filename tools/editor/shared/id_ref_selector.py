@@ -55,8 +55,26 @@ class IdRefSelector(QComboBox):
 
     def current_id(self) -> str:
         idx = self.currentIndex()
+        le = self.lineEdit()
+        if self.isEditable() and le is not None:
+            text = le.text().strip()
+            if (
+                text
+                and 0 <= idx < self.count()
+                and text != self.itemText(idx)
+            ):
+                if "  [" in text:
+                    return text.split("  [", 1)[0].strip()
+                return text
         if 0 <= idx < len(self._ids):
             return self._ids[idx]
+        if self.isEditable() and le is not None:
+            text = le.text().strip()
+            if not text or text == "(none)":
+                return ""
+            if "  [" in text:
+                return text.split("  [", 1)[0].strip()
+            return text
         return ""
 
     def _on_index(self, _idx: int) -> None:

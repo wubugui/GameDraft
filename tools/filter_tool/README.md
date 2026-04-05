@@ -27,3 +27,9 @@ python -m tools.filter_tool
 ## 格式
 
 与游戏 FilterLoader 一致：`{ "id", "matrix": [20个数], "alpha": 1 }`
+
+## 与 GameDraft Editor 的关系
+
+- 滤镜 JSON 目录由 [`paths.py`](paths.py) 的 `filters_json_dir(project_root)` 解析，与编辑器 `ProjectModel` 使用的 `public/assets/data/filters` **为同一路径**。
+- 内置矩阵名与说明与 [`presets.py`](presets.py) 一致，编辑器 Filters 页可一键填入同一套预制。
+- 在编辑器 Filters 标签页可 **打开滤镜工具**（本模块）或 **从磁盘重载** 以同步另一程序保存的文件。

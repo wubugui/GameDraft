@@ -136,6 +136,17 @@ class ProjectModel(QObject):
         self.undo_stack.clear()
         self.dirty_changed.emit(False)
 
+    def reload_filters_from_disk(self) -> None:
+        """重读 public/assets/data/filters，与 tools.filter_tool 写入目录一致（不标脏）。"""
+        if self.project_path is None:
+            return
+        self.filter_defs = {}
+        filters_dir = self.data_path / "filters"
+        if filters_dir.is_dir():
+            for p in list_json_files(filters_dir):
+                self.filter_defs[p.stem] = self._load(p, {})
+        self.data_changed.emit("filter", "")
+
     @staticmethod
     def _load(path: Path, default: Any) -> Any:
         if path.exists():
@@ -170,6 +181,15 @@ class ProjectModel(QObject):
             write_json(sp / f"{sid}.json", data)
         from .flag_registry import flag_registry_path
         write_json(flag_registry_path(self.assets_path), self.flag_registry)
+        filters_dir = dp / "filters"
+        filters_dir.mkdir(parents=True, exist_ok=True)
+        keep = set(self.filter_defs.keys())
+        if filters_dir.is_dir():
+            for p in list(filters_dir.glob("*.json")):
+                if p.stem not in keep:
+                    p.unlink()
+        for stem, data in self.filter_defs.items():
+            write_json(filters_dir / f"{stem}.json", data)
         self._dirty.clear()
         self.dirty_changed.emit(False)
 
@@ -196,6 +216,57 @@ class ProjectModel(QObject):
 
     def all_scene_ids(self) -> list[str]:
         return list(self.scenes.keys())
+
+    def spawn_point_keys_for_scene(self, scene_id: str) -> list[str]:
+        """Spawn point id strings from scene JSON ``spawnPoints`` (empty first = default)."""
+        sc = self.scenes.get(scene_id) or {}
+        raw = sc.get("spawnPoints") or {}
+        if not isinstance(raw, dict):
+            return [""]
+        keys = sorted(str(k) for k in raw.keys())
+        return [""] + keys
+
+    def archive_entry_ids_for_book_type(self, book_type: str) -> list[tuple[str, str]]:
+        """Ids for addArchiveEntry ``entryId`` picker by ``bookType``."""
+        if book_type == "character":
+            return [(ch["id"], ch.get("name", ch["id"])) for ch in self.archive_characters]
+        if book_type == "lore":
+            entries = self.archive_lore
+            if isinstance(entries, dict):
+                entries = entries.get("entries", [])
+            return [
+                (e["id"], (e.get("title") or e["id"])[:40])
+                for e in entries
+                if isinstance(e, dict) and e.get("id")
+            ]
+        if book_type == "document":
+            return [
+                (d["id"], (d.get("name") or d.get("title") or d["id"])[:40])
+                for d in self.archive_documents
+                if isinstance(d, dict) and d.get("id")
+            ]
+        if book_type == "book":
+            return [
+                (b["id"], (b.get("title") or b["id"])[:40])
+                for b in self.archive_books
+                if isinstance(b, dict) and b.get("id")
+            ]
+        return []
+
+    def npc_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """NPC ids in a scene (for hotspot / emote targets)."""
+        if not scene_id:
+            return []
+        sc = self.scenes.get(scene_id) or {}
+        out: list[tuple[str, str]] = []
+        for npc in sc.get("npcs") or []:
+            if not isinstance(npc, dict):
+                continue
+            nid = npc.get("id") or npc.get("npcId")
+            if nid:
+                label = npc.get("label") or npc.get("name") or str(nid)
+                out.append((str(nid), str(label)[:40]))
+        return out
 
     def all_item_ids(self) -> list[tuple[str, str]]:
         return [(it["id"], it.get("name", it["id"])) for it in self.items]
@@ -233,6 +304,32 @@ class ProjectModel(QObject):
         if self.project_path is None:
             return []
         return [p.name for p in list_ink_files(self.dialogues_path)]
+
+    def dialogue_asset_path_choices(self) -> list[tuple[str, str]]:
+        """(runtime path under /assets/dialogues/, basename) for NPC dialogueFile."""
+        return [(f"/assets/dialogues/{name}", name) for name in self.all_ink_files()]
+
+    def anim_asset_path_choices(self) -> list[tuple[str, str]]:
+        """(runtime path /assets/data/<stem>.json, stem) for npc animFile."""
+        return [(f"/assets/data/{stem}.json", stem) for stem in self.all_anim_files()]
+
+    def illustration_asset_choices(self) -> list[tuple[str, str]]:
+        """Known illustration paths under /assets/images/illustrations/."""
+        root = self.assets_path / "images" / "illustrations"
+        if not root.is_dir():
+            return []
+        out: list[tuple[str, str]] = []
+        for pat in ("*.png", "*.jpg", "*.webp"):
+            for p in sorted(root.glob(pat)):
+                out.append((f"/assets/images/illustrations/{p.name}", p.name))
+        return out
+
+    def audio_src_choices(self) -> list[tuple[str, str]]:
+        """Existing wav under assets/audio for audio_config src."""
+        root = self.assets_path / "audio"
+        if not root.is_dir():
+            return []
+        return [(f"/assets/audio/{p.name}", p.name) for p in sorted(root.glob("*.wav"))]
 
     def all_flags(self) -> set[str]:
         """Collect every flag name referenced across the project data."""

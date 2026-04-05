@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QScrollArea,
     QStackedWidget, QTextEdit, QToolBar, QMenu, QGraphicsTextItem,
     QToolButton, QMessageBox, QDialog, QDialogButtonBox, QAbstractItemView,
+    QSizePolicy,
 )
 from PySide6.QtGui import (
     QPixmap, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
@@ -576,6 +577,39 @@ class ScenePropertyPanel(QScrollArea):
         self._spawn_flush_scene: dict | None = None
         self._editing_scene_id: str = ""
 
+    def _load_ambient_widgets(self, ambient_ids: list[str]) -> None:
+        catalog = list(self._model.all_audio_ids("ambient"))
+        want = set(ambient_ids)
+        self._sc_ambient_list.blockSignals(True)
+        self._sc_ambient_list.clear()
+        for aid in sorted(catalog):
+            it = QListWidgetItem(aid)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(
+                Qt.CheckState.Checked if aid in want else Qt.CheckState.Unchecked,
+            )
+            self._sc_ambient_list.addItem(it)
+        catalog_set = set(catalog)
+        extra = [x for x in ambient_ids if x not in catalog_set]
+        self._sc_ambient_extra.setText(", ".join(extra))
+        self._sc_ambient_list.blockSignals(False)
+
+    def _ambient_ids_from_widgets(self) -> list[str]:
+        checked: list[str] = []
+        for i in range(self._sc_ambient_list.count()):
+            it = self._sc_ambient_list.item(i)
+            if it.checkState() == Qt.CheckState.Checked:
+                checked.append(it.text())
+        extra_raw = self._sc_ambient_extra.text().strip()
+        extra = [s.strip() for s in extra_raw.split(",") if s.strip()]
+        seen: set[str] = set()
+        out: list[str] = []
+        for x in checked + extra:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
     def show_empty(self) -> None:
         self._stack.setCurrentWidget(self._empty)
 
@@ -584,13 +618,19 @@ class ScenePropertyPanel(QScrollArea):
     def _build_scene_panel(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint,
+        )
         self._sc_id = QLineEdit(); form.addRow("id", self._sc_id)
         self._sc_name = QLineEdit(); form.addRow("name", self._sc_name)
         self._sc_width = QDoubleSpinBox(); self._sc_width.setRange(0, 99999)
         form.addRow("worldWidth", self._sc_width)
         self._sc_height = QDoubleSpinBox(); self._sc_height.setRange(0, 99999)
         form.addRow("worldHeight", self._sc_height)
-        self._sc_bgm = QLineEdit(); form.addRow("bgm", self._sc_bgm)
+        self._sc_bgm = IdRefSelector(allow_empty=True)
+        self._sc_bgm.setMinimumWidth(200)
+        self._sc_bgm.value_changed.connect(lambda _x: self.changed.emit())
+        form.addRow("bgm", self._sc_bgm)
         self._sc_filter = IdRefSelector(allow_empty=True)
         form.addRow("filterId", self._sc_filter)
         self._sc_zoom = QDoubleSpinBox(); self._sc_zoom.setRange(0.01, 20); self._sc_zoom.setSingleStep(0.1)
@@ -603,7 +643,43 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("walkSpeed", self._sc_walk)
         self._sc_run = QDoubleSpinBox(); self._sc_run.setRange(0, 9999)
         form.addRow("runSpeed", self._sc_run)
-        self._sc_ambient = QLineEdit(); form.addRow("ambientSounds", self._sc_ambient)
+        amb_box = QWidget()
+        amb_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        amb_lay = QVBoxLayout(amb_box)
+        amb_lay.setContentsMargins(0, 0, 0, 0)
+        amb_lay.setSpacing(4)
+        amb_hint = QLabel(
+            "勾选 audio_config.ambient 中的 id；目录外 id 在下方填写（逗号分隔）。",
+        )
+        amb_hint.setWordWrap(True)
+        amb_hint.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        amb_lay.addWidget(amb_hint)
+        self._sc_ambient_list = QListWidget()
+        self._sc_ambient_list.setFixedHeight(110)
+        self._sc_ambient_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._sc_ambient_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+        )
+        self._sc_ambient_list.itemChanged.connect(lambda _i: self.changed.emit())
+        amb_lay.addWidget(self._sc_ambient_list)
+        self._sc_ambient_extra = QLineEdit()
+        self._sc_ambient_extra.setPlaceholderText("其它 ambient id，逗号分隔")
+        self._sc_ambient_extra.textChanged.connect(self.changed.emit)
+        amb_lay.addWidget(self._sc_ambient_extra)
+        amb_lbl = QLabel("ambientSounds")
+        amb_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+        )
+        form.addRow(amb_lbl, amb_box)
         return w
 
     def load_scene_props(
@@ -622,7 +698,8 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_name.setText(sc.get("name", ""))
         self._sc_width.setValue(sc.get("worldWidth", 0))
         self._sc_height.setValue(sc.get("worldHeight", 0))
-        self._sc_bgm.setText(sc.get("bgm", ""))
+        self._sc_bgm.set_items([(a, a) for a in self._model.all_audio_ids("bgm")])
+        self._sc_bgm.set_current(str(sc.get("bgm", "") or ""))
         self._sc_filter.set_items(self._model.all_filter_ids())
         self._sc_filter.set_current(sc.get("filterId", ""))
         cam = sc.get("camera", {})
@@ -631,7 +708,10 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_scale.setValue(sc.get("worldScale", 1))
         self._sc_walk.setValue(sc.get("playerWalkSpeed", 0))
         self._sc_run.setValue(sc.get("playerRunSpeed", 0))
-        self._sc_ambient.setText(", ".join(sc.get("ambientSounds", [])))
+        raw_amb = sc.get("ambientSounds", [])
+        if not isinstance(raw_amb, list):
+            raw_amb = []
+        self._load_ambient_widgets([str(x) for x in raw_amb])
 
     def save_scene_props(self) -> None:
         if self._stack.currentWidget() != self._scene_panel:
@@ -646,7 +726,7 @@ class ScenePropertyPanel(QScrollArea):
         wh = self._sc_height.value()
         if wh > 0:
             sc["worldHeight"] = wh
-        bgm = self._sc_bgm.text().strip()
+        bgm = self._sc_bgm.current_id().strip()
         if bgm:
             sc["bgm"] = bgm
         elif "bgm" in sc:
@@ -674,9 +754,9 @@ class ScenePropertyPanel(QScrollArea):
             sc["playerRunSpeed"] = rs
         elif "playerRunSpeed" in sc:
             del sc["playerRunSpeed"]
-        raw_ambient = self._sc_ambient.text().strip()
-        if raw_ambient:
-            sc["ambientSounds"] = [s.strip() for s in raw_ambient.split(",") if s.strip()]
+        ambs = self._ambient_ids_from_widgets()
+        if ambs:
+            sc["ambientSounds"] = ambs
         elif "ambientSounds" in sc:
             del sc["ambientSounds"]
         self.changed.emit()
@@ -731,7 +811,10 @@ class ScenePropertyPanel(QScrollArea):
 
         # pickup data
         pp = QWidget(); pf = QFormLayout(pp)
-        self._hs_pickup_item = QLineEdit(); pf.addRow("itemId", self._hs_pickup_item)
+        self._hs_pickup_item = IdRefSelector(allow_empty=False)
+        self._hs_pickup_item.setMinimumWidth(200)
+        self._hs_pickup_item.value_changed.connect(lambda _x: self.changed.emit())
+        pf.addRow("itemId", self._hs_pickup_item)
         self._hs_pickup_name = QLineEdit(); pf.addRow("itemName", self._hs_pickup_name)
         self._hs_pickup_count = QSpinBox(); self._hs_pickup_count.setRange(1, 999)
         pf.addRow("count", self._hs_pickup_count)
@@ -762,7 +845,10 @@ class ScenePropertyPanel(QScrollArea):
 
         # npc hotspot data
         np_ = QWidget(); nf = QFormLayout(np_)
-        self._hs_npc_id = QLineEdit(); nf.addRow("npcId", self._hs_npc_id)
+        self._hs_npc_id = IdRefSelector(allow_empty=True)
+        self._hs_npc_id.setMinimumWidth(200)
+        self._hs_npc_id.value_changed.connect(lambda _x: self.changed.emit())
+        nf.addRow("npcId", self._hs_npc_id)
         self._hs_data_stack.addWidget(np_)
 
         # encounter data
@@ -841,7 +927,8 @@ class ScenePropertyPanel(QScrollArea):
             )
             self._hs_inspect_actions.set_data(data.get("actions", []))
         elif ht == "pickup":
-            self._hs_pickup_item.setText(data.get("itemId", ""))
+            self._hs_pickup_item.set_items(self._model.all_item_ids())
+            self._hs_pickup_item.set_current(data.get("itemId", ""))
             self._hs_pickup_name.setText(data.get("itemName", ""))
             self._hs_pickup_count.setValue(data.get("count", 1))
             self._hs_pickup_currency.setChecked(data.get("isCurrency", False))
@@ -856,7 +943,10 @@ class ScenePropertyPanel(QScrollArea):
                 self._hs_trans_loading = False
             self._refresh_trans_spawn_display()
         elif ht == "npc":
-            self._hs_npc_id.setText(data.get("npcId", ""))
+            self._hs_npc_id.set_items(
+                self._model.npc_ids_for_scene(self._editing_scene_id or None),
+            )
+            self._hs_npc_id.set_current(data.get("npcId", ""))
         elif ht == "encounter":
             self._hs_enc_id.set_items(self._model.all_encounter_ids())
             self._hs_enc_id.set_current(data.get("encounterId", ""))
@@ -886,7 +976,7 @@ class ScenePropertyPanel(QScrollArea):
                 hs["data"]["actions"] = acts
         elif ht == "pickup":
             hs["data"] = {
-                "itemId": self._hs_pickup_item.text(),
+                "itemId": self._hs_pickup_item.current_id(),
                 "itemName": self._hs_pickup_name.text(),
                 "count": self._hs_pickup_count.value(),
             }
@@ -899,7 +989,7 @@ class ScenePropertyPanel(QScrollArea):
             if sp:
                 hs["data"]["targetSpawnPoint"] = sp
         elif ht == "npc":
-            hs["data"] = {"npcId": self._hs_npc_id.text()}
+            hs["data"] = {"npcId": self._hs_npc_id.current_id()}
         elif ht == "encounter":
             hs["data"] = {"encounterId": self._hs_enc_id.current_id()}
         self.changed.emit()
@@ -922,11 +1012,17 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("x", self._npc_x)
         self._npc_y = QDoubleSpinBox(); self._npc_y.setRange(-99999, 99999); self._npc_y.setDecimals(1)
         form.addRow("y", self._npc_y)
-        self._npc_dialogue = QLineEdit(); form.addRow("dialogueFile", self._npc_dialogue)
+        self._npc_dialogue = IdRefSelector(allow_empty=True)
+        self._npc_dialogue.setMinimumWidth(220)
+        self._npc_dialogue.value_changed.connect(lambda _x: self.changed.emit())
+        form.addRow("dialogueFile", self._npc_dialogue)
         self._npc_knot = QLineEdit(); form.addRow("dialogueKnot", self._npc_knot)
         self._npc_range = QDoubleSpinBox(); self._npc_range.setRange(0, 99999)
         form.addRow("interactionRange", self._npc_range)
-        self._npc_anim = QLineEdit(); form.addRow("animFile", self._npc_anim)
+        self._npc_anim = IdRefSelector(allow_empty=True)
+        self._npc_anim.setMinimumWidth(220)
+        self._npc_anim.value_changed.connect(lambda _x: self.changed.emit())
+        form.addRow("animFile", self._npc_anim)
         return w
 
     def load_npc_props(self, npc: dict) -> None:
@@ -937,24 +1033,38 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_name.setText(npc.get("name", ""))
         self._npc_x.setValue(npc.get("x", 0))
         self._npc_y.setValue(npc.get("y", 0))
-        self._npc_dialogue.setText(npc.get("dialogueFile", ""))
+        d_items = self._model.dialogue_asset_path_choices()
+        cur_d = npc.get("dialogueFile", "") or ""
+        if cur_d and all(x[0] != cur_d for x in d_items):
+            d_items = [(cur_d, cur_d)] + d_items
+        self._npc_dialogue.set_items(d_items)
+        self._npc_dialogue.set_current(cur_d)
         self._npc_knot.setText(npc.get("dialogueKnot", ""))
         self._npc_range.setValue(npc.get("interactionRange", 50))
-        self._npc_anim.setText(npc.get("animFile", ""))
+        a_items = self._model.anim_asset_path_choices()
+        cur_a = npc.get("animFile", "") or ""
+        if cur_a and all(x[0] != cur_a for x in a_items):
+            a_items = [(cur_a, cur_a)] + a_items
+        self._npc_anim.set_items(a_items)
+        self._npc_anim.set_current(cur_a)
 
     def _write_npc_widgets_to_dict(self, npc: dict) -> None:
         npc["id"] = self._npc_id.text().strip()
         npc["name"] = self._npc_name.text()
         npc["x"] = self._npc_x.value()
         npc["y"] = self._npc_y.value()
-        npc["dialogueFile"] = self._npc_dialogue.text()
+        dd = self._npc_dialogue.current_id().strip()
+        if dd:
+            npc["dialogueFile"] = dd
+        elif "dialogueFile" in npc:
+            del npc["dialogueFile"]
         knot = self._npc_knot.text().strip()
         if knot:
             npc["dialogueKnot"] = knot
         elif "dialogueKnot" in npc:
             del npc["dialogueKnot"]
         npc["interactionRange"] = self._npc_range.value()
-        anim = self._npc_anim.text().strip()
+        anim = self._npc_anim.current_id().strip()
         if anim:
             npc["animFile"] = anim
         elif "animFile" in npc:
@@ -1133,12 +1243,12 @@ class SceneEditor(QWidget):
         add_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         tb.addWidget(add_btn)
-        del_btn = QPushButton("Delete")
-        del_btn.clicked.connect(self._delete_selected)
-        tb.addWidget(del_btn)
         save_btn = QPushButton("Apply")
         save_btn.clicked.connect(self._apply_props)
         tb.addWidget(save_btn)
+        del_btn = QPushButton("Delete")
+        del_btn.clicked.connect(self._delete_selected)
+        tb.addWidget(del_btn)
         ll.addWidget(tb)
 
         self._scene_list = QListWidget()

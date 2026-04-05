@@ -10,6 +10,7 @@ from PySide6.QtCore import Signal
 
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
+from .id_ref_selector import IdRefSelector
 
 ACTION_TYPES = [
     "setFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
@@ -38,13 +39,16 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "startCutscene": [("id", "str")],
     "showEmote": [("target", "str"), ("emote", "str")],
     "openShop": [("shopId", "str")],
-    "switchScene": [("sceneId", "str"), ("spawnPoint", "str")],
-    "changeScene": [("sceneId", "str"), ("spawnPoint", "str")],
+    "switchScene": [("targetScene", "str"), ("targetSpawnPoint", "str")],
+    "changeScene": [("targetScene", "str"), ("targetSpawnPoint", "str")],
     "showNotification": [("text", "str"), ("type", "str")],
     "shopPurchase": [("itemId", "str"), ("price", "int")],
     "inventoryDiscard": [("itemId", "str")],
-    "pickup": [("id", "str"), ("name", "str"), ("count", "int"), ("isCurrency", "bool")],
+    "pickup": [("itemId", "str"), ("itemName", "str"), ("count", "int"), ("isCurrency", "bool")],
 }
+
+_NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
+_ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book")
 
 
 class ActionRow(QWidget):
@@ -82,28 +86,127 @@ class ActionRow(QWidget):
         self._params_layout.setContentsMargins(20, 0, 0, 0)
         outer.addWidget(self._params_frame)
 
-        self._data = data or {"type": "setFlag", "params": {}}
+        raw = data or {"type": "setFlag", "params": {}}
+        self._data = {
+            "type": raw.get("type", "setFlag"),
+            "params": dict(raw.get("params", {})),
+        }
+        self._normalize_action_params(self._data["type"], self._data["params"])
         self.type_combo.setCurrentText(self._data.get("type", "setFlag"))
         self._rebuild_params()
 
         self.type_combo.currentTextChanged.connect(self._on_type_changed)
 
+    @staticmethod
+    def _normalize_action_params(act_type: str, params: dict) -> None:
+        if act_type in ("switchScene", "changeScene"):
+            if "sceneId" in params and "targetScene" not in params:
+                params["targetScene"] = params.pop("sceneId")
+            if "spawnPoint" in params and "targetSpawnPoint" not in params:
+                params["targetSpawnPoint"] = params.pop("spawnPoint")
+        if act_type == "pickup":
+            if "id" in params and "itemId" not in params:
+                params["itemId"] = params.pop("id")
+            if "name" in params and "itemName" not in params:
+                params["itemName"] = params.pop("name")
+
     def set_project_context(self, model, scene_id: str | None) -> None:
+        self._data = self.to_dict()
         self._ctx_model = model
         self._ctx_scene_id = scene_id
-        w = self._param_widgets.get("key")
-        if isinstance(w, FlagKeyPickField):
-            w.set_context(model, scene_id)
-        vw = self._param_widgets.get("value")
-        if isinstance(vw, FlagValueEdit):
-            vw.set_registry(model.flag_registry if model else {})
-            if isinstance(w, FlagKeyPickField):
-                vw.set_flag_key(w.key())
+        self._rebuild_params()
 
     def _on_type_changed(self, _text: str) -> None:
         self._data["params"] = {}
         self._rebuild_params()
         self.changed.emit()
+
+    def _connect_scene_spawn_pickers(self) -> None:
+        ts_w = self._param_widgets.get("targetScene")
+        sp_w = self._param_widgets.get("targetSpawnPoint")
+        if not isinstance(ts_w, IdRefSelector) or not isinstance(sp_w, IdRefSelector):
+            return
+
+        def refresh_spawn(_: str = "") -> None:
+            sid = ts_w.current_id()
+            keys = (
+                self._ctx_model.spawn_point_keys_for_scene(sid)
+                if self._ctx_model
+                else [""]
+            )
+            items: list[tuple[str, str]] = [(k, k if k else "(default)") for k in keys]
+            cur = sp_w.current_id()
+            sp_w.set_items(items)
+            if cur in keys:
+                sp_w.set_current(cur)
+            elif keys:
+                sp_w.set_current(keys[0])
+
+        ts_w.value_changed.connect(refresh_spawn)
+        refresh_spawn()
+
+    def _connect_archive_pickers(self) -> None:
+        bt_w = self._param_widgets.get("bookType")
+        en_w = self._param_widgets.get("entryId")
+        if not isinstance(bt_w, QComboBox) or not isinstance(en_w, IdRefSelector):
+            return
+
+        def refresh_entry(_: str = "") -> None:
+            bt = bt_w.currentText()
+            items = (
+                self._ctx_model.archive_entry_ids_for_book_type(bt)
+                if self._ctx_model
+                else []
+            )
+            cur = en_w.current_id()
+            en_w.set_items(items)
+            ids = [p[0] for p in items]
+            if cur in ids:
+                en_w.set_current(cur)
+            elif ids:
+                en_w.set_current(ids[0])
+
+        bt_w.currentTextChanged.connect(refresh_entry)
+        refresh_entry()
+
+    def _make_selector(
+        self,
+        kind: str,
+        val: str,
+    ) -> QWidget:
+        m = self._ctx_model
+        w = IdRefSelector(self, allow_empty=True)
+        w.setMinimumWidth(200)
+        if kind == "scene":
+            w.set_items([(s, s) for s in (m.all_scene_ids() if m else [])])
+        elif kind == "item":
+            w.set_items(m.all_item_ids() if m else [])
+        elif kind == "quest":
+            w.set_items(m.all_quest_ids() if m else [])
+        elif kind == "encounter":
+            w.set_items(m.all_encounter_ids() if m else [])
+        elif kind == "rule":
+            w.set_items(m.all_rule_ids() if m else [])
+        elif kind == "fragment":
+            w.set_items(m.all_fragment_ids() if m else [])
+        elif kind == "cutscene":
+            w.set_items(m.all_cutscene_ids() if m else [])
+        elif kind == "shop":
+            w.set_items(m.all_shop_ids() if m else [])
+        elif kind == "audio_bgm":
+            w.set_items([(a, a) for a in (m.all_audio_ids("bgm") if m else [])])
+        elif kind == "audio_sfx":
+            w.set_items([(a, a) for a in (m.all_audio_ids("sfx") if m else [])])
+        elif kind == "spawn":
+            w.set_items([("", "(default)")])
+        elif kind == "emote_target":
+            extra = m.npc_ids_for_scene(self._ctx_scene_id) if m else []
+            w.set_items(extra)
+        else:
+            w.set_items([])
+        w.set_current(str(val) if val is not None else "")
+        w.value_changed.connect(self.changed)
+        return w
 
     def _rebuild_params(self) -> None:
         while self._params_layout.rowCount() > 0:
@@ -121,6 +224,7 @@ class ActionRow(QWidget):
 
         for pname, ptype in schema:
             val = params.get(pname, "")
+            w: QWidget
             if ptype == "int":
                 w = QSpinBox()
                 w.setRange(-999999, 999999)
@@ -139,11 +243,79 @@ class ActionRow(QWidget):
                 cur = str(val) if val is not None else ""
                 w = FlagKeyPickField(self._ctx_model, self._ctx_scene_id, cur, self)
                 w.setMinimumWidth(200)
+            elif act_type in ("switchScene", "changeScene") and pname == "targetScene":
+                w = self._make_selector("scene", str(val) if val is not None else "")
+            elif act_type in ("switchScene", "changeScene") and pname == "targetSpawnPoint":
+                w = self._make_selector("spawn", str(val) if val is not None else "")
+            elif act_type == "giveItem" and pname == "id":
+                w = self._make_selector("item", str(val) if val is not None else "")
+            elif act_type == "removeItem" and pname == "id":
+                w = self._make_selector("item", str(val) if val is not None else "")
+            elif act_type == "giveRule" and pname == "id":
+                w = self._make_selector("rule", str(val) if val is not None else "")
+            elif act_type == "giveFragment" and pname == "id":
+                w = self._make_selector("fragment", str(val) if val is not None else "")
+            elif act_type == "updateQuest" and pname == "id":
+                w = self._make_selector("quest", str(val) if val is not None else "")
+            elif act_type == "startEncounter" and pname == "id":
+                w = self._make_selector("encounter", str(val) if val is not None else "")
+            elif act_type == "playBgm" and pname == "id":
+                w = self._make_selector("audio_bgm", str(val) if val is not None else "")
+            elif act_type == "playSfx" and pname == "id":
+                w = self._make_selector("audio_sfx", str(val) if val is not None else "")
+            elif act_type == "startCutscene" and pname == "id":
+                w = self._make_selector("cutscene", str(val) if val is not None else "")
+            elif act_type == "openShop" and pname == "shopId":
+                w = self._make_selector("shop", str(val) if val is not None else "")
+            elif act_type == "shopPurchase" and pname == "itemId":
+                w = self._make_selector("item", str(val) if val is not None else "")
+            elif act_type == "inventoryDiscard" and pname == "itemId":
+                w = self._make_selector("item", str(val) if val is not None else "")
+            elif act_type == "pickup" and pname == "itemId":
+                w = self._make_selector("item", str(val) if val is not None else "")
+            elif act_type == "addArchiveEntry" and pname == "bookType":
+                w = QComboBox()
+                w.addItems(list(_ARCHIVE_BOOK_TYPES))
+                tv = str(val) if val else "character"
+                i = w.findText(tv)
+                if i >= 0:
+                    w.setCurrentIndex(i)
+                w.currentTextChanged.connect(self.changed)
+            elif act_type == "addArchiveEntry" and pname == "entryId":
+                w = IdRefSelector(self, allow_empty=True)
+                w.setMinimumWidth(200)
+                bt = str(params.get("bookType", "character"))
+                items = (
+                    self._ctx_model.archive_entry_ids_for_book_type(bt)
+                    if self._ctx_model
+                    else []
+                )
+                w.set_items(items)
+                w.set_current(str(val) if val is not None else "")
+                w.value_changed.connect(self.changed)
+            elif act_type == "showNotification" and pname == "type":
+                w = QComboBox()
+                w.setEditable(True)
+                w.addItems(list(_NOTIFICATION_TYPES))
+                tv = str(val) if val is not None else "info"
+                i = w.findText(tv)
+                if i >= 0:
+                    w.setCurrentIndex(i)
+                else:
+                    w.setEditText(tv)
+                w.currentTextChanged.connect(self.changed)
+            elif act_type == "showEmote" and pname == "target":
+                w = self._make_selector("emote_target", str(val) if val is not None else "")
             else:
                 w = QLineEdit(str(val))
                 w.textChanged.connect(self.changed)
             self._param_widgets[pname] = w
             self._params_layout.addRow(pname, w)
+
+        if act_type in ("switchScene", "changeScene"):
+            self._connect_scene_spawn_pickers()
+        if act_type == "addArchiveEntry":
+            self._connect_archive_pickers()
 
         if act_type == "setFlag":
             kw = self._param_widgets.get("key")
@@ -178,6 +350,10 @@ class ActionRow(QWidget):
                 params[pname] = v if isinstance(v, bool) else float(v)
             elif act_type == "setFlag" and pname == "key" and isinstance(w, FlagKeyPickField):
                 params[pname] = w.key()
+            elif isinstance(w, IdRefSelector):
+                params[pname] = w.current_id()
+            elif isinstance(w, QComboBox):
+                params[pname] = w.currentText()
             else:
                 params[pname] = w.text()
         return {"type": act_type, "params": params}

@@ -1,50 +1,185 @@
 {
   "static": [
-    { "key": "box_hidden_in_temple", "valueType": "bool" },
-    { "key": "box_opened", "valueType": "bool" },
-    { "key": "box_taboo_active", "valueType": "bool" },
-    { "key": "coins", "valueType": "float" },
-    { "key": "current_day", "valueType": "float" },
-    { "key": "day_1_done", "valueType": "bool" },
-    { "key": "day_2_started", "valueType": "bool" },
-    { "key": "encounter_ghost_done", "valueType": "bool" },
-    { "key": "entered_dark_alley", "valueType": "bool" },
-    { "key": "first_night_escape", "valueType": "bool" },
-    { "key": "ghost_approach_direct", "valueType": "bool" },
-    { "key": "ghost_ran_away", "valueType": "bool" },
-    { "key": "ghost_used_taomu", "valueType": "bool" },
-    { "key": "ghost_watched_safe", "valueType": "bool" },
-    { "key": "got_iron_box", "valueType": "bool" },
-    { "key": "heard_city_news", "valueType": "bool" },
-    { "key": "heard_ghost_story", "valueType": "bool" },
-    { "key": "heard_opera_rumor", "valueType": "bool" },
-    { "key": "heard_teahouse_story", "valueType": "bool" },
-    { "key": "heard_waiter_ghost_talk", "valueType": "bool" },
-    { "key": "heard_yanwang_story", "valueType": "bool" },
-    { "key": "inspected_stone_tablet", "valueType": "bool" },
-    { "key": "know_city_strange", "valueType": "bool" },
-    { "key": "know_ghost_opera", "valueType": "bool" },
-    { "key": "met_blind_li", "valueType": "bool" },
-    { "key": "met_mysterious_visitor", "valueType": "bool" },
-    { "key": "old_box_checked", "valueType": "bool" },
-    { "key": "peddler_arrived", "valueType": "bool" },
-    { "key": "peddler_met", "valueType": "bool" },
-    { "key": "peddler_story_heard", "valueType": "bool" },
-    { "key": "prologue_demo_complete", "valueType": "bool" },
-    { "key": "prologue_started", "valueType": "bool" },
-    { "key": "read_box_note", "valueType": "bool" },
-    { "key": "read_temple_notes", "valueType": "bool" },
-    { "key": "rule_rule_ghost_origin_acquired", "valueType": "bool" },
-    { "key": "rule_rule_no_go_night_acquired", "valueType": "bool" },
-    { "key": "saw_hanged_woman", "valueType": "bool" },
-    { "key": "saw_standing_shadow", "valueType": "bool" },
-    { "key": "strangers_entered_temple", "valueType": "bool" },
-    { "key": "talked_wang_about_ghost", "valueType": "bool" },
-    { "key": "test_cutscene_done", "valueType": "bool" },
-    { "key": "used_fire_dark_alley", "valueType": "bool" },
-    { "key": "used_origin_dark_alley", "valueType": "bool" },
-    { "key": "used_rule_dark_alley", "valueType": "bool" },
-    { "key": "waiter_met", "valueType": "bool" }
+    {
+      "key": "box_hidden_in_temple",
+      "valueType": "bool"
+    },
+    {
+      "key": "box_opened",
+      "valueType": "bool"
+    },
+    {
+      "key": "box_taboo_active",
+      "valueType": "bool"
+    },
+    {
+      "key": "coins",
+      "valueType": "float"
+    },
+    {
+      "key": "current_day",
+      "valueType": "float"
+    },
+    {
+      "key": "day_1_done",
+      "valueType": "bool"
+    },
+    {
+      "key": "day_2_started",
+      "valueType": "bool"
+    },
+    {
+      "key": "encounter_ghost_done",
+      "valueType": "bool"
+    },
+    {
+      "key": "entered_dark_alley",
+      "valueType": "bool"
+    },
+    {
+      "key": "first_night_escape",
+      "valueType": "bool"
+    },
+    {
+      "key": "ghost_approach_direct",
+      "valueType": "bool"
+    },
+    {
+      "key": "ghost_ran_away",
+      "valueType": "bool"
+    },
+    {
+      "key": "ghost_used_taomu",
+      "valueType": "bool"
+    },
+    {
+      "key": "ghost_watched_safe",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_iron_box",
+      "valueType": "bool"
+    },
+    {
+      "key": "heard_city_news",
+      "valueType": "bool"
+    },
+    {
+      "key": "heard_ghost_story",
+      "valueType": "bool"
+    },
+    {
+      "key": "heard_opera_rumor",
+      "valueType": "bool"
+    },
+    {
+      "key": "heard_teahouse_story",
+      "valueType": "bool"
+    },
+    {
+      "key": "heard_waiter_ghost_talk",
+      "valueType": "bool"
+    },
+    {
+      "key": "heard_yanwang_story",
+      "valueType": "bool"
+    },
+    {
+      "key": "inspected_stone_tablet",
+      "valueType": "bool"
+    },
+    {
+      "key": "know_city_strange",
+      "valueType": "bool"
+    },
+    {
+      "key": "know_ghost_opera",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_blind_li",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_mysterious_visitor",
+      "valueType": "bool"
+    },
+    {
+      "key": "old_box_checked",
+      "valueType": "bool"
+    },
+    {
+      "key": "peddler_arrived",
+      "valueType": "bool"
+    },
+    {
+      "key": "peddler_met",
+      "valueType": "bool"
+    },
+    {
+      "key": "peddler_story_heard",
+      "valueType": "bool"
+    },
+    {
+      "key": "prologue_demo_complete",
+      "valueType": "bool"
+    },
+    {
+      "key": "prologue_started",
+      "valueType": "bool"
+    },
+    {
+      "key": "read_box_note",
+      "valueType": "bool"
+    },
+    {
+      "key": "read_temple_notes",
+      "valueType": "bool"
+    },
+    {
+      "key": "rule_rule_ghost_origin_acquired",
+      "valueType": "bool"
+    },
+    {
+      "key": "rule_rule_no_go_night_acquired",
+      "valueType": "bool"
+    },
+    {
+      "key": "saw_hanged_woman",
+      "valueType": "bool"
+    },
+    {
+      "key": "saw_standing_shadow",
+      "valueType": "bool"
+    },
+    {
+      "key": "strangers_entered_temple",
+      "valueType": "bool"
+    },
+    {
+      "key": "talked_wang_about_ghost",
+      "valueType": "bool"
+    },
+    {
+      "key": "test_cutscene_done",
+      "valueType": "bool"
+    },
+    {
+      "key": "used_fire_dark_alley",
+      "valueType": "bool"
+    },
+    {
+      "key": "used_origin_dark_alley",
+      "valueType": "bool"
+    },
+    {
+      "key": "used_rule_dark_alley",
+      "valueType": "bool"
+    },
+    {
+      "key": "waiter_met",
+      "valueType": "bool"
+    }
   ],
   "patterns": [
     {

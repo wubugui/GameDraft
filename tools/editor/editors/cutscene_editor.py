@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from ..project_model import ProjectModel
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
+from ..shared.id_ref_selector import IdRefSelector
 
 COMMAND_TYPES = [
     "fade_black", "fade_in", "flash_white", "wait_time", "wait_click",
@@ -44,7 +45,7 @@ _CMD_PARAMS: dict[str, list[tuple[str, str]]] = {
     "hide_movie_bar": [],
     "show_subtitle": [("text", "str"), ("duration", "float")],
     "entity_move": [("target", "str"), ("x", "float"), ("y", "float"), ("speed", "float")],
-    "entity_anim": [("target", "str"), ("anim", "str")],
+    "entity_anim": [("target", "str"), ("animation", "str")],
     "entity_face": [("target", "str"), ("faceTarget", "str")],
     "entity_spawn": [("id", "str"), ("name", "str"), ("x", "float"), ("y", "float")],
     "entity_remove": [("id", "str")],
@@ -84,6 +85,30 @@ class CommandWidget(QFrame):
         self._rebuild_params()
         self._type_combo.currentTextChanged.connect(lambda _: self._rebuild_params())
 
+    def _connect_cutscene_spawn(self) -> None:
+        sc_w = self._widgets.get("sceneId")
+        sp_w = self._widgets.get("spawnPoint")
+        if not isinstance(sc_w, IdRefSelector) or not isinstance(sp_w, IdRefSelector):
+            return
+
+        def refresh(_: str = "") -> None:
+            sid = sc_w.current_id()
+            keys = (
+                self._model.spawn_point_keys_for_scene(sid)
+                if self._model
+                else [""]
+            )
+            items: list[tuple[str, str]] = [(k, k if k else "(default)") for k in keys]
+            cur = sp_w.current_id()
+            sp_w.set_items(items)
+            if cur in keys:
+                sp_w.set_current(cur)
+            elif keys:
+                sp_w.set_current(keys[0])
+
+        sc_w.value_changed.connect(refresh)
+        refresh()
+
     def _rebuild_params(self) -> None:
         while self._params_layout.rowCount() > 0:
             self._params_layout.removeRow(0)
@@ -93,6 +118,8 @@ class CommandWidget(QFrame):
         schema = _CMD_PARAMS.get(ct, [])
         for pname, ptype in schema:
             val = self._cmd_data.get(pname, "")
+            if ct == "entity_anim" and pname == "animation" and val == "":
+                val = self._cmd_data.get("anim", "")
             if ptype == "float":
                 w = QDoubleSpinBox()
                 w.setRange(-99999, 99999)
@@ -111,10 +138,42 @@ class CommandWidget(QFrame):
             elif ct == "set_flag" and pname == "key":
                 w = FlagKeyPickField(self._model, None, str(val) if val else "", self)
                 w.setMinimumWidth(200)
+            elif ct == "play_bgm" and pname == "id":
+                w = IdRefSelector(self, allow_empty=True)
+                w.setMinimumWidth(200)
+                if self._model:
+                    w.set_items([(a, a) for a in self._model.all_audio_ids("bgm")])
+                w.set_current(str(val) if val is not None else "")
+            elif ct == "play_sfx" and pname == "id":
+                w = IdRefSelector(self, allow_empty=True)
+                w.setMinimumWidth(200)
+                if self._model:
+                    w.set_items([(a, a) for a in self._model.all_audio_ids("sfx")])
+                w.set_current(str(val) if val is not None else "")
+            elif ct in ("switch_scene", "change_scene") and pname == "sceneId":
+                w = IdRefSelector(self, allow_empty=True)
+                w.setMinimumWidth(200)
+                if self._model:
+                    w.set_items([(s, s) for s in self._model.all_scene_ids()])
+                w.set_current(str(val) if val is not None else "")
+            elif ct in ("switch_scene", "change_scene") and pname == "spawnPoint":
+                w = IdRefSelector(self, allow_empty=True)
+                w.setMinimumWidth(200)
+                sid = str(self._cmd_data.get("sceneId", "") or "")
+                keys = (
+                    self._model.spawn_point_keys_for_scene(sid)
+                    if self._model and sid
+                    else [""]
+                )
+                w.set_items([(k, k if k else "(default)") for k in keys])
+                w.set_current(str(val) if val is not None else "")
             else:
                 w = QLineEdit(str(val))
             self._widgets[pname] = w
             self._params_layout.addRow(pname, w)
+
+        if ct in ("switch_scene", "change_scene"):
+            self._connect_cutscene_spawn()
 
         if ct == "set_flag":
             kw = self._widgets.get("key")
@@ -152,8 +211,12 @@ class CommandWidget(QFrame):
                 d[pname] = v if isinstance(v, bool) else float(v)
             elif ct == "set_flag" and pname == "key" and isinstance(w, FlagKeyPickField):
                 d[pname] = w.key()
+            elif isinstance(w, IdRefSelector):
+                d[pname] = w.current_id()
             else:
                 d[pname] = w.text()
+        if ct == "entity_anim":
+            d.pop("anim", None)
         return d
 
 

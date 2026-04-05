@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
+from ..shared.id_ref_selector import IdRefSelector
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +487,9 @@ class ArchiveEditor(QWidget):
         self._pg_title = QLineEdit(); pf.addRow("title", self._pg_title)
         self._pg_content = QTextEdit(); self._pg_content.setMaximumHeight(100)
         pf.addRow("content", self._pg_content)
-        self._pg_illust = QLineEdit(); pf.addRow("illustration", self._pg_illust)
+        self._pg_illust = IdRefSelector(allow_empty=True)
+        self._pg_illust.setMinimumWidth(260)
+        pf.addRow("illustration", self._pg_illust)
         dl.addLayout(pf)
         self._pg_cond = ConditionEditor("unlockConditions")
         dl.addWidget(self._pg_cond)
@@ -532,7 +535,12 @@ class ArchiveEditor(QWidget):
         pg = pages[row]
         self._pg_title.setText(pg.get("title", ""))
         self._pg_content.setPlainText(pg.get("content", ""))
-        self._pg_illust.setText(pg.get("illustration", ""))
+        ill_choices = self._model.illustration_asset_choices()
+        cur_ill = pg.get("illustration", "") or ""
+        if cur_ill and all(x[0] != cur_ill for x in ill_choices):
+            ill_choices = [(cur_ill, cur_ill)] + ill_choices
+        self._pg_illust.set_items(ill_choices)
+        self._pg_illust.set_current(cur_ill)
         self._pg_cond.set_flag_pattern_context(self._model, None)
         self._pg_cond.set_data(pg.get("unlockConditions", []))
 
@@ -558,7 +566,7 @@ class ArchiveEditor(QWidget):
                 if pg["title"] is None:
                     pg.pop("title", None)
                 pg["content"] = self._pg_content.toPlainText()
-                ill = self._pg_illust.text().strip()
+                ill = self._pg_illust.current_id().strip()
                 if ill:
                     pg["illustration"] = ill
                 elif "illustration" in pg:

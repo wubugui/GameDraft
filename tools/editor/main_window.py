@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         from .editors.string_editor import StringEditor
         from .editors.game_config_editor import GameConfigEditor
         from .editors.flag_registry_editor import FlagRegistryEditor
+        from .editors.filter_editor import FilterEditor
 
         editors = [
             ("Scene", SceneEditor),
@@ -131,6 +132,7 @@ class MainWindow(QMainWindow):
             ("Archive", ArchiveEditor),
             ("Dialogue", DialogueBrowser),
             ("Audio", AudioEditor),
+            ("Filters", FilterEditor),
             ("Animation", AnimEditor),
             ("Strings", StringEditor),
             ("Config", GameConfigEditor),
