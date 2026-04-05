@@ -5,8 +5,34 @@
   "worldWidth": 100,
   "worldHeight": 160,
   "states": {
-    "idle": { "frames": [0, 1], "frameRate": 2, "loop": true },
-    "walk": { "frames": [1,2, 3, 4, 5], "frameRate": 8, "loop": true },
-    "run": { "frames": [6, 7, 8, 9], "frameRate": 12, "loop": true }
+    "idle": {
+      "frames": [
+        0,
+        1
+      ],
+      "frameRate": 2,
+      "loop": true
+    },
+    "walk": {
+      "frames": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "frameRate": 8,
+      "loop": true
+    },
+    "run": {
+      "frames": [
+        6,
+        7,
+        8,
+        9
+      ],
+      "frameRate": 12,
+      "loop": true
+    }
   }
 }

@@ -6,7 +6,9 @@
     "description": "张叨叨又在茶馆里说书。先坐下听一耳朵，看看今天城里又传什么怪话。",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "heard_teahouse_story" }
+      {
+        "flag": "heard_teahouse_story"
+      }
     ],
     "rewards": [],
     "nextQuestId": "opening_02"
@@ -18,7 +20,9 @@
     "description": "瞎子李刚进茶馆。你早听说这老瞎子走南闯北，嘴里没几句真话，但也许真能教你一门吃饭的手艺。",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "got_iron_box" }
+      {
+        "flag": "got_iron_box"
+      }
     ],
     "rewards": [],
     "nextQuestId": "opening_03"
@@ -30,7 +34,9 @@
     "description": "盒子揣在身上总让人心里发痒。先把它藏到破烂城隍庙里，七天后再来取。",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "box_hidden_in_temple" }
+      {
+        "flag": "box_hidden_in_temple"
+      }
     ],
     "rewards": [],
     "nextQuestId": "opening_04"
@@ -42,7 +48,9 @@
     "description": "动静过去了。摸回庙门口，看看墙边月影下有什么——然后赶紧离开。",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "saw_standing_shadow" }
+      {
+        "flag": "saw_standing_shadow"
+      }
     ],
     "rewards": [],
     "nextQuestId": "opening_05"
@@ -54,7 +62,9 @@
     "description": "今晚这事太邪门了。天一亮，再回城隍庙看看盒子和那个女人到底怎么回事。",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "day_2_started" }
+      {
+        "flag": "day_2_started"
+      }
     ],
     "rewards": [],
     "nextQuestId": "opening_06"
@@ -66,7 +76,9 @@
     "description": "天亮了，该回去看看昨晚那地方到底怎么了。盒子和那女人……",
     "preconditions": [],
     "completionConditions": [
-      { "flag": "saw_hanged_woman" }
+      {
+        "flag": "saw_hanged_woman"
+      }
     ],
     "rewards": []
   }

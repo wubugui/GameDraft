@@ -8,7 +8,14 @@
     "pixelsPerUnit": 1
   },
   "backgrounds": [
-    { "image": "background.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "spawnPoint": { "x": 800, "y": 600 }
+  "spawnPoint": {
+    "x": 800,
+    "y": 600
+  }
 }

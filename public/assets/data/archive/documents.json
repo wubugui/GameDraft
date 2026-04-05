@@ -4,26 +4,42 @@
     "name": "城防署告示",
     "content": "近日城外流民日增，城内治安堪忧。凡有生面孔者，各铺保甲须即时登记报备。夜间宵禁自亥时始，卯时止，违者以扰乱治安论处。\n\n特此告示。\n渝都卫城防署 民国十三年秋",
     "annotation": "告示的纸已经泛黄了，看日期是去年秋天贴的。",
-    "discoverConditions": [{ "flag": "prologue_started" }]
+    "discoverConditions": [
+      {
+        "flag": "prologue_started"
+      }
+    ]
   },
   {
     "id": "doc_temple_keeper_diary",
     "name": "庙祝日记残页",
     "content": "七月十五，中元节。\n今年的香火比去年还少了。城里的人都不来拜了，说城隍爷不灵了。可我觉得不是城隍爷不灵，是城隍爷管不过来了。\n后山义冢那边又不太平了。昨晚值夜的时候隐约听到唱曲的声音，凄凄惨惨的。我没敢出去看。\n那个坟……又是一年不长草了。",
     "annotation": "日记残页的纸质很差，好像是从账本上撕下来的。墨迹有些晕开，字写得工工整整。",
-    "discoverConditions": [{ "flag": "encounter_ghost_done" }]
+    "discoverConditions": [
+      {
+        "flag": "encounter_ghost_done"
+      }
+    ]
   },
   {
     "id": "doc_wanted_poster",
     "name": "通缉令",
     "content": "通缉令\n\n缉拿在逃匪首刘麻子一名，身高五尺五寸，左脸有一刀疤，操北方口音。此人系北山匪帮头目，积案累累。\n知情者速到城防署报案，赏银五十两。\n\n窝藏者同罪论处。",
-    "discoverConditions": [{ "flag": "heard_city_news" }]
+    "discoverConditions": [
+      {
+        "flag": "heard_city_news"
+      }
+    ]
   },
   {
     "id": "doc_opera_playbill",
     "name": "旧戏单",
     "content": "柳家班 庚申年 新春公演\n\n头折《牡丹亭·惊梦》 旦角：柳如烟\n二折《窦娥冤·斩娥》 旦角：柳如烟\n三折《红楼梦·葬花》 旦角：柳如烟\n\n地点：渝都卫城隍庙戏台\n票价：铜钱十文",
     "annotation": "一张已经发黄发脆的老戏单。柳如烟这个名字被人用红笔圈了起来。",
-    "discoverConditions": [{ "flag": "heard_opera_rumor" }]
+    "discoverConditions": [
+      {
+        "flag": "heard_opera_rumor"
+      }
+    ]
   }
 ]

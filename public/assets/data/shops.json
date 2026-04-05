@@ -3,22 +3,52 @@
     "id": "teahouse_shop",
     "name": "茶馆杂货",
     "items": [
-      { "itemId": "taomu", "price": 3 },
-      { "itemId": "nuomi", "price": 2 },
-      { "itemId": "mugwort", "price": 1 },
-      { "itemId": "shaojiu", "price": 5 },
-      { "itemId": "talisman", "price": 8 }
+      {
+        "itemId": "taomu",
+        "price": 3
+      },
+      {
+        "itemId": "nuomi",
+        "price": 2
+      },
+      {
+        "itemId": "mugwort",
+        "price": 1
+      },
+      {
+        "itemId": "shaojiu",
+        "price": 5
+      },
+      {
+        "itemId": "talisman",
+        "price": 8
+      }
     ]
   },
   {
     "id": "peddler_shop",
     "name": "南边来的货郎",
     "items": [
-      { "itemId": "taomu", "price": 2 },
-      { "itemId": "talisman", "price": 6 },
-      { "itemId": "nuomi", "price": 1 },
-      { "itemId": "shaojiu", "price": 4 },
-      { "itemId": "mugwort", "price": 1 }
+      {
+        "itemId": "taomu",
+        "price": 2
+      },
+      {
+        "itemId": "talisman",
+        "price": 6
+      },
+      {
+        "itemId": "nuomi",
+        "price": 1
+      },
+      {
+        "itemId": "shaojiu",
+        "price": 4
+      },
+      {
+        "itemId": "mugwort",
+        "price": 1
+      }
     ]
   }
 ]

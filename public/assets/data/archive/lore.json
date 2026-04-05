@@ -12,7 +12,11 @@
       "content": "张叨叨今日摆的，是崂山道士李天狗捡天书、上神仙顶途中撞见倒斗客放出旱魃的故事。张叨叨说那道士与旱魃大战三百回合，最后拂袖而去，连赏钱都不收。听着像胡吹，可也怪勾人。",
       "source": "说书人张叨叨",
       "category": "legend",
-      "unlockConditions": [{ "flag": "heard_teahouse_story" }]
+      "unlockConditions": [
+        {
+          "flag": "heard_teahouse_story"
+        }
+      ]
     },
     {
       "id": "lore_ghost_mountain",
@@ -20,7 +24,11 @@
       "content": "据说城隍庙后山每到三更天就有白色身影出没，还会唱戏。有个胆大的人去看了，回来之后疯了，整天嘟囔着《红楼》里的曲词。老百姓都说那是鬼在唱堂会。",
       "source": "说书人张叨叨",
       "category": "legend",
-      "unlockConditions": [{ "flag": "heard_ghost_story" }]
+      "unlockConditions": [
+        {
+          "flag": "heard_ghost_story"
+        }
+      ]
     },
     {
       "id": "lore_yanwang_ridge",
@@ -28,7 +36,11 @@
       "content": "城北有一片死黑死黑的山脉叫做阎王岭。老辈子传下来的话：人死了，魂往北走，过了阎王岭就回不来了。但偏偏有不少活人往那边跑——找金子的、找药的、自称能通阴阳的。去的人多，回来的人少，渝都卫人管他们叫短命娃娃。",
       "source": "说书人张叨叨",
       "category": "geography",
-      "unlockConditions": [{ "flag": "heard_yanwang_story" }]
+      "unlockConditions": [
+        {
+          "flag": "heard_yanwang_story"
+        }
+      ]
     },
     {
       "id": "lore_temple_history",
@@ -36,7 +48,13 @@
       "content": "城隍庙始建于明洪武年间。碑文末尾写道：阎王岭下，阴阳交汇，城隍镇之，百鬼不侵。",
       "source": "城隍庙石碑",
       "category": "geography",
-      "unlockConditions": [{ "flag": "inspected_stone_tablet", "op": "==", "value": true }]
+      "unlockConditions": [
+        {
+          "flag": "inspected_stone_tablet",
+          "op": "==",
+          "value": true
+        }
+      ]
     }
   ]
 }
