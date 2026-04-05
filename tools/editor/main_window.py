@@ -145,6 +145,10 @@ class MainWindow(QMainWindow):
         if self._model.project_path is None:
             return
         try:
+            for inst in self._editor_instances:
+                flush = getattr(inst, "flush_to_model", None)
+                if callable(flush):
+                    flush()
             self._model.save_all()
             self._status.showMessage("Saved.", 3000)
         except Exception as e:

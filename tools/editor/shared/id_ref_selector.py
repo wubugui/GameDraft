@@ -2,20 +2,30 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import QComboBox, QWidget
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QEvent, QTimer
 
 
 class IdRefSelector(QComboBox):
     """A searchable combo-box that shows id + display-name pairs."""
     value_changed = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None, allow_empty: bool = True):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        allow_empty: bool = True,
+        click_opens_popup: bool = False,
+    ):
         super().__init__(parent)
         self.setEditable(True)
         self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._allow_empty = allow_empty
+        self._click_opens_popup = click_opens_popup
         self._ids: list[str] = []
         self.currentIndexChanged.connect(self._on_index)
+        if click_opens_popup:
+            le = self.lineEdit()
+            if le is not None:
+                le.installEventFilter(self)
 
     def set_items(self, items: list[tuple[str, str]] | list[str]) -> None:
         """Populate with (id, display_name) pairs or plain id strings."""
@@ -51,3 +61,12 @@ class IdRefSelector(QComboBox):
 
     def _on_index(self, _idx: int) -> None:
         self.value_changed.emit(self.current_id())
+
+    def eventFilter(self, obj, event):  # noqa: ANN001
+        if (
+            self._click_opens_popup
+            and obj is self.lineEdit()
+            and event.type() == QEvent.Type.MouseButtonPress
+        ):
+            QTimer.singleShot(0, self.showPopup)
+        return super().eventFilter(obj, event)

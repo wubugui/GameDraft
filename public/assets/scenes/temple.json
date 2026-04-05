@@ -15,13 +15,17 @@
     }
   ],
   "spawnPoint": {
-    "x": 1000,
+    "x": 1000.0,
     "y": 892.8
   },
   "spawnPoints": {
     "from_street": {
       "x": 1000,
       "y": 892.8
+    },
+    "spawn_0": {
+      "x": 735.8,
+      "y": 722.7
     }
   },
   "hotspots": [

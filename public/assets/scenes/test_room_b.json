@@ -29,7 +29,7 @@
       "id": "old_box",
       "type": "encounter",
       "label": "旧木箱",
-      "x": 1500,
+      "x": 1500.0,
       "y": 872.2,
       "interactionRange": 400,
       "data": {
@@ -53,8 +53,8 @@
       "id": "exit_to_a",
       "type": "transition",
       "label": "回到街巷",
-      "x": 2500,
-      "y": 2616.6,
+      "x": 349.3,
+      "y": 2604.3,
       "interactionRange": 300,
       "data": {
         "targetScene": "test_room_a",
@@ -78,7 +78,7 @@
       "id": "ghost_area",
       "type": "encounter",
       "label": "后山小路",
-      "x": 2500,
+      "x": 2500.0,
       "y": 1046.6,
       "interactionRange": 400,
       "conditions": [
@@ -118,7 +118,7 @@
   "zones": [
     {
       "id": "dark_alley",
-      "x": 1500,
+      "x": 1500.0,
       "y": 697.8,
       "width": 2000,
       "height": 1046.6,

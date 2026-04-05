@@ -1,10 +1,10 @@
 {
   "id": "bridge_underpass",
   "name": "桥下",
-  "worldWidth": 2000,
+  "worldWidth": 2000.0,
   "camera": {
-    "zoom": 1,
-    "pixelsPerUnit": 1
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
   },
   "backgrounds": [
     {
@@ -19,7 +19,7 @@
   },
   "spawnPoints": {
     "from_street": {
-      "x": 328,
+      "x": 328.0,
       "y": 919.6
     }
   },
@@ -35,6 +35,18 @@
         "targetScene": "test_room_a",
         "targetSpawnPoint": "from_bridge"
       }
+    },
+    {
+      "id": "new_hotspot_1",
+      "type": "transition",
+      "label": "",
+      "x": 791.2,
+      "y": 1090.2,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "temple"
+      },
+      "autoTrigger": true
     }
   ],
   "depthConfig": {

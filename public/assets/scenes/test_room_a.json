@@ -14,8 +14,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 2011,
-    "y": 2141
+    "x": 2011.0,
+    "y": 2141.0
   },
   "spawnPoints": {
     "from_b": {
@@ -23,20 +23,24 @@
       "y": 4465.2
     },
     "from_teahouse": {
-      "x": 1738,
-      "y": 1912
+      "x": 1740.1,
+      "y": 1914.1
     },
     "from_temple": {
       "x": 16250,
       "y": 2232.6
     },
     "from_bridge": {
-      "x": 3903,
-      "y": 2160
+      "x": 3903.0,
+      "y": 2160.0
     },
     "from_mountain_pass": {
       "x": 3810,
       "y": 176.8
+    },
+    "spawn_0": {
+      "x": 470.7,
+      "y": 1060.9
     }
   },
   "hotspots": [
@@ -66,8 +70,8 @@
       "id": "exit_to_teahouse",
       "type": "transition",
       "label": "去茶馆",
-      "x": 1738,
-      "y": 1912,
+      "x": 1738.0,
+      "y": 1912.0,
       "interactionRange": 875,
       "data": {
         "targetScene": "teahouse",
