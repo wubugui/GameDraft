@@ -1,127 +1,141 @@
 {
   "static": [
-    "box_hidden_in_temple",
-    "box_opened",
-    "box_taboo_active",
-    "coins",
-    "current_day",
-    "day_1_done",
-    "day_2_started",
-    "encounter_ghost_done",
-    "entered_dark_alley",
-    "first_night_escape",
-    "ghost_approach_direct",
-    "ghost_ran_away",
-    "ghost_used_taomu",
-    "ghost_watched_safe",
-    "got_iron_box",
-    "heard_city_news",
-    "heard_ghost_story",
-    "heard_opera_rumor",
-    "heard_teahouse_story",
-    "heard_waiter_ghost_talk",
-    "heard_yanwang_story",
-    "inspected_stone_tablet",
-    "know_city_strange",
-    "know_ghost_opera",
-    "met_blind_li",
-    "met_mysterious_visitor",
-    "old_box_checked",
-    "peddler_arrived",
-    "peddler_met",
-    "peddler_story_heard",
-    "prologue_demo_complete",
-    "prologue_started",
-    "read_box_note",
-    "read_temple_notes",
-    "rule_rule_ghost_origin_acquired",
-    "rule_rule_no_go_night_acquired",
-    "saw_hanged_woman",
-    "saw_standing_shadow",
-    "strangers_entered_temple",
-    "talked_wang_about_ghost",
-    "test_cutscene_done",
-    "used_fire_dark_alley",
-    "used_origin_dark_alley",
-    "used_rule_dark_alley",
-    "waiter_met"
+    { "key": "box_hidden_in_temple", "valueType": "bool" },
+    { "key": "box_opened", "valueType": "bool" },
+    { "key": "box_taboo_active", "valueType": "bool" },
+    { "key": "coins", "valueType": "float" },
+    { "key": "current_day", "valueType": "float" },
+    { "key": "day_1_done", "valueType": "bool" },
+    { "key": "day_2_started", "valueType": "bool" },
+    { "key": "encounter_ghost_done", "valueType": "bool" },
+    { "key": "entered_dark_alley", "valueType": "bool" },
+    { "key": "first_night_escape", "valueType": "bool" },
+    { "key": "ghost_approach_direct", "valueType": "bool" },
+    { "key": "ghost_ran_away", "valueType": "bool" },
+    { "key": "ghost_used_taomu", "valueType": "bool" },
+    { "key": "ghost_watched_safe", "valueType": "bool" },
+    { "key": "got_iron_box", "valueType": "bool" },
+    { "key": "heard_city_news", "valueType": "bool" },
+    { "key": "heard_ghost_story", "valueType": "bool" },
+    { "key": "heard_opera_rumor", "valueType": "bool" },
+    { "key": "heard_teahouse_story", "valueType": "bool" },
+    { "key": "heard_waiter_ghost_talk", "valueType": "bool" },
+    { "key": "heard_yanwang_story", "valueType": "bool" },
+    { "key": "inspected_stone_tablet", "valueType": "bool" },
+    { "key": "know_city_strange", "valueType": "bool" },
+    { "key": "know_ghost_opera", "valueType": "bool" },
+    { "key": "met_blind_li", "valueType": "bool" },
+    { "key": "met_mysterious_visitor", "valueType": "bool" },
+    { "key": "old_box_checked", "valueType": "bool" },
+    { "key": "peddler_arrived", "valueType": "bool" },
+    { "key": "peddler_met", "valueType": "bool" },
+    { "key": "peddler_story_heard", "valueType": "bool" },
+    { "key": "prologue_demo_complete", "valueType": "bool" },
+    { "key": "prologue_started", "valueType": "bool" },
+    { "key": "read_box_note", "valueType": "bool" },
+    { "key": "read_temple_notes", "valueType": "bool" },
+    { "key": "rule_rule_ghost_origin_acquired", "valueType": "bool" },
+    { "key": "rule_rule_no_go_night_acquired", "valueType": "bool" },
+    { "key": "saw_hanged_woman", "valueType": "bool" },
+    { "key": "saw_standing_shadow", "valueType": "bool" },
+    { "key": "strangers_entered_temple", "valueType": "bool" },
+    { "key": "talked_wang_about_ghost", "valueType": "bool" },
+    { "key": "test_cutscene_done", "valueType": "bool" },
+    { "key": "used_fire_dark_alley", "valueType": "bool" },
+    { "key": "used_origin_dark_alley", "valueType": "bool" },
+    { "key": "used_rule_dark_alley", "valueType": "bool" },
+    { "key": "waiter_met", "valueType": "bool" }
   ],
   "patterns": [
     {
       "id": "picked_up",
       "prefix": "picked_up_",
-      "idSource": "hotspot_any_scene"
+      "idSource": "hotspot_any_scene",
+      "valueType": "bool"
     },
     {
       "id": "rule_used",
       "prefix": "rule_used_",
-      "idSource": "rule"
+      "idSource": "rule",
+      "valueType": "bool"
     },
     {
       "id": "rule_acquired",
       "prefix": "rule_",
       "suffix": "_acquired",
-      "idSource": "rule"
+      "idSource": "rule",
+      "valueType": "bool"
     },
     {
       "id": "rule_discovered",
       "prefix": "rule_",
       "suffix": "_discovered",
-      "idSource": "rule"
+      "idSource": "rule",
+      "valueType": "bool"
     },
     {
       "id": "rule_fragments_collected",
       "prefix": "rule_",
       "suffix": "_fragments_collected",
-      "idSource": "rule"
+      "idSource": "rule",
+      "valueType": "float"
     },
     {
       "id": "rule_fragments_total",
       "prefix": "rule_",
       "suffix": "_fragments_total",
-      "idSource": "rule"
+      "idSource": "rule",
+      "valueType": "float"
     },
     {
       "id": "fragment_acquired",
       "prefix": "fragment_",
       "suffix": "_acquired",
-      "idSource": "fragment"
+      "idSource": "fragment",
+      "valueType": "bool"
     },
     {
       "id": "quest_status",
       "prefix": "quest_",
       "suffix": "_status",
-      "idSource": "quest"
+      "idSource": "quest",
+      "valueType": "float"
     },
     {
       "id": "item_count",
       "prefix": "item_count_",
-      "idSource": "item"
+      "idSource": "item",
+      "valueType": "float"
     },
     {
       "id": "has_item",
       "prefix": "has_item_",
-      "idSource": "item"
+      "idSource": "item",
+      "valueType": "bool"
     },
     {
       "id": "archive_character",
       "prefix": "archive_character_",
-      "idSource": "archive_character"
+      "idSource": "archive_character",
+      "valueType": "bool"
     },
     {
       "id": "archive_lore",
       "prefix": "archive_lore_",
-      "idSource": "archive_lore"
+      "idSource": "archive_lore",
+      "valueType": "bool"
     },
     {
       "id": "archive_document",
       "prefix": "archive_document_",
-      "idSource": "archive_document"
+      "idSource": "archive_document",
+      "valueType": "bool"
     },
     {
       "id": "archive_book",
       "prefix": "archive_book_",
-      "idSource": "archive_book"
+      "idSource": "archive_book",
+      "valueType": "bool"
     }
   ],
   "migrations": {},

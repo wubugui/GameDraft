@@ -1,10 +1,19 @@
 import type { Condition } from '../data/types';
 import type { EventBus } from './EventBus';
 
+/** One static flag key + value kind (tools / documentation; runtime only needs key set). */
+export type FlagRegistryStaticEntry = { key: string; valueType: 'bool' | 'float' };
+
 /** Shape of public/assets/data/flag_registry.json. */
 export interface FlagRegistryJson {
-  static?: string[];
-  patterns?: { prefix: string; suffix?: string; [k: string]: unknown }[];
+  /** Unified list: each entry has key + valueType (legacy string[] is normalized on editor load). */
+  static?: Array<string | FlagRegistryStaticEntry>;
+  patterns?: {
+    prefix: string;
+    suffix?: string;
+    valueType?: 'bool' | 'float';
+    [k: string]: unknown;
+  }[];
   migrations?: Record<string, string>;
   runtime?: {
     warnUnknownInDev?: boolean;
@@ -36,8 +45,17 @@ export class FlagStore {
       return;
     }
     const rt = data.runtime ?? {};
+    const staticList = data.static ?? [];
+    const staticKeys: string[] = [];
+    for (const e of staticList) {
+      if (typeof e === 'string') {
+        if (e) staticKeys.push(e);
+      } else if (e && typeof e === 'object' && typeof e.key === 'string' && e.key) {
+        staticKeys.push(e.key);
+      }
+    }
     this.registryRuntime = {
-      staticKeys: new Set(data.static ?? []),
+      staticKeys: new Set(staticKeys),
       patterns: (data.patterns ?? []).map(p => ({ prefix: p.prefix, suffix: p.suffix })),
       migrations: data.migrations ?? {},
       stripUnknown: !!rt.stripUnknown,

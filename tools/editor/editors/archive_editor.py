@@ -17,13 +17,12 @@ from ..shared.condition_editor import ConditionEditor
 # ---------------------------------------------------------------------------
 
 class _CondTextGroup(QGroupBox):
-    def __init__(self, title: str, data: dict, flags: list[str],
+    def __init__(self, title: str, data: dict,
                  model: ProjectModel | None = None, parent: QWidget | None = None):
         super().__init__(title, parent)
         lay = QVBoxLayout(self)
         self._cond = ConditionEditor("conditions")
         self._cond.set_flag_pattern_context(model, None)
-        self._cond.set_flags(flags)
         self._cond.set_data(data.get("conditions", []))
         lay.addWidget(self._cond)
         self._text = QTextEdit(data.get("text", ""))
@@ -195,36 +194,32 @@ class ArchiveEditor(QWidget):
         self._ch_id.setText(ch.get("id", ""))
         self._ch_name.setText(ch.get("name", ""))
         self._ch_title.setText(ch.get("title", ""))
-        flags = self._model.registry_flag_choices(None)
         self._ch_unlock.set_flag_pattern_context(self._model, None)
-        self._ch_unlock.set_flags(flags)
         self._ch_unlock.set_data(ch.get("unlockConditions", []))
         self._rebuild_cond_text_list(self._ch_imp_layout, self._imp_widgets,
-                                      ch.get("impressions", []), "Impression", flags)
+                                      ch.get("impressions", []), "Impression")
         self._rebuild_cond_text_list(self._ch_ki_layout, self._ki_widgets,
-                                      ch.get("knownInfo", []), "Info", flags)
+                                      ch.get("knownInfo", []), "Info")
 
-    def _rebuild_cond_text_list(self, layout, widgets, items, prefix, flags):
+    def _rebuild_cond_text_list(self, layout, widgets, items, prefix):
         for w in widgets:
             layout.removeWidget(w)
             w.deleteLater()
         widgets.clear()
         for i, item in enumerate(items):
-            g = _CondTextGroup(f"{prefix} {i + 1}", item, flags, self._model)
+            g = _CondTextGroup(f"{prefix} {i + 1}", item, self._model)
             widgets.append(g)
             layout.addWidget(g)
 
     def _add_impression(self) -> None:
-        flags = self._model.registry_flag_choices(None)
         g = _CondTextGroup(f"Impression {len(self._imp_widgets) + 1}",
-                           {"conditions": [], "text": ""}, flags, self._model)
+                           {"conditions": [], "text": ""}, self._model)
         self._imp_widgets.append(g)
         self._ch_imp_layout.addWidget(g)
 
     def _add_known_info(self) -> None:
-        flags = self._model.registry_flag_choices(None)
         g = _CondTextGroup(f"Info {len(self._ki_widgets) + 1}",
-                           {"conditions": [], "text": ""}, flags, self._model)
+                           {"conditions": [], "text": ""}, self._model)
         self._ki_widgets.append(g)
         self._ch_ki_layout.addWidget(g)
 
@@ -326,7 +321,6 @@ class ArchiveEditor(QWidget):
         self._lo_source.setText(e.get("source", ""))
         self._lo_cat.setCurrentText(e.get("category", "legend"))
         self._lo_cond.set_flag_pattern_context(self._model, None)
-        self._lo_cond.set_flags(self._model.registry_flag_choices(None))
         self._lo_cond.set_data(e.get("unlockConditions", []))
 
     def _apply_lore(self) -> None:
@@ -419,7 +413,6 @@ class ArchiveEditor(QWidget):
         self._doc_content.setPlainText(d.get("content", ""))
         self._doc_annot.setPlainText(d.get("annotation", ""))
         self._doc_cond.set_flag_pattern_context(self._model, None)
-        self._doc_cond.set_flags(self._model.registry_flag_choices(None))
         self._doc_cond.set_data(d.get("discoverConditions", []))
 
     def _apply_doc(self) -> None:
@@ -541,7 +534,6 @@ class ArchiveEditor(QWidget):
         self._pg_content.setPlainText(pg.get("content", ""))
         self._pg_illust.setText(pg.get("illustration", ""))
         self._pg_cond.set_flag_pattern_context(self._model, None)
-        self._pg_cond.set_flags(self._model.registry_flag_choices(None))
         self._pg_cond.set_data(pg.get("unlockConditions", []))
 
     def _add_page(self) -> None:

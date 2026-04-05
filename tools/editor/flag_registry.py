@@ -12,6 +12,56 @@ def flag_registry_path(assets_path: Path) -> Path:
     return assets_path / "data" / "flag_registry.json"
 
 
+def normalize_registry_value_type(raw: object) -> str:
+    """Registry stores 'bool' | 'float'. Legacy 'int' from older editors == 'float'."""
+    if raw == "float" or raw == "int":
+        return "float"
+    return "bool"
+
+
+def _migrate_flag_registry_in_place(data: dict[str, Any]) -> None:
+    """Normalize static to [{key, valueType}, ...]. Strips legacy staticValueTypes / parallel staticTypes map."""
+    data.pop("staticValueTypes", None)
+    raw = data.get("static")
+    parallel = data.pop("staticTypes", None)
+    parallel_types = parallel if isinstance(parallel, dict) else {}
+
+    if not isinstance(raw, list):
+        data["static"] = []
+        return
+
+    norm: list[dict[str, str]] = []
+    for e in raw:
+        if isinstance(e, str):
+            k = e.strip()
+            if not k:
+                continue
+            vt = normalize_registry_value_type(parallel_types.get(k, "bool"))
+            norm.append({"key": k, "valueType": vt})
+        elif isinstance(e, dict):
+            k = str(e.get("key", "")).strip()
+            if not k:
+                continue
+            vt_raw = e.get("valueType")
+            if vt_raw is None and k in parallel_types:
+                vt_raw = parallel_types[k]
+            vt = normalize_registry_value_type(vt_raw)
+            norm.append({"key": k, "valueType": vt})
+    data["static"] = norm
+
+
+def static_key_set(registry: dict[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for e in registry.get("static") or []:
+        if isinstance(e, dict):
+            k = e.get("key")
+            if isinstance(k, str) and k:
+                out.add(k)
+        elif isinstance(e, str) and e:
+            out.add(e)
+    return out
+
+
 def load_flag_registry(path: Path) -> dict[str, Any]:
     default: dict[str, Any] = {
         "static": [],
@@ -26,7 +76,9 @@ def load_flag_registry(path: Path) -> dict[str, Any]:
         data = read_json(path)
         if isinstance(data, dict):
             for k, v in default.items():
-                data.setdefault(k, v)
+                if k not in data:
+                    data[k] = v
+            _migrate_flag_registry_in_place(data)
             return data
     except Exception:
         pass
@@ -84,6 +136,28 @@ def _hotspot_ids_in_scene(model: ProjectModel, scene_id: str) -> set[str]:
     return {str(hs["id"]) for hs in (sc.get("hotspots") or []) if hs.get("id")}
 
 
+def ids_for_registry_pattern_source(
+    model: ProjectModel,
+    *,
+    scene_id: str | None,
+    id_source: str | None,
+) -> list[str]:
+    """ID list for one registry pattern idSource (editor UI + expand)."""
+    if not id_source:
+        return []
+    ids_map = build_id_sets(model)
+    all_hotspots = _all_hotspot_ids(model)
+    if id_source == "hotspot_in_scene":
+        if scene_id and scene_id in model.scenes:
+            return sorted(_hotspot_ids_in_scene(model, scene_id))
+        return sorted(all_hotspots)
+    if id_source == "hotspot_any_scene":
+        return sorted(all_hotspots)
+    if id_source in ids_map:
+        return sorted(ids_map[id_source])
+    return []
+
+
 def expand_registry_flag_keys(
     registry: dict[str, Any],
     model: ProjectModel,
@@ -95,12 +169,13 @@ def expand_registry_flag_keys(
     Used by editor pickers only; aligns with validate_flag_key (per-scene hotspot when applicable).
     """
     out: set[str] = set()
-    for s in registry.get("static") or []:
-        if isinstance(s, str) and s:
-            out.add(s)
-    ids = build_id_sets(model)
-    all_hotspots = _all_hotspot_ids(model)
-
+    for e in registry.get("static") or []:
+        if isinstance(e, dict):
+            k = e.get("key")
+            if isinstance(k, str) and k:
+                out.add(k)
+        elif isinstance(e, str) and e:
+            out.add(e)
     for p in registry.get("patterns") or []:
         if not isinstance(p, dict):
             continue
@@ -108,19 +183,8 @@ def expand_registry_flag_keys(
         suf = p.get("suffix")
         suffix = suf if suf else ""
         src = p.get("idSource")
-        id_list: list[str] = []
-        if src == "hotspot_in_scene":
-            if scene_id and scene_id in model.scenes:
-                id_list = sorted(_hotspot_ids_in_scene(model, scene_id))
-            else:
-                id_list = sorted(all_hotspots)
-        elif src == "hotspot_any_scene":
-            id_list = sorted(all_hotspots)
-        elif src in ids:
-            id_list = sorted(ids[src])
-        elif not src:
-            continue
-        else:
+        id_list = ids_for_registry_pattern_source(model, scene_id=scene_id, id_source=src)
+        if not id_list and src:
             continue
         for rid in id_list:
             out.add(f"{prefix}{rid}{suffix}")
@@ -138,7 +202,7 @@ def validate_flag_key(
     """Return (ok, message_if_bad)."""
     if not key or not isinstance(key, str):
         return False, "empty flag key"
-    static: set[str] = set(registry.get("static") or [])
+    static = static_key_set(registry)
     if key in static:
         return True, None
     ids = build_id_sets(model)
@@ -173,11 +237,56 @@ def validate_flag_key(
     return False, f"flag '{key}' not in registry static/patterns ({severity})"
 
 
+def flag_value_type_for_key(key: str, registry: dict[str, Any] | None) -> str:
+    """Return 'bool' or 'float' for editor FlagValueEdit (from registry.static + patterns)."""
+    if not key or not isinstance(key, str):
+        return "bool"
+    r = registry or {}
+    for e in r.get("static") or []:
+        if isinstance(e, dict) and e.get("key") == key:
+            return normalize_registry_value_type(e.get("valueType"))
+    for p in r.get("patterns") or []:
+        if not isinstance(p, dict):
+            continue
+        prefix = p.get("prefix") or ""
+        suf = p.get("suffix")
+        suffix = suf if suf else None
+        if _extract_pattern_id(key, prefix, suffix) is None:
+            continue
+        return normalize_registry_value_type(p.get("valueType"))
+    return "bool"
+
+
+def flag_registry_static_format_issues(registry: dict[str, Any]) -> list[str]:
+    """Validate static[] entries: unique keys, required valueType."""
+    issues: list[str] = []
+    seen: set[str] = set()
+    for i, e in enumerate(registry.get("static") or []):
+        if isinstance(e, str):
+            issues.append(f"static[{i}] 仍为旧格式字符串，请保存登记表以迁移")
+            continue
+        if not isinstance(e, dict):
+            issues.append(f"static[{i}] 不是对象")
+            continue
+        k = e.get("key")
+        if not isinstance(k, str) or not k.strip():
+            issues.append(f"static[{i}] 缺少 key")
+            continue
+        k = k.strip()
+        if k in seen:
+            issues.append(f"static 重复 key: {k!r}")
+        seen.add(k)
+        vt = e.get("valueType")
+        if vt not in ("bool", "float", "int"):
+            issues.append(f"static {k!r} 的 valueType 无效或缺失")
+    return issues
+
+
 def validate_flag_key_loose(key: str, registry: dict[str, Any]) -> bool:
     """Match static or any pattern prefix/suffix without id check (Ink/global)."""
     if not key:
         return False
-    if key in set(registry.get("static") or []):
+    if key in static_key_set(registry):
         return True
     for p in registry.get("patterns") or []:
         if not isinstance(p, dict):

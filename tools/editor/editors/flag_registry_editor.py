@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from ..project_model import ProjectModel
+from ..flag_registry import normalize_registry_value_type
 
 ID_SOURCES = [
     "hotspot_any_scene", "hotspot_in_scene",
@@ -35,6 +36,11 @@ class FlagRegistryEditor(QWidget):
         splitter.setSizes([500, 500])
         root.addWidget(splitter)
 
+        self._refresh_static()
+        self._refresh_patterns()
+
+    def refresh_views(self) -> None:
+        """Reload lists from model (e.g. after external edits)."""
         self._refresh_static()
         self._refresh_patterns()
 
@@ -70,6 +76,16 @@ class FlagRegistryEditor(QWidget):
         btn_row.addWidget(del_btn)
         lay.addLayout(btn_row)
 
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel("选中项值类型:"))
+        self._static_type_combo = QComboBox()
+        self._static_type_combo.addItems(["bool", "float"])
+        self._static_type_combo.currentTextChanged.connect(self._on_static_type_edited)
+        type_row.addWidget(self._static_type_combo, stretch=1)
+        lay.addLayout(type_row)
+
+        self._static_list.itemSelectionChanged.connect(self._sync_static_type_ui)
+
         count_row = QHBoxLayout()
         self._static_count = QLabel("0 flags")
         count_row.addWidget(self._static_count)
@@ -78,13 +94,54 @@ class FlagRegistryEditor(QWidget):
 
         return w
 
+    def _find_static_entry(self, key: str) -> dict | None:
+        for e in self._model.flag_registry.get("static") or []:
+            if isinstance(e, dict) and e.get("key") == key:
+                return e
+        return None
+
     def _refresh_static(self) -> None:
         self._static_list.clear()
         statics = self._model.flag_registry.get("static") or []
-        for key in sorted(statics):
+        keys: list[str] = []
+        for e in statics:
+            if isinstance(e, dict) and e.get("key"):
+                keys.append(str(e["key"]))
+            elif isinstance(e, str) and e:
+                keys.append(e)
+        for key in sorted(keys):
             self._static_list.addItem(key)
-        self._static_count.setText(f"{len(statics)} flags")
+        self._static_count.setText(f"{len(keys)} flags")
         self._filter_static(self._search.text())
+        self._sync_static_type_ui()
+
+    def _sync_static_type_ui(self) -> None:
+        sel = self._static_list.selectedItems()
+        if len(sel) != 1:
+            self._static_type_combo.setEnabled(False)
+            return
+        it = sel[0]
+        if it.isHidden():
+            self._static_type_combo.setEnabled(False)
+            return
+        self._static_type_combo.setEnabled(True)
+        key = it.text()
+        ent = self._find_static_entry(key)
+        vt = normalize_registry_value_type((ent or {}).get("valueType"))
+        self._static_type_combo.blockSignals(True)
+        self._static_type_combo.setCurrentText("float" if vt == "float" else "bool")
+        self._static_type_combo.blockSignals(False)
+
+    def _on_static_type_edited(self, text: str) -> None:
+        sel = self._static_list.selectedItems()
+        if len(sel) != 1 or not text:
+            return
+        key = sel[0].text()
+        ent = self._find_static_entry(key)
+        if not ent:
+            return
+        ent["valueType"] = "float" if text == "float" else "bool"
+        self._model.mark_dirty("flag_registry")
 
     def _filter_static(self, text: str) -> None:
         text = text.strip().lower()
@@ -92,18 +149,20 @@ class FlagRegistryEditor(QWidget):
             item = self._static_list.item(i)
             if item:
                 item.setHidden(bool(text) and text not in item.text().lower())
+        self._sync_static_type_ui()
 
     def _add_static(self) -> None:
         key, ok = QInputDialog.getText(self, "Add Flag", "Flag key:")
         if not ok or not key.strip():
             return
         key = key.strip()
-        statics: list[str] = self._model.flag_registry.setdefault("static", [])
-        if key in statics:
+        statics: list = self._model.flag_registry.setdefault("static", [])
+        existing = {str(e["key"]) for e in statics if isinstance(e, dict) and e.get("key")}
+        if key in existing:
             QMessageBox.information(self, "Add Flag", f"'{key}' already exists.")
             return
-        statics.append(key)
-        statics.sort()
+        statics.append({"key": key, "valueType": "bool"})
+        statics.sort(key=lambda e: str(e.get("key", "")) if isinstance(e, dict) else str(e))
         self._model.mark_dirty("flag_registry")
         self._refresh_static()
 
@@ -117,13 +176,16 @@ class FlagRegistryEditor(QWidget):
         if not ok or not new_key.strip() or new_key.strip() == old_key:
             return
         new_key = new_key.strip()
-        statics: list[str] = self._model.flag_registry.setdefault("static", [])
-        if new_key in statics:
+        statics: list = self._model.flag_registry.setdefault("static", [])
+        keys_now = {str(e["key"]) for e in statics if isinstance(e, dict) and e.get("key")}
+        if new_key in keys_now:
             QMessageBox.information(self, "Rename", f"'{new_key}' already exists.")
             return
-        idx = statics.index(old_key)
-        statics[idx] = new_key
-        statics.sort()
+        ent = self._find_static_entry(old_key)
+        if not ent:
+            return
+        ent["key"] = new_key
+        statics.sort(key=lambda e: str(e.get("key", "")) if isinstance(e, dict) else str(e))
         self._model.mark_dirty("flag_registry")
         self._refresh_static()
 
@@ -139,10 +201,15 @@ class FlagRegistryEditor(QWidget):
         )
         if r != QMessageBox.StandardButton.Yes:
             return
-        statics: list[str] = self._model.flag_registry.setdefault("static", [])
-        for k in keys:
-            if k in statics:
-                statics.remove(k)
+        statics: list = self._model.flag_registry.setdefault("static", [])
+        key_set = set(keys)
+        self._model.flag_registry["static"] = [
+            e for e in statics
+            if not (
+                isinstance(e, dict) and e.get("key") in key_set
+                or isinstance(e, str) and e in key_set
+            )
+        ]
         self._model.mark_dirty("flag_registry")
         self._refresh_static()
 
@@ -189,7 +256,9 @@ class FlagRegistryEditor(QWidget):
 
     def _add_pattern(self) -> None:
         patterns: list[dict] = self._model.flag_registry.setdefault("patterns", [])
-        patterns.append({"id": "new_pattern", "prefix": "new_", "idSource": "item"})
+        patterns.append({
+            "id": "new_pattern", "prefix": "new_", "idSource": "item", "valueType": "bool",
+        })
         self._model.mark_dirty("flag_registry")
         self._refresh_patterns()
 
@@ -245,6 +314,15 @@ class _PatternRow(QFrame):
         self._src.setMaximumWidth(180)
         self._src.currentTextChanged.connect(self.changed)
 
+        self._vtype = QComboBox()
+        self._vtype.addItems(["bool", "float"])
+        raw_vt = data.get("valueType", "bool")
+        if raw_vt == "int":
+            raw_vt = "float"
+        self._vtype.setCurrentText("float" if raw_vt == "float" else "bool")
+        self._vtype.setMaximumWidth(72)
+        self._vtype.currentTextChanged.connect(self.changed)
+
         del_btn = QPushButton("-")
         del_btn.setFixedWidth(28)
         del_btn.clicked.connect(lambda: self.removed.emit(self))
@@ -257,12 +335,15 @@ class _PatternRow(QFrame):
         lay.addWidget(self._suffix)
         lay.addWidget(QLabel("idSource:"))
         lay.addWidget(self._src)
+        lay.addWidget(QLabel("类型:"))
+        lay.addWidget(self._vtype)
         lay.addWidget(del_btn)
 
     def to_dict(self) -> dict:
         d: dict = {
             "id": self._id.text().strip(),
             "prefix": self._prefix.text().strip(),
+            "valueType": self._vtype.currentText(),
         }
         suf = self._suffix.text().strip()
         if suf:

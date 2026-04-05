@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Signal
 
-from .flag_key_selector import populate_flag_key_combo
+from .flag_key_field import FlagKeyPickField
+from .flag_value_edit import FlagValueEdit
 
 ACTION_TYPES = [
     "setFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
@@ -50,11 +51,17 @@ class ActionRow(QWidget):
     removed = Signal(object)
     changed = Signal()
 
-    def __init__(self, data: dict | None = None, parent: QWidget | None = None,
-                 shared_flag_keys: list[str] | None = None):
+    def __init__(
+        self,
+        data: dict | None = None,
+        parent: QWidget | None = None,
+        model=None,
+        scene_id: str | None = None,
+    ):
         super().__init__(parent)
         self._param_widgets: dict[str, QWidget] = {}
-        self._shared_flag_keys = shared_flag_keys or []
+        self._ctx_model = model
+        self._ctx_scene_id = scene_id
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -80,6 +87,18 @@ class ActionRow(QWidget):
         self._rebuild_params()
 
         self.type_combo.currentTextChanged.connect(self._on_type_changed)
+
+    def set_project_context(self, model, scene_id: str | None) -> None:
+        self._ctx_model = model
+        self._ctx_scene_id = scene_id
+        w = self._param_widgets.get("key")
+        if isinstance(w, FlagKeyPickField):
+            w.set_context(model, scene_id)
+        vw = self._param_widgets.get("value")
+        if isinstance(vw, FlagValueEdit):
+            vw.set_registry(model.flag_registry if model else {})
+            if isinstance(w, FlagKeyPickField):
+                vw.set_flag_key(w.key())
 
     def _on_type_changed(self, _text: str) -> None:
         self._data["params"] = {}
@@ -112,21 +131,35 @@ class ActionRow(QWidget):
                 w.setChecked(bool(val))
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
-                w = QLineEdit(str(val) if val != "" else "true")
-                w.setPlaceholderText("true / false / number")
-                w.textChanged.connect(self.changed)
+                w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
+                if act_type != "setFlag":
+                    w.set_value(val if val != "" else True)
+                w.valueChanged.connect(self.changed)
             elif act_type == "setFlag" and pname == "key":
-                w = QComboBox()
-                w.setEditable(False)
-                w.setMinimumWidth(180)
                 cur = str(val) if val is not None else ""
-                populate_flag_key_combo(w, self._shared_flag_keys, cur)
-                w.currentIndexChanged.connect(self.changed)
+                w = FlagKeyPickField(self._ctx_model, self._ctx_scene_id, cur, self)
+                w.setMinimumWidth(200)
             else:
                 w = QLineEdit(str(val))
                 w.textChanged.connect(self.changed)
             self._param_widgets[pname] = w
             self._params_layout.addRow(pname, w)
+
+        if act_type == "setFlag":
+            kw = self._param_widgets.get("key")
+            vw = self._param_widgets.get("value")
+            if isinstance(kw, FlagKeyPickField) and isinstance(vw, FlagValueEdit):
+                reg = self._ctx_model.flag_registry if self._ctx_model else {}
+                vw.set_registry(reg)
+
+                def on_key() -> None:
+                    vw.set_flag_key(kw.key())
+                    self.changed.emit()
+
+                kw.valueChanged.connect(on_key)
+                on_key()
+                pval = params.get("value", "")
+                vw.set_value(pval if pval != "" else True)
 
     def to_dict(self) -> dict:
         act_type = self.type_combo.currentText()
@@ -140,32 +173,14 @@ class ActionRow(QWidget):
                 params[pname] = w.value()
             elif ptype == "bool":
                 params[pname] = w.isChecked()
-            elif ptype == "flag_val":
-                raw = w.text().strip()
-                if raw == "true":
-                    params[pname] = True
-                elif raw == "false":
-                    params[pname] = False
-                else:
-                    try:
-                        params[pname] = int(raw)
-                    except ValueError:
-                        params[pname] = raw
-            elif act_type == "setFlag" and pname == "key" and isinstance(w, QComboBox):
-                raw_k = w.currentData()
-                params[pname] = raw_k if isinstance(raw_k, str) else (str(raw_k) if raw_k else "")
+            elif ptype == "flag_val" and isinstance(w, FlagValueEdit):
+                v = w.get_value()
+                params[pname] = v if isinstance(v, bool) else float(v)
+            elif act_type == "setFlag" and pname == "key" and isinstance(w, FlagKeyPickField):
+                params[pname] = w.key()
             else:
                 params[pname] = w.text()
         return {"type": act_type, "params": params}
-
-    def refresh_setflag_key_combo(self) -> None:
-        w = self._param_widgets.get("key")
-        if w is None or self.type_combo.currentText() != "setFlag":
-            return
-        if isinstance(w, QComboBox):
-            cur = w.currentData()
-            cur_s = str(cur) if cur else ""
-            populate_flag_key_combo(w, self._shared_flag_keys, cur_s)
 
 
 class ActionEditor(QWidget):
@@ -174,7 +189,8 @@ class ActionEditor(QWidget):
     def __init__(self, label: str = "Actions", parent: QWidget | None = None):
         super().__init__(parent)
         self._rows: list[ActionRow] = []
-        self._shared_flag_keys: list[str] = []
+        self._ctx_model = None
+        self._ctx_scene_id: str | None = None
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(QLabel(f"<b>{label}</b>"))
@@ -185,17 +201,18 @@ class ActionEditor(QWidget):
         add_btn.clicked.connect(self._add_empty)
         root.addWidget(add_btn)
 
-    def set_flag_keys(self, keys: list[str]) -> None:
-        """Allowed flag keys from registry only (expanded)."""
-        self._shared_flag_keys.clear()
-        self._shared_flag_keys.extend(keys)
+    def set_project_context(self, model, scene_id: str | None = None) -> None:
+        self._ctx_model = model
+        self._ctx_scene_id = scene_id
         for r in self._rows:
-            r._shared_flag_keys = self._shared_flag_keys
-            r.refresh_setflag_key_combo()
+            r.set_project_context(model, scene_id)
 
-    def set_flag_completions(self, keys: list[str]) -> None:
-        """Backward-compatible name; keys must be registry-expanded list."""
-        self.set_flag_keys(keys)
+    def set_flag_completions(self, _keys: list[str]) -> None:
+        """Deprecated: pass set_project_context instead."""
+        del _keys
+
+    def set_flag_keys(self, _keys: list[str]) -> None:
+        del _keys
 
     def set_data(self, actions: list[dict]) -> None:
         self._clear()
@@ -212,7 +229,7 @@ class ActionEditor(QWidget):
         self._rows.clear()
 
     def _add_row(self, data: dict | None = None) -> None:
-        row = ActionRow(data, shared_flag_keys=self._shared_flag_keys)
+        row = ActionRow(data, model=self._ctx_model, scene_id=self._ctx_scene_id)
         row.removed.connect(self._remove_row)
         row.changed.connect(self.changed)
         self._rows.append(row)

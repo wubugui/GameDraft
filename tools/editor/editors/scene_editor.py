@@ -828,9 +828,7 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_y.setValue(hs.get("y", 0))
         self._hs_range.setValue(hs.get("interactionRange", 50))
         self._hs_auto.setChecked(hs.get("autoTrigger", False))
-        fc = self._model.registry_flag_choices(self._editing_scene_id or None)
         self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
-        self._hs_cond.set_flags(fc)
         self._hs_cond.set_data(hs.get("conditions", []))
 
         data = hs.get("data", {})
@@ -838,7 +836,9 @@ class ScenePropertyPanel(QScrollArea):
         self._on_hs_type_changed(ht)
         if ht == "inspect":
             self._hs_inspect_text.setPlainText(data.get("text", ""))
-            self._hs_inspect_actions.set_flag_completions(fc)
+            self._hs_inspect_actions.set_project_context(
+                self._model, self._editing_scene_id or None,
+            )
             self._hs_inspect_actions.set_data(data.get("actions", []))
         elif ht == "pickup":
             self._hs_pickup_item.setText(data.get("itemId", ""))
@@ -998,12 +998,10 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_y.setValue(zone.get("y", 0))
         self._zn_w.setValue(zone.get("width", 100))
         self._zn_h.setValue(zone.get("height", 100))
-        zf = self._model.registry_flag_choices(self._editing_scene_id or None)
         self._zn_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
-        self._zn_cond.set_flags(zf)
         self._zn_cond.set_data(zone.get("conditions", []))
-        self._zn_enter.set_flag_completions(zf)
-        self._zn_exit.set_flag_completions(zf)
+        self._zn_enter.set_project_context(self._model, self._editing_scene_id or None)
+        self._zn_exit.set_project_context(self._model, self._editing_scene_id or None)
         self._zn_enter.set_data(zone.get("onEnter", []))
         self._zn_exit.set_data(zone.get("onExit", []))
 

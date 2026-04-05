@@ -175,6 +175,25 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
     if not reg.get("static") and not reg.get("patterns"):
         return
 
+    from .flag_registry import flag_registry_static_format_issues
+    for msg in flag_registry_static_format_issues(reg):
+        issues.append(Issue("warning", "flag_registry", "flag_registry", msg))
+    for i, p in enumerate(reg.get("patterns") or []):
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id", i))
+        vt = p.get("valueType")
+        if vt is None:
+            issues.append(Issue(
+                "warning", "flag_registry", pid,
+                "pattern 缺少 valueType（bool 或 float）",
+            ))
+        elif vt not in ("bool", "float", "int"):
+            issues.append(Issue(
+                "warning", "flag_registry", pid,
+                f"pattern valueType 无效: {vt!r}",
+            ))
+
     for sid, sc in model.scenes.items():
         for hs in sc.get("hotspots", []) or []:
             hid = str(hs.get("id", ""))

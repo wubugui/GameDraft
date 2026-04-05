@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QLabel,
-    QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
+    QWidget, QVBoxLayout, QFormLayout, QPushButton, QLabel,
+    QTableWidget, QHeaderView,
 )
 
 from ..project_model import ProjectModel
 from ..shared.id_ref_selector import IdRefSelector
-from ..shared.flag_key_selector import populate_flag_key_combo
+from ..shared.flag_key_field import FlagKeyPickField
+from ..shared.flag_value_edit import FlagValueEdit
 
 
 class GameConfigEditor(QWidget):
@@ -35,13 +36,12 @@ class GameConfigEditor(QWidget):
         self._initial_cutscene.set_items(model.all_cutscene_ids())
         f.addRow("initialCutscene", self._initial_cutscene)
 
-        self._cutscene_flag = QComboBox()
-        self._cutscene_flag.setEditable(False)
-        self._cutscene_flag.setMinimumWidth(220)
+        self._cutscene_flag = FlagKeyPickField(model, None, "", self)
+        self._cutscene_flag.setMinimumWidth(320)
         f.addRow("initialCutsceneDoneFlag", self._cutscene_flag)
         lay.addLayout(f)
 
-        lay.addWidget(QLabel("<b>startupFlags</b>（key 仅能从 Flags 登记中选择）"))
+        lay.addWidget(QLabel("<b>startupFlags</b>"))
         self._flags_table = QTableWidget(0, 2)
         self._flags_table.setHorizontalHeaderLabels(["key", "value"])
         self._flags_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -57,38 +57,36 @@ class GameConfigEditor(QWidget):
         lay.addStretch()
         self._load()
 
-    def _flag_choices(self) -> list[str]:
-        return self._model.registry_flag_choices(None)
-
     def _load(self) -> None:
         cfg = self._model.game_config
-        allowed = self._flag_choices()
         self._initial_scene.set_current(cfg.get("initialScene", ""))
         self._initial_quest.set_current(cfg.get("initialQuest", ""))
         self._fallback_scene.set_current(cfg.get("fallbackScene", ""))
         self._initial_cutscene.set_current(cfg.get("initialCutscene", ""))
-        populate_flag_key_combo(
-            self._cutscene_flag, allowed, str(cfg.get("initialCutsceneDoneFlag", "") or "")
-        )
+        self._cutscene_flag.set_key(str(cfg.get("initialCutsceneDoneFlag", "") or ""))
         sf = cfg.get("startupFlags", {})
         self._flags_table.setRowCount(0)
         for k, v in sf.items():
             r = self._flags_table.rowCount()
             self._flags_table.insertRow(r)
-            cb = QComboBox()
-            cb.setEditable(False)
-            populate_flag_key_combo(cb, allowed, str(k))
-            self._flags_table.setCellWidget(r, 0, cb)
-            self._flags_table.setItem(r, 1, QTableWidgetItem(str(v)))
+            pf = FlagKeyPickField(self._model, None, str(k), self)
+            vf = FlagValueEdit(self, self._model.flag_registry)
+            pf.valueChanged.connect(lambda: vf.set_flag_key(pf.key()))
+            self._flags_table.setCellWidget(r, 0, pf)
+            self._flags_table.setCellWidget(r, 1, vf)
+            vf.set_flag_key(pf.key())
+            vf.set_value(v)
 
     def _add_flag(self) -> None:
         r = self._flags_table.rowCount()
         self._flags_table.insertRow(r)
-        cb = QComboBox()
-        cb.setEditable(False)
-        populate_flag_key_combo(cb, self._flag_choices(), "")
-        self._flags_table.setCellWidget(r, 0, cb)
-        self._flags_table.setItem(r, 1, QTableWidgetItem("true"))
+        pf = FlagKeyPickField(self._model, None, "", self)
+        vf = FlagValueEdit(self, self._model.flag_registry)
+        pf.valueChanged.connect(lambda: vf.set_flag_key(pf.key()))
+        self._flags_table.setCellWidget(r, 0, pf)
+        self._flags_table.setCellWidget(r, 1, vf)
+        vf.set_flag_key(pf.key())
+        vf.set_value(True)
 
     def _apply(self) -> None:
         cfg = self._model.game_config
@@ -100,8 +98,7 @@ class GameConfigEditor(QWidget):
             cfg["initialCutscene"] = cs
         elif "initialCutscene" in cfg:
             del cfg["initialCutscene"]
-        cf = self._cutscene_flag.currentData()
-        cf_s = str(cf).strip() if cf else ""
+        cf_s = self._cutscene_flag.key()
         if cf_s:
             cfg["initialCutsceneDoneFlag"] = cf_s
         elif "initialCutsceneDoneFlag" in cfg:
@@ -109,23 +106,17 @@ class GameConfigEditor(QWidget):
         sf: dict = {}
         for i in range(self._flags_table.rowCount()):
             cw = self._flags_table.cellWidget(i, 0)
-            v_item = self._flags_table.item(i, 1)
+            vw = self._flags_table.cellWidget(i, 1)
             k = ""
-            if isinstance(cw, QComboBox):
-                raw = cw.currentData()
-                k = str(raw).strip() if raw else ""
+            if isinstance(cw, FlagKeyPickField):
+                k = cw.key()
             if not k:
                 continue
-            raw = v_item.text().strip() if v_item else "true"
-            if raw == "true":
-                sf[k] = True
-            elif raw == "false":
-                sf[k] = False
+            if isinstance(vw, FlagValueEdit):
+                v = vw.get_value()
+                sf[k] = v if isinstance(v, bool) else float(v)
             else:
-                try:
-                    sf[k] = int(raw)
-                except ValueError:
-                    sf[k] = raw
+                sf[k] = True
         if sf:
             cfg["startupFlags"] = sf
         elif "startupFlags" in cfg:

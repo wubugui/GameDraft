@@ -67,6 +67,7 @@ class QuestEditor(QWidget):
         self._q_pre = ConditionEditor("Preconditions"); form.addWidget(self._q_pre)
         self._q_comp = ConditionEditor("Completion Conditions"); form.addWidget(self._q_comp)
         self._q_rewards = ActionEditor("Rewards"); form.addWidget(self._q_rewards)
+        self._q_rewards.set_project_context(self._model, None)
         apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply)
         form.addWidget(apply_btn)
         form.addStretch()
@@ -119,14 +120,11 @@ class QuestEditor(QWidget):
         self._q_title.setText(q.get("title", ""))
         self._q_desc.setPlainText(q.get("description", ""))
         self._q_next.set_current(q.get("nextQuestId", ""))
-        flags = self._model.registry_flag_choices(None)
         self._q_pre.set_flag_pattern_context(self._model, None)
         self._q_comp.set_flag_pattern_context(self._model, None)
-        self._q_pre.set_flags(flags)
-        self._q_comp.set_flags(flags)
         self._q_pre.set_data(q.get("preconditions", []))
         self._q_comp.set_data(q.get("completionConditions", []))
-        self._q_rewards.set_flag_completions(flags)
+        self._q_rewards.set_project_context(self._model, None)
         self._q_rewards.set_data(q.get("rewards", []))
 
     def _apply(self) -> None:
