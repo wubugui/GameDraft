@@ -4,6 +4,7 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
+import type { InventoryManager } from './InventoryManager';
 import type { ActionDef, IGameSystem, GameContext, DialogueLine, DialogueChoice } from '../data/types';
 import { bindInkExternals } from '../data/inkExternals';
 
@@ -20,6 +21,7 @@ export class DialogueManager implements IGameSystem {
   private flagStore: FlagStore;
   private actionExecutor: ActionExecutor;
   private assetManager: AssetManager;
+  private inventoryManager: InventoryManager;
   private story: Story | null = null;
   private active: boolean = false;
   private currentNpcName: string = '';
@@ -30,11 +32,13 @@ export class DialogueManager implements IGameSystem {
     flagStore: FlagStore,
     actionExecutor: ActionExecutor,
     assetManager: AssetManager,
+    inventoryManager: InventoryManager,
   ) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.actionExecutor = actionExecutor;
     this.assetManager = assetManager;
+    this.inventoryManager = inventoryManager;
   }
 
   init(_ctx: GameContext): void {}
@@ -63,7 +67,7 @@ export class DialogueManager implements IGameSystem {
     const jsonStr = await this.assetManager.loadText(jsonPath);
 
     this.story = new Story(jsonStr);
-    bindInkExternals(this.story, { flagStore: this.flagStore });
+    bindInkExternals(this.story, { flagStore: this.flagStore, inventory: this.inventoryManager });
 
     this.currentInkPath = inkPath;
     this.currentNpcName = npcName;

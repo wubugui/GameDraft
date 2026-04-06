@@ -1,3 +1,7 @@
+import subprocess
+import sys
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QStatusBar, QMessageBox, QPushButton, QDialog,
     QVBoxLayout, QTextEdit,
@@ -60,7 +64,25 @@ class MainWindow(QMainWindow):
         self._scene.node_deselected.connect(self._on_node_deselected)
         self._view.node_clicked.connect(self._on_node_selected)
 
+        self._build_menus()
+
         self._refresh()
+
+    def _build_menus(self) -> None:
+        mb = self.menuBar()
+        tools_menu = mb.addMenu("Tools")
+        act = tools_menu.addAction("Open GameDraft Editor")
+        act.triggered.connect(self._open_main_editor)
+
+    def _open_main_editor(self) -> None:
+        root = str(Path(self._project_path).resolve())
+        try:
+            subprocess.Popen(
+                [sys.executable, "-m", "tools.editor", root],
+                cwd=root,
+            )
+        except OSError as e:
+            QMessageBox.critical(self, "GameDraft Editor", str(e))
 
     def _refresh(self):
         self._graph = parse_project(self._project_path)

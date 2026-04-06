@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
         self._game_proc_log: str = ""
         self._game_user_stopped: bool = False
         self._last_vite_dev_url: str | None = None
+        self._pending_cutscene_id: str | None = None
         self._tabs = QTabWidget()
         self.setCentralWidget(self._tabs)
         self._editor_instances: list = []
@@ -152,6 +153,8 @@ class MainWindow(QMainWindow):
 
         tools_menu = mb.addMenu("Tools")
         self._act(tools_menu, "Validate Data", self._validate)
+        tools_menu.addSeparator()
+        self._act(tools_menu, "Open Graph Editor", self._open_graph_editor)
 
         view_menu = mb.addMenu("View")
         ag_theme = QActionGroup(self)
@@ -248,6 +251,20 @@ class MainWindow(QMainWindow):
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
 
+    def _open_graph_editor(self) -> None:
+        if self._model.project_path is None:
+            QMessageBox.information(
+                self, "Graph Editor", "Please open a project first.")
+            return
+        root = str(self._model.project_path.resolve())
+        try:
+            subprocess.Popen(
+                [sys.executable, "-m", "tools.graph_editor", "--project", root],
+                cwd=root,
+            )
+        except OSError as e:
+            QMessageBox.critical(self, "Graph Editor", str(e))
+
     def _populate_tabs(self) -> None:
         self._tabs.clear()
         self._editor_instances.clear()
@@ -293,6 +310,8 @@ class MainWindow(QMainWindow):
             ed = cls(self._model)
             self._tabs.addTab(ed, label)
             self._editor_instances.append(ed)
+            if isinstance(ed, CutsceneEditor):
+                ed.play_requested.connect(self._on_cutscene_play_requested)
 
         self._game_browser = GameBrowserTab(self)
         self._game_browser.run_requested.connect(self._run_game)
@@ -414,10 +433,14 @@ class MainWindow(QMainWindow):
             return (int(vp["width"]), int(vp["height"]))
         return (1280, 720)
 
-    def _focus_game_tab_and_load(self, url: str | None = None) -> None:
+    def _focus_game_tab_and_load(self, url: str | None = None,
+                                extra_params: str = "") -> None:
         target = (url or GAME_DEV_URL).strip()
         if not target.endswith("/"):
             target += "/"
+        if extra_params:
+            sep = "&" if "?" in target else "?"
+            target = target + sep + extra_params
 
         if self._game_browser is not None:
             self._game_browser.show_message(
@@ -448,7 +471,11 @@ class MainWindow(QMainWindow):
         self._game_server_ready_for_current_run = True
         self._last_vite_dev_url = url
         self._game_ready_timer.stop()
-        self._focus_game_tab_and_load(url)
+        params = ""
+        if self._pending_cutscene_id:
+            params = f"mode=dev&play_cutscene={self._pending_cutscene_id}"
+            self._pending_cutscene_id = None
+        self._focus_game_tab_and_load(url, extra_params=params)
         self._status.showMessage("Dev server ready.", 3000)
 
     def _on_game_proc_output(self) -> None:
@@ -537,6 +564,32 @@ class MainWindow(QMainWindow):
             self._game_browser.show_message(
                 "Dev server stopped. Press Run (F5) to start again.",
             )
+
+    def _on_cutscene_play_requested(self, cutscene_id: str) -> None:
+        if not cutscene_id:
+            return
+        self._save_all()
+        if not self._compile_ink():
+            return
+
+        is_running = (self._game_proc is not None
+                      and self._game_proc.state() != QProcess.ProcessState.NotRunning)
+
+        if is_running and self._game_play_window is not None:
+            js = f'window.__gameDevAPI && window.__gameDevAPI.playCutscene("{cutscene_id}")'
+            self._game_play_window.run_js(js)
+            self._game_play_window.raise_()
+            self._game_play_window.activateWindow()
+            self._status.showMessage(f"Playing cutscene: {cutscene_id}", 3000)
+        elif is_running:
+            self._focus_game_tab_and_load(
+                self._last_vite_dev_url,
+                extra_params=f"mode=dev&play_cutscene={cutscene_id}",
+            )
+            self._status.showMessage(f"Playing cutscene: {cutscene_id}", 3000)
+        else:
+            self._pending_cutscene_id = cutscene_id
+            self._run_game()
 
     def _on_game_play_window_closed(self) -> None:
         self._game_play_window = None

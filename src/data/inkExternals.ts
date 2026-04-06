@@ -1,5 +1,6 @@
 import type { Story } from 'inkjs';
 import type { FlagStore } from '../core/FlagStore';
+import type { InventoryManager } from '../systems/InventoryManager';
 
 // ---------------------------------------------------------------------------
 // Editor metadata (parsed by tools/editor at startup)
@@ -24,6 +25,8 @@ export interface InkParam {
  */
 export const INK_EXTERNALS: Record<string, InkParam[]> = {
   getFlag: [{ name: 'key', completion: 'flag_key' }],
+  /** Current player coin balance (same source as InventoryManager / HUD). */
+  getCoins: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -32,6 +35,7 @@ export const INK_EXTERNALS: Record<string, InkParam[]> = {
 
 export interface InkExternalDeps {
   flagStore: FlagStore;
+  inventory: InventoryManager;
 }
 
 export function bindInkExternals(story: Story, deps: InkExternalDeps): void {
@@ -40,4 +44,5 @@ export function bindInkExternals(story: Story, deps: InkExternalDeps): void {
     if (typeof val === 'boolean') return val ? 1 : 0;
     return val ?? 0;
   }, true);
+  story.BindExternalFunction('getCoins', () => deps.inventory.getCoins(), true);
 }

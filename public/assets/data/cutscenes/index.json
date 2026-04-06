@@ -14,16 +14,16 @@
       {
         "type": "show_title",
         "text": "渝都卫",
-        "duration": 1
+        "duration": 1.0
       },
       {
         "type": "wait_time",
-        "duration": 1
+        "duration": 1.0
       },
       {
         "type": "show_title",
         "text": "第一天",
-        "duration": 1
+        "duration": 1.0
       },
       {
         "type": "show_dialogue",
@@ -41,7 +41,7 @@
       },
       {
         "type": "fade_in",
-        "duration": 1
+        "duration": 1.0
       },
       {
         "type": "show_dialogue",
@@ -53,7 +53,8 @@
         "speaker": "旁白",
         "text": "你——关二狗，从小没爹没娘，混迹于街头，靠帮人跑腿混口饭吃。今天你照例在城里转悠，想看看有什么营生可做。"
       }
-    ]
+    ],
+    "targetScene": "teahouse"
   },
   {
     "id": "prologue_day_end",

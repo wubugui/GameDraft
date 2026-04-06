@@ -24,6 +24,8 @@ class Toolbar(QToolBar):
         self.addSeparator()
 
         self._save_action = self.addAction("Save All")
+        self._save_action.setEnabled(False)
+        self._save_action.setToolTip("暂不可用：编辑器当前为只读模式")
         self._save_action.triggered.connect(self.save_requested.emit)
 
         self._refresh_action = self.addAction("Refresh")

@@ -616,7 +616,10 @@ class DialogueBrowser(QWidget):
             QMessageBox.warning(self, "New Ink File", f"{name} already exists.")
             return
         target.parent.mkdir(parents=True, exist_ok=True)
-        write_text(target, f"EXTERNAL getFlag(key)\n\n=== start ===\n-> END\n")
+        write_text(
+            target,
+            "EXTERNAL getFlag(key)\nEXTERNAL getCoins()\n\n=== start ===\n-> END\n",
+        )
         self._refresh()
         for i in range(self._file_list.count()):
             item = self._file_list.item(i)

@@ -391,6 +391,11 @@ export interface IEmoteBubbleProvider {
 export interface CutsceneDef {
   id: string;
   commands: CutsceneCommand[];
+  targetScene?: string;
+  targetSpawnPoint?: string;
+  targetX?: number;
+  targetY?: number;
+  restoreState?: boolean;
 }
 
 export interface CutsceneCommand {

@@ -160,6 +160,10 @@ class GamePlayWindow(QWidget):
     def is_available(self) -> bool:
         return self._view is not None
 
+    def run_js(self, code: str) -> None:
+        if self._view:
+            self._view.page().runJavaScript(code)
+
     def closeEvent(self, event) -> None:
         self.closed.emit()
         super().closeEvent(event)

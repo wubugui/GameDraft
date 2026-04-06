@@ -262,6 +262,35 @@ class ProjectModel(QObject):
             ]
         return []
 
+    def all_npc_ids_global(self) -> list[tuple[str, str]]:
+        """All NPC ids across all scenes, deduplicated."""
+        seen: dict[str, str] = {}
+        for sc in self.scenes.values():
+            if not isinstance(sc, dict):
+                continue
+            for npc in sc.get("npcs") or []:
+                if not isinstance(npc, dict):
+                    continue
+                nid = npc.get("id") or npc.get("npcId")
+                if nid and str(nid) not in seen:
+                    label = npc.get("label") or npc.get("name") or str(nid)
+                    seen[str(nid)] = str(label)[:40]
+        return [(k, v) for k, v in sorted(seen.items())]
+
+    def all_npc_names(self) -> list[str]:
+        """All unique NPC display names across all scenes."""
+        names: set[str] = set()
+        for sc in self.scenes.values():
+            if not isinstance(sc, dict):
+                continue
+            for npc in sc.get("npcs") or []:
+                if not isinstance(npc, dict):
+                    continue
+                name = npc.get("name") or npc.get("label") or npc.get("id")
+                if name:
+                    names.add(str(name))
+        return sorted(names)
+
     def npc_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
         """NPC ids in a scene (for hotspot / emote targets)."""
         if not scene_id:
@@ -276,6 +305,32 @@ class ProjectModel(QObject):
                 label = npc.get("label") or npc.get("name") or str(nid)
                 out.append((str(nid), str(label)[:40]))
         return out
+
+    def scene_transitions(self) -> list[dict]:
+        """All transition edges between scenes, derived from hotspot data.
+
+        Returns list of {from_scene, to_scene, label, conditional}.
+        """
+        edges: list[dict] = []
+        for sid, sc in self.scenes.items():
+            if not isinstance(sc, dict):
+                continue
+            for hs in sc.get("hotspots") or []:
+                if not isinstance(hs, dict):
+                    continue
+                if hs.get("type") != "transition":
+                    continue
+                data = hs.get("data") or {}
+                target = data.get("targetScene")
+                if not target:
+                    continue
+                edges.append({
+                    "from_scene": str(sid),
+                    "to_scene": str(target),
+                    "label": str(hs.get("label", "")),
+                    "conditional": bool(hs.get("conditions")),
+                })
+        return edges
 
     def all_item_ids(self) -> list[tuple[str, str]]:
         return [(it["id"], it.get("name", it["id"])) for it in self.items]

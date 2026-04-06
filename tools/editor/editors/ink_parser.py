@@ -29,6 +29,10 @@ RE_TAG_INLINE = re.compile(r"#\s*(\S+(?::[^\s#]*)*)")
 RE_EXTERNAL = re.compile(r"^EXTERNAL\s+", re.IGNORECASE)
 RE_EXTERNAL_DECL = re.compile(r"^EXTERNAL\s+(\w+)\s*\(([^)]*)\)", re.IGNORECASE)
 RE_COND_EXTERN = re.compile(r'^\{\s*(\w+)\("([^"]+)"\)\s*:', re.IGNORECASE)
+RE_COND_EXTERN_NOARG = re.compile(
+    r'^\{\s*(\w+)\(\s*\)\s*(?:(>=|<=|==|!=|>|<)\s*(-?\d+(?:\.\d+)?))?\s*:',
+    re.IGNORECASE,
+)
 RE_COND_ELSE = re.compile(r"^\s*-\s*else\s*:")
 RE_COND_END = re.compile(r"^\s*\}\s*$")
 RE_SPEAKER_TAG = re.compile(r"#\s*speaker:(\S+)")
@@ -107,6 +111,10 @@ class SimNode:
     divert_target: str = ""
     choices: list[SimChoice] = field(default_factory=list)
     condition_flag: str = ""
+    condition_mode: str = "flag"  # 'flag' | 'external'
+    condition_external_name: str = ""
+    condition_cmp: str | None = None
+    condition_rhs: float | None = None
     true_children: list[SimNode] = field(default_factory=list)
     false_children: list[SimNode] = field(default_factory=list)
     line_number: int = 0
@@ -140,7 +148,7 @@ class InkExternalDef:
 
 INK_EXTERNALS: dict[str, InkExternalDef] = {}
 
-_RE_EXT_ENTRY = re.compile(r"(\w+)\s*:\s*\[(.+?)\]", re.DOTALL)
+_RE_EXT_ENTRY = re.compile(r"(\w+)\s*:\s*\[(.*?)\]", re.DOTALL)
 _RE_EXT_PARAM = re.compile(r"name:\s*'(\w+)'.*?completion:\s*'(\w+)'")
 
 
@@ -159,8 +167,7 @@ def discover_ink_externals(contract_file: Path) -> dict[str, InkExternalDef]:
         params: list[InkExternalParam] = []
         for pm in _RE_EXT_PARAM.finditer(params_block):
             params.append(InkExternalParam(pm.group(1), pm.group(2)))
-        if params:
-            result[func_name] = InkExternalDef(func_name, params)
+        result[func_name] = InkExternalDef(func_name, params)
     return result
 
 
@@ -338,6 +345,22 @@ def validate_ink(text: str, model: ProjectModel | None = None) -> list[InkValida
                         issues.append(InkValidationIssue(
                             i, f"Flag '{arg}' not in registry", "warning",
                         ))
+            continue
+        cond_na = RE_COND_EXTERN_NOARG.match(stripped)
+        if cond_na:
+            fn = cond_na.group(1)
+            if fn not in INK_EXTERNALS:
+                issues.append(InkValidationIssue(
+                    i, f"Condition uses unregistered external '{fn}'", "warning",
+                ))
+            elif len(INK_EXTERNALS[fn].params) != 0:
+                issues.append(InkValidationIssue(
+                    i,
+                    f"Condition '{fn}()' does not match signature "
+                    f"({format_external_signature(INK_EXTERNALS[fn])})",
+                    "error",
+                ))
+            continue
 
         dm = RE_INLINE_DIVERT.search(stripped)
         if dm:
@@ -402,6 +425,32 @@ def _detect_speaker(line: str, tags: list[str]) -> str:
     return ""
 
 
+def _conditional_branches(
+    all_lines: list[str], i: int, end: int,
+) -> tuple[int, list[SimNode], list[SimNode]]:
+    true_lines: list[int] = []
+    false_lines: list[int] = []
+    in_else = False
+    j = i + 1
+    while j < end:
+        sl = all_lines[j].strip()
+        if RE_COND_END.match(sl):
+            j += 1
+            break
+        if RE_COND_ELSE.match(sl):
+            in_else = True
+            j += 1
+            continue
+        if in_else:
+            false_lines.append(j)
+        else:
+            true_lines.append(j)
+        j += 1
+    true_children = _parse_line_indices(all_lines, true_lines)
+    false_children = _parse_line_indices(all_lines, false_lines)
+    return j, true_children, false_children
+
+
 def parse_knot_sim_tree(
     all_lines: list[str], start: int, end: int,
 ) -> list[SimNode]:
@@ -418,28 +467,29 @@ def parse_knot_sim_tree(
         cond_m = RE_COND_EXTERN.match(stripped)
         if cond_m:
             flag_key = cond_m.group(2)
-            true_lines: list[int] = []
-            false_lines: list[int] = []
-            in_else = False
-            j = i + 1
-            while j < end:
-                sl = all_lines[j].strip()
-                if RE_COND_END.match(sl):
-                    j += 1
-                    break
-                if RE_COND_ELSE.match(sl):
-                    in_else = True
-                    j += 1
-                    continue
-                if in_else:
-                    false_lines.append(j)
-                else:
-                    true_lines.append(j)
-                j += 1
-            true_children = _parse_line_indices(all_lines, true_lines)
-            false_children = _parse_line_indices(all_lines, false_lines)
+            j, true_children, false_children = _conditional_branches(all_lines, i, end)
             nodes.append(SimNode(
                 kind="conditional", condition_flag=flag_key,
+                condition_mode="flag",
+                true_children=true_children, false_children=false_children,
+                line_number=i,
+            ))
+            i = j
+            continue
+
+        cond_na = RE_COND_EXTERN_NOARG.match(stripped)
+        if cond_na:
+            fn = cond_na.group(1)
+            cmp_op = cond_na.group(2)
+            rhs_raw = cond_na.group(3)
+            rhs = float(rhs_raw) if rhs_raw is not None else None
+            j, true_children, false_children = _conditional_branches(all_lines, i, end)
+            nodes.append(SimNode(
+                kind="conditional",
+                condition_mode="external",
+                condition_external_name=fn,
+                condition_cmp=cmp_op,
+                condition_rhs=rhs,
                 true_children=true_children, false_children=false_children,
                 line_number=i,
             ))

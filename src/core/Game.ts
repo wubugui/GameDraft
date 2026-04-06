@@ -55,6 +55,22 @@ import { SceneDepthSystem } from './SceneDepthSystem';
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import { depthLog, depthError } from './depthLog';
+import { DevModeUI } from '../ui/DevModeUI';
+
+export interface GameStartOptions {
+  devMode?: boolean;
+  playCutscene?: string;
+}
+
+declare global {
+  interface Window {
+    __gameDevAPI?: {
+      playCutscene(id: string): void;
+      reload(): void;
+      isReady(): boolean;
+    };
+  }
+}
 
 export class Game {
   private eventBus: EventBus;
@@ -117,6 +133,8 @@ export class Game {
   private unsubRendererResize: (() => void) | null = null;
   /** 避免 beforeunload 与 pagehide 接连触发时重复销毁（第二次会踩已 teardown 的 Pixi Application） */
   private tearDownComplete = false;
+  private isDevMode = false;
+  private devModeUI: DevModeUI | null = null;
   private gameConfig: GameConfig = {
     initialScene: '',
     initialQuest: '',
@@ -136,8 +154,10 @@ export class Game {
     this.player = new Player(this.inputManager);
     this.interactionSystem = new InteractionSystem(this.eventBus, this.flagStore, this.inputManager);
     this.sceneManager = new SceneManager(this.assetManager, this.eventBus, this.renderer);
-    this.dialogueManager = new DialogueManager(this.eventBus, this.flagStore, this.actionExecutor, this.assetManager);
     this.inventoryManager = new InventoryManager(this.eventBus, this.flagStore);
+    this.dialogueManager = new DialogueManager(
+      this.eventBus, this.flagStore, this.actionExecutor, this.assetManager, this.inventoryManager,
+    );
     this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
     this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
@@ -170,7 +190,8 @@ export class Game {
     }
   }
 
-  async start(): Promise<void> {
+  async start(options: GameStartOptions = {}): Promise<void> {
+    this.isDevMode = !!options.devMode;
     await this.renderer.init();
     await this.stringsProvider.load(this.assetManager);
 
@@ -238,6 +259,16 @@ export class Game {
         params.targetSpawnPoint,
         cameraPos,
       );
+    });
+    this.cutsceneManager.setSceneIdGetter(() => this.sceneManager.currentSceneData?.id ?? null);
+    this.cutsceneManager.setPlayerPositionGetter(() => ({ x: this.player.x, y: this.player.y }));
+    this.cutsceneManager.setPlayerPositionSetter((x, y) => { this.player.x = x; this.player.y = y; });
+    this.cutsceneManager.setCameraAccessor(this.camera);
+    this.cutsceneManager.setSpawnPointResolver((spawnKey: string) => {
+      const scene = this.sceneManager.currentSceneData;
+      if (!scene) return null;
+      if (!spawnKey) return scene.spawnPoint ?? null;
+      return scene.spawnPoints?.[spawnKey] ?? null;
     });
 
     this.saveManager = new SaveManager(
@@ -367,12 +398,16 @@ export class Game {
     this.saveManager.setFallbackScene(this.gameConfig.fallbackScene || this.gameConfig.initialScene);
 
     await this.setupPlayer();
-    if (this.gameConfig.initialQuest) {
-      this.questManager.acceptQuest(this.gameConfig.initialQuest);
-    }
 
-    await this.sceneManager.loadScene(this.gameConfig.initialScene);
-    await this.tryStartInitialPrologue();
+    if (this.isDevMode) {
+      await this.startDevMode(options.playCutscene);
+    } else {
+      if (this.gameConfig.initialQuest) {
+        this.questManager.acceptQuest(this.gameConfig.initialQuest);
+      }
+      await this.sceneManager.loadScene(this.gameConfig.initialScene);
+      await this.tryStartInitialPrologue();
+    }
 
     this.lastTime = performance.now();
     this.renderer.app.ticker.add(() => {
@@ -611,6 +646,47 @@ export class Game {
     });
   }
 
+  private async startDevMode(playCutscene?: string): Promise<void> {
+    const DEV_SCENE = 'dev_room';
+    await this.sceneManager.loadScene(DEV_SCENE);
+
+    this.devModeUI = new DevModeUI(this.renderer, {
+      getCutsceneIds: () => this.cutsceneManager.getCutsceneIds(),
+      playCutscene: (id: string) => this.devPlayCutscene(id),
+      reload: () => this.devReload(),
+    });
+    this.devModeUI.open();
+
+    window.__gameDevAPI = {
+      playCutscene: (id: string) => this.devPlayCutscene(id),
+      reload: () => this.devReload(),
+      isReady: () => true,
+    };
+
+    if (playCutscene) {
+      setTimeout(() => this.devPlayCutscene(playCutscene), 300);
+    }
+  }
+
+  private async devPlayCutscene(id: string): Promise<void> {
+    if (this.cutsceneManager.isPlaying) return;
+    this.devModeUI?.close();
+    this.stateController.setState(GameState.Cutscene);
+    await this.cutsceneManager.startCutscene(id);
+    this.stateController.setState(GameState.Exploring);
+    if (this.isDevMode) {
+      const currentScene = this.sceneManager.currentSceneData?.id;
+      if (currentScene !== 'dev_room') {
+        await this.sceneManager.switchScene('dev_room');
+      }
+      this.devModeUI?.open();
+    }
+  }
+
+  private devReload(): void {
+    window.location.reload();
+  }
+
   private async tryStartInitialPrologue(): Promise<void> {
     const cutsceneId = this.gameConfig.initialCutscene;
     if (!cutsceneId) return;
@@ -724,6 +800,9 @@ export class Game {
     this.menuUI?.destroy();
     this.ruleUseUI?.destroy();
     this.debugPanelUI?.destroy();
+    this.devModeUI?.destroy();
+    this.devModeUI = null;
+    delete window.__gameDevAPI;
 
     this.interactionCoordinator?.destroy();
     this.eventBridge?.destroy();

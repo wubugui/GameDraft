@@ -62,7 +62,9 @@ class InkSimulatorWidget(QWidget):
         self._flags_input = QTextEdit()
         self._flags_input.setMaximumHeight(50)
         self._flags_input.setFont(QFont("Consolas", 9))
-        self._flags_input.setPlaceholderText("e.g. has_talisman=1, waiter_met=true")
+        self._flags_input.setPlaceholderText(
+            "e.g. has_talisman=1, waiter_met=true, coins=120",
+        )
         fp_layout.addWidget(self._flags_input)
         root.addWidget(self._flags_panel)
 
@@ -96,6 +98,30 @@ class InkSimulatorWidget(QWidget):
         for name in self._knot_names:
             self._knot_combo.addItem(name)
         self._on_reset()
+
+    def _sim_external_value(self, name: str) -> float:
+        if name.lower() == "getcoins":
+            v = self._flags.get("coins", 0)
+            return float(v) if isinstance(v, (int, float)) else 0.0
+        return 0.0
+
+    @staticmethod
+    def _cmp(lhs: float, op: str | None, rhs: float | None) -> bool:
+        if op is None or rhs is None:
+            return bool(lhs and lhs != 0)
+        if op == ">":
+            return lhs > rhs
+        if op == ">=":
+            return lhs >= rhs
+        if op == "<":
+            return lhs < rhs
+        if op == "<=":
+            return lhs <= rhs
+        if op == "==":
+            return lhs == rhs
+        if op == "!=":
+            return lhs != rhs
+        return bool(lhs and lhs != 0)
 
     def _parse_flags_input(self) -> dict[str, Any]:
         text = self._flags_input.toPlainText().strip()
@@ -192,11 +218,13 @@ class InkSimulatorWidget(QWidget):
                     break
 
             if node.kind == "conditional":
-                flag_val = self._flags.get(node.condition_flag, 0)
-                if flag_val and flag_val != 0:
-                    branch = list(node.true_children)
+                if getattr(node, "condition_mode", "flag") == "external":
+                    val = self._sim_external_value(node.condition_external_name)
+                    ok = self._cmp(val, node.condition_cmp, node.condition_rhs)
                 else:
-                    branch = list(node.false_children)
+                    flag_val = self._flags.get(node.condition_flag, 0)
+                    ok = bool(flag_val and flag_val != 0)
+                branch = list(node.true_children) if ok else list(node.false_children)
                 self._pending_nodes = branch + self._pending_nodes
                 continue
 

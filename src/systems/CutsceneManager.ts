@@ -4,6 +4,7 @@ import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
+import type { Camera } from '../rendering/Camera';
 import type { CutsceneDef, CutsceneCommand, ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext } from '../data/types';
 import { Npc } from '../entities/Npc';
 
@@ -17,6 +18,15 @@ export type ChangeSceneParams = {
 };
 
 export type SceneSwitcher = (params: ChangeSceneParams) => Promise<void>;
+
+interface CutsceneSnapshot {
+  sceneId: string;
+  playerX: number;
+  playerY: number;
+  cameraX: number;
+  cameraY: number;
+  cameraZoom: number;
+}
 
 export class CutsceneManager implements IGameSystem {
   private eventBus: EventBus;
@@ -38,6 +48,13 @@ export class CutsceneManager implements IGameSystem {
   private assetManager!: AssetManager;
   private unsubInput: (() => void) | null = null;
   private destroyed = false;
+
+  private snapshot: CutsceneSnapshot | null = null;
+  private sceneIdGetter: (() => string | null) | null = null;
+  private playerPositionGetter: (() => { x: number; y: number }) | null = null;
+  private playerPositionSetter: ((x: number, y: number) => void) | null = null;
+  private cameraAccessor: Camera | null = null;
+  private spawnPointResolver: ((spawnKey: string) => { x: number; y: number } | null) | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -85,6 +102,34 @@ export class CutsceneManager implements IGameSystem {
     this.sceneSwitcher = switcher;
   }
 
+  setSceneIdGetter(fn: () => string | null): void {
+    this.sceneIdGetter = fn;
+  }
+
+  setPlayerPositionGetter(fn: () => { x: number; y: number }): void {
+    this.playerPositionGetter = fn;
+  }
+
+  setPlayerPositionSetter(fn: (x: number, y: number) => void): void {
+    this.playerPositionSetter = fn;
+  }
+
+  setCameraAccessor(camera: Camera): void {
+    this.cameraAccessor = camera;
+  }
+
+  setSpawnPointResolver(fn: (spawnKey: string) => { x: number; y: number } | null): void {
+    this.spawnPointResolver = fn;
+  }
+
+  getCutsceneIds(): string[] {
+    return Array.from(this.cutsceneDefs.keys());
+  }
+
+  getCutsceneDef(id: string): CutsceneDef | undefined {
+    return this.cutsceneDefs.get(id);
+  }
+
   async loadDefs(): Promise<void> {
     try {
       const list = await this.assetManager.loadJson<CutsceneDef[]>('/assets/data/cutscenes/index.json');
@@ -121,14 +166,67 @@ export class CutsceneManager implements IGameSystem {
     this.eventBus.emit('cutscene:start', { id });
     this.unsubInput = this.inputManager?.subscribeAnyInput(this.onClickBound) ?? null;
 
+    const needsPositioning = !!def.targetScene || typeof def.targetX === 'number';
+    if (needsPositioning) {
+      await this.saveAndTransition(def);
+    }
+
     await this.executeCommands(def.commands);
 
     if (this.destroyed) return;
+
+    if (needsPositioning && def.restoreState !== false) {
+      await this.restoreSnapshot();
+    }
+    this.snapshot = null;
+
     this.unsubInput?.();
     this.unsubInput = null;
     this.cleanup();
     this.playing = false;
     this.eventBus.emit('cutscene:end', { id });
+  }
+
+  private async saveAndTransition(def: CutsceneDef): Promise<void> {
+    const currentSceneId = this.sceneIdGetter?.() ?? '';
+    const pos = this.playerPositionGetter?.() ?? { x: 0, y: 0 };
+    this.snapshot = {
+      sceneId: currentSceneId,
+      playerX: pos.x,
+      playerY: pos.y,
+      cameraX: this.cameraAccessor?.getX() ?? 0,
+      cameraY: this.cameraAccessor?.getY() ?? 0,
+      cameraZoom: this.cameraAccessor?.getZoom() ?? 1,
+    };
+
+    if (def.targetScene && def.targetScene !== currentSceneId && this.sceneSwitcher) {
+      await this.sceneSwitcher({
+        targetScene: def.targetScene,
+        targetSpawnPoint: def.targetSpawnPoint,
+      });
+    } else if (def.targetSpawnPoint) {
+      const spawnPos = this.spawnPointResolver?.(def.targetSpawnPoint);
+      if (spawnPos) {
+        this.playerPositionSetter?.(spawnPos.x, spawnPos.y);
+        this.cameraAccessor?.snapTo(spawnPos.x, spawnPos.y);
+      }
+    }
+
+    if (typeof def.targetX === 'number' && typeof def.targetY === 'number') {
+      this.playerPositionSetter?.(def.targetX, def.targetY);
+      this.cameraAccessor?.snapTo(def.targetX, def.targetY);
+    }
+  }
+
+  private async restoreSnapshot(): Promise<void> {
+    if (!this.snapshot) return;
+    const currentSceneId = this.sceneIdGetter?.() ?? '';
+    if (this.snapshot.sceneId && this.snapshot.sceneId !== currentSceneId && this.sceneSwitcher) {
+      await this.sceneSwitcher({ targetScene: this.snapshot.sceneId });
+    }
+    this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
+    this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
+    this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
   }
 
   get isPlaying(): boolean {
@@ -391,10 +489,12 @@ export class CutsceneManager implements IGameSystem {
       this.cleanup();
     }
     this.playing = false;
+    this.snapshot = null;
   }
 
   destroy(): void {
     this.destroyed = true;
+    this.snapshot = null;
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
       this.waitClickResolve = null;

@@ -1,17 +1,21 @@
 """Cutscene timeline editor."""
 from __future__ import annotations
 
+import json
+
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QLabel,
-    QScrollArea, QCheckBox, QDoubleSpinBox, QSpinBox, QFrame,
+    QScrollArea, QCheckBox, QDoubleSpinBox, QSpinBox, QFrame, QMessageBox,
+    QDialog,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QTimer
 
 from ..project_model import ProjectModel
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
 from ..shared.id_ref_selector import IdRefSelector
+from .scene_editor import TargetSpawnPickerDialog
 
 COMMAND_TYPES = [
     "fade_black", "fade_in", "flash_white", "wait_time", "wait_click",
@@ -30,7 +34,7 @@ _CMD_PARAMS: dict[str, list[tuple[str, str]]] = {
     "wait_time": [("duration", "float")],
     "wait_click": [],
     "set_flag": [("key", "str"), ("value", "flag_val")],
-    "show_title": [("text", "str"), ("duration", "float")],
+    "show_title": [("text", "text"), ("duration", "float")],
     "show_dialogue": [("speaker", "str"), ("text", "text")],
     "play_bgm": [("id", "str"), ("fadeMs", "float")],
     "stop_bgm": [("fadeMs", "float")],
@@ -43,7 +47,7 @@ _CMD_PARAMS: dict[str, list[tuple[str, str]]] = {
     "hide_img": [("id", "str")],
     "show_movie_bar": [("heightPercent", "float")],
     "hide_movie_bar": [],
-    "show_subtitle": [("text", "str"), ("duration", "float")],
+    "show_subtitle": [("text", "text"), ("duration", "float")],
     "entity_move": [("target", "str"), ("x", "float"), ("y", "float"), ("speed", "float")],
     "entity_anim": [("target", "str"), ("animation", "str")],
     "entity_face": [("target", "str"), ("faceTarget", "str")],
@@ -51,7 +55,28 @@ _CMD_PARAMS: dict[str, list[tuple[str, str]]] = {
     "entity_remove": [("id", "str")],
     "entity_emote": [("target", "str"), ("emote", "str"), ("duration", "float")],
     "entity_visible": [("target", "str"), ("visible", "bool")],
+    "execute_action": [("actionType", "str"), ("params", "text")],
 }
+
+_ENTITY_TARGET_FIELDS = {
+    ("entity_move", "target"),
+    ("entity_anim", "target"),
+    ("entity_face", "target"),
+    ("entity_face", "faceTarget"),
+    ("entity_emote", "target"),
+    ("entity_visible", "target"),
+}
+
+_ACTION_TYPES = [
+    "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "giveRule", "giveFragment", "updateQuest",
+    "startEncounter", "playBgm", "stopBgm", "playSfx",
+    "endDay", "addDelayedEvent", "addArchiveEntry",
+    "startCutscene", "showEmote", "openShop",
+    "switchScene", "changeScene",
+]
+
+_EMOTE_PRESETS = ["!", "?", "...", "!!!", "~"]
 
 
 class CommandWidget(QFrame):
@@ -167,6 +192,54 @@ class CommandWidget(QFrame):
                 )
                 w.set_items([(k, k if k else "(default)") for k in keys])
                 w.set_current(str(val) if val is not None else "")
+            elif (ct, pname) in _ENTITY_TARGET_FIELDS:
+                w = IdRefSelector(self, allow_empty=False)
+                w.setMinimumWidth(200)
+                if self._model:
+                    items: list[tuple[str, str]] = [("player", "player")]
+                    items += self._model.all_npc_ids_global()
+                    w.set_items(items)
+                w.set_current(str(val) if val else "player")
+            elif ct == "show_dialogue" and pname == "speaker":
+                w = QComboBox()
+                w.setEditable(True)
+                w.setMinimumWidth(200)
+                if self._model:
+                    for name in self._model.all_npc_names():
+                        w.addItem(name)
+                w.setCurrentText(str(val) if val else "")
+            elif ct == "show_img" and pname == "image":
+                w = IdRefSelector(self, allow_empty=True)
+                w.setMinimumWidth(200)
+                if self._model:
+                    w.set_items(self._model.illustration_asset_choices())
+                w.set_current(str(val) if val is not None else "")
+            elif ct == "entity_anim" and pname == "animation":
+                w = IdRefSelector(self, allow_empty=True)
+                w.setMinimumWidth(200)
+                if self._model:
+                    w.set_items([(a, a) for a in self._model.all_anim_files()])
+                w.set_current(str(val) if val is not None else "")
+            elif ct == "entity_emote" and pname == "emote":
+                w = QComboBox()
+                w.setEditable(True)
+                w.setMinimumWidth(150)
+                for e in _EMOTE_PRESETS:
+                    w.addItem(e)
+                w.setCurrentText(str(val) if val else "")
+            elif ct == "execute_action" and pname == "actionType":
+                w = QComboBox()
+                w.setMinimumWidth(200)
+                for at in _ACTION_TYPES:
+                    w.addItem(at)
+                w.setCurrentText(str(val) if val else _ACTION_TYPES[0])
+            elif ct == "execute_action" and pname == "params":
+                w = QTextEdit()
+                w.setMaximumHeight(80)
+                if isinstance(val, dict):
+                    w.setPlainText(json.dumps(val, ensure_ascii=False, indent=2))
+                elif val:
+                    w.setPlainText(str(val))
             else:
                 w = QLineEdit(str(val))
             self._widgets[pname] = w
@@ -213,14 +286,27 @@ class CommandWidget(QFrame):
                 d[pname] = w.key()
             elif isinstance(w, IdRefSelector):
                 d[pname] = w.current_id()
+            elif isinstance(w, QComboBox):
+                d[pname] = w.currentText()
             else:
                 d[pname] = w.text()
         if ct == "entity_anim":
             d.pop("anim", None)
+        if ct == "execute_action" and "params" in d:
+            raw = d["params"]
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    d["params"] = json.loads(raw)
+                except json.JSONDecodeError:
+                    d["params"] = {}
+            elif not isinstance(raw, dict):
+                d["params"] = {}
         return d
 
 
 class CutsceneEditor(QWidget):
+    play_requested = Signal(str)
+
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
         self._model = model
@@ -242,9 +328,59 @@ class CutsceneEditor(QWidget):
 
         right = QWidget()
         rl = QVBoxLayout(right)
+
+        top_row = QHBoxLayout()
         f = QFormLayout()
         self._c_id = QLineEdit(); f.addRow("id", self._c_id)
-        rl.addLayout(f)
+        top_row.addLayout(f, stretch=1)
+        self._play_btn = QPushButton("Play")
+        self._play_btn.setToolTip("Play this cutscene in the game preview")
+        self._play_btn.clicked.connect(self._on_play)
+        top_row.addWidget(self._play_btn)
+        rl.addLayout(top_row)
+
+        bind_form = QFormLayout()
+        self._target_scene = IdRefSelector(self, allow_empty=True)
+        self._target_scene.setMinimumWidth(200)
+        if self._model:
+            self._target_scene.set_items(
+                [("", "(none)")] + [(s, s) for s in self._model.all_scene_ids()])
+        bind_form.addRow("targetScene", self._target_scene)
+
+        self._spawn_key = ""
+        self._spawn_loading = False
+        spawn_row = QWidget()
+        spawn_lay = QHBoxLayout(spawn_row)
+        spawn_lay.setContentsMargins(0, 0, 0, 0)
+        self._spawn_display = QLineEdit()
+        self._spawn_display.setReadOnly(True)
+        self._spawn_display.setPlaceholderText("点击右侧按钮在场景预览中选择…")
+        spawn_lay.addWidget(self._spawn_display, 1)
+        self._spawn_pick_btn = QPushButton("选择出生点…")
+        self._spawn_pick_btn.clicked.connect(self._open_spawn_picker)
+        spawn_lay.addWidget(self._spawn_pick_btn)
+        bind_form.addRow("targetSpawnPoint", spawn_row)
+        self._target_scene.value_changed.connect(self._on_target_scene_changed)
+
+        pos_row = QHBoxLayout()
+        self._pos_chk = QCheckBox("targetX/Y")
+        self._target_x = QDoubleSpinBox(); self._target_x.setRange(-99999, 99999); self._target_x.setDecimals(1)
+        self._target_y = QDoubleSpinBox(); self._target_y.setRange(-99999, 99999); self._target_y.setDecimals(1)
+        self._target_x.setEnabled(False); self._target_y.setEnabled(False)
+        self._pos_chk.toggled.connect(self._target_x.setEnabled)
+        self._pos_chk.toggled.connect(self._target_y.setEnabled)
+        pos_row.addWidget(self._pos_chk)
+        pos_row.addWidget(QLabel("X:")); pos_row.addWidget(self._target_x)
+        pos_row.addWidget(QLabel("Y:")); pos_row.addWidget(self._target_y)
+        bind_form.addRow(pos_row)
+
+        self._restore_chk = QCheckBox("restoreState")
+        self._restore_chk.setChecked(True)
+        self._restore_chk.setToolTip("After cutscene ends, restore previous scene and player position")
+        bind_form.addRow(self._restore_chk)
+
+        rl.addLayout(bind_form)
+
         rl.addWidget(QLabel("<b>Commands</b>"))
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -273,12 +409,60 @@ class CutsceneEditor(QWidget):
         for c in self._model.cutscenes:
             self._list.addItem(c.get("id", "?"))
 
+    def _on_target_scene_changed(self, sid: str) -> None:
+        if self._spawn_loading:
+            return
+        if not sid:
+            self._spawn_key = ""
+            self._refresh_spawn_display()
+            return
+        sc = self._model.scenes.get(sid)
+        if sc and self._spawn_key:
+            if self._spawn_key not in (sc.get("spawnPoints") or {}):
+                self._spawn_key = ""
+        self._refresh_spawn_display()
+        QTimer.singleShot(0, self._open_spawn_picker)
+
+    def _refresh_spawn_display(self) -> None:
+        sid = self._target_scene.current_id()
+        if not sid:
+            self._spawn_display.setText("")
+            self._spawn_pick_btn.setEnabled(False)
+            return
+        self._spawn_pick_btn.setEnabled(True)
+        if not self._spawn_key:
+            self._spawn_display.setText("默认（spawnPoint）")
+        else:
+            self._spawn_display.setText(self._spawn_key)
+
+    def _open_spawn_picker(self) -> None:
+        sid = self._target_scene.current_id()
+        if not sid:
+            QMessageBox.information(self, "Cutscene", "请先选择目标场景。")
+            return
+        dlg = TargetSpawnPickerDialog(self._model, sid, self._spawn_key, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._spawn_key = dlg.selected_spawn_key()
+            self._refresh_spawn_display()
+
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.cutscenes):
             return
         self._current_idx = row
         cs = self._model.cutscenes[row]
         self._c_id.setText(cs.get("id", ""))
+        self._spawn_loading = True
+        try:
+            self._spawn_key = (cs.get("targetSpawnPoint") or "").strip()
+            self._target_scene.set_current(cs.get("targetScene", "") or "")
+        finally:
+            self._spawn_loading = False
+        self._refresh_spawn_display()
+        has_pos = "targetX" in cs and "targetY" in cs
+        self._pos_chk.setChecked(has_pos)
+        self._target_x.setValue(float(cs.get("targetX", 0)))
+        self._target_y.setValue(float(cs.get("targetY", 0)))
+        self._restore_chk.setChecked(cs.get("restoreState", True))
         self._rebuild_commands(cs.get("commands", []))
 
     def _rebuild_commands(self, commands: list[dict]) -> None:
@@ -301,6 +485,31 @@ class CutsceneEditor(QWidget):
             return
         cs = self._model.cutscenes[self._current_idx]
         cs["id"] = self._c_id.text().strip()
+
+        scene = self._target_scene.current_id()
+        if scene:
+            cs["targetScene"] = scene
+        else:
+            cs.pop("targetScene", None)
+
+        spawn = self._spawn_key.strip()
+        if spawn:
+            cs["targetSpawnPoint"] = spawn
+        else:
+            cs.pop("targetSpawnPoint", None)
+
+        if self._pos_chk.isChecked():
+            cs["targetX"] = self._target_x.value()
+            cs["targetY"] = self._target_y.value()
+        else:
+            cs.pop("targetX", None)
+            cs.pop("targetY", None)
+
+        if not self._restore_chk.isChecked():
+            cs["restoreState"] = False
+        else:
+            cs.pop("restoreState", None)
+
         cs["commands"] = [cw.to_dict() for cw in self._cmd_widgets]
         self._model.mark_dirty("cutscene")
         self._refresh()
@@ -311,6 +520,11 @@ class CutsceneEditor(QWidget):
         })
         self._model.mark_dirty("cutscene")
         self._refresh()
+
+    def _on_play(self) -> None:
+        cid = self._c_id.text().strip()
+        if cid:
+            self.play_requested.emit(cid)
 
     def _delete(self) -> None:
         if self._current_idx >= 0:
