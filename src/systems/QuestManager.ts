@@ -80,7 +80,22 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
       type: 'quest',
     });
 
-    if (def.nextQuestId) {
+    if (def.nextQuests && def.nextQuests.length > 0) {
+      for (const edge of def.nextQuests) {
+        if (edge.conditions.length > 0 &&
+            !this.flagStore.checkConditions(edge.conditions)) {
+          continue;
+        }
+        if (!edge.bypassPreconditions) {
+          const targetDef = this.questDefs.get(edge.questId);
+          if (targetDef && targetDef.preconditions.length > 0 &&
+              !this.flagStore.checkConditions(targetDef.preconditions)) {
+            continue;
+          }
+        }
+        this.acceptQuest(edge.questId);
+      }
+    } else if (def.nextQuestId) {
       this.acceptQuest(def.nextQuestId);
     }
   }

@@ -1,0 +1,12 @@
+[
+  {
+    "id": "opening",
+    "name": "序章",
+    "type": "main"
+  },
+  {
+    "id": "group_1",
+    "name": "新分组_1",
+    "type": "main"
+  }
+]

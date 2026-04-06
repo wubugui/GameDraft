@@ -1,6 +1,7 @@
 [
   {
     "id": "opening_01",
+    "group": "opening",
     "type": "main",
     "title": "听张叨叨摆书",
     "description": "张叨叨又在茶馆里说书。先坐下听一耳朵，看看今天城里又传什么怪话。",
@@ -11,10 +12,16 @@
       }
     ],
     "rewards": [],
-    "nextQuestId": "opening_02"
+    "nextQuests": [
+      {
+        "questId": "opening_02",
+        "conditions": []
+      }
+    ]
   },
   {
     "id": "opening_02",
+    "group": "opening",
     "type": "main",
     "title": "和瞎子李搭话",
     "description": "瞎子李刚进茶馆。你早听说这老瞎子走南闯北，嘴里没几句真话，但也许真能教你一门吃饭的手艺。",
@@ -25,10 +32,16 @@
       }
     ],
     "rewards": [],
-    "nextQuestId": "opening_03"
+    "nextQuests": [
+      {
+        "questId": "opening_03",
+        "conditions": []
+      }
+    ]
   },
   {
     "id": "opening_03",
+    "group": "opening",
     "type": "main",
     "title": "把铁盒子藏去城隍庙",
     "description": "盒子揣在身上总让人心里发痒。先把它藏到破烂城隍庙里，七天后再来取。",
@@ -39,10 +52,16 @@
       }
     ],
     "rewards": [],
-    "nextQuestId": "opening_04"
+    "nextQuests": [
+      {
+        "questId": "opening_04",
+        "conditions": []
+      }
+    ]
   },
   {
     "id": "opening_04",
+    "group": "opening",
     "type": "main",
     "title": "摸进去瞧一眼",
     "description": "动静过去了。摸回庙门口，看看墙边月影下有什么——然后赶紧离开。",
@@ -53,10 +72,16 @@
       }
     ],
     "rewards": [],
-    "nextQuestId": "opening_05"
+    "nextQuests": [
+      {
+        "questId": "opening_05",
+        "conditions": []
+      }
+    ]
   },
   {
     "id": "opening_05",
+    "group": "opening",
     "type": "main",
     "title": "等天亮再回城隍庙",
     "description": "今晚这事太邪门了。天一亮，再回城隍庙看看盒子和那个女人到底怎么回事。",
@@ -67,10 +92,16 @@
       }
     ],
     "rewards": [],
-    "nextQuestId": "opening_06"
+    "nextQuests": [
+      {
+        "questId": "opening_06",
+        "conditions": []
+      }
+    ]
   },
   {
     "id": "opening_06",
+    "group": "opening",
     "type": "main",
     "title": "回城隍庙看看",
     "description": "天亮了，该回去看看昨晚那地方到底怎么了。盒子和那女人……",
@@ -81,5 +112,16 @@
       }
     ],
     "rewards": []
+  },
+  {
+    "id": "quest_6",
+    "group": "group_1",
+    "type": "side",
+    "title": "新任务",
+    "description": "",
+    "preconditions": [],
+    "completionConditions": [],
+    "rewards": [],
+    "nextQuests": []
   }
 ]

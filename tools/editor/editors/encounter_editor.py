@@ -161,3 +161,9 @@ class EncounterEditor(QWidget):
             self._current_idx = -1
             self._model.mark_dirty("encounter")
             self._refresh()
+
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+        for i, enc in enumerate(self._model.encounters):
+            if enc.get("id") == item_id:
+                self._list.setCurrentRow(i)
+                return

@@ -23,14 +23,19 @@ class QuestPanel(QWidget):
         self.title_edit = QLineEdit()
         self.desc_edit = QTextEdit()
         self.desc_edit.setMaximumHeight(80)
+        self.group_label = QLineEdit()
+        self.group_label.setReadOnly(True)
+        self.group_label.setPlaceholderText("(managed by main editor)")
         self.next_edit = QLineEdit()
-        self.next_edit.setPlaceholderText("nextQuestId (optional)")
+        self.next_edit.setReadOnly(True)
+        self.next_edit.setPlaceholderText("nextQuests (read-only)")
 
         form.addRow("ID:", self.id_edit)
+        form.addRow("Group:", self.group_label)
         form.addRow("Type:", self.type_combo)
         form.addRow("Title:", self.title_edit)
         form.addRow("Description:", self.desc_edit)
-        form.addRow("Next Quest:", self.next_edit)
+        form.addRow("NextQuests:", self.next_edit)
         layout.addLayout(form)
 
         self.precond_editor = ConditionEditor("Preconditions")
@@ -44,7 +49,7 @@ class QuestPanel(QWidget):
 
         layout.addStretch()
 
-        for w in (self.type_combo, self.title_edit, self.next_edit):
+        for w in (self.type_combo, self.title_edit):
             if hasattr(w, 'textChanged'):
                 w.textChanged.connect(self._mark_dirty)
             if hasattr(w, 'currentTextChanged'):
@@ -61,7 +66,12 @@ class QuestPanel(QWidget):
         self.type_combo.setCurrentText(d.get("type", "main"))
         self.title_edit.setText(d.get("title", ""))
         self.desc_edit.setPlainText(d.get("description", ""))
-        self.next_edit.setText(d.get("nextQuestId", ""))
+        self.group_label.setText(d.get("group", ""))
+        nq_list = d.get("nextQuests", [])
+        if nq_list:
+            self.next_edit.setText(", ".join(e.get("questId", "") for e in nq_list))
+        else:
+            self.next_edit.setText(d.get("nextQuestId", ""))
         self.precond_editor.set_data(d.get("preconditions", []))
         self.complete_editor.set_data(d.get("completionConditions", []))
         self.rewards_editor.set_data(d.get("rewards", []))
@@ -73,11 +83,6 @@ class QuestPanel(QWidget):
         d["type"] = self.type_combo.currentText()
         d["title"] = self.title_edit.text()
         d["description"] = self.desc_edit.toPlainText()
-        nq = self.next_edit.text().strip()
-        if nq:
-            d["nextQuestId"] = nq
-        elif "nextQuestId" in d:
-            del d["nextQuestId"]
         d["preconditions"] = self.precond_editor.to_list()
         d["completionConditions"] = self.complete_editor.to_list()
         d["rewards"] = self.rewards_editor.to_list()

@@ -16,6 +16,8 @@ _TYPE_SHORT = {
     NodeType.RULE: "R",
     NodeType.FRAGMENT: "Fr",
     NodeType.ITEM: "I",
+    NodeType.QUEST_GROUP: "G",
+    NodeType.ZONE: "Z",
 }
 
 

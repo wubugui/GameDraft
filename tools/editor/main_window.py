@@ -119,6 +119,7 @@ class MainWindow(QMainWindow):
         from .editors.game_config_editor import GameConfigEditor
         from .editors.flag_registry_editor import FlagRegistryEditor
         from .editors.filter_editor import FilterEditor
+        from .editors.action_registry_editor import ActionRegistryEditor
 
         editors = [
             ("Scene", SceneEditor),
@@ -137,11 +138,14 @@ class MainWindow(QMainWindow):
             ("Strings", StringEditor),
             ("Config", GameConfigEditor),
             ("Flags", FlagRegistryEditor),
+            ("Actions", ActionRegistryEditor),
         ]
         for label, cls in editors:
             ed = cls(self._model)
             self._tabs.addTab(ed, label)
             self._editor_instances.append(ed)
+
+        self._connect_action_nav()
 
     # ---- save / dirty -----------------------------------------------------
 
@@ -225,6 +229,35 @@ class MainWindow(QMainWindow):
         te.setPlainText("\n".join(lines))
         lay.addWidget(te)
         dlg.exec()
+
+    # ---- action navigation -------------------------------------------------
+
+    def _connect_action_nav(self) -> None:
+        from .editors.action_registry_editor import ActionRegistryEditor
+        for ed in self._editor_instances:
+            if isinstance(ed, ActionRegistryEditor):
+                ed.navigate_to_source.connect(self._on_navigate_to_source)
+                break
+
+    def _on_navigate_to_source(self, source_type: str, source_id: str, scene_id: str) -> None:
+        tab_map = {
+            "quest": "Quest",
+            "encounter": "Encounter",
+            "scene_hotspot": "Scene",
+            "scene_zone": "Scene",
+            "scene_zone_rule": "Scene",
+        }
+        target_label = tab_map.get(source_type)
+        if not target_label:
+            return
+        for i, ed in enumerate(self._editor_instances):
+            label = self._tabs.tabText(i)
+            if label == target_label:
+                self._tabs.setCurrentIndex(i)
+                select = getattr(ed, "select_by_id", None)
+                if callable(select):
+                    select(source_id, scene_id)
+                break
 
     # ---- close ------------------------------------------------------------
 

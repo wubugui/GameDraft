@@ -66,6 +66,27 @@ def _extract_flags_from_actions(graph: GameGraph, owner_id: str, actions: list[d
                 graph.add_edge(owner_id, f"enc:{eid}", EdgeType.TRIGGERS)
 
 
+def parse_quest_groups(graph: GameGraph, project_path: str):
+    fp = os.path.join(project_path, "public", "assets", "data", "questGroups.json")
+    if not os.path.exists(fp):
+        return
+    with open(fp, "r", encoding="utf-8") as f:
+        groups = json.load(f)
+
+    for g in groups:
+        nid = f"qgroup:{g['id']}"
+        graph.add_node(NodeData(
+            id=nid,
+            node_type=NodeType.QUEST_GROUP,
+            label=g.get("name", g["id"]),
+            source_file=fp,
+            data=g,
+        ))
+        pg = g.get("parentGroup")
+        if pg:
+            graph.add_edge(f"qgroup:{pg}", nid, EdgeType.CONTAINS)
+
+
 def parse_quests(graph: GameGraph, project_path: str):
     fp = os.path.join(project_path, "public", "assets", "data", "quests.json")
     if not os.path.exists(fp):
@@ -83,12 +104,21 @@ def parse_quests(graph: GameGraph, project_path: str):
             data=q,
         ))
 
+        grp = q.get("group", "")
+        if grp:
+            graph.add_edge(f"qgroup:{grp}", nid, EdgeType.BELONGS_TO_GROUP)
+
         _extract_flags_from_conditions(graph, nid, q.get("preconditions", []))
         _extract_flags_from_conditions(graph, nid, q.get("completionConditions", []))
         _extract_flags_from_actions(graph, nid, q.get("rewards", []))
 
+        for edge in q.get("nextQuests", []):
+            tgt = edge.get("questId", "")
+            if tgt:
+                graph.add_edge(nid, f"quest:{tgt}", EdgeType.NEXT_QUEST)
+                _extract_flags_from_conditions(graph, nid, edge.get("conditions", []))
         nq = q.get("nextQuestId")
-        if nq:
+        if nq and not q.get("nextQuests"):
             graph.add_edge(nid, f"quest:{nq}", EdgeType.NEXT_QUEST)
 
 

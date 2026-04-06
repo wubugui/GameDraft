@@ -14,6 +14,7 @@ class EdgeType(Enum):
     DIVERTS = auto()
     CHOICE = auto()
     RULE_SLOT = auto()
+    BELONGS_TO_GROUP = auto()
 
 
 EDGE_COLORS = {
@@ -29,6 +30,7 @@ EDGE_COLORS = {
     EdgeType.DIVERTS: "#8B5CF6",
     EdgeType.CHOICE: "#A78BFA",
     EdgeType.RULE_SLOT: "#06B6D4",
+    EdgeType.BELONGS_TO_GROUP: "#6366F1",
 }
 
 EDGE_LABELS = {
@@ -44,4 +46,5 @@ EDGE_LABELS = {
     EdgeType.DIVERTS: "divert",
     EdgeType.CHOICE: "choice",
     EdgeType.RULE_SLOT: "ruleSlot",
+    EdgeType.BELONGS_TO_GROUP: "group",
 }

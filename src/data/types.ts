@@ -201,8 +201,22 @@ export interface Position {
 // 任务数据
 // ============================================================
 
+export interface QuestGroupDef {
+  id: string;
+  name: string;
+  type: 'main' | 'side';
+  parentGroup?: string;
+}
+
+export interface QuestEdge {
+  questId: string;
+  conditions: Condition[];
+  bypassPreconditions?: boolean;
+}
+
 export interface QuestDef {
   id: string;
+  group: string;
   type: 'main' | 'side';
   sideType?: 'errand' | 'inquiry' | 'investigation' | 'commission';
   title: string;
@@ -210,6 +224,8 @@ export interface QuestDef {
   preconditions: Condition[];
   completionConditions: Condition[];
   rewards: ActionDef[];
+  nextQuests?: QuestEdge[];
+  /** @deprecated use nextQuests */
   nextQuestId?: string;
 }
 

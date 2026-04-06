@@ -1513,3 +1513,24 @@ class SceneEditor(QWidget):
             sc.get("spawnPoints", {}).pop(eid, None)
         self._model.mark_dirty("scene", self._current_scene_id or "")
         self._load_scene(self._current_scene_id)
+
+    def select_by_id(self, item_id: str, scene_id: str = "") -> None:
+        if scene_id:
+            for i in range(self._scene_list.count()):
+                it = self._scene_list.item(i)
+                if it and it.data(Qt.ItemDataRole.UserRole) == scene_id:
+                    self._scene_list.setCurrentItem(it)
+                    break
+        if not item_id:
+            return
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not sc:
+            return
+        for hs in sc.get("hotspots", []):
+            if hs.get("id") == item_id:
+                self._props.load_hotspot_props(hs)
+                return
+        for zone in sc.get("zones", []):
+            if zone.get("id") == item_id:
+                self._props.load_zone_props(zone)
+                return

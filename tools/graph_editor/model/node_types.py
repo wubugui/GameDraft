@@ -15,6 +15,7 @@ class NodeType(Enum):
     FRAGMENT = auto()
     ITEM = auto()
     ZONE = auto()
+    QUEST_GROUP = auto()
 
 
 NODE_COLORS = {
@@ -29,6 +30,7 @@ NODE_COLORS = {
     NodeType.FRAGMENT: "#FBBF24",
     NodeType.ITEM: "#14B8A6",
     NodeType.ZONE: "#06B6D4",
+    NodeType.QUEST_GROUP: "#325090",
 }
 
 NODE_LABELS = {
@@ -43,6 +45,7 @@ NODE_LABELS = {
     NodeType.FRAGMENT: "Fragment",
     NodeType.ITEM: "Item",
     NodeType.ZONE: "Zone",
+    NodeType.QUEST_GROUP: "Quest Group",
 }
 
 EDITABLE_TYPES = {

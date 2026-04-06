@@ -64,10 +64,39 @@ def validate(model: ProjectModel) -> list[Issue]:
             issues.append(Issue("warning", "scene", sid,
                                 f"filterId '{fid}' has no matching filter JSON"))
 
+    # --- quest groups ---
+    quest_group_ids = {g["id"] for g in model.quest_groups}
+    for g in model.quest_groups:
+        pg = g.get("parentGroup")
+        if pg and pg not in quest_group_ids:
+            issues.append(Issue("error", "questGroup", g["id"],
+                                f"parentGroup '{pg}' not found"))
+    # parentGroup circular reference detection
+    for g in model.quest_groups:
+        visited: set[str] = set()
+        cur = g["id"]
+        while cur:
+            if cur in visited:
+                issues.append(Issue("error", "questGroup", g["id"],
+                                    f"parentGroup circular reference detected"))
+                break
+            visited.add(cur)
+            parent_g = next((x for x in model.quest_groups if x["id"] == cur), None)
+            cur = parent_g.get("parentGroup", "") if parent_g else ""
+
     # --- quests ---
     for q in model.quests:
+        grp = q.get("group", "")
+        if grp and grp not in quest_group_ids:
+            issues.append(Issue("error", "quest", q["id"],
+                                f"group '{grp}' not found in questGroups"))
+        for edge in q.get("nextQuests", []):
+            eid = edge.get("questId", "")
+            if eid and eid not in quest_ids:
+                issues.append(Issue("error", "quest", q["id"],
+                                    f"nextQuests questId '{eid}' not found"))
         nxt = q.get("nextQuestId")
-        if nxt and nxt not in quest_ids:
+        if nxt and not q.get("nextQuests") and nxt not in quest_ids:
             issues.append(Issue("error", "quest", q["id"],
                                 f"nextQuestId '{nxt}' not found"))
 
@@ -212,6 +241,8 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         qid = str(q.get("id", ""))
         for ck in ("preconditions", "completionConditions"):
             _walk_conditions(model, issues, q.get(ck), "quest", qid, None)
+        for edge in q.get("nextQuests", []) or []:
+            _walk_conditions(model, issues, edge.get("conditions"), "quest", qid, None)
 
     for enc in model.encounters:
         eid = str(enc.get("id", ""))

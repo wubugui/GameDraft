@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
         if view_name == "Full Graph":
             self._scene.populate(self._graph, layout="spring")
         elif view_name == "Quests":
-            sub = self._graph.subgraph_with_neighbors({NodeType.QUEST})
+            sub = self._graph.subgraph_with_neighbors({NodeType.QUEST, NodeType.QUEST_GROUP})
             self._scene.populate(sub, layout="hierarchical")
         elif view_name == "Encounters":
             sub = self._graph.subgraph_with_neighbors({NodeType.ENCOUNTER})

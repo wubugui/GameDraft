@@ -49,6 +49,7 @@ class ProjectModel(QObject):
         self.game_config: dict = {}
         self.items: list[dict] = []
         self.quests: list[dict] = []
+        self.quest_groups: list[dict] = []
         self.encounters: list[dict] = []
         self.rules_data: dict = {}
         self.shops: list[dict] = []
@@ -100,6 +101,7 @@ class ProjectModel(QObject):
         self.game_config = self._load(dp / "game_config.json", {})
         self.items = self._load(dp / "items.json", [])
         self.quests = self._load(dp / "quests.json", [])
+        self.quest_groups = self._load(dp / "questGroups.json", [])
         self.encounters = self._load(dp / "encounters.json", [])
         self.rules_data = self._load(dp / "rules.json", {})
         self.shops = self._load(dp / "shops.json", [])
@@ -164,6 +166,7 @@ class ProjectModel(QObject):
         write_json(dp / "game_config.json", self.game_config)
         write_json(dp / "items.json", self.items)
         write_json(dp / "quests.json", self.quests)
+        write_json(dp / "questGroups.json", self.quest_groups)
         write_json(dp / "encounters.json", self.encounters)
         write_json(dp / "rules.json", self.rules_data)
         write_json(dp / "shops.json", self.shops)
@@ -273,6 +276,9 @@ class ProjectModel(QObject):
 
     def all_quest_ids(self) -> list[tuple[str, str]]:
         return [(q["id"], q.get("title", q["id"])) for q in self.quests]
+
+    def all_quest_group_ids(self) -> list[tuple[str, str]]:
+        return [(g["id"], g.get("name", g["id"])) for g in self.quest_groups]
 
     def all_encounter_ids(self) -> list[tuple[str, str]]:
         return [(e["id"], e.get("narrative", e["id"])[:30]) for e in self.encounters]
@@ -405,6 +411,10 @@ class ProjectModel(QObject):
                 p = act.get("params", {})
                 if act.get("type") == "setFlag" and "key" in p:
                     flags.add(p["key"])
+            for edge in item.get("nextQuests", []):
+                for cond in edge.get("conditions", []):
+                    if "flag" in cond:
+                        flags.add(cond["flag"])
 
     @staticmethod
     def _collect_flags_from_scene(sc: dict, flags: set[str]) -> None:

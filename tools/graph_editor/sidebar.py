@@ -20,10 +20,13 @@ class Sidebar(QTreeWidget):
     def populate(self, graph: GameGraph):
         self.clear()
         type_order = [
-            NodeType.SCENE, NodeType.NPC, NodeType.QUEST, NodeType.ENCOUNTER,
+            NodeType.SCENE, NodeType.NPC, NodeType.QUEST_GROUP, NodeType.QUEST,
+            NodeType.ENCOUNTER,
             NodeType.RULE, NodeType.FRAGMENT, NodeType.ITEM, NodeType.FLAG,
             NodeType.DIALOGUE_KNOT, NodeType.HOTSPOT,
         ]
+
+        quest_group_items: dict[str, QTreeWidgetItem] = {}
 
         for nt in type_order:
             nodes = graph.nodes_by_type(nt)
@@ -45,6 +48,42 @@ class Sidebar(QTreeWidget):
                     for nd in sorted(files[fname], key=lambda n: n.data.get("start_line", 0)):
                         child = QTreeWidgetItem(file_item, [nd.label])
                         child.setData(0, 0x0100, nd.id)
+
+            elif nt == NodeType.QUEST_GROUP:
+                group = QTreeWidgetItem(self, [f"{NODE_LABELS[nt]} ({len(nodes)})"])
+                group.setExpanded(True)
+                for nd in sorted(nodes, key=lambda n: n.label):
+                    child = QTreeWidgetItem(group, [nd.label])
+                    child.setData(0, 0x0100, nd.id)
+                    gid = nd.data.get("id", nd.id.replace("qgroup:", ""))
+                    quest_group_items[gid] = child
+
+            elif nt == NodeType.QUEST:
+                quest_nodes = sorted(nodes, key=lambda n: n.label)
+                grouped: dict[str, list] = {}
+                ungrouped: list = []
+                for nd in quest_nodes:
+                    grp = nd.data.get("group", "")
+                    if grp and grp in quest_group_items:
+                        grouped.setdefault(grp, []).append(nd)
+                    else:
+                        ungrouped.append(nd)
+
+                for grp_id, grp_quests in grouped.items():
+                    parent = quest_group_items[grp_id]
+                    old_text = parent.text(0)
+                    parent.setText(0, f"{old_text} [{len(grp_quests)}]")
+                    for nd in grp_quests:
+                        child = QTreeWidgetItem(parent, [nd.label])
+                        child.setData(0, 0x0100, nd.id)
+
+                if ungrouped:
+                    group = QTreeWidgetItem(self, [f"Quest [ungrouped] ({len(ungrouped)})"])
+                    group.setExpanded(True)
+                    for nd in ungrouped:
+                        child = QTreeWidgetItem(group, [nd.label])
+                        child.setData(0, 0x0100, nd.id)
+
             else:
                 group = QTreeWidgetItem(self, [f"{NODE_LABELS[nt]} ({len(nodes)})"])
                 group.setExpanded(True)
