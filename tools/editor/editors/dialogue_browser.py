@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt, QRegularExpression, QStringListModel, QTimer
 
 from ..project_model import ProjectModel
 from ..file_io import read_text, write_text
+from .. import theme as app_theme
 from ..shared.action_editor import (
     ACTION_TYPES, _NOTIFICATION_TYPES, _ARCHIVE_BOOK_TYPES,
 )
@@ -75,33 +76,44 @@ class InkHighlighter(QSyntaxHighlighter):
         self._rules: list[tuple[QRegularExpression, QTextCharFormat]] = []
         self._error_lines: set[int] = set()
         self._warning_lines: set[int] = set()
+        self._theme_id = app_theme.current_theme_id()
+        self._rebuild_rules()
+
+    def _rebuild_rules(self) -> None:
+        c = app_theme.ink_syntax_base_colors(self._theme_id)
+        self._rules = []
 
         fmt_knot = QTextCharFormat()
-        fmt_knot.setForeground(QColor(100, 200, 255))
+        fmt_knot.setForeground(c["knot"])
         fmt_knot.setFontWeight(QFont.Weight.Bold)
         self._rules.append((QRegularExpression(r"^===.*===$"), fmt_knot))
 
         fmt_tag = QTextCharFormat()
-        fmt_tag.setForeground(QColor(200, 180, 80))
+        fmt_tag.setForeground(c["tag"])
         self._rules.append((QRegularExpression(r"#\s*[a-zA-Z_]\w*(?::[^\s#]*)*"), fmt_tag))
 
         fmt_choice = QTextCharFormat()
-        fmt_choice.setForeground(QColor(150, 220, 150))
+        fmt_choice.setForeground(c["choice"])
         self._rules.append((QRegularExpression(r"^\s*[\+\*].*$"), fmt_choice))
 
         fmt_ext = QTextCharFormat()
-        fmt_ext.setForeground(QColor(200, 120, 120))
+        fmt_ext.setForeground(c["ext"])
         self._rules.append((QRegularExpression(r"^EXTERNAL\s+.*$"), fmt_ext))
 
         fmt_divert = QTextCharFormat()
-        fmt_divert.setForeground(QColor(180, 140, 220))
+        fmt_divert.setForeground(c["divert"])
         self._rules.append((QRegularExpression(r"->\s*\S+"), fmt_divert))
 
         fmt_cond = QTextCharFormat()
-        fmt_cond.setForeground(QColor(220, 160, 100))
+        fmt_cond.setForeground(c["cond"])
         self._rules.append((QRegularExpression(r"^\{.*$"), fmt_cond))
         self._rules.append((QRegularExpression(r"^\s*-\s*else\s*:"), fmt_cond))
         self._rules.append((QRegularExpression(r"^\}\s*$"), fmt_cond))
+
+    def apply_theme(self, theme_id: str) -> None:
+        self._theme_id = theme_id
+        self._rebuild_rules()
+        self.rehighlight()
 
     def set_issues(
         self, errors: set[int], warnings: set[int],
@@ -118,16 +130,17 @@ class InkHighlighter(QSyntaxHighlighter):
                 self.setFormat(m.capturedStart(), m.capturedLength(), fmt)
 
         block_num = self.currentBlock().blockNumber()
+        uc = app_theme.ink_syntax_base_colors(self._theme_id)
         if block_num in self._error_lines:
             fmt_err = QTextCharFormat()
-            fmt_err.setUnderlineColor(QColor(255, 80, 80))
+            fmt_err.setUnderlineColor(uc["err_line"])
             fmt_err.setUnderlineStyle(
                 QTextCharFormat.UnderlineStyle.WaveUnderline,
             )
             self.setFormat(0, len(text), fmt_err)
         elif block_num in self._warning_lines:
             fmt_warn = QTextCharFormat()
-            fmt_warn.setUnderlineColor(QColor(220, 180, 60))
+            fmt_warn.setUnderlineColor(uc["warn_line"])
             fmt_warn.setUnderlineStyle(
                 QTextCharFormat.UnderlineStyle.WaveUnderline,
             )
@@ -798,3 +811,8 @@ class DialogueBrowser(QWidget):
                 subprocess.Popen(["code", str(self._current_path)])
             except FileNotFoundError:
                 pass
+
+    def on_editor_theme_changed(self, theme_id: str) -> None:
+        if self._highlighter:
+            self._highlighter.apply_theme(theme_id)
+        self._simulator.apply_theme(theme_id)

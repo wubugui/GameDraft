@@ -6,12 +6,15 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from . import theme
 from .main_window import MainWindow
 
 
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("GameDraft Editor")
+
+    theme.apply_application_theme(app, theme.settings_load_theme())
 
     win = MainWindow()
     win.show()

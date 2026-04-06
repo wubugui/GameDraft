@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from .. import theme as app_theme
 
 try:
     from tools.filter_tool.paths import filters_json_dir
@@ -68,7 +69,8 @@ class FilterEditor(QWidget):
         rl = QVBoxLayout(right)
         self._path_lbl = QLabel()
         self._path_lbl.setWordWrap(True)
-        self._path_lbl.setStyleSheet("color: #666;")
+        self._path_lbl.setStyleSheet(
+            app_theme.secondary_label_stylesheet(app_theme.current_theme_id()))
         rl.addWidget(self._path_lbl)
 
         hint = QLabel(
@@ -100,8 +102,10 @@ class FilterEditor(QWidget):
             else "（未能导入 tools.filter_tool.presets）"
         )
         preset_hint.setWordWrap(True)
-        preset_hint.setStyleSheet("color: #666;")
-        rl.addWidget(preset_hint)
+        self._preset_hint = preset_hint
+        self._preset_hint.setStyleSheet(
+            app_theme.secondary_label_stylesheet(app_theme.current_theme_id()))
+        rl.addWidget(self._preset_hint)
 
         form = QFormLayout()
         self._lbl_stem = QLabel("-")
@@ -305,3 +309,8 @@ class FilterEditor(QWidget):
         self._lbl_stem.setText("-")
         self._matrix_edit.clear()
         self._refresh_list()
+
+    def on_editor_theme_changed(self, theme_id: str) -> None:
+        ss = app_theme.secondary_label_stylesheet(theme_id)
+        self._path_lbl.setStyleSheet(ss)
+        self._preset_hint.setStyleSheet(ss)

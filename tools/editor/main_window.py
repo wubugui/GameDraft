@@ -9,9 +9,11 @@ from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QToolBar, QFileDialog,
     QMessageBox, QTextEdit, QDialog, QVBoxLayout, QLabel,
 )
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QActionGroup
 from PySide6.QtCore import Qt, QProcess
+from PySide6.QtWidgets import QApplication
 
+from . import theme
 from .project_model import ProjectModel
 from .validator import validate, Issue
 
@@ -60,6 +62,40 @@ class MainWindow(QMainWindow):
 
         tools_menu = mb.addMenu("Tools")
         self._act(tools_menu, "Validate Data", self._validate)
+
+        view_menu = mb.addMenu("View")
+        ag_theme = QActionGroup(self)
+        self._act_theme_light = QAction("浅色主题", self, checkable=True)
+        self._act_theme_dark = QAction("深色主题", self, checkable=True)
+        ag_theme.addAction(self._act_theme_light)
+        ag_theme.addAction(self._act_theme_dark)
+        self._act_theme_light.triggered.connect(
+            lambda: self._apply_ui_theme(theme.THEME_LIGHT))
+        self._act_theme_dark.triggered.connect(
+            lambda: self._apply_ui_theme(theme.THEME_DARK))
+        view_menu.addAction(self._act_theme_light)
+        view_menu.addAction(self._act_theme_dark)
+        tid = theme.current_theme_id()
+        self._act_theme_light.setChecked(tid == theme.THEME_LIGHT)
+        self._act_theme_dark.setChecked(tid == theme.THEME_DARK)
+
+    def _apply_ui_theme(self, theme_id: str) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+        theme.apply_application_theme(app, theme_id)
+        theme.settings_save_theme(theme_id)
+        self._act_theme_light.setChecked(theme_id == theme.THEME_LIGHT)
+        self._act_theme_dark.setChecked(theme_id == theme.THEME_DARK)
+        self._sync_theme_to_editors()
+
+    def _sync_theme_to_editors(self) -> None:
+        tid = theme.current_theme_id()
+        theme.refresh_all_graphics_views(self, tid)
+        for inst in self._editor_instances:
+            fn = getattr(inst, "on_editor_theme_changed", None)
+            if callable(fn):
+                fn(tid)
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
@@ -146,6 +182,7 @@ class MainWindow(QMainWindow):
             self._editor_instances.append(ed)
 
         self._connect_action_nav()
+        self._sync_theme_to_editors()
 
     # ---- save / dirty -----------------------------------------------------
 

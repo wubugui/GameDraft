@@ -8,8 +8,10 @@ from PySide6.QtWidgets import (
     QTextEdit, QScrollArea, QGroupBox, QFormLayout, QCheckBox,
     QFrame, QComboBox, QSizePolicy,
 )
-from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QFont, QTextCharFormat, QTextCursor
 from PySide6.QtCore import Qt, Signal
+
+from .. import theme as app_theme
 
 from .ink_parser import (
     SimNode, SimChoice, build_sim_tree, parse_knots,
@@ -71,7 +73,9 @@ class InkSimulatorWidget(QWidget):
 
         self._actions_label = QLabel("")
         self._actions_label.setWordWrap(True)
-        self._actions_label.setStyleSheet("color: #C8B450; font-size: 9pt;")
+        self._theme_id = app_theme.current_theme_id()
+        self._actions_label.setStyleSheet(
+            app_theme.ink_actions_label_stylesheet(self._theme_id))
         root.addWidget(self._actions_label)
 
         self._choices_widget = QWidget()
@@ -79,6 +83,11 @@ class InkSimulatorWidget(QWidget):
         self._choices_layout.setContentsMargins(0, 0, 0, 0)
         self._choices_layout.setSpacing(2)
         root.addWidget(self._choices_widget)
+
+    def apply_theme(self, theme_id: str) -> None:
+        self._theme_id = theme_id
+        self._actions_label.setStyleSheet(
+            app_theme.ink_actions_label_stylesheet(theme_id))
 
     def load_ink(self, text: str) -> None:
         self._sim_tree = build_sim_tree(text)
@@ -243,16 +252,17 @@ class InkSimulatorWidget(QWidget):
         cursor = self._output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
+        col = app_theme.ink_simulator_text_colors(self._theme_id)
         if choice:
             fmt = QTextCharFormat()
-            fmt.setForeground(QColor(150, 220, 150))
+            fmt.setForeground(col["choice"])
             cursor.insertText(text + "\n", fmt)
         elif speaker:
             fmt_speaker = QTextCharFormat()
-            fmt_speaker.setForeground(QColor(100, 200, 255))
+            fmt_speaker.setForeground(col["speaker"])
             fmt_speaker.setFontWeight(QFont.Weight.Bold)
             fmt_text = QTextCharFormat()
-            fmt_text.setForeground(QColor(220, 220, 220))
+            fmt_text.setForeground(col["body"])
             if text.startswith(speaker):
                 cursor.insertText(text + "\n", fmt_text)
             else:
@@ -260,7 +270,7 @@ class InkSimulatorWidget(QWidget):
                 cursor.insertText(text + "\n", fmt_text)
         else:
             fmt = QTextCharFormat()
-            fmt.setForeground(QColor(220, 220, 220))
+            fmt.setForeground(col["plain"])
             cursor.insertText(text + "\n", fmt)
 
         self._output.setTextCursor(cursor)
@@ -270,7 +280,8 @@ class InkSimulatorWidget(QWidget):
         cursor = self._output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(140, 140, 160))
+        col = app_theme.ink_simulator_text_colors(self._theme_id)
+        fmt.setForeground(col["system"])
         fmt.setFontItalic(True)
         cursor.insertText(text + "\n", fmt)
         self._output.setTextCursor(cursor)
