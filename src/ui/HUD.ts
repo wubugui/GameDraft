@@ -45,7 +45,7 @@ export class HUD {
 
     this.coinText = new Text({
       text: `${this.strings.get('hud', 'coins')} 0`,
-      style: { fontSize: 13, fill: UITheme.colors.gold, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 200 },
+      style: { fontSize: 13, fill: UITheme.colors.gold, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 200 },
     });
     this.coinText.x = 20;
     this.coinText.y = 15;
@@ -61,7 +61,7 @@ export class HUD {
 
     this.questText = new Text({
       text: '',
-      style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 210 },
+      style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 210 },
     });
     this.questText.x = this.renderer.screenWidth - 220;
     this.questText.y = 15;
@@ -77,7 +77,7 @@ export class HUD {
 
     this.ruleHintText = new Text({
       text: this.strings.get('hud', 'ruleUseHint'),
-      style: { fontSize: 13, fill: UITheme.colors.orange, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 150 },
+      style: { fontSize: 13, fill: UITheme.colors.orange, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 150 },
     });
     this.ruleHintText.x = (this.renderer.screenWidth - this.ruleHintText.width) / 2;
     this.ruleHintText.y = this.renderer.screenHeight - 45;
@@ -86,7 +86,7 @@ export class HUD {
 
     this.mapNameText = new Text({
       text: '',
-      style: { fontSize: 12, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 400 },
+      style: { fontSize: 12, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 400 },
     });
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
     this.mapNameText.y = 10;

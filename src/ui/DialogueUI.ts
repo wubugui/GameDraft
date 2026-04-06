@@ -72,7 +72,7 @@ export class DialogueUI {
 
     this.speakerText = new Text({
       text: '',
-      style: { fontSize: 15, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: boxWidth - TEXT_PADDING * 2 },
+      style: { fontSize: 15, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: boxWidth - TEXT_PADDING * 2 },
     });
     this.speakerText.x = BOX_MARGIN + TEXT_PADDING;
     this.speakerText.y = boxY + 12;
@@ -84,7 +84,7 @@ export class DialogueUI {
         fontSize: 15,
         fill: UITheme.colors.body,
         fontFamily: UITheme.fonts.ui,
-        wordWrap: true,
+        wordWrap: true, breakWords: true,
         wordWrapWidth: boxWidth - TEXT_PADDING * 2,
         lineHeight: 22,
       },
@@ -155,7 +155,7 @@ export class DialogueUI {
           fontSize: 14,
           fill: fillColor,
           fontFamily: UITheme.fonts.ui,
-          wordWrap: true,
+          wordWrap: true, breakWords: true,
           wordWrapWidth: boxWidth - 80,
         },
       });

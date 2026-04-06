@@ -31,7 +31,7 @@ export class InspectBox {
           fontSize: 16,
           fill: UITheme.colors.body,
           fontFamily: UITheme.fonts.ui,
-          wordWrap: true,
+          wordWrap: true, breakWords: true,
           wordWrapWidth: boxWidth - 40,
         },
       });
@@ -59,7 +59,7 @@ export class InspectBox {
 
       const hint = new Text({
         text: this.strings.get('inspectBox', 'closeHint'),
-        style: { fontSize: 11, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 200 },
+        style: { fontSize: 11, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 200 },
       });
       hint.anchor.set(0.5, 1);
       hint.x = this.renderer.screenWidth / 2;

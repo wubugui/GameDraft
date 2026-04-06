@@ -70,7 +70,7 @@ export class QuestPanelUI {
     const addSectionLabel = (text: string) => {
       const label = new Text({
         text,
-        style: { fontSize: 13, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 540 },
+        style: { fontSize: 13, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 540 },
       });
       label.x = 0;
       label.y = cy;
@@ -82,7 +82,7 @@ export class QuestPanelUI {
       const displayTitle = prefix ? `${prefix} ${title}` : title;
       const qt = new Text({
         text: displayTitle,
-        style: { fontSize: 13, fill: titleColor, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 520 },
+        style: { fontSize: 13, fill: titleColor, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 520 },
       });
       qt.x = 10;
       qt.y = cy;
@@ -92,7 +92,7 @@ export class QuestPanelUI {
       if (desc) {
         const qd = new Text({
           text: desc,
-          style: { fontSize: 11, fill: descColor, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: wrapWidth },
+          style: { fontSize: 11, fill: descColor, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
         });
         qd.x = 10;
         qd.y = cy;
@@ -105,7 +105,7 @@ export class QuestPanelUI {
     const addEmpty = (text: string) => {
       const t = new Text({
         text,
-        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 540 },
+        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 540 },
       });
       t.x = 10;
       t.y = cy;
@@ -167,7 +167,7 @@ export class QuestPanelUI {
 
     const title = new Text({
       text: this.strings.get('quest', 'title'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 560 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 560 },
     });
     title.x = px + PADDING;
     title.y = py + 14;
@@ -188,7 +188,7 @@ export class QuestPanelUI {
 
     const hint = new Text({
       text: this.strings.get('quest', 'closeHint'),
-      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 540 },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 540 },
     });
     hint.x = px + panelW - 80;
     hint.y = py + panelH - 24;

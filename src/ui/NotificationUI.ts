@@ -59,7 +59,7 @@ export class NotificationUI {
 
     const label = new Text({
       text,
-      style: { fontSize: 12, fill: color, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 220 },
+      style: { fontSize: 12, fill: color, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 220 },
     });
     label.x = 10;
     label.y = 8;

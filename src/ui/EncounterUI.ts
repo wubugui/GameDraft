@@ -94,7 +94,7 @@ export class EncounterUI {
         fontSize: 15,
         fill: UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
-        wordWrap: true,
+        wordWrap: true, breakWords: true,
         wordWrapWidth: boxWidth - TEXT_PADDING * 2,
         lineHeight: 22,
         fontStyle: 'italic',
@@ -165,7 +165,7 @@ export class EncounterUI {
 
       const text = new Text({
         text: label + suffix,
-        style: { fontSize: 14, fill: color, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: boxWidth - 80 },
+        style: { fontSize: 14, fill: color, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: boxWidth - 80 },
       });
       text.x = 12;
       text.y = 8;
@@ -214,7 +214,7 @@ export class EncounterUI {
         fontSize: 15,
         fill: UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
-        wordWrap: true,
+        wordWrap: true, breakWords: true,
         wordWrapWidth: boxWidth - TEXT_PADDING * 2,
         lineHeight: 22,
       },

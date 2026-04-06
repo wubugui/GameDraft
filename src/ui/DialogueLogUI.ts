@@ -106,7 +106,7 @@ export class DialogueLogUI {
 
     const title = new Text({
       text: this.strings.get('dialogueLog', 'title'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: panelW - PADDING * 2 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: panelW - PADDING * 2 },
     });
     title.x = px + PADDING;
     title.y = py + 14;
@@ -132,7 +132,7 @@ export class DialogueLogUI {
           fontSize: 13,
           fill: color,
           fontFamily: UITheme.fonts.ui,
-          wordWrap: true,
+          wordWrap: true, breakWords: true,
           wordWrapWidth: panelW - PADDING * 2 - 10,
         },
       });
@@ -151,7 +151,7 @@ export class DialogueLogUI {
     if (this.entries.length === 0) {
       const empty = new Text({
         text: this.strings.get('dialogueLog', 'empty'),
-        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: panelW - PADDING * 2 },
+        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: panelW - PADDING * 2 },
       });
       empty.x = px + PADDING + 10;
       empty.y = py + 60;
@@ -163,7 +163,7 @@ export class DialogueLogUI {
       : '';
     const hint = new Text({
       text: `${scrollInfo}  ${this.strings.get('dialogueLog', 'closeHint')}`,
-      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: panelW - PADDING * 2 },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: panelW - PADDING * 2 },
     });
     hint.x = px + panelW - hint.width - 16;
     hint.y = py + panelH - 24;

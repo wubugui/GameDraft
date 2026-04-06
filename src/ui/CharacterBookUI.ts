@@ -66,7 +66,7 @@ export class CharacterBookUI {
 
     const title = new Text({
       text: this.strings.get('characterBook', 'title'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 40 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 40 },
     });
     title.x = px + PADDING;
     title.y = py + 12;
@@ -74,7 +74,7 @@ export class CharacterBookUI {
 
     const backBtn = new Text({
       text: this.strings.get('characterBook', 'back'),
-      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 100 },
+      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 100 },
     });
     backBtn.x = px + PANEL_W - 100;
     backBtn.y = py + 14;
@@ -91,7 +91,7 @@ export class CharacterBookUI {
     if (characters.length === 0) {
       const empty = new Text({
         text: this.strings.get('characterBook', 'empty'),
-        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 160 },
+        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 160 },
       });
       empty.x = px + PADDING;
       empty.y = py + 50;
@@ -102,7 +102,7 @@ export class CharacterBookUI {
       const isNew = !this.archiveData.isRead(`char_${ch.id}`);
       const label = new Text({
         text: (isNew ? '* ' : '') + ch.name,
-        style: { fontSize: 13, fill: isNew ? UITheme.colors.title : UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 160 },
+        style: { fontSize: 13, fill: isNew ? UITheme.colors.title : UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 160 },
       });
       label.x = px + PADDING;
       label.y = py + 50 + i * ENTRY_H;
@@ -141,7 +141,7 @@ export class CharacterBookUI {
     let cy = 0;
     const nameT = new Text({
       text: `${ch.name} - ${ch.title}`,
-      style: { fontSize: 15, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 240 },
+      style: { fontSize: 15, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 240 },
     });
     nameT.y = cy;
     this.detailContainer.addChild(nameT);
@@ -149,13 +149,13 @@ export class CharacterBookUI {
 
     const impressions = this.archiveData.getCharacterVisibleImpressions(ch);
     if (impressions.length > 0) {
-      const hdr = new Text({ text: this.strings.get('characterBook', 'impression'), style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 240 } });
+      const hdr = new Text({ text: this.strings.get('characterBook', 'impression'), style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 240 } });
       hdr.y = cy; cy += 18;
       this.detailContainer.addChild(hdr);
       for (const imp of impressions) {
         const t = new Text({
           text: `  ${imp}`,
-          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 380 },
+          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 380 },
         });
         t.y = cy; cy += t.height + 4;
         this.detailContainer.addChild(t);
@@ -165,13 +165,13 @@ export class CharacterBookUI {
 
     const infos = this.archiveData.getCharacterVisibleInfo(ch);
     if (infos.length > 0) {
-      const hdr = new Text({ text: this.strings.get('characterBook', 'knownIntel'), style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 240 } });
+      const hdr = new Text({ text: this.strings.get('characterBook', 'knownIntel'), style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 240 } });
       hdr.y = cy; cy += 18;
       this.detailContainer.addChild(hdr);
       for (const info of infos) {
         const t = new Text({
           text: `  ${info}`,
-          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 380 },
+          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 380 },
         });
         t.y = cy; cy += t.height + 4;
         this.detailContainer.addChild(t);

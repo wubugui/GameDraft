@@ -66,7 +66,7 @@ export class LoreBookUI {
 
     const title = new Text({
       text: this.strings.get('loreBook', 'title'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 40 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 40 },
     });
     title.x = px + PADDING;
     title.y = py + 12;
@@ -74,7 +74,7 @@ export class LoreBookUI {
 
     const backBtn = new Text({
       text: this.strings.get('loreBook', 'back'),
-      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 100 },
+      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 100 },
     });
     backBtn.x = px + PANEL_W - 100;
     backBtn.y = py + 14;
@@ -91,7 +91,7 @@ export class LoreBookUI {
     if (lore.length === 0) {
       const empty = new Text({
         text: this.strings.get('loreBook', 'empty'),
-        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 160 },
+        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 160 },
       });
       empty.x = px + PADDING;
       empty.y = py + cy;
@@ -101,7 +101,7 @@ export class LoreBookUI {
         const isNew = !this.archiveData.isRead(`lore_${entry.id}`);
         const label = new Text({
           text: (isNew ? '* ' : '') + `[${this.categoryLabel(entry.category)}] ${entry.title}`,
-          style: { fontSize: 13, fill: isNew ? UITheme.colors.title : UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 160 },
+          style: { fontSize: 13, fill: isNew ? UITheme.colors.title : UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 160 },
         });
         label.x = px + PADDING;
         label.y = py + cy;
@@ -136,7 +136,7 @@ export class LoreBookUI {
     }
     const ct = new Text({
       text: content + `\n\n${this.strings.get('loreBook', 'source')} ${source}`,
-      style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 240 },
+      style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 240 },
     });
     ct.x = x;
     ct.y = y;

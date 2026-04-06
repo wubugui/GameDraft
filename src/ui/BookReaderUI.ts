@@ -68,7 +68,7 @@ export class BookReaderUI {
 
     const title = new Text({
       text: this.currentBook.title,
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - PADDING * 2 },
     });
     title.x = px + PADDING;
     title.y = py + 14;
@@ -76,7 +76,7 @@ export class BookReaderUI {
 
     const backBtn = new Text({
       text: this.strings.get('bookReader', 'back'),
-      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 100 },
+      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 100 },
     });
     backBtn.x = px + PANEL_W - 100;
     backBtn.y = py + 14;
@@ -93,7 +93,7 @@ export class BookReaderUI {
         if (page.title) {
           const pt = new Text({
             text: page.title,
-            style: { fontSize: 15, fill: UITheme.colors.ruleName, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 },
+            style: { fontSize: 15, fill: UITheme.colors.ruleName, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - PADDING * 2 },
           });
           pt.x = px + PADDING;
           pt.y = py + 50;
@@ -106,7 +106,7 @@ export class BookReaderUI {
             fontSize: 13,
             fill: UITheme.colors.bodyDim,
             fontFamily: UITheme.fonts.display,
-            wordWrap: true,
+            wordWrap: true, breakWords: true,
             wordWrapWidth: PANEL_W - PADDING * 2,
             lineHeight: 22,
           },
@@ -123,7 +123,7 @@ export class BookReaderUI {
       } else {
         const missing = new Text({
           text: this.strings.get('bookReader', 'pageMissing'),
-          style: { fontSize: 16, fill: UITheme.colors.disabledDark, fontFamily: UITheme.fonts.display, fontStyle: 'italic', wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 },
+          style: { fontSize: 16, fill: UITheme.colors.disabledDark, fontFamily: UITheme.fonts.display, fontStyle: 'italic', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - PADDING * 2 },
         });
         missing.x = px + (PANEL_W - missing.width) / 2;
         missing.y = py + PANEL_H / 2 - 20;
@@ -133,7 +133,7 @@ export class BookReaderUI {
 
     const pageInfo = new Text({
       text: `${this.currentPage + 1} / ${pages.length}    ${this.strings.get('bookReader', 'pageHint')}`,
-      style: { fontSize: 11, fill: UITheme.colors.pageInfo, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 200 },
+      style: { fontSize: 11, fill: UITheme.colors.pageInfo, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 200 },
     });
     pageInfo.x = px + (PANEL_W - pageInfo.width) / 2;
     pageInfo.y = py + PANEL_H - 28;
@@ -147,7 +147,7 @@ export class BookReaderUI {
       prevBg.cursor = 'pointer';
       prevBg.on('pointerdown', () => { this.currentPage--; this.build(); });
       this.container.addChild(prevBg);
-      const prevText = new Text({ text: '<', style: { fontSize: 20, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 100 } });
+      const prevText = new Text({ text: '<', style: { fontSize: 20, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 100 } });
       prevText.x = px + 14;
       prevText.y = py + PANEL_H / 2 - 12;
       prevText.eventMode = 'none';
@@ -162,7 +162,7 @@ export class BookReaderUI {
       nextBg.cursor = 'pointer';
       nextBg.on('pointerdown', () => { this.currentPage++; this.build(); });
       this.container.addChild(nextBg);
-      const nextText = new Text({ text: '>', style: { fontSize: 20, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 100 } });
+      const nextText = new Text({ text: '>', style: { fontSize: 20, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 100 } });
       nextText.x = px + PANEL_W - 28;
       nextText.y = py + PANEL_H / 2 - 12;
       nextText.eventMode = 'none';

@@ -76,7 +76,7 @@ export class InventoryUI {
 
     const title = new Text({
       text: this.strings.get('inventory', 'title'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 80 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 80 },
     });
     title.x = px + 20;
     title.y = py + 14;
@@ -84,7 +84,7 @@ export class InventoryUI {
 
     const coinLabel = new Text({
       text: `${this.strings.get('inventory', 'coins')} ${this.inventoryData.getCoins()}`,
-      style: { fontSize: 13, fill: UITheme.colors.gold, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 120 },
+      style: { fontSize: 13, fill: UITheme.colors.gold, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 120 },
     });
     coinLabel.x = px + 100;
     coinLabel.y = py + 17;
@@ -117,7 +117,7 @@ export class InventoryUI {
             fontSize: 11,
             fill: item.def?.type === 'key' ? UITheme.colors.title : UITheme.colors.body,
             fontFamily: UITheme.fonts.ui,
-            wordWrap: true,
+            wordWrap: true, breakWords: true,
             wordWrapWidth: CELL_SIZE - 12,
           },
         });
@@ -134,7 +134,7 @@ export class InventoryUI {
         if (item.def?.type !== 'key' && item.count > 1) {
           const countText = new Text({
             text: `x${item.count}`,
-            style: { fontSize: 10, fill: UITheme.colors.descText, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 30 },
+            style: { fontSize: 10, fill: UITheme.colors.descText, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 30 },
           });
           countText.x = cx + CELL_SIZE - 24;
           countText.y = cy + CELL_SIZE - 16;
@@ -153,7 +153,7 @@ export class InventoryUI {
 
     const hint = new Text({
       text: this.strings.get('inventory', 'closeHint'),
-      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 120 },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 120 },
     });
     hint.x = px + panelW - 70;
     hint.y = py + panelH - 24;
@@ -176,14 +176,14 @@ export class InventoryUI {
 
     const nameText = new Text({
       text: name + (def?.type === 'key' ? ` ${this.strings.get('inventory', 'keyItem')}` : ` x${count}`),
-      style: { fontSize: 14, fill: def?.type === 'key' ? UITheme.colors.title : UITheme.colors.body, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 176 },
+      style: { fontSize: 14, fill: def?.type === 'key' ? UITheme.colors.title : UITheme.colors.body, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 176 },
     });
     nameText.x = x + 12;
     nameText.y = y + 12;
 
     const descText = new Text({
       text: desc || this.strings.get('inventory', 'noDesc'),
-      style: { fontSize: 12, fill: UITheme.colors.descTextDim, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 176, lineHeight: 18 },
+      style: { fontSize: 12, fill: UITheme.colors.descTextDim, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 176, lineHeight: 18 },
     });
     descText.x = x + 12;
     descText.y = y + 36;
@@ -223,7 +223,7 @@ export class InventoryUI {
 
       const btnText = new Text({
         text: this.strings.get('inventory', 'discard'),
-        style: { fontSize: 12, fill: UITheme.colors.red, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 60 },
+        style: { fontSize: 12, fill: UITheme.colors.red, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 60 },
       });
       btnText.x = x + 30;
       btnText.y = y + detailH - 28;

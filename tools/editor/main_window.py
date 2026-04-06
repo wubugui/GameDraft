@@ -11,15 +11,16 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QToolBar, QFileDialog,
     QMessageBox, QTextEdit, QDialog, QVBoxLayout, QLabel,
+    QSizePolicy, QWidget, QStyle,
 )
 from PySide6.QtGui import QAction, QKeySequence, QActionGroup
-from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize
 from PySide6.QtWidgets import QApplication
 
 from . import theme
 from .project_model import ProjectModel
 from .validator import validate, Issue
-from .editors.game_browser import GAME_DEV_URL, GameBrowserTab
+from .editors.game_browser import GAME_DEV_URL, GameBrowserTab, GamePlayWindow
 
 # Vite 就绪行示例:  Local:   http://127.0.0.1:3000/
 _VITE_DEV_URL_RE = re.compile(
@@ -96,6 +97,7 @@ class MainWindow(QMainWindow):
         self._game_ready_timer.setSingleShot(True)
         self._game_ready_timer.timeout.connect(self._on_game_server_ready_timeout)
         self._game_browser: GameBrowserTab | None = None
+        self._game_play_window: GamePlayWindow | None = None
         self._game_proc_log: str = ""
         self._game_user_stopped: bool = False
         self._last_vite_dev_url: str | None = None
@@ -128,8 +130,23 @@ class MainWindow(QMainWindow):
                                        QKeySequence.StandardKey.Redo)
 
         run_menu = mb.addMenu("Run")
-        self._act(run_menu, "Run Game", self._run_game, QKeySequence("F5"))
-        self._act(run_menu, "Stop Game", self._stop_game, QKeySequence("Shift+F5"))
+        st = self.style()
+        a_run = QAction(
+            st.standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
+            "Run Game",
+            self,
+        )
+        a_run.setShortcut(QKeySequence("F5"))
+        a_run.triggered.connect(self._run_game)
+        run_menu.addAction(a_run)
+        a_stop = QAction(
+            st.standardIcon(QStyle.StandardPixmap.SP_MediaStop),
+            "Stop Game",
+            self,
+        )
+        a_stop.setShortcut(QKeySequence("Shift+F5"))
+        a_stop.triggered.connect(self._stop_game)
+        run_menu.addAction(a_stop)
         run_menu.addSeparator()
         self._act(run_menu, "Build (Export)", self._build_game)
 
@@ -173,13 +190,36 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
         tb.setMovable(False)
+        tb.setIconSize(QSize(24, 24))
         self.addToolBar(tb)
         tb.addAction("Save All", self._save_all)
         tb.addSeparator()
-        tb.addAction("Run", self._run_game)
-        tb.addAction("Stop", self._stop_game)
-        tb.addSeparator()
         tb.addAction("Validate", self._validate)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+
+        st = self.style()
+        act_run = QAction(
+            st.standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
+            "",
+            self,
+        )
+        act_run.setToolTip("运行游戏 (F5)")
+        act_run.setShortcut(QKeySequence("F5"))
+        act_run.triggered.connect(self._run_game)
+        tb.addAction(act_run)
+
+        act_stop = QAction(
+            st.standardIcon(QStyle.StandardPixmap.SP_MediaStop),
+            "",
+            self,
+        )
+        act_stop.setToolTip("停止游戏 (Shift+F5)")
+        act_stop.setShortcut(QKeySequence("Shift+F5"))
+        act_stop.triggered.connect(self._stop_game)
+        tb.addAction(act_stop)
 
     @staticmethod
     def _act(menu, text, slot, shortcut=None) -> QAction:
@@ -323,11 +363,43 @@ class MainWindow(QMainWindow):
         self._tabs.setCurrentWidget(self._game_browser)
         self._game_ready_timer.start(60_000)
 
+    def _get_game_window_size(self) -> tuple[int, int]:
+        cfg = self._model.game_config
+        ws = cfg.get("windowSize")
+        if isinstance(ws, dict) and ws.get("width") and ws.get("height"):
+            return (int(ws["width"]), int(ws["height"]))
+        vp = cfg.get("viewport")
+        if isinstance(vp, dict) and vp.get("width") and vp.get("height"):
+            return (int(vp["width"]), int(vp["height"]))
+        return (1280, 720)
+
     def _focus_game_tab_and_load(self, url: str | None = None) -> None:
-        if self._game_browser is None or not self._game_browser.is_webengine_available():
-            return
-        self._game_browser.load_dev_url(url)
-        self._tabs.setCurrentWidget(self._game_browser)
+        target = (url or GAME_DEV_URL).strip()
+        if not target.endswith("/"):
+            target += "/"
+
+        if self._game_browser is not None:
+            self._game_browser.show_message(
+                "Game is running in a separate window.\n"
+                "Press F5 to reopen if closed.",
+            )
+            self._tabs.setCurrentWidget(self._game_browser)
+
+        if self._game_play_window is None:
+            w, h = self._get_game_window_size()
+            self._game_play_window = GamePlayWindow(w, h, parent=self)
+            if not self._game_play_window.is_available():
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+                QDesktopServices.openUrl(QUrl(target))
+                self._game_play_window = None
+                return
+            self._game_play_window.closed.connect(self._on_game_play_window_closed)
+
+        self._game_play_window.load_url(target)
+        self._game_play_window.show()
+        self._game_play_window.raise_()
+        self._game_play_window.activateWindow()
 
     def _mark_game_server_ready(self, url: str) -> None:
         if self._game_server_ready_for_current_run:
@@ -393,6 +465,7 @@ class MainWindow(QMainWindow):
         self._game_ready_timer.stop()
         was_ready = self._game_server_ready_for_current_run
         self._game_server_ready_for_current_run = False
+        self._close_game_play_window()
         proc = self.sender()
         if isinstance(proc, QProcess):
             tail = bytes(proc.readAllStandardOutput()).decode("utf-8", errors="replace")
@@ -424,12 +497,26 @@ class MainWindow(QMainWindow):
                 "Dev server stopped. Press Run (F5) to start again.",
             )
 
+    def _on_game_play_window_closed(self) -> None:
+        self._game_play_window = None
+
+    def _close_game_play_window(self) -> None:
+        if self._game_play_window is not None:
+            try:
+                self._game_play_window.closed.disconnect(self._on_game_play_window_closed)
+            except (TypeError, RuntimeError):
+                pass
+            self._game_play_window.close()
+            self._game_play_window.deleteLater()
+            self._game_play_window = None
+
     def _stop_game(self) -> None:
         if self._model.project_path is None:
             return
         self._game_user_stopped = True
         self._game_ready_timer.stop()
         self._game_server_ready_for_current_run = False
+        self._close_game_play_window()
         cmd_path = self._model.project_path / "stop-game.cmd"
         if cmd_path.exists():
             subprocess.run(["cmd", "/c", str(cmd_path), "nopause"],

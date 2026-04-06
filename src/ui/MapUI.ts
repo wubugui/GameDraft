@@ -75,7 +75,7 @@ export class MapUI {
 
     const title = new Text({
       text: this.strings.get('map', 'title'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 560 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 560 },
     });
     title.x = px + 20;
     title.y = py + 12;
@@ -83,7 +83,7 @@ export class MapUI {
 
     const hint = new Text({
       text: this.strings.get('map', 'closeHint'),
-      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 560 },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 560 },
     });
     hint.x = px + PANEL_W - 80;
     hint.y = py + PANEL_H - 24;
@@ -92,7 +92,7 @@ export class MapUI {
     if (this.nodes.length === 0) {
       const empty = new Text({
         text: this.strings.get('map', 'noData'),
-        style: { fontSize: 13, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 560 },
+        style: { fontSize: 13, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 560 },
       });
       empty.x = px + (PANEL_W - empty.width) / 2;
       empty.y = py + PANEL_H / 2;
@@ -137,7 +137,7 @@ export class MapUI {
           fontSize: 11,
           fill: isCurrent ? UITheme.colors.mapCurrentBorder : (unlocked ? UITheme.colors.mapUnlockedText : UITheme.colors.mapLockedText),
           fontFamily: UITheme.fonts.ui,
-          wordWrap: true,
+          wordWrap: true, breakWords: true,
           wordWrapWidth: 100,
         },
       });

@@ -81,7 +81,7 @@ export class MenuUI {
 
     const gameName = new Text({
       text: this.strings.get('menu', 'gameTitle'),
-      style: { fontSize: 48, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: sw - 40 },
+      style: { fontSize: 48, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: sw - 40 },
     });
     gameName.x = (sw - gameName.width) / 2;
     gameName.y = sh * 0.2;
@@ -89,7 +89,7 @@ export class MenuUI {
 
     const subtitle = new Text({
       text: this.strings.get('menu', 'gameSubtitle'),
-      style: { fontSize: 20, fill: UITheme.colors.section, fontFamily: UITheme.fonts.display, wordWrap: true, wordWrapWidth: sw - 40 },
+      style: { fontSize: 20, fill: UITheme.colors.section, fontFamily: UITheme.fonts.display, wordWrap: true, breakWords: true, wordWrapWidth: sw - 40 },
     });
     subtitle.x = (sw - subtitle.width) / 2;
     subtitle.y = sh * 0.2 + 60;
@@ -120,7 +120,7 @@ export class MenuUI {
 
     const title = new Text({
       text: this.strings.get('menu', 'pause'),
-      style: { fontSize: 24, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: sw - 40 },
+      style: { fontSize: 24, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: sw - 40 },
     });
     title.x = (sw - title.width) / 2;
     title.y = sh * 0.2;
@@ -160,7 +160,7 @@ export class MenuUI {
 
     const title = new Text({
       text: action === 'save' ? this.strings.get('menu', 'save') : this.strings.get('menu', 'load'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 80 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 80 },
     });
     title.x = px + 20;
     title.y = py + 14;
@@ -184,7 +184,7 @@ export class MenuUI {
 
         const info = new Text({
           text: this.strings.get('menu', 'slotInfo', { slot: String(i + 1), scene: meta.sceneName, day: String(meta.dayNumber), date: dateStr, minutes: String(playMin) }),
-          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 60 },
+          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 60 },
         });
         info.x = px + 28;
         info.y = slotY + 20;
@@ -192,7 +192,7 @@ export class MenuUI {
       } else {
         const empty = new Text({
           text: this.strings.get('menu', 'slotEmpty', { slot: i + 1 }),
-          style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 60 },
+          style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 60 },
         });
         empty.x = px + 28;
         empty.y = slotY + 20;
@@ -226,7 +226,7 @@ export class MenuUI {
 
     const backBtn = new Text({
       text: this.strings.get('menu', 'back'),
-      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 60 },
+      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 60 },
     });
     backBtn.x = px + PANEL_W - 60;
     backBtn.y = py + 14;
@@ -263,7 +263,7 @@ export class MenuUI {
 
     const title = new Text({
       text: this.strings.get('menu', 'settings'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 80 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 80 },
     });
     title.x = px + 20;
     title.y = py + 14;
@@ -279,7 +279,7 @@ export class MenuUI {
       const cy = py + 60 + idx * 60;
       const labelT = new Text({
         text: label,
-        style: { fontSize: 13, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 100 },
+        style: { fontSize: 13, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 100 },
       });
       labelT.x = px + 20;
       labelT.y = cy;
@@ -293,7 +293,7 @@ export class MenuUI {
 
     const backBtn = new Text({
       text: this.strings.get('menu', 'back'),
-      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 60 },
+      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 60 },
     });
     backBtn.x = px + PANEL_W - 60;
     backBtn.y = py + 14;
@@ -332,7 +332,7 @@ export class MenuUI {
 
     const pct = new Text({
       text: `${Math.round(value * 100)}%`,
-      style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 50 },
+      style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 50 },
     });
     pct.x = x + width + 10;
     pct.y = y;
@@ -396,7 +396,7 @@ export class MenuUI {
 
       const t = new Text({
         text: btn.label,
-        style: { fontSize: 15, fill: UITheme.colors.buttonText, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 190 },
+        style: { fontSize: 15, fill: UITheme.colors.buttonText, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 190 },
       });
       t.x = bx + (200 - t.width) / 2;
       t.y = by + (BTN_H - t.height) / 2;

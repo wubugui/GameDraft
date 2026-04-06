@@ -30,6 +30,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   private assetManager!: AssetManager;
+  private audioGestureUnlock: (() => void) | null = null;
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
@@ -37,6 +38,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   init(ctx: GameContext): void {
     this.assetManager = ctx.assetManager;
+    this.installAudioContextUnlock();
   }
   update(_dt: number): void {}
 
@@ -208,7 +210,38 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.pendingTimers.add(id);
   }
 
+  /**
+   * 嵌入式 WebView / 无首击自动播：AudioContext 会以 suspended 创建，浏览器会打印警告且听不到声。
+   * 在首次指针/键盘/触摸后 resume，符合 autoplay 策略。
+   */
+  private installAudioContextUnlock(): void {
+    const tryResume = (): void => {
+      const ctx = Howler.ctx;
+      if (ctx?.state === 'suspended') {
+        void ctx.resume().catch(() => {});
+      }
+      if (ctx?.state === 'running') {
+        this.removeAudioContextUnlock();
+      }
+    };
+    this.audioGestureUnlock = tryResume;
+    const opts: AddEventListenerOptions = { passive: true };
+    window.addEventListener('pointerdown', tryResume, opts);
+    window.addEventListener('keydown', tryResume);
+    window.addEventListener('touchstart', tryResume, opts);
+  }
+
+  private removeAudioContextUnlock(): void {
+    const fn = this.audioGestureUnlock;
+    if (!fn) return;
+    this.audioGestureUnlock = null;
+    window.removeEventListener('pointerdown', fn);
+    window.removeEventListener('keydown', fn);
+    window.removeEventListener('touchstart', fn);
+  }
+
   destroy(): void {
+    this.removeAudioContextUnlock();
     if (this.currentBgm) {
       const bgm = this.currentBgm;
       this.currentBgm = null;

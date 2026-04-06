@@ -86,7 +86,7 @@ export class ShopUI {
 
     const title = new Text({
       text: this.currentShop.name,
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 - 120 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - PADDING * 2 - 120 },
     });
     title.x = px + PADDING;
     title.y = py + 12;
@@ -95,7 +95,7 @@ export class ShopUI {
     const coins = this.inventoryData.getCoins();
     const coinText = new Text({
       text: `${this.strings.get('shop', 'coins')} ${coins}`,
-      style: { fontSize: 13, fill: UITheme.colors.goldDim, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 90 },
+      style: { fontSize: 13, fill: UITheme.colors.goldDim, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 90 },
     });
     coinText.x = px + PANEL_W - 100;
     coinText.y = py + 16;
@@ -115,7 +115,7 @@ export class ShopUI {
 
       const nameT = new Text({
         text: name,
-        style: { fontSize: 13, fill: canBuy ? UITheme.colors.bodyLight : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 - 180 },
+        style: { fontSize: 13, fill: canBuy ? UITheme.colors.bodyLight : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - PADDING * 2 - 180 },
       });
       nameT.x = px + PADDING + 10;
       nameT.y = py + cy + 8;
@@ -123,7 +123,7 @@ export class ShopUI {
 
       const priceT = new Text({
         text: `${price} ${this.strings.get('shop', 'unit')}`,
-        style: { fontSize: 13, fill: canBuy ? UITheme.colors.goldDim : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 70 },
+        style: { fontSize: 13, fill: canBuy ? UITheme.colors.goldDim : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 70 },
       });
       priceT.x = px + PANEL_W - PADDING - 120;
       priceT.y = py + cy + 8;
@@ -131,7 +131,7 @@ export class ShopUI {
 
       const buyBtn = new Text({
         text: canBuy ? this.strings.get('shop', 'buy') : this.strings.get('shop', 'insufficient'),
-        style: { fontSize: 13, fill: canBuy ? UITheme.colors.green : UITheme.colors.disabledDark, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 60 },
+        style: { fontSize: 13, fill: canBuy ? UITheme.colors.green : UITheme.colors.disabledDark, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 60 },
       });
       buyBtn.x = px + PANEL_W - PADDING - 50;
       buyBtn.y = py + cy + 8;
@@ -149,7 +149,7 @@ export class ShopUI {
 
     const closeBtn = new Text({
       text: this.strings.get('shop', 'leave'),
-      style: { fontSize: 14, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 },
+      style: { fontSize: 14, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - PADDING * 2 },
     });
     closeBtn.x = px + (PANEL_W - closeBtn.width) / 2;
     closeBtn.y = py + panelH - 30;

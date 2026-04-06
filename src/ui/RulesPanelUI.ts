@@ -89,7 +89,7 @@ export class RulesPanelUI {
     const addSectionLabel = (text: string) => {
       const label = new Text({
         text,
-        style: { fontSize: 13, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 540 },
+        style: { fontSize: 13, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 540 },
       });
       label.x = 0;
       label.y = cy;
@@ -100,7 +100,7 @@ export class RulesPanelUI {
     const addEmpty = (text: string) => {
       const t = new Text({
         text,
-        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 540 },
+        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 540 },
       });
       t.x = 10;
       t.y = cy;
@@ -132,7 +132,7 @@ export class RulesPanelUI {
 
             const nameText = new Text({
               text: `${r.def.name}`,
-              style: { fontSize: 13, fill: UITheme.colors.ruleName, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 520 },
+              style: { fontSize: 13, fill: UITheme.colors.ruleName, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 520 },
             });
             nameText.x = 10;
             nameText.y = cy;
@@ -140,7 +140,7 @@ export class RulesPanelUI {
 
             const tagText = new Text({
               text: `[${vLabel}]`,
-              style: { fontSize: 11, fill: vColor, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 200 },
+              style: { fontSize: 11, fill: vColor, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 200 },
             });
             tagText.x = 10 + nameText.width + 8;
             tagText.y = cy + 1;
@@ -150,7 +150,7 @@ export class RulesPanelUI {
             if (r.def.description) {
               const descText = new Text({
                 text: r.def.description,
-                style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: wrapWidth },
+                style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
               });
               descText.x = 10;
               descText.y = cy;
@@ -161,7 +161,7 @@ export class RulesPanelUI {
             if (r.def.source) {
               const srcText = new Text({
                 text: `${this.strings.get('rulesPanel', 'source')} ${r.def.source}`,
-                style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 520 },
+                style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
               });
               srcText.x = 10;
               srcText.y = cy;
@@ -173,7 +173,7 @@ export class RulesPanelUI {
             if (progress.total > 0) {
               const progText = new Text({
                 text: `${this.strings.get('rulesPanel', 'fragments')} ${progress.collected}/${progress.total}`,
-                style: { fontSize: 10, fill: UITheme.colors.ruleProgress, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 520 },
+                style: { fontSize: 10, fill: UITheme.colors.ruleProgress, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
               });
               progText.x = 10;
               progText.y = cy;
@@ -203,7 +203,7 @@ export class RulesPanelUI {
 
           const nameText = new Text({
             text: `${arrow} ${displayName}`,
-            style: { fontSize: 13, fill: UITheme.colors.ruleCollecting, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 520 },
+            style: { fontSize: 13, fill: UITheme.colors.ruleCollecting, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 520 },
           });
           nameText.x = 10;
           nameText.y = cy;
@@ -211,7 +211,7 @@ export class RulesPanelUI {
 
           const progressLabel = new Text({
             text: `(${entry.collected}/${entry.total})`,
-            style: { fontSize: 12, fill: UITheme.colors.ruleProgress, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 200 },
+            style: { fontSize: 12, fill: UITheme.colors.ruleProgress, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 200 },
           });
           progressLabel.x = 10 + nameText.width + 8;
           progressLabel.y = cy + 1;
@@ -254,7 +254,7 @@ export class RulesPanelUI {
               if (isCollected) {
                 const fragText = new Text({
                   text: `"${frag.text}"`,
-                  style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: wrapWidth - 20 },
+                  style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth - 20 },
                 });
                 fragText.x = 20;
                 fragText.y = cy;
@@ -264,7 +264,7 @@ export class RulesPanelUI {
                 if (frag.source) {
                   const srcText = new Text({
                     text: `-- ${frag.source}`,
-                    style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 520 },
+                    style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
                   });
                   srcText.x = 24;
                   srcText.y = cy;
@@ -274,7 +274,7 @@ export class RulesPanelUI {
               } else {
                 const unknownText = new Text({
                   text: this.strings.get('rulesPanel', 'hidden'),
-                  style: { fontSize: 11, fill: UITheme.colors.disabledDark, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 520 },
+                  style: { fontSize: 11, fill: UITheme.colors.disabledDark, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
                 });
                 unknownText.x = 20;
                 unknownText.y = cy;
@@ -312,7 +312,7 @@ export class RulesPanelUI {
 
     const title = new Text({
       text: this.strings.get('rulesPanel', 'title'),
-      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 560 },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 560 },
     });
     title.x = px + PADDING;
     title.y = py + 14;
@@ -332,7 +332,7 @@ export class RulesPanelUI {
 
     const hint = new Text({
       text: this.strings.get('rulesPanel', 'closeHint'),
-      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 540 },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 540 },
     });
     hint.x = px + panelW - 70;
     hint.y = py + panelH - 24;

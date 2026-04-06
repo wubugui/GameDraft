@@ -106,7 +106,7 @@ export class RuleUseUI {
 
     const title = new Text({
       text: this.strings.get('ruleUse', 'title'),
-      style: { fontSize: 16, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 360 },
+      style: { fontSize: 16, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 360 },
     });
     title.x = px + (panelW - title.width) / 2;
     title.y = py + 10;
@@ -128,7 +128,7 @@ export class RuleUseUI {
 
       const text = new Text({
         text: label,
-        style: { fontSize: 14, fill: s.enabled ? UITheme.colors.body : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 360 },
+        style: { fontSize: 14, fill: s.enabled ? UITheme.colors.body : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 360 },
       });
       text.x = px + 24;
       text.y = ry + 8;
@@ -151,7 +151,7 @@ export class RuleUseUI {
 
     const hint = new Text({
       text: this.strings.get('ruleUse', 'closeHint'),
-      style: { fontSize: 11, fill: UITheme.colors.hintLight, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 360 },
+      style: { fontSize: 11, fill: UITheme.colors.hintLight, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 360 },
     });
     hint.x = px + (panelW - hint.width) / 2;
     hint.y = py + panelH - 18;

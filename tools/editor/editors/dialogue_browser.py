@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt, QRegularExpression, QStringListModel, QTimer
 from ..project_model import ProjectModel
 from ..file_io import read_text, write_text
 from .. import theme as app_theme
+from ..shared.ink_find_replace import InkFindReplaceBar
 from ..shared.action_editor import (
     ACTION_TYPES, _NOTIFICATION_TYPES, _ARCHIVE_BOOK_TYPES,
 )
@@ -527,7 +528,16 @@ class DialogueBrowser(QWidget):
         self._editor = InkTextEdit(model)
         self._editor.textChanged.connect(self._on_text_changed)
         self._highlighter: InkHighlighter | None = None
-        self._center_tabs.addTab(self._editor, "Editor")
+
+        editor_tab = QWidget()
+        editor_tab_lo = QVBoxLayout(editor_tab)
+        editor_tab_lo.setContentsMargins(0, 0, 0, 0)
+        editor_tab_lo.setSpacing(0)
+        self._find_bar = InkFindReplaceBar(self._editor)
+        self._find_bar.hide()
+        editor_tab_lo.addWidget(self._find_bar)
+        editor_tab_lo.addWidget(self._editor, stretch=1)
+        self._center_tabs.addTab(editor_tab, "Editor")
 
         self._flow_scene = InkFlowScene()
         self._flow_scene.knot_clicked.connect(self._on_flow_knot_clicked)
@@ -554,6 +564,22 @@ class DialogueBrowser(QWidget):
 
         save_sc = QShortcut(QKeySequence("Ctrl+S"), self)
         save_sc.activated.connect(self._save_file)
+
+        sc_find = QShortcut(QKeySequence(QKeySequence.StandardKey.Find), self)
+        sc_find.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc_find.activated.connect(lambda: self._show_find_bar(replace_focus=False))
+        sc_rep = QShortcut(QKeySequence("Ctrl+H"), self)
+        sc_rep.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc_rep.activated.connect(lambda: self._show_find_bar(replace_focus=True))
+        sc_next = QShortcut(QKeySequence(QKeySequence.StandardKey.FindNext), self)
+        sc_next.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc_next.activated.connect(self._shortcut_find_next)
+        sc_prev = QShortcut(QKeySequence("Shift+F3"), self)
+        sc_prev.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc_prev.activated.connect(self._shortcut_find_prev)
+        sc_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        sc_esc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc_esc.activated.connect(self._hide_find_bar_if_visible)
 
         self._validation_timer = QTimer(self)
         self._validation_timer.setSingleShot(True)
@@ -811,6 +837,29 @@ class DialogueBrowser(QWidget):
                 subprocess.Popen(["code", str(self._current_path)])
             except FileNotFoundError:
                 pass
+
+    # ---- Find / replace ---------------------------------------------------
+
+    def _show_find_bar(self, replace_focus: bool = False) -> None:
+        self._center_tabs.setCurrentIndex(0)
+        self._find_bar.show()
+        if replace_focus:
+            self._find_bar.focus_replace()
+        else:
+            self._find_bar.focus_find()
+
+    def _hide_find_bar_if_visible(self) -> None:
+        if self._find_bar.isVisible():
+            self._find_bar.hide()
+            self._editor.setFocus()
+
+    def _shortcut_find_next(self) -> None:
+        if self._find_bar.isVisible():
+            self._find_bar.find_next()
+
+    def _shortcut_find_prev(self) -> None:
+        if self._find_bar.isVisible():
+            self._find_bar.find_prev()
 
     def on_editor_theme_changed(self, theme_id: str) -> None:
         if self._highlighter:

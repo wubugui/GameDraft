@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import html
 
-from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtCore import Qt, Signal, QUrl, QSize
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QLineEdit,
+    QLineEdit, QStyle,
 )
 
 # Default must match vite.config.ts server.port
@@ -43,13 +43,26 @@ class GameBrowserTab(QWidget):
         root.setContentsMargins(4, 4, 4, 4)
 
         bar = QHBoxLayout()
-        self._btn_run = QPushButton("Run")
+        st = self.style()
+        icon_sz = QSize(22, 22)
+
+        self._btn_run = QPushButton(
+            st.standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "",
+        )
+        self._btn_run.setToolTip("运行游戏 (F5)")
+        self._btn_run.setIconSize(icon_sz)
         self._btn_run.clicked.connect(self.run_requested.emit)
         bar.addWidget(self._btn_run)
 
-        self._btn_stop = QPushButton("Stop")
+        self._btn_stop = QPushButton(
+            st.standardIcon(QStyle.StandardPixmap.SP_MediaStop), "",
+        )
+        self._btn_stop.setToolTip("停止游戏 (Shift+F5)")
+        self._btn_stop.setIconSize(icon_sz)
         self._btn_stop.clicked.connect(self.stop_requested.emit)
         bar.addWidget(self._btn_stop)
+
+        bar.addSpacing(16)
 
         self._btn_reload = QPushButton("Reload")
         self._btn_reload.clicked.connect(self._reload)
@@ -114,3 +127,39 @@ class GameBrowserTab(QWidget):
 
     def _open_external(self) -> None:
         QDesktopServices.openUrl(QUrl(self._url_line.text()))
+
+
+class GamePlayWindow(QWidget):
+    """Standalone popup window for game preview."""
+
+    closed = Signal()
+
+    def __init__(self, width: int = 1280, height: int = 720,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent, Qt.WindowType.Window)
+        self.setWindowTitle("GameDraft")
+        self.resize(width, height)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        if QWebEngineView is not None:
+            self._view = QWebEngineView(self)
+            lay.addWidget(self._view)
+        else:
+            self._view = None
+
+    def load_url(self, url: str) -> None:
+        if self._view:
+            self._view.load(QUrl(url))
+
+    def reload(self) -> None:
+        if self._view:
+            self._view.reload()
+
+    def is_available(self) -> bool:
+        return self._view is not None
+
+    def closeEvent(self, event) -> None:
+        self.closed.emit()
+        super().closeEvent(event)

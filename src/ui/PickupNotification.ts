@@ -21,7 +21,7 @@ export class PickupNotification {
 
     const text = new Text({
       text: label,
-      style: { fontSize: 14, fill: UITheme.colors.pickupText, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 250 },
+      style: { fontSize: 14, fill: UITheme.colors.pickupText, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 250 },
     });
 
     const padding = 12;

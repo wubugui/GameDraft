@@ -93,7 +93,7 @@ export class BookshelfUI {
 
     const title = new Text({
       text: this.strings.get('bookshelf', 'title'),
-      style: { fontSize: 20, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 40 },
+      style: { fontSize: 20, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 40 },
     });
     title.x = px + PADDING;
     title.y = py + 14;
@@ -101,7 +101,7 @@ export class BookshelfUI {
 
     const hint = new Text({
       text: this.strings.get('bookshelf', 'closeHint'),
-      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 40 },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 40 },
     });
     hint.x = px + PANEL_W - 80;
     hint.y = py + PANEL_H - 24;
@@ -154,7 +154,7 @@ export class BookshelfUI {
 
     const label = new Text({
       text: slot.label,
-      style: { fontSize: 12, fill: UITheme.colors.bookLabel, fontFamily: UITheme.fonts.display, align: 'center', wordWrap: true, wordWrapWidth: BOOK_W - 10 },
+      style: { fontSize: 12, fill: UITheme.colors.bookLabel, fontFamily: UITheme.fonts.display, align: 'center', wordWrap: true, breakWords: true, wordWrapWidth: BOOK_W - 10 },
     });
     label.x = x + (BOOK_W - label.width) / 2;
     label.y = y + BOOK_H / 2 - label.height / 2;
