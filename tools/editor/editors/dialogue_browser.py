@@ -19,7 +19,9 @@ from PySide6.QtCore import Qt, QRegularExpression, QStringListModel, QTimer
 
 from ..project_model import ProjectModel
 from ..file_io import read_text, write_text
-from ..shared.action_editor import ACTION_TYPES
+from ..shared.action_editor import (
+    ACTION_TYPES, _NOTIFICATION_TYPES, _ARCHIVE_BOOK_TYPES,
+)
 from .ink_parser import (
     parse_knots, parse_tags, validate_ink,
     extract_npc_references, InkTag,
@@ -29,7 +31,7 @@ from .ink_flow_scene import InkFlowScene, InkFlowView
 from .ink_simulator import InkSimulatorWidget
 
 # ---------------------------------------------------------------------------
-# Tag type -> action param ID source mapping
+# Autocomplete data tables
 # ---------------------------------------------------------------------------
 
 _ACTION_ID_SOURCES: dict[str, str] = {
@@ -46,14 +48,21 @@ _ACTION_ID_SOURCES: dict[str, str] = {
     "playBgm": "bgm",
     "stopBgm": "bgm",
     "playSfx": "sfx",
+    "pickup": "item",
+    "shopPurchase": "item",
+    "inventoryDiscard": "item",
 }
 
-# Tag prefixes offered after typing `# `
 _TAG_PREFIXES = [
     "action:", "require:", "speaker:", "ruleHint:", "cost:",
 ]
 
 _INK_KEYWORDS = ["EXTERNAL ", "INCLUDE "]
+
+_EMOTE_NAMES = [
+    "happy", "sad", "angry", "surprised", "confused",
+    "scared", "neutral", "thinking",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +138,139 @@ class InkHighlighter(QSyntaxHighlighter):
 # Ink text editor with context-aware autocomplete
 # ---------------------------------------------------------------------------
 
+class _CompletionRule:
+    """A single context-aware autocomplete rule.
+
+    Attributes:
+        pattern:       Compiled regex matched against the text before cursor.
+        candidates_fn: ``(match, editor) -> list[str]``  returns candidates.
+        prefix_group:  Which regex group holds the already-typed prefix.
+    """
+    __slots__ = ("pattern", "candidates_fn", "prefix_group")
+
+    def __init__(
+        self,
+        pattern: str,
+        candidates_fn,
+        prefix_group: int = 1,
+    ):
+        self.pattern = re.compile(pattern, re.IGNORECASE)
+        self.candidates_fn = candidates_fn
+        self.prefix_group = prefix_group
+
+
+def _build_completion_rules() -> list[_CompletionRule]:
+    """Return the ordered rule list (most-specific first)."""
+    R = _CompletionRule
+
+    # --- helpers referenced by lambdas (closures capture *editor* at call) --
+
+    def _divert(m, e):
+        return e._knot_names + ["END"]
+
+    def _ext_arg(m, e):
+        ext_def = INK_EXTERNALS.get(m.group(1))
+        if ext_def and ext_def.params:
+            return e._candidates_for_param_type(ext_def.params[0].completion_type)
+        return []
+
+    def _ext_func(m, e):
+        return [f'{n}("' for n in INK_EXTERNALS]
+
+    def _cond_else(m, e):
+        return ["else:"]
+
+    def _setflag_val(m, e):
+        return ["true", "false", "1", "0"]
+
+    def _action_archive_book(m, e):
+        return list(_ARCHIVE_BOOK_TYPES)
+
+    def _action_notif_type(m, e):
+        return list(_NOTIFICATION_TYPES)
+
+    def _action_emote_target(m, e):
+        return e._npc_names()
+
+    def _action_emote_name(m, e):
+        return list(_EMOTE_NAMES)
+
+    def _action_scene_spawn(m, e):
+        scene_id = m.group(1)
+        return e._model.spawn_point_keys_for_scene(scene_id)
+
+    def _action_param(m, e):
+        return e._get_action_param_candidates(m.group(1))
+
+    def _action_type(m, e):
+        return list(ACTION_TYPES)
+
+    def _require(m, e):
+        return e._flag_keys()
+
+    def _speaker(m, e):
+        return e._npc_names()
+
+    def _rule_hint(m, e):
+        return [r[0] for r in e._model.all_rule_ids()]
+
+    def _cost(m, e):
+        return ["currency"]
+
+    def _tag_prefix(m, e):
+        return list(_TAG_PREFIXES)
+
+    def _ext_decl(m, e):
+        return all_external_signatures()
+
+    def _ink_kw(m, e):
+        return list(_INK_KEYWORDS)
+
+    return [
+        # ---- Divert -------------------------------------------------------
+        R(r'->\s*(\S*)$',                                  _divert),
+
+        # ---- Conditional block { func("arg"): ... } ----------------------
+        R(r'\{\s*(\w+)\(\s*"([^"]*)$',                     _ext_arg,    2),
+        R(r'\{\s*(\w*)$',                                  _ext_func),
+
+        # ---- Conditional else inside block --------------------------------
+        R(r'^\s*-\s*(\w*)$',                               _cond_else),
+
+        # ---- Tag: action (most-specific first) ----------------------------
+        # setFlag value
+        R(r'#\s*action:setFlag:[^:\s]+:([^:\s]*)$',        _setflag_val),
+        # addArchiveEntry:bookType (no data source for entryId, skip second level)
+        R(r'#\s*action:addArchiveEntry:([^:\s]*)$',        _action_archive_book),
+        # showNotification:text:type
+        R(r'#\s*action:showNotification:[^:\s]+:([^:\s]*)$', _action_notif_type),
+        # showEmote:target:emote
+        R(r'#\s*action:showEmote:[^:\s]+:([^:\s]*)$',      _action_emote_name),
+        R(r'#\s*action:showEmote:([^:\s]*)$',              _action_emote_target),
+        # switchScene/changeScene:sceneId:spawnPoint
+        R(r'#\s*action:(?:switchScene|changeScene):([^:\s]+):([^:\s]*)$',
+                                                            _action_scene_spawn, 2),
+        # generic action first param
+        R(r'#\s*action:(\w+):([^:\s]*)$',                  _action_param, 2),
+        # action type
+        R(r'#\s*action:([^:\s]*)$',                        _action_type),
+
+        # ---- Tag: other types ---------------------------------------------
+        R(r'#\s*require:([^:\s]*)$',                       _require),
+        R(r'#\s*speaker:([^:\s]*)$',                       _speaker),
+        R(r'#\s*ruleHint:([^:\s]*)$',                      _rule_hint),
+        R(r'#\s*cost:([^:\s]*)$',                          _cost),
+        R(r'#\s*([^:\s]*)$',                               _tag_prefix),
+
+        # ---- Line-start keywords ------------------------------------------
+        R(r'^\s*EXTERNAL\s+(\S*)$',                        _ext_decl),
+        R(r'^\s*([A-Z]+)$',                                _ink_kw),
+    ]
+
+
+_COMPLETION_RULES = _build_completion_rules()
+
+
 class InkTextEdit(QPlainTextEdit):
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -158,13 +300,14 @@ class InkTextEdit(QPlainTextEdit):
     def set_knot_names(self, names: list[str]) -> None:
         self._knot_names = list(names)
 
+    # ---- Context menu helpers ---------------------------------------------
+
     def contextMenuEvent(self, event) -> None:
         menu = self.createStandardContextMenu()
         menu.addSeparator()
 
         insert_menu = menu.addMenu("Insert Tag")
         for prefix in _TAG_PREFIXES:
-            tag_name = prefix.rstrip(":")
             act = insert_menu.addAction(f"# {prefix}")
             act.triggered.connect(
                 lambda checked, p=prefix: self._insert_tag_template(p),
@@ -190,6 +333,8 @@ class InkTextEdit(QPlainTextEdit):
         cursor.insertText("\n-> ")
         self.setTextCursor(cursor)
         self._update_completions()
+
+    # ---- Autocomplete core ------------------------------------------------
 
     def keyPressEvent(self, event) -> None:
         if self._completer.popup().isVisible():
@@ -228,85 +373,17 @@ class InkTextEdit(QPlainTextEdit):
         self._completer.complete(cr)
 
     def _get_completion_context(self, text_before: str) -> tuple[list[str], str]:
-        """Return (candidates, prefix) for the current cursor context.
-
-        Patterns are checked from most specific to least specific so that
-        e.g. ``# action:setFlag:key:`` is matched before ``# action:setFlag:``.
-        Each pattern captures the already-typed portion as *prefix* so
-        QCompleter can filter continuously while the user types.
-        """
-        # -> divert target
-        m = re.search(r'->\s*(\S*)$', text_before)
-        if m:
-            return self._knot_names + ["END"], m.group(1)
-
-        # {externalFunc("arg -- argument inside any registered external call
-        m = re.search(r'\{(\w+)\(\s*"([^"]*)$', text_before)
-        if m:
-            func_name = m.group(1)
-            ext_def = INK_EXTERNALS.get(func_name)
-            if ext_def and ext_def.params:
-                candidates = self._candidates_for_param_type(ext_def.params[0].completion_type)
+        """Walk the rule table and return (candidates, prefix) for the first
+        matching rule, or ([], '') if nothing matches."""
+        for rule in _COMPLETION_RULES:
+            m = rule.pattern.search(text_before)
+            if m:
+                candidates = rule.candidates_fn(m, self)
                 if candidates:
-                    return candidates, m.group(2)
-
-        # {funcPrefix -- external function name after opening brace
-        m = re.search(r'\{(\w*)$', text_before)
-        if m:
-            names = [f'{n}("' for n in INK_EXTERNALS]
-            return names, m.group(1)
-
-        # # action:setFlag:<key>:<value>
-        m = re.search(r'#\s*action:setFlag:[^:\s]+:([^:\s]*)$', text_before)
-        if m:
-            return ["true", "false", "1", "0"], m.group(1)
-
-        # # action:<type>:<param>
-        m = re.search(r'#\s*action:(\w+):([^:\s]*)$', text_before)
-        if m:
-            return self._get_action_param_candidates(m.group(1)), m.group(2)
-
-        # # action:<type>
-        m = re.search(r'#\s*action:([^:\s]*)$', text_before)
-        if m:
-            return list(ACTION_TYPES), m.group(1)
-
-        # # require:<flag>
-        m = re.search(r'#\s*require:([^:\s]*)$', text_before)
-        if m:
-            return self._flag_keys(), m.group(1)
-
-        # # speaker:<name>
-        m = re.search(r'#\s*speaker:([^:\s]*)$', text_before)
-        if m:
-            return self._npc_names(), m.group(1)
-
-        # # ruleHint:<rule>
-        m = re.search(r'#\s*ruleHint:([^:\s]*)$', text_before)
-        if m:
-            return [r[0] for r in self._model.all_rule_ids()], m.group(1)
-
-        # # cost:<type>
-        m = re.search(r'#\s*cost:([^:\s]*)$', text_before)
-        if m:
-            return ["currency"], m.group(1)
-
-        # # <tag_prefix> -- least specific tag pattern
-        m = re.search(r'#\s*([^:\s]*)$', text_before)
-        if m:
-            return _TAG_PREFIXES, m.group(1)
-
-        # EXTERNAL <func> -- external function declaration
-        m = re.search(r'^\s*EXTERNAL\s+(\S*)$', text_before)
-        if m:
-            return all_external_signatures(), m.group(1)
-
-        # Line-start Ink keyword (EXTERNAL, INCLUDE, ...)
-        m = re.search(r'^\s*([A-Z]*)$', text_before)
-        if m and m.group(1):
-            return list(_INK_KEYWORDS), m.group(1)
-
+                    return candidates, m.group(rule.prefix_group)
         return [], ""
+
+    # ---- Candidate data helpers -------------------------------------------
 
     def _get_action_param_candidates(self, act_type: str) -> list[str]:
         if act_type == "setFlag":
@@ -335,7 +412,6 @@ class InkTextEdit(QPlainTextEdit):
         return []
 
     def _candidates_for_param_type(self, completion_type: str) -> list[str]:
-        """Map a param completion_type to actual candidate values."""
         if completion_type == "flag_key":
             return self._flag_keys()
         if completion_type == "item_id":
@@ -355,6 +431,8 @@ class InkTextEdit(QPlainTextEdit):
                 if n:
                     names.add(str(n))
         return sorted(names)
+
+    # ---- Insert completion ------------------------------------------------
 
     def _insert_completion(self, text: str) -> None:
         cursor = self.textCursor()
