@@ -1,6 +1,9 @@
 """Main application window for GameDraft Editor."""
 from __future__ import annotations
 
+import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,12 +13,74 @@ from PySide6.QtWidgets import (
     QMessageBox, QTextEdit, QDialog, QVBoxLayout, QLabel,
 )
 from PySide6.QtGui import QAction, QKeySequence, QActionGroup
-from PySide6.QtCore import Qt, QProcess
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer
 from PySide6.QtWidgets import QApplication
 
 from . import theme
 from .project_model import ProjectModel
 from .validator import validate, Issue
+from .editors.game_browser import GAME_DEV_URL, GameBrowserTab
+
+# Vite 就绪行示例:  Local:   http://127.0.0.1:3000/
+_VITE_DEV_URL_RE = re.compile(
+    r"https?://(?:127\.0\.0\.1|localhost):\d{2,5}(?:/[^\s]*)?",
+    re.IGNORECASE,
+)
+
+
+def _vite_dev_url_from_log(log: str) -> str | None:
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", log)
+    matches = list(_VITE_DEV_URL_RE.finditer(plain))
+    if not matches:
+        return None
+    url = matches[-1].group(0).rstrip()
+    if not url.endswith("/"):
+        url += "/"
+    return url
+
+
+def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
+    """GUI 启动的进程常缺少终端里的 PATH；补全常见 Node/npm 目录。"""
+    path_key = "Path" if sys.platform == "win32" else "PATH"
+    if not env.contains(path_key):
+        for alt in ("PATH", "Path"):
+            if env.contains(alt):
+                path_key = alt
+                break
+    current = env.value(path_key, "")
+    prefixes: list[str] = []
+
+    npm = shutil.which("npm")
+    if npm:
+        prefixes.append(str(Path(npm).resolve().parent))
+
+    if sys.platform == "win32":
+        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pfx86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        home = os.environ.get("USERPROFILE", "")
+        for d in (
+            os.path.join(pf, "nodejs"),
+            os.path.join(pfx86, "nodejs"),
+            os.path.join(home, "AppData", "Roaming", "npm"),
+            os.path.join(home, ".volta", "bin"),
+        ):
+            if os.path.isdir(d):
+                prefixes.append(d)
+        nvm_link = os.environ.get("NVM_SYMLINK", "")
+        if nvm_link and os.path.isdir(nvm_link):
+            prefixes.insert(0, nvm_link)
+
+    seen: set[str] = set()
+    merged: list[str] = []
+    for p in prefixes:
+        if not p:
+            continue
+        norm = os.path.normcase(os.path.abspath(p))
+        if os.path.isdir(p) and norm not in seen:
+            seen.add(norm)
+            merged.append(p)
+    if merged:
+        env.insert(path_key, os.pathsep.join(merged) + os.pathsep + current)
 
 
 class MainWindow(QMainWindow):
@@ -26,6 +91,14 @@ class MainWindow(QMainWindow):
 
         self._model = ProjectModel(self)
         self._game_proc: QProcess | None = None
+        self._game_server_ready_for_current_run = False
+        self._game_ready_timer = QTimer(self)
+        self._game_ready_timer.setSingleShot(True)
+        self._game_ready_timer.timeout.connect(self._on_game_server_ready_timeout)
+        self._game_browser: GameBrowserTab | None = None
+        self._game_proc_log: str = ""
+        self._game_user_stopped: bool = False
+        self._last_vite_dev_url: str | None = None
         self._tabs = QTabWidget()
         self.setCentralWidget(self._tabs)
         self._editor_instances: list = []
@@ -181,6 +254,11 @@ class MainWindow(QMainWindow):
             self._tabs.addTab(ed, label)
             self._editor_instances.append(ed)
 
+        self._game_browser = GameBrowserTab(self)
+        self._game_browser.run_requested.connect(self._run_game)
+        self._game_browser.stop_requested.connect(self._stop_game)
+        self._tabs.addTab(self._game_browser, "Game")
+
         self._connect_action_nav()
         self._sync_theme_to_editors()
 
@@ -209,25 +287,171 @@ class MainWindow(QMainWindow):
         if self._model.project_path is None:
             return
         self._save_all()
-        cmd_path = self._model.project_path / "start-game.cmd"
-        if not cmd_path.exists():
-            QMessageBox.warning(self, "Error", "start-game.cmd not found")
+        proj = self._model.project_path
+        pkg_json = proj / "package.json"
+        if not pkg_json.is_file():
+            QMessageBox.warning(self, "Error", "package.json not found")
             return
-        self._game_proc = QProcess(self)
-        self._game_proc.setWorkingDirectory(str(self._model.project_path))
-        self._game_proc.start("cmd", ["/c", str(cmd_path)])
-        self._status.showMessage("Game started.", 3000)
+        if self._game_browser is None:
+            return
+
+        if (self._game_proc is not None
+                and self._game_proc.state() != QProcess.ProcessState.NotRunning):
+            self._focus_game_tab_and_load(self._last_vite_dev_url)
+            self._status.showMessage("Dev server already running; reloaded Game tab.", 3000)
+            return
+
+        self._game_server_ready_for_current_run = False
+        self._game_user_stopped = False
+        self._game_proc_log = ""
+        self._game_ready_timer.stop()
+
+        proc = QProcess(self)
+        proc.setWorkingDirectory(str(proj))
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("GAMEDRAFT_EDITOR_EMBED", "1")
+        _augment_env_for_nodejs(env)
+        proc.setProcessEnvironment(env)
+        proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        proc.readyReadStandardOutput.connect(self._on_game_proc_output)
+        proc.errorOccurred.connect(self._on_game_proc_error)
+        proc.finished.connect(self._on_game_proc_finished)
+        self._game_proc = proc
+        self._game_proc.start("cmd.exe", ["/c", "npm run dev"])
+        self._status.showMessage("Starting Vite dev server…", 5000)
+        self._game_browser.show_message("Starting dev server…")
+        self._tabs.setCurrentWidget(self._game_browser)
+        self._game_ready_timer.start(60_000)
+
+    def _focus_game_tab_and_load(self, url: str | None = None) -> None:
+        if self._game_browser is None or not self._game_browser.is_webengine_available():
+            return
+        self._game_browser.load_dev_url(url)
+        self._tabs.setCurrentWidget(self._game_browser)
+
+    def _mark_game_server_ready(self, url: str) -> None:
+        if self._game_server_ready_for_current_run:
+            return
+        self._game_server_ready_for_current_run = True
+        self._last_vite_dev_url = url
+        self._game_ready_timer.stop()
+        self._focus_game_tab_and_load(url)
+        self._status.showMessage("Dev server ready.", 3000)
+
+    def _on_game_proc_output(self) -> None:
+        if self._game_server_ready_for_current_run or self._game_proc is None:
+            return
+        chunk = bytes(self._game_proc.readAllStandardOutput()).decode(
+            "utf-8", errors="replace",
+        )
+        if not chunk:
+            return
+        self._game_proc_log += chunk
+        url = _vite_dev_url_from_log(self._game_proc_log)
+        if url:
+            self._mark_game_server_ready(url)
+
+    def _on_game_proc_error(self, error: QProcess.ProcessError) -> None:
+        if error == QProcess.ProcessError.FailedToStart:
+            self._game_ready_timer.stop()
+            QMessageBox.critical(
+                self,
+                "Run Game",
+                "无法启动开发服务器子进程（FailedToStart）。\n"
+                "若已安装 Node，请尝试从「开始菜单」启动本编辑器，或检查安全软件是否拦截。",
+            )
+
+    def _on_game_server_ready_timeout(self) -> None:
+        if self._game_server_ready_for_current_run:
+            return
+        if self._game_proc is None:
+            return
+        if self._game_proc.state() == QProcess.ProcessState.NotRunning:
+            return
+        self._game_server_ready_for_current_run = True
+        url = _vite_dev_url_from_log(self._game_proc_log) or self._last_vite_dev_url or GAME_DEV_URL
+        self._focus_game_tab_and_load(url)
+        self._status.showMessage(
+            "Timeout: opened dev URL; if the page fails, check Game tab or Run output.",
+            8000,
+        )
+
+    def _show_game_proc_failure(self, headline: str) -> None:
+        tail = self._game_proc_log.strip()
+        if len(tail) > 6000:
+            tail = tail[-6000:]
+        msg = headline
+        if tail:
+            msg += "\n\n--- npm / Vite 输出（尾部）---\n" + tail
+        QMessageBox.warning(self, "Run Game", msg)
+        if self._game_browser is not None and self._game_browser.is_webengine_available():
+            self._game_browser.show_message(
+                f"{headline}\n\n按 F5 重试。若提示找不到 npm，请将 Node.js 加入系统 PATH。",
+            )
+
+    def _on_game_proc_finished(self, exit_code: int, _exit_status) -> None:
+        self._game_ready_timer.stop()
+        was_ready = self._game_server_ready_for_current_run
+        self._game_server_ready_for_current_run = False
+        proc = self.sender()
+        if isinstance(proc, QProcess):
+            tail = bytes(proc.readAllStandardOutput()).decode("utf-8", errors="replace")
+            self._game_proc_log += tail
+        if proc is self._game_proc:
+            self._game_proc = None
+        user_stop = self._game_user_stopped
+        self._game_user_stopped = False
+
+        if user_stop:
+            if self._game_browser is not None and self._game_browser.is_webengine_available():
+                self._game_browser.show_message(
+                    "Game stopped. Press Run (F5) to start again.",
+                )
+            return
+
+        if not was_ready:
+            if exit_code != 0:
+                self._show_game_proc_failure(
+                    f"开发服务器异常结束（退出码 {exit_code}）。常见原因：未安装 Node/npm、"
+                    "脚本编译失败、或端口被占用。",
+                )
+            else:
+                self._show_game_proc_failure("开发进程已结束，未输出就绪信息。")
+            return
+
+        if self._game_browser is not None and self._game_browser.is_webengine_available():
+            self._game_browser.show_message(
+                "Dev server stopped. Press Run (F5) to start again.",
+            )
 
     def _stop_game(self) -> None:
         if self._model.project_path is None:
             return
+        self._game_user_stopped = True
+        self._game_ready_timer.stop()
+        self._game_server_ready_for_current_run = False
         cmd_path = self._model.project_path / "stop-game.cmd"
         if cmd_path.exists():
             subprocess.run(["cmd", "/c", str(cmd_path), "nopause"],
                            cwd=str(self._model.project_path))
-        if self._game_proc and self._game_proc.state() != QProcess.ProcessState.NotRunning:
-            self._game_proc.kill()
-        self._game_proc = None
+        proc = self._game_proc
+        if proc is not None:
+            try:
+                proc.readyReadStandardOutput.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                proc.finished.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._game_proc = None
+            if proc.state() != QProcess.ProcessState.NotRunning:
+                proc.kill()
+            proc.deleteLater()
+        if self._game_browser is not None and self._game_browser.is_webengine_available():
+            self._game_browser.show_message(
+                "Game stopped. Press Run (F5) to start the dev server.",
+            )
         self._status.showMessage("Game stopped.", 3000)
 
     def _build_game(self) -> None:

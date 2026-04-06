@@ -4,6 +4,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+    import PySide6.QtWebEngineWidgets  # noqa: F401 — WebEngine before QApplication
+except ImportError:
+    pass
+
 from PySide6.QtWidgets import QApplication
 
 from . import theme
