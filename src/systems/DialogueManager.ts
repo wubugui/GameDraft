@@ -5,6 +5,7 @@ import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { ActionDef, IGameSystem, GameContext, DialogueLine, DialogueChoice } from '../data/types';
+import { bindInkExternals } from '../data/inkExternals';
 
 function parseTagValue(s: string): string | number | boolean {
   if (s === 'true') return true;
@@ -62,7 +63,7 @@ export class DialogueManager implements IGameSystem {
     const jsonStr = await this.assetManager.loadText(jsonPath);
 
     this.story = new Story(jsonStr);
-    this.bindGetFlag();
+    bindInkExternals(this.story, { flagStore: this.flagStore });
 
     this.currentInkPath = inkPath;
     this.currentNpcName = npcName;
@@ -74,15 +75,6 @@ export class DialogueManager implements IGameSystem {
 
     this.eventBus.emit('dialogue:start', { npcName });
     this.advance();
-  }
-
-  private bindGetFlag(): void {
-    if (!this.story) return;
-    this.story.BindExternalFunction('getFlag', (key: string) => {
-      const val = this.flagStore.get(key);
-      if (typeof val === 'boolean') return val ? 1 : 0;
-      return val ?? 0;
-    }, true);
   }
 
   advance(): void {

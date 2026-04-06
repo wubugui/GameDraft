@@ -42,7 +42,7 @@ class MainWindow(QMainWindow):
 
         file_menu = mb.addMenu("File")
         self._act(file_menu, "Open Project...", self._open_project, QKeySequence("Ctrl+O"))
-        self._act(file_menu, "Save All", self._save_all, QKeySequence("Ctrl+S"))
+        self._act(file_menu, "Save All", self._save_all, QKeySequence("Ctrl+Shift+S"))
         file_menu.addSeparator()
         self._act(file_menu, "Exit", self.close, QKeySequence("Alt+F4"))
 

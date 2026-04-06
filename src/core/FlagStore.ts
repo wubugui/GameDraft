@@ -143,7 +143,7 @@ export class FlagStore {
     this.flags.clear();
     for (const [rawKey, v] of Object.entries(data)) {
       let k = rawKey;
-      if (r?.migrations?.[k]) {
+      if (r && r.migrations && k in r.migrations) {
         k = r.migrations[k];
       }
       if (r && !this.isKeyAllowed(k, r)) {

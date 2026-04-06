@@ -134,6 +134,12 @@ class ProjectModel(QObject):
         from .flag_registry import flag_registry_path, load_flag_registry
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
+        from .editors.ink_parser import discover_ink_externals, INK_EXTERNALS as _ink_ext
+        _ink_ext.clear()
+        _ink_ext.update(discover_ink_externals(
+            project_path / "src" / "data" / "inkExternals.ts",
+        ))
+
         self._dirty.clear()
         self.undo_stack.clear()
         self.dirty_changed.emit(False)
