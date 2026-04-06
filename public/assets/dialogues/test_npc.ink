@@ -28,7 +28,7 @@ EXTERNAL getFlag(key)
         -> end_chat
 
 === talked_ghost ===
-{getFlag("has_talisman"):
+{getFlag("has_item_talisman"):
     王大爷: 咦？你身上那是什么符？看着像是道士画的。
     关二狗: 路上捡的，也不知道管不管用。
     王大爷: 管不管用不好说，但有个东西防身总比没有强。

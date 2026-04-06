@@ -14,6 +14,98 @@ from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
 
 
+# ---------------------------------------------------------------------------
+# Consume-items editor (list of {id, count} rows)
+# ---------------------------------------------------------------------------
+
+class _ConsumeItemRow(QWidget):
+    def __init__(
+        self,
+        data: dict,
+        model: ProjectModel,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        self._item_sel = IdRefSelector(allow_empty=False)
+        self._item_sel.set_items(model.all_item_ids())
+        self._item_sel.set_current(data.get("id", ""))
+        lay.addWidget(self._item_sel, stretch=1)
+
+        self._count = QSpinBox()
+        self._count.setRange(1, 9999)
+        self._count.setValue(data.get("count", 1))
+        self._count.setPrefix("x")
+        lay.addWidget(self._count)
+
+        self._del_btn = QPushButton("\u2212")
+        self._del_btn.setFixedWidth(24)
+        lay.addWidget(self._del_btn)
+
+    def to_dict(self) -> dict:
+        return {"id": self._item_sel.current_id(), "count": self._count.value()}
+
+
+class ConsumeItemsEditor(QGroupBox):
+    def __init__(self, title: str = "Consume Items",
+                 parent: QWidget | None = None):
+        super().__init__(title, parent)
+        self._model: ProjectModel | None = None
+        self._rows: list[_ConsumeItemRow] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(4, 8, 4, 4)
+        self._rows_layout = QVBoxLayout()
+        outer.addLayout(self._rows_layout)
+
+        btn = QPushButton("+ Item")
+        btn.clicked.connect(self._add_row)
+        outer.addWidget(btn)
+
+    def set_model(self, model: ProjectModel) -> None:
+        self._model = model
+
+    def set_data(self, items: list[dict]) -> None:
+        self._clear()
+        for entry in items:
+            self._add_row(entry)
+
+    def to_list(self) -> list[dict]:
+        out: list[dict] = []
+        for row in self._rows:
+            d = row.to_dict()
+            if d["id"]:
+                out.append(d)
+        return out
+
+    def _add_row(self, data: dict | None = None) -> None:
+        if self._model is None:
+            return
+        if data is None or isinstance(data, bool):
+            data = {"id": "", "count": 1}
+        row = _ConsumeItemRow(data, self._model)
+        row._del_btn.clicked.connect(lambda: self._remove_row(row))
+        self._rows.append(row)
+        self._rows_layout.addWidget(row)
+
+    def _remove_row(self, row: _ConsumeItemRow) -> None:
+        self._rows_layout.removeWidget(row)
+        self._rows.remove(row)
+        row.deleteLater()
+
+    def _clear(self) -> None:
+        for row in self._rows:
+            self._rows_layout.removeWidget(row)
+            row.deleteLater()
+        self._rows.clear()
+
+
+# ---------------------------------------------------------------------------
+# Option widget
+# ---------------------------------------------------------------------------
+
 class OptionWidget(QGroupBox):
     def __init__(self, idx: int, data: dict, model: ProjectModel,
                  parent: QWidget | None = None):
@@ -36,6 +128,10 @@ class OptionWidget(QGroupBox):
         self._conds.set_flag_pattern_context(model, None)
         self._conds.set_data(data.get("conditions", []))
         lay.addWidget(self._conds)
+        self._consume = ConsumeItemsEditor("Consume Items")
+        self._consume.set_model(model)
+        self._consume.set_data(data.get("consumeItems", []))
+        lay.addWidget(self._consume)
         self._actions = ActionEditor("Result Actions")
         self._actions.set_project_context(model, None)
         self._actions.set_data(data.get("resultActions", []))
@@ -54,7 +150,7 @@ class OptionWidget(QGroupBox):
         rt = self._result_text.toPlainText()
         if rt:
             d["resultText"] = rt
-        ci = self._data.get("consumeItems")
+        ci = self._consume.to_list()
         if ci:
             d["consumeItems"] = ci
         return d

@@ -84,13 +84,8 @@ class _DraggableCircle(QGraphicsEllipseItem):
                       self.GraphicsItemFlag.ItemSendsGeometryChanges)
         self.entity_id = entity_id
         self.entity_kind = entity_kind
-
-        if range_radius > 0:
-            outline = QGraphicsEllipseItem(
-                -range_radius, -range_radius,
-                range_radius * 2, range_radius * 2, self)
-            outline.setPen(_RANGE_PEN)
-            outline.setBrush(QBrush(Qt.GlobalColor.transparent))
+        self._range_outline: QGraphicsEllipseItem | None = None
+        self.set_interaction_range(range_radius)
 
         self._label = QGraphicsTextItem(entity_id, self)
         self._label.setDefaultTextColor(Qt.GlobalColor.white)
@@ -98,6 +93,21 @@ class _DraggableCircle(QGraphicsEllipseItem):
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label.setPos(radius * 0.5, -radius * 0.5)
+
+    def set_interaction_range(self, range_radius: float) -> None:
+        """Update dashed outline for hotspot/NPC interaction range (world units)."""
+        r = float(range_radius)
+        if r <= 0:
+            if self._range_outline is not None:
+                self._range_outline.hide()
+            return
+        if self._range_outline is None:
+            self._range_outline = QGraphicsEllipseItem(-r, -r, r * 2, r * 2, self)
+            self._range_outline.setPen(_RANGE_PEN)
+            self._range_outline.setBrush(QBrush(Qt.GlobalColor.transparent))
+        else:
+            self._range_outline.setRect(-r, -r, r * 2, r * 2)
+            self._range_outline.show()
 
 
 class _DraggableRect(QGraphicsRectItem):
@@ -243,6 +253,13 @@ class SceneCanvas(QGraphicsView):
             _SPAWN_COLOR, name, "spawn")
         self._gfx.addItem(item)
         self._entity_items[f"spawn:{name}"] = item
+
+    def update_interaction_range(self, kind: str, entity_id: str, range_radius: float) -> None:
+        """Refresh dashed circle for hotspot/NPC when interactionRange edits live-update model."""
+        key = f"{kind}:{entity_id}"
+        item = self._entity_items.get(key)
+        if item is not None and hasattr(item, "set_interaction_range"):
+            item.set_interaction_range(range_radius)
 
     def fit_all(self) -> None:
         self.fitInView(self._gfx.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
@@ -536,6 +553,8 @@ class TargetSpawnPickerDialog(QDialog):
 
 class ScenePropertyPanel(QScrollArea):
     changed = Signal()
+    # (kind, entity_id, interaction_range) — live canvas sync
+    interaction_range_changed = Signal(str, str, float)
 
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -790,6 +809,7 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("y", self._hs_y)
         self._hs_range = QDoubleSpinBox(); self._hs_range.setRange(0, 99999)
         form.addRow("interactionRange", self._hs_range)
+        self._hs_range.valueChanged.connect(self._on_hotspot_interaction_range_live)
         self._hs_auto = QCheckBox(); form.addRow("autoTrigger", self._hs_auto)
         lay.addLayout(form)
 
@@ -912,7 +932,9 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_label.setText(hs.get("label", ""))
         self._hs_x.setValue(hs.get("x", 0))
         self._hs_y.setValue(hs.get("y", 0))
+        self._hs_range.blockSignals(True)
         self._hs_range.setValue(hs.get("interactionRange", 50))
+        self._hs_range.blockSignals(False)
         self._hs_auto.setChecked(hs.get("autoTrigger", False))
         self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
         self._hs_cond.set_data(hs.get("conditions", []))
@@ -950,6 +972,26 @@ class ScenePropertyPanel(QScrollArea):
         elif ht == "encounter":
             self._hs_enc_id.set_items(self._model.all_encounter_ids())
             self._hs_enc_id.set_current(data.get("encounterId", ""))
+
+    def _on_hotspot_interaction_range_live(self, value: float) -> None:
+        hs = self._pending_hotspot
+        if hs is None or self._stack.currentWidget() != self._hotspot_panel:
+            return
+        hs["interactionRange"] = float(value)
+        eid = str(hs.get("id", ""))
+        if eid:
+            self.interaction_range_changed.emit("hotspot", eid, float(value))
+        self.changed.emit()
+
+    def _on_npc_interaction_range_live(self, value: float) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        npc["interactionRange"] = float(value)
+        eid = str(npc.get("id", ""))
+        if eid:
+            self.interaction_range_changed.emit("npc", eid, float(value))
+        self.changed.emit()
 
     def _write_hotspot_widgets_to_dict(self, hs: dict) -> None:
         hs["id"] = self._hs_id.text().strip()
@@ -1019,6 +1061,7 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_knot = QLineEdit(); form.addRow("dialogueKnot", self._npc_knot)
         self._npc_range = QDoubleSpinBox(); self._npc_range.setRange(0, 99999)
         form.addRow("interactionRange", self._npc_range)
+        self._npc_range.valueChanged.connect(self._on_npc_interaction_range_live)
         self._npc_anim = IdRefSelector(allow_empty=True)
         self._npc_anim.setMinimumWidth(220)
         self._npc_anim.value_changed.connect(lambda _x: self.changed.emit())
@@ -1040,7 +1083,9 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_dialogue.set_items(d_items)
         self._npc_dialogue.set_current(cur_d)
         self._npc_knot.setText(npc.get("dialogueKnot", ""))
+        self._npc_range.blockSignals(True)
         self._npc_range.setValue(npc.get("interactionRange", 50))
+        self._npc_range.blockSignals(False)
         a_items = self._model.anim_asset_path_choices()
         cur_a = npc.get("animFile", "") or ""
         if cur_a and all(x[0] != cur_a for x in a_items):
@@ -1265,6 +1310,7 @@ class SceneEditor(QWidget):
         # right: property panel
         self._props = ScenePropertyPanel(model)
         self._props.changed.connect(lambda: model.mark_dirty("scene", self._current_scene_id or ""))
+        self._props.interaction_range_changed.connect(self._on_props_interaction_range_changed)
 
         splitter.addWidget(left)
         splitter.addWidget(self._canvas)
@@ -1351,6 +1397,10 @@ class SceneEditor(QWidget):
             sc = self._model.scenes.get(self._current_scene_id)
             if sc:
                 self._props.load_scene_props(sc, clear_pending_edits=False)
+
+    def _on_props_interaction_range_changed(self, kind: str, eid: str, r: float) -> None:
+        if eid:
+            self._canvas.update_interaction_range(kind, eid, r)
 
     def _on_item_moved(self, kind: str, eid: str, x: float, y: float) -> None:
         sc = self._model.scenes.get(self._current_scene_id or "")

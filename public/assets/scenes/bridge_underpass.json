@@ -30,7 +30,7 @@
       "label": "回街巷",
       "x": 328.3,
       "y": 919.3,
-      "interactionRange": 406.3,
+      "interactionRange": 200.0,
       "data": {
         "targetScene": "test_room_a",
         "targetSpawnPoint": "from_bridge"
