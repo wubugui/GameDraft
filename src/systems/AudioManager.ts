@@ -30,7 +30,11 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   private assetManager!: AssetManager;
-  private audioGestureUnlock: (() => void) | null = null;
+
+  /** 嵌入式 WebView 等场景下，页面加载后尚无用户手势，此时 play() 会触发 AudioContext 警告；推迟到首次输入再真正播放。 */
+  private audioUnblocked = false;
+  private pendingPlayback: Array<() => void> = [];
+  private gestureListenersInstalled = false;
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
@@ -38,7 +42,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   init(ctx: GameContext): void {
     this.assetManager = ctx.assetManager;
-    this.installAudioContextUnlock();
+    this.installAudioGestureGate();
   }
   update(_dt: number): void {}
 
@@ -65,87 +69,99 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   playBgm(id: string, fadeMs: number = 1000): void {
-    if (this.currentBgmId === id) return;
+    this.runWhenAudioAllowed(() => {
+      if (this.currentBgmId === id) return;
 
-    const entry = this.config.bgm[id];
-    if (!entry) {
-      console.warn(`AudioManager: unknown bgm "${id}"`);
-      return;
-    }
+      const entry = this.config.bgm[id];
+      if (!entry) {
+        console.warn(`AudioManager: unknown bgm "${id}"`);
+        return;
+      }
 
-    if (this.currentBgm) {
-      const old = this.currentBgm;
-      old.fade(old.volume(), 0, fadeMs);
-      this.scheduleCleanup(() => { old.stop(); old.unload(); }, fadeMs);
-    }
+      if (this.currentBgm) {
+        const old = this.currentBgm;
+        old.fade(old.volume(), 0, fadeMs);
+        this.scheduleCleanup(() => { old.stop(); old.unload(); }, fadeMs);
+      }
 
-    const howl = new Howl({
-      src: [entry.src],
-      loop: true,
-      volume: 0,
+      const howl = new Howl({
+        src: [entry.src],
+        loop: true,
+        volume: 0,
+      });
+      howl.play();
+      howl.fade(0, this.bgmVolume, fadeMs);
+
+      this.currentBgm = howl;
+      this.currentBgmId = id;
     });
-    howl.play();
-    howl.fade(0, this.bgmVolume, fadeMs);
-
-    this.currentBgm = howl;
-    this.currentBgmId = id;
   }
 
   stopBgm(fadeMs: number = 1000): void {
-    if (!this.currentBgm) return;
-    const bgm = this.currentBgm;
-    bgm.fade(bgm.volume(), 0, fadeMs);
-    this.scheduleCleanup(() => { bgm.stop(); bgm.unload(); }, fadeMs);
-    this.currentBgm = null;
-    this.currentBgmId = null;
+    this.runWhenAudioAllowed(() => {
+      if (!this.currentBgm) return;
+      const bgm = this.currentBgm;
+      bgm.fade(bgm.volume(), 0, fadeMs);
+      this.scheduleCleanup(() => { bgm.stop(); bgm.unload(); }, fadeMs);
+      this.currentBgm = null;
+      this.currentBgmId = null;
+    });
   }
 
   addAmbient(id: string, volume?: number): void {
-    if (this.ambientLayers.has(id)) return;
+    this.runWhenAudioAllowed(() => {
+      if (this.ambientLayers.has(id)) return;
 
-    const entry = this.config.ambient[id];
-    if (!entry) {
-      console.warn(`AudioManager: unknown ambient "${id}"`);
-      return;
-    }
+      const entry = this.config.ambient[id];
+      if (!entry) {
+        console.warn(`AudioManager: unknown ambient "${id}"`);
+        return;
+      }
 
-    const vol = (volume ?? 1.0) * this.ambientVolume;
-    const howl = new Howl({
-      src: [entry.src],
-      loop: true,
-      volume: vol,
+      const vol = (volume ?? 1.0) * this.ambientVolume;
+      const howl = new Howl({
+        src: [entry.src],
+        loop: true,
+        volume: vol,
+      });
+      howl.play();
+      this.ambientLayers.set(id, howl);
     });
-    howl.play();
-    this.ambientLayers.set(id, howl);
   }
 
   removeAmbient(id: string, fadeMs: number = 500): void {
-    const howl = this.ambientLayers.get(id);
-    if (!howl) return;
-    howl.fade(howl.volume(), 0, fadeMs);
-    this.scheduleCleanup(() => { howl.stop(); howl.unload(); }, fadeMs);
-    this.ambientLayers.delete(id);
+    this.runWhenAudioAllowed(() => {
+      const howl = this.ambientLayers.get(id);
+      if (!howl) return;
+      howl.fade(howl.volume(), 0, fadeMs);
+      this.scheduleCleanup(() => { howl.stop(); howl.unload(); }, fadeMs);
+      this.ambientLayers.delete(id);
+    });
   }
 
   clearAmbient(fadeMs: number = 500): void {
-    this.ambientLayers.forEach((howl) => {
-      howl.fade(howl.volume(), 0, fadeMs);
-      this.scheduleCleanup(() => { howl.stop(); howl.unload(); }, fadeMs);
+    this.runWhenAudioAllowed(() => {
+      this.ambientLayers.forEach((howl) => {
+        howl.fade(howl.volume(), 0, fadeMs);
+        this.scheduleCleanup(() => { howl.stop(); howl.unload(); }, fadeMs);
+      });
+      this.ambientLayers.clear();
     });
-    this.ambientLayers.clear();
   }
 
   playSfx(id: string): void {
-    const entry = this.config.sfx[id];
-    if (!entry) return;
+    this.runWhenAudioAllowed(() => {
+      const entry = this.config.sfx[id];
+      if (!entry) return;
 
-    let howl = this.sfxCache.get(id);
-    if (!howl) {
-      howl = new Howl({ src: [entry.src], volume: this.sfxVolume });
-      this.sfxCache.set(id, howl);
-    }
-    howl.volume(this.sfxVolume);
-    howl.play();
+      let howl = this.sfxCache.get(id);
+      if (!howl) {
+        howl = new Howl({ src: [entry.src], volume: this.sfxVolume });
+        this.sfxCache.set(id, howl);
+      }
+      howl.volume(this.sfxVolume);
+      howl.play();
+    });
   }
 
   setVolume(channel: 'bgm' | 'sfx' | 'ambient', vol: number): void {
@@ -210,38 +226,45 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.pendingTimers.add(id);
   }
 
-  /**
-   * 嵌入式 WebView / 无首击自动播：AudioContext 会以 suspended 创建，浏览器会打印警告且听不到声。
-   * 在首次指针/键盘/触摸后 resume，符合 autoplay 策略。
-   */
-  private installAudioContextUnlock(): void {
-    const tryResume = (): void => {
-      const ctx = Howler.ctx;
-      if (ctx?.state === 'suspended') {
-        void ctx.resume().catch(() => {});
-      }
-      if (ctx?.state === 'running') {
-        this.removeAudioContextUnlock();
-      }
-    };
-    this.audioGestureUnlock = tryResume;
-    const opts: AddEventListenerOptions = { passive: true };
-    window.addEventListener('pointerdown', tryResume, opts);
-    window.addEventListener('keydown', tryResume);
-    window.addEventListener('touchstart', tryResume, opts);
+  private runWhenAudioAllowed(fn: () => void): void {
+    if (this.audioUnblocked) {
+      fn();
+      return;
+    }
+    this.pendingPlayback.push(fn);
   }
 
-  private removeAudioContextUnlock(): void {
-    const fn = this.audioGestureUnlock;
-    if (!fn) return;
-    this.audioGestureUnlock = null;
-    window.removeEventListener('pointerdown', fn);
-    window.removeEventListener('keydown', fn);
-    window.removeEventListener('touchstart', fn);
+  private readonly _onFirstGesture = (_e: Event): void => {
+    if (this.audioUnblocked) return;
+    this.audioUnblocked = true;
+    void Howler.ctx?.resume().catch(() => {});
+    this.removeAudioGestureListeners();
+    const queued = this.pendingPlayback.splice(0);
+    for (const fn of queued) {
+      fn();
+    }
+  };
+
+  private installAudioGestureGate(): void {
+    if (typeof window === 'undefined' || this.gestureListenersInstalled) return;
+    this.gestureListenersInstalled = true;
+    const capPassive: AddEventListenerOptions = { capture: true, passive: true };
+    window.addEventListener('pointerdown', this._onFirstGesture, capPassive);
+    window.addEventListener('keydown', this._onFirstGesture, { capture: true });
+    window.addEventListener('touchstart', this._onFirstGesture, capPassive);
+  }
+
+  private removeAudioGestureListeners(): void {
+    if (!this.gestureListenersInstalled) return;
+    this.gestureListenersInstalled = false;
+    window.removeEventListener('pointerdown', this._onFirstGesture, true);
+    window.removeEventListener('keydown', this._onFirstGesture, true);
+    window.removeEventListener('touchstart', this._onFirstGesture, true);
   }
 
   destroy(): void {
-    this.removeAudioContextUnlock();
+    this.removeAudioGestureListeners();
+    this.pendingPlayback = [];
     if (this.currentBgm) {
       const bgm = this.currentBgm;
       this.currentBgm = null;

@@ -53,6 +53,31 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       this.loadDocuments(),
       this.loadBooks(),
     ]);
+    await this.preloadContentImages();
+  }
+
+  private async preloadContentImages(): Promise<void> {
+    const paths = new Set<string>();
+    const imgRe = /\[img:([^\]]+)\]/g;
+
+    for (const book of this.bookDefs.values()) {
+      for (const page of book.pages) {
+        if (page.illustration) paths.add(`assets/${page.illustration}`);
+        for (const m of page.content.matchAll(imgRe)) paths.add(`assets/${m[1]}`);
+      }
+    }
+    for (const entry of this.loreDefs.values()) {
+      for (const m of entry.content.matchAll(imgRe)) paths.add(`assets/${m[1]}`);
+    }
+    for (const doc of this.documentDefs.values()) {
+      for (const m of doc.content.matchAll(imgRe)) paths.add(`assets/${m[1]}`);
+    }
+
+    if (paths.size > 0) {
+      await Promise.all(
+        [...paths].map(p => this.assetManager.loadTexture(p).catch(() => null)),
+      );
+    }
   }
 
   private async loadCharacters(): Promise<void> {
@@ -238,11 +263,12 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       .filter((e): e is BookDef => !!e);
   }
 
-  getBookVisiblePages(book: BookDef): { pageNum: number; title?: string; content: string; unlocked: boolean }[] {
+  getBookVisiblePages(book: BookDef): { pageNum: number; title?: string; content: string; illustration?: string; unlocked: boolean }[] {
     return book.pages.map(p => ({
       pageNum: p.pageNum,
       title: p.title,
       content: p.content,
+      illustration: p.illustration,
       unlocked: this.checkConditions(p.unlockConditions),
     }));
   }

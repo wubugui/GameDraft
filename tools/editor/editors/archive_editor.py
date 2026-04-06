@@ -1,16 +1,48 @@
 """Archive editor: characters, lore, books, documents."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QTabWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
-    QScrollArea, QLabel, QGroupBox,
+    QScrollArea, QLabel, QGroupBox, QFileDialog,
 )
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
+
+
+def _make_insert_image_btn(text_edit: QTextEdit, model: ProjectModel) -> QPushButton:
+    """Create a button that inserts an [img:] marker into *text_edit*."""
+
+    def _pick() -> None:
+        if model.project_path is None:
+            return
+        images_root = model.project_path / "public" / "assets" / "images"
+        start_dir = str(images_root) if images_root.is_dir() else str(model.project_path)
+        path, _ = QFileDialog.getOpenFileName(
+            text_edit, "Select Image", start_dir,
+            "Images (*.png *.jpg *.jpeg *.webp);;All Files (*)",
+        )
+        if not path:
+            return
+        assets_base = model.project_path / "public" / "assets"
+        try:
+            rel = Path(path).relative_to(assets_base).as_posix()
+        except ValueError:
+            rel = Path(path).name
+        marker = f"[img:{rel}]"
+        cursor = text_edit.textCursor()
+        cursor.insertText(marker)
+        text_edit.setTextCursor(cursor)
+
+    btn = QPushButton("Insert Image")
+    btn.setMaximumWidth(120)
+    btn.clicked.connect(_pick)
+    return btn
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +308,10 @@ class ArchiveEditor(QWidget):
         self._lo_id = QLineEdit(); f.addRow("id", self._lo_id)
         self._lo_title = QLineEdit(); f.addRow("title", self._lo_title)
         self._lo_content = QTextEdit(); self._lo_content.setMaximumHeight(100)
-        f.addRow("content", self._lo_content)
+        lo_content_row = QHBoxLayout()
+        lo_content_row.addWidget(self._lo_content)
+        lo_content_row.addWidget(_make_insert_image_btn(self._lo_content, self._model))
+        f.addRow("content", lo_content_row)
         self._lo_source = QLineEdit(); f.addRow("source", self._lo_source)
         self._lo_cat = QComboBox()
         self._lo_cat.addItems(["legend", "geography", "folklore", "affairs"])
@@ -380,7 +415,10 @@ class ArchiveEditor(QWidget):
         self._doc_id = QLineEdit(); f.addRow("id", self._doc_id)
         self._doc_name = QLineEdit(); f.addRow("name", self._doc_name)
         self._doc_content = QTextEdit(); self._doc_content.setMaximumHeight(120)
-        f.addRow("content", self._doc_content)
+        doc_content_row = QHBoxLayout()
+        doc_content_row.addWidget(self._doc_content)
+        doc_content_row.addWidget(_make_insert_image_btn(self._doc_content, self._model))
+        f.addRow("content", doc_content_row)
         self._doc_annot = QTextEdit(); self._doc_annot.setMaximumHeight(60)
         f.addRow("annotation", self._doc_annot)
         dl.addLayout(f)
@@ -486,7 +524,10 @@ class ArchiveEditor(QWidget):
         pf = QFormLayout()
         self._pg_title = QLineEdit(); pf.addRow("title", self._pg_title)
         self._pg_content = QTextEdit(); self._pg_content.setMaximumHeight(100)
-        pf.addRow("content", self._pg_content)
+        pg_content_row = QHBoxLayout()
+        pg_content_row.addWidget(self._pg_content)
+        pg_content_row.addWidget(_make_insert_image_btn(self._pg_content, self._model))
+        pf.addRow("content", pg_content_row)
         self._pg_illust = IdRefSelector(allow_empty=True)
         self._pg_illust.setMinimumWidth(260)
         pf.addRow("illustration", self._pg_illust)

@@ -561,7 +561,7 @@ export interface IArchiveDataProvider {
   getUnlockedDocuments(): DocumentEntry[];
   getBooks(): BookDef[];
   getUnlockedBooks(): BookDef[];
-  getBookVisiblePages(book: BookDef): { pageNum: number; title?: string; content: string; unlocked: boolean }[];
+  getBookVisiblePages(book: BookDef): { pageNum: number; title?: string; content: string; illustration?: string; unlocked: boolean }[];
   markRead(key: string): void;
   isRead(key: string): boolean;
   getLoreCategoryName(key: string): string;

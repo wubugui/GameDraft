@@ -192,7 +192,7 @@ export class Game {
     this.inventoryUI = new InventoryUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider);
     this.rulesPanelUI = new RulesPanelUI(this.renderer, this.rulesManager, this.stringsProvider);
     this.dialogueLogUI = new DialogueLogUI(this.renderer, this.eventBus, this.stringsProvider);
-    this.bookReaderUI = new BookReaderUI(this.renderer, this.archiveManager, this.stringsProvider);
+    this.bookReaderUI = new BookReaderUI(this.renderer, this.archiveManager, this.stringsProvider, this.assetManager);
     this.bookshelfUI = new BookshelfUI(
       this.renderer,
       this.archiveManager,
@@ -204,9 +204,9 @@ export class Game {
         this.bookReaderUI.openBook(book, onClose);
         return this.bookReaderUI;
       },
-      (onClose) => { const s = new CharacterBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider); s.open(); return s; },
-      (onClose) => { const s = new LoreBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider); s.open(); return s; },
-      (onClose) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider); s.open(); return s; },
+      (onClose) => { const s = new CharacterBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      (onClose) => { const s = new LoreBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      (onClose) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       this.stringsProvider,
     );
     this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider);

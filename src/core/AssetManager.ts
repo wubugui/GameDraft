@@ -14,6 +14,11 @@ export class AssetManager {
     return await Assets.load(resolved);
   }
 
+  getTexture(path: string): Texture | null {
+    const resolved = resolveAssetPath(path);
+    return Assets.get<Texture>(resolved) ?? null;
+  }
+
   async loadJson<T = unknown>(path: string): Promise<T> {
     const resolved = resolveAssetPath(path);
     if (this.jsonCache.has(resolved)) {

@@ -1,27 +1,38 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { buildRichContent } from './RichContent';
 import type { Renderer } from '../rendering/Renderer';
 import type { BookDef, IArchiveDataProvider } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
+import type { AssetManager } from '../core/AssetManager';
 
 const PANEL_W = 600;
 const PANEL_H = 480;
 const PADDING = 24;
+const CONTENT_TOP = 46;
+const CONTENT_H = PANEL_H - 80;
 
 export class BookReaderUI {
   private renderer: Renderer;
   private archiveData: IArchiveDataProvider;
+  private assetManager: AssetManager;
   private container: Container | null = null;
   private currentBook: BookDef | null = null;
   private currentPage = 0;
   private onCloseCb: (() => void) | null = null;
   private onKeyBound: (e: KeyboardEvent) => void;
+  private onWheelBound: (e: WheelEvent) => void;
   private strings: StringsProvider;
+  private contentContainer: Container | null = null;
+  private contentScrollOffset = 0;
+  private contentTotalH = 0;
 
-  constructor(renderer: Renderer, archiveData: IArchiveDataProvider, strings: StringsProvider) {
+  constructor(renderer: Renderer, archiveData: IArchiveDataProvider, strings: StringsProvider, assetManager: AssetManager) {
     this.renderer = renderer;
     this.archiveData = archiveData;
+    this.assetManager = assetManager;
     this.onKeyBound = this.onKey.bind(this);
+    this.onWheelBound = this.onWheel.bind(this);
     this.strings = strings;
   }
 
@@ -30,11 +41,13 @@ export class BookReaderUI {
     this.currentPage = 0;
     this.onCloseCb = onClose;
     window.addEventListener('keydown', this.onKeyBound);
+    window.addEventListener('wheel', this.onWheelBound, { passive: false });
     this.build();
   }
 
   close(): void {
     window.removeEventListener('keydown', this.onKeyBound);
+    window.removeEventListener('wheel', this.onWheelBound);
     this.destroyUI();
     this.currentBook = null;
     this.onCloseCb = null;
@@ -48,6 +61,7 @@ export class BookReaderUI {
     this.destroyUI();
     if (!this.currentBook) return;
 
+    this.contentScrollOffset = 0;
     this.container = new Container();
     const sw = this.renderer.screenWidth;
     const sh = this.renderer.screenHeight;
@@ -90,6 +104,8 @@ export class BookReaderUI {
 
     if (page) {
       if (page.unlocked) {
+        let contentY = py + CONTENT_TOP;
+
         if (page.title) {
           const pt = new Text({
             text: page.title,
@@ -98,28 +114,33 @@ export class BookReaderUI {
           pt.x = px + PADDING;
           pt.y = py + 50;
           this.container.addChild(pt);
+          contentY = py + 80;
         }
 
-        const content = new Text({
-          text: page.content,
-          style: {
-            fontSize: 13,
-            fill: UITheme.colors.bodyDim,
-            fontFamily: UITheme.fonts.display,
-            wordWrap: true, breakWords: true,
-            wordWrapWidth: PANEL_W - PADDING * 2,
-            lineHeight: 22,
-          },
-        });
-        content.x = px + PADDING;
-        content.y = py + (page.title ? 80 : 50);
-        this.container.addChild(content);
+        let raw = page.content;
+        if (page.illustration) {
+          raw = `[img:${page.illustration}]\n${raw}`;
+        }
+
+        const { container: rc, totalHeight } = buildRichContent(raw, {
+          width: PANEL_W - PADDING * 2,
+          fontSize: 13,
+          fill: UITheme.colors.bodyDim,
+          fontFamily: UITheme.fonts.display,
+          lineHeight: 22,
+        }, this.assetManager);
+
+        rc.x = px + PADDING;
+        rc.y = contentY;
+        this.contentContainer = rc;
+        this.contentTotalH = totalHeight;
+        this.container.addChild(rc);
 
         const contentMask = new Graphics();
-        contentMask.rect(px + PADDING, py + 46, PANEL_W - PADDING * 2, PANEL_H - 80);
+        contentMask.rect(px + PADDING, py + CONTENT_TOP, PANEL_W - PADDING * 2, CONTENT_H);
         contentMask.fill({ color: 0xffffff });
         this.container.addChild(contentMask);
-        content.mask = contentMask;
+        rc.mask = contentMask;
       } else {
         const missing = new Text({
           text: this.strings.get('bookReader', 'pageMissing'),
@@ -173,6 +194,23 @@ export class BookReaderUI {
     fadeIn(this.container);
   }
 
+  private onWheel(e: WheelEvent): void {
+    if (!this.contentContainer) return;
+    const maxScroll = Math.max(0, this.contentTotalH - CONTENT_H);
+    if (maxScroll <= 0) return;
+    e.preventDefault();
+    this.contentScrollOffset = Math.max(0, Math.min(this.contentScrollOffset + e.deltaY, maxScroll));
+
+    const sw = this.renderer.screenWidth;
+    const sh = this.renderer.screenHeight;
+    const py = (sh - PANEL_H) / 2;
+    const baseY = py + CONTENT_TOP;
+    const pages = this.currentBook ? this.archiveData.getBookVisiblePages(this.currentBook) : [];
+    const page = pages[this.currentPage];
+    const offset = page?.title ? 34 : 0;
+    this.contentContainer.y = baseY + offset - this.contentScrollOffset;
+  }
+
   private onKey(e: KeyboardEvent): void {
     if (!this.currentBook) return;
     const pages = this.archiveData.getBookVisiblePages(this.currentBook);
@@ -186,6 +224,7 @@ export class BookReaderUI {
   }
 
   private destroyUI(): void {
+    this.contentContainer = null;
     if (this.container) {
       if (this.container.parent) this.container.parent.removeChild(this.container);
       this.container.destroy({ children: true });

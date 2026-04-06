@@ -1,29 +1,40 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { buildRichContent } from './RichContent';
 import type { Renderer } from '../rendering/Renderer';
 import type { IArchiveDataProvider } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
+import type { AssetManager } from '../core/AssetManager';
 
 const PANEL_W = 650;
 const PANEL_H = 500;
 const PADDING = 20;
 const ENTRY_H = 30;
+const LIST_WIDTH = 180;
+const DETAIL_AREA_W = PANEL_W - LIST_WIDTH - PADDING * 2;
+const DETAIL_AREA_H = PANEL_H - 70;
 
 export class CharacterBookUI {
   private renderer: Renderer;
   private archiveData: IArchiveDataProvider;
+  private assetManager: AssetManager;
   private container: Container | null = null;
   private detailContainer: Container | null = null;
+  private detailMask: Graphics | null = null;
+  private detailScrollOffset = 0;
+  private detailTotalH = 0;
   private onClose: () => void;
   private strings: StringsProvider;
-  private scrollOffset = 0;
+  private listScrollOffset = 0;
   private listContentH = 0;
   private listContainer: Container | null = null;
   private onWheelBound: (e: WheelEvent) => void;
+  private panelX = 0;
 
-  constructor(renderer: Renderer, archiveData: IArchiveDataProvider, onClose: () => void, strings: StringsProvider) {
+  constructor(renderer: Renderer, archiveData: IArchiveDataProvider, onClose: () => void, strings: StringsProvider, assetManager: AssetManager) {
     this.renderer = renderer;
     this.archiveData = archiveData;
+    this.assetManager = assetManager;
     this.onClose = onClose;
     this.strings = strings;
     this.onWheelBound = (e) => this.onWheel(e);
@@ -34,7 +45,8 @@ export class CharacterBookUI {
   }
 
   open(): void {
-    this.scrollOffset = 0;
+    this.listScrollOffset = 0;
+    this.detailScrollOffset = 0;
     window.addEventListener('wheel', this.onWheelBound, { passive: false });
     this.build();
   }
@@ -51,6 +63,7 @@ export class CharacterBookUI {
     const sh = this.renderer.screenHeight;
     const px = (sw - PANEL_W) / 2;
     const py = (sh - PANEL_H) / 2;
+    this.panelX = px;
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
@@ -84,7 +97,6 @@ export class CharacterBookUI {
     this.container.addChild(backBtn);
 
     const characters = this.archiveData.getUnlockedCharacters();
-    const listWidth = 180;
     const listContainer = new Container();
     this.listContainer = listContainer;
 
@@ -110,14 +122,14 @@ export class CharacterBookUI {
       label.cursor = 'pointer';
       label.on('pointerdown', () => {
         this.archiveData.markRead(`char_${ch.id}`);
-        this.showDetail(ch.id, px + PADDING + listWidth, py + 50);
+        this.showDetail(ch.id, px + PADDING + LIST_WIDTH, py + 50);
       });
       listContainer.addChild(label);
     });
 
     this.listContentH = 50 + characters.length * ENTRY_H;
     const listMask = new Graphics();
-    listMask.rect(px, py + 50, listWidth, PANEL_H - 70);
+    listMask.rect(px, py + 50, LIST_WIDTH, DETAIL_AREA_H);
     listMask.fill({ color: 0xffffff });
     this.container.addChild(listMask);
     listContainer.mask = listMask;
@@ -131,64 +143,74 @@ export class CharacterBookUI {
     if (this.detailContainer) {
       if (this.detailContainer.parent) this.detailContainer.parent.removeChild(this.detailContainer);
       this.detailContainer.destroy({ children: true });
+      this.detailContainer = null;
     }
-    this.detailContainer = new Container();
+    if (this.detailMask) {
+      if (this.detailMask.parent) this.detailMask.parent.removeChild(this.detailMask);
+      this.detailMask.destroy();
+      this.detailMask = null;
+    }
+    this.detailScrollOffset = 0;
 
     const chars = this.archiveData.getUnlockedCharacters();
     const ch = chars.find(c => c.id === charId);
     if (!ch) return;
 
-    let cy = 0;
-    const nameT = new Text({
-      text: `${ch.name} - ${ch.title}`,
-      style: { fontSize: 15, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 240 },
-    });
-    nameT.y = cy;
-    this.detailContainer.addChild(nameT);
-    cy += 30;
+    const parts: string[] = [];
+    parts.push(`${ch.name} - ${ch.title}`);
 
     const impressions = this.archiveData.getCharacterVisibleImpressions(ch);
     if (impressions.length > 0) {
-      const hdr = new Text({ text: this.strings.get('characterBook', 'impression'), style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 240 } });
-      hdr.y = cy; cy += 18;
-      this.detailContainer.addChild(hdr);
-      for (const imp of impressions) {
-        const t = new Text({
-          text: `  ${imp}`,
-          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 380 },
-        });
-        t.y = cy; cy += t.height + 4;
-        this.detailContainer.addChild(t);
-      }
-      cy += 8;
+      parts.push(`\n${this.strings.get('characterBook', 'impression')}`);
+      for (const imp of impressions) parts.push(`  ${imp}`);
     }
 
     const infos = this.archiveData.getCharacterVisibleInfo(ch);
     if (infos.length > 0) {
-      const hdr = new Text({ text: this.strings.get('characterBook', 'knownIntel'), style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - 240 } });
-      hdr.y = cy; cy += 18;
-      this.detailContainer.addChild(hdr);
-      for (const info of infos) {
-        const t = new Text({
-          text: `  ${info}`,
-          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 380 },
-        });
-        t.y = cy; cy += t.height + 4;
-        this.detailContainer.addChild(t);
-      }
+      parts.push(`\n${this.strings.get('characterBook', 'knownIntel')}`);
+      for (const info of infos) parts.push(`  ${info}`);
     }
 
-    this.detailContainer.x = dx;
-    this.detailContainer.y = dy;
-    this.container?.addChild(this.detailContainer);
+    const { container: rc, totalHeight } = buildRichContent(parts.join('\n'), {
+      width: DETAIL_AREA_W,
+      fontSize: 12,
+      fill: UITheme.colors.subtle,
+      fontFamily: UITheme.fonts.ui,
+    }, this.assetManager);
+
+    rc.x = dx;
+    rc.y = dy;
+    this.detailContainer = rc;
+    this.detailTotalH = totalHeight;
+
+    const sh = this.renderer.screenHeight;
+    const py = (sh - PANEL_H) / 2;
+    const mask = new Graphics();
+    mask.rect(dx, py + 50, DETAIL_AREA_W, DETAIL_AREA_H);
+    mask.fill({ color: 0xffffff });
+    this.detailMask = mask;
+    this.container?.addChild(mask);
+    rc.mask = mask;
+    this.container?.addChild(rc);
   }
 
   private onWheel(e: WheelEvent): void {
-    if (!this.listContainer) return;
     e.preventDefault();
-    const maxScroll = Math.max(0, this.listContentH - (PANEL_H - 70));
-    this.scrollOffset = Math.max(0, Math.min(this.scrollOffset + e.deltaY, maxScroll));
-    this.listContainer.y = -this.scrollOffset;
+    const mouseInDetailArea = e.clientX > this.panelX + PADDING + LIST_WIDTH;
+
+    if (mouseInDetailArea && this.detailContainer) {
+      const maxScroll = Math.max(0, this.detailTotalH - DETAIL_AREA_H);
+      if (maxScroll <= 0) return;
+      this.detailScrollOffset = Math.max(0, Math.min(this.detailScrollOffset + e.deltaY, maxScroll));
+      const sh = this.renderer.screenHeight;
+      const py = (sh - PANEL_H) / 2;
+      this.detailContainer.y = py + 50 - this.detailScrollOffset;
+    } else if (this.listContainer) {
+      const maxScroll = Math.max(0, this.listContentH - DETAIL_AREA_H);
+      if (maxScroll <= 0) return;
+      this.listScrollOffset = Math.max(0, Math.min(this.listScrollOffset + e.deltaY, maxScroll));
+      this.listContainer.y = -this.listScrollOffset;
+    }
   }
 
   private destroyUI(): void {
@@ -196,6 +218,8 @@ export class CharacterBookUI {
       this.detailContainer.destroy({ children: true });
       this.detailContainer = null;
     }
+    this.detailMask = null;
+    this.listContainer = null;
     if (this.container) {
       if (this.container.parent) this.container.parent.removeChild(this.container);
       this.container.destroy({ children: true });
