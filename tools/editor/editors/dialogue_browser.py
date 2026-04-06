@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QLabel, QTabWidget,
-    QTreeWidget, QTreeWidgetItem, QCompleter, QMessageBox,
+    QTreeWidget, QTreeWidgetItem, QCompleter, QMessageBox, QInputDialog,
 )
 from PySide6.QtGui import (
     QFont, QColor, QTextCharFormat, QSyntaxHighlighter, QTextDocument,
@@ -487,7 +487,19 @@ class DialogueBrowser(QWidget):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(4)
 
-        ll.addWidget(QLabel("<b>Ink Files</b>"))
+        file_header = QHBoxLayout()
+        file_header.addWidget(QLabel("<b>Ink Files</b>"), stretch=1)
+        btn_new = QPushButton("+")
+        btn_new.setFixedWidth(28)
+        btn_new.setToolTip("New ink file")
+        btn_new.clicked.connect(self._new_ink_file)
+        file_header.addWidget(btn_new)
+        btn_del = QPushButton("\u2212")
+        btn_del.setFixedWidth(28)
+        btn_del.setToolTip("Delete ink file")
+        btn_del.clicked.connect(self._delete_ink_file)
+        file_header.addWidget(btn_del)
+        ll.addLayout(file_header)
         self._file_list = QListWidget()
         self._file_list.currentRowChanged.connect(self._on_file_row_changed)
         ll.addWidget(self._file_list, stretch=2)
@@ -589,6 +601,59 @@ class DialogueBrowser(QWidget):
         self._refresh()
 
     # ---- File list --------------------------------------------------------
+
+    def _new_ink_file(self) -> None:
+        name, ok = QInputDialog.getText(
+            self, "New Ink File", "File name (without .ink):",
+        )
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if not name.endswith(".ink"):
+            name += ".ink"
+        target = self._model.dialogues_path / name
+        if target.exists():
+            QMessageBox.warning(self, "New Ink File", f"{name} already exists.")
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_text(target, f"EXTERNAL getFlag(key)\n\n=== start ===\n-> END\n")
+        self._refresh()
+        for i in range(self._file_list.count()):
+            item = self._file_list.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) == name:
+                self._file_list.setCurrentRow(i)
+                break
+
+    def _delete_ink_file(self) -> None:
+        item = self._file_list.currentItem()
+        if item is None:
+            return
+        name = item.data(Qt.ItemDataRole.UserRole)
+        if not name:
+            return
+        r = QMessageBox.question(
+            self, "Delete Ink File",
+            f"Are you sure you want to delete '{name}'?\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if r != QMessageBox.StandardButton.Yes:
+            return
+        target = self._model.dialogues_path / name
+        if target.exists():
+            target.unlink()
+        json_target = self._model.dialogues_path / (name + ".json")
+        if json_target.exists():
+            json_target.unlink()
+        if name == self._current_filename:
+            self._current_path = None
+            self._current_filename = ""
+            self._dirty = False
+            self._btn_save.setEnabled(False)
+            self._editor.clear()
+            self._knot_list.clear()
+            self._tag_tree.clear()
+            self._ref_list.clear()
+        self._refresh()
 
     def _refresh(self) -> None:
         self._file_list.blockSignals(True)
