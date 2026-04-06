@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, ActionDef } from '../data/types';
@@ -91,16 +92,21 @@ export class RuleUseUI {
 
     this.container = new Container();
 
+    const overlay = new Graphics();
+    overlay.rect(0, 0, sw, sh);
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlay });
+    this.container.addChild(overlay);
+
     const bg = new Graphics();
-    bg.roundRect(px, py, panelW, panelH, 8);
-    bg.fill({ color: 0x0e0e1a, alpha: 0.95 });
-    bg.roundRect(px, py, panelW, panelH, 8);
-    bg.stroke({ color: 0x444466, width: 1 });
+    bg.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
+    bg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.panelBg });
+    bg.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
     const title = new Text({
       text: this.strings.get('ruleUse', 'title'),
-      style: { fontSize: 16, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: { fontSize: 16, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 360 },
     });
     title.x = px + (panelW - title.width) / 2;
     title.y = py + 10;
@@ -111,10 +117,10 @@ export class RuleUseUI {
       const ry = py + titleH + padY + i * rowH;
 
       const rowBg = new Graphics();
-      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, 4);
-      rowBg.fill({ color: s.enabled ? 0x1a1a2e : 0x151520, alpha: 0.9 });
-      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, 4);
-      rowBg.stroke({ color: s.enabled ? 0x555577 : 0x333344, width: 1 });
+      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
+      rowBg.fill({ color: s.enabled ? UITheme.colors.rowBgDark : UITheme.colors.rowBgInactive, alpha: UITheme.alpha.rowHover });
+      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
+      rowBg.stroke({ color: s.enabled ? UITheme.colors.borderActive : UITheme.colors.borderSubtle, width: 1 });
       this.container.addChild(rowBg);
 
       let label = `${i + 1}. ${s.ruleName}`;
@@ -122,7 +128,7 @@ export class RuleUseUI {
 
       const text = new Text({
         text: label,
-        style: { fontSize: 14, fill: s.enabled ? 0xdddddd : 0x666666, fontFamily: 'sans-serif' },
+        style: { fontSize: 14, fill: s.enabled ? UITheme.colors.body : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 360 },
       });
       text.x = px + 24;
       text.y = ry + 8;
@@ -130,8 +136,8 @@ export class RuleUseUI {
 
       if (s.enabled) {
         const hoverBg = new Graphics();
-        hoverBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, 4);
-        hoverBg.fill({ color: 0x2a2a4e, alpha: 0.9 });
+        hoverBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
+        hoverBg.fill({ color: UITheme.colors.rowHover, alpha: UITheme.alpha.rowHover });
         hoverBg.visible = false;
         this.container.addChildAt(hoverBg, this.container.children.indexOf(rowBg));
 
@@ -145,13 +151,14 @@ export class RuleUseUI {
 
     const hint = new Text({
       text: this.strings.get('ruleUse', 'closeHint'),
-      style: { fontSize: 11, fill: 0x777777, fontFamily: 'sans-serif' },
+      style: { fontSize: 11, fill: UITheme.colors.hintLight, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 360 },
     });
     hint.x = px + (panelW - hint.width) / 2;
     hint.y = py + panelH - 18;
     this.container.addChild(hint);
 
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private selectSlot(slot: ResolvedRuleSlot): void {

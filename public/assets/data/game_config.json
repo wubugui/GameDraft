@@ -3,5 +3,13 @@
   "initialQuest": "opening_01",
   "fallbackScene": "test_room_a",
   "initialCutscene": "prologue_opening",
-  "initialCutsceneDoneFlag": "prologue_started"
+  "initialCutsceneDoneFlag": "prologue_started",
+  "viewport": {
+    "width": 1024,
+    "height": 768
+  },
+  "windowSize": {
+    "width": 1024,
+    "height": 768
+  }
 }

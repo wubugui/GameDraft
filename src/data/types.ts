@@ -515,6 +515,10 @@ export interface GameConfig {
   initialCutsceneDoneFlag?: string;
   /** 开局写入 FlagStore，用于跳过开场演出时补齐地图等依赖的标记 */
   startupFlags?: Record<string, boolean | number>;
+  /** 逻辑视口大小，所有游戏元素限制在此分辨率内，渲染结果缩放铺满窗口 */
+  viewport?: { width: number; height: number };
+  /** 游戏窗口大小（容器 CSS 尺寸），不影响视口逻辑分辨率 */
+  windowSize?: { width: number; height: number };
 }
 
 // ============================================================

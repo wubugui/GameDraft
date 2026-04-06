@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { StringsProvider } from '../core/StringsProvider';
 
@@ -23,34 +24,42 @@ export class InspectBox {
       this.container = new Container();
 
       const boxWidth = Math.min(this.renderer.screenWidth - 40, 600);
-      const boxHeight = 100;
-      const boxX = (this.renderer.screenWidth - boxWidth) / 2;
-      const boxY = this.renderer.screenHeight - boxHeight - 30;
-
-      const bg = new Graphics();
-      bg.roundRect(boxX, boxY, boxWidth, boxHeight, 8);
-      bg.fill({ color: 0x1a1a2e, alpha: 0.92 });
-      bg.roundRect(boxX, boxY, boxWidth, boxHeight, 8);
-      bg.stroke({ color: 0x555577, width: 1 });
-      this.container.addChild(bg);
 
       const textObj = new Text({
         text,
         style: {
           fontSize: 16,
-          fill: 0xdddddd,
-          fontFamily: 'sans-serif',
+          fill: UITheme.colors.body,
+          fontFamily: UITheme.fonts.ui,
           wordWrap: true,
           wordWrapWidth: boxWidth - 40,
         },
       });
+
+      const boxHeight = Math.min(Math.max(100, textObj.height + 60), this.renderer.screenHeight - 80);
+      const boxX = (this.renderer.screenWidth - boxWidth) / 2;
+      const boxY = this.renderer.screenHeight - boxHeight - 30;
+
+      const bg = new Graphics();
+      bg.roundRect(boxX, boxY, boxWidth, boxHeight, UITheme.panel.borderRadius);
+      bg.fill({ color: UITheme.colors.panelBgAlt, alpha: UITheme.alpha.dialogueBg });
+      bg.roundRect(boxX, boxY, boxWidth, boxHeight, UITheme.panel.borderRadius);
+      bg.stroke({ color: UITheme.colors.borderActive, width: 1 });
+      this.container.addChild(bg);
+
       textObj.x = boxX + 20;
       textObj.y = boxY + 16;
       this.container.addChild(textObj);
 
+      const boxMask = new Graphics();
+      boxMask.rect(boxX, boxY, boxWidth, boxHeight);
+      boxMask.fill({ color: 0xffffff });
+      this.container.addChild(boxMask);
+      textObj.mask = boxMask;
+
       const hint = new Text({
         text: this.strings.get('inspectBox', 'closeHint'),
-        style: { fontSize: 11, fill: 0x888888, fontFamily: 'sans-serif' },
+        style: { fontSize: 11, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 200 },
       });
       hint.anchor.set(0.5, 1);
       hint.x = this.renderer.screenWidth / 2;

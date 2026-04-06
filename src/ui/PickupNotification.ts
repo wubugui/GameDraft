@@ -1,8 +1,10 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { StringsProvider } from '../core/StringsProvider';
 
 export class PickupNotification {
+  private static readonly MAX_VISIBLE = 5;
   private renderer: Renderer;
   private strings: StringsProvider;
   private activeNotifications: Container[] = [];
@@ -19,13 +21,13 @@ export class PickupNotification {
 
     const text = new Text({
       text: label,
-      style: { fontSize: 14, fill: 0xffcc44, fontFamily: 'sans-serif' },
+      style: { fontSize: 14, fill: UITheme.colors.pickupText, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 250 },
     });
 
     const padding = 12;
     const bg = new Graphics();
-    bg.roundRect(0, 0, text.width + padding * 2, text.height + padding, 4);
-    bg.fill({ color: 0x000000, alpha: 0.7 });
+    bg.roundRect(0, 0, text.width + padding * 2, text.height + padding, UITheme.panel.borderRadiusSmall);
+    bg.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.pickupBg });
     container.addChild(bg);
 
     text.x = padding;
@@ -37,6 +39,10 @@ export class PickupNotification {
 
     this.renderer.uiLayer.addChild(container);
     this.activeNotifications.push(container);
+
+    if (this.activeNotifications.length > PickupNotification.MAX_VISIBLE) {
+      this.removeNotification(this.activeNotifications[0]);
+    }
 
     const startTime = performance.now();
     const duration = 2000;
@@ -66,6 +72,9 @@ export class PickupNotification {
       container.parent.removeChild(container);
     }
     container.destroy({ children: true });
+    for (let i = 0; i < this.activeNotifications.length; i++) {
+      this.activeNotifications[i].y = 20 + i * 40;
+    }
   }
 
   forceCleanup(): void {

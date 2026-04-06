@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -26,6 +27,7 @@ export class DialogueUI {
   private waitingForAdvance: boolean = false;
   private waitingForChoice: boolean = false;
   private willEndAfterAdvance: boolean = false;
+  private currentChoices: DialogueChoice[] = [];
 
   private onClickBound: (e: MouseEvent) => void;
   private onKeyBound: (e: KeyboardEvent) => void;
@@ -62,15 +64,15 @@ export class DialogueUI {
     const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
 
     const bg = new Graphics();
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, 6);
-    bg.fill({ color: 0x0e0e1a, alpha: 0.92 });
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, 6);
-    bg.stroke({ color: 0x444466, width: 1 });
+    bg.roundRect(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, UITheme.panel.borderRadiusMed);
+    bg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.dialogueBg });
+    bg.roundRect(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, UITheme.panel.borderRadiusMed);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
     this.speakerText = new Text({
       text: '',
-      style: { fontSize: 15, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: { fontSize: 15, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: boxWidth - TEXT_PADDING * 2 },
     });
     this.speakerText.x = BOX_MARGIN + TEXT_PADDING;
     this.speakerText.y = boxY + 12;
@@ -80,8 +82,8 @@ export class DialogueUI {
       text: '',
       style: {
         fontSize: 15,
-        fill: 0xdddddd,
-        fontFamily: 'sans-serif',
+        fill: UITheme.colors.body,
+        fontFamily: UITheme.fonts.ui,
         wordWrap: true,
         wordWrapWidth: boxWidth - TEXT_PADDING * 2,
         lineHeight: 22,
@@ -91,7 +93,14 @@ export class DialogueUI {
     this.bodyText.y = boxY + 36;
     this.container.addChild(this.bodyText);
 
+    const textMask = new Graphics();
+    textMask.rect(BOX_MARGIN + TEXT_PADDING, boxY + 36, boxWidth - TEXT_PADDING * 2, BOX_HEIGHT - 48);
+    textMask.fill({ color: 0xffffff });
+    this.container.addChild(textMask);
+    this.bodyText.mask = textMask;
+
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
 
     window.addEventListener('mousedown', this.onClickBound);
     window.addEventListener('keydown', this.onKeyBound);
@@ -115,6 +124,7 @@ export class DialogueUI {
     this.ensureContainer();
     this.clearChoices();
     this.waitingForChoice = true;
+    this.currentChoices = choices;
 
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
     const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
@@ -129,22 +139,24 @@ export class DialogueUI {
       row.y = i * 36;
 
       const bg = new Graphics();
-      bg.roundRect(0, 0, boxWidth, 32, 4);
-      bg.fill({ color: 0x1a1a2e, alpha: 0.9 });
-      bg.roundRect(0, 0, boxWidth, 32, 4);
-      bg.stroke({ color: choice.enabled ? 0x555577 : 0x333344, width: 1 });
+      bg.roundRect(0, 0, boxWidth, 32, UITheme.panel.borderRadiusSmall);
+      bg.fill({ color: UITheme.colors.rowBgDark, alpha: UITheme.alpha.rowHover });
+      bg.roundRect(0, 0, boxWidth, 32, UITheme.panel.borderRadiusSmall);
+      bg.stroke({ color: choice.enabled ? UITheme.colors.borderActive : UITheme.colors.borderSubtle, width: 1 });
       row.addChild(bg);
 
       const prefix = choice.ruleHintId ? `${this.strings.get('dialogue', 'ruleTag')} ${i + 1}. ` : `${i + 1}. `;
       const fillColor = choice.ruleHintId
-        ? (choice.enabled ? 0xffaa44 : 0x886633)
-        : (choice.enabled ? 0xdddddd : 0x666666);
+        ? (choice.enabled ? UITheme.colors.choiceRule : UITheme.colors.choiceRuleDisabled)
+        : (choice.enabled ? UITheme.colors.choiceEnabled : UITheme.colors.choiceDisabled);
       const text = new Text({
         text: `${prefix}${choice.text}`,
         style: {
           fontSize: 14,
           fill: fillColor,
-          fontFamily: 'sans-serif',
+          fontFamily: UITheme.fonts.ui,
+          wordWrap: true,
+          wordWrapWidth: boxWidth - 80,
         },
       });
       text.x = 14;
@@ -156,8 +168,8 @@ export class DialogueUI {
         row.cursor = 'pointer';
 
         const hoverBg = new Graphics();
-        hoverBg.roundRect(0, 0, boxWidth, 32, 4);
-        hoverBg.fill({ color: 0x2a2a4e, alpha: 0.9 });
+        hoverBg.roundRect(0, 0, boxWidth, 32, UITheme.panel.borderRadiusSmall);
+        hoverBg.fill({ color: UITheme.colors.rowHover, alpha: UITheme.alpha.rowHover });
         hoverBg.visible = false;
         row.addChildAt(hoverBg, 0);
 
@@ -183,6 +195,7 @@ export class DialogueUI {
       this.choicesContainer.destroy({ children: true });
       this.choicesContainer = null;
     }
+    this.currentChoices = [];
   }
 
   update(dt: number): void {
@@ -213,8 +226,11 @@ export class DialogueUI {
     }
     if (this.waitingForChoice && e.code >= 'Digit1' && e.code <= 'Digit9') {
       const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
-      this.eventBus.emit('dialogue:choiceSelected', { index: idx });
-      this.waitingForChoice = false;
+      const choice = this.currentChoices[idx];
+      if (choice && choice.enabled) {
+        this.eventBus.emit('dialogue:choiceSelected', { index: choice.index });
+        this.waitingForChoice = false;
+      }
     }
   }
 

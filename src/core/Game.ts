@@ -174,6 +174,14 @@ export class Game {
     await this.renderer.init();
     await this.stringsProvider.load(this.assetManager);
 
+    await this.loadGameConfig();
+    if (this.gameConfig.windowSize) {
+      this.renderer.setWindowSize(this.gameConfig.windowSize.width, this.gameConfig.windowSize.height);
+    }
+    if (this.gameConfig.viewport) {
+      this.renderer.setViewportSize(this.gameConfig.viewport.width, this.gameConfig.viewport.height);
+    }
+
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
     this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider);
     this.dialogueUI = new DialogueUI(this.renderer, this.eventBus, this.stringsProvider);
@@ -341,7 +349,6 @@ export class Game {
     this.debugTools.init();
 
     await Promise.all([
-      this.loadGameConfig(),
       this.loadFlagRegistry(),
       this.inventoryManager.loadDefs(),
       this.rulesManager.loadDefs(),
@@ -400,6 +407,8 @@ export class Game {
           this.flagStore.set(k, v as boolean | number);
         }
       }
+      if (cfg.viewport) this.gameConfig.viewport = cfg.viewport;
+      if (cfg.windowSize) this.gameConfig.windowSize = cfg.windowSize;
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
     }

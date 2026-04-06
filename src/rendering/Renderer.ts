@@ -20,6 +20,9 @@ export class Renderer {
   /** app.resize() 之后通知（此时 app.screen 已更新），供 Camera 等与画布像素对齐 */
   private afterResizeCallbacks = new Set<() => void>();
 
+  private viewportWidth = 0;
+  private viewportHeight = 0;
+
   constructor() {
     this.app = new Application();
     this.worldContainer = new Container();
@@ -55,6 +58,9 @@ export class Renderer {
     if (mount) {
       this.mountObserver = new ResizeObserver(() => {
         if (this.initialized && !this.tornDown) {
+          if (this.viewportWidth > 0 && this.viewportHeight > 0) {
+            return;
+          }
           this.app.resize();
           this.notifyAfterResize();
         }
@@ -81,6 +87,73 @@ export class Renderer {
       } catch (e) {
         console.warn('Renderer: afterResize callback failed', e);
       }
+    }
+  }
+
+  /**
+   * 设置逻辑视口大小（内部渲染分辨率）。
+   * 游戏在此分辨率下渲染，canvas 通过 CSS 铺满容器 --
+   * 纯粹是渲染完成后的显示变换，不干预 Camera/Stage 等游戏内坐标管线。
+   * 传 0,0 取消固定视口，恢复跟随容器自动 resize。
+   */
+  setViewportSize(width: number, height: number): void {
+    this.viewportWidth = width;
+    this.viewportHeight = height;
+
+    const app = this.app as Application & {
+      cancelResize?: () => void;
+      resizeTo?: Window | HTMLElement | null;
+    };
+
+    if (width > 0 && height > 0) {
+      try { app.cancelResize?.(); } catch { /* ignore */ }
+      try { app.resizeTo = null; } catch { /* ignore */ }
+
+      this.app.renderer.resize(width, height);
+
+      const canvas = this.app.canvas as HTMLCanvasElement;
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+    } else {
+      const mount = document.getElementById('game-mount');
+      if (mount) {
+        try { app.resizeTo = mount; } catch { /* ignore */ }
+      }
+      this.app.resize();
+    }
+
+    this.notifyAfterResize();
+  }
+
+  getViewportSize(): { width: number; height: number } | null {
+    if (this.viewportWidth > 0 && this.viewportHeight > 0) {
+      return { width: this.viewportWidth, height: this.viewportHeight };
+    }
+    return null;
+  }
+
+  /**
+   * 设置游戏容器（#game-mount）的 CSS 尺寸，作为"窗口大小"。
+   * 纯 CSS 层面，不影响渲染分辨率或游戏内坐标。
+   * 传 0,0 恢复为填满浏览器窗口。
+   */
+  setWindowSize(width: number, height: number): void {
+    const mount = document.getElementById('game-mount');
+    if (!mount) return;
+    if (width > 0 && height > 0) {
+      mount.style.width = `${width}px`;
+      mount.style.height = `${height}px`;
+      mount.style.maxWidth = '100vw';
+      mount.style.maxHeight = '100vh';
+    } else {
+      mount.style.width = '100%';
+      mount.style.height = '100%';
+      mount.style.maxWidth = '';
+      mount.style.maxHeight = '';
+    }
+    if (this.initialized && !this.tornDown && !(this.viewportWidth > 0 && this.viewportHeight > 0)) {
+      this.app.resize();
+      this.notifyAfterResize();
     }
   }
 

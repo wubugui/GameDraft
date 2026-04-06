@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 
@@ -41,24 +42,24 @@ export class NotificationUI {
 
   private addNotification(text: string, type?: string): void {
     const typeColors: Record<string, number> = {
-      quest: 0xffcc66,
-      rule: 0x88ddaa,
-      item: 0xdddddd,
-      warning: 0xff8866,
-      info: 0xaaaacc,
+      quest: UITheme.colors.notifQuest,
+      rule: UITheme.colors.notifRule,
+      item: UITheme.colors.notifItem,
+      warning: UITheme.colors.notifWarning,
+      info: UITheme.colors.notifInfo,
     };
-    const color = typeColors[type ?? 'info'] ?? 0xaaaacc;
+    const color = typeColors[type ?? 'info'] ?? UITheme.colors.notifInfo;
 
     const entry = new Container();
 
     const bg = new Graphics();
-    bg.roundRect(0, 0, 240, SLOT_HEIGHT - 4, 4);
-    bg.fill({ color: 0x0e0e1a, alpha: 0.85 });
+    bg.roundRect(0, 0, 240, SLOT_HEIGHT - 4, UITheme.panel.borderRadiusSmall);
+    bg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.notifBg });
     entry.addChild(bg);
 
     const label = new Text({
       text,
-      style: { fontSize: 12, fill: color, fontFamily: 'sans-serif' },
+      style: { fontSize: 12, fill: color, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 220 },
     });
     label.x = 10;
     label.y = 8;

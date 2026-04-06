@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { IArchiveDataProvider, BookDef } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -80,19 +81,19 @@ export class BookshelfUI {
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: 0x000000, alpha: 0.5 });
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlay });
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, PANEL_H, 8);
-    bg.fill({ color: 0x1a1a2e, alpha: 0.95 });
-    bg.roundRect(px, py, PANEL_W, PANEL_H, 8);
-    bg.stroke({ color: 0x444466, width: 1 });
+    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
+    bg.fill({ color: UITheme.colors.panelBgAlt, alpha: UITheme.alpha.panelBg });
+    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
     const title = new Text({
       text: this.strings.get('bookshelf', 'title'),
-      style: { fontSize: 20, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
+      style: { fontSize: 20, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 40 },
     });
     title.x = px + PADDING;
     title.y = py + 14;
@@ -100,7 +101,7 @@ export class BookshelfUI {
 
     const hint = new Text({
       text: this.strings.get('bookshelf', 'closeHint'),
-      style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 40 },
     });
     hint.x = px + PANEL_W - 80;
     hint.y = py + PANEL_H - 24;
@@ -134,23 +135,26 @@ export class BookshelfUI {
     });
 
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private drawBookSlot(slot: BookSlot, x: number, y: number): void {
     const bookGfx = new Graphics();
-    bookGfx.roundRect(x, y, BOOK_W, BOOK_H, 4);
-    bookGfx.fill({ color: slot.color, alpha: 0.9 });
-    bookGfx.roundRect(x, y, BOOK_W, BOOK_H, 4);
-    bookGfx.stroke({ color: 0x666666, width: 1 });
+    bookGfx.roundRect(x, y, BOOK_W, BOOK_H, UITheme.panel.borderRadiusSmall);
+    bookGfx.fill({ color: slot.color, alpha: UITheme.alpha.bookSpine });
+    bookGfx.roundRect(x, y, BOOK_W, BOOK_H, UITheme.panel.borderRadiusSmall);
+    bookGfx.stroke({ color: UITheme.colors.bookBorder, width: 1 });
 
     bookGfx.eventMode = 'static';
     bookGfx.cursor = 'pointer';
     bookGfx.on('pointerdown', () => this.onBookClick(slot.id));
+    bookGfx.on('pointerover', () => { bookGfx.alpha = 0.8; });
+    bookGfx.on('pointerout', () => { bookGfx.alpha = 1; });
     this.container?.addChild(bookGfx);
 
     const label = new Text({
       text: slot.label,
-      style: { fontSize: 12, fill: 0xeeddcc, fontFamily: 'serif', align: 'center', wordWrap: true, wordWrapWidth: BOOK_W - 10 },
+      style: { fontSize: 12, fill: UITheme.colors.bookLabel, fontFamily: UITheme.fonts.display, align: 'center', wordWrap: true, wordWrapWidth: BOOK_W - 10 },
     });
     label.x = x + (BOOK_W - label.width) / 2;
     label.y = y + BOOK_H / 2 - label.height / 2;
@@ -160,7 +164,7 @@ export class BookshelfUI {
     if (slot.hasUnread) {
       const dot = new Graphics();
       dot.circle(x + BOOK_W - 8, y + 8, 5);
-      dot.fill(0xff6644);
+      dot.fill(UITheme.colors.redDot);
       this.container?.addChild(dot);
     }
   }

@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -9,6 +10,7 @@ export class HUD {
   private strings: StringsProvider;
   private container: Container;
 
+  private coinBg: Graphics;
   private coinText: Text;
   private questText: Text;
   private questBg: Graphics;
@@ -18,6 +20,7 @@ export class HUD {
   private hasRuleSlots: boolean = false;
 
   private mapNameText: Text;
+  private onResizeBound: () => void;
   private sceneEnterCb: (p: { sceneId: string; sceneName?: string }) => void;
 
   private currencyCb: (p: { newTotal: number }) => void;
@@ -33,24 +36,24 @@ export class HUD {
 
     this.container = new Container();
 
-    const coinBg = new Graphics();
-    coinBg.roundRect(0, 0, 120, 28, 4);
-    coinBg.fill({ color: 0x0e0e1a, alpha: 0.8 });
-    coinBg.x = 10;
-    coinBg.y = 10;
-    this.container.addChild(coinBg);
+    this.coinBg = new Graphics();
+    this.coinBg.roundRect(0, 0, 120, 28, UITheme.panel.borderRadiusSmall);
+    this.coinBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
+    this.coinBg.x = 10;
+    this.coinBg.y = 10;
+    this.container.addChild(this.coinBg);
 
     this.coinText = new Text({
       text: `${this.strings.get('hud', 'coins')} 0`,
-      style: { fontSize: 13, fill: 0xffcc66, fontFamily: 'sans-serif' },
+      style: { fontSize: 13, fill: UITheme.colors.gold, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 200 },
     });
     this.coinText.x = 20;
     this.coinText.y = 15;
     this.container.addChild(this.coinText);
 
     this.questBg = new Graphics();
-    this.questBg.roundRect(0, 0, 220, 28, 4);
-    this.questBg.fill({ color: 0x0e0e1a, alpha: 0.8 });
+    this.questBg.roundRect(0, 0, 220, 28, UITheme.panel.borderRadiusSmall);
+    this.questBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
     this.questBg.x = this.renderer.screenWidth - 230;
     this.questBg.y = 10;
     this.questBg.visible = false;
@@ -58,15 +61,15 @@ export class HUD {
 
     this.questText = new Text({
       text: '',
-      style: { fontSize: 12, fill: 0xaaaacc, fontFamily: 'sans-serif' },
+      style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 210 },
     });
     this.questText.x = this.renderer.screenWidth - 220;
     this.questText.y = 15;
     this.container.addChild(this.questText);
 
     this.ruleHintBg = new Graphics();
-    this.ruleHintBg.roundRect(0, 0, 160, 28, 4);
-    this.ruleHintBg.fill({ color: 0x1a0e0e, alpha: 0.85 });
+    this.ruleHintBg.roundRect(0, 0, 160, 28, UITheme.panel.borderRadiusSmall);
+    this.ruleHintBg.fill({ color: UITheme.colors.hudRuleHint, alpha: UITheme.alpha.hudBgDark });
     this.ruleHintBg.x = (this.renderer.screenWidth - 160) / 2;
     this.ruleHintBg.y = this.renderer.screenHeight - 50;
     this.ruleHintBg.visible = false;
@@ -74,7 +77,7 @@ export class HUD {
 
     this.ruleHintText = new Text({
       text: this.strings.get('hud', 'ruleUseHint'),
-      style: { fontSize: 13, fill: 0xffaa44, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: { fontSize: 13, fill: UITheme.colors.orange, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 150 },
     });
     this.ruleHintText.x = (this.renderer.screenWidth - this.ruleHintText.width) / 2;
     this.ruleHintText.y = this.renderer.screenHeight - 45;
@@ -83,13 +86,17 @@ export class HUD {
 
     this.mapNameText = new Text({
       text: '',
-      style: { fontSize: 12, fill: 0x8888aa, fontFamily: 'sans-serif' },
+      style: { fontSize: 12, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 400 },
     });
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
     this.mapNameText.y = 10;
     this.container.addChild(this.mapNameText);
 
     this.renderer.uiLayer.addChild(this.container);
+
+    this.layout();
+    this.onResizeBound = () => this.layout();
+    window.addEventListener('resize', this.onResizeBound);
 
     this.sceneEnterCb = (p) => {
       this.mapNameText.text = p.sceneName ?? p.sceneId ?? '';
@@ -98,6 +105,9 @@ export class HUD {
 
     this.currencyCb = (p) => {
       this.coinText.text = `${this.strings.get('hud', 'coins')} ${p.newTotal}`;
+      this.coinBg.clear();
+      this.coinBg.roundRect(0, 0, this.coinText.width + 20, 28, UITheme.panel.borderRadiusSmall);
+      this.coinBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
     };
     this.questAcceptedCb = (p) => {
       this.setQuestHint(p.title);
@@ -118,11 +128,17 @@ export class HUD {
 
   setCoins(amount: number): void {
     this.coinText.text = `${this.strings.get('hud', 'coins')} ${amount}`;
+    this.coinBg.clear();
+    this.coinBg.roundRect(0, 0, this.coinText.width + 20, 28, UITheme.panel.borderRadiusSmall);
+    this.coinBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
   }
 
   setQuestHint(title: string): void {
     if (title) {
       this.questText.text = `${this.strings.get('hud', 'current')}${title}`;
+      this.questBg.clear();
+      this.questBg.roundRect(0, 0, this.questText.width + 20, 28, UITheme.panel.borderRadiusSmall);
+      this.questBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
       this.questBg.visible = true;
     } else {
       this.questText.text = '';
@@ -140,7 +156,18 @@ export class HUD {
     this.setRuleHintVisible(hasSlots);
   }
 
+  private layout(): void {
+    this.questBg.x = this.renderer.screenWidth - 230;
+    this.questText.x = this.renderer.screenWidth - 220;
+    this.ruleHintBg.x = (this.renderer.screenWidth - 160) / 2;
+    this.ruleHintBg.y = this.renderer.screenHeight - 50;
+    this.ruleHintText.x = (this.renderer.screenWidth - this.ruleHintText.width) / 2;
+    this.ruleHintText.y = this.renderer.screenHeight - 45;
+    this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
+  }
+
   destroy(): void {
+    window.removeEventListener('resize', this.onResizeBound);
     this.eventBus.off('scene:enter', this.sceneEnterCb);
     this.eventBus.off('currency:changed', this.currencyCb);
     this.eventBus.off('quest:accepted', this.questAcceptedCb);

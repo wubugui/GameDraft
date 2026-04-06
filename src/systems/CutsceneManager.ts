@@ -37,6 +37,7 @@ export class CutsceneManager implements IGameSystem {
   private inputManager: InputManager | null = null;
   private assetManager!: AssetManager;
   private unsubInput: (() => void) | null = null;
+  private destroyed = false;
 
   constructor(
     eventBus: EventBus,
@@ -122,6 +123,7 @@ export class CutsceneManager implements IGameSystem {
 
     await this.executeCommands(def.commands);
 
+    if (this.destroyed) return;
     this.unsubInput?.();
     this.unsubInput = null;
     this.cleanup();
@@ -146,6 +148,8 @@ export class CutsceneManager implements IGameSystem {
   private async executeCommands(commands: CutsceneCommand[]): Promise<void> {
     let i = 0;
     while (i < commands.length) {
+      if (this.destroyed) return;
+
       const parallelGroup: CutsceneCommand[] = [commands[i]];
       while (i + 1 < commands.length && commands[i + 1].parallel) {
         i++;
@@ -390,6 +394,7 @@ export class CutsceneManager implements IGameSystem {
   }
 
   destroy(): void {
+    this.destroyed = true;
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
       this.waitClickResolve = null;

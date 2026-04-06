@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -23,8 +24,10 @@ export class EncounterUI {
   private phase: EncounterPhase = EncounterPhase.Inactive;
 
   private narrativeText: Text | null = null;
+  private narrativeBg: Graphics | null = null;
   private optionsContainer: Container | null = null;
   private resultText: Text | null = null;
+  private currentOptions: ResolvedOption[] = [];
 
   private fullText: string = '';
   private displayedChars: number = 0;
@@ -78,18 +81,19 @@ export class EncounterUI {
     const boxY = this.renderer.screenHeight - boxHeight - BOX_MARGIN;
 
     const bg = new Graphics();
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, 6);
-    bg.fill({ color: 0x1a0a0a, alpha: 0.92 });
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, 6);
-    bg.stroke({ color: 0x664444, width: 1 });
+    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
+    bg.fill({ color: UITheme.colors.encounterBg, alpha: UITheme.alpha.encounterBg });
+    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
+    bg.stroke({ color: UITheme.colors.encounterBorder, width: 1 });
     this.container!.addChild(bg);
+    this.narrativeBg = bg;
 
     this.narrativeText = new Text({
       text: '',
       style: {
         fontSize: 15,
-        fill: 0xccbbaa,
-        fontFamily: 'sans-serif',
+        fill: UITheme.colors.bodyMuted,
+        fontFamily: UITheme.fonts.ui,
         wordWrap: true,
         wordWrapWidth: boxWidth - TEXT_PADDING * 2,
         lineHeight: 22,
@@ -99,6 +103,12 @@ export class EncounterUI {
     this.narrativeText.x = BOX_MARGIN + TEXT_PADDING;
     this.narrativeText.y = boxY + TEXT_PADDING;
     this.container!.addChild(this.narrativeText);
+
+    const narrativeMask = new Graphics();
+    narrativeMask.rect(BOX_MARGIN + TEXT_PADDING, boxY + TEXT_PADDING, boxWidth - TEXT_PADDING * 2, boxHeight - TEXT_PADDING * 2);
+    narrativeMask.fill({ color: 0xffffff });
+    this.container!.addChild(narrativeMask);
+    this.narrativeText.mask = narrativeMask;
 
     this.fullText = text;
     this.displayedChars = 0;
@@ -110,6 +120,7 @@ export class EncounterUI {
     this.ensureContainer();
     this.clearNarrative();
     this.phase = EncounterPhase.Options;
+    this.currentOptions = options;
 
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
 
@@ -119,10 +130,10 @@ export class EncounterUI {
     this.optionsContainer.y = startY;
 
     const bg = new Graphics();
-    bg.roundRect(BOX_MARGIN, 0, boxWidth, totalHeight, 6);
-    bg.fill({ color: 0x1a0a0a, alpha: 0.92 });
-    bg.roundRect(BOX_MARGIN, 0, boxWidth, totalHeight, 6);
-    bg.stroke({ color: 0x664444, width: 1 });
+    bg.roundRect(BOX_MARGIN, 0, boxWidth, totalHeight, UITheme.panel.borderRadiusMed);
+    bg.fill({ color: UITheme.colors.encounterBg, alpha: UITheme.alpha.encounterBg });
+    bg.roundRect(BOX_MARGIN, 0, boxWidth, totalHeight, UITheme.panel.borderRadiusMed);
+    bg.stroke({ color: UITheme.colors.encounterBorder, width: 1 });
     this.optionsContainer.addChild(bg);
 
     for (let i = 0; i < options.length; i++) {
@@ -132,9 +143,9 @@ export class EncounterUI {
       row.x = BOX_MARGIN + 10;
 
       const typeColors: Record<string, number> = {
-        general: 0xdddddd,
-        rule: 0x88ddaa,
-        special: 0xddaa88,
+        general: UITheme.colors.body,
+        rule: UITheme.colors.greenBright,
+        special: UITheme.colors.encounterSpecial,
       };
       const typeLabel: Record<string, string> = {
         general: '',
@@ -142,11 +153,11 @@ export class EncounterUI {
         special: `${this.strings.get('encounter', 'specialTag')} `,
       };
 
-      const color = opt.enabled ? (typeColors[opt.type] ?? 0xdddddd) : 0x666666;
+      const color = opt.enabled ? (typeColors[opt.type] ?? UITheme.colors.body) : UITheme.colors.disabled;
 
       const rowBg = new Graphics();
-      rowBg.roundRect(0, 0, boxWidth - 20, 34, 4);
-      rowBg.fill({ color: 0x221111, alpha: 0.6 });
+      rowBg.roundRect(0, 0, boxWidth - 20, 34, UITheme.panel.borderRadiusSmall);
+      rowBg.fill({ color: UITheme.colors.encounterRow, alpha: UITheme.alpha.rowBgLight });
       row.addChild(rowBg);
 
       const label = `${i + 1}. ${typeLabel[opt.type] ?? ''}${opt.text}`;
@@ -154,7 +165,7 @@ export class EncounterUI {
 
       const text = new Text({
         text: label + suffix,
-        style: { fontSize: 14, fill: color, fontFamily: 'sans-serif' },
+        style: { fontSize: 14, fill: color, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: boxWidth - 80 },
       });
       text.x = 12;
       text.y = 8;
@@ -165,8 +176,8 @@ export class EncounterUI {
         row.cursor = 'pointer';
 
         const hoverBg = new Graphics();
-        hoverBg.roundRect(0, 0, boxWidth - 20, 34, 4);
-        hoverBg.fill({ color: 0x332222, alpha: 0.8 });
+        hoverBg.roundRect(0, 0, boxWidth - 20, 34, UITheme.panel.borderRadiusSmall);
+        hoverBg.fill({ color: UITheme.colors.encounterHover, alpha: UITheme.alpha.rowBg });
         hoverBg.visible = false;
         row.addChildAt(hoverBg, 0);
 
@@ -193,16 +204,16 @@ export class EncounterUI {
     const boxY = this.renderer.screenHeight - boxHeight - BOX_MARGIN;
 
     const bg = new Graphics();
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, 6);
-    bg.fill({ color: 0x1a0a0a, alpha: 0.92 });
+    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
+    bg.fill({ color: UITheme.colors.encounterBg, alpha: UITheme.alpha.encounterBg });
     this.container!.addChild(bg);
 
     this.resultText = new Text({
       text: '',
       style: {
         fontSize: 15,
-        fill: 0xccbbaa,
-        fontFamily: 'sans-serif',
+        fill: UITheme.colors.bodyMuted,
+        fontFamily: UITheme.fonts.ui,
         wordWrap: true,
         wordWrapWidth: boxWidth - TEXT_PADDING * 2,
         lineHeight: 22,
@@ -211,6 +222,12 @@ export class EncounterUI {
     this.resultText.x = BOX_MARGIN + TEXT_PADDING;
     this.resultText.y = boxY + TEXT_PADDING;
     this.container!.addChild(this.resultText);
+
+    const resultMask = new Graphics();
+    resultMask.rect(BOX_MARGIN + TEXT_PADDING, boxY + TEXT_PADDING, boxWidth - TEXT_PADDING * 2, boxHeight - TEXT_PADDING * 2);
+    resultMask.fill({ color: 0xffffff });
+    this.container!.addChild(resultMask);
+    this.resultText.mask = resultMask;
 
     this.fullText = text;
     this.displayedChars = 0;
@@ -246,7 +263,10 @@ export class EncounterUI {
     }
     if (this.phase === EncounterPhase.Options && e.code >= 'Digit1' && e.code <= 'Digit9') {
       const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
-      this.eventBus.emit('encounter:choiceSelected', { index: idx });
+      const opt = this.currentOptions[idx];
+      if (opt && opt.enabled) {
+        this.eventBus.emit('encounter:choiceSelected', { index: opt.index });
+      }
     }
   }
 
@@ -271,7 +291,13 @@ export class EncounterUI {
   }
 
   private clearNarrative(): void {
+    if (this.narrativeBg) {
+      if (this.narrativeBg.parent) this.narrativeBg.parent.removeChild(this.narrativeBg);
+      this.narrativeBg.destroy();
+      this.narrativeBg = null;
+    }
     if (this.narrativeText) {
+      if (this.narrativeText.parent) this.narrativeText.parent.removeChild(this.narrativeText);
       this.narrativeText.destroy();
       this.narrativeText = null;
     }
@@ -285,6 +311,7 @@ export class EncounterUI {
       this.optionsContainer.destroy({ children: true });
       this.optionsContainer = null;
     }
+    this.currentOptions = [];
   }
 
   private clearAll(): void {
@@ -296,8 +323,10 @@ export class EncounterUI {
       }
     }
     this.narrativeText = null;
+    this.narrativeBg = null;
     this.optionsContainer = null;
     this.resultText = null;
+    this.currentOptions = [];
   }
 
   hide(): void {

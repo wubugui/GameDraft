@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IInventoryDataProvider, ShopDef } from '../data/types';
@@ -73,19 +74,19 @@ export class ShopUI {
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: 0x000000, alpha: 0.4 });
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlayLight });
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, panelH, 8);
-    bg.fill({ color: 0x111122, alpha: 0.95 });
-    bg.roundRect(px, py, PANEL_W, panelH, 8);
-    bg.stroke({ color: 0x444466, width: 1 });
+    bg.roundRect(px, py, PANEL_W, panelH, UITheme.panel.borderRadius);
+    bg.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
+    bg.roundRect(px, py, PANEL_W, panelH, UITheme.panel.borderRadius);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
     const title = new Text({
       text: this.currentShop.name,
-      style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 - 120 },
     });
     title.x = px + PADDING;
     title.y = py + 12;
@@ -94,7 +95,7 @@ export class ShopUI {
     const coins = this.inventoryData.getCoins();
     const coinText = new Text({
       text: `${this.strings.get('shop', 'coins')} ${coins}`,
-      style: { fontSize: 13, fill: 0xccaa66, fontFamily: 'sans-serif' },
+      style: { fontSize: 13, fill: UITheme.colors.goldDim, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 90 },
     });
     coinText.x = px + PANEL_W - 100;
     coinText.y = py + 16;
@@ -108,13 +109,13 @@ export class ShopUI {
       const canBuy = coins >= price;
 
       const row = new Graphics();
-      row.roundRect(px + PADDING, py + cy, PANEL_W - PADDING * 2, ITEM_H - 4, 4);
-      row.fill({ color: 0x222233, alpha: 0.6 });
+      row.roundRect(px + PADDING, py + cy, PANEL_W - PADDING * 2, ITEM_H - 4, UITheme.panel.borderRadiusSmall);
+      row.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.rowBgLight });
       this.container.addChild(row);
 
       const nameT = new Text({
         text: name,
-        style: { fontSize: 13, fill: canBuy ? 0xcccccc : 0x666666, fontFamily: 'sans-serif' },
+        style: { fontSize: 13, fill: canBuy ? UITheme.colors.bodyLight : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 - 180 },
       });
       nameT.x = px + PADDING + 10;
       nameT.y = py + cy + 8;
@@ -122,7 +123,7 @@ export class ShopUI {
 
       const priceT = new Text({
         text: `${price} ${this.strings.get('shop', 'unit')}`,
-        style: { fontSize: 13, fill: canBuy ? 0xccaa66 : 0x666655, fontFamily: 'sans-serif' },
+        style: { fontSize: 13, fill: canBuy ? UITheme.colors.goldDim : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 70 },
       });
       priceT.x = px + PANEL_W - PADDING - 120;
       priceT.y = py + cy + 8;
@@ -130,7 +131,7 @@ export class ShopUI {
 
       const buyBtn = new Text({
         text: canBuy ? this.strings.get('shop', 'buy') : this.strings.get('shop', 'insufficient'),
-        style: { fontSize: 13, fill: canBuy ? 0x88cc88 : 0x555555, fontFamily: 'sans-serif' },
+        style: { fontSize: 13, fill: canBuy ? UITheme.colors.green : UITheme.colors.disabledDark, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 60 },
       });
       buyBtn.x = px + PANEL_W - PADDING - 50;
       buyBtn.y = py + cy + 8;
@@ -148,7 +149,7 @@ export class ShopUI {
 
     const closeBtn = new Text({
       text: this.strings.get('shop', 'leave'),
-      style: { fontSize: 14, fill: 0x8888aa, fontFamily: 'sans-serif' },
+      style: { fontSize: 14, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - PADDING * 2 },
     });
     closeBtn.x = px + (PANEL_W - closeBtn.width) / 2;
     closeBtn.y = py + panelH - 30;
@@ -158,6 +159,7 @@ export class ShopUI {
     this.container.addChild(closeBtn);
 
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private doPurchase(itemId: string, price: number): void {

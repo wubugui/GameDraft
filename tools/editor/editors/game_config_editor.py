@@ -2,14 +2,38 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QPushButton, QLabel,
-    QTableWidget, QHeaderView,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel,
+    QTableWidget, QHeaderView, QSpinBox, QGroupBox, QCheckBox,
 )
 
 from ..project_model import ProjectModel
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
+
+
+def _make_size_row(label: str) -> tuple[QHBoxLayout, QCheckBox, QSpinBox, QSpinBox]:
+    """Create a width x height input row with an enable checkbox."""
+    row = QHBoxLayout()
+    chk = QCheckBox(label)
+    chk.setToolTip(f"Enable custom {label.lower()}")
+    row.addWidget(chk)
+    w = QSpinBox()
+    w.setRange(0, 7680)
+    w.setSuffix(" px")
+    w.setEnabled(False)
+    h = QSpinBox()
+    h.setRange(0, 4320)
+    h.setSuffix(" px")
+    h.setEnabled(False)
+    row.addWidget(QLabel("W:"))
+    row.addWidget(w)
+    row.addWidget(QLabel("H:"))
+    row.addWidget(h)
+    row.addStretch()
+    chk.toggled.connect(w.setEnabled)
+    chk.toggled.connect(h.setEnabled)
+    return row, chk, w, h
 
 
 class GameConfigEditor(QWidget):
@@ -41,6 +65,30 @@ class GameConfigEditor(QWidget):
         f.addRow("initialCutsceneDoneFlag", self._cutscene_flag)
         lay.addLayout(f)
 
+        # -- Display settings ---------------------------------------------------
+        disp_box = QGroupBox("Display")
+        disp_lay = QVBoxLayout(disp_box)
+
+        vp_row, self._vp_chk, self._vp_w, self._vp_h = _make_size_row("Viewport")
+        self._vp_w.setValue(1280)
+        self._vp_h.setValue(720)
+        self._vp_chk.setToolTip(
+            "Logical rendering resolution. Game elements are rendered at this "
+            "size and the result is scaled to fill the window via CSS."
+        )
+        disp_lay.addLayout(vp_row)
+
+        ws_row, self._ws_chk, self._ws_w, self._ws_h = _make_size_row("Window Size")
+        self._ws_w.setValue(1280)
+        self._ws_h.setValue(720)
+        self._ws_chk.setToolTip(
+            "CSS size of the game container. Independent of viewport resolution."
+        )
+        disp_lay.addLayout(ws_row)
+
+        lay.addWidget(disp_box)
+
+        # -- Startup flags ------------------------------------------------------
         lay.addWidget(QLabel("<b>startupFlags</b>"))
         self._flags_table = QTableWidget(0, 2)
         self._flags_table.setHorizontalHeaderLabels(["key", "value"])
@@ -64,6 +112,23 @@ class GameConfigEditor(QWidget):
         self._fallback_scene.set_current(cfg.get("fallbackScene", ""))
         self._initial_cutscene.set_current(cfg.get("initialCutscene", ""))
         self._cutscene_flag.set_key(str(cfg.get("initialCutsceneDoneFlag", "") or ""))
+
+        vp = cfg.get("viewport")
+        if isinstance(vp, dict) and vp.get("width") and vp.get("height"):
+            self._vp_chk.setChecked(True)
+            self._vp_w.setValue(int(vp["width"]))
+            self._vp_h.setValue(int(vp["height"]))
+        else:
+            self._vp_chk.setChecked(False)
+
+        ws = cfg.get("windowSize")
+        if isinstance(ws, dict) and ws.get("width") and ws.get("height"):
+            self._ws_chk.setChecked(True)
+            self._ws_w.setValue(int(ws["width"]))
+            self._ws_h.setValue(int(ws["height"]))
+        else:
+            self._ws_chk.setChecked(False)
+
         sf = cfg.get("startupFlags", {})
         self._flags_table.setRowCount(0)
         for k, v in sf.items():
@@ -103,6 +168,17 @@ class GameConfigEditor(QWidget):
             cfg["initialCutsceneDoneFlag"] = cf_s
         elif "initialCutsceneDoneFlag" in cfg:
             del cfg["initialCutsceneDoneFlag"]
+
+        if self._vp_chk.isChecked() and self._vp_w.value() > 0 and self._vp_h.value() > 0:
+            cfg["viewport"] = {"width": self._vp_w.value(), "height": self._vp_h.value()}
+        elif "viewport" in cfg:
+            del cfg["viewport"]
+
+        if self._ws_chk.isChecked() and self._ws_w.value() > 0 and self._ws_h.value() > 0:
+            cfg["windowSize"] = {"width": self._ws_w.value(), "height": self._ws_h.value()}
+        elif "windowSize" in cfg:
+            del cfg["windowSize"]
+
         sf: dict = {}
         for i in range(self._flags_table.rowCount()):
             cw = self._flags_table.cellWidget(i, 0)

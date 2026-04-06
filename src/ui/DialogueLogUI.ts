@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -93,19 +94,19 @@ export class DialogueLogUI {
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: 0x000000, alpha: 0.5 });
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlay });
     this.container.addChild(overlay);
 
     const panel = new Graphics();
-    panel.roundRect(px, py, panelW, panelH, 8);
-    panel.fill({ color: 0x111122, alpha: 0.95 });
-    panel.roundRect(px, py, panelW, panelH, 8);
-    panel.stroke({ color: 0x444466, width: 1 });
+    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
+    panel.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
+    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
+    panel.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(panel);
 
     const title = new Text({
       text: this.strings.get('dialogueLog', 'title'),
-      style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: panelW - PADDING * 2 },
     });
     title.x = px + PADDING;
     title.y = py + 14;
@@ -123,14 +124,14 @@ export class DialogueLogUI {
       const entry = this.entries[i];
       const isChoice = entry.type === 'choice';
       const prefix = isChoice ? '> ' : (entry.speaker ? `${entry.speaker}: ` : '');
-      const color = isChoice ? 0x88bbdd : 0xcccccc;
+      const color = isChoice ? UITheme.colors.choiceLog : UITheme.colors.bodyLight;
 
       const t = new Text({
         text: prefix + entry.text,
         style: {
           fontSize: 13,
           fill: color,
-          fontFamily: 'sans-serif',
+          fontFamily: UITheme.fonts.ui,
           wordWrap: true,
           wordWrapWidth: panelW - PADDING * 2 - 10,
         },
@@ -150,7 +151,7 @@ export class DialogueLogUI {
     if (this.entries.length === 0) {
       const empty = new Text({
         text: this.strings.get('dialogueLog', 'empty'),
-        style: { fontSize: 12, fill: 0x555566, fontFamily: 'sans-serif' },
+        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: panelW - PADDING * 2 },
       });
       empty.x = px + PADDING + 10;
       empty.y = py + 60;
@@ -162,13 +163,14 @@ export class DialogueLogUI {
       : '';
     const hint = new Text({
       text: `${scrollInfo}  ${this.strings.get('dialogueLog', 'closeHint')}`,
-      style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: panelW - PADDING * 2 },
     });
     hint.x = px + panelW - hint.width - 16;
     hint.y = py + panelH - 24;
     this.container.addChild(hint);
 
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private onKey(e: KeyboardEvent): void {

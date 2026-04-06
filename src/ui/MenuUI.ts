@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { ISaveDataProvider, IAudioSettingsProvider } from '../data/types';
@@ -19,6 +20,7 @@ export class MenuUI {
   private container: Container | null = null;
   private _isOpen = false;
   private mode: MenuMode = 'main';
+  private previousMode: MenuMode = 'main';
 
   constructor(
     renderer: Renderer,
@@ -74,12 +76,12 @@ export class MenuUI {
 
     const bg = new Graphics();
     bg.rect(0, 0, sw, sh);
-    bg.fill(0x0a0a14);
+    bg.fill(UITheme.colors.mainMenuBg);
     this.container.addChild(bg);
 
     const gameName = new Text({
       text: this.strings.get('menu', 'gameTitle'),
-      style: { fontSize: 48, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
+      style: { fontSize: 48, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: sw - 40 },
     });
     gameName.x = (sw - gameName.width) / 2;
     gameName.y = sh * 0.2;
@@ -87,7 +89,7 @@ export class MenuUI {
 
     const subtitle = new Text({
       text: this.strings.get('menu', 'gameSubtitle'),
-      style: { fontSize: 20, fill: 0x888899, fontFamily: 'serif' },
+      style: { fontSize: 20, fill: UITheme.colors.section, fontFamily: UITheme.fonts.display, wordWrap: true, wordWrapWidth: sw - 40 },
     });
     subtitle.x = (sw - subtitle.width) / 2;
     subtitle.y = sh * 0.2 + 60;
@@ -98,9 +100,9 @@ export class MenuUI {
     ];
 
     if (this.saveData.hasAnySave()) {
-      buttons.push({ label: this.strings.get('menu', 'continueGame'), action: () => { this.mode = 'load'; this.build(); } });
+      buttons.push({ label: this.strings.get('menu', 'continueGame'), action: () => { this.previousMode = this.mode; this.mode = 'load'; this.build(); } });
     }
-    buttons.push({ label: this.strings.get('menu', 'settings'), action: () => { this.mode = 'settings'; this.build(); } });
+    buttons.push({ label: this.strings.get('menu', 'settings'), action: () => { this.previousMode = this.mode; this.mode = 'settings'; this.build(); } });
 
     this.buildButtonColumn(buttons, sw, sh * 0.5);
     this.renderer.uiLayer.addChild(this.container);
@@ -113,12 +115,12 @@ export class MenuUI {
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: 0x000000, alpha: 0.6 });
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlayDark });
     this.container.addChild(overlay);
 
     const title = new Text({
       text: this.strings.get('menu', 'pause'),
-      style: { fontSize: 24, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
+      style: { fontSize: 24, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: sw - 40 },
     });
     title.x = (sw - title.width) / 2;
     title.y = sh * 0.2;
@@ -126,14 +128,15 @@ export class MenuUI {
 
     const buttons: { label: string; action: () => void }[] = [
       { label: this.strings.get('menu', 'resume'), action: () => this.close() },
-      { label: this.strings.get('menu', 'save'), action: () => { this.mode = 'save'; this.build(); } },
-      { label: this.strings.get('menu', 'load'), action: () => { this.mode = 'load'; this.build(); } },
-      { label: this.strings.get('menu', 'settings'), action: () => { this.mode = 'settings'; this.build(); } },
+      { label: this.strings.get('menu', 'save'), action: () => { this.previousMode = this.mode; this.mode = 'save'; this.build(); } },
+      { label: this.strings.get('menu', 'load'), action: () => { this.previousMode = this.mode; this.mode = 'load'; this.build(); } },
+      { label: this.strings.get('menu', 'settings'), action: () => { this.previousMode = this.mode; this.mode = 'settings'; this.build(); } },
       { label: this.strings.get('menu', 'returnToMain'), action: () => { this.close(); this.eventBus.emit('menu:returnToMain', {}); } },
     ];
 
     this.buildButtonColumn(buttons, sw, sh * 0.35);
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private buildSaveLoadPanel(action: 'save' | 'load'): void {
@@ -145,19 +148,19 @@ export class MenuUI {
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: 0x000000, alpha: 0.6 });
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlayDark });
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, 300, 8);
-    bg.fill({ color: 0x111122, alpha: 0.95 });
-    bg.roundRect(px, py, PANEL_W, 300, 8);
-    bg.stroke({ color: 0x444466, width: 1 });
+    bg.roundRect(px, py, PANEL_W, 300, UITheme.panel.borderRadius);
+    bg.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
+    bg.roundRect(px, py, PANEL_W, 300, UITheme.panel.borderRadius);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
     const title = new Text({
       text: action === 'save' ? this.strings.get('menu', 'save') : this.strings.get('menu', 'load'),
-      style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 80 },
     });
     title.x = px + 20;
     title.y = py + 14;
@@ -168,10 +171,10 @@ export class MenuUI {
       const slotY = py + 56 + i * 70;
 
       const slotBg = new Graphics();
-      slotBg.roundRect(px + 16, slotY, PANEL_W - 32, 60, 4);
-      slotBg.fill({ color: 0x222233, alpha: 0.7 });
-      slotBg.roundRect(px + 16, slotY, PANEL_W - 32, 60, 4);
-      slotBg.stroke({ color: 0x333344, width: 1 });
+      slotBg.roundRect(px + 16, slotY, PANEL_W - 32, 60, UITheme.panel.borderRadiusSmall);
+      slotBg.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.slotBg });
+      slotBg.roundRect(px + 16, slotY, PANEL_W - 32, 60, UITheme.panel.borderRadiusSmall);
+      slotBg.stroke({ color: UITheme.colors.borderSubtle, width: 1 });
       this.container.addChild(slotBg);
 
       if (meta) {
@@ -181,7 +184,7 @@ export class MenuUI {
 
         const info = new Text({
           text: this.strings.get('menu', 'slotInfo', { slot: String(i + 1), scene: meta.sceneName, day: String(meta.dayNumber), date: dateStr, minutes: String(playMin) }),
-          style: { fontSize: 12, fill: 0xaaaacc, fontFamily: 'sans-serif' },
+          style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 60 },
         });
         info.x = px + 28;
         info.y = slotY + 20;
@@ -189,7 +192,7 @@ export class MenuUI {
       } else {
         const empty = new Text({
           text: this.strings.get('menu', 'slotEmpty', { slot: i + 1 }),
-          style: { fontSize: 12, fill: 0x555566, fontFamily: 'sans-serif' },
+          style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: PANEL_W - 60 },
         });
         empty.x = px + 28;
         empty.y = slotY + 20;
@@ -223,19 +226,20 @@ export class MenuUI {
 
     const backBtn = new Text({
       text: this.strings.get('menu', 'back'),
-      style: { fontSize: 13, fill: 0x8888aa, fontFamily: 'sans-serif' },
+      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 60 },
     });
     backBtn.x = px + PANEL_W - 60;
     backBtn.y = py + 14;
     backBtn.eventMode = 'static';
     backBtn.cursor = 'pointer';
     backBtn.on('pointerdown', () => {
-      this.mode = this.mode === 'save' ? 'pause' : (this.saveData.hasAnySave() ? 'main' : 'pause');
+      this.mode = this.previousMode;
       this.build();
     });
     this.container.addChild(backBtn);
 
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private buildSettings(): void {
@@ -247,19 +251,19 @@ export class MenuUI {
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: 0x000000, alpha: 0.6 });
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlayDark });
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, 280, 8);
-    bg.fill({ color: 0x111122, alpha: 0.95 });
-    bg.roundRect(px, py, PANEL_W, 280, 8);
-    bg.stroke({ color: 0x444466, width: 1 });
+    bg.roundRect(px, py, PANEL_W, 280, UITheme.panel.borderRadius);
+    bg.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
+    bg.roundRect(px, py, PANEL_W, 280, UITheme.panel.borderRadius);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
     const title = new Text({
       text: this.strings.get('menu', 'settings'),
-      style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, wordWrapWidth: PANEL_W - 80 },
     });
     title.x = px + 20;
     title.y = py + 14;
@@ -275,7 +279,7 @@ export class MenuUI {
       const cy = py + 60 + idx * 60;
       const labelT = new Text({
         text: label,
-        style: { fontSize: 13, fill: 0xaaaacc, fontFamily: 'sans-serif' },
+        style: { fontSize: 13, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 100 },
       });
       labelT.x = px + 20;
       labelT.y = cy;
@@ -285,54 +289,84 @@ export class MenuUI {
       this.drawSlider(px + 130, cy, 200, vol, (v) => {
         this.audioSettings.setVolume(channel, v);
       });
-
-      const pct = new Text({
-        text: `${Math.round(vol * 100)}%`,
-        style: { fontSize: 12, fill: 0x888899, fontFamily: 'sans-serif' },
-      });
-      pct.x = px + 340;
-      pct.y = cy;
-      this.container!.addChild(pct);
     });
 
     const backBtn = new Text({
       text: this.strings.get('menu', 'back'),
-      style: { fontSize: 13, fill: 0x8888aa, fontFamily: 'sans-serif' },
+      style: { fontSize: 13, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 60 },
     });
     backBtn.x = px + PANEL_W - 60;
     backBtn.y = py + 14;
     backBtn.eventMode = 'static';
     backBtn.cursor = 'pointer';
-    backBtn.on('pointerdown', () => { this.mode = 'pause'; this.build(); });
+    backBtn.on('pointerdown', () => { this.mode = this.previousMode; this.build(); });
     this.container.addChild(backBtn);
 
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private drawSlider(x: number, y: number, width: number, value: number, onChange: (v: number) => void): void {
     const track = new Graphics();
     track.roundRect(x, y + 6, width, 6, 3);
-    track.fill(0x333344);
+    track.fill(UITheme.colors.sliderTrack);
     this.container!.addChild(track);
 
     const fill = new Graphics();
-    fill.roundRect(x, y + 6, width * value, 6, 3);
-    fill.fill(0x5588cc);
+    const drawFill = (v: number) => {
+      fill.clear();
+      fill.roundRect(x, y + 6, width * v, 6, 3);
+      fill.fill(UITheme.colors.sliderFill);
+    };
+    drawFill(value);
     this.container!.addChild(fill);
 
     const handle = new Graphics();
-    handle.circle(x + width * value, y + 9, 8);
-    handle.fill(0x88aacc);
+    const drawHandle = (v: number) => {
+      handle.clear();
+      handle.circle(x + width * v, y + 9, 8);
+      handle.fill(UITheme.colors.sliderHandle);
+    };
+    drawHandle(value);
     this.container!.addChild(handle);
+
+    const pct = new Text({
+      text: `${Math.round(value * 100)}%`,
+      style: { fontSize: 12, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 50 },
+    });
+    pct.x = x + width + 10;
+    pct.y = y;
+    this.container!.addChild(pct);
+
+    let dragging = false;
+    const updateValue = (globalX: number) => {
+      const v = Math.max(0, Math.min(1, (globalX - x) / width));
+      onChange(v);
+      drawFill(v);
+      drawHandle(v);
+      pct.text = `${Math.round(v * 100)}%`;
+    };
+
+    const onMove = (e: PointerEvent) => { if (dragging) updateValue(e.clientX); };
+    const onUp = () => {
+      dragging = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
 
     track.eventMode = 'static';
     track.cursor = 'pointer';
-    track.on('pointerdown', (e) => {
-      const localX = e.globalX - x;
-      const v = Math.max(0, Math.min(1, localX / width));
-      onChange(v);
-      this.build();
-    });
+    handle.eventMode = 'static';
+    handle.cursor = 'pointer';
+
+    const startDrag = (e: any) => {
+      dragging = true;
+      updateValue(e.globalX);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+    track.on('pointerdown', startDrag);
+    handle.on('pointerdown', startDrag);
   }
 
   private buildButtonColumn(buttons: { label: string; action: () => void }[], sw: number, startY: number): void {
@@ -340,21 +374,29 @@ export class MenuUI {
       const by = startY + i * (BTN_H + BTN_GAP);
       const bx = (sw - 200) / 2;
 
+      const hoverBg = new Graphics();
+      hoverBg.roundRect(bx, by, 200, BTN_H, UITheme.panel.borderRadiusMed);
+      hoverBg.fill({ color: UITheme.colors.rowHover, alpha: UITheme.alpha.rowBg });
+      hoverBg.roundRect(bx, by, 200, BTN_H, UITheme.panel.borderRadiusMed);
+      hoverBg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+      hoverBg.visible = false;
+      this.container!.addChild(hoverBg);
+
       const bg = new Graphics();
-      bg.roundRect(bx, by, 200, BTN_H, 6);
-      bg.fill({ color: 0x222233, alpha: 0.8 });
-      bg.roundRect(bx, by, 200, BTN_H, 6);
-      bg.stroke({ color: 0x444466, width: 1 });
+      bg.roundRect(bx, by, 200, BTN_H, UITheme.panel.borderRadiusMed);
+      bg.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.rowBg });
+      bg.roundRect(bx, by, 200, BTN_H, UITheme.panel.borderRadiusMed);
+      bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
       bg.eventMode = 'static';
       bg.cursor = 'pointer';
       bg.on('pointerdown', btn.action);
-      bg.on('pointerover', () => { bg.alpha = 0.8; });
-      bg.on('pointerout', () => { bg.alpha = 1; });
+      bg.on('pointerover', () => { hoverBg.visible = true; bg.visible = false; });
+      bg.on('pointerout', () => { hoverBg.visible = false; bg.visible = true; });
       this.container!.addChild(bg);
 
       const t = new Text({
         text: btn.label,
-        style: { fontSize: 15, fill: 0xccccdd, fontFamily: 'sans-serif' },
+        style: { fontSize: 15, fill: UITheme.colors.buttonText, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 190 },
       });
       t.x = bx + (200 - t.width) / 2;
       t.y = by + (BTN_H - t.height) / 2;

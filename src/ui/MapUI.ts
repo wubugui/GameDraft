@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
@@ -62,19 +63,19 @@ export class MapUI {
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: 0x000000, alpha: 0.5 });
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlay });
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, PANEL_H, 8);
-    bg.fill({ color: 0x1a1a2e, alpha: 0.95 });
-    bg.roundRect(px, py, PANEL_W, PANEL_H, 8);
-    bg.stroke({ color: 0x444466, width: 1 });
+    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
+    bg.fill({ color: UITheme.colors.panelBgAlt, alpha: UITheme.alpha.panelBg });
+    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
     const title = new Text({
       text: this.strings.get('map', 'title'),
-      style: { fontSize: 18, fill: 0xffcc88, fontFamily: 'serif', fontWeight: 'bold' },
+      style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.display, fontWeight: 'bold', wordWrap: true, wordWrapWidth: 560 },
     });
     title.x = px + 20;
     title.y = py + 12;
@@ -82,7 +83,7 @@ export class MapUI {
 
     const hint = new Text({
       text: this.strings.get('map', 'closeHint'),
-      style: { fontSize: 11, fill: 0x555566, fontFamily: 'sans-serif' },
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 560 },
     });
     hint.x = px + PANEL_W - 80;
     hint.y = py + PANEL_H - 24;
@@ -91,7 +92,7 @@ export class MapUI {
     if (this.nodes.length === 0) {
       const empty = new Text({
         text: this.strings.get('map', 'noData'),
-        style: { fontSize: 13, fill: 0x555566, fontFamily: 'sans-serif' },
+        style: { fontSize: 13, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, wordWrapWidth: 560 },
       });
       empty.x = px + (PANEL_W - empty.width) / 2;
       empty.y = py + PANEL_H / 2;
@@ -109,15 +110,15 @@ export class MapUI {
       circle.circle(nx, ny, NODE_R);
 
       if (isCurrent) {
-        circle.fill(0xffcc44);
+        circle.fill(UITheme.colors.mapCurrent);
         circle.circle(nx, ny, NODE_R);
-        circle.stroke({ color: 0xffee88, width: 2 });
+        circle.stroke({ color: UITheme.colors.mapCurrentBorder, width: 2 });
       } else if (unlocked) {
-        circle.fill(0x557799);
+        circle.fill(UITheme.colors.mapUnlocked);
         circle.circle(nx, ny, NODE_R);
-        circle.stroke({ color: 0x6688aa, width: 1 });
+        circle.stroke({ color: UITheme.colors.mapUnlockedBorder, width: 1 });
       } else {
-        circle.fill({ color: 0x333344, alpha: 0.5 });
+        circle.fill({ color: UITheme.colors.mapLocked, alpha: UITheme.alpha.overlay });
       }
 
       if (unlocked && !isCurrent) {
@@ -134,8 +135,10 @@ export class MapUI {
         text: unlocked ? node.name : this.strings.get('map', 'locked'),
         style: {
           fontSize: 11,
-          fill: isCurrent ? 0xffee88 : (unlocked ? 0xaabbcc : 0x444455),
-          fontFamily: 'sans-serif',
+          fill: isCurrent ? UITheme.colors.mapCurrentBorder : (unlocked ? UITheme.colors.mapUnlockedText : UITheme.colors.mapLockedText),
+          fontFamily: UITheme.fonts.ui,
+          wordWrap: true,
+          wordWrapWidth: 100,
         },
       });
       label.x = nx - label.width / 2;
@@ -144,6 +147,7 @@ export class MapUI {
     }
 
     this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
   }
 
   private destroyUI(): void {
