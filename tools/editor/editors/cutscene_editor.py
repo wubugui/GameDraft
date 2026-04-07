@@ -15,6 +15,7 @@ from ..project_model import ProjectModel
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.image_path_picker import CutsceneImagePathRow
 from .scene_editor import TargetSpawnPickerDialog
 
 COMMAND_TYPES = [
@@ -209,11 +210,8 @@ class CommandWidget(QFrame):
                         w.addItem(name)
                 w.setCurrentText(str(val) if val else "")
             elif ct == "show_img" and pname == "image":
-                w = IdRefSelector(self, allow_empty=True)
-                w.setMinimumWidth(200)
-                if self._model:
-                    w.set_items(self._model.illustration_asset_choices())
-                w.set_current(str(val) if val is not None else "")
+                w = CutsceneImagePathRow(self._model, str(val) if val is not None else "", self)
+                w.setMinimumWidth(360)
             elif ct == "entity_anim" and pname == "animation":
                 w = IdRefSelector(self, allow_empty=True)
                 w.setMinimumWidth(200)
@@ -284,6 +282,8 @@ class CommandWidget(QFrame):
                 d[pname] = v if isinstance(v, bool) else float(v)
             elif ct == "set_flag" and pname == "key" and isinstance(w, FlagKeyPickField):
                 d[pname] = w.key()
+            elif isinstance(w, CutsceneImagePathRow):
+                d[pname] = w.path()
             elif isinstance(w, IdRefSelector):
                 d[pname] = w.current_id()
             elif isinstance(w, QComboBox):

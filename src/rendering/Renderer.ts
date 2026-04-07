@@ -1,6 +1,11 @@
 import { Application, Container, type Filter } from 'pixi.js';
 import { WorldFilterPipeline, loadFilter } from './filter';
 
+/** Pixi 类型未包含 null，运行时必须赋 null 以断开 auto-resize */
+function setAppResizeTo(app: Application, target: Window | HTMLElement | null): void {
+  (app as unknown as { resizeTo: Window | HTMLElement | null }).resizeTo = target;
+}
+
 export class Renderer {
   public app: Application;
   public worldContainer: Container;
@@ -100,14 +105,11 @@ export class Renderer {
     this.viewportWidth = width;
     this.viewportHeight = height;
 
-    const app = this.app as Application & {
-      cancelResize?: () => void;
-      resizeTo?: Window | HTMLElement | null;
-    };
+    const app = this.app as Application & { cancelResize?: () => void };
 
     if (width > 0 && height > 0) {
       try { app.cancelResize?.(); } catch { /* ignore */ }
-      try { app.resizeTo = null; } catch { /* ignore */ }
+      try { setAppResizeTo(this.app, null); } catch { /* ignore */ }
 
       this.app.renderer.resize(width, height);
 
@@ -117,7 +119,7 @@ export class Renderer {
     } else {
       const mount = document.getElementById('game-mount');
       if (mount) {
-        try { app.resizeTo = mount; } catch { /* ignore */ }
+        try { setAppResizeTo(this.app, mount); } catch { /* ignore */ }
       }
       this.app.resize();
     }
@@ -204,10 +206,7 @@ export class Renderer {
 
     this.worldFilterPipeline.clear();
 
-    const app = this.app as Application & {
-      cancelResize?: () => void;
-      resizeTo?: Window | HTMLElement | null;
-    };
+    const app = this.app as Application & { cancelResize?: () => void };
     try {
       app.cancelResize?.();
     } catch {
@@ -215,7 +214,7 @@ export class Renderer {
     }
     try {
       // 先断开 resizeTo，避免 ResizePlugin.destroy 里 _cancelResize 已不可靠（Pixi v8 + HMR/重复卸载）
-      app.resizeTo = null;
+      setAppResizeTo(this.app, null);
     } catch {
       /* ignore */
     }

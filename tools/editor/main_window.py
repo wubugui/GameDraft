@@ -596,13 +596,9 @@ class MainWindow(QMainWindow):
 
     def _close_game_play_window(self) -> None:
         if self._game_play_window is not None:
-            try:
-                self._game_play_window.closed.disconnect(self._on_game_play_window_closed)
-            except (TypeError, RuntimeError):
-                pass
+            # 不 disconnect closed、不 deleteLater：关闭流程在 GamePlayWindow 内异步完成，
+            # 否则 Qt 会在首次 close(ignore) 后误删窗口；引用在 closed 信号里清掉
             self._game_play_window.close()
-            self._game_play_window.deleteLater()
-            self._game_play_window = None
 
     def _stop_game(self) -> None:
         if self._model.project_path is None:

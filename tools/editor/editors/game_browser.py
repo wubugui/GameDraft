@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import html
 
-from PySide6.QtCore import Qt, Signal, QUrl, QSize
+from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -139,6 +139,8 @@ class GamePlayWindow(QWidget):
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("GameDraft")
         self.resize(width, height)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._native_close_armed = False
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -165,5 +167,29 @@ class GamePlayWindow(QWidget):
             self._view.page().runJavaScript(code)
 
     def closeEvent(self, event) -> None:
-        self.closed.emit()
-        super().closeEvent(event)
+        # WebEngine 关窗口默认不触发 pagehide/beforeunload，必须先停 Howler 再关视图
+        if self._native_close_armed:
+            self.closed.emit()
+            super().closeEvent(event)
+            return
+
+        if self._view is None:
+            self._native_close_armed = True
+            self.closeEvent(event)
+            return
+
+        event.ignore()
+        done: list[bool] = [False]
+
+        def arm_and_close(*_args: object) -> None:
+            if done[0]:
+                return
+            done[0] = True
+            self._native_close_armed = True
+            self.close()
+
+        js = """(function(){try{if(window.__gameDestroy)window.__gameDestroy();}catch(e){}
+try{if(window.Howler){if(typeof Howler.stop==='function')Howler.stop();
+if(typeof Howler.unload==='function')Howler.unload();}}catch(e){}})();0;"""
+        self._view.page().runJavaScript(js, arm_and_close)
+        QTimer.singleShot(400, arm_and_close)
