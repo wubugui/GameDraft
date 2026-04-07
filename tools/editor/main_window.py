@@ -700,6 +700,12 @@ class MainWindow(QMainWindow):
     # ---- close ------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
+        from .editors.cutscene_editor import CutsceneEditor
+        for ed in self._editor_instances:
+            if isinstance(ed, CutsceneEditor) and ed.has_pending_changes():
+                if ed.confirm_apply_or_discard(self) == "cancel":
+                    event.ignore()
+                    return
         if self._model.is_dirty:
             r = QMessageBox.question(
                 self, "Unsaved Changes",

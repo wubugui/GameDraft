@@ -45,6 +45,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "shopPurchase": [("itemId", "str"), ("price", "int")],
     "inventoryDiscard": [("itemId", "str")],
     "pickup": [("itemId", "str"), ("itemName", "str"), ("count", "int"), ("isCurrency", "bool")],
+    "addDelayedEvent": [("targetDay", "int")],
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
@@ -61,15 +62,18 @@ class ActionRow(QWidget):
         parent: QWidget | None = None,
         model=None,
         scene_id: str | None = None,
+        show_delete_button: bool = True,
     ):
         super().__init__(parent)
         self._param_widgets: dict[str, QWidget] = {}
         self._ctx_model = model
         self._ctx_scene_id = scene_id
+        self._delayed_editor = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(2)
+        self._outer_layout = outer
 
         top = QHBoxLayout()
         self.type_combo = QComboBox()
@@ -77,6 +81,7 @@ class ActionRow(QWidget):
         self.del_btn = QPushButton("\u2212")
         self.del_btn.setFixedWidth(24)
         self.del_btn.clicked.connect(lambda: self.removed.emit(self))
+        self.del_btn.setVisible(show_delete_button)
         top.addWidget(self.type_combo, stretch=1)
         top.addWidget(self.del_btn)
         outer.addLayout(top)
@@ -212,6 +217,10 @@ class ActionRow(QWidget):
         while self._params_layout.rowCount() > 0:
             self._params_layout.removeRow(0)
         self._param_widgets.clear()
+        if self._delayed_editor is not None:
+            self._outer_layout.removeWidget(self._delayed_editor)
+            self._delayed_editor.deleteLater()
+            self._delayed_editor = None
 
         act_type = self.type_combo.currentText()
         schema = _PARAM_SCHEMAS.get(act_type, [])
@@ -333,6 +342,15 @@ class ActionRow(QWidget):
                 pval = params.get("value", "")
                 vw.set_value(pval if pval != "" else True)
 
+        if act_type == "addDelayedEvent":
+            ed = ActionEditor("delayed actions", self)
+            ed.set_project_context(self._ctx_model, self._ctx_scene_id)
+            raw_actions = params.get("actions", [])
+            ed.set_data(list(raw_actions) if isinstance(raw_actions, list) else [])
+            ed.changed.connect(self.changed)
+            self._delayed_editor = ed
+            self._outer_layout.addWidget(ed)
+
     def to_dict(self) -> dict:
         act_type = self.type_combo.currentText()
         schema = _PARAM_SCHEMAS.get(act_type, [])
@@ -356,6 +374,8 @@ class ActionRow(QWidget):
                 params[pname] = w.currentText()
             else:
                 params[pname] = w.text()
+        if act_type == "addDelayedEvent" and self._delayed_editor is not None:
+            params["actions"] = self._delayed_editor.to_list()
         return {"type": act_type, "params": params}
 
 
