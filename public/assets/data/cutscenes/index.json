@@ -4,7 +4,6 @@
     "commands": [
       {
         "type": "show_img",
-        "id": "legend_story",
         "image": "/assets/images/illustrations/李天狗神仙岭大战旱魃/taoist_finds_scroll_cliff.png"
       },
       {
@@ -14,16 +13,16 @@
       {
         "type": "show_title",
         "text": "渝都卫",
-        "duration": 1.0
+        "duration": 1000
       },
       {
         "type": "wait_time",
-        "duration": 1.0
+        "duration": 1000
       },
       {
         "type": "show_title",
         "text": "第一天",
-        "duration": 1.0
+        "duration": 1000
       },
       {
         "type": "show_dialogue",
@@ -31,8 +30,7 @@
         "text": "茶馆里，张叨叨正说到李天狗的段子。说那道士上神仙顶、斗魃烧尸，最后连赏钱都不收，拂袖就没了影。"
       },
       {
-        "type": "hide_img",
-        "id": "legend_story"
+        "type": "hide_img"
       },
       {
         "type": "set_flag",
@@ -41,7 +39,7 @@
       },
       {
         "type": "fade_in",
-        "duration": 1.0
+        "duration": 1000
       },
       {
         "type": "show_dialogue",

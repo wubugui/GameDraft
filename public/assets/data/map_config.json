@@ -59,5 +59,19 @@
     "x": 450,
     "y": 200,
     "unlockConditions": []
+  },
+  {
+    "sceneId": "河边",
+    "name": "河边",
+    "x": 100.0,
+    "y": 100.0,
+    "unlockConditions": []
+  },
+  {
+    "sceneId": "码头白天",
+    "name": "码头",
+    "x": 150.0,
+    "y": 100.0,
+    "unlockConditions": []
   }
 ]

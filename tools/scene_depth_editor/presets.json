@@ -54,5 +54,19 @@
       "scale": 4.1,
       "offset": -3.45
     }
+  },
+  "码头": {
+    "camera": {
+      "elevation_deg": 36.0,
+      "azimuth_deg": 0.0,
+      "pixels_per_unit": 229.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.69,
+      "offset": -2.4
+    }
   }
 }

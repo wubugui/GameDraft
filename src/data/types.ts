@@ -380,6 +380,11 @@ export interface ICutsceneActor {
   setVisible(visible: boolean): void;
   getDisplayObject(): unknown;
   cutsceneUpdate(dt: number): void;
+  /**
+   * 表情气泡锚点：在 getDisplayObject() 局部坐标中，气泡**底边**应对齐的 Y（脚点在 0，向上为负）。
+   * EmoteBubbleManager 会把气泡顶边放在该 Y 上方 `bubbleHeight` 处。
+   */
+  getEmoteBubbleAnchorLocalY(): number;
 }
 
 /** 演出气泡提供者接口，用于 CutsceneManager 解耦对 EmoteBubbleManager 的直接依赖 */

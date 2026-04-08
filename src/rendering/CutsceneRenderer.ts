@@ -143,7 +143,8 @@ export class CutsceneRenderer {
     box.destroy({ children: true });
   }
 
-  async showEmoteBubble(displayObj: Container, emote: string, duration: number): Promise<void> {
+  /** @param anchorBottomY displayObj 局部坐标中气泡底边应对齐的 Y（与 EmoteBubbleManager、ICutsceneActor 一致，默认按约 96 像素高角色估算） */
+  async showEmoteBubble(displayObj: Container, emote: string, duration: number, anchorBottomY: number = -104): Promise<void> {
     const bubble = new Container();
 
     const txt = new Text({
@@ -167,7 +168,7 @@ export class CutsceneRenderer {
     bubble.addChild(txt);
 
     bubble.x = -bw / 2;
-    bubble.y = -(bh + 50);
+    bubble.y = anchorBottomY - bh;
 
     displayObj.addChild(bubble);
     this.activeEmotes.push(bubble);

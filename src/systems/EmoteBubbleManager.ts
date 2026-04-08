@@ -41,7 +41,8 @@ export class EmoteBubbleManager implements IGameSystem {
     bubble.addChild(txt);
 
     bubble.x = -bw / 2;
-    bubble.y = -(bh + 50);
+    const anchorY = actor.getEmoteBubbleAnchorLocalY();
+    bubble.y = anchorY - bh;
 
     displayObj.addChild(bubble);
     this.activeBubbles.push({ bubble, parent: displayObj, remainingMs: durationMs });

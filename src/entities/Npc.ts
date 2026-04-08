@@ -81,6 +81,16 @@ export class Npc implements ICutsceneActor {
     return this.container;
   }
 
+  /** 气泡底边在头顶附近；无精灵时用占位圆顶部估算 */
+  getEmoteBubbleAnchorLocalY(): number {
+    const headGap = 8;
+    if (this.sprite) {
+      const h = Math.max(this.sprite.getWorldSize().height, 1);
+      return -h - headGap;
+    }
+    return -MARKER_SIZE * 2 - headGap;
+  }
+
   setFacing(dx: number, _dy: number): void {
     if (this.sprite) {
       this.sprite.setDirection(dx, _dy);

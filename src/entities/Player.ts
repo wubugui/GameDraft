@@ -60,6 +60,13 @@ export class Player implements ICutsceneActor {
     return this.sprite.container;
   }
 
+  /** 气泡底边落在头顶稍上方（Sprite 锚点在脚底） */
+  getEmoteBubbleAnchorLocalY(): number {
+    const h = Math.max(this.sprite.getWorldSize().height, 1);
+    const headGap = 8;
+    return -h - headGap;
+  }
+
   setFacing(dx: number, dy: number): void {
     this.sprite.setDirection(dx, dy);
   }

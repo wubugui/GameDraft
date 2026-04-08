@@ -34,7 +34,10 @@ export class InputManager {
     }
     this.keysDown.add(e.code);
     for (const cb of this.keyDownSubscribers) cb(e);
-    for (const cb of this.anyInputSubscribers) cb();
+    // 长按会产生 repeat 的 keydown；过场用 subscribeAnyInput 推进对话时若每次都触发会瞬间连点完所有指令
+    if (!e.repeat) {
+      for (const cb of this.anyInputSubscribers) cb();
+    }
   }
 
   private onKeyUp(e: KeyboardEvent): void {

@@ -38,6 +38,10 @@ export class CutsceneManager implements IGameSystem {
   private playing: boolean = false;
   private waitClickResolve: (() => void) | null = null;
   private dialogueResolve: (() => void) | null = null;
+  /** performance.now() 之前忽略对白/字幕的点击推进（避免 WebView/同帧伪输入立刻 resolve） */
+  private dialogueAdvanceNotBefore = 0;
+  /** 同上，用于 wait_click */
+  private waitClickNotBefore = 0;
   private onClickBound: () => void;
 
   private entityResolver: EntityResolver | null = null;
@@ -68,14 +72,19 @@ export class CutsceneManager implements IGameSystem {
     this.cutsceneRenderer = cutsceneRenderer;
 
     this.onClickBound = () => {
+      const now = performance.now();
       if (this.waitClickResolve) {
+        if (now < this.waitClickNotBefore) return;
         const r = this.waitClickResolve;
         this.waitClickResolve = null;
+        this.waitClickNotBefore = 0;
         r();
       }
       if (this.dialogueResolve) {
+        if (now < this.dialogueAdvanceNotBefore) return;
         const r = this.dialogueResolve;
         this.dialogueResolve = null;
+        this.dialogueAdvanceNotBefore = 0;
         r();
       }
     };
@@ -451,12 +460,36 @@ export class CutsceneManager implements IGameSystem {
   }
 
   private waitForClick(): Promise<void> {
-    return new Promise(resolve => { this.waitClickResolve = resolve; });
+    return new Promise(resolve => {
+      const arm = () => {
+        this.waitClickNotBefore = performance.now() + 120;
+        this.waitClickResolve = () => {
+          this.waitClickResolve = null;
+          this.waitClickNotBefore = 0;
+          resolve();
+        };
+      };
+      requestAnimationFrame(() => {
+        requestAnimationFrame(arm);
+      });
+    });
   }
 
   private async showDialogueText(text: string, speaker?: string): Promise<void> {
     const box = this.cutsceneRenderer.showDialogueBox(text, speaker);
-    await new Promise<void>(resolve => { this.dialogueResolve = resolve; });
+    await new Promise<void>(resolve => {
+      const arm = () => {
+        this.dialogueAdvanceNotBefore = performance.now() + 120;
+        this.dialogueResolve = () => {
+          this.dialogueResolve = null;
+          this.dialogueAdvanceNotBefore = 0;
+          resolve();
+        };
+      };
+      requestAnimationFrame(() => {
+        requestAnimationFrame(arm);
+      });
+    });
     this.cutsceneRenderer.dismissDialogueBox(box);
   }
 
@@ -465,7 +498,19 @@ export class CutsceneManager implements IGameSystem {
       ? position
       : 'bottom';
     const container = this.cutsceneRenderer.showSubtitle(text, pos);
-    await new Promise<void>(resolve => { this.dialogueResolve = resolve; });
+    await new Promise<void>(resolve => {
+      const arm = () => {
+        this.dialogueAdvanceNotBefore = performance.now() + 120;
+        this.dialogueResolve = () => {
+          this.dialogueResolve = null;
+          this.dialogueAdvanceNotBefore = 0;
+          resolve();
+        };
+      };
+      requestAnimationFrame(() => {
+        requestAnimationFrame(arm);
+      });
+    });
     this.cutsceneRenderer.dismissSubtitle(container);
   }
 
@@ -490,6 +535,8 @@ export class CutsceneManager implements IGameSystem {
     }
     this.playing = false;
     this.snapshot = null;
+    this.dialogueAdvanceNotBefore = 0;
+    this.waitClickNotBefore = 0;
   }
 
   destroy(): void {
@@ -505,6 +552,8 @@ export class CutsceneManager implements IGameSystem {
       this.dialogueResolve = null;
       r();
     }
+    this.dialogueAdvanceNotBefore = 0;
+    this.waitClickNotBefore = 0;
     this.unsubInput?.();
     this.unsubInput = null;
     this.cleanup();

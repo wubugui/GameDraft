@@ -652,11 +652,107 @@ class SceneDepthEditorApp:
             return False, f"不是有效文件夹:\n{dst_path}"
         scene_id = dst_path.name
         scene_json_path = dst_path.parent / f"{scene_id}.json"
-        if not scene_json_path.exists():
-            return False, (
-                f"未找到场景 JSON:\n{scene_json_path}\n\n"
-                f"请确保选择的文件夹名与同目录下的场景 JSON 文件名一致。")
         return True, str(scene_json_path)
+
+    def _prepare_scene_data_for_export(
+        self, scene_json_path: Path, scene_id: str
+    ) -> tuple[dict, bool]:
+        """加载或构建可写入游戏的场景 JSON 对象；缺字段时补齐。
+
+        返回 (scene_data, repaired)。repaired 表示新建文件、JSON 无法解析、
+        或曾补全/修正关键字段（会与导出结果一并写回）。"""
+        data: dict = {}
+        repaired = False
+
+        if scene_json_path.exists():
+            try:
+                raw = json.loads(scene_json_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    data = raw
+                else:
+                    repaired = True
+            except (json.JSONDecodeError, OSError):
+                repaired = True
+        else:
+            repaired = True
+
+        if self.source_image is None:
+            img_w, img_h = 800, 600
+        else:
+            img_w, img_h = self.source_image.size
+
+        def _mark_repair() -> None:
+            nonlocal repaired
+            repaired = True
+
+        if data.get("id") != scene_id:
+            _mark_repair()
+            data["id"] = scene_id
+
+        name = data.get("name")
+        if not name:
+            _mark_repair()
+            data["name"] = str(scene_id)
+
+        ww, wh = data.get("worldWidth"), data.get("worldHeight")
+        try:
+            ww_ok = ww is not None and float(ww) > 0
+        except (TypeError, ValueError):
+            ww_ok = False
+        try:
+            wh_ok = wh is not None and float(wh) > 0
+        except (TypeError, ValueError):
+            wh_ok = False
+        if not ww_ok:
+            _mark_repair()
+            data["worldWidth"] = int(img_w)
+        if not wh_ok:
+            _mark_repair()
+            data["worldHeight"] = int(img_h)
+
+        cam = data.get("camera")
+        if not isinstance(cam, dict):
+            _mark_repair()
+            data["camera"] = {"zoom": 1.0, "pixelsPerUnit": 1.0}
+        else:
+            if "zoom" not in cam:
+                _mark_repair()
+                cam["zoom"] = 1.0
+            if "pixelsPerUnit" not in cam:
+                _mark_repair()
+                cam["pixelsPerUnit"] = 1.0
+
+        bgs = data.get("backgrounds")
+        if not isinstance(bgs, list) or len(bgs) == 0:
+            _mark_repair()
+            data["backgrounds"] = [{"image": "background.png", "x": 0, "y": 0}]
+        else:
+            first = bgs[0]
+            if not isinstance(first, dict) or not first.get("image"):
+                _mark_repair()
+                data["backgrounds"] = [{"image": "background.png", "x": 0, "y": 0}]
+            elif first.get("image") != "background.png":
+                _mark_repair()
+                first_fixed = dict(first)
+                first_fixed["image"] = "background.png"
+                data["backgrounds"] = [first_fixed] + list(bgs[1:])
+
+        sp = data.get("spawnPoint")
+        if not isinstance(sp, dict):
+            _mark_repair()
+            data["spawnPoint"] = {
+                "x": round(img_w / 2.0, 1),
+                "y": round(img_h * 0.85, 1),
+            }
+        else:
+            if "x" not in sp or "y" not in sp:
+                _mark_repair()
+                data["spawnPoint"] = {
+                    "x": round(img_w / 2.0, 1),
+                    "y": round(img_h * 0.85, 1),
+                }
+
+        return data, repaired
 
     def _new_scene(self) -> None:
         path = filedialog.askdirectory(
@@ -1274,7 +1370,7 @@ class SceneDepthEditorApp:
 
         if dst_path is None:
             picked = filedialog.askdirectory(
-                title="选择游戏资源目录（与同名的场景 JSON 在同一上级目录下，如 .../scenes/teahouse）",
+                title="选择游戏资源目录（与同名场景 JSON 同级，如 .../public/assets/scenes/teahouse；缺少或损坏的 JSON 将自动创建/修复）",
                 initialdir=self._game_export_picker_initialdir())
             if not picked:
                 return
@@ -1289,6 +1385,9 @@ class SceneDepthEditorApp:
             self._set_status(f"已记录导出目录到工程配置: {self._game_export_path}")
 
         assert dst_path is not None and scene_json_path is not None
+
+        scene_data, scene_json_repaired = self._prepare_scene_data_for_export(
+            scene_json_path, dst_path.name)
 
         M = self._build_M()
 
@@ -1358,15 +1457,19 @@ class SceneDepthEditorApp:
                 "height_offset": ho,
             }
 
-        scene_data = json.loads(scene_json_path.read_text(encoding="utf-8"))
         scene_data["depthConfig"] = depth_config
         scene_json_path.write_text(
             json.dumps(scene_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
         self._set_status(f"游戏数据已导出到: {dst_path}")
-        messagebox.showinfo("导出完成",
-                            f"资源已导出到:\n{dst_path}\n\n"
-                            f"depthConfig 已自动写入:\n{scene_json_path}")
+        repair_note = ""
+        if scene_json_repaired:
+            repair_note = "\n\n场景 JSON 已新建或已修复（含 id、背景、出生点等必要字段）。"
+        messagebox.showinfo(
+            "导出完成",
+            f"资源已导出到:\n{dst_path}\n\n"
+            f"depthConfig 已写入:\n{scene_json_path}"
+            f"{repair_note}")
 
     def _build_M(self) -> OrthoProjection:
         self._sync_camera()

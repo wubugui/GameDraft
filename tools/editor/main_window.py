@@ -154,7 +154,10 @@ class MainWindow(QMainWindow):
         tools_menu = mb.addMenu("Tools")
         self._act(tools_menu, "Validate Data", self._validate)
         tools_menu.addSeparator()
-        self._act(tools_menu, "Open Graph Editor", self._open_graph_editor)
+        ext = tools_menu.addMenu("External tools (new process)")
+        self._act(ext, "Graph Editor", self._launch_graph_editor_external)
+        self._act(ext, "Scene Depth Editor", self._launch_scene_depth_editor_external)
+        self._act(ext, "Filter Tool", self._launch_filter_tool_external)
 
         view_menu = mb.addMenu("View")
         ag_theme = QActionGroup(self)
@@ -251,19 +254,66 @@ class MainWindow(QMainWindow):
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
 
-    def _open_graph_editor(self) -> None:
-        if self._model.project_path is None:
+    @staticmethod
+    def _editor_package_parents() -> Path:
+        """tools/editor → GameDraft 仓库根（含 public/assets 时可作为默认 cwd）。"""
+        return Path(__file__).resolve().parent.parent.parent
+
+    def _external_tool_cwd(self) -> Path:
+        """外部工具工作目录：当前工程根，否则为编辑器所在仓库根。"""
+        if self._model.project_path is not None:
+            return self._model.project_path
+        return self._editor_package_parents()
+
+    def _ensure_valid_tool_root(self) -> Path | None:
+        root = self._external_tool_cwd()
+        if not (root / "public" / "assets").is_dir():
             QMessageBox.information(
-                self, "Graph Editor", "Please open a project first.")
-            return
-        root = str(self._model.project_path.resolve())
-        try:
-            subprocess.Popen(
-                [sys.executable, "-m", "tools.graph_editor", "--project", root],
-                cwd=root,
+                self,
+                "External tools",
+                "Need a valid GameDraft root (folder containing public/assets). "
+                "Use File → Open Project, or launch the editor from the GameDraft repo.",
             )
+            return None
+        return root
+
+    def _launch_external_tool(
+        self,
+        module: str,
+        extra_args: list[str],
+        label: str,
+        *,
+        root: Path | None = None,
+    ) -> None:
+        """另起独立 Python 进程运行 python -m，不与主编辑器共享进程。"""
+        r = root if root is not None else self._ensure_valid_tool_root()
+        if r is None:
+            return
+        cwd = str(r.resolve())
+        cmd = [sys.executable, "-m", module, *extra_args]
+        try:
+            subprocess.Popen(cmd, cwd=cwd)
         except OSError as e:
-            QMessageBox.critical(self, "Graph Editor", str(e))
+            QMessageBox.critical(self, "External tools", f"Failed to start {label}:\n{e}")
+            return
+        self._status.showMessage(f"Started in new process: {label}", 4000)
+
+    def _launch_graph_editor_external(self) -> None:
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        self._launch_external_tool(
+            "tools.graph_editor",
+            ["--project", str(root.resolve())],
+            "Graph Editor",
+            root=root,
+        )
+
+    def _launch_scene_depth_editor_external(self) -> None:
+        self._launch_external_tool("tools.scene_depth_editor", [], "Scene Depth Editor")
+
+    def _launch_filter_tool_external(self) -> None:
+        self._launch_external_tool("tools.filter_tool", [], "Filter Tool")
 
     def _populate_tabs(self) -> None:
         self._tabs.clear()

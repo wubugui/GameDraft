@@ -1,0 +1,67 @@
+{
+  "id": "码头白天",
+  "name": "码头白天",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 731.7,
+    "y": 444.2
+  },
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.5877852522924731,
+          -0.8090169943749475
+        ],
+        [
+          0.0,
+          0.8090169943749475,
+          -0.5877852522924731
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 229.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.69,
+      "offset": -2.4
+    },
+    "shader": {
+      "depth_per_sy": 0.003172674794783235,
+      "floor_depth_A": -0.006010401399437439,
+      "floor_depth_B": 2.3079941373839765
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -2.812764214930006,
+      "z_min": -2.986899563318777,
+      "cell_size": 0.02995633187772926,
+      "grid_width": 191,
+      "grid_height": 201,
+      "height_offset": 0.05
+    }
+  }
+}
