@@ -41,6 +41,11 @@ _NPC_COLOR = QColor(180, 80, 220, 180)
 _ZONE_COLOR = QColor(255, 200, 0, 60)
 _SPAWN_COLOR = QColor(255, 255, 255, 200)
 _RANGE_PEN = QPen(QColor(255, 255, 255, 60), 0, Qt.PenStyle.DotLine)
+# 场景视图中 NPC 比例参考框（与 SpriteEntity worldWidth/worldHeight 一致，非可编辑）
+_NPC_REF_FILL = QColor(130, 220, 160, 55)
+_NPC_REF_PEN = QPen(QColor(90, 180, 120), 0, Qt.PenStyle.DashLine)
+_NPC_REF_MARGIN = 24.0
+_NPC_REF_Z = -20.0
 
 
 def _resolve_world_size(sc: dict, img_path: Path | None) -> tuple[float, float]:
@@ -62,6 +67,39 @@ def _resolve_world_size(sc: dict, img_path: Path | None) -> tuple[float, float]:
     if wh > 0:
         return (wh / aspect, wh)
     return (800, 800 * aspect)
+
+
+def _npc_reference_world_size(model: ProjectModel) -> tuple[float, float]:
+    """与 SpriteEntity.loadFromDef 一致：取 player_anim，否则任一 *_anim 的 world 尺寸，缺省 100×160。"""
+    pa = model.animations.get("player_anim")
+    if isinstance(pa, dict):
+        w = float(pa.get("worldWidth", 0) or 0)
+        h = float(pa.get("worldHeight", 0) or 0)
+        if w > 0 and h > 0:
+            return (w, h)
+    for _stem, data in model.animations.items():
+        if not isinstance(data, dict):
+            continue
+        w = float(data.get("worldWidth", 0) or 0)
+        h = float(data.get("worldHeight", 0) or 0)
+        if w > 0 and h > 0:
+            return (w, h)
+    return (100.0, 160.0)
+
+
+def _background_pixel_aspect(model: ProjectModel, scene_id: str, sc: dict) -> float | None:
+    """背景图像素高/宽，与 worldHeight/worldWidth 比例一致时匹配画面。"""
+    bgs = sc.get("backgrounds", [])
+    if not bgs:
+        return None
+    img_name = bgs[0].get("image", "background.png")
+    img_path = model.scenes_path / scene_id / img_name
+    if not img_path.exists():
+        return None
+    pm = QPixmap(str(img_path))
+    if pm.isNull() or pm.width() <= 0:
+        return None
+    return float(pm.height()) / float(pm.width())
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +198,8 @@ class SceneCanvas(QGraphicsView):
         self._saved_item_z: list[tuple[QGraphicsItem, float]] | None = None
         self._bg_item: QGraphicsPixmapItem | None = None
         self._entity_items: dict[str, QGraphicsEllipseItem | QGraphicsRectItem] = {}
+        self._npc_ref_items: list[QGraphicsItem] = []
+        self._npc_ref_visible: bool = True
         self._world_w: float = 800
         self._world_h: float = 600
 
@@ -172,6 +212,7 @@ class SceneCanvas(QGraphicsView):
         self._saved_item_z = None
         self._pick_cycle_key = None
         self._pick_cycle_i = 0
+        self._npc_ref_items.clear()
         self._gfx.clear()
         self._bg_item = None
         self._entity_items.clear()
@@ -260,6 +301,59 @@ class SceneCanvas(QGraphicsView):
         item = self._entity_items.get(key)
         if item is not None and hasattr(item, "set_interaction_range"):
             item.set_interaction_range(range_radius)
+
+    def set_npc_reference_visible(self, visible: bool) -> None:
+        self._npc_ref_visible = visible
+        for it in self._npc_ref_items:
+            it.setVisible(visible)
+
+    def _clear_npc_reference_graphics(self) -> None:
+        for it in self._npc_ref_items:
+            self._gfx.removeItem(it)
+        self._npc_ref_items.clear()
+
+    def rebuild_npc_reference(
+        self, world_w: float, world_h: float, ref_w: float, ref_h: float
+    ) -> None:
+        """绘制与运行时 NPC Sprite 同宽高的参考矩形（左上、右下各一块，便于目测场景尺度）。"""
+        self._clear_npc_reference_graphics()
+        if not self._npc_ref_visible:
+            return
+        rw = max(1.0, float(ref_w))
+        rh = max(1.0, float(ref_h))
+        m = _NPC_REF_MARGIN
+        pairs = [
+            (m, m, "左上"),
+            (world_w - rw - m, world_h - rh - m, "右下"),
+        ]
+        label_txt = f"NPC 参考 {rw:.0f}×{rh:.0f} wu"
+        for x0, y0, corner in pairs:
+            x = max(0.0, min(float(x0), max(0.0, world_w - rw)))
+            y = max(0.0, min(float(y0), max(0.0, world_h - rh)))
+            rect = QGraphicsRectItem(x, y, rw, rh)
+            rect.setBrush(QBrush(_NPC_REF_FILL))
+            rect.setPen(_NPC_REF_PEN)
+            rect.setZValue(_NPC_REF_Z)
+            rect.setAcceptHoverEvents(False)
+            rect.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+            rect.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            rect.setToolTip(
+                f"{corner}：与角色动画 JSON 中 worldWidth×worldHeight "
+                f"（脚底锚点、向上为高）同尺寸的参考框，不可编辑。"
+            )
+            self._gfx.addItem(rect)
+            self._npc_ref_items.append(rect)
+            tag = QGraphicsTextItem(f"{corner}\n{label_txt}")
+            tag.setDefaultTextColor(QColor(200, 240, 210))
+            tag.setFont(QFont("Consolas", 8))
+            tag.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+            tag.setPos(x + 3, y + 3)
+            tag.setZValue(_NPC_REF_Z + 0.1)
+            tag.setAcceptHoverEvents(False)
+            tag.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+            tag.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            self._gfx.addItem(tag)
+            self._npc_ref_items.append(tag)
 
     def fit_all(self) -> None:
         self.fitInView(self._gfx.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
@@ -588,6 +682,8 @@ class ScenePropertyPanel(QScrollArea):
         self._spawn_name_original: str = ""
         self._hs_trans_spawn_key: str = ""
         self._hs_trans_loading: bool = False
+        self._world_aspect_ratio_hw: float = 16.0 / 9.0
+        self._updating_world_dims: bool = False
         # Last opened entity dicts (still bound to model.scenes); used by Save All / flush
         # without requiring Apply or a visible property panel.
         self._pending_hotspot: dict | None = None
@@ -642,10 +738,23 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._sc_id = QLineEdit(); form.addRow("id", self._sc_id)
         self._sc_name = QLineEdit(); form.addRow("name", self._sc_name)
-        self._sc_width = QDoubleSpinBox(); self._sc_width.setRange(0, 99999)
+        self._sc_width = QDoubleSpinBox()
+        self._sc_width.setRange(0, 99999)
+        self._sc_width.setDecimals(2)
         form.addRow("worldWidth", self._sc_width)
-        self._sc_height = QDoubleSpinBox(); self._sc_height.setRange(0, 99999)
+        self._sc_height = QDoubleSpinBox()
+        self._sc_height.setRange(0, 99999)
+        self._sc_height.setDecimals(2)
         form.addRow("worldHeight", self._sc_height)
+        self._sc_lock_aspect = QCheckBox("锁定宽高比（改一侧按比例更新另一侧）")
+        self._sc_lock_aspect.setChecked(True)
+        self._sc_lock_aspect.setToolTip(
+            "比例在打开场景时取自当前 worldHeight÷worldWidth；若仅有一项有效则尽量用背景图像素高宽比。"
+        )
+        self._sc_lock_aspect.toggled.connect(self._on_lock_aspect_toggled)
+        form.addRow("", self._sc_lock_aspect)
+        self._sc_width.valueChanged.connect(self._on_world_width_changed)
+        self._sc_height.valueChanged.connect(self._on_world_height_changed)
         self._sc_bgm = IdRefSelector(allow_empty=True)
         self._sc_bgm.setMinimumWidth(200)
         self._sc_bgm.value_changed.connect(lambda _x: self.changed.emit())
@@ -658,6 +767,32 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("camera.ppu", self._sc_ppu)
         self._sc_scale = QDoubleSpinBox(); self._sc_scale.setRange(0.01, 10); self._sc_scale.setValue(1)
         form.addRow("worldScale", self._sc_scale)
+
+        depth_box = QGroupBox("depthConfig（2D 遮挡深度）")
+        depth_form = QFormLayout(depth_box)
+        self._sc_depth_tol = QDoubleSpinBox()
+        self._sc_depth_tol.setRange(-50.0, 50.0)
+        self._sc_depth_tol.setDecimals(4)
+        self._sc_depth_tol.setSingleStep(0.05)
+        self._sc_depth_tol.setToolTip(
+            "depth_tolerance：精灵与场景深度比较时的容差（标定深度空间），对应 Scene Depth Editor「深度容差」。",
+        )
+        depth_form.addRow("depth_tolerance", self._sc_depth_tol)
+        self._sc_floor_offset = QDoubleSpinBox()
+        self._sc_floor_offset.setRange(-50.0, 50.0)
+        self._sc_floor_offset.setDecimals(4)
+        self._sc_floor_offset.setSingleStep(0.05)
+        self._sc_floor_offset.setToolTip(
+            "floor_offset：脚底深度衬底偏移（标定深度空间），对应 Scene Depth Editor「地板偏移」。",
+        )
+        depth_form.addRow("floor_offset", self._sc_floor_offset)
+        self._sc_depth_hint = QLabel()
+        self._sc_depth_hint.setWordWrap(True)
+        depth_form.addRow(self._sc_depth_hint)
+        self._sc_depth_tol.valueChanged.connect(self._on_depth_fields_changed)
+        self._sc_floor_offset.valueChanged.connect(self._on_depth_fields_changed)
+        form.addRow(depth_box)
+
         self._sc_walk = QDoubleSpinBox(); self._sc_walk.setRange(0, 9999)
         form.addRow("walkSpeed", self._sc_walk)
         self._sc_run = QDoubleSpinBox(); self._sc_run.setRange(0, 9999)
@@ -715,8 +850,27 @@ class ScenePropertyPanel(QScrollArea):
         self._editing_scene_id = str(sc.get("id", ""))
         self._sc_id.setText(sc.get("id", ""))
         self._sc_name.setText(sc.get("name", ""))
-        self._sc_width.setValue(sc.get("worldWidth", 0))
-        self._sc_height.setValue(sc.get("worldHeight", 0))
+        ww = float(sc.get("worldWidth", 0) or 0)
+        wh = float(sc.get("worldHeight", 0) or 0)
+        if ww > 0 and wh > 0:
+            self._world_aspect_ratio_hw = wh / ww
+        else:
+            sid = self._editing_scene_id or str(sc.get("id", ""))
+            asp = _background_pixel_aspect(self._model, sid, sc)
+            if asp is not None and asp > 0:
+                self._world_aspect_ratio_hw = asp
+            else:
+                self._world_aspect_ratio_hw = 16.0 / 9.0
+        self._updating_world_dims = True
+        self._sc_width.blockSignals(True)
+        self._sc_height.blockSignals(True)
+        try:
+            self._sc_width.setValue(ww)
+            self._sc_height.setValue(wh)
+        finally:
+            self._sc_width.blockSignals(False)
+            self._sc_height.blockSignals(False)
+        self._updating_world_dims = False
         self._sc_bgm.set_items([(a, a) for a in self._model.all_audio_ids("bgm")])
         self._sc_bgm.set_current(str(sc.get("bgm", "") or ""))
         self._sc_filter.set_items(self._model.all_filter_ids())
@@ -727,10 +881,82 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_scale.setValue(sc.get("worldScale", 1))
         self._sc_walk.setValue(sc.get("playerWalkSpeed", 0))
         self._sc_run.setValue(sc.get("playerRunSpeed", 0))
+        dc = sc.get("depthConfig")
+        self._sc_depth_tol.blockSignals(True)
+        self._sc_floor_offset.blockSignals(True)
+        try:
+            if isinstance(dc, dict):
+                self._sc_depth_tol.setEnabled(True)
+                self._sc_floor_offset.setEnabled(True)
+                self._sc_depth_tol.setValue(float(dc.get("depth_tolerance", 0)))
+                self._sc_floor_offset.setValue(float(dc.get("floor_offset", 0)))
+                self._sc_depth_hint.setText(
+                    "与运行时 SceneDepthSystem 一致；其余 depthConfig 请在 Scene Depth Editor 中导出。",
+                )
+            else:
+                self._sc_depth_tol.setEnabled(False)
+                self._sc_floor_offset.setEnabled(False)
+                self._sc_depth_tol.setValue(0.0)
+                self._sc_floor_offset.setValue(0.0)
+                self._sc_depth_hint.setText(
+                    "当前场景无 depthConfig。请先用主菜单「Scene Depth Editor」导出后再在此处微调这两项。",
+                )
+        finally:
+            self._sc_depth_tol.blockSignals(False)
+            self._sc_floor_offset.blockSignals(False)
         raw_amb = sc.get("ambientSounds", [])
         if not isinstance(raw_amb, list):
             raw_amb = []
         self._load_ambient_widgets([str(x) for x in raw_amb])
+
+    def _on_depth_fields_changed(self, _v: float) -> None:
+        if not self._sc_depth_tol.isEnabled():
+            return
+        self.changed.emit()
+
+    def _on_lock_aspect_toggled(self, checked: bool) -> None:
+        if checked:
+            w = self._sc_width.value()
+            h = self._sc_height.value()
+            if w > 0 and h > 0:
+                self._world_aspect_ratio_hw = h / w
+
+    def _on_world_width_changed(self, _v: float) -> None:
+        if self._updating_world_dims:
+            return
+        if not self._sc_lock_aspect.isChecked():
+            return
+        w = self._sc_width.value()
+        if w <= 0:
+            return
+        self._updating_world_dims = True
+        self._sc_height.blockSignals(True)
+        try:
+            self._sc_height.setValue(round(w * self._world_aspect_ratio_hw, 2))
+        finally:
+            self._sc_height.blockSignals(False)
+        self._updating_world_dims = False
+        self.changed.emit()
+
+    def _on_world_height_changed(self, _v: float) -> None:
+        if self._updating_world_dims:
+            return
+        if not self._sc_lock_aspect.isChecked():
+            return
+        h = self._sc_height.value()
+        if h <= 0:
+            return
+        r = self._world_aspect_ratio_hw
+        if r <= 1e-12:
+            return
+        self._updating_world_dims = True
+        self._sc_width.blockSignals(True)
+        try:
+            self._sc_width.setValue(round(h / r, 2))
+        finally:
+            self._sc_width.blockSignals(False)
+        self._updating_world_dims = False
+        self.changed.emit()
 
     def save_scene_props(self) -> None:
         if self._stack.currentWidget() != self._scene_panel:
@@ -773,6 +999,10 @@ class ScenePropertyPanel(QScrollArea):
             sc["playerRunSpeed"] = rs
         elif "playerRunSpeed" in sc:
             del sc["playerRunSpeed"]
+        dc_save = sc.get("depthConfig")
+        if isinstance(dc_save, dict):
+            dc_save["depth_tolerance"] = float(self._sc_depth_tol.value())
+            dc_save["floor_offset"] = float(self._sc_floor_offset.value())
         ambs = self._ambient_ids_from_widgets()
         if ambs:
             sc["ambientSounds"] = ambs
@@ -1264,6 +1494,7 @@ class SceneEditor(QWidget):
         super().__init__(parent)
         self._model = model
         self._current_scene_id: str | None = None
+        self._last_canvas_world: tuple[float, float] | None = None
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1295,6 +1526,15 @@ class SceneEditor(QWidget):
         del_btn.clicked.connect(self._delete_selected)
         tb.addWidget(del_btn)
         ll.addWidget(tb)
+
+        self._chk_npc_ref = QCheckBox("场景视图：显示 NPC 比例参考框")
+        self._chk_npc_ref.setChecked(True)
+        self._chk_npc_ref.setToolTip(
+            "在画布左上与右下绘制与角色动画 worldWidth×worldHeight 同尺寸的矩形，"
+            "用于目测场景世界单位尺度（数据来自 player_anim.json 等，不可点选拖动）。"
+        )
+        self._chk_npc_ref.toggled.connect(self._on_npc_ref_toggled)
+        ll.addWidget(self._chk_npc_ref)
 
         self._scene_list = QListWidget()
         self._scene_list.currentItemChanged.connect(self._on_scene_selected)
@@ -1367,8 +1607,21 @@ class SceneEditor(QWidget):
         for name, pos in sc.get("spawnPoints", {}).items():
             self._canvas.add_spawn(name, pos)
 
+        self._last_canvas_world = (world_w, world_h)
+        self._canvas.set_npc_reference_visible(self._chk_npc_ref.isChecked())
+        rw, rh = _npc_reference_world_size(self._model)
+        self._canvas.rebuild_npc_reference(world_w, world_h, rw, rh)
+
         self._canvas.fit_all()
         self._props.load_scene_props(sc, clear_pending_edits=True)
+
+    def _on_npc_ref_toggled(self, checked: bool) -> None:
+        self._canvas.set_npc_reference_visible(checked)
+        if self._last_canvas_world is None:
+            return
+        ww, wh = self._last_canvas_world
+        rw, rh = _npc_reference_world_size(self._model)
+        self._canvas.rebuild_npc_reference(ww, wh, rw, rh)
 
     def _on_item_selected(self, kind: str, eid: str) -> None:
         sc = self._model.scenes.get(self._current_scene_id or "")

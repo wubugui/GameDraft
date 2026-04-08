@@ -205,9 +205,11 @@ class MapEditor(QWidget):
         f.addRow("name", self._m_name)
         self._m_x = QDoubleSpinBox()
         self._m_x.setRange(-9999, 9999)
+        self._m_x.setDecimals(4)
         f.addRow("x", self._m_x)
         self._m_y = QDoubleSpinBox()
         self._m_y.setRange(-9999, 9999)
+        self._m_y.setDecimals(4)
         f.addRow("y", self._m_y)
         self._m_cond = ConditionEditor("unlockConditions")
         apply_btn = QPushButton("Apply")
@@ -451,8 +453,22 @@ class MapEditor(QWidget):
         n = self._model.map_nodes[row]
         self._m_scene.set_current(n.get("sceneId", ""))
         self._m_name.setText(n.get("name", ""))
-        self._m_x.setValue(n.get("x", 0))
-        self._m_y.setValue(n.get("y", 0))
+        # 仅用模型/图元坐标更新数值框，且必须 blockSignals：否则会触发 _on_xy_spin_changed，
+        # 默认 2 位小数舍入会把节点 setPos 到错误位置。
+        if row < len(self._node_graphics):
+            p = self._node_graphics[row].pos()
+            vx, vy = float(p.x()), float(p.y())
+        else:
+            vx = float(n.get("x", 0))
+            vy = float(n.get("y", 0))
+        self._m_x.blockSignals(True)
+        self._m_y.blockSignals(True)
+        try:
+            self._m_x.setValue(vx)
+            self._m_y.setValue(vy)
+        finally:
+            self._m_x.blockSignals(False)
+            self._m_y.blockSignals(False)
         self._m_cond.set_flag_pattern_context(self._model, None)
         self._m_cond.set_data(n.get("unlockConditions", []))
 

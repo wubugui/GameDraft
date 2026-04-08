@@ -2,15 +2,15 @@
   {
     "sceneId": "test_room_a",
     "name": "街巷",
-    "x": 250,
-    "y": 180,
+    "x": 252.92239747634068,
+    "y": 142.00883280757097,
     "unlockConditions": []
   },
   {
     "sceneId": "test_room_b",
     "name": "后巷",
-    "x": 400,
-    "y": 180,
+    "x": 139.75441640378548,
+    "y": 230.77665615141956,
     "unlockConditions": [
       {
         "flag": "prologue_started"
@@ -20,8 +20,8 @@
   {
     "sceneId": "teahouse",
     "name": "茶馆",
-    "x": 150,
-    "y": 280,
+    "x": 199.22413249211354,
+    "y": 142.67776025236583,
     "unlockConditions": [
       {
         "flag": "prologue_started"
@@ -31,8 +31,8 @@
   {
     "sceneId": "temple",
     "name": "城隍庙",
-    "x": 350,
-    "y": 280,
+    "x": 412.1618296529969,
+    "y": 120.39447949526809,
     "unlockConditions": [
       {
         "flag": "talked_wang_about_ghost"
@@ -42,36 +42,36 @@
   {
     "sceneId": "bridge_underpass",
     "name": "桥下",
-    "x": 200,
-    "y": 240,
+    "x": 211.01987381703472,
+    "y": 260.3350157728706,
     "unlockConditions": []
   },
   {
     "sceneId": "mountain_pass",
     "name": "山路",
-    "x": 300,
-    "y": 220,
+    "x": 337.1083596214511,
+    "y": 110.92760252365925,
     "unlockConditions": []
   },
   {
     "sceneId": "temple_exterior",
     "name": "庙宇",
-    "x": 450,
-    "y": 200,
+    "x": 394.26135646687703,
+    "y": 87.21372239747633,
     "unlockConditions": []
   },
   {
     "sceneId": "河边",
     "name": "河边",
-    "x": 100.0,
-    "y": 100.0,
+    "x": 299.2892429022082,
+    "y": 67.80492113564667,
     "unlockConditions": []
   },
   {
     "sceneId": "码头白天",
     "name": "码头",
-    "x": 150.0,
-    "y": 100.0,
+    "x": 281.1121,
+    "y": 241.9189,
     "unlockConditions": []
   }
 ]
