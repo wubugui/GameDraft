@@ -492,13 +492,17 @@ class ProjectModel(QObject):
             for cond in zone.get("conditions", []):
                 if "flag" in cond:
                     flags.add(cond["flag"])
-            for ev in ("onEnter", "onExit"):
+            for ev in ("onEnter", "onStay", "onExit"):
                 for act in zone.get(ev, []) or []:
-                    p = act.get("params", {})
-                    if act.get("type") == "setFlag" and "key" in p:
+                    p = act.get("params", {}) or {}
+                    at = act.get("type")
+                    if at == "setFlag" and "key" in p:
                         flags.add(p["key"])
-            for slot in zone.get("ruleSlots", []) or []:
-                for act in slot.get("resultActions", []) or []:
-                    p = act.get("params", {})
-                    if act.get("type") == "setFlag" and "key" in p:
-                        flags.add(p["key"])
+                    elif at == "enableRuleOffers":
+                        for slot in (p.get("slots") or []):
+                            if not isinstance(slot, dict):
+                                continue
+                            for ract in slot.get("resultActions", []) or []:
+                                rp = ract.get("params", {}) or {}
+                                if ract.get("type") == "setFlag" and "key" in rp:
+                                    flags.add(rp["key"])

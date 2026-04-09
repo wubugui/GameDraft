@@ -95,29 +95,25 @@ def _scan_actions(model: ProjectModel) -> list[ActionRecord]:
 
         for zone in sc.get("zones", []):
             zid = zone.get("id", "?")
-            for i, act in enumerate(zone.get("onEnter", [])):
-                records.append(ActionRecord(
-                    action=act, action_type=act.get("type", ""),
-                    source_type="scene_zone", source_id=zid,
-                    scene_id=sid, container_field="onEnter",
-                    container_index=i,
-                ))
-            for i, act in enumerate(zone.get("onExit", [])):
-                records.append(ActionRecord(
-                    action=act, action_type=act.get("type", ""),
-                    source_type="scene_zone", source_id=zid,
-                    scene_id=sid, container_field="onExit",
-                    container_index=i,
-                ))
-            for si, slot in enumerate(zone.get("ruleSlots", [])):
-                for i, act in enumerate(slot.get("resultActions", [])):
+            for ev in ("onEnter", "onStay", "onExit"):
+                for i, act in enumerate(zone.get(ev, []) or []):
                     records.append(ActionRecord(
                         action=act, action_type=act.get("type", ""),
-                        source_type="scene_zone_rule", source_id=zid,
-                        scene_id=sid,
-                        container_field=f"ruleSlot{si}.resultActions",
+                        source_type="scene_zone", source_id=zid,
+                        scene_id=sid, container_field=ev,
                         container_index=i,
                     ))
+                    if act.get("type") == "enableRuleOffers":
+                        slots = (act.get("params") or {}).get("slots") or []
+                        for si, slot in enumerate(slots):
+                            for j, ract in enumerate(slot.get("resultActions", []) or []):
+                                records.append(ActionRecord(
+                                    action=ract, action_type=ract.get("type", ""),
+                                    source_type="scene_zone_rule", source_id=zid,
+                                    scene_id=sid,
+                                    container_field=f"{ev}[{i}].slots[{si}].resultActions",
+                                    container_index=j,
+                                ))
 
     return records
 

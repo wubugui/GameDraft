@@ -493,16 +493,20 @@ export interface MapNodeDef {
 // 区域数据
 // ============================================================
 
+/** ActionExecutor 在 zone 内执行 batch 时注入的上下文。 */
+export interface ZoneActionContext {
+  zoneId: string;
+}
+
 export interface ZoneDef {
   id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  /** 世界坐标闭合多边形顶点（顺序连接，首尾不重复同一点），至少 3 个。 */
+  polygon: Array<{ x: number; y: number }>;
   conditions?: Condition[];
   onEnter?: ActionDef[];
+  /** 玩家在区域内时每帧执行的 Action（慎用非幂等 action）。 */
+  onStay?: ActionDef[];
   onExit?: ActionDef[];
-  ruleSlots?: ZoneRuleSlot[];
 }
 
 export interface ZoneRuleSlot {

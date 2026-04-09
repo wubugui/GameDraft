@@ -65,6 +65,15 @@ def _extract_flags_from_actions(graph: GameGraph, owner_id: str, actions: list[d
             if eid:
                 graph.add_edge(owner_id, f"enc:{eid}", EdgeType.TRIGGERS)
 
+        elif atype == "enableRuleOffers":
+            for slot in params.get("slots") or []:
+                if not isinstance(slot, dict):
+                    continue
+                rule_id = slot.get("ruleId", "")
+                if rule_id:
+                    graph.add_edge(owner_id, f"rule:{rule_id}", EdgeType.RULE_SLOT)
+                _extract_flags_from_actions(graph, owner_id, slot.get("resultActions") or [])
+
 
 def parse_quest_groups(graph: GameGraph, project_path: str):
     fp = os.path.join(project_path, "public", "assets", "data", "questGroups.json")
@@ -278,10 +287,5 @@ def parse_scenes(graph: GameGraph, project_path: str):
             graph.add_edge(scene_id, zone_id, EdgeType.CONTAINS)
             _extract_flags_from_conditions(graph, zone_id, zone.get("conditions", []))
             _extract_flags_from_actions(graph, zone_id, zone.get("onEnter", []))
+            _extract_flags_from_actions(graph, zone_id, zone.get("onStay", []))
             _extract_flags_from_actions(graph, zone_id, zone.get("onExit", []))
-
-            for slot in zone.get("ruleSlots", []):
-                rule_id = slot.get("ruleId", "")
-                if rule_id:
-                    graph.add_edge(zone_id, f"rule:{rule_id}", EdgeType.RULE_SLOT)
-                _extract_flags_from_actions(graph, zone_id, slot.get("resultActions", []))

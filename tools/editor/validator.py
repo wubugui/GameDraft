@@ -64,6 +64,38 @@ def validate(model: ProjectModel) -> list[Issue]:
             issues.append(Issue("warning", "scene", sid,
                                 f"filterId '{fid}' has no matching filter JSON"))
 
+        for zone in sc.get("zones", []) or []:
+            zid = str(zone.get("id", "")) or "?"
+            poly = zone.get("polygon")
+            if not isinstance(poly, list) or len(poly) < 3:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Zone '{zid}' 需要 polygon 数组且至少 3 个顶点",
+                ))
+            else:
+                for pi, p in enumerate(poly):
+                    if not isinstance(p, dict):
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"Zone '{zid}' polygon[{pi}] 须为 {{x,y}} 对象",
+                        ))
+                        continue
+                    for coord in ("x", "y"):
+                        v = p.get(coord)
+                        try:
+                            float(v)
+                        except (TypeError, ValueError):
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"Zone '{zid}' polygon[{pi}].{coord} 须为数值",
+                            ))
+            for legacy in ("x", "y", "width", "height"):
+                if legacy in zone:
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"Zone '{zid}' 含遗留几何字段 '{legacy}'，请删除，仅保留 polygon",
+                    ))
+
     # --- quest groups ---
     quest_group_ids = {g["id"] for g in model.quest_groups}
     for g in model.quest_groups:
@@ -179,6 +211,13 @@ def _walk_setflag_actions(
         p = act.get("params") or {}
         if act.get("type") == "setFlag" and p.get("key"):
             _flag_issue(model, issues, str(p["key"]), data_type, item_id, scene_id)
+        elif act.get("type") == "enableRuleOffers":
+            for slot in (p.get("slots") or []):
+                if isinstance(slot, dict):
+                    _walk_setflag_actions(
+                        model, issues, slot.get("resultActions"),
+                        data_type, item_id, scene_id,
+                    )
 
 
 def _validate_ink_file(model: ProjectModel, issues: list[Issue], ink_name: str) -> None:
@@ -232,10 +271,8 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         for zone in sc.get("zones", []) or []:
             zid = str(zone.get("id", ""))
             _walk_conditions(model, issues, zone.get("conditions"), "scene", zid, sid)
-            for ev in ("onEnter", "onExit"):
+            for ev in ("onEnter", "onStay", "onExit"):
                 _walk_setflag_actions(model, issues, zone.get(ev), "scene", zid, sid)
-            for slot in zone.get("ruleSlots", []) or []:
-                _walk_setflag_actions(model, issues, slot.get("resultActions"), "scene", zid, sid)
 
     for q in model.quests:
         qid = str(q.get("id", ""))

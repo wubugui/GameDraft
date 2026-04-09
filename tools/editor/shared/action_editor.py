@@ -4,9 +4,15 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QComboBox, QLabel, QSpinBox, QCheckBox, QFormLayout, QFrame,
+    QTextEdit, QApplication,
 )
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, QEventLoop, Signal
+
+
+def _hide_combo_popups_under(widget: QWidget) -> None:
+    for cb in widget.findChildren(QComboBox):
+        cb.hidePopup()
 
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
@@ -19,6 +25,7 @@ ACTION_TYPES = [
     "addArchiveEntry", "startCutscene", "showEmote", "openShop",
     "pickup", "switchScene", "changeScene", "showNotification",
     "shopPurchase", "inventoryDiscard",
+    "enableRuleOffers", "disableRuleOffers",
 ]
 
 _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
@@ -46,10 +53,103 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "inventoryDiscard": [("itemId", "str")],
     "pickup": [("itemId", "str"), ("itemName", "str"), ("count", "int"), ("isCurrency", "bool")],
     "addDelayedEvent": [("targetDay", "int")],
+    "disableRuleOffers": [],
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
 _ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book")
+
+
+class RuleSlotsParamEditor(QWidget):
+    """enableRuleOffers.params.slots：多槽，每槽 ruleId + resultText + resultActions。"""
+
+    changed = Signal()
+
+    def __init__(
+        self,
+        slots: list | None = None,
+        model=None,
+        scene_id: str | None = None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self._model = model
+        self._scene_id = scene_id
+        self._rows: list[dict] = []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(QLabel(
+            "slots（须在 Zone 的 onEnter/onExit 中配合 disableRuleOffers 使用）",
+        ))
+        self._list_layout = QVBoxLayout()
+        root.addLayout(self._list_layout)
+        btn_add = QPushButton("+ 规矩槽位")
+        btn_add.clicked.connect(self._add_empty_slot)
+        root.addWidget(btn_add)
+        raw = slots if isinstance(slots, list) else []
+        if raw:
+            for s in raw:
+                if isinstance(s, dict):
+                    self._append_slot_ui(s)
+        else:
+            self._append_slot_ui({})
+
+    def _add_empty_slot(self) -> None:
+        self._append_slot_ui({})
+        self.changed.emit()
+
+    def _remove_row(self, rec: dict) -> None:
+        if rec in self._rows:
+            self._rows.remove(rec)
+        box = rec["box"]
+        _hide_combo_popups_under(box)
+        self._list_layout.removeWidget(box)
+        box.deleteLater()
+        self.changed.emit()
+
+    def _append_slot_ui(self, data: dict) -> None:
+        box = QFrame()
+        box.setFrameStyle(QFrame.Shape.StyledPanel)
+        bl = QVBoxLayout(box)
+        hdr = QHBoxLayout()
+        hdr.addWidget(QLabel("ruleId"), stretch=0)
+        rid = IdRefSelector(box, allow_empty=True)
+        rid.setMinimumWidth(200)
+        rid.set_items(self._model.all_rule_ids() if self._model else [])
+        rid.set_current(str(data.get("ruleId", "")))
+        rid.value_changed.connect(lambda _v: self.changed.emit())
+        hdr.addWidget(rid, stretch=1)
+        rm = QPushButton("\u2212")
+        rm.setFixedWidth(24)
+        bl.addWidget(QLabel("resultText"))
+        tx = QTextEdit()
+        tx.setMaximumHeight(80)
+        tx.setPlainText(str(data.get("resultText", "")))
+        tx.textChanged.connect(self.changed.emit)
+        bl.addWidget(tx)
+        bl.addWidget(QLabel("resultActions"))
+        ae = ActionEditor("resultActions", box)
+        ae.set_project_context(self._model, self._scene_id)
+        ra = data.get("resultActions", [])
+        ae.set_data(list(ra) if isinstance(ra, list) else [])
+        ae.changed.connect(self.changed.emit)
+        bl.addWidget(ae)
+        rec = {"box": box, "rid": rid, "text": tx, "ae": ae}
+        rm.clicked.connect(lambda: self._remove_row(rec))
+        hdr.addWidget(rm)
+        bl.insertLayout(0, hdr)
+        self._rows.append(rec)
+        self._list_layout.addWidget(box)
+
+    def to_list(self) -> list[dict]:
+        out: list[dict] = []
+        for r in self._rows:
+            out.append({
+                "ruleId": r["rid"].current_id(),
+                "resultText": r["text"].toPlainText(),
+                "resultActions": r["ae"].to_list(),
+            })
+        return out
 
 
 class ActionRow(QWidget):
@@ -85,6 +185,8 @@ class ActionRow(QWidget):
         top.addWidget(self.type_combo, stretch=1)
         top.addWidget(self.del_btn)
         outer.addLayout(top)
+
+        self._rule_slots_editor: RuleSlotsParamEditor | None = None
 
         self._params_frame = QFrame()
         self._params_layout = QFormLayout(self._params_frame)
@@ -221,10 +323,28 @@ class ActionRow(QWidget):
             self._outer_layout.removeWidget(self._delayed_editor)
             self._delayed_editor.deleteLater()
             self._delayed_editor = None
+        if self._rule_slots_editor is not None:
+            self._outer_layout.removeWidget(self._rule_slots_editor)
+            self._rule_slots_editor.deleteLater()
+            self._rule_slots_editor = None
 
         act_type = self.type_combo.currentText()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params = self._data.get("params", {})
+
+        if act_type == "enableRuleOffers":
+            self._params_frame.setVisible(False)
+            slots_raw = params.get("slots", [])
+            ed = RuleSlotsParamEditor(
+                slots_raw if isinstance(slots_raw, list) else [],
+                self._ctx_model,
+                self._ctx_scene_id,
+                self,
+            )
+            ed.changed.connect(self.changed)
+            self._rule_slots_editor = ed
+            self._outer_layout.addWidget(ed)
+            return
 
         if not schema:
             self._params_frame.setVisible(False)
@@ -374,6 +494,8 @@ class ActionRow(QWidget):
                 params[pname] = w.currentText()
             else:
                 params[pname] = w.text()
+        if act_type == "enableRuleOffers" and self._rule_slots_editor is not None:
+            params["slots"] = self._rule_slots_editor.to_list()
         if act_type == "addDelayedEvent" and self._delayed_editor is not None:
             params["actions"] = self._delayed_editor.to_list()
         return {"type": act_type, "params": params}
@@ -420,9 +542,12 @@ class ActionEditor(QWidget):
 
     def _clear(self) -> None:
         for r in self._rows:
+            _hide_combo_popups_under(r)
             self._rows_layout.removeWidget(r)
             r.deleteLater()
         self._rows.clear()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def _add_row(self, data: dict | None = None) -> None:
         row = ActionRow(data, model=self._ctx_model, scene_id=self._ctx_scene_id)
@@ -437,6 +562,7 @@ class ActionEditor(QWidget):
 
     def _remove_row(self, row: ActionRow) -> None:
         if row in self._rows:
+            _hide_combo_popups_under(row)
             self._rows.remove(row)
             self._rows_layout.removeWidget(row)
             row.deleteLater()

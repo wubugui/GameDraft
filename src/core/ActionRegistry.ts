@@ -1,4 +1,5 @@
 import type { ActionExecutor } from './ActionExecutor';
+import type { RuleOfferRegistry } from './RuleOfferRegistry';
 import type { EventBus } from './EventBus';
 import type { StringsProvider } from './StringsProvider';
 import type { GameStateController } from './GameStateController';
@@ -12,10 +13,11 @@ import type { ArchiveManager } from '../systems/ArchiveManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
-import type { ICutsceneActor } from '../data/types';
+import type { ICutsceneActor, ZoneRuleSlot } from '../data/types';
 import { GameState } from '../data/types';
 
 export interface ActionRegistryDeps {
+  ruleOfferRegistry: RuleOfferRegistry;
   inventoryManager: InventoryManager;
   rulesManager: RulesManager;
   questManager: QuestManager;
@@ -36,6 +38,24 @@ export interface ActionRegistryDeps {
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
+  executor.register('enableRuleOffers', (p, zctx) => {
+    if (!zctx?.zoneId) {
+      console.warn('enableRuleOffers: missing zone context (must run from ZoneSystem batch)');
+      return;
+    }
+    const slots = p.slots as ZoneRuleSlot[] | undefined;
+    if (!slots || !Array.isArray(slots)) return;
+    d.ruleOfferRegistry.register(zctx.zoneId, slots);
+  }, ['slots']);
+
+  executor.register('disableRuleOffers', (_p, zctx) => {
+    if (!zctx?.zoneId) {
+      console.warn('disableRuleOffers: missing zone context (must run from ZoneSystem batch)');
+      return;
+    }
+    d.ruleOfferRegistry.unregister(zctx.zoneId);
+  }, []);
+
   executor.register('giveItem', (p) => d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1), ['id', 'count']);
   executor.register('removeItem', (p) => d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1), ['id', 'count']);
   executor.register('giveCurrency', (p) => d.inventoryManager.addCoins(p.amount as number), ['amount']);

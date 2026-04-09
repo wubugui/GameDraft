@@ -1,11 +1,11 @@
 {
   "id": "test_room_b",
   "name": "后巷",
-  "worldWidth": 5000,
-  "worldHeight": 2791,
+  "worldWidth": 1500.0,
+  "worldHeight": 837.3,
   "camera": {
-    "zoom": 1,
-    "pixelsPerUnit": 1
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
   },
   "backgrounds": [
     {
@@ -15,13 +15,13 @@
     }
   ],
   "spawnPoint": {
-    "x": 2500,
-    "y": 2442.1
+    "x": 208.5,
+    "y": 463.1
   },
   "spawnPoints": {
     "from_a": {
-      "x": 2500,
-      "y": 2442.1
+      "x": 177.3,
+      "y": 400.6
     }
   },
   "hotspots": [
@@ -29,8 +29,8 @@
       "id": "old_box",
       "type": "encounter",
       "label": "旧木箱",
-      "x": 1500.0,
-      "y": 872.2,
+      "x": 665.0,
+      "y": 250.4,
       "interactionRange": 400,
       "data": {
         "encounterId": "old_box_encounter"
@@ -40,8 +40,8 @@
       "id": "herb_bundle",
       "type": "pickup",
       "label": "艾草",
-      "x": 3500,
-      "y": 1395.5,
+      "x": 198.2,
+      "y": 458.1,
       "interactionRange": 350,
       "data": {
         "itemId": "mugwort",
@@ -53,9 +53,9 @@
       "id": "exit_to_a",
       "type": "transition",
       "label": "回到街巷",
-      "x": 349.3,
-      "y": 2604.3,
-      "interactionRange": 300,
+      "x": 109.7,
+      "y": 802.4,
+      "interactionRange": 300.0,
       "data": {
         "targetScene": "test_room_a",
         "targetSpawnPoint": "from_b"
@@ -65,8 +65,8 @@
       "id": "taomu_pickup",
       "type": "pickup",
       "label": "桃木片",
-      "x": 1500,
-      "y": 2093.3,
+      "x": 198.0,
+      "y": 124.7,
       "interactionRange": 350,
       "data": {
         "itemId": "taomu",
@@ -78,9 +78,9 @@
       "id": "ghost_area",
       "type": "encounter",
       "label": "后山小路",
-      "x": 2500.0,
-      "y": 1046.6,
-      "interactionRange": 400,
+      "x": 468.0,
+      "y": 345.7,
+      "interactionRange": 400.0,
       "conditions": [
         {
           "flag": "talked_wang_about_ghost"
@@ -94,8 +94,8 @@
       "id": "strange_mark",
       "type": "inspect",
       "label": "墙上的奇怪痕迹",
-      "x": 3500,
-      "y": 872.2,
+      "x": 271.1,
+      "y": 622.2,
       "interactionRange": 400,
       "conditions": [
         {
@@ -118,10 +118,36 @@
   "zones": [
     {
       "id": "dark_alley",
-      "x": 1500.0,
-      "y": 697.8,
-      "width": 2000,
-      "height": 1046.6,
+      "polygon": [
+        {
+          "x": 226.1,
+          "y": 392.1
+        },
+        {
+          "x": 291.5,
+          "y": 438.8
+        },
+        {
+          "x": 335.8,
+          "y": 490.9
+        },
+        {
+          "x": 232.2,
+          "y": 511.8
+        },
+        {
+          "x": 131.5,
+          "y": 408.9
+        },
+        {
+          "x": 114.7,
+          "y": 376.4
+        },
+        {
+          "x": 195.3,
+          "y": 362.9
+        }
+      ],
       "onEnter": [
         {
           "type": "setFlag",
@@ -129,62 +155,80 @@
             "key": "entered_dark_alley",
             "value": true
           }
+        },
+        {
+          "type": "enableRuleOffers",
+          "params": {
+            "slots": [
+              {
+                "ruleId": "rule_no_go_night",
+                "resultText": "你默念着\"三更勿去\"，小心翼翼地环顾四周。果然，墙角处有一缕若有若无的白烟正在消散。你停下脚步，那白烟便没了踪影。看来王大爷的话不是随便说说的。",
+                "resultActions": [
+                  {
+                    "type": "setFlag",
+                    "params": {
+                      "key": "used_rule_dark_alley",
+                      "value": true
+                    }
+                  },
+                  {
+                    "type": "giveRule",
+                    "params": {
+                      "id": "rule_ghost_verified"
+                    }
+                  }
+                ]
+              },
+              {
+                "ruleId": "rule_zombie_fire",
+                "resultText": "你掏出桃木片在角落里点燃，火光照亮了阴暗的巷道。你注意到墙壁上有些奇怪的刮痕，像是什么东西挣扎留下的。火光闪烁间，刮痕处渗出了一丝暗红色的液体……",
+                "resultActions": [
+                  {
+                    "type": "setFlag",
+                    "params": {
+                      "key": "used_fire_dark_alley",
+                      "value": true
+                    }
+                  }
+                ]
+              },
+              {
+                "ruleId": "rule_ghost_origin",
+                "resultText": "你想起那些关于柳家戏班的传闻——\"她不是在害人，她是在找人。\"你轻声说道。风停了。四周忽然安静得出奇，仿佛有什么东西在听你说话。",
+                "resultActions": [
+                  {
+                    "type": "setFlag",
+                    "params": {
+                      "key": "used_origin_dark_alley",
+                      "value": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "",
+            "value": true
+          }
         }
       ],
       "onExit": [
+        {
+          "type": "disableRuleOffers",
+          "params": {}
+        },
         {
           "type": "setFlag",
           "params": {
             "key": "entered_dark_alley",
             "value": false
           }
-        }
-      ],
-      "ruleSlots": [
-        {
-          "ruleId": "rule_no_go_night",
-          "resultText": "你默念着\"三更勿去\"，小心翼翼地环顾四周。果然，墙角处有一缕若有若无的白烟正在消散。你停下脚步，那白烟便没了踪影。看来王大爷的话不是随便说说的。",
-          "resultActions": [
-            {
-              "type": "setFlag",
-              "params": {
-                "key": "used_rule_dark_alley",
-                "value": true
-              }
-            },
-            {
-              "type": "giveRule",
-              "params": {
-                "id": "rule_ghost_verified"
-              }
-            }
-          ]
-        },
-        {
-          "ruleId": "rule_zombie_fire",
-          "resultText": "你掏出桃木片在角落里点燃，火光照亮了阴暗的巷道。你注意到墙壁上有些奇怪的刮痕，像是什么东西挣扎留下的。火光闪烁间，刮痕处渗出了一丝暗红色的液体……",
-          "resultActions": [
-            {
-              "type": "setFlag",
-              "params": {
-                "key": "used_fire_dark_alley",
-                "value": true
-              }
-            }
-          ]
-        },
-        {
-          "ruleId": "rule_ghost_origin",
-          "resultText": "你想起那些关于柳家戏班的传闻——\"她不是在害人，她是在找人。\"你轻声说道。风停了。四周忽然安静得出奇，仿佛有什么东西在听你说话。",
-          "resultActions": [
-            {
-              "type": "setFlag",
-              "params": {
-                "key": "used_origin_dark_alley",
-                "value": true
-              }
-            }
-          ]
         }
       ]
     }

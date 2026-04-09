@@ -48,6 +48,7 @@ import type { IGameSystem, AnimationSetDef, GameConfig } from '../data/types';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
+import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
 import { DebugTools } from './DebugTools';
@@ -94,6 +95,7 @@ export class Game {
   private cutsceneManager!: CutsceneManager;
   private archiveManager: ArchiveManager;
   private emoteBubbleManager: EmoteBubbleManager;
+  private ruleOfferRegistry: RuleOfferRegistry;
   private zoneSystem: ZoneSystem;
   private saveManager!: SaveManager;
   private inspectBox!: InspectBox;
@@ -149,6 +151,7 @@ export class Game {
     this.assetManager = new AssetManager();
     this.stateController = new GameStateController(this.inputManager);
     this.actionExecutor = new ActionExecutor(this.eventBus, this.flagStore);
+    this.ruleOfferRegistry = new RuleOfferRegistry();
     this.renderer = new Renderer();
     this.camera = new Camera(this.renderer.worldContainer);
     this.player = new Player(this.inputManager);
@@ -165,7 +168,7 @@ export class Game {
     this.dayManager = new DayManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
-    this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor);
+    this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
     this.sceneDepthSystem = new SceneDepthSystem();
 
     const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager };
@@ -308,6 +311,7 @@ export class Game {
     });
 
     registerActionHandlers(this.actionExecutor, {
+      ruleOfferRegistry: this.ruleOfferRegistry,
       inventoryManager: this.inventoryManager,
       rulesManager: this.rulesManager,
       questManager: this.questManager,

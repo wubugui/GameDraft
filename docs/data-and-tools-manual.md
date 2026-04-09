@@ -131,16 +131,15 @@
 
 ### 3.4 区域（Zone）
 
-矩形范围，用于「走进这块地」触发效果。
+简单多边形范围（无矩形专用字段），用于「点落在闭合边界内」触发效果；顶点顺序为边界走向，**首尾不重复**存储同一点（运行时按顺序连边，末点回到首点作闭合）。
 
 | 字段 | 含义 | 示例 |
 |------|------|------|
 | id | 唯一 | `zone_inn_danger` |
-| x,y,width,height | 矩形左下角与宽高 | 盖住门口一条带 |
+| polygon | 顶点数组，每项 `{ "x", "y" }`，至少 3 个点 | 场景编辑器画布拖动 / 侧栏顶点表；图编辑器 Zone 页同结构表格 |
 | Conditions | 区域生效前提 | 仅夜间：`night_time` 为真 |
-| onEnter / onExit | 进入或离开时要执行的动作列表 | 进雾区：`playSfx` `mist`，或 `setFlag` |
-
-说明：若数据里存在「规矩槽」等高级结构，界面可能只在 **Actions** 总表里出现，编辑时优先用 Actions 页搜场景名定位。
+| onEnter / onStay / onExit | 进入时、停留在区内每帧、离开时执行的动作列表 | 进雾区：`playSfx`，或 `setFlag` |
+| 区内规矩 | 不在 Zone 上挂槽位；在 `onEnter` 用 `enableRuleOffers`（`params.slots` 与旧 `ruleSlots` 条目形状相同）、`onExit` 用 `disableRuleOffers` | |
 
 ### 3.5 出生点（Spawn Point）
 

@@ -1,14 +1,18 @@
-import type { ActionDef } from '../data/types';
+import type { ActionDef, ZoneActionContext } from '../data/types';
 import type { EventBus } from './EventBus';
 import type { FlagStore } from './FlagStore';
 
-type ActionHandler = (params: Record<string, unknown>) => void;
+export type ActionHandler = (
+  params: Record<string, unknown>,
+  zoneContext: ZoneActionContext | null,
+) => void;
 
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
   private paramNamesMap: Map<string, string[]> = new Map();
   private eventBus: EventBus;
   private flagStore: FlagStore;
+  private zoneContextStack: ZoneActionContext[] = [];
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
@@ -35,10 +39,17 @@ export class ActionExecutor {
     return this.paramNamesMap.get(type);
   }
 
+  /** 当前是否在 zone batch 内（供 handler 读取，一般通过第二参数即可）。 */
+  getZoneContext(): ZoneActionContext | null {
+    if (this.zoneContextStack.length === 0) return null;
+    return this.zoneContextStack[this.zoneContextStack.length - 1]!;
+  }
+
   execute(action: ActionDef): void {
     const handler = this.handlers.get(action.type);
+    const zctx = this.getZoneContext();
     if (handler) {
-      handler(action.params);
+      handler(action.params, zctx);
     } else {
       console.warn(`ActionExecutor: unknown action type "${action.type}"`);
     }
@@ -50,8 +61,23 @@ export class ActionExecutor {
     }
   }
 
+  /**
+   * ZoneSystem 专用：执行期间 handler 第二参数为非空 zone 上下文（enableRuleOffers 等使用）。
+   */
+  executeBatchInZoneContext(actions: ActionDef[], context: ZoneActionContext): void {
+    this.zoneContextStack.push(context);
+    try {
+      for (const action of actions) {
+        this.execute(action);
+      }
+    } finally {
+      this.zoneContextStack.pop();
+    }
+  }
+
   destroy(): void {
     this.handlers.clear();
     this.paramNamesMap.clear();
+    this.zoneContextStack = [];
   }
 }

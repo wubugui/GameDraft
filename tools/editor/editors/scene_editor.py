@@ -12,16 +12,17 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsRectItem,
-    QGraphicsItem,
+    QGraphicsItem, QGraphicsObject,
     QGraphicsPixmapItem, QGroupBox, QFormLayout, QLineEdit, QDoubleSpinBox,
     QSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QScrollArea,
     QStackedWidget, QTextEdit, QToolBar, QMenu, QGraphicsTextItem,
     QToolButton, QMessageBox, QDialog, QDialogButtonBox, QAbstractItemView,
-    QSizePolicy,
+    QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
+    QGraphicsSceneContextMenuEvent, QTableWidget, QTableWidgetItem, QHeaderView,
 )
 from PySide6.QtGui import (
     QPixmap, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
-    QMouseEvent, QContextMenuEvent, QAction, QTransform,
+    QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
 )
 from PySide6.QtCore import Qt, QRectF, QPoint, QPointF, Signal, QTimer
 
@@ -102,6 +103,25 @@ def _background_pixel_aspect(model: ProjectModel, scene_id: str, sc: dict) -> fl
     return float(pm.height()) / float(pm.width())
 
 
+def _zone_polygon_points_for_editor(zone: dict) -> list[tuple[float, float]]:
+    """画布用：优先 polygon；否则用遗留矩形字段生成四角；再否则小三角形。"""
+    poly = zone.get("polygon")
+    if isinstance(poly, list) and len(poly) >= 3:
+        pts: list[tuple[float, float]] = []
+        for p in poly:
+            if isinstance(p, dict):
+                pts.append((float(p.get("x", 0)), float(p.get("y", 0))))
+        if len(pts) >= 3:
+            return pts
+    x = float(zone.get("x", 0))
+    y = float(zone.get("y", 0))
+    w = float(zone.get("width", 100))
+    h = float(zone.get("height", 80))
+    if w > 0 and h > 0:
+        return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+    return [(x, y), (x + 80, y), (x + 40, y + 60)]
+
+
 # ---------------------------------------------------------------------------
 # Draggable graphics items  (all sizes in world units)
 # ---------------------------------------------------------------------------
@@ -171,6 +191,233 @@ class _DraggableRect(QGraphicsRectItem):
         self._label.setPos(2, 2)
 
 
+class _EditableZonePolygon(QGraphicsObject):
+    """Zone：世界坐标闭合多边形；拖顶点、拖内部平移、双击边插点、右键删顶点。"""
+
+    HANDLE_WORLD_R = 14.0
+
+    def __init__(
+        self,
+        canvas: "SceneCanvas",
+        points: list[tuple[float, float]],
+        color: QColor,
+        entity_id: str,
+    ):
+        super().__init__()
+        self._canvas = canvas
+        self.entity_id = entity_id
+        self.entity_kind = "zone"
+        self._color = color
+        self._points: list[list[float]] = [[float(x), float(y)] for x, y in points]
+        self.setFlags(
+            self.GraphicsItemFlag.ItemIsSelectable
+            | self.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self._drag_vertex: int | None = None
+        self._drag_body = False
+        self._last_scene: QPointF | None = None
+        self._hover_vertex: int | None = None
+
+    def set_points_from_model(self, poly: list) -> None:
+        self._points = []
+        for p in poly:
+            if isinstance(p, dict):
+                self._points.append([float(p.get("x", 0)), float(p.get("y", 0))])
+        self.prepareGeometryChange()
+        self.update()
+
+    def points_to_model(self) -> list[dict[str, float]]:
+        return [{"x": round(px, 1), "y": round(py, 1)} for px, py in self._points]
+
+    def _polyf(self) -> QPolygonF:
+        return QPolygonF([QPointF(p[0], p[1]) for p in self._points])
+
+    def boundingRect(self) -> QRectF:
+        if len(self._points) < 1:
+            return QRectF()
+        xs = [p[0] for p in self._points]
+        ys = [p[1] for p in self._points]
+        m = self.HANDLE_WORLD_R + 2
+        return QRectF(
+            min(xs) - m, min(ys) - m,
+            max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m,
+        )
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        del option, widget
+        painter.save()
+        pf = self._polyf()
+        painter.setPen(QPen(self._color.darker(180), 0, Qt.PenStyle.DashLine))
+        painter.setBrush(QBrush(self._color))
+        painter.drawPolygon(pf)
+        hrad = self.HANDLE_WORLD_R * 0.38
+        for i, (px, py) in enumerate(self._points):
+            c = QColor(255, 230, 100)
+            if self._hover_vertex == i or self._drag_vertex == i:
+                c = QColor(255, 200, 60)
+            painter.setBrush(QBrush(c))
+            painter.setPen(QPen(QColor(100, 70, 0), 0))
+            painter.drawEllipse(QPointF(px, py), hrad, hrad)
+        if self._points:
+            xs = [p[0] for p in self._points]
+            ys = [p[1] for p in self._points]
+            painter.setPen(QPen(Qt.GlobalColor.white))
+            painter.setFont(QFont("Consolas", 8))
+            painter.drawText(QPointF(min(xs) + 3, min(ys) + 12), self.entity_id)
+        painter.restore()
+
+    def _vertex_at_scene(self, scene_pos: QPointF) -> int | None:
+        x, y = scene_pos.x(), scene_pos.y()
+        r2 = self.HANDLE_WORLD_R ** 2
+        for i, p in enumerate(self._points):
+            dx, dy = p[0] - x, p[1] - y
+            if dx * dx + dy * dy <= r2:
+                return i
+        return None
+
+    def _point_in_polygon(self, x: float, y: float) -> bool:
+        n = len(self._points)
+        if n < 3:
+            return False
+        inside = False
+        j = n - 1
+        for i in range(n):
+            xi, yi = self._points[i][0], self._points[i][1]
+            xj, yj = self._points[j][0], self._points[j][1]
+            dy = yj - yi
+            if abs(dy) < 1e-12:
+                j = i
+                continue
+            xinters = xi + (xj - xi) * (y - yi) / dy
+            if (yi > y) != (yj > y) and x < xinters:
+                inside = not inside
+            j = i
+        return inside
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        sp = event.scenePos()
+        vi = self._vertex_at_scene(sp)
+        if vi is not None:
+            self._drag_vertex = vi
+            self._drag_body = False
+            self._last_scene = QPointF(sp)
+            self.setSelected(True)
+            event.accept()
+            return
+        if self._point_in_polygon(sp.x(), sp.y()):
+            self._drag_vertex = None
+            self._drag_body = True
+            self._last_scene = QPointF(sp)
+            self.setSelected(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._drag_vertex is not None and self._last_scene is not None:
+            sp = event.scenePos()
+            dx = sp.x() - self._last_scene.x()
+            dy = sp.y() - self._last_scene.y()
+            self._points[self._drag_vertex][0] += dx
+            self._points[self._drag_vertex][1] += dy
+            self._last_scene = QPointF(sp)
+            self.prepareGeometryChange()
+            self.update()
+            event.accept()
+            return
+        if self._drag_body and self._last_scene is not None:
+            sp = event.scenePos()
+            dx = sp.x() - self._last_scene.x()
+            dy = sp.y() - self._last_scene.y()
+            for p in self._points:
+                p[0] += dx
+                p[1] += dy
+            self._last_scene = QPointF(sp)
+            self.prepareGeometryChange()
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._drag_vertex is not None or self._drag_body:
+                self._drag_vertex = None
+                self._drag_body = False
+                self._last_scene = None
+                self._canvas._emit_zone_polygon_committed(
+                    self.entity_id, self.points_to_model())
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+        sp = event.scenePos()
+        if self._vertex_at_scene(sp) is not None:
+            super().mouseDoubleClickEvent(event)
+            return
+        best_i = -1
+        best_d2 = 1e18
+        x, y = sp.x(), sp.y()
+        n = len(self._points)
+        for i in range(n):
+            j = (i + 1) % n
+            ax, ay = self._points[i][0], self._points[i][1]
+            bx, by = self._points[j][0], self._points[j][1]
+            abx, aby = bx - ax, by - ay
+            denom = abx * abx + aby * aby + 1e-12
+            t = max(0, min(1, ((x - ax) * abx + (y - ay) * aby) / denom))
+            px, py = ax + t * abx, ay + t * aby
+            d2 = (x - px) ** 2 + (y - py) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best_i = i
+        thr = (self.HANDLE_WORLD_R * 2.2) ** 2
+        if best_i >= 0 and best_d2 < thr:
+            j = (best_i + 1) % n
+            mx = (self._points[best_i][0] + self._points[j][0]) * 0.5
+            my = (self._points[best_i][1] + self._points[j][1]) * 0.5
+            self._points.insert(best_i + 1, [mx, my])
+            self.prepareGeometryChange()
+            self.update()
+            self._canvas._emit_zone_polygon_committed(
+                self.entity_id, self.points_to_model())
+        event.accept()
+
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        vi = self._vertex_at_scene(event.scenePos())
+        if vi is not None and len(self._points) > 3:
+            menu = QMenu()
+            act = menu.addAction("删除此顶点")
+            chosen = menu.exec(event.screenPos())
+            if chosen == act:
+                del self._points[vi]
+                self.prepareGeometryChange()
+                self.update()
+                self._canvas._emit_zone_polygon_committed(
+                    self.entity_id, self.points_to_model())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
+
+    def hoverMoveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self._hover_vertex = self._vertex_at_scene(event.scenePos())
+        self.update()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self._hover_vertex = None
+        self.update()
+        super().hoverLeaveEvent(event)
+
+
 # ---------------------------------------------------------------------------
 # Canvas view  (coordinate system = world units)
 # ---------------------------------------------------------------------------
@@ -179,6 +426,8 @@ class SceneCanvas(QGraphicsView):
     item_selected = Signal(str, str)   # (entity_kind, entity_id)
     item_deselected = Signal()
     item_moved = Signal(str, str, float, float)  # kind, id, x, y
+    # kind, id, polygon: list[{"x","y"}, ...]
+    item_zone_polygon_committed = Signal(str, str, object)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
     context_add_entity = Signal(str, float, float)
 
@@ -197,7 +446,7 @@ class SceneCanvas(QGraphicsView):
         self._pick_cycle_i: int = 0
         self._saved_item_z: list[tuple[QGraphicsItem, float]] | None = None
         self._bg_item: QGraphicsPixmapItem | None = None
-        self._entity_items: dict[str, QGraphicsEllipseItem | QGraphicsRectItem] = {}
+        self._entity_items: dict[str, QGraphicsEllipseItem | QGraphicsRectItem | QGraphicsObject] = {}
         self._npc_ref_items: list[QGraphicsItem] = []
         self._npc_ref_visible: bool = True
         self._world_w: float = 800
@@ -281,12 +530,27 @@ class SceneCanvas(QGraphicsView):
         self._entity_items[f"npc:{npc.get('id', '')}"] = item
 
     def add_zone(self, zone: dict) -> None:
-        item = _DraggableRect(
-            zone["x"], zone["y"],
-            zone.get("width", 100), zone.get("height", 100),
-            _ZONE_COLOR, zone.get("id", "?"), "zone")
+        pts = _zone_polygon_points_for_editor(zone)
+        item = _EditableZonePolygon(
+            self, pts, _ZONE_COLOR, zone.get("id", "?"))
         self._gfx.addItem(item)
         self._entity_items[f"zone:{zone.get('id', '')}"] = item
+
+    def update_zone_polygon(
+        self, entity_id: str, polygon: list,
+    ) -> None:
+        """属性面板改顶点表时同步画布多边形。"""
+        key = f"zone:{entity_id}"
+        item = self._entity_items.get(key)
+        if isinstance(item, _EditableZonePolygon):
+            item.set_points_from_model(polygon)
+
+    def _emit_zone_polygon_committed(
+        self,
+        eid: str,
+        polygon: list,
+    ) -> None:
+        self.item_zone_polygon_committed.emit("zone", eid, polygon)
 
     def add_spawn(self, name: str, pos: dict) -> None:
         item = _DraggableCircle(
@@ -447,8 +711,12 @@ class SceneCanvas(QGraphicsView):
                 # property panel. If item_selected runs before item_moved, the
                 # spin boxes are filled with stale x/y and stay wrong until the
                 # next gesture.
-                self.item_moved.emit(it.entity_kind, it.entity_id,
-                                     it.pos().x(), it.pos().y())
+                emit_move = it.entity_kind != "zone"
+                if emit_move:
+                    self.item_moved.emit(
+                        it.entity_kind, it.entity_id,
+                        it.pos().x(), it.pos().y(),
+                    )
                 self.item_selected.emit(it.entity_kind, it.entity_id)
         else:
             self.item_deselected.emit()
@@ -649,6 +917,8 @@ class ScenePropertyPanel(QScrollArea):
     changed = Signal()
     # (kind, entity_id, interaction_range) — live canvas sync
     interaction_range_changed = Signal(str, str, float)
+    # entity_id, polygon list[{"x","y"}, ...] — 侧栏顶点表驱动画布
+    zone_polygon_changed = Signal(str, object)
 
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -691,6 +961,7 @@ class ScenePropertyPanel(QScrollArea):
         self._pending_zone: dict | None = None
         self._spawn_flush_scene: dict | None = None
         self._editing_scene_id: str = ""
+        self._zn_poly_updating: bool = False
 
     def _load_ambient_widgets(self, ambient_ids: list[str]) -> None:
         catalog = list(self._model.all_audio_ids("ambient"))
@@ -1359,43 +1630,213 @@ class ScenePropertyPanel(QScrollArea):
         w = QWidget()
         lay = QVBoxLayout(w)
         form = QFormLayout()
-        self._zn_id = QLineEdit(); form.addRow("id", self._zn_id)
-        self._zn_x = QDoubleSpinBox(); self._zn_x.setRange(-99999, 99999); self._zn_x.setDecimals(1)
-        form.addRow("x", self._zn_x)
-        self._zn_y = QDoubleSpinBox(); self._zn_y.setRange(-99999, 99999); self._zn_y.setDecimals(1)
-        form.addRow("y", self._zn_y)
-        self._zn_w = QDoubleSpinBox(); self._zn_w.setRange(0, 99999)
-        form.addRow("width", self._zn_w)
-        self._zn_h = QDoubleSpinBox(); self._zn_h.setRange(0, 99999)
-        form.addRow("height", self._zn_h)
+        self._zn_id = QLineEdit()
+        form.addRow("id", self._zn_id)
         lay.addLayout(form)
-        self._zn_cond = ConditionEditor("Conditions"); lay.addWidget(self._zn_cond)
-        self._zn_enter = ActionEditor("onEnter"); lay.addWidget(self._zn_enter)
-        self._zn_exit = ActionEditor("onExit"); lay.addWidget(self._zn_exit)
+
+        poly_label = QLabel(
+            "polygon 顶点（顺序为边界，首尾不重复；画布可拖点、双击边插点）")
+        poly_label.setWordWrap(True)
+        lay.addWidget(poly_label)
+
+        self._zn_poly_table = QTableWidget(0, 3)
+        self._zn_poly_table.setHorizontalHeaderLabels(["#", "x", "y"])
+        self._zn_poly_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        self._zn_poly_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self._zn_poly_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch)
+        self._zn_poly_table.setMinimumHeight(220)
+        self._zn_poly_table.itemChanged.connect(self._on_zone_poly_cell_changed)
+        lay.addWidget(self._zn_poly_table)
+
+        btn_row = QHBoxLayout()
+        self._zn_poly_add = QPushButton("添加顶点")
+        self._zn_poly_add.clicked.connect(self._on_zone_poly_add_vertex)
+        self._zn_poly_del = QPushButton("删除选中顶点")
+        self._zn_poly_del.clicked.connect(self._on_zone_poly_remove_vertex)
+        self._zn_poly_quad = QPushButton("生成轴对齐四边形")
+        self._zn_poly_quad.setToolTip("按当前顶点包围盒生成与世界轴对齐的矩形四点")
+        self._zn_poly_quad.clicked.connect(self._on_zone_poly_axis_quad)
+        btn_row.addWidget(self._zn_poly_add)
+        btn_row.addWidget(self._zn_poly_del)
+        btn_row.addWidget(self._zn_poly_quad)
+        lay.addLayout(btn_row)
+
+        self._zn_cond = ConditionEditor("Conditions")
+        lay.addWidget(self._zn_cond)
+        self._zn_enter = ActionEditor("onEnter")
+        lay.addWidget(self._zn_enter)
+        self._zn_stay = ActionEditor("onStay")
+        lay.addWidget(self._zn_stay)
+        self._zn_exit = ActionEditor("onExit")
+        lay.addWidget(self._zn_exit)
         return w
+
+    def _parse_float_cell(self, it: QTableWidgetItem | None, default: float = 0.0) -> float:
+        if it is None:
+            return default
+        try:
+            return float(it.text().strip())
+        except ValueError:
+            return default
+
+    def _zone_polygon_from_table(self) -> list[dict[str, float]]:
+        t = self._zn_poly_table
+        out: list[dict[str, float]] = []
+        for r in range(t.rowCount()):
+            x = round(self._parse_float_cell(t.item(r, 1)), 1)
+            y = round(self._parse_float_cell(t.item(r, 2)), 1)
+            out.append({"x": x, "y": y})
+        return out
+
+    def _set_zone_poly_table(self, polygon: list) -> None:
+        self._zn_poly_updating = True
+        try:
+            t = self._zn_poly_table
+            t.blockSignals(True)
+            t.setRowCount(0)
+            if not isinstance(polygon, list):
+                polygon = []
+            for p in polygon:
+                if not isinstance(p, dict):
+                    continue
+                r = t.rowCount()
+                t.insertRow(r)
+                ix = QTableWidgetItem(str(r + 1))
+                ix.setFlags(ix.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                t.setItem(r, 0, ix)
+                x = QTableWidgetItem(str(round(float(p.get("x", 0)), 1)))
+                t.setItem(r, 1, x)
+                y = QTableWidgetItem(str(round(float(p.get("y", 0)), 1)))
+                t.setItem(r, 2, y)
+            t.blockSignals(False)
+            for r in range(t.rowCount()):
+                it = t.item(r, 0)
+                if it:
+                    it.setText(str(r + 1))
+        finally:
+            self._zn_poly_updating = False
+
+    def _emit_zone_polygon_from_table_if_valid(self) -> None:
+        if self._zn_poly_updating:
+            return
+        if self._stack.currentWidget() != self._zone_panel:
+            return
+        eid = self._zn_id.text().strip()
+        if not eid:
+            return
+        poly = self._zone_polygon_from_table()
+        if len(poly) < 3:
+            return
+        self.zone_polygon_changed.emit(eid, poly)
+
+    def _on_zone_poly_cell_changed(self, item: QTableWidgetItem) -> None:
+        if self._zn_poly_updating:
+            return
+        if item.column() == 0:
+            return
+        self._emit_zone_polygon_from_table_if_valid()
+
+    def _on_zone_poly_add_vertex(self) -> None:
+        if self._stack.currentWidget() != self._zone_panel:
+            return
+        t = self._zn_poly_table
+        poly = self._zone_polygon_from_table()
+        row = t.currentRow()
+        if row < 0 and t.rowCount() > 0:
+            row = t.rowCount() - 1
+        if len(poly) == 0:
+            nx, ny = 0.0, 0.0
+            ins_at = 0
+        elif len(poly) < 2:
+            nx = poly[0]["x"] + 10.0
+            ny = poly[0]["y"]
+            ins_at = 1
+        else:
+            i = max(0, min(row, len(poly) - 1))
+            j = (i + 1) % len(poly)
+            nx = (poly[i]["x"] + poly[j]["x"]) * 0.5
+            ny = (poly[i]["y"] + poly[j]["y"]) * 0.5
+            ins_at = i + 1
+        poly.insert(ins_at, {"x": round(nx, 1), "y": round(ny, 1)})
+        self._set_zone_poly_table(poly)
+        self._emit_zone_polygon_from_table_if_valid()
+
+    def _on_zone_poly_remove_vertex(self) -> None:
+        if self._stack.currentWidget() != self._zone_panel:
+            return
+        t = self._zn_poly_table
+        row = t.currentRow()
+        if row < 0 or t.rowCount() <= 3:
+            return
+        poly = self._zone_polygon_from_table()
+        if row < len(poly):
+            del poly[row]
+        self._set_zone_poly_table(poly)
+        self._emit_zone_polygon_from_table_if_valid()
+
+    def _on_zone_poly_axis_quad(self) -> None:
+        if self._stack.currentWidget() != self._zone_panel:
+            return
+        poly = self._zone_polygon_from_table()
+        if len(poly) < 1:
+            poly = [{"x": 0, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 80}, {"x": 0, "y": 80}]
+            self._set_zone_poly_table(poly)
+            self._emit_zone_polygon_from_table_if_valid()
+            return
+        xs = [p["x"] for p in poly]
+        ys = [p["y"] for p in poly]
+        x0, x1 = min(xs), max(xs)
+        y0, y1 = min(ys), max(ys)
+        if x1 - x0 < 1:
+            x1 = x0 + 100
+        if y1 - y0 < 1:
+            y1 = y0 + 80
+        quad = [
+            {"x": round(x0, 1), "y": round(y0, 1)},
+            {"x": round(x1, 1), "y": round(y0, 1)},
+            {"x": round(x1, 1), "y": round(y1, 1)},
+            {"x": round(x0, 1), "y": round(y1, 1)},
+        ]
+        self._set_zone_poly_table(quad)
+        self._emit_zone_polygon_from_table_if_valid()
+
+    def refresh_zone_polygon_table(self, eid: str, polygon: list) -> None:
+        if self._stack.currentWidget() != self._zone_panel:
+            return
+        if self._zn_id.text().strip() != eid:
+            return
+        self._set_zone_poly_table(polygon)
 
     def load_zone_props(self, zone: dict) -> None:
         self._current_data = zone
         self._pending_zone = zone
         self._stack.setCurrentWidget(self._zone_panel)
         self._zn_id.setText(zone.get("id", ""))
-        self._zn_x.setValue(zone.get("x", 0))
-        self._zn_y.setValue(zone.get("y", 0))
-        self._zn_w.setValue(zone.get("width", 100))
-        self._zn_h.setValue(zone.get("height", 100))
+        poly = zone.get("polygon")
+        if isinstance(poly, list) and len(poly) >= 3:
+            self._set_zone_poly_table(poly)
+        else:
+            pts = _zone_polygon_points_for_editor(zone)
+            self._set_zone_poly_table([{"x": x, "y": y} for x, y in pts])
         self._zn_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
         self._zn_cond.set_data(zone.get("conditions", []))
         self._zn_enter.set_project_context(self._model, self._editing_scene_id or None)
+        self._zn_stay.set_project_context(self._model, self._editing_scene_id or None)
         self._zn_exit.set_project_context(self._model, self._editing_scene_id or None)
         self._zn_enter.set_data(zone.get("onEnter", []))
+        self._zn_stay.set_data(zone.get("onStay", []))
         self._zn_exit.set_data(zone.get("onExit", []))
 
     def _write_zone_widgets_to_dict(self, zone: dict) -> None:
         zone["id"] = self._zn_id.text().strip()
-        zone["x"] = self._zn_x.value()
-        zone["y"] = self._zn_y.value()
-        zone["width"] = self._zn_w.value()
-        zone["height"] = self._zn_h.value()
+        poly = self._zone_polygon_from_table()
+        if len(poly) >= 3:
+            zone["polygon"] = poly
+        for k in ("x", "y", "width", "height"):
+            zone.pop(k, None)
         c = self._zn_cond.to_list()
         if c:
             zone["conditions"] = c
@@ -1406,11 +1847,18 @@ class ScenePropertyPanel(QScrollArea):
             zone["onEnter"] = oe
         elif "onEnter" in zone:
             del zone["onEnter"]
+        oy = self._zn_stay.to_list()
+        if oy:
+            zone["onStay"] = oy
+        elif "onStay" in zone:
+            del zone["onStay"]
         ox = self._zn_exit.to_list()
         if ox:
             zone["onExit"] = ox
         elif "onExit" in zone:
             del zone["onExit"]
+        if "ruleSlots" in zone:
+            del zone["ruleSlots"]
         self.changed.emit()
 
     def save_zone_props(self) -> dict | None:
@@ -1545,12 +1993,15 @@ class SceneEditor(QWidget):
         self._canvas.item_selected.connect(self._on_item_selected)
         self._canvas.item_deselected.connect(self._on_item_deselected)
         self._canvas.item_moved.connect(self._on_item_moved)
+        self._canvas.item_zone_polygon_committed.connect(
+            self._on_item_zone_polygon_committed)
         self._canvas.context_add_entity.connect(self._on_canvas_context_add_entity)
 
         # right: property panel
         self._props = ScenePropertyPanel(model)
         self._props.changed.connect(lambda: model.mark_dirty("scene", self._current_scene_id or ""))
         self._props.interaction_range_changed.connect(self._on_props_interaction_range_changed)
+        self._props.zone_polygon_changed.connect(self._on_props_zone_polygon_changed)
 
         splitter.addWidget(left)
         splitter.addWidget(self._canvas)
@@ -1640,6 +2091,11 @@ class SceneEditor(QWidget):
         elif kind == "zone":
             for zone in sc.get("zones", []):
                 if zone.get("id") == eid:
+                    if (
+                        self._props._stack.currentWidget() == self._props._zone_panel
+                        and self._props._pending_zone is zone
+                    ):
+                        return
                     self._props.load_zone_props(zone)
                     return
         elif kind == "spawn":
@@ -1654,6 +2110,44 @@ class SceneEditor(QWidget):
     def _on_props_interaction_range_changed(self, kind: str, eid: str, r: float) -> None:
         if eid:
             self._canvas.update_interaction_range(kind, eid, r)
+
+    def _on_props_zone_polygon_changed(self, eid: str, polygon: object) -> None:
+        poly_list = polygon if isinstance(polygon, list) else []
+        if len(poly_list) < 3:
+            return
+        self._canvas.update_zone_polygon(eid, poly_list)
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None:
+            return
+        for zone in sc.get("zones", []):
+            if zone.get("id") == eid:
+                zone["polygon"] = poly_list
+                for k in ("x", "y", "width", "height"):
+                    zone.pop(k, None)
+                break
+        self._model.mark_dirty("scene", self._current_scene_id or "")
+
+    def _on_item_zone_polygon_committed(
+        self,
+        kind: str,
+        eid: str,
+        polygon: object,
+    ) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None:
+            return
+        poly_list = polygon if isinstance(polygon, list) else []
+        if len(poly_list) < 3:
+            return
+        for zone in sc.get("zones", []):
+            if zone.get("id") == eid:
+                zone["polygon"] = poly_list
+                for k in ("x", "y", "width", "height"):
+                    zone.pop(k, None)
+                break
+        self._model.mark_dirty("scene", self._current_scene_id or "")
+        self._props.refresh_zone_polygon_table(eid, poly_list)
+        self._canvas.item_selected.emit(kind, eid)
 
     def _on_item_moved(self, kind: str, eid: str, x: float, y: float) -> None:
         sc = self._model.scenes.get(self._current_scene_id or "")
@@ -1670,12 +2164,6 @@ class SceneEditor(QWidget):
                 if npc.get("id") == eid:
                     npc["x"] = round(x, 1)
                     npc["y"] = round(y, 1)
-                    break
-        elif kind == "zone":
-            for zone in sc.get("zones", []):
-                if zone.get("id") == eid:
-                    zone["x"] = round(x, 1)
-                    zone["y"] = round(y, 1)
                     break
         elif kind == "spawn":
             if eid == "default":
@@ -1768,7 +2256,13 @@ class SceneEditor(QWidget):
         z_list = sc.setdefault("zones", [])
         new_id = f"new_zone_{len(z_list)}"
         z_list.append({
-            "id": new_id, "x": wx, "y": wy, "width": 200, "height": 100,
+            "id": new_id,
+            "polygon": [
+                {"x": wx, "y": wy},
+                {"x": round(wx + 200, 1), "y": wy},
+                {"x": round(wx + 200, 1), "y": round(wy + 100, 1)},
+                {"x": wx, "y": round(wy + 100, 1)},
+            ],
         })
         self._model.mark_dirty("scene", self._current_scene_id or "")
         self._load_scene(self._current_scene_id)

@@ -1,21 +1,30 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
+import type { RuleOfferRegistry } from '../core/RuleOfferRegistry';
 import type { ZoneDef, ZoneRuleSlot, IGameSystem, GameContext, IZoneDataProvider } from '../data/types';
+import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
 
 export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private actionExecutor: ActionExecutor;
+  private ruleOfferRegistry: RuleOfferRegistry;
 
   private zones: ZoneDef[] = [];
   private activeZoneIds: Set<string> = new Set();
   private playerPosGetter: (() => { x: number; y: number }) | null = null;
 
-  constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
+  constructor(
+    eventBus: EventBus,
+    flagStore: FlagStore,
+    actionExecutor: ActionExecutor,
+    ruleOfferRegistry: RuleOfferRegistry,
+  ) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.actionExecutor = actionExecutor;
+    this.ruleOfferRegistry = ruleOfferRegistry;
   }
 
   init(_ctx: GameContext): void {}
@@ -32,6 +41,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
       const zone = this.zones.find(z => z.id === id);
       if (zone) this.exitZone(zone);
     }
+    this.ruleOfferRegistry.clear();
     this.zones = zones;
     this.activeZoneIds.clear();
   }
@@ -41,6 +51,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
       const zone = this.zones.find(z => z.id === id);
       if (zone) this.exitZone(zone);
     }
+    this.ruleOfferRegistry.clear();
     this.zones = [];
     this.activeZoneIds.clear();
   }
@@ -49,6 +60,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     if (!this.playerPosGetter) return;
     const { x: playerX, y: playerY } = this.playerPosGetter();
     this.checkZones(playerX, playerY);
+    this.runStayActions(playerX, playerY);
   }
 
   private checkZones(playerX: number, playerY: number): void {
@@ -57,8 +69,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
         if (this.activeZoneIds.has(zone.id)) this.exitZone(zone);
         continue;
       }
-      const inside = playerX >= zone.x && playerX <= zone.x + zone.width
-                  && playerY >= zone.y && playerY <= zone.y + zone.height;
+      const inside =
+        isValidZonePolygon(zone.polygon) &&
+        isPointInPolygon(zone.polygon, playerX, playerY);
       if (inside && !this.activeZoneIds.has(zone.id)) this.enterZone(zone);
       if (!inside && this.activeZoneIds.has(zone.id)) this.exitZone(zone);
     }
@@ -66,8 +79,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
 
   private enterZone(zone: ZoneDef): void {
     this.activeZoneIds.add(zone.id);
-    if (zone.onEnter && zone.onEnter.length > 0) {
-      this.actionExecutor.executeBatch(zone.onEnter);
+    const enter = zone.onEnter;
+    if (enter && enter.length > 0) {
+      this.actionExecutor.executeBatchInZoneContext(enter, { zoneId: zone.id });
     }
     this.eventBus.emit('zone:enter', { zoneId: zone.id, zone });
     this.emitRuleAvailability();
@@ -75,11 +89,30 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
 
   private exitZone(zone: ZoneDef): void {
     this.activeZoneIds.delete(zone.id);
-    if (zone.onExit && zone.onExit.length > 0) {
-      this.actionExecutor.executeBatch(zone.onExit);
+    const exit = zone.onExit;
+    if (exit && exit.length > 0) {
+      this.actionExecutor.executeBatchInZoneContext(exit, { zoneId: zone.id });
     }
     this.eventBus.emit('zone:exit', { zoneId: zone.id, zone });
     this.emitRuleAvailability();
+  }
+
+  /** 已在激活集中的区域，每帧执行 onStay。 */
+  private runStayActions(playerX: number, playerY: number): void {
+    for (const zone of this.zones) {
+      if (!this.activeZoneIds.has(zone.id)) continue;
+      if (zone.conditions && zone.conditions.length > 0 && !this.flagStore.checkConditions(zone.conditions)) {
+        continue;
+      }
+      const inside =
+        isValidZonePolygon(zone.polygon) &&
+        isPointInPolygon(zone.polygon, playerX, playerY);
+      if (!inside) continue;
+      const stay = zone.onStay;
+      if (stay && stay.length > 0) {
+        this.actionExecutor.executeBatchInZoneContext(stay, { zoneId: zone.id });
+      }
+    }
   }
 
   private emitRuleAvailability(): void {
@@ -92,16 +125,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   }
 
   getCurrentRuleSlots(): ZoneRuleSlot[] {
-    const slots: ZoneRuleSlot[] = [];
-    for (const zone of this.zones) {
-      if (!this.activeZoneIds.has(zone.id)) continue;
-      if (zone.ruleSlots) {
-        for (const slot of zone.ruleSlots) {
-          slots.push(slot);
-        }
-      }
-    }
-    return slots;
+    return this.ruleOfferRegistry.getAggregatedSlots();
   }
 
   isInAnyZone(): boolean {
@@ -113,6 +137,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   }
 
   destroy(): void {
+    this.ruleOfferRegistry.clear();
     this.zones = [];
     this.activeZoneIds.clear();
   }

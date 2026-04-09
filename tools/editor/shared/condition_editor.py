@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QComboBox, QLabel, QFrame,
+    QComboBox, QLabel, QFrame, QApplication,
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, QEventLoop, Signal
 
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
@@ -214,9 +214,13 @@ class ConditionEditor(QWidget):
 
     def _clear(self) -> None:
         for r in self._rows:
+            for cb in r.findChildren(QComboBox):
+                cb.hidePopup()
             self._rows_layout.removeWidget(r)
             r.deleteLater()
         self._rows.clear()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def _add_row(self, data: dict | None = None) -> None:
         row = ConditionRow(data, self._ctx_model, self._ctx_scene_id)
@@ -231,6 +235,8 @@ class ConditionEditor(QWidget):
 
     def _remove_row(self, row: ConditionRow) -> None:
         if row in self._rows:
+            for cb in row.findChildren(QComboBox):
+                cb.hidePopup()
             self._rows.remove(row)
             self._rows_layout.removeWidget(row)
             row.deleteLater()

@@ -9,6 +9,7 @@ import json
 ACTION_TYPES = [
     "setFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "giveFragment", "updateQuest", "startEncounter", "showNotification",
+    "enableRuleOffers", "disableRuleOffers",
 ]
 
 
