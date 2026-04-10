@@ -16,6 +16,8 @@ export class Npc implements ICutsceneActor {
   private _x: number;
   private _y: number;
   private moveTarget: { x: number; y: number; speed: number; resolve: () => void } | null = null;
+  /** loadSprite 时解析的静止状态，用于巡逻/演出移动结束后恢复，不硬编码 idle */
+  private restAnimState: string | null = null;
 
   constructor(def: NpcDef) {
     this.def = def;
@@ -40,7 +42,7 @@ export class Npc implements ICutsceneActor {
     this.container.addChild(this.nameLabel);
   }
 
-  loadSprite(texture: Texture, animDef: AnimationSetDef): void {
+  loadSprite(texture: Texture, animDef: AnimationSetDef, initialState?: string): void {
     if (this.marker) {
       this.container.removeChild(this.marker);
       this.marker.destroy();
@@ -49,7 +51,15 @@ export class Npc implements ICutsceneActor {
 
     this.sprite = new SpriteEntity();
     this.sprite.loadFromDef(texture, animDef);
-    this.sprite.playAnimation('idle');
+    const want = initialState?.trim();
+    const keys = Object.keys(animDef.states);
+    const resolved =
+      (want && animDef.states[want] ? want : undefined) ??
+      (animDef.states.idle ? 'idle' : keys[0]);
+    this.restAnimState = resolved ?? null;
+    if (resolved) {
+      this.sprite.playAnimation(resolved);
+    }
     this.container.addChildAt(this.sprite.container, 0);
     this.sprite.container.x = 0;
     this.sprite.container.y = 0;
@@ -108,7 +118,7 @@ export class Npc implements ICutsceneActor {
     this.sprite?.playAnimation(name);
   }
 
-  moveTo(targetX: number, targetY: number, speed: number): Promise<void> {
+  moveTo(targetX: number, targetY: number, speed: number, moveAnimState?: string): Promise<void> {
     if (this.moveTarget) {
       this.moveTarget.resolve();
     }
@@ -116,7 +126,10 @@ export class Npc implements ICutsceneActor {
       this.moveTarget = { x: targetX, y: targetY, speed, resolve };
       const dx = targetX - this._x;
       this.setFacing(dx, 0);
-      this.playAnimation('walk');
+      const anim = moveAnimState?.trim();
+      if (anim) {
+        this.playAnimation(anim);
+      }
     });
   }
 
@@ -131,7 +144,9 @@ export class Npc implements ICutsceneActor {
       if (dist <= step) {
         this.x = t.x;
         this.y = t.y;
-        this.playAnimation('idle');
+        if (this.restAnimState) {
+          this.playAnimation(this.restAnimState);
+        }
         const resolve = t.resolve;
         this.moveTarget = null;
         resolve();

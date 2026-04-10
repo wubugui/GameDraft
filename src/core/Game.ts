@@ -45,6 +45,8 @@ import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
 import { GameState } from '../data/types';
 import type { IGameSystem, AnimationSetDef, GameConfig } from '../data/types';
+import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
+import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
@@ -458,13 +460,15 @@ export class Game {
     let texture: any;
 
     try {
-      animDef = await this.assetManager.loadJson<AnimationSetDef>('/assets/data/player_anim.json');
+      const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>('/assets/data/player_anim.json');
 
-      if (animDef.spritesheet) {
-        texture = await this.assetManager.loadTexture(animDef.spritesheet);
+      if (animRaw.spritesheet) {
+        texture = await this.assetManager.loadTexture(animRaw.spritesheet);
+        animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
       } else {
         const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
         texture = placeholder.texture;
+        animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
       }
     } catch {
       const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
@@ -497,12 +501,13 @@ export class Game {
     npc: Npc,
     route: { x: number; y: number }[],
     speed: number,
+    moveAnimState?: string,
   ): void {
     const run = async () => {
       let i = 0;
       let step = 1;
       while (this.sceneManager.getCurrentNpcs().includes(npc)) {
-        await npc.moveTo(route[i].x, route[i].y, speed);
+        await npc.moveTo(route[i].x, route[i].y, speed, moveAnimState);
         if (!this.sceneManager.getCurrentNpcs().includes(npc)) break;
         i += step;
         if (i >= route.length) {
@@ -628,7 +633,7 @@ export class Game {
         }
         const patrol = npc.def.patrol;
         if (patrol?.route && patrol.route.length > 0) {
-          this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60);
+          this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, patrol.moveAnimState);
         }
       }
 

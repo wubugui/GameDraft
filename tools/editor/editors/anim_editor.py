@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
-    QFormLayout, QLineEdit, QSpinBox, QPushButton, QLabel,
+    QFormLayout, QLineEdit, QSpinBox, QPushButton, QLabel, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea,
     QFileDialog, QMessageBox, QInputDialog, QCheckBox,
     QSizePolicy,
@@ -20,6 +20,16 @@ from ..project_model import ProjectModel
 
 _STEM_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 
+# QLabel + setPixmap：须配合固定上限与 setFixedSize，避免随布局/尺寸提示越撑越大
+_ATLAS_VIEW_MAX_W = 580
+_ATLAS_VIEW_MAX_H = 300
+_ATLAS_VIEW_MIN_W = 240
+_ATLAS_VIEW_RESERVE_RIGHT_COL = 280
+_FRAME_PREV_MAX_W = 220
+_FRAME_PREV_MAX_H = 200
+_FRAME_PREV_PLACEHOLDER_W = 160
+_FRAME_PREV_PLACEHOLDER_H = 120
+
 
 def _default_anim_template() -> dict:
     return {
@@ -27,7 +37,6 @@ def _default_anim_template() -> dict:
         "cols": 1,
         "rows": 1,
         "worldWidth": 100,
-        "worldHeight": 160,
         "states": {
             "idle": {
                 "frames": [0],
@@ -69,6 +78,7 @@ class AnimEditor(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setMinimumHeight(420)
         detail = QWidget()
+        self._anim_detail_panel = detail
         dl = QVBoxLayout(detail)
         f = QFormLayout()
         self._a_stem = QLineEdit()
@@ -91,12 +101,20 @@ class AnimEditor(QWidget):
         self._a_rows = QSpinBox()
         self._a_rows.setRange(1, 99)
         f.addRow("rows", self._a_rows)
+        self._a_world_mode = QComboBox()
+        self._a_world_mode.addItem("按宽度（只写 worldWidth）", 0)
+        self._a_world_mode.addItem("按高度（只写 worldHeight）", 1)
+        self._a_world_mode.addItem("同时写宽高（高级）", 2)
+        self._a_world_mode.setCurrentIndex(0)
+        self._a_world_mode.currentIndexChanged.connect(self._on_anim_world_mode_changed)
+        f.addRow("世界尺寸", self._a_world_mode)
         self._a_ww = QSpinBox()
         self._a_ww.setRange(1, 9999)
         f.addRow("worldWidth", self._a_ww)
         self._a_wh = QSpinBox()
         self._a_wh.setRange(1, 9999)
         f.addRow("worldHeight", self._a_wh)
+        self._on_anim_world_mode_changed(0)
         dl.addLayout(f)
 
         self._a_sheet.editingFinished.connect(self._refresh_preview)
@@ -147,23 +165,22 @@ class AnimEditor(QWidget):
         atlas_col.addWidget(self._lbl_atlas_meta)
         self._atlas_full = QLabel()
         self._atlas_full.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._atlas_full.setMinimumHeight(120)
         self._atlas_full.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Fixed,
         )
+        self._atlas_full.setFixedSize(_ATLAS_VIEW_MIN_W, 120)
         self._atlas_full.setStyleSheet("background: #1a1a1a;")
         atlas_col.addWidget(self._atlas_full, 1)
         frame_col = QVBoxLayout()
         frame_col.addWidget(QLabel("<b>当前帧</b>"))
         self._preview = QLabel()
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setMinimumSize(140, 100)
-        self._preview.setMaximumSize(240, 220)
         self._preview.setSizePolicy(
             QSizePolicy.Policy.Fixed,
             QSizePolicy.Policy.Fixed,
         )
+        self._preview.setFixedSize(_FRAME_PREV_PLACEHOLDER_W, _FRAME_PREV_PLACEHOLDER_H)
         self._preview.setStyleSheet("background: #2a2a2a;")
         frame_col.addWidget(self._preview)
         frame_col.addStretch(1)
@@ -201,6 +218,25 @@ class AnimEditor(QWidget):
             return False
         return bool(_STEM_RE.fullmatch(s))
 
+    def _atlas_target_view_width(self) -> int:
+        dw = self._anim_detail_panel.width()
+        if dw > _ATLAS_VIEW_RESERVE_RIGHT_COL + _ATLAS_VIEW_MIN_W:
+            return max(
+                _ATLAS_VIEW_MIN_W,
+                min(_ATLAS_VIEW_MAX_W, dw - _ATLAS_VIEW_RESERVE_RIGHT_COL),
+            )
+        return _ATLAS_VIEW_MAX_W
+
+    def _set_atlas_full_placeholder(self, message: str) -> None:
+        self._atlas_full.clear()
+        self._atlas_full.setText(message)
+        self._atlas_full.setFixedSize(_ATLAS_VIEW_MIN_W, 120)
+
+    def _set_frame_preview_placeholder(self, message: str) -> None:
+        self._preview.clear()
+        self._preview.setText(message)
+        self._preview.setFixedSize(_FRAME_PREV_PLACEHOLDER_W, _FRAME_PREV_PLACEHOLDER_H)
+
     def _refresh(self) -> None:
         sel = self._list.currentItem()
         keep = sel.text() if sel else self._current_key
@@ -229,14 +265,14 @@ class AnimEditor(QWidget):
         self._a_sheet.clear()
         self._a_cols.setValue(1)
         self._a_rows.setValue(1)
+        self._a_world_mode.setCurrentIndex(0)
         self._a_ww.setValue(100)
         self._a_wh.setValue(160)
+        self._on_anim_world_mode_changed(0)
         self._clear_state_rows()
-        self._atlas_full.clear()
-        self._atlas_full.setText("")
+        self._set_atlas_full_placeholder("")
         self._lbl_atlas_meta.setText("")
-        self._preview.clear()
-        self._preview.setText("(未选择动画)")
+        self._set_frame_preview_placeholder("(未选择动画)")
 
     def _clear_state_rows(self) -> None:
         while self._state_table.rowCount() > 0:
@@ -252,8 +288,17 @@ class AnimEditor(QWidget):
         self._a_sheet.setText(a.get("spritesheet", ""))
         self._a_cols.setValue(int(a.get("cols", 1)))
         self._a_rows.setValue(int(a.get("rows", 1)))
-        self._a_ww.setValue(int(a.get("worldWidth", 100)))
-        self._a_wh.setValue(int(a.get("worldHeight", 100)))
+        ww = int(a.get("worldWidth", 0) or 0)
+        wh = int(a.get("worldHeight", 0) or 0)
+        if ww > 0 and wh > 0:
+            self._a_world_mode.setCurrentIndex(2)
+        elif wh > 0:
+            self._a_world_mode.setCurrentIndex(1)
+        else:
+            self._a_world_mode.setCurrentIndex(0)
+        self._a_ww.setValue(ww if ww > 0 else 100)
+        self._a_wh.setValue(wh if wh > 0 else 160)
+        self._on_anim_world_mode_changed(self._a_world_mode.currentIndex())
 
         self._state_table.blockSignals(True)
         self._clear_state_rows()
@@ -366,11 +411,9 @@ class AnimEditor(QWidget):
             return
         sheet_path = self._a_sheet.text().strip()
         if not sheet_path:
-            self._atlas_full.clear()
-            self._atlas_full.setText("(未设置 spritesheet)")
+            self._set_atlas_full_placeholder("(未设置 spritesheet)")
             self._lbl_atlas_meta.setText("")
-            self._preview.clear()
-            self._preview.setText("(未设置 spritesheet)")
+            self._set_frame_preview_placeholder("(未设置 spritesheet)")
             self._restart_preview_animation()
             return
         full = self._model.project_path / "public" / sheet_path.lstrip("/")
@@ -382,31 +425,29 @@ class AnimEditor(QWidget):
                 self._update_atlas_full_label()
                 self._restart_preview_animation()
                 return
-        self._atlas_full.clear()
-        self._atlas_full.setText(f"无法加载: {sheet_path}")
+        self._set_atlas_full_placeholder(f"无法加载: {sheet_path}")
         self._lbl_atlas_meta.setText("")
-        self._preview.clear()
-        self._preview.setText(f"无法加载: {sheet_path}")
+        self._set_frame_preview_placeholder(f"无法加载: {sheet_path}")
         self._stop_preview_timer()
 
     def _update_atlas_full_label(self) -> None:
         if self._sheet_pixmap is None or self._sheet_pixmap.isNull():
-            self._atlas_full.clear()
-            self._atlas_full.setText("(无雪碧图)")
+            self._set_atlas_full_placeholder("(无雪碧图)")
             self._lbl_atlas_meta.setText("")
             return
         cols = max(1, self._a_cols.value())
         rows = max(1, self._a_rows.value())
         w = self._sheet_pixmap.width()
         h = self._sheet_pixmap.height()
-        # 限制在视口内完整显示整张图（与右侧「当前帧」并排，竖向不再堆叠过高）
+        avail_w = self._atlas_target_view_width()
         scaled = self._sheet_pixmap.scaled(
-            580,
-            300,
+            avail_w,
+            _ATLAS_VIEW_MAX_H,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         self._atlas_full.setPixmap(scaled)
+        self._atlas_full.setFixedSize(scaled.size())
         self._atlas_full.setText("")
         fw = max(1, w // cols)
         fh = max(1, h // rows)
@@ -417,6 +458,11 @@ class AnimEditor(QWidget):
     def _on_sheet_grid_changed(self, _v: int) -> None:
         self._update_atlas_full_label()
         self._restart_preview_animation()
+
+    def _on_anim_world_mode_changed(self, _idx: int) -> None:
+        mode = int(self._a_world_mode.currentData())
+        self._a_ww.setEnabled(mode in (0, 2))
+        self._a_wh.setEnabled(mode in (1, 2))
 
     def _stop_preview_timer(self) -> None:
         self._preview_timer.stop()
@@ -461,12 +507,16 @@ class AnimEditor(QWidget):
 
     def _show_cropped_scaled(self, cropped: QPixmap | None) -> None:
         if cropped is None or cropped.isNull():
-            self._preview.clear()
-            self._preview.setText("(无法切帧：检查 cols/rows 与帧索引)")
+            self._set_frame_preview_placeholder("(无法切帧：检查 cols/rows 与帧索引)")
             return
-        self._preview.setPixmap(
-            cropped.scaled(220, 200, Qt.AspectRatioMode.KeepAspectRatio)
+        scaled = cropped.scaled(
+            _FRAME_PREV_MAX_W,
+            _FRAME_PREV_MAX_H,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
         )
+        self._preview.setPixmap(scaled)
+        self._preview.setFixedSize(scaled.size())
         self._preview.setText("")
 
     def _restart_preview_animation(self) -> None:
@@ -480,9 +530,8 @@ class AnimEditor(QWidget):
                 self._show_cropped_scaled(self._atlas_crop(0))
                 self._lbl_preview_info.setText("（请选中一行 state）")
             elif not self._a_sheet.text().strip():
-                self._preview.clear()
-                self._preview.setText("(未设置 spritesheet)")
-            return
+                self._set_frame_preview_placeholder("(未设置 spritesheet)")
+                return
         data = self._gather_row_preview(row)
         if not data:
             return
@@ -490,8 +539,7 @@ class AnimEditor(QWidget):
         self._preview_frames = frames
         self._preview_seq_i = 0
         if not self._sheet_pixmap or self._sheet_pixmap.isNull():
-            self._preview.clear()
-            self._preview.setText("(无法加载雪碧图)")
+            self._set_frame_preview_placeholder("(无法加载雪碧图)")
             self._lbl_preview_info.setText("")
             return
         first = self._atlas_crop(frames[0])
@@ -648,8 +696,18 @@ class AnimEditor(QWidget):
         a["spritesheet"] = self._a_sheet.text().strip()
         a["cols"] = self._a_cols.value()
         a["rows"] = self._a_rows.value()
-        a["worldWidth"] = self._a_ww.value()
-        a["worldHeight"] = self._a_wh.value()
+        a.pop("worldWidth", None)
+        a.pop("worldHeight", None)
+        mode = int(self._a_world_mode.currentData())
+        ww_v = self._a_ww.value()
+        wh_v = self._a_wh.value()
+        if mode == 0:
+            a["worldWidth"] = max(1, ww_v)
+        elif mode == 1:
+            a["worldHeight"] = max(1, wh_v)
+        else:
+            a["worldWidth"] = max(1, ww_v)
+            a["worldHeight"] = max(1, wh_v)
 
         states: dict = {}
         for i in range(self._state_table.rowCount()):

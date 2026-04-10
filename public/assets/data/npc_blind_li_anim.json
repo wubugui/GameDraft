@@ -2,8 +2,6 @@
   "spritesheet": "/assets/images/characters/npc_blind_li.png",
   "cols": 5,
   "rows": 2,
-  "worldWidth": 100,
-  "worldHeight": 160,
   "states": {
     "idle": {
       "frames": [
@@ -32,5 +30,6 @@
       "frameRate": 12,
       "loop": true
     }
-  }
+  },
+  "worldHeight": 160
 }

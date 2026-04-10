@@ -2,8 +2,6 @@
   "spritesheet": "/assets/images/characters/player_hero.png",
   "cols": 5,
   "rows": 2,
-  "worldWidth": 100,
-  "worldHeight": 160,
   "states": {
     "idle": {
       "frames": [
@@ -33,5 +31,6 @@
       "frameRate": 12,
       "loop": true
     }
-  }
+  },
+  "worldHeight": 150
 }

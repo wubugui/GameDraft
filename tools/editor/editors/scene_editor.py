@@ -7,6 +7,8 @@ completely decoupled from the coordinate system.
 from __future__ import annotations
 
 import copy
+import json
+import math
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -23,8 +25,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QPixmap, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
     QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
+    QShortcut, QKeySequence, QPainterPath,
 )
-from PySide6.QtCore import Qt, QRectF, QPoint, QPointF, Signal, QTimer
+from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, Signal, QTimer
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
@@ -47,6 +50,11 @@ _NPC_REF_FILL = QColor(130, 220, 160, 55)
 _NPC_REF_PEN = QPen(QColor(90, 180, 120), 0, Qt.PenStyle.DashLine)
 _NPC_REF_MARGIN = 24.0
 _NPC_REF_Z = -20.0
+# 高于参考框、低于可拖实体（0），避免挡住点选 NPC
+_NPC_SCENE_ANIM_PREVIEW_Z = -10.0
+# 巡逻折线：高于精灵预览、高于 NPC 控制点，shape 仅顶点以便线段处点选 NPC
+_PATROL_LINE_COLOR = QColor(0, 200, 220, 220)
+_PATROL_OVERLAY_Z = 2.0
 
 
 def _resolve_world_size(sc: dict, img_path: Path | None) -> tuple[float, float]:
@@ -70,22 +78,148 @@ def _resolve_world_size(sc: dict, img_path: Path | None) -> tuple[float, float]:
     return (800, 800 * aspect)
 
 
+def _resolved_anim_world_pair(data: dict, model: ProjectModel) -> tuple[float, float] | None:
+    """与运行时 normalizeAnimationSetDef 一致：worldWidth/worldHeight 可只填其一。"""
+    cols = max(1, int(data.get("cols", 1) or 1))
+    rows = max(1, int(data.get("rows", 1) or 1))
+    w = float(data.get("worldWidth", 0) or 0)
+    h = float(data.get("worldHeight", 0) or 0)
+    if w > 0 and h > 0:
+        return (w, h)
+    sheet = str(data.get("spritesheet", "") or "").strip().lstrip("/")
+    if not model.project_path or not sheet:
+        return None
+    pm = QPixmap(str(model.project_path / "public" / sheet))
+    if pm.isNull() or pm.width() <= 0:
+        return None
+    fw = max(1, pm.width() // cols)
+    fh = max(1, pm.height() // rows)
+    aspect_hw = fh / fw
+    if w > 0:
+        return (w, w * aspect_hw)
+    if h > 0:
+        return (h / aspect_hw, h)
+    return None
+
+
 def _npc_reference_world_size(model: ProjectModel) -> tuple[float, float]:
-    """与 SpriteEntity.loadFromDef 一致：取 player_anim，否则任一 *_anim 的 world 尺寸，缺省 100×160。"""
+    """取 player_anim，否则任一动画的推导世界尺寸；缺省 100×160。"""
     pa = model.animations.get("player_anim")
     if isinstance(pa, dict):
-        w = float(pa.get("worldWidth", 0) or 0)
-        h = float(pa.get("worldHeight", 0) or 0)
-        if w > 0 and h > 0:
-            return (w, h)
-    for _stem, data in model.animations.items():
+        r = _resolved_anim_world_pair(pa, model)
+        if r:
+            return r
+    for _stem, data in sorted(model.animations.items()):
         if not isinstance(data, dict):
             continue
-        w = float(data.get("worldWidth", 0) or 0)
-        h = float(data.get("worldHeight", 0) or 0)
-        if w > 0 and h > 0:
-            return (w, h)
+        r = _resolved_anim_world_pair(data, model)
+        if r:
+            return r
     return (100.0, 160.0)
+
+
+def _crop_atlas_cell(
+    atlas: QPixmap, cols: int, rows: int, atlas_index: int,
+) -> QPixmap | None:
+    if atlas is None or atlas.isNull():
+        return None
+    pw = atlas.width()
+    ph = atlas.height()
+    c = max(1, cols)
+    r = max(1, rows)
+    fw = max(1, pw // c)
+    fh = max(1, ph // r)
+    col = atlas_index % c
+    row = atlas_index // c
+    if col >= c or row >= r:
+        return None
+    x, y = col * fw, row * fh
+    if x + fw > pw or y + fh > ph:
+        return None
+    return atlas.copy(QRect(x, y, fw, fh))
+
+
+class _SceneNpcAnimRuntime:
+    """场景画布上单个 NPC 的循环动画（与脚底锚点、世界尺寸一致）。"""
+
+    __slots__ = (
+        "npc_id", "item", "atlas", "cols", "rows",
+        "world_w", "world_h", "frames", "frame_idx", "_accum",
+        "frame_rate", "loop",
+        "facing_x", "_prev_x", "_prev_y", "_have_prev",
+    )
+
+    def __init__(
+        self,
+        npc_id: str,
+        item: QGraphicsPixmapItem,
+        atlas: QPixmap,
+        cols: int,
+        rows: int,
+        world_w: float,
+        world_h: float,
+        frames: list[int],
+        frame_rate: float,
+        loop: bool,
+    ) -> None:
+        self.npc_id = npc_id
+        self.item = item
+        self.atlas = atlas
+        self.cols = max(1, cols)
+        self.rows = max(1, rows)
+        self.world_w = world_w
+        self.world_h = world_h
+        self.frames = frames
+        self.frame_idx = 0
+        self._accum = 0.0
+        self.frame_rate = max(1.0, float(frame_rate))
+        self.loop = loop
+        self.facing_x = 1
+        self._prev_x = 0.0
+        self._prev_y = 0.0
+        self._have_prev = False
+
+    def tick(self, dt: float, npc_x: float, npc_y: float) -> None:
+        self._accum += dt
+        step = 1.0 / self.frame_rate
+        while self._accum >= step and len(self.frames) > 1:
+            self._accum -= step
+            self.frame_idx += 1
+            if self.frame_idx >= len(self.frames):
+                if self.loop:
+                    self.frame_idx = 0
+                else:
+                    self.frame_idx = len(self.frames) - 1
+                    self._accum = 0.0
+                    break
+        if self._have_prev:
+            dx = npc_x - self._prev_x
+            if abs(dx) > 1e-4:
+                self.facing_x = 1 if dx > 0 else -1
+        self._prev_x = npc_x
+        self._prev_y = npc_y
+        self._have_prev = True
+        self.draw_at(npc_x, npc_y)
+
+    def draw_at(self, npc_x: float, npc_y: float) -> None:
+        if not self.frames:
+            return
+        idx = int(self.frames[self.frame_idx % len(self.frames)])
+        pm = _crop_atlas_cell(self.atlas, self.cols, self.rows, idx)
+        if pm is None or pm.isNull():
+            return
+        fw = max(1, pm.width())
+        fh = max(1, pm.height())
+        self.item.setPixmap(pm)
+        sx = (self.world_w / fw) * self.facing_x
+        sy = self.world_h / fh
+        t = QTransform()
+        t.translate(float(npc_x), float(npc_y))
+        t.scale(sx, sy)
+        t.translate(-fw * 0.5, -float(fh))
+        self.item.setTransform(t)
+        self.item.setPos(0.0, 0.0)
+        self.item.show()
 
 
 def _background_pixel_aspect(model: ProjectModel, scene_id: str, sc: dict) -> float | None:
@@ -131,7 +265,8 @@ class _DraggableCircle(QGraphicsEllipseItem):
 
     def __init__(self, x: float, y: float, radius: float,
                  color: QColor, entity_id: str, entity_kind: str,
-                 range_radius: float = 0):
+                 range_radius: float = 0,
+                 scene_view: "SceneCanvas | None" = None):
         super().__init__(-radius, -radius, radius * 2, radius * 2)
         self.setPos(x, y)
         self.setBrush(QBrush(color))
@@ -142,6 +277,7 @@ class _DraggableCircle(QGraphicsEllipseItem):
                       self.GraphicsItemFlag.ItemSendsGeometryChanges)
         self.entity_id = entity_id
         self.entity_kind = entity_kind
+        self._scene_view = scene_view
         self._range_outline: QGraphicsEllipseItem | None = None
         self.set_interaction_range(range_radius)
 
@@ -150,6 +286,8 @@ class _DraggableCircle(QGraphicsEllipseItem):
         self._label.setFont(QFont("Consolas", 8))
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self._label.setFlag(
+            QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._label.setPos(radius * 0.5, -radius * 0.5)
 
     def set_interaction_range(self, range_radius: float) -> None:
@@ -163,9 +301,26 @@ class _DraggableCircle(QGraphicsEllipseItem):
             self._range_outline = QGraphicsEllipseItem(-r, -r, r * 2, r * 2, self)
             self._range_outline.setPen(_RANGE_PEN)
             self._range_outline.setBrush(QBrush(Qt.GlobalColor.transparent))
+            self._range_outline.setFlag(
+                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         else:
             self._range_outline.setRect(-r, -r, r * 2, r * 2)
             self._range_outline.show()
+
+    def itemChange(
+        self,
+        change: QGraphicsItem.GraphicsItemChange,
+        value: object,
+    ) -> object:
+        result = super().itemChange(change, value)
+        if (
+            change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
+            and self._scene_view is not None
+        ):
+            p = self.pos()
+            self._scene_view.item_position_live.emit(
+                self.entity_kind, self.entity_id, p.x(), p.y())
+        return result
 
 
 class _DraggableRect(QGraphicsRectItem):
@@ -188,6 +343,8 @@ class _DraggableRect(QGraphicsRectItem):
         self._label.setFont(QFont("Consolas", 8))
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self._label.setFlag(
+            QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._label.setPos(2, 2)
 
 
@@ -418,6 +575,197 @@ class _EditableZonePolygon(QGraphicsObject):
         super().hoverLeaveEvent(event)
 
 
+class _NpcPatrolPolyline(QGraphicsObject):
+    """NPC 巡逻开放折线：仅顶点参与命中，线段中点可选中下层 NPC 圆点。"""
+
+    HANDLE_WORLD_R = 14.0
+
+    def __init__(
+        self,
+        canvas: "SceneCanvas",
+        npc_id: str,
+        points: list[tuple[float, float]],
+    ):
+        super().__init__()
+        self._canvas = canvas
+        self.npc_id = npc_id
+        self._points: list[list[float]] = [[float(x), float(y)] for x, y in points]
+        self.setFlags(
+            self.GraphicsItemFlag.ItemIsSelectable
+            | self.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setZValue(_PATROL_OVERLAY_Z)
+        self._drag_vertex: int | None = None
+        self._last_scene: QPointF | None = None
+        self._hover_vertex: int | None = None
+
+    def set_points_from_model(self, route: list) -> None:
+        self._points = []
+        for p in route:
+            if isinstance(p, dict):
+                self._points.append([
+                    round(float(p.get("x", 0)), 1),
+                    round(float(p.get("y", 0)), 1),
+                ])
+        self.prepareGeometryChange()
+        self.update()
+
+    def points_to_model(self) -> list[dict[str, float]]:
+        return [{"x": round(px, 1), "y": round(py, 1)} for px, py in self._points]
+
+    def boundingRect(self) -> QRectF:
+        if len(self._points) < 1:
+            return QRectF()
+        xs = [p[0] for p in self._points]
+        ys = [p[1] for p in self._points]
+        m = self.HANDLE_WORLD_R + 4
+        return QRectF(
+            min(xs) - m, min(ys) - m,
+            max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m,
+        )
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        r = self.HANDLE_WORLD_R
+        for px, py in self._points:
+            path.addEllipse(QPointF(px, py), r, r)
+        return path
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        del option, widget
+        painter.save()
+        n = len(self._points)
+        if n >= 2:
+            pen = QPen(_PATROL_LINE_COLOR.darker(120), 0, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(Qt.GlobalColor.transparent))
+            for i in range(n - 1):
+                a = self._points[i]
+                b = self._points[i + 1]
+                painter.drawLine(QPointF(a[0], a[1]), QPointF(b[0], b[1]))
+        hrad = self.HANDLE_WORLD_R * 0.38
+        for i, (px, py) in enumerate(self._points):
+            c = QColor(180, 250, 255)
+            if self._hover_vertex == i or self._drag_vertex == i:
+                c = QColor(100, 220, 240)
+            painter.setBrush(QBrush(c))
+            painter.setPen(QPen(QColor(0, 120, 140), 0))
+            painter.drawEllipse(QPointF(px, py), hrad, hrad)
+            painter.setPen(QPen(Qt.GlobalColor.white))
+            painter.setFont(QFont("Consolas", 8))
+            painter.drawText(QPointF(px + hrad + 2, py + 4), str(i))
+        painter.restore()
+
+    def _vertex_at_scene(self, scene_pos: QPointF) -> int | None:
+        x, y = scene_pos.x(), scene_pos.y()
+        r2 = self.HANDLE_WORLD_R ** 2
+        for i, p in enumerate(self._points):
+            dx, dy = p[0] - x, p[1] - y
+            if dx * dx + dy * dy <= r2:
+                return i
+        return None
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        sp = event.scenePos()
+        vi = self._vertex_at_scene(sp)
+        if vi is not None:
+            self._drag_vertex = vi
+            self._last_scene = QPointF(sp)
+            self.setSelected(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._drag_vertex is not None and self._last_scene is not None:
+            sp = event.scenePos()
+            dx = sp.x() - self._last_scene.x()
+            dy = sp.y() - self._last_scene.y()
+            self._points[self._drag_vertex][0] += dx
+            self._points[self._drag_vertex][1] += dy
+            self._last_scene = QPointF(sp)
+            self.prepareGeometryChange()
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._drag_vertex is not None:
+                self._drag_vertex = None
+                self._last_scene = None
+                self._canvas._emit_npc_patrol_route_committed(
+                    self.npc_id, self.points_to_model())
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+        sp = event.scenePos()
+        if self._vertex_at_scene(sp) is not None:
+            super().mouseDoubleClickEvent(event)
+            return
+        x, y = sp.x(), sp.y()
+        n = len(self._points)
+        best_i = -1
+        best_d2 = 1e18
+        for i in range(max(0, n - 1)):
+            ax, ay = self._points[i][0], self._points[i][1]
+            bx, by = self._points[i + 1][0], self._points[i + 1][1]
+            abx, aby = bx - ax, by - ay
+            denom = abx * abx + aby * aby + 1e-12
+            t = max(0, min(1, ((x - ax) * abx + (y - ay) * aby) / denom))
+            px, py = ax + t * abx, ay + t * aby
+            d2 = (x - px) ** 2 + (y - py) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best_i = i
+        thr = (self.HANDLE_WORLD_R * 2.2) ** 2
+        if best_i >= 0 and best_d2 < thr:
+            mx = (self._points[best_i][0] + self._points[best_i + 1][0]) * 0.5
+            my = (self._points[best_i][1] + self._points[best_i + 1][1]) * 0.5
+            self._points.insert(best_i + 1, [mx, my])
+            self.prepareGeometryChange()
+            self.update()
+            self._canvas._emit_npc_patrol_route_committed(
+                self.npc_id, self.points_to_model())
+        event.accept()
+
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        vi = self._vertex_at_scene(event.scenePos())
+        if vi is not None and len(self._points) > 2:
+            menu = QMenu()
+            act = menu.addAction("删除此顶点")
+            chosen = menu.exec(event.screenPos())
+            if chosen == act:
+                del self._points[vi]
+                self.prepareGeometryChange()
+                self.update()
+                self._canvas._emit_npc_patrol_route_committed(
+                    self.npc_id, self.points_to_model())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
+
+    def hoverMoveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self._hover_vertex = self._vertex_at_scene(event.scenePos())
+        self.update()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self._hover_vertex = None
+        self.update()
+        super().hoverLeaveEvent(event)
+
+
 # ---------------------------------------------------------------------------
 # Canvas view  (coordinate system = world units)
 # ---------------------------------------------------------------------------
@@ -426,8 +774,11 @@ class SceneCanvas(QGraphicsView):
     item_selected = Signal(str, str)   # (entity_kind, entity_id)
     item_deselected = Signal()
     item_moved = Signal(str, str, float, float)  # kind, id, x, y
+    item_position_live = Signal(str, str, float, float)  # kind, id, x, y（拖拽中）
     # kind, id, polygon: list[{"x","y"}, ...]
     item_zone_polygon_committed = Signal(str, str, object)
+    # npc_id, route: list[{"x","y"}, ...]
+    item_npc_patrol_route_committed = Signal(str, object)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
     context_add_entity = Signal(str, float, float)
 
@@ -437,6 +788,8 @@ class SceneCanvas(QGraphicsView):
         self.setScene(self._gfx)
         self.setRenderHints(QPainter.RenderHint.Antialiasing |
                             QPainter.RenderHint.SmoothPixmapTransform)
+        self.setViewportUpdateMode(
+            QGraphicsView.ViewportUpdateMode.SmartViewportUpdate)
         # 左键用于选择/拖移图元；平移视图使用鼠标中键（见 mousePress/Move/Release）
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -449,6 +802,7 @@ class SceneCanvas(QGraphicsView):
         self._entity_items: dict[str, QGraphicsEllipseItem | QGraphicsRectItem | QGraphicsObject] = {}
         self._npc_ref_items: list[QGraphicsItem] = []
         self._npc_ref_visible: bool = True
+        self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
         self._world_w: float = 800
         self._world_h: float = 600
 
@@ -465,6 +819,7 @@ class SceneCanvas(QGraphicsView):
         self._gfx.clear()
         self._bg_item = None
         self._entity_items.clear()
+        self._patrol_overlays.clear()
 
     def _restore_pick_z_order(self) -> None:
         if not self._saved_item_z:
@@ -516,7 +871,7 @@ class SceneCanvas(QGraphicsView):
         item = _DraggableCircle(
             hs["x"], hs["y"], self.handle_radius,
             color, hs.get("id", "?"), "hotspot",
-            range_radius=ir)
+            range_radius=ir, scene_view=self)
         self._gfx.addItem(item)
         self._entity_items[f"hotspot:{hs.get('id', '')}"] = item
 
@@ -525,7 +880,7 @@ class SceneCanvas(QGraphicsView):
         item = _DraggableCircle(
             npc["x"], npc["y"], self.handle_radius,
             _NPC_COLOR, npc.get("id", "?"), "npc",
-            range_radius=ir)
+            range_radius=ir, scene_view=self)
         self._gfx.addItem(item)
         self._entity_items[f"npc:{npc.get('id', '')}"] = item
 
@@ -552,10 +907,42 @@ class SceneCanvas(QGraphicsView):
     ) -> None:
         self.item_zone_polygon_committed.emit("zone", eid, polygon)
 
+    def _emit_npc_patrol_route_committed(
+        self, npc_id: str, route: list,
+    ) -> None:
+        self.item_npc_patrol_route_committed.emit(npc_id, route)
+
+    def set_npc_patrol_overlay(
+        self, npc_id: str, route: list | None,
+    ) -> None:
+        """显示/更新巡逻折线；route 为 None 或空则移除。"""
+        self.remove_npc_patrol_overlay(npc_id)
+        if not npc_id or not route or not isinstance(route, list):
+            return
+        pts: list[tuple[float, float]] = []
+        for p in route:
+            if isinstance(p, dict):
+                pts.append((float(p.get("x", 0)), float(p.get("y", 0))))
+        if len(pts) < 2:
+            return
+        item = _NpcPatrolPolyline(self, npc_id, pts)
+        self._gfx.addItem(item)
+        self._patrol_overlays[npc_id] = item
+
+    def remove_npc_patrol_overlay(self, npc_id: str) -> None:
+        it = self._patrol_overlays.pop(npc_id, None)
+        if it is not None and it.scene() is self._gfx:
+            self._gfx.removeItem(it)
+
+    def update_npc_patrol_overlay_points(self, npc_id: str, route: list) -> None:
+        item = self._patrol_overlays.get(npc_id)
+        if isinstance(item, _NpcPatrolPolyline):
+            item.set_points_from_model(route)
+
     def add_spawn(self, name: str, pos: dict) -> None:
         item = _DraggableCircle(
             pos["x"], pos["y"], self.handle_radius * 0.6,
-            _SPAWN_COLOR, name, "spawn")
+            _SPAWN_COLOR, name, "spawn", scene_view=self)
         self._gfx.addItem(item)
         self._entity_items[f"spawn:{name}"] = item
 
@@ -618,6 +1005,9 @@ class SceneCanvas(QGraphicsView):
             tag.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
             self._gfx.addItem(tag)
             self._npc_ref_items.append(tag)
+
+    def graphics_scene(self) -> QGraphicsScene:
+        return self._gfx
 
     def fit_all(self) -> None:
         self.fitInView(self._gfx.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
@@ -919,6 +1309,16 @@ class ScenePropertyPanel(QScrollArea):
     interaction_range_changed = Signal(str, str, float)
     # entity_id, polygon list[{"x","y"}, ...] — 侧栏顶点表驱动画布
     zone_polygon_changed = Signal(str, object)
+    # 侧栏改 anim/初始状态后，让主窗口按 npc id 重建该 NPC 的场景动画层
+    npc_scene_anim_refresh_requested = Signal(str)
+    # 侧栏改 x/y 时同步写回 dict 并通知主窗口重绘该 NPC 位置
+    npc_xy_live_changed = Signal(str)
+    # 侧栏底部「从场景删除」与工具栏删除共用同一逻辑
+    delete_current_entity_requested = Signal()
+    # 巡逻折线显示/数据变更后刷新画布 overlay
+    npc_patrol_overlay_refresh_requested = Signal()
+    # npc_id, enabled — 仅编辑器内沿路径预览精灵
+    npc_patrol_preview_changed = Signal(str, bool)
 
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -962,6 +1362,18 @@ class ScenePropertyPanel(QScrollArea):
         self._spawn_flush_scene: dict | None = None
         self._editing_scene_id: str = ""
         self._zn_poly_updating: bool = False
+        self._npc_patrol_table_updating: bool = False
+
+    def _append_entity_delete_footer(self, vbox: QVBoxLayout) -> QPushButton:
+        vbox.addSpacing(12)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        btn = QPushButton("从场景删除")
+        btn.setToolTip("从当前场景数据中移除此实体（未 Save All 前仅内存变更）")
+        btn.clicked.connect(self.delete_current_entity_requested.emit)
+        row.addWidget(btn)
+        vbox.addLayout(row)
+        return btn
 
     def _load_ambient_widgets(self, ambient_ids: list[str]) -> None:
         catalog = list(self._model.all_audio_ids("ambient"))
@@ -1379,6 +1791,7 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_data_stack.addWidget(ep)
 
         self._hs_type.currentTextChanged.connect(self._on_hs_type_changed)
+        self._append_entity_delete_footer(lay)
         return w
 
     _TYPE_TO_DATA_IDX = {"inspect": 0, "pickup": 1, "transition": 2, "npc": 3, "encounter": 4}
@@ -1548,12 +1961,15 @@ class ScenePropertyPanel(QScrollArea):
 
     def _build_npc_panel(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        outer = QVBoxLayout(w)
+        form = QFormLayout()
         self._npc_id = QLineEdit(); form.addRow("id", self._npc_id)
         self._npc_name = QLineEdit(); form.addRow("name", self._npc_name)
         self._npc_x = QDoubleSpinBox(); self._npc_x.setRange(-99999, 99999); self._npc_x.setDecimals(1)
+        self._npc_x.valueChanged.connect(self._on_npc_xy_live)
         form.addRow("x", self._npc_x)
         self._npc_y = QDoubleSpinBox(); self._npc_y.setRange(-99999, 99999); self._npc_y.setDecimals(1)
+        self._npc_y.valueChanged.connect(self._on_npc_xy_live)
         form.addRow("y", self._npc_y)
         self._npc_dialogue = IdRefSelector(allow_empty=True)
         self._npc_dialogue.setMinimumWidth(220)
@@ -1565,18 +1981,435 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range.valueChanged.connect(self._on_npc_interaction_range_live)
         self._npc_anim = IdRefSelector(allow_empty=True)
         self._npc_anim.setMinimumWidth(220)
-        self._npc_anim.value_changed.connect(lambda _x: self.changed.emit())
+        self._npc_anim.value_changed.connect(self._on_npc_anim_file_changed)
         form.addRow("animFile", self._npc_anim)
+        self._npc_initial_state = QComboBox()
+        self._npc_initial_state.setMinimumWidth(220)
+        self._npc_initial_state.currentIndexChanged.connect(self._on_npc_initial_state_changed)
+        form.addRow("initialAnimState", self._npc_initial_state)
+        outer.addLayout(form)
+
+        patrol_box = QGroupBox("巡逻路径（运行时折返 ping-pong）")
+        patrol_outer = QVBoxLayout(patrol_box)
+        self._npc_patrol_enable = QCheckBox("启用巡逻")
+        self._npc_patrol_enable.toggled.connect(self._on_npc_patrol_enable_toggled)
+        patrol_outer.addWidget(self._npc_patrol_enable)
+        sp_row = QHBoxLayout()
+        sp_row.addWidget(QLabel("speed"))
+        self._npc_patrol_speed = QDoubleSpinBox()
+        self._npc_patrol_speed.setRange(1, 500)
+        self._npc_patrol_speed.setValue(60)
+        self._npc_patrol_speed.valueChanged.connect(self._on_npc_patrol_speed_changed)
+        sp_row.addWidget(self._npc_patrol_speed)
+        patrol_outer.addLayout(sp_row)
+        move_anim_row = QHBoxLayout()
+        move_anim_row.addWidget(QLabel("巡逻移动动画状态"))
+        self._npc_patrol_move_anim = QLineEdit()
+        self._npc_patrol_move_anim.setPlaceholderText(
+            "animFile 内 states 的键名，与运行时一致；留空则移动时不切动画")
+        self._npc_patrol_move_anim.editingFinished.connect(
+            self._on_npc_patrol_move_anim_finished)
+        move_anim_row.addWidget(self._npc_patrol_move_anim)
+        patrol_outer.addLayout(move_anim_row)
+        self._npc_patrol_preview = QCheckBox("画布预览巡逻（不写回 x,y）")
+        self._npc_patrol_preview.setToolTip("需配置 animFile；沿路径折返移动，仅预览。")
+        self._npc_patrol_preview.toggled.connect(self._on_npc_patrol_preview_toggled)
+        patrol_outer.addWidget(self._npc_patrol_preview)
+        ph = QLabel("路点可与出生 x,y 不同；线段中点仍可选中紫色 NPC 控制点。")
+        ph.setWordWrap(True)
+        patrol_outer.addWidget(ph)
+        self._npc_patrol_table = QTableWidget(0, 3)
+        self._npc_patrol_table.setHorizontalHeaderLabels(["#", "x", "y"])
+        self._npc_patrol_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        self._npc_patrol_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self._npc_patrol_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch)
+        self._npc_patrol_table.setMinimumHeight(120)
+        self._npc_patrol_table.itemChanged.connect(self._on_npc_patrol_table_item_changed)
+        patrol_outer.addWidget(self._npc_patrol_table)
+        pr_btns = QHBoxLayout()
+        self._npc_patrol_add_pt = QPushButton("添加路点")
+        self._npc_patrol_add_pt.clicked.connect(self._on_npc_patrol_add_point)
+        self._npc_patrol_del_pt = QPushButton("删除所选路点")
+        self._npc_patrol_del_pt.clicked.connect(self._on_npc_patrol_remove_point)
+        pr_btns.addWidget(self._npc_patrol_add_pt)
+        pr_btns.addWidget(self._npc_patrol_del_pt)
+        patrol_outer.addLayout(pr_btns)
+        outer.addWidget(patrol_box)
+        self._set_npc_patrol_widgets_enabled(False)
+
+        _npc_scene_hint = QLabel(
+            "动画仅在主画布上播放（脚底对齐 x,y）；侧栏只编辑 animFile 与 initialAnimState。"
+        )
+        _npc_scene_hint.setWordWrap(True)
+        outer.addWidget(_npc_scene_hint)
+        self._append_entity_delete_footer(outer)
         return w
 
+    def _set_npc_patrol_widgets_enabled(self, en: bool) -> None:
+        self._npc_patrol_speed.setEnabled(en)
+        self._npc_patrol_move_anim.setEnabled(en)
+        self._npc_patrol_table.setEnabled(en)
+        self._npc_patrol_add_pt.setEnabled(en)
+        self._npc_patrol_del_pt.setEnabled(en)
+        self._update_npc_patrol_preview_enabled()
+
+    def _update_npc_patrol_preview_enabled(self) -> None:
+        en = (
+            self._npc_patrol_enable.isChecked()
+            and bool(self._npc_anim.current_id().strip())
+        )
+        self._npc_patrol_preview.setEnabled(en)
+        if not en and self._npc_patrol_preview.isChecked():
+            self._npc_patrol_preview.blockSignals(True)
+            self._npc_patrol_preview.setChecked(False)
+            self._npc_patrol_preview.blockSignals(False)
+            npc = self._pending_npc
+            if npc is not None:
+                self.npc_patrol_preview_changed.emit(str(npc.get("id", "")), False)
+
+    def _default_patrol_route_for_npc(self, npc: dict) -> list[dict[str, float]]:
+        x = round(float(npc.get("x", 0)), 1)
+        y = round(float(npc.get("y", 0)), 1)
+        return [{"x": x, "y": y}, {"x": round(x + 50.0, 1), "y": y}]
+
+    def _npc_patrol_route_from_table(self) -> list[dict[str, float]]:
+        t = self._npc_patrol_table
+        out: list[dict[str, float]] = []
+        for r in range(t.rowCount()):
+            x_it = t.item(r, 1)
+            y_it = t.item(r, 2)
+            try:
+                x = round(float(x_it.text().strip() if x_it else 0), 1)
+                y = round(float(y_it.text().strip() if y_it else 0), 1)
+            except (TypeError, ValueError, AttributeError):
+                x, y = 0.0, 0.0
+            out.append({"x": x, "y": y})
+        return out
+
+    def _fill_npc_patrol_table(self, route: list) -> None:
+        self._npc_patrol_table_updating = True
+        try:
+            self._npc_patrol_table.blockSignals(True)
+            self._npc_patrol_table.setRowCount(0)
+            if not isinstance(route, list):
+                route = []
+            for i, p in enumerate(route):
+                if not isinstance(p, dict):
+                    continue
+                r = self._npc_patrol_table.rowCount()
+                self._npc_patrol_table.insertRow(r)
+                ix = QTableWidgetItem(str(i))
+                ix.setFlags(ix.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self._npc_patrol_table.setItem(r, 0, ix)
+                self._npc_patrol_table.setItem(
+                    r, 1, QTableWidgetItem(str(round(float(p.get("x", 0)), 1))))
+                self._npc_patrol_table.setItem(
+                    r, 2, QTableWidgetItem(str(round(float(p.get("y", 0)), 1))))
+            self._npc_patrol_table.blockSignals(False)
+            for r in range(self._npc_patrol_table.rowCount()):
+                it = self._npc_patrol_table.item(r, 0)
+                if it:
+                    it.setText(str(r))
+        finally:
+            self._npc_patrol_table_updating = False
+
+    def _sync_patrol_dict_from_table(self) -> None:
+        npc = self._pending_npc
+        if npc is None or not self._npc_patrol_enable.isChecked():
+            return
+        route = self._npc_patrol_route_from_table()
+        if len(route) < 2:
+            return
+        pat = npc.setdefault("patrol", {})
+        pat["route"] = route
+        if "speed" not in pat:
+            pat["speed"] = int(self._npc_patrol_speed.value())
+        v = self._npc_patrol_move_anim.text().strip()
+        if v:
+            pat["moveAnimState"] = v
+        elif "moveAnimState" in pat:
+            del pat["moveAnimState"]
+
+    def _on_npc_patrol_move_anim_finished(self) -> None:
+        if self._stack.currentWidget() != self._npc_panel:
+            return
+        npc = self._pending_npc
+        if npc is None or not self._npc_patrol_enable.isChecked():
+            return
+        pat = npc.setdefault("patrol", {})
+        v = self._npc_patrol_move_anim.text().strip()
+        if v:
+            pat["moveAnimState"] = v
+        elif "moveAnimState" in pat:
+            del pat["moveAnimState"]
+        self.changed.emit()
+        self._request_scene_npc_anim_refresh()
+
+    def _on_npc_patrol_enable_toggled(self, checked: bool) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        self._set_npc_patrol_widgets_enabled(checked)
+        if checked:
+            patrol = npc.setdefault("patrol", {})
+            route = patrol.get("route")
+            if not isinstance(route, list) or len(route) < 2:
+                patrol["route"] = self._default_patrol_route_for_npc(npc)
+            if patrol.get("speed") is None:
+                patrol["speed"] = 60
+            self._npc_patrol_speed.blockSignals(True)
+            self._npc_patrol_speed.setValue(int(patrol.get("speed", 60) or 60))
+            self._npc_patrol_speed.blockSignals(False)
+            self._fill_npc_patrol_table(patrol["route"])
+            self._npc_patrol_move_anim.blockSignals(True)
+            self._npc_patrol_move_anim.setText(
+                str(patrol.get("moveAnimState", "") or ""))
+            self._npc_patrol_move_anim.blockSignals(False)
+        else:
+            npc.pop("patrol", None)
+            self._npc_patrol_preview.blockSignals(True)
+            self._npc_patrol_preview.setChecked(False)
+            self._npc_patrol_preview.blockSignals(False)
+            self._npc_patrol_table.setRowCount(0)
+            self._npc_patrol_move_anim.blockSignals(True)
+            self._npc_patrol_move_anim.clear()
+            self._npc_patrol_move_anim.blockSignals(False)
+            self.npc_patrol_preview_changed.emit(str(npc.get("id", "")), False)
+        self.changed.emit()
+        self.npc_patrol_overlay_refresh_requested.emit()
+
+    def _on_npc_patrol_speed_changed(self, _v: float) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        if not self._npc_patrol_enable.isChecked():
+            return
+        pat = npc.setdefault("patrol", {})
+        pat["speed"] = int(self._npc_patrol_speed.value())
+        self.changed.emit()
+
+    def _on_npc_patrol_preview_toggled(self, checked: bool) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        if not self._npc_patrol_enable.isChecked():
+            return
+        self.npc_patrol_preview_changed.emit(str(npc.get("id", "")), checked)
+
+    def _on_npc_patrol_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._npc_patrol_table_updating:
+            return
+        if item.column() == 0:
+            return
+        if not self._npc_patrol_enable.isChecked():
+            return
+        self._sync_patrol_dict_from_table()
+        self.changed.emit()
+        self.npc_patrol_overlay_refresh_requested.emit()
+
+    def _on_npc_patrol_add_point(self) -> None:
+        if self._stack.currentWidget() != self._npc_panel or not self._npc_patrol_enable.isChecked():
+            return
+        npc = self._pending_npc
+        if npc is None:
+            return
+        route = self._npc_patrol_route_from_table()
+        if len(route) < 2:
+            route = self._default_patrol_route_for_npc(npc)
+        last = route[-1]
+        nx = round(float(last["x"]) + 40.0, 1)
+        ny = round(float(last["y"]), 1)
+        route.append({"x": nx, "y": ny})
+        self._fill_npc_patrol_table(route)
+        self._sync_patrol_dict_from_table()
+        self.changed.emit()
+        self.npc_patrol_overlay_refresh_requested.emit()
+
+    def _on_npc_patrol_remove_point(self) -> None:
+        if self._stack.currentWidget() != self._npc_panel or not self._npc_patrol_enable.isChecked():
+            return
+        t = self._npc_patrol_table
+        row = t.currentRow()
+        if row < 0 or t.rowCount() <= 2:
+            return
+        route = self._npc_patrol_route_from_table()
+        if row < len(route):
+            del route[row]
+        self._fill_npc_patrol_table(route)
+        self._sync_patrol_dict_from_table()
+        self.changed.emit()
+        self.npc_patrol_overlay_refresh_requested.emit()
+
+    def _load_npc_patrol_ui(self, npc: dict) -> None:
+        pat = npc.get("patrol")
+        en = isinstance(pat, dict) and isinstance(pat.get("route"), list) and len(pat["route"]) >= 2
+        self._npc_patrol_enable.blockSignals(True)
+        self._npc_patrol_enable.setChecked(en)
+        self._npc_patrol_enable.blockSignals(False)
+        self._set_npc_patrol_widgets_enabled(en)
+        if en and isinstance(pat, dict):
+            self._npc_patrol_speed.blockSignals(True)
+            self._npc_patrol_speed.setValue(int(pat.get("speed", 60) or 60))
+            self._npc_patrol_speed.blockSignals(False)
+            self._fill_npc_patrol_table(pat["route"])
+            self._npc_patrol_move_anim.blockSignals(True)
+            self._npc_patrol_move_anim.setText(
+                str(pat.get("moveAnimState", "") or ""))
+            self._npc_patrol_move_anim.blockSignals(False)
+        else:
+            self._npc_patrol_speed.blockSignals(True)
+            self._npc_patrol_speed.setValue(60)
+            self._npc_patrol_speed.blockSignals(False)
+            self._npc_patrol_table.setRowCount(0)
+            self._npc_patrol_move_anim.blockSignals(True)
+            self._npc_patrol_move_anim.clear()
+            self._npc_patrol_move_anim.blockSignals(False)
+        self._npc_patrol_preview.blockSignals(True)
+        self._npc_patrol_preview.setChecked(False)
+        self._npc_patrol_preview.blockSignals(False)
+        self._update_npc_patrol_preview_enabled()
+
+    def refresh_npc_patrol_table(self, npc_id: str, route: list) -> None:
+        if self._stack.currentWidget() != self._npc_panel or self._pending_npc is None:
+            return
+        if str(self._pending_npc.get("id", "")) != npc_id:
+            return
+        if not self._npc_patrol_enable.isChecked():
+            return
+        if not isinstance(route, list):
+            return
+        self._fill_npc_patrol_table(route)
+        pat = self._pending_npc.setdefault("patrol", {})
+        pat["route"] = [dict(x) for x in route] if route else []
+
+    def _request_scene_npc_anim_refresh(self) -> None:
+        nid = ""
+        if self._pending_npc:
+            nid = str(self._pending_npc.get("id", "") or "")
+        self.npc_scene_anim_refresh_requested.emit(nid)
+
+    def _on_npc_xy_live(self, _v: float) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        npc["x"] = round(float(self._npc_x.value()), 1)
+        npc["y"] = round(float(self._npc_y.value()), 1)
+        self.changed.emit()
+        self.npc_xy_live_changed.emit(str(npc.get("id", "")))
+
+    def _on_npc_initial_state_changed(self, _i: int) -> None:
+        if self._npc_initial_state.signalsBlocked():
+            return
+        self._sync_npc_initial_anim_state_to_dict()
+        self.changed.emit()
+        self._request_scene_npc_anim_refresh()
+
+    def _on_npc_anim_file_changed(self, _id: str) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            self.changed.emit()
+            return
+        anim = self._npc_anim.current_id().strip()
+        if anim:
+            npc["animFile"] = anim
+        elif "animFile" in npc:
+            del npc["animFile"]
+        self._fill_npc_initial_state_combo()
+        self._sync_npc_initial_anim_state_to_dict()
+        self.changed.emit()
+        self._request_scene_npc_anim_refresh()
+        self._update_npc_patrol_preview_enabled()
+
+    def _npc_anim_json_path(self, anim_id: str) -> Path | None:
+        aid = anim_id.strip()
+        if not aid or self._model.project_path is None:
+            return None
+        if aid.startswith("/"):
+            aid = aid[1:]
+        return self._model.project_path / "public" / Path(aid).as_posix()
+
+    def _anim_states_from_model(self, anim_id: str) -> dict:
+        """仅使用工程已加载的 model.animations（与磁盘一致以打开工程时为准），编辑中不再读盘。"""
+        p = self._npc_anim_json_path(anim_id.strip())
+        if not p:
+            return {}
+        mem = self._model.animations.get(p.stem)
+        if not isinstance(mem, dict):
+            return {}
+        st = mem.get("states")
+        return st if isinstance(st, dict) else {}
+
+    def _fill_npc_initial_state_combo(self) -> None:
+        self._npc_initial_state.blockSignals(True)
+        self._npc_initial_state.clear()
+        anim_id = self._npc_anim.current_id().strip()
+        need_refresh = False
+        if not anim_id:
+            need_refresh = True
+        else:
+            p = self._npc_anim_json_path(anim_id)
+            if not p or not p.is_file():
+                need_refresh = True
+            states = self._anim_states_from_model(anim_id)
+            names = [str(k) for k in states.keys()]
+            saved = ""
+            if self._pending_npc:
+                saved = str(
+                    self._pending_npc.get("initialAnimState", "") or "").strip()
+            if saved and saved not in names:
+                names.insert(0, saved)
+            for n in names:
+                self._npc_initial_state.addItem(n)
+            sel = 0
+            if saved and saved in names:
+                sel = names.index(saved)
+            elif not saved and "idle" in names:
+                sel = names.index("idle")
+            if names:
+                self._npc_initial_state.setCurrentIndex(sel)
+        self._npc_initial_state.blockSignals(False)
+        if need_refresh:
+            self._request_scene_npc_anim_refresh()
+
+    def _sync_npc_initial_anim_state_to_dict(self) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        anim = self._npc_anim.current_id().strip()
+        if not anim:
+            npc.pop("initialAnimState", None)
+            return
+        ist = self._npc_initial_state.currentText().strip()
+        if ist and self._npc_initial_state.count() > 0:
+            npc["initialAnimState"] = ist
+        elif "initialAnimState" in npc:
+            del npc["initialAnimState"]
+
     def load_npc_props(self, npc: dict) -> None:
+        if (
+            self._stack.currentWidget() == self._npc_panel
+            and self._pending_npc is not None
+        ):
+            pid = str(self._pending_npc.get("id", "") or "")
+            nid = str(npc.get("id", "") or "")
+            if pid and nid and pid != nid:
+                self.npc_patrol_preview_changed.emit(pid, False)
         self._current_data = npc
         self._pending_npc = npc
         self._stack.setCurrentWidget(self._npc_panel)
         self._npc_id.setText(npc.get("id", ""))
         self._npc_name.setText(npc.get("name", ""))
-        self._npc_x.setValue(npc.get("x", 0))
-        self._npc_y.setValue(npc.get("y", 0))
+        self._npc_x.blockSignals(True)
+        self._npc_y.blockSignals(True)
+        try:
+            self._npc_x.setValue(npc.get("x", 0))
+            self._npc_y.setValue(npc.get("y", 0))
+        finally:
+            self._npc_x.blockSignals(False)
+            self._npc_y.blockSignals(False)
         d_items = self._model.dialogue_asset_path_choices()
         cur_d = npc.get("dialogueFile", "") or ""
         if cur_d and all(x[0] != cur_d for x in d_items):
@@ -1591,8 +2424,15 @@ class ScenePropertyPanel(QScrollArea):
         cur_a = npc.get("animFile", "") or ""
         if cur_a and all(x[0] != cur_a for x in a_items):
             a_items = [(cur_a, cur_a)] + a_items
-        self._npc_anim.set_items(a_items)
-        self._npc_anim.set_current(cur_a)
+        self._npc_anim.blockSignals(True)
+        try:
+            self._npc_anim.set_items(a_items)
+            self._npc_anim.set_current(cur_a)
+        finally:
+            self._npc_anim.blockSignals(False)
+        self._fill_npc_initial_state_combo()
+        self._load_npc_patrol_ui(npc)
+        self.npc_patrol_overlay_refresh_requested.emit()
 
     def _write_npc_widgets_to_dict(self, npc: dict) -> None:
         npc["id"] = self._npc_id.text().strip()
@@ -1615,6 +2455,29 @@ class ScenePropertyPanel(QScrollArea):
             npc["animFile"] = anim
         elif "animFile" in npc:
             del npc["animFile"]
+        ist = self._npc_initial_state.currentText().strip()
+        if anim and ist and self._npc_initial_state.count() > 0:
+            npc["initialAnimState"] = ist
+        elif "initialAnimState" in npc:
+            del npc["initialAnimState"]
+        if self._npc_patrol_enable.isChecked():
+            route = self._npc_patrol_route_from_table()
+            if len(route) >= 2:
+                pat_out: dict = {
+                    "route": route,
+                    "speed": int(self._npc_patrol_speed.value()),
+                }
+            else:
+                pat_out = {
+                    "route": self._default_patrol_route_for_npc(npc),
+                    "speed": int(self._npc_patrol_speed.value()),
+                }
+            ma = self._npc_patrol_move_anim.text().strip()
+            if ma:
+                pat_out["moveAnimState"] = ma
+            npc["patrol"] = pat_out
+        elif "patrol" in npc:
+            del npc["patrol"]
         self.changed.emit()
 
     def save_npc_props(self) -> dict | None:
@@ -1672,6 +2535,7 @@ class ScenePropertyPanel(QScrollArea):
         lay.addWidget(self._zn_stay)
         self._zn_exit = ActionEditor("onExit")
         lay.addWidget(self._zn_exit)
+        self._append_entity_delete_footer(lay)
         return w
 
     def _parse_float_cell(self, it: QTableWidgetItem | None, default: float = 0.0) -> float:
@@ -1872,7 +2736,9 @@ class ScenePropertyPanel(QScrollArea):
 
     def _build_spawn_panel(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        outer = QVBoxLayout(w)
+        form_host = QWidget()
+        form = QFormLayout(form_host)
         self._sp_key = QLineEdit()
         form.addRow("key", self._sp_key)
         self._sp_x = QDoubleSpinBox()
@@ -1886,6 +2752,8 @@ class ScenePropertyPanel(QScrollArea):
         self._sp_note = QLabel()
         self._sp_note.setWordWrap(True)
         form.addRow(self._sp_note)
+        outer.addWidget(form_host)
+        self._sp_delete_btn = self._append_entity_delete_footer(outer)
         return w
 
     def load_spawn_props(self, sc: dict, spawn_name: str) -> None:
@@ -1901,11 +2769,16 @@ class ScenePropertyPanel(QScrollArea):
             self._sp_key.setReadOnly(True)
             self._sp_key.setText("default")
             self._sp_note.setText("默认出生点，写入 JSON 字段 spawnPoint。")
+            self._sp_delete_btn.setEnabled(False)
+            self._sp_delete_btn.setToolTip("默认出生点不可删除。")
         else:
             sps = sc.setdefault("spawnPoints", {})
             pos = sps.setdefault(spawn_name, {"x": 0, "y": 0})
             self._sp_key.setReadOnly(False)
             self._sp_key.setText(spawn_name)
+            self._sp_delete_btn.setEnabled(True)
+            self._sp_delete_btn.setToolTip(
+                "从当前场景数据中移除此命名出生点（未 Save All 前仅内存变更）")
             self._sp_note.setText("命名出生点，写入 JSON 字段 spawnPoints。")
         self._sp_x.setValue(float(pos.get("x", 0)))
         self._sp_y.setValue(float(pos.get("y", 0)))
@@ -1943,6 +2816,13 @@ class SceneEditor(QWidget):
         self._model = model
         self._current_scene_id: str | None = None
         self._last_canvas_world: tuple[float, float] | None = None
+        self._scene_npc_runtimes: dict[str, _SceneNpcAnimRuntime] = {}
+        self._scene_npc_anim_timer = QTimer(self)
+        self._scene_npc_anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._scene_npc_anim_timer.setInterval(16)
+        self._scene_npc_anim_timer.timeout.connect(self._tick_scene_npc_anims)
+        self._patrol_preview_ids: set[str] = set()
+        self._patrol_preview_state: dict[str, dict] = {}
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1993,6 +2873,7 @@ class SceneEditor(QWidget):
         self._canvas.item_selected.connect(self._on_item_selected)
         self._canvas.item_deselected.connect(self._on_item_deselected)
         self._canvas.item_moved.connect(self._on_item_moved)
+        self._canvas.item_position_live.connect(self._on_item_position_live)
         self._canvas.item_zone_polygon_committed.connect(
             self._on_item_zone_polygon_committed)
         self._canvas.context_add_entity.connect(self._on_canvas_context_add_entity)
@@ -2002,6 +2883,16 @@ class SceneEditor(QWidget):
         self._props.changed.connect(lambda: model.mark_dirty("scene", self._current_scene_id or ""))
         self._props.interaction_range_changed.connect(self._on_props_interaction_range_changed)
         self._props.zone_polygon_changed.connect(self._on_props_zone_polygon_changed)
+        self._props.npc_scene_anim_refresh_requested.connect(
+            self._on_npc_scene_anim_refresh_requested)
+        self._props.npc_xy_live_changed.connect(self._on_npc_xy_live_changed)
+        self._props.delete_current_entity_requested.connect(self._delete_selected)
+        self._props.npc_patrol_overlay_refresh_requested.connect(
+            self._refresh_npc_patrol_overlay)
+        self._props.npc_patrol_preview_changed.connect(
+            self._on_npc_patrol_preview_changed)
+        self._canvas.item_npc_patrol_route_committed.connect(
+            self._on_npc_patrol_route_committed)
 
         splitter.addWidget(left)
         splitter.addWidget(self._canvas)
@@ -2009,7 +2900,299 @@ class SceneEditor(QWidget):
         splitter.setSizes([180, 800, 350])
         root.addWidget(splitter)
 
+        del_sc = QShortcut(QKeySequence.StandardKey.Delete, self)
+        del_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        del_sc.activated.connect(self._delete_selected)
+        bs_sc = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        bs_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        bs_sc.activated.connect(self._delete_selected)
+
         self._refresh_scene_list()
+
+    def _clear_scene_npc_anim_layers(self) -> None:
+        self._scene_npc_anim_timer.stop()
+        self._scene_npc_runtimes.clear()
+        self._patrol_preview_ids.clear()
+        self._patrol_preview_state.clear()
+
+    def _refresh_npc_patrol_overlay(self) -> None:
+        for nid in list(self._canvas._patrol_overlays.keys()):
+            self._canvas.remove_npc_patrol_overlay(nid)
+        npc = self._props._pending_npc
+        if self._props._stack.currentWidget() != self._props._npc_panel:
+            return
+        if npc is not None and self._props._npc_patrol_enable.isChecked():
+            route = (npc.get("patrol") or {}).get("route")
+            if isinstance(route, list) and len(route) >= 2:
+                self._canvas.set_npc_patrol_overlay(
+                    str(npc.get("id", "")), route)
+
+    def _on_npc_patrol_route_committed(
+        self, npc_id: str, route: object,
+    ) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None:
+            return
+        if not isinstance(route, list):
+            return
+        norm: list[dict[str, float]] = []
+        for p in route:
+            if isinstance(p, dict):
+                norm.append({
+                    "x": round(float(p.get("x", 0)), 1),
+                    "y": round(float(p.get("y", 0)), 1),
+                })
+        if len(norm) < 2:
+            return
+        for n in sc.get("npcs", []):
+            if isinstance(n, dict) and str(n.get("id", "")) == npc_id:
+                pat = n.setdefault("patrol", {})
+                pat["route"] = norm
+                self._model.mark_dirty("scene", self._current_scene_id or "")
+                self._props.refresh_npc_patrol_table(npc_id, norm)
+                self._patrol_preview_state.pop(npc_id, None)
+                return
+
+    def _on_npc_patrol_preview_changed(self, npc_id: str, on: bool) -> None:
+        nid = npc_id.strip()
+        if not nid:
+            return
+        if on:
+            self._patrol_preview_ids.add(nid)
+            self._patrol_preview_state.pop(nid, None)
+        else:
+            self._patrol_preview_ids.discard(nid)
+            self._patrol_preview_state.pop(nid, None)
+        self._refresh_one_scene_npc_anim(nid)
+
+    def _patrol_preview_advance(
+        self, npc_id: str, npc: dict, dt: float,
+    ) -> tuple[float, float]:
+        patrol = npc.get("patrol") or {}
+        route = patrol.get("route")
+        if not isinstance(route, list) or len(route) < 2:
+            return float(npc.get("x", 0)), float(npc.get("y", 0))
+        speed = float(patrol.get("speed", 60) or 60)
+        st = self._patrol_preview_state.setdefault(npc_id, {})
+        if "px" not in st:
+            st["px"] = float(npc.get("x", 0))
+            st["py"] = float(npc.get("y", 0))
+            st["ti"] = 0
+            st["step"] = 1
+        px = float(st["px"])
+        py = float(st["py"])
+        ti = int(st["ti"])
+        step = int(st["step"])
+        n = len(route)
+        tgt = route[ti]
+        tx = float(tgt["x"])
+        ty = float(tgt["y"])
+        dx, dy = tx - px, ty - py
+        dist = math.hypot(dx, dy)
+        move = speed * dt
+        if dist <= 1e-5 or dist <= move:
+            px, py = tx, ty
+            ti += step
+            if ti >= n:
+                ti = max(0, n - 1)
+                step = -1
+            elif ti < 0:
+                ti = 0
+                step = 1
+            st["ti"] = ti
+            st["step"] = step
+        else:
+            px += dx / dist * move
+            py += dy / dist * move
+        st["px"] = px
+        st["py"] = py
+        return px, py
+
+    def _public_asset_path(self, rel: str) -> Path | None:
+        r = (rel or "").strip().lstrip("/").replace("\\", "/")
+        if not r or self._model.project_path is None:
+            return None
+        return self._model.project_path / "public" / r
+
+    def _resolve_anim_public_path(self, anim_id: str) -> Path | None:
+        aid = anim_id.strip()
+        if not aid:
+            return None
+        if aid.startswith("/"):
+            aid = aid[1:]
+        return self._public_asset_path(aid)
+
+    def _try_add_scene_npc_anim(
+        self,
+        npc: dict,
+        json_memo: dict[str, dict],
+        atlas_memo: dict[str, QPixmap],
+    ) -> None:
+        npc_id = str(npc.get("id", "") or "")
+        if not npc_id:
+            return
+        anim_id = str(npc.get("animFile", "") or "").strip()
+        if not anim_id:
+            return
+        path = self._resolve_anim_public_path(anim_id)
+        if not path or not path.is_file():
+            return
+        jkey = str(path.resolve())
+        data = json_memo.get(jkey)
+        if data is None:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                return
+            json_memo[jkey] = data
+        pair = _resolved_anim_world_pair(data, self._model)
+        if not pair:
+            return
+        world_w, world_h = pair
+        cols = max(1, int(data.get("cols", 1) or 1))
+        rows = max(1, int(data.get("rows", 1) or 1))
+        sheet = str(data.get("spritesheet", "") or "").strip().lstrip("/")
+        if not sheet:
+            return
+        ap = self._public_asset_path(sheet)
+        if not ap or not ap.is_file():
+            return
+        akey = str(ap.resolve())
+        atlas = atlas_memo.get(akey)
+        if atlas is None or atlas.isNull():
+            atlas = QPixmap(str(ap))
+            if atlas.isNull():
+                return
+            atlas_memo[akey] = atlas
+        states = data.get("states")
+        if not isinstance(states, dict) or not states:
+            return
+        want = str(npc.get("initialAnimState", "") or "").strip()
+        if want in states:
+            state_name = want
+        elif "idle" in states:
+            state_name = "idle"
+        else:
+            state_name = next(iter(states.keys()))
+        pat = npc.get("patrol")
+        if isinstance(pat, dict) and npc_id in self._patrol_preview_ids:
+            ma = str(pat.get("moveAnimState", "") or "").strip()
+            if ma and ma in states:
+                state_name = ma
+        st = states.get(state_name)
+        if not isinstance(st, dict):
+            return
+        frames = st.get("frames") or [0]
+        if not isinstance(frames, list):
+            frames = [0]
+        frames_i: list[int] = []
+        for x in frames:
+            try:
+                frames_i.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        if not frames_i:
+            frames_i = [0]
+        rate = float(st.get("frameRate", 8) or 8)
+        loop = bool(st.get("loop", True))
+        item = QGraphicsPixmapItem()
+        item.setZValue(_NPC_SCENE_ANIM_PREVIEW_Z)
+        item.setOpacity(0.9)
+        item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self._canvas.graphics_scene().addItem(item)
+        rt = _SceneNpcAnimRuntime(
+            npc_id, item, atlas, cols, rows, world_w, world_h,
+            frames_i, rate, loop,
+        )
+        nx = float(npc.get("x", 0))
+        ny = float(npc.get("y", 0))
+        rt.draw_at(nx, ny)
+        self._scene_npc_runtimes[npc_id] = rt
+
+    def _rebuild_scene_npc_anim_layers(self) -> None:
+        self._clear_scene_npc_anim_layers()
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not sc:
+            return
+        jmemo: dict[str, dict] = {}
+        amemo: dict[str, QPixmap] = {}
+        for npc in sc.get("npcs", []):
+            if isinstance(npc, dict):
+                self._try_add_scene_npc_anim(npc, jmemo, amemo)
+        if self._scene_npc_runtimes:
+            self._scene_npc_anim_timer.start()
+
+    def _refresh_one_scene_npc_anim(self, npc_id: str) -> None:
+        if not self._current_scene_id:
+            return
+        sc = self._model.scenes.get(self._current_scene_id)
+        if not sc:
+            return
+        npc = None
+        for n in sc.get("npcs", []):
+            if isinstance(n, dict) and str(n.get("id", "")) == npc_id:
+                npc = n
+                break
+        old = self._scene_npc_runtimes.pop(npc_id, None)
+        if old is not None and old.item.scene() is not None:
+            old.item.scene().removeItem(old.item)
+        if npc is None:
+            if not self._scene_npc_runtimes:
+                self._scene_npc_anim_timer.stop()
+            return
+        jmemo: dict[str, dict] = {}
+        amemo: dict[str, QPixmap] = {}
+        self._try_add_scene_npc_anim(npc, jmemo, amemo)
+        if self._scene_npc_runtimes and not self._scene_npc_anim_timer.isActive():
+            self._scene_npc_anim_timer.start()
+
+    def _tick_scene_npc_anims(self) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not sc:
+            self._scene_npc_anim_timer.stop()
+            return
+        npc_by_id = {
+            str(n.get("id", "")): n
+            for n in sc.get("npcs", [])
+            if isinstance(n, dict) and n.get("id")
+        }
+        dt = self._scene_npc_anim_timer.interval() / 1000.0
+        for rid, rt in list(self._scene_npc_runtimes.items()):
+            npc = npc_by_id.get(rid)
+            if not npc:
+                continue
+            if rid in self._patrol_preview_ids:
+                px, py = self._patrol_preview_advance(rid, npc, dt)
+                rt.tick(dt, px, py)
+            else:
+                x = float(npc.get("x", 0))
+                y = float(npc.get("y", 0))
+                rt.tick(dt, x, y)
+        self._canvas.viewport().update()
+
+    def _on_npc_scene_anim_refresh_requested(self, npc_id: str) -> None:
+        if not npc_id.strip():
+            self._rebuild_scene_npc_anim_layers()
+        else:
+            self._refresh_one_scene_npc_anim(npc_id.strip())
+
+    def _on_npc_xy_live_changed(self, npc_id: str) -> None:
+        self._patrol_preview_state.pop(npc_id, None)
+        rt = self._scene_npc_runtimes.get(npc_id)
+        if rt is None:
+            return
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not sc:
+            return
+        for n in sc.get("npcs", []):
+            if isinstance(n, dict) and str(n.get("id", "")) == npc_id:
+                if npc_id not in self._patrol_preview_ids:
+                    rt.draw_at(float(n.get("x", 0)), float(n.get("y", 0)))
+                    self._canvas.viewport().update()
+                return
 
     def _refresh_scene_list(self) -> None:
         self._scene_list.clear()
@@ -2027,11 +3210,12 @@ class SceneEditor(QWidget):
         sid = current.data(Qt.ItemDataRole.UserRole)
         self._load_scene(sid)
 
-    def _load_scene(self, scene_id: str) -> None:
+    def _load_scene(self, scene_id: str, *, reset_view: bool = True) -> None:
         self._current_scene_id = scene_id
         sc = self._model.scenes.get(scene_id)
         if sc is None:
             return
+        self._clear_scene_npc_anim_layers()
         self._canvas.clear_scene()
 
         bgs = sc.get("backgrounds", [])
@@ -2063,8 +3247,10 @@ class SceneEditor(QWidget):
         rw, rh = _npc_reference_world_size(self._model)
         self._canvas.rebuild_npc_reference(world_w, world_h, rw, rh)
 
-        self._canvas.fit_all()
+        if reset_view:
+            self._canvas.fit_all()
         self._props.load_scene_props(sc, clear_pending_edits=True)
+        self._rebuild_scene_npc_anim_layers()
 
     def _on_npc_ref_toggled(self, checked: bool) -> None:
         self._canvas.set_npc_reference_visible(checked)
@@ -2075,6 +3261,9 @@ class SceneEditor(QWidget):
         self._canvas.rebuild_npc_reference(ww, wh, rw, rh)
 
     def _on_item_selected(self, kind: str, eid: str) -> None:
+        if kind != "npc":
+            self._patrol_preview_ids.clear()
+            self._patrol_preview_state.clear()
         sc = self._model.scenes.get(self._current_scene_id or "")
         if sc is None:
             return
@@ -2106,6 +3295,7 @@ class SceneEditor(QWidget):
             sc = self._model.scenes.get(self._current_scene_id)
             if sc:
                 self._props.load_scene_props(sc, clear_pending_edits=False)
+        self._refresh_npc_patrol_overlay()
 
     def _on_props_interaction_range_changed(self, kind: str, eid: str, r: float) -> None:
         if eid:
@@ -2149,6 +3339,38 @@ class SceneEditor(QWidget):
         self._props.refresh_zone_polygon_table(eid, poly_list)
         self._canvas.item_selected.emit(kind, eid)
 
+    def _on_item_position_live(
+        self, kind: str, eid: str, x: float, y: float,
+    ) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None:
+            return
+        rx = round(x, 1)
+        ry = round(y, 1)
+        if kind == "hotspot":
+            for hs in sc.get("hotspots", []):
+                if hs.get("id") == eid:
+                    hs["x"] = rx
+                    hs["y"] = ry
+                    return
+        elif kind == "npc":
+            for npc in sc.get("npcs", []):
+                if npc.get("id") == eid:
+                    npc["x"] = rx
+                    npc["y"] = ry
+                    self._patrol_preview_state.pop(eid, None)
+                    rt = self._scene_npc_runtimes.get(eid)
+                    if rt is not None:
+                        rt.draw_at(float(rx), float(ry))
+                        self._canvas.viewport().update()
+                    return
+        elif kind == "spawn":
+            if eid == "default":
+                sc["spawnPoint"] = {"x": rx, "y": ry}
+            else:
+                sps = sc.setdefault("spawnPoints", {})
+                sps[eid] = {"x": rx, "y": ry}
+
     def _on_item_moved(self, kind: str, eid: str, x: float, y: float) -> None:
         sc = self._model.scenes.get(self._current_scene_id or "")
         if sc is None:
@@ -2164,6 +3386,11 @@ class SceneEditor(QWidget):
                 if npc.get("id") == eid:
                     npc["x"] = round(x, 1)
                     npc["y"] = round(y, 1)
+                    self._patrol_preview_state.pop(eid, None)
+                    rt = self._scene_npc_runtimes.get(eid)
+                    if rt is not None:
+                        rt.draw_at(float(npc["x"]), float(npc["y"]))
+                        self._canvas.viewport().update()
                     break
         elif kind == "spawn":
             if eid == "default":
@@ -2187,7 +3414,7 @@ class SceneEditor(QWidget):
         self._props.save_spawn_props()
         self._model.mark_dirty("scene", self._current_scene_id or "")
         if self._current_scene_id:
-            self._load_scene(self._current_scene_id)
+            self._load_scene(self._current_scene_id, reset_view=False)
 
     def _require_scene(self) -> dict | None:
         sid = self._current_scene_id
@@ -2224,7 +3451,7 @@ class SceneEditor(QWidget):
             "interactionRange": 50, "data": {"text": ""},
         })
         self._model.mark_dirty("scene", self._current_scene_id or "")
-        self._load_scene(self._current_scene_id)
+        self._load_scene(self._current_scene_id, reset_view=False)
 
     def _add_hotspot(self) -> None:
         self._add_hotspot_at(100, 100)
@@ -2242,7 +3469,7 @@ class SceneEditor(QWidget):
             "dialogueFile": "", "interactionRange": 50,
         })
         self._model.mark_dirty("scene", self._current_scene_id or "")
-        self._load_scene(self._current_scene_id)
+        self._load_scene(self._current_scene_id, reset_view=False)
 
     def _add_npc(self) -> None:
         self._add_npc_at(150, 150)
@@ -2265,7 +3492,7 @@ class SceneEditor(QWidget):
             ],
         })
         self._model.mark_dirty("scene", self._current_scene_id or "")
-        self._load_scene(self._current_scene_id)
+        self._load_scene(self._current_scene_id, reset_view=False)
 
     def _add_zone(self) -> None:
         self._add_zone_at(50, 50)
@@ -2283,7 +3510,7 @@ class SceneEditor(QWidget):
         name = f"spawn_{n}"
         sps[name] = {"x": wx, "y": wy}
         self._model.mark_dirty("scene", self._current_scene_id or "")
-        self._load_scene(self._current_scene_id)
+        self._load_scene(self._current_scene_id, reset_view=False)
 
     def _add_spawn(self) -> None:
         self._add_spawn_at(200, 200)
@@ -2292,24 +3519,45 @@ class SceneEditor(QWidget):
         sc = self._require_scene()
         if sc is None:
             return
-        sel = self._canvas._gfx.selectedItems()
-        if not sel:
+        kind: str | None = None
+        eid: str | None = None
+        for it in self._canvas._gfx.selectedItems():
+            if hasattr(it, "entity_kind") and hasattr(it, "entity_id"):
+                ek = str(getattr(it, "entity_kind", "") or "")
+                ei = getattr(it, "entity_id", None)
+                if ek and ei is not None and str(ei) != "":
+                    kind, eid = ek, str(ei)
+                    break
+        if kind is None or eid is None:
+            w = self._props._stack.currentWidget()
+            if w == self._props._npc_panel and self._props._pending_npc:
+                kind, eid = "npc", str(
+                    self._props._pending_npc.get("id", "") or "")
+            elif w == self._props._hotspot_panel and self._props._pending_hotspot:
+                kind, eid = "hotspot", str(
+                    self._props._pending_hotspot.get("id", "") or "")
+            elif w == self._props._zone_panel and self._props._pending_zone:
+                kind, eid = "zone", str(
+                    self._props._pending_zone.get("id", "") or "")
+            elif w == self._props._spawn_panel and self._props._spawn_scene is not None:
+                kind = "spawn"
+                eid = str(self._props._spawn_name_original or "")
+        if not kind or not eid:
             return
-        it = sel[0]
-        if not hasattr(it, "entity_kind"):
+        if kind == "spawn" and eid == "default":
+            QMessageBox.information(
+                self, "场景编辑器", "默认出生点不可删除。")
             return
-        kind = it.entity_kind
-        eid = it.entity_id
         if kind == "hotspot":
             sc["hotspots"] = [h for h in sc.get("hotspots", []) if h.get("id") != eid]
         elif kind == "npc":
             sc["npcs"] = [n for n in sc.get("npcs", []) if n.get("id") != eid]
         elif kind == "zone":
             sc["zones"] = [z for z in sc.get("zones", []) if z.get("id") != eid]
-        elif kind == "spawn" and eid != "default":
+        elif kind == "spawn":
             sc.get("spawnPoints", {}).pop(eid, None)
         self._model.mark_dirty("scene", self._current_scene_id or "")
-        self._load_scene(self._current_scene_id)
+        self._load_scene(self._current_scene_id, reset_view=False)
 
     def select_by_id(self, item_id: str, scene_id: str = "") -> None:
         if scene_id:

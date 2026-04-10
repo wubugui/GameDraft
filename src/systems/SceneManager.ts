@@ -5,7 +5,9 @@ import type { Renderer } from '../rendering/Renderer';
 import { Hotspot } from '../entities/Hotspot';
 import { Npc } from '../entities/Npc';
 import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
-import type { SceneData, SceneRuntimeState, Position, GameContext, AnimationSetDef, SceneCameraConfig } from '../data/types';
+import type { SceneData, SceneRuntimeState, Position, GameContext, SceneCameraConfig } from '../data/types';
+import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
+import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import type { IGameSystem } from '../data/types';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
@@ -226,9 +228,10 @@ export class SceneManager implements IGameSystem {
         const npc = new Npc(npcDef);
         if (npcDef.animFile) {
           try {
-            const animDef = await this.assetManager.loadJson<AnimationSetDef>(npcDef.animFile);
-            const tex = await this.assetManager.loadTexture(animDef.spritesheet);
-            npc.loadSprite(tex, animDef);
+            const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(npcDef.animFile);
+            const tex = await this.assetManager.loadTexture(animRaw.spritesheet);
+            const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
+            npc.loadSprite(tex, animDef, npcDef.initialAnimState);
           } catch (_e) {
             // 加载失败时保留占位外观
           }

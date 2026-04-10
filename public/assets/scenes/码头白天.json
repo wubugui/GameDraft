@@ -69,10 +69,56 @@
     {
       "id": "new_npc_0",
       "name": "New NPC",
-      "x": 1908.0,
-      "y": 1144.3,
+      "x": 1752.2,
+      "y": 1100.5,
       "interactionRange": 50.0,
-      "animFile": "/assets/data/npc_yangren_anim.json"
+      "animFile": "/assets/data/npc_yangren_anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "new_npc_1",
+      "name": "New NPC",
+      "x": 1441.3,
+      "y": 945.9,
+      "interactionRange": 50.0,
+      "animFile": "/assets/data/boy_ring_anim.json",
+      "initialAnimState": "run_ring",
+      "patrol": {
+        "route": [
+          {
+            "x": 1208.3,
+            "y": 1088.6
+          },
+          {
+            "x": 1507.1,
+            "y": 1021.6
+          },
+          {
+            "x": 1606.9,
+            "y": 976.4
+          },
+          {
+            "x": 1800.6,
+            "y": 726.3
+          },
+          {
+            "x": 1227.0,
+            "y": 991.0
+          }
+        ],
+        "speed": 60,
+        "moveAnimState": "run_ring"
+      }
+    },
+    {
+      "id": "new_npc_2",
+      "name": "New NPC",
+      "x": 1688.1,
+      "y": 1099.1,
+      "interactionRange": 50.0,
+      "animFile": "/assets/data/player_anim.json",
+      "initialAnimState": "idle"
     }
-  ]
+  ],
+  "hotspots": []
 }

@@ -162,6 +162,8 @@ export interface NpcHotspotData {
 export interface PatrolDef {
   route: { x: number; y: number }[];
   speed?: number;
+  /** 沿路径移动时播放的状态名（须存在于 npc.animFile）；不设则移动时不切换动画 */
+  moveAnimState?: string;
 }
 
 export interface NpcDef {
@@ -174,6 +176,8 @@ export interface NpcDef {
   dialogueKnot?: string;
   interactionRange: number;
   animFile?: string;
+  /** 进入场景时播放的状态名；缺省时优先 idle，否则取 states 中第一个 */
+  initialAnimState?: string;
   patrol?: PatrolDef;
 }
 
@@ -310,9 +314,9 @@ export interface AnimationSetDef {
   spritesheet: string;
   cols: number;
   rows: number;
-  /** 世界单位：精灵在世界中的宽度 */
+  /** 世界单位：精灵在世界中的宽度（JSON 可与 worldHeight 二选一，由加载时归一化） */
   worldWidth: number;
-  /** 世界单位：精灵在世界中的高度（可从 worldWidth 和图集帧比例推导） */
+  /** 世界单位：精灵在世界中的高度（JSON 可与 worldWidth 二选一） */
   worldHeight: number;
   states: Record<string, AnimationStateDef>;
 }
@@ -375,7 +379,7 @@ export interface ICutsceneActor {
   readonly entityId: string;
   x: number;
   y: number;
-  moveTo(targetX: number, targetY: number, speed: number): Promise<void>;
+  moveTo(targetX: number, targetY: number, speed: number, moveAnimState?: string): Promise<void>;
   playAnimation(name: string): void;
   setFacing(dx: number, dy: number): void;
   setVisible(visible: boolean): void;

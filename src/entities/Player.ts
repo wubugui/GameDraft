@@ -75,7 +75,7 @@ export class Player implements ICutsceneActor {
     this.sprite.container.visible = visible;
   }
 
-  moveTo(targetX: number, targetY: number, speed: number): Promise<void> {
+  moveTo(targetX: number, targetY: number, speed: number, _moveAnimState?: string): Promise<void> {
     if (this.moveTarget) {
       this.moveTarget.resolve();
     }

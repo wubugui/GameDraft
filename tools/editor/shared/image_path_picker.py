@@ -21,6 +21,9 @@ from ..project_model import ProjectModel
 
 _IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All (*.*)"
 
+# 缩略预览边长上限（勿用 label.width() 等会随 pixmap 变化的量作为 scaled 目标）
+_CUTSCENE_PREVIEW_BOX = 100
+
 
 def disk_path_for_runtime_url(model: ProjectModel | None, url: str) -> Path | None:
     """Resolve /assets/... URL to file under public/assets/."""
@@ -87,10 +90,15 @@ def _set_preview_label(label: QLabel, path: Path | None) -> None:
     if pm.isNull():
         label.setText("(无法加载)")
         return
+    cap = min(
+        _CUTSCENE_PREVIEW_BOX,
+        max(16, label.maximumWidth()),
+        max(16, label.maximumHeight()),
+    )
     label.setPixmap(
         pm.scaled(
-            label.maximumWidth(),
-            label.maximumHeight(),
+            cap,
+            cap,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
