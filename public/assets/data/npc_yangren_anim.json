@@ -1,5 +1,5 @@
 {
-  "spritesheet": "/assets/images/characters/npc_blind_li.png",
+  "spritesheet": "/assets/images/characters/npc_yangren.png",
   "cols": 5,
   "rows": 2,
   "worldWidth": 100,
@@ -7,13 +7,14 @@
   "states": {
     "idle": {
       "frames": [
-        0
+        1
       ],
       "frameRate": 1,
       "loop": true
     },
     "walk": {
       "frames": [
+        1,
         2,
         3,
         4,

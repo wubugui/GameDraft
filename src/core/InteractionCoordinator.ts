@@ -67,8 +67,11 @@ export class InteractionCoordinator {
     if (stateController.currentState !== GameState.Exploring) return;
     if (dialogueManager.isActive) return;
 
+    const inkPath = npc.def.dialogueFile?.trim();
+    if (!inkPath) return;
+
     stateController.setState(GameState.Dialogue);
-    await dialogueManager.startDialogue(npc.def.dialogueFile, npc.def.name, npc.def.dialogueKnot);
+    await dialogueManager.startDialogue(inkPath, npc.def.name, npc.def.dialogueKnot);
   }
 
   private async handleInspect(hotspot: Hotspot, data: InspectData): Promise<void> {

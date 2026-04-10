@@ -226,6 +226,20 @@ class CommandWidget(QFrame):
             self._cmd_data["type"] = ct_new
         self._rebuild_params()
 
+    def refresh_animation_picker_items(self) -> None:
+        if self._current_type_str() != "entity_anim":
+            return
+        w = self._widgets.get("animation")
+        if not isinstance(w, IdRefSelector) or not self._model:
+            return
+        cur = w.current_id()
+        anims = self._model.all_anim_files()
+        w.set_items([(a, a) for a in anims])
+        if cur in anims:
+            w.set_current(cur)
+        else:
+            w.set_current("")
+
     def _connect_cutscene_spawn(self) -> None:
         sc_w = self._widgets.get("sceneId")
         sp_w = self._widgets.get("spawnPoint")
@@ -705,6 +719,7 @@ class CutsceneEditor(QWidget):
         root.addWidget(splitter)
         self._cmd_widgets: list[CommandWidget] = []
         self._refresh()
+        self._model.data_changed.connect(self._on_model_data_changed)
 
         self._c_id.textChanged.connect(self.mark_pending_changes)
         self._target_scene.value_changed.connect(self.mark_pending_changes)
@@ -713,6 +728,12 @@ class CutsceneEditor(QWidget):
         self._target_x.valueChanged.connect(self.mark_pending_changes)
         self._target_y.valueChanged.connect(self.mark_pending_changes)
         self._restore_chk.toggled.connect(self.mark_pending_changes)
+
+    def _on_model_data_changed(self, data_type: str, _item_id: str) -> None:
+        if data_type != "animation":
+            return
+        for cw in self._cmd_widgets:
+            cw.refresh_animation_picker_items()
 
     def mark_pending_changes(self, *args) -> None:
         if self._loading_ui:

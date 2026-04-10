@@ -169,7 +169,8 @@ export interface NpcDef {
   name: string;
   x: number;
   y: number;
-  dialogueFile: string;
+  /** 未配置时按 E 不会进入对话 */
+  dialogueFile?: string;
   dialogueKnot?: string;
   interactionRange: number;
   animFile?: string;

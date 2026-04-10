@@ -63,6 +63,7 @@ export class DialogueManager implements IGameSystem {
   }
 
   async startDialogue(inkPath: string, npcName: string, knotName?: string): Promise<void> {
+    if (!inkPath?.trim()) return;
     const jsonPath = inkPath.replace(/\.ink$/, '.ink.json');
     const jsonStr = await this.assetManager.loadText(jsonPath);
 

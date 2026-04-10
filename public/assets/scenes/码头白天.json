@@ -64,5 +64,15 @@
       "height_offset": 0.05
     }
   },
-  "filterId": "identity"
+  "filterId": "identity",
+  "npcs": [
+    {
+      "id": "new_npc_0",
+      "name": "New NPC",
+      "x": 1908.0,
+      "y": 1144.3,
+      "interactionRange": 50.0,
+      "animFile": "/assets/data/npc_yangren_anim.json"
+    }
+  ]
 }

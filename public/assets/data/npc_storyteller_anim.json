@@ -7,10 +7,9 @@
   "states": {
     "idle": {
       "frames": [
-        0,
-        1
+        0
       ],
-      "frameRate": 2,
+      "frameRate": 1,
       "loop": true
     },
     "walk": {

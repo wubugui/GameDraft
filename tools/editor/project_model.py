@@ -186,6 +186,10 @@ class ProjectModel(QObject):
         write_json(dp / "archive" / "documents.json", self.archive_documents)
         for name, data in self.animations.items():
             write_json(dp / f"{name}.json", data)
+        keep_anim = set(self.animations.keys())
+        for p in list(dp.glob("*_anim.json")):
+            if p.stem not in keep_anim:
+                p.unlink()
         for sid, data in self.scenes.items():
             write_json(sp / f"{sid}.json", data)
         from .flag_registry import flag_registry_path
