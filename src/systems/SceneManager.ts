@@ -8,6 +8,7 @@ import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
 import type { SceneData, SceneRuntimeState, Position, GameContext, SceneCameraConfig } from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
+import { resolvePathRelativeToAnimManifest } from '../core/assetPath';
 import type { IGameSystem } from '../data/types';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
@@ -229,7 +230,8 @@ export class SceneManager implements IGameSystem {
         if (npcDef.animFile) {
           try {
             const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(npcDef.animFile);
-            const tex = await this.assetManager.loadTexture(animRaw.spritesheet);
+            const sheetPath = resolvePathRelativeToAnimManifest(npcDef.animFile, animRaw.spritesheet);
+            const tex = await this.assetManager.loadTexture(sheetPath);
             const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
             npc.loadSprite(tex, animDef, npcDef.initialAnimState);
           } catch (_e) {

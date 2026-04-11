@@ -72,7 +72,7 @@
       "x": 1752.2,
       "y": 1100.5,
       "interactionRange": 50.0,
-      "animFile": "/assets/data/npc_yangren_anim.json",
+      "animFile": "/assets/animation/npc_yangren_anim/anim.json",
       "initialAnimState": "idle"
     },
     {
@@ -81,7 +81,7 @@
       "x": 1441.3,
       "y": 945.9,
       "interactionRange": 50.0,
-      "animFile": "/assets/data/boy_ring_anim.json",
+      "animFile": "/assets/animation/boy_ring_anim/anim.json",
       "initialAnimState": "run_ring",
       "patrol": {
         "route": [
@@ -116,7 +116,7 @@
       "x": 1688.1,
       "y": 1099.1,
       "interactionRange": 50.0,
-      "animFile": "/assets/data/player_anim.json",
+      "animFile": "/assets/animation/player_anim/anim.json",
       "initialAnimState": "idle"
     }
   ],

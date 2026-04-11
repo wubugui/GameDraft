@@ -175,6 +175,7 @@ export interface NpcDef {
   dialogueFile?: string;
   dialogueKnot?: string;
   interactionRange: number;
+  /** 动画包清单路径，如 `/assets/animation/<包目录名>/anim.json`；图集由清单内 spritesheet 相对该目录解析 */
   animFile?: string;
   /** 进入场景时播放的状态名；缺省时优先 idle，否则取 states 中第一个 */
   initialAnimState?: string;
@@ -310,10 +311,30 @@ export interface EncounterTriggerData {
 // 动画数据
 // ============================================================
 
+/** 图集中单个槽位（与 cols×rows 网格中一格对齐）的像素尺寸与内容包围盒 */
+export interface AtlasFrameBoxDef {
+  /** 图集格宽（像素），通常全表一致 */
+  width: number;
+  /** 图集格高（像素） */
+  height: number;
+  /** 精灵可见内容宽（alpha 裁切后，不含格内对称留白） */
+  contentWidth: number;
+  /** 精灵可见内容高 */
+  contentHeight: number;
+}
+
 export interface AnimationSetDef {
   spritesheet: string;
   cols: number;
   rows: number;
+  /** 单格像素尺寸；与 texture.width/cols、texture.height/rows 一致时可省略 */
+  cellWidth?: number;
+  cellHeight?: number;
+  /**
+   * 按图集线性索引 0…排列的帧框目录，长度等于本图集实际占用的槽位数。
+   * `states[*].frames` 中的每个数为指向本数组的下标（与 SpriteEntity 中 col=idx%cols 一致）。
+   */
+  atlasFrames?: AtlasFrameBoxDef[];
   /** 世界单位：精灵在世界中的宽度（JSON 可与 worldHeight 二选一，由加载时归一化） */
   worldWidth: number;
   /** 世界单位：精灵在世界中的高度（JSON 可与 worldWidth 二选一） */
@@ -322,6 +343,9 @@ export interface AnimationSetDef {
 }
 
 export interface AnimationStateDef {
+  /**
+   * 本状态按播放顺序引用的图集槽位索引（与 atlasFrames[i]、网格 col=idx%cols、row=floor(idx/cols) 一致）。
+   */
   frames: number[];
   frameRate: number;
   loop: boolean;
@@ -524,6 +548,17 @@ export interface ZoneRuleSlot {
 // 全局游戏配置
 // ============================================================
 
+/** 玩家精灵：动画包与逻辑状态（idle/walk/run）到 anim.json 中 states 键的映射 */
+export interface PlayerAvatarConfig {
+  /** anim.json 的 URL，默认 /assets/animation/player_anim/anim.json */
+  animManifest?: string;
+  /**
+   * 逻辑状态名 -> anim.json 里 states 的键。未写的键视为「与逻辑名同名」。
+   * 游戏内 Player 固定使用 idle / walk / run 三种逻辑名。
+   */
+  stateMap?: Record<string, string>;
+}
+
 export interface GameConfig {
   initialScene: string;
   initialQuest: string;
@@ -538,6 +573,8 @@ export interface GameConfig {
   viewport?: { width: number; height: number };
   /** 游戏窗口大小（容器 CSS 尺寸），不影响视口逻辑分辨率 */
   windowSize?: { width: number; height: number };
+  /** 玩家化身：动画资源与状态映射（见 PlayerAvatarConfig） */
+  playerAvatar?: PlayerAvatarConfig;
 }
 
 // ============================================================

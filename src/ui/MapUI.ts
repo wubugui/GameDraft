@@ -39,6 +39,15 @@ export class MapUI {
     this.currentSceneId = sceneId;
   }
 
+  /** 地图配置里出现过的场景 id（去重），供开发模式列表等使用 */
+  getConfiguredSceneIds(): string[] {
+    const seen = new Set<string>();
+    for (const n of this.nodes) {
+      if (n.sceneId) seen.add(n.sceneId);
+    }
+    return Array.from(seen);
+  }
+
   get isOpen(): boolean { return this._isOpen; }
 
   open(): void {

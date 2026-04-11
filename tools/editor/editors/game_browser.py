@@ -33,6 +33,7 @@ class GameBrowserTab(QWidget):
     """Toolbar + embedded Chromium view (or fallback if WebEngine missing)."""
 
     run_requested = Signal()
+    run_dev_requested = Signal()
     stop_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -53,6 +54,14 @@ class GameBrowserTab(QWidget):
         self._btn_run.setIconSize(icon_sz)
         self._btn_run.clicked.connect(self.run_requested.emit)
         bar.addWidget(self._btn_run)
+
+        self._btn_run_dev = QPushButton(
+            st.standardIcon(QStyle.StandardPixmap.SP_ArrowForward), "",
+        )
+        self._btn_run_dev.setToolTip("运行游戏 — 开发模式 (Ctrl+F5)")
+        self._btn_run_dev.setIconSize(icon_sz)
+        self._btn_run_dev.clicked.connect(self.run_dev_requested.emit)
+        bar.addWidget(self._btn_run_dev)
 
         self._btn_stop = QPushButton(
             st.standardIcon(QStyle.StandardPixmap.SP_MediaStop), "",

@@ -47,6 +47,17 @@
         "targetScene": "temple"
       },
       "autoTrigger": true
+    },
+    {
+      "id": "new_hotspot_2",
+      "type": "inspect",
+      "label": "",
+      "x": 465.3,
+      "y": 322.9,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      }
     }
   ],
   "depthConfig": {

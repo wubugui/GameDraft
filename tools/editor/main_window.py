@@ -101,7 +101,7 @@ class MainWindow(QMainWindow):
         self._game_proc_log: str = ""
         self._game_user_stopped: bool = False
         self._last_vite_dev_url: str | None = None
-        self._pending_cutscene_id: str | None = None
+        self._pending_launch_params: str | None = None
         self._tabs = QTabWidget()
         self.setCentralWidget(self._tabs)
         self._editor_instances: list = []
@@ -140,6 +140,15 @@ class MainWindow(QMainWindow):
         a_run.setShortcut(QKeySequence("F5"))
         a_run.triggered.connect(self._run_game)
         run_menu.addAction(a_run)
+        a_run_dev = QAction(
+            st.standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
+            "Run Game (Dev Mode)",
+            self,
+        )
+        a_run_dev.setShortcut(QKeySequence("Ctrl+F5"))
+        a_run_dev.setToolTip("启动并进入开发模式（URL ?mode=dev）")
+        a_run_dev.triggered.connect(self._run_game_dev)
+        run_menu.addAction(a_run_dev)
         a_stop = QAction(
             st.standardIcon(QStyle.StandardPixmap.SP_MediaStop),
             "Stop Game",
@@ -216,6 +225,16 @@ class MainWindow(QMainWindow):
         act_run.setShortcut(QKeySequence("F5"))
         act_run.triggered.connect(self._run_game)
         tb.addAction(act_run)
+
+        act_run_dev = QAction(
+            st.standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
+            "",
+            self,
+        )
+        act_run_dev.setToolTip("运行游戏 — 开发模式 (Ctrl+F5)")
+        act_run_dev.setShortcut(QKeySequence("Ctrl+F5"))
+        act_run_dev.triggered.connect(self._run_game_dev)
+        tb.addAction(act_run_dev)
 
         act_stop = QAction(
             st.standardIcon(QStyle.StandardPixmap.SP_MediaStop),
@@ -333,6 +352,7 @@ class MainWindow(QMainWindow):
         from .editors.anim_editor import AnimEditor
         from .editors.string_editor import StringEditor
         from .editors.game_config_editor import GameConfigEditor
+        from .editors.player_avatar_editor import PlayerAvatarEditor
         from .editors.flag_registry_editor import FlagRegistryEditor
         from .editors.filter_editor import FilterEditor
         from .editors.action_registry_editor import ActionRegistryEditor
@@ -350,7 +370,8 @@ class MainWindow(QMainWindow):
             ("Dialogue", DialogueBrowser),
             ("Audio", AudioEditor),
             ("Filters", FilterEditor),
-            ("Animation", AnimEditor),
+            ("动画浏览", AnimEditor),
+            ("玩家化身", PlayerAvatarEditor),
             ("Strings", StringEditor),
             ("Config", GameConfigEditor),
             ("Flags", FlagRegistryEditor),
@@ -365,6 +386,7 @@ class MainWindow(QMainWindow):
 
         self._game_browser = GameBrowserTab(self)
         self._game_browser.run_requested.connect(self._run_game)
+        self._game_browser.run_dev_requested.connect(self._run_game_dev)
         self._game_browser.stop_requested.connect(self._stop_game)
         self._tabs.addTab(self._game_browser, "Game")
 
@@ -429,7 +451,7 @@ class MainWindow(QMainWindow):
             )
         return True
 
-    def _run_game(self) -> None:
+    def _run_game(self, *, launch_params: str | None = None) -> None:
         if self._model.project_path is None:
             return
         self._save_all()
@@ -447,7 +469,10 @@ class MainWindow(QMainWindow):
 
         if (self._game_proc is not None
                 and self._game_proc.state() != QProcess.ProcessState.NotRunning):
-            self._focus_game_tab_and_load(self._last_vite_dev_url)
+            self._focus_game_tab_and_load(
+                self._last_vite_dev_url,
+                extra_params=launch_params or "",
+            )
             self._status.showMessage("Dev server already running; reloaded Game tab.", 3000)
             return
 
@@ -467,11 +492,16 @@ class MainWindow(QMainWindow):
         proc.errorOccurred.connect(self._on_game_proc_error)
         proc.finished.connect(self._on_game_proc_finished)
         self._game_proc = proc
+        self._pending_launch_params = launch_params
         self._game_proc.start("cmd.exe", ["/c", "npm run dev"])
         self._status.showMessage("Starting Vite dev server…", 5000)
         self._game_browser.show_message("Starting dev server…")
         self._tabs.setCurrentWidget(self._game_browser)
         self._game_ready_timer.start(60_000)
+
+    def _run_game_dev(self) -> None:
+        """与 F5 相同流程，但加载 URL 带 mode=dev（开发模式 UI）。"""
+        self._run_game(launch_params="mode=dev")
 
     def _get_game_window_size(self) -> tuple[int, int]:
         cfg = self._model.game_config
@@ -521,10 +551,8 @@ class MainWindow(QMainWindow):
         self._game_server_ready_for_current_run = True
         self._last_vite_dev_url = url
         self._game_ready_timer.stop()
-        params = ""
-        if self._pending_cutscene_id:
-            params = f"mode=dev&play_cutscene={self._pending_cutscene_id}"
-            self._pending_cutscene_id = None
+        params = self._pending_launch_params or ""
+        self._pending_launch_params = None
         self._focus_game_tab_and_load(url, extra_params=params)
         self._status.showMessage("Dev server ready.", 3000)
 
@@ -560,7 +588,9 @@ class MainWindow(QMainWindow):
             return
         self._game_server_ready_for_current_run = True
         url = _vite_dev_url_from_log(self._game_proc_log) or self._last_vite_dev_url or GAME_DEV_URL
-        self._focus_game_tab_and_load(url)
+        params = self._pending_launch_params or ""
+        self._pending_launch_params = None
+        self._focus_game_tab_and_load(url, extra_params=params)
         self._status.showMessage(
             "Timeout: opened dev URL; if the page fails, check Game tab or Run output.",
             8000,
@@ -638,8 +668,9 @@ class MainWindow(QMainWindow):
             )
             self._status.showMessage(f"Playing cutscene: {cutscene_id}", 3000)
         else:
-            self._pending_cutscene_id = cutscene_id
-            self._run_game()
+            self._run_game(
+                launch_params=f"mode=dev&play_cutscene={cutscene_id}",
+            )
 
     def _on_game_play_window_closed(self) -> None:
         self._game_play_window = None

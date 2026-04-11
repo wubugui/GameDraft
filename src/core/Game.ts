@@ -44,9 +44,10 @@ import { DebugPanelUI } from '../ui/DebugPanelUI';
 import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
 import { GameState } from '../data/types';
-import type { IGameSystem, AnimationSetDef, GameConfig } from '../data/types';
+import type { IGameSystem, AnimationSetDef, GameConfig, SceneDataRaw } from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
+import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
@@ -71,6 +72,8 @@ declare global {
       playCutscene(id: string): void;
       reload(): void;
       isReady(): boolean;
+      /** 重新打开 Dev Mode 面板（从场景列表跳转后不会自动再开） */
+      openDevPanel(): void;
     };
   }
 }
@@ -143,6 +146,10 @@ export class Game {
     initialScene: '',
     initialQuest: '',
     fallbackScene: '',
+    playerAvatar: {
+      animManifest: '/assets/animation/player_anim/anim.json',
+      stateMap: {},
+    },
   };
 
   constructor() {
@@ -331,6 +338,13 @@ export class Game {
       pickupNotification: this.pickupNotification,
       inspectBox: this.inspectBox,
       shopUI: this.shopUI,
+      applyPlayerAvatar: (path, sm) => this.applyPlayerAvatarFromAction(path, sm),
+      resetPlayerAvatar: () => this.resetPlayerAvatarFromAction(),
+      setSceneDepthFloorOffset: (v) => { this.sceneDepthSystem.floorOffset = v; },
+      resetSceneDepthFloorOffset: () => {
+        const cfg = this.sceneDepthSystem.currentConfig;
+        this.sceneDepthSystem.floorOffset = cfg?.floor_offset ?? 0;
+      },
     });
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
@@ -382,6 +396,10 @@ export class Game {
         return { width: s.worldWidth, height: s.worldHeight };
       },
       applyDebugSceneWorldSize: (w, h) => this.applyDebugSceneWorldSize(w, h),
+      isDevMode: () => this.isDevMode,
+      goToDevScene: () => {
+        void this.devLoadScene('dev_room');
+      },
     });
     this.debugTools.init();
 
@@ -450,30 +468,44 @@ export class Game {
       }
       if (cfg.viewport) this.gameConfig.viewport = cfg.viewport;
       if (cfg.windowSize) this.gameConfig.windowSize = cfg.windowSize;
+      if (cfg.playerAvatar !== undefined) {
+        const pa = cfg.playerAvatar;
+        this.gameConfig.playerAvatar = {
+          animManifest: pa.animManifest ?? this.gameConfig.playerAvatar?.animManifest,
+          stateMap: pa.stateMap ? { ...pa.stateMap } : this.gameConfig.playerAvatar?.stateMap,
+        };
+      }
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
     }
   }
 
-  private async setupPlayer(): Promise<void> {
-    let animDef: AnimationSetDef;
-    let texture: any;
-
+  /** 从磁盘加载玩家动画资源；失败返回 null（由调用方决定占位图集）。 */
+  private async loadPlayerAvatarResources(
+    playerAnimPath: string,
+  ): Promise<{ texture: any; animDef: AnimationSetDef } | null> {
     try {
-      const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>('/assets/data/player_anim.json');
-
+      const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(playerAnimPath);
       if (animRaw.spritesheet) {
-        texture = await this.assetManager.loadTexture(animRaw.spritesheet);
-        animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
-      } else {
-        const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
-        texture = placeholder.texture;
-        animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
+        const sheetPath = resolvePathRelativeToAnimManifest(playerAnimPath, animRaw.spritesheet);
+        const texture = await this.assetManager.loadTexture(sheetPath);
+        const animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
+        return { texture, animDef };
       }
-    } catch {
       const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
-      texture = placeholder.texture;
-      animDef = {
+      const texture = placeholder.texture;
+      const animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
+      return { texture, animDef };
+    } catch {
+      return null;
+    }
+  }
+
+  private placeholderPlayerAvatar(): { texture: any; animDef: AnimationSetDef } {
+    const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
+    return {
+      texture: placeholder.texture,
+      animDef: {
         spritesheet: '',
         cols: 6,
         rows: 1,
@@ -484,12 +516,69 @@ export class Game {
           [ANIM_WALK]: { frames: [2, 3, 4, 5], frameRate: 8, loop: true },
           [ANIM_RUN]:  { frames: [2, 3, 4, 5], frameRate: 12, loop: true },
         },
-      };
-    }
+      },
+    };
+  }
 
+  private mountPlayerAvatar(
+    texture: any,
+    animDef: AnimationSetDef,
+    stateMap: Record<string, string> | undefined,
+    sourcePathForLog: string,
+    applyStateMap: boolean,
+  ): void {
     this.playerAnimDef = animDef;
     this.player.sprite.loadFromDef(texture, animDef);
+    const sm = applyStateMap ? stateMap : undefined;
+    this.player.sprite.setLogicalStateMap(sm);
+    if (sm && animDef.states) {
+      for (const [logical, clip] of Object.entries(sm)) {
+        if (clip && !animDef.states[clip]) {
+          console.warn(
+            `Game: playerAvatar.stateMap["${logical}"] -> "${clip}" is not a state in ${sourcePathForLog}`,
+          );
+        }
+      }
+    }
     this.player.sprite.playAnimation(ANIM_IDLE);
+  }
+
+  /** 事件 / Action：切换动画包与映射；加载失败则不打断当前化身。 */
+  async applyPlayerAvatarFromAction(
+    manifestPath: string,
+    stateMap?: Record<string, string> | null,
+  ): Promise<void> {
+    const path = manifestPath.trim();
+    if (!path) return;
+    const loaded = await this.loadPlayerAvatarResources(path);
+    if (!loaded) {
+      console.warn('applyPlayerAvatar: 无法加载', path);
+      return;
+    }
+    const sm =
+      stateMap && Object.keys(stateMap).length > 0 ? stateMap : undefined;
+    this.mountPlayerAvatar(loaded.texture, loaded.animDef, sm, path, true);
+  }
+
+  /** 按 game_config.playerAvatar 恢复（与开局 setupPlayer 数据源一致）。 */
+  async resetPlayerAvatarFromAction(): Promise<void> {
+    const avatar = this.gameConfig.playerAvatar;
+    const defaultManifest = '/assets/animation/player_anim/anim.json';
+    const path = (avatar?.animManifest?.trim() || defaultManifest);
+    await this.applyPlayerAvatarFromAction(path, avatar?.stateMap ?? null);
+  }
+
+  private async setupPlayer(): Promise<void> {
+    const avatar = this.gameConfig.playerAvatar;
+    const defaultManifest = '/assets/animation/player_anim/anim.json';
+    const playerAnimPath = (avatar?.animManifest?.trim() || defaultManifest);
+    const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
+    if (loaded) {
+      this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true);
+    } else {
+      const { texture, animDef } = this.placeholderPlayerAvatar();
+      this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false);
+    }
     this.renderer.entityLayer.addChild(this.player.sprite.container);
 
     const playerPosGetter = () => ({ x: this.player.x, y: this.player.y });
@@ -662,6 +751,10 @@ export class Game {
     this.devModeUI = new DevModeUI(this.renderer, {
       getCutsceneIds: () => this.cutsceneManager.getCutsceneIds(),
       playCutscene: (id: string) => this.devPlayCutscene(id),
+      getScenes: () => this.getDevSceneEntries(),
+      loadScene: (id: string) => {
+        void this.devLoadScene(id);
+      },
       reload: () => this.devReload(),
     });
     this.devModeUI.open();
@@ -670,6 +763,7 @@ export class Game {
       playCutscene: (id: string) => this.devPlayCutscene(id),
       reload: () => this.devReload(),
       isReady: () => true,
+      openDevPanel: () => this.devModeUI?.open(),
     };
 
     if (playCutscene) {
@@ -694,6 +788,48 @@ export class Game {
 
   private devReload(): void {
     window.location.reload();
+  }
+
+  /** 开发模式场景列表：地图节点 + game_config 入口/回退 + dev_room，去重排序 */
+  private getDevSceneIds(): string[] {
+    const ids = new Set<string>();
+    for (const sid of this.mapUI.getConfiguredSceneIds()) ids.add(sid);
+    ids.add('dev_room');
+    if (this.gameConfig.initialScene) ids.add(this.gameConfig.initialScene);
+    if (this.gameConfig.fallbackScene) ids.add(this.gameConfig.fallbackScene);
+    return Array.from(ids).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  }
+
+  /** 开发模式列表展示名取自各场景 JSON 的 name，缺省或加载失败时用 id */
+  private async getDevSceneEntries(): Promise<Array<{ id: string; name: string }>> {
+    const ids = this.getDevSceneIds();
+    return Promise.all(
+      ids.map(async (id) => {
+        try {
+          const raw = await this.assetManager.loadJson<SceneDataRaw>(`assets/scenes/${id}.json`);
+          const n = raw.name;
+          const name = typeof n === 'string' && n.trim() ? n.trim() : id;
+          return { id, name };
+        } catch {
+          return { id, name: id };
+        }
+      }),
+    );
+  }
+
+  private async devLoadScene(sceneId: string): Promise<void> {
+    if (!sceneId || this.sceneManager.switching) return;
+    this.devModeUI?.close();
+    try {
+      await this.sceneManager.switchScene(sceneId);
+      this.mapUI.setCurrentScene(sceneId);
+      // dev_room 是开发模式枢纽：回到此处时再打开 Dev 面板；其它场景保持关闭以免挡画面
+      if (this.isDevMode && sceneId === 'dev_room') {
+        this.devModeUI?.open();
+      }
+    } catch (e) {
+      console.warn('DevMode: failed to load scene', sceneId, e);
+    }
   }
 
   private async tryStartInitialPrologue(): Promise<void> {

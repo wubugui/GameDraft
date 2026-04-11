@@ -1,3 +1,11 @@
+/**
+ * 游戏内 Action 注册表。
+ *
+ * 约定：凡在此处 executor.register 的新类型，必须同步到
+ * `tools/editor/shared/action_editor.py` 的 ACTION_TYPES，并配置 _PARAM_SCHEMAS
+ * 或 setPlayerAvatar / enableRuleOffers 等专用表单，否则主编辑器无法添加该 Action，
+ * 且 `tools/editor/validator.py` 会对数据中的未知 type 报错。
+ */
 import type { ActionExecutor } from './ActionExecutor';
 import type { RuleOfferRegistry } from './RuleOfferRegistry';
 import type { EventBus } from './EventBus';
@@ -35,6 +43,14 @@ export interface ActionRegistryDeps {
   pickupNotification: { show(name: string, count: number): void; forceCleanup(): void };
   inspectBox: { readonly isOpen: boolean; close(): void };
   shopUI: { openShop(shopId: string): void };
+  /** 运行时切换玩家动画包与 idle/walk/run clip映射（失败则保持当前化身） */
+  applyPlayerAvatar: (manifestPath: string, stateMap?: Record<string, string> | null) => Promise<void>;
+  /** 按 game_config.playerAvatar 恢复玩家化身 */
+  resetPlayerAvatar: () => Promise<void>;
+  /** 运行时覆盖场景深度遮挡的 floor_offset（脚底衬底偏移，与 depthConfig 同语义） */
+  setSceneDepthFloorOffset: (floorOffset: number) => void;
+  /** 恢复为当前场景已加载的 depthConfig.floor_offset */
+  resetSceneDepthFloorOffset: () => void;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -153,4 +169,44 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['itemId', 'price']);
 
   executor.register('inventoryDiscard', (p) => d.inventoryManager.discardItem(p.itemId as string), ['itemId']);
+
+  executor.register('setPlayerAvatar', (p) => {
+    let path = String(p.animManifest ?? '').trim();
+    if (!path) {
+      const bid = String(p.bundleId ?? '').trim();
+      if (bid) path = `/assets/animation/${bid}/anim.json`;
+    }
+    if (!path) {
+      console.warn('setPlayerAvatar: 需要 params.animManifest 或 params.bundleId');
+      return;
+    }
+    const raw = p.stateMap;
+    let stateMap: Record<string, string> | undefined;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof v === 'string' && v.trim()) out[k] = v.trim();
+      }
+      stateMap = Object.keys(out).length > 0 ? out : undefined;
+    }
+    void d.applyPlayerAvatar(path, stateMap).catch((e) => console.warn('setPlayerAvatar', e));
+  }, ['animManifest', 'bundleId', 'stateMap']);
+
+  executor.register('resetPlayerAvatar', (_p) => {
+    void d.resetPlayerAvatar().catch((e) => console.warn('resetPlayerAvatar', e));
+  }, []);
+
+  executor.register('setSceneDepthFloorOffset', (p) => {
+    const raw = p.floor_offset;
+    const v = typeof raw === 'number' ? raw : Number(raw);
+    if (!Number.isFinite(v)) {
+      console.warn('setSceneDepthFloorOffset: params.floor_offset 需为有限数值');
+      return;
+    }
+    d.setSceneDepthFloorOffset(v);
+  }, ['floor_offset']);
+
+  executor.register('resetSceneDepthFloorOffset', (_p) => {
+    d.resetSceneDepthFloorOffset();
+  }, []);
 }

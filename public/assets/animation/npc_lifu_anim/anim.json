@@ -1,0 +1,122 @@
+{
+  "spritesheet": "atlas.png",
+  "cols": 4,
+  "rows": 4,
+  "states": {
+    "lifu_stand": {
+      "frames": [
+        0
+      ],
+      "frameRate": 1,
+      "loop": false
+    },
+    "lifu_walk": {
+      "frames": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "frameRate": 8,
+      "loop": true
+    }
+  },
+  "worldHeight": 160,
+  "cellWidth": 420,
+  "cellHeight": 703,
+  "atlasFrames": [
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 308,
+      "contentHeight": 695
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 373,
+      "contentHeight": 667
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 333,
+      "contentHeight": 693
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 349,
+      "contentHeight": 692
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 412,
+      "contentHeight": 677
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 352,
+      "contentHeight": 689
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 310,
+      "contentHeight": 683
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 340,
+      "contentHeight": 675
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 372,
+      "contentHeight": 668
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 333,
+      "contentHeight": 693
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 386,
+      "contentHeight": 688
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 412,
+      "contentHeight": 678
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 341,
+      "contentHeight": 691
+    },
+    {
+      "width": 420,
+      "height": 703,
+      "contentWidth": 317,
+      "contentHeight": 681
+    }
+  ]
+}

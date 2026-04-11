@@ -11,5 +11,13 @@
   "windowSize": {
     "width": 1024,
     "height": 768
+  },
+  "playerAvatar": {
+    "animManifest": "/assets/animation/player_anim/anim.json",
+    "stateMap": {
+      "idle": "hero_stand",
+      "walk": "hero_run",
+      "run": "hero_run_new"
+    }
   }
 }

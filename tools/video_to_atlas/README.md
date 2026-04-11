@@ -1,14 +1,12 @@
-# 视频转 Atlas（GameDraft）
+# Video-to-Atlas Workspace (GameDraft)
 
-从视频中按时间区间抽帧，维护**全局帧库**；可创建多个**命名动画序列**（每段对应 `AnimationSetDef` 里的一个 `state`），再导出 **native 等大单元格** 图集 PNG（按各帧 alpha 包围盒裁切后的原始像素尺寸取 max 作为格宽、格高，格内底边 + 水平居中）及 `.anim.json` /可选 `.meta.json`。格式与运行时 `AnimationSetDef`（见工程 `src/data/types.ts`）及示例 `public/assets/data/npc_yangren_anim.json` 一致。
+从视频中按时间区间抽帧，管理**多视频子帧库**和**动画序列**，导出 **native 等大单元格**图集 PNG 及 `.anim.json`。工作区数据持久化为 `.vtaw` 目录。
 
 ## 环境
 
 - Python 3.10+
 
 ## 安装
-
-在仓库根目录或本工具目录下执行：
 
 ```bat
 cd /d f:\GameDraft\tools\video_to_atlas
@@ -22,30 +20,70 @@ cd /d f:\GameDraft\tools\video_to_atlas
 python main.py
 ```
 
+## 模块结构
+
+| 文件 | 职责 |
+|---|---|
+| `main.py` | 入口，启动 `QApplication` + `MainWindow` |
+| `main_window.py` | 主窗口：单页纵向工作流 (素材库、首尾帧、动画序列、导出) |
+| `workspace_model.py` | 数据模型：`Workspace`, `VideoSource`, `FrameItem`, `SlotRef`, `AnimationClip`, `ExportJob`, `ChromaParams`, `GlobalSettings` + save/load |
+| `import_dialog.py` | 导入弹窗：视频加载、时间区间、色键、抽帧 |
+| `frame_viewer.py` | 帧大图查看对话框 (`QGraphicsView` + 缩放平移 + 棋盘格) |
+| `frame_sequence_player.py` | 共享帧序列播放器组件 (范围预览 + 动画预览复用) |
+| `export_panel.py` | 导出工作台：per-job 参数、分别导出、合并导出 |
+| `atlas_core.py` | 图像处理核心：抽帧解码、色键、图集打包、导出格式生成 |
+| `loop_range_bar.py` | 双关键点循环区间条 UI 组件 |
+| `gui.py` | (旧版主窗口，已废弃，保留备查) |
+| `project_model.py` | (旧版数据模型，已废弃，保留备查) |
+
+## 工作区持久化格式
+
+```
+my_project.vtaw/
+  project.json          # manifest: version + VideoSources + clips + export_jobs + settings
+  frames/
+    {frame_id}.png      # 每帧 RGBA PNG
+  thumbnails/
+    {frame_id}.png      # 64x64 缩略图缓存 (可重建)
+```
+
 ## 工作流概要
 
-1. **打开视频**，用时间轴设 **t0、t1**；**播放始终只在区间内**（点播放会从 t0 起播）；可选 **到 t1 后循环回 t0**，否则在区间末尾暂停。拖动圆点会立即约束当前播放位置，无需暂停重播。
-2. **色键**：在「色键」分组设 RGB、容差；左侧 **原图 | 色键结果（棋盘底）** 会按「预览采样时刻」刷新（播放器当前时刻 / t0 / 中点 / t1），与抽帧使用同一抠图逻辑。
-3. **追加抽取**：设 **目标 FPS、最大帧数**，点 **「追加抽取当前区间到全局库」**。可反复换视频或改区间继续追加，**不会清空**已有库帧。
-4. **全局帧库**：缩略图网格展示所有帧；**范围首/尾索引** 用于后续操作。可 **删除库中一段索引**（会从所有动画序列里移除对应帧引用）。
-5. **库内首尾蒙版**：设首、尾 **库索引** 与权重，下方为混合预览，便于选循环尾帧。
-6. **动画序列**：**新建动画**（名称即导出 JSON 中的 `state` 名）；**将库范围加入当前动画** 或 **用库范围新建动画**；在列表中 **删除帧项、上移/下移**；**帧率、是否循环** 按序列单独设置；**播放预览** 小窗轮播当前序列。
-7. **导出**：
-   - **导出当前动画**：一张 PNG + `.anim.json`（仅含当前 state）；可选 **同时写出 .meta.json**。
-   - **合并导出全部动画**：一张 PNG + 一个 `.anim.json`（含多个 state，类似 `npc_yangren_anim.json`）。可选 **合并时复用相同帧**：按帧 id 去重占格，减小图集；关闭则每个引用单独占格。
-8. **单元格内边距**：导出区的「单元格内边距」对应打包时格内留白（与旧版 padding 语义一致）。
-9. **帧索引基准**：JSON 中 `frames` 可与工程一致选 **0 或 1** 起。
+1. **新建/打开工作区**：菜单 文件 > 新建工作区 / 打开工作区...
+2. **导入视频帧**：菜单 导入 > 新建导入... 弹出导入弹窗；或在视频列表右键 > 继续导入... 追加帧到已有视频源
+3. **素材库管理**：
+   - 视频列表中点击切换**激活子库**
+   - 帧格网格查看帧缩略图，Ctrl+左键设首帧，Alt+左键设尾帧
+   - 右键菜单：设首帧、设尾帧、删除帧、查看大图
+   - 每个视频下的帧仅支持尾部追加 + 中间删除，**禁止重排**
+4. **首尾帧工作区**：洋葱皮对照预览 + 范围循环播放预览 (可调速度)
+5. **动画序列**：
+   - 新建动画、用激活子库首尾范围创建
+   - 每帧引用全局 `frame_id` (UUID hex16)，支持单帧/全部水平翻转 (不改原始帧)
+   - 缺失帧标红显示，可手动替换修补
+   - 序列内 frame_id 不允许重复
+6. **导出工作台**：
+   - 添加动画到导出列表，每行独立设置缩放/边距/world尺寸
+   - 分别导出（每个动画独立 PNG + anim.json）
+   - 合并导出（所有动画到一张图集 + 多 state anim.json）
+   - 合并导出支持每 clip 不同分辨率缩放
+7. **保存**：Ctrl+S 手动保存工作区
+
+## 关键设计决策
+
+- **frame_id** 全局唯一 UUID hex16，删帧前扫描所有动画引用并提示确认
+- **SlotRef(frame_id, flip_h)** 替代分离的 frame_ids + flip 列表
+- **flip_h** 在预览/导出时对像素做临时翻转副本，不改原始帧数据
+- **ExportJob** 参数不写回 AnimationClip，导出时读最新 clip 状态
+- **anchor** 固定 bottom-center (与 GameDraft SpriteEntity 一致)
+- 删除 clip 时级联删除其 ExportJob
 
 ## 导出文件
 
-- `*.png`：图集（RGBA；色键开启时含透明）。
-- `*.meta.json`（可选）：列行、cell 尺寸、帧索引等调试信息（`version: 2`，`packMode: native_equal_cells`）。
-- `*.anim.json`：`spritesheet`、`cols`、`rows`、`worldWidth`、`worldHeight`、`states`。
-
-## 区间循环仍觉跳变时（资料与建议）
-
-Qt/QMediaPlayer **做不到真正无缝**区间循环（类似 [QTBUG-34706](https://bugreports.qt.io/browse/QTBUG-34706)、[StackOverflow 讨论](https://stackoverflow.com/questions/70007728/qt-multimedia-is-there-a-way-to-implement-gapless-loop-video-playback-in-pyside)）。可尝试 ffmpeg 缩短 GOP、保证首尾画面可接；Windows 上可调整 `main.py` 中 `QT_MEDIA_BACKEND`。
+- `*.png`：图集 (RGBA)
+- `*.meta.json` (可选)：单格尺寸、帧索引等调试信息
+- `*.anim.json`：`spritesheet`、`cols`、`rows`、`worldWidth`/`worldHeight`、`states`
 
 ## 依赖
 
-- `opencv-python`、`numpy`、`Pillow`、`PySide6`
+- `opencv-python`, `numpy`, `Pillow`, `PySide6`

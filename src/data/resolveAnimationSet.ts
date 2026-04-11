@@ -8,15 +8,39 @@ export type AnimationSetDefInput = Omit<AnimationSetDef, 'worldWidth' | 'worldHe
 
 const DEFAULT_WORLD_WIDTH = 100;
 
+/** 单格像素尺寸：JSON 可显式写 cellWidth/cellHeight，否则按纹理与 cols/rows 推导。 */
+export function effectiveCellPixelSize(
+  input: AnimationSetDefInput,
+  texturePixelWidth: number,
+  texturePixelHeight: number,
+): { cellW: number; cellH: number } {
+  const cols = Math.max(1, input.cols);
+  const rows = Math.max(1, input.rows);
+  let cellW: number;
+  let cellH: number;
+  if (typeof input.cellWidth === 'number' && input.cellWidth > 0) {
+    cellW = input.cellWidth;
+  } else {
+    cellW = texturePixelWidth / cols;
+  }
+  if (typeof input.cellHeight === 'number' && input.cellHeight > 0) {
+    cellH = input.cellHeight;
+  } else {
+    cellH = texturePixelHeight / rows;
+  }
+  return { cellW, cellH };
+}
+
 export function resolveAnimationWorldSize(
   input: AnimationSetDefInput,
   texturePixelWidth: number,
   texturePixelHeight: number,
 ): { worldWidth: number; worldHeight: number } {
-  const cols = Math.max(1, input.cols);
-  const rows = Math.max(1, input.rows);
-  const frameW = texturePixelWidth / cols;
-  const frameH = texturePixelHeight / rows;
+  const { cellW: frameW, cellH: frameH } = effectiveCellPixelSize(
+    input,
+    texturePixelWidth,
+    texturePixelHeight,
+  );
   const aspectHW = frameH / frameW;
 
   const wRaw = input.worldWidth;
@@ -42,10 +66,13 @@ export function normalizeAnimationSetDef(
   texturePixelWidth: number,
   texturePixelHeight: number,
 ): AnimationSetDef {
+  const { cellW, cellH } = effectiveCellPixelSize(input, texturePixelWidth, texturePixelHeight);
   const { worldWidth, worldHeight } = resolveAnimationWorldSize(input, texturePixelWidth, texturePixelHeight);
   return {
     ...input,
     worldWidth,
     worldHeight,
+    cellWidth: Math.round(cellW * 1e6) / 1e6,
+    cellHeight: Math.round(cellH * 1e6) / 1e6,
   };
 }

@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -285,19 +285,23 @@ def pack_frames_native_equal_cells(
     rgba_list: List[np.ndarray],
     pad: int,
     feather_ignore_px: int = 0,
-) -> Tuple[List[Image.Image], int, int]:
+) -> Tuple[List[Image.Image], int, int, List[Tuple[int, int]]]:
     """
     等大单元格、原始像素尺寸（仅 alpha 包围盒裁切，不做整体缩放）。
     cell 宽高 = 各裁切后 max(w,h) + 2*pad；每帧在格内底边 + 水平居中粘贴。
+    返回 (cells, cell_w, cell_h, content_sizes)，content_sizes 为每帧 (content_w, content_h)。
     """
     if not rgba_list:
-        return [], 0, 0
+        return [], 0, 0, []
     crops: List[np.ndarray] = []
     for rgba in rgba_list:
         c = _prepare_cropped_rgba(rgba, feather_ignore_px)
         if c is None:
             c = np.zeros((1, 1, 4), dtype=np.uint8)
         crops.append(c)
+    content_sizes: List[Tuple[int, int]] = [
+        (int(c.shape[1]), int(c.shape[0])) for c in crops
+    ]
     max_w = max(int(c.shape[1]) for c in crops)
     max_h = max(int(c.shape[0]) for c in crops)
     cell_w = max_w + 2 * pad
@@ -314,7 +318,7 @@ def pack_frames_native_equal_cells(
         py = max(pad, py)
         cell.paste(pil, (px, py), pil)
         cells.append(cell)
-    return cells, cell_w, cell_h
+    return cells, cell_w, cell_h, content_sizes
 
 
 def build_atlas_native_equal_cells(
@@ -334,7 +338,8 @@ def build_atlas_native_equal_cells(
         raise RuntimeError("没有可用于打包的帧")
     n = len(rgba_frames)
     times = frame_times if frame_times is not None and len(frame_times) == n else [float(i) for i in range(n)]
-    cells, cell_w, cell_h = pack_frames_native_equal_cells(rgba_frames, padding, feather_ignore_px)
+    cells, cell_w, cell_h, content_sizes = pack_frames_native_equal_cells(
+        rgba_frames, padding, feather_ignore_px)
     cols, rows = compute_auto_grid(n, cols, rows)
     slots = cols * rows
     if n > slots:
@@ -371,6 +376,10 @@ def build_atlas_native_equal_cells(
                 "logicalIndex": i,
                 "atlasIndex": base + i,
                 "timeSec": times[i],
+                "cellWidth": cell_w,
+                "cellHeight": cell_h,
+                "contentWidth": content_sizes[i][0],
+                "contentHeight": content_sizes[i][1],
             }
             for i in range(n)
         ],
@@ -597,6 +606,25 @@ def first_last_frame_diff_score(rgba_frames: List[np.ndarray]) -> Optional[float
     return float(diff)
 
 
+def anim_atlas_frames_from_meta(meta: dict[str, Any]) -> List[Dict[str, int]]:
+    """与 anim.json 中 atlasFrames 字段一致：每图集槽位一格，与 states[*].frames 索引对应。"""
+    cell_w = int(meta.get("cellWidth", 0))
+    cell_h = int(meta.get("cellHeight", 0))
+    out: List[Dict[str, int]] = []
+    for fi in meta.get("frames", []):
+        cw = int(fi.get("cellWidth", cell_w))
+        ch = int(fi.get("cellHeight", cell_h))
+        ctw = int(fi.get("contentWidth", cw))
+        cth = int(fi.get("contentHeight", ch))
+        out.append({
+            "width": cw,
+            "height": ch,
+            "contentWidth": ctw,
+            "contentHeight": cth,
+        })
+    return out
+
+
 def apply_anim_json_world_size(
     d: dict[str, Any],
     *,
@@ -649,6 +677,9 @@ def export_gamedraft_anim(
         },
     }
     apply_anim_json_world_size(out, world_w=world_w, world_h=world_h)
+    out["cellWidth"] = int(meta["cellWidth"])
+    out["cellHeight"] = int(meta["cellHeight"])
+    out["atlasFrames"] = anim_atlas_frames_from_meta(meta)
     return out
 
 
@@ -676,6 +707,9 @@ def export_gamedraft_anim_multi(
         "states": out_states,
     }
     apply_anim_json_world_size(out, world_w=world_w, world_h=world_h)
+    out["cellWidth"] = int(meta["cellWidth"])
+    out["cellHeight"] = int(meta["cellHeight"])
+    out["atlasFrames"] = anim_atlas_frames_from_meta(meta)
     return out
 
 

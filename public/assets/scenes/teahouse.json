@@ -1,13 +1,13 @@
 {
   "id": "teahouse",
   "name": "茶馆",
-  "worldWidth": 700,
+  "worldWidth": 700.0,
   "camera": {
     "zoom": 1.5,
-    "pixelsPerUnit": 1
+    "pixelsPerUnit": 1.0
   },
-  "playerWalkSpeed": 100,
-  "playerRunSpeed": 180,
+  "playerWalkSpeed": 100.0,
+  "playerRunSpeed": 180.0,
   "backgrounds": [
     {
       "image": "background.png",
@@ -96,7 +96,7 @@
       "dialogueFile": "/assets/dialogues/storyteller.ink",
       "dialogueKnot": "start",
       "interactionRange": 71.4,
-      "animFile": "/assets/data/npc_storyteller_anim.json",
+      "animFile": "/assets/animation/npc_storyteller_anim/anim.json",
       "patrol": {
         "route": [
           {
@@ -119,7 +119,7 @@
       "dialogueFile": "/assets/dialogues/blind_li.ink",
       "dialogueKnot": "start",
       "interactionRange": 71.4,
-      "animFile": "/assets/data/npc_blind_li_anim.json"
+      "animFile": "/assets/animation/npc_blind_li_anim/anim.json"
     },
     {
       "id": "waiter_xiaoer",

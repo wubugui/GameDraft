@@ -1,0 +1,100 @@
+{
+  "spritesheet": "atlas.png",
+  "cols": 5,
+  "rows": 2,
+  "states": {
+    "idle": {
+      "frames": [
+        1
+      ],
+      "frameRate": 1,
+      "loop": true
+    },
+    "walk": {
+      "frames": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "frameRate": 8,
+      "loop": true
+    },
+    "run": {
+      "frames": [
+        6,
+        7,
+        8,
+        9
+      ],
+      "frameRate": 12,
+      "loop": true
+    }
+  },
+  "worldHeight": 160,
+  "cellWidth": 275,
+  "cellHeight": 384,
+  "atlasFrames": [
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    },
+    {
+      "width": 275,
+      "height": 384,
+      "contentWidth": 275,
+      "contentHeight": 384
+    }
+  ]
+}

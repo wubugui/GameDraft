@@ -20,3 +20,22 @@ export function resolveAssetPath(path: string): string {
 export async function fetchAsset(path: string): Promise<Response> {
   return fetch(resolveAssetPath(path));
 }
+
+/**
+ * 将 anim.json 同目录下的相对资源路径解析为以 / 开头的资产路径（供 loadTexture/loadJson 使用）。
+ * - `spritesheet` 为 `/assets/...` 时原样返回；
+ * - 否则视为相对 anim清单文件所在目录。
+ */
+export function resolvePathRelativeToAnimManifest(animManifestPath: string, ref: string): string {
+  const r = (ref || '').trim();
+  if (!r) return r;
+  if (r.startsWith('http://') || r.startsWith('https://')) return r;
+  if (r.startsWith('/assets/')) return r;
+  const base = animManifestPath.replace(/\/[^/]+$/, '');
+  const part = r.startsWith('./') ? r.slice(2) : r;
+  const joined = `${base}/${part}`.replace(/\/+/g, '/');
+  if (!joined.startsWith('/')) {
+    return `/${joined}`;
+  }
+  return joined;
+}

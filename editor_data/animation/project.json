@@ -1,0 +1,2085 @@
+{
+  "version": 1,
+  "activeVideoId": "39fcac62a8184a15",
+  "settings": {
+    "frameIndexBase": 0,
+    "saveMeta": true,
+    "dedupMerge": true,
+    "spritesheetRelPath": "/assets/images/characters/out_atlas.png",
+    "worldSizeMode": 1
+  },
+  "videoSources": [
+    {
+      "videoId": "118cc4f231514f35",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\滚铁环跑步动画.mp4",
+      "displayName": "滚铁环跑步动画",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "dc0c55133a9f4bba",
+        "5624becef5b24f11",
+        "4c43882e1d8142ec",
+        "5d458e2367754d33",
+        "06d27a8d312a4ad1",
+        "9948d7fb3a91419c",
+        "7673ba332de7480d",
+        "0b084a870dc9446a",
+        "c0be49fa934c4920",
+        "9f938ace405844ad",
+        "7f5281f8729f4dcd",
+        "93ab4c08a9154b18",
+        "c1c9fbd5eaef420e",
+        "1760b1f0cf034681",
+        "21584ca3c39243b6",
+        "488f72a1cee9411b",
+        "0112f7804fc647fe",
+        "3f8603402ee640ae",
+        "195644770f0044f2",
+        "66875a8cee05442d",
+        "f0aa137cd34542cb",
+        "b077c5d1e3254f71",
+        "f3337f98e46b4a9e",
+        "652885dca89d4e76"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          252,
+          252,
+          252
+        ],
+        "tolerance": 80.0
+      }
+    },
+    {
+      "videoId": "26c3e9a4bcf3407b",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\角色原地步行动画.mp4",
+      "displayName": "角色原地步行动画",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "74d82e6704c44fc9",
+        "248c96213fd74461",
+        "3bc1f99aea3844ef",
+        "de864c0b38a84f56",
+        "6b3e7790cd784a67",
+        "8d1d109560b14886",
+        "621285a519be48c6",
+        "b3c984b499af4267",
+        "77984bc904104679",
+        "6b12a538c2ce44bd",
+        "19ddfd97e9684422",
+        "0c405213b8d54e68",
+        "2bb5d3ecf8e0422f",
+        "38f84cf246634977",
+        "3ca4a17c54894793",
+        "fab7e27b26d24a8c",
+        "dc35b19460364a15",
+        "f993fe99f5c54d1c",
+        "dfe02a792a2f45d3",
+        "60b78bb3bdef48df",
+        "b9dcf17dde174b10",
+        "63fb095837a3441d",
+        "363ec4541f724df2",
+        "f366dec324714203"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 80.0
+      }
+    },
+    {
+      "videoId": "9f95666314e94022",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\小孩哭泣动画.mp4",
+      "displayName": "小孩哭泣动画",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "a9c0120639ed4f1e",
+        "acc7a2fdeb474085",
+        "242928919983436f",
+        "49412a05bf8e4326",
+        "f287385223af477a",
+        "d279612f51a54dc1",
+        "bb4748afba914ad4",
+        "44af285e21d141ac",
+        "fd1e009aafc84756",
+        "b55b3462ce2c4343",
+        "51014e2108c04921",
+        "64679ec0d2b74c1b",
+        "309ef66c6cf84097",
+        "3753cb25e8104f74",
+        "270aac12d0674ce4",
+        "71a100ef26264e5d",
+        "d56dafba32dc4769",
+        "aed3bdc5d2ff4225",
+        "9ea3344540bc4081",
+        "8e6242b0b77a47db",
+        "59005ca715d64a67",
+        "6719c44e141f4758",
+        "f48b2020ac8c4a5e",
+        "9afe17884d87454d"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 80.0
+      }
+    },
+    {
+      "videoId": "ddcec44e919a44c3",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\小孩原地步行动画.mp4",
+      "displayName": "小孩原地步行动画",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "2a51686fa886427c",
+        "e2e035443ec642e2",
+        "c713b0da5a67409c",
+        "f3cee49320774099",
+        "3e8d6ae5a2c44639",
+        "67fb975ec1504439",
+        "0b2e9d0e61b7456c",
+        "e7f3eee06f504c7e",
+        "968a7ffa54ff4908",
+        "147992faac0841fb",
+        "ad542fece37b41e4",
+        "fd91010a06094528",
+        "7649223a1e514faf",
+        "4c5f24712d1b423b",
+        "beb2f8b64b5b470f",
+        "ddc31a7be3fd4a39",
+        "bfaefb9001d64fe6",
+        "83f7441bae96482c",
+        "60f2a9453b3d41fd",
+        "1cb3ae11c3674f63",
+        "fbe451b8a56c46e2",
+        "f3253c2fd820447c",
+        "9600ff331c1747bc",
+        "0e9a92cbccf745a4",
+        "9d3945cabec24bc4",
+        "fcf9f78ff0b742d9"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 80.0
+      }
+    },
+    {
+      "videoId": "d2bbe5abd00d4f98",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\小孩原地跑步动画.mp4",
+      "displayName": "小孩原地跑步动画",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "870cb24e1a1146e4",
+        "7dca27a9c4c84860",
+        "01dcd13527b74a75",
+        "e45224052ad64f9e",
+        "90b0b4e391984f30",
+        "2c0af54690fd4a95",
+        "2b758a68fceb4522",
+        "43dfe0cc15d64846",
+        "d3f21e009ffe4c4d",
+        "6609082b9c154b2a",
+        "f3a849ccce5b4bbc",
+        "21fab9efcb654b24",
+        "561a857029a84643",
+        "92a259606a6c43a4",
+        "5e43d20ed1bb437e",
+        "f1ee5256440e4a53",
+        "28d7c42e5cbd43e8",
+        "e913750ba7cb4606",
+        "cf99dec133bc47df",
+        "699b47adbc3c4306",
+        "f341cd84c35d49c2",
+        "aa65694fc3c14fb0",
+        "1fe45b6b9d3b4995",
+        "07dc5518cffe47eb",
+        "04a7f64753114725",
+        "fd7b26af39ae498b",
+        "4b6a347b2a7e410e",
+        "524c70f1c4ef4c1f",
+        "365a3dbeb1864e51",
+        "b7839019d7054e45",
+        "a80c918c5e144e7f",
+        "b1ccdfce10a6489c",
+        "b7a76809b24c4c47",
+        "cdcfe2ef3bf5476d",
+        "12c69d196b284f66",
+        "525e559e056a4325",
+        "44a571b09d5b40dd",
+        "f9ac599e0fd445da",
+        "7b056b6a200c433b",
+        "d66fb0775ed74b31",
+        "c032db81bd50424a",
+        "394fa95cf6d84423",
+        "c6b832199f3b4c1f",
+        "3981d64ccff54b2b",
+        "b53d7d5697364733",
+        "4b4e179a8d074a3f",
+        "7a2572bf58fb4fe3",
+        "44147fa062f44871"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 80.0
+      }
+    },
+    {
+      "videoId": "9ad03b39f9904629",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\小孩手拿铁环站立动画 (1).mp4",
+      "displayName": "小孩手拿铁环站立动画 (1)",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "dd86272d5e6642f3",
+        "8d303ed248794dee",
+        "861738f7d853485f",
+        "02bf862a5e3b4f5b",
+        "c7e82a0a49e34666",
+        "f7454f6fdb924dcc",
+        "09a9784c3d9f496b",
+        "e61cda716a4f486a",
+        "51aa727dabe74727",
+        "87023f2c8afb466b",
+        "413cd2e9f7664bae",
+        "e6d757f50427491b"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 80.0
+      }
+    },
+    {
+      "videoId": "b7e0604648ea4a13",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\video (1).mp4",
+      "displayName": "video (1)",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "97a4cb4ba21540b5",
+        "1e0ba4c70a364d14",
+        "d8b2bc4fefcd4ab5",
+        "b611f7beb4704a2e",
+        "4af023bd113c4a62",
+        "36b59478fc39489b",
+        "2aa5fec1bd8f42da",
+        "44cab4aa836f4017",
+        "ff16630405434212",
+        "f7c8bb2aff754914",
+        "9003666e90ee45c4",
+        "4498a84ee25c4b97",
+        "f76b603010c74fd7",
+        "514032ab77364d4a",
+        "bc71949fb51c451a",
+        "bb94d74c651f45a3",
+        "ccdc10108cf84166",
+        "c5087e75a0f549f5",
+        "2424e265523d4940",
+        "c4ba69e66b784640",
+        "e2a8674e2e3c496a",
+        "111cb4a59ef94b26",
+        "aff60b281cf04059",
+        "c1b204ec4d164f18"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          115,
+          155,
+          116
+        ],
+        "tolerance": 30.0
+      }
+    },
+    {
+      "videoId": "1ffddde933fd4030",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\老人弯腰慢走动画.mp4",
+      "displayName": "老人弯腰慢走动画",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "443fb0cb59764e36",
+        "17bd54b828984ec2",
+        "a0f8451d52d64ade",
+        "a5874fe231184ddb",
+        "9eb7d298a11a44a9",
+        "318d8e32cfa64478",
+        "415f9096977f4136",
+        "93b78445e638498d",
+        "64f29db85ae84d6f",
+        "e2c821557a174dce",
+        "243491a7f6fe4d8d",
+        "3dcc3e88f36241ee",
+        "dd0691f0befd449c",
+        "3a21c7be46ea48a8",
+        "0e916c1d6d134087",
+        "ed0f083a02ea41c0",
+        "52cd3c01571545cd",
+        "a718fde903354aa1",
+        "e1f7d7a805d94afd",
+        "3301064f929e42f4",
+        "fe2dad734a3e425c",
+        "cce4d7e417ef4065",
+        "7984b54759c344cf",
+        "9662df6e00504f3d",
+        "2ed846a2456e4969",
+        "511b5edf34764a3f",
+        "1e9b07d105254009",
+        "1c14d708a9354df0",
+        "a28ea41c015b4ab3",
+        "e7ab42e87468434e",
+        "47dc2490cb2c4c9a",
+        "af1fd907c4cb4316",
+        "7edd19244d3f41e8",
+        "bb8fd1f528844f23",
+        "a655be481f024ead",
+        "b3825f54225d4be2",
+        "0fb4a25175a14ad6",
+        "7e7c1889f4e446db",
+        "c52b0d1568cf4ab3",
+        "d74ff374c27d439a",
+        "cf650981dc6b4d69",
+        "2c27eba2f3a341c1",
+        "b523fe2e7cb44979",
+        "f2bc2460c1e344ce",
+        "be8d90c8409c4337",
+        "b5f190a0718949f7",
+        "233e8411172543f3",
+        "ec2b87e64e6545c8"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 40.0
+      }
+    },
+    {
+      "videoId": "39fcac62a8184a15",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\hero_video.mp4",
+      "displayName": "hero_video",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "fd9827c966fa43ef",
+        "ba4f9111ebe44248",
+        "950626dfcf074635",
+        "653fb40dbf18401e",
+        "b1bde000cc424d8d",
+        "55632ca0d2314c2b",
+        "f98ac7167f9b4344",
+        "696e2904f9bf493e",
+        "3159857afd68481a",
+        "247127152cd94004",
+        "6d3c6d3088044519",
+        "7d929248c61d4f89",
+        "aa631edfb25249b8",
+        "9d61a10863fe4df1",
+        "c56072cfef924823",
+        "24fd40a65add4423",
+        "bf7bf231a5d54383",
+        "460ab65b4eb54f40",
+        "8b70b7e4c5664c7f",
+        "4db84a378e6346ee",
+        "01f8e352b34f46b1",
+        "6c51428c1fcd463b",
+        "9f20a30b644e447d",
+        "1234bbfc3a754704"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          253,
+          253,
+          253
+        ],
+        "tolerance": 80.0
+      }
+    }
+  ],
+  "frames": {
+    "dc0c55133a9f4bba": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.0
+    },
+    "5624becef5b24f11": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.1036972154372252
+    },
+    "4c43882e1d8142ec": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.2073944308744504
+    },
+    "5d458e2367754d33": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.31109164631167563
+    },
+    "06d27a8d312a4ad1": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.4147888617489008
+    },
+    "9948d7fb3a91419c": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.518486077186126
+    },
+    "7673ba332de7480d": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.6221832926233513
+    },
+    "0b084a870dc9446a": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.7258805080605765
+    },
+    "c0be49fa934c4920": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.8295777234978016
+    },
+    "9f938ace405844ad": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 0.9332749389350269
+    },
+    "7f5281f8729f4dcd": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.036972154372252
+    },
+    "93ab4c08a9154b18": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.1406693698094772
+    },
+    "c1c9fbd5eaef420e": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.2443665852467025
+    },
+    "1760b1f0cf034681": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.3480638006839276
+    },
+    "21584ca3c39243b6": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.451761016121153
+    },
+    "488f72a1cee9411b": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.555458231558378
+    },
+    "0112f7804fc647fe": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.6591554469956031
+    },
+    "3f8603402ee640ae": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.7628526624328285
+    },
+    "195644770f0044f2": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.8665498778700538
+    },
+    "66875a8cee05442d": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 1.9702470933072789
+    },
+    "f0aa137cd34542cb": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 2.073944308744504
+    },
+    "b077c5d1e3254f71": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 2.177641524181729
+    },
+    "f3337f98e46b4a9e": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 2.2813387396189544
+    },
+    "652885dca89d4e76": {
+      "videoId": "118cc4f231514f35",
+      "tSec": 2.3850359550561797
+    },
+    "74d82e6704c44fc9": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 0.0
+    },
+    "248c96213fd74461": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 0.21920289855072464
+    },
+    "3bc1f99aea3844ef": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 0.4384057971014493
+    },
+    "de864c0b38a84f56": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 0.657608695652174
+    },
+    "6b3e7790cd784a67": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 0.8768115942028986
+    },
+    "8d1d109560b14886": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 1.0960144927536233
+    },
+    "621285a519be48c6": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 1.315217391304348
+    },
+    "b3c984b499af4267": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 1.5344202898550727
+    },
+    "77984bc904104679": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 1.7536231884057971
+    },
+    "6b12a538c2ce44bd": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 1.972826086956522
+    },
+    "19ddfd97e9684422": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 2.1920289855072466
+    },
+    "0c405213b8d54e68": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 2.411231884057971
+    },
+    "2bb5d3ecf8e0422f": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 2.630434782608696
+    },
+    "38f84cf246634977": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 2.8496376811594204
+    },
+    "3ca4a17c54894793": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 3.0688405797101455
+    },
+    "fab7e27b26d24a8c": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 3.2880434782608696
+    },
+    "dc35b19460364a15": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 3.5072463768115942
+    },
+    "f993fe99f5c54d1c": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 3.726449275362319
+    },
+    "dfe02a792a2f45d3": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 3.945652173913044
+    },
+    "60b78bb3bdef48df": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 4.1648550724637685
+    },
+    "b9dcf17dde174b10": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 4.384057971014493
+    },
+    "63fb095837a3441d": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 4.603260869565218
+    },
+    "363ec4541f724df2": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 4.822463768115942
+    },
+    "f366dec324714203": {
+      "videoId": "26c3e9a4bcf3407b",
+      "tSec": 5.041666666666667
+    },
+    "a9c0120639ed4f1e": {
+      "videoId": "9f95666314e94022",
+      "tSec": 0.0
+    },
+    "acc7a2fdeb474085": {
+      "videoId": "9f95666314e94022",
+      "tSec": 0.21920289855072464
+    },
+    "242928919983436f": {
+      "videoId": "9f95666314e94022",
+      "tSec": 0.4384057971014493
+    },
+    "49412a05bf8e4326": {
+      "videoId": "9f95666314e94022",
+      "tSec": 0.657608695652174
+    },
+    "f287385223af477a": {
+      "videoId": "9f95666314e94022",
+      "tSec": 0.8768115942028986
+    },
+    "d279612f51a54dc1": {
+      "videoId": "9f95666314e94022",
+      "tSec": 1.0960144927536233
+    },
+    "bb4748afba914ad4": {
+      "videoId": "9f95666314e94022",
+      "tSec": 1.315217391304348
+    },
+    "44af285e21d141ac": {
+      "videoId": "9f95666314e94022",
+      "tSec": 1.5344202898550727
+    },
+    "fd1e009aafc84756": {
+      "videoId": "9f95666314e94022",
+      "tSec": 1.7536231884057971
+    },
+    "b55b3462ce2c4343": {
+      "videoId": "9f95666314e94022",
+      "tSec": 1.972826086956522
+    },
+    "51014e2108c04921": {
+      "videoId": "9f95666314e94022",
+      "tSec": 2.1920289855072466
+    },
+    "64679ec0d2b74c1b": {
+      "videoId": "9f95666314e94022",
+      "tSec": 2.411231884057971
+    },
+    "309ef66c6cf84097": {
+      "videoId": "9f95666314e94022",
+      "tSec": 2.630434782608696
+    },
+    "3753cb25e8104f74": {
+      "videoId": "9f95666314e94022",
+      "tSec": 2.8496376811594204
+    },
+    "270aac12d0674ce4": {
+      "videoId": "9f95666314e94022",
+      "tSec": 3.0688405797101455
+    },
+    "71a100ef26264e5d": {
+      "videoId": "9f95666314e94022",
+      "tSec": 3.2880434782608696
+    },
+    "d56dafba32dc4769": {
+      "videoId": "9f95666314e94022",
+      "tSec": 3.5072463768115942
+    },
+    "aed3bdc5d2ff4225": {
+      "videoId": "9f95666314e94022",
+      "tSec": 3.726449275362319
+    },
+    "9ea3344540bc4081": {
+      "videoId": "9f95666314e94022",
+      "tSec": 3.945652173913044
+    },
+    "8e6242b0b77a47db": {
+      "videoId": "9f95666314e94022",
+      "tSec": 4.1648550724637685
+    },
+    "59005ca715d64a67": {
+      "videoId": "9f95666314e94022",
+      "tSec": 4.384057971014493
+    },
+    "6719c44e141f4758": {
+      "videoId": "9f95666314e94022",
+      "tSec": 4.603260869565218
+    },
+    "f48b2020ac8c4a5e": {
+      "videoId": "9f95666314e94022",
+      "tSec": 4.822463768115942
+    },
+    "9afe17884d87454d": {
+      "videoId": "9f95666314e94022",
+      "tSec": 5.041666666666667
+    },
+    "2a51686fa886427c": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 0.0
+    },
+    "e2e035443ec642e2": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 0.2851468164794007
+    },
+    "c713b0da5a67409c": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 0.538191011235955
+    },
+    "f3cee49320774099": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 0.7340087933561309
+    },
+    "3e8d6ae5a2c44639": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 0.9298265754763068
+    },
+    "67fb975ec1504439": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 1.1256443575964825
+    },
+    "0b2e9d0e61b7456c": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 1.3214621397166586
+    },
+    "e7f3eee06f504c7e": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 1.5172799218368342
+    },
+    "968a7ffa54ff4908": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 1.7130977039570103
+    },
+    "147992faac0841fb": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 1.9089154860771864
+    },
+    "ad542fece37b41e4": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 2.104733268197362
+    },
+    "fd91010a06094528": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 2.300551050317538
+    },
+    "7649223a1e514faf": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 2.496368832437714
+    },
+    "4c5f24712d1b423b": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 2.69218661455789
+    },
+    "beb2f8b64b5b470f": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 2.8880043966780655
+    },
+    "ddc31a7be3fd4a39": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 3.083822178798241
+    },
+    "bfaefb9001d64fe6": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 3.2796399609184177
+    },
+    "83f7441bae96482c": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 3.4754577430385933
+    },
+    "60f2a9453b3d41fd": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 3.671275525158769
+    },
+    "1cb3ae11c3674f63": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 3.8670933072789446
+    },
+    "fbe451b8a56c46e2": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 4.062911089399121
+    },
+    "f3253c2fd820447c": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 4.258728871519296
+    },
+    "9600ff331c1747bc": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 4.454546653639472
+    },
+    "0e9a92cbccf745a4": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 4.650364435759648
+    },
+    "9d3945cabec24bc4": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 4.846182217879824
+    },
+    "fcf9f78ff0b742d9": {
+      "videoId": "ddcec44e919a44c3",
+      "tSec": 5.042
+    },
+    "870cb24e1a1146e4": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.0
+    },
+    "7dca27a9c4c84860": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.10675427524105505
+    },
+    "01dcd13527b74a75": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.2135085504821101
+    },
+    "e45224052ad64f9e": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.3202628257231651
+    },
+    "90b0b4e391984f30": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.4270171009642202
+    },
+    "2c0af54690fd4a95": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.5337713762052753
+    },
+    "2b758a68fceb4522": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.6405256514463302
+    },
+    "43dfe0cc15d64846": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.7472799266873853
+    },
+    "d3f21e009ffe4c4d": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.8540342019284404
+    },
+    "6609082b9c154b2a": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 0.9607884771694954
+    },
+    "f3a849ccce5b4bbc": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.0675427524105505
+    },
+    "21fab9efcb654b24": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.1742970276516056
+    },
+    "561a857029a84643": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.2810513028926604
+    },
+    "92a259606a6c43a4": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.3878055781337157
+    },
+    "5e43d20ed1bb437e": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.4945598533747706
+    },
+    "f1ee5256440e4a53": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.601314128615826
+    },
+    "28d7c42e5cbd43e8": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.7080684038568807
+    },
+    "e913750ba7cb4606": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.814822679097936
+    },
+    "cf99dec133bc47df": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 1.921576954338991
+    },
+    "699b47adbc3c4306": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.0283312295800457
+    },
+    "f341cd84c35d49c2": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.135085504821101
+    },
+    "aa65694fc3c14fb0": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.241839780062156
+    },
+    "1fe45b6b9d3b4995": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.348594055303211
+    },
+    "07dc5518cffe47eb": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.455348330544266
+    },
+    "04a7f64753114725": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.562102605785321
+    },
+    "fd7b26af39ae498b": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.668856881026376
+    },
+    "4b6a347b2a7e410e": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.7756111562674315
+    },
+    "524c70f1c4ef4c1f": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.882365431508487
+    },
+    "365a3dbeb1864e51": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 2.989119706749541
+    },
+    "b7839019d7054e45": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.0958739819905965
+    },
+    "a80c918c5e144e7f": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.202628257231652
+    },
+    "b1ccdfce10a6489c": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.309382532472706
+    },
+    "b7a76809b24c4c47": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.4161368077137615
+    },
+    "cdcfe2ef3bf5476d": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.522891082954817
+    },
+    "12c69d196b284f66": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.629645358195872
+    },
+    "525e559e056a4325": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.7363996334369265
+    },
+    "44a571b09d5b40dd": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.843153908677982
+    },
+    "f9ac599e0fd445da": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 3.949908183919037
+    },
+    "7b056b6a200c433b": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.0566624591600915
+    },
+    "d66fb0775ed74b31": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.163416734401147
+    },
+    "c032db81bd50424a": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.270171009642202
+    },
+    "394fa95cf6d84423": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.376925284883257
+    },
+    "c6b832199f3b4c1f": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.483679560124312
+    },
+    "3981d64ccff54b2b": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.590433835365367
+    },
+    "b53d7d5697364733": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.697188110606422
+    },
+    "4b4e179a8d074a3f": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.803942385847478
+    },
+    "7a2572bf58fb4fe3": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 4.910696661088532
+    },
+    "44147fa062f44871": {
+      "videoId": "d2bbe5abd00d4f98",
+      "tSec": 5.017450936329587
+    },
+    "dd86272d5e6642f3": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 2.9288921348314605
+    },
+    "8d303ed248794dee": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 3.120962546816479
+    },
+    "861738f7d853485f": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 3.313032958801498
+    },
+    "02bf862a5e3b4f5b": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 3.5051033707865167
+    },
+    "c7e82a0a49e34666": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 3.697173782771536
+    },
+    "f7454f6fdb924dcc": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 3.8892441947565546
+    },
+    "09a9784c3d9f496b": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 4.081314606741573
+    },
+    "e61cda716a4f486a": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 4.273385018726592
+    },
+    "51aa727dabe74727": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 4.465455430711611
+    },
+    "87023f2c8afb466b": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 4.6575258426966295
+    },
+    "413cd2e9f7664bae": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 4.849596254681648
+    },
+    "e6d757f50427491b": {
+      "videoId": "9ad03b39f9904629",
+      "tSec": 5.041666666666667
+    },
+    "97a4cb4ba21540b5": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 1.051832958801498
+    },
+    "1e0ba4c70a364d14": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 1.2253039895782445
+    },
+    "d8b2bc4fefcd4ab5": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 1.3987750203549911
+    },
+    "b611f7beb4704a2e": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 1.5722460511317375
+    },
+    "4af023bd113c4a62": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 1.745717081908484
+    },
+    "36b59478fc39489b": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 1.9191881126852306
+    },
+    "2aa5fec1bd8f42da": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 2.092659143461977
+    },
+    "44cab4aa836f4017": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 2.2661301742387234
+    },
+    "ff16630405434212": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 2.43960120501547
+    },
+    "f7c8bb2aff754914": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 2.6130722357922167
+    },
+    "9003666e90ee45c4": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 2.786543266568963
+    },
+    "4498a84ee25c4b97": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 2.9600142973457095
+    },
+    "f76b603010c74fd7": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 3.1334853281224557
+    },
+    "514032ab77364d4a": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 3.3069563588992024
+    },
+    "bc71949fb51c451a": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 3.480427389675949
+    },
+    "bb94d74c651f45a3": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 3.6538984204526956
+    },
+    "ccdc10108cf84166": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 3.8273694512294414
+    },
+    "c5087e75a0f549f5": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 4.000840482006188
+    },
+    "2424e265523d4940": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 4.174311512782935
+    },
+    "c4ba69e66b784640": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 4.347782543559681
+    },
+    "e2a8674e2e3c496a": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 4.521253574336428
+    },
+    "111cb4a59ef94b26": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 4.694724605113174
+    },
+    "aff60b281cf04059": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 4.868195635889921
+    },
+    "c1b204ec4d164f18": {
+      "videoId": "b7e0604648ea4a13",
+      "tSec": 5.041666666666667
+    },
+    "443fb0cb59764e36": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.0
+    },
+    "17bd54b828984ec2": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.10726950354609929
+    },
+    "a0f8451d52d64ade": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.21453900709219859
+    },
+    "a5874fe231184ddb": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.32180851063829785
+    },
+    "9eb7d298a11a44a9": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.42907801418439717
+    },
+    "318d8e32cfa64478": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.5363475177304965
+    },
+    "415f9096977f4136": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.6436170212765957
+    },
+    "93b78445e638498d": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.750886524822695
+    },
+    "64f29db85ae84d6f": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.8581560283687943
+    },
+    "e2c821557a174dce": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 0.9654255319148937
+    },
+    "243491a7f6fe4d8d": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.072695035460993
+    },
+    "3dcc3e88f36241ee": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.1799645390070923
+    },
+    "dd0691f0befd449c": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.2872340425531914
+    },
+    "3a21c7be46ea48a8": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.394503546099291
+    },
+    "0e916c1d6d134087": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.50177304964539
+    },
+    "ed0f083a02ea41c0": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.6090425531914896
+    },
+    "52cd3c01571545cd": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.7163120567375887
+    },
+    "a718fde903354aa1": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.8235815602836882
+    },
+    "e1f7d7a805d94afd": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 1.9308510638297873
+    },
+    "3301064f929e42f4": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.0381205673758864
+    },
+    "fe2dad734a3e425c": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.145390070921986
+    },
+    "cce4d7e417ef4065": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.252659574468085
+    },
+    "7984b54759c344cf": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.3599290780141846
+    },
+    "9662df6e00504f3d": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.4671985815602837
+    },
+    "2ed846a2456e4969": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.574468085106383
+    },
+    "511b5edf34764a3f": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.6817375886524824
+    },
+    "1e9b07d105254009": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.789007092198582
+    },
+    "1c14d708a9354df0": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 2.8962765957446814
+    },
+    "a28ea41c015b4ab3": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.00354609929078
+    },
+    "e7ab42e87468434e": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.1108156028368796
+    },
+    "47dc2490cb2c4c9a": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.218085106382979
+    },
+    "af1fd907c4cb4316": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.325354609929078
+    },
+    "7edd19244d3f41e8": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.4326241134751774
+    },
+    "bb8fd1f528844f23": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.539893617021277
+    },
+    "a655be481f024ead": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.6471631205673765
+    },
+    "b3825f54225d4be2": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.754432624113475
+    },
+    "0fb4a25175a14ad6": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.8617021276595747
+    },
+    "7e7c1889f4e446db": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 3.968971631205674
+    },
+    "c52b0d1568cf4ab3": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.076241134751773
+    },
+    "d74ff374c27d439a": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.183510638297872
+    },
+    "cf650981dc6b4d69": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.290780141843972
+    },
+    "2c27eba2f3a341c1": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.3980496453900715
+    },
+    "b523fe2e7cb44979": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.50531914893617
+    },
+    "f2bc2460c1e344ce": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.61258865248227
+    },
+    "be8d90c8409c4337": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.719858156028369
+    },
+    "b5f190a0718949f7": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.827127659574469
+    },
+    "233e8411172543f3": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 4.934397163120567
+    },
+    "ec2b87e64e6545c8": {
+      "videoId": "1ffddde933fd4030",
+      "tSec": 5.041666666666667
+    },
+    "fd9827c966fa43ef": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 0.0
+    },
+    "ba4f9111ebe44248": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 0.21920289855072464
+    },
+    "950626dfcf074635": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 0.4384057971014493
+    },
+    "653fb40dbf18401e": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 0.657608695652174
+    },
+    "b1bde000cc424d8d": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 0.8768115942028986
+    },
+    "55632ca0d2314c2b": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 1.0960144927536233
+    },
+    "f98ac7167f9b4344": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 1.315217391304348
+    },
+    "696e2904f9bf493e": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 1.5344202898550727
+    },
+    "3159857afd68481a": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 1.7536231884057971
+    },
+    "247127152cd94004": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 1.972826086956522
+    },
+    "6d3c6d3088044519": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 2.1920289855072466
+    },
+    "7d929248c61d4f89": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 2.411231884057971
+    },
+    "aa631edfb25249b8": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 2.630434782608696
+    },
+    "9d61a10863fe4df1": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 2.8496376811594204
+    },
+    "c56072cfef924823": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 3.0688405797101455
+    },
+    "24fd40a65add4423": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 3.2880434782608696
+    },
+    "bf7bf231a5d54383": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 3.5072463768115942
+    },
+    "460ab65b4eb54f40": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 3.726449275362319
+    },
+    "8b70b7e4c5664c7f": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 3.945652173913044
+    },
+    "4db84a378e6346ee": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 4.1648550724637685
+    },
+    "01f8e352b34f46b1": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 4.384057971014493
+    },
+    "6c51428c1fcd463b": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 4.603260869565218
+    },
+    "9f20a30b644e447d": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 4.822463768115942
+    },
+    "1234bbfc3a754704": {
+      "videoId": "39fcac62a8184a15",
+      "tSec": 5.041666666666667
+    }
+  },
+  "clips": [
+    {
+      "id": "cff472164095406c",
+      "name": "boy_run_ring",
+      "slots": [
+        {
+          "frameId": "dc0c55133a9f4bba",
+          "flipH": true
+        },
+        {
+          "frameId": "5624becef5b24f11",
+          "flipH": true
+        },
+        {
+          "frameId": "4c43882e1d8142ec",
+          "flipH": true
+        },
+        {
+          "frameId": "5d458e2367754d33",
+          "flipH": true
+        },
+        {
+          "frameId": "06d27a8d312a4ad1",
+          "flipH": true
+        },
+        {
+          "frameId": "9948d7fb3a91419c",
+          "flipH": true
+        },
+        {
+          "frameId": "7673ba332de7480d",
+          "flipH": true
+        },
+        {
+          "frameId": "0b084a870dc9446a",
+          "flipH": true
+        },
+        {
+          "frameId": "c0be49fa934c4920",
+          "flipH": true
+        }
+      ],
+      "frameRate": 12.0,
+      "loop": true
+    },
+    {
+      "id": "6a0a1e64a81e4e49",
+      "name": "boy_cry",
+      "slots": [
+        {
+          "frameId": "bb4748afba914ad4",
+          "flipH": false
+        },
+        {
+          "frameId": "44af285e21d141ac",
+          "flipH": false
+        },
+        {
+          "frameId": "fd1e009aafc84756",
+          "flipH": false
+        },
+        {
+          "frameId": "b55b3462ce2c4343",
+          "flipH": false
+        },
+        {
+          "frameId": "51014e2108c04921",
+          "flipH": false
+        },
+        {
+          "frameId": "64679ec0d2b74c1b",
+          "flipH": false
+        },
+        {
+          "frameId": "309ef66c6cf84097",
+          "flipH": false
+        },
+        {
+          "frameId": "3753cb25e8104f74",
+          "flipH": false
+        },
+        {
+          "frameId": "270aac12d0674ce4",
+          "flipH": false
+        },
+        {
+          "frameId": "71a100ef26264e5d",
+          "flipH": false
+        }
+      ],
+      "frameRate": 6.0,
+      "loop": true
+    },
+    {
+      "id": "518fc68a278548bf",
+      "name": "boy_walk",
+      "slots": [
+        {
+          "frameId": "147992faac0841fb",
+          "flipH": false
+        },
+        {
+          "frameId": "ad542fece37b41e4",
+          "flipH": false
+        },
+        {
+          "frameId": "fd91010a06094528",
+          "flipH": false
+        },
+        {
+          "frameId": "7649223a1e514faf",
+          "flipH": false
+        },
+        {
+          "frameId": "4c5f24712d1b423b",
+          "flipH": false
+        },
+        {
+          "frameId": "beb2f8b64b5b470f",
+          "flipH": false
+        },
+        {
+          "frameId": "ddc31a7be3fd4a39",
+          "flipH": false
+        },
+        {
+          "frameId": "bfaefb9001d64fe6",
+          "flipH": false
+        },
+        {
+          "frameId": "83f7441bae96482c",
+          "flipH": false
+        },
+        {
+          "frameId": "60f2a9453b3d41fd",
+          "flipH": false
+        },
+        {
+          "frameId": "1cb3ae11c3674f63",
+          "flipH": false
+        }
+      ],
+      "frameRate": 6.0,
+      "loop": true
+    },
+    {
+      "id": "4332f786217b4825",
+      "name": "boy_run",
+      "slots": [
+        {
+          "frameId": "f3a849ccce5b4bbc",
+          "flipH": false
+        },
+        {
+          "frameId": "21fab9efcb654b24",
+          "flipH": false
+        },
+        {
+          "frameId": "561a857029a84643",
+          "flipH": false
+        },
+        {
+          "frameId": "92a259606a6c43a4",
+          "flipH": false
+        },
+        {
+          "frameId": "5e43d20ed1bb437e",
+          "flipH": false
+        },
+        {
+          "frameId": "f1ee5256440e4a53",
+          "flipH": false
+        },
+        {
+          "frameId": "28d7c42e5cbd43e8",
+          "flipH": false
+        },
+        {
+          "frameId": "e913750ba7cb4606",
+          "flipH": false
+        },
+        {
+          "frameId": "cf99dec133bc47df",
+          "flipH": false
+        },
+        {
+          "frameId": "699b47adbc3c4306",
+          "flipH": false
+        },
+        {
+          "frameId": "f341cd84c35d49c2",
+          "flipH": false
+        },
+        {
+          "frameId": "aa65694fc3c14fb0",
+          "flipH": false
+        },
+        {
+          "frameId": "1fe45b6b9d3b4995",
+          "flipH": false
+        },
+        {
+          "frameId": "07dc5518cffe47eb",
+          "flipH": false
+        },
+        {
+          "frameId": "04a7f64753114725",
+          "flipH": false
+        },
+        {
+          "frameId": "fd7b26af39ae498b",
+          "flipH": false
+        }
+      ],
+      "frameRate": 12.0,
+      "loop": true
+    },
+    {
+      "id": "5a1752258abd456a",
+      "name": "lifu_stand",
+      "slots": [
+        {
+          "frameId": "74d82e6704c44fc9",
+          "flipH": false
+        }
+      ],
+      "frameRate": 1.0,
+      "loop": false
+    },
+    {
+      "id": "b358816dd3b14a39",
+      "name": "lifu_walk",
+      "slots": [
+        {
+          "frameId": "77984bc904104679",
+          "flipH": false
+        },
+        {
+          "frameId": "6b12a538c2ce44bd",
+          "flipH": false
+        },
+        {
+          "frameId": "19ddfd97e9684422",
+          "flipH": false
+        },
+        {
+          "frameId": "0c405213b8d54e68",
+          "flipH": false
+        },
+        {
+          "frameId": "2bb5d3ecf8e0422f",
+          "flipH": false
+        },
+        {
+          "frameId": "38f84cf246634977",
+          "flipH": false
+        },
+        {
+          "frameId": "3ca4a17c54894793",
+          "flipH": false
+        },
+        {
+          "frameId": "fab7e27b26d24a8c",
+          "flipH": false
+        },
+        {
+          "frameId": "dc35b19460364a15",
+          "flipH": false
+        },
+        {
+          "frameId": "f993fe99f5c54d1c",
+          "flipH": false
+        },
+        {
+          "frameId": "dfe02a792a2f45d3",
+          "flipH": false
+        },
+        {
+          "frameId": "60b78bb3bdef48df",
+          "flipH": false
+        },
+        {
+          "frameId": "b9dcf17dde174b10",
+          "flipH": false
+        }
+      ],
+      "frameRate": 8.0,
+      "loop": true
+    },
+    {
+      "id": "e049a08ea0ad4ae9",
+      "name": "boy_stand_ring",
+      "slots": [
+        {
+          "frameId": "51aa727dabe74727",
+          "flipH": false
+        },
+        {
+          "frameId": "87023f2c8afb466b",
+          "flipH": false
+        },
+        {
+          "frameId": "413cd2e9f7664bae",
+          "flipH": false
+        },
+        {
+          "frameId": "e6d757f50427491b",
+          "flipH": false
+        }
+      ],
+      "frameRate": 4.0,
+      "loop": true
+    },
+    {
+      "id": "2903b3c204e8424e",
+      "name": "hero_run",
+      "slots": [
+        {
+          "frameId": "ff16630405434212",
+          "flipH": false
+        },
+        {
+          "frameId": "f7c8bb2aff754914",
+          "flipH": false
+        },
+        {
+          "frameId": "9003666e90ee45c4",
+          "flipH": false
+        },
+        {
+          "frameId": "4498a84ee25c4b97",
+          "flipH": false
+        },
+        {
+          "frameId": "f76b603010c74fd7",
+          "flipH": false
+        },
+        {
+          "frameId": "514032ab77364d4a",
+          "flipH": false
+        },
+        {
+          "frameId": "bc71949fb51c451a",
+          "flipH": false
+        },
+        {
+          "frameId": "bb94d74c651f45a3",
+          "flipH": false
+        },
+        {
+          "frameId": "ccdc10108cf84166",
+          "flipH": false
+        },
+        {
+          "frameId": "c5087e75a0f549f5",
+          "flipH": false
+        },
+        {
+          "frameId": "2424e265523d4940",
+          "flipH": false
+        },
+        {
+          "frameId": "c4ba69e66b784640",
+          "flipH": false
+        },
+        {
+          "frameId": "e2a8674e2e3c496a",
+          "flipH": false
+        },
+        {
+          "frameId": "111cb4a59ef94b26",
+          "flipH": false
+        },
+        {
+          "frameId": "aff60b281cf04059",
+          "flipH": false
+        }
+      ],
+      "frameRate": 12.0,
+      "loop": true
+    },
+    {
+      "id": "32d25b3a99894dea",
+      "name": "hero_walk_guangcai",
+      "slots": [
+        {
+          "frameId": "64f29db85ae84d6f",
+          "flipH": false
+        },
+        {
+          "frameId": "e2c821557a174dce",
+          "flipH": false
+        },
+        {
+          "frameId": "243491a7f6fe4d8d",
+          "flipH": false
+        },
+        {
+          "frameId": "3dcc3e88f36241ee",
+          "flipH": false
+        },
+        {
+          "frameId": "dd0691f0befd449c",
+          "flipH": false
+        },
+        {
+          "frameId": "3a21c7be46ea48a8",
+          "flipH": false
+        },
+        {
+          "frameId": "0e916c1d6d134087",
+          "flipH": false
+        },
+        {
+          "frameId": "ed0f083a02ea41c0",
+          "flipH": false
+        },
+        {
+          "frameId": "52cd3c01571545cd",
+          "flipH": false
+        },
+        {
+          "frameId": "a718fde903354aa1",
+          "flipH": false
+        },
+        {
+          "frameId": "e1f7d7a805d94afd",
+          "flipH": false
+        },
+        {
+          "frameId": "3301064f929e42f4",
+          "flipH": false
+        },
+        {
+          "frameId": "fe2dad734a3e425c",
+          "flipH": false
+        },
+        {
+          "frameId": "cce4d7e417ef4065",
+          "flipH": false
+        }
+      ],
+      "frameRate": 12.0,
+      "loop": true
+    },
+    {
+      "id": "e5350eb225904145",
+      "name": "hero_run_new",
+      "slots": [
+        {
+          "frameId": "3159857afd68481a",
+          "flipH": false
+        },
+        {
+          "frameId": "247127152cd94004",
+          "flipH": false
+        },
+        {
+          "frameId": "6d3c6d3088044519",
+          "flipH": false
+        },
+        {
+          "frameId": "7d929248c61d4f89",
+          "flipH": false
+        },
+        {
+          "frameId": "aa631edfb25249b8",
+          "flipH": false
+        },
+        {
+          "frameId": "9d61a10863fe4df1",
+          "flipH": false
+        },
+        {
+          "frameId": "c56072cfef924823",
+          "flipH": false
+        },
+        {
+          "frameId": "24fd40a65add4423",
+          "flipH": false
+        },
+        {
+          "frameId": "bf7bf231a5d54383",
+          "flipH": false
+        },
+        {
+          "frameId": "460ab65b4eb54f40",
+          "flipH": false
+        },
+        {
+          "frameId": "8b70b7e4c5664c7f",
+          "flipH": false
+        },
+        {
+          "frameId": "4db84a378e6346ee",
+          "flipH": false
+        },
+        {
+          "frameId": "01f8e352b34f46b1",
+          "flipH": false
+        },
+        {
+          "frameId": "6c51428c1fcd463b",
+          "flipH": false
+        },
+        {
+          "frameId": "9f20a30b644e447d",
+          "flipH": false
+        }
+      ],
+      "frameRate": 8.0,
+      "loop": true
+    },
+    {
+      "id": "164a9cb2f6174304",
+      "name": "hero_stand",
+      "slots": [
+        {
+          "frameId": "ba4f9111ebe44248",
+          "flipH": false
+        }
+      ],
+      "frameRate": 1.0,
+      "loop": false
+    }
+  ],
+  "exportJobs": [
+    {
+      "id": "42f87f8125854d63",
+      "clipId": "cff472164095406c",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 80.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "3e16d44f4d6540e0",
+      "clipId": "6a0a1e64a81e4e49",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 80.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "279325689f3b48d5",
+      "clipId": "518fc68a278548bf",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 80.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "f1a39d183ea14c86",
+      "clipId": "4332f786217b4825",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 80.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "68f59e0496624360",
+      "clipId": "5a1752258abd456a",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 160.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "cf256825ebc3451f",
+      "clipId": "b358816dd3b14a39",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 160.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "8875e32ccceb49ad",
+      "clipId": "e049a08ea0ad4ae9",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 80.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "687c6f95bd544639",
+      "clipId": "2903b3c204e8424e",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": true
+    },
+    {
+      "id": "46c27c58dad34223",
+      "clipId": "32d25b3a99894dea",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": true
+    },
+    {
+      "id": "a90c700068c04d35",
+      "clipId": "e5350eb225904145",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": true
+    },
+    {
+      "id": "de9c9762040e4e2a",
+      "clipId": "164a9cb2f6174304",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": true
+    }
+  ]
+}

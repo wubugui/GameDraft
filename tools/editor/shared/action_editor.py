@@ -1,13 +1,22 @@
-"""Reusable ActionDef[] editor with dynamic params forms."""
+"""Reusable ActionDef[] editor with dynamic params forms.
+
+与 `src/core/ActionRegistry.ts` 成对维护：在 Registry 里新 register 的 type，
+必须在本文件的 ACTION_TYPES 中出现，并补齐 _PARAM_SCHEMAS或自定义 _rebuild_params 分支，
+否则策划无法在场景/任务/遭遇等编辑器里添加该动作；校验器也会对未登记 type 报错。
+"""
 from __future__ import annotations
+
+import re
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
-    QComboBox, QLabel, QSpinBox, QCheckBox, QFormLayout, QFrame,
+    QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QFormLayout, QFrame,
     QTextEdit, QApplication,
 )
 
-from PySide6.QtCore import QEvent, QEventLoop, Signal
+from PySide6.QtCore import QEvent, QEventLoop, Qt, Signal
+
+_ANIM_MANIFEST_RE = re.compile(r"^/assets/animation/([^/]+)/anim\.json$")
 
 
 def _hide_combo_popups_under(widget: QWidget) -> None:
@@ -25,6 +34,8 @@ ACTION_TYPES = [
     "addArchiveEntry", "startCutscene", "showEmote", "openShop",
     "pickup", "switchScene", "changeScene", "showNotification",
     "shopPurchase", "inventoryDiscard",
+    "setPlayerAvatar", "resetPlayerAvatar",
+    "setSceneDepthFloorOffset", "resetSceneDepthFloorOffset",
     "enableRuleOffers", "disableRuleOffers",
 ]
 
@@ -54,6 +65,9 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "pickup": [("itemId", "str"), ("itemName", "str"), ("count", "int"), ("isCurrency", "bool")],
     "addDelayedEvent": [("targetDay", "int")],
     "disableRuleOffers": [],
+    "resetPlayerAvatar": [],
+    "setSceneDepthFloorOffset": [("floor_offset", "float")],
+    "resetSceneDepthFloorOffset": [],
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
@@ -346,6 +360,54 @@ class ActionRow(QWidget):
             self._outer_layout.addWidget(ed)
             return
 
+        if act_type == "setPlayerAvatar":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            sm_raw = params.get("stateMap")
+            sm: dict = sm_raw if isinstance(sm_raw, dict) else {}
+            tip = QLabel(
+                "填写 <b>animManifest</b> 或 <b>bundleId</b> 其一（若都填则优先使用 animManifest）。"
+                "下方为逻辑状态 idle / walk / run 对应的 clip（states 键）；留空表示与逻辑名同名。"
+            )
+            tip.setWordWrap(True)
+            tip.setTextFormat(Qt.TextFormat.RichText)
+            self._params_layout.addRow(tip)
+
+            bid = IdRefSelector(self, allow_empty=True)
+            bid.setMinimumWidth(220)
+            bundles = (
+                [(k, k) for k in sorted(self._ctx_model.animations.keys())]
+                if self._ctx_model
+                else []
+            )
+            bid.set_items(bundles)
+            b_from_p = str(params.get("bundleId", "") or "").strip()
+            am = str(params.get("animManifest", "") or "").strip()
+            if not b_from_p and am:
+                m = _ANIM_MANIFEST_RE.match(am)
+                if m:
+                    b_from_p = m.group(1)
+            bid.set_current(b_from_p)
+            bid.value_changed.connect(self.changed)
+            self._param_widgets["bundleId"] = bid
+            self._params_layout.addRow("bundleId", bid)
+
+            man = QLineEdit(am)
+            man.setPlaceholderText("/assets/animation/player_anim/anim.json")
+            man.textChanged.connect(self.changed)
+            self._param_widgets["animManifest"] = man
+            self._params_layout.addRow("animManifest", man)
+
+            for logical in ("idle", "walk", "run"):
+                le = QLineEdit(str(sm.get(logical, "") or ""))
+                le.setPlaceholderText("留空 = 与逻辑名相同")
+                le.textChanged.connect(self.changed)
+                self._param_widgets[logical] = le
+                self._params_layout.addRow(f"clip:{logical}", le)
+            return
+
         if not schema:
             self._params_frame.setVisible(False)
             return
@@ -358,6 +420,16 @@ class ActionRow(QWidget):
                 w = QSpinBox()
                 w.setRange(-999999, 999999)
                 w.setValue(int(val) if val != "" else 0)
+                w.valueChanged.connect(self.changed)
+            elif ptype == "float":
+                w = QDoubleSpinBox()
+                w.setRange(-50.0, 50.0)
+                w.setDecimals(4)
+                w.setSingleStep(0.05)
+                try:
+                    w.setValue(float(val))
+                except (TypeError, ValueError):
+                    w.setValue(0.0)
                 w.valueChanged.connect(self.changed)
             elif ptype == "bool":
                 w = QCheckBox()
@@ -471,8 +543,32 @@ class ActionRow(QWidget):
             self._delayed_editor = ed
             self._outer_layout.addWidget(ed)
 
+    def _to_dict_set_player_avatar(self) -> dict:
+        man_w = self._param_widgets.get("animManifest")
+        bid_w = self._param_widgets.get("bundleId")
+        man = man_w.text().strip() if isinstance(man_w, QLineEdit) else ""
+        bid = bid_w.current_id().strip() if isinstance(bid_w, IdRefSelector) else ""
+        params: dict = {}
+        if man:
+            params["animManifest"] = man
+        elif bid:
+            params["bundleId"] = bid
+        sm: dict = {}
+        for logical in ("idle", "walk", "run"):
+            w = self._param_widgets.get(logical)
+            if not isinstance(w, QLineEdit):
+                continue
+            t = w.text().strip()
+            if t:
+                sm[logical] = t
+        if sm:
+            params["stateMap"] = sm
+        return {"type": "setPlayerAvatar", "params": params}
+
     def to_dict(self) -> dict:
         act_type = self.type_combo.currentText()
+        if act_type == "setPlayerAvatar":
+            return self._to_dict_set_player_avatar()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params: dict = {}
         for pname, ptype in schema:
@@ -481,6 +577,8 @@ class ActionRow(QWidget):
                 continue
             if ptype == "int":
                 params[pname] = w.value()
+            elif ptype == "float":
+                params[pname] = float(w.value())
             elif ptype == "bool":
                 params[pname] = w.isChecked()
             elif ptype == "flag_val" and isinstance(w, FlagValueEdit):

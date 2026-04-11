@@ -30,6 +30,8 @@ export class SpriteEntity {
   private frameTimer: number = 0;
   private playing: boolean = false;
   private onCompleteCallback: (() => void) | null = null;
+  /** 逻辑状态名（如 idle）-> anim.json 中的 states 键；未配置则同名 */
+  private logicalToClip: Map<string, string> = new Map();
 
   constructor() {
     this.container = new Container();
@@ -47,20 +49,24 @@ export class SpriteEntity {
 
     const cols = animDef.cols;
     const rows = animDef.rows;
-    const srcFrameW = texture.width / cols;
-    const srcFrameH = texture.height / rows;
+    const strideW =
+      typeof animDef.cellWidth === 'number' && animDef.cellWidth > 0
+        ? animDef.cellWidth
+        : texture.width / cols;
+    const strideH =
+      typeof animDef.cellHeight === 'number' && animDef.cellHeight > 0
+        ? animDef.cellHeight
+        : texture.height / rows;
 
     for (const [stateName, stateDef] of Object.entries(animDef.states)) {
       const textures: Texture[] = [];
       for (const frameIdx of stateDef.frames) {
         const col = frameIdx % cols;
         const row = Math.floor(frameIdx / cols);
-        const rect = new Rectangle(
-          col * srcFrameW,
-          row * srcFrameH,
-          srcFrameW,
-          srcFrameH,
-        );
+        const box = animDef.atlasFrames?.[frameIdx];
+        const rw = box && box.width > 0 ? box.width : strideW;
+        const rh = box && box.height > 0 ? box.height : strideH;
+        const rect = new Rectangle(col * strideW, row * strideH, rw, rh);
         const frameTex = new Texture({ source: texture.source, frame: rect });
         textures.push(frameTex);
       }
@@ -70,14 +76,30 @@ export class SpriteEntity {
     this.applySpriteScale();
   }
 
-  playAnimation(stateName: string, onComplete?: () => void): void {
-    if (this.currentState === stateName && this.playing) return;
+  /**
+   * 配置逻辑状态到图集 states 键的映射（玩家化身等）。未出现在 map 中的逻辑名仍按原名解析。
+   */
+  setLogicalStateMap(map: Record<string, string> | undefined): void {
+    this.logicalToClip.clear();
+    if (!map) return;
+    for (const [logical, clip] of Object.entries(map)) {
+      if (logical && clip) this.logicalToClip.set(logical, clip);
+    }
+  }
 
-    const frameDef = this.animDef?.states[stateName];
-    const textures = this.frames.get(stateName);
+  private resolveClip(stateName: string): string {
+    return this.logicalToClip.get(stateName) ?? stateName;
+  }
+
+  playAnimation(stateName: string, onComplete?: () => void): void {
+    const clip = this.resolveClip(stateName);
+    if (this.currentState === clip && this.playing) return;
+
+    const frameDef = this.animDef?.states[clip];
+    const textures = this.frames.get(clip);
     if (!frameDef || !textures || textures.length === 0) return;
 
-    this.currentState = stateName;
+    this.currentState = clip;
     this.currentFrames = textures;
     this.currentFrameDef = frameDef;
     this.frameIndex = 0;
@@ -100,7 +122,9 @@ export class SpriteEntity {
     }
 
     this.frameTimer += dt;
-    const frameDuration = 1 / this.currentFrameDef.frameRate;
+    const fpsRaw = Number(this.currentFrameDef.frameRate);
+    const fps = Number.isFinite(fpsRaw) && fpsRaw > 0 ? fpsRaw : 8;
+    const frameDuration = 1 / fps;
 
     while (this.frameTimer >= frameDuration) {
       this.frameTimer -= frameDuration;
@@ -137,8 +161,31 @@ export class SpriteEntity {
   }
 
   private applySpriteScale(): void {
-    const frameW = this.animDef ? (this.baseTexture!.width / this.animDef.cols) : 1;
-    const frameH = this.animDef ? (this.baseTexture!.height / this.animDef.rows) : 1;
+    const tex = this.baseTexture;
+    const def = this.animDef;
+    if (!tex || !def) {
+      this.sprite.scale.set(this.facingX, 1);
+      return;
+    }
+    const strideW =
+      typeof def.cellWidth === 'number' && def.cellWidth > 0
+        ? def.cellWidth
+        : tex.width / def.cols;
+    const strideH =
+      typeof def.cellHeight === 'number' && def.cellHeight > 0
+        ? def.cellHeight
+        : tex.height / def.rows;
+    let frameW = strideW;
+    let frameH = strideH;
+    if (this.currentFrameDef && def.atlasFrames && def.atlasFrames.length > 0) {
+      const seq = this.currentFrameDef.frames;
+      const slot = seq[this.frameIndex % seq.length];
+      const box = def.atlasFrames[slot];
+      if (box && box.width > 0 && box.height > 0) {
+        frameW = box.width;
+        frameH = box.height;
+      }
+    }
 
     this.sprite.scale.set(
       (this.worldWidth / frameW) * this.facingX,

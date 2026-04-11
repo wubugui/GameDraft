@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
@@ -27,7 +27,7 @@ from PySide6.QtGui import (
     QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
     QShortcut, QKeySequence, QPainterPath,
 )
-from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, Signal, QTimer
+from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, Signal, QTimer, QElapsedTimer
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
@@ -78,7 +78,40 @@ def _resolve_world_size(sc: dict, img_path: Path | None) -> tuple[float, float]:
     return (800, 800 * aspect)
 
 
-def _resolved_anim_world_pair(data: dict, model: ProjectModel) -> tuple[float, float] | None:
+def _anim_bundle_key_from_manifest_url(url: str) -> str:
+    p = PurePosixPath(str(url).strip().replace("\\", "/").lstrip("/"))
+    if p.name == "anim.json":
+        return p.parent.name
+    return p.stem
+
+
+def _spritesheet_public_path(
+    model: ProjectModel,
+    spritesheet: str,
+    anim_manifest_url: str | None,
+) -> Path | None:
+    """与运行时 resolvePathRelativeToAnimManifest 一致，返回 public 下的绝对路径。"""
+    if not model.project_path:
+        return None
+    pub = model.project_path / "public"
+    sh = str(spritesheet or "").strip()
+    if not sh:
+        return None
+    if sh.startswith("/assets/"):
+        return pub / sh.lstrip("/")
+    if not anim_manifest_url:
+        return None
+    base = PurePosixPath(anim_manifest_url.strip().lstrip("/")).parent
+    part = sh[2:] if sh.startswith("./") else sh
+    return pub / (base / PurePosixPath(part))
+
+
+def _resolved_anim_world_pair(
+    data: dict,
+    model: ProjectModel,
+    *,
+    anim_manifest_url: str | None = None,
+) -> tuple[float, float] | None:
     """与运行时 normalizeAnimationSetDef 一致：worldWidth/worldHeight 可只填其一。"""
     cols = max(1, int(data.get("cols", 1) or 1))
     rows = max(1, int(data.get("rows", 1) or 1))
@@ -86,14 +119,17 @@ def _resolved_anim_world_pair(data: dict, model: ProjectModel) -> tuple[float, f
     h = float(data.get("worldHeight", 0) or 0)
     if w > 0 and h > 0:
         return (w, h)
-    sheet = str(data.get("spritesheet", "") or "").strip().lstrip("/")
-    if not model.project_path or not sheet:
+    sheet = str(data.get("spritesheet", "") or "").strip()
+    sp = _spritesheet_public_path(model, sheet, anim_manifest_url)
+    if sp is None or not sp.is_file():
         return None
-    pm = QPixmap(str(model.project_path / "public" / sheet))
+    pm = QPixmap(str(sp))
     if pm.isNull() or pm.width() <= 0:
         return None
-    fw = max(1, pm.width() // cols)
-    fh = max(1, pm.height() // rows)
+    cw = int(data.get("cellWidth", 0) or 0)
+    ch = int(data.get("cellHeight", 0) or 0)
+    fw = max(1, cw if cw > 0 else pm.width() // cols)
+    fh = max(1, ch if ch > 0 else pm.height() // rows)
     aspect_hw = fh / fw
     if w > 0:
         return (w, w * aspect_hw)
@@ -106,20 +142,30 @@ def _npc_reference_world_size(model: ProjectModel) -> tuple[float, float]:
     """取 player_anim，否则任一动画的推导世界尺寸；缺省 100×160。"""
     pa = model.animations.get("player_anim")
     if isinstance(pa, dict):
-        r = _resolved_anim_world_pair(pa, model)
+        r = _resolved_anim_world_pair(
+            pa, model, anim_manifest_url="/assets/animation/player_anim/anim.json")
         if r:
             return r
-    for _stem, data in sorted(model.animations.items()):
+    for stem, data in sorted(model.animations.items()):
         if not isinstance(data, dict):
             continue
-        r = _resolved_anim_world_pair(data, model)
+        r = _resolved_anim_world_pair(
+            data, model, anim_manifest_url=f"/assets/animation/{stem}/anim.json")
         if r:
             return r
     return (100.0, 160.0)
 
 
 def _crop_atlas_cell(
-    atlas: QPixmap, cols: int, rows: int, atlas_index: int,
+    atlas: QPixmap,
+    cols: int,
+    rows: int,
+    atlas_index: int,
+    *,
+    cell_w: int | None = None,
+    cell_h: int | None = None,
+    slice_w: int | None = None,
+    slice_h: int | None = None,
 ) -> QPixmap | None:
     if atlas is None or atlas.isNull():
         return None
@@ -127,16 +173,18 @@ def _crop_atlas_cell(
     ph = atlas.height()
     c = max(1, cols)
     r = max(1, rows)
-    fw = max(1, pw // c)
-    fh = max(1, ph // r)
+    stride_w = max(1, int(cell_w) if cell_w and cell_w > 0 else pw // c)
+    stride_h = max(1, int(cell_h) if cell_h and cell_h > 0 else ph // r)
+    sw = max(1, int(slice_w) if slice_w and slice_w > 0 else stride_w)
+    sh = max(1, int(slice_h) if slice_h and slice_h > 0 else stride_h)
     col = atlas_index % c
     row = atlas_index // c
     if col >= c or row >= r:
         return None
-    x, y = col * fw, row * fh
-    if x + fw > pw or y + fh > ph:
+    x, y = col * stride_w, row * stride_h
+    if x + sw > pw or y + sh > ph:
         return None
-    return atlas.copy(QRect(x, y, fw, fh))
+    return atlas.copy(QRect(x, y, sw, sh))
 
 
 class _SceneNpcAnimRuntime:
@@ -144,6 +192,7 @@ class _SceneNpcAnimRuntime:
 
     __slots__ = (
         "npc_id", "item", "atlas", "cols", "rows",
+        "cell_w", "cell_h", "atlas_frames",
         "world_w", "world_h", "frames", "frame_idx", "_accum",
         "frame_rate", "loop",
         "facing_x", "_prev_x", "_prev_y", "_have_prev",
@@ -161,18 +210,26 @@ class _SceneNpcAnimRuntime:
         frames: list[int],
         frame_rate: float,
         loop: bool,
+        *,
+        cell_w: int | None = None,
+        cell_h: int | None = None,
+        atlas_frames: list[dict] | None = None,
     ) -> None:
         self.npc_id = npc_id
         self.item = item
         self.atlas = atlas
         self.cols = max(1, cols)
         self.rows = max(1, rows)
+        self.cell_w = int(cell_w) if cell_w and cell_w > 0 else None
+        self.cell_h = int(cell_h) if cell_h and cell_h > 0 else None
+        self.atlas_frames = atlas_frames if isinstance(atlas_frames, list) else None
         self.world_w = world_w
         self.world_h = world_h
         self.frames = frames
         self.frame_idx = 0
         self._accum = 0.0
-        self.frame_rate = max(1.0, float(frame_rate))
+        fr = float(frame_rate)
+        self.frame_rate = max(1e-6, fr if fr > 0 else 8.0)
         self.loop = loop
         self.facing_x = 1
         self._prev_x = 0.0
@@ -205,7 +262,23 @@ class _SceneNpcAnimRuntime:
         if not self.frames:
             return
         idx = int(self.frames[self.frame_idx % len(self.frames)])
-        pm = _crop_atlas_cell(self.atlas, self.cols, self.rows, idx)
+        sw: int | None = None
+        sh: int | None = None
+        if self.atlas_frames and 0 <= idx < len(self.atlas_frames):
+            b = self.atlas_frames[idx]
+            if isinstance(b, dict):
+                sw = int(b.get("width", 0) or 0) or None
+                sh = int(b.get("height", 0) or 0) or None
+        pm = _crop_atlas_cell(
+            self.atlas,
+            self.cols,
+            self.rows,
+            idx,
+            cell_w=self.cell_w,
+            cell_h=self.cell_h,
+            slice_w=sw,
+            slice_h=sh,
+        )
         if pm is None or pm.isNull():
             return
         fw = max(1, pm.width())
@@ -401,6 +474,16 @@ class _EditableZonePolygon(QGraphicsObject):
             max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m,
         )
 
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        if len(self._points) >= 3:
+            path.addPolygon(self._polyf())
+            path.closeSubpath()
+        r = self.HANDLE_WORLD_R
+        for px, py in self._points:
+            path.addEllipse(QPointF(px, py), r, r)
+        return path
+
     def paint(self, painter: QPainter, option, widget=None) -> None:
         del option, widget
         painter.save()
@@ -452,24 +535,57 @@ class _EditableZonePolygon(QGraphicsObject):
             j = i
         return inside
 
+    def _select_exclusively(self) -> None:
+        sc = self.scene()
+        if sc is not None:
+            sc.clearSelection()
+        self.setSelected(True)
+
+    def try_delete_hovered_vertex(self) -> bool:
+        """删除当前悬停的顶点（须多于 3 点）；用于 Del/Backspace 快捷操作。"""
+        vi = self._hover_vertex
+        if vi is None or len(self._points) <= 3:
+            return False
+        del self._points[vi]
+        self._hover_vertex = None
+        self.prepareGeometryChange()
+        self.update()
+        self._canvas._emit_zone_polygon_committed(
+            self.entity_id, self.points_to_model())
+        return True
+
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
         sp = event.scenePos()
         vi = self._vertex_at_scene(sp)
+        if vi is not None and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if len(self._points) > 3:
+                del self._points[vi]
+                if self._hover_vertex == vi:
+                    self._hover_vertex = None
+                elif self._hover_vertex is not None and self._hover_vertex > vi:
+                    self._hover_vertex -= 1
+                self.prepareGeometryChange()
+                self.update()
+                self._select_exclusively()
+                self._canvas._emit_zone_polygon_committed(
+                    self.entity_id, self.points_to_model())
+            event.accept()
+            return
         if vi is not None:
             self._drag_vertex = vi
             self._drag_body = False
             self._last_scene = QPointF(sp)
-            self.setSelected(True)
+            self._select_exclusively()
             event.accept()
             return
         if self._point_in_polygon(sp.x(), sp.y()):
             self._drag_vertex = None
             self._drag_body = True
             self._last_scene = QPointF(sp)
-            self.setSelected(True)
+            self._select_exclusively()
             event.accept()
             return
         super().mousePressEvent(event)
@@ -675,6 +791,9 @@ class _NpcPatrolPolyline(QGraphicsObject):
         if vi is not None:
             self._drag_vertex = vi
             self._last_scene = QPointF(sp)
+            sc = self.scene()
+            if sc is not None:
+                sc.clearSelection()
             self.setSelected(True)
             event.accept()
             return
@@ -2336,7 +2455,8 @@ class ScenePropertyPanel(QScrollArea):
         p = self._npc_anim_json_path(anim_id.strip())
         if not p:
             return {}
-        mem = self._model.animations.get(p.stem)
+        bid = _anim_bundle_key_from_manifest_url(anim_id.strip())
+        mem = self._model.animations.get(bid)
         if not isinstance(mem, dict):
             return {}
         st = mem.get("states")
@@ -2498,7 +2618,8 @@ class ScenePropertyPanel(QScrollArea):
         lay.addLayout(form)
 
         poly_label = QLabel(
-            "polygon 顶点（顺序为边界，首尾不重复；画布可拖点、双击边插点）")
+            "polygon 顶点（顺序为边界，首尾不重复）。画布：拖点 / 拖内部平移 / "
+            "双击边中点附近插点 / Shift+单击顶点删点 / Del 删鼠标悬停顶点 / 右键顶点菜单也可删。")
         poly_label.setWordWrap(True)
         lay.addWidget(poly_label)
 
@@ -2518,6 +2639,8 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_poly_add = QPushButton("添加顶点")
         self._zn_poly_add.clicked.connect(self._on_zone_poly_add_vertex)
         self._zn_poly_del = QPushButton("删除选中顶点")
+        self._zn_poly_del.setToolTip(
+            "按表格当前行删除；画布上请用 Shift+单击顶点，或鼠标移到顶点后按 Del。")
         self._zn_poly_del.clicked.connect(self._on_zone_poly_remove_vertex)
         self._zn_poly_quad = QPushButton("生成轴对齐四边形")
         self._zn_poly_quad.setToolTip("按当前顶点包围盒生成与世界轴对齐的矩形四点")
@@ -2819,10 +2942,16 @@ class SceneEditor(QWidget):
         self._scene_npc_runtimes: dict[str, _SceneNpcAnimRuntime] = {}
         self._scene_npc_anim_timer = QTimer(self)
         self._scene_npc_anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._scene_npc_anim_timer.setInterval(16)
+        self._scene_npc_anim_timer.setInterval(8)
         self._scene_npc_anim_timer.timeout.connect(self._tick_scene_npc_anims)
+        self._scene_npc_anim_elapsed = QElapsedTimer()
         self._patrol_preview_ids: set[str] = set()
         self._patrol_preview_state: dict[str, dict] = {}
+        # 巡逻折线重建若在鼠标事件栈内同步 removeItem，可能触发 Qt 崩溃；延后到下一轮事件循环
+        self._patrol_overlay_refresh_timer = QTimer(self)
+        self._patrol_overlay_refresh_timer.setSingleShot(True)
+        self._patrol_overlay_refresh_timer.timeout.connect(
+            self._apply_npc_patrol_overlay_refresh)
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -2859,7 +2988,7 @@ class SceneEditor(QWidget):
         self._chk_npc_ref.setChecked(True)
         self._chk_npc_ref.setToolTip(
             "在画布左上与右下绘制与角色动画 worldWidth×worldHeight 同尺寸的矩形，"
-            "用于目测场景世界单位尺度（数据来自 player_anim.json 等，不可点选拖动）。"
+            "用于目测场景世界单位尺度（数据来自 animation/player_anim 等，不可点选拖动）。"
         )
         self._chk_npc_ref.toggled.connect(self._on_npc_ref_toggled)
         ll.addWidget(self._chk_npc_ref)
@@ -2902,10 +3031,10 @@ class SceneEditor(QWidget):
 
         del_sc = QShortcut(QKeySequence.StandardKey.Delete, self)
         del_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        del_sc.activated.connect(self._delete_selected)
+        del_sc.activated.connect(self._on_delete_key_shortcut)
         bs_sc = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
         bs_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        bs_sc.activated.connect(self._delete_selected)
+        bs_sc.activated.connect(self._on_delete_key_shortcut)
 
         self._refresh_scene_list()
 
@@ -2916,6 +3045,9 @@ class SceneEditor(QWidget):
         self._patrol_preview_state.clear()
 
     def _refresh_npc_patrol_overlay(self) -> None:
+        self._patrol_overlay_refresh_timer.start(0)
+
+    def _apply_npc_patrol_overlay_refresh(self) -> None:
         for nid in list(self._canvas._patrol_overlays.keys()):
             self._canvas.remove_npc_patrol_overlay(nid)
         npc = self._props._pending_npc
@@ -3046,16 +3178,22 @@ class SceneEditor(QWidget):
             except (OSError, json.JSONDecodeError):
                 return
             json_memo[jkey] = data
-        pair = _resolved_anim_world_pair(data, self._model)
+        pair = _resolved_anim_world_pair(
+            data, self._model, anim_manifest_url=anim_id.strip())
         if not pair:
             return
         world_w, world_h = pair
         cols = max(1, int(data.get("cols", 1) or 1))
         rows = max(1, int(data.get("rows", 1) or 1))
-        sheet = str(data.get("spritesheet", "") or "").strip().lstrip("/")
+        cell_w = int(data.get("cellWidth", 0) or 0) or None
+        cell_h = int(data.get("cellHeight", 0) or 0) or None
+        atlas_frames = data.get("atlasFrames")
+        if not isinstance(atlas_frames, list):
+            atlas_frames = None
+        sheet = str(data.get("spritesheet", "") or "").strip()
         if not sheet:
             return
-        ap = self._public_asset_path(sheet)
+        ap = _spritesheet_public_path(self._model, sheet, anim_id.strip())
         if not ap or not ap.is_file():
             return
         akey = str(ap.resolve())
@@ -3104,8 +3242,19 @@ class SceneEditor(QWidget):
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
         self._canvas.graphics_scene().addItem(item)
         rt = _SceneNpcAnimRuntime(
-            npc_id, item, atlas, cols, rows, world_w, world_h,
-            frames_i, rate, loop,
+            npc_id,
+            item,
+            atlas,
+            cols,
+            rows,
+            world_w,
+            world_h,
+            frames_i,
+            rate,
+            loop,
+            cell_w=cell_w,
+            cell_h=cell_h,
+            atlas_frames=atlas_frames,
         )
         nx = float(npc.get("x", 0))
         ny = float(npc.get("y", 0))
@@ -3123,6 +3272,7 @@ class SceneEditor(QWidget):
             if isinstance(npc, dict):
                 self._try_add_scene_npc_anim(npc, jmemo, amemo)
         if self._scene_npc_runtimes:
+            self._scene_npc_anim_elapsed.start()
             self._scene_npc_anim_timer.start()
 
     def _refresh_one_scene_npc_anim(self, npc_id: str) -> None:
@@ -3147,6 +3297,7 @@ class SceneEditor(QWidget):
         amemo: dict[str, QPixmap] = {}
         self._try_add_scene_npc_anim(npc, jmemo, amemo)
         if self._scene_npc_runtimes and not self._scene_npc_anim_timer.isActive():
+            self._scene_npc_anim_elapsed.start()
             self._scene_npc_anim_timer.start()
 
     def _tick_scene_npc_anims(self) -> None:
@@ -3159,7 +3310,8 @@ class SceneEditor(QWidget):
             for n in sc.get("npcs", [])
             if isinstance(n, dict) and n.get("id")
         }
-        dt = self._scene_npc_anim_timer.interval() / 1000.0
+        dt_ms = self._scene_npc_anim_elapsed.restart()
+        dt = max(1e-6, dt_ms / 1000.0)
         for rid, rt in list(self._scene_npc_runtimes.items()):
             npc = npc_by_id.get(rid)
             if not npc:
@@ -3514,6 +3666,18 @@ class SceneEditor(QWidget):
 
     def _add_spawn(self) -> None:
         self._add_spawn_at(200, 200)
+
+    def _try_delete_zone_hovered_vertex(self) -> bool:
+        """若当前选中 Zone 多边形且鼠标正悬停某一顶点，则删该顶点。"""
+        for it in self._canvas._gfx.selectedItems():
+            if isinstance(it, _EditableZonePolygon) and it.try_delete_hovered_vertex():
+                return True
+        return False
+
+    def _on_delete_key_shortcut(self) -> None:
+        if self._try_delete_zone_hovered_vertex():
+            return
+        self._delete_selected()
 
     def _delete_selected(self) -> None:
         sc = self._require_scene()

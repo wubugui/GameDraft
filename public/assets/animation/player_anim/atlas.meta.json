@@ -1,0 +1,422 @@
+{
+  "version": 2,
+  "packMode": "native_equal_cells",
+  "video": "",
+  "exportFps": 12.0,
+  "cols": 7,
+  "rows": 7,
+  "cellWidth": 508,
+  "cellHeight": 737,
+  "padding": 4,
+  "frameCount": 45,
+  "frameIndexBase": 0,
+  "anchor": "bottom_center",
+  "rowMajorOrder": "col=index%cols, row=index//cols（与 GameDraft SpriteEntity 一致）",
+  "frames": [
+    {
+      "logicalIndex": 0,
+      "atlasIndex": 0,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 341,
+      "contentHeight": 668
+    },
+    {
+      "logicalIndex": 1,
+      "atlasIndex": 1,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 379,
+      "contentHeight": 676
+    },
+    {
+      "logicalIndex": 2,
+      "atlasIndex": 2,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 348,
+      "contentHeight": 664
+    },
+    {
+      "logicalIndex": 3,
+      "atlasIndex": 3,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 394,
+      "contentHeight": 665
+    },
+    {
+      "logicalIndex": 4,
+      "atlasIndex": 4,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 381,
+      "contentHeight": 659
+    },
+    {
+      "logicalIndex": 5,
+      "atlasIndex": 5,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 343,
+      "contentHeight": 670
+    },
+    {
+      "logicalIndex": 6,
+      "atlasIndex": 6,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 374,
+      "contentHeight": 686
+    },
+    {
+      "logicalIndex": 7,
+      "atlasIndex": 7,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 329,
+      "contentHeight": 668
+    },
+    {
+      "logicalIndex": 8,
+      "atlasIndex": 8,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 366,
+      "contentHeight": 682
+    },
+    {
+      "logicalIndex": 9,
+      "atlasIndex": 9,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 409,
+      "contentHeight": 667
+    },
+    {
+      "logicalIndex": 10,
+      "atlasIndex": 10,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 350,
+      "contentHeight": 661
+    },
+    {
+      "logicalIndex": 11,
+      "atlasIndex": 11,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 378,
+      "contentHeight": 675
+    },
+    {
+      "logicalIndex": 12,
+      "atlasIndex": 12,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 343,
+      "contentHeight": 676
+    },
+    {
+      "logicalIndex": 13,
+      "atlasIndex": 13,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 349,
+      "contentHeight": 686
+    },
+    {
+      "logicalIndex": 14,
+      "atlasIndex": 14,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 412,
+      "contentHeight": 673
+    },
+    {
+      "logicalIndex": 15,
+      "atlasIndex": 15,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 495,
+      "contentHeight": 706
+    },
+    {
+      "logicalIndex": 16,
+      "atlasIndex": 16,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 495,
+      "contentHeight": 709
+    },
+    {
+      "logicalIndex": 17,
+      "atlasIndex": 17,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 497,
+      "contentHeight": 718
+    },
+    {
+      "logicalIndex": 18,
+      "atlasIndex": 18,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 497,
+      "contentHeight": 724
+    },
+    {
+      "logicalIndex": 19,
+      "atlasIndex": 19,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 494,
+      "contentHeight": 729
+    },
+    {
+      "logicalIndex": 20,
+      "atlasIndex": 20,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 494,
+      "contentHeight": 724
+    },
+    {
+      "logicalIndex": 21,
+      "atlasIndex": 21,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 495,
+      "contentHeight": 714
+    },
+    {
+      "logicalIndex": 22,
+      "atlasIndex": 22,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 497,
+      "contentHeight": 706
+    },
+    {
+      "logicalIndex": 23,
+      "atlasIndex": 23,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 498,
+      "contentHeight": 712
+    },
+    {
+      "logicalIndex": 24,
+      "atlasIndex": 24,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 500,
+      "contentHeight": 716
+    },
+    {
+      "logicalIndex": 25,
+      "atlasIndex": 25,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 500,
+      "contentHeight": 725
+    },
+    {
+      "logicalIndex": 26,
+      "atlasIndex": 26,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 496,
+      "contentHeight": 723
+    },
+    {
+      "logicalIndex": 27,
+      "atlasIndex": 27,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 496,
+      "contentHeight": 720
+    },
+    {
+      "logicalIndex": 28,
+      "atlasIndex": 28,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 494,
+      "contentHeight": 708
+    },
+    {
+      "logicalIndex": 29,
+      "atlasIndex": 29,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 298,
+      "contentHeight": 676
+    },
+    {
+      "logicalIndex": 30,
+      "atlasIndex": 30,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 313,
+      "contentHeight": 693
+    },
+    {
+      "logicalIndex": 31,
+      "atlasIndex": 31,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 423,
+      "contentHeight": 662
+    },
+    {
+      "logicalIndex": 32,
+      "atlasIndex": 32,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 306,
+      "contentHeight": 679
+    },
+    {
+      "logicalIndex": 33,
+      "atlasIndex": 33,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 297,
+      "contentHeight": 665
+    },
+    {
+      "logicalIndex": 34,
+      "atlasIndex": 34,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 319,
+      "contentHeight": 693
+    },
+    {
+      "logicalIndex": 35,
+      "atlasIndex": 35,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 379,
+      "contentHeight": 651
+    },
+    {
+      "logicalIndex": 36,
+      "atlasIndex": 36,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 304,
+      "contentHeight": 681
+    },
+    {
+      "logicalIndex": 37,
+      "atlasIndex": 37,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 301,
+      "contentHeight": 673
+    },
+    {
+      "logicalIndex": 38,
+      "atlasIndex": 38,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 364,
+      "contentHeight": 676
+    },
+    {
+      "logicalIndex": 39,
+      "atlasIndex": 39,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 372,
+      "contentHeight": 650
+    },
+    {
+      "logicalIndex": 40,
+      "atlasIndex": 40,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 324,
+      "contentHeight": 684
+    },
+    {
+      "logicalIndex": 41,
+      "atlasIndex": 41,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 279,
+      "contentHeight": 668
+    },
+    {
+      "logicalIndex": 42,
+      "atlasIndex": 42,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 434,
+      "contentHeight": 675
+    },
+    {
+      "logicalIndex": 43,
+      "atlasIndex": 43,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 307,
+      "contentHeight": 679
+    },
+    {
+      "logicalIndex": 44,
+      "atlasIndex": 44,
+      "timeSec": 0.0,
+      "cellWidth": 508,
+      "cellHeight": 737,
+      "contentWidth": 219,
+      "contentHeight": 689
+    }
+  ]
+}

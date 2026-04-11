@@ -88,6 +88,11 @@ class ProjectModel(QObject):
         return self.assets_path / "scenes"
 
     @property
+    def animation_bundles_path(self) -> Path:
+        """每个子目录含 anim.json +图集，与 video_to_atlas 导出一致。"""
+        return self.assets_path / "animation"
+
+    @property
     def dialogues_path(self) -> Path:
         return self.assets_path / "dialogues"
 
@@ -115,8 +120,13 @@ class ProjectModel(QObject):
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
 
         self.animations = {}
-        for p in list_json_files(dp, "*_anim.json"):
-            self.animations[p.stem] = self._load(p, {})
+        anim_root = self.animation_bundles_path
+        if anim_root.is_dir():
+            for sub in sorted(anim_root.iterdir()):
+                if sub.is_dir():
+                    aj = sub / "anim.json"
+                    if aj.is_file():
+                        self.animations[sub.name] = self._load(aj, {})
 
         self.scenes = {}
         for p in list_json_files(sp, "*.json"):
@@ -155,6 +165,20 @@ class ProjectModel(QObject):
                 self.filter_defs[p.stem] = self._load(p, {})
         self.data_changed.emit("filter", "")
 
+    def reload_animations_from_disk(self) -> None:
+        """重读 public/assets/animation/*/anim.json（不标脏；导出/外部工具改盘后用于同步内存）。"""
+        if self.project_path is None:
+            return
+        self.animations = {}
+        anim_root = self.animation_bundles_path
+        if anim_root.is_dir():
+            for sub in sorted(anim_root.iterdir()):
+                if sub.is_dir():
+                    aj = sub / "anim.json"
+                    if aj.is_file():
+                        self.animations[sub.name] = self._load(aj, {})
+        self.data_changed.emit("animation", "")
+
     @staticmethod
     def _load(path: Path, default: Any) -> Any:
         if path.exists():
@@ -184,12 +208,6 @@ class ProjectModel(QObject):
         write_json(dp / "archive" / "lore.json", self.archive_lore)
         write_json(dp / "archive" / "books.json", self.archive_books)
         write_json(dp / "archive" / "documents.json", self.archive_documents)
-        for name, data in self.animations.items():
-            write_json(dp / f"{name}.json", data)
-        keep_anim = set(self.animations.keys())
-        for p in list(dp.glob("*_anim.json")):
-            if p.stem not in keep_anim:
-                p.unlink()
         for sid, data in self.scenes.items():
             write_json(sp / f"{sid}.json", data)
         from .flag_registry import flag_registry_path
@@ -369,6 +387,7 @@ class ProjectModel(QObject):
         return list(self.audio_config.get(channel, {}).keys())
 
     def all_anim_files(self) -> list[str]:
+        """动画包目录名（与 `animation/<id>/anim.json` 的 id 一致）。"""
         return list(self.animations.keys())
 
     def all_ink_files(self) -> list[str]:
@@ -381,8 +400,11 @@ class ProjectModel(QObject):
         return [(f"/assets/dialogues/{name}", name) for name in self.all_ink_files()]
 
     def anim_asset_path_choices(self) -> list[tuple[str, str]]:
-        """(runtime path /assets/data/<stem>.json, stem) for npc animFile."""
-        return [(f"/assets/data/{stem}.json", stem) for stem in self.all_anim_files()]
+        """(runtime path /assets/animation/<id>/anim.json, 显示名) for npc animFile."""
+        return [
+            (f"/assets/animation/{stem}/anim.json", stem)
+            for stem in self.all_anim_files()
+        ]
 
     def illustration_asset_choices(self) -> list[tuple[str, str]]:
         """Known illustration paths under /assets/images/illustrations/."""

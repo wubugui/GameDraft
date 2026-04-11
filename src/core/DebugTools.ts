@@ -26,6 +26,10 @@ export interface DebugToolsDeps {
   isExploring: () => boolean;
   getDebugSceneWorldSize: () => { width: number; height: number } | undefined;
   applyDebugSceneWorldSize: (width: number, height: number) => void;
+  /** `?mode=dev` 时为 true */
+  isDevMode: () => boolean;
+  /** 切换到开发用 dev_room 场景 */
+  goToDevScene: () => void;
 }
 
 export class DebugTools {
@@ -196,9 +200,8 @@ export class DebugTools {
   private setupDebugPanelSections(): void {
     const { debugPanelUI, player, inventoryManager, renderer } = this.deps;
 
-    debugPanelUI.addSection('Quick Actions', () => ({
-      text: 'Debug shortcuts for development.',
-      actions: [
+    debugPanelUI.addSection('Quick Actions', () => {
+      const actions: { label: string; fn: () => void }[] = [
         {
           label: 'Reload Scene',
           fn: () => {
@@ -215,8 +218,21 @@ export class DebugTools {
           label: 'Refresh',
           fn: () => debugPanelUI.refresh(),
         },
-      ],
-    }));
+      ];
+      if (this.deps.isDevMode()) {
+        actions.push({
+          label: '回到 Dev 场景',
+          fn: () => {
+            this.deps.goToDevScene();
+            debugPanelUI.log('切换到 dev_room');
+          },
+        });
+      }
+      return {
+        text: 'Debug shortcuts for development.',
+        actions,
+      };
+    });
 
     debugPanelUI.addSection('Collisions', () => {
       const enabled = player.collisionsEnabledState;

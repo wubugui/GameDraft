@@ -5,6 +5,12 @@ import { UITheme } from './UITheme';
 export interface DevModeCallbacks {
   getCutsceneIds(): string[];
   playCutscene(id: string): void;
+  /**
+   * 开发模式可切换场景（id 用于 loadScene；name 来自各场景 JSON 的 name，供列表展示）
+   */
+  getScenes(): Promise<Array<{ id: string; name: string }>>;
+  /** 进入指定场景（默认出生点） */
+  loadScene(id: string): void;
   reload(): void;
 }
 
@@ -12,6 +18,7 @@ const CATEGORY_WIDTH = 160;
 const HEADER_HEIGHT = 48;
 const ITEM_HEIGHT = 36;
 const SCROLL_SPEED = 30;
+const TAB_H = 40;
 
 export class DevModeUI {
   private renderer: Renderer;
@@ -23,6 +30,7 @@ export class DevModeUI {
   private contentMask: Graphics | null = null;
   private contentContainer: Container | null = null;
   private boundWheel: ((e: WheelEvent) => void) | null = null;
+  private section: 'cutscene' | 'scene' = 'cutscene';
 
   constructor(renderer: Renderer, callbacks: DevModeCallbacks) {
     this.renderer = renderer;
@@ -40,6 +48,7 @@ export class DevModeUI {
     if (this._isOpen) return;
     this._isOpen = true;
     this.scrollY = 0;
+    this.section = 'cutscene';
     this.rebuild();
     this.container.visible = true;
     this.boundWheel = (e: WheelEvent) => this.onWheel(e);
@@ -128,8 +137,19 @@ export class DevModeUI {
     catBg.fill({ color: UITheme.colors.panelBgAlt, alpha: 0.8 });
     this.container.addChild(catBg);
 
-    const catLabel = this.makeCategoryLabel('Cutscene', panelX, bodyY, true);
-    this.container.addChild(catLabel);
+    const tabY0 = bodyY + 8;
+    this.container.addChild(this.makeSectionTab(
+      'Cutscene', panelX, tabY0, this.section === 'cutscene', () => {
+        this.section = 'cutscene';
+        this.rebuild();
+      },
+    ));
+    this.container.addChild(this.makeSectionTab(
+      '场景', panelX, tabY0 + TAB_H + 4, this.section === 'scene', () => {
+        this.section = 'scene';
+        this.rebuild();
+      },
+    ));
 
     const catDivider = new Graphics();
     catDivider.rect(panelX + CATEGORY_WIDTH, bodyY, 1, bodyH);
@@ -138,7 +158,11 @@ export class DevModeUI {
 
     const contentX = panelX + CATEGORY_WIDTH + 1;
     const contentW = panelW - CATEGORY_WIDTH - 1;
-    this.buildCutsceneList(contentX, bodyY, contentW, bodyH);
+    if (this.section === 'cutscene') {
+      this.buildCutsceneList(contentX, bodyY, contentW, bodyH);
+    } else {
+      this.buildSceneList(contentX, bodyY, contentW, bodyH);
+    }
   }
 
   private buildCutsceneList(x: number, y: number, w: number, h: number): void {
@@ -179,6 +203,64 @@ export class DevModeUI {
     const totalH = cy;
     this.maxScrollY = Math.max(0, totalH - h);
     this.applyScroll();
+  }
+
+  private buildSceneList(x: number, y: number, w: number, h: number): void {
+    this.contentMask = new Graphics();
+    this.contentMask.rect(x, y, w, h);
+    this.contentMask.fill(0xffffff);
+    this.container.addChild(this.contentMask);
+
+    this.contentContainer = new Container();
+    this.contentContainer.mask = this.contentMask;
+    this.container.addChild(this.contentContainer);
+
+    const pad = 8;
+    const loading = new Text({
+      text: '加载场景列表…',
+      style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+    });
+    loading.x = x + pad;
+    loading.y = y + pad;
+    this.contentContainer.addChild(loading);
+    this.maxScrollY = 0;
+
+    void (async () => {
+      let entries: Array<{ id: string; name: string }>;
+      try {
+        entries = await this.callbacks.getScenes();
+      } catch {
+        entries = [];
+      }
+      if (!this._isOpen || this.section !== 'scene' || !this.contentContainer) return;
+
+      this.contentContainer.removeChildren();
+      let cy = 0;
+
+      if (entries.length === 0) {
+        const empty = new Text({
+          text: 'No scenes in list (check map_config / game_config).',
+          style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+        });
+        empty.x = x + pad;
+        empty.y = y + pad;
+        this.contentContainer.addChild(empty);
+        this.maxScrollY = 0;
+        return;
+      }
+
+      for (const { id, name } of entries) {
+        const row = this.makeListItem(name, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
+          this.callbacks.loadScene(id);
+        });
+        this.contentContainer.addChild(row);
+        cy += ITEM_HEIGHT + 2;
+      }
+
+      const totalH = cy;
+      this.maxScrollY = Math.max(0, totalH - h);
+      this.applyScroll();
+    })();
   }
 
   private makeListItem(
@@ -269,9 +351,11 @@ export class DevModeUI {
     return btn;
   }
 
-  private makeCategoryLabel(text: string, panelX: number, bodyY: number, active: boolean): Container {
+  private makeSectionTab(
+    text: string, panelX: number, bodyY: number, active: boolean, onSelect: () => void,
+  ): Container {
     const c = new Container();
-    const h = 36;
+    const h = TAB_H;
     const w = CATEGORY_WIDTH;
 
     const bg = new Graphics();
@@ -294,6 +378,24 @@ export class DevModeUI {
 
     c.x = panelX;
     c.y = bodyY;
+    c.eventMode = 'static';
+    c.cursor = 'pointer';
+    c.on('pointertap', () => {
+      if (!active) onSelect();
+    });
+    if (!active) {
+      c.on('pointerover', () => {
+        bg.clear();
+        bg.rect(0, 0, w, h);
+        bg.fill({ color: UITheme.colors.rowHover, alpha: 0.35 });
+      });
+      c.on('pointerout', () => {
+        bg.clear();
+        bg.rect(0, 0, w, h);
+        bg.fill({ color: UITheme.colors.panelBgAlt, alpha: 0.5 });
+      });
+    }
+
     return c;
   }
 

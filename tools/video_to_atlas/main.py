@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 # 先于 Qt / OpenCV / 解码库加载：减轻循环 seek 时 H.264/FFmpeg 刷 stderr
 if sys.platform == "win32":
@@ -64,12 +65,15 @@ try:
 except Exception:
     pass
 
-from gui import MainWindow
+from main_window import MainWindow
 
 
 def main() -> None:
     app = QApplication(sys.argv)
-    win = MainWindow()
+    init_ws: Path | None = None
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        init_ws = Path(sys.argv[1]).expanduser()
+    win = MainWindow(initial_workspace=init_ws)
     win.show()
     raise SystemExit(app.exec())
 

@@ -1,0 +1,287 @@
+{
+  "version": 2,
+  "packMode": "native_equal_cells",
+  "video": "",
+  "exportFps": 12.0,
+  "cols": 6,
+  "rows": 5,
+  "cellWidth": 562,
+  "cellHeight": 662,
+  "padding": 4,
+  "frameCount": 30,
+  "frameIndexBase": 0,
+  "anchor": "bottom_center",
+  "rowMajorOrder": "col=index%cols, row=index//cols（与 GameDraft SpriteEntity 一致）",
+  "frames": [
+    {
+      "logicalIndex": 0,
+      "atlasIndex": 0,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 538,
+      "contentHeight": 588
+    },
+    {
+      "logicalIndex": 1,
+      "atlasIndex": 1,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 542,
+      "contentHeight": 580
+    },
+    {
+      "logicalIndex": 2,
+      "atlasIndex": 2,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 509,
+      "contentHeight": 573
+    },
+    {
+      "logicalIndex": 3,
+      "atlasIndex": 3,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 519,
+      "contentHeight": 587
+    },
+    {
+      "logicalIndex": 4,
+      "atlasIndex": 4,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 534,
+      "contentHeight": 593
+    },
+    {
+      "logicalIndex": 5,
+      "atlasIndex": 5,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 538,
+      "contentHeight": 590
+    },
+    {
+      "logicalIndex": 6,
+      "atlasIndex": 6,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 554,
+      "contentHeight": 575
+    },
+    {
+      "logicalIndex": 7,
+      "atlasIndex": 7,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 547,
+      "contentHeight": 585
+    },
+    {
+      "logicalIndex": 8,
+      "atlasIndex": 8,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 538,
+      "contentHeight": 595
+    },
+    {
+      "logicalIndex": 9,
+      "atlasIndex": 9,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 193,
+      "contentHeight": 641
+    },
+    {
+      "logicalIndex": 10,
+      "atlasIndex": 10,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 197,
+      "contentHeight": 636
+    },
+    {
+      "logicalIndex": 11,
+      "atlasIndex": 11,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 199,
+      "contentHeight": 630
+    },
+    {
+      "logicalIndex": 12,
+      "atlasIndex": 12,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 198,
+      "contentHeight": 635
+    },
+    {
+      "logicalIndex": 13,
+      "atlasIndex": 13,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 207,
+      "contentHeight": 643
+    },
+    {
+      "logicalIndex": 14,
+      "atlasIndex": 14,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 215,
+      "contentHeight": 636
+    },
+    {
+      "logicalIndex": 15,
+      "atlasIndex": 15,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 222,
+      "contentHeight": 626
+    },
+    {
+      "logicalIndex": 16,
+      "atlasIndex": 16,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 217,
+      "contentHeight": 620
+    },
+    {
+      "logicalIndex": 17,
+      "atlasIndex": 17,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 207,
+      "contentHeight": 630
+    },
+    {
+      "logicalIndex": 18,
+      "atlasIndex": 18,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 208,
+      "contentHeight": 641
+    },
+    {
+      "logicalIndex": 19,
+      "atlasIndex": 19,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 318,
+      "contentHeight": 634
+    },
+    {
+      "logicalIndex": 20,
+      "atlasIndex": 20,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 255,
+      "contentHeight": 640
+    },
+    {
+      "logicalIndex": 21,
+      "atlasIndex": 21,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 228,
+      "contentHeight": 653
+    },
+    {
+      "logicalIndex": 22,
+      "atlasIndex": 22,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 345,
+      "contentHeight": 639
+    },
+    {
+      "logicalIndex": 23,
+      "atlasIndex": 23,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 200,
+      "contentHeight": 651
+    },
+    {
+      "logicalIndex": 24,
+      "atlasIndex": 24,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 280,
+      "contentHeight": 646
+    },
+    {
+      "logicalIndex": 25,
+      "atlasIndex": 25,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 341,
+      "contentHeight": 633
+    },
+    {
+      "logicalIndex": 26,
+      "atlasIndex": 26,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 174,
+      "contentHeight": 648
+    },
+    {
+      "logicalIndex": 27,
+      "atlasIndex": 27,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 321,
+      "contentHeight": 643
+    },
+    {
+      "logicalIndex": 28,
+      "atlasIndex": 28,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 319,
+      "contentHeight": 644
+    },
+    {
+      "logicalIndex": 29,
+      "atlasIndex": 29,
+      "timeSec": 0.0,
+      "cellWidth": 562,
+      "cellHeight": 662,
+      "contentWidth": 192,
+      "contentHeight": 654
+    }
+  ]
+}

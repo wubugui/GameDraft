@@ -201,23 +201,39 @@ def _walk_conditions(
             _flag_issue(model, issues, str(cond["flag"]), data_type, item_id, scene_id)
 
 
-def _walk_setflag_actions(
+def _walk_action_defs(
     model: ProjectModel, issues: list[Issue], actions: list,
     data_type: str, item_id: str, scene_id: str | None,
 ) -> None:
+    """遍历 ActionDef 列表：校验 type 已在编辑器登记；setFlag 键；嵌套 enableRuleOffers / addDelayedEvent。"""
+    from .shared.action_editor import ACTION_TYPES
+    allowed_types = set(ACTION_TYPES)
+
     for act in actions or []:
         if not isinstance(act, dict):
             continue
+        t = act.get("type")
+        if isinstance(t, str) and t and t not in allowed_types:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"Action 类型 {t!r} 未在 action_editor.ACTION_TYPES 中登记；"
+                f"添加新 Action 须在 ActionRegistry 与 action_editor 同步维护",
+            ))
         p = act.get("params") or {}
-        if act.get("type") == "setFlag" and p.get("key"):
+        if t == "setFlag" and p.get("key"):
             _flag_issue(model, issues, str(p["key"]), data_type, item_id, scene_id)
-        elif act.get("type") == "enableRuleOffers":
+        elif t == "enableRuleOffers":
             for slot in (p.get("slots") or []):
                 if isinstance(slot, dict):
-                    _walk_setflag_actions(
+                    _walk_action_defs(
                         model, issues, slot.get("resultActions"),
                         data_type, item_id, scene_id,
                     )
+        elif t == "addDelayedEvent":
+            _walk_action_defs(
+                model, issues, p.get("actions"),
+                data_type, item_id, scene_id,
+            )
 
 
 def _validate_ink_file(model: ProjectModel, issues: list[Issue], ink_name: str) -> None:
@@ -267,12 +283,12 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             hid = str(hs.get("id", ""))
             _walk_conditions(model, issues, hs.get("conditions"), "scene", hid, sid)
             data = hs.get("data") or {}
-            _walk_setflag_actions(model, issues, data.get("actions"), "scene", hid, sid)
+            _walk_action_defs(model, issues, data.get("actions"), "scene", hid, sid)
         for zone in sc.get("zones", []) or []:
             zid = str(zone.get("id", ""))
             _walk_conditions(model, issues, zone.get("conditions"), "scene", zid, sid)
             for ev in ("onEnter", "onStay", "onExit"):
-                _walk_setflag_actions(model, issues, zone.get(ev), "scene", zid, sid)
+                _walk_action_defs(model, issues, zone.get(ev), "scene", zid, sid)
 
     for q in model.quests:
         qid = str(q.get("id", ""))
@@ -280,17 +296,15 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             _walk_conditions(model, issues, q.get(ck), "quest", qid, None)
         for edge in q.get("nextQuests", []) or []:
             _walk_conditions(model, issues, edge.get("conditions"), "quest", qid, None)
+        _walk_action_defs(model, issues, q.get("rewards"), "quest", qid, None)
 
     for enc in model.encounters:
         eid = str(enc.get("id", ""))
         _walk_conditions(model, issues, enc.get("conditions"), "encounter", eid, None)
         for opt in enc.get("options", []) or []:
             _walk_conditions(model, issues, opt.get("conditions"), "encounter", eid, None)
-            _walk_setflag_actions(model, issues, opt.get("resultActions"), "encounter", eid, None)
-        for act in enc.get("rewards", []) or []:
-            p = (act.get("params") or {}) if isinstance(act, dict) else {}
-            if isinstance(act, dict) and act.get("type") == "setFlag" and p.get("key"):
-                _flag_issue(model, issues, str(p["key"]), "encounter", eid, None)
+            _walk_action_defs(model, issues, opt.get("resultActions"), "encounter", eid, None)
+        _walk_action_defs(model, issues, enc.get("rewards"), "encounter", eid, None)
 
     for node in model.map_nodes:
         mid = str(node.get("sceneId", "?"))
