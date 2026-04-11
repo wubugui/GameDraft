@@ -44,6 +44,17 @@ export class Npc implements ICutsceneActor {
     this.nameLabel.anchor.set(0.5, 0);
     this.nameLabel.y = 6;
     this.container.addChild(this.nameLabel);
+    this.applyInitialFacing();
+  }
+
+  /** 按 def.initialFacing 设置左右镜像（无精灵时同步占位与标签）。 */
+  applyInitialFacing(): void {
+    const f = this.def.initialFacing;
+    if (f === 'left') {
+      this.setFacing(-1, 0);
+    } else if (f === 'right') {
+      this.setFacing(1, 0);
+    }
   }
 
   loadSprite(texture: Texture, animDef: AnimationSetDef, initialState?: string): void {
@@ -67,6 +78,7 @@ export class Npc implements ICutsceneActor {
     this.container.addChildAt(this.sprite.container, 0);
     this.sprite.container.x = 0;
     this.sprite.container.y = 0;
+    this.applyInitialFacing();
   }
 
   private _syncContainerPosition(): void {

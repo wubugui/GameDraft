@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLineEdit, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QHBoxLayout,
+    QComboBox, QDoubleSpinBox,
 )
 from PySide6.QtCore import Signal, Qt
 
@@ -41,6 +42,16 @@ class ZonePanel(QWidget):
         self.id_edit = QLineEdit()
         self.id_edit.setReadOnly(True)
         form.addRow("ID:", self.id_edit)
+        self._kind = QComboBox()
+        self._kind.addItem("普通（进出/停留）", "standard")
+        self._kind.addItem("深度 floor 修正（仅遮挡）", "depth_floor")
+        self._kind.currentIndexChanged.connect(self._on_kind_changed)
+        form.addRow("区域类型", self._kind)
+        self._boost = QDoubleSpinBox()
+        self._boost.setRange(-1e6, 1e6)
+        self._boost.setDecimals(4)
+        self._boost.valueChanged.connect(self._mark_dirty)
+        form.addRow("floorOffsetBoost", self._boost)
         layout.addLayout(form)
 
         hint = QLabel(
@@ -91,6 +102,16 @@ class ZonePanel(QWidget):
         self.enter_editor.changed.connect(self._mark_dirty)
         self.stay_editor.changed.connect(self._mark_dirty)
         self.exit_editor.changed.connect(self._mark_dirty)
+
+    def _on_kind_changed(self, _i: int) -> None:
+        self._apply_kind_ui()
+        self._mark_dirty()
+
+    def _apply_kind_ui(self) -> None:
+        is_depth = self._kind.currentData() == "depth_floor"
+        self._boost.setEnabled(is_depth)
+        for w in (self.enter_editor, self.stay_editor, self.exit_editor):
+            w.setEnabled(not is_depth)
 
     def _parse_cell_float(self, it: QTableWidgetItem | None, default: float = 0.0) -> float:
         if it is None:
@@ -220,26 +241,35 @@ class ZonePanel(QWidget):
         self._emit_if_valid_polygon()
 
     def _write_editors_to_dict(self, d: dict) -> None:
+        kind = self._kind.currentData() or "standard"
+        if kind == "depth_floor":
+            d["zoneKind"] = "depth_floor"
+            d["floorOffsetBoost"] = self._boost.value()
+            for k in ("onEnter", "onStay", "onExit"):
+                d.pop(k, None)
+        else:
+            d.pop("zoneKind", None)
+            d.pop("floorOffsetBoost", None)
+            enter = self.enter_editor.to_list()
+            if enter:
+                d["onEnter"] = enter
+            elif "onEnter" in d:
+                del d["onEnter"]
+            stay = self.stay_editor.to_list()
+            if stay:
+                d["onStay"] = stay
+            elif "onStay" in d:
+                del d["onStay"]
+            exit_acts = self.exit_editor.to_list()
+            if exit_acts:
+                d["onExit"] = exit_acts
+            elif "onExit" in d:
+                del d["onExit"]
         conds = self.cond_editor.to_list()
         if conds:
             d["conditions"] = conds
         elif "conditions" in d:
             del d["conditions"]
-        enter = self.enter_editor.to_list()
-        if enter:
-            d["onEnter"] = enter
-        elif "onEnter" in d:
-            del d["onEnter"]
-        stay = self.stay_editor.to_list()
-        if stay:
-            d["onStay"] = stay
-        elif "onStay" in d:
-            del d["onStay"]
-        exit_acts = self.exit_editor.to_list()
-        if exit_acts:
-            d["onExit"] = exit_acts
-        elif "onExit" in d:
-            del d["onExit"]
         if "ruleSlots" in d:
             del d["ruleSlots"]
 
@@ -262,6 +292,19 @@ class ZonePanel(QWidget):
         self.enter_editor.set_data(d.get("onEnter", []))
         self.stay_editor.set_data(d.get("onStay", []))
         self.exit_editor.set_data(d.get("onExit", []))
+        self._kind.blockSignals(True)
+        self._boost.blockSignals(True)
+        try:
+            idx = self._kind.findData(d.get("zoneKind") or "standard")
+            self._kind.setCurrentIndex(idx if idx >= 0 else 0)
+            try:
+                self._boost.setValue(float(d.get("floorOffsetBoost", 0)))
+            except (TypeError, ValueError):
+                self._boost.setValue(0.0)
+        finally:
+            self._kind.blockSignals(False)
+            self._boost.blockSignals(False)
+        self._apply_kind_ui()
 
     def _mark_dirty(self):
         if not self._nd:

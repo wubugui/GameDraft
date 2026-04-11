@@ -235,20 +235,8 @@
           "y": 2258.7
         }
       ],
-      "onEnter": [
-        {
-          "type": "setSceneDepthFloorOffset",
-          "params": {
-            "floor_offset": -0.1
-          }
-        }
-      ],
-      "onExit": [
-        {
-          "type": "resetSceneDepthFloorOffset",
-          "params": {}
-        }
-      ]
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": -0.2
     },
     {
       "id": "new_zone_1",
@@ -270,63 +258,39 @@
           "y": 678.6
         }
       ],
-      "onEnter": [
-        {
-          "type": "setSceneDepthFloorOffset",
-          "params": {
-            "floor_offset": -0.8
-          }
-        }
-      ],
-      "onExit": [
-        {
-          "type": "resetSceneDepthFloorOffset",
-          "params": {}
-        }
-      ]
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": -0.8
     },
     {
       "id": "new_zone_2",
       "polygon": [
         {
-          "x": 3059.6,
+          "x": 3060.9,
           "y": 1797.7
         },
         {
-          "x": 3268.9,
+          "x": 3270.2,
           "y": 1616.3
         },
         {
-          "x": 4022.1,
+          "x": 4023.4,
           "y": 2059.4
         },
         {
-          "x": 3899.6,
+          "x": 3900.9,
           "y": 2347.6
         },
         {
-          "x": 3689.6,
+          "x": 3690.9,
           "y": 2210.1
         },
         {
-          "x": 3479.6,
+          "x": 3480.9,
           "y": 2072.7
         }
       ],
-      "onEnter": [
-        {
-          "type": "setSceneDepthFloorOffset",
-          "params": {
-            "floor_offset": -0.4
-          }
-        }
-      ],
-      "onExit": [
-        {
-          "type": "resetSceneDepthFloorOffset",
-          "params": {}
-        }
-      ]
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": -0.4
     }
   ],
   "ambientSounds": [

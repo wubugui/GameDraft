@@ -53,6 +53,12 @@ def validate(model: ProjectModel) -> list[Issue]:
                     issues.append(Issue("warning", "scene", sid,
                                         f"Hotspot '{hs.get('id')}' itemId '{iid}' not found"))
         for npc in sc.get("npcs", []):
+            ifi = npc.get("initialFacing")
+            if ifi is not None and ifi not in ("left", "right"):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{npc.get('id')}' initialFacing 须为 'left' 或 'right'",
+                ))
             dcz = npc.get("dialogueCameraZoom")
             if dcz is not None:
                 try:
@@ -106,6 +112,38 @@ def validate(model: ProjectModel) -> list[Issue]:
                         "warning", "scene", sid,
                         f"Zone '{zid}' 含遗留几何字段 '{legacy}'，请删除，仅保留 polygon",
                     ))
+            zk = zone.get("zoneKind") or "standard"
+            if zk not in ("standard", "depth_floor"):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Zone '{zid}' zoneKind 无效: {zk!r}（应为 standard 或 depth_floor）",
+                ))
+            elif zk == "depth_floor":
+                b = zone.get("floorOffsetBoost")
+                try:
+                    bf = float(b)
+                    if not math.isfinite(bf):
+                        raise ValueError
+                except (TypeError, ValueError):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"Zone '{zid}'（depth_floor）需要有限数值 floorOffsetBoost",
+                    ))
+                for ev, label in (
+                    ("onEnter", "onEnter"),
+                    ("onStay", "onStay"),
+                    ("onExit", "onExit"),
+                ):
+                    if zone.get(ev):
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"Zone '{zid}'为 depth_floor，{label} 不会执行（区域逻辑已跳过）",
+                        ))
+            elif zk == "standard" and "floorOffsetBoost" in zone:
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"Zone '{zid}' 为 standard，floorOffsetBoost 无效，可删除",
+                ))
 
     # --- quest groups ---
     quest_group_ids = {g["id"] for g in model.quest_groups}

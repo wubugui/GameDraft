@@ -197,6 +197,10 @@
       "valueType": "string"
     },
     {
+      "key": "码头_已经和过码头告示交互过",
+      "valueType": "bool"
+    },
+    {
       "key": "铁环小孩_已经获得铁环",
       "valueType": "bool"
     }

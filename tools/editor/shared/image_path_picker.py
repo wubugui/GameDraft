@@ -4,7 +4,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -108,6 +108,8 @@ def _set_preview_label(label: QLabel, path: Path | None) -> None:
 class CutsceneImagePathRow(QWidget):
     """Line edit + Browse + thumbnail preview for show_img.image."""
 
+    changed = Signal()
+
     def __init__(self, model: ProjectModel | None, initial: str, parent: QWidget | None = None):
         super().__init__(parent)
         self._model = model
@@ -126,6 +128,7 @@ class CutsceneImagePathRow(QWidget):
         row = QHBoxLayout()
         self._edit = QLineEdit(initial)
         self._edit.setPlaceholderText("/assets/... 或点 Browse 从任意位置选择")
+        self._edit.textChanged.connect(lambda _t: self.changed.emit())
         btn = QPushButton("Browse…")
         btn.setToolTip("打开文件对话框（任意文件夹），选中后预览并写入游戏内路径")
         btn.clicked.connect(self._on_browse)
@@ -165,9 +168,11 @@ class CutsceneImagePathRow(QWidget):
             if url:
                 self._edit.setText(url)
                 _set_preview_label(self._preview, src)
+                self.changed.emit()
         else:
             self._edit.setText(str(src))
             _set_preview_label(self._preview, src)
+            self.changed.emit()
 
     def _refresh_preview_from_text(self) -> None:
         t = self._edit.text().strip()
@@ -179,7 +184,9 @@ class CutsceneImagePathRow(QWidget):
         _set_preview_label(self._preview, p)
 
     def set_path(self, path: str) -> None:
+        self._edit.blockSignals(True)
         self._edit.setText(path)
+        self._edit.blockSignals(False)
         self._refresh_preview_from_text()
 
     def path(self) -> str:

@@ -297,6 +297,61 @@ export class CutsceneRenderer {
     this.images.set(id, { sprite, imagePath: resolvedPath });
   }
 
+  /**
+   * 按屏幕百分比定位显示图片：中心在 (xPercent,yPercent)，宽度为屏宽的 widthPercent%；
+   * 高度由纹理宽高比推出。与 `hideImg` 共用 id 句柄。
+   */
+  async showPercentImg(
+    imagePath: string,
+    id: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+  ): Promise<void> {
+    this.hideImg(id);
+    const resolvedPath = resolveAssetPath(imagePath);
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const xp = Math.max(0, Math.min(100, xPercent));
+    const yp = Math.max(0, Math.min(100, yPercent));
+    const wPct = Math.max(0.01, Math.min(100, widthPercent));
+    const cx = sw * (xp / 100);
+    const cy = sh * (yp / 100);
+    const dispW = sw * (wPct / 100);
+
+    let texture: Texture;
+    try {
+      texture = await Assets.load<Texture>(resolvedPath);
+    } catch (err) {
+      console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
+      const dispH = Math.max(8, dispW * 0.75);
+      const placeholder = new Graphics();
+      placeholder.rect(-dispW / 2, -dispH / 2, dispW, dispH);
+      placeholder.fill({ color: 0x333344, alpha: 0.9 });
+      placeholder.x = cx;
+      placeholder.y = cy;
+      placeholder.label = id;
+      this.renderer.cutsceneOverlay.addChild(placeholder);
+      this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
+      return;
+    }
+    if (!texture || texture.width <= 0 || texture.height <= 0) {
+      console.warn(`[CutsceneRenderer] 图片尺寸异常: ${resolvedPath} (${texture?.width}x${texture?.height})`);
+    }
+    const iw = Math.max(1, texture.width);
+    const ih = Math.max(1, texture.height);
+    const dispH = dispW * (ih / iw);
+    const sprite = new Sprite(texture);
+    sprite.anchor.set(0.5);
+    sprite.width = dispW;
+    sprite.height = dispH;
+    sprite.x = cx;
+    sprite.y = cy;
+    sprite.label = id;
+    this.renderer.cutsceneOverlay.addChild(sprite);
+    this.images.set(id, { sprite, imagePath: resolvedPath });
+  }
+
   /** 隐藏并卸载指定 id 的图片 */
   hideImg(id: string): void {
     const entry = this.images.get(id);

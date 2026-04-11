@@ -238,15 +238,29 @@ export class SceneDepthSystem implements IGameSystem {
         }
     }
 
-    /** @param worldY 脚部世界坐标 Y */
-    updateEntityFootY(filter: DepthOcclusionFilter, worldY: number): void {
-        filter.setEntityFootY(worldY);
+    /**
+     * @param footWorldX 脚底中心世界 X
+     * @param footWorldY 脚底世界坐标 Y（与 Player/NPC 的 y 一致）
+     * @param floorOffsetExtra 按实体叠加的 floor 偏移（如 depth_floor 区）
+     */
+    updateEntityDepthOcclusion(
+        filter: DepthOcclusionFilter,
+        footWorldX: number,
+        footWorldY: number,
+        floorOffsetExtra: number,
+    ): void {
+        filter.setEntityFootY(footWorldY);
+        filter.setFloorOffsetExtra(floorOffsetExtra);
         if (this._logCounter % 300 === 0) {
             const floorA = this.config?.shader.floor_depth_A ?? 0;
             const floorB = this.config?.shader.floor_depth_B ?? 0;
-            const syTex = worldY * this.worldToPixelY;
-            const dBase = floorA * syTex + floorB + this._floorOffset;
-            depthLog(T, 'footWorldY:', worldY.toFixed(2), 'syTex:', syTex.toFixed(2), 'd_base:', dBase.toFixed(4));
+            const syTex = footWorldY * this.worldToPixelY;
+            const dBase = floorA * syTex + floorB + this._floorOffset + floorOffsetExtra;
+            depthLog(
+                T,
+                'foot:', footWorldX.toFixed(2), footWorldY.toFixed(2),
+                'syTex:', syTex.toFixed(2), 'd_base:', dBase.toFixed(4),
+            );
             this._logCounter++;
         } else {
             this._logCounter++;

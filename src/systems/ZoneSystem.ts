@@ -70,6 +70,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
 
   private checkZones(playerX: number, playerY: number): void {
     for (const zone of this.zones) {
+      if (zone.zoneKind === 'depth_floor') {
+        continue;
+      }
       if (zone.conditions && zone.conditions.length > 0 && !this.flagStore.checkConditions(zone.conditions)) {
         if (this.activeZoneIds.has(zone.id)) this.exitZone(zone);
         continue;
@@ -107,6 +110,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   /** 已在激活集中的区域，每帧执行 onStay。 */
   private runStayActions(playerX: number, playerY: number): void {
     for (const zone of this.zones) {
+      if (zone.zoneKind === 'depth_floor') {
+        continue;
+      }
       if (!this.activeZoneIds.has(zone.id)) continue;
       if (zone.conditions && zone.conditions.length > 0 && !this.flagStore.checkConditions(zone.conditions)) {
         continue;

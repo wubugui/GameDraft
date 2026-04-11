@@ -19,7 +19,7 @@
     "animManifest": "/assets/animation/player_anim/anim.json",
     "stateMap": {
       "idle": "hero_stand",
-      "walk": "hero_run",
+      "walk": "hero_walk",
       "run": "hero_run_new"
     }
   }

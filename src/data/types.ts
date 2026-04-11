@@ -188,6 +188,11 @@ export interface NpcDef {
   animFile?: string;
   /** 进入场景时播放的状态名；缺省时优先 idle，否则取 states 中第一个 */
   initialAnimState?: string;
+  /**
+   * 进入场景时的左右朝向（脚底为锚点，镜像 container.scale.x）。
+   * 缺省为 right。对话/巡逻中仍可由逻辑改写朝向。
+   */
+  initialFacing?: 'left' | 'right';
   patrol?: PatrolDef;
 }
 
@@ -614,8 +619,18 @@ export interface ZoneActionContext {
   zoneId: string;
 }
 
+/** standard：进出停留与规矩等；depth_floor：仅参与深度遮挡，脚底在区内时叠加 floorOffsetBoost */
+export type ZoneKind = 'standard' | 'depth_floor';
+
 export interface ZoneDef {
   id: string;
+  /** 缺省为 standard（与未写字段的老数据兼容） */
+  zoneKind?: ZoneKind;
+  /**
+   * zoneKind === 'depth_floor' 时使用：叠加到深度遮挡公式中 floor 项的偏移（与场景 depthConfig.floor_offset 同语义）。
+   * 多区重叠时取 |floorOffsetBoost| 最大者（并列保留先出现的）。
+   */
+  floorOffsetBoost?: number;
   /** 世界坐标闭合多边形顶点（顺序连接，首尾不重复同一点），至少 3 个。 */
   polygon: Array<{ x: number; y: number }>;
   conditions?: Condition[];

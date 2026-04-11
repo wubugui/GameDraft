@@ -88,6 +88,8 @@ export class DialogueManager implements IGameSystem {
   private sceneManager: SceneManager;
   private strings: StringsProvider | null = null;
   private story: Story | null = null;
+  /** 非 Ink：预置台词队列（与 `story` 互斥） */
+  private scriptedRemaining: DialogueLine[] | null = null;
   private active: boolean = false;
   private currentNpcName: string = '';
   private currentInkPath: string = '';
@@ -145,12 +147,14 @@ export class DialogueManager implements IGameSystem {
     }
     this.active = false;
     this.story = null;
+    this.scriptedRemaining = null;
     this.currentNpcName = '';
     this.currentInkPath = '';
   }
 
   async startDialogue(inkPath: string, npcName: string, knotName?: string): Promise<void> {
     if (!inkPath?.trim()) return;
+    this.scriptedRemaining = null;
     const jsonPath = inkPath.replace(/\.ink$/, '.ink.json');
     const jsonStr = await this.assetManager.loadText(jsonPath);
 
@@ -173,8 +177,45 @@ export class DialogueManager implements IGameSystem {
     await this.advance();
   }
 
+  /**
+   * 不加载 Ink，按顺序播放 `lines`（每条点击继续）；与对话 UI / EventBridge 流程一致。
+   */
+  startScriptedDialogue(lines: DialogueLine[]): void {
+    if (!lines.length) return;
+    this.story = null;
+    this.currentInkPath = '';
+    this.scriptedRemaining = lines.slice(1);
+    this.active = true;
+    this.currentNpcName = String(lines[0].speaker ?? '').trim();
+    this.eventBus.emit('dialogue:start', { npcName: this.currentNpcName });
+    this.eventBus.emit('dialogue:line', {
+      speaker: lines[0].speaker,
+      text: lines[0].text,
+      tags: lines[0].tags ?? [],
+    });
+    if (lines.length === 1) {
+      this.scheduleEnd();
+    }
+  }
+
   async advance(): Promise<void> {
-    if (!this.story || !this.active) return;
+    if (!this.active) return;
+
+    if (this.scriptedRemaining !== null) {
+      if (this.scriptedRemaining.length === 0) {
+        this.scriptedRemaining = null;
+        this.endDialogue();
+        return;
+      }
+      const line = this.scriptedRemaining.shift()!;
+      this.eventBus.emit('dialogue:line', line);
+      if (this.scriptedRemaining.length === 0) {
+        this.scheduleEnd();
+      }
+      return;
+    }
+
+    if (!this.story) return;
 
     if (this.story.canContinue) {
       const rawText = this.story.Continue() ?? '';
@@ -391,7 +432,9 @@ export class DialogueManager implements IGameSystem {
     if (!this.active) return;
     this.active = false;
     this.story = null;
+    this.scriptedRemaining = null;
     this.currentNpcName = '';
+    this.currentInkPath = '';
     this.eventBus.emit('dialogue:end', {});
   }
 
@@ -401,7 +444,9 @@ export class DialogueManager implements IGameSystem {
 
   destroy(): void {
     this.story = null;
+    this.scriptedRemaining = null;
     this.active = false;
     this.currentNpcName = '';
+    this.currentInkPath = '';
   }
 }

@@ -94,9 +94,32 @@ if (!fs.existsSync(INK_DIR)) {
   process.exit(0);
 }
 
-const files = fs.readdirSync(INK_DIR).filter(f => f.endsWith('.ink'));
+const cliArgs = process.argv.slice(2);
+let files;
+if (cliArgs.length > 0) {
+  const seen = new Set();
+  files = [];
+  for (const a of cliArgs) {
+    const base = a.endsWith('.ink') ? a : `${a}.ink`;
+    const fullPath = path.join(INK_DIR, base);
+    if (!fs.existsSync(fullPath)) {
+      console.error(`[ERROR] 找不到: ${base}`);
+      process.exit(1);
+    }
+    if (!seen.has(base)) {
+      seen.add(base);
+      files.push(base);
+    }
+  }
+} else {
+  files = fs.readdirSync(INK_DIR).filter(f => f.endsWith('.ink'));
+}
 
 if (files.length === 0) {
+  if (cliArgs.length > 0) {
+    console.error('[ERROR] 没有可编译的文件');
+    process.exit(1);
+  }
   console.log('No .ink files found.');
   process.exit(0);
 }

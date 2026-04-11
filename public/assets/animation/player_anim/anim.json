@@ -1,7 +1,7 @@
 {
   "spritesheet": "atlas.png",
-  "cols": 7,
-  "rows": 7,
+  "cols": 8,
+  "rows": 8,
   "states": {
     "hero_run": {
       "frames": [
@@ -71,6 +71,35 @@
       ],
       "frameRate": 1,
       "loop": false
+    },
+    "hero_sleep": {
+      "frames": [
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54
+      ],
+      "frameRate": 8,
+      "loop": true
+    },
+    "hero_walk": {
+      "frames": [
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61
+      ],
+      "frameRate": 6,
+      "loop": true
     }
   },
   "worldHeight": 150,
@@ -346,6 +375,108 @@
       "height": 737,
       "contentWidth": 219,
       "contentHeight": 689
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 222,
+      "contentHeight": 691
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 218,
+      "contentHeight": 687
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 216,
+      "contentHeight": 689
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 216,
+      "contentHeight": 687
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 224,
+      "contentHeight": 688
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 234,
+      "contentHeight": 685
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 243,
+      "contentHeight": 681
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 244,
+      "contentHeight": 680
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 234,
+      "contentHeight": 687
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 228,
+      "contentHeight": 691
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 289,
+      "contentHeight": 692
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 315,
+      "contentHeight": 672
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 223,
+      "contentHeight": 684
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 264,
+      "contentHeight": 693
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 352,
+      "contentHeight": 689
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 314,
+      "contentHeight": 688
+    },
+    {
+      "width": 508,
+      "height": 737,
+      "contentWidth": 220,
+      "contentHeight": 698
     }
   ]
 }

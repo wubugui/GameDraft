@@ -149,6 +149,21 @@ export class CutsceneManager implements IGameSystem {
     });
   }
 
+  /** Action「showOverlayImage」：与过场 `show_img` 共用 cutsceneOverlay 与 `hideImg` 句柄。 */
+  showOverlayImage(
+    overlayId: string,
+    imagePath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+  ): Promise<void> {
+    return this.cutsceneRenderer.showPercentImg(imagePath, overlayId, xPercent, yPercent, widthPercent);
+  }
+
+  hideOverlayImage(overlayId: string): void {
+    this.cutsceneRenderer.hideImg(overlayId);
+  }
+
   /**
    * 仅遮住场景画面（uiLayer 上的对话框仍可见），与过场 `fade_black` 全屏遮罩不同。
    * 返回在渐隐结束（或失败已记录）时 settled 的 Promise，供对话等需要顺序衔接的流程 await。

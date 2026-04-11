@@ -118,7 +118,7 @@ export class InteractionCoordinator {
     stateController.setState(GameState.UIOverlay);
     await inspectBox.show(data.text);
     eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
-    if (data.actions) actionExecutor.executeBatch(data.actions);
+    if (data.actions) await actionExecutor.executeBatchSequential(data.actions);
     if (stateController.currentState === GameState.UIOverlay) {
       stateController.setState(GameState.Exploring);
     }

@@ -58,8 +58,10 @@ import { DebugTools } from './DebugTools';
 import { SceneDepthSystem } from './SceneDepthSystem';
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
+import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
+import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 
 export interface GameStartOptions {
   devMode?: boolean;
@@ -378,6 +380,38 @@ export class Game {
       },
       startNpcPatrol: (npcId) => {
         this.startNpcPatrolForNpc(npcId);
+      },
+      showOverlayImage: (id, image, xPct, yPct, wPct) =>
+        this.cutsceneManager.showOverlayImage(id, image, xPct, yPct, wPct),
+      hideOverlayImage: (id) => {
+        this.cutsceneManager.hideOverlayImage(id);
+      },
+      startInkDialogue: async (inkPath, knot) => {
+        this.stateController.setState(GameState.Dialogue);
+        try {
+          const k = knot?.trim();
+          await this.dialogueManager.startDialogue(inkPath, '', k || undefined);
+        } catch (e) {
+          console.warn('Game: startInkDialogue failed', e);
+          this.stateController.setState(GameState.Exploring);
+        }
+      },
+      playScriptedDialogue: (lines) => {
+        this.stateController.setState(GameState.Dialogue);
+        return new Promise<void>((resolve) => {
+          const onEnd = () => {
+            this.eventBus.off('dialogue:end', onEnd);
+            resolve();
+          };
+          this.eventBus.on('dialogue:end', onEnd);
+          this.dialogueManager.startScriptedDialogue(lines);
+        });
+      },
+      waitClickContinue: (hintOverride) => {
+        const label = hintOverride?.trim()
+          ? hintOverride.trim()
+          : this.stringsProvider.get('actions', 'clickToContinue');
+        return waitClickContinueWithHint(this.renderer, this.inputManager, label);
       },
     });
 
@@ -1152,15 +1186,37 @@ export class Game {
         this.renderer.worldContainer.y,
         S,
       );
+      const zones = this.sceneManager.currentSceneData?.zones;
       if (this.playerDepthFilter) {
-        this.sceneDepthSystem.updateEntityFootY(this.playerDepthFilter, this.player.y);
+        const ex = resolveDepthFloorOffsetBoost(
+          zones,
+          this.player.x,
+          this.player.y,
+          this.flagStore,
+        );
+        this.sceneDepthSystem.updateEntityDepthOcclusion(
+          this.playerDepthFilter,
+          this.player.x,
+          this.player.y,
+          ex,
+        );
       }
       for (const child of this.renderer.entityLayer.children) {
-        const c = child as unknown as { filters?: readonly { _isDepthOcclusion?: boolean }[]; y: number };
+        const c = child as unknown as {
+          filters?: readonly { _isDepthOcclusion?: boolean }[];
+          x: number;
+          y: number;
+        };
         if (c.filters) {
           for (const f of c.filters) {
             if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
-              this.sceneDepthSystem.updateEntityFootY(f as unknown as DepthOcclusionFilter, c.y);
+              const ex = resolveDepthFloorOffsetBoost(zones, c.x, c.y, this.flagStore);
+              this.sceneDepthSystem.updateEntityDepthOcclusion(
+                f as unknown as DepthOcclusionFilter,
+                c.x,
+                c.y,
+                ex,
+              );
             }
           }
         }

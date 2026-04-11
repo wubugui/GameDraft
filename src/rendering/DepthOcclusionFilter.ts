@@ -50,6 +50,7 @@ uniform float uDepthPerSy;
 uniform float uFloorA;
 uniform float uFloorB;
 uniform float uFloorOffset;
+uniform float uFloorOffsetExtra;
 uniform float uTolerance;
 uniform vec2  uWorldContainerPos;
 uniform float uEntityFootWorldY; // 精灵脚部世界坐标 Y
@@ -98,7 +99,7 @@ void main(void) {
     float footWy = uEntityFootWorldY;
     float syTexFoot = footWy * uWorldToPixelY;
     float syTex = wy * uWorldToPixelY;
-    float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset;
+    float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
     float spriteDepth = d_base + uDepthPerSy * (syTex - syTexFoot);
 
     // ========== 调试模式 ==========
@@ -181,6 +182,7 @@ export class DepthOcclusionFilter extends Filter {
                     uFloorA: { value: cfg.shader.floor_depth_A, type: 'f32' },
                     uFloorB: { value: cfg.shader.floor_depth_B, type: 'f32' },
                     uFloorOffset: { value: cfg.floor_offset, type: 'f32' },
+                    uFloorOffsetExtra: { value: 0, type: 'f32' },
                     uTolerance: { value: cfg.depth_tolerance, type: 'f32' },
                     uWorldContainerPos: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
                     uEntityFootWorldY: { value: 0, type: 'f32' },
@@ -279,6 +281,12 @@ export class DepthOcclusionFilter extends Filter {
     setFloorOffset(v: number): void {
         const u = this._du;
         if (u) u['uFloorOffset'] = v;
+    }
+
+    /** 按实体叠加的 floor 偏移（depth_floor 区等），与场景 floor_offset 相加 */
+    setFloorOffsetExtra(v: number): void {
+        const u = this._du;
+        if (u) u['uFloorOffsetExtra'] = v;
     }
 
     setDebug(on: boolean): void {

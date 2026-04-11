@@ -144,6 +144,9 @@
     "defaultProtagonistName": "你",
     "narratorLabel": ""
   },
+  "actions": {
+    "clickToContinue": "点击继续"
+  },
   "gameTags": {
     "flagTrue": "是",
     "flagFalse": "否",

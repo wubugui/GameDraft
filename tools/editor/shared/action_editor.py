@@ -31,6 +31,9 @@ def _hide_combo_popups_under(widget: QWidget) -> None:
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
+from .image_path_picker import CutsceneImagePathRow
+from .ink_path_picker import InkPathPickRow
+from .scripted_lines_editor import ScriptedLinesEditor
 
 ACTION_TYPES = [
     "setFlag", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
@@ -45,6 +48,8 @@ ACTION_TYPES = [
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
+    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "startInkDialogue",
+    "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
 ]
@@ -94,6 +99,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fadingRestoreSceneCameraZoom": [("durationMs", "int")],
     "fadeWorldToBlack": [("durationMs", "int")],
     "fadeWorldFromBlack": [("durationMs", "int")],
+    "hideOverlayImage": [("id", "str")],
+    "waitClickContinue": [("text", "str")],
     "waitMs": [("durationMs", "int")],
 }
 
@@ -371,7 +378,7 @@ class RuleSlotsParamEditor(QWidget):
         tx = QTextEdit()
         tx.setMaximumHeight(80)
         tx.setPlainText(str(data.get("resultText", "")))
-        tx.textChanged.connect(self.changed.emit)
+        tx.textChanged.connect(lambda: self.changed.emit())
         bl.addWidget(tx)
         bl.addWidget(QLabel("resultActions"))
         ae = ActionEditor("resultActions", box)
@@ -401,6 +408,8 @@ class RuleSlotsParamEditor(QWidget):
 class ActionRow(QWidget):
     removed = Signal(object)
     changed = Signal()
+    move_up = Signal()
+    move_down = Signal()
 
     def __init__(
         self,
@@ -409,6 +418,7 @@ class ActionRow(QWidget):
         model=None,
         scene_id: str | None = None,
         show_delete_button: bool = True,
+        show_reorder_buttons: bool = True,
     ):
         super().__init__(parent)
         self._param_widgets: dict[str, QWidget] = {}
@@ -423,11 +433,23 @@ class ActionRow(QWidget):
 
         top = QHBoxLayout()
         self.type_combo = FilterableTypeCombo.from_flat_strings(ACTION_TYPES)
+        self._btn_up = QPushButton("\u2191")
+        self._btn_up.setFixedWidth(24)
+        self._btn_up.setToolTip("上移")
+        self._btn_up.clicked.connect(self.move_up.emit)
+        self._btn_down = QPushButton("\u2193")
+        self._btn_down.setFixedWidth(24)
+        self._btn_down.setToolTip("下移")
+        self._btn_down.clicked.connect(self.move_down.emit)
+        self._btn_up.setVisible(show_reorder_buttons)
+        self._btn_down.setVisible(show_reorder_buttons)
         self.del_btn = QPushButton("\u2212")
         self.del_btn.setFixedWidth(24)
         self.del_btn.clicked.connect(lambda: self.removed.emit(self))
         self.del_btn.setVisible(show_delete_button)
         top.addWidget(self.type_combo, stretch=1)
+        top.addWidget(self._btn_up)
+        top.addWidget(self._btn_down)
         top.addWidget(self.del_btn)
         outer.addLayout(top)
 
@@ -448,6 +470,10 @@ class ActionRow(QWidget):
         self._rebuild_params()
 
         self.type_combo.typeCommitted.connect(self._on_type_committed)
+
+    def set_reorder_enabled(self, up: bool, down: bool) -> None:
+        self._btn_up.setEnabled(up)
+        self._btn_down.setEnabled(down)
 
     @staticmethod
     def _normalize_action_params(act_type: str, params: dict) -> None:
@@ -576,6 +602,81 @@ class ActionRow(QWidget):
         act_type = self.type_combo.committed_type()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params = self._data.get("params", {})
+
+        if act_type == "showOverlayImage":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "id：与 hideOverlayImage 共用的标记；x/y/width 为 0–100 的屏幕百分比；"
+                "图像中心在 (x,y)，高度由原图宽高比自动计算。",
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            id_ed = QLineEdit(str(params.get("id", "") or ""))
+            id_ed.setPlaceholderText("如 notice_a")
+            id_ed.textChanged.connect(self.changed)
+            self._param_widgets["id"] = id_ed
+            self._params_layout.addRow("id", id_ed)
+            img_row = CutsceneImagePathRow(self._ctx_model, str(params.get("image", "") or ""), self)
+            img_row.changed.connect(self.changed)
+            self._param_widgets["image"] = img_row
+            self._params_layout.addRow("image", img_row)
+
+            def _pct_spin(key: str, default: float) -> QDoubleSpinBox:
+                sp = QDoubleSpinBox()
+                sp.setRange(0, 100)
+                sp.setDecimals(2)
+                sp.setSingleStep(0.5)
+                val = params.get(key, default)
+                try:
+                    sp.setValue(float(val))
+                except (TypeError, ValueError):
+                    sp.setValue(float(default))
+                sp.valueChanged.connect(self.changed)
+                return sp
+
+            self._param_widgets["xPercent"] = _pct_spin("xPercent", 50.0)
+            self._params_layout.addRow("xPercent（水平中心）", self._param_widgets["xPercent"])
+            self._param_widgets["yPercent"] = _pct_spin("yPercent", 50.0)
+            self._params_layout.addRow("yPercent（垂直中心）", self._param_widgets["yPercent"])
+            self._param_widgets["widthPercent"] = _pct_spin("widthPercent", 40.0)
+            self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
+            return
+
+        if act_type == "startInkDialogue":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "inkPath：编译后的运行时路径（.ink）；knot 可选，留空从默认起点开始。",
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            ink_w = InkPathPickRow(self._ctx_model, str(params.get("inkPath", "") or ""), self)
+            ink_w.changed.connect(self.changed)
+            self._param_widgets["inkPath"] = ink_w
+            self._params_layout.addRow("inkPath", ink_w)
+            kn = QLineEdit(str(params.get("knot", "") or ""))
+            kn.setPlaceholderText("可选，如 chapter1_opening")
+            kn.textChanged.connect(self.changed)
+            self._param_widgets["knot"] = kn
+            self._params_layout.addRow("knot", kn)
+            return
+
+        if act_type == "playScriptedDialogue":
+            self._params_frame.setVisible(False)
+            raw_lines = params.get("lines", [])
+            ed = ScriptedLinesEditor(
+                list(raw_lines) if isinstance(raw_lines, list) else [],
+                self,
+            )
+            ed.changed.connect(self.changed)
+            self._delayed_editor = ed
+            self._outer_layout.addWidget(ed)
+            return
 
         if act_type == "enableRuleOffers":
             self._params_frame.setVisible(False)
@@ -738,6 +839,10 @@ class ActionRow(QWidget):
                 w.currentTextChanged.connect(self.changed)
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
+            elif act_type == "waitClickContinue" and pname == "text":
+                w = QLineEdit(str(val))
+                w.setPlaceholderText("留空= strings actions.clickToContinue（默认「点击继续」）")
+                w.textChanged.connect(lambda _t: self.changed.emit())
             else:
                 w = QLineEdit(str(val))
                 w.textChanged.connect(self.changed)
@@ -774,6 +879,40 @@ class ActionRow(QWidget):
             self._delayed_editor = ed
             self._outer_layout.addWidget(ed)
 
+    def _to_dict_show_overlay_image(self) -> dict:
+        id_w = self._param_widgets.get("id")
+        img_w = self._param_widgets.get("image")
+        x_w = self._param_widgets.get("xPercent")
+        y_w = self._param_widgets.get("yPercent")
+        w_w = self._param_widgets.get("widthPercent")
+        pid = id_w.text().strip() if isinstance(id_w, QLineEdit) else ""
+        pimg = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
+        return {
+            "type": "showOverlayImage",
+            "params": {
+                "id": pid,
+                "image": pimg,
+                "xPercent": float(x_w.value()) if isinstance(x_w, QDoubleSpinBox) else 0.0,
+                "yPercent": float(y_w.value()) if isinstance(y_w, QDoubleSpinBox) else 0.0,
+                "widthPercent": float(w_w.value()) if isinstance(w_w, QDoubleSpinBox) else 0.0,
+            },
+        }
+
+    def _to_dict_start_ink_dialogue(self) -> dict:
+        ink_w = self._param_widgets.get("inkPath")
+        kn_w = self._param_widgets.get("knot")
+        path = ink_w.path() if isinstance(ink_w, InkPathPickRow) else ""
+        knot = kn_w.text().strip() if isinstance(kn_w, QLineEdit) else ""
+        prm: dict = {"inkPath": path}
+        if knot:
+            prm["knot"] = knot
+        return {"type": "startInkDialogue", "params": prm}
+
+    def _to_dict_play_scripted_dialogue(self) -> dict:
+        ed = self._delayed_editor
+        lines = ed.to_list() if isinstance(ed, ScriptedLinesEditor) else []
+        return {"type": "playScriptedDialogue", "params": {"lines": lines}}
+
     def _to_dict_set_player_avatar(self) -> dict:
         man_w = self._param_widgets.get("animManifest")
         bid_w = self._param_widgets.get("bundleId")
@@ -798,6 +937,12 @@ class ActionRow(QWidget):
 
     def to_dict(self) -> dict:
         act_type = self.type_combo.committed_type()
+        if act_type == "showOverlayImage":
+            return self._to_dict_show_overlay_image()
+        if act_type == "startInkDialogue":
+            return self._to_dict_start_ink_dialogue()
+        if act_type == "playScriptedDialogue":
+            return self._to_dict_play_scripted_dialogue()
         if act_type == "setPlayerAvatar":
             return self._to_dict_set_player_avatar()
         schema = _PARAM_SCHEMAS.get(act_type, [])
@@ -833,11 +978,18 @@ class ActionRow(QWidget):
 class ActionEditor(QWidget):
     changed = Signal()
 
-    def __init__(self, label: str = "Actions", parent: QWidget | None = None):
+    def __init__(
+        self,
+        label: str = "Actions",
+        parent: QWidget | None = None,
+        *,
+        show_reorder_buttons: bool = True,
+    ):
         super().__init__(parent)
         self._rows: list[ActionRow] = []
         self._ctx_model = None
         self._ctx_scene_id: str | None = None
+        self._show_reorder_buttons = show_reorder_buttons
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(QLabel(f"<b>{label}</b>"))
@@ -879,14 +1031,43 @@ class ActionEditor(QWidget):
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def _add_row(self, data: dict | None = None) -> None:
-        row = ActionRow(data, model=self._ctx_model, scene_id=self._ctx_scene_id)
+        row = ActionRow(
+            data,
+            model=self._ctx_model,
+            scene_id=self._ctx_scene_id,
+            show_reorder_buttons=self._show_reorder_buttons,
+        )
         row.removed.connect(self._remove_row)
         row.changed.connect(self.changed)
+        row.move_up.connect(lambda: self._move_row(row, -1))
+        row.move_down.connect(lambda: self._move_row(row, 1))
         self._rows.append(row)
         self._rows_layout.addWidget(row)
+        self._refresh_reorder_buttons()
 
     def _add_empty(self) -> None:
         self._add_row({"type": "setFlag", "params": {}})
+        self.changed.emit()
+
+    def _refresh_reorder_buttons(self) -> None:
+        if not self._show_reorder_buttons:
+            return
+        n = len(self._rows)
+        for i, r in enumerate(self._rows):
+            r.set_reorder_enabled(i > 0, i < n - 1)
+
+    def _move_row(self, row: ActionRow, delta: int) -> None:
+        i = self._rows.index(row)
+        j = i + delta
+        if j < 0 or j >= len(self._rows):
+            return
+        self._rows[i], self._rows[j] = self._rows[j], self._rows[i]
+        _hide_combo_popups_under(self)
+        for r in self._rows:
+            self._rows_layout.removeWidget(r)
+        for r in self._rows:
+            self._rows_layout.addWidget(r)
+        self._refresh_reorder_buttons()
         self.changed.emit()
 
     def _remove_row(self, row: ActionRow) -> None:
@@ -895,4 +1076,5 @@ class ActionEditor(QWidget):
             self._rows.remove(row)
             self._rows_layout.removeWidget(row)
             row.deleteLater()
+            self._refresh_reorder_buttons()
             self.changed.emit()

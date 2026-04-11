@@ -24,7 +24,7 @@ import type { ArchiveManager } from '../systems/ArchiveManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
-import type { ICutsceneActor, ZoneRuleSlot } from '../data/types';
+import type { DialogueLine, ICutsceneActor, ZoneRuleSlot } from '../data/types';
 import { GameState } from '../data/types';
 
 export interface ActionRegistryDeps {
@@ -64,6 +64,21 @@ export interface ActionRegistryDeps {
   stopNpcPatrol: (npcId: string) => void;
   /** 在当前场景为该 NPC 重新启动巡逻（会先 stop再跑，避免重复协程） */
   startNpcPatrol: (npcId: string) => void;
+  /** 屏幕叠加图（百分比布局，与 hideOverlayImage 成对） */
+  showOverlayImage: (
+    id: string,
+    imagePath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+  ) => Promise<void>;
+  hideOverlayImage: (id: string) => void;
+  /** 直接进入 Ink 对话（非 NPC 交互路径） */
+  startInkDialogue: (inkPath: string, knot?: string) => Promise<void>;
+  /** 不加载 Ink，按序播放预置台词（至 dialogue:end） */
+  playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
+  /** 显示「点击继续」类提示并阻塞直至任意键或鼠标 */
+  waitClickContinue: (hintOverride?: string) => Promise<void>;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -439,6 +454,79 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('ActionRegistry: fadeWorldFromBlack failed', e);
     });
   }, ['durationMs']);
+
+  executor.register('showOverlayImage', (p) => {
+    const id = String(p.id ?? '').trim();
+    const image = String(p.image ?? '').trim();
+    if (!id || !image) {
+      console.warn('showOverlayImage: 需要 id 与 image');
+      return;
+    }
+    const x = typeof p.xPercent === 'number' ? p.xPercent : Number(p.xPercent);
+    const y = typeof p.yPercent === 'number' ? p.yPercent : Number(p.yPercent);
+    const w = typeof p.widthPercent === 'number' ? p.widthPercent : Number(p.widthPercent);
+    if (![x, y, w].every(n => Number.isFinite(n))) {
+      console.warn('showOverlayImage: xPercent / yPercent / widthPercent 须为数值');
+      return;
+    }
+    return d.showOverlayImage(id, image, x, y, w).catch((e) => {
+      console.warn('ActionRegistry: showOverlayImage failed', e);
+    });
+  }, ['id', 'image', 'xPercent', 'yPercent', 'widthPercent']);
+
+  executor.register('hideOverlayImage', (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      console.warn('hideOverlayImage: 需要 id');
+      return;
+    }
+    d.hideOverlayImage(id);
+  }, ['id']);
+
+  executor.register('startInkDialogue', (p) => {
+    const inkPath = String(p.inkPath ?? '').trim();
+    if (!inkPath) {
+      console.warn('startInkDialogue: 需要 inkPath');
+      return;
+    }
+    const knotRaw = p.knot;
+    const knot = knotRaw !== undefined && knotRaw !== null ? String(knotRaw).trim() : '';
+    return d.startInkDialogue(inkPath, knot || undefined);
+  }, ['inkPath', 'knot']);
+
+  executor.register('waitClickContinue', (p) => {
+    const raw = p.text;
+    const hint = raw !== undefined && raw !== null ? String(raw).trim() : '';
+    return d.waitClickContinue(hint || undefined);
+  }, ['text']);
+
+  executor.register('playScriptedDialogue', (p) => {
+    const raw = p.lines;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      console.warn('playScriptedDialogue: params.lines 须为非空数组');
+      return;
+    }
+    const narrKey = d.stringsProvider.get('dialogue', 'narratorLabel');
+    const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
+    const lines: DialogueLine[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const o = item as Record<string, unknown>;
+      const speaker = String(o.speaker ?? '').trim();
+      const text = String(o.text ?? '').trim();
+      if (!text) continue;
+      lines.push({
+        speaker: speaker || narratorFallback,
+        text,
+        tags: [],
+      });
+    }
+    if (lines.length === 0) {
+      console.warn('playScriptedDialogue: 无有效台词（需要 text）');
+      return;
+    }
+    return d.playScriptedDialogue(lines);
+  }, ['lines']);
 
   /** 热区/任务等非对话路径无延时效果；仅 Ink 对话标签走 registerDialogueSequential。 */
   executor.register('waitMs', () => {}, ['durationMs']);

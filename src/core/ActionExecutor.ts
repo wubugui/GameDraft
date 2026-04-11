@@ -119,6 +119,29 @@ export class ActionExecutor {
   }
 
   /**
+   * 按顺序执行并 await handler 返回的 Promise（用于 inspect 等需「上图→对话→下图」的串联）。
+   */
+  async executeSequential(action: ActionDef): Promise<void> {
+    const handler = this.handlers.get(action.type);
+    const zctx = this.getZoneContext();
+    if (!handler) {
+      console.warn(`ActionExecutor: unknown action type "${action.type}"`);
+      return;
+    }
+    try {
+      await Promise.resolve(handler(action.params, zctx));
+    } catch (e) {
+      console.warn(`ActionExecutor: sequential action "${action.type}" failed`, e);
+    }
+  }
+
+  async executeBatchSequential(actions: ActionDef[]): Promise<void> {
+    for (const action of actions) {
+      await this.executeSequential(action);
+    }
+  }
+
+  /**
    * ZoneSystem 专用：执行期间 handler 第二参数为非空 zone 上下文（enableRuleOffers 等使用）。
    */
   executeBatchInZoneContext(actions: ActionDef[], context: ZoneActionContext): void {

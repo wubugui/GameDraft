@@ -1,0 +1,116 @@
+{
+  "version": 2,
+  "packMode": "native_equal_cells",
+  "video": "",
+  "exportFps": 12.0,
+  "cols": 4,
+  "rows": 3,
+  "cellWidth": 345,
+  "cellHeight": 713,
+  "padding": 4,
+  "frameCount": 11,
+  "frameIndexBase": 0,
+  "anchor": "bottom_center",
+  "rowMajorOrder": "col=index%cols, row=index//cols（与 GameDraft SpriteEntity 一致）",
+  "frames": [
+    {
+      "logicalIndex": 0,
+      "atlasIndex": 0,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 329,
+      "contentHeight": 700
+    },
+    {
+      "logicalIndex": 1,
+      "atlasIndex": 1,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 329,
+      "contentHeight": 700
+    },
+    {
+      "logicalIndex": 2,
+      "atlasIndex": 2,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 328,
+      "contentHeight": 701
+    },
+    {
+      "logicalIndex": 3,
+      "atlasIndex": 3,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 328,
+      "contentHeight": 702
+    },
+    {
+      "logicalIndex": 4,
+      "atlasIndex": 4,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 331,
+      "contentHeight": 705
+    },
+    {
+      "logicalIndex": 5,
+      "atlasIndex": 5,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 333,
+      "contentHeight": 705
+    },
+    {
+      "logicalIndex": 6,
+      "atlasIndex": 6,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 337,
+      "contentHeight": 703
+    },
+    {
+      "logicalIndex": 7,
+      "atlasIndex": 7,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 337,
+      "contentHeight": 702
+    },
+    {
+      "logicalIndex": 8,
+      "atlasIndex": 8,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 334,
+      "contentHeight": 702
+    },
+    {
+      "logicalIndex": 9,
+      "atlasIndex": 9,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 335,
+      "contentHeight": 702
+    },
+    {
+      "logicalIndex": 10,
+      "atlasIndex": 10,
+      "timeSec": 0.0,
+      "cellWidth": 345,
+      "cellHeight": 713,
+      "contentWidth": 336,
+      "contentHeight": 701
+    }
+  ]
+}

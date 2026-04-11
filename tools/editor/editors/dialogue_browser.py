@@ -613,6 +613,21 @@ class DialogueBrowser(QWidget):
         btn_row.addWidget(btn_open)
         ll.addLayout(btn_row)
 
+        compile_row = QHBoxLayout()
+        self._btn_compile_sel = QPushButton("编译当前 Ink")
+        self._btn_compile_sel.setToolTip(
+            "运行 scripts/compile-ink.cjs，仅编译列表当前选中的 .ink",
+        )
+        self._btn_compile_sel.clicked.connect(self._compile_selected_ink)
+        compile_row.addWidget(self._btn_compile_sel)
+        self._btn_compile_all = QPushButton("编译全部 Ink")
+        self._btn_compile_all.setToolTip(
+            "运行 scripts/compile-ink.cjs，编译 public/assets/dialogues 下全部 .ink",
+        )
+        self._btn_compile_all.clicked.connect(self._compile_all_ink)
+        compile_row.addWidget(self._btn_compile_all)
+        ll.addLayout(compile_row)
+
         main_splitter.addWidget(left)
 
         # ---- Right panel (center + bottom) ----
@@ -846,6 +861,87 @@ class DialogueBrowser(QWidget):
         self._dirty = False
         self._btn_save.setEnabled(False)
         self._update_file_list_dirty(False)
+
+    def _selected_ink_basename(self) -> str | None:
+        item = self._file_list.currentItem()
+        if item is None:
+            return None
+        name = item.data(Qt.ItemDataRole.UserRole)
+        return str(name) if name else None
+
+    def _run_ink_compile(self, ink_basenames: list[str] | None) -> None:
+        root = self._model.project_path
+        if root is None:
+            QMessageBox.warning(self, "编译 Ink", "未加载项目。")
+            return
+        script = root / "scripts" / "compile-ink.cjs"
+        if not script.is_file():
+            QMessageBox.critical(
+                self, "编译 Ink", f"找不到编译脚本：\n{script}",
+            )
+            return
+        cmd = ["node", str(script)]
+        if ink_basenames:
+            cmd.extend(ink_basenames)
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError:
+            QMessageBox.critical(
+                self, "编译 Ink",
+                "未找到 node 命令，请安装 Node.js 并加入 PATH。",
+            )
+            return
+        except OSError as e:
+            QMessageBox.critical(self, "编译 Ink", str(e))
+            return
+        detail = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        if proc.returncode != 0:
+            mb = QMessageBox(self)
+            mb.setIcon(QMessageBox.Icon.Critical)
+            mb.setWindowTitle("Ink 编译失败")
+            mb.setText("编译过程报错，详情见下方。")
+            mb.setDetailedText(detail or "(无输出)")
+            mb.exec()
+            return
+        mb = QMessageBox(self)
+        mb.setIcon(QMessageBox.Icon.Information)
+        mb.setWindowTitle("Ink 编译")
+        mb.setText("Ink 编译成功。")
+        if detail:
+            mb.setDetailedText(detail)
+        mb.exec()
+
+    def _compile_selected_ink(self) -> None:
+        name = self._selected_ink_basename()
+        if not name:
+            QMessageBox.information(self, "编译 Ink", "请先在列表中选中一个 .ink 文件。")
+            return
+        if self._dirty:
+            self._save_file()
+        self._run_ink_compile([name])
+
+    def _compile_all_ink(self) -> None:
+        if self._dirty:
+            r = QMessageBox.question(
+                self, "编译全部 Ink",
+                "当前文件有未保存修改。是否先保存再编译全部？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if r == QMessageBox.StandardButton.Cancel:
+                return
+            if r == QMessageBox.StandardButton.Save:
+                self._save_file()
+        self._run_ink_compile(None)
 
     # ---- Knot list --------------------------------------------------------
 

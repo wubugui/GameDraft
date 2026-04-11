@@ -43,6 +43,13 @@ _HOTSPOT_COLORS = {
 }
 _NPC_COLOR = QColor(180, 80, 220, 180)
 _ZONE_COLOR = QColor(255, 200, 0, 60)
+_ZONE_COLOR_DEPTH_FLOOR = QColor(80, 160, 255, 72)
+
+
+def _zone_canvas_color(zone: dict) -> QColor:
+    if zone.get("zoneKind") == "depth_floor":
+        return _ZONE_COLOR_DEPTH_FLOOR
+    return _ZONE_COLOR
 _SPAWN_COLOR = QColor(255, 255, 255, 200)
 _RANGE_PEN = QPen(QColor(255, 255, 255, 60), 0, Qt.PenStyle.DotLine)
 # 场景视图中 NPC 比例参考框（与 SpriteEntity worldWidth/worldHeight 一致，非可编辑）
@@ -1006,7 +1013,7 @@ class SceneCanvas(QGraphicsView):
     def add_zone(self, zone: dict) -> None:
         pts = _zone_polygon_points_for_editor(zone)
         item = _EditableZonePolygon(
-            self, pts, _ZONE_COLOR, zone.get("id", "?"))
+            self, pts, _zone_canvas_color(zone), zone.get("id", "?"))
         self._gfx.addItem(item)
         self._entity_items[f"zone:{zone.get('id', '')}"] = item
 
@@ -1629,7 +1636,7 @@ class ScenePropertyPanel(QScrollArea):
         amb_lay.addWidget(self._sc_ambient_list)
         self._sc_ambient_extra = QLineEdit()
         self._sc_ambient_extra.setPlaceholderText("其它 ambient id，逗号分隔")
-        self._sc_ambient_extra.textChanged.connect(self.changed.emit)
+        self._sc_ambient_extra.textChanged.connect(lambda _t: self.changed.emit())
         amb_lay.addWidget(self._sc_ambient_extra)
         amb_lbl = QLabel("ambientSounds")
         amb_lbl.setAlignment(
@@ -2090,6 +2097,12 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_y = QDoubleSpinBox(); self._npc_y.setRange(-99999, 99999); self._npc_y.setDecimals(1)
         self._npc_y.valueChanged.connect(self._on_npc_xy_live)
         form.addRow("y", self._npc_y)
+        self._npc_facing = QComboBox()
+        self._npc_facing.addItem("朝右（默认）", "right")
+        self._npc_facing.addItem("朝左", "left")
+        self._npc_facing.setToolTip("进入场景时的左右朝向（与游戏中 setFacing 一致）")
+        self._npc_facing.currentIndexChanged.connect(self._on_npc_facing_changed)
+        form.addRow("initialFacing", self._npc_facing)
         self._npc_dialogue = IdRefSelector(allow_empty=True)
         self._npc_dialogue.setMinimumWidth(220)
         self._npc_dialogue.value_changed.connect(lambda _x: self.changed.emit())
@@ -2428,6 +2441,12 @@ class ScenePropertyPanel(QScrollArea):
         self.changed.emit()
         self.npc_xy_live_changed.emit(str(npc.get("id", "")))
 
+    def _on_npc_facing_changed(self, _i: int) -> None:
+        if self._npc_facing.signalsBlocked():
+            return
+        self.changed.emit()
+        self._request_scene_npc_anim_refresh()
+
     def _on_npc_initial_state_changed(self, _i: int) -> None:
         if self._npc_initial_state.signalsBlocked():
             return
@@ -2555,6 +2574,13 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range.blockSignals(True)
         self._npc_range.setValue(npc.get("interactionRange", 50))
         self._npc_range.blockSignals(False)
+        self._npc_facing.blockSignals(True)
+        try:
+            cur_f = str(npc.get("initialFacing", "") or "").strip().lower()
+            idx = self._npc_facing.findData("left" if cur_f == "left" else "right")
+            self._npc_facing.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            self._npc_facing.blockSignals(False)
         a_items = self._model.anim_asset_path_choices()
         cur_a = npc.get("animFile", "") or ""
         if cur_a and all(x[0] != cur_a for x in a_items):
@@ -2574,6 +2600,11 @@ class ScenePropertyPanel(QScrollArea):
         npc["name"] = self._npc_name.text()
         npc["x"] = self._npc_x.value()
         npc["y"] = self._npc_y.value()
+        fv = self._npc_facing.currentData()
+        if fv == "left":
+            npc["initialFacing"] = "left"
+        elif "initialFacing" in npc:
+            del npc["initialFacing"]
         dd = self._npc_dialogue.current_id().strip()
         if dd:
             npc["dialogueFile"] = dd
@@ -2635,6 +2666,18 @@ class ScenePropertyPanel(QScrollArea):
         form = QFormLayout()
         self._zn_id = QLineEdit()
         form.addRow("id", self._zn_id)
+        self._zn_kind = QComboBox()
+        self._zn_kind.addItem("普通（进出/停留）", "standard")
+        self._zn_kind.addItem("深度 floor 修正（仅遮挡，脚底中心判点）", "depth_floor")
+        self._zn_kind.currentIndexChanged.connect(self._on_zone_kind_changed)
+        form.addRow("区域类型", self._zn_kind)
+        self._zn_boost = QDoubleSpinBox()
+        self._zn_boost.setRange(-1e6, 1e6)
+        self._zn_boost.setDecimals(4)
+        self._zn_boost.setToolTip(
+            "depth_floor：叠加到深度遮挡 d_base（与场景 floor_offset 同语义）。重叠多区取 |值| 最大者。")
+        self._zn_boost.valueChanged.connect(lambda _v: self.changed.emit())
+        form.addRow("floorOffsetBoost", self._zn_boost)
         lay.addLayout(form)
 
         poly_label = QLabel(
@@ -2680,6 +2723,17 @@ class ScenePropertyPanel(QScrollArea):
         lay.addWidget(self._zn_exit)
         self._append_entity_delete_footer(lay)
         return w
+
+    def _apply_zone_kind_ui(self) -> None:
+        kind = self._zn_kind.currentData()
+        is_depth = kind == "depth_floor"
+        self._zn_boost.setEnabled(is_depth)
+        for w in (self._zn_enter, self._zn_stay, self._zn_exit):
+            w.setEnabled(not is_depth)
+
+    def _on_zone_kind_changed(self, _idx: int) -> None:
+        self._apply_zone_kind_ui()
+        self.changed.emit()
 
     def _parse_float_cell(self, it: QTableWidgetItem | None, default: float = 0.0) -> float:
         if it is None:
@@ -2836,6 +2890,13 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_enter.set_data(zone.get("onEnter", []))
         self._zn_stay.set_data(zone.get("onStay", []))
         self._zn_exit.set_data(zone.get("onExit", []))
+        idx = self._zn_kind.findData(zone.get("zoneKind") or "standard")
+        self._zn_kind.setCurrentIndex(idx if idx >= 0 else 0)
+        try:
+            self._zn_boost.setValue(float(zone.get("floorOffsetBoost", 0)))
+        except (TypeError, ValueError):
+            self._zn_boost.setValue(0.0)
+        self._apply_zone_kind_ui()
 
     def _write_zone_widgets_to_dict(self, zone: dict) -> None:
         zone["id"] = self._zn_id.text().strip()
@@ -2844,26 +2905,35 @@ class ScenePropertyPanel(QScrollArea):
             zone["polygon"] = poly
         for k in ("x", "y", "width", "height"):
             zone.pop(k, None)
+        kind = self._zn_kind.currentData() or "standard"
+        if kind == "depth_floor":
+            zone["zoneKind"] = "depth_floor"
+            zone["floorOffsetBoost"] = self._zn_boost.value()
+            for k in ("onEnter", "onStay", "onExit"):
+                zone.pop(k, None)
+        else:
+            zone.pop("zoneKind", None)
+            zone.pop("floorOffsetBoost", None)
+            oe = self._zn_enter.to_list()
+            if oe:
+                zone["onEnter"] = oe
+            elif "onEnter" in zone:
+                del zone["onEnter"]
+            oy = self._zn_stay.to_list()
+            if oy:
+                zone["onStay"] = oy
+            elif "onStay" in zone:
+                del zone["onStay"]
+            ox = self._zn_exit.to_list()
+            if ox:
+                zone["onExit"] = ox
+            elif "onExit" in zone:
+                del zone["onExit"]
         c = self._zn_cond.to_list()
         if c:
             zone["conditions"] = c
         elif "conditions" in zone:
             del zone["conditions"]
-        oe = self._zn_enter.to_list()
-        if oe:
-            zone["onEnter"] = oe
-        elif "onEnter" in zone:
-            del zone["onEnter"]
-        oy = self._zn_stay.to_list()
-        if oy:
-            zone["onStay"] = oy
-        elif "onStay" in zone:
-            del zone["onStay"]
-        ox = self._zn_exit.to_list()
-        if ox:
-            zone["onExit"] = ox
-        elif "onExit" in zone:
-            del zone["onExit"]
         if "ruleSlots" in zone:
             del zone["ruleSlots"]
         self.changed.emit()
@@ -3276,6 +3346,8 @@ class SceneEditor(QWidget):
             cell_h=cell_h,
             atlas_frames=atlas_frames,
         )
+        facing = str(npc.get("initialFacing", "") or "").strip().lower()
+        rt.facing_x = -1 if facing == "left" else 1
         nx = float(npc.get("x", 0))
         ny = float(npc.get("y", 0))
         rt.draw_at(nx, ny)

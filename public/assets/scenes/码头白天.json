@@ -118,7 +118,137 @@
       "interactionRange": 50.0,
       "animFile": "/assets/animation/player_anim/anim.json",
       "initialAnimState": "idle"
+    },
+    {
+      "id": "new_npc_3",
+      "name": "New NPC",
+      "x": 1103.6,
+      "y": 1238.0,
+      "interactionRange": 60.0,
+      "animFile": "/assets/animation/npc_lifu_anim/anim.json",
+      "initialAnimState": "lifu_stand"
+    },
+    {
+      "id": "new_npc_4",
+      "name": "打瞌睡的官差",
+      "x": 1281.9,
+      "y": 1144.4,
+      "interactionRange": 60.0,
+      "animFile": "/assets/animation/guanchai_anim/anim.json",
+      "initialAnimState": "guanchai_sleep",
+      "initialFacing": "left",
+      "dialogueFile": "/assets/dialogues/码头看板官差.ink",
+      "dialogueKnot": "start"
     }
   ],
-  "hotspots": []
+  "hotspots": [
+    {
+      "id": "hotspot_码头告示板",
+      "type": "inspect",
+      "label": "码头告示板",
+      "x": 1197.6,
+      "y": 1177.2,
+      "interactionRange": 60.0,
+      "data": {
+        "text": "告示板上贴了告示，但是你不识字.....",
+        "actions": [
+          {
+            "type": "showOverlayImage",
+            "params": {
+              "id": "水猴子告示X",
+              "image": "/assets/images/illustrations/告示-抓水猴子X.png",
+              "xPercent": 50.0,
+              "yPercent": 50.0,
+              "widthPercent": 40.0
+            }
+          },
+          {
+            "type": "waitClickContinue",
+            "params": {
+              "text": ""
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "你",
+                  "text": "女......"
+                },
+                {
+                  "speaker": "",
+                  "text": "子......"
+                }
+              ]
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "你",
+                  "text": "哪家的女人能有这么戳，这啥鸡毛丑八怪！"
+                }
+              ]
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "你：",
+                  "text": "三......五......"
+                },
+                {
+                  "speaker": "",
+                  "text": "不对！这狗日的好像是银子的意思！不得行，等老子去问哈。"
+                }
+              ]
+            }
+          },
+          {
+            "type": "hideOverlayImage",
+            "params": {
+              "id": "水猴子告示X"
+            }
+          },
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "码头_已经和过码头告示交互过",
+              "value": true
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "zones": [
+    {
+      "id": "new_zone_0",
+      "polygon": [
+        {
+          "x": 1825.0,
+          "y": 859.9
+        },
+        {
+          "x": 2342.0,
+          "y": 1080.1
+        },
+        {
+          "x": 1905.8,
+          "y": 1384.9
+        },
+        {
+          "x": 1395.8,
+          "y": 1100.2
+        }
+      ],
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": -0.2
+    }
+  ]
 }

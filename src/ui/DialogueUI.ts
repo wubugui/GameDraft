@@ -109,6 +109,8 @@ export class DialogueUI {
   private showLine(line: DialogueLine): void {
     this.ensureContainer();
     this.clearChoices();
+    /** 新一句必须清掉上一句的「点按结束」标记，否则连续多段 playScriptedDialogue 时首句会误走 advanceEnd 直接关对话 */
+    this.willEndAfterAdvance = false;
 
     this.speakerText!.text = line.speaker;
     this.fullText = line.text;

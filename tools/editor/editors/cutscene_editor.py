@@ -465,7 +465,12 @@ class CommandWidget(QFrame):
                 "params": dict(self._cmd_data.get("params") or {}),
             }
             self._action_row = ActionRow(
-                ad, model=self._model, scene_id=None, show_delete_button=False, parent=self,
+                ad,
+                model=self._model,
+                scene_id=None,
+                show_delete_button=False,
+                show_reorder_buttons=False,
+                parent=self,
             )
             self._action_row.changed.connect(self._emit_editor_dirty)
             self._params_layout.addRow(self._action_row)
