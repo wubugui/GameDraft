@@ -17,6 +17,7 @@ from .ink_parser import (
     SimNode, SimChoice, build_sim_tree, parse_knots,
     _extract_line_tags, RE_SPEAKER_TAG,
 )
+from ..shared.ink_setflag_tag import parse_append_flag_action_tag, parse_set_flag_action_tag
 
 
 class InkSimulatorWidget(QWidget):
@@ -105,6 +106,19 @@ class InkSimulatorWidget(QWidget):
             return float(v) if isinstance(v, (int, float)) else 0.0
         return 0.0
 
+    def _apply_ink_action_tag(self, t: str) -> None:
+        ap = parse_append_flag_action_tag(t)
+        if ap is not None:
+            fk, frag = ap
+            cur = self._flags.get(fk, "")
+            base = cur if isinstance(cur, str) else ("" if cur is None else str(cur))
+            self._flags[fk] = base + frag
+            return
+        parsed = parse_set_flag_action_tag(t)
+        if parsed is not None:
+            fk, fv = parsed
+            self._flags[fk] = fv
+
     @staticmethod
     def _cmp(lhs: float, op: str | None, rhs: float | None) -> bool:
         if op is None or rhs is None:
@@ -192,15 +206,7 @@ class InkSimulatorWidget(QWidget):
                 for t in node.tags:
                     if t.startswith("action:"):
                         actions_collected.append(t)
-                        parts = t.split(":")
-                        if len(parts) >= 4 and parts[1] == "setFlag":
-                            fk, fv = parts[2], parts[3]
-                            try:
-                                self._flags[fk] = float(fv)
-                            except ValueError:
-                                self._flags[fk] = (
-                                    1 if fv.lower() == "true" else 0
-                                )
+                        self._apply_ink_action_tag(t)
                 continue
 
             if node.kind == "divert":
@@ -258,12 +264,7 @@ class InkSimulatorWidget(QWidget):
         self._history.append((self._current_knot, ch.display_text))
         for t in ch.tags:
             if t.startswith("action:"):
-                parts = t.split(":")
-                if len(parts) >= 4 and parts[1] == "setFlag":
-                    try:
-                        self._flags[parts[2]] = float(parts[3])
-                    except ValueError:
-                        self._flags[parts[2]] = 1
+                self._apply_ink_action_tag(t)
         self._pending_nodes = list(ch.body) + self._pending_nodes
         self._advance()
 

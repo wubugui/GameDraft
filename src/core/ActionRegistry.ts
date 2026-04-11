@@ -5,6 +5,9 @@
  * `tools/editor/shared/action_editor.py` 的 ACTION_TYPES，并配置 _PARAM_SCHEMAS
  * 或 setPlayerAvatar / enableRuleOffers 等专用表单，否则主编辑器无法添加该 Action，
  * 且 `tools/editor/validator.py` 会对数据中的未知 type 报错。
+ *
+ * 对话 Ink `# action:` 与热区共用本文件中的 `register` handler；若 handler 返回 Promise，
+ * 对话里会顺序 await。仅当热区必须无效果而对话要等待时，再使用 `registerDialogueSequential`（如 waitMs）。
  */
 import type { ActionExecutor } from './ActionExecutor';
 import type { RuleOfferRegistry } from './RuleOfferRegistry';
@@ -51,6 +54,16 @@ export interface ActionRegistryDeps {
   setSceneDepthFloorOffset: (floorOffset: number) => void;
   /** 恢复为当前场景已加载的 depthConfig.floor_offset */
   resetSceneDepthFloorOffset: () => void;
+  /** 对话等临时拉近：直接设置 Camera.zoom（与场景 JSON camera.zoom 同语义） */
+  setCameraZoom: (zoom: number) => void;
+  /** 恢复为当前场景数据中的 camera.zoom（无配置则 1） */
+  restoreSceneCameraZoom: () => void;
+  /** 渐变拉远/还原到当前场景 JSON 中的 camera.zoom（durationMs 毫秒） */
+  fadingRestoreSceneCameraZoom: (durationMs: number) => void;
+  /** 停止指定 NPC 的巡逻协程（打断位移 + 失效该次巡逻 token） */
+  stopNpcPatrol: (npcId: string) => void;
+  /** 在当前场景为该 NPC 重新启动巡逻（会先 stop再跑，避免重复协程） */
+  startNpcPatrol: (npcId: string) => void;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -72,43 +85,99 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.ruleOfferRegistry.unregister(zctx.zoneId);
   }, []);
 
-  executor.register('giveItem', (p) => d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1), ['id', 'count']);
-  executor.register('removeItem', (p) => d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1), ['id', 'count']);
-  executor.register('giveCurrency', (p) => d.inventoryManager.addCoins(p.amount as number), ['amount']);
-  executor.register('removeCurrency', (p) => d.inventoryManager.removeCoins(p.amount as number), ['amount']);
-  executor.register('giveRule', (p) => d.rulesManager.giveRule(p.id as string), ['id']);
-  executor.register('giveFragment', (p) => d.rulesManager.giveFragment(p.id as string), ['id']);
-  executor.register('updateQuest', (p) => d.questManager.acceptQuest(p.id as string), ['id']);
+  executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
+  executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
+  executor.register('giveCurrency', (p) => { void d.inventoryManager.addCoins(p.amount as number); }, ['amount']);
+  executor.register('removeCurrency', (p) => { void d.inventoryManager.removeCoins(p.amount as number); }, ['amount']);
+  executor.register('giveRule', (p) => { void d.rulesManager.giveRule(p.id as string); }, ['id']);
+  executor.register('giveFragment', (p) => { void d.rulesManager.giveFragment(p.id as string); }, ['id']);
+  executor.register('updateQuest', (p) => { void d.questManager.acceptQuest(p.id as string); }, ['id']);
 
   executor.register('startEncounter', (p) => {
     d.stateController.setState(GameState.Encounter);
     d.encounterManager.startEncounter(p.id as string);
   }, ['id']);
 
-  executor.register('playBgm', (p) => d.audioManager.playBgm(p.id as string, (p.fadeMs as number) ?? 1000), ['id', 'fadeMs']);
-  executor.register('stopBgm', (p) => d.audioManager.stopBgm((p.fadeMs as number) ?? 1000), ['fadeMs']);
-  executor.register('playSfx', (p) => d.audioManager.playSfx(p.id as string), ['id']);
-  executor.register('endDay', () => d.dayManager.endDay());
+  executor.register('playBgm', (p) => { void d.audioManager.playBgm(p.id as string, (p.fadeMs as number) ?? 1000); }, ['id', 'fadeMs']);
+  executor.register('stopBgm', (p) => { void d.audioManager.stopBgm((p.fadeMs as number) ?? 1000); }, ['fadeMs']);
+  executor.register('playSfx', (p) => { void d.audioManager.playSfx(p.id as string); }, ['id']);
+  executor.register('endDay', () => { d.dayManager.endDay(); }, []);
 
   executor.register('addDelayedEvent', (p) => {
     d.dayManager.addDelayedEvent(p.targetDay as number, p.actions as any[]);
   }, ['targetDay', 'actions']);
 
   executor.register('addArchiveEntry', (p) => {
-    d.archiveManager.addEntry(p.bookType as 'character' | 'lore' | 'document' | 'book', p.entryId as string);
+    d.archiveManager.addEntry(
+      p.bookType as 'character' | 'lore' | 'document' | 'book' | 'bookEntry',
+      p.entryId as string,
+    );
   }, ['bookType', 'entryId']);
 
   executor.register('startCutscene', (p) => {
     d.stateController.setState(GameState.Cutscene);
-    d.cutsceneManager.startCutscene(p.id as string).then(() => {
-      d.stateController.setState(GameState.Exploring);
-    });
+    return d.cutsceneManager.startCutscene(p.id as string)
+      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .catch((e) => {
+        console.warn('ActionRegistry: startCutscene failed', e);
+        d.stateController.setState(GameState.Exploring);
+      });
   }, ['id']);
 
   executor.register('showEmote', (p) => {
     const actor = d.resolveActor(p.target as string);
     if (actor) d.emoteBubbleManager.show(actor, p.emote as string, (p.duration as number) ?? 1500);
   }, ['target', 'emote', 'duration']);
+
+  /** `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。 */
+  executor.register('playNpcAnimation', (p) => {
+    const target = String(p.target ?? '').trim();
+    const state = String(p.state ?? '').trim();
+    if (!target || !state) {
+      console.warn('playNpcAnimation: 需要 target 与 state');
+      return;
+    }
+    const actor = d.resolveActor(target);
+    if (!actor) {
+      console.warn(`playNpcAnimation: 找不到实体 "${target}"`);
+      return;
+    }
+    actor.playAnimation(state);
+  }, ['target', 'state']);
+
+  /** `target` 为场景 NPC 的 `id` 或 `player`；`enabled` 为 false 时隐藏实体（不卸载，可再设为 true 显示）。 */
+  executor.register('setEntityEnabled', (p) => {
+    const target = String(p.target ?? '').trim();
+    if (!target) {
+      console.warn('setEntityEnabled: missing target');
+      return;
+    }
+    const raw = p.enabled;
+    if (raw === undefined || raw === null) {
+      console.warn('setEntityEnabled: missing enabled');
+      return;
+    }
+    let enabled: boolean;
+    if (typeof raw === 'boolean') {
+      enabled = raw;
+    } else if (typeof raw === 'number') {
+      enabled = raw !== 0;
+    } else {
+      const s = String(raw).trim().toLowerCase();
+      if (s === 'true' || s === '1') enabled = true;
+      else if (s === 'false' || s === '0') enabled = false;
+      else {
+        console.warn(`setEntityEnabled: invalid enabled ${String(raw)}`);
+        return;
+      }
+    }
+    const actor = d.resolveActor(target);
+    if (!actor) {
+      console.warn(`setEntityEnabled: no entity "${target}"`);
+      return;
+    }
+    actor.setVisible(enabled);
+  }, ['target', 'enabled']);
 
   executor.register('openShop', (p) => {
     d.stateController.setState(GameState.UIOverlay);
@@ -132,9 +201,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('switchScene', (p) => {
     d.stateController.setState(GameState.Cutscene);
     prepareSceneSwitch();
-    d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined).then(() => {
-      d.stateController.setState(GameState.Exploring);
-    });
+    return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined)
+      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .catch((e) => {
+        console.warn('ActionRegistry: switchScene failed', e);
+        d.stateController.setState(GameState.Exploring);
+      });
   }, ['targetScene', 'targetSpawnPoint']);
 
   executor.register('changeScene', (p) => {
@@ -142,9 +214,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     prepareSceneSwitch();
     const cam = typeof p.cameraX === 'number' && typeof p.cameraY === 'number'
       ? { x: p.cameraX as number, y: p.cameraY as number } : undefined;
-    d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined, cam).then(() => {
-      d.stateController.setState(GameState.Exploring);
-    });
+    return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined, cam)
+      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .catch((e) => {
+        console.warn('ActionRegistry: changeScene failed', e);
+        d.stateController.setState(GameState.Exploring);
+      });
   }, ['targetScene', 'targetSpawnPoint', 'cameraX', 'cameraY']);
 
   executor.register('shopPurchase', (p) => {
@@ -168,7 +243,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     });
   }, ['itemId', 'price']);
 
-  executor.register('inventoryDiscard', (p) => d.inventoryManager.discardItem(p.itemId as string), ['itemId']);
+  executor.register('inventoryDiscard', (p) => { void d.inventoryManager.discardItem(p.itemId as string); }, ['itemId']);
 
   executor.register('setPlayerAvatar', (p) => {
     let path = String(p.animManifest ?? '').trim();
@@ -189,11 +264,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       }
       stateMap = Object.keys(out).length > 0 ? out : undefined;
     }
-    void d.applyPlayerAvatar(path, stateMap).catch((e) => console.warn('setPlayerAvatar', e));
+    return d.applyPlayerAvatar(path, stateMap).catch((e) => console.warn('setPlayerAvatar', e));
   }, ['animManifest', 'bundleId', 'stateMap']);
 
   executor.register('resetPlayerAvatar', (_p) => {
-    void d.resetPlayerAvatar().catch((e) => console.warn('resetPlayerAvatar', e));
+    return d.resetPlayerAvatar().catch((e) => console.warn('resetPlayerAvatar', e));
   }, []);
 
   executor.register('setSceneDepthFloorOffset', (p) => {
@@ -209,4 +284,169 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('resetSceneDepthFloorOffset', (_p) => {
     d.resetSceneDepthFloorOffset();
   }, []);
+
+  executor.register('setCameraZoom', (p) => {
+    const v = typeof p.zoom === 'number' ? p.zoom : Number(p.zoom);
+    if (!Number.isFinite(v) || v <= 0) {
+      console.warn('setCameraZoom: params.zoom 需为有限正数');
+      return;
+    }
+    d.setCameraZoom(v);
+  }, ['zoom']);
+
+  executor.register('restoreSceneCameraZoom', (_p) => {
+    d.restoreSceneCameraZoom();
+  }, []);
+
+  executor.register('fadingZoom', (p) => {
+    const zoom = typeof p.zoom === 'number' ? p.zoom : Number(p.zoom);
+    const durRaw = p.durationMs ?? p.duration ?? 600;
+    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    if (!Number.isFinite(zoom) || zoom <= 0) {
+      console.warn('fadingZoom: params.zoom 需为有限正数');
+      return;
+    }
+    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
+    d.cutsceneManager.fadingCameraZoom(zoom, ms);
+  }, ['zoom', 'durationMs']);
+
+  executor.register('fadingRestoreSceneCameraZoom', (p) => {
+    const durRaw = p.durationMs ?? p.duration ?? 600;
+    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
+    d.fadingRestoreSceneCameraZoom(ms);
+  }, ['durationMs']);
+
+  executor.register('stopNpcPatrol', (p) => {
+    const id = typeof p.npcId === 'string' ? p.npcId.trim() : '';
+    if (!id) {
+      console.warn('stopNpcPatrol: missing or empty npcId');
+      return;
+    }
+    d.stopNpcPatrol(id);
+  }, ['npcId']);
+
+  /** 写入场景记忆并立即 stopNpcPatrol；重进场景不再启动巡逻 */
+  executor.register('persistNpcDisablePatrol', (p) => {
+    const id = typeof p.npcId === 'string' ? p.npcId.trim() : '';
+    if (!id) {
+      console.warn('persistNpcDisablePatrol: missing or empty npcId');
+      return;
+    }
+    d.sceneManager.mergePersistentNpcState(id, { patrolDisabled: true });
+    d.stopNpcPatrol(id);
+  }, ['npcId']);
+
+  /** 清除「持久停巡逻」并立即在本场景重启巡逻协程；重进场景会照常启动巡逻 */
+  executor.register('persistNpcEnablePatrol', (p) => {
+    const id = typeof p.npcId === 'string' ? p.npcId.trim() : '';
+    if (!id) {
+      console.warn('persistNpcEnablePatrol: missing or empty npcId');
+      return;
+    }
+    d.sceneManager.mergePersistentNpcState(id, { patrolDisabled: false });
+    d.startNpcPatrol(id);
+  }, ['npcId']);
+
+  /** 写入场景记忆并立即 setVisible；重进场景保持显隐 */
+  executor.register('persistNpcEntityEnabled', (p) => {
+    const target = String(p.target ?? '').trim();
+    if (!target) {
+      console.warn('persistNpcEntityEnabled: missing target');
+      return;
+    }
+    const raw = p.enabled;
+    if (raw === undefined || raw === null) {
+      console.warn('persistNpcEntityEnabled: missing enabled');
+      return;
+    }
+    let enabled: boolean;
+    if (typeof raw === 'boolean') {
+      enabled = raw;
+    } else if (typeof raw === 'number') {
+      enabled = raw !== 0;
+    } else {
+      const s = String(raw).trim().toLowerCase();
+      if (s === 'true' || s === '1') enabled = true;
+      else if (s === 'false' || s === '0') enabled = false;
+      else {
+        console.warn(`persistNpcEntityEnabled: invalid enabled ${String(raw)}`);
+        return;
+      }
+    }
+    d.sceneManager.mergePersistentNpcState(target, { enabled });
+    const actor = d.resolveActor(target);
+    if (actor) {
+      actor.setVisible(enabled);
+    } else {
+      console.warn(`persistNpcEntityEnabled: no entity "${target}"`);
+    }
+  }, ['target', 'enabled']);
+
+  /** 写入场景记忆并立即移动 NPC */
+  executor.register('persistNpcAt', (p) => {
+    const target = String(p.target ?? '').trim();
+    const x = typeof p.x === 'number' ? p.x : Number(p.x);
+    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('persistNpcAt: 需要 target、有限数值 x/y');
+      return;
+    }
+    d.sceneManager.mergePersistentNpcState(target, { x, y });
+    const npc = d.sceneManager.getNpcById(target);
+    if (npc) {
+      npc.x = x;
+      npc.y = y;
+    } else {
+      console.warn(`persistNpcAt:当前场景无 NPC "${target}"`);
+    }
+  }, ['target', 'x', 'y']);
+
+  /** 写入场景记忆并立即 playAnimation（进入场景时在 loadSprite 后也会套用） */
+  const persistNpcAnimStateHandler = (p: Record<string, unknown>) => {
+    const target = String(p.target ?? '').trim();
+    const state = String(p.state ?? '').trim();
+    if (!target || !state) {
+      console.warn('persistNpcAnimState: 需要 target 与 state');
+      return;
+    }
+    d.sceneManager.mergePersistentNpcState(target, { animState: state });
+    const actor = d.resolveActor(target);
+    if (actor) {
+      actor.playAnimation(state);
+    } else {
+      console.warn(`persistNpcAnimState: 找不到实体 "${target}"`);
+    }
+  };
+  executor.register('persistNpcAnimState', persistNpcAnimStateHandler, ['target', 'state']);
+  /** 与 persistNpcAnimState 同义（Ink 里勿与 playNpcAnimation 混淆：后者不存档） */
+  executor.register('persistPlayNpcAnimation', persistNpcAnimStateHandler, ['target', 'state']);
+
+  executor.register('fadeWorldToBlack', (p) => {
+    const durRaw = p.durationMs ?? p.duration ?? 600;
+    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
+    return d.cutsceneManager.fadeWorldToBlack(ms).catch((e) => {
+      console.warn('ActionRegistry: fadeWorldToBlack failed', e);
+    });
+  }, ['durationMs']);
+
+  executor.register('fadeWorldFromBlack', (p) => {
+    const durRaw = p.durationMs ?? p.duration ?? 600;
+    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
+    return d.cutsceneManager.fadeWorldFromBlack(ms).catch((e) => {
+      console.warn('ActionRegistry: fadeWorldFromBlack failed', e);
+    });
+  }, ['durationMs']);
+
+  /** 热区/任务等非对话路径无延时效果；仅 Ink 对话标签走 registerDialogueSequential。 */
+  executor.register('waitMs', () => {}, ['durationMs']);
+
+  executor.registerDialogueSequential('waitMs', async (p) => {
+    const durRaw = p.durationMs ?? 600;
+    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
+    if (ms > 0) await new Promise<void>(resolve => setTimeout(resolve, ms));
+  });
 }

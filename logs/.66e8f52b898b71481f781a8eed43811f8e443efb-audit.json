@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "f:\\GameDraft\\logs\\.66e8f52b898b71481f781a8eed43811f8e443efb-audit.json",
+    "files": [
+        {
+            "date": 1775890679217,
+            "name": "f:\\GameDraft\\logs\\mcp-puppeteer-2026-04-11.log",
+            "hash": "54e01815e15498163cdacf8464db414a02fef67803b46be2790c1f23d60bb739"
+        }
+    ],
+    "hashType": "sha256"
+}

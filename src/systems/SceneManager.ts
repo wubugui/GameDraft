@@ -5,7 +5,14 @@ import type { Renderer } from '../rendering/Renderer';
 import { Hotspot } from '../entities/Hotspot';
 import { Npc } from '../entities/Npc';
 import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
-import type { SceneData, SceneRuntimeState, Position, GameContext, SceneCameraConfig } from '../data/types';
+import type {
+  SceneData,
+  SceneRuntimeState,
+  Position,
+  GameContext,
+  SceneCameraConfig,
+  NpcPersistentSnapshot,
+} from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from '../core/assetPath';
@@ -19,6 +26,7 @@ export type ApplyDebugWorldSizeResult =
 interface SceneMemory {
   inspectedHotspots: string[];
   pickedUpHotspots: string[];
+  npcSnapshots: Record<string, NpcPersistentSnapshot>;
 }
 
 export class SceneManager implements IGameSystem {
@@ -113,6 +121,40 @@ export class SceneManager implements IGameSystem {
 
   get switching(): boolean {
     return this.isSwitching;
+  }
+
+  /**
+   * 合并当前场景内某 NPC 的持久快照（仅 `persistNpc*` Action 应调用）。
+   * 不写场景 JSON；随 `sceneMemory` 进存档。
+   */
+  mergePersistentNpcState(npcId: string, patch: Partial<NpcPersistentSnapshot>): void {
+    const sceneId = this.currentScene?.id;
+    if (!sceneId) {
+      console.warn('SceneManager.mergePersistentNpcState: 无当前场景');
+      return;
+    }
+    const id = npcId.trim();
+    if (!id) {
+      console.warn('SceneManager.mergePersistentNpcState: 空 npcId');
+      return;
+    }
+    let mem = this.sceneMemory.get(sceneId);
+    if (!mem) {
+      mem = { inspectedHotspots: [], pickedUpHotspots: [], npcSnapshots: {} };
+      this.sceneMemory.set(sceneId, mem);
+    } else if (!mem.npcSnapshots) {
+      mem.npcSnapshots = {};
+    }
+    const prev = mem.npcSnapshots[id] ?? {};
+    mem.npcSnapshots[id] = { ...prev, ...patch };
+  }
+
+  /** 再次进入场景时是否不应启动该 NPC 的巡逻 */
+  isNpcPatrolPersistentlyDisabled(npcId: string): boolean {
+    const sid = this.currentScene?.id;
+    if (!sid) return false;
+    const mem = this.sceneMemory.get(sid);
+    return mem?.npcSnapshots?.[npcId]?.patrolDisabled === true;
   }
 
   /**
@@ -238,6 +280,25 @@ export class SceneManager implements IGameSystem {
             // 加载失败时保留占位外观
           }
         }
+        const snap = memory?.npcSnapshots?.[npcDef.id];
+        if (snap) {
+          if (
+            typeof snap.x === 'number' &&
+            Number.isFinite(snap.x) &&
+            typeof snap.y === 'number' &&
+            Number.isFinite(snap.y)
+          ) {
+            npc.x = snap.x;
+            npc.y = snap.y;
+          }
+          if (typeof snap.enabled === 'boolean') {
+            npc.setVisible(snap.enabled);
+          }
+          const anim = snap.animState?.trim();
+          if (anim) {
+            npc.playAnimation(anim);
+          }
+        }
         this.currentNpcs.push(npc);
         this.renderer.entityLayer.addChild(npc.container);
       }
@@ -275,6 +336,7 @@ export class SceneManager implements IGameSystem {
   }
 
   unloadScene(): void {
+    this.eventBus.emit('scene:beforeUnload');
     this.interactionSetter?.([], []);
 
     for (const hotspot of this.currentHotspots) {
@@ -283,6 +345,13 @@ export class SceneManager implements IGameSystem {
     this.currentHotspots = [];
 
     for (const npc of this.currentNpcs) {
+      const filters = npc.container.filters;
+      if (filters && filters.length > 0) {
+        for (const f of filters) {
+          f.destroy();
+        }
+      }
+      npc.container.filters = [];
       npc.destroy();
     }
     this.currentNpcs = [];
@@ -340,6 +409,7 @@ export class SceneManager implements IGameSystem {
     this.sceneMemory.set(this.currentScene.id, {
       inspectedHotspots: inspected,
       pickedUpHotspots: pickedUp,
+      npcSnapshots: existing?.npcSnapshots ?? {},
     });
   }
 
@@ -415,22 +485,37 @@ export class SceneManager implements IGameSystem {
   }
 
   serialize(): object {
-    const data: Record<string, { inspected: string[]; pickedUp: string[] }> = {};
+    const data: Record<
+      string,
+      { inspected: string[]; pickedUp: string[]; npcSnapshots: Record<string, NpcPersistentSnapshot> }
+    > = {};
     this.sceneMemory.forEach((mem, sceneId) => {
       data[sceneId] = {
         inspected: mem.inspectedHotspots,
         pickedUp: mem.pickedUpHotspots,
+        npcSnapshots: mem.npcSnapshots ?? {},
       };
     });
     return { currentSceneId: this.currentScene?.id ?? null, memory: data };
   }
 
-  deserialize(data: { currentSceneId: string | null; memory: Record<string, { inspected: string[]; pickedUp: string[] }> }): void {
+  deserialize(data: {
+    currentSceneId: string | null;
+    memory: Record<
+      string,
+      {
+        inspected: string[];
+        pickedUp: string[];
+        npcSnapshots?: Record<string, NpcPersistentSnapshot>;
+      }
+    >;
+  }): void {
     this.sceneMemory.clear();
     for (const [sceneId, mem] of Object.entries(data.memory)) {
       this.sceneMemory.set(sceneId, {
         inspectedHotspots: mem.inspected,
         pickedUpHotspots: mem.pickedUp,
+        npcSnapshots: mem.npcSnapshots ?? {},
       });
     }
   }

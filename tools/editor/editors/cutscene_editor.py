@@ -521,7 +521,7 @@ class CommandWidget(QFrame):
                 d[pname] = w.toPlainText()
             elif ptype == "flag_val" and isinstance(w, FlagValueEdit):
                 v = w.get_value()
-                d[pname] = v if isinstance(v, bool) else float(v)
+                d[pname] = v if isinstance(v, (bool, str)) else float(v)
             elif ct == "set_flag" and pname == "key" and isinstance(w, FlagKeyPickField):
                 d[pname] = w.key()
             elif isinstance(w, CutsceneImagePathRow):

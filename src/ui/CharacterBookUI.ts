@@ -120,10 +120,11 @@ export class CharacterBookUI {
       label.y = py + 50 + i * ENTRY_H;
       label.eventMode = 'static';
       label.cursor = 'pointer';
-      label.on('pointerdown', () => {
-        this.archiveData.markRead(`char_${ch.id}`);
-        this.showDetail(ch.id, px + PADDING + LIST_WIDTH, py + 50);
-      });
+        label.on('pointerdown', () => {
+          this.archiveData.triggerFirstViewIfNeeded(`char_${ch.id}`, ch.firstViewActions);
+          this.archiveData.markRead(`char_${ch.id}`);
+          this.showDetail(ch.id, px + PADDING + LIST_WIDTH, py + 50);
+        });
       listContainer.addChild(label);
     });
 

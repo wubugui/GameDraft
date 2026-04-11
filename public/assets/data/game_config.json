@@ -4,6 +4,9 @@
   "fallbackScene": "test_room_a",
   "initialCutscene": "prologue_opening",
   "initialCutsceneDoneFlag": "prologue_started",
+  "startupFlags": {
+    "archive_book_book_erta_guide": true
+  },
   "viewport": {
     "width": 1024,
     "height": 768

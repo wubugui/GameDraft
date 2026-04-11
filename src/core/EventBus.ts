@@ -15,7 +15,16 @@ export class EventBus {
   }
 
   emit(event: string, payload?: any): void {
-    this.listeners.get(event)?.forEach(cb => cb(payload));
+    const set = this.listeners.get(event);
+    if (!set || set.size === 0) return;
+    const cbs = [...set];
+    for (const cb of cbs) {
+      try {
+        cb(payload);
+      } catch (e) {
+        console.warn(`EventBus: listener for "${event}" threw`, e);
+      }
+    }
   }
 
   clear(): void {

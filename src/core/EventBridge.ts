@@ -32,9 +32,13 @@ export class EventBridge {
     const { dialogueManager, encounterManager, stateController,
             actionExecutor, sceneManager, mapUI, menuUI, inspectBox } = this.deps;
 
-    this.listen('dialogue:advance', () => dialogueManager.advance());
+    this.listen('dialogue:advance', () => {
+      void dialogueManager.advance().catch((e) => console.warn('DialogueManager.advance failed', e));
+    });
     this.listen('dialogue:advanceEnd', () => dialogueManager.endDialogue());
-    this.listen('dialogue:choiceSelected', (p: { index: number }) => dialogueManager.chooseOption(p.index));
+    this.listen('dialogue:choiceSelected', (p: { index: number }) => {
+      void dialogueManager.chooseOption(p.index).catch((e) => console.warn('DialogueManager.chooseOption failed', e));
+    });
     this.listen('dialogue:end', () => stateController.setState(GameState.Exploring));
 
     this.listen('encounter:narrativeDone', () => encounterManager.generateOptions());
@@ -52,7 +56,12 @@ export class EventBridge {
 
     this.listen('map:travel', (p: { sceneId: string }) => {
       stateController.setState(GameState.Cutscene);
-      sceneManager.switchScene(p.sceneId).then(() => stateController.setState(GameState.Exploring));
+      sceneManager.switchScene(p.sceneId)
+        .then(() => stateController.setState(GameState.Exploring))
+        .catch((e) => {
+          console.warn('EventBridge: map:travel switchScene failed', e);
+          stateController.setState(GameState.Exploring);
+        });
     });
 
     this.listen('menu:newGame', () => { menuUI.close(); stateController.setState(GameState.Exploring); });

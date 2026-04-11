@@ -139,6 +139,34 @@ export class CutsceneManager implements IGameSystem {
     return this.cutsceneDefs.get(id);
   }
 
+  /**
+   * 渐变改变相机 zoom（与演出 camera_zoom 同源，供 Action fadingZoom 等使用）。
+   */
+  fadingCameraZoom(targetZoom: number, durationMs: number): void {
+    const d = Math.max(0, durationMs);
+    void this.cutsceneRenderer.cameraZoom(targetZoom, d <= 0 ? 1 : d).catch((e) => {
+      console.warn('CutsceneManager: fadingCameraZoom failed', e);
+    });
+  }
+
+  /**
+   * 仅遮住场景画面（uiLayer 上的对话框仍可见），与过场 `fade_black` 全屏遮罩不同。
+   * 返回在渐隐结束（或失败已记录）时 settled 的 Promise，供对话等需要顺序衔接的流程 await。
+   */
+  fadeWorldToBlack(durationMs: number): Promise<void> {
+    const d = Math.max(0, durationMs);
+    return this.cutsceneRenderer.fadeWorldToBlack(d <= 0 ? 1 : d).catch((e) => {
+      console.warn('CutsceneManager: fadeWorldToBlack failed', e);
+    });
+  }
+
+  fadeWorldFromBlack(durationMs: number): Promise<void> {
+    const d = Math.max(0, durationMs);
+    return this.cutsceneRenderer.fadeWorldFromBlack(d <= 0 ? 1 : d).catch((e) => {
+      console.warn('CutsceneManager: fadeWorldFromBlack failed', e);
+    });
+  }
+
   async loadDefs(): Promise<void> {
     try {
       const list = await this.assetManager.loadJson<CutsceneDef[]>('/assets/data/cutscenes/index.json');
@@ -175,25 +203,30 @@ export class CutsceneManager implements IGameSystem {
     this.eventBus.emit('cutscene:start', { id });
     this.unsubInput = this.inputManager?.subscribeAnyInput(this.onClickBound) ?? null;
 
-    const needsPositioning = !!def.targetScene || typeof def.targetX === 'number';
-    if (needsPositioning) {
-      await this.saveAndTransition(def);
+    try {
+      const needsPositioning = !!def.targetScene || typeof def.targetX === 'number';
+      if (needsPositioning) {
+        await this.saveAndTransition(def);
+      }
+
+      await this.executeCommands(def.commands);
+
+      if (this.destroyed) return;
+
+      if (needsPositioning && def.restoreState !== false) {
+        await this.restoreSnapshot();
+      }
+      this.snapshot = null;
+    } catch (e) {
+      console.warn(`CutsceneManager: startCutscene "${id}" failed`, e);
+      throw e;
+    } finally {
+      this.unsubInput?.();
+      this.unsubInput = null;
+      this.cleanup();
+      this.playing = false;
+      this.eventBus.emit('cutscene:end', { id });
     }
-
-    await this.executeCommands(def.commands);
-
-    if (this.destroyed) return;
-
-    if (needsPositioning && def.restoreState !== false) {
-      await this.restoreSnapshot();
-    }
-    this.snapshot = null;
-
-    this.unsubInput?.();
-    this.unsubInput = null;
-    this.cleanup();
-    this.playing = false;
-    this.eventBus.emit('cutscene:end', { id });
   }
 
   private async saveAndTransition(def: CutsceneDef): Promise<void> {

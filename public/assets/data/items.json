@@ -86,5 +86,12 @@
       }
     ],
     "maxStack": 1
+  },
+  {
+    "id": "iron_hoop",
+    "name": "铁环",
+    "type": "key",
+    "description": "小孩滚着玩的铁环，摸着冰凉。",
+    "maxStack": 1
   }
 ]

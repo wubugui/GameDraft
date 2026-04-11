@@ -174,6 +174,15 @@ export interface NpcDef {
   /** 未配置时按 E 不会进入对话 */
   dialogueFile?: string;
   dialogueKnot?: string;
+  /**
+   * 进入该 NPC 对话时镜头渐变缩放到该值（与场景 `camera.zoom` 同语义）；缺省为 1.0。
+   * 对话结束（含异常中断）时由系统渐变恢复为当前场景配置的 zoom。
+   */
+  dialogueCameraZoom?: number;
+  /**
+   * @deprecated 站立/表情动画请在 Ink 中用 `# action:playNpcAnimation:...`；保留字段仅为兼容旧场景数据。
+   */
+  dialogueStandAnimState?: string;
   interactionRange: number;
   /** 动画包清单路径，如 `/assets/animation/<包目录名>/anim.json`；图集由清单内 spritesheet 相对该目录解析 */
   animFile?: string;
@@ -185,6 +194,19 @@ export interface NpcDef {
 // ============================================================
 // 场景运行时状态（用于场景记忆）
 // ============================================================
+
+/** 仅由 `persistNpc*` Action 写入 sceneMemory；再次进入场景时套在 NpcDef 之上 */
+export interface NpcPersistentSnapshot {
+  /** true 时本场景不再为该 NPC 启动巡逻协程 */
+  patrolDisabled?: boolean;
+  /** false 时持久隐藏（与 setEntityEnabled 一致） */
+  enabled?: boolean;
+  /** 持久世界坐标 */
+  x?: number;
+  y?: number;
+  /** 进入场景并 loadSprite 后播放的状态名 */
+  animState?: string;
+}
 
 export interface SceneRuntimeState {
   inspectedHotspots: Set<string>;
@@ -462,6 +484,8 @@ export interface CharacterEntry {
   impressions: { text: string; conditions: Condition[] }[];
   knownInfo: { text: string; conditions: Condition[] }[];
   unlockConditions: Condition[];
+  /** 玩家第一次在档案中点开该人物时执行（仅一次，记入存档） */
+  firstViewActions?: ActionDef[];
 }
 
 export interface LoreEntry {
@@ -471,6 +495,8 @@ export interface LoreEntry {
   source: string;
   category: 'legend' | 'geography' | 'folklore' | 'affairs';
   unlockConditions: Condition[];
+  /** 玩家第一次在档案中点开该条目时执行（仅一次） */
+  firstViewActions?: ActionDef[];
 }
 
 export interface DocumentEntry {
@@ -479,6 +505,8 @@ export interface DocumentEntry {
   content: string;
   annotation?: string;
   discoverConditions: Condition[];
+  /** 玩家第一次在档案中点开该文档时执行（仅一次） */
+  firstViewActions?: ActionDef[];
 }
 
 export interface BookDef {
@@ -488,13 +516,70 @@ export interface BookDef {
   pages: BookPage[];
 }
 
+/** 书籍某一页内可单独解锁的子条目（如《风物志》下的小记） */
+export interface BookPageEntry {
+  id: string;
+  title: string;
+  content: string;
+  /**
+   * 按语；可嵌入游戏 tag（运行时展开）：
+   * `[tag:string:category:key]`、`[tag:flag:flagKey]`、`[tag:item:itemId]`
+   */
+  annotation?: string;
+  illustration?: string;
+  /** 满足时自动解锁；与 Ink/Action 写入的 archive_book_entry_<id> 等价 */
+  discoverConditions?: Condition[];
+  /** 已解锁且玩家第一次翻到包含该条目的书页时执行（仅一次） */
+  firstViewActions?: ActionDef[];
+}
+
 export interface BookPage {
   pageNum: number;
   title?: string;
   content: string;
   illustration?: string;
-  unlockConditions: Condition[];
+  unlockConditions?: Condition[];
+  entries?: BookPageEntry[];
+  /** 玩家第一次翻到该页（且页已解锁）时执行（仅一次） */
+  firstViewActions?: ActionDef[];
 }
+
+/** 成书左侧目录：章节与其下的 entry 子节点 */
+export interface BookTocEntry {
+  id: string;
+  title: string;
+  unlocked: boolean;
+}
+
+export interface BookTocChapter {
+  pageNum: number;
+  title?: string;
+  unlocked: boolean;
+  entries: BookTocEntry[];
+}
+
+/** 成书阅读器一屏：章节正文页，或某章下独立一篇（含按语） */
+export type BookReaderSlice =
+  | {
+      kind: 'page';
+      pageNum: number;
+      title?: string;
+      content: string;
+      illustration?: string;
+      unlocked: boolean;
+    }
+  | {
+      kind: 'entry';
+      pageNum: number;
+      chapterTitle?: string;
+      entryId: string;
+      title: string;
+      content: string;
+      /** 已展开 [tag:…] 的按语纯文本 */
+      annotation?: string;
+      illustration?: string;
+      unlocked: boolean;
+    };
 
 // ============================================================
 // 商店数据
@@ -617,10 +702,19 @@ export interface IArchiveDataProvider {
   getUnlockedDocuments(): DocumentEntry[];
   getBooks(): BookDef[];
   getUnlockedBooks(): BookDef[];
-  getBookVisiblePages(book: BookDef): { pageNum: number; title?: string; content: string; illustration?: string; unlocked: boolean }[];
+  /** 左侧树：章节 → 子条目（含解锁状态） */
+  getBookTocChapters(book: BookDef): BookTocChapter[];
+  getBookPageSlice(book: BookDef, pageNum: number): BookReaderSlice | null;
+  getBookEntrySlice(book: BookDef, pageNum: number, entryId: string): BookReaderSlice | null;
   markRead(key: string): void;
   isRead(key: string): boolean;
   getLoreCategoryName(key: string): string;
+  /**
+   * 档案实体首次被阅览时执行配置的 Action（每个 qualifiedKey 仅一次，与「已读」星标无关，单独持久化）。
+   */
+  triggerFirstViewIfNeeded(qualifiedKey: string, actions: ActionDef[] | undefined): void;
+  /** 当前阅读屏首次展示时：仅触发该屏对应的页级或条目级 firstViewActions */
+  triggerBookSliceFirstView(bookId: string, slice: BookReaderSlice): void;
 }
 
 export interface IZoneDataProvider {

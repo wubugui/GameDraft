@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QStatusBar, QMessageBox, QPushButton, QDialog,
     QVBoxLayout, QTextEdit,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from .model.graph_model import GameGraph
 from .model.node_types import NodeType
@@ -17,6 +17,7 @@ from .sidebar import Sidebar
 from .toolbar import Toolbar
 from .panels.property_stack import PropertyStack
 from .serializer import save_all
+from .layout_store import GraphLayoutStore
 
 
 class MainWindow(QMainWindow):
@@ -26,6 +27,12 @@ class MainWindow(QMainWindow):
         self._graph: GameGraph | None = None
         self._current_view = "Full Graph"
         self._dialogue_file: str | None = None
+        self._layout_store = GraphLayoutStore(
+            Path(project_path).resolve() / "editor_data" / "graph_layout.json"
+        )
+        self._layout_save_timer = QTimer(self)
+        self._layout_save_timer.setSingleShot(True)
+        self._layout_save_timer.timeout.connect(self._flush_layout_store)
 
         self.setWindowTitle(f"Graph Editor - {project_path}")
         self.resize(1600, 900)
@@ -57,11 +64,18 @@ class MainWindow(QMainWindow):
         self._toolbar.refresh_requested.connect(self._refresh)
         self._toolbar.layout_requested.connect(self._relayout)
         self._toolbar.filter_changed.connect(self._on_filter_changed)
+        self._toolbar.full_component_changed.connect(
+            self._scene.set_highlight_full_component
+        )
+        self._toolbar.isolate_highlight_changed.connect(
+            self._scene.set_isolate_highlight
+        )
         self._toolbar.save_requested.connect(self._on_save)
         self._sidebar.node_activated.connect(self._on_sidebar_activate)
         self._sidebar.dialogue_file_selected.connect(self._on_dialogue_file_selected)
         self._scene.node_selected.connect(self._on_node_selected)
         self._scene.node_deselected.connect(self._on_node_deselected)
+        self._scene.node_moved.connect(self._on_node_moved_schedule_save)
         self._view.node_clicked.connect(self._on_node_selected)
 
         self._build_menus()
@@ -86,36 +100,81 @@ class MainWindow(QMainWindow):
 
     def _refresh(self):
         self._graph = parse_project(self._project_path)
+        if self._graph:
+            valid = {nd.id for nd in self._graph.all_nodes()}
+            self._layout_store.prune_unknown(valid)
+            self._layout_store.flush()
         self._property_panel.set_graph(self._graph)
         self._sidebar.populate(self._graph)
         self._rebuild_view()
+        self._property_panel.clear_selection()
         self._update_status()
 
-    def _rebuild_view(self):
+    def _rebuild_view(self, force_layout: bool = False):
         if not self._graph:
             return
 
         view_name = self._current_view
+        saved = None if force_layout else self._layout_store.get_positions()
 
         if view_name == "Full Graph":
-            self._scene.populate(self._graph, layout="spring")
+            self._scene.populate(
+                self._graph,
+                layout="spring",
+                saved_positions=saved,
+                force_layout=force_layout,
+            )
         elif view_name == "Quests":
-            sub = self._graph.subgraph_with_neighbors({NodeType.QUEST, NodeType.QUEST_GROUP})
-            self._scene.populate(sub, layout="hierarchical")
+            sub = self._graph.subgraph_with_neighbors(
+                {NodeType.QUEST, NodeType.QUEST_GROUP}
+            )
+            self._scene.populate(
+                sub,
+                layout="hierarchical",
+                saved_positions=saved,
+                force_layout=force_layout,
+            )
         elif view_name == "Encounters":
             sub = self._graph.subgraph_with_neighbors({NodeType.ENCOUNTER})
-            self._scene.populate(sub, layout="spring")
+            self._scene.populate(
+                sub,
+                layout="spring",
+                saved_positions=saved,
+                force_layout=force_layout,
+            )
         elif view_name == "Dialogue":
             if self._dialogue_file:
                 sub = self._graph.dialogue_subgraph(self._dialogue_file)
             else:
                 sub = self._graph.subgraph_with_neighbors({NodeType.DIALOGUE_KNOT})
-            self._scene.populate(sub, layout="spring")
+            self._scene.populate(
+                sub,
+                layout="spring",
+                saved_positions=saved,
+                force_layout=force_layout,
+            )
+
+        self._scene.set_highlight_full_component(
+            self._toolbar.is_full_component_highlight()
+        )
+        self._scene.set_isolate_highlight(self._toolbar.is_isolate_highlight())
+        self._scene.set_type_filter(self._toolbar.get_hidden_types())
+
+        if force_layout:
+            self._layout_save_timer.stop()
+            self._layout_store.replace_all(self._scene.dump_positions())
 
         self._view.fit_all()
 
     def _relayout(self):
-        self._rebuild_view()
+        self._rebuild_view(force_layout=True)
+
+    def _on_node_moved_schedule_save(self, node_id: str, x: float, y: float):
+        self._layout_store.update_position(node_id, x, y)
+        self._layout_save_timer.start(450)
+
+    def _flush_layout_store(self):
+        self._layout_store.flush()
 
     def _on_view_changed(self, view_name: str):
         self._current_view = view_name

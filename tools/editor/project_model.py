@@ -282,6 +282,22 @@ class ProjectModel(QObject):
                 for b in self.archive_books
                 if isinstance(b, dict) and b.get("id")
             ]
+        if book_type == "bookEntry":
+            out: list[tuple[str, str]] = []
+            for b in self.archive_books:
+                if not isinstance(b, dict):
+                    continue
+                for pg in b.get("pages") or []:
+                    if not isinstance(pg, dict):
+                        continue
+                    for ent in pg.get("entries") or []:
+                        if not isinstance(ent, dict):
+                            continue
+                        eid = ent.get("id")
+                        if eid:
+                            label = (ent.get("title") or eid)[:40]
+                            out.append((str(eid), str(label)))
+            return out
         return []
 
     def all_npc_ids_global(self) -> list[tuple[str, str]]:

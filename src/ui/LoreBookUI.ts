@@ -121,6 +121,7 @@ export class LoreBookUI {
         label.eventMode = 'static';
         label.cursor = 'pointer';
         label.on('pointerdown', () => {
+          this.archiveData.triggerFirstViewIfNeeded(`lore_${entry.id}`, entry.firstViewActions);
           this.archiveData.markRead(`lore_${entry.id}`);
           this.showContent(entry.content, entry.source, px + CONTENT_X_OFFSET, py + 50);
         });

@@ -17,6 +17,7 @@ ID_SOURCES = [
     "rule", "fragment", "quest", "item",
     "encounter", "cutscene",
     "archive_character", "archive_lore", "archive_document", "archive_book",
+    "archive_book_entry",
 ]
 
 
@@ -79,7 +80,7 @@ class FlagRegistryEditor(QWidget):
         type_row = QHBoxLayout()
         type_row.addWidget(QLabel("选中项值类型:"))
         self._static_type_combo = QComboBox()
-        self._static_type_combo.addItems(["bool", "float"])
+        self._static_type_combo.addItems(["bool", "float", "string"])
         self._static_type_combo.currentTextChanged.connect(self._on_static_type_edited)
         type_row.addWidget(self._static_type_combo, stretch=1)
         lay.addLayout(type_row)
@@ -129,7 +130,12 @@ class FlagRegistryEditor(QWidget):
         ent = self._find_static_entry(key)
         vt = normalize_registry_value_type((ent or {}).get("valueType"))
         self._static_type_combo.blockSignals(True)
-        self._static_type_combo.setCurrentText("float" if vt == "float" else "bool")
+        if vt == "float":
+            self._static_type_combo.setCurrentText("float")
+        elif vt == "string":
+            self._static_type_combo.setCurrentText("string")
+        else:
+            self._static_type_combo.setCurrentText("bool")
         self._static_type_combo.blockSignals(False)
 
     def _on_static_type_edited(self, text: str) -> None:
@@ -140,7 +146,12 @@ class FlagRegistryEditor(QWidget):
         ent = self._find_static_entry(key)
         if not ent:
             return
-        ent["valueType"] = "float" if text == "float" else "bool"
+        if text == "float":
+            ent["valueType"] = "float"
+        elif text == "string":
+            ent["valueType"] = "string"
+        else:
+            ent["valueType"] = "bool"
         self._model.mark_dirty("flag_registry")
 
     def _filter_static(self, text: str) -> None:
@@ -315,12 +326,17 @@ class _PatternRow(QFrame):
         self._src.currentTextChanged.connect(self.changed)
 
         self._vtype = QComboBox()
-        self._vtype.addItems(["bool", "float"])
+        self._vtype.addItems(["bool", "float", "string"])
         raw_vt = data.get("valueType", "bool")
         if raw_vt == "int":
             raw_vt = "float"
-        self._vtype.setCurrentText("float" if raw_vt == "float" else "bool")
-        self._vtype.setMaximumWidth(72)
+        elif raw_vt == "str":
+            raw_vt = "string"
+        if raw_vt not in ("bool", "float", "string"):
+            raw_vt = "bool"
+        self._vtype.setCurrentText(raw_vt)
+        self._vtype.setMinimumWidth(72)
+        self._vtype.setMaximumWidth(96)
         self._vtype.currentTextChanged.connect(self.changed)
 
         del_btn = QPushButton("-")

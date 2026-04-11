@@ -92,6 +92,8 @@ class ConditionRow(QWidget):
                 pass
             else:
                 result["value"] = v
+        elif isinstance(v, str):
+            result["value"] = v
         else:
             result["value"] = float(v)
         return result

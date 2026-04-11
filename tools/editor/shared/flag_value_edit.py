@@ -1,7 +1,7 @@
-"""Flag condition / setFlag value: bool or float (matches FlagStore boolean | number)."""
+"""Flag condition / setFlag value: bool, float, or string (matches FlagStore)."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QDoubleSpinBox
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QDoubleSpinBox, QLineEdit
 from PySide6.QtCore import Signal
 
 
@@ -21,6 +21,16 @@ def _to_bool(v: object) -> bool:
         except ValueError:
             return True
     return True
+
+
+def _to_str(v: object) -> str:
+    if isinstance(v, str):
+        return v
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return str(v)
+    return "" if v is None else str(v)
 
 
 def _to_float(v: object) -> float:
@@ -65,8 +75,14 @@ class FlagValueEdit(QWidget):
         self._spin.setMaximumWidth(110)
         self._spin.valueChanged.connect(lambda *_: self.valueChanged.emit())
 
+        self._line = QLineEdit()
+        self._line.setPlaceholderText("字符串")
+        self._line.setMinimumWidth(120)
+        self._line.textChanged.connect(lambda *_: self.valueChanged.emit())
+
         lay.addWidget(self._bool_combo)
         lay.addWidget(self._spin)
+        lay.addWidget(self._line)
         self._apply_mode_visibility()
 
     def set_registry(self, registry: dict | None) -> None:
@@ -93,16 +109,19 @@ class FlagValueEdit(QWidget):
         self.set_value(cur)
 
     def _apply_mode_visibility(self) -> None:
-        is_bool = self._mode == "bool"
-        self._bool_combo.setVisible(is_bool)
-        self._spin.setVisible(not is_bool)
+        self._bool_combo.setVisible(self._mode == "bool")
+        self._spin.setVisible(self._mode == "float")
+        self._line.setVisible(self._mode == "string")
 
     def set_value(self, v: object) -> None:
         self._bool_combo.blockSignals(True)
         self._spin.blockSignals(True)
+        self._line.blockSignals(True)
         try:
             if self._mode == "bool":
                 self._bool_combo.setCurrentIndex(1 if _to_bool(v) else 0)
+            elif self._mode == "string":
+                self._line.setText(_to_str(v))
             else:
                 try:
                     self._spin.setValue(_to_float(v))
@@ -111,6 +130,7 @@ class FlagValueEdit(QWidget):
         finally:
             self._bool_combo.blockSignals(False)
             self._spin.blockSignals(False)
+            self._line.blockSignals(False)
 
     def get_value(self) -> object:
         if self._mode == "bool":
@@ -118,4 +138,6 @@ class FlagValueEdit(QWidget):
             if d is None:
                 return self._bool_combo.currentText().lower() == "true"
             return bool(d)
+        if self._mode == "string":
+            return self._line.text()
         return float(self._spin.value())

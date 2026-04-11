@@ -190,7 +190,7 @@ class GameConfigEditor(QWidget):
                 continue
             if isinstance(vw, FlagValueEdit):
                 v = vw.get_value()
-                sf[k] = v if isinstance(v, bool) else float(v)
+                sf[k] = v if isinstance(v, (bool, str)) else float(v)
             else:
                 sf[k] = True
         if sf:

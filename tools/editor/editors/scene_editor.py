@@ -2095,6 +2095,15 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_dialogue.value_changed.connect(lambda _x: self.changed.emit())
         form.addRow("dialogueFile", self._npc_dialogue)
         self._npc_knot = QLineEdit(); form.addRow("dialogueKnot", self._npc_knot)
+        self._npc_dialogue_zoom = QDoubleSpinBox()
+        self._npc_dialogue_zoom.setRange(0.05, 8.0)
+        self._npc_dialogue_zoom.setDecimals(3)
+        self._npc_dialogue_zoom.setValue(1.0)
+        self._npc_dialogue_zoom.setToolTip(
+            "进入该 NPC 对话时镜头渐变缩放到该值（与场景 camera.zoom 同语义）；缺省 1.0；"
+            "对话结束由运行时自动恢复场景 zoom，无需在 ink 里写 fadingZoom。")
+        self._npc_dialogue_zoom.valueChanged.connect(lambda _v: self.changed.emit())
+        form.addRow("dialogueCameraZoom", self._npc_dialogue_zoom)
         self._npc_range = QDoubleSpinBox(); self._npc_range.setRange(0, 99999)
         form.addRow("interactionRange", self._npc_range)
         self._npc_range.valueChanged.connect(self._on_npc_interaction_range_live)
@@ -2537,6 +2546,12 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_dialogue.set_items(d_items)
         self._npc_dialogue.set_current(cur_d)
         self._npc_knot.setText(npc.get("dialogueKnot", ""))
+        self._npc_dialogue_zoom.blockSignals(True)
+        try:
+            self._npc_dialogue_zoom.setValue(float(npc.get("dialogueCameraZoom", 1.0)))
+        except (TypeError, ValueError):
+            self._npc_dialogue_zoom.setValue(1.0)
+        self._npc_dialogue_zoom.blockSignals(False)
         self._npc_range.blockSignals(True)
         self._npc_range.setValue(npc.get("interactionRange", 50))
         self._npc_range.blockSignals(False)
@@ -2569,6 +2584,11 @@ class ScenePropertyPanel(QScrollArea):
             npc["dialogueKnot"] = knot
         elif "dialogueKnot" in npc:
             del npc["dialogueKnot"]
+        zv = float(self._npc_dialogue_zoom.value())
+        if abs(zv - 1.0) > 1e-6:
+            npc["dialogueCameraZoom"] = zv
+        elif "dialogueCameraZoom" in npc:
+            del npc["dialogueCameraZoom"]
         npc["interactionRange"] = self._npc_range.value()
         anim = self._npc_anim.current_id().strip()
         if anim:

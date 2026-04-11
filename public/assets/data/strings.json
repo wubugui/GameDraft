@@ -68,7 +68,14 @@
   "bookReader": {
     "back": "[返回书架]",
     "pageMissing": "此页缺失",
-    "pageHint": "< > 翻页"
+    "pageHint": "左侧目录切换章节与轶闻",
+    "tocTitle": "目录",
+    "chapterFallback": "第 {n} 页",
+    "entryLocked": "此轶闻尚未解锁",
+    "backToChapter": "返回本章正文",
+    "untitledEntry": "（轶闻）",
+    "entryFromChapter": "出自：{chapter}",
+    "annotationHeading": "按语"
   },
   "hud": {
     "coins": "铜钱:",
@@ -133,6 +140,14 @@
     "closeHint": "按 L 关闭"
   },
   "dialogue": {
-    "ruleTag": "[规]"
+    "ruleTag": "[规]",
+    "defaultProtagonistName": "你",
+    "narratorLabel": "旁白"
+  },
+  "gameTags": {
+    "flagTrue": "是",
+    "flagFalse": "否",
+    "flagUnset": "—",
+    "unknownItem": "（道具：{id}）"
   }
 }

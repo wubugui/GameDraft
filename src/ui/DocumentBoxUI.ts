@@ -130,6 +130,7 @@ export class DocumentBoxUI {
         label.eventMode = 'static';
         label.cursor = 'pointer';
         label.on('pointerdown', () => {
+          this.archiveData.triggerFirstViewIfNeeded(`doc_${doc.id}`, doc.firstViewActions);
           this.archiveData.markRead(`doc_${doc.id}`);
           this.showContent(doc.content, doc.annotation, px + CONTENT_X_OFFSET, py + 50);
         });

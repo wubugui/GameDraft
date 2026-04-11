@@ -44,7 +44,7 @@ import { DebugPanelUI } from '../ui/DebugPanelUI';
 import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
 import { GameState } from '../data/types';
-import type { IGameSystem, AnimationSetDef, GameConfig, SceneDataRaw } from '../data/types';
+import type { ActionDef, IGameSystem, AnimationSetDef, GameConfig, SceneDataRaw } from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from './assetPath';
@@ -134,6 +134,15 @@ export class Game {
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: DepthOcclusionFilter | null = null;
 
+  /** 场景卸载时递增，使旧场景的 NPC 巡逻异步循环立即失效 */
+  private patrolGeneration = 0;
+  /**
+   * 按 NPC 递增的巡逻代；`stopNpcPatrol` Action 与对话顺序 bump，协程在 sleep/move 前后检查，无需 FlagStore。
+   * 场景卸载时清空，避免与旧场景残留 token 纠缠。
+   */
+  private npcPatrolEpoch = new Map<string, number>();
+  private mainTick: (() => void) | null = null;
+
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
   private boundWindowListeners: { event: string; fn: EventListener }[] = [];
@@ -169,6 +178,7 @@ export class Game {
     this.inventoryManager = new InventoryManager(this.eventBus, this.flagStore);
     this.dialogueManager = new DialogueManager(
       this.eventBus, this.flagStore, this.actionExecutor, this.assetManager, this.inventoryManager,
+      this.sceneManager,
     );
     this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
     this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
@@ -204,6 +214,7 @@ export class Game {
 
   async start(options: GameStartOptions = {}): Promise<void> {
     this.isDevMode = !!options.devMode;
+    this.dialogueManager.configureDevModeInkActionAlerts(this.isDevMode);
     await this.renderer.init();
     await this.stringsProvider.load(this.assetManager);
 
@@ -282,7 +293,6 @@ export class Game {
       if (!spawnKey) return scene.spawnPoint ?? null;
       return scene.spawnPoints?.[spawnKey] ?? null;
     });
-
     this.saveManager = new SaveManager(
       () => this.collectSaveData(),
       (data) => this.distributeSaveData(data),
@@ -292,18 +302,21 @@ export class Game {
     );
     this.menuUI = new MenuUI(this.renderer, this.eventBus, this.saveManager, this.audioManager, this.stringsProvider);
     this.ruleUseUI = new RuleUseUI(this.renderer, this.eventBus, this.zoneSystem, this.rulesManager, this.stringsProvider);
-    this.debugPanelUI = new DebugPanelUI(() => ({
-      fps: this.lastFps,
-      sceneId: this.sceneManager.currentSceneData?.id ?? undefined,
-      state: this.stateController.currentState,
-      worldWidth: this.sceneManager.currentSceneData?.worldWidth,
-      worldHeight: this.sceneManager.currentSceneData?.worldHeight,
-      depthOcclusionEnabled: this.sceneDepthSystem.isEnabled,
-      floorOffsetRuntime: this.sceneDepthSystem.isEnabled
-        ? this.sceneDepthSystem.floorOffset
-        : undefined,
-      floorOffsetFromScene: this.sceneDepthSystem.currentConfig?.floor_offset,
-    }));
+    this.debugPanelUI = new DebugPanelUI(
+      () => ({
+        fps: this.lastFps,
+        sceneId: this.sceneManager.currentSceneData?.id ?? undefined,
+        state: this.stateController.currentState,
+        worldWidth: this.sceneManager.currentSceneData?.worldWidth,
+        worldHeight: this.sceneManager.currentSceneData?.worldHeight,
+        depthOcclusionEnabled: this.sceneDepthSystem.isEnabled,
+        floorOffsetRuntime: this.sceneDepthSystem.isEnabled
+          ? this.sceneDepthSystem.floorOffset
+          : undefined,
+        floorOffsetFromScene: this.sceneDepthSystem.currentConfig?.floor_offset,
+      }),
+      this.inputManager,
+    );
 
     this.camera.setScreenSize(this.renderer.screenWidth, this.renderer.screenHeight);
     this.unsubRendererResize = this.renderer.subscribeAfterResize(() => {
@@ -350,6 +363,22 @@ export class Game {
         const cfg = this.sceneDepthSystem.currentConfig;
         this.sceneDepthSystem.floorOffset = cfg?.floor_offset ?? 0;
       },
+      setCameraZoom: (z) => { this.camera.setZoom(z); },
+      restoreSceneCameraZoom: () => {
+        const z = this.sceneManager.currentSceneData?.camera?.zoom;
+        this.camera.setZoom(z !== undefined && Number.isFinite(z) && z > 0 ? z : 1);
+      },
+      fadingRestoreSceneCameraZoom: (durationMs) => {
+        const z = this.sceneManager.currentSceneData?.camera?.zoom;
+        const target = z !== undefined && Number.isFinite(z) && z > 0 ? z : 1;
+        this.cutsceneManager.fadingCameraZoom(target, durationMs);
+      },
+      stopNpcPatrol: (npcId) => {
+        this.stopNpcPatrol(npcId);
+      },
+      startNpcPatrol: (npcId) => {
+        this.startNpcPatrolForNpc(npcId);
+      },
     });
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
@@ -359,8 +388,27 @@ export class Game {
       actionExecutor: this.actionExecutor,
       inspectBox: this.inspectBox,
       eventBus: this.eventBus,
+      getPlayerWorldPos: () => ({ x: this.player.x, y: this.player.y }),
+      preparePlayerForNpcDialogue: (npc) => {
+        this.player.setFacing(npc.x - this.player.x, npc.y - this.player.y);
+        this.player.playAnimation(ANIM_IDLE);
+      },
+      fadingDialogueCameraZoom: (targetZoom, durationMs) => {
+        this.cutsceneManager.fadingCameraZoom(targetZoom, durationMs);
+      },
+      fadingRestoreSceneCameraZoom: (durationMs) => {
+        const z = this.sceneManager.currentSceneData?.camera?.zoom;
+        const target = z !== undefined && Number.isFinite(z) && z > 0 ? z : 1;
+        this.cutsceneManager.fadingCameraZoom(target, durationMs);
+      },
     });
     this.interactionCoordinator.init();
+
+    this.listenEvent('archive:firstView', (p: { actions: ActionDef[] }) => {
+      for (const a of p.actions) {
+        this.actionExecutor.execute(a);
+      }
+    });
 
     this.eventBridge = new EventBridge(this.eventBus, {
       dialogueManager: this.dialogueManager,
@@ -421,6 +469,8 @@ export class Game {
       this.mapUI.loadConfig(),
     ]);
 
+    this.debugPanelUI.attachFlagDebug(this.flagStore, this.eventBus);
+
     if (!this.gameConfig.initialScene) {
       console.error('Game: initialScene not configured in game_config.json');
     }
@@ -439,12 +489,13 @@ export class Game {
     }
 
     this.lastTime = performance.now();
-    this.renderer.app.ticker.add(() => {
+    this.mainTick = () => {
       const now = performance.now();
       const dt = Math.min((now - this.lastTime) / 1000, 0.1);
       this.lastTime = now;
       this.tick(dt);
-    });
+    };
+    this.renderer.app.ticker.add(this.mainTick);
   }
 
   private async loadFlagRegistry(): Promise<void> {
@@ -591,29 +642,93 @@ export class Game {
     this.zoneSystem.setPlayerPositionGetter(playerPosGetter);
   }
 
+  /**
+   * Ink / 热区 Action：停止指定 NPC 的巡逻（打断当前位移 +递增巡逻代，语义与对话里其它 action 顺序一致）。
+   */
+  stopNpcPatrol(npcId: string): void {
+    const id = npcId?.trim();
+    if (!id) return;
+    const npc = this.sceneManager.getNpcById(id);
+    npc?.cancelActiveMove();
+    const cur = this.npcPatrolEpoch.get(id) ?? 0;
+    this.npcPatrolEpoch.set(id, cur + 1);
+  }
+
+  /** 当前场景内重启巡逻：先 bump token 结束旧协程，再开新协程（与 scene:ready 规则一致） */
+  private startNpcPatrolForNpc(npcId: string): void {
+    const id = npcId?.trim();
+    if (!id) return;
+    const npc = this.sceneManager.getNpcById(id);
+    if (!npc) {
+      console.warn('startNpcPatrolForNpc: 当前场景无该 NPC', id);
+      return;
+    }
+    const patrol = npc.def.patrol;
+    if (!patrol?.route || patrol.route.length === 0) return;
+    this.stopNpcPatrol(id);
+    const moveAnim =
+      npc.def.id === 'npc_ringboy' && this.flagStore.get('ringboy_patrol_walk_anim') === true
+        ? 'boy_walk'
+        : patrol.moveAnimState;
+    this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, moveAnim);
+  }
+
+  private async sleepWhileNpcPatrolPaused(npc: Npc, gen: number): Promise<void> {
+    while (
+      npc.isPatrolPausedForDialogue &&
+      this.patrolGeneration === gen &&
+      this.sceneManager.getCurrentNpcs().includes(npc)
+    ) {
+      await new Promise<void>(r => setTimeout(r, 40));
+    }
+  }
+
   private runNpcPatrol(
     npc: Npc,
     route: { x: number; y: number }[],
     speed: number,
     moveAnimState?: string,
   ): void {
+    const gen = this.patrolGeneration;
+    const npcId = npc.def.id;
+    const tokenAtStart = this.npcPatrolEpoch.get(npcId) ?? 0;
+    const patrolStoppedByAction = (): boolean =>
+      (this.npcPatrolEpoch.get(npcId) ?? 0) !== tokenAtStart;
+
     const run = async () => {
       let i = 0;
       let step = 1;
-      while (this.sceneManager.getCurrentNpcs().includes(npc)) {
-        await npc.moveTo(route[i].x, route[i].y, speed, moveAnimState);
-        if (!this.sceneManager.getCurrentNpcs().includes(npc)) break;
-        i += step;
-        if (i >= route.length) {
-          i = Math.max(0, route.length - 1);
-          step = -1;
-        } else if (i < 0) {
-          i = 0;
-          step = 1;
+      while (
+        this.patrolGeneration === gen &&
+        this.sceneManager.getCurrentNpcs().includes(npc)
+      ) {
+        if (patrolStoppedByAction()) break;
+        await this.sleepWhileNpcPatrolPaused(npc, gen);
+        if (this.patrolGeneration !== gen || !this.sceneManager.getCurrentNpcs().includes(npc)) {
+          break;
+        }
+        if (patrolStoppedByAction()) break;
+        const moveAnim =
+          npc.def.id === 'npc_ringboy' && this.flagStore.get('ringboy_patrol_walk_anim') === true
+            ? 'boy_walk'
+            : moveAnimState;
+        await npc.moveTo(route[i].x, route[i].y, speed, moveAnim);
+        if (this.patrolGeneration !== gen || !this.sceneManager.getCurrentNpcs().includes(npc)) {
+          break;
+        }
+        if (!npc.consumePatrolSkipWaypointAdvance()) {
+          i += step;
+          if (i >= route.length) {
+            i = Math.max(0, route.length - 1);
+            step = -1;
+          } else if (i < 0) {
+            i = 0;
+            step = 1;
+          }
         }
       }
     };
-    run();
+    void run();
   }
 
   private setupSceneManager(): void {
@@ -696,6 +811,10 @@ export class Game {
   }
 
   private setupSceneReadyHandler(): void {
+    this.listenEvent('scene:beforeUnload', () => {
+      this.patrolGeneration++;
+      this.npcPatrolEpoch.clear();
+    });
     this.listenEvent('scene:ready', () => {
       this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
       this.interactionSystem.update(0);
@@ -726,7 +845,11 @@ export class Game {
           depthError('Game', 'NPC filter FAILED', npc.id, e);
         }
         const patrol = npc.def.patrol;
-        if (patrol?.route && patrol.route.length > 0) {
+        if (
+          patrol?.route &&
+          patrol.route.length > 0 &&
+          !this.sceneManager.isNpcPatrolPersistentlyDisabled(npc.id)
+        ) {
           this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, patrol.moveAnimState);
         }
       }
@@ -916,6 +1039,15 @@ export class Game {
     if (this.tearDownComplete) return;
     this.tearDownComplete = true;
 
+    if (this.mainTick && this.renderer?.app?.ticker) {
+      try {
+        this.renderer.app.ticker.remove(this.mainTick);
+      } catch {
+        /* ignore */
+      }
+      this.mainTick = null;
+    }
+
     for (const { event, fn } of this.boundCallbacks) {
       this.eventBus.off(event, fn);
     }
@@ -997,6 +1129,10 @@ export class Game {
 
     if (this.stateController.currentState === GameState.Dialogue) {
       this.dialogueUI.update(dt);
+      this.player.sprite.update(dt);
+      for (const npc of this.sceneManager.getCurrentNpcs()) {
+        npc.cutsceneUpdate(dt);
+      }
     }
 
     if (this.stateController.currentState === GameState.Encounter) {

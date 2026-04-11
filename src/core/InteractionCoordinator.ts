@@ -15,7 +15,16 @@ export interface InteractionDeps {
   actionExecutor: ActionExecutor;
   inspectBox: { show(text: string): Promise<void>; readonly isOpen: boolean; close(): void };
   eventBus: EventBus;
+  getPlayerWorldPos: () => { x: number; y: number };
+  /** 与 NPC 对话开始前：玩家切站立并朝向该 NPC（世界向量，不改动画数据） */
+  preparePlayerForNpcDialogue: (npc: Npc) => void;
+  /** 与 Action `fadingZoom` 同源：NPC 对话开场拉近 */
+  fadingDialogueCameraZoom: (targetZoom: number, durationMs: number) => void;
+  /** 与 Action `fadingRestoreSceneCameraZoom` 同源：对话结束恢复场景 zoom */
+  fadingRestoreSceneCameraZoom: (durationMs: number) => void;
 }
+
+const NPC_DIALOGUE_CAMERA_ZOOM_MS = 550;
 
 export class InteractionCoordinator {
   private eventBus: EventBus;
@@ -63,15 +72,45 @@ export class InteractionCoordinator {
   }
 
   private async handleNpc(npc: Npc): Promise<void> {
-    const { stateController, dialogueManager } = this.deps;
+    const { stateController, dialogueManager, eventBus, getPlayerWorldPos } = this.deps;
     if (stateController.currentState !== GameState.Exploring) return;
     if (dialogueManager.isActive) return;
 
     const inkPath = npc.def.dialogueFile?.trim();
     if (!inkPath) return;
 
+    this.deps.preparePlayerForNpcDialogue(npc);
+    const pos = getPlayerWorldPos();
+    npc.pausePatrolAndFaceForDialogue(pos.x, pos.y);
+
+    const rawZ = npc.def.dialogueCameraZoom;
+    const targetZoom =
+      rawZ !== undefined && Number.isFinite(rawZ) && rawZ > 0 ? rawZ : 1;
+
+    let dialogueCleanupDone = false;
+    const cleanupDialogueZoomAndNpc = () => {
+      if (dialogueCleanupDone) return;
+      dialogueCleanupDone = true;
+      npc.onDialogueEnd();
+      eventBus.off('dialogue:end', onDialogueEnd);
+      this.deps.fadingRestoreSceneCameraZoom(NPC_DIALOGUE_CAMERA_ZOOM_MS);
+    };
+
+    const onDialogueEnd = () => {
+      cleanupDialogueZoomAndNpc();
+    };
+    eventBus.on('dialogue:end', onDialogueEnd);
+
+    this.deps.fadingDialogueCameraZoom(targetZoom, NPC_DIALOGUE_CAMERA_ZOOM_MS);
+
     stateController.setState(GameState.Dialogue);
-    await dialogueManager.startDialogue(inkPath, npc.def.name, npc.def.dialogueKnot);
+    try {
+      await dialogueManager.startDialogue(inkPath, npc.def.name, npc.def.dialogueKnot);
+    } catch (e) {
+      cleanupDialogueZoomAndNpc();
+      console.warn('InteractionCoordinator: startDialogue failed', e);
+      stateController.setState(GameState.Exploring);
+    }
   }
 
   private async handleInspect(hotspot: Hotspot, data: InspectData): Promise<void> {

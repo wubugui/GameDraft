@@ -161,7 +161,9 @@
       "name": "滚铁环的小孩儿",
       "x": 3568.1,
       "y": 2087.8,
-      "interactionRange": 50.0,
+      "interactionRange": 100.0,
+      "dialogueFile": "/assets/dialogues/滚铁环小孩对话.ink",
+      "dialogueKnot": "start",
       "patrol": {
         "route": [
           {
@@ -173,8 +175,8 @@
             "y": 1995.7
           },
           {
-            "x": 3533.1,
-            "y": 1935.4
+            "x": 3482.6,
+            "y": 1976.5
           },
           {
             "x": 3141.3,
@@ -205,7 +207,8 @@
             "y": 1015.8
           }
         ],
-        "speed": 60
+        "speed": 60,
+        "moveAnimState": "boy_run_ring"
       },
       "animFile": "/assets/animation/boy_ring_anim/anim.json",
       "initialAnimState": "boy_run_ring"
@@ -300,6 +303,14 @@
         {
           "x": 3899.6,
           "y": 2347.6
+        },
+        {
+          "x": 3689.6,
+          "y": 2210.1
+        },
+        {
+          "x": 3479.6,
+          "y": 2072.7
         }
       ],
       "onEnter": [

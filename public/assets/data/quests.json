@@ -114,14 +114,15 @@
     "rewards": []
   },
   {
-    "id": "quest_6",
-    "group": "group_1",
+    "id": "支线-归还小孩铁环-归还铁环",
+    "group": "支线-铁环",
     "type": "side",
-    "title": "新任务",
-    "description": "",
+    "title": "归还铁环",
+    "description": "把铁环换给小孩。",
     "preconditions": [],
     "completionConditions": [],
     "rewards": [],
-    "nextQuests": []
+    "nextQuests": [],
+    "sideType": "commission"
   }
 ]

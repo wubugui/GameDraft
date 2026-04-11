@@ -13,9 +13,11 @@ def flag_registry_path(assets_path: Path) -> Path:
 
 
 def normalize_registry_value_type(raw: object) -> str:
-    """Registry stores 'bool' | 'float'. Legacy 'int' from older editors == 'float'."""
+    """Registry stores 'bool' | 'float' | 'string'. Legacy 'int' == 'float'; 'str' == 'string'."""
     if raw == "float" or raw == "int":
         return "float"
+    if raw == "string" or raw == "str":
+        return "string"
     return "bool"
 
 
@@ -100,6 +102,20 @@ def _pattern_matches(key: str, prefix: str, suffix: str | None) -> bool:
     return _extract_pattern_id(key, prefix, suffix) is not None
 
 
+def _book_page_entry_ids(model: ProjectModel) -> set[str]:
+    out: set[str] = set()
+    for b in model.archive_books:
+        if not isinstance(b, dict):
+            continue
+        for pg in b.get("pages") or []:
+            if not isinstance(pg, dict):
+                continue
+            for ent in pg.get("entries") or []:
+                if isinstance(ent, dict) and ent.get("id"):
+                    out.add(str(ent["id"]))
+    return out
+
+
 def build_id_sets(model: ProjectModel) -> dict[str, set[str]]:
     rules = model.rules_data.get("rules", [])
     fragments = model.rules_data.get("fragments", [])
@@ -118,6 +134,7 @@ def build_id_sets(model: ProjectModel) -> dict[str, set[str]]:
         "archive_lore": lore_ids,
         "archive_document": {d["id"] for d in model.archive_documents if isinstance(d, dict) and "id" in d},
         "archive_book": {b["id"] for b in model.archive_books if isinstance(b, dict) and "id" in b},
+        "archive_book_entry": _book_page_entry_ids(model),
     }
 
 
@@ -237,10 +254,10 @@ def validate_flag_key(
     return False, f"flag '{key}' not in registry static/patterns ({severity})"
 
 
-def flag_value_type_for_key(key: str, registry: dict[str, Any] | None) -> str:
-    """Return 'bool' or 'float' for editor FlagValueEdit (from registry.static + patterns)."""
+def registry_value_type_for_key(key: str, registry: dict[str, Any] | None) -> str | None:
+    """若 key 命中 static 或某条 pattern，返回规范化后的 'bool'|'float'|'string'；否则 None。"""
     if not key or not isinstance(key, str):
-        return "bool"
+        return None
     r = registry or {}
     for e in r.get("static") or []:
         if isinstance(e, dict) and e.get("key") == key:
@@ -254,7 +271,12 @@ def flag_value_type_for_key(key: str, registry: dict[str, Any] | None) -> str:
         if _extract_pattern_id(key, prefix, suffix) is None:
             continue
         return normalize_registry_value_type(p.get("valueType"))
-    return "bool"
+    return None
+
+
+def flag_value_type_for_key(key: str, registry: dict[str, Any] | None) -> str:
+    """Return 'bool' | 'float' | 'string' for editor FlagValueEdit（未登记则默认 bool）。"""
+    return registry_value_type_for_key(key, registry) or "bool"
 
 
 def flag_registry_static_format_issues(registry: dict[str, Any]) -> list[str]:
@@ -277,7 +299,7 @@ def flag_registry_static_format_issues(registry: dict[str, Any]) -> list[str]:
             issues.append(f"static 重复 key: {k!r}")
         seen.add(k)
         vt = e.get("valueType")
-        if vt not in ("bool", "float", "int"):
+        if vt not in ("bool", "float", "int", "string", "str"):
             issues.append(f"static {k!r} 的 valueType 无效或缺失")
     return issues
 

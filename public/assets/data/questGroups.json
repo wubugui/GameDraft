@@ -5,8 +5,8 @@
     "type": "main"
   },
   {
-    "id": "group_1",
-    "name": "新分组_1",
-    "type": "main"
+    "id": "支线-铁环",
+    "name": "支线-铁环去向",
+    "type": "side"
   }
 ]

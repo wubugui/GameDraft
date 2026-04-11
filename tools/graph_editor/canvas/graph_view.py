@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QGraphicsView, QGraphicsItem
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QPainter, QColor
 
 from .graph_scene import GraphScene
 from .node_item import NodeItem
@@ -24,7 +24,8 @@ class GraphView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.SmartViewportUpdate)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setBackgroundBrush(Qt.GlobalColor.black)
+        # 略浅于纯黑，连线与标签更容易分辨
+        self.setBackgroundBrush(QColor(28, 28, 30))
 
     def _find_node_item(self, item) -> NodeItem | None:
         """Walk up parent chain to find the owning NodeItem."""
@@ -54,8 +55,6 @@ class GraphView(QGraphicsView):
             if node_item is not None:
                 self._scene.highlight_node(node_item.nd.id)
                 self.node_clicked.emit(node_item.nd.id)
-                event.accept()
-                return
             else:
                 self._scene.highlight_node(None)
 

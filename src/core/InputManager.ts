@@ -1,6 +1,8 @@
 export class InputManager {
   private keysDown: Set<string> = new Set();
   private keyJustPressed: Set<string> = new Set();
+  /** 为 true 时不写入按键状态，查询移动/按键视为无输入（如 Debug 侧栏聚焦时避免吃掉快捷键） */
+  private gameKeyboardBlocked = false;
   private mousePos: { x: number; y: number } = { x: 0, y: 0 };
   private mouseDown: boolean = false;
   private mouseJustClicked: boolean = false;
@@ -29,15 +31,17 @@ export class InputManager {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
-    if (!this.keysDown.has(e.code)) {
-      this.keyJustPressed.add(e.code);
+    if (!this.gameKeyboardBlocked) {
+      if (!this.keysDown.has(e.code)) {
+        this.keyJustPressed.add(e.code);
+      }
+      this.keysDown.add(e.code);
+      // 长按会产生 repeat 的 keydown；过场用 subscribeAnyInput 推进对话时若每次都触发会瞬间连点完所有指令
+      if (!e.repeat) {
+        for (const cb of this.anyInputSubscribers) cb();
+      }
     }
-    this.keysDown.add(e.code);
     for (const cb of this.keyDownSubscribers) cb(e);
-    // 长按会产生 repeat 的 keydown；过场用 subscribeAnyInput 推进对话时若每次都触发会瞬间连点完所有指令
-    if (!e.repeat) {
-      for (const cb of this.anyInputSubscribers) cb();
-    }
   }
 
   private onKeyUp(e: KeyboardEvent): void {
@@ -60,10 +64,12 @@ export class InputManager {
   }
 
   isKeyDown(code: string): boolean {
+    if (this.gameKeyboardBlocked) return false;
     return this.keysDown.has(code);
   }
 
   wasKeyJustPressed(code: string): boolean {
+    if (this.gameKeyboardBlocked) return false;
     return this.keyJustPressed.has(code);
   }
 
@@ -85,6 +91,7 @@ export class InputManager {
   }
 
   getMovementDirection(): { x: number; y: number } {
+    if (this.gameKeyboardBlocked) return { x: 0, y: 0 };
     let dx = 0;
     let dy = 0;
 
@@ -103,7 +110,12 @@ export class InputManager {
   }
 
   isRunning(): boolean {
-    return this.isKeyDown('ShiftLeft') || this.isKeyDown('ShiftRight');
+    if (this.gameKeyboardBlocked) return false;
+    return this.keysDown.has('ShiftLeft') || this.keysDown.has('ShiftRight');
+  }
+
+  setGameKeyboardBlocked(blocked: boolean): void {
+    this.gameKeyboardBlocked = blocked;
   }
 
   subscribeKeyDown(cb: (e: KeyboardEvent) => void): () => void {

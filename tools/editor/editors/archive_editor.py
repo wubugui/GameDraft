@@ -6,13 +6,16 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QTabWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
-    QScrollArea, QLabel, QGroupBox, QFileDialog,
+    QScrollArea, QLabel, QGroupBox, QFileDialog, QDialog, QDialogButtonBox,
+    QStackedWidget,
 )
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
+from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.action_editor import ActionEditor
 
 
 def _make_insert_image_btn(text_edit: QTextEdit, model: ProjectModel) -> QPushButton:
@@ -42,6 +45,117 @@ def _make_insert_image_btn(text_edit: QTextEdit, model: ProjectModel) -> QPushBu
     btn = QPushButton("Insert Image")
     btn.setMaximumWidth(120)
     btn.clicked.connect(_pick)
+    return btn
+
+
+def _open_game_tag_insert_dialog(
+    parent: QWidget,
+    model: ProjectModel,
+    text_edit: QTextEdit,
+) -> None:
+    """插入与运行时 expandGameTags 一致的标记：string / flag / item。"""
+    d = QDialog(parent)
+    d.setWindowTitle("插入游戏 tag")
+    d.setMinimumWidth(360)
+    root = QVBoxLayout(d)
+    kind = QComboBox()
+    kind.addItems(["strings（文案表）", "flag（变量键）", "item（道具）"])
+    root.addWidget(kind)
+    stack = QStackedWidget()
+
+    w0 = QWidget()
+    f0 = QFormLayout(w0)
+    cat_combo = QComboBox()
+    key_combo = QComboBox()
+    key_combo.setEditable(True)
+    cats = sorted(model.strings.keys()) if isinstance(model.strings, dict) else []
+    cat_combo.addItems(cats)
+
+    def _refresh_keys() -> None:
+        key_combo.clear()
+        c = cat_combo.currentText()
+        sub = model.strings.get(c) if isinstance(model.strings, dict) else None
+        if isinstance(sub, dict):
+            key_combo.addItems(sorted(str(k) for k in sub.keys()))
+
+    cat_combo.currentTextChanged.connect(lambda _t: _refresh_keys())
+    _refresh_keys()
+    f0.addRow("category", cat_combo)
+    f0.addRow("key", key_combo)
+    stack.addWidget(w0)
+
+    w1 = QWidget()
+    f1 = QFormLayout(w1)
+    flag_pick = FlagKeyPickField(model, None, "", w1)
+    f1.addRow("flag 键", flag_pick)
+    stack.addWidget(w1)
+
+    w2 = QWidget()
+    f2 = QFormLayout(w2)
+    item_combo = QComboBox()
+    item_combo.setEditable(True)
+    for iid, label in model.all_item_ids():
+        if iid:
+            item_combo.addItem(f"{label} ({iid})", iid)
+    f2.addRow("道具", item_combo)
+    stack.addWidget(w2)
+
+    root.addWidget(stack)
+
+    def _on_kind(idx: int) -> None:
+        stack.setCurrentIndex(idx)
+
+    kind.currentIndexChanged.connect(_on_kind)
+    _on_kind(0)
+
+    bb = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+    )
+    root.addWidget(bb)
+
+    def _accept() -> None:
+        idx = kind.currentIndex()
+        marker = ""
+        if idx == 0:
+            c = cat_combo.currentText().strip()
+            k = key_combo.currentText().strip()
+            if c and k:
+                marker = f"[tag:string:{c}:{k}]"
+        elif idx == 1:
+            k = flag_pick.key().strip()
+            if k:
+                marker = f"[tag:flag:{k}]"
+        else:
+            k = item_combo.currentData()
+            if k is None or k == "":
+                k = item_combo.currentText().strip()
+            else:
+                k = str(k)
+            if k:
+                marker = f"[tag:item:{k}]"
+        if marker:
+            cur = text_edit.textCursor()
+            cur.insertText(marker)
+            text_edit.setTextCursor(cur)
+        d.accept()
+
+    bb.accepted.connect(_accept)
+    bb.rejected.connect(d.reject)
+    d.exec()
+
+
+def _make_insert_game_tag_btn(
+    text_edit: QTextEdit,
+    model: ProjectModel,
+    parent: QWidget,
+) -> QPushButton:
+    btn = QPushButton("插入 tag")
+
+    def _go() -> None:
+        _open_game_tag_insert_dialog(parent, model, text_edit)
+
+    btn.setMaximumWidth(100)
+    btn.clicked.connect(_go)
     return btn
 
 
@@ -186,6 +300,9 @@ class ArchiveEditor(QWidget):
         dl.addLayout(f)
         self._ch_unlock = ConditionEditor("unlockConditions")
         dl.addWidget(self._ch_unlock)
+        dl.addWidget(QLabel("首次阅览动作 firstViewActions（玩家第一次点开该人物档案时执行一次）"))
+        self._ch_first_view = ActionEditor("firstViewActions")
+        dl.addWidget(self._ch_first_view)
 
         dl.addWidget(QLabel("<b>Impressions</b>"))
         self._ch_imp_layout = QVBoxLayout()
@@ -229,6 +346,8 @@ class ArchiveEditor(QWidget):
         self._ch_title.setText(ch.get("title", ""))
         self._ch_unlock.set_flag_pattern_context(self._model, None)
         self._ch_unlock.set_data(ch.get("unlockConditions", []))
+        self._ch_first_view.set_project_context(self._model, None)
+        self._ch_first_view.set_data(ch.get("firstViewActions", []))
         self._rebuild_cond_text_list(self._ch_imp_layout, self._imp_widgets,
                                       ch.get("impressions", []), "Impression")
         self._rebuild_cond_text_list(self._ch_ki_layout, self._ki_widgets,
@@ -264,6 +383,11 @@ class ArchiveEditor(QWidget):
         ch["name"] = self._ch_name.text()
         ch["title"] = self._ch_title.text()
         ch["unlockConditions"] = self._ch_unlock.to_list()
+        ch_fv = self._ch_first_view.to_list()
+        if ch_fv:
+            ch["firstViewActions"] = ch_fv
+        elif "firstViewActions" in ch:
+            del ch["firstViewActions"]
         ch["impressions"] = [w.to_dict() for w in self._imp_widgets]
         ch["knownInfo"] = [w.to_dict() for w in self._ki_widgets]
         self._model.mark_dirty("archive")
@@ -324,6 +448,9 @@ class ArchiveEditor(QWidget):
         rl.addWidget(scroll)
         scroll.setWidget(detail)
         rl.addWidget(self._lo_cond)
+        rl.addWidget(QLabel("<b>首次阅览动作 firstViewActions</b>"))
+        self._lo_first_view = ActionEditor("firstViewActions")
+        rl.addWidget(self._lo_first_view)
         rl.addWidget(apply_btn)
 
         splitter.addWidget(left)
@@ -358,6 +485,8 @@ class ArchiveEditor(QWidget):
         self._lo_cat.setCurrentText(e.get("category", "legend"))
         self._lo_cond.set_flag_pattern_context(self._model, None)
         self._lo_cond.set_data(e.get("unlockConditions", []))
+        self._lo_first_view.set_project_context(self._model, None)
+        self._lo_first_view.set_data(e.get("firstViewActions", []))
 
     def _apply_lore(self) -> None:
         entries = self._lore_entries()
@@ -370,6 +499,11 @@ class ArchiveEditor(QWidget):
         e["source"] = self._lo_source.text()
         e["category"] = self._lo_cat.currentText()
         e["unlockConditions"] = self._lo_cond.to_list()
+        lo_fv = self._lo_first_view.to_list()
+        if lo_fv:
+            e["firstViewActions"] = lo_fv
+        elif "firstViewActions" in e:
+            del e["firstViewActions"]
         self._model.mark_dirty("archive")
         self._refresh_lore()
 
@@ -424,6 +558,9 @@ class ArchiveEditor(QWidget):
         dl.addLayout(f)
         self._doc_cond = ConditionEditor("discoverConditions")
         dl.addWidget(self._doc_cond)
+        dl.addWidget(QLabel("<b>首次阅览动作 firstViewActions</b>"))
+        self._doc_first_view = ActionEditor("firstViewActions")
+        dl.addWidget(self._doc_first_view)
         apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply_doc)
         dl.addWidget(apply_btn)
         dl.addStretch()
@@ -453,6 +590,8 @@ class ArchiveEditor(QWidget):
         self._doc_annot.setPlainText(d.get("annotation", ""))
         self._doc_cond.set_flag_pattern_context(self._model, None)
         self._doc_cond.set_data(d.get("discoverConditions", []))
+        self._doc_first_view.set_project_context(self._model, None)
+        self._doc_first_view.set_data(d.get("firstViewActions", []))
 
     def _apply_doc(self) -> None:
         if self._doc_idx < 0:
@@ -467,6 +606,11 @@ class ArchiveEditor(QWidget):
         elif "annotation" in d:
             del d["annotation"]
         d["discoverConditions"] = self._doc_cond.to_list()
+        doc_fv = self._doc_first_view.to_list()
+        if doc_fv:
+            d["firstViewActions"] = doc_fv
+        elif "firstViewActions" in d:
+            del d["firstViewActions"]
         self._model.mark_dirty("archive")
         self._refresh_docs()
 
@@ -534,6 +678,51 @@ class ArchiveEditor(QWidget):
         dl.addLayout(pf)
         self._pg_cond = ConditionEditor("unlockConditions")
         dl.addWidget(self._pg_cond)
+        dl.addWidget(QLabel("<b>首次阅览动作（本页）firstViewActions</b>"))
+        self._pg_first_view = ActionEditor("page firstViewActions")
+        dl.addWidget(self._pg_first_view)
+
+        dl.addWidget(QLabel("<b>Page entries（书籍子条目）</b>"))
+        self._entry_list = QListWidget()
+        self._entry_list.currentRowChanged.connect(self._on_entry_select)
+        dl.addWidget(self._entry_list)
+        ent_btn_row = QHBoxLayout()
+        btn_add_ent = QPushButton("+ Entry")
+        btn_add_ent.clicked.connect(self._add_page_entry)
+        btn_del_ent = QPushButton("Delete Entry")
+        btn_del_ent.clicked.connect(self._del_page_entry)
+        ent_btn_row.addWidget(btn_add_ent)
+        ent_btn_row.addWidget(btn_del_ent)
+        dl.addLayout(ent_btn_row)
+        ef = QFormLayout()
+        self._en_id = QLineEdit()
+        ef.addRow("entry id", self._en_id)
+        self._en_title = QLineEdit()
+        ef.addRow("title", self._en_title)
+        self._en_content = QTextEdit()
+        self._en_content.setMaximumHeight(90)
+        en_content_row = QHBoxLayout()
+        en_content_row.addWidget(self._en_content)
+        en_content_row.addWidget(_make_insert_image_btn(self._en_content, self._model))
+        ef.addRow("content", en_content_row)
+        ann_row = QHBoxLayout()
+        self._en_annotation = QTextEdit()
+        self._en_annotation.setMaximumHeight(76)
+        self._en_annotation.setPlaceholderText(
+            "按语；可点右侧插入 [tag:string:类:key]、[tag:flag:键]、[tag:item:道具id]",
+        )
+        ann_row.addWidget(self._en_annotation)
+        ann_row.addWidget(_make_insert_game_tag_btn(self._en_annotation, self._model, self))
+        ef.addRow("annotation", ann_row)
+        self._en_illust = IdRefSelector(allow_empty=True)
+        self._en_illust.setMinimumWidth(260)
+        ef.addRow("illustration", self._en_illust)
+        dl.addLayout(ef)
+        self._en_disc = ConditionEditor("discoverConditions")
+        dl.addWidget(self._en_disc)
+        dl.addWidget(QLabel("<b>首次阅览动作（子条目）firstViewActions</b>"))
+        self._en_first_view = ActionEditor("entry firstViewActions")
+        dl.addWidget(self._en_first_view)
 
         apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply_book)
         dl.addWidget(apply_btn)
@@ -546,6 +735,7 @@ class ArchiveEditor(QWidget):
         lay.addWidget(splitter)
         self._book_idx = -1
         self._page_idx = -1
+        self._entry_idx = -1
         self._refresh_books()
         return w
 
@@ -565,6 +755,12 @@ class ArchiveEditor(QWidget):
         self._page_list.clear()
         for pg in b.get("pages", []):
             self._page_list.addItem(f"Page {pg.get('pageNum', '?')}: {pg.get('title', '')}")
+        self._entry_list.clear()
+        self._page_idx = -1
+        self._entry_idx = -1
+        self._clear_entry_form()
+        self._pg_first_view.set_project_context(self._model, None)
+        self._pg_first_view.set_data([])
 
     def _on_page_select(self, row: int) -> None:
         if self._book_idx < 0:
@@ -584,6 +780,100 @@ class ArchiveEditor(QWidget):
         self._pg_illust.set_current(cur_ill)
         self._pg_cond.set_flag_pattern_context(self._model, None)
         self._pg_cond.set_data(pg.get("unlockConditions", []))
+        self._pg_first_view.set_project_context(self._model, None)
+        self._pg_first_view.set_data(pg.get("firstViewActions", []))
+        self._refresh_entry_list()
+        self._entry_idx = -1
+        self._clear_entry_form()
+
+    def _refresh_entry_list(self) -> None:
+        self._entry_list.clear()
+        if self._book_idx < 0 or self._page_idx < 0:
+            return
+        pages = self._model.archive_books[self._book_idx].get("pages", [])
+        if self._page_idx >= len(pages):
+            return
+        pg = pages[self._page_idx]
+        for i, ent in enumerate(pg.get("entries") or []):
+            eid = ent.get("id", "?") if isinstance(ent, dict) else "?"
+            self._entry_list.addItem(f"{i + 1}. {eid}")
+
+    def _clear_entry_form(self) -> None:
+        self._en_id.clear()
+        self._en_title.clear()
+        self._en_content.clear()
+        self._en_annotation.clear()
+        ill_choices = self._model.illustration_asset_choices()
+        self._en_illust.set_items(ill_choices)
+        self._en_illust.set_current("")
+        self._en_disc.set_flag_pattern_context(self._model, None)
+        self._en_disc.set_data([])
+        self._en_first_view.set_project_context(self._model, None)
+        self._en_first_view.set_data([])
+
+    def _on_entry_select(self, row: int) -> None:
+        if self._book_idx < 0 or self._page_idx < 0:
+            return
+        pages = self._model.archive_books[self._book_idx].get("pages", [])
+        if self._page_idx >= len(pages):
+            return
+        entries = pages[self._page_idx].get("entries") or []
+        if row < 0 or row >= len(entries):
+            self._entry_idx = -1
+            self._clear_entry_form()
+            return
+        self._entry_idx = row
+        ent = entries[row]
+        if not isinstance(ent, dict):
+            self._clear_entry_form()
+            return
+        self._en_id.setText(str(ent.get("id", "")))
+        self._en_title.setText(str(ent.get("title", "")))
+        self._en_content.setPlainText(str(ent.get("content", "")))
+        self._en_annotation.setPlainText(str(ent.get("annotation", "")))
+        ill_choices = self._model.illustration_asset_choices()
+        cur_ill = ent.get("illustration", "") or ""
+        if cur_ill and all(x[0] != cur_ill for x in ill_choices):
+            ill_choices = [(cur_ill, cur_ill)] + ill_choices
+        self._en_illust.set_items(ill_choices)
+        self._en_illust.set_current(cur_ill)
+        self._en_disc.set_flag_pattern_context(self._model, None)
+        self._en_disc.set_data(ent.get("discoverConditions", []))
+        self._en_first_view.set_project_context(self._model, None)
+        self._en_first_view.set_data(ent.get("firstViewActions", []))
+
+    def _add_page_entry(self) -> None:
+        if self._book_idx < 0 or self._page_idx < 0:
+            return
+        pages = self._model.archive_books[self._book_idx].setdefault("pages", [])
+        pg = pages[self._page_idx]
+        ents = pg.setdefault("entries", [])
+        ents.append({
+            "id": f"book_entry_{len(ents) + 1}",
+            "title": "",
+            "content": "",
+        })
+        self._model.mark_dirty("archive")
+        self._refresh_entry_list()
+        self._entry_list.setCurrentRow(len(ents) - 1)
+
+    def _del_page_entry(self) -> None:
+        if self._book_idx < 0 or self._page_idx < 0 or self._entry_idx < 0:
+            return
+        pages = self._model.archive_books[self._book_idx].get("pages", [])
+        if self._page_idx >= len(pages):
+            return
+        pg = pages[self._page_idx]
+        ents = pg.get("entries")
+        if not isinstance(ents, list) or self._entry_idx >= len(ents):
+            return
+        ents.pop(self._entry_idx)
+        if not ents:
+            pg.pop("entries", None)
+        self._entry_idx = -1
+        self._model.mark_dirty("archive")
+        self._refresh_entry_list()
+        self._clear_entry_form()
 
     def _add_page(self) -> None:
         if self._book_idx < 0:
@@ -613,6 +903,41 @@ class ArchiveEditor(QWidget):
                 elif "illustration" in pg:
                     del pg["illustration"]
                 pg["unlockConditions"] = self._pg_cond.to_list()
+                pg_fv = self._pg_first_view.to_list()
+                if pg_fv:
+                    pg["firstViewActions"] = pg_fv
+                elif "firstViewActions" in pg:
+                    del pg["firstViewActions"]
+                if self._entry_idx >= 0:
+                    ents = pg.setdefault("entries", [])
+                    if self._entry_idx < len(ents):
+                        ent = ents[self._entry_idx]
+                        if not isinstance(ent, dict):
+                            ent = {}
+                            ents[self._entry_idx] = ent
+                        ent["id"] = self._en_id.text().strip()
+                        ent["title"] = self._en_title.text().strip()
+                        ent["content"] = self._en_content.toPlainText()
+                        ann = self._en_annotation.toPlainText().strip()
+                        if ann:
+                            ent["annotation"] = ann
+                        else:
+                            ent.pop("annotation", None)
+                        ill = self._en_illust.current_id().strip()
+                        if ill:
+                            ent["illustration"] = ill
+                        elif "illustration" in ent:
+                            del ent["illustration"]
+                        disc = self._en_disc.to_list()
+                        if disc:
+                            ent["discoverConditions"] = disc
+                        elif "discoverConditions" in ent:
+                            del ent["discoverConditions"]
+                        en_fv = self._en_first_view.to_list()
+                        if en_fv:
+                            ent["firstViewActions"] = en_fv
+                        elif "firstViewActions" in ent:
+                            del ent["firstViewActions"]
         self._model.mark_dirty("archive")
         self._refresh_books()
 

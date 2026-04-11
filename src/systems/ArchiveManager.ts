@@ -1,9 +1,23 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { AssetManager } from '../core/AssetManager';
-import type { CharacterEntry, LoreEntry, DocumentEntry, BookDef, Condition, IGameSystem, GameContext, IArchiveDataProvider } from '../data/types';
+import { expandGameTags } from '../core/expandGameTags';
+import type {
+  ActionDef,
+  CharacterEntry,
+  LoreEntry,
+  DocumentEntry,
+  BookDef,
+  BookPageEntry,
+  BookReaderSlice,
+  BookTocChapter,
+  Condition,
+  IGameSystem,
+  GameContext,
+  IArchiveDataProvider,
+} from '../data/types';
 
-type BookType = 'character' | 'lore' | 'document' | 'book';
+type BookType = 'character' | 'lore' | 'document' | 'book' | 'bookEntry';
 
 export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private eventBus: EventBus;
@@ -13,6 +27,8 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private loreDefs: Map<string, LoreEntry> = new Map();
   private documentDefs: Map<string, DocumentEntry> = new Map();
   private bookDefs: Map<string, BookDef> = new Map();
+  private bookEntryIds: Set<string> = new Set();
+  private itemDisplayNames: Map<string, string> = new Map();
 
   private unlockedCharacters: Set<string> = new Set();
   private unlockedLore: Set<string> = new Set();
@@ -20,6 +36,8 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private unlockedBooks: Set<string> = new Set();
 
   private readEntries: Set<string> = new Set();
+  /** 已执行过「首次阅览」动作的 stable key（与 markRead 的 key 独立） */
+  private firstViewFired: Set<string> = new Set();
   private loreCategoryNames: Record<string, string> = {};
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
@@ -52,8 +70,20 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       this.loadLore(),
       this.loadDocuments(),
       this.loadBooks(),
+      this.loadItemDisplayNames(),
     ]);
     await this.preloadContentImages();
+    this.evaluateUnlocks();
+    this.syncUnlockedBooksFromFlags();
+  }
+
+  /** 与 FlagStore 中 archive_book_<id> 对齐（支持 game_config startupFlags 开局解锁成书） */
+  private syncUnlockedBooksFromFlags(): void {
+    for (const id of this.bookDefs.keys()) {
+      if (this.flagStore.get(`archive_book_${id}`) === true) {
+        this.unlockedBooks.add(id);
+      }
+    }
   }
 
   private async preloadContentImages(): Promise<void> {
@@ -64,6 +94,13 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       for (const page of book.pages) {
         if (page.illustration) paths.add(`assets/${page.illustration}`);
         for (const m of page.content.matchAll(imgRe)) paths.add(`assets/${m[1]}`);
+        for (const ent of page.entries ?? []) {
+          if (ent.illustration) paths.add(`assets/${ent.illustration}`);
+          for (const m of ent.content.matchAll(imgRe)) paths.add(`assets/${m[1]}`);
+          if (ent.annotation) {
+            for (const m of ent.annotation.matchAll(imgRe)) paths.add(`assets/${m[1]}`);
+          }
+        }
       }
     }
     for (const entry of this.loreDefs.values()) {
@@ -108,7 +145,25 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private async loadBooks(): Promise<void> {
     try {
       const list = await this.assetManager.loadJson<BookDef[]>('/assets/data/archive/books.json');
-      for (const b of list) this.bookDefs.set(b.id, b);
+      this.bookEntryIds.clear();
+      for (const b of list) {
+        this.bookDefs.set(b.id, b);
+        for (const page of b.pages) {
+          for (const ent of page.entries ?? []) {
+            if (ent?.id) this.bookEntryIds.add(ent.id);
+          }
+        }
+      }
+    } catch { /* no data yet */ }
+  }
+
+  private async loadItemDisplayNames(): Promise<void> {
+    this.itemDisplayNames.clear();
+    try {
+      const list = await this.assetManager.loadJson<{ id: string; name?: string }[]>('/assets/data/items.json');
+      for (const it of list) {
+        if (it?.id) this.itemDisplayNames.set(it.id, it.name ?? it.id);
+      }
     } catch { /* no data yet */ }
   }
 
@@ -142,6 +197,15 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
           this.emitUpdate('book', entryId);
         }
         break;
+      case 'bookEntry':
+        if (!this.bookEntryIds.has(entryId)) {
+          console.warn(`ArchiveManager: unknown book entry '${entryId}'`);
+          break;
+        }
+        if (this.flagStore.get(`archive_book_entry_${entryId}`) === true) break;
+        this.flagStore.set(`archive_book_entry_${entryId}`, true);
+        this.emitUpdate('book', entryId);
+        break;
     }
   }
 
@@ -159,6 +223,29 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   isRead(key: string): boolean {
     return this.readEntries.has(key);
+  }
+
+  triggerFirstViewIfNeeded(qualifiedKey: string, actions: ActionDef[] | undefined): void {
+    if (!actions || actions.length === 0) return;
+    if (this.firstViewFired.has(qualifiedKey)) return;
+    this.firstViewFired.add(qualifiedKey);
+    this.eventBus.emit('archive:firstView', { actions: actions.map(a => ({ ...a, params: { ...a.params } })) });
+  }
+
+  triggerBookSliceFirstView(bookId: string, slice: BookReaderSlice): void {
+    const book = this.bookDefs.get(bookId);
+    if (!book) return;
+    if (slice.kind === 'page') {
+      const raw = book.pages.find(p => p.pageNum === slice.pageNum);
+      if (!raw) return;
+      if (!this.checkConditions(raw.unlockConditions ?? [])) return;
+      this.triggerFirstViewIfNeeded(`bookpage_${bookId}_${slice.pageNum}`, raw.firstViewActions);
+      return;
+    }
+    const page = book.pages.find(p => p.pageNum === slice.pageNum);
+    const ent = page?.entries?.find(e => e.id === slice.entryId);
+    if (!ent) return;
+    this.triggerFirstViewIfNeeded(`bookentry_${bookId}_${slice.entryId}`, ent.firstViewActions);
   }
 
   getLoreCategoryName(key: string): string {
@@ -183,6 +270,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
         }
         return false;
       case 'book':
+      case 'bookEntry':
         return false;
     }
   }
@@ -216,6 +304,20 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
         this.emitUpdate('document', id);
       }
     });
+
+    for (const book of this.bookDefs.values()) {
+      for (const page of book.pages) {
+        for (const ent of page.entries ?? []) {
+          if (!ent.id) continue;
+          if (this.flagStore.get(`archive_book_entry_${ent.id}`) === true) continue;
+          const conds = ent.discoverConditions;
+          if (conds && conds.length > 0 && this.checkConditions(conds)) {
+            this.flagStore.set(`archive_book_entry_${ent.id}`, true);
+            this.emitUpdate('book', ent.id);
+          }
+        }
+      }
+    }
   }
 
   private checkConditions(conditions: Condition[]): boolean {
@@ -263,14 +365,76 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       .filter((e): e is BookDef => !!e);
   }
 
-  getBookVisiblePages(book: BookDef): { pageNum: number; title?: string; content: string; illustration?: string; unlocked: boolean }[] {
-    return book.pages.map(p => ({
+  private bookExpandOpts(): {
+    strings: (c: string, k: string, v?: Record<string, string | number>) => string;
+    flagStore: FlagStore;
+    itemNames: Map<string, string>;
+  } {
+    return {
+      strings: (c, k, v) => this.strings.get(c, k, v),
+      flagStore: this.flagStore,
+      itemNames: this.itemDisplayNames,
+    };
+  }
+
+  getBookTocChapters(book: BookDef): BookTocChapter[] {
+    const pages = [...book.pages].sort((a, b) => a.pageNum - b.pageNum);
+    return pages.map((p) => {
+      const unlocked = this.checkConditions(p.unlockConditions ?? []);
+      const entries = (p.entries ?? [])
+        .filter((ent): ent is BookPageEntry => !!ent?.id)
+        .map((ent) => ({
+          id: ent.id,
+          title: ent.title?.trim() || this.strings.get('bookReader', 'untitledEntry'),
+          unlocked: this.flagStore.get(`archive_book_entry_${ent.id}`) === true,
+        }));
+      return {
+        pageNum: p.pageNum,
+        title: p.title,
+        unlocked,
+        entries,
+      };
+    });
+  }
+
+  getBookPageSlice(book: BookDef, pageNum: number): BookReaderSlice | null {
+    const p = book.pages.find((x) => x.pageNum === pageNum);
+    if (!p) return null;
+    const unlocked = this.checkConditions(p.unlockConditions ?? []);
+    return {
+      kind: 'page',
       pageNum: p.pageNum,
       title: p.title,
       content: p.content,
       illustration: p.illustration,
-      unlocked: this.checkConditions(p.unlockConditions),
-    }));
+      unlocked,
+    };
+  }
+
+  getBookEntrySlice(book: BookDef, pageNum: number, entryId: string): BookReaderSlice | null {
+    const p = book.pages.find((x) => x.pageNum === pageNum);
+    if (!p) return null;
+    if (!this.checkConditions(p.unlockConditions ?? [])) return null;
+    const ent = p.entries?.find((e) => e.id === entryId);
+    if (!ent) return null;
+    if (this.flagStore.get(`archive_book_entry_${ent.id}`) !== true) return null;
+    const titleTrim = ent.title?.trim() ?? '';
+    const contentTrim = ent.content?.trim() ?? '';
+    const annRaw = ent.annotation?.trim();
+    const ill = ent.illustration?.trim();
+    if (!titleTrim && !contentTrim && !annRaw && !ill) return null;
+    const annotation = annRaw ? expandGameTags(annRaw, this.bookExpandOpts()) : undefined;
+    return {
+      kind: 'entry',
+      pageNum: p.pageNum,
+      chapterTitle: p.title,
+      entryId: ent.id,
+      title: titleTrim || this.strings.get('bookReader', 'untitledEntry'),
+      content: contentTrim,
+      annotation,
+      illustration: ill,
+      unlocked: true,
+    };
   }
 
   serialize(): object {
@@ -280,6 +444,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       documents: Array.from(this.unlockedDocuments),
       books: Array.from(this.unlockedBooks),
       read: Array.from(this.readEntries),
+      firstViewFired: Array.from(this.firstViewFired),
     };
   }
 
@@ -289,12 +454,15 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     documents?: string[];
     books?: string[];
     read?: string[];
+    firstViewFired?: string[];
   }): void {
     this.unlockedCharacters = new Set(data.characters ?? []);
     this.unlockedLore = new Set(data.lore ?? []);
     this.unlockedDocuments = new Set(data.documents ?? []);
     this.unlockedBooks = new Set(data.books ?? []);
     this.readEntries = new Set(data.read ?? []);
+    this.firstViewFired = new Set(data.firstViewFired ?? []);
+    this.syncUnlockedBooksFromFlags();
   }
 
   destroy(): void {
@@ -304,10 +472,13 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.loreDefs.clear();
     this.documentDefs.clear();
     this.bookDefs.clear();
+    this.bookEntryIds.clear();
+    this.itemDisplayNames.clear();
     this.unlockedCharacters.clear();
     this.unlockedLore.clear();
     this.unlockedDocuments.clear();
     this.unlockedBooks.clear();
     this.readEntries.clear();
+    this.firstViewFired.clear();
   }
 }

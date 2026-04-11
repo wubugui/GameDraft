@@ -5,8 +5,8 @@
     "pixelsPerUnit": 1.0
   },
   "id": "河边",
-  "worldWidth": 1376,
-  "worldHeight": 768,
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
   "backgrounds": [
     {
       "image": "background.png",

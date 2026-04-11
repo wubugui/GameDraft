@@ -30,6 +30,8 @@ interface PanelEntry {
 export class GameStateController {
   private _currentState: GameState = GameState.Exploring;
   private _previousState: GameState = GameState.Exploring;
+  /** 进入 UIOverlay 前压栈，关闭覆盖层面板时按 LIFO 恢复（支持多层覆盖 UI） */
+  private overlayReturnStack: GameState[] = [];
   private panels = new Map<string, PanelEntry>();
   private escapeFallback: (() => void) | null = null;
   private unsubKeyDown: (() => void) | null = null;
@@ -49,7 +51,8 @@ export class GameStateController {
   }
 
   restorePreviousState(): void {
-    this._currentState = this._previousState;
+    const s = this.overlayReturnStack.pop();
+    this._currentState = s !== undefined ? s : this._previousState;
   }
 
   registerPanel(
@@ -87,7 +90,8 @@ export class GameStateController {
     if (entry.panel.isOpen) {
       entry.panel.close();
       if (entry.overlaysGameState) {
-        this._currentState = this._previousState;
+        const restored = this.overlayReturnStack.pop();
+        this._currentState = restored ?? GameState.Exploring;
       }
       return;
     }
@@ -95,19 +99,34 @@ export class GameStateController {
     const canOpen = entry.alwaysOpenable || this._currentState === GameState.Exploring;
     if (!canOpen) return;
     if (entry.overlaysGameState) {
-      this._previousState = this._currentState;
+      this.overlayReturnStack.push(this._currentState);
       this._currentState = GameState.UIOverlay;
     }
     entry.panel.open();
 
     if (!entry.panel.isOpen && entry.overlaysGameState) {
-      this._currentState = this._previousState;
+      const restored = this.overlayReturnStack.pop();
+      this._currentState = restored ?? GameState.Exploring;
     }
   }
 
   private handleKeyDown(e: KeyboardEvent): void {
     // 避免按住键时首拍打开、重复 keydown 立即再关（如 F2 调试侧栏）
     if (e.repeat) return;
+
+    const debugEntry = this.panels.get('debug');
+    if (debugEntry?.panel.isOpen) {
+      if (e.code === 'F2') {
+        e.preventDefault();
+        this.togglePanel('debug');
+        return;
+      }
+      if (e.code === 'Escape') {
+        this.handleEscape();
+        return;
+      }
+      return;
+    }
 
     for (const [name, entry] of this.panels) {
       const matches =
@@ -130,7 +149,8 @@ export class GameStateController {
       for (const [, entry] of Array.from(this.panels.entries()).reverse()) {
         if (entry.panel.isOpen && entry.overlaysGameState) {
           entry.panel.close();
-          this._currentState = this._previousState;
+          const restored = this.overlayReturnStack.pop();
+          this._currentState = restored ?? GameState.Exploring;
           return;
         }
       }
@@ -155,6 +175,7 @@ export class GameStateController {
       }
     }
     this.panels.clear();
+    this.overlayReturnStack = [];
     this.unsubKeyDown?.();
     this.unsubKeyDown = null;
   }

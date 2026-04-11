@@ -115,11 +115,12 @@
       "id": "blind_li",
       "name": "瞎子李",
       "x": 188.1,
-      "y": 207,
+      "y": 207.0,
       "dialogueFile": "/assets/dialogues/blind_li.ink",
       "dialogueKnot": "start",
       "interactionRange": 71.4,
-      "animFile": "/assets/animation/npc_blind_li_anim/anim.json"
+      "animFile": "/assets/animation/npc_blind_li_anim/anim.json",
+      "initialAnimState": "boy_run_ring"
     },
     {
       "id": "waiter_xiaoer",

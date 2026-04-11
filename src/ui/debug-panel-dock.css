@@ -216,3 +216,169 @@
   flex: 0 0 auto;
   padding: 0.35rem 0 0;
 }
+
+.debug-dock__tools-column {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.debug-dock__flag-section {
+  flex: 0 1 auto;
+  max-height: min(52vh, 22rem);
+  overflow: auto;
+  padding-right: 0.15rem;
+  border-bottom: 1px solid #2a3344;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.45rem;
+}
+
+.debug-flag__subhead {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #8ab;
+  margin: 0 0 0.25rem;
+}
+
+.debug-flag__label {
+  display: block;
+  font-size: 0.72rem;
+  color: #9aa;
+  margin: 0.35rem 0 0.15rem;
+}
+
+.debug-flag__search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 4px;
+  margin-bottom: 0.35rem;
+}
+
+.debug-flag__select {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  background: #0f1218;
+  border: 1px solid #3a4a60;
+  color: #cde;
+  border-radius: 4px;
+  margin-bottom: 0.45rem;
+}
+
+.debug-flag__editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.debug-flag__cur {
+  font-size: 0.75rem;
+  color: #aab;
+  word-break: break-all;
+}
+
+.debug-flag__cur-key {
+  color: #9cf;
+  font-weight: 600;
+}
+
+.debug-flag__cur-val {
+  color: #bd8;
+}
+
+.debug-flag__btn-row,
+.debug-flag__num-row,
+.debug-flag__str-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.debug-flag__num,
+.debug-flag__str {
+  flex: 1 1 6rem;
+  min-width: 0;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.78rem;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 4px;
+}
+
+.debug-flag__fav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.25rem;
+}
+
+.debug-flag__fav-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.35rem;
+  background: #121620;
+  border-radius: 4px;
+  border: 1px solid #2a3344;
+}
+
+.debug-flag__fav-name {
+  flex: 1 1 40%;
+  min-width: 0;
+  cursor: pointer;
+  color: #9cf;
+  text-decoration: underline dotted;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-flag__fav-val {
+  color: #8a9;
+  font-family: ui-monospace, monospace;
+}
+
+.debug-flag__fav-num {
+  width: 4.5rem;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.72rem;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 3px;
+}
+
+.debug-flag__fav-str {
+  flex: 1 1 5rem;
+  min-width: 0;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.72rem;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 3px;
+}
+
+.debug-flag__hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #678;
+}
+
+.debug-dock__btn--sm {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.68rem;
+}

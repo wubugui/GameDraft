@@ -13,9 +13,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import (
     QFont, QColor, QTextCharFormat, QSyntaxHighlighter, QTextDocument,
-    QTextCursor, QShortcut, QKeySequence, QAction,
+    QTextCursor, QShortcut, QKeySequence, QAction, QKeyEvent,
 )
-from PySide6.QtCore import Qt, QRegularExpression, QStringListModel, QTimer
+from PySide6.QtCore import Qt, QRegularExpression, QStringListModel, QTimer, QEvent, QObject
 
 from ..project_model import ProjectModel
 from ..file_io import read_text, write_text
@@ -195,7 +195,7 @@ def _build_completion_rules() -> list[_CompletionRule]:
         return ["else:"]
 
     def _setflag_val(m, e):
-        return ["true", "false", "1", "0"]
+        return ['"', "'", "true", "false", "1", "0"]
 
     def _action_archive_book(m, e):
         return list(_ARCHIVE_BOOK_TYPES)
@@ -252,8 +252,9 @@ def _build_completion_rules() -> list[_CompletionRule]:
         R(r'^\s*-\s*(\w*)$',                               _cond_else),
 
         # ---- Tag: action (most-specific first) ----------------------------
-        # setFlag value
-        R(r'#\s*action:setFlag:[^:\s]+:([^:\s]*)$',        _setflag_val),
+        # setFlag / appendFlag 第二参数（含引号、冒号）
+        R(r'#\s*action:setFlag:[^:\s#]+:(.*)$', _setflag_val),
+        R(r'#\s*action:appendFlag:[^:\s#]+:(.*)$', _setflag_val),
         # addArchiveEntry:bookType (no data source for entryId, skip second level)
         R(r'#\s*action:addArchiveEntry:([^:\s]*)$',        _action_archive_book),
         # showNotification:text:type
@@ -261,6 +262,8 @@ def _build_completion_rules() -> list[_CompletionRule]:
         # showEmote:target:emote
         R(r'#\s*action:showEmote:[^:\s]+:([^:\s]*)$',      _action_emote_name),
         R(r'#\s*action:showEmote:([^:\s]*)$',              _action_emote_target),
+        R(r'#\s*action:setEntityEnabled:[^:\s#]+:([^:\s]*)$',
+          lambda _m, _e: ["true", "false"],                1),
         # switchScene/changeScene:sceneId:spawnPoint
         R(r'#\s*action:(?:switchScene|changeScene):([^:\s]+):([^:\s]*)$',
                                                             _action_scene_spawn, 2),
@@ -304,6 +307,9 @@ class InkTextEdit(QPlainTextEdit):
         self._completer_model = QStringListModel(self)
         self._completer.setModel(self._completer_model)
         self._completer.activated.connect(self._insert_completion)
+        self._completion_popup_filter_installed = False
+        self._esc_shortcut_editor: QShortcut | None = None
+        self._esc_shortcut_popup: QShortcut | None = None
 
         self._knot_names: list[str] = []
 
@@ -350,11 +356,70 @@ class InkTextEdit(QPlainTextEdit):
 
     # ---- Autocomplete core ------------------------------------------------
 
+    def _set_completion_esc_shortcuts_enabled(self, on: bool) -> None:
+        if self._esc_shortcut_editor is not None:
+            self._esc_shortcut_editor.setEnabled(on)
+        if self._esc_shortcut_popup is not None:
+            self._esc_shortcut_popup.setEnabled(on)
+
+    def _ensure_esc_shortcuts(self) -> None:
+        """补全弹层常为独立 Popup窗口，Esc 进不了 QPlainTextEdit；用 Shortcut 绑在编辑区 + 弹层上。"""
+        if self._esc_shortcut_editor is None:
+            s = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+            s.setContext(Qt.ShortcutContext.WidgetShortcut)
+            s.activated.connect(self._hide_completion_popup)
+            s.setEnabled(False)
+            self._esc_shortcut_editor = s
+        popup = self._completer.popup()
+        if popup is not None and self._esc_shortcut_popup is None:
+            s = QShortcut(QKeySequence(Qt.Key.Key_Escape), popup)
+            s.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            s.activated.connect(self._hide_completion_popup)
+            s.setEnabled(False)
+            self._esc_shortcut_popup = s
+
+    def _hide_completion_popup(self) -> None:
+        self._set_completion_esc_shortcuts_enabled(False)
+        p = self._completer.popup()
+        if p is not None:
+            p.hide()
+        self.setFocus()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        # __init__ 里 setFont 等会早于 _completer 赋值触发本过滤；不得访问未创建的 _completer
+        completer = getattr(self, "_completer", None)
+        if completer is None:
+            return super().eventFilter(watched, event)
+        popup = completer.popup()
+        if popup is None:
+            return super().eventFilter(watched, event)
+        vp = popup.viewport()
+        targets = (popup, vp) if vp is not None else (popup,)
+        if (
+            watched in targets
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() == Qt.Key.Key_Escape
+        ):
+            self._hide_completion_popup()
+            event.accept()
+            return True
+        # QListView 补全弹层无 aboutToHide；点外部关闭时收 Hide，关掉 Esc 快捷方式
+        if watched == popup and event.type() == QEvent.Type.Hide:
+            self._set_completion_esc_shortcuts_enabled(False)
+        return super().eventFilter(watched, event)
+
     def keyPressEvent(self, event) -> None:
         if self._completer.popup().isVisible():
+            if event.key() == Qt.Key.Key_Escape:
+                self._hide_completion_popup()
+                event.accept()
+                return
             if event.key() in (
-                Qt.Key.Key_Enter, Qt.Key.Key_Return,
-                Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab,
+                Qt.Key.Key_Enter,
+                Qt.Key.Key_Return,
+                Qt.Key.Key_Tab,
+                Qt.Key.Key_Backtab,
             ):
                 event.ignore()
                 return
@@ -371,13 +436,23 @@ class InkTextEdit(QPlainTextEdit):
         candidates, prefix = self._get_completion_context(text_before)
         if not candidates:
             self._completer.popup().hide()
+            self._set_completion_esc_shortcuts_enabled(False)
             return
+
+        popup = self._completer.popup()
+        if popup is not None and not self._completion_popup_filter_installed:
+            popup.installEventFilter(self)
+            vp = popup.viewport()
+            if vp is not None:
+                vp.installEventFilter(self)
+            self._completion_popup_filter_installed = True
 
         self._completer_model.setStringList(candidates)
         self._completer.setCompletionPrefix(prefix)
 
         if self._completer.completionCount() == 0:
             self._completer.popup().hide()
+            self._set_completion_esc_shortcuts_enabled(False)
             return
 
         cr = self.cursorRect()
@@ -385,6 +460,8 @@ class InkTextEdit(QPlainTextEdit):
             min(300, self._completer.popup().sizeHintForColumn(0) + 40),
         )
         self._completer.complete(cr)
+        self._ensure_esc_shortcuts()
+        self._set_completion_esc_shortcuts_enabled(True)
 
     def _get_completion_context(self, text_before: str) -> tuple[list[str], str]:
         """Walk the rule table and return (candidates, prefix) for the first
@@ -402,6 +479,9 @@ class InkTextEdit(QPlainTextEdit):
     def _get_action_param_candidates(self, act_type: str) -> list[str]:
         if act_type == "setFlag":
             return self._flag_keys()
+        if act_type == "setEntityEnabled":
+            ids = sorted({item[0] for item in self._model.all_npc_ids_global()} | {"player"})
+            return list(ids)
         src = _ACTION_ID_SOURCES.get(act_type)
         if not src:
             return []
@@ -432,6 +512,9 @@ class InkTextEdit(QPlainTextEdit):
             return [item[0] for item in self._model.all_item_ids()]
         if completion_type == "scene_id":
             return self._model.all_scene_ids()
+        if completion_type == "actor_id":
+            ids = [t[0] for t in self._model.all_npc_ids_global()]
+            return sorted(set(ids) | {"@", "#"})
         return []
 
     def _flag_keys(self) -> list[str]:

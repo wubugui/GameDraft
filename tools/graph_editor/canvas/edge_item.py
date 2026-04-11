@@ -27,8 +27,9 @@ class EdgeItem(QGraphicsPathItem):
 
         label_text = EDGE_LABELS.get(edge_type, "")
         self._label = QGraphicsTextItem(label_text, self)
-        self._label.setDefaultTextColor(color.lighter(140))
-        label_font = QFont("Microsoft YaHei", 7)
+        # 画布为深灰底，固定浅灰字比“边颜色提亮”更易读
+        self._label.setDefaultTextColor(QColor("#d6d6d8"))
+        label_font = QFont("Microsoft YaHei", 8)
         self._label.setFont(label_font)
 
         src_item.add_edge(self)
@@ -87,7 +88,7 @@ class EdgeItem(QGraphicsPathItem):
             self.setZValue(5)
         else:
             self.setPen(QPen(color, 1.5))
-            self._label.setDefaultTextColor(color.lighter(140))
+            self._label.setDefaultTextColor(QColor("#d6d6d8"))
             self.setZValue(0)
 
     def set_dimmed(self, dimmed: bool):

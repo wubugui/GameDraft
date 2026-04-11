@@ -33,19 +33,25 @@ from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 
 ACTION_TYPES = [
-    "setFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "setFlag", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
-    "addArchiveEntry", "startCutscene", "showEmote", "openShop",
-    "pickup", "switchScene", "changeScene", "showNotification",
+    "addArchiveEntry", "startCutscene", "showEmote", "playNpcAnimation", "setEntityEnabled", "openShop",
+    "pickup", "switchScene", "changeScene", "showNotification", "stopNpcPatrol",
+    "persistNpcDisablePatrol", "persistNpcEnablePatrol", "persistNpcEntityEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "shopPurchase", "inventoryDiscard",
     "setPlayerAvatar", "resetPlayerAvatar",
     "setSceneDepthFloorOffset", "resetSceneDepthFloorOffset",
+    "setCameraZoom", "restoreSceneCameraZoom",
+    "fadingZoom", "fadingRestoreSceneCameraZoom",
+    "fadeWorldToBlack", "fadeWorldFromBlack",
+    "waitMs",
     "enableRuleOffers", "disableRuleOffers",
 ]
 
 _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "setFlag": [("key", "str"), ("value", "flag_val")],
+    "appendFlag": [("key", "str"), ("text", "str")],
     "giveItem": [("id", "str"), ("count", "int")],
     "removeItem": [("id", "str"), ("count", "int")],
     "giveCurrency": [("amount", "int")],
@@ -61,10 +67,19 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "addArchiveEntry": [("bookType", "str"), ("entryId", "str")],
     "startCutscene": [("id", "str")],
     "showEmote": [("target", "str"), ("emote", "str")],
+    "playNpcAnimation": [("target", "str"), ("state", "str")],
+    "setEntityEnabled": [("target", "str"), ("enabled", "bool")],
     "openShop": [("shopId", "str")],
     "switchScene": [("targetScene", "str"), ("targetSpawnPoint", "str")],
     "changeScene": [("targetScene", "str"), ("targetSpawnPoint", "str")],
     "showNotification": [("text", "str"), ("type", "str")],
+    "stopNpcPatrol": [("npcId", "str")],
+    "persistNpcDisablePatrol": [("npcId", "str")],
+    "persistNpcEnablePatrol": [("npcId", "str")],
+    "persistNpcEntityEnabled": [("target", "str"), ("enabled", "bool")],
+    "persistNpcAt": [("target", "str"), ("x", "float"), ("y", "float")],
+    "persistNpcAnimState": [("target", "str"), ("state", "str")],
+    "persistPlayNpcAnimation": [("target", "str"), ("state", "str")],
     "shopPurchase": [("itemId", "str"), ("price", "int")],
     "inventoryDiscard": [("itemId", "str")],
     "pickup": [("itemId", "str"), ("itemName", "str"), ("count", "int"), ("isCurrency", "bool")],
@@ -73,10 +88,17 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "resetPlayerAvatar": [],
     "setSceneDepthFloorOffset": [("floor_offset", "float")],
     "resetSceneDepthFloorOffset": [],
+    "setCameraZoom": [("zoom", "float")],
+    "restoreSceneCameraZoom": [],
+    "fadingZoom": [("zoom", "float"), ("durationMs", "int")],
+    "fadingRestoreSceneCameraZoom": [("durationMs", "int")],
+    "fadeWorldToBlack": [("durationMs", "int")],
+    "fadeWorldFromBlack": [("durationMs", "int")],
+    "waitMs": [("durationMs", "int")],
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
-_ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book")
+_ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book", "bookEntry")
 
 
 class FilterableTypeCombo(QComboBox):
@@ -646,10 +668,10 @@ class ActionRow(QWidget):
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
-                if act_type != "setFlag":
+                if act_type not in ("setFlag",):
                     w.set_value(val if val != "" else True)
                 w.valueChanged.connect(self.changed)
-            elif act_type == "setFlag" and pname == "key":
+            elif act_type in ("setFlag", "appendFlag") and pname == "key":
                 cur = str(val) if val is not None else ""
                 w = FlagKeyPickField(self._ctx_model, self._ctx_scene_id, cur, self)
                 w.setMinimumWidth(200)
@@ -792,8 +814,8 @@ class ActionRow(QWidget):
                 params[pname] = w.isChecked()
             elif ptype == "flag_val" and isinstance(w, FlagValueEdit):
                 v = w.get_value()
-                params[pname] = v if isinstance(v, bool) else float(v)
-            elif act_type == "setFlag" and pname == "key" and isinstance(w, FlagKeyPickField):
+                params[pname] = v if isinstance(v, (bool, str)) else float(v)
+            elif act_type in ("setFlag", "appendFlag") and pname == "key" and isinstance(w, FlagKeyPickField):
                 params[pname] = w.key()
             elif isinstance(w, IdRefSelector):
                 params[pname] = w.current_id()

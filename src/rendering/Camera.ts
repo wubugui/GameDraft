@@ -24,6 +24,7 @@ export class Camera {
   private targetY: number = 0;
   private currentX: number = 0;
   private currentY: number = 0;
+  /** 约等价于 60fps 下每帧的插值比例；内部按 dt 换算为帧率无关平滑 */
   private smoothing: number = 0.1;
 
   private boundsWidth: number = 0;
@@ -74,9 +75,12 @@ export class Camera {
     this.applyTransform();
   }
 
-  update(_dt: number): void {
-    this.currentX += (this.targetX - this.currentX) * this.smoothing;
-    this.currentY += (this.targetY - this.currentY) * this.smoothing;
+  update(dt: number): void {
+    const base = Math.min(1, Math.max(0, this.smoothing));
+    const refFps = 60;
+    const alpha = base <= 0 ? 1 : (1 - Math.pow(1 - base, dt * refFps));
+    this.currentX += (this.targetX - this.currentX) * alpha;
+    this.currentY += (this.targetY - this.currentY) * alpha;
     this.applyTransform();
   }
 

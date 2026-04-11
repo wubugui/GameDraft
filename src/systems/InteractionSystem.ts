@@ -15,6 +15,8 @@ export class InteractionSystem implements IGameSystem {
   private hotspots: Hotspot[] = [];
   private npcs: Npc[] = [];
   private nearestTarget: InteractableTarget | null = null;
+  /** 已进入范围并触发过一次的 autoTrigger 热点，离开前不重复触发 */
+  private autoTriggeredHotspot: Hotspot | null = null;
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private inputManager: InputManager;
@@ -42,6 +44,7 @@ export class InteractionSystem implements IGameSystem {
   clearHotspots(): void {
     this.hotspots = [];
     this.clearNearestIfKind('hotspot');
+    this.autoTriggeredHotspot = null;
   }
 
   setNpcs(npcs: Npc[]): void {
@@ -87,6 +90,7 @@ export class InteractionSystem implements IGameSystem {
     }
 
     for (const npc of this.npcs) {
+      if (!npc.container.visible) continue;
       const dx = pos.x - npc.x;
       const dy = pos.y - npc.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -106,7 +110,13 @@ export class InteractionSystem implements IGameSystem {
     if (closestTarget && this.inputManager.wasKeyJustPressed('KeyE')) {
       this.triggerTarget(closestTarget);
     } else if (closestTarget?.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger) {
-      this.triggerTarget(closestTarget);
+      const h = closestTarget.hotspot;
+      if (this.autoTriggeredHotspot !== h) {
+        this.autoTriggeredHotspot = h;
+        this.triggerTarget(closestTarget);
+      }
+    } else {
+      this.autoTriggeredHotspot = null;
     }
   }
 
@@ -146,6 +156,7 @@ export class InteractionSystem implements IGameSystem {
     this.clearHotspots();
     this.clearNpcs();
     this.nearestTarget = null;
+    this.autoTriggeredHotspot = null;
     this.playerPosGetter = null;
   }
 }

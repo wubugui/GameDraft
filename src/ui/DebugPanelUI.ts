@@ -1,4 +1,8 @@
 import './debug-panel-dock.css';
+import type { FlagStore } from '../core/FlagStore';
+import type { EventBus } from '../core/EventBus';
+import type { InputManager } from '../core/InputManager';
+import { createDebugFlagSection, type DebugFlagSectionHandle } from './debugFlagSection';
 
 /** 可注册的 debug 区块内容：纯文本或带操作按钮 */
 export type DebugSectionContent =
@@ -46,12 +50,18 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private panelLog: HTMLElement;
   private logPre: HTMLElement;
   private tabButtons: Map<TabId, HTMLButtonElement> = new Map();
+  private flagSectionHandle: DebugFlagSectionHandle | null = null;
+  private readonly inputManager?: InputManager;
 
-  constructor(systemInfoProvider?: () => {
-    fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
-    floorOffsetRuntime?: number; floorOffsetFromScene?: number; depthOcclusionEnabled?: boolean;
-  }) {
+  constructor(
+    systemInfoProvider?: () => {
+      fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+      floorOffsetRuntime?: number; floorOffsetFromScene?: number; depthOcclusionEnabled?: boolean;
+    },
+    inputManager?: InputManager,
+  ) {
     this.systemInfoProvider = systemInfoProvider;
+    this.inputManager = inputManager;
 
     const shell = document.getElementById('app-shell');
     let dock = document.getElementById('debug-dock');
@@ -180,6 +190,13 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.systemLiveRafId = requestAnimationFrame(tick);
   }
 
+  /** 挂载 Flag 调试（登记表键 + 可搜索 + 收藏写入 editor_data/debug_flag_favorites.json）；在 loadFlagRegistry 之后调用一次 */
+  attachFlagDebug(flagStore: FlagStore, eventBus: EventBus): void {
+    if (this.flagSectionHandle) return;
+    this.flagSectionHandle = createDebugFlagSection(flagStore, eventBus, (m) => this.log(m));
+    if (this._isOpen) this.render();
+  }
+
   setSystemInfoProvider(provider: () => {
     fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
     floorOffsetRuntime?: number; floorOffsetFromScene?: number; depthOcclusionEnabled?: boolean;
@@ -197,10 +214,12 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
   open(): void {
     if (this._isOpen) return;
+    this.inputManager?.setGameKeyboardBlocked(true);
     this._isOpen = true;
     this.root.classList.add('is-open');
     this.root.setAttribute('aria-hidden', 'false');
     this.render();
+    this.flagSectionHandle?.syncFavoritesFromFile();
     this.updateSystemLiveLoop();
   }
 
@@ -211,6 +230,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
       this.systemLiveRafId = null;
     }
     this._isOpen = false;
+    this.inputManager?.setGameKeyboardBlocked(false);
     this.root.classList.remove('is-open');
     this.root.setAttribute('aria-hidden', 'true');
     this.clearPanelBodies();
@@ -305,12 +325,20 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
   private renderTools(): void {
     this.panelTools.replaceChildren();
+    const column = document.createElement('div');
+    column.className = 'debug-dock__tools-column';
+
+    if (this.flagSectionHandle) {
+      column.appendChild(this.flagSectionHandle.root);
+    }
+
     const scroll = document.createElement('div');
     scroll.className = 'debug-dock__scroll';
 
     if (this.sections.size === 0) {
       scroll.appendChild(this.p('未注册调试区块。'));
-      this.panelTools.appendChild(scroll);
+      column.appendChild(scroll);
+      this.panelTools.appendChild(column);
       return;
     }
 
@@ -361,7 +389,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
         scroll.appendChild(err);
       }
     }
-    this.panelTools.appendChild(scroll);
+    column.appendChild(scroll);
+    this.panelTools.appendChild(column);
   }
 
   private p(text: string): HTMLParagraphElement {
@@ -376,6 +405,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
       cancelAnimationFrame(this.systemLiveRafId);
       this.systemLiveRafId = null;
     }
+    this.flagSectionHandle?.destroy();
+    this.flagSectionHandle = null;
     this.close();
     this.sections.clear();
     this.logLines = [];

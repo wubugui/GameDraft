@@ -1,6 +1,7 @@
 """Cross-data reference validator."""
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -52,6 +53,16 @@ def validate(model: ProjectModel) -> list[Issue]:
                     issues.append(Issue("warning", "scene", sid,
                                         f"Hotspot '{hs.get('id')}' itemId '{iid}' not found"))
         for npc in sc.get("npcs", []):
+            dcz = npc.get("dialogueCameraZoom")
+            if dcz is not None:
+                try:
+                    fz = float(dcz)
+                    if fz <= 0 or not math.isfinite(fz):
+                        issues.append(Issue("error", "scene", sid,
+                                            f"NPC '{npc.get('id')}' dialogueCameraZoom 须为正有限数"))
+                except (TypeError, ValueError):
+                    issues.append(Issue("error", "scene", sid,
+                                        f"NPC '{npc.get('id')}' dialogueCameraZoom 须为数字"))
             df = npc.get("dialogueFile", "")
             if df:
                 fname = df.rsplit("/", 1)[-1] if "/" in df else df
@@ -157,6 +168,30 @@ def validate(model: ProjectModel) -> list[Issue]:
                 issues.append(Issue("error", "shop", shop["id"],
                                     f"shopItem '{si['itemId']}' not found"))
 
+    # --- book page entries (unique ids across all books) ---
+    book_entry_first_book: dict[str, str] = {}
+    for bk in model.archive_books:
+        if not isinstance(bk, dict):
+            continue
+        bid = str(bk.get("id", ""))
+        for pg in bk.get("pages") or []:
+            if not isinstance(pg, dict):
+                continue
+            for ent in pg.get("entries") or []:
+                if not isinstance(ent, dict):
+                    continue
+                eid = str(ent.get("id", "")).strip()
+                if not eid:
+                    issues.append(Issue("warning", "archive", bid, "book page entry 缺少 id"))
+                    continue
+                if eid in book_entry_first_book:
+                    issues.append(Issue(
+                        "error", "archive", eid,
+                        f"重复的 book page entry id（已出现在书 '{book_entry_first_book[eid]}'）",
+                    ))
+                else:
+                    book_entry_first_book[eid] = bid
+
     # --- map ---
     for node in model.map_nodes:
         if node.get("sceneId") and node["sceneId"] not in scene_ids:
@@ -222,6 +257,17 @@ def _walk_action_defs(
         p = act.get("params") or {}
         if t == "setFlag" and p.get("key"):
             _flag_issue(model, issues, str(p["key"]), data_type, item_id, scene_id)
+        elif t == "appendFlag" and p.get("key"):
+            fk = str(p["key"])
+            _flag_issue(model, issues, fk, data_type, item_id, scene_id)
+            from .flag_registry import registry_value_type_for_key
+            rvt = registry_value_type_for_key(fk, model.flag_registry)
+            if rvt != "string":
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"appendFlag 的 key {fk!r} 在登记表中须为 string 类型"
+                    + (f"（当前为 {rvt!r}）" if rvt else "（未命中 static/pattern）"),
+                ))
         elif t == "enableRuleOffers":
             for slot in (p.get("slots") or []):
                 if isinstance(slot, dict):
@@ -270,9 +316,9 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         if vt is None:
             issues.append(Issue(
                 "warning", "flag_registry", pid,
-                "pattern 缺少 valueType（bool 或 float）",
+                "pattern 缺少 valueType（bool、float 或 string）",
             ))
-        elif vt not in ("bool", "float", "int"):
+        elif vt not in ("bool", "float", "int", "string", "str"):
             issues.append(Issue(
                 "warning", "flag_registry", pid,
                 f"pattern valueType 无效: {vt!r}",
@@ -328,6 +374,7 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             _walk_conditions(model, issues, imp.get("conditions"), "archive", cid, None)
         for ki in ch.get("knownInfo", []) or []:
             _walk_conditions(model, issues, ki.get("conditions"), "archive", cid, None)
+        _walk_action_defs(model, issues, ch.get("firstViewActions"), "archive", cid, None)
 
     entries = model.archive_lore
     if isinstance(entries, dict):
@@ -335,15 +382,34 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
     for le in entries or []:
         lid = str(le.get("id", ""))
         _walk_conditions(model, issues, le.get("unlockConditions"), "archive", lid, None)
+        _walk_action_defs(model, issues, le.get("firstViewActions"), "archive", lid, None)
 
     for doc in model.archive_documents:
         did = str(doc.get("id", ""))
         _walk_conditions(model, issues, doc.get("discoverConditions"), "archive", did, None)
+        _walk_action_defs(model, issues, doc.get("firstViewActions"), "archive", did, None)
 
     for bk in model.archive_books:
         bid = str(bk.get("id", ""))
         for pg in bk.get("pages", []) or []:
+            pnum = pg.get("pageNum", "?")
             _walk_conditions(model, issues, pg.get("unlockConditions"), "archive", bid, None)
+            _walk_action_defs(
+                model, issues, pg.get("firstViewActions"),
+                "archive", f"{bid}/page/{pnum}", None,
+            )
+            for ent in pg.get("entries") or []:
+                if not isinstance(ent, dict):
+                    continue
+                eid = str(ent.get("id", "")).strip() or "?"
+                _walk_conditions(
+                    model, issues, ent.get("discoverConditions"),
+                    "archive", f"{bid}/entry/{eid}", None,
+                )
+                _walk_action_defs(
+                    model, issues, ent.get("firstViewActions"),
+                    "archive", f"{bid}/entry/{eid}", None,
+                )
 
     cfg = model.game_config
     done_flag = cfg.get("initialCutsceneDoneFlag")

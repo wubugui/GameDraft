@@ -16,7 +16,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   private pendingEvaluate: boolean = false;
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
-  private onFlagChanged: (payload: { key: string; value: boolean | number }) => void;
+  private onFlagChanged: () => void;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;

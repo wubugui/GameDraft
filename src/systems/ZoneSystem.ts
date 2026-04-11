@@ -14,6 +14,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   private zones: ZoneDef[] = [];
   private activeZoneIds: Set<string> = new Set();
   private playerPosGetter: (() => { x: number; y: number }) | null = null;
+  /** onStay 最小间隔（秒），避免每帧执行重逻辑 */
+  private zoneStayNextAt: Map<string, number> = new Map();
+  private static readonly STAY_INTERVAL_SEC = 0.25;
 
   constructor(
     eventBus: EventBus,
@@ -44,6 +47,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.ruleOfferRegistry.clear();
     this.zones = zones;
     this.activeZoneIds.clear();
+    this.zoneStayNextAt.clear();
   }
 
   clearZones(): void {
@@ -54,6 +58,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.ruleOfferRegistry.clear();
     this.zones = [];
     this.activeZoneIds.clear();
+    this.zoneStayNextAt.clear();
   }
 
   update(_dt: number): void {
@@ -79,6 +84,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
 
   private enterZone(zone: ZoneDef): void {
     this.activeZoneIds.add(zone.id);
+    this.zoneStayNextAt.delete(zone.id);
     const enter = zone.onEnter;
     if (enter && enter.length > 0) {
       this.actionExecutor.executeBatchInZoneContext(enter, { zoneId: zone.id });
@@ -89,6 +95,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
 
   private exitZone(zone: ZoneDef): void {
     this.activeZoneIds.delete(zone.id);
+    this.zoneStayNextAt.delete(zone.id);
     const exit = zone.onExit;
     if (exit && exit.length > 0) {
       this.actionExecutor.executeBatchInZoneContext(exit, { zoneId: zone.id });
@@ -110,6 +117,10 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
       if (!inside) continue;
       const stay = zone.onStay;
       if (stay && stay.length > 0) {
+        const now = performance.now() / 1000;
+        const next = this.zoneStayNextAt.get(zone.id) ?? 0;
+        if (now < next) continue;
+        this.zoneStayNextAt.set(zone.id, now + ZoneSystem.STAY_INTERVAL_SEC);
         this.actionExecutor.executeBatchInZoneContext(stay, { zoneId: zone.id });
       }
     }
@@ -140,5 +151,6 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.ruleOfferRegistry.clear();
     this.zones = [];
     this.activeZoneIds.clear();
+    this.zoneStayNextAt.clear();
   }
 }

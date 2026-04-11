@@ -11,6 +11,8 @@ export class CutsceneRenderer {
   private camera: Camera;
 
   private fadeOverlay: Graphics | null = null;
+  /** 仅遮住世界与 cutsceneOverlay 内容，不遮住 uiLayer（供对话期间「游戏画面渐黑」、台词仍用 DialogueUI 显示）。 */
+  private worldFadeOverlay: Graphics | null = null;
   private titleContainer: Container | null = null;
   private activeEmotes: Container[] = [];
   private images: Map<string, { sprite: Sprite | Graphics; imagePath: string; isPlaceholder?: boolean }> = new Map();
@@ -57,6 +59,30 @@ export class CutsceneRenderer {
 
   fadeFromBlack(duration: number): Promise<void> {
     const overlay = this.ensureFadeOverlay();
+    return this.animateAlpha(overlay, overlay.alpha, 0, duration);
+  }
+
+  private ensureWorldFadeOverlay(): Graphics {
+    if (!this.worldFadeOverlay) {
+      this.worldFadeOverlay = new Graphics();
+      this.worldFadeOverlay.rect(0, 0, this.screenWidth + 200, this.screenHeight + 200);
+      this.worldFadeOverlay.fill(0x000000);
+      this.worldFadeOverlay.x = -100;
+      this.worldFadeOverlay.y = -100;
+      this.worldFadeOverlay.alpha = 0;
+      this.renderer.cutsceneOverlay.addChild(this.worldFadeOverlay);
+    }
+    return this.worldFadeOverlay;
+  }
+
+  /** 对话等：仅游戏画面渐黑，DialogueUI 仍在上层可见。 */
+  fadeWorldToBlack(duration: number): Promise<void> {
+    const overlay = this.ensureWorldFadeOverlay();
+    return this.animateAlpha(overlay, overlay.alpha, 1, duration);
+  }
+
+  fadeWorldFromBlack(duration: number): Promise<void> {
+    const overlay = this.ensureWorldFadeOverlay();
     return this.animateAlpha(overlay, overlay.alpha, 0, duration);
   }
 
@@ -211,11 +237,13 @@ export class CutsceneRenderer {
   async cameraZoom(scale: number, duration: number): Promise<void> {
     const startScale = this.camera.getZoom();
     const startTime = performance.now();
+    const dur = Math.max(1, duration);
 
     return new Promise(resolve => {
       const tick = () => {
-        const t = Math.min((performance.now() - startTime) / duration, 1);
-        this.camera.setZoom(startScale + (scale - startScale) * t);
+        const t = Math.min((performance.now() - startTime) / dur, 1);
+        const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        this.camera.setZoom(startScale + (scale - startScale) * ease);
         if (t < 1) this.trackRaf(tick); else resolve();
       };
       this.trackRaf(tick);
@@ -368,6 +396,11 @@ export class CutsceneRenderer {
       if (this.fadeOverlay.parent) this.fadeOverlay.parent.removeChild(this.fadeOverlay);
       this.fadeOverlay.destroy();
       this.fadeOverlay = null;
+    }
+    if (this.worldFadeOverlay) {
+      if (this.worldFadeOverlay.parent) this.worldFadeOverlay.parent.removeChild(this.worldFadeOverlay);
+      this.worldFadeOverlay.destroy();
+      this.worldFadeOverlay = null;
     }
     if (this.titleContainer) {
       if (this.titleContainer.parent) this.titleContainer.parent.removeChild(this.titleContainer);

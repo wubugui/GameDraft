@@ -14,7 +14,25 @@
         "pageNum": 2,
         "title": "地理",
         "content": "往西，最出名的有座神仙顶，终年白雪覆盖，杳无人烟。传言神仙顶所在之山脉乃一片大龙脉，于是三天两头就有人往那儿跑。\n\n往北有阎王岭，传说死了人的鬼魂就往那边去。[img:images/backgrounds/back_alley_dock_bg.png]\n\n往东深入山区，穷山恶水，刁民四伏。[img:images/backgrounds/bridge_underpass_bg.png]\n\n向南翻过八面山则是水土丰腴的平原。",
-        "unlockConditions": []
+        "unlockConditions": [],
+        "entries": [
+          {
+            "id": "erta_geo_iron_ring",
+            "title": "铁环与街巷嬉乐",
+            "content": "滚铁环，秦汉时期的百戏中已有类似表演，后传入民间成为常见玩物。孩童以铁钩推动铁环奔跑，既可做个人游戏，也可多人竞速。\n有观点认为铁环滚动的连续声响可以驱邪，部分地区的家长允许孩子在天黑后仍在巷中玩耍，正是因为\"环声不断，邪祟不近\"。此外，铁环与哪吒风火轮的关联在多地均有流传，被认为是风火轮在民间的世俗化投射。\n值得注意的是，一些地方存在\"夜不滚环\"的禁忌，理由是环声近似招魂铃声，深夜独行时滚动可能引来不洁之物。还有说法称铁环若无故自倒，应在倒地位置烧一小叠纸钱再继续。这些禁忌的具体来源尚无定论，但它们在旧时街坊间确实被许多家庭所遵守。",
+            "annotation": "[tag:flag:书籍_风物志_铁环标注]",
+            "discoverConditions": [
+              {
+                "flag": "has_item_iron_hoop"
+              }
+            ]
+          },
+          {
+            "id": "book_entry_2",
+            "title": "",
+            "content": ""
+          }
+        ]
       },
       {
         "pageNum": 3,

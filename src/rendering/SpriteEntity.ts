@@ -41,9 +41,9 @@ export class SpriteEntity {
   }
 
   loadFromDef(texture: Texture, animDef: AnimationSetDef): void {
+    this.disposeFrameTextures();
     this.baseTexture = texture;
     this.animDef = animDef;
-    this.frames.clear();
     this.worldWidth = animDef.worldWidth;
     this.worldHeight = animDef.worldHeight;
 
@@ -74,6 +74,33 @@ export class SpriteEntity {
     }
 
     this.applySpriteScale();
+  }
+
+  private disposeFrameTextures(): void {
+    this.sprite.texture = Texture.EMPTY;
+    for (const textures of this.frames.values()) {
+      for (const t of textures) {
+        // 子纹理与图集共享 Assets 管理的 TextureSource，不可 destroy(true) 否则会拆掉整张贴图
+        t.destroy(false);
+      }
+    }
+    this.frames.clear();
+    this.currentFrames = [];
+    this.currentFrameDef = null;
+    this.frameIndex = 0;
+    this.frameTimer = 0;
+    this.playing = false;
+    this.onCompleteCallback = null;
+    this.currentState = '';
+  }
+
+  /** 释放帧子纹理与 Pixi 子节点（不销毁传入 loadFromDef 的图集基纹理） */
+  destroy(): void {
+    this.disposeFrameTextures();
+    this.baseTexture = null;
+    this.animDef = null;
+    this.logicalToClip.clear();
+    this.container.destroy({ children: true });
   }
 
   /**

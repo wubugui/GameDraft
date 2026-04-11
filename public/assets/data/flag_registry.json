@@ -41,6 +41,10 @@
       "valueType": "bool"
     },
     {
+      "key": "foreigner_crate_event_done",
+      "valueType": "bool"
+    },
+    {
       "key": "ghost_approach_direct",
       "valueType": "bool"
     },
@@ -137,6 +141,10 @@
       "valueType": "bool"
     },
     {
+      "key": "ringboy_patrol_walk_anim",
+      "valueType": "bool"
+    },
+    {
       "key": "rule_rule_ghost_origin_acquired",
       "valueType": "bool"
     },
@@ -178,6 +186,14 @@
     },
     {
       "key": "waiter_met",
+      "valueType": "bool"
+    },
+    {
+      "key": "书籍_风物志_铁环标注",
+      "valueType": "string"
+    },
+    {
+      "key": "铁环小孩_已经获得铁环",
       "valueType": "bool"
     }
   ],
@@ -270,6 +286,12 @@
       "id": "archive_book",
       "prefix": "archive_book_",
       "idSource": "archive_book",
+      "valueType": "bool"
+    },
+    {
+      "id": "archive_book_entry",
+      "prefix": "archive_book_entry_",
+      "idSource": "archive_book_entry",
       "valueType": "bool"
     }
   ],
