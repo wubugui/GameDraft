@@ -419,11 +419,18 @@ class QuestEditor(QWidget):
         f.addRow("description", self._q_desc)
         ql.addLayout(f)
 
-        self._q_pre = ConditionEditor("Preconditions")
+        _pre_hint = (
+            "手动接任务（如动作 updateQuest、运行时 acceptQuest）不会校验本栏 Preconditions。\n"
+            "本栏仅用于：任务仍为未接取时，由 flag 变化触发的自动接取。"
+        )
+        self._q_pre = ConditionEditor("Preconditions", hint=_pre_hint)
         ql.addWidget(self._q_pre)
         self._q_comp = ConditionEditor("Completion Conditions")
         ql.addWidget(self._q_comp)
-        self._q_rewards = ActionEditor("Rewards")
+        self._q_accept = ActionEditor("Accept Actions (on activate)")
+        self._q_accept.set_project_context(self._model, None)
+        ql.addWidget(self._q_accept)
+        self._q_rewards = ActionEditor("Rewards (on complete)")
         self._q_rewards.set_project_context(self._model, None)
         ql.addWidget(self._q_rewards)
 
@@ -661,6 +668,8 @@ class QuestEditor(QWidget):
         self._q_comp.set_flag_pattern_context(self._model, None)
         self._q_pre.set_data(q.get("preconditions", []))
         self._q_comp.set_data(q.get("completionConditions", []))
+        self._q_accept.set_project_context(self._model, None)
+        self._q_accept.set_data(q.get("acceptActions", []))
         self._q_rewards.set_project_context(self._model, None)
         self._q_rewards.set_data(q.get("rewards", []))
         self._q_next_editor.set_data(q.get("nextQuests", []))
@@ -715,6 +724,7 @@ class QuestEditor(QWidget):
         q["description"] = self._q_desc.toPlainText()
         q["preconditions"] = self._q_pre.to_list()
         q["completionConditions"] = self._q_comp.to_list()
+        q["acceptActions"] = self._q_accept.to_list()
         q["rewards"] = self._q_rewards.to_list()
         q["nextQuests"] = self._q_next_editor.to_list()
         if "nextQuestId" in q:
@@ -764,6 +774,7 @@ class QuestEditor(QWidget):
             "description": "",
             "preconditions": [],
             "completionConditions": [],
+            "acceptActions": [],
             "rewards": [],
             "nextQuests": [],
         }

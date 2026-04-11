@@ -102,7 +102,13 @@ class ConditionRow(QWidget):
 class ConditionEditor(QWidget):
     changed = Signal()
 
-    def __init__(self, label: str = "Conditions", parent: QWidget | None = None):
+    def __init__(
+        self,
+        label: str = "Conditions",
+        parent: QWidget | None = None,
+        *,
+        hint: str | None = None,
+    ):
         super().__init__(parent)
         self._rows: list[ConditionRow] = []
         self._ctx_model: ProjectModel | None = None
@@ -111,6 +117,10 @@ class ConditionEditor(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(QLabel(f"<b>{label}</b>"))
+        if hint:
+            hl = QLabel(hint)
+            hl.setWordWrap(True)
+            root.addWidget(hl)
         self._rows_layout = QVBoxLayout()
         self._rows_layout.setSpacing(2)
         root.addLayout(self._rows_layout)

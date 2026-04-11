@@ -63,12 +63,16 @@ class ConditionRow(QWidget):
 class ConditionEditor(QWidget):
     changed = Signal()
 
-    def __init__(self, label: str = "Conditions", parent=None):
+    def __init__(self, label: str = "Conditions", parent=None, *, hint: str | None = None):
         super().__init__(parent)
         self._rows: list[ConditionRow] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(f"<b>{label}</b>"))
+        if hint:
+            hl = QLabel(hint)
+            hl.setWordWrap(True)
+            layout.addWidget(hl)
         self._rows_layout = QVBoxLayout()
         layout.addLayout(self._rows_layout)
         add_btn = QPushButton(f"+ Add Condition")

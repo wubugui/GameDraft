@@ -50,7 +50,7 @@ description: Registers a new ActionExecutor action in GameDraft with editor supp
 - 内置（非 Registry）：`src/core/ActionExecutor.ts` 中的 `setFlag`、`showNotification`；若在此新增类型，**仍须**在 `action_editor` 中登记。
 - 表单与类型列表：`tools/editor/shared/action_editor.py`。
 - 数据内 Action 扫描与类型校验：`tools/editor/validator.py`（`_walk_action_defs`）。
-- 动作数据挂载位置（与 `action_registry_editor` 扫描一致）：任务 `rewards`、遭遇 `options[].resultActions` 与 `rewards`、场景热区 `data.actions`、区域 `onEnter`/`onStay`/`onExit`、`enableRuleOffers` 内 `slots[].resultActions`、`addDelayedEvent.params.actions` 等。
+- 动作数据挂载位置（与 `action_registry_editor` 扫描一致）：任务 `acceptActions`（接取时）与 `rewards`（完成时）、遭遇 `options[].resultActions` 与 `rewards`、场景热区 `data.actions`、区域 `onEnter`/`onStay`/`onExit`、`enableRuleOffers` 内 `slots[].resultActions`、`addDelayedEvent.params.actions` 等。
 
 ## 完成后
 

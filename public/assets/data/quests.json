@@ -124,5 +124,51 @@
     "rewards": [],
     "nextQuests": [],
     "sideType": "commission"
+  },
+  {
+    "id": "支线-抓水猴子-码头探索",
+    "group": "支线-抓水猴子",
+    "type": "side",
+    "title": "过去看热闹",
+    "description": "码头上有一群人围在一起叽叽喳喳说着什么，好像发生了什么不得了的事。",
+    "preconditions": [],
+    "completionConditions": [],
+    "rewards": [
+      {
+        "type": "setFlag",
+        "params": {
+          "key": "Q抓水猴子_禁止离开码头",
+          "value": false
+        }
+      }
+    ],
+    "nextQuests": [
+      {
+        "questId": "支线-抓水猴子-找回漂浮的箱子",
+        "conditions": []
+      }
+    ],
+    "sideType": "investigation",
+    "acceptActions": [
+      {
+        "type": "setFlag",
+        "params": {
+          "key": "Q抓水猴子_禁止离开码头",
+          "value": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "支线-抓水猴子-找回漂浮的箱子",
+    "group": "支线-抓水猴子",
+    "type": "side",
+    "title": "给洋人找回漂浮的箱子",
+    "description": "你火急火燎的跳下水，想要第一个捞回洋人的箱子。",
+    "preconditions": [],
+    "completionConditions": [],
+    "acceptActions": [],
+    "rewards": [],
+    "nextQuests": []
   }
 ]

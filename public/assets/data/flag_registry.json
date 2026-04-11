@@ -1,6 +1,10 @@
 {
   "static": [
     {
+      "key": "Q抓水猴子_禁止离开码头",
+      "valueType": "bool"
+    },
+    {
       "key": "box_hidden_in_temple",
       "valueType": "bool"
     },

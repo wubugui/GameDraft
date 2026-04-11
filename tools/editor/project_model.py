@@ -510,6 +510,10 @@ class ProjectModel(QObject):
                     p = act.get("params", {})
                     if act.get("type") == "setFlag" and "key" in p:
                         flags.add(p["key"])
+            for act in item.get("acceptActions", []):
+                p = act.get("params", {})
+                if act.get("type") == "setFlag" and "key" in p:
+                    flags.add(p["key"])
             for act in item.get("rewards", []):
                 p = act.get("params", {})
                 if act.get("type") == "setFlag" and "key" in p:

@@ -119,6 +119,7 @@ def parse_quests(graph: GameGraph, project_path: str):
 
         _extract_flags_from_conditions(graph, nid, q.get("preconditions", []))
         _extract_flags_from_conditions(graph, nid, q.get("completionConditions", []))
+        _extract_flags_from_actions(graph, nid, q.get("acceptActions", []))
         _extract_flags_from_actions(graph, nid, q.get("rewards", []))
 
         for edge in q.get("nextQuests", []):

@@ -251,6 +251,8 @@ export interface QuestDef {
   description: string;
   preconditions: Condition[];
   completionConditions: Condition[];
+  /** 任务变为 Active（接取）时执行，语义与 rewards 相同，仅触发时机不同 */
+  acceptActions?: ActionDef[];
   rewards: ActionDef[];
   nextQuests?: QuestEdge[];
   /** @deprecated use nextQuests */

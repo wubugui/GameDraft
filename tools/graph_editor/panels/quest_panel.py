@@ -38,13 +38,20 @@ class QuestPanel(QWidget):
         form.addRow("NextQuests:", self.next_edit)
         layout.addLayout(form)
 
-        self.precond_editor = ConditionEditor("Preconditions")
+        _pre_hint = (
+            "手动接任务（如动作 updateQuest、运行时 acceptQuest）不会校验本栏 Preconditions。\n"
+            "本栏仅用于：任务仍为未接取时，由 flag 变化触发的自动接取。"
+        )
+        self.precond_editor = ConditionEditor("Preconditions", hint=_pre_hint)
         layout.addWidget(self.precond_editor)
 
         self.complete_editor = ConditionEditor("Completion Conditions")
         layout.addWidget(self.complete_editor)
 
-        self.rewards_editor = ActionEditor("Rewards")
+        self.accept_actions_editor = ActionEditor("Accept Actions (on activate)")
+        layout.addWidget(self.accept_actions_editor)
+
+        self.rewards_editor = ActionEditor("Rewards (on complete)")
         layout.addWidget(self.rewards_editor)
 
         layout.addStretch()
@@ -57,6 +64,7 @@ class QuestPanel(QWidget):
         self.desc_edit.textChanged.connect(self._mark_dirty)
         self.precond_editor.changed.connect(self._mark_dirty)
         self.complete_editor.changed.connect(self._mark_dirty)
+        self.accept_actions_editor.changed.connect(self._mark_dirty)
         self.rewards_editor.changed.connect(self._mark_dirty)
 
     def load_node(self, nd: NodeData):
@@ -74,6 +82,7 @@ class QuestPanel(QWidget):
             self.next_edit.setText(d.get("nextQuestId", ""))
         self.precond_editor.set_data(d.get("preconditions", []))
         self.complete_editor.set_data(d.get("completionConditions", []))
+        self.accept_actions_editor.set_data(d.get("acceptActions", []))
         self.rewards_editor.set_data(d.get("rewards", []))
 
     def _mark_dirty(self):
@@ -85,6 +94,7 @@ class QuestPanel(QWidget):
         d["description"] = self.desc_edit.toPlainText()
         d["preconditions"] = self.precond_editor.to_list()
         d["completionConditions"] = self.complete_editor.to_list()
+        d["acceptActions"] = self.accept_actions_editor.to_list()
         d["rewards"] = self.rewards_editor.to_list()
         self._nd.dirty = True
         self.data_changed.emit(self._nd.id)

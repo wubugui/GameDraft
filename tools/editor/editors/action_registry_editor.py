@@ -64,6 +64,12 @@ def _scan_actions(model: ProjectModel) -> list[ActionRecord]:
 
     for q in model.quests:
         qid = q.get("id", "?")
+        for i, act in enumerate(q.get("acceptActions", [])):
+            records.append(ActionRecord(
+                action=act, action_type=act.get("type", ""),
+                source_type="quest", source_id=qid, scene_id="",
+                container_field="acceptActions", container_index=i,
+            ))
         for i, act in enumerate(q.get("rewards", [])):
             records.append(ActionRecord(
                 action=act, action_type=act.get("type", ""),

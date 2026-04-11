@@ -342,6 +342,7 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             _walk_conditions(model, issues, q.get(ck), "quest", qid, None)
         for edge in q.get("nextQuests", []) or []:
             _walk_conditions(model, issues, edge.get("conditions"), "quest", qid, None)
+        _walk_action_defs(model, issues, q.get("acceptActions"), "quest", qid, None)
         _walk_action_defs(model, issues, q.get("rewards"), "quest", qid, None)
 
     for enc in model.encounters:

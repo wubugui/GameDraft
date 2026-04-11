@@ -56,6 +56,11 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     this.syncFlag(questId);
 
     const def = this.questDefs.get(questId);
+    const onAccept = def?.acceptActions ?? [];
+    if (onAccept.length > 0) {
+      this.actionExecutor.executeBatch(onAccept);
+    }
+
     this.eventBus.emit('quest:accepted', { questId, title: def?.title ?? questId });
     this.eventBus.emit('notification:show', {
       text: this.strings.get('notifications', 'questAccepted', { title: def?.title ?? questId }),
