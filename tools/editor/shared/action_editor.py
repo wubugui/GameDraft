@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
@@ -15,6 +16,10 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtCore import QEvent, QEventLoop, Qt, Signal
+from PySide6.QtGui import QWheelEvent
+
+# Qt6: ItemDataRole.UserRole
+_USER_ROLE = Qt.ItemDataRole.UserRole
 
 _ANIM_MANIFEST_RE = re.compile(r"^/assets/animation/([^/]+)/anim\.json$")
 
@@ -72,6 +77,211 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
 _ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book")
+
+
+class FilterableTypeCombo(QComboBox):
+    """
+    可编辑下拉：每项为 (展示名, 取值)。筛选同时对展示名、取值做匹配（非前缀限定）：
+    - 子串：查询串在字符串任意位置出现（不区分大小写）
+    - 模糊：查询串每个字符在字符串中按先后顺序出现即可    """
+
+    typeCommitted = Signal(str)
+
+    def __init__(
+        self,
+        entries: list[tuple[str, str]],
+        parent: QWidget | None = None,
+        *,
+        orphan_label: Callable[[str], str] | None = None,
+    ):
+        super().__init__(parent)
+        self._entries: list[tuple[str, str]] = list(entries)
+        self._orphan_label = orphan_label
+        self._canonical_values: list[str] = []
+        self._value_set: set[str] = set()
+        self._lower_value: dict[str, str] = {}
+        self._rebuild_value_index()
+        self._committed: str = self._entries[0][1] if self._entries else ""
+        self._programmatic = False
+        self._suppress_editing_finish = False
+
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        le = self.lineEdit()
+        le.setPlaceholderText("输入以筛选…")
+        le.textEdited.connect(self._on_text_edited)
+        le.editingFinished.connect(self._on_editing_finished)
+        self.activated.connect(self._on_activated)
+        self.setToolTip(
+            "输入关键字筛选（非仅前缀）：展示名与内部取值任一在任意位置含子串即匹配；"
+            "否则按字符顺序模糊匹配。点选列表或输入唯一匹配后失焦确定。",
+        )
+
+    @classmethod
+    def from_flat_strings(cls, types: list[str], parent: QWidget | None = None) -> FilterableTypeCombo:
+        return cls([(t, t) for t in types], parent=parent)
+
+    def _rebuild_value_index(self) -> None:
+        self._canonical_values = []
+        self._value_set = set()
+        self._lower_value = {}
+        for _d, v in self._entries:
+            if v not in self._value_set:
+                self._value_set.add(v)
+                self._canonical_values.append(v)
+                self._lower_value.setdefault(v.lower(), v)
+
+    def committed_type(self) -> str:
+        """当前选中的取值（与 Action type 等业务字段一致）。"""
+        return self._committed
+
+    def set_committed_type(self, value: str, *, emit: bool = False) -> None:
+        self._programmatic = True
+        try:
+            self._committed = value if value else (
+                self._entries[0][1] if self._entries else "")
+            self._refill_all_items(self._committed)
+        finally:
+            self._programmatic = False
+        if emit:
+            self.typeCommitted.emit(self._committed)
+
+    def wheelEvent(self, ev: QWheelEvent) -> None:
+        ev.ignore()
+
+    @staticmethod
+    def _matches(text: str, q: str) -> bool:
+        q = q.strip().lower()
+        if not q:
+            return True
+        tl = text.lower()
+        if q in tl:
+            return True
+        i = 0
+        for ch in q:
+            j = tl.find(ch, i)
+            if j < 0:
+                return False
+            i = j + 1
+        return True
+
+    def _matches_entry(self, display: str, value: str, q: str) -> bool:
+        return self._matches(display, q) or self._matches(value, q)
+
+    def _display_for_value(self, value: str) -> str:
+        for d, v in self._entries:
+            if v == value:
+                return d
+        return value
+
+    def _entries_with_orphan(self, committed_value: str) -> list[tuple[str, str]]:
+        out = list(self._entries)
+        if committed_value and committed_value not in self._value_set:
+            if all(v != committed_value for _, v in out):
+                disp = (
+                    self._orphan_label(committed_value)
+                    if self._orphan_label
+                    else committed_value
+                )
+                out.insert(0, (disp, committed_value))
+        return out
+
+    def _refill_all_items(self, committed_value: str) -> None:
+        self.blockSignals(True)
+        self.clear()
+        self._committed = committed_value
+        rows = self._entries_with_orphan(committed_value)
+        for disp, val in rows:
+            idx = self.count()
+            self.addItem(disp)
+            self.setItemData(idx, val, _USER_ROLE)
+        disp_show = self._display_for_value(committed_value)
+        self.lineEdit().setText(disp_show)
+        for i in range(self.count()):
+            if str(self.itemData(i, _USER_ROLE) or "") == committed_value:
+                self.setCurrentIndex(i)
+                break
+        self.blockSignals(False)
+
+    def _pool_rows(self) -> list[tuple[str, str]]:
+        return self._entries_with_orphan(self._committed)
+
+    def _on_text_edited(self, text: str) -> None:
+        if self._programmatic:
+            return
+        pool = self._pool_rows()
+        matches = [(d, v) for d, v in pool if self._matches_entry(d, v, text)]
+        if not matches:
+            matches = pool
+        self.blockSignals(True)
+        self.clear()
+        for disp, val in matches:
+            idx = self.count()
+            self.addItem(disp)
+            self.setItemData(idx, val, _USER_ROLE)
+        self.lineEdit().setText(text)
+        self.blockSignals(False)
+
+    def _value_at(self, index: int) -> str:
+        if index < 0:
+            return ""
+        raw = self.itemData(index, _USER_ROLE)
+        if raw is not None:
+            return str(raw)
+        return self.itemText(index)
+
+    def _on_activated(self, index: int) -> None:
+        if index < 0:
+            return
+        v = self._value_at(index)
+        self._suppress_editing_finish = True
+        self._apply_committed(v)
+        self._suppress_editing_finish = False
+
+    def _apply_committed(self, value: str) -> None:
+        prev = self._committed
+        self._committed = value
+        self._programmatic = True
+        self._refill_all_items(value)
+        self._programmatic = False
+        if prev != value:
+            self.typeCommitted.emit(value)
+
+    def _on_editing_finished(self) -> None:
+        if self._programmatic or self._suppress_editing_finish:
+            self._suppress_editing_finish = False
+            return
+        raw = self.lineEdit().text().strip()
+        if not raw:
+            self._programmatic = True
+            self._refill_all_items(self._committed)
+            self._programmatic = False
+            return
+        if raw in self._value_set:
+            self._apply_committed(raw)
+            return
+        for d, v in self._entries_with_orphan(self._committed):
+            if raw == d:
+                self._apply_committed(v)
+                return
+        low = raw.lower()
+        if low in self._lower_value:
+            self._apply_committed(self._lower_value[low])
+            return
+        if raw == self._committed and raw not in self._value_set:
+            return
+        cand: list[str] = []
+        seen: set[str] = set()
+        for d, v in self._pool_rows():
+            if self._matches_entry(d, v, raw) and v not in seen:
+                seen.add(v)
+                cand.append(v)
+        if len(cand) == 1:
+            self._apply_committed(cand[0])
+            return
+        self._programmatic = True
+        self._refill_all_items(self._committed)
+        self._programmatic = False
 
 
 class RuleSlotsParamEditor(QWidget):
@@ -190,8 +400,7 @@ class ActionRow(QWidget):
         self._outer_layout = outer
 
         top = QHBoxLayout()
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(ACTION_TYPES)
+        self.type_combo = FilterableTypeCombo.from_flat_strings(ACTION_TYPES)
         self.del_btn = QPushButton("\u2212")
         self.del_btn.setFixedWidth(24)
         self.del_btn.clicked.connect(lambda: self.removed.emit(self))
@@ -213,10 +422,10 @@ class ActionRow(QWidget):
             "params": dict(raw.get("params", {})),
         }
         self._normalize_action_params(self._data["type"], self._data["params"])
-        self.type_combo.setCurrentText(self._data.get("type", "setFlag"))
+        self.type_combo.set_committed_type(self._data.get("type", "setFlag"))
         self._rebuild_params()
 
-        self.type_combo.currentTextChanged.connect(self._on_type_changed)
+        self.type_combo.typeCommitted.connect(self._on_type_committed)
 
     @staticmethod
     def _normalize_action_params(act_type: str, params: dict) -> None:
@@ -237,7 +446,7 @@ class ActionRow(QWidget):
         self._ctx_scene_id = scene_id
         self._rebuild_params()
 
-    def _on_type_changed(self, _text: str) -> None:
+    def _on_type_committed(self, _text: str) -> None:
         self._data["params"] = {}
         self._rebuild_params()
         self.changed.emit()
@@ -342,7 +551,7 @@ class ActionRow(QWidget):
             self._rule_slots_editor.deleteLater()
             self._rule_slots_editor = None
 
-        act_type = self.type_combo.currentText()
+        act_type = self.type_combo.committed_type()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params = self._data.get("params", {})
 
@@ -566,7 +775,7 @@ class ActionRow(QWidget):
         return {"type": "setPlayerAvatar", "params": params}
 
     def to_dict(self) -> dict:
-        act_type = self.type_combo.currentText()
+        act_type = self.type_combo.committed_type()
         if act_type == "setPlayerAvatar":
             return self._to_dict_set_player_avatar()
         schema = _PARAM_SCHEMAS.get(act_type, [])

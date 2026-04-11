@@ -1,9 +1,17 @@
 """Reusable widget for editing an ActionDef[] array."""
+import json
+import sys
+from pathlib import Path
+
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QComboBox, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel,
 )
 from PySide6.QtCore import Signal
-import json
+
+_ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from tools.editor.shared.action_editor import FilterableTypeCombo
 
 
 ACTION_TYPES = [
@@ -22,10 +30,9 @@ class ActionRow(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(ACTION_TYPES)
+        self.type_combo = FilterableTypeCombo.from_flat_strings(ACTION_TYPES)
         if data:
-            self.type_combo.setCurrentText(data.get("type", "setFlag"))
+            self.type_combo.set_committed_type(data.get("type", "setFlag"))
 
         self.params_edit = QLineEdit()
         self.params_edit.setPlaceholderText('{"key":"value"}')
@@ -40,7 +47,7 @@ class ActionRow(QWidget):
         layout.addWidget(self.params_edit, stretch=1)
         layout.addWidget(self.del_btn)
 
-        self.type_combo.currentTextChanged.connect(self.changed.emit)
+        self.type_combo.typeCommitted.connect(self.changed.emit)
         self.params_edit.textChanged.connect(self.changed.emit)
 
     def to_dict(self) -> dict:
@@ -48,7 +55,7 @@ class ActionRow(QWidget):
             params = json.loads(self.params_edit.text())
         except (json.JSONDecodeError, ValueError):
             params = {}
-        return {"type": self.type_combo.currentText(), "params": params}
+        return {"type": self.type_combo.committed_type(), "params": params}
 
 
 class ActionEditor(QWidget):

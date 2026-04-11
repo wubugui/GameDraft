@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTableWidget,
-    QTableWidgetItem, QComboBox, QLineEdit, QPushButton, QLabel,
+    QTableWidgetItem, QLineEdit, QPushButton, QLabel,
     QHeaderView, QAbstractItemView, QFrame, QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal
 
 from ..project_model import ProjectModel
-from ..shared.action_editor import ACTION_TYPES
+from ..shared.action_editor import ACTION_TYPES, FilterableTypeCombo
 
 if TYPE_CHECKING:
     pass
@@ -148,15 +148,17 @@ class ActionRegistryEditor(QWidget):
 
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("类型:"))
-        self._type_filter = QComboBox()
-        self._type_filter.addItems(["全部"] + ACTION_TYPES)
-        self._type_filter.currentTextChanged.connect(self._apply_filter)
+        self._type_filter = FilterableTypeCombo(
+            [("全部", "全部")] + [(t, t) for t in ACTION_TYPES],
+        )
+        self._type_filter.set_committed_type("全部")
+        self._type_filter.typeCommitted.connect(self._apply_filter)
         filter_row.addWidget(self._type_filter)
 
         filter_row.addWidget(QLabel("来源:"))
-        self._source_filter = QComboBox()
-        self._source_filter.addItems(_SOURCE_TYPES)
-        self._source_filter.currentTextChanged.connect(self._apply_filter)
+        self._source_filter = FilterableTypeCombo([(s, s) for s in _SOURCE_TYPES])
+        self._source_filter.set_committed_type("全部")
+        self._source_filter.typeCommitted.connect(self._apply_filter)
         filter_row.addWidget(self._source_filter)
 
         self._search = QLineEdit()
@@ -244,8 +246,8 @@ class ActionRegistryEditor(QWidget):
         self._apply_filter()
 
     def _apply_filter(self) -> None:
-        type_f = self._type_filter.currentText()
-        source_f = self._source_filter.currentText()
+        type_f = self._type_filter.committed_type()
+        source_f = self._source_filter.committed_type()
         search_f = self._search.text().strip().lower()
 
         filtered: list[ActionRecord] = []

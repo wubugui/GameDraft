@@ -25,6 +25,11 @@ type TabId = typeof TAB_SYSTEM | typeof TAB_TOOLS | typeof TAB_LOG;
 export class DebugPanelUI implements IDebugPanelAPI {
   private systemInfoProvider?: () => {
     fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+    /** 深度遮挡启用时：当前运行时的 floor_offset（可被 Action 等改写） */
+    floorOffsetRuntime?: number;
+    /** 当前场景 depthConfig 中的原始 floor_offset；无配置时为 undefined */
+    floorOffsetFromScene?: number;
+    depthOcclusionEnabled?: boolean;
   };
   private sections = new Map<string, () => DebugSectionContent>();
   private logLines: string[] = [];
@@ -44,6 +49,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
   constructor(systemInfoProvider?: () => {
     fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+    floorOffsetRuntime?: number; floorOffsetFromScene?: number; depthOcclusionEnabled?: boolean;
   }) {
     this.systemInfoProvider = systemInfoProvider;
 
@@ -176,6 +182,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
   setSystemInfoProvider(provider: () => {
     fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+    floorOffsetRuntime?: number; floorOffsetFromScene?: number; depthOcclusionEnabled?: boolean;
   }): void {
     this.systemInfoProvider = provider;
     if (this._isOpen) {
@@ -269,6 +276,16 @@ export class DebugPanelUI implements IDebugPanelAPI {
     if (info.state) lines.push(`State: ${info.state}`);
     if (info.worldWidth != null) lines.push(`worldWidth: ${info.worldWidth}`);
     if (info.worldHeight != null) lines.push(`worldHeight: ${info.worldHeight}`);
+    if (info.depthOcclusionEnabled && info.floorOffsetRuntime != null) {
+      const cfg = info.floorOffsetFromScene;
+      const r = Number(info.floorOffsetRuntime);
+      const cfgStr = cfg != null ? Number(cfg).toFixed(4) : '—';
+      lines.push(
+        `floor_offset（运行）: ${r.toFixed(4)}（场景配置: ${cfgStr}）`,
+      );
+    } else {
+      lines.push('floor_offset: （当前场景未启用深度遮挡）');
+    }
     const text = lines.length === 0 ? '（暂无）' : lines.join('\n');
 
     let pre = this.systemStatsPre;

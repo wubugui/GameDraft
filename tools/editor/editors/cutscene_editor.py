@@ -18,7 +18,7 @@ from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
-from ..shared.action_editor import ActionRow, ACTION_TYPES
+from ..shared.action_editor import ActionRow, ACTION_TYPES, FilterableTypeCombo
 from .scene_editor import TargetSpawnPickerDialog
 
 if TYPE_CHECKING:
@@ -168,9 +168,12 @@ class CommandWidget(QFrame):
             self._btn_del.clicked.connect(lambda: cutscene_editor._remove_command(self))
 
         top = QHBoxLayout()
-        self._type_combo = QComboBox()
-        self._fill_type_combo(ut)
-        self._type_combo.currentIndexChanged.connect(self._on_type_combo_changed)
+        self._type_combo = FilterableTypeCombo(
+            [(t, t) for t in COMMAND_TYPES],
+            orphan_label=lambda v: f"[unknown] {v}",
+        )
+        self._type_combo.set_committed_type(ut)
+        self._type_combo.typeCommitted.connect(self._on_type_combo_changed)
         self._parallel = QCheckBox("parallel")
         self._parallel.setChecked(bool(cmd.get("parallel", False)))
         self._parallel.toggled.connect(self._emit_editor_dirty)
@@ -189,30 +192,11 @@ class CommandWidget(QFrame):
         if self._editor is not None and hasattr(self._editor, "mark_pending_changes"):
             self._editor.mark_pending_changes()
 
-    def _fill_type_combo(self, ut: str) -> None:
-        self._type_combo.blockSignals(True)
-        self._type_combo.clear()
-        if ut not in STANDARD_CMD_TYPES:
-            self._type_combo.addItem(f"[unknown] {ut}", ut)
-        for t in COMMAND_TYPES:
-            self._type_combo.addItem(t, t)
-        for i in range(self._type_combo.count()):
-            if self._type_combo.itemData(i) == ut:
-                self._type_combo.setCurrentIndex(i)
-                break
-        else:
-            self._type_combo.setCurrentIndex(0)
-        self._type_combo.blockSignals(False)
-
     def _wire_type_combo_once(self) -> None:
-        self._type_combo.currentIndexChanged.connect(lambda *_: self._emit_editor_dirty())
+        self._type_combo.typeCommitted.connect(lambda *_: self._emit_editor_dirty())
 
     def _current_type_str(self) -> str:
-        i = self._type_combo.currentIndex()
-        d = self._type_combo.itemData(i)
-        if d is not None:
-            return str(d)
-        return self._type_combo.currentText()
+        return self._type_combo.committed_type()
 
     def _is_unknown_type(self) -> bool:
         return self._current_type_str() not in STANDARD_CMD_TYPES

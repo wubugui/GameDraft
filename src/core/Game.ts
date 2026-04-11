@@ -298,6 +298,11 @@ export class Game {
       state: this.stateController.currentState,
       worldWidth: this.sceneManager.currentSceneData?.worldWidth,
       worldHeight: this.sceneManager.currentSceneData?.worldHeight,
+      depthOcclusionEnabled: this.sceneDepthSystem.isEnabled,
+      floorOffsetRuntime: this.sceneDepthSystem.isEnabled
+        ? this.sceneDepthSystem.floorOffset
+        : undefined,
+      floorOffsetFromScene: this.sceneDepthSystem.currentConfig?.floor_offset,
     }));
 
     this.camera.setScreenSize(this.renderer.screenWidth, this.renderer.screenHeight);
