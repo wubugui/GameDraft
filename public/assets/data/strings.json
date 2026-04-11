@@ -11,8 +11,8 @@
     "shopPurchased": "购买了 {name}"
   },
   "menu": {
-    "gameTitle": "渝都卫",
-    "gameSubtitle": "旧梦惊尘",
+    "gameTitle": "七日惊魂",
+    "gameSubtitle": "",
     "newGame": "新游戏",
     "continueGame": "继续游戏",
     "settings": "设置",
@@ -142,7 +142,7 @@
   "dialogue": {
     "ruleTag": "[规]",
     "defaultProtagonistName": "你",
-    "narratorLabel": "旁白"
+    "narratorLabel": ""
   },
   "gameTags": {
     "flagTrue": "是",

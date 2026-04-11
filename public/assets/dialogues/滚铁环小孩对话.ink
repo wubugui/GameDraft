@@ -62,7 +62,7 @@ EXTERNAL getActorName(id)
 
 === opt_snatch_ring ===
 @: 喂！这圈圈老子玩玩！
-你伸手一把夺过铁环，恶狠狠的向小孩儿呸了一口。
+你伸手一把夺过铁环，恶狠狠地向小孩儿呸了一口。
 # action:giveItem:iron_hoop:1
 # action:appendFlag:书籍_风物志_铁环标注:"你从小孩那儿抢了一个铁环。"
 # action:showNotification:获得铁环:item
