@@ -2,11 +2,13 @@
 
 **审查时间戳：** 2026-03-16 10:50
 
+> **后注（2026-04）**：运行时 NPC 对话已迁移为 **图对话 JSON**（`GraphDialogueManager`）；下文若仍出现 Ink，均为该次审查时的快照，不代表当前代码。
+
 ### 文档同步说明
 - 已将 `游戏架构设计文档.md` 中的系统清单同步为当前代码现状：移除 `NPCManager`，补充 `ZoneSystem`。
 - 已将 UI 结构同步为当前代码现状：移除 `UIManager`、`RulesBookUI`，补充 `InspectBox`、`PickupNotification`、`RulesPanelUI`、`RuleUseUI`。
 - 已将资源目录同步为当前代码现状：补充 `shops.json`、`map_config.json`、`player_anim.json`、`cutscenes/index.json`、`archive/books.json`，移除文档中不存在的 `npcs.json`、`animations.json`、旧的目录描述。
-- 已将对话动作机制同步为当前代码现状：当前使用 ink 标签 `action:*`，不是文档原先描述的 external function 直调。
+- 已将对话动作机制同步为当时代码现状（后续已改为图节点 `actions` + `ActionExecutor`，见上文后注）。
 - 已将 `ActionExecutor` 的当前动作类型、`InputManager` 的实际职责、UI 组织方式、部分事件名与 payload 描述同步到现状。
 
 ### 问题列表

@@ -1,4 +1,4 @@
-"""JSON / Ink file I/O for the GameDraft editor."""
+"""JSON file I/O for the GameDraft editor."""
 from __future__ import annotations
 
 import json
@@ -33,7 +33,3 @@ def list_json_files(directory: Path, pattern: str = "*.json") -> list[Path]:
     return sorted(directory.glob(pattern))
 
 
-def list_ink_files(directory: Path) -> list[Path]:
-    if not directory.exists():
-        return []
-    return sorted(directory.glob("*.ink"))

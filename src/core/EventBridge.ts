@@ -2,6 +2,7 @@ import type { EventBus } from './EventBus';
 import type { ActionExecutor } from './ActionExecutor';
 import type { GameStateController } from './GameStateController';
 import type { DialogueManager } from '../systems/DialogueManager';
+import type { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import type { EncounterManager } from '../systems/EncounterManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { ActionDef } from '../data/types';
@@ -9,6 +10,7 @@ import { GameState } from '../data/types';
 
 export interface EventBridgeDeps {
   dialogueManager: DialogueManager;
+  graphDialogueManager: GraphDialogueManager;
   encounterManager: EncounterManager;
   stateController: GameStateController;
   actionExecutor: ActionExecutor;
@@ -29,15 +31,24 @@ export class EventBridge {
   }
 
   init(): void {
-    const { dialogueManager, encounterManager, stateController,
+    const { dialogueManager, graphDialogueManager, encounterManager, stateController,
             actionExecutor, sceneManager, mapUI, menuUI, inspectBox } = this.deps;
 
     this.listen('dialogue:advance', () => {
-      void dialogueManager.advance().catch((e) => console.warn('DialogueManager.advance failed', e));
+      const run = graphDialogueManager.isActive
+        ? graphDialogueManager.advance()
+        : dialogueManager.advance();
+      void run.catch((e) => console.warn('Dialogue advance failed', e));
     });
-    this.listen('dialogue:advanceEnd', () => dialogueManager.endDialogue());
+    this.listen('dialogue:advanceEnd', () => {
+      if (graphDialogueManager.isActive) graphDialogueManager.endDialogue();
+      else dialogueManager.endDialogue();
+    });
     this.listen('dialogue:choiceSelected', (p: { index: number }) => {
-      void dialogueManager.chooseOption(p.index).catch((e) => console.warn('DialogueManager.chooseOption failed', e));
+      const run = graphDialogueManager.isActive
+        ? graphDialogueManager.chooseOption(p.index)
+        : dialogueManager.chooseOption(p.index);
+      void run.catch((e) => console.warn('Dialogue chooseOption failed', e));
     });
     this.listen('dialogue:end', () => stateController.setState(GameState.Exploring));
 

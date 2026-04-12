@@ -470,7 +470,7 @@ export class CutsceneManager implements IGameSystem {
       return;
     }
     const def: NpcDef = {
-      id, name: name ?? id, x, y, dialogueFile: '', interactionRange: 0,
+      id, name: name ?? id, x, y, interactionRange: 0,
     };
     const npc = new Npc(def);
     this.tempActors.set(id, npc);

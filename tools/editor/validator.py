@@ -1,17 +1,15 @@
 """Cross-data reference validator."""
 from __future__ import annotations
 
+import json
 import math
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .file_io import read_json
+
 if TYPE_CHECKING:
     from .project_model import ProjectModel
-
-INK_SETFLAG = re.compile(r"#\s*action:setFlag:([^:\s#]+):([^\s#]+)")
-INK_REQUIRE = re.compile(r"#\s*require:([^\s#]+)")
-
 
 @dataclass
 class Issue:
@@ -145,13 +143,55 @@ def validate(model: ProjectModel) -> list[Issue]:
                 except (TypeError, ValueError):
                     issues.append(Issue("error", "scene", sid,
                                         f"NPC '{npc.get('id')}' dialogueCameraZoom 须为数字"))
-            df = npc.get("dialogueFile", "")
+            df = str(npc.get("dialogueFile", "") or "").strip()
+            dk = str(npc.get("dialogueKnot", "") or "").strip()
+            dg = str(npc.get("dialogueGraphId", "") or "").strip()
             if df:
-                fname = df.rsplit("/", 1)[-1] if "/" in df else df
-                ink_files = model.all_ink_files()
-                if fname not in ink_files:
-                    issues.append(Issue("warning", "scene", sid,
-                                        f"NPC '{npc.get('id')}' dialogueFile '{fname}' not found"))
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{npc.get('id')}' 仍含已废弃字段 dialogueFile，请改为 dialogueGraphId",
+                ))
+            if dk:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{npc.get('id')}' 仍含已废弃字段 dialogueKnot（图对话不需要 knot）",
+                ))
+            if dg:
+                gpath = model.dialogues_path / "graphs" / f"{dg}.json"
+                if not gpath.is_file():
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"NPC '{npc.get('id')}' dialogueGraphId '{dg}' 缺少文件 dialogues/graphs/{dg}.json",
+                    ))
+                else:
+                    try:
+                        gdata = read_json(gpath)
+                    except (OSError, ValueError, json.JSONDecodeError):
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"NPC '{npc.get('id')}' 图对话文件 graphs/{dg}.json 无法解析为 JSON",
+                        ))
+                    else:
+                        if not isinstance(gdata, dict):
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"NPC '{npc.get('id')}' graphs/{dg}.json 根须为对象",
+                            ))
+                        else:
+                            nodes = gdata.get("nodes")
+                            entry = gdata.get("entry")
+                            if not isinstance(nodes, dict) or not isinstance(entry, str) or entry not in nodes:
+                                issues.append(Issue(
+                                    "error", "scene", sid,
+                                    f"NPC '{npc.get('id')}' graphs/{dg}.json 缺少合法 entry 或 nodes",
+                                ))
+                            else:
+                                dge = str(npc.get("dialogueGraphEntry", "") or "").strip()
+                                if dge and dge not in nodes:
+                                    issues.append(Issue(
+                                        "error", "scene", sid,
+                                        f"NPC '{npc.get('id')}' dialogueGraphEntry '{dge}' 不在图 nodes 中",
+                                    ))
         fid = sc.get("filterId")
         if fid and fid not in filter_ids:
             issues.append(Issue("warning", "scene", sid,
@@ -423,24 +463,6 @@ def _walk_action_defs(
             )
 
 
-def _validate_ink_file(model: ProjectModel, issues: list[Issue], ink_name: str) -> None:
-    dp = model.dialogues_path
-    path = dp / ink_name
-    if not path.is_file():
-        return
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return
-    for m in INK_SETFLAG.finditer(text):
-        key = m.group(1).strip()
-        _flag_issue(model, issues, key, "ink", ink_name, None)
-    for m in INK_REQUIRE.finditer(text):
-        key = m.group(1).strip()
-        if key:
-            _flag_issue(model, issues, key, "ink", ink_name, None)
-
-
 def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
     reg = model.flag_registry
     if not reg.get("static") and not reg.get("patterns"):
@@ -563,7 +585,3 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             if fk:
                 _flag_issue(model, issues, str(fk), "config", "game_config", None)
 
-    for ink_name in model.all_ink_files():
-        if not ink_name.endswith(".ink"):
-            continue
-        _validate_ink_file(model, issues, ink_name)

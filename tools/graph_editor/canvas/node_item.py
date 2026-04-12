@@ -31,7 +31,7 @@ _TYPE_SHORT = {
     NodeType.FLAG: "F",
     NodeType.QUEST: "Q",
     NodeType.ENCOUNTER: "E",
-    NodeType.DIALOGUE_KNOT: "D",
+    NodeType.DIALOGUE_GRAPH: "D",
     NodeType.SCENE: "S",
     NodeType.HOTSPOT: "H",
     NodeType.NPC: "N",
@@ -90,7 +90,7 @@ class NodeItem(QGraphicsRectItem):
             (height - lrect.height()) / 2,
         )
 
-        if nd.node_type == NodeType.DIALOGUE_KNOT:
+        if nd.node_type == NodeType.DIALOGUE_GRAPH:
             tags_text = self._build_dialogue_tags(nd)
             if tags_text:
                 self._tags_label = QGraphicsTextItem(tags_text, self)

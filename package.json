@@ -3,16 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "ink:compile": "node scripts/compile-ink.cjs",
-    "dev": "node scripts/compile-ink.cjs && vite",
-    "build": "node scripts/compile-ink.cjs && tsc && vite build",
+    "dev": "vite",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "filter-tool": "python -m tools.filter_tool"
   },
   "type": "module",
   "dependencies": {
     "howler": "^2.2.4",
-    "inkjs": "^2.4.0",
     "pixi.js": "^8.17.0"
   },
   "devDependencies": {

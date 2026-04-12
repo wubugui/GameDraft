@@ -6,7 +6,7 @@
  * 或 setPlayerAvatar / enableRuleOffers 等专用表单，否则主编辑器无法添加该 Action，
  * 且 `tools/editor/validator.py` 会对数据中的未知 type 报错。
  *
- * 对话 Ink `# action:` 与热区共用本文件中的 `register` handler；若 handler 返回 Promise，
+ * 图对话节点 `runActions` 与热区共用本文件中的 `register` handler；若 handler 返回 Promise，
  * 对话里会顺序 await。仅当热区必须无效果而对话要等待时，再使用 `registerDialogueSequential`（如 waitMs）。
  */
 import type { ActionExecutor } from './ActionExecutor';
@@ -78,9 +78,9 @@ export interface ActionRegistryDeps {
    */
   resolveOverlayImagePath: (image: string) => string;
   hideOverlayImage: (id: string) => void;
-  /** 直接进入 Ink 对话（非 NPC 交互路径） */
-  startInkDialogue: (inkPath: string, knot?: string) => Promise<void>;
-  /** 不加载 Ink，按序播放预置台词（至 dialogue:end） */
+  /** 图对话（参数 graphId 对应 `graphs/<graphId>.json`） */
+  startDialogueGraph: (graphId: string, entry?: string, npcId?: string) => Promise<void>;
+  /** 按序播放预置台词（至 dialogue:end） */
   playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
   /** 显示「点击继续」类提示并阻塞直至任意键或鼠标 */
   waitClickContinue: (hintOverride?: string) => Promise<void>;
@@ -439,7 +439,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
   };
   executor.register('persistNpcAnimState', persistNpcAnimStateHandler, ['target', 'state']);
-  /** 与 persistNpcAnimState 同义（Ink 里勿与 playNpcAnimation 混淆：后者不存档） */
+  /** 与 persistNpcAnimState 同义（勿与 playNpcAnimation 混淆：后者不存档） */
   executor.register('persistPlayNpcAnimation', persistNpcAnimStateHandler, ['target', 'state']);
 
   executor.register('fadeWorldToBlack', (p) => {
@@ -489,16 +489,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.hideOverlayImage(id);
   }, ['id']);
 
-  executor.register('startInkDialogue', (p) => {
-    const inkPath = String(p.inkPath ?? '').trim();
-    if (!inkPath) {
-      console.warn('startInkDialogue: 需要 inkPath');
+  executor.register('startDialogueGraph', (p) => {
+    const graphId = String(p.graphId ?? '').trim();
+    if (!graphId) {
+      console.warn('startDialogueGraph: 需要 graphId');
       return;
     }
-    const knotRaw = p.knot;
-    const knot = knotRaw !== undefined && knotRaw !== null ? String(knotRaw).trim() : '';
-    return d.startInkDialogue(inkPath, knot || undefined);
-  }, ['inkPath', 'knot']);
+    const entryRaw = p.entry;
+    const entry = entryRaw !== undefined && entryRaw !== null ? String(entryRaw).trim() : '';
+    const npcIdRaw = p.npcId;
+    const npcId = npcIdRaw !== undefined && npcIdRaw !== null ? String(npcIdRaw).trim() : '';
+    return d.startDialogueGraph(graphId, entry || undefined, npcId || undefined);
+  }, ['graphId', 'entry', 'npcId']);
 
   executor.register('waitClickContinue', (p) => {
     const raw = p.text;
@@ -534,7 +536,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     return d.playScriptedDialogue(lines);
   }, ['lines']);
 
-  /** 热区/任务等非对话路径无延时效果；仅 Ink 对话标签走 registerDialogueSequential。 */
+  /** 热区/任务等非对话路径无延时效果；图对话 runActions 中走 registerDialogueSequential。 */
   executor.register('waitMs', () => {}, ['durationMs']);
 
   executor.registerDialogueSequential('waitMs', async (p) => {

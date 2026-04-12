@@ -3,6 +3,7 @@ import type { ActionExecutor } from './ActionExecutor';
 import type { GameStateController } from './GameStateController';
 import type { SceneManager } from '../systems/SceneManager';
 import type { DialogueManager } from '../systems/DialogueManager';
+import type { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import type { Hotspot } from '../entities/Hotspot';
 import type { Npc } from '../entities/Npc';
 import type { HotspotDef, InspectData, PickupData, TransitionData, EncounterTriggerData } from '../data/types';
@@ -12,6 +13,7 @@ export interface InteractionDeps {
   stateController: GameStateController;
   sceneManager: SceneManager;
   dialogueManager: DialogueManager;
+  graphDialogueManager: GraphDialogueManager;
   actionExecutor: ActionExecutor;
   inspectBox: { show(text: string): Promise<void>; readonly isOpen: boolean; close(): void };
   eventBus: EventBus;
@@ -72,12 +74,12 @@ export class InteractionCoordinator {
   }
 
   private async handleNpc(npc: Npc): Promise<void> {
-    const { stateController, dialogueManager, eventBus, getPlayerWorldPos } = this.deps;
+    const { stateController, dialogueManager, graphDialogueManager, eventBus, getPlayerWorldPos } = this.deps;
     if (stateController.currentState !== GameState.Exploring) return;
-    if (dialogueManager.isActive) return;
+    if (dialogueManager.isActive || graphDialogueManager.isActive) return;
 
-    const inkPath = npc.def.dialogueFile?.trim();
-    if (!inkPath) return;
+    const graphId = npc.def.dialogueGraphId?.trim();
+    if (!graphId) return;
 
     this.deps.preparePlayerForNpcDialogue(npc);
     const pos = getPlayerWorldPos();
@@ -105,7 +107,16 @@ export class InteractionCoordinator {
 
     stateController.setState(GameState.Dialogue);
     try {
-      await dialogueManager.startDialogue(inkPath, npc.def.name, npc.def.dialogueKnot);
+      await graphDialogueManager.startDialogueGraph({
+        graphId,
+        entry: npc.def.dialogueGraphEntry?.trim() || undefined,
+        npcName: npc.def.name,
+        npcId: npc.def.id,
+      });
+      if (!graphDialogueManager.isActive) {
+        cleanupDialogueZoomAndNpc();
+        stateController.setState(GameState.Exploring);
+      }
     } catch (e) {
       cleanupDialogueZoomAndNpc();
       console.warn('InteractionCoordinator: startDialogue failed', e);

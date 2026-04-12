@@ -61,7 +61,7 @@ class PropertyStack(QWidget):
             NodeType.HOTSPOT: self._hotspot,
             NodeType.NPC: self._npc,
             NodeType.FLAG: self._flag,
-            NodeType.DIALOGUE_KNOT: self._dialogue,
+            NodeType.DIALOGUE_GRAPH: self._dialogue,
             NodeType.ZONE: self._zone,
         }
 

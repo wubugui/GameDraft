@@ -1,4 +1,4 @@
-"""对话叠图短 id：overlay_images.json，供 Ink # action:showOverlayImage 第二参数使用。"""
+"""对话叠图短 id：overlay_images.json，供 showOverlayImage 等动作的 image 参数使用。"""
 from __future__ import annotations
 
 from typing import Callable
@@ -97,7 +97,7 @@ class OverlayImagesEditor(QWidget):
         root = QVBoxLayout(self)
         hint = QLabel(
             "此处登记「短 id → /assets/... 路径」。"
-            "Ink 里写：<code># action:showOverlayImage:图层句柄:短id:50:40:70</code>，"
+            "图对话 <code>runActions</code> 里 <code>showOverlayImage</code> 的 <code>image</code> 可填短 id；"
             "第二段为短 id 时由运行时解析；若以 <code>/</code> 开头则当作完整路径。",
         )
         hint.setWordWrap(True)

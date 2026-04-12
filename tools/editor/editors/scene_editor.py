@@ -2706,18 +2706,22 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_facing.setToolTip("进入场景时的左右朝向（与游戏中 setFacing 一致）")
         self._npc_facing.currentIndexChanged.connect(self._on_npc_facing_changed)
         form.addRow("initialFacing", self._npc_facing)
-        self._npc_dialogue = IdRefSelector(allow_empty=True)
-        self._npc_dialogue.setMinimumWidth(220)
-        self._npc_dialogue.value_changed.connect(lambda _x: self.changed.emit())
-        form.addRow("dialogueFile", self._npc_dialogue)
-        self._npc_knot = QLineEdit(); form.addRow("dialogueKnot", self._npc_knot)
+        self._npc_dialogue_graph = IdRefSelector(allow_empty=True)
+        self._npc_dialogue_graph.setMinimumWidth(220)
+        self._npc_dialogue_graph.setToolTip("对应 public/assets/dialogues/graphs/<id>.json")
+        self._npc_dialogue_graph.value_changed.connect(lambda _x: self.changed.emit())
+        form.addRow("dialogueGraphId", self._npc_dialogue_graph)
+        self._npc_dialogue_graph_entry = QLineEdit()
+        self._npc_dialogue_graph_entry.setPlaceholderText("可选，覆盖图 JSON 的 entry 节点 id")
+        self._npc_dialogue_graph_entry.textChanged.connect(lambda _t: self.changed.emit())
+        form.addRow("dialogueGraphEntry", self._npc_dialogue_graph_entry)
         self._npc_dialogue_zoom = QDoubleSpinBox()
         self._npc_dialogue_zoom.setRange(0.05, 8.0)
         self._npc_dialogue_zoom.setDecimals(3)
         self._npc_dialogue_zoom.setValue(1.0)
         self._npc_dialogue_zoom.setToolTip(
             "进入该 NPC 对话时镜头渐变缩放到该值（与场景 camera.zoom 同语义）；缺省 1.0；"
-            "对话结束由运行时自动恢复场景 zoom，无需在 ink 里写 fadingZoom。")
+            "对话结束由运行时自动恢复场景 zoom。")
         self._npc_dialogue_zoom.valueChanged.connect(lambda _v: self.changed.emit())
         form.addRow("dialogueCameraZoom", self._npc_dialogue_zoom)
         self._npc_range = QDoubleSpinBox(); self._npc_range.setRange(0, 99999)
@@ -3161,13 +3165,13 @@ class ScenePropertyPanel(QScrollArea):
         finally:
             self._npc_x.blockSignals(False)
             self._npc_y.blockSignals(False)
-        d_items = self._model.dialogue_asset_path_choices()
-        cur_d = npc.get("dialogueFile", "") or ""
-        if cur_d and all(x[0] != cur_d for x in d_items):
-            d_items = [(cur_d, cur_d)] + d_items
-        self._npc_dialogue.set_items(d_items)
-        self._npc_dialogue.set_current(cur_d)
-        self._npc_knot.setText(npc.get("dialogueKnot", ""))
+        g_items = [(gid, gid) for gid in self._model.all_dialogue_graph_ids()]
+        cur_g = str(npc.get("dialogueGraphId", "") or "").strip()
+        if cur_g and all(x[0] != cur_g for x in g_items):
+            g_items = [(cur_g, cur_g)] + g_items
+        self._npc_dialogue_graph.set_items(g_items)
+        self._npc_dialogue_graph.set_current(cur_g)
+        self._npc_dialogue_graph_entry.setText(str(npc.get("dialogueGraphEntry", "") or ""))
         self._npc_dialogue_zoom.blockSignals(True)
         try:
             self._npc_dialogue_zoom.setValue(float(npc.get("dialogueCameraZoom", 1.0)))
@@ -3208,16 +3212,19 @@ class ScenePropertyPanel(QScrollArea):
             npc["initialFacing"] = "left"
         elif "initialFacing" in npc:
             del npc["initialFacing"]
-        dd = self._npc_dialogue.current_id().strip()
-        if dd:
-            npc["dialogueFile"] = dd
-        elif "dialogueFile" in npc:
-            del npc["dialogueFile"]
-        knot = self._npc_knot.text().strip()
-        if knot:
-            npc["dialogueKnot"] = knot
-        elif "dialogueKnot" in npc:
-            del npc["dialogueKnot"]
+        for k in ("dialogueFile", "dialogueKnot"):
+            if k in npc:
+                del npc[k]
+        dg = self._npc_dialogue_graph.current_id().strip()
+        if dg:
+            npc["dialogueGraphId"] = dg
+        elif "dialogueGraphId" in npc:
+            del npc["dialogueGraphId"]
+        dge = self._npc_dialogue_graph_entry.text().strip()
+        if dge:
+            npc["dialogueGraphEntry"] = dge
+        elif "dialogueGraphEntry" in npc:
+            del npc["dialogueGraphEntry"]
         zv = float(self._npc_dialogue_zoom.value())
         if abs(zv - 1.0) > 1e-6:
             npc["dialogueCameraZoom"] = zv
@@ -4361,7 +4368,7 @@ class SceneEditor(QWidget):
         new_id = f"new_npc_{len(npc_list)}"
         npc_list.append({
             "id": new_id, "name": "New NPC", "x": wx, "y": wy,
-            "dialogueFile": "", "interactionRange": 50,
+            "interactionRange": 50,
         })
         self._model.mark_dirty("scene", self._current_scene_id or "")
         self._load_scene(self._current_scene_id, reset_view=False)

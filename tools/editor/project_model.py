@@ -7,7 +7,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
-from .file_io import read_json, write_json, list_json_files, list_ink_files
+from .file_io import read_json, write_json, list_json_files
 
 
 # ---------------------------------------------------------------------------
@@ -146,12 +146,6 @@ class ProjectModel(QObject):
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
         self.overlay_images = self._load(dp / "overlay_images.json", {})
-
-        from .editors.ink_parser import discover_ink_externals, INK_EXTERNALS as _ink_ext
-        _ink_ext.clear()
-        _ink_ext.update(discover_ink_externals(
-            project_path / "src" / "data" / "inkExternals.ts",
-        ))
 
         self._dirty.clear()
         self.undo_stack.clear()
@@ -410,14 +404,14 @@ class ProjectModel(QObject):
         """动画包目录名（与 `animation/<id>/anim.json` 的 id 一致）。"""
         return list(self.animations.keys())
 
-    def all_ink_files(self) -> list[str]:
+    def all_dialogue_graph_ids(self) -> list[str]:
+        """`dialogues/graphs/<id>.json` 的 id（不含扩展名）。"""
         if self.project_path is None:
             return []
-        return [p.name for p in list_ink_files(self.dialogues_path)]
-
-    def dialogue_asset_path_choices(self) -> list[tuple[str, str]]:
-        """(runtime path under /assets/dialogues/, basename) for NPC dialogueFile."""
-        return [(f"/assets/dialogues/{name}", name) for name in self.all_ink_files()]
+        gp = self.dialogues_path / "graphs"
+        if not gp.is_dir():
+            return []
+        return sorted(p.stem for p in gp.glob("*.json"))
 
     def anim_asset_path_choices(self) -> list[tuple[str, str]]:
         """(runtime path /assets/animation/<id>/anim.json, 显示名) for npc animFile."""

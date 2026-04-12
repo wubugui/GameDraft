@@ -94,8 +94,7 @@
       "animFile": "/assets/animation/guanchai_anim/anim.json",
       "initialAnimState": "guanchai_sleep",
       "initialFacing": "left",
-      "dialogueFile": "/assets/dialogues/码头看板官差.ink",
-      "dialogueKnot": "start"
+      "dialogueGraphId": "码头看板官差"
     }
   ],
   "hotspots": [

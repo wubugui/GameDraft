@@ -90,7 +90,7 @@ export class ActionExecutor {
   }
 
   /**
-   * Ink 对话：与 `execute` 同一套 handler；优先 `registerDialogueSequential`（对话专用体），
+   * 图对话 runActions：与 `execute` 同一套 handler；优先 `registerDialogueSequential`（对话专用体），
    * 否则 await handler 返回值（含 Promise），实现与全游戏 Action 定义一致。
    */
   async executeForDialogue(action: ActionDef): Promise<void> {

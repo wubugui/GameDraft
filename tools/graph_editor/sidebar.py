@@ -13,7 +13,6 @@ from .model.node_types import NodeType, NODE_LABELS
 
 class Sidebar(QWidget):
     node_activated = Signal(str)
-    dialogue_file_selected = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -39,7 +38,7 @@ class Sidebar(QWidget):
             NodeType.SCENE, NodeType.NPC, NodeType.QUEST_GROUP, NodeType.QUEST,
             NodeType.ENCOUNTER,
             NodeType.RULE, NodeType.FRAGMENT, NodeType.ITEM, NodeType.FLAG,
-            NodeType.DIALOGUE_KNOT, NodeType.HOTSPOT,
+            NodeType.DIALOGUE_GRAPH, NodeType.HOTSPOT,
         ]
 
         quest_group_items: dict[str, QTreeWidgetItem] = {}
@@ -49,23 +48,7 @@ class Sidebar(QWidget):
             if not nodes:
                 continue
 
-            if nt == NodeType.DIALOGUE_KNOT:
-                group = QTreeWidgetItem(self._tree, [f"{NODE_LABELS[nt]} ({len(nodes)})"])
-                group.setExpanded(True)
-
-                files: dict[str, list] = {}
-                for nd in nodes:
-                    fname = nd.data.get("file", "unknown")
-                    files.setdefault(fname, []).append(nd)
-
-                for fname in sorted(files.keys()):
-                    file_item = QTreeWidgetItem(group, [f"{fname}.ink"])
-                    file_item.setData(0, 0x0100, f"__dlgfile__:{fname}")
-                    for nd in sorted(files[fname], key=lambda n: n.data.get("start_line", 0)):
-                        child = QTreeWidgetItem(file_item, [nd.label])
-                        child.setData(0, 0x0100, nd.id)
-
-            elif nt == NodeType.QUEST_GROUP:
+            if nt == NodeType.QUEST_GROUP:
                 group = QTreeWidgetItem(self._tree, [f"{NODE_LABELS[nt]} ({len(nodes)})"])
                 group.setExpanded(True)
                 for nd in sorted(nodes, key=lambda n: n.label):
@@ -142,8 +125,4 @@ class Sidebar(QWidget):
         nid = item.data(0, 0x0100)
         if not nid:
             return
-        if nid.startswith("__dlgfile__:"):
-            fname = nid.replace("__dlgfile__:", "")
-            self.dialogue_file_selected.emit(fname)
-        else:
-            self.node_activated.emit(nid)
+        self.node_activated.emit(nid)

@@ -4,7 +4,8 @@
       "mcp__web-search__search_web",
       "mcp__web-search__fetch_url",
       "Skill(claude-api)",
-      "Skill(claude-api:*)"
+      "Skill(claude-api:*)",
+      "WebSearch"
     ]
   }
 }

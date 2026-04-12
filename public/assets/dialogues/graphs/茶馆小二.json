@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "id": "茶馆小二",
+  "entry": "root",
+  "meta": { "title": "茶馆·小二" },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        { "conditions": [{ "flag": "got_iron_box", "value": true }], "next": "after_box_1" },
+        { "conditions": [{ "flag": "waiter_met", "value": true }], "next": "return_1" }
+      ],
+      "defaultNext": "first_1"
+    },
+    "first_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "哟，关二狗，今儿又来蹭茶气？先说好，赊着的那两碗茶钱我可都记着呢。",
+      "next": "first_set_met"
+    },
+    "first_set_met": {
+      "type": "runActions",
+      "actions": [{ "type": "setFlag", "params": { "key": "waiter_met", "value": true } }],
+      "next": "first_choice"
+    },
+    "first_choice": {
+      "type": "choice",
+      "options": [
+        { "id": "a", "text": "少废话，瞎子李今天怎么来了", "next": "first_a" },
+        { "id": "b", "text": "张叨叨今天讲什么呢", "next": "first_b" }
+      ]
+    },
+    "first_a": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "刚摸进来没多久。你要真有事求他，先让张叨叨把那段书摆完，省得那老瞎子嫌你心浮气躁。",
+      "next": "end1"
+    },
+    "first_b": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "还不是那些神仙道士、坟里头爬出来的怪东西。可偏偏茶客就爱听这个。",
+      "next": "end1"
+    },
+    "return_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "又来啦？今儿这茶馆可没什么空位，想听书就自己挤一挤。",
+      "next": "return_choice"
+    },
+    "return_choice": {
+      "type": "choice",
+      "options": [
+        { "id": "r1", "text": "瞎子李好说话吗", "next": "return_r1" },
+        { "id": "r2", "text": "城隍庙那边最近闹什么怪", "next": "return_r2" },
+        { "id": "r3", "text": "没事，我随便转转", "next": "return_r3" }
+      ]
+    },
+    "return_r1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "谁知道呢，那老瞎子看着和气，真要不顺心，嘴比刀子还快。你自己掂量着点说。",
+      "next": "end1"
+    },
+    "return_r2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "你还真问着了。前些天有人翻出一张旧戏单，说当年柳家班就在城隍庙戏台唱过堂会，后来班里那个最红的旦角，说没就没了。",
+      "next": "return_r2b"
+    },
+    "return_r2b": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "这几日城里又有人说，夜里从庙后头过，能听见女人吊着嗓子唱戏。有人说她是在害人，也有人说她像是在找人。",
+      "next": "return_r2flags"
+    },
+    "return_r2flags": {
+      "type": "runActions",
+      "actions": [
+        { "type": "setFlag", "params": { "key": "heard_waiter_ghost_talk", "value": true } },
+        { "type": "setFlag", "params": { "key": "heard_opera_rumor", "value": true } }
+      ],
+      "next": "end1"
+    },
+    "return_r3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "转吧转吧，别碰翻茶碗就成。",
+      "next": "end1"
+    },
+    "after_box_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "咦，你怎么一副魂不守舍的样子？刚才不是还在瞎子李那儿赔笑么。",
+      "next": "after_choice"
+    },
+    "after_choice": {
+      "type": "choice",
+      "options": [
+        { "id": "x", "text": "没事，先走了", "next": "after_x" },
+        { "id": "y", "text": "给我倒碗凉茶压压惊", "next": "after_y" }
+      ]
+    },
+    "after_x": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "行，走路看着点，别又把自己摔沟里去。",
+      "next": "end1"
+    },
+    "after_y": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "小二" },
+      "text": "稀奇，关二狗也有肯掏钱喝茶的时候？算了，这碗先记账上。",
+      "next": "end1"
+    },
+    "end1": { "type": "end" }
+  }
+}

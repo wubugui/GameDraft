@@ -60,7 +60,7 @@ class Toolbar(QToolBar):
         filter_types = [
             NodeType.FLAG, NodeType.QUEST, NodeType.ENCOUNTER,
             NodeType.SCENE, NodeType.HOTSPOT, NodeType.NPC,
-            NodeType.RULE, NodeType.ITEM, NodeType.DIALOGUE_KNOT,
+            NodeType.RULE, NodeType.ITEM, NodeType.DIALOGUE_GRAPH,
         ]
 
         for nt in filter_types:

@@ -93,8 +93,7 @@
       "name": "说书人张叨叨",
       "x": 485.7,
       "y": 431.6,
-      "dialogueFile": "/assets/dialogues/storyteller.ink",
-      "dialogueKnot": "start",
+      "dialogueGraphId": "茶馆说书人",
       "interactionRange": 71.4,
       "animFile": "/assets/animation/npc_storyteller_anim/anim.json",
       "patrol": {
@@ -116,8 +115,7 @@
       "name": "瞎子李",
       "x": 188.1,
       "y": 207.0,
-      "dialogueFile": "/assets/dialogues/blind_li.ink",
-      "dialogueKnot": "start",
+      "dialogueGraphId": "茶馆瞎子李",
       "interactionRange": 71.4,
       "animFile": "/assets/animation/npc_blind_li_anim/anim.json",
       "initialAnimState": "boy_run_ring"
@@ -127,8 +125,7 @@
       "name": "小二",
       "x": 557.1,
       "y": 232.4,
-      "dialogueFile": "/assets/dialogues/waiter.ink",
-      "dialogueKnot": "start",
+      "dialogueGraphId": "茶馆小二",
       "interactionRange": 64.3
     }
   ],

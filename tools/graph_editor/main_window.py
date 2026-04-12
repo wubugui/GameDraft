@@ -26,7 +26,6 @@ class MainWindow(QMainWindow):
         self._project_path = project_path
         self._graph: GameGraph | None = None
         self._current_view = "Full Graph"
-        self._dialogue_file: str | None = None
         self._layout_store = GraphLayoutStore(
             Path(project_path).resolve() / "editor_data" / "graph_layout.json"
         )
@@ -72,7 +71,6 @@ class MainWindow(QMainWindow):
         )
         self._toolbar.save_requested.connect(self._on_save)
         self._sidebar.node_activated.connect(self._on_sidebar_activate)
-        self._sidebar.dialogue_file_selected.connect(self._on_dialogue_file_selected)
         self._scene.node_selected.connect(self._on_node_selected)
         self._scene.node_deselected.connect(self._on_node_deselected)
         self._scene.node_moved.connect(self._on_node_moved_schedule_save)
@@ -143,10 +141,7 @@ class MainWindow(QMainWindow):
                 force_layout=force_layout,
             )
         elif view_name == "Dialogue":
-            if self._dialogue_file:
-                sub = self._graph.dialogue_subgraph(self._dialogue_file)
-            else:
-                sub = self._graph.subgraph_with_neighbors({NodeType.DIALOGUE_KNOT})
+            sub = self._graph.subgraph_with_neighbors({NodeType.DIALOGUE_GRAPH})
             self._scene.populate(
                 sub,
                 layout="spring",
@@ -188,11 +183,6 @@ class MainWindow(QMainWindow):
         if item:
             self._view.centerOn(item)
             self._scene.highlight_node(node_id)
-
-    def _on_dialogue_file_selected(self, basename: str):
-        self._dialogue_file = basename
-        self._current_view = "Dialogue"
-        self._rebuild_view()
 
     def _on_node_selected(self, node_id: str):
         if not self._graph:

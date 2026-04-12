@@ -33,7 +33,6 @@ description: Registers a new ActionExecutor action in GameDraft with editor supp
 
 4. **校验**
    - `validator` 会对数据中出现的 `action.type` 与 **`ACTION_TYPES`** 比对；未登记会报 **error**。新增类型后运行主编辑器 **Validate Data** 或等价调用 `validate(model)` 做冒烟。
-   - **`npm run ink:compile`**（`scripts/compile-ink.cjs`）会遍历编译后的 `.ink.json` 中所有 `# action:` 标签，与 **`action_editor.py` 的 `ACTION_TYPES`** 比对；未登记类型会导致 **编译失败退出码 1**。
 
 5. **异步 handler**
    - 若 handler 需 `async`（如加载资源），在 `register` 内使用 `void promise.catch(...)`，**不要**把 `ActionExecutor.execute` 改成 async（影响全链路）。

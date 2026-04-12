@@ -192,21 +192,87 @@ export interface PatrolDef {
   moveAnimState?: string;
 }
 
+/** 图对话 JSON 中的说话人（与 `public/assets/dialogues/graphs/*.json` 一致） */
+export type DialogueGraphSpeaker =
+  | { kind: 'player' }
+  | { kind: 'npc' }
+  | { kind: 'literal'; name: string }
+  | { kind: 'sceneNpc'; npcId: string };
+
+/** 图对话条件：flag 条件（同 Condition）或任务状态 */
+export type GraphCondition =
+  | Condition
+  | { quest: string; questStatus: 'Inactive' | 'Active' | 'Completed' };
+
+export interface DialogueLinePayload {
+  speaker: DialogueGraphSpeaker;
+  text?: string;
+  textKey?: string;
+}
+
+export interface GraphChoiceOptionDef {
+  id: string;
+  text: string;
+  next: string;
+  requireFlag?: string;
+  costCoins?: number;
+  ruleHintId?: string;
+}
+
+export type DialogueGraphNodeDef =
+  | {
+      type: 'line';
+      speaker: DialogueGraphSpeaker;
+      text?: string;
+      textKey?: string;
+      next: string;
+    }
+  | {
+      type: 'runActions';
+      actions: ActionDef[];
+      next: string;
+    }
+  | {
+      type: 'choice';
+      promptLine?: DialogueLinePayload;
+      options: GraphChoiceOptionDef[];
+    }
+  | {
+      type: 'switch';
+      cases: { conditions: GraphCondition[]; next: string }[];
+      defaultNext: string;
+    }
+  | { type: 'end' };
+
+/** 图对话资源根结构（JSON 文件） */
+export interface DialogueGraphFile {
+  schemaVersion: number;
+  id: string;
+  entry: string;
+  preconditions?: GraphCondition[];
+  nodes: Record<string, DialogueGraphNodeDef>;
+  meta?: { title?: string };
+}
+
 export interface NpcDef {
   id: string;
   name: string;
   x: number;
   y: number;
-  /** 未配置时按 E 不会进入对话 */
-  dialogueFile?: string;
-  dialogueKnot?: string;
+  /**
+   * 图对话：资源 id（不含路径），对应 `public/assets/dialogues/graphs/<id>.json`。
+   * 未配置时按 E 不会进入对话。
+   */
+  dialogueGraphId?: string;
+  /** 覆盖图 JSON 的 `entry`；缺省用图内 `entry` */
+  dialogueGraphEntry?: string;
   /**
    * 进入该 NPC 对话时镜头渐变缩放到该值（与场景 `camera.zoom` 同语义）；缺省为 1.0。
    * 对话结束（含异常中断）时由系统渐变恢复为当前场景配置的 zoom。
    */
   dialogueCameraZoom?: number;
   /**
-   * @deprecated 站立/表情动画请在 Ink 中用 `# action:playNpcAnimation:...`；保留字段仅为兼容旧场景数据。
+   * @deprecated 站立/表情动画请用图对话 `runActions` 的 playNpcAnimation；保留字段仅为兼容旧场景数据。
    */
   dialogueStandAnimState?: string;
   interactionRange: number;
@@ -562,7 +628,7 @@ export interface BookPageEntry {
    */
   annotation?: string;
   illustration?: string;
-  /** 满足时自动解锁；与 Ink/Action 写入的 archive_book_entry_<id> 等价 */
+  /** 满足时自动解锁；与 Action 写入的 archive_book_entry_<id> 等价 */
   discoverConditions?: Condition[];
   /** 已解锁且玩家第一次翻到包含该条目的书页时执行（仅一次） */
   firstViewActions?: ActionDef[];

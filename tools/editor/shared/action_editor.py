@@ -32,7 +32,6 @@ from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .image_path_picker import CutsceneImagePathRow
-from .ink_path_picker import InkPathPickRow
 from .scripted_lines_editor import ScriptedLinesEditor
 
 ACTION_TYPES = [
@@ -48,7 +47,7 @@ ACTION_TYPES = [
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
-    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "startInkDialogue",
+    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "startDialogueGraph",
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
@@ -645,25 +644,32 @@ class ActionRow(QWidget):
             self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
             return
 
-        if act_type == "startInkDialogue":
+        if act_type == "startDialogueGraph":
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
                 self._params_layout.removeRow(0)
             self._param_widgets.clear()
             tip = QLabel(
-                "inkPath：编译后的运行时路径（.ink）；knot 可选，留空从默认起点开始。",
+                "graphId：不含路径，与 assets/dialogues/graphs 下同名 .json 对应；"
+                "entry 覆盖图内入口节点；npcId 用于解析说话人显示名（可选）。",
             )
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
-            ink_w = InkPathPickRow(self._ctx_model, str(params.get("inkPath", "") or ""), self)
-            ink_w.changed.connect(self.changed)
-            self._param_widgets["inkPath"] = ink_w
-            self._params_layout.addRow("inkPath", ink_w)
-            kn = QLineEdit(str(params.get("knot", "") or ""))
-            kn.setPlaceholderText("可选，如 chapter1_opening")
-            kn.textChanged.connect(self.changed)
-            self._param_widgets["knot"] = kn
-            self._params_layout.addRow("knot", kn)
+            gid = QLineEdit(str(params.get("graphId", "") or ""))
+            gid.setPlaceholderText("如 码头看板官差")
+            gid.textChanged.connect(self.changed)
+            self._param_widgets["graphId"] = gid
+            self._params_layout.addRow("graphId", gid)
+            ent = QLineEdit(str(params.get("entry", "") or ""))
+            ent.setPlaceholderText("可选，覆盖图 JSON 的 entry")
+            ent.textChanged.connect(self.changed)
+            self._param_widgets["entry"] = ent
+            self._params_layout.addRow("entry", ent)
+            nid = QLineEdit(str(params.get("npcId", "") or ""))
+            nid.setPlaceholderText("可选，场景内 NPC id")
+            nid.textChanged.connect(self.changed)
+            self._param_widgets["npcId"] = nid
+            self._params_layout.addRow("npcId", nid)
             return
 
         if act_type == "playScriptedDialogue":
@@ -898,15 +904,19 @@ class ActionRow(QWidget):
             },
         }
 
-    def _to_dict_start_ink_dialogue(self) -> dict:
-        ink_w = self._param_widgets.get("inkPath")
-        kn_w = self._param_widgets.get("knot")
-        path = ink_w.path() if isinstance(ink_w, InkPathPickRow) else ""
-        knot = kn_w.text().strip() if isinstance(kn_w, QLineEdit) else ""
-        prm: dict = {"inkPath": path}
-        if knot:
-            prm["knot"] = knot
-        return {"type": "startInkDialogue", "params": prm}
+    def _to_dict_start_dialogue_graph(self) -> dict:
+        gid_w = self._param_widgets.get("graphId")
+        ent_w = self._param_widgets.get("entry")
+        nid_w = self._param_widgets.get("npcId")
+        graph_id = gid_w.text().strip() if isinstance(gid_w, QLineEdit) else ""
+        prm: dict = {"graphId": graph_id}
+        ent = ent_w.text().strip() if isinstance(ent_w, QLineEdit) else ""
+        if ent:
+            prm["entry"] = ent
+        nid = nid_w.text().strip() if isinstance(nid_w, QLineEdit) else ""
+        if nid:
+            prm["npcId"] = nid
+        return {"type": "startDialogueGraph", "params": prm}
 
     def _to_dict_play_scripted_dialogue(self) -> dict:
         ed = self._delayed_editor
@@ -939,8 +949,8 @@ class ActionRow(QWidget):
         act_type = self.type_combo.committed_type()
         if act_type == "showOverlayImage":
             return self._to_dict_show_overlay_image()
-        if act_type == "startInkDialogue":
-            return self._to_dict_start_ink_dialogue()
+        if act_type == "startDialogueGraph":
+            return self._to_dict_start_dialogue_graph()
         if act_type == "playScriptedDialogue":
             return self._to_dict_play_scripted_dialogue()
         if act_type == "setPlayerAvatar":

@@ -3,7 +3,7 @@ from ..model.node_types import NodeData
 
 
 class DialoguePanel(QWidget):
-    """Read-only panel showing dialogue knot details."""
+    """Read-only panel for dialogue graph asset nodes."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -19,22 +19,17 @@ class DialoguePanel(QWidget):
         layout.addWidget(self._text)
 
     def load_node(self, nd: NodeData):
-        d = nd.data
-        lines = [f"<h3>Dialogue: {d.get('knot_name', nd.label)}</h3>"]
-        lines.append(f"<b>File:</b> {d.get('file', '')}.ink<br>")
-        lines.append(f"<b>Start Line:</b> {d.get('start_line', '?')}<br>")
-
-        tags = d.get("action_tags", [])
-        if tags:
-            lines.append(f"<br><b>Action Tags:</b><br>")
-            for t in tags:
-                lines.append(f"  &bull; {t}<br>")
-
-        flags = d.get("getflags", [])
-        if flags:
-            lines.append(f"<br><b>Reads Flags:</b><br>")
-            for f in flags:
-                lines.append(f"  &bull; {f}<br>")
-
+        gid = nd.data.get("graphId", nd.label)
+        src = nd.source_file or ""
+        lines = [
+            f"<h3>Dialogue graph: {gid}</h3>",
+            f"<b>Source:</b> {src}<br>",
+        ]
         self._header.setText("".join(lines))
-        self._text.setPlainText(d.get("text", ""))
+        self._text.setPlainText(
+            "请使用「图对话编辑器」编辑对白：\n"
+            "  工程根目录运行 edit-dialogue-graph.cmd\n"
+            "  或：python -m tools.dialogue_graph_editor --project <工程根>\n"
+            "资源路径：public/assets/dialogues/graphs/<id>.json\n"
+            "本 Graph Editor 窗口仅展示引用关系。",
+        )

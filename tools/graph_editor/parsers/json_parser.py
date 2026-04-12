@@ -270,11 +270,18 @@ def parse_scenes(graph: GameGraph, project_path: str):
             ))
             graph.add_edge(scene_id, npc_id, EdgeType.CONTAINS)
 
-            dlg_file = npc.get("dialogueFile", "")
-            if dlg_file:
-                knot = npc.get("dialogueKnot", "start")
-                dlg_base = Path(dlg_file).stem
-                graph.add_edge(npc_id, f"knot:{dlg_base}.{knot}", EdgeType.TRIGGERS)
+            dg = str(npc.get("dialogueGraphId", "") or "").strip()
+            if dg:
+                dg_node = f"dlggraph:{dg}"
+                if graph.get_node(dg_node) is None:
+                    graph.add_node(NodeData(
+                        id=dg_node,
+                        node_type=NodeType.DIALOGUE_GRAPH,
+                        label=dg,
+                        source_file=f"dialogues/graphs/{dg}.json",
+                        data={"graphId": dg},
+                    ))
+                graph.add_edge(npc_id, dg_node, EdgeType.TRIGGERS)
 
         for zone in scene.get("zones", []):
             zone_id = f"zone:{scene['id']}.{zone['id']}"

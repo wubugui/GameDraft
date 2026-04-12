@@ -10,6 +10,7 @@ import { Player, ANIM_IDLE, ANIM_WALK, ANIM_RUN } from '../entities/Player';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { SceneManager } from '../systems/SceneManager';
 import { DialogueManager } from '../systems/DialogueManager';
+import { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import { QuestManager } from '../systems/QuestManager';
 import { RulesManager } from '../systems/RulesManager';
 import { InventoryManager } from '../systems/InventoryManager';
@@ -95,6 +96,7 @@ export class Game {
   private interactionSystem: InteractionSystem;
   private sceneManager: SceneManager;
   private dialogueManager: DialogueManager;
+  private graphDialogueManager: GraphDialogueManager;
   private questManager: QuestManager;
   private rulesManager: RulesManager;
   private inventoryManager: InventoryManager;
@@ -155,7 +157,7 @@ export class Game {
   private tearDownComplete = false;
   private isDevMode = false;
   private devModeUI: DevModeUI | null = null;
-  /** `overlay_images.json`：Ink 里可写短 id，避免 # action 里塞长路径 */
+  /** `overlay_images.json`：可写短 id，避免 action 参数里塞长路径 */
   private overlayImageRegistry: Record<string, string> = {};
 
   private gameConfig: GameConfig = {
@@ -184,12 +186,17 @@ export class Game {
     this.sceneManager = new SceneManager(this.assetManager, this.eventBus, this.renderer);
     this.inventoryManager = new InventoryManager(this.eventBus, this.flagStore);
     this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
-    this.dialogueManager = new DialogueManager(
-      this.eventBus, this.flagStore, this.actionExecutor, this.assetManager, this.inventoryManager,
+    this.dialogueManager = new DialogueManager(this.eventBus);
+    this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
+    this.graphDialogueManager = new GraphDialogueManager(
+      this.eventBus,
+      this.flagStore,
+      this.actionExecutor,
+      this.assetManager,
       this.sceneManager,
       this.rulesManager,
+      this.questManager,
     );
-    this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.audioManager = new AudioManager(this.eventBus);
     this.dayManager = new DayManager(this.eventBus, this.flagStore, this.actionExecutor);
@@ -203,6 +210,7 @@ export class Game {
       { name: 'sceneManager', system: this.sceneManager },
       { name: 'interactionSystem', system: this.interactionSystem },
       { name: 'dialogueManager', system: this.dialogueManager },
+      { name: 'graphDialogueManager', system: this.graphDialogueManager },
       { name: 'inventoryManager', system: this.inventoryManager },
       { name: 'rulesManager', system: this.rulesManager },
       { name: 'questManager', system: this.questManager },
@@ -222,7 +230,6 @@ export class Game {
 
   async start(options: GameStartOptions = {}): Promise<void> {
     this.isDevMode = !!options.devMode;
-    this.dialogueManager.configureDevModeInkActionAlerts(this.isDevMode);
     await this.renderer.init();
     await this.stringsProvider.load(this.assetManager);
 
@@ -393,13 +400,25 @@ export class Game {
       hideOverlayImage: (id) => {
         this.cutsceneManager.hideOverlayImage(id);
       },
-      startInkDialogue: async (inkPath, knot) => {
+      startDialogueGraph: async (graphId, entry, npcId) => {
         this.stateController.setState(GameState.Dialogue);
         try {
-          const k = knot?.trim();
-          await this.dialogueManager.startDialogue(inkPath, '', k || undefined);
+          let npcName = '';
+          if (npcId?.trim()) {
+            const npc = this.sceneManager.getNpcById(npcId.trim());
+            if (npc) npcName = npc.def.name;
+          }
+          await this.graphDialogueManager.startDialogueGraph({
+            graphId,
+            entry,
+            npcName,
+            npcId: npcId?.trim() || undefined,
+          });
+          if (!this.graphDialogueManager.isActive) {
+            this.stateController.setState(GameState.Exploring);
+          }
         } catch (e) {
-          console.warn('Game: startInkDialogue failed', e);
+          console.warn('Game: startDialogueGraph failed', e);
           this.stateController.setState(GameState.Exploring);
         }
       },
@@ -426,6 +445,7 @@ export class Game {
       stateController: this.stateController,
       sceneManager: this.sceneManager,
       dialogueManager: this.dialogueManager,
+      graphDialogueManager: this.graphDialogueManager,
       actionExecutor: this.actionExecutor,
       inspectBox: this.inspectBox,
       eventBus: this.eventBus,
@@ -453,6 +473,7 @@ export class Game {
 
     this.eventBridge = new EventBridge(this.eventBus, {
       dialogueManager: this.dialogueManager,
+      graphDialogueManager: this.graphDialogueManager,
       encounterManager: this.encounterManager,
       stateController: this.stateController,
       actionExecutor: this.actionExecutor,
@@ -703,7 +724,7 @@ export class Game {
   }
 
   /**
-   * Ink / 热区 Action：停止指定 NPC 的巡逻（打断当前位移 +递增巡逻代，语义与对话里其它 action 顺序一致）。
+   * 热区 / 图对话 Action：停止指定 NPC 的巡逻（打断当前位移 +递增巡逻代，语义与对话里其它 action 顺序一致）。
    */
   stopNpcPatrol(npcId: string): void {
     const id = npcId?.trim();

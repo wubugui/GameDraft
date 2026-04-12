@@ -98,27 +98,6 @@ class GameGraph:
                 readers.append(v)
         return readers
 
-    def dialogue_subgraph(self, ink_basename: str) -> "GameGraph":
-        """Extract subgraph for a specific ink file, plus connected external entities."""
-        knot_ids = set()
-        for nd in self.nodes_by_type(NodeType.DIALOGUE_KNOT):
-            if nd.data.get("file") == ink_basename:
-                knot_ids.add(nd.id)
-
-        all_ids = set(knot_ids)
-        for kid in knot_ids:
-            all_ids.update(self.neighbors_of(kid))
-
-        sub = GameGraph()
-        for nid in all_ids:
-            nd = self.get_node(nid)
-            if nd:
-                sub.add_node(nd)
-        for u, v, d in self.g.edges(data=True):
-            if u in sub.g and v in sub.g:
-                sub.g.add_edge(u, v, **d)
-        return sub
-
     def diagnostics(self) -> dict:
         write_only = []
         read_only = []

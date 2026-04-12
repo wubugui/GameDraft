@@ -305,7 +305,7 @@ def flag_registry_static_format_issues(registry: dict[str, Any]) -> list[str]:
 
 
 def validate_flag_key_loose(key: str, registry: dict[str, Any]) -> bool:
-    """Match static or any pattern prefix/suffix without id check (Ink/global)."""
+    """Match static or any pattern prefix/suffix without id check（全局）。"""
     if not key:
         return False
     if key in static_key_set(registry):

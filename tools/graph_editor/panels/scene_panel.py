@@ -147,8 +147,8 @@ class NpcPanel(QWidget):
         self.x_spin.setRange(0, 10000)
         self.y_spin = QSpinBox()
         self.y_spin.setRange(0, 10000)
-        self.dlg_edit = QLineEdit()
-        self.knot_edit = QLineEdit()
+        self.dlg_graph_edit = QLineEdit()
+        self.dlg_entry_edit = QLineEdit()
         self.range_spin = QSpinBox()
         self.range_spin.setRange(1, 500)
 
@@ -156,8 +156,8 @@ class NpcPanel(QWidget):
         form.addRow("Name:", self.name_edit)
         form.addRow("X:", self.x_spin)
         form.addRow("Y:", self.y_spin)
-        form.addRow("Dialogue File:", self.dlg_edit)
-        form.addRow("Dialogue Knot:", self.knot_edit)
+        form.addRow("dialogueGraphId:", self.dlg_graph_edit)
+        form.addRow("dialogueGraphEntry:", self.dlg_entry_edit)
         form.addRow("Range:", self.range_spin)
         layout.addLayout(form)
         layout.addStretch()
@@ -165,8 +165,8 @@ class NpcPanel(QWidget):
         self.name_edit.textChanged.connect(self._mark_dirty)
         self.x_spin.valueChanged.connect(self._mark_dirty)
         self.y_spin.valueChanged.connect(self._mark_dirty)
-        self.dlg_edit.textChanged.connect(self._mark_dirty)
-        self.knot_edit.textChanged.connect(self._mark_dirty)
+        self.dlg_graph_edit.textChanged.connect(self._mark_dirty)
+        self.dlg_entry_edit.textChanged.connect(self._mark_dirty)
         self.range_spin.valueChanged.connect(self._mark_dirty)
 
     def load_node(self, nd: NodeData):
@@ -176,8 +176,8 @@ class NpcPanel(QWidget):
         self.name_edit.setText(d.get("name", ""))
         self.x_spin.setValue(d.get("x", 0))
         self.y_spin.setValue(d.get("y", 0))
-        self.dlg_edit.setText(d.get("dialogueFile", ""))
-        self.knot_edit.setText(d.get("dialogueKnot", ""))
+        self.dlg_graph_edit.setText(str(d.get("dialogueGraphId", "") or ""))
+        self.dlg_entry_edit.setText(str(d.get("dialogueGraphEntry", "") or ""))
         self.range_spin.setValue(d.get("interactionRange", 80))
 
     def _mark_dirty(self):
@@ -187,8 +187,19 @@ class NpcPanel(QWidget):
         d["name"] = self.name_edit.text()
         d["x"] = self.x_spin.value()
         d["y"] = self.y_spin.value()
-        d["dialogueFile"] = self.dlg_edit.text()
-        d["dialogueKnot"] = self.knot_edit.text()
+        dg = self.dlg_graph_edit.text().strip()
+        if dg:
+            d["dialogueGraphId"] = dg
+        elif "dialogueGraphId" in d:
+            del d["dialogueGraphId"]
+        de = self.dlg_entry_edit.text().strip()
+        if de:
+            d["dialogueGraphEntry"] = de
+        elif "dialogueGraphEntry" in d:
+            del d["dialogueGraphEntry"]
+        for k in ("dialogueFile", "dialogueKnot"):
+            if k in d:
+                del d[k]
         d["interactionRange"] = self.range_spin.value()
         self._nd.dirty = True
         self.data_changed.emit(self._nd.id)

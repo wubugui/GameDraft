@@ -162,7 +162,7 @@ export class Npc implements ICutsceneActor {
 
   /**
    * 进入对话：暂停巡逻（取消当前位移并阻塞巡逻循环）、朝向玩家。
-   * 对话中要播的站立/表情动画由 Ink 的 `# action:playNpcAnimation:...` 驱动。
+   * 对话中要播的站立/表情动画由图对话 `runActions` 的 playNpcAnimation 等驱动。
    */
   pausePatrolAndFaceForDialogue(playerX: number, playerY: number): void {
     if (this.def.patrol) {

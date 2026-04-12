@@ -2,6 +2,8 @@
 
 **审查时间戳：** 2026-04-04 21:30
 
+> **后注（2026-04）**：下文若仍提及 Ink 标签解析等，均为该次审查快照；当前 NPC 对话为 **图对话 JSON**，动作经 `ActionExecutor` 执行。
+
 **审查范围：** `src/` 全部 TypeScript 源码（core / systems / rendering / entities / ui / data / debug），对照 `游戏架构设计文档.md` 中的 8 条铁律与配置驱动清单。
 
 ---

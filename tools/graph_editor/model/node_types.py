@@ -7,7 +7,7 @@ class NodeType(Enum):
     FLAG = auto()
     QUEST = auto()
     ENCOUNTER = auto()
-    DIALOGUE_KNOT = auto()
+    DIALOGUE_GRAPH = auto()
     SCENE = auto()
     HOTSPOT = auto()
     NPC = auto()
@@ -22,7 +22,7 @@ NODE_COLORS = {
     NodeType.FLAG: "#F59E0B",
     NodeType.QUEST: "#3B82F6",
     NodeType.ENCOUNTER: "#EF4444",
-    NodeType.DIALOGUE_KNOT: "#8B5CF6",
+    NodeType.DIALOGUE_GRAPH: "#8B5CF6",
     NodeType.SCENE: "#10B981",
     NodeType.HOTSPOT: "#6EE7B7",
     NodeType.NPC: "#EC4899",
@@ -37,7 +37,7 @@ NODE_LABELS = {
     NodeType.FLAG: "Flag",
     NodeType.QUEST: "Quest",
     NodeType.ENCOUNTER: "Encounter",
-    NodeType.DIALOGUE_KNOT: "Dialogue",
+    NodeType.DIALOGUE_GRAPH: "Dialogue Graph",
     NodeType.SCENE: "Scene",
     NodeType.HOTSPOT: "Hotspot",
     NodeType.NPC: "NPC",

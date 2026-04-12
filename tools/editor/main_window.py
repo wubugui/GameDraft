@@ -347,7 +347,6 @@ class MainWindow(QMainWindow):
         from .editors.shop_editor import ShopEditor
         from .editors.map_editor import MapEditor
         from .editors.archive_editor import ArchiveEditor
-        from .editors.dialogue_browser import DialogueBrowser
         from .editors.audio_editor import AudioEditor
         from .editors.anim_editor import AnimEditor
         from .editors.string_editor import StringEditor
@@ -368,7 +367,6 @@ class MainWindow(QMainWindow):
             ("Shop", ShopEditor),
             ("Map", MapEditor),
             ("Archive", ArchiveEditor),
-            ("Dialogue", DialogueBrowser),
             ("Audio", AudioEditor),
             ("Filters", FilterEditor),
             ("动画浏览", AnimEditor),
@@ -416,50 +414,10 @@ class MainWindow(QMainWindow):
 
     # ---- run game ---------------------------------------------------------
 
-    def _compile_ink(self) -> bool:
-        """Compile all .ink -> .ink.json. Returns True on success."""
-        proj = self._model.project_path
-        if proj is None:
-            return True
-        script = proj / "scripts" / "compile-ink.cjs"
-        if not script.is_file():
-            return True
-        env = os.environ.copy()
-        npm_path = shutil.which("npm")
-        if npm_path:
-            node_dir = str(Path(npm_path).resolve().parent)
-            env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
-        node = shutil.which("node", path=env.get("PATH"))
-        if node is None:
-            QMessageBox.warning(self, "Ink Compile",
-                                "node not found in PATH, cannot compile ink.")
-            return False
-        r = subprocess.run(
-            [node, str(script)],
-            cwd=str(proj), capture_output=True, text=True, env=env,
-            timeout=30,
-        )
-        if r.returncode != 0:
-            msg = (r.stdout + "\n" + r.stderr).strip()
-            QMessageBox.critical(
-                self, "Ink Compile Failed",
-                f"Ink compilation errors:\n\n{msg}",
-            )
-            return False
-        ok_lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
-        if ok_lines:
-            self._status.showMessage(
-                f"Ink compiled: {len(ok_lines)} file(s)", 3000,
-            )
-        return True
-
     def _run_game(self, *, launch_params: str | None = None) -> None:
         if self._model.project_path is None:
             return
         self._save_all()
-
-        if not self._compile_ink():
-            return
 
         proj = self._model.project_path
         pkg_json = proj / "package.json"
@@ -651,9 +609,6 @@ class MainWindow(QMainWindow):
         if not cutscene_id:
             return
         self._save_all()
-        if not self._compile_ink():
-            return
-
         is_running = (self._game_proc is not None
                       and self._game_proc.state() != QProcess.ProcessState.NotRunning)
 

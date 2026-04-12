@@ -54,12 +54,12 @@
 | addArchiveEntry | 解锁档案条目 | bookType + entryId | 解锁人物：`character`，`npc_li` |
 | startCutscene | 播一段演出 | id=演出编号 | 开场：`cs_prologue` |
 | showEmote | 角色冒情绪气泡 | target=角色 id，emote=表情名 | 路人：`npc_01`，`surprise` |
-| playNpcAnimation | 切换实体动画状态 | target、state（与 anim 包内状态名一致） | `# action:playNpcAnimation:npc_ringboy:boy_cry` |
+| playNpcAnimation | 切换实体动画状态 | target、state（与 anim 包内状态名一致） | 图节点 `actions`：`playNpcAnimation`，target `npc_ringboy`，state `boy_cry` |
 | openShop | 打开商店界面 | shopId | `shop_general` |
 | switchScene / changeScene | 切场景 | targetScene，targetSpawnPoint | 进室内：`room_01`，出生点选列表里有的 |
 | showNotification | 屏幕提示 | text，type（如 info / quest） | 「获得了锈铁钥匙」，type `item` |
-| fadingZoom | 渐变镜头缩放（与场景 `camera.zoom` 同语义） | zoom，durationMs | `# action:fadingZoom:1.15:550` |
-| fadingRestoreSceneCameraZoom | 渐变恢复为当前场景 JSON 的 `camera.zoom`（无则 1） | durationMs | `# action:fadingRestoreSceneCameraZoom:550` |
+| fadingZoom | 渐变镜头缩放（与场景 `camera.zoom` 同语义） | zoom，durationMs | 图节点 `actions`：`fadingZoom`，如 zoom `1.15`，durationMs `550` |
+| fadingRestoreSceneCameraZoom | 渐变恢复为当前场景 JSON 的 `camera.zoom`（无则 1） | durationMs | 图节点 `actions`：`fadingRestoreSceneCameraZoom` |
 | setCameraZoom | 立刻设置镜头缩放（无渐变） | zoom | 少用，多用 fadingZoom |
 | restoreSceneCameraZoom | 立刻恢复场景配置的 zoom | 无 | |
 | pickup | 当拾取物处理 | itemId，itemName，count，是否钱币 | 与热点捡钱逻辑配套时问程序 |
@@ -67,7 +67,7 @@
 
 填完一串动作后，**从上到下依次执行**；若某一步类型写错或参数漏了，可能出现「没反应」或仅控制台报错，以试玩为准。
 
-**NPC 对话与镜头**：与 NPC 交谈时，系统会按该 NPC 的 **`dialogueCameraZoom`**（缺省 1.0）在**开场**渐变拉近，在**整段对话结束**时渐变恢复场景 zoom。**Ink 里仍可写** `fadingZoom` / `fadingRestoreSceneCameraZoom` / `setCameraZoom` 等，用于**对话中途**再推/拉镜头，或与自动行为叠加（按执行顺序生效）。
+**NPC 对话与镜头**：与 NPC 交谈时，系统会按该 NPC 的 **`dialogueCameraZoom`**（缺省 1.0）在**开场**渐变拉近，在**整段对话结束**时渐变恢复场景 zoom。图对话中可在对应节点的 **`actions`** 里配置 `fadingZoom` / `fadingRestoreSceneCameraZoom` / `setCameraZoom` 等，用于**对话中途**再推/拉镜头，或与自动行为叠加（按节点内 `actions` 顺序执行）。
 
 ---
 
@@ -131,8 +131,8 @@
 | id | 唯一 | 场景内不重复 | `npc_blacksmith` |
 | name | 显示名 | | 「王铁匠」 |
 | x, y | 站立位置 | 在画布上拖 | |
-| dialogueFile | 对话文件 | 选对话目录下的 **.ink** | `/assets/dialogues/blacksmith.ink` |
-| dialogueKnot | 从哪一段开始 | 可与编剧在 ink 里约定的结名一致 | `hello_after_quest` |
+| dialogueGraphId | 图对话资源 id | 对应 `assets/dialogues/graphs/<id>.json`（不含路径与后缀） | `茶馆瞎子李` |
+| dialogueGraphEntry | 可选入口节点 id | 从该节点开始推进；不填则用图内默认入口 | `warn_ch` |
 | dialogueCameraZoom | 进入对话时镜头渐变缩放到该值（与场景 `camera.zoom` 同语义） | 缺省 `1.0`；结束对话由游戏自动恢复场景 zoom | `1.15` |
 | interactionRange | 对话距离 | | `60` |
 | animFile | 动画包 | 选 **Animation** 页里那种 `xxx_anim` 对应路径 | 选列表里的 |
@@ -345,13 +345,14 @@
 
 ---
 
-## 十二、Dialogue（对话）
+## 十二、Dialogue（图对话）
 
-- 选 **.ink** 文件编辑；**NPC 的 dialogueFile** 必须指到同套文件。  
-- **dialogueKnot** 填 ink 里某段入口名，可从该段直接播，不用从文件头一路选下来。  
-- 若引擎提供 `getFlag(标记)` 一类函数，只能在程序已声明的范围内用；对话里改标记常用约定写法（如编剧文档里的 `# action:setFlag:...`），须与 **Flags** 登记表一致。
-- **NPC 对话时的动画**：停巡逻与朝向由系统处理；需要站立或换表情时在 Ink 里写 **`# action:playNpcAnimation:<npcId>:<状态名>`**（状态名须与该 NPC 的 `animFile` 内一致）。一般放在该分支入口的第一条有对白/选项的行上，避免重复。未执行 `playNpcAnimation` 时，精灵仍保持进入对话前的当前状态。  
-- **对话模拟**（若有）：用来走分支查漏；最终以游戏内为准。
+- 运行时对话内容为 **`public/assets/dialogues/graphs/*.json`**：节点（文本/选项）、条件、`actions`（与上文 Action 表一致，经 `ActionExecutor` 执行）。
+- 场景 **NPC** 上填 **`dialogueGraphId`**（及可选 **`dialogueGraphEntry`**），与图文件名/入口节点对应。
+- 节点条件、选项条件均基于 **FlagStore**（及数据里约定的比较方式）；改标记用 **`setFlag`** 等 Action，须与 **Flags** 登记表一致。
+- **NPC 对话时的动画**：停巡逻与朝向由系统处理；需要换站立或表情时在对应节点的 **`actions`** 里加 **`playNpcAnimation`**（target 为 npc id，state 与 `animFile` 内状态名一致）。一般放在该分支入口节点上，避免重复。未执行 `playNpcAnimation` 时，精灵仍保持进入对话前的当前状态。
+- 仓库中的 **`.ink`** 若存在，仅作编剧归档，**不参与**运行时加载；以图 JSON 为准。
+- **对话模拟**（若有工具）：用来走分支查漏；最终以游戏内为准。
 
 ---
 
