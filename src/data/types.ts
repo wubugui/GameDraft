@@ -122,6 +122,23 @@ export interface SceneCameraConfig {
 
 export type HotspotType = 'inspect' | 'pickup' | 'transition' | 'npc' | 'encounter';
 
+/** 有展示图时强制与 Player/NPC 的叠放档位；缺省字段则与其它实体一样仅按 Y 排序 */
+export type HotspotDisplaySpriteSort = 'back' | 'front';
+
+/** 热区展示图：底边中点对齐热区 (x,y)，向上延伸 worldHeight、水平居中 worldWidth（与角色脚底锚点一致） */
+export interface HotspotDisplayImage {
+  /** 资源路径，如 `/assets/images/...` */
+  image: string;
+  worldWidth: number;
+  worldHeight: number;
+  /**
+   * 展示图左右朝向（水平镜像 scale.x）。缺省为 right，与 NpcDef.initialFacing 语义一致。
+   */
+  facing?: 'left' | 'right';
+  /** 有图时与角色/NPC 的叠放层级；不设则与众人同规则按 Y */
+  spriteSort?: HotspotDisplaySpriteSort;
+}
+
 export interface HotspotDef {
   id: string;
   type: HotspotType;
@@ -132,6 +149,15 @@ export interface HotspotDef {
   label?: string;
   autoTrigger?: boolean;
   data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData;
+  /** 可选：展示用贴图，底中锚点对齐 (x,y) */
+  displayImage?: HotspotDisplayImage;
+  /**
+   * 可选：相对热区锚点 (x,y) 的局部多边形（与 `collisionPolygonLocal` 配合）。
+   * 旧场景未写 `collisionPolygonLocal` 时按世界坐标兼容。
+   */
+  collisionPolygon?: { x: number; y: number }[];
+  /** 为 true 时 `collisionPolygon` 为局部坐标；缺省视为旧版世界坐标 */
+  collisionPolygonLocal?: boolean;
 }
 
 export interface InspectData {

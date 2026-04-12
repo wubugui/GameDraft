@@ -59,6 +59,8 @@ import { SceneDepthSystem } from './SceneDepthSystem';
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
+import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
+import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
@@ -809,17 +811,29 @@ export class Game {
           sceneData.worldWidth, sceneData.worldHeight,
           worldToPixelX, worldToPixelY,
         );
-        this.player.setDepthCollision((wx, wy) => this.sceneDepthSystem.isCollision(wx, wy));
       } else {
         this.sceneDepthSystem.loadDefault();
-        this.player.setDepthCollision(null);
       }
+      this.refreshPlayerWorldCollision();
     });
 
     this.sceneManager.setDepthUnloader(() => {
       this.sceneDepthSystem.unload();
-      this.player.setDepthCollision(null);
+      this.refreshPlayerWorldCollision();
       this.playerDepthFilter = null;
+    });
+  }
+
+  /** 深度图碰撞与热区多边形碰撞合并（已拾取/失效的热区不参与） */
+  private refreshPlayerWorldCollision(): void {
+    this.player.setDepthCollision((wx, wy) => {
+      if (this.sceneDepthSystem.isCollision(wx, wy)) return true;
+      for (const h of this.sceneManager.getCurrentHotspots()) {
+        if (!h.active) continue;
+        const worldPoly = hotspotCollisionPolygonToWorld(h.def);
+        if (worldPoly && isValidZonePolygon(worldPoly) && isPointInPolygon(worldPoly, wx, wy)) return true;
+      }
+      return false;
     });
   }
 
@@ -848,6 +862,13 @@ export class Game {
     this.listenEvent('scene:beforeUnload', () => {
       this.patrolGeneration++;
       this.npcPatrolEpoch.clear();
+      for (const h of this.sceneManager.getCurrentHotspots()) {
+        const f = h.detachDepthOcclusionFilter();
+        if (f) {
+          this.sceneDepthSystem.removeFilter(f);
+          f.destroy();
+        }
+      }
     });
     this.listenEvent('scene:ready', () => {
       this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
@@ -885,6 +906,19 @@ export class Game {
           !this.sceneManager.isNpcPatrolPersistentlyDisabled(npc.id)
         ) {
           this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, patrol.moveAnimState);
+        }
+      }
+
+      for (const h of this.sceneManager.getCurrentHotspots()) {
+        if (!h.hasDepthDisplayImage()) continue;
+        try {
+          const hf = this.sceneDepthSystem.createFilterForEntity();
+          if (hf) {
+            depthLog('Game', 'attaching depth filter to hotspot display:', h.def.id);
+            h.attachDepthOcclusionFilter(hf);
+          }
+        } catch (e) {
+          depthError('Game', 'hotspot depth filter FAILED', h.def.id, e);
         }
       }
 
@@ -1220,6 +1254,13 @@ export class Game {
             }
           }
         }
+      }
+      for (const h of this.sceneManager.getCurrentHotspots()) {
+        const hf = h.getDepthOcclusionFilter();
+        if (!hf) continue;
+        const footY = h.depthOcclusionFootWorldY();
+        const ex = resolveDepthFloorOffsetBoost(zones, h.container.x, footY, this.flagStore);
+        this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
       }
     }
 

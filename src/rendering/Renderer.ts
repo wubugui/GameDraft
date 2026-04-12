@@ -54,6 +54,7 @@ export class Renderer {
     else document.body.appendChild(canvas);
 
     this.worldContainer.addChild(this.backgroundLayer);
+    this.entityLayer.sortableChildren = true;
     this.worldContainer.addChild(this.entityLayer);
 
     this.app.stage.addChild(this.worldContainer);
@@ -161,9 +162,18 @@ export class Renderer {
 
   /**
    * 实体前后次序：按子树根节点世界脚底 y（与 SpriteEntity anchor 底中、碰撞/深度脚点一致）。
+   * 带展示图且 `spriteSort` 为 back/front 的热点容器会标 `entitySortBand`，此处写入 zIndex 后 sortChildren。
    */
   sortEntityLayer(): void {
-    this.entityLayer.children.sort((a, b) => a.y - b.y);
+    const bandSize = 10_000_000;
+    for (const child of this.entityLayer.children) {
+      const band = (child as { entitySortBand?: 'back' | 'front' }).entitySortBand;
+      let z = child.y;
+      if (band === 'back') z = -bandSize + child.y;
+      else if (band === 'front') z = bandSize + child.y;
+      child.zIndex = z;
+    }
+    this.entityLayer.sortChildren();
   }
 
   get screenWidth(): number {

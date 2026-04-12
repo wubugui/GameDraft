@@ -36,6 +36,82 @@ def validate(model: ProjectModel) -> list[Issue]:
     # --- scenes ---
     for sid, sc in model.scenes.items():
         for hs in sc.get("hotspots", []):
+            hid = str(hs.get("id", "")) or "?"
+            di = hs.get("displayImage")
+            if di is not None:
+                if not isinstance(di, dict):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"Hotspot '{hid}' displayImage 须为对象",
+                    ))
+                else:
+                    img = str(di.get("image", "") or "").strip()
+                    if not img:
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"Hotspot '{hid}' displayImage.image 不能为空",
+                        ))
+                    for key in ("worldWidth", "worldHeight"):
+                        v = di.get(key)
+                        try:
+                            fv = float(v)
+                            if fv <= 0 or not math.isfinite(fv):
+                                issues.append(Issue(
+                                    "error", "scene", sid,
+                                    f"Hotspot '{hid}' displayImage.{key} 须为正有限数",
+                                ))
+                        except (TypeError, ValueError):
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"Hotspot '{hid}' displayImage.{key} 须为数值",
+                            ))
+                    fac = di.get("facing")
+                    if fac is not None and fac not in ("left", "right"):
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"Hotspot '{hid}' displayImage.facing 须为 left 或 right",
+                        ))
+                    ssort = di.get("spriteSort")
+                    if ssort is not None and ssort not in ("back", "front"):
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"Hotspot '{hid}' displayImage.spriteSort 须为 back 或 front",
+                        ))
+            cpl = hs.get("collisionPolygonLocal")
+            if cpl is not None and not isinstance(cpl, bool):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Hotspot '{hid}' collisionPolygonLocal 须为布尔",
+                ))
+            poly = hs.get("collisionPolygon")
+            if poly is not None:
+                if not isinstance(poly, list):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"Hotspot '{hid}' collisionPolygon 须为数组",
+                    ))
+                elif len(poly) > 0 and len(poly) < 3:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"Hotspot '{hid}' collisionPolygon 至少 3 个顶点或省略",
+                    ))
+                else:
+                    for pi, p in enumerate(poly):
+                        if not isinstance(p, dict):
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"Hotspot '{hid}' collisionPolygon[{pi}] 须为 {{x,y}} 对象",
+                            ))
+                            continue
+                        for coord in ("x", "y"):
+                            v = p.get(coord)
+                            try:
+                                float(v)
+                            except (TypeError, ValueError):
+                                issues.append(Issue(
+                                    "error", "scene", sid,
+                                    f"Hotspot '{hid}' collisionPolygon[{pi}].{coord} 须为数值",
+                                ))
             data = hs.get("data", {})
             if hs.get("type") == "transition":
                 ts = data.get("targetScene", "")

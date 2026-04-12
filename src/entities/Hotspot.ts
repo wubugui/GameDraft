@@ -1,5 +1,6 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import type { HotspotDef } from '../data/types';
+import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 
 const TYPE_COLORS: Record<string, number> = {
   inspect: 0x44aaff,
@@ -13,6 +14,10 @@ export class Hotspot {
   public active: boolean = true;
 
   private marker: Graphics;
+  private displaySprite: Sprite | null = null;
+  /** displayImage 世界高度；贴图为底中锚点，与 NPC/Player 脚底一致 */
+  private _displayWorldHeight = 0;
+  private depthOcclusionFilter: DepthOcclusionFilter | null = null;
   private promptIcon: Container | null = null;
   private showingPrompt: boolean = false;
 
@@ -27,6 +32,104 @@ export class Hotspot {
     this.container.addChild(this.marker);
 
     this._syncContainerPosition();
+    this._syncEntitySortBand();
+  }
+
+  /** 与 Renderer.sortEntityLayer 配合：仅在有展示图且配置了 spriteSort 时标记容器 */
+  private _syncEntitySortBand(): void {
+    const c = this.container as Container & { entitySortBand?: 'back' | 'front' };
+    const di = this.def.displayImage;
+    if (
+      this.displaySprite &&
+      di &&
+      di.image &&
+      di.worldWidth > 0 &&
+      di.worldHeight > 0 &&
+      di.spriteSort === 'back'
+    ) {
+      c.entitySortBand = 'back';
+    } else if (
+      this.displaySprite &&
+      di &&
+      di.image &&
+      di.worldWidth > 0 &&
+      di.worldHeight > 0 &&
+      di.spriteSort === 'front'
+    ) {
+      c.entitySortBand = 'front';
+    } else {
+      delete c.entitySortBand;
+    }
+  }
+
+  /**
+   * 以热区 (x,y) 为底边中点铺满 worldWidth×worldHeight；有图时隐藏彩色圆点标记。
+   */
+  setDisplayTexture(texture: Texture, worldWidth: number, worldHeight: number): void {
+    if (this.displaySprite) {
+      this.displaySprite.filters = [];
+      this.container.removeChild(this.displaySprite);
+      this.displaySprite.destroy();
+      this.displaySprite = null;
+    }
+    this._displayWorldHeight = 0;
+    if (worldWidth <= 0 || worldHeight <= 0) {
+      this._syncEntitySortBand();
+      return;
+    }
+    const spr = new Sprite(texture);
+    spr.anchor.set(0.5, 1);
+    spr.position.set(0, 0);
+    spr.width = worldWidth;
+    spr.height = worldHeight;
+    this.container.addChildAt(spr, 0);
+    this.displaySprite = spr;
+    this._displayWorldHeight = worldHeight;
+    this._applyDisplayImageFacing(spr);
+    this.marker.visible = false;
+    this._syncEntitySortBand();
+  }
+
+  private _applyDisplayImageFacing(spr: Sprite): void {
+    const f = this.def.displayImage?.facing;
+    const flip = f === 'left' ? -1 : 1;
+    spr.scale.x = flip * Math.abs(spr.scale.x);
+  }
+
+  /** 与 Player/NPC 一致：底中锚点下脚底即 container.y */
+  depthOcclusionFootWorldY(): number {
+    return this.container.y;
+  }
+
+  /**
+   * 仅挂到 displaySprite，避免 E 提示等子节点被深度裁切。
+   * 须在场景 depth 加载完成之后调用。
+   */
+  attachDepthOcclusionFilter(filter: DepthOcclusionFilter | null): void {
+    if (this.depthOcclusionFilter && this.displaySprite) {
+      this.displaySprite.filters = [];
+    }
+    this.depthOcclusionFilter = filter;
+    if (filter && this.displaySprite) {
+      this.displaySprite.filters = [filter];
+    }
+  }
+
+  /** 场景卸载前由 Game 摘除并 destroy 滤镜 */
+  detachDepthOcclusionFilter(): DepthOcclusionFilter | null {
+    const f = this.depthOcclusionFilter;
+    this.depthOcclusionFilter = null;
+    if (this.displaySprite) this.displaySprite.filters = [];
+    return f;
+  }
+
+  getDepthOcclusionFilter(): DepthOcclusionFilter | null {
+    return this.depthOcclusionFilter;
+  }
+
+  /** 已加载 displayImage 贴图（用于决定是否创建深度滤镜） */
+  hasDepthDisplayImage(): boolean {
+    return this.displaySprite !== null && this._displayWorldHeight > 0;
   }
 
   private _syncContainerPosition(): void {
@@ -81,6 +184,8 @@ export class Hotspot {
 
   destroy(): void {
     this.hidePrompt();
+    this.depthOcclusionFilter = null;
+    this.displaySprite = null;
     if (this.container.parent) {
       this.container.parent.removeChild(this.container);
     }

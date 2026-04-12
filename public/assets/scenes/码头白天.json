@@ -15,8 +15,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 1576.5,
-    "y": 979.8
+    "x": 515.3,
+    "y": 905.4
   },
   "depthConfig": {
     "depth_map": "raw_depth_rg.png",
@@ -69,61 +69,18 @@
     {
       "id": "new_npc_0",
       "name": "New NPC",
-      "x": 1752.2,
-      "y": 1100.5,
+      "x": 1650.8,
+      "y": 1185.0,
       "interactionRange": 50.0,
       "animFile": "/assets/animation/npc_yangren_anim/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "initialFacing": "left"
     },
     {
-      "id": "new_npc_1",
-      "name": "New NPC",
-      "x": 1441.3,
-      "y": 945.9,
-      "interactionRange": 50.0,
-      "animFile": "/assets/animation/boy_ring_anim/anim.json",
-      "initialAnimState": "run_ring",
-      "patrol": {
-        "route": [
-          {
-            "x": 1208.3,
-            "y": 1088.6
-          },
-          {
-            "x": 1507.1,
-            "y": 1021.6
-          },
-          {
-            "x": 1606.9,
-            "y": 976.4
-          },
-          {
-            "x": 1800.6,
-            "y": 726.3
-          },
-          {
-            "x": 1227.0,
-            "y": 991.0
-          }
-        ],
-        "speed": 60,
-        "moveAnimState": "run_ring"
-      }
-    },
-    {
-      "id": "new_npc_2",
-      "name": "New NPC",
-      "x": 1688.1,
-      "y": 1099.1,
-      "interactionRange": 50.0,
-      "animFile": "/assets/animation/player_anim/anim.json",
-      "initialAnimState": "idle"
-    },
-    {
-      "id": "new_npc_3",
-      "name": "New NPC",
-      "x": 1103.6,
-      "y": 1238.0,
+      "id": "npc_脚帮告示",
+      "name": "脚帮",
+      "x": 1082.0,
+      "y": 1230.4,
       "interactionRange": 60.0,
       "animFile": "/assets/animation/npc_lifu_anim/anim.json",
       "initialAnimState": "lifu_stand"
@@ -131,8 +88,8 @@
     {
       "id": "new_npc_4",
       "name": "打瞌睡的官差",
-      "x": 1281.9,
-      "y": 1144.4,
+      "x": 1261.9,
+      "y": 1164.4,
       "interactionRange": 60.0,
       "animFile": "/assets/animation/guanchai_anim/anim.json",
       "initialAnimState": "guanchai_sleep",
@@ -146,8 +103,8 @@
       "id": "hotspot_码头告示板",
       "type": "inspect",
       "label": "码头告示板",
-      "x": 1197.6,
-      "y": 1177.2,
+      "x": 1189.1,
+      "y": 1188.7,
       "interactionRange": 60.0,
       "data": {
         "text": "告示板上贴了告示，但是你不识字.....",
@@ -204,7 +161,7 @@
                 },
                 {
                   "speaker": "你",
-                  "text": "也~这狗日的好像是银子的意思！不得行，等老子去问哈。"
+                  "text": "钱？！不得行，等老子去问哈。"
                 }
               ]
             }
@@ -224,6 +181,154 @@
           }
         ]
       }
+    },
+    {
+      "id": "new_hotspot_1",
+      "type": "inspect",
+      "label": "",
+      "x": 1717.5,
+      "y": 1232.7,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/assets/images/illustrations/码头人群1.png",
+        "worldWidth": 400.0,
+        "worldHeight": 400.0,
+        "facing": "left",
+        "spriteSort": "back"
+      },
+      "collisionPolygon": [
+        {
+          "x": -202.3,
+          "y": -213.6
+        },
+        {
+          "x": -105.8,
+          "y": -284.2
+        },
+        {
+          "x": 54.1,
+          "y": -276.2
+        },
+        {
+          "x": 194.5,
+          "y": -124.3
+        },
+        {
+          "x": 101.8,
+          "y": -63.9
+        },
+        {
+          "x": 43.2,
+          "y": -145.5
+        },
+        {
+          "x": -53.6,
+          "y": -178.7
+        },
+        {
+          "x": -144.0,
+          "y": -164.8
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "new_hotspot_2",
+      "type": "inspect",
+      "label": "",
+      "x": 1346.6,
+      "y": 1592.0,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/assets/images/illustrations/iron_box_closeup.png",
+        "worldWidth": 100.0,
+        "worldHeight": 55.8
+      }
+    },
+    {
+      "id": "new_hotspot_3",
+      "type": "inspect",
+      "label": "",
+      "x": 1480.5,
+      "y": 1414.0,
+      "interactionRange": 50,
+      "data": {
+        "text": ""
+      }
+    },
+    {
+      "id": "new_hotspot_4",
+      "type": "inspect",
+      "label": "洋人女性",
+      "x": 1699.8,
+      "y": 1204.7,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/assets/images/illustrations/洋人女性.png",
+        "worldWidth": 90.0,
+        "worldHeight": 161.2
+      }
+    },
+    {
+      "id": "new_hotspot_5",
+      "type": "inspect",
+      "label": "",
+      "x": 1976.8,
+      "y": 1289.5,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/assets/images/illustrations/堆积的箱子.png",
+        "worldWidth": 250.0,
+        "worldHeight": 250.0
+      },
+      "collisionPolygon": [
+        {
+          "x": -90.0,
+          "y": -147.7
+        },
+        {
+          "x": 119.6,
+          "y": -86.7
+        },
+        {
+          "x": 42.8,
+          "y": -36.9
+        },
+        {
+          "x": -105.0,
+          "y": -89.2
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "new_hotspot_6",
+      "type": "inspect",
+      "label": "",
+      "x": 1729.2,
+      "y": 1261.4,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/assets/images/illustrations/搬运工.png",
+        "worldWidth": 100.0,
+        "worldHeight": 179.2,
+        "facing": "left"
+      }
     }
   ],
   "zones": [
@@ -231,20 +336,36 @@
       "id": "new_zone_0",
       "polygon": [
         {
-          "x": 1825.0,
-          "y": 859.9
+          "x": 1833.1,
+          "y": 857.8
         },
         {
-          "x": 2342.0,
-          "y": 1080.1
+          "x": 2350.1,
+          "y": 1078.0
         },
         {
-          "x": 1905.8,
-          "y": 1384.9
+          "x": 1913.9,
+          "y": 1382.8
         },
         {
-          "x": 1395.8,
-          "y": 1100.2
+          "x": 1786.4,
+          "y": 1311.6
+        },
+        {
+          "x": 1722.7,
+          "y": 1276.0
+        },
+        {
+          "x": 1658.9,
+          "y": 1240.4
+        },
+        {
+          "x": 1403.9,
+          "y": 1098.1
+        },
+        {
+          "x": 1618.5,
+          "y": 977.9
         }
       ],
       "zoneKind": "depth_floor",

@@ -20,10 +20,11 @@ from PySide6.QtWidgets import (
     QStackedWidget, QTextEdit, QToolBar, QMenu, QGraphicsTextItem,
     QToolButton, QMessageBox, QDialog, QDialogButtonBox, QAbstractItemView,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
-    QGraphicsSceneContextMenuEvent, QTableWidget, QTableWidgetItem, QHeaderView,
+    QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
 )
 from PySide6.QtGui import (
     QPixmap, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
+    QImageReader,
     QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
     QShortcut, QKeySequence, QPainterPath,
 )
@@ -33,6 +34,7 @@ from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 
 _HOTSPOT_COLORS = {
     "inspect": QColor(60, 140, 255, 160),
@@ -44,6 +46,94 @@ _HOTSPOT_COLORS = {
 _NPC_COLOR = QColor(180, 80, 220, 180)
 _ZONE_COLOR = QColor(255, 200, 0, 60)
 _ZONE_COLOR_DEPTH_FLOOR = QColor(80, 160, 255, 72)
+
+_HOTSPOT_COLLISION_ZONE_COLOR = QColor(255, 120, 60, 95)
+
+
+def _hotspot_collision_world_to_local(hs: dict, world_poly: list) -> list[dict[str, float]]:
+    x0 = float(hs.get("x", 0))
+    y0 = float(hs.get("y", 0))
+    out: list[dict[str, float]] = []
+    for p in world_poly:
+        if isinstance(p, dict):
+            out.append({
+                "x": round(float(p.get("x", 0)) - x0, 1),
+                "y": round(float(p.get("y", 0)) - y0, 1),
+            })
+    return out
+
+
+def _hotspot_collision_local_to_world(hs: dict, local_poly: list) -> list[dict[str, float]]:
+    x0 = float(hs.get("x", 0))
+    y0 = float(hs.get("y", 0))
+    out: list[dict[str, float]] = []
+    for p in local_poly:
+        if isinstance(p, dict):
+            out.append({
+                "x": round(float(p.get("x", 0)) + x0, 1),
+                "y": round(float(p.get("y", 0)) + y0, 1),
+            })
+    return out
+
+
+def _default_hotspot_collision_triangle_local() -> list[dict[str, float]]:
+    return [
+        {"x": -40.0, "y": -30.0},
+        {"x": 40.0, "y": -30.0},
+        {"x": 0.0, "y": 40.0},
+    ]
+
+
+def _hotspot_display_image_pixel_size(
+    model: ProjectModel | None, path_url: str,
+) -> tuple[int, int] | None:
+    """返回图片像素宽高；路径无效时 None。"""
+    p = disk_path_for_runtime_url(model, path_url) if model else None
+    if p is None or not p.is_file():
+        return None
+    r = QImageReader(str(p))
+    sz = r.size()
+    if not sz.isValid() or sz.width() <= 0 or sz.height() <= 0:
+        return None
+    return sz.width(), sz.height()
+
+
+def _display_world_height_from_width(ww: float, pw: int, ph: int) -> float:
+    if ww <= 0 or pw <= 0 or ph <= 0:
+        return 0.0
+    return round(ww * (ph / pw), 1)
+
+
+def _hotspot_display_image_dict(
+    path: str, ww: float, hh: float, facing: str, sprite_sort: str,
+) -> dict:
+    d: dict = {"image": path, "worldWidth": float(ww), "worldHeight": float(hh)}
+    if (facing or "right").strip().lower() == "left":
+        d["facing"] = "left"
+    ss = (sprite_sort or "default").strip().lower()
+    if ss in ("back", "front"):
+        d["spriteSort"] = ss
+    return d
+
+
+def _migrate_scene_hotspot_collision_to_local(sc: dict) -> bool:
+    """旧数据 collisionPolygon 为世界坐标：转为相对 (x,y) 的局部坐标并打标。"""
+    changed = False
+    for hs in sc.get("hotspots") or []:
+        if not isinstance(hs, dict):
+            continue
+        poly = hs.get("collisionPolygon")
+        if not isinstance(poly, list) or len(poly) < 3:
+            continue
+        if hs.get("collisionPolygonLocal") is True:
+            continue
+        lp = _hotspot_collision_world_to_local(hs, poly)
+        if len(lp) < 3:
+            continue
+        hs["collisionPolygon"] = lp
+        hs["collisionPolygonLocal"] = True
+        changed = True
+    return changed
 
 
 def _zone_canvas_color(zone: dict) -> QColor:
@@ -383,6 +473,9 @@ class _DraggableCircle(QGraphicsEllipseItem):
             self._range_outline.setBrush(QBrush(Qt.GlobalColor.transparent))
             self._range_outline.setFlag(
                 QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+            # 虚线圈仅作示意，不参与命中；否则大圆会挡住下方的 hotspot 碰撞多边形，
+            # 连顶点都难以点到（与常规 zone 不同，碰撞多边形主要靠拖顶点编辑）。
+            self._range_outline.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         else:
             self._range_outline.setRect(-r, -r, r * 2, r * 2)
             self._range_outline.show()
@@ -429,7 +522,8 @@ class _DraggableRect(QGraphicsRectItem):
 
 
 class _EditableZonePolygon(QGraphicsObject):
-    """Zone：世界坐标闭合多边形；拖顶点、拖内部平移、双击边插点、右键删顶点。"""
+    """Zone：世界坐标闭合多边形；拖顶点、拖内部平移、双击边插点、右键删顶点。
+    hotspot_collision：仅顶点（及边插点等），不允许拖内部整体平移。"""
 
     HANDLE_WORLD_R = 14.0
 
@@ -439,11 +533,13 @@ class _EditableZonePolygon(QGraphicsObject):
         points: list[tuple[float, float]],
         color: QColor,
         entity_id: str,
+        poly_kind: str = "zone",
     ):
         super().__init__()
         self._canvas = canvas
         self.entity_id = entity_id
-        self.entity_kind = "zone"
+        self.entity_kind = "zone" if poly_kind == "zone" else "hotspot_collision"
+        self._poly_kind = poly_kind
         self._color = color
         self._points: list[list[float]] = [[float(x), float(y)] for x, y in points]
         self.setFlags(
@@ -466,6 +562,13 @@ class _EditableZonePolygon(QGraphicsObject):
 
     def points_to_model(self) -> list[dict[str, float]]:
         return [{"x": round(px, 1), "y": round(py, 1)} for px, py in self._points]
+
+    def _emit_polygon_committed(self) -> None:
+        poly = self.points_to_model()
+        if self._poly_kind == "zone":
+            self._canvas._emit_zone_polygon_committed(self.entity_id, poly)
+        else:
+            self._canvas._emit_hotspot_collision_polygon_committed(self.entity_id, poly)
 
     def _polyf(self) -> QPolygonF:
         return QPolygonF([QPointF(p[0], p[1]) for p in self._points])
@@ -557,8 +660,7 @@ class _EditableZonePolygon(QGraphicsObject):
         self._hover_vertex = None
         self.prepareGeometryChange()
         self.update()
-        self._canvas._emit_zone_polygon_committed(
-            self.entity_id, self.points_to_model())
+        self._emit_polygon_committed()
         return True
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
@@ -577,8 +679,7 @@ class _EditableZonePolygon(QGraphicsObject):
                 self.prepareGeometryChange()
                 self.update()
                 self._select_exclusively()
-                self._canvas._emit_zone_polygon_committed(
-                    self.entity_id, self.points_to_model())
+                self._emit_polygon_committed()
             event.accept()
             return
         if vi is not None:
@@ -588,7 +689,10 @@ class _EditableZonePolygon(QGraphicsObject):
             self._select_exclusively()
             event.accept()
             return
-        if self._point_in_polygon(sp.x(), sp.y()):
+        # hotspot 附带 collisionPolygon：仅允许拖顶点，禁止像独立 zone 那样拖内部整体平移。
+        if self._poly_kind != "hotspot_collision" and self._point_in_polygon(
+            sp.x(), sp.y()
+        ):
             self._drag_vertex = None
             self._drag_body = True
             self._last_scene = QPointF(sp)
@@ -629,8 +733,7 @@ class _EditableZonePolygon(QGraphicsObject):
                 self._drag_vertex = None
                 self._drag_body = False
                 self._last_scene = None
-                self._canvas._emit_zone_polygon_committed(
-                    self.entity_id, self.points_to_model())
+                self._emit_polygon_committed()
                 event.accept()
                 return
         super().mouseReleaseEvent(event)
@@ -667,8 +770,7 @@ class _EditableZonePolygon(QGraphicsObject):
             self._points.insert(best_i + 1, [mx, my])
             self.prepareGeometryChange()
             self.update()
-            self._canvas._emit_zone_polygon_committed(
-                self.entity_id, self.points_to_model())
+            self._emit_polygon_committed()
         event.accept()
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
@@ -681,8 +783,7 @@ class _EditableZonePolygon(QGraphicsObject):
                 del self._points[vi]
                 self.prepareGeometryChange()
                 self.update()
-                self._canvas._emit_zone_polygon_committed(
-                    self.entity_id, self.points_to_model())
+                self._emit_polygon_committed()
             event.accept()
             return
         super().contextMenuEvent(event)
@@ -903,6 +1004,8 @@ class SceneCanvas(QGraphicsView):
     item_position_live = Signal(str, str, float, float)  # kind, id, x, y（拖拽中）
     # kind, id, polygon: list[{"x","y"}, ...]
     item_zone_polygon_committed = Signal(str, str, object)
+    # hotspot_id, polygon: list[{"x","y"}, ...]
+    item_hotspot_collision_polygon_committed = Signal(str, object)
     # npc_id, route: list[{"x","y"}, ...]
     item_npc_patrol_route_committed = Signal(str, object)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
@@ -931,6 +1034,11 @@ class SceneCanvas(QGraphicsView):
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
         self._world_w: float = 800
         self._world_h: float = 600
+        self._project_model: ProjectModel | None = None
+
+    def set_project_model(self, model: ProjectModel | None) -> None:
+        """用于将 /assets/... 解析为本地路径，在画布上绘制热区 displayImage。"""
+        self._project_model = model
 
     @property
     def handle_radius(self) -> float:
@@ -1000,6 +1108,93 @@ class SceneCanvas(QGraphicsView):
             range_radius=ir, scene_view=self)
         self._gfx.addItem(item)
         self._entity_items[f"hotspot:{hs.get('id', '')}"] = item
+        self.refresh_hotspot_visuals(hs)
+
+    def refresh_hotspot_visuals(self, hs: dict) -> None:
+        """同步 displayImage 预览（底边中点对齐 x,y）与 collisionPolygon。"""
+        hid = str(hs.get("id", "")).strip()
+        if not hid:
+            return
+        # 仅重建展示图；碰撞多边形在已存在时原地更新顶点，避免在鼠标事件栈内
+        # removeItem 掉正在拖拽/悬停的多边形（与巡逻折线延后刷新同类 Qt 崩溃）。
+        disp_key = f"hotspot_display:{hid}"
+        old_disp = self._entity_items.pop(disp_key, None)
+        if old_disp is not None and old_disp.scene() is self._gfx:
+            self._gfx.removeItem(old_disp)
+        di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
+        img = str(di.get("image", "") or "").strip()
+        try:
+            ww = float(di.get("worldWidth", 0) or 0)
+            hh = float(di.get("worldHeight", 0) or 0)
+        except (TypeError, ValueError):
+            ww, hh = 0.0, 0.0
+        if img and ww > 0 and hh > 0:
+            cx = float(hs.get("x", 0))
+            cy = float(hs.get("y", 0))
+            pm_data = QPixmap()
+            disk_path = (
+                disk_path_for_runtime_url(self._project_model, img)
+                if self._project_model
+                else None
+            )
+            if disk_path and disk_path.is_file():
+                pm_data = QPixmap(str(disk_path))
+            if not pm_data.isNull():
+                facing = str(di.get("facing", "") or "right").strip().lower()
+                if facing == "left":
+                    pm_data = QPixmap.fromImage(pm_data.toImage().mirrored(True, False))
+                sw = max(pm_data.width(), 1)
+                sh = max(pm_data.height(), 1)
+                pix_it = QGraphicsPixmapItem(pm_data)
+                pix_it.setPos(cx - ww * 0.5, cy - hh)
+                pix_it.setTransform(QTransform.fromScale(ww / sw, hh / sh))
+                pix_it.setZValue(-4)
+                self._gfx.addItem(pix_it)
+                self._entity_items[disp_key] = pix_it
+            else:
+                rect = QGraphicsRectItem(cx - ww * 0.5, cy - hh, ww, hh)
+                rect.setBrush(QBrush(QColor(200, 120, 255, 38)))
+                rect.setPen(QPen(QColor(140, 70, 190, 200), 0, Qt.PenStyle.DashLine))
+                rect.setZValue(-4)
+                self._gfx.addItem(rect)
+                self._entity_items[disp_key] = rect
+        col_key = f"hotspot_collision:{hid}"
+        poly = hs.get("collisionPolygon")
+        pts: list[tuple[float, float]] = []
+        if isinstance(poly, list) and len(poly) >= 3:
+            if hs.get("collisionPolygonLocal") is True:
+                for p in _hotspot_collision_local_to_world(hs, poly):
+                    pts.append((float(p["x"]), float(p["y"])))
+            else:
+                for p in poly:
+                    if isinstance(p, dict):
+                        pts.append((float(p.get("x", 0)), float(p.get("y", 0))))
+        if len(pts) >= 3:
+            model_pts = [{"x": px, "y": py} for px, py in pts]
+            existing = self._entity_items.get(col_key)
+            if isinstance(existing, _EditableZonePolygon):
+                existing.set_points_from_model(model_pts)
+            else:
+                old_col = self._entity_items.pop(col_key, None)
+                if old_col is not None and old_col.scene() is self._gfx:
+                    self._gfx.removeItem(old_col)
+                poly_item = _EditableZonePolygon(
+                    self, pts, _HOTSPOT_COLLISION_ZONE_COLOR, hid,
+                    poly_kind="hotspot_collision",
+                )
+                poly_item.setZValue(-2)
+                self._gfx.addItem(poly_item)
+                self._entity_items[col_key] = poly_item
+        else:
+            old_col = self._entity_items.pop(col_key, None)
+            if old_col is not None and old_col.scene() is self._gfx:
+                self._gfx.removeItem(old_col)
+
+    def update_hotspot_collision_polygon(self, entity_id: str, polygon: list) -> None:
+        key = f"hotspot_collision:{entity_id}"
+        item = self._entity_items.get(key)
+        if isinstance(item, _EditableZonePolygon):
+            item.set_points_from_model(polygon)
 
     def add_npc(self, npc: dict) -> None:
         ir = npc.get("interactionRange", 50)
@@ -1032,6 +1227,13 @@ class SceneCanvas(QGraphicsView):
         polygon: list,
     ) -> None:
         self.item_zone_polygon_committed.emit("zone", eid, polygon)
+
+    def _emit_hotspot_collision_polygon_committed(
+        self,
+        eid: str,
+        polygon: list,
+    ) -> None:
+        self.item_hotspot_collision_polygon_committed.emit(eid, polygon)
 
     def _emit_npc_patrol_route_committed(
         self, npc_id: str, route: list,
@@ -1179,13 +1381,20 @@ class SceneCanvas(QGraphicsView):
                 self._pick_cycle_key = None
             else:
                 key = (round(sp.x(), 1), round(sp.y(), 1))
+                sel = self._gfx.selectedItems()
+                sel0 = sel[0] if sel else None
                 if key != self._pick_cycle_key:
                     self._pick_cycle_key = key
-                    self._pick_cycle_i = 0
+                    # 新落点：已选中图元若在叠放栈内则保持为本次操作目标，避免
+                    # 「按下移动一丁点」就重置为 stack[0] 导致 Zone 抢走拖动。
+                    if sel0 is not None and sel0 in stack:
+                        self._pick_cycle_i = stack.index(sel0)
+                    else:
+                        self._pick_cycle_i = 0
                 else:
-                    sel = self._gfx.selectedItems()
-                    if sel and sel[0] in stack:
-                        self._pick_cycle_i = (stack.index(sel[0]) + 1) % len(stack)
+                    # 同一栅格落点重复点击：在栈内循环切换（原行为）
+                    if sel0 is not None and sel0 in stack:
+                        self._pick_cycle_i = (stack.index(sel0) + 1) % len(stack)
                     else:
                         self._pick_cycle_i = 0
                 target = stack[self._pick_cycle_i]
@@ -1227,7 +1436,7 @@ class SceneCanvas(QGraphicsView):
                 # property panel. If item_selected runs before item_moved, the
                 # spin boxes are filled with stale x/y and stay wrong until the
                 # next gesture.
-                emit_move = it.entity_kind != "zone"
+                emit_move = it.entity_kind not in ("zone", "hotspot_collision")
                 if emit_move:
                     self.item_moved.emit(
                         it.entity_kind, it.entity_id,
@@ -1435,6 +1644,8 @@ class ScenePropertyPanel(QScrollArea):
     interaction_range_changed = Signal(str, str, float)
     # entity_id, polygon list[{"x","y"}, ...] — 侧栏顶点表驱动画布
     zone_polygon_changed = Signal(str, object)
+    hotspot_collision_polygon_changed = Signal(str, object)
+    hotspot_visual_refresh_requested = Signal(str)
     # 侧栏改 anim/初始状态后，让主窗口按 npc id 重建该 NPC 的场景动画层
     npc_scene_anim_refresh_requested = Signal(str)
     # 侧栏改 x/y 时同步写回 dict 并通知主窗口重绘该 NPC 位置
@@ -1843,8 +2054,10 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("type", self._hs_type)
         self._hs_label = QLineEdit(); form.addRow("label", self._hs_label)
         self._hs_x = QDoubleSpinBox(); self._hs_x.setRange(-99999, 99999); self._hs_x.setDecimals(1)
+        self._hs_x.valueChanged.connect(self._on_hs_xy_live_refresh)
         form.addRow("x", self._hs_x)
         self._hs_y = QDoubleSpinBox(); self._hs_y.setRange(-99999, 99999); self._hs_y.setDecimals(1)
+        self._hs_y.valueChanged.connect(self._on_hs_xy_live_refresh)
         form.addRow("y", self._hs_y)
         self._hs_range = QDoubleSpinBox(); self._hs_range.setRange(0, 99999)
         form.addRow("interactionRange", self._hs_range)
@@ -1854,6 +2067,87 @@ class ScenePropertyPanel(QScrollArea):
 
         self._hs_cond = ConditionEditor("Conditions")
         lay.addWidget(self._hs_cond)
+
+        disp = QGroupBox(
+            "显示图（可选，底边中点对齐 x,y；只调世界宽度，高度按图片比例自动算）")
+        dlay = QVBoxLayout(disp)
+        self._hs_disp_row = CutsceneImagePathRow(
+            self._model, "", self,
+            external_copy_subdir="illustrations",
+        )
+        self._hs_disp_row.changed.connect(self._on_hs_display_row_changed)
+        dlay.addWidget(self._hs_disp_row)
+        df = QFormLayout()
+        self._hs_disp_ww = QDoubleSpinBox()
+        self._hs_disp_ww.setRange(1, 999999)
+        self._hs_disp_ww.setDecimals(1)
+        self._hs_disp_ww.setSingleStep(1.0)
+        self._hs_disp_ww.setValue(100)
+        self._hs_disp_ww.setToolTip("世界宽度（世界单位）；可手输或拖动下方滑块")
+        self._hs_disp_ww.valueChanged.connect(self._on_hs_display_dim_changed)
+        df.addRow("worldWidth", self._hs_disp_ww)
+        self._hs_disp_ww_slider = QSlider(Qt.Orientation.Horizontal)
+        self._hs_disp_ww_slider.setRange(100, 10_000)
+        self._hs_disp_ww_slider.setValue(1000)
+        self._hs_disp_ww_slider.setToolTip(
+            "拖动调节世界宽度（约 10～1000，与上方数值同步，步进 0.1；超出范围可手输）"
+        )
+        self._hs_disp_ww_slider.valueChanged.connect(self._on_hs_disp_ww_slider_changed)
+        df.addRow(self._hs_disp_ww_slider)
+        self._hs_disp_hh_label = QLabel("worldHeight（自动）: —")
+        self._hs_disp_hh_label.setStyleSheet("color:#aaa;")
+        self._hs_disp_hh_label.setWordWrap(True)
+        df.addRow("worldHeight", self._hs_disp_hh_label)
+        self._hs_disp_facing = QComboBox()
+        self._hs_disp_facing.addItem("朝右（默认）", "right")
+        self._hs_disp_facing.addItem("朝左", "left")
+        self._hs_disp_facing.setToolTip("展示图水平镜像，与 NPC initialFacing 一致")
+        self._hs_disp_facing.currentIndexChanged.connect(self._on_hs_disp_facing_changed)
+        df.addRow("朝向", self._hs_disp_facing)
+        self._hs_disp_sprite_sort = QComboBox()
+        self._hs_disp_sprite_sort.addItem("与角色/NPC 同层（按 Y）", "default")
+        self._hs_disp_sprite_sort.addItem("永远画在最底层", "back")
+        self._hs_disp_sprite_sort.addItem("永远画在最顶层", "front")
+        self._hs_disp_sprite_sort.setToolTip(
+            "仅运行时有效：同一 entityLayer 内与玩家、NPC 的叠放；"
+            "最底/最顶仍会在同档热点之间按 Y 细分。"
+        )
+        self._hs_disp_sprite_sort.currentIndexChanged.connect(self._on_hs_disp_sprite_sort_changed)
+        df.addRow("精灵排序", self._hs_disp_sprite_sort)
+        dlay.addLayout(df)
+        lay.addWidget(disp)
+
+        colg = QGroupBox("碰撞多边形（可选，世界坐标；区域内阻挡行走）")
+        clay = QVBoxLayout(colg)
+        self._hs_col_enable = QCheckBox("启用碰撞多边形")
+        self._hs_col_enable.toggled.connect(self._on_hs_collision_toggle)
+        clay.addWidget(self._hs_col_enable)
+        col_hint = QLabel(
+            "与 Zone 相同：拖顶点、拖内部平移、双击边插点、Shift+单击删点；"
+            "侧栏表格与画布双向同步。")
+        col_hint.setWordWrap(True)
+        clay.addWidget(col_hint)
+        self._hs_col_table = QTableWidget(0, 3)
+        self._hs_col_table.setHorizontalHeaderLabels(["#", "x", "y"])
+        self._hs_col_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        self._hs_col_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self._hs_col_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch)
+        self._hs_col_table.setMinimumHeight(140)
+        self._hs_col_table.itemChanged.connect(self._on_hs_col_cell_changed)
+        clay.addWidget(self._hs_col_table)
+        col_btns = QHBoxLayout()
+        self._hs_col_add = QPushButton("添加顶点")
+        self._hs_col_add.clicked.connect(self._on_hs_col_add_vertex)
+        self._hs_col_del = QPushButton("删除选中顶点")
+        self._hs_col_del.clicked.connect(self._on_hs_col_remove_vertex)
+        col_btns.addWidget(self._hs_col_add)
+        col_btns.addWidget(self._hs_col_del)
+        clay.addLayout(col_btns)
+        lay.addWidget(colg)
+        self._hs_col_updating = False
 
         self._hs_data_stack = QStackedWidget()
         lay.addWidget(QLabel("<b>Data</b>"))
@@ -1925,6 +2219,249 @@ class ScenePropertyPanel(QScrollArea):
     def _on_hs_type_changed(self, t: str) -> None:
         self._hs_data_stack.setCurrentIndex(self._TYPE_TO_DATA_IDX.get(t, 0))
 
+    def _hs_col_polygon_from_table(self) -> list[dict[str, float]]:
+        t = self._hs_col_table
+        out: list[dict[str, float]] = []
+        for r in range(t.rowCount()):
+            x = round(self._parse_float_cell(t.item(r, 1)), 1)
+            y = round(self._parse_float_cell(t.item(r, 2)), 1)
+            out.append({"x": x, "y": y})
+        return out
+
+    def _set_hs_col_table(self, polygon: list) -> None:
+        self._hs_col_updating = True
+        try:
+            t = self._hs_col_table
+            t.blockSignals(True)
+            t.setRowCount(0)
+            if not isinstance(polygon, list):
+                polygon = []
+            for p in polygon:
+                if not isinstance(p, dict):
+                    continue
+                r = t.rowCount()
+                t.insertRow(r)
+                ix = QTableWidgetItem(str(r + 1))
+                ix.setFlags(ix.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                t.setItem(r, 0, ix)
+                t.setItem(r, 1, QTableWidgetItem(str(round(float(p.get("x", 0)), 1))))
+                t.setItem(r, 2, QTableWidgetItem(str(round(float(p.get("y", 0)), 1))))
+            t.blockSignals(False)
+            for r in range(t.rowCount()):
+                it = t.item(r, 0)
+                if it:
+                    it.setText(str(r + 1))
+        finally:
+            self._hs_col_updating = False
+
+    def _on_hs_display_row_changed(self) -> None:
+        self._sync_hs_disp_width_slider_from_spin()
+        self._update_hs_disp_height_label()
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _compute_hs_display_world_height(self, path: str, ww: float) -> float:
+        if not path or ww <= 0:
+            return 0.0
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            return max(1.0, float(ww))
+        pw, ph = px
+        return _display_world_height_from_width(ww, pw, ph)
+
+    def _update_hs_disp_height_label(self) -> None:
+        path = self._hs_disp_row.path().strip()
+        ww = float(self._hs_disp_ww.value())
+        hh = self._compute_hs_display_world_height(path, ww)
+        px = _hotspot_display_image_pixel_size(self._model, path) if path else None
+        if path and ww > 0 and hh > 0:
+            if px is None:
+                self._hs_disp_hh_label.setText(
+                    f"worldHeight（自动）: {hh:g}（无法读取图尺寸，暂按正方形）",
+                )
+            else:
+                self._hs_disp_hh_label.setText(
+                    f"worldHeight（自动，按图比例）: {hh:g}",
+                )
+        else:
+            self._hs_disp_hh_label.setText("worldHeight（自动）: —")
+
+    def _sync_hs_disp_width_slider_from_spin(self) -> None:
+        raw = int(round(float(self._hs_disp_ww.value()) * 10))
+        raw = max(
+            self._hs_disp_ww_slider.minimum(),
+            min(self._hs_disp_ww_slider.maximum(), raw),
+        )
+        self._hs_disp_ww_slider.blockSignals(True)
+        self._hs_disp_ww_slider.setValue(raw)
+        self._hs_disp_ww_slider.blockSignals(False)
+
+    def _on_hs_disp_ww_slider_changed(self, v: int) -> None:
+        self._hs_disp_ww.blockSignals(True)
+        self._hs_disp_ww.setValue(v / 10.0)
+        self._hs_disp_ww.blockSignals(False)
+        self._update_hs_disp_height_label()
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _on_hs_display_dim_changed(self, _v: float) -> None:
+        self._sync_hs_disp_width_slider_from_spin()
+        self._update_hs_disp_height_label()
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _on_hs_disp_facing_changed(self, _i: int) -> None:
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _on_hs_disp_sprite_sort_changed(self, _i: int) -> None:
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _on_hs_xy_live_refresh(self, _v: float | None = None) -> None:
+        """x/y 与局部碰撞多边形联动：表格显示世界坐标，画布随 hs 位置刷新。"""
+        hs = self._pending_hotspot
+        if hs is None or self._stack.currentWidget() != self._hotspot_panel:
+            return
+        hs["x"] = float(self._hs_x.value())
+        hs["y"] = float(self._hs_y.value())
+        if self._hs_col_enable.isChecked():
+            col = hs.get("collisionPolygon")
+            if isinstance(col, list) and len(col) >= 3 and hs.get("collisionPolygonLocal") is True:
+                self._hs_col_updating = True
+                try:
+                    self._set_hs_col_table(_hotspot_collision_local_to_world(hs, col))
+                finally:
+                    self._hs_col_updating = False
+        self.changed.emit()
+        eid = str(hs.get("id", "")).strip()
+        if eid:
+            self.hotspot_visual_refresh_requested.emit(eid)
+
+    def _sync_hs_display_to_dict_and_refresh(self) -> None:
+        hs = self._pending_hotspot
+        if hs is None or self._stack.currentWidget() != self._hotspot_panel:
+            return
+        path = self._hs_disp_row.path().strip()
+        ww = float(self._hs_disp_ww.value())
+        hh = self._compute_hs_display_world_height(path, ww)
+        if path and ww > 0 and hh > 0:
+            fac = self._hs_disp_facing.currentData()
+            sort = self._hs_disp_sprite_sort.currentData()
+            hs["displayImage"] = _hotspot_display_image_dict(
+                path, ww, hh, str(fac or "right"), str(sort or "default"),
+            )
+        else:
+            hs.pop("displayImage", None)
+        self.changed.emit()
+        eid = str(hs.get("id", "")).strip()
+        if eid:
+            self.hotspot_visual_refresh_requested.emit(eid)
+
+    def _on_hs_collision_toggle(self, checked: bool) -> None:
+        hs = self._pending_hotspot
+        if hs is None or self._stack.currentWidget() != self._hotspot_panel:
+            return
+        if checked:
+            poly = hs.get("collisionPolygon")
+            if not (isinstance(poly, list) and len(poly) >= 3):
+                hs["collisionPolygon"] = _default_hotspot_collision_triangle_local()
+                hs["collisionPolygonLocal"] = True
+            wpoly = _hotspot_collision_local_to_world(hs, hs["collisionPolygon"])
+            self._set_hs_col_table(wpoly)
+        else:
+            hs.pop("collisionPolygon", None)
+            hs.pop("collisionPolygonLocal", None)
+            self._hs_col_updating = True
+            try:
+                self._hs_col_table.setRowCount(0)
+            finally:
+                self._hs_col_updating = False
+        self.changed.emit()
+        eid = str(hs.get("id", "")).strip()
+        if eid:
+            self.hotspot_visual_refresh_requested.emit(eid)
+            if checked and isinstance(hs.get("collisionPolygon"), list):
+                wpoly = _hotspot_collision_local_to_world(hs, hs["collisionPolygon"])
+                self.hotspot_collision_polygon_changed.emit(eid, wpoly)
+
+    def _emit_hs_col_polygon_if_valid(self) -> None:
+        if self._hs_col_updating:
+            return
+        if self._stack.currentWidget() != self._hotspot_panel:
+            return
+        if not self._hs_col_enable.isChecked():
+            return
+        hs = self._pending_hotspot
+        if hs is None:
+            return
+        eid = str(hs.get("id", "")).strip()
+        if not eid:
+            return
+        poly_world = self._hs_col_polygon_from_table()
+        if len(poly_world) < 3:
+            return
+        hs["collisionPolygon"] = _hotspot_collision_world_to_local(hs, poly_world)
+        hs["collisionPolygonLocal"] = True
+        self.hotspot_collision_polygon_changed.emit(eid, poly_world)
+        self.changed.emit()
+
+    def _on_hs_col_cell_changed(self, item: QTableWidgetItem) -> None:
+        if self._hs_col_updating:
+            return
+        if item.column() == 0:
+            return
+        self._emit_hs_col_polygon_if_valid()
+
+    def _on_hs_col_add_vertex(self) -> None:
+        if self._stack.currentWidget() != self._hotspot_panel:
+            return
+        if not self._hs_col_enable.isChecked():
+            return
+        hs = self._pending_hotspot
+        if hs is None:
+            return
+        t = self._hs_col_table
+        poly = self._hs_col_polygon_from_table()
+        row = t.currentRow()
+        if len(poly) < 3:
+            hs["collisionPolygon"] = _default_hotspot_collision_triangle_local()
+            hs["collisionPolygonLocal"] = True
+            poly = _hotspot_collision_local_to_world(hs, hs["collisionPolygon"])
+        else:
+            if row < 0 and t.rowCount() > 0:
+                row = t.rowCount() - 1
+            i = max(0, min(row, len(poly) - 1))
+            j = (i + 1) % len(poly)
+            nx = (poly[i]["x"] + poly[j]["x"]) * 0.5
+            ny = (poly[i]["y"] + poly[j]["y"]) * 0.5
+            poly.insert(i + 1, {"x": round(nx, 1), "y": round(ny, 1)})
+        self._set_hs_col_table(poly)
+        self._emit_hs_col_polygon_if_valid()
+
+    def _on_hs_col_remove_vertex(self) -> None:
+        if self._stack.currentWidget() != self._hotspot_panel:
+            return
+        t = self._hs_col_table
+        row = t.currentRow()
+        if row < 0 or t.rowCount() <= 3:
+            return
+        poly = self._hs_col_polygon_from_table()
+        if row < len(poly):
+            del poly[row]
+        self._set_hs_col_table(poly)
+        self._emit_hs_col_polygon_if_valid()
+
+    def refresh_hotspot_collision_table(self, eid: str) -> None:
+        """侧栏表格显示世界坐标（由内存中的局部 collisionPolygon 换算）。"""
+        if self._stack.currentWidget() != self._hotspot_panel:
+            return
+        hs = self._pending_hotspot
+        if hs is None or str(hs.get("id", "")) != eid:
+            return
+        col = hs.get("collisionPolygon")
+        if not isinstance(col, list) or len(col) < 3:
+            return
+        if hs.get("collisionPolygonLocal") is True:
+            self._set_hs_col_table(_hotspot_collision_local_to_world(hs, col))
+        else:
+            self._set_hs_col_table(col)
+
     def _on_trans_scene_changed(self, sid: str) -> None:
         if self._hs_trans_loading:
             return
@@ -1970,14 +2507,57 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_id.setText(hs.get("id", ""))
         self._hs_type.setCurrentText(hs.get("type", "inspect"))
         self._hs_label.setText(hs.get("label", ""))
+        self._hs_x.blockSignals(True)
+        self._hs_y.blockSignals(True)
         self._hs_x.setValue(hs.get("x", 0))
         self._hs_y.setValue(hs.get("y", 0))
+        self._hs_x.blockSignals(False)
+        self._hs_y.blockSignals(False)
         self._hs_range.blockSignals(True)
         self._hs_range.setValue(hs.get("interactionRange", 50))
         self._hs_range.blockSignals(False)
         self._hs_auto.setChecked(hs.get("autoTrigger", False))
         self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
         self._hs_cond.set_data(hs.get("conditions", []))
+
+        di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
+        self._hs_disp_row.set_path(str(di.get("image", "") or ""))
+        self._hs_disp_ww.blockSignals(True)
+        self._hs_disp_ww_slider.blockSignals(True)
+        self._hs_disp_ww.setValue(float(di.get("worldWidth", 100) or 100))
+        self._sync_hs_disp_width_slider_from_spin()
+        self._hs_disp_ww_slider.blockSignals(False)
+        self._hs_disp_ww.blockSignals(False)
+        self._update_hs_disp_height_label()
+        fac = str(di.get("facing", "") or "right").strip().lower()
+        self._hs_disp_facing.blockSignals(True)
+        self._hs_disp_facing.setCurrentIndex(1 if fac == "left" else 0)
+        self._hs_disp_facing.blockSignals(False)
+        ss = str(di.get("spriteSort", "") or "default").strip().lower()
+        sort_idx = 0
+        if ss == "back":
+            sort_idx = 1
+        elif ss == "front":
+            sort_idx = 2
+        self._hs_disp_sprite_sort.blockSignals(True)
+        self._hs_disp_sprite_sort.setCurrentIndex(sort_idx)
+        self._hs_disp_sprite_sort.blockSignals(False)
+        colpoly = hs.get("collisionPolygon")
+        has_col = isinstance(colpoly, list) and len(colpoly) >= 3
+        self._hs_col_enable.blockSignals(True)
+        self._hs_col_enable.setChecked(has_col)
+        self._hs_col_enable.blockSignals(False)
+        if has_col:
+            if hs.get("collisionPolygonLocal") is True:
+                self._set_hs_col_table(_hotspot_collision_local_to_world(hs, colpoly))
+            else:
+                self._set_hs_col_table(colpoly)
+        else:
+            self._hs_col_updating = True
+            try:
+                self._hs_col_table.setRowCount(0)
+            finally:
+                self._hs_col_updating = False
 
         data = hs.get("data", {})
         ht = hs.get("type", "inspect")
@@ -2049,6 +2629,29 @@ class ScenePropertyPanel(QScrollArea):
             hs["conditions"] = conds
         elif "conditions" in hs:
             del hs["conditions"]
+
+        path = self._hs_disp_row.path().strip()
+        ww = float(self._hs_disp_ww.value())
+        hh = self._compute_hs_display_world_height(path, ww)
+        fac = self._hs_disp_facing.currentData()
+        sort = self._hs_disp_sprite_sort.currentData()
+        if path and ww > 0 and hh > 0:
+            hs["displayImage"] = _hotspot_display_image_dict(
+                path, ww, hh, str(fac or "right"), str(sort or "default"),
+            )
+        else:
+            hs.pop("displayImage", None)
+        if self._hs_col_enable.isChecked():
+            poly_world = self._hs_col_polygon_from_table()
+            if len(poly_world) >= 3:
+                hs["collisionPolygon"] = _hotspot_collision_world_to_local(hs, poly_world)
+                hs["collisionPolygonLocal"] = True
+            elif "collisionPolygon" in hs:
+                del hs["collisionPolygon"]
+                hs.pop("collisionPolygonLocal", None)
+        else:
+            hs.pop("collisionPolygon", None)
+            hs.pop("collisionPolygonLocal", None)
 
         ht = hs["type"]
         if ht == "inspect":
@@ -3089,12 +3692,15 @@ class SceneEditor(QWidget):
 
         # center: canvas
         self._canvas = SceneCanvas()
+        self._canvas.set_project_model(model)
         self._canvas.item_selected.connect(self._on_item_selected)
         self._canvas.item_deselected.connect(self._on_item_deselected)
         self._canvas.item_moved.connect(self._on_item_moved)
         self._canvas.item_position_live.connect(self._on_item_position_live)
         self._canvas.item_zone_polygon_committed.connect(
             self._on_item_zone_polygon_committed)
+        self._canvas.item_hotspot_collision_polygon_committed.connect(
+            self._on_item_hotspot_collision_polygon_committed)
         self._canvas.context_add_entity.connect(self._on_canvas_context_add_entity)
 
         # right: property panel
@@ -3102,6 +3708,10 @@ class SceneEditor(QWidget):
         self._props.changed.connect(lambda: model.mark_dirty("scene", self._current_scene_id or ""))
         self._props.interaction_range_changed.connect(self._on_props_interaction_range_changed)
         self._props.zone_polygon_changed.connect(self._on_props_zone_polygon_changed)
+        self._props.hotspot_collision_polygon_changed.connect(
+            self._on_props_hotspot_collision_polygon_changed)
+        self._props.hotspot_visual_refresh_requested.connect(
+            self._on_hotspot_visual_refresh_requested)
         self._props.npc_scene_anim_refresh_requested.connect(
             self._on_npc_scene_anim_refresh_requested)
         self._props.npc_xy_live_changed.connect(self._on_npc_xy_live_changed)
@@ -3459,6 +4069,8 @@ class SceneEditor(QWidget):
         sc = self._model.scenes.get(scene_id)
         if sc is None:
             return
+        if _migrate_scene_hotspot_collision_to_local(sc):
+            self._model.mark_dirty("scene", scene_id)
         self._clear_scene_npc_anim_layers()
         self._canvas.clear_scene()
 
@@ -3511,7 +4123,7 @@ class SceneEditor(QWidget):
         sc = self._model.scenes.get(self._current_scene_id or "")
         if sc is None:
             return
-        if kind == "hotspot":
+        if kind in ("hotspot", "hotspot_collision"):
             for hs in sc.get("hotspots", []):
                 if hs.get("id") == eid:
                     self._props.load_hotspot_props(hs)
@@ -3583,6 +4195,43 @@ class SceneEditor(QWidget):
         self._props.refresh_zone_polygon_table(eid, poly_list)
         self._canvas.item_selected.emit(kind, eid)
 
+    def _on_item_hotspot_collision_polygon_committed(self, eid: str, polygon: object) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None:
+            return
+        poly_list = polygon if isinstance(polygon, list) else []
+        if len(poly_list) < 3:
+            return
+        for hs in sc.get("hotspots", []):
+            if hs.get("id") == eid:
+                hs["collisionPolygon"] = _hotspot_collision_world_to_local(hs, poly_list)
+                hs["collisionPolygonLocal"] = True
+                break
+        else:
+            return
+        self._model.mark_dirty("scene", self._current_scene_id or "")
+
+        def _deferred_hotspot_collision_ui() -> None:
+            self._props.refresh_hotspot_collision_table(eid)
+            self._canvas.item_selected.emit("hotspot_collision", eid)
+
+        QTimer.singleShot(0, _deferred_hotspot_collision_ui)
+
+    def _on_props_hotspot_collision_polygon_changed(self, eid: str, polygon: object) -> None:
+        poly_list = polygon if isinstance(polygon, list) else []
+        if len(poly_list) < 3:
+            return
+        self._canvas.update_hotspot_collision_polygon(eid, poly_list)
+
+    def _on_hotspot_visual_refresh_requested(self, eid: str) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None or not eid:
+            return
+        for hs in sc.get("hotspots", []):
+            if hs.get("id") == eid:
+                self._canvas.refresh_hotspot_visuals(hs)
+                return
+
     def _on_item_position_live(
         self, kind: str, eid: str, x: float, y: float,
     ) -> None:
@@ -3596,6 +4245,7 @@ class SceneEditor(QWidget):
                 if hs.get("id") == eid:
                     hs["x"] = rx
                     hs["y"] = ry
+                    self._canvas.refresh_hotspot_visuals(hs)
                     return
         elif kind == "npc":
             for npc in sc.get("npcs", []):
@@ -3624,6 +4274,7 @@ class SceneEditor(QWidget):
                 if hs.get("id") == eid:
                     hs["x"] = round(x, 1)
                     hs["y"] = round(y, 1)
+                    self._canvas.refresh_hotspot_visuals(hs)
                     break
         elif kind == "npc":
             for npc in sc.get("npcs", []):

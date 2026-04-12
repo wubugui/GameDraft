@@ -119,6 +119,10 @@ export class SceneManager implements IGameSystem {
     return this.currentNpcs;
   }
 
+  getCurrentHotspots(): readonly Hotspot[] {
+    return this.currentHotspots;
+  }
+
   get switching(): boolean {
     return this.isSwitching;
   }
@@ -263,6 +267,15 @@ export class SceneManager implements IGameSystem {
         const hotspot = new Hotspot(def);
         this.currentHotspots.push(hotspot);
         this.renderer.entityLayer.addChild(hotspot.container);
+        const di = def.displayImage;
+        if (di?.image && di.worldWidth > 0 && di.worldHeight > 0) {
+          try {
+            const tex = await this.assetManager.loadTexture(di.image);
+            hotspot.setDisplayTexture(tex, di.worldWidth, di.worldHeight);
+          } catch (_e) {
+            console.warn(`SceneManager: hotspot "${def.id}" displayImage failed`, di.image);
+          }
+        }
       }
     }
 

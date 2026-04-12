@@ -1,6 +1,7 @@
 """Pick image from anywhere with preview; map to /assets/... for runtime."""
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -24,6 +25,16 @@ _IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All (*.*)"
 # 缩略预览边长上限（勿用 label.width() 等会随 pixmap 变化的量作为 scaled 目标）
 _CUTSCENE_PREVIEW_BOX = 100
 
+_SAFE_IMAGES_SUBDIR = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def sanitize_images_subdir(name: str) -> str:
+    """`public/assets/images/<subdir>/` 下仅允许单层安全目录名。"""
+    s = (name or "cutscene").strip()
+    if not _SAFE_IMAGES_SUBDIR.match(s):
+        return "cutscene"
+    return s
+
 
 def disk_path_for_runtime_url(model: ProjectModel | None, url: str) -> Path | None:
     """Resolve /assets/... URL to file under public/assets/."""
@@ -39,10 +50,15 @@ def disk_path_for_runtime_url(model: ProjectModel | None, url: str) -> Path | No
     return p if p.is_file() else None
 
 
-def import_or_resolve_image_path(model: ProjectModel, source: Path) -> str | None:
+def import_or_resolve_image_path(
+    model: ProjectModel,
+    source: Path,
+    *,
+    external_copy_subdir: str = "cutscene",
+) -> str | None:
     """
     If source is under project public/, return /assets/... URL.
-    Otherwise copy into public/assets/images/cutscene/ and return new URL.
+    Otherwise copy into public/assets/images/<external_copy_subdir>/ and return new URL.
     """
     source = source.resolve()
     public = model.project_path.resolve() / "public"
@@ -52,7 +68,8 @@ def import_or_resolve_image_path(model: ProjectModel, source: Path) -> str | Non
     except ValueError:
         pass
 
-    dest_dir = model.assets_path / "images" / "cutscene"
+    sub = sanitize_images_subdir(external_copy_subdir)
+    dest_dir = model.assets_path / "images" / sub
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -110,9 +127,18 @@ class CutsceneImagePathRow(QWidget):
 
     changed = Signal()
 
-    def __init__(self, model: ProjectModel | None, initial: str, parent: QWidget | None = None):
+    def __init__(
+        self,
+        model: ProjectModel | None,
+        initial: str,
+        parent: QWidget | None = None,
+        *,
+        external_copy_subdir: str = "cutscene",
+        external_copy_hint: str | None = None,
+    ):
         super().__init__(parent)
         self._model = model
+        self._external_copy_subdir = sanitize_images_subdir(external_copy_subdir)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -135,7 +161,10 @@ class CutsceneImagePathRow(QWidget):
         row.addWidget(self._edit, stretch=1)
         row.addWidget(btn)
         right.addLayout(row)
-        hint = QLabel("项目外文件会复制到 assets/images/cutscene/")
+        hint_text = external_copy_hint or (
+            f"项目外文件会复制到 assets/images/{self._external_copy_subdir}/"
+        )
+        hint = QLabel(hint_text)
         hint.setStyleSheet("color:#888;font-size:11px;")
         right.addWidget(hint)
 
@@ -164,7 +193,9 @@ class CutsceneImagePathRow(QWidget):
             return
         src = Path(path)
         if self._model and self._model.project_path:
-            url = import_or_resolve_image_path(self._model, src)
+            url = import_or_resolve_image_path(
+                self._model, src, external_copy_subdir=self._external_copy_subdir,
+            )
             if url:
                 self._edit.setText(url)
                 _set_preview_label(self._preview, src)

@@ -217,6 +217,12 @@ export class SceneDepthSystem implements IGameSystem {
         }
     }
 
+    /** 实体销毁时摘除，避免 updatePerFrame 仍引用已 destroy 的滤镜 */
+    removeFilter(f: DepthOcclusionFilter): void {
+        const i = this.filters.indexOf(f);
+        if (i >= 0) this.filters.splice(i, 1);
+    }
+
     setCollisionTextureOnFilters(tex: Texture): void {
         for (const f of this.filters) f.setCollisionTexture(tex);
     }
