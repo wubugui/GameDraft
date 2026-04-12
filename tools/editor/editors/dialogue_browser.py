@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QLabel, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QCompleter, QMessageBox, QInputDialog,
+    QFileDialog,
 )
 from PySide6.QtGui import (
     QFont, QColor, QTextCharFormat, QSyntaxHighlighter, QTextDocument,
@@ -21,6 +22,7 @@ from ..project_model import ProjectModel
 from ..file_io import read_text, write_text
 from .. import theme as app_theme
 from ..shared.ink_find_replace import InkFindReplaceBar
+from ..shared.image_path_picker import import_or_resolve_image_path
 from ..shared.action_editor import (
     ACTION_TYPES, _NOTIFICATION_TYPES, _ARCHIVE_BOOK_TYPES,
 )
@@ -213,6 +215,13 @@ def _build_completion_rules() -> list[_CompletionRule]:
         scene_id = m.group(1)
         return e._model.spawn_point_keys_for_scene(scene_id)
 
+    def _overlay_image_short_ids(_m, e):
+        """showOverlayImage 第二段：overlay_images.json 中的短 id。"""
+        ov = getattr(e._model, "overlay_images", None) or {}
+        if not isinstance(ov, dict):
+            return []
+        return sorted({str(k) for k in ov.keys() if str(k).strip()})
+
     def _action_param(m, e):
         return e._get_action_param_candidates(m.group(1))
 
@@ -267,6 +276,8 @@ def _build_completion_rules() -> list[_CompletionRule]:
         # switchScene/changeScene:sceneId:spawnPoint
         R(r'#\s*action:(?:switchScene|changeScene):([^:\s]+):([^:\s]*)$',
                                                             _action_scene_spawn, 2),
+        # showOverlayImage:图层句柄:短id或路径（第二段补全叠图 id）
+        R(r'#\s*action:showOverlayImage:[^:]+:([^:\s]*)$', _overlay_image_short_ids, 1),
         # generic action first param
         R(r'#\s*action:(\w+):([^:\s]*)$',                  _action_param, 2),
         # action type
@@ -336,6 +347,14 @@ class InkTextEdit(QPlainTextEdit):
         divert_act = insert_menu.addAction("-> (divert)")
         divert_act.triggered.connect(self._insert_divert_template)
 
+        menu.addSeparator()
+        img_act = menu.addAction("插入图片路径 (/assets/…)…")
+        img_act.setToolTip(
+            "打开文件框选择图片；项目外文件会复制到 assets/images/illustrations/，"
+            "并在光标处插入 /assets/... 路径（可用于 # action:showOverlayImage 或正文）",
+        )
+        img_act.triggered.connect(self._insert_image_path_at_cursor)
+
         menu.exec(event.globalPos())
 
     def _insert_tag_template(self, prefix: str) -> None:
@@ -352,6 +371,38 @@ class InkTextEdit(QPlainTextEdit):
         cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
         cursor.insertText("\n-> ")
         self.setTextCursor(cursor)
+        self._update_completions()
+
+    def _insert_image_path_at_cursor(self) -> None:
+        start = str(Path.home() / "Pictures")
+        if self._model.project_path:
+            d = self._model.assets_path / "images"
+            if d.is_dir():
+                start = str(d)
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择图片并插入 /assets/... 路径",
+            start,
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All (*.*)",
+        )
+        if not path_str:
+            return
+        p = Path(path_str)
+        if not self._model.project_path:
+            QMessageBox.information(
+                self,
+                "插入图片路径",
+                "未打开工程，将插入所选文件的绝对路径（不推荐）。",
+            )
+            self.textCursor().insertText(p.as_posix().replace("\\", "/"))
+            self._update_completions()
+            return
+        url = import_or_resolve_image_path(
+            self._model, p, external_copy_subdir="illustrations",
+        )
+        if not url:
+            return
+        self.textCursor().insertText(url)
         self._update_completions()
 
     # ---- Autocomplete core ------------------------------------------------

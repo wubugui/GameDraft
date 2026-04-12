@@ -72,6 +72,11 @@ export interface ActionRegistryDeps {
     yPercent: number,
     widthPercent: number,
   ) => Promise<void>;
+  /**
+   * 将 overlay_images.json 中的短 id 解析为 /assets/... 路径；
+   * 若以 / 开头则视为已是完整路径，不查表。
+   */
+  resolveOverlayImagePath: (image: string) => string;
   hideOverlayImage: (id: string) => void;
   /** 直接进入 Ink 对话（非 NPC 交互路径） */
   startInkDialogue: (inkPath: string, knot?: string) => Promise<void>;
@@ -457,7 +462,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('showOverlayImage', (p) => {
     const id = String(p.id ?? '').trim();
-    const image = String(p.image ?? '').trim();
+    const rawImage = String(p.image ?? '').trim();
+    const image = d.resolveOverlayImagePath(rawImage);
     if (!id || !image) {
       console.warn('showOverlayImage: 需要 id 与 image');
       return;

@@ -155,6 +155,9 @@ export class Game {
   private tearDownComplete = false;
   private isDevMode = false;
   private devModeUI: DevModeUI | null = null;
+  /** `overlay_images.json`：Ink 里可写短 id，避免 # action 里塞长路径 */
+  private overlayImageRegistry: Record<string, string> = {};
+
   private gameConfig: GameConfig = {
     initialScene: '',
     initialQuest: '',
@@ -180,11 +183,12 @@ export class Game {
     this.interactionSystem = new InteractionSystem(this.eventBus, this.flagStore, this.inputManager);
     this.sceneManager = new SceneManager(this.assetManager, this.eventBus, this.renderer);
     this.inventoryManager = new InventoryManager(this.eventBus, this.flagStore);
+    this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
     this.dialogueManager = new DialogueManager(
       this.eventBus, this.flagStore, this.actionExecutor, this.assetManager, this.inventoryManager,
       this.sceneManager,
+      this.rulesManager,
     );
-    this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
     this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.audioManager = new AudioManager(this.eventBus);
@@ -385,6 +389,7 @@ export class Game {
       },
       showOverlayImage: (id, image, xPct, yPct, wPct) =>
         this.cutsceneManager.showOverlayImage(id, image, xPct, yPct, wPct),
+      resolveOverlayImagePath: (img) => this.resolveOverlayImageIdToPath(img),
       hideOverlayImage: (id) => {
         this.cutsceneManager.hideOverlayImage(id);
       },
@@ -570,6 +575,25 @@ export class Game {
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
     }
+    try {
+      const ov = await this.assetManager.loadJson<Record<string, string>>('/assets/data/overlay_images.json');
+      this.overlayImageRegistry = ov && typeof ov === 'object' ? { ...ov } : {};
+    } catch {
+      this.overlayImageRegistry = {};
+    }
+  }
+
+  /**
+   * showOverlayImage 的 image 参数：短 id 查 overlay_images.json；以 / 开头则当作完整路径。
+   */
+  private resolveOverlayImageIdToPath(image: string): string {
+    const raw = image.trim();
+    if (!raw) return raw;
+    if (raw.startsWith('/')) return raw;
+    const path = this.overlayImageRegistry[raw];
+    if (path) return path;
+    console.warn(`Game: overlay 图 id「${raw}」未在 overlay_images.json 中登记，将按原文字符串当路径`);
+    return raw;
   }
 
   /** 从磁盘加载玩家动画资源；失败返回 null（由调用方决定占位图集）。 */

@@ -35,6 +35,7 @@ export class DialogueUI {
   private dialogueChoicesCb: (choices: DialogueChoice[]) => void;
   private dialogueWillEndCb: () => void;
   private dialogueEndCb: () => void;
+  private dialoguePrepareBeatCb: () => void;
 
   constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider) {
     this.renderer = renderer;
@@ -48,11 +49,27 @@ export class DialogueUI {
     this.dialogueChoicesCb = (choices) => this.showChoices(choices);
     this.dialogueWillEndCb = () => { this.willEndAfterAdvance = true; };
     this.dialogueEndCb = () => this.hide();
+    this.dialoguePrepareBeatCb = () => this.onPrepareBeat();
 
     this.eventBus.on('dialogue:line', this.dialogueLineCb);
     this.eventBus.on('dialogue:choices', this.dialogueChoicesCb);
     this.eventBus.on('dialogue:willEnd', this.dialogueWillEndCb);
     this.eventBus.on('dialogue:end', this.dialogueEndCb);
+    this.eventBus.on('dialogue:prepareBeat', this.dialoguePrepareBeatCb);
+  }
+
+  /** 推进到下一拍之前清空当前台词区（与推迟 action、下一句台词顺序配合）。 */
+  private onPrepareBeat(): void {
+    if (!this.container || !this.speakerText || !this.bodyText) return;
+    this.clearChoices();
+    this.speakerText.text = '';
+    this.bodyText.text = '';
+    this.fullText = '';
+    this.displayedChars = 0;
+    this.typewriterTimer = 0;
+    this.isShowingFullText = false;
+    this.waitingForAdvance = false;
+    this.waitingForChoice = false;
   }
 
   private ensureContainer(): void {
@@ -126,6 +143,7 @@ export class DialogueUI {
     this.ensureContainer();
     this.clearChoices();
     this.waitingForChoice = true;
+    this.waitingForAdvance = false;
     this.currentChoices = choices;
 
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
@@ -165,8 +183,8 @@ export class DialogueUI {
       text.y = 7;
       row.addChild(text);
 
+      row.eventMode = 'static';
       if (choice.enabled) {
-        row.eventMode = 'static';
         row.cursor = 'pointer';
 
         const hoverBg = new Graphics();
@@ -180,6 +198,13 @@ export class DialogueUI {
         row.on('pointerdown', () => {
           this.waitingForChoice = false;
           this.eventBus.emit('dialogue:choiceSelected', { index: choice.index });
+        });
+      } else {
+        row.cursor = 'default';
+        row.on('pointerdown', () => {
+          if (choice.disableHint) {
+            this.eventBus.emit('notification:show', { text: choice.disableHint, type: 'warning' });
+          }
         });
       }
 
@@ -229,9 +254,12 @@ export class DialogueUI {
     if (this.waitingForChoice && e.code >= 'Digit1' && e.code <= 'Digit9') {
       const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
       const choice = this.currentChoices[idx];
-      if (choice && choice.enabled) {
+      if (!choice) return;
+      if (choice.enabled) {
         this.eventBus.emit('dialogue:choiceSelected', { index: choice.index });
         this.waitingForChoice = false;
+      } else if (choice.disableHint) {
+        this.eventBus.emit('notification:show', { text: choice.disableHint, type: 'warning' });
       }
     }
   }
@@ -286,5 +314,6 @@ export class DialogueUI {
     this.eventBus.off('dialogue:choices', this.dialogueChoicesCb);
     this.eventBus.off('dialogue:willEnd', this.dialogueWillEndCb);
     this.eventBus.off('dialogue:end', this.dialogueEndCb);
+    this.eventBus.off('dialogue:prepareBeat', this.dialoguePrepareBeatCb);
   }
 }

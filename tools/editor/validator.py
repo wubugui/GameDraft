@@ -324,9 +324,36 @@ def validate(model: ProjectModel) -> list[Issue]:
         issues.append(Issue("warning", "config", "game_config",
                             f"initialCutscene '{cfg['initialCutscene']}' not found"))
 
+    _validate_overlay_images(model, issues)
+
     _validate_flags(model, issues)
 
     return issues
+
+
+def _validate_overlay_images(model: ProjectModel, issues: list[Issue]) -> None:
+    ov = getattr(model, "overlay_images", None)
+    if not isinstance(ov, dict):
+        return
+    for kid, pth in ov.items():
+        ks = str(kid).strip()
+        if not ks:
+            issues.append(Issue(
+                "error", "overlay_images", "overlay_images",
+                "存在无效的键（空字符串），请用「叠图 ID」页修正并保存",
+            ))
+            continue
+        ps = str(pth or "").strip()
+        if not ps:
+            issues.append(Issue(
+                "error", "overlay_images", ks,
+                f"短 id「{ks}」对应的图片路径为空",
+            ))
+        elif not ps.startswith("/"):
+            issues.append(Issue(
+                "warning", "overlay_images", ks,
+                f"短 id「{ks}」的路径建议以 / 开头（/assets/...），当前：{ps[:80]}",
+            ))
 
 
 def _flag_issue(model: ProjectModel, issues: list[Issue], key: str,

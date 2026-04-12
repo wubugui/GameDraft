@@ -65,6 +65,7 @@ class ProjectModel(QObject):
         self.scenes: dict[str, dict] = {}
         self.filter_defs: dict[str, dict] = {}
         self.flag_registry: dict = {}
+        self.overlay_images: dict[str, str] = {}
 
         self._dirty: set[str] = set()
 
@@ -144,6 +145,8 @@ class ProjectModel(QObject):
         from .flag_registry import flag_registry_path, load_flag_registry
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
+        self.overlay_images = self._load(dp / "overlay_images.json", {})
+
         from .editors.ink_parser import discover_ink_externals, INK_EXTERNALS as _ink_ext
         _ink_ext.clear()
         _ink_ext.update(discover_ink_externals(
@@ -212,6 +215,7 @@ class ProjectModel(QObject):
             write_json(sp / f"{sid}.json", data)
         from .flag_registry import flag_registry_path
         write_json(flag_registry_path(self.assets_path), self.flag_registry)
+        write_json(dp / "overlay_images.json", self.overlay_images)
         filters_dir = dp / "filters"
         filters_dir.mkdir(parents=True, exist_ok=True)
         keep = set(self.filter_defs.keys())

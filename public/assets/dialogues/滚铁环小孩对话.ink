@@ -44,9 +44,15 @@ EXTERNAL getActorName(id)
 === opt_ask_ring ===
 @: 小娃儿，这玩意儿你滚了一天怕该歇歇了。\n让老子滚一滚撒。
 %: ......
+-> opt_ask_ring_fade_then_narration
+
+=== opt_ask_ring_fade_then_narration ===
 # action:persistNpcDisablePatrol:npc_ringboy
 # action:fadeWorldToBlack:550
 # action:waitMs:500
+-> opt_ask_ring_narration
+
+=== opt_ask_ring_narration ===
 （小孩儿丢下铁环跑了......）
 -> opt_ask_ring_after_narration
 

@@ -9,6 +9,7 @@ import type { ActionDef, IGameSystem, GameContext, DialogueLine, DialogueChoice 
 import type { StringsProvider } from '../core/StringsProvider';
 import { bindInkExternals } from '../data/inkExternals';
 import type { SceneManager } from './SceneManager';
+import type { RulesManager } from './RulesManager';
 function parseTagValue(s: string): string | number | boolean {
   if (s === 'true') return true;
   if (s === 'false') return false;
@@ -86,6 +87,7 @@ export class DialogueManager implements IGameSystem {
   private assetManager: AssetManager;
   private inventoryManager: InventoryManager;
   private sceneManager: SceneManager;
+  private rulesManager: RulesManager;
   private strings: StringsProvider | null = null;
   private story: Story | null = null;
   /** 非 Ink：预置台词队列（与 `story` 互斥） */
@@ -93,6 +95,16 @@ export class DialogueManager implements IGameSystem {
   private active: boolean = false;
   private currentNpcName: string = '';
   private currentInkPath: string = '';
+  /**
+   * 非空台词上的 `# action:` 在本句展示并**由玩家点击推进之后**再执行（与下一句 `Continue` 之前刷新）。
+   * 避免叠图等效果在台词尚未点过时触发。
+   */
+  private deferredDialogueActions: ActionDef[] = [];
+  /**
+   * 玩家在选项上确认后紧接着的 `advance` 须照常 `prepareBeat` 清空上一拍；
+   * 从台词点击继续且下一拍仅有选项时则应保留最后一行在底栏（否则选项上方台词被先清空）。
+   */
+  private advanceFromChoice = false;
   /** 与 `Game.start({ devMode })` 同步；为 true 时 Ink `# action:` 解析问题会弹游戏内通知 */
   private devModeInkActionAlerts = false;
 
@@ -103,6 +115,7 @@ export class DialogueManager implements IGameSystem {
     assetManager: AssetManager,
     inventoryManager: InventoryManager,
     sceneManager: SceneManager,
+    rulesManager: RulesManager,
   ) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
@@ -110,6 +123,7 @@ export class DialogueManager implements IGameSystem {
     this.assetManager = assetManager;
     this.inventoryManager = inventoryManager;
     this.sceneManager = sceneManager;
+    this.rulesManager = rulesManager;
   }
 
   init(ctx: GameContext): void {
@@ -146,6 +160,7 @@ export class DialogueManager implements IGameSystem {
       this.endDialogue();
     }
     this.active = false;
+    this.advanceFromChoice = false;
     this.story = null;
     this.scriptedRemaining = null;
     this.currentNpcName = '';
@@ -174,6 +189,7 @@ export class DialogueManager implements IGameSystem {
     }
 
     this.eventBus.emit('dialogue:start', { npcName });
+    this.deferredDialogueActions = [];
     await this.advance();
   }
 
@@ -201,6 +217,19 @@ export class DialogueManager implements IGameSystem {
   async advance(): Promise<void> {
     if (!this.active) return;
 
+    const fromChoice = this.advanceFromChoice;
+    this.advanceFromChoice = false;
+    const choiceOnly =
+      this.story !== null &&
+      !this.story.canContinue &&
+      this.story.currentChoices.length > 0;
+    /** 从台词点到「仅选项」时跳过清空，保留上一句在对话底栏；选完选项后的推进仍清空。 */
+    const skipPrepareBeat = choiceOnly && !fromChoice;
+    if (!skipPrepareBeat) {
+      /** 先清 UI 上一句，再执行推迟的 action / Continue，避免旧台词与叠图同屏。 */
+      this.eventBus.emit('dialogue:prepareBeat', {});
+    }
+
     if (this.scriptedRemaining !== null) {
       if (this.scriptedRemaining.length === 0) {
         this.scriptedRemaining = null;
@@ -217,18 +246,21 @@ export class DialogueManager implements IGameSystem {
 
     if (!this.story) return;
 
+    await this.flushDeferredDialogueActions();
+
     if (this.story.canContinue) {
       const rawText = this.story.Continue() ?? '';
       const tags = this.story.currentTags ?? [];
 
-      await this.processActionTags(tags);
-
       const text = this.normalizeInkSourceNewlines(rawText.trim());
 
       if (!text) {
+        await this.processActionTags(tags);
         await this.advance();
         return;
       }
+
+      this.queueDeferredActionTags(tags);
 
       const filteredTags = tags.filter(
         t => !t.startsWith('action:') && !t.startsWith('speaker:'),
@@ -250,16 +282,39 @@ export class DialogueManager implements IGameSystem {
   async chooseOption(index: number): Promise<void> {
     if (!this.story || !this.active) return;
     const choiceText = this.story.currentChoices[index]?.text ?? '';
+    this.advanceFromChoice = true;
     this.story.ChooseChoiceIndex(index);
     this.eventBus.emit('dialogue:choiceSelected:log', { index, text: choiceText });
     await this.advance();
   }
 
+  /** 仅 glue 段等无可见台词、或需立即执行的标签使用。 */
   private async processActionTags(tags: string[]): Promise<void> {
+    const defs = this.collectActionDefsFromTags(tags);
+    for (const actionDef of defs) {
+      await this.actionExecutor.executeForDialogue(actionDef);
+    }
+  }
+
+  private collectActionDefsFromTags(tags: string[]): ActionDef[] {
+    const out: ActionDef[] = [];
     for (const tag of tags) {
       if (!tag.startsWith('action:')) continue;
       const actionDef = this.parseActionTag(tag);
-      if (!actionDef) continue;
+      if (actionDef) out.push(actionDef);
+    }
+    return out;
+  }
+
+  private queueDeferredActionTags(tags: string[]): void {
+    this.deferredDialogueActions = this.collectActionDefsFromTags(tags);
+  }
+
+  private async flushDeferredDialogueActions(): Promise<void> {
+    if (this.deferredDialogueActions.length === 0) return;
+    const batch = this.deferredDialogueActions;
+    this.deferredDialogueActions = [];
+    for (const actionDef of batch) {
       await this.actionExecutor.executeForDialogue(actionDef);
     }
   }
@@ -394,25 +449,34 @@ export class DialogueManager implements IGameSystem {
   }
 
   private buildChoices(inkChoices: Choice[]): DialogueChoice[] {
+    const peeked = this.peekChoiceContentTags(inkChoices.length);
+
     return inkChoices.map((choice, i) => {
-      let enabled = true;
       let ruleHintId: string | undefined;
-      const tags = choice.tags ?? [];
+      let requireKey: string | undefined;
+      let costAmount: number | undefined;
+      const tags = peeked[i];
 
       for (const tag of tags) {
         if (tag.startsWith('require:')) {
-          const flagKey = tag.substring('require:'.length).trim();
-          enabled = !!this.flagStore.get(flagKey);
+          requireKey = tag.substring('require:'.length).trim();
         }
         if (tag.startsWith('cost:')) {
-          const amount = parseInt(tag.substring('cost:'.length).trim(), 10);
-          const coins = (this.flagStore.get('coins') as number) ?? 0;
-          enabled = coins >= amount;
+          const n = parseInt(tag.substring('cost:'.length).trim(), 10);
+          if (!Number.isNaN(n)) costAmount = n;
         }
         if (tag.startsWith('ruleHint:')) {
           ruleHintId = tag.substring('ruleHint:'.length).trim();
         }
       }
+
+      const coins = (this.flagStore.get('coins') as number) ?? 0;
+      const reqOk = requireKey === undefined || !!this.flagStore.get(requireKey);
+      const costOk = costAmount === undefined || coins >= costAmount;
+      const enabled = reqOk && costOk;
+      const disableHint = enabled
+        ? undefined
+        : this.buildChoiceDisableHint({ requireKey, reqOk, costAmount, costOk, ruleHintId });
 
       return {
         index: i,
@@ -420,8 +484,62 @@ export class DialogueManager implements IGameSystem {
         tags,
         enabled,
         ruleHintId,
+        disableHint,
       };
     });
+  }
+
+  private buildChoiceDisableHint(args: {
+    requireKey: string | undefined;
+    reqOk: boolean;
+    costAmount: number | undefined;
+    costOk: boolean;
+    ruleHintId: string | undefined;
+  }): string | undefined {
+    const s = this.strings;
+    if (!s) return undefined;
+
+    if (!args.reqOk && args.requireKey) {
+      if (args.ruleHintId) {
+        const def = this.rulesManager.getRuleDef(args.ruleHintId);
+        const name = def?.name ?? args.ruleHintId;
+        return s.get('dialogue', 'choiceNeedRule', { name });
+      }
+      return s.get('dialogue', 'choiceFlagLocked');
+    }
+
+    if (!args.costOk && args.costAmount !== undefined) {
+      return s.get('dialogue', 'choiceNeedCoins', { amount: args.costAmount });
+    }
+
+    return undefined;
+  }
+
+  /**
+   * inkjs JS compiler does not populate Choice.tags; tags written on
+   * a choice line end up inside the choice content instead. Peek into
+   * each branch via state save/restore to extract them before the
+   * player actually picks an option.
+   */
+  private peekChoiceContentTags(count: number): string[][] {
+    if (!this.story) return Array.from({ length: count }, () => []);
+
+    const saved = this.story.state.toJson();
+    const result: string[][] = [];
+
+    for (let i = 0; i < count; i++) {
+      this.story.state.LoadJson(saved);
+      this.story.ChooseChoiceIndex(i);
+      if (this.story.canContinue) {
+        this.story.Continue();
+        result.push([...(this.story.currentTags ?? [])]);
+      } else {
+        result.push([]);
+      }
+    }
+
+    this.story.state.LoadJson(saved);
+    return result;
   }
 
   private scheduleEnd(): void {
@@ -431,8 +549,10 @@ export class DialogueManager implements IGameSystem {
   endDialogue(): void {
     if (!this.active) return;
     this.active = false;
+    this.advanceFromChoice = false;
     this.story = null;
     this.scriptedRemaining = null;
+    this.deferredDialogueActions = [];
     this.currentNpcName = '';
     this.currentInkPath = '';
     this.eventBus.emit('dialogue:end', {});
@@ -446,6 +566,8 @@ export class DialogueManager implements IGameSystem {
     this.story = null;
     this.scriptedRemaining = null;
     this.active = false;
+    this.advanceFromChoice = false;
+    this.deferredDialogueActions = [];
     this.currentNpcName = '';
     this.currentInkPath = '';
   }

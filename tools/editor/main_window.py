@@ -356,6 +356,7 @@ class MainWindow(QMainWindow):
         from .editors.flag_registry_editor import FlagRegistryEditor
         from .editors.filter_editor import FilterEditor
         from .editors.action_registry_editor import ActionRegistryEditor
+        from .editors.overlay_images_editor import OverlayImagesEditor
 
         editors = [
             ("Scene", SceneEditor),
@@ -374,6 +375,7 @@ class MainWindow(QMainWindow):
             ("玩家化身", PlayerAvatarEditor),
             ("Strings", StringEditor),
             ("Config", GameConfigEditor),
+            ("叠图 ID", OverlayImagesEditor),
             ("Flags", FlagRegistryEditor),
             ("Actions", ActionRegistryEditor),
         ]

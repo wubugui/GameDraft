@@ -142,7 +142,10 @@
   "dialogue": {
     "ruleTag": "[规]",
     "defaultProtagonistName": "你",
-    "narratorLabel": ""
+    "narratorLabel": "",
+    "choiceNeedRule": "规矩本里尚未收录「{name}」，无法使用该说法。",
+    "choiceFlagLocked": "条件未满足，无法选择该选项。",
+    "choiceNeedCoins": "铜钱不足，至少需要 {amount} 文。"
   },
   "actions": {
     "clickToContinue": "点击继续"

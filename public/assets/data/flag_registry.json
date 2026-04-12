@@ -201,6 +201,10 @@
       "valueType": "bool"
     },
     {
+      "key": "码头_看板官差对话完结",
+      "valueType": "bool"
+    },
+    {
       "key": "铁环小孩_已经获得铁环",
       "valueType": "bool"
     }

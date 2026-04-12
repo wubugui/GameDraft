@@ -428,6 +428,8 @@ export interface DialogueChoice {
   tags: string[];
   enabled: boolean;
   ruleHintId?: string;
+  /** 选项不可用时，点击/快捷键可显示的说明（规矩未收录、铜钱不足等） */
+  disableHint?: string;
 }
 
 export interface ResolvedOption {
