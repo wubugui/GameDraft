@@ -58,6 +58,8 @@ if hasattr(sys, "__stderr__") and sys.__stderr__ is not None:
 
 from PySide6.QtWidgets import QApplication
 
+from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_block
+
 import cv2
 
 try:
@@ -70,6 +72,7 @@ from main_window import MainWindow
 
 def main() -> None:
     app = QApplication(sys.argv)
+    install_global_combo_wheel_block(app)
     init_ws: Path | None = None
     if len(sys.argv) > 1 and sys.argv[1].strip():
         init_ws = Path(sys.argv[1]).expanduser()

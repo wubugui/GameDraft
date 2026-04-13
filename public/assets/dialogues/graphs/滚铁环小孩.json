@@ -2,13 +2,18 @@
   "schemaVersion": 1,
   "id": "滚铁环小孩",
   "entry": "root",
-  "meta": { "title": "滚铁环小孩" },
+  "meta": {},
   "nodes": {
     "root": {
       "type": "switch",
       "cases": [
         {
-          "conditions": [{ "flag": "铁环小孩_已经获得铁环", "value": true }],
+          "conditions": [
+            {
+              "flag": "铁环小孩_已经获得铁环",
+              "value": true
+            }
+          ],
           "next": "has_ring_1"
         }
       ],
@@ -16,29 +21,41 @@
     },
     "has_ring_1": {
       "type": "line",
-      "speaker": { "kind": "player" },
-      "text": "老子又不要你的，还给你还给你。",
-      "next": "has_ring_2"
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "has_ring_2",
+      "text": "老子又不要你的，还给你还给你。"
     },
     "has_ring_2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
-      "text": "哇哇哇哇哇哇哇哇哇哇哇哇......",
-      "next": "has_ring_3"
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "has_ring_3",
+      "text": "哇哇哇哇哇哇哇哇哇哇哇哇......"
     },
     "has_ring_3": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
-      "text": "不理你......",
-      "next": "end1"
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "end1",
+      "text": "不理你......"
     },
-    "end1": { "type": "end" },
+    "end1": {
+      "type": "end"
+    },
     "anim_branch": {
       "type": "runActions",
       "actions": [
         {
           "type": "playNpcAnimation",
-          "params": { "target": "npc_ringboy", "state": "boy_stand_ring" }
+          "params": {
+            "target": "npc_ringboy",
+            "state": "boy_stand_ring"
+          }
         }
       ],
       "next": "sw_event"
@@ -47,7 +64,12 @@
       "type": "switch",
       "cases": [
         {
-          "conditions": [{ "flag": "foreigner_crate_event_done", "value": false }],
+          "conditions": [
+            {
+              "flag": "foreigner_crate_event_done",
+              "value": false
+            }
+          ],
           "next": "before_evt_1"
         }
       ],
@@ -55,27 +77,38 @@
     },
     "before_evt_1": {
       "type": "line",
-      "speaker": { "kind": "player" },
-      "text": "小娃儿，这圈圈有点东西，借给老子耍哈撒。",
-      "next": "before_evt_2"
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "before_evt_2",
+      "text": "小娃儿，这圈圈有点东西，借给老子耍哈撒。"
     },
     "before_evt_2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
-      "text": "你谁啊？不给......",
-      "next": "before_evt_3"
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "before_evt_3",
+      "text": "你谁啊？不给......"
     },
     "before_evt_3": {
       "type": "line",
-      "speaker": { "kind": "player" },
-      "text": "（嗤笑）切~个破铁环当传家宝，送老子，老子都不要！",
-      "next": "sw_archive_ring"
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "sw_archive_ring",
+      "text": "（嗤笑）切~个破铁环当传家宝，送老子，老子都不要！"
     },
     "sw_archive_ring": {
       "type": "switch",
       "cases": [
         {
-          "conditions": [{ "flag": "archive_book_entry_erta_geo_iron_ring", "value": false }],
+          "conditions": [
+            {
+              "flag": "archive_book_entry_erta_geo_iron_ring",
+              "value": false
+            }
+          ],
           "next": "grant_book_entry"
         }
       ],
@@ -86,93 +119,221 @@
       "actions": [
         {
           "type": "addArchiveEntry",
-          "params": { "bookType": "bookEntry", "entryId": "erta_geo_iron_ring" }
+          "params": {
+            "bookType": "bookEntry",
+            "entryId": "erta_geo_iron_ring"
+          }
         }
       ],
       "next": "end1"
     },
     "after_evt_choice": {
       "type": "choice",
-      "promptLine": {
-        "speaker": { "kind": "literal", "name": "旁白" },
-        "text": "小孩护着铁环看着你，不知道你要干什么......"
-      },
       "options": [
-        { "id": "ask", "text": "要铁环。", "next": "opt_ask_1" },
-        { "id": "snatch", "text": "抢铁环。", "next": "opt_snatch_1" }
-      ]
+        {
+          "id": "ask",
+          "text": "要铁环。",
+          "next": "opt_ask_1"
+        },
+        {
+          "id": "snatch",
+          "text": "抢铁环。",
+          "next": "opt_snatch_1"
+        }
+      ],
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "小孩护着铁环看着你，不知道你要干什么......"
+      }
     },
     "opt_ask_1": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "小娃儿，这玩意儿你滚了一天怕该歇歇了。\n让老子滚一滚撒。",
       "next": "opt_ask_2"
     },
     "opt_ask_2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
-      "text": "......",
-      "next": "opt_ask_fade"
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "opt_ask_fade",
+      "text": "......"
     },
     "opt_ask_fade": {
       "type": "runActions",
       "actions": [
-        { "type": "persistNpcDisablePatrol", "params": { "npcId": "npc_ringboy" } },
-        { "type": "fadeWorldToBlack", "params": { "durationMs": 550 } },
-        { "type": "waitMs", "params": { "durationMs": 500 } }
+        {
+          "type": "persistNpcDisablePatrol",
+          "params": {
+            "npcId": "npc_ringboy"
+          }
+        },
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 550
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 500
+          }
+        }
       ],
       "next": "opt_ask_narr"
     },
     "opt_ask_narr": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
-      "text": "（小孩儿丢下铁环跑了......）",
-      "next": "opt_ask_resolve"
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "opt_ask_resolve",
+      "text": "（小孩儿丢下铁环跑了......）"
     },
     "opt_ask_resolve": {
       "type": "runActions",
       "actions": [
-        { "type": "persistNpcEntityEnabled", "params": { "target": "npc_ringboy", "enabled": false } },
-        { "type": "fadeWorldFromBlack", "params": { "durationMs": 550 } },
-        { "type": "giveItem", "params": { "id": "iron_hoop", "count": 1 } },
+        {
+          "type": "persistNpcEntityEnabled",
+          "params": {
+            "target": "npc_ringboy",
+            "enabled": false
+          }
+        },
+        {
+          "type": "fadeWorldFromBlack",
+          "params": {
+            "durationMs": 550
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "iron_hoop",
+            "count": 1
+          }
+        },
         {
           "type": "appendFlag",
-          "params": { "key": "书籍_风物志_铁环标注", "text": "捡了一个铁环。" }
+          "params": {
+            "key": "书籍_风物志_铁环标注",
+            "text": "捡了一个铁环。"
+          }
         },
-        { "type": "showNotification", "params": { "text": "获得铁环", "type": "item" } },
-        { "type": "setFlag", "params": { "key": "铁环小孩_已经获得铁环", "value": true } },
-        { "type": "updateQuest", "params": { "id": "支线-归还小孩铁环-归还铁环" } }
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "获得铁环",
+            "type": "item"
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "铁环小孩_已经获得铁环",
+            "value": true
+          }
+        },
+        {
+          "type": "updateQuest",
+          "params": {
+            "id": "支线-归还小孩铁环-归还铁环"
+          }
+        }
       ],
       "next": "end1"
     },
     "opt_snatch_1": {
       "type": "line",
-      "speaker": { "kind": "player" },
-      "text": "喂！这圈圈老子玩玩！",
-      "next": "opt_snatch_2"
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "opt_snatch_2",
+      "text": "喂！这圈圈老子玩玩！"
     },
     "opt_snatch_2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
-      "text": "你伸手一把夺过铁环，恶狠狠地向小孩儿呸了一口。",
-      "next": "opt_snatch_actions"
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "opt_snatch_actions",
+      "text": "你伸手一把夺过铁环，恶狠狠地向小孩儿呸了一口。"
     },
     "opt_snatch_actions": {
       "type": "runActions",
       "actions": [
-        { "type": "giveItem", "params": { "id": "iron_hoop", "count": 1 } },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "iron_hoop",
+            "count": 1
+          }
+        },
         {
           "type": "appendFlag",
-          "params": { "key": "书籍_风物志_铁环标注", "text": "你从小孩那儿抢了一个铁环。" }
+          "params": {
+            "key": "书籍_风物志_铁环标注",
+            "text": "你从小孩那儿抢了一个铁环。"
+          }
         },
-        { "type": "showNotification", "params": { "text": "获得铁环", "type": "item" } },
-        { "type": "persistNpcDisablePatrol", "params": { "npcId": "npc_ringboy" } },
-        { "type": "persistNpcAnimState", "params": { "target": "npc_ringboy", "state": "boy_cry" } },
-        { "type": "waitMs", "params": { "durationMs": 500 } },
-        { "type": "setFlag", "params": { "key": "铁环小孩_已经获得铁环", "value": true } },
-        { "type": "updateQuest", "params": { "id": "支线-归还小孩铁环-归还铁环" } }
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "获得铁环",
+            "type": "item"
+          }
+        },
+        {
+          "type": "persistNpcDisablePatrol",
+          "params": {
+            "npcId": "npc_ringboy"
+          }
+        },
+        {
+          "type": "persistNpcAnimState",
+          "params": {
+            "target": "npc_ringboy",
+            "state": "boy_cry"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 500
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "铁环小孩_已经获得铁环",
+            "value": true
+          }
+        },
+        {
+          "type": "updateQuest",
+          "params": {
+            "id": "支线-归还小孩铁环-归还铁环"
+          }
+        }
       ],
       "next": "end1"
+    },
+    "n_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": ""
     }
-  }
+  },
+  "preconditions": []
 }

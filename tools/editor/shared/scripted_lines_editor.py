@@ -7,11 +7,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QFontMetrics
 
 
 class ScriptedLinesEditor(QWidget):
@@ -69,8 +71,10 @@ class ScriptedLinesEditor(QWidget):
         bl.addLayout(hdr)
         bl.addWidget(QLabel("text"))
         tx = QTextEdit()
-        tx.setMinimumHeight(56)
-        tx.setMaximumHeight(120)
+        fm = QFontMetrics(tx.font())
+        lh = max(1, int(fm.lineSpacing()))
+        tx.setFixedHeight(max(24, lh + 14))
+        tx.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         tx.setPlainText(str(data.get("text", "") or ""))
         tx.textChanged.connect(lambda: self.changed.emit())
         bl.addWidget(tx)

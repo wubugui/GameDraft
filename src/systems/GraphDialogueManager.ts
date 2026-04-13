@@ -51,6 +51,8 @@ export class GraphDialogueManager implements IGameSystem {
   private choicePhase: null | { nodeId: string; stage: 'prompt' | 'options' } = null;
   /** 已展示 `line` 节点台词，等待玩家点击后再 `prepareBeat` 并进入 `next` */
   private awaitingLineDismiss = false;
+  /** `line` 节点多拍时当前拍索引（单拍 legacy 恒为 0） */
+  private lineBeatIndex = 0;
 
   constructor(
     eventBus: EventBus,
@@ -107,6 +109,7 @@ export class GraphDialogueManager implements IGameSystem {
     this.npcId = '';
     this.choicePhase = null;
     this.awaitingLineDismiss = false;
+    this.lineBeatIndex = 0;
     this.opChain = Promise.resolve();
   }
 
@@ -167,6 +170,7 @@ export class GraphDialogueManager implements IGameSystem {
       this.active = true;
       this.choicePhase = null;
       this.awaitingLineDismiss = false;
+      this.lineBeatIndex = 0;
 
       this.eventBus.emit('dialogue:start', { npcName: this.npcName, graphId: gid });
       await this.drainUntilBlocking();
@@ -189,6 +193,19 @@ export class GraphDialogueManager implements IGameSystem {
       this.awaitingLineDismiss = false;
       const cur = this.graph.nodes[this.currentNodeId];
       if (cur?.type === 'line') {
+        const beats = this.lineBeatsFor(cur);
+        if (this.lineBeatIndex + 1 < beats.length) {
+          this.lineBeatIndex += 1;
+          const line = this.linePayloadToDialogueLine(beats[this.lineBeatIndex]!);
+          this.eventBus.emit('dialogue:line', line);
+          this.awaitingLineDismiss = true;
+          const nextAfterLine = this.graph.nodes[cur.next];
+          if (this.lineBeatIndex === beats.length - 1 && nextAfterLine?.type === 'end') {
+            this.eventBus.emit('dialogue:willEnd', {});
+          }
+          return;
+        }
+        this.lineBeatIndex = 0;
         this.eventBus.emit('dialogue:prepareBeat', {});
         this.currentNodeId = cur.next;
         await this.drainUntilBlocking();
@@ -234,6 +251,7 @@ export class GraphDialogueManager implements IGameSystem {
     this.npcId = '';
     this.choicePhase = null;
     this.awaitingLineDismiss = false;
+    this.lineBeatIndex = 0;
     /** 丢弃排队中的推进；在途 runExclusive 的 release 仍可能随后触发，属可接受竞态 */
     this.opChain = Promise.resolve();
     this.eventBus.emit('dialogue:end', {});
@@ -263,16 +281,23 @@ export class GraphDialogueManager implements IGameSystem {
       }
 
       if (node.type === 'line') {
-        const line = this.linePayloadToDialogueLine({
-          speaker: node.speaker,
-          text: node.text,
-          textKey: node.textKey,
-        });
+        this.lineBeatIndex = 0;
+        const beats = this.lineBeatsFor(node);
+        const first = beats[0];
+        if (!first) {
+          console.warn(`GraphDialogueManager: line 节点无可用台词 ${this.currentNodeId}`);
+          this.endDialogue();
+          return;
+        }
+        const line = this.linePayloadToDialogueLine(first);
         this.eventBus.emit('dialogue:line', line);
         this.awaitingLineDismiss = true;
         const next = this.graph.nodes[node.next];
-        if (next?.type === 'end') {
+        if (beats.length === 1 && next?.type === 'end') {
           this.eventBus.emit('dialogue:willEnd', {});
+        }
+        if (beats.length > 1 && next?.type === 'end') {
+          /** 多拍时仅在最后一拍展示后结束；willEnd 在点到最后一拍时再发（见 advanceCore） */
         }
         return;
       }
@@ -330,9 +355,11 @@ export class GraphDialogueManager implements IGameSystem {
       const coins = (this.flagStore.get('coins') as number) ?? 0;
       const costOk = costAmount === undefined || coins >= costAmount;
       const enabled = reqOk && costOk;
-      const disableHint = enabled
+      const customHint = !enabled && opt.disabledClickHint?.trim() ? opt.disabledClickHint.trim() : undefined;
+      const autoHint = enabled
         ? undefined
         : this.buildChoiceDisableHint({ requireKey, reqOk, costAmount, costOk, ruleHintId: opt.ruleHintId }, s);
+      const disableHint = customHint ?? autoHint;
 
       return {
         index: i,
@@ -379,6 +406,16 @@ export class GraphDialogueManager implements IGameSystem {
     return node.defaultNext;
   }
 
+  private lineBeatsFor(
+    node: Extract<DialogueGraphNodeDef, { type: 'line' }>,
+  ): DialogueLinePayload[] {
+    const lines = node.lines;
+    if (Array.isArray(lines) && lines.length > 0) {
+      return lines;
+    }
+    return [{ speaker: node.speaker, text: node.text, textKey: node.textKey }];
+  }
+
   private linePayloadToDialogueLine(p: DialogueLinePayload): DialogueLine {
     const speaker = this.resolveSpeaker(p.speaker);
     let text = '';
@@ -401,7 +438,12 @@ export class GraphDialogueManager implements IGameSystem {
     }
     if (s.kind === 'npc') return this.npcName;
     if (s.kind === 'literal') return s.name;
-    const npc = this.sceneManager.getNpcById(s.npcId);
-    return npc?.def.name ?? s.npcId;
+    /** 与图对话编辑器约定：promptLine / line 的 sceneNpc 可写此占位，等价于 startDialogueGraph 传入的 npcId */
+    const contextNpcToken = '@contextNpc';
+    const raw = s.npcId?.trim() ?? '';
+    const id = raw === contextNpcToken ? this.npcId.trim() : raw;
+    if (!id) return this.npcName || raw || '…';
+    const npc = this.sceneManager.getNpcById(id);
+    return npc?.def.name ?? id;
   }
 }

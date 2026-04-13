@@ -4,6 +4,8 @@ import sys
 from PySide6.QtWidgets import QApplication, QStyleFactory
 from PySide6.QtGui import QPalette, QColor
 
+from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_block
+
 from .main_window import MainWindow
 
 
@@ -54,6 +56,7 @@ def main():
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
+    install_global_combo_wheel_block(app)
     setup_dark_theme(app)
     w = MainWindow(args.project)
     w.show()

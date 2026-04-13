@@ -313,4 +313,9 @@ class ActionRegistryEditor(QWidget):
         r = self._current_record
         if not r:
             return
+        if r.action_type == "startDialogueGraph":
+            gid = (r.action.get("params") or {}).get("graphId")
+            if gid:
+                self.navigate_to_source.emit("dialogue_graph", str(gid), "")
+                return
         self.navigate_to_source.emit(r.source_type, r.source_id, r.scene_id)

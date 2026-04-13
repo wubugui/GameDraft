@@ -216,7 +216,13 @@ export interface GraphChoiceOptionDef {
   next: string;
   requireFlag?: string;
   costCoins?: number;
+  /** 与 UI「规矩」标签、灰色样式相关；锁定时可与 strings 中 choiceNeedRule 组合成提示 */
   ruleHintId?: string;
+  /**
+   * 选项不可选时，玩家点击该条后弹出的说明文案。
+   * 不填则运行时按 requireFlag / costCoins / ruleHintId 自动生成（规矩名、铜钱数等）。
+   */
+  disabledClickHint?: string;
 }
 
 export type DialogueGraphNodeDef =
@@ -225,6 +231,8 @@ export type DialogueGraphNodeDef =
       speaker: DialogueGraphSpeaker;
       text?: string;
       textKey?: string;
+      /** 多拍连续对白（每拍仍需点击继续）；若存在则按顺序播放，且首拍应与 speaker/text/textKey 一致（可由编辑器镜像） */
+      lines?: DialogueLinePayload[];
       next: string;
     }
   | {

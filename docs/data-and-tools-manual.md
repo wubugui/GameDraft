@@ -432,7 +432,13 @@ NPC **animFile** 选这里登记过的动画包路径。
 
 ---
 
-## 二十一、界面英文标签速查
+## 二十一、图对话页签（流程图编辑器）
+
+主编辑器 **图对话** 页编辑 `public/assets/dialogues/graphs/*.json`。右侧表单与中间**流程图**同一套数据：从节点**右侧圆点**拖线到目标节点即可改 `next` / 选项 `next` / `switch` 分支；**右键连线**可断开。画布快捷键：**F** 适应窗口，**A** 自动布局。节点坐标与「缺失目标」的幽灵占位块位置写入 `editor_data/dialogue_flow_layout.json`（嵌套格式含 `nodes` / `ghosts`），**不参与**游戏运行时加载。**Actions** 页中 **startDialogueGraph** 可「前往来源」跳到本页并打开对应图文件。
+
+---
+
+## 二十二、界面英文标签速查
 
 | 界面标签 | 中文含义 |
 |----------|----------|
@@ -446,6 +452,7 @@ NPC **animFile** 选这里登记过的动画包路径。
 | Map | 大地图 |
 | Archive | 档案 |
 | Dialogue | 对话 |
+| 图对话 | 图对话 JSON / 流程图 |
 | Audio | 音频 |
 | Filters | 滤镜 |
 | Animation | 动画 |

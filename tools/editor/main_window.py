@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         ext = tools_menu.addMenu("External tools (new process)")
         self._act(ext, "Graph Editor", self._launch_graph_editor_external)
+        self._act(ext, "Dialogue Graph Editor", self._launch_dialogue_graph_editor_external)
         self._act(ext, "Scene Depth Editor", self._launch_scene_depth_editor_external)
         self._act(ext, "Filter Tool", self._launch_filter_tool_external)
 
@@ -328,6 +329,17 @@ class MainWindow(QMainWindow):
             root=root,
         )
 
+    def _launch_dialogue_graph_editor_external(self) -> None:
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        self._launch_external_tool(
+            "tools.dialogue_graph_editor",
+            ["--project", str(root.resolve())],
+            "Dialogue Graph Editor",
+            root=root,
+        )
+
     def _launch_scene_depth_editor_external(self) -> None:
         self._launch_external_tool("tools.scene_depth_editor", [], "Scene Depth Editor")
 
@@ -356,12 +368,14 @@ class MainWindow(QMainWindow):
         from .editors.filter_editor import FilterEditor
         from .editors.action_registry_editor import ActionRegistryEditor
         from .editors.overlay_images_editor import OverlayImagesEditor
+        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
 
         editors = [
             ("Scene", SceneEditor),
             ("Quest", QuestEditor),
             ("Encounter", EncounterEditor),
             ("Cutscene", CutsceneEditor),
+            ("图对话", DialogueGraphEditorTab),
             ("Item", ItemEditor),
             ("Rule", RuleEditor),
             ("Shop", ShopEditor),
@@ -716,6 +730,14 @@ class MainWindow(QMainWindow):
                 break
 
     def _on_navigate_to_source(self, source_type: str, source_id: str, scene_id: str) -> None:
+        if source_type == "dialogue_graph":
+            from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+            for i, ed in enumerate(self._editor_instances):
+                if isinstance(ed, DialogueGraphEditorTab):
+                    self._tabs.setCurrentIndex(i)
+                    ed.open_graph_by_id(source_id)
+                    return
+            return
         tab_map = {
             "quest": "Quest",
             "encounter": "Encounter",
@@ -739,11 +761,16 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         from .editors.cutscene_editor import CutsceneEditor
+        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         for ed in self._editor_instances:
             if isinstance(ed, CutsceneEditor) and ed.has_pending_changes():
                 if ed.confirm_apply_or_discard(self) == "cancel":
                     event.ignore()
                     return
+        for ed in self._editor_instances:
+            if isinstance(ed, DialogueGraphEditorTab) and not ed.confirm_close(self):
+                event.ignore()
+                return
         if self._model.is_dirty:
             r = QMessageBox.question(
                 self, "Unsaved Changes",

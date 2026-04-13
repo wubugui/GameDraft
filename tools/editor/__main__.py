@@ -11,12 +11,15 @@ except ImportError:
 
 from PySide6.QtWidgets import QApplication
 
+from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_block
+
 from . import theme
 from .main_window import MainWindow
 
 
 def main() -> None:
     app = QApplication(sys.argv)
+    install_global_combo_wheel_block(app)
     app.setApplicationName("GameDraft Editor")
 
     theme.apply_application_theme(app, theme.settings_load_theme())

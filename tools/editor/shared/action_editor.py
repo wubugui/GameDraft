@@ -12,7 +12,7 @@ from typing import Callable
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QFormLayout, QFrame,
-    QTextEdit, QApplication,
+    QTextEdit, QApplication, QToolButton,
 )
 
 from PySide6.QtCore import QEvent, QEventLoop, Qt, Signal
@@ -366,7 +366,7 @@ class RuleSlotsParamEditor(QWidget):
         hdr = QHBoxLayout()
         hdr.addWidget(QLabel("ruleId"), stretch=0)
         rid = IdRefSelector(box, allow_empty=True)
-        rid.setMinimumWidth(200)
+        rid.setMinimumWidth(96)
         rid.set_items(self._model.all_rule_ids() if self._model else [])
         rid.set_current(str(data.get("ruleId", "")))
         rid.value_changed.connect(lambda _v: self.changed.emit())
@@ -424,6 +424,7 @@ class ActionRow(QWidget):
         self._ctx_model = model
         self._ctx_scene_id = scene_id
         self._delayed_editor = None
+        self._collapsed = True
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -431,6 +432,12 @@ class ActionRow(QWidget):
         self._outer_layout = outer
 
         top = QHBoxLayout()
+        self._fold_toggle = QToolButton()
+        self._fold_toggle.setAutoRaise(True)
+        self._fold_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._fold_toggle.setToolTip("折叠 / 展开参数区")
+        self._fold_toggle.clicked.connect(self._on_fold_clicked)
+        top.addWidget(self._fold_toggle)
         self.type_combo = FilterableTypeCombo.from_flat_strings(ACTION_TYPES)
         self._btn_up = QPushButton("\u2191")
         self._btn_up.setFixedWidth(24)
@@ -454,10 +461,17 @@ class ActionRow(QWidget):
 
         self._rule_slots_editor: RuleSlotsParamEditor | None = None
 
+        self._foldable_body = QWidget()
+        self._foldable_layout = QVBoxLayout(self._foldable_body)
+        self._foldable_layout.setContentsMargins(0, 0, 0, 0)
+        self._foldable_layout.setSpacing(2)
+
         self._params_frame = QFrame()
         self._params_layout = QFormLayout(self._params_frame)
         self._params_layout.setContentsMargins(20, 0, 0, 0)
-        outer.addWidget(self._params_frame)
+        self._foldable_layout.addWidget(self._params_frame)
+        outer.addWidget(self._foldable_body)
+        self._foldable_body.setVisible(False)
 
         raw = data or {"type": "setFlag", "params": {}}
         self._data = {
@@ -469,6 +483,29 @@ class ActionRow(QWidget):
         self._rebuild_params()
 
         self.type_combo.typeCommitted.connect(self._on_type_committed)
+
+    def _on_fold_clicked(self) -> None:
+        self._collapsed = not self._collapsed
+        self._foldable_body.setVisible(not self._collapsed)
+        self._fold_toggle.setArrowType(
+            Qt.ArrowType.RightArrow if self._collapsed else Qt.ArrowType.DownArrow
+        )
+
+    def _sync_foldable_visibility(self) -> None:
+        self._foldable_body.setVisible(not self._collapsed)
+
+    def apply_fold_policy(self, single_row: bool) -> None:
+        """仅一行时展开并隐藏折叠钮；多行时默认折叠参数区。"""
+        if single_row:
+            self._fold_toggle.setVisible(False)
+            self._collapsed = False
+            self._foldable_body.setVisible(True)
+            self._fold_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        else:
+            self._fold_toggle.setVisible(True)
+            self._collapsed = True
+            self._foldable_body.setVisible(False)
+            self._fold_toggle.setArrowType(Qt.ArrowType.RightArrow)
 
     def set_reorder_enabled(self, up: bool, down: bool) -> None:
         self._btn_up.setEnabled(up)
@@ -553,7 +590,7 @@ class ActionRow(QWidget):
     ) -> QWidget:
         m = self._ctx_model
         w = IdRefSelector(self, allow_empty=True)
-        w.setMinimumWidth(200)
+        w.setMinimumWidth(96)
         if kind == "scene":
             w.set_items([(s, s) for s in (m.all_scene_ids() if m else [])])
         elif kind == "item":
@@ -590,11 +627,11 @@ class ActionRow(QWidget):
             self._params_layout.removeRow(0)
         self._param_widgets.clear()
         if self._delayed_editor is not None:
-            self._outer_layout.removeWidget(self._delayed_editor)
+            self._foldable_layout.removeWidget(self._delayed_editor)
             self._delayed_editor.deleteLater()
             self._delayed_editor = None
         if self._rule_slots_editor is not None:
-            self._outer_layout.removeWidget(self._rule_slots_editor)
+            self._foldable_layout.removeWidget(self._rule_slots_editor)
             self._rule_slots_editor.deleteLater()
             self._rule_slots_editor = None
 
@@ -642,6 +679,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow("yPercent（垂直中心）", self._param_widgets["yPercent"])
             self._param_widgets["widthPercent"] = _pct_spin("widthPercent", 40.0)
             self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
+            self._sync_foldable_visibility()
             return
 
         if act_type == "startDialogueGraph":
@@ -670,6 +708,7 @@ class ActionRow(QWidget):
             nid.textChanged.connect(self.changed)
             self._param_widgets["npcId"] = nid
             self._params_layout.addRow("npcId", nid)
+            self._sync_foldable_visibility()
             return
 
         if act_type == "playScriptedDialogue":
@@ -681,7 +720,8 @@ class ActionRow(QWidget):
             )
             ed.changed.connect(self.changed)
             self._delayed_editor = ed
-            self._outer_layout.addWidget(ed)
+            self._foldable_layout.addWidget(ed)
+            self._sync_foldable_visibility()
             return
 
         if act_type == "enableRuleOffers":
@@ -695,7 +735,8 @@ class ActionRow(QWidget):
             )
             ed.changed.connect(self.changed)
             self._rule_slots_editor = ed
-            self._outer_layout.addWidget(ed)
+            self._foldable_layout.addWidget(ed)
+            self._sync_foldable_visibility()
             return
 
         if act_type == "setPlayerAvatar":
@@ -714,7 +755,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow(tip)
 
             bid = IdRefSelector(self, allow_empty=True)
-            bid.setMinimumWidth(220)
+            bid.setMinimumWidth(112)
             bundles = (
                 [(k, k) for k in sorted(self._ctx_model.animations.keys())]
                 if self._ctx_model
@@ -744,10 +785,12 @@ class ActionRow(QWidget):
                 le.textChanged.connect(self.changed)
                 self._param_widgets[logical] = le
                 self._params_layout.addRow(f"clip:{logical}", le)
+            self._sync_foldable_visibility()
             return
 
         if not schema:
             self._params_frame.setVisible(False)
+            self._sync_foldable_visibility()
             return
         self._params_frame.setVisible(True)
 
@@ -781,7 +824,7 @@ class ActionRow(QWidget):
             elif act_type in ("setFlag", "appendFlag") and pname == "key":
                 cur = str(val) if val is not None else ""
                 w = FlagKeyPickField(self._ctx_model, self._ctx_scene_id, cur, self)
-                w.setMinimumWidth(200)
+                w.setMinimumWidth(96)
             elif act_type in ("switchScene", "changeScene") and pname == "targetScene":
                 w = self._make_selector("scene", str(val) if val is not None else "")
             elif act_type in ("switchScene", "changeScene") and pname == "targetSpawnPoint":
@@ -822,7 +865,7 @@ class ActionRow(QWidget):
                 w.currentTextChanged.connect(self.changed)
             elif act_type == "addArchiveEntry" and pname == "entryId":
                 w = IdRefSelector(self, allow_empty=True)
-                w.setMinimumWidth(200)
+                w.setMinimumWidth(96)
                 bt = str(params.get("bookType", "character"))
                 items = (
                     self._ctx_model.archive_entry_ids_for_book_type(bt)
@@ -883,7 +926,9 @@ class ActionRow(QWidget):
             ed.set_data(list(raw_actions) if isinstance(raw_actions, list) else [])
             ed.changed.connect(self.changed)
             self._delayed_editor = ed
-            self._outer_layout.addWidget(ed)
+            self._foldable_layout.addWidget(ed)
+
+        self._sync_foldable_visibility()
 
     def _to_dict_show_overlay_image(self) -> dict:
         id_w = self._param_widgets.get("id")
@@ -1054,6 +1099,7 @@ class ActionEditor(QWidget):
         self._rows.append(row)
         self._rows_layout.addWidget(row)
         self._refresh_reorder_buttons()
+        self._refresh_fold_policy()
 
     def _add_empty(self) -> None:
         self._add_row({"type": "setFlag", "params": {}})
@@ -1087,4 +1133,11 @@ class ActionEditor(QWidget):
             self._rows_layout.removeWidget(row)
             row.deleteLater()
             self._refresh_reorder_buttons()
+            self._refresh_fold_policy()
             self.changed.emit()
+
+    def _refresh_fold_policy(self) -> None:
+        n = len(self._rows)
+        single = n <= 1
+        for r in self._rows:
+            r.apply_fold_policy(single)
