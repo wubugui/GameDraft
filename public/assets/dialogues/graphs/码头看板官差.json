@@ -44,7 +44,7 @@
               "value": true
             }
           ],
-          "next": "n_abuse_1"
+          "next": "n_1"
         }
       ],
       "defaultNext": "n_no_1"
@@ -68,86 +68,6 @@
     },
     "e2": {
       "type": "end"
-    },
-    "n_abuse_1": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "text": "官爷......",
-      "next": "n_abuse_2"
-    },
-    "n_abuse_2": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "next": "n_abuse_3",
-      "text": "zzz..."
-    },
-    "n_abuse_3": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "next": "n_abuse_4",
-      "text": "官爷！"
-    },
-    "n_abuse_4": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "next": "n_abuse_5",
-      "text": "干什么！死叫花！"
-    },
-    "n_abuse_5": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "text": "嘿嘿。这告示上都写的啥啊？",
-      "next": "n_abuse_6"
-    },
-    "n_abuse_6": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "不准下水！",
-      "next": "n_abuse_7"
-    },
-    "n_abuse_7": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "text": "为啥？",
-      "next": "n_abuse_8"
-    },
-    "n_abuse_8": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "爬爬爬！个龟儿死叫花。",
-      "next": "n_abuse_9"
-    },
-    "n_abuse_9": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "画那么大个水猴子看不见！",
-      "next": "n_abuse_10"
-    },
-    "n_abuse_10": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "下水找死，要死你死远点。",
-      "next": "n_main_choice"
     },
     "n_main_choice": {
       "type": "choice",
@@ -220,31 +140,7 @@
           }
         }
       ],
-      "next": "n_pay2_l1"
-    },
-    "n_pay2_l1": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "两文？你当老子是要饭的？",
-      "next": "n_too_1"
-    },
-    "n_too_1": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "滚滚滚！别碍老子的眼！",
-      "next": "n_too_2"
-    },
-    "n_too_2": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "text": "……",
-      "next": "e_too"
+      "next": "n_2"
     },
     "e_too": {
       "type": "end"
@@ -294,8 +190,8 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "哟，懂事。",
-      "next": "n_pay12_l2"
+      "next": "n_pay12_l2",
+      "text": "哟，懂事。"
     },
     "n_pay12_l2": {
       "type": "line",
@@ -310,8 +206,8 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "老子才不当这冤大头。",
-      "next": "e5"
+      "next": "e5",
+      "text": "老子才不当这冤大头。"
     },
     "e5": {
       "type": "end"
@@ -321,16 +217,16 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "官爷，我可是听说过的——夜里有些地方去不得，冲撞了比下水还麻烦。您在这码头上当差，总该懂这里头的分寸吧？",
-      "next": "n_intel_2"
+      "next": "n_intel_2",
+      "text": "官爷，我可是听说过的——夜里有些地方去不得，冲撞了比下水还麻烦。您在这码头上当差，总该懂这里头的分寸吧？"
     },
     "n_intel_2": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "……哼。少跟老子扯这些有的没的。",
-      "next": "n_intel_3"
+      "next": "n_intel_3",
+      "text": "……哼。少跟老子扯这些有的没的。"
     },
     "n_intel_3": {
       "type": "line",
@@ -394,6 +290,94 @@
     },
     "e4": {
       "type": "end"
+    },
+    "n_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_main_choice",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "官爷......"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "zzz..."
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "官爷！！"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "干什么！死叫花！"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "嘿嘿。这告示上都写的啥啊？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "不准下水！"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "为啥？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "爬爬爬！个龟儿死叫花。下水找死，要死你死远点。"
+        }
+      ],
+      "text": "官爷......"
+    },
+    "n_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "e_too",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……"
+        }
+      ],
+      "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
+    },
+    "n_too_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "e_too",
+      "text": "……"
     }
   },
   "preconditions": []

@@ -11,6 +11,7 @@
           "conditions": [
             {
               "flag": "铁环小孩_已经获得铁环",
+              "op": "==",
               "value": true
             }
           ],
@@ -24,25 +25,29 @@
       "speaker": {
         "kind": "player"
       },
-      "next": "has_ring_2",
-      "text": "老子又不要你的，还给你还给你。"
-    },
-    "has_ring_2": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "next": "has_ring_3",
-      "text": "哇哇哇哇哇哇哇哇哇哇哇哇......"
-    },
-    "has_ring_3": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
       "next": "end1",
-      "text": "不理你......"
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "老子又不要你的，还给你还给你。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "哇哇哇哇哇哇哇哇哇哇哇哇......"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "不理你......"
+        }
+      ],
+      "text": "老子又不要你的，还给你还给你。"
     },
     "end1": {
       "type": "end"
@@ -326,13 +331,6 @@
         }
       ],
       "next": "end1"
-    },
-    "n_1": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "next": ""
     }
   },
   "preconditions": []

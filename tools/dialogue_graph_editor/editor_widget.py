@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QMenu, QCompleter, QDialog, QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel
-from PySide6.QtGui import QUndoStack, QAction, QCursor
+from PySide6.QtGui import QUndoStack, QAction, QCursor, QKeySequence, QShortcut
 
 from .graph_document import (
     graphs_dir,
@@ -216,6 +216,10 @@ class DialogueGraphEditorWidget(QWidget):
         self._node_list = QListWidget()
         self._node_list.currentItemChanged.connect(self._on_node_item_changed)
         nv.addWidget(self._node_list, 1)
+        sc_del_list = QShortcut(
+            QKeySequence(Qt.Key.Key_Delete), self._node_list, activated=self._on_flow_delete_key
+        )
+        sc_del_list.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         hb = QHBoxLayout()
         self._btn_add = QPushButton("添加节点")
         self._btn_del = QPushButton("删除")
@@ -482,13 +486,26 @@ class DialogueGraphEditorWidget(QWidget):
         scene_y: float,
         hit_node_id: object,
         hit_frame_gid: object,
+        hit_ghost_missing: object,
     ) -> None:
         if not isinstance(self._data.get("nodes"), dict) or not self._data["nodes"]:
             self._toast("请先打开或新建图", 3000)
             return
         nid = hit_node_id if isinstance(hit_node_id, str) and hit_node_id else None
         fgid = hit_frame_gid if isinstance(hit_frame_gid, str) and hit_frame_gid else None
+        ghost_mid = (
+            hit_ghost_missing.strip()
+            if isinstance(hit_ghost_missing, str) and hit_ghost_missing.strip()
+            else None
+        )
         menu = QMenu(self)
+        if ghost_mid:
+            act_g = QAction(f'清除指向缺失节点「{ghost_mid}」的连线…', self)
+            act_g.triggered.connect(
+                lambda checked=False, g=ghost_mid: self._remove_ghost_missing_targets([g])
+            )
+            menu.addAction(act_g)
+            menu.addSeparator()
         if fgid and fgid in self._editor_group_frames:
             act_nm = QAction("编辑分组名称…", self)
             act_nm.triggered.connect(lambda checked=False, g=fgid: self._on_editor_frame_rename(g))
@@ -549,11 +566,15 @@ class DialogueGraphEditorWidget(QWidget):
         self._layout_save_timer.start(450)
 
     def _on_flow_delete_key(self) -> None:
-        nid = self._oden.primary_selected_flow_node_id()
-        if not nid or nid not in (self._data.get("nodes") or {}):
-            self._toast("请先选中要删除的节点", 2500)
+        nids = self._oden.selected_flow_node_ids()
+        if nids:
+            self._delete_nodes(nids)
             return
-        self._delete_node(nid)
+        mids = self._oden.selected_ghost_missing_ids()
+        if mids:
+            self._remove_ghost_missing_targets(mids)
+            return
+        self._toast("请先选中要删除的节点或幽灵占位", 2500)
 
     def create_new_graph_draft(self) -> None:
         if self._dirty:
@@ -862,13 +883,12 @@ class DialogueGraphEditorWidget(QWidget):
         lp = self._layout_path_for_io()
         if not lp:
             return
-        if not (self._data.get("nodes") or {}):
-            return
         self._oden.sync_layout_dicts_from_graph()
         snap = self._oden.snapshot_editor_group_frames()
         if snap:
             self._editor_group_frames.update(snap)
         self._sync_node_groups_from_scene()
+        self._canonicalize_editor_layout_to_graph_nodes()
         gh = self._ghost_positions if self._ghost_positions else None
         write_positions_for_graph(
             self._project,
@@ -1078,19 +1098,43 @@ class DialogueGraphEditorWidget(QWidget):
             if nid not in self._positions:
                 self._positions[nid] = fallback.get(nid, (0.0, 0.0))
 
-    def _prune_positions(self) -> None:
-        nodes = self._data.get("nodes") or {}
+    def _canonicalize_editor_layout_to_graph_nodes(self) -> bool:
+        """以 graphs/*.json 中当前 ``nodes`` 为唯一准绳裁剪编辑器布局（坐标、分组、ghosts）。
+
+        避免 layout 文件残留已删节点 id，进而与画布/Oden 状态不一致或出现无法对应 JSON 的占位。
+        返回是否修改过任何字典内容（用于打开文件后决定是否回写 layout）。
+        """
+        raw_nodes = self._data.get("nodes")
+        nodes: dict[str, Any] = raw_nodes if isinstance(raw_nodes, dict) else {}
+        changed = False
         for k in list(self._positions.keys()):
             if k not in nodes:
                 del self._positions[k]
+                changed = True
         for k in list(self._node_to_group.keys()):
             if k not in nodes:
                 del self._node_to_group[k]
+                changed = True
+        for k, gid in list(self._node_to_group.items()):
+            if gid not in self._editor_groups:
+                del self._node_to_group[k]
+                changed = True
         for k in list(self._editor_group_frames.keys()):
             if k not in self._editor_groups:
                 del self._editor_group_frames[k]
+                changed = True
+        missing: set[str] = set()
+        for _s, d, _lab, _k, _idx in extract_flow_edges_detailed(nodes):
+            if d and d not in nodes:
+                missing.add(str(d))
+        for k in list(self._ghost_positions.keys()):
+            if str(k) not in missing:
+                del self._ghost_positions[k]
+                changed = True
+        return changed
 
     def _rebuild_flow_scene(self) -> None:
+        self._canonicalize_editor_layout_to_graph_nodes()
         if not self._layout_path_for_io():
             self._oden.rebuild(
                 {},
@@ -1258,11 +1302,11 @@ class DialogueGraphEditorWidget(QWidget):
                 nodes, entry, avoid_rects=avoid
             )
             regen_layout = True
-        self._prune_positions()
+        layout_fixed = self._canonicalize_editor_layout_to_graph_nodes()
         self._undo_stack.clear()
         self._populate_node_list(select_first=True)
         self._rebuild_flow_scene()
-        if regen_layout or migrated_frames:
+        if regen_layout or migrated_frames or layout_fixed:
             self._flush_flow_layout_to_disk()
         QTimer.singleShot(0, self._flow_fit_view)
         self._emit_title()
@@ -1494,9 +1538,10 @@ class DialogueGraphEditorWidget(QWidget):
             return
         if nid != self._editing_node_id and self._editing_node_id:
             try:
-                self._data.setdefault("nodes", {})[self._editing_node_id] = (
-                    self._inspector.get_node()
-                )
+                # 切换列表行前先把旧节点写回；若旧 id 已不在图中（例如刚删节点），切勿 setdefault 把它插回去
+                prev_nodes = self._data.get("nodes")
+                if isinstance(prev_nodes, dict) and self._editing_node_id in prev_nodes:
+                    prev_nodes[self._editing_node_id] = self._inspector.get_node()
             except ValueError as e:
                 QMessageBox.warning(self, "无法切换节点", str(e))
                 self._node_list.blockSignals(True)
@@ -1581,20 +1626,37 @@ class DialogueGraphEditorWidget(QWidget):
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
 
-    def _delete_node(self, nid: str | None = None):
-        # 工具栏 clicked 可能传入 bool；仅非空 str 才视为显式节点 id。
-        if isinstance(nid, str) and nid.strip():
-            nid = nid.strip()
-        else:
-            nid = self._current_node_id_from_list()
-        if not nid:
+    def _resolve_delete_targets(self, explicit_id: str | None) -> list[str]:
+        """显式 id（右键菜单等）优先，否则用画布多选，再退回节点列表当前行。"""
+        if explicit_id and explicit_id.strip():
+            return [explicit_id.strip()]
+        sel = self._oden.selected_flow_node_ids()
+        if sel:
+            return sel
+        cur = self._current_node_id_from_list()
+        if cur:
+            return [cur]
+        one = self._oden.primary_selected_flow_node_id()
+        return [one] if one else []
+
+    def _delete_nodes(self, targets: list[str]) -> None:
+        node_dict = self._data.setdefault("nodes", {})
+        if not isinstance(node_dict, dict):
             return
-        refs = collect_incoming_refs(self._data, nid)
-        if refs:
+        to_del = sorted({n for n in targets if n in node_dict})
+        if not to_del:
+            return
+        to_del_set = set(to_del)
+        ext_refs = 0
+        for nid in to_del:
+            for src, *_r in collect_incoming_refs(self._data, nid):
+                if src not in to_del_set:
+                    ext_refs += 1
+        if ext_refs:
             r = QMessageBox.question(
                 self,
                 "删除节点",
-                f"仍有 {len(refs)} 条连线指向 {nid!r}。是否先断开这些入边再删除？\n"
+                f"仍有 {ext_refs} 条来自其它节点的连线指向待删除节点。是否先断开这些入边再删除？\n"
                 "选「否」将直接删除（可能留下悬空 next）。",
                 QMessageBox.StandardButton.Yes
                 | QMessageBox.StandardButton.No
@@ -1603,26 +1665,80 @@ class DialogueGraphEditorWidget(QWidget):
             if r == QMessageBox.StandardButton.Cancel:
                 return
             if r == QMessageBox.StandardButton.Yes:
-                clear_incoming_to_node(self._data, nid)
+                for nid in to_del:
+                    clear_incoming_to_node(self._data, nid)
+        preview = "、".join(to_del[:12])
+        if len(to_del) > 12:
+            preview += f" 等共 {len(to_del)} 个"
         confirm = QMessageBox.question(
             self,
             "删除",
-            f"删除节点 {nid!r}？",
+            f"删除节点 {preview}？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        nodes = self._data.get("nodes") or {}
-        if nid in nodes:
-            del nodes[nid]
-        self._node_to_group.pop(nid, None)
-        if self._data.get("entry") == nid:
+        for nid in to_del:
+            node_dict.pop(nid, None)
+            self._node_to_group.pop(nid, None)
+        if self._editing_node_id in to_del_set:
+            self._editing_node_id = None
+        entry = str(self._data.get("entry", "") or "")
+        if entry in to_del_set:
             self._edit_entry.setText("")
         self._mark_dirty()
         self._populate_node_list(select_first=True)
-        self._prune_positions()
+        self._canonicalize_editor_layout_to_graph_nodes()
         self._rebuild_flow_scene()
+        if self._layout_path_for_io():
+            self._flush_flow_layout_to_disk()
+
+    def _remove_ghost_missing_targets(self, mids: list[str]) -> None:
+        """幽灵节点对应 JSON 外 id：清空所有指向这些 id 的连线并移除布局里 ghost 坐标。"""
+        u = sorted({str(m).strip() for m in mids if str(m).strip()})
+        if not u:
+            return
+        total_refs = sum(len(collect_incoming_refs(self._data, mid)) for mid in u)
+        if total_refs == 0:
+            for mid in u:
+                self._ghost_positions.pop(mid, None)
+            self._mark_dirty()
+            self._rebuild_flow_scene()
+            if self._layout_path_for_io():
+                self._flush_flow_layout_to_disk()
+            self._toast("已移除幽灵布局坐标（无连线指向这些缺失 id）", 2500)
+            return
+        preview = "、".join(u[:16])
+        if len(u) > 16:
+            preview += f" 等共 {len(u)} 个"
+        r = QMessageBox.question(
+            self,
+            "清除缺失目标连线",
+            f"将清空所有指向以下缺失 id 的 next 类连线（共 {total_refs} 条）：\n{preview}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if r != QMessageBox.StandardButton.Yes:
+            return
+        for mid in u:
+            clear_incoming_to_node(self._data, mid)
+            self._ghost_positions.pop(mid, None)
+        self._mark_dirty()
+        self._rebuild_flow_scene()
+        if self._layout_path_for_io():
+            self._flush_flow_layout_to_disk()
+
+    def _delete_node(self, nid: str | None = None):
+        # 工具栏 clicked 可能传入 bool；仅非空 str 才视为显式节点 id。
+        explicit = nid.strip() if isinstance(nid, str) and nid.strip() else None
+        targets = self._resolve_delete_targets(explicit)
+        if targets:
+            self._delete_nodes(targets)
+            return
+        mids = self._oden.selected_ghost_missing_ids()
+        if mids:
+            self._remove_ghost_missing_targets(mids)
 
     def _duplicate_node(self, source_nid: str | None = None):
         # 工具栏 clicked 可能传入 bool；仅当 source_nid 为非空 str 时才视为画布/显式指定。
