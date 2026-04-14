@@ -1,5 +1,11 @@
-import { Container, Sprite, Texture, Rectangle } from 'pixi.js';
+import { BlurFilter, Container, Sprite, Texture, Rectangle } from 'pixi.js';
 import type { AnimationSetDef, AnimationStateDef } from '../data/types';
+import {
+  blurStrengthFromPixelDensityK,
+  computePixelDensityK,
+  createPixelDensityBlurFilter,
+  type TexelsPerWorld,
+} from './EntityPixelDensityMatch';
 
 /**
  * 精灵实体
@@ -32,6 +38,10 @@ export class SpriteEntity {
   private onCompleteCallback: (() => void) | null = null;
   /** 逻辑状态名（如 idle）-> anim.json 中的 states 键；未配置则同名 */
   private logicalToClip: Map<string, string> = new Map();
+
+  /** 仅显示：与背景像素密度对齐的低通（内层 Sprite，不影响外层深度滤镜） */
+  private pixelDensityBlur: BlurFilter | null = null;
+  private pixelDensityMatchActive = false;
 
   constructor() {
     this.container = new Container();
@@ -96,6 +106,7 @@ export class SpriteEntity {
 
   /** 释放帧子纹理与 Pixi 子节点（不销毁传入 loadFromDef 的图集基纹理） */
   destroy(): void {
+    this.clearPixelDensityBlur();
     this.disposeFrameTextures();
     this.baseTexture = null;
     this.animDef = null;
@@ -187,12 +198,61 @@ export class SpriteEntity {
     return { width: this.worldWidth, height: this.worldHeight };
   }
 
-  private applySpriteScale(): void {
+  /**
+   * 是否参与「实体与背景像素密度匹配」。关时移除内层密度滤镜。
+   */
+  setPixelDensityMatchActive(active: boolean): void {
+    if (this.pixelDensityMatchActive === active) return;
+    this.pixelDensityMatchActive = active;
+    this.sprite.roundPixels = active;
+    if (!active) {
+      this.clearPixelDensityBlur();
+    }
+  }
+
+  getPixelDensityMatchActive(): boolean {
+    return this.pixelDensityMatchActive;
+  }
+
+  /**
+   * 按当前帧与背景 dBg 更新内层 Sprite 的模糊强度；需在每帧或切帧后调用。
+   * @param dBg 背景 texels/world；为 null 或功能关闭时由调用方先 setActive(false)
+   * @param strengthScale 强度倍率（配置 / 调试）
+   */
+  applyPixelDensityMatch(dBg: TexelsPerWorld | null, strengthScale = 1): void {
+    if (!this.pixelDensityMatchActive) return;
+    if (!dBg || !this.baseTexture || !this.animDef) {
+      this.clearPixelDensityBlur();
+      return;
+    }
+    const { frameW, frameH } = this.getCurrentFramePixelSize();
+    const k = computePixelDensityK(frameW, frameH, this.worldWidth, this.worldHeight, dBg);
+    const strength = blurStrengthFromPixelDensityK(k, strengthScale);
+    if (strength <= 0) {
+      this.sprite.filters = [];
+      return;
+    }
+    if (!this.pixelDensityBlur) {
+      this.pixelDensityBlur = createPixelDensityBlurFilter(strength);
+    } else {
+      this.pixelDensityBlur.strength = strength;
+    }
+    this.sprite.filters = [this.pixelDensityBlur];
+  }
+
+  private clearPixelDensityBlur(): void {
+    this.sprite.filters = [];
+    if (this.pixelDensityBlur) {
+      this.pixelDensityBlur.destroy();
+      this.pixelDensityBlur = null;
+    }
+  }
+
+  private getCurrentFramePixelSize(): { frameW: number; frameH: number } {
     const tex = this.baseTexture;
     const def = this.animDef;
     if (!tex || !def) {
-      this.sprite.scale.set(this.facingX, 1);
-      return;
+      return { frameW: 1, frameH: 1 };
     }
     const strideW =
       typeof def.cellWidth === 'number' && def.cellWidth > 0
@@ -213,6 +273,17 @@ export class SpriteEntity {
         frameH = box.height;
       }
     }
+    return { frameW, frameH };
+  }
+
+  private applySpriteScale(): void {
+    const tex = this.baseTexture;
+    const def = this.animDef;
+    if (!tex || !def) {
+      this.sprite.scale.set(this.facingX, 1);
+      return;
+    }
+    const { frameW, frameH } = this.getCurrentFramePixelSize();
 
     this.sprite.scale.set(
       (this.worldWidth / frameW) * this.facingX,

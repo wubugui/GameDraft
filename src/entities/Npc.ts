@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, Texture } from 'pixi.js';
 import type { NpcDef, AnimationSetDef, ICutsceneActor } from '../data/types';
+import type { TexelsPerWorld } from '../rendering/EntityPixelDensityMatch';
 import { SpriteEntity } from '../rendering/SpriteEntity';
 
 const MARKER_SIZE = 20;
@@ -150,6 +151,13 @@ export class Npc implements ICutsceneActor {
 
   playAnimation(name: string): void {
     this.sprite?.playAnimation(name);
+  }
+
+  /** 纯渲染：与背景像素密度对齐（内层精灵，不碰深度与碰撞） */
+  applyEntityPixelDensityMatch(enabled: boolean, dBg: TexelsPerWorld | null, strengthScale = 1): void {
+    if (!this.sprite) return;
+    this.sprite.setPixelDensityMatchActive(enabled);
+    this.sprite.applyPixelDensityMatch(dBg, strengthScale);
   }
 
   /** 打断当前 moveTo（与 onDialogueStart 内取消位移一致），供停止巡逻等逻辑调用 */

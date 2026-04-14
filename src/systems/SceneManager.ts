@@ -212,6 +212,24 @@ export class SceneManager implements IGameSystem {
     return { ok: true, worldToPixelX, worldToPixelY };
   }
 
+  /**
+   * 第一层背景贴图在 X/Y 方向的「每世界单位像素数」（与 loadScene / applyDebugWorldSize 中 worldToPixel 一致）。
+   * 无有效背景精灵时返回 null。
+   */
+  getBackgroundTexelsPerWorld(): { x: number; y: number } | null {
+    const scene = this.currentScene;
+    const bg = this.sceneContainerBg;
+    if (!scene || !bg || scene.worldWidth <= 0 || scene.worldHeight <= 0) return null;
+    const first = bg.children.find(
+      (c): c is Sprite => c instanceof Sprite && c.texture?.width > 0 && c.texture?.height > 0,
+    );
+    if (!first) return null;
+    return {
+      x: first.texture.width / scene.worldWidth,
+      y: first.texture.height / scene.worldHeight,
+    };
+  }
+
   async loadScene(sceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }, fromSceneId?: string | null): Promise<void> {
     const sceneData = await this.assetManager.loadSceneData(sceneId);
     this.currentScene = sceneData;

@@ -46,6 +46,7 @@ import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
 import { GameState } from '../data/types';
 import type { ActionDef, IGameSystem, AnimationSetDef, GameConfig, SceneDataRaw } from '../data/types';
+import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from './assetPath';
@@ -140,6 +141,12 @@ export class Game {
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: DepthOcclusionFilter | null = null;
 
+  /** null = 跟随 game_config.entityPixelDensityMatch；非 null 为调试强制开/关 */
+  private entityPixelDensityMatchDebugOverride: boolean | null = null;
+
+  /** null = 使用 game_config.entityPixelDensityMatchBlurScale；非 null 为调试倍率（仍会被夹到 0.05～5） */
+  private entityPixelDensityMatchBlurScaleDebug: number | null = null;
+
   /** 场景卸载时递增，使旧场景的 NPC 巡逻异步循环立即失效 */
   private patrolGeneration = 0;
   /**
@@ -168,6 +175,8 @@ export class Game {
       animManifest: '/assets/animation/player_anim/anim.json',
       stateMap: {},
     },
+    entityPixelDensityMatch: true,
+    entityPixelDensityMatchBlurScale: DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE,
   };
 
   constructor() {
@@ -515,6 +524,23 @@ export class Game {
       goToDevScene: () => {
         void this.devLoadScene('dev_room');
       },
+      getEntityPixelDensityMatchConfig: () => this.gameConfig.entityPixelDensityMatch === true,
+      getEntityPixelDensityMatchEffective: () => this.getEntityPixelDensityMatchEffective(),
+      getEntityPixelDensityMatchDebugOverride: () => this.entityPixelDensityMatchDebugOverride,
+      cycleEntityPixelDensityMatchDebugOverride: () => {
+        const cur = this.entityPixelDensityMatchDebugOverride;
+        this.entityPixelDensityMatchDebugOverride = cur === null ? true : cur === true ? false : null;
+        this.syncEntityPixelDensityMatch();
+      },
+      getEntityPixelDensityMatchBlurScaleFromConfig: () => this.getEntityPixelDensityMatchBlurScaleFromConfig(),
+      getEntityPixelDensityMatchBlurScaleEffective: () => this.getEntityPixelDensityMatchBlurScale(),
+      getEntityPixelDensityMatchBlurScaleDebug: () => this.entityPixelDensityMatchBlurScaleDebug,
+      nudgeEntityPixelDensityMatchBlurScaleDebug: (delta: number) => {
+        this.nudgeEntityPixelDensityMatchBlurScaleDebug(delta);
+      },
+      clearEntityPixelDensityMatchBlurScaleDebug: () => {
+        this.clearEntityPixelDensityMatchBlurScaleDebug();
+      },
     });
     this.debugTools.init();
 
@@ -550,6 +576,13 @@ export class Game {
       await this.tryStartInitialPrologue();
     }
 
+    if (this.tearDownComplete || !this.renderer.isInitialized()) {
+      return;
+    }
+    const ticker = this.renderer.app.ticker;
+    if (!ticker) {
+      return;
+    }
     this.lastTime = performance.now();
     this.mainTick = () => {
       const now = performance.now();
@@ -557,7 +590,7 @@ export class Game {
       this.lastTime = now;
       this.tick(dt);
     };
-    this.renderer.app.ticker.add(this.mainTick);
+    ticker.add(this.mainTick);
   }
 
   private async loadFlagRegistry(): Promise<void> {
@@ -592,6 +625,16 @@ export class Game {
           animManifest: pa.animManifest ?? this.gameConfig.playerAvatar?.animManifest,
           stateMap: pa.stateMap ? { ...pa.stateMap } : this.gameConfig.playerAvatar?.stateMap,
         };
+      }
+      if (typeof cfg.entityPixelDensityMatch === 'boolean') {
+        this.gameConfig.entityPixelDensityMatch = cfg.entityPixelDensityMatch;
+      }
+      if (
+        typeof cfg.entityPixelDensityMatchBlurScale === 'number' &&
+        Number.isFinite(cfg.entityPixelDensityMatchBlurScale) &&
+        cfg.entityPixelDensityMatchBlurScale > 0
+      ) {
+        this.gameConfig.entityPixelDensityMatchBlurScale = cfg.entityPixelDensityMatchBlurScale;
       }
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
@@ -967,6 +1010,8 @@ export class Game {
         }
       }
 
+      this.syncEntityPixelDensityMatch();
+
       // 背景调试可视化：传递当前场景的深度纹理和配置
       const dTex = this.sceneDepthSystem.currentDepthTexture;
       const dCfg = this.sceneDepthSystem.currentConfig;
@@ -1105,6 +1150,66 @@ export class Game {
     if (data['game']) this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
   }
 
+  private getEntityPixelDensityMatchEffective(): boolean {
+    if (this.entityPixelDensityMatchDebugOverride !== null) {
+      return this.entityPixelDensityMatchDebugOverride;
+    }
+    return this.gameConfig.entityPixelDensityMatch === true;
+  }
+
+  /** 配置开启且能读到背景密度时，才做低通与整像素对齐（与 syncEntityPixelDensityMatch 一致） */
+  private isEntityPixelDensityMatchRenderingOn(): boolean {
+    const dBg = this.sceneManager.getBackgroundTexelsPerWorld();
+    return dBg != null && this.getEntityPixelDensityMatchEffective();
+  }
+
+  private getEntityPixelDensityMatchBlurScaleFromConfig(): number {
+    const v = this.gameConfig.entityPixelDensityMatchBlurScale;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
+      return DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE;
+    }
+    return v;
+  }
+
+  /** 配置与调试覆盖合成后的强度倍率（0.05～5） */
+  private getEntityPixelDensityMatchBlurScale(): number {
+    const cfg = this.getEntityPixelDensityMatchBlurScaleFromConfig();
+    const raw =
+      this.entityPixelDensityMatchBlurScaleDebug !== null
+        ? this.entityPixelDensityMatchBlurScaleDebug
+        : cfg;
+    return Math.min(5, Math.max(0.05, raw));
+  }
+
+  private nudgeEntityPixelDensityMatchBlurScaleDebug(delta: number): void {
+    const cfg = this.getEntityPixelDensityMatchBlurScaleFromConfig();
+    const cur = this.entityPixelDensityMatchBlurScaleDebug ?? cfg;
+    this.entityPixelDensityMatchBlurScaleDebug = Math.min(5, Math.max(0.05, cur + delta));
+    this.syncEntityPixelDensityMatch();
+  }
+
+  private clearEntityPixelDensityMatchBlurScaleDebug(): void {
+    this.entityPixelDensityMatchBlurScaleDebug = null;
+    this.syncEntityPixelDensityMatch();
+  }
+
+  /**
+   * 按配置与背景密度同步玩家 / NPC / 热点展示的低通（仅 Pixi filters，不影响深度与碰撞）。
+   */
+  private syncEntityPixelDensityMatch(): void {
+    const dBg = this.sceneManager.getBackgroundTexelsPerWorld();
+    const on = dBg != null && this.getEntityPixelDensityMatchEffective();
+    const strengthScale = this.getEntityPixelDensityMatchBlurScale();
+    this.player.sprite.setPixelDensityMatchActive(on);
+    this.player.sprite.applyPixelDensityMatch(dBg, strengthScale);
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      npc.applyEntityPixelDensityMatch(on, dBg, strengthScale);
+    }
+    for (const h of this.sceneManager.getCurrentHotspots()) {
+      h.applyEntityPixelDensityMatch(on, dBg, strengthScale);
+    }
+  }
+
   /**
    * 调试：只改内存中的当前场景 worldWidth / worldHeight；不写 JSON。「重载场景」可恢复数据文件数值。
    */
@@ -1123,6 +1228,7 @@ export class Game {
     if (this.sceneDepthSystem.currentDepthTexture && this.sceneDepthSystem.currentConfig) {
       this.depthDebugVisualizer.updateSceneWorldSize(sd.worldWidth, sd.worldHeight);
     }
+    this.syncEntityPixelDensityMatch();
   }
 
   private async reloadScene(sceneId: string): Promise<void> {
@@ -1220,6 +1326,8 @@ export class Game {
     this.lastFps = dt > 0 ? 1 / dt : 0;
     this.playTimeMs += dt * 1000;
 
+    this.camera.setPixelSnapTranslation(this.isEntityPixelDensityMatchRenderingOn());
+
     if (this.stateController.currentState === GameState.Exploring) {
       this.player.update(dt);
       this.interactionSystem.update(dt);
@@ -1257,6 +1365,8 @@ export class Game {
     this.camera.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();
+
+    this.syncEntityPixelDensityMatch();
 
     if (this.sceneDepthSystem.isEnabled) {
       const S = this.camera.getProjectionScale();

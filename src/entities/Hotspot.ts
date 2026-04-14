@@ -1,6 +1,12 @@
-import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { BlurFilter, Container, Graphics, Sprite, Text, Texture, type Filter } from 'pixi.js';
 import type { HotspotDef } from '../data/types';
 import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
+import {
+  blurStrengthFromPixelDensityK,
+  computePixelDensityK,
+  createPixelDensityBlurFilter,
+  type TexelsPerWorld,
+} from '../rendering/EntityPixelDensityMatch';
 
 const TYPE_COLORS: Record<string, number> = {
   inspect: 0x44aaff,
@@ -18,6 +24,8 @@ export class Hotspot {
   /** displayImage 世界高度；贴图为底中锚点，与 NPC/Player 脚底一致 */
   private _displayWorldHeight = 0;
   private depthOcclusionFilter: DepthOcclusionFilter | null = null;
+  /** 展示图专用；与 DepthOcclusionFilter 组合为 [density, depth]，深度实例引用不变 */
+  private pixelDensityBlur: BlurFilter | null = null;
   private promptIcon: Container | null = null;
   private showingPrompt: boolean = false;
 
@@ -72,6 +80,10 @@ export class Hotspot {
       this.displaySprite.destroy();
       this.displaySprite = null;
     }
+    if (this.pixelDensityBlur) {
+      this.pixelDensityBlur.destroy();
+      this.pixelDensityBlur = null;
+    }
     this._displayWorldHeight = 0;
     if (worldWidth <= 0 || worldHeight <= 0) {
       this._syncEntitySortBand();
@@ -106,21 +118,61 @@ export class Hotspot {
    * 须在场景 depth 加载完成之后调用。
    */
   attachDepthOcclusionFilter(filter: DepthOcclusionFilter | null): void {
-    if (this.depthOcclusionFilter && this.displaySprite) {
-      this.displaySprite.filters = [];
-    }
     this.depthOcclusionFilter = filter;
-    if (filter && this.displaySprite) {
-      this.displaySprite.filters = [filter];
-    }
+    this.rebuildDisplaySpriteFilters();
   }
 
   /** 场景卸载前由 Game 摘除并 destroy 滤镜 */
   detachDepthOcclusionFilter(): DepthOcclusionFilter | null {
     const f = this.depthOcclusionFilter;
     this.depthOcclusionFilter = null;
-    if (this.displaySprite) this.displaySprite.filters = [];
+    this.rebuildDisplaySpriteFilters();
     return f;
+  }
+
+  /**
+   * 先密度低通、后深度遮挡（深度滤镜实例与未开密度时相同，仅数组组合变化）
+   */
+  private rebuildDisplaySpriteFilters(): void {
+    if (!this.displaySprite) return;
+    const chain: Filter[] = [];
+    if (this.pixelDensityBlur) chain.push(this.pixelDensityBlur);
+    if (this.depthOcclusionFilter) chain.push(this.depthOcclusionFilter);
+    this.displaySprite.filters = chain.length > 0 ? chain : [];
+  }
+
+  /** 纯渲染：展示图与背景像素密度对齐 */
+  applyEntityPixelDensityMatch(enabled: boolean, dBg: TexelsPerWorld | null, strengthScale = 1): void {
+    if (!this.displaySprite) return;
+    const di = this.def.displayImage;
+    if (!enabled || !dBg || !di || di.worldWidth <= 0 || di.worldHeight <= 0) {
+      this.displaySprite.roundPixels = false;
+      if (this.pixelDensityBlur) {
+        this.pixelDensityBlur.destroy();
+        this.pixelDensityBlur = null;
+      }
+      this.rebuildDisplaySpriteFilters();
+      return;
+    }
+    this.displaySprite.roundPixels = true;
+    const tw = this.displaySprite.texture.width;
+    const th = this.displaySprite.texture.height;
+    const k = computePixelDensityK(tw, th, di.worldWidth, di.worldHeight, dBg);
+    const strength = blurStrengthFromPixelDensityK(k, strengthScale);
+    if (strength <= 0) {
+      if (this.pixelDensityBlur) {
+        this.pixelDensityBlur.destroy();
+        this.pixelDensityBlur = null;
+      }
+      this.rebuildDisplaySpriteFilters();
+      return;
+    }
+    if (!this.pixelDensityBlur) {
+      this.pixelDensityBlur = createPixelDensityBlurFilter(strength);
+    } else {
+      this.pixelDensityBlur.strength = strength;
+    }
+    this.rebuildDisplaySpriteFilters();
   }
 
   getDepthOcclusionFilter(): DepthOcclusionFilter | null {
@@ -185,6 +237,10 @@ export class Hotspot {
   destroy(): void {
     this.hidePrompt();
     this.depthOcclusionFilter = null;
+    if (this.pixelDensityBlur) {
+      this.pixelDensityBlur.destroy();
+      this.pixelDensityBlur = null;
+    }
     this.displaySprite = null;
     if (this.container.parent) {
       this.container.parent.removeChild(this.container);

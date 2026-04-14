@@ -30,6 +30,19 @@ export interface DebugToolsDeps {
   isDevMode: () => boolean;
   /** 切换到开发用 dev_room 场景 */
   goToDevScene: () => void;
+  /** game_config 中 entityPixelDensityMatch */
+  getEntityPixelDensityMatchConfig: () => boolean;
+  /** 是否实际生效（配置 + 调试覆盖 + 有背景密度） */
+  getEntityPixelDensityMatchEffective: () => boolean;
+  /** null跟随配置；true/false 为调试强制 */
+  getEntityPixelDensityMatchDebugOverride: () => boolean | null;
+  /** 切换调试覆盖：无 → 强制开 → 强制关 → 无 */
+  cycleEntityPixelDensityMatchDebugOverride: () => void;
+  getEntityPixelDensityMatchBlurScaleFromConfig: () => number;
+  getEntityPixelDensityMatchBlurScaleEffective: () => number;
+  getEntityPixelDensityMatchBlurScaleDebug: () => number | null;
+  nudgeEntityPixelDensityMatchBlurScaleDebug: (delta: number) => void;
+  clearEntityPixelDensityMatchBlurScaleDebug: () => void;
 }
 
 export class DebugTools {
@@ -306,6 +319,59 @@ export class DebugTools {
           { label: '仅W+100', fn: () => { const s = need(); if (s) apply(s.width + 100, s.height); } },
           { label: '仅H−100', fn: () => { const s = need(); if (s) apply(s.width, s.height - 100); } },
           { label: '仅H+100', fn: () => { const s = need(); if (s) apply(s.width, s.height + 100); } },
+        ],
+      };
+    });
+
+    debugPanelUI.addSection('实体像素密度匹配', () => {
+      const cfg = this.deps.getEntityPixelDensityMatchConfig();
+      const eff = this.deps.getEntityPixelDensityMatchEffective();
+      const ov = this.deps.getEntityPixelDensityMatchDebugOverride();
+      const ovLabel = ov === null ? '跟随配置' : ov ? '强制开' : '强制关';
+      const blurCfg = this.deps.getEntityPixelDensityMatchBlurScaleFromConfig();
+      const blurEff = this.deps.getEntityPixelDensityMatchBlurScaleEffective();
+      const blurDbg = this.deps.getEntityPixelDensityMatchBlurScaleDebug();
+      const blurDbgLabel = blurDbg === null ? '无（跟配置）' : String(blurDbg.toFixed(2));
+      return {
+        text:
+          `game_config.entityPixelDensityMatch：${cfg}\n` +
+          `当前生效：${eff}\n` +
+          `调试覆盖：${ovLabel}\n` +
+          `模糊倍率（配置）：${blurCfg.toFixed(2)}（game_config.entityPixelDensityMatchBlurScale，默认 0.25）\n` +
+          `模糊倍率（实际）：${blurEff.toFixed(2)}调试内存值：${blurDbgLabel}\n` +
+          '纯渲染低通，不影响深度遮挡与碰撞。',
+        actions: [
+          {
+            label: '切换调试覆盖（开/关/跟随）',
+            fn: () => {
+              this.deps.cycleEntityPixelDensityMatchDebugOverride();
+              debugPanelUI.refresh();
+            },
+          },
+          {
+            label: '模糊倍率 −0.25',
+            fn: () => {
+              this.deps.nudgeEntityPixelDensityMatchBlurScaleDebug(-0.25);
+              debugPanelUI.log(`像素密度模糊倍率 -> ${this.deps.getEntityPixelDensityMatchBlurScaleEffective().toFixed(2)}`);
+              debugPanelUI.refresh();
+            },
+          },
+          {
+            label: '模糊倍率 +0.25',
+            fn: () => {
+              this.deps.nudgeEntityPixelDensityMatchBlurScaleDebug(0.25);
+              debugPanelUI.log(`像素密度模糊倍率 -> ${this.deps.getEntityPixelDensityMatchBlurScaleEffective().toFixed(2)}`);
+              debugPanelUI.refresh();
+            },
+          },
+          {
+            label: '重置模糊倍率调试',
+            fn: () => {
+              this.deps.clearEntityPixelDensityMatchBlurScaleDebug();
+              debugPanelUI.log('像素密度模糊倍率调试已清除，恢复 game_config');
+              debugPanelUI.refresh();
+            },
+          },
         ],
       };
     });

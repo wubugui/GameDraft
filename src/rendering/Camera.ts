@@ -33,6 +33,12 @@ export class Camera {
   private screenWidth: number = 0;
   private screenHeight: number = 0;
 
+  /**
+   * 为 true 时，世界容器在屏幕上的平移四舍五入到整像素，减轻跟随时亚像素爬行/闪烁。
+   * 由 Game 在「实体像素密度匹配」开启时打开，避免影响默认管线。
+   */
+  private pixelSnapTranslation = false;
+
   constructor(worldContainer: Container) {
     this.worldContainer = worldContainer;
   }
@@ -95,6 +101,12 @@ export class Camera {
     return this.pixelsPerUnit * this.zoom * this.worldScale;
   }
 
+  setPixelSnapTranslation(enabled: boolean): void {
+    if (this.pixelSnapTranslation === enabled) return;
+    this.pixelSnapTranslation = enabled;
+    this.applyTransform();
+  }
+
   /** 视野宽度（世界单位） */
   getViewWidth(): number {
     return this.screenWidth / this.getProjectionScale();
@@ -132,7 +144,13 @@ export class Camera {
 
     // View-Projection: 容器缩放 + 平移
     this.worldContainer.scale.set(S, S);
-    this.worldContainer.x = -camX * S + this.screenWidth / 2;
-    this.worldContainer.y = -camY * S + this.screenHeight / 2;
+    let tx = -camX * S + this.screenWidth / 2;
+    let ty = -camY * S + this.screenHeight / 2;
+    if (this.pixelSnapTranslation) {
+      tx = Math.round(tx);
+      ty = Math.round(ty);
+    }
+    this.worldContainer.x = tx;
+    this.worldContainer.y = ty;
   }
 }

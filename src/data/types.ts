@@ -779,6 +779,12 @@ export interface GameConfig {
   windowSize?: { width: number; height: number };
   /** 玩家化身：动画资源与状态映射（见 PlayerAvatarConfig） */
   playerAvatar?: PlayerAvatarConfig;
+  /** 为 true 时按背景像素密度对实体展示做自动低通（纯渲染，默认开启；可在 game_config 设为 false 关闭） */
+  entityPixelDensityMatch?: boolean;
+  /**
+   * 低通强度倍率，缺省 0.25。仅当 entityPixelDensityMatch 生效时读取；建议约 0.25～2。
+   */
+  entityPixelDensityMatchBlurScale?: number;
 }
 
 // ============================================================
