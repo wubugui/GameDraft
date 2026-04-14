@@ -10,43 +10,10 @@ const questStatusMap: Record<string, QuestStatus> = {
   Completed: QuestStatus.Completed,
 };
 
-function evalFlagCondition(c: Condition, flagStore: FlagStore): boolean {
-  const flag = c.flag;
-  const op = c.op ?? '==';
-  const left = flagStore.get(flag);
-  const right = c.value;
-
-  if (right === undefined) {
-    if (op === '!=') return !left;
-    return !!left;
-  }
-  if (typeof right === 'boolean') {
-    const lv = !!left;
-    if (op === '==') return lv === right;
-    if (op === '!=') return lv !== right;
-    return false;
-  }
-  const ln = typeof left === 'number' ? left : Number(left);
-  const rn = right as number;
-  if (!Number.isFinite(ln) || !Number.isFinite(rn)) return false;
-  switch (op) {
-    case '==':
-      return ln === rn;
-    case '!=':
-      return ln !== rn;
-    case '>':
-      return ln > rn;
-    case '<':
-      return ln < rn;
-    case '>=':
-      return ln >= rn;
-    case '<=':
-      return ln <= rn;
-    default:
-      return false;
-  }
-}
-
+/**
+ * 图对话 switch / preconditions 与热区、任务等统一走 FlagStore.checkConditions，
+ * 避免两套语义（字符串、缺省 value 等）不一致。
+ */
 export function evaluateGraphCondition(
   c: GraphCondition,
   flagStore: FlagStore,
@@ -61,7 +28,7 @@ export function evaluateGraphCondition(
     if (want === undefined) return false;
     return questManager.getStatus(m.quest) === want;
   }
-  return evalFlagCondition(c as Condition, flagStore);
+  return flagStore.checkConditions([c as Condition]);
 }
 
 export function evaluateAllGraphConditions(

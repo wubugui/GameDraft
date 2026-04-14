@@ -5,6 +5,7 @@ import type { AssetManager } from '../core/AssetManager';
 import type { SceneManager } from './SceneManager';
 import type { RulesManager } from './RulesManager';
 import type { QuestManager } from './QuestManager';
+import type { InventoryManager } from './InventoryManager';
 import type { StringsProvider } from '../core/StringsProvider';
 import type {
   ActionDef,
@@ -35,6 +36,7 @@ export class GraphDialogueManager implements IGameSystem {
   private sceneManager: SceneManager;
   private rulesManager: RulesManager;
   private questManager: QuestManager;
+  private inventoryManager: InventoryManager;
   private strings: StringsProvider | null = null;
 
   private graph: DialogueGraphFile | null = null;
@@ -53,6 +55,17 @@ export class GraphDialogueManager implements IGameSystem {
   private awaitingLineDismiss = false;
   /** `line` 节点多拍时当前拍索引（单拍 legacy 恒为 0） */
   private lineBeatIndex = 0;
+  /** `drainUntilBlocking` 在 await 中仍 >0，供 advance/choose 重入，避免与 opChain 死锁 */
+  private drainDepth = 0;
+  /** `endDialogue` 后应跳过的已排队 op 代际 */
+  private opDrainGeneration = 0;
+  /** 在 drain 内通过 Action 请求嵌套开图时，于当前图 `dialogue:end` 之后按序启动（立即 resolve，避免阻塞 runActions） */
+  private deferredGraphQueue: Array<{
+    graphId: string;
+    entry?: string;
+    npcName: string;
+    npcId?: string;
+  }> = [];
 
   constructor(
     eventBus: EventBus,
@@ -62,6 +75,7 @@ export class GraphDialogueManager implements IGameSystem {
     sceneManager: SceneManager,
     rulesManager: RulesManager,
     questManager: QuestManager,
+    inventoryManager: InventoryManager,
   ) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
@@ -70,17 +84,32 @@ export class GraphDialogueManager implements IGameSystem {
     this.sceneManager = sceneManager;
     this.rulesManager = rulesManager;
     this.questManager = questManager;
+    this.inventoryManager = inventoryManager;
   }
 
   private runExclusive(fn: () => Promise<void>): Promise<void> {
     const prev = this.opChain;
+    const genAtSchedule = this.opDrainGeneration;
     let release!: () => void;
     const next = new Promise<void>((res) => { release = res; });
     this.opChain = next;
     return prev
-      .then(fn)
+      .then(async () => {
+        if (genAtSchedule !== this.opDrainGeneration) return;
+        await fn();
+      })
       .catch((e) => console.warn('GraphDialogueManager: op failed', e))
       .finally(() => { release(); });
+  }
+
+  /** advance / choose：在 drain 的 await 间隙可立即执行，避免与外层 opChain 死锁 */
+  private runUserOp(fn: () => Promise<void>): Promise<void> {
+    if (this.drainDepth > 0) {
+      return Promise.resolve()
+        .then(fn)
+        .catch((e) => console.warn('GraphDialogueManager: op failed', e));
+    }
+    return this.runExclusive(fn);
   }
 
   init(ctx: GameContext): void {
@@ -100,6 +129,7 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   deserialize(_data: object): void {
+    this.deferredGraphQueue.length = 0;
     if (this.active) this.endDialogue();
     this.active = false;
     this.graph = null;
@@ -110,6 +140,7 @@ export class GraphDialogueManager implements IGameSystem {
     this.choicePhase = null;
     this.awaitingLineDismiss = false;
     this.lineBeatIndex = 0;
+    this.deferredGraphQueue = [];
     this.opChain = Promise.resolve();
   }
 
@@ -118,6 +149,7 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   destroy(): void {
+    this.deferredGraphQueue.length = 0;
     this.endDialogue();
     this.strings = null;
   }
@@ -128,9 +160,20 @@ export class GraphDialogueManager implements IGameSystem {
     npcName: string;
     npcId?: string;
   }): Promise<void> {
+    const gid = params.graphId?.trim();
+    if (!gid) return Promise.resolve();
+
+    if (this.drainDepth > 0 && this.active) {
+      this.deferredGraphQueue.push({
+        graphId: gid,
+        entry: params.entry?.trim() || undefined,
+        npcName: params.npcName,
+        npcId: params.npcId?.trim() || undefined,
+      });
+      return Promise.resolve();
+    }
+
     return this.runExclusive(async () => {
-      const gid = params.graphId?.trim();
-      if (!gid) return;
       if (this.active) {
         console.warn('GraphDialogueManager: 已有对话进行中，忽略重复 start');
         return;
@@ -178,7 +221,7 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   async advance(): Promise<void> {
-    return this.runExclusive(() => this.advanceCore());
+    return this.runUserOp(() => this.advanceCore());
   }
 
   private async advanceCore(): Promise<void> {
@@ -221,7 +264,7 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   async chooseOption(index: number): Promise<void> {
-    return this.runExclusive(async () => {
+    return this.runUserOp(async () => {
       if (!this.active || !this.graph || this.choicePhase?.stage !== 'options') return;
 
       const node = this.graph.nodes[this.choicePhase.nodeId];
@@ -252,14 +295,27 @@ export class GraphDialogueManager implements IGameSystem {
     this.choicePhase = null;
     this.awaitingLineDismiss = false;
     this.lineBeatIndex = 0;
-    /** 丢弃排队中的推进；在途 runExclusive 的 release 仍可能随后触发，属可接受竞态 */
+    this.opDrainGeneration++;
     this.opChain = Promise.resolve();
     this.eventBus.emit('dialogue:end', {});
+
+    const q = this.deferredGraphQueue.splice(0);
+    if (q.length === 0) return;
+    /** 不可再包一层 runExclusive：否则与 startDialogueGraph 内部的 runExclusive 互相等待死锁 */
+    void Promise.resolve()
+      .then(async () => {
+        for (const item of q) {
+          await this.startDialogueGraph(item);
+        }
+      })
+      .catch((e) => console.warn('GraphDialogueManager: 衔接嵌套图失败', e));
   }
 
   private async drainUntilBlocking(): Promise<void> {
     if (!this.active || !this.graph) return;
-    while (this.active && this.graph) {
+    this.drainDepth++;
+    try {
+      while (this.active && this.graph) {
       const node = this.graph.nodes[this.currentNodeId];
       if (!node) {
         console.warn(`GraphDialogueManager: 缺失节点 ${this.currentNodeId}`);
@@ -273,8 +329,14 @@ export class GraphDialogueManager implements IGameSystem {
       }
 
       if (node.type === 'runActions') {
-        for (const a of node.actions) {
-          await this.actionExecutor.executeForDialogue(a as ActionDef);
+        try {
+          for (const a of node.actions) {
+            await this.actionExecutor.executeForDialogue(a as ActionDef);
+          }
+        } catch (e) {
+          console.warn('GraphDialogueManager: runActions 执行失败，结束对话', e);
+          this.endDialogue();
+          return;
         }
         this.currentNodeId = node.next;
         continue;
@@ -330,6 +392,9 @@ export class GraphDialogueManager implements IGameSystem {
       this.endDialogue();
       return;
     }
+    } finally {
+      this.drainDepth--;
+    }
   }
 
   private showChoiceOptionsFromPrompt(): void {
@@ -341,6 +406,10 @@ export class GraphDialogueManager implements IGameSystem {
     this.emitChoicesForNode(node);
   }
 
+  private inventoryCoinsForChoice(): number {
+    return this.inventoryManager.getCoins();
+  }
+
   private emitChoicesForNode(node: Extract<DialogueGraphNodeDef, { type: 'choice' }>): void {
     const choices = this.buildChoicesForNode(node);
     this.eventBus.emit('dialogue:choices', choices);
@@ -350,9 +419,11 @@ export class GraphDialogueManager implements IGameSystem {
     const s = this.strings;
     return node.options.map((opt, i) => {
       const requireKey = opt.requireFlag?.trim() || undefined;
-      const reqOk = requireKey === undefined || !!this.flagStore.get(requireKey);
+      const reqOk =
+        requireKey === undefined ||
+        this.flagStore.checkConditions([{ flag: requireKey, op: '!=', value: false }]);
       const costAmount = opt.costCoins;
-      const coins = (this.flagStore.get('coins') as number) ?? 0;
+      const coins = this.inventoryCoinsForChoice();
       const costOk = costAmount === undefined || coins >= costAmount;
       const enabled = reqOk && costOk;
       const customHint = !enabled && opt.disabledClickHint?.trim() ? opt.disabledClickHint.trim() : undefined;

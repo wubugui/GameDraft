@@ -81,7 +81,11 @@ export class EventBridge {
     this.listen('scene:enter', (p: { sceneId: string }) => mapUI.setCurrentScene(p.sceneId));
 
     this.listen('ruleUse:apply', async (p: { ruleId: string; actions: ActionDef[]; resultText?: string }) => {
-      actionExecutor.executeBatch(p.actions);
+      try {
+        await actionExecutor.executeBatchAwait(p.actions);
+      } catch (e) {
+        console.warn('EventBridge: ruleUse:apply actions failed', e);
+      }
       actionExecutor.execute({ type: 'setFlag', params: { key: `rule_used_${p.ruleId}`, value: true } });
       if (p.resultText) {
         stateController.setState(GameState.UIOverlay);

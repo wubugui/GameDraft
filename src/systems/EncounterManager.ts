@@ -143,7 +143,9 @@ export class EncounterManager implements IGameSystem {
     }
 
     if (opt.resultActions.length > 0) {
-      this.actionExecutor.executeBatch(opt.resultActions);
+      void this.actionExecutor.executeBatchAwait(opt.resultActions).catch((e) => {
+        console.warn('EncounterManager: resultActions failed', e);
+      });
     }
 
     if (opt.resultText) {
