@@ -23,6 +23,8 @@ export class Npc implements ICutsceneActor {
   private patrolPaused = false;
   /** 打断当前 moveTo 后本段不递增路点索引 */
   private patrolSkipWaypointAdvance = false;
+  /** 与玩家开对话前记录的 `container.scale.x`（含左右镜像），结束时还原 */
+  private facingScaleXBeforeDialogue: number | null = null;
 
   constructor(def: NpcDef) {
     this.def = def;
@@ -178,6 +180,7 @@ export class Npc implements ICutsceneActor {
       this.patrolSkipWaypointAdvance = true;
       this.patrolPaused = true;
     }
+    this.facingScaleXBeforeDialogue = this.container.scale.x;
     this.setFacing(playerX - this._x, playerY - this._y);
   }
 
@@ -193,6 +196,15 @@ export class Npc implements ICutsceneActor {
 
   onDialogueEnd(): void {
     if (this.def.patrol) this.patrolPaused = false;
+    if (this.facingScaleXBeforeDialogue === null) return;
+    const saved = this.facingScaleXBeforeDialogue;
+    this.facingScaleXBeforeDialogue = null;
+    this.container.scale.x = saved;
+    const sx = Math.sign(saved) || 1;
+    this.nameLabel.scale.x = sx;
+    if (this.promptIcon) this.promptIcon.scale.x = sx;
+    if (this.marker) this.marker.scale.x = sx;
+    this.sprite?.setDirection(1, 0);
   }
 
   get isPatrolPausedForDialogue(): boolean {

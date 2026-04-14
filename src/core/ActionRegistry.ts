@@ -78,6 +78,16 @@ export interface ActionRegistryDeps {
    */
   resolveOverlayImagePath: (image: string) => string;
   hideOverlayImage: (id: string) => void;
+  /** 双图叠化（与 showOverlayImage 同布局与 id，durationMs 结束后保留目标图） */
+  blendOverlayImage: (
+    id: string,
+    fromImagePath: string,
+    toImagePath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    durationMs: number,
+  ) => Promise<void>;
   /** 图对话（参数 graphId 对应 `graphs/<graphId>.json`） */
   startDialogueGraph: (graphId: string, entry?: string, npcId?: string) => Promise<void>;
   /** 按序播放预置台词（至 dialogue:end） */
@@ -497,6 +507,31 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     d.hideOverlayImage(id);
   }, ['id']);
+
+  executor.register('blendOverlayImage', (p) => {
+    const id = String(p.id ?? '').trim();
+    const rawFrom = String(p.fromImage ?? '').trim();
+    const rawTo = String(p.toImage ?? '').trim();
+    const fromImage = d.resolveOverlayImagePath(rawFrom);
+    const toImage = d.resolveOverlayImagePath(rawTo);
+    if (!id || !fromImage || !toImage) {
+      console.warn('blendOverlayImage: 需要 id、fromImage、toImage');
+      return;
+    }
+    const x = typeof p.xPercent === 'number' ? p.xPercent : Number(p.xPercent);
+    const y = typeof p.yPercent === 'number' ? p.yPercent : Number(p.yPercent);
+    const w = typeof p.widthPercent === 'number' ? p.widthPercent : Number(p.widthPercent);
+    if (![x, y, w].every(n => Number.isFinite(n))) {
+      console.warn('blendOverlayImage: xPercent / yPercent / widthPercent 须为数值');
+      return;
+    }
+    const durRaw = p.durationMs ?? 600;
+    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
+    return d.blendOverlayImage(id, fromImage, toImage, x, y, w, ms).catch((e) => {
+      console.warn('ActionRegistry: blendOverlayImage failed', e);
+    });
+  }, ['id', 'fromImage', 'toImage', 'durationMs', 'xPercent', 'yPercent', 'widthPercent']);
 
   executor.register('startDialogueGraph', (p) => {
     const graphId = String(p.graphId ?? '').trim();

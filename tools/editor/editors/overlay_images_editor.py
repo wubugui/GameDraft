@@ -1,4 +1,4 @@
-"""对话叠图短 id：overlay_images.json，供 showOverlayImage 等动作的 image 参数使用。"""
+"""对话叠图短 id：overlay_images.json，供 showOverlayImage / blendOverlayImage 等动作的 image 参数使用。"""
 from __future__ import annotations
 
 from typing import Callable

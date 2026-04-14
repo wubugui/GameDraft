@@ -249,7 +249,10 @@ export class GraphDialogueManager implements IGameSystem {
           return;
         }
         this.lineBeatIndex = 0;
-        this.eventBus.emit('dialogue:prepareBeat', {});
+        const nextAfterLine = this.graph.nodes[cur.next];
+        if (nextAfterLine?.type !== 'runActions') {
+          this.eventBus.emit('dialogue:prepareBeat', {});
+        }
         this.currentNodeId = cur.next;
         await this.drainUntilBlocking();
       } else if (cur?.type === 'end') {
@@ -259,7 +262,10 @@ export class GraphDialogueManager implements IGameSystem {
       return;
     }
 
-    this.eventBus.emit('dialogue:prepareBeat', {});
+    const head = this.graph.nodes[this.currentNodeId];
+    if (head?.type !== 'runActions') {
+      this.eventBus.emit('dialogue:prepareBeat', {});
+    }
     await this.drainUntilBlocking();
   }
 
@@ -329,6 +335,7 @@ export class GraphDialogueManager implements IGameSystem {
       }
 
       if (node.type === 'runActions') {
+        this.eventBus.emit('dialogue:hidePanel', {});
         try {
           for (const a of node.actions) {
             await this.actionExecutor.executeForDialogue(a as ActionDef);

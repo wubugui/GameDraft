@@ -11,10 +11,18 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QComboBox, QTableWidget, QTableWidgetItem, QPushButton,
     QHeaderView, QMessageBox, QCheckBox, QGroupBox,
     QSizePolicy, QSpinBox, QDoubleSpinBox, QStackedWidget, QToolButton, QDialog,
-    QStyle,
+    QStyle, QApplication,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QEventLoop, QEvent
 from PySide6.QtGui import QFontMetrics
+
+from tools.editor.shared.action_editor import (
+    _hide_combo_popups_under,
+    _dismiss_active_popup_stack,
+    _hide_active_application_popups,
+    _purge_qcombobox_private_containers,
+    _protected_combobox_popup_widget_ids,
+)
 
 from .editor_asset_catalog import load_rule_id_name_pairs
 from .node_picker_dialog import NodePickerDialog
@@ -150,6 +158,9 @@ class NodeInspector(QWidget):
     def _clear_body(self) -> None:
         """切换节点类型时整页重建表单；必须拆掉嵌套的 QFormLayout，否则 takeAt 拿不到子布局里的 QLabel，旧标签会残留在 _body 上叠在新控件上。"""
         old_body = self._body
+        # 先收起所有 QComboBox 弹出层再销毁，避免 Windows 上短暂出现独立小窗抢焦点（与 ActionEditor._clear 一致）
+        _hide_combo_popups_under(old_body)
+        _dismiss_active_popup_stack()
         self._body = QWidget()
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
@@ -159,6 +170,9 @@ class NodeInspector(QWidget):
         self._root_layout.removeWidget(old_body)
         self._root_layout.insertWidget(idx, self._body)
         old_body.deleteLater()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        _purge_qcombobox_private_containers()
 
     def _emit_changed(self):
         # Parent connects to slot that reads get_node()
@@ -218,6 +232,16 @@ class NodeInspector(QWidget):
                 self._getter = lambda s=snap: copy.deepcopy(s)
         finally:
             self._suppress_change_emit = False
+            _hide_combo_popups_under(self._body)
+            _hide_active_application_popups()
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            _prot = _protected_combobox_popup_widget_ids(self._body)
+            _purge_qcombobox_private_containers(protected_ids=_prot)
+            _mw = self.window()
+            if _mw is not None:
+                _mw.raise_()
+                _mw.activateWindow()
 
     def get_node(self) -> dict[str, Any]:
         """Return current node dict from form state."""
