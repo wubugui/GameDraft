@@ -1,7 +1,8 @@
-import { Container, Graphics, Text, Sprite, Assets, Texture } from 'pixi.js';
+import { Container, Graphics, Text, Sprite, Assets, Texture, type Mesh } from 'pixi.js';
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
 import { resolveAssetPath } from '../core/assetPath';
+import { createOverlayBlendMesh } from './overlayBlendShader';
 
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
 export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
@@ -16,7 +17,7 @@ export class CutsceneRenderer {
   private titleContainer: Container | null = null;
   private activeEmotes: Container[] = [];
   private images: Map<string, {
-    sprite: Sprite | Graphics | Container;
+    sprite: Sprite | Graphics | Container | Mesh;
     imagePath: string;
     isPlaceholder?: boolean;
     /** hideImg 时额外卸载（例如叠化过程中尚未从 Map 元数据移除的「底图」路径） */
@@ -372,8 +373,9 @@ export class CutsceneRenderer {
   }
 
   /**
-   * 与 showPercentImg 相同布局，在 durationMs 内将 from与 to 做线性交叉淡化（底图淡出、顶图淡入）。
-   * 结束后仅保留 to 的显示，与 showOverlayImage 共用 id / hideImg。
+   * 与 showPercentImg 相同中心点与宽度（屏宽百分比）；高度按 **目标图 to** 宽高比推算。
+   * 片元 shader 内 mix(from, to, t)；delayMs 内 t恒为 0，之后 durationMs 内 t 由 0 线性增至 1。
+   * 结束后改为单 Sprite 仅显示 to，与 showOverlayImage 共用 id / hideImg。
    */
   async blendPercentImg(
     fromImagePath: string,
@@ -383,6 +385,7 @@ export class CutsceneRenderer {
     yPercent: number,
     widthPercent: number,
     durationMs: number,
+    delayMs: number,
   ): Promise<void> {
     this.hideImg(id);
     const resolvedFrom = resolveAssetPath(fromImagePath);
@@ -396,71 +399,71 @@ export class CutsceneRenderer {
     const cy = sh * (yp / 100);
     const dispW = sw * (wPct / 100);
     const dur = Math.max(0, durationMs);
+    const delay = Math.max(0, delayMs);
 
     let texFrom: Texture | undefined;
     let texTo: Texture | undefined;
-    try {
-      texFrom = await Assets.load<Texture>(resolvedFrom);
-    } catch (err) {
-      console.error(`[CutsceneRenderer] blendPercentImg 底图加载失败: ${resolvedFrom}`, err);
-    }
-    try {
-      texTo = await Assets.load<Texture>(resolvedTo);
-    } catch (err) {
-      console.error(`[CutsceneRenderer] blendPercentImg 目标图加载失败: ${resolvedTo}`, err);
-    }
+    [texFrom, texTo] = await Promise.all([
+      Assets.load<Texture>(resolvedFrom).catch((err) => {
+        console.error(`[CutsceneRenderer] blendPercentImg 底图加载失败: ${resolvedFrom}`, err);
+        return undefined;
+      }),
+      Assets.load<Texture>(resolvedTo).catch((err) => {
+        console.error(`[CutsceneRenderer] blendPercentImg 目标图加载失败: ${resolvedTo}`, err);
+        return undefined;
+      }),
+    ]);
     if (!texFrom && !texTo) return;
     if (!texFrom) texFrom = texTo;
     if (!texTo) texTo = texFrom;
 
-    const iwF = Math.max(1, texFrom!.width);
-    const ihF = Math.max(1, texFrom!.height);
-    const dispH = dispW * (ihF / iwF);
+    const iwT = Math.max(1, texTo!.width);
+    const ihT = Math.max(1, texTo!.height);
+    const dispH = dispW * (ihT / iwT);
 
-    const mkSprite = (tex: Texture): Sprite => {
-      const sp = new Sprite(tex);
-      sp.anchor.set(0.5);
-      sp.width = dispW;
-      sp.height = dispH;
-      sp.x = cx;
-      sp.y = cy;
-      return sp;
-    };
-
-    const spFrom = mkSprite(texFrom!);
-    const spTo = mkSprite(texTo!);
-    spTo.alpha = 0;
-
-    const container = new Container();
-    container.label = id;
-    container.addChild(spFrom);
-    container.addChild(spTo);
-    this.renderer.cutsceneOverlay.addChild(container);
+    const { mesh, setT } = createOverlayBlendMesh(texFrom!, texTo!, sw, sh, cx, cy, dispW, dispH);
+    mesh.label = id;
+    this.renderer.cutsceneOverlay.addChild(mesh);
 
     const finalizeStill = (): void => {
-      spFrom.alpha = 0;
-      spTo.alpha = 1;
-      container.removeChild(spFrom);
-      spFrom.destroy();
+      if (mesh.parent) mesh.parent.removeChild(mesh);
+      mesh.destroy({ children: true });
       if (resolvedFrom !== resolvedTo) void Assets.unload(resolvedFrom);
-      this.images.set(id, { sprite: container, imagePath: resolvedTo });
+
+      const sprite = new Sprite(texTo!);
+      sprite.anchor.set(0.5);
+      sprite.width = dispW;
+      sprite.height = dispH;
+      sprite.x = cx;
+      sprite.y = cy;
+      sprite.label = id;
+      this.renderer.cutsceneOverlay.addChild(sprite);
+      this.images.set(id, { sprite, imagePath: resolvedTo });
     };
 
     this.images.set(id, {
-      sprite: container,
+      sprite: mesh,
       imagePath: resolvedTo,
       extraUnloadPaths: resolvedFrom !== resolvedTo ? [resolvedFrom] : undefined,
     });
 
+    await this.wait(delay);
     if (dur <= 0) {
+      setT(1);
       finalizeStill();
       return;
     }
 
-    await Promise.all([
-      this.animateAlpha(spFrom, 1, 0, dur),
-      this.animateAlpha(spTo, 0, 1, dur),
-    ]);
+    await new Promise<void>(resolve => {
+      const start = performance.now();
+      const tick = (): void => {
+        const u = Math.min((performance.now() - start) / dur, 1);
+        setT(u);
+        if (u < 1) this.trackRaf(tick);
+        else resolve();
+      };
+      this.trackRaf(tick);
+    });
 
     finalizeStill();
   }

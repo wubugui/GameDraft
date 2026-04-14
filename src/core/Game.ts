@@ -412,8 +412,8 @@ export class Game {
       hideOverlayImage: (id) => {
         this.cutsceneManager.hideOverlayImage(id);
       },
-      blendOverlayImage: (id, fromPath, toPath, xPct, yPct, wPct, durationMs) =>
-        this.cutsceneManager.blendOverlayImage(id, fromPath, toPath, xPct, yPct, wPct, durationMs),
+      blendOverlayImage: (id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs) =>
+        this.cutsceneManager.blendOverlayImage(id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs),
       startDialogueGraph: async (graphId, entry, npcId) => {
         this.stateController.setState(GameState.Dialogue);
         try {

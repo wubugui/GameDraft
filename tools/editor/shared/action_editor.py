@@ -746,8 +746,9 @@ class ActionRow(QWidget):
                 self._params_layout.removeRow(0)
             self._param_widgets.clear()
             tip = QLabel(
-                "id：与 hideOverlayImage 共用；fromImage→toImage 在线性时长内交叉淡化；"
-                "布局与 showOverlayImage 相同（百分比）；durationMs 结束后保留目标图。",
+                "id：与 hideOverlayImage 共用；片元 shader 内 mix(from,to,t)。"
+                "宽度为 widthPercent（占屏宽），高度按 toImage 宽高比自动算。"
+                "delayMs 内 t=0；之后 durationMs 内 t 由 0 线性到 1；结束保留目标图。",
             )
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
@@ -774,7 +775,18 @@ class ActionRow(QWidget):
                 dur.setValue(600)
             dur.valueChanged.connect(self.changed)
             self._param_widgets["durationMs"] = dur
-            self._params_layout.addRow("durationMs（毫秒）", dur)
+            self._params_layout.addRow("durationMs（t 从 0→1，毫秒）", dur)
+            del_sp = QSpinBox()
+            del_sp.setRange(0, 9999999)
+            del_sp.setSingleStep(50)
+            del_val = params.get("delayMs", 0)
+            try:
+                del_sp.setValue(int(del_val))
+            except (TypeError, ValueError):
+                del_sp.setValue(0)
+            del_sp.valueChanged.connect(self.changed)
+            self._param_widgets["delayMs"] = del_sp
+            self._params_layout.addRow("delayMs（t 保持 0 的等待，毫秒）", del_sp)
 
             def _pct_spin(key: str, default: float) -> QDoubleSpinBox:
                 sp = QDoubleSpinBox()
@@ -1070,6 +1082,7 @@ class ActionRow(QWidget):
         from_w = self._param_widgets.get("fromImage")
         to_w = self._param_widgets.get("toImage")
         dur_w = self._param_widgets.get("durationMs")
+        del_w = self._param_widgets.get("delayMs")
         x_w = self._param_widgets.get("xPercent")
         y_w = self._param_widgets.get("yPercent")
         w_w = self._param_widgets.get("widthPercent")
@@ -1077,6 +1090,7 @@ class ActionRow(QWidget):
         pfrom = from_w.path() if isinstance(from_w, CutsceneImagePathRow) else ""
         pto = to_w.path() if isinstance(to_w, CutsceneImagePathRow) else ""
         dms = int(dur_w.value()) if isinstance(dur_w, QSpinBox) else 600
+        ddelay = int(del_w.value()) if isinstance(del_w, QSpinBox) else 0
         return {
             "type": "blendOverlayImage",
             "params": {
@@ -1084,6 +1098,7 @@ class ActionRow(QWidget):
                 "fromImage": pfrom,
                 "toImage": pto,
                 "durationMs": dms,
+                "delayMs": ddelay,
                 "xPercent": float(x_w.value()) if isinstance(x_w, QDoubleSpinBox) else 0.0,
                 "yPercent": float(y_w.value()) if isinstance(y_w, QDoubleSpinBox) else 0.0,
                 "widthPercent": float(w_w.value()) if isinstance(w_w, QDoubleSpinBox) else 0.0,

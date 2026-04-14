@@ -87,6 +87,7 @@ export interface ActionRegistryDeps {
     yPercent: number,
     widthPercent: number,
     durationMs: number,
+    delayMs: number,
   ) => Promise<void>;
   /** 图对话（参数 graphId 对应 `graphs/<graphId>.json`） */
   startDialogueGraph: (graphId: string, entry?: string, npcId?: string) => Promise<void>;
@@ -528,10 +529,13 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const durRaw = p.durationMs ?? 600;
     const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
-    return d.blendOverlayImage(id, fromImage, toImage, x, y, w, ms).catch((e) => {
+    const delRaw = p.delayMs ?? 0;
+    const delayParsed = typeof delRaw === 'number' ? delRaw : Number(delRaw);
+    const delayMs = Number.isFinite(delayParsed) && delayParsed >= 0 ? delayParsed : 0;
+    return d.blendOverlayImage(id, fromImage, toImage, x, y, w, ms, delayMs).catch((e) => {
       console.warn('ActionRegistry: blendOverlayImage failed', e);
     });
-  }, ['id', 'fromImage', 'toImage', 'durationMs', 'xPercent', 'yPercent', 'widthPercent']);
+  }, ['id', 'fromImage', 'toImage', 'durationMs', 'delayMs', 'xPercent', 'yPercent', 'widthPercent']);
 
   executor.register('startDialogueGraph', (p) => {
     const graphId = String(p.graphId ?? '').trim();
