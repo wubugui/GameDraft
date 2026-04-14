@@ -42,7 +42,9 @@ export class DayManager implements IGameSystem {
     const remaining: DelayedEvent[] = [];
     for (const evt of this.delayedEvents) {
       if (evt.targetDay <= this._currentDay) {
-        this.actionExecutor.executeBatch(evt.actions);
+        void this.actionExecutor.executeBatchAwait(evt.actions).catch((e) => {
+          console.warn('DayManager: delayed actions failed', e);
+        });
       } else {
         remaining.push(evt);
       }

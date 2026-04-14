@@ -205,6 +205,7 @@ export class Game {
       this.sceneManager,
       this.rulesManager,
       this.questManager,
+      this.inventoryManager,
     );
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.audioManager = new AudioManager(this.eventBus);

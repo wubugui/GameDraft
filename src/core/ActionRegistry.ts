@@ -24,7 +24,7 @@ import type { ArchiveManager } from '../systems/ArchiveManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
-import type { DialogueLine, ICutsceneActor, ZoneRuleSlot } from '../data/types';
+import type { ActionDef, DialogueLine, ICutsceneActor, ZoneRuleSlot } from '../data/types';
 import { GameState } from '../data/types';
 
 export interface ActionRegistryDeps {
@@ -124,7 +124,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('endDay', () => { d.dayManager.endDay(); }, []);
 
   executor.register('addDelayedEvent', (p) => {
-    d.dayManager.addDelayedEvent(p.targetDay as number, p.actions as any[]);
+    const raw = p.actions;
+    const actions = Array.isArray(raw)
+      ? (raw as unknown[]).filter((a): a is ActionDef => {
+          return !!a && typeof a === 'object' && typeof (a as { type?: unknown }).type === 'string';
+        })
+      : [];
+    if (Array.isArray(raw) && raw.length > 0 && actions.length !== raw.length) {
+      console.warn('addDelayedEvent: 已跳过无效的嵌套动作项');
+    }
+    d.dayManager.addDelayedEvent(p.targetDay as number, actions);
   }, ['targetDay', 'actions']);
 
   executor.register('addArchiveEntry', (p) => {

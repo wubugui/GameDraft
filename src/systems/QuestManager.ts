@@ -58,7 +58,9 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     const def = this.questDefs.get(questId);
     const onAccept = def?.acceptActions ?? [];
     if (onAccept.length > 0) {
-      this.actionExecutor.executeBatch(onAccept);
+      void this.actionExecutor.executeBatchAwait(onAccept).catch((e) => {
+        console.warn('QuestManager: acceptActions failed', e);
+      });
     }
 
     this.eventBus.emit('quest:accepted', { questId, title: def?.title ?? questId });
@@ -76,7 +78,9 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     if (!def) return;
 
     if (def.rewards.length > 0) {
-      this.actionExecutor.executeBatch(def.rewards);
+      void this.actionExecutor.executeBatchAwait(def.rewards).catch((e) => {
+        console.warn('QuestManager: rewards failed', e);
+      });
     }
 
     this.eventBus.emit('quest:completed', { questId, title: def.title });
