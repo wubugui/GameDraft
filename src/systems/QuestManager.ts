@@ -17,6 +17,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
   private onFlagChanged: () => void;
+  /** 任务奖励 / 接取动作串行，避免与 evaluate 或它处异步交错 */
+  private questActionTail: Promise<void> = Promise.resolve();
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -48,6 +50,12 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     }
   }
 
+  private enqueueQuestActions(task: () => Promise<void>): void {
+    this.questActionTail = this.questActionTail.then(task, task).catch((e) => {
+      console.warn('QuestManager: queued quest actions failed', e);
+    });
+  }
+
   acceptQuest(questId: string): void {
     const status = this.questStatus.get(questId);
     if (status !== undefined && status !== QuestStatus.Inactive) return;
@@ -57,17 +65,28 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
     const def = this.questDefs.get(questId);
     const onAccept = def?.acceptActions ?? [];
+    const title = def?.title ?? questId;
+
     if (onAccept.length > 0) {
-      void this.actionExecutor.executeBatchAwait(onAccept).catch((e) => {
-        console.warn('QuestManager: acceptActions failed', e);
+      this.enqueueQuestActions(async () => {
+        try {
+          await this.actionExecutor.executeBatchAwait(onAccept);
+        } catch (e) {
+          console.warn('QuestManager: acceptActions failed', e);
+        }
+        this.eventBus.emit('quest:accepted', { questId, title });
+        this.eventBus.emit('notification:show', {
+          text: this.strings.get('notifications', 'questAccepted', { title }),
+          type: 'quest',
+        });
+      });
+    } else {
+      this.eventBus.emit('quest:accepted', { questId, title });
+      this.eventBus.emit('notification:show', {
+        text: this.strings.get('notifications', 'questAccepted', { title }),
+        type: 'quest',
       });
     }
-
-    this.eventBus.emit('quest:accepted', { questId, title: def?.title ?? questId });
-    this.eventBus.emit('notification:show', {
-      text: this.strings.get('notifications', 'questAccepted', { title: def?.title ?? questId }),
-      type: 'quest',
-    });
   }
 
   private completeQuest(questId: string): void {
@@ -77,35 +96,45 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     const def = this.questDefs.get(questId);
     if (!def) return;
 
-    if (def.rewards.length > 0) {
-      void this.actionExecutor.executeBatchAwait(def.rewards).catch((e) => {
-        console.warn('QuestManager: rewards failed', e);
+    const title = def.title;
+    const emitCompletedAndChain = (): void => {
+      this.eventBus.emit('quest:completed', { questId, title });
+      this.eventBus.emit('notification:show', {
+        text: this.strings.get('notifications', 'questCompleted', { title }),
+        type: 'quest',
       });
-    }
 
-    this.eventBus.emit('quest:completed', { questId, title: def.title });
-    this.eventBus.emit('notification:show', {
-      text: this.strings.get('notifications', 'questCompleted', { title: def.title }),
-      type: 'quest',
-    });
-
-    if (def.nextQuests && def.nextQuests.length > 0) {
-      for (const edge of def.nextQuests) {
-        if (edge.conditions.length > 0 &&
-            !this.flagStore.checkConditions(edge.conditions)) {
-          continue;
-        }
-        if (!edge.bypassPreconditions) {
-          const targetDef = this.questDefs.get(edge.questId);
-          if (targetDef && targetDef.preconditions.length > 0 &&
-              !this.flagStore.checkConditions(targetDef.preconditions)) {
+      if (def.nextQuests && def.nextQuests.length > 0) {
+        for (const edge of def.nextQuests) {
+          if (edge.conditions.length > 0 &&
+              !this.flagStore.checkConditions(edge.conditions)) {
             continue;
           }
+          if (!edge.bypassPreconditions) {
+            const targetDef = this.questDefs.get(edge.questId);
+            if (targetDef && targetDef.preconditions.length > 0 &&
+                !this.flagStore.checkConditions(targetDef.preconditions)) {
+              continue;
+            }
+          }
+          this.acceptQuest(edge.questId);
         }
-        this.acceptQuest(edge.questId);
+      } else if (def.nextQuestId) {
+        this.acceptQuest(def.nextQuestId);
       }
-    } else if (def.nextQuestId) {
-      this.acceptQuest(def.nextQuestId);
+    };
+
+    if (def.rewards.length > 0) {
+      this.enqueueQuestActions(async () => {
+        try {
+          await this.actionExecutor.executeBatchAwait(def.rewards);
+        } catch (e) {
+          console.warn('QuestManager: rewards failed', e);
+        }
+        emitCompletedAndChain();
+      });
+    } else {
+      emitCompletedAndChain();
     }
   }
 
@@ -198,5 +227,6 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     this.eventBus.off('flag:changed', this.onFlagChanged);
     this.questDefs.clear();
     this.questStatus.clear();
+    this.questActionTail = Promise.resolve();
   }
 }

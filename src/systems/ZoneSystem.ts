@@ -17,6 +17,8 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   /** onStay 最小间隔（秒），避免每帧执行重逻辑 */
   private zoneStayNextAt: Map<string, number> = new Map();
   private static readonly STAY_INTERVAL_SEC = 0.25;
+  /** 每个 zone 的 onEnter/onExit/onStay 串行，避免 zoneContextStack 与其它批交错 */
+  private zoneActionTail: Map<string, Promise<void>> = new Map();
 
   constructor(
     eventBus: EventBus,
@@ -48,6 +50,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.zones = zones;
     this.activeZoneIds.clear();
     this.zoneStayNextAt.clear();
+    this.zoneActionTail.clear();
   }
 
   clearZones(): void {
@@ -59,6 +62,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.zones = [];
     this.activeZoneIds.clear();
     this.zoneStayNextAt.clear();
+    this.zoneActionTail.clear();
   }
 
   update(_dt: number): void {
@@ -85,14 +89,22 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     }
   }
 
+  private enqueueZoneActions(zoneId: string, task: () => Promise<void>): void {
+    const prev = this.zoneActionTail.get(zoneId) ?? Promise.resolve();
+    const next = prev.then(task, task).catch((e) => {
+      console.warn(`ZoneSystem: zone "${zoneId}" actions failed`, e);
+    });
+    this.zoneActionTail.set(zoneId, next);
+  }
+
   private enterZone(zone: ZoneDef): void {
     this.activeZoneIds.add(zone.id);
     this.zoneStayNextAt.delete(zone.id);
     const enter = zone.onEnter;
     if (enter && enter.length > 0) {
-      void this.actionExecutor.executeBatchInZoneContext(enter, { zoneId: zone.id }).catch((e) => {
-        console.warn('ZoneSystem: onEnter actions failed', e);
-      });
+      this.enqueueZoneActions(zone.id, () =>
+        this.actionExecutor.executeBatchInZoneContext(enter, { zoneId: zone.id }),
+      );
     }
     this.eventBus.emit('zone:enter', { zoneId: zone.id, zone });
     this.emitRuleAvailability();
@@ -103,9 +115,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.zoneStayNextAt.delete(zone.id);
     const exit = zone.onExit;
     if (exit && exit.length > 0) {
-      void this.actionExecutor.executeBatchInZoneContext(exit, { zoneId: zone.id }).catch((e) => {
-        console.warn('ZoneSystem: onExit actions failed', e);
-      });
+      this.enqueueZoneActions(zone.id, () =>
+        this.actionExecutor.executeBatchInZoneContext(exit, { zoneId: zone.id }),
+      );
     }
     this.eventBus.emit('zone:exit', { zoneId: zone.id, zone });
     this.emitRuleAvailability();
@@ -131,9 +143,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
         const next = this.zoneStayNextAt.get(zone.id) ?? 0;
         if (now < next) continue;
         this.zoneStayNextAt.set(zone.id, now + ZoneSystem.STAY_INTERVAL_SEC);
-        void this.actionExecutor.executeBatchInZoneContext(stay, { zoneId: zone.id }).catch((e) => {
-          console.warn('ZoneSystem: onStay actions failed', e);
-        });
+        this.enqueueZoneActions(zone.id, () =>
+          this.actionExecutor.executeBatchInZoneContext(stay, { zoneId: zone.id }),
+        );
       }
     }
   }
@@ -164,5 +176,6 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.zones = [];
     this.activeZoneIds.clear();
     this.zoneStayNextAt.clear();
+    this.zoneActionTail.clear();
   }
 }

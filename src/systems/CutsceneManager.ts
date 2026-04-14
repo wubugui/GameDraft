@@ -338,7 +338,7 @@ export class CutsceneManager implements IGameSystem {
         await this.waitForClick();
         break;
       case 'set_flag':
-        this.actionExecutor.execute({ type: 'setFlag', params: { key: cmd.key as string, value: cmd.value as boolean | number } });
+        await this.actionExecutor.executeAwait({ type: 'setFlag', params: { key: cmd.key as string, value: cmd.value as boolean | number } });
         break;
       case 'show_title':
         await this.cutsceneRenderer.showTitle(cmd.text as string, cmd.duration as number ?? 2000);
@@ -347,13 +347,13 @@ export class CutsceneManager implements IGameSystem {
         await this.showDialogueText(cmd.text as string, cmd.speaker as string | undefined);
         break;
       case 'play_bgm':
-        this.actionExecutor.execute({ type: 'playBgm', params: { id: cmd.id as string, fadeMs: cmd.fadeMs as number } });
+        await this.actionExecutor.executeAwait({ type: 'playBgm', params: { id: cmd.id as string, fadeMs: cmd.fadeMs as number } });
         break;
       case 'stop_bgm':
-        this.actionExecutor.execute({ type: 'stopBgm', params: { fadeMs: cmd.fadeMs as number } });
+        await this.actionExecutor.executeAwait({ type: 'stopBgm', params: { fadeMs: cmd.fadeMs as number } });
         break;
       case 'play_sfx':
-        this.actionExecutor.execute({ type: 'playSfx', params: { id: cmd.id as string } });
+        await this.actionExecutor.executeAwait({ type: 'playSfx', params: { id: cmd.id as string } });
         break;
       case 'camera_move':
         await this.cutsceneRenderer.cameraMove(cmd.x as number, cmd.y as number, cmd.duration as number ?? 1000);
@@ -362,7 +362,10 @@ export class CutsceneManager implements IGameSystem {
         await this.cutsceneRenderer.cameraZoom(cmd.scale as number, cmd.duration as number ?? 500);
         break;
       case 'switch_scene':
-        this.actionExecutor.execute({ type: 'switchScene', params: { targetScene: cmd.sceneId as string, targetSpawnPoint: cmd.spawnPoint as string | undefined } });
+        await this.actionExecutor.executeAwait({
+          type: 'switchScene',
+          params: { targetScene: cmd.sceneId as string, targetSpawnPoint: cmd.spawnPoint as string | undefined },
+        });
         break;
       case 'change_scene': {
         const params: ChangeSceneParams = {
@@ -374,7 +377,7 @@ export class CutsceneManager implements IGameSystem {
         if (this.sceneSwitcher) {
           await this.sceneSwitcher(params);
         } else {
-          this.actionExecutor.execute({ type: 'changeScene', params });
+          await this.actionExecutor.executeAwait({ type: 'changeScene', params });
         }
         break;
       }
@@ -397,7 +400,7 @@ export class CutsceneManager implements IGameSystem {
         await this.showSubtitleText(cmd.text as string, cmd.position as string | number | undefined);
         break;
       case 'execute_action':
-        this.actionExecutor.execute({ type: cmd.actionType as string, params: (cmd.params as Record<string, unknown>) ?? {} });
+        await this.actionExecutor.executeAwait({ type: cmd.actionType as string, params: (cmd.params as Record<string, unknown>) ?? {} });
         break;
       case 'entity_move':
         await this.entityMove(cmd.target as string, cmd.x as number, cmd.y as number, cmd.speed as number | undefined);

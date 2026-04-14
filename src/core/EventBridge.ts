@@ -53,26 +53,39 @@ export class EventBridge {
     this.listen('dialogue:end', () => stateController.setState(GameState.Exploring));
 
     this.listen('encounter:narrativeDone', () => encounterManager.generateOptions());
-    this.listen('encounter:choiceSelected', (p: { index: number }) => encounterManager.chooseOption(p.index));
+    this.listen('encounter:choiceSelected', (p: { index: number }) => {
+      void encounterManager.chooseOption(p.index).catch((e) => {
+        console.warn('EventBridge: encounter chooseOption failed', e);
+      });
+    });
     this.listen('encounter:resultDone', () => encounterManager.endEncounter());
     this.listen('encounter:end', () => stateController.setState(GameState.Exploring));
 
-    this.listen('shop:purchase', (p: { itemId: string; price: number }) => {
-      actionExecutor.execute({ type: 'shopPurchase', params: { itemId: p.itemId, price: p.price } });
+    this.listen('shop:purchase', async (p: { itemId: string; price: number }) => {
+      try {
+        await actionExecutor.executeAwait({ type: 'shopPurchase', params: { itemId: p.itemId, price: p.price } });
+      } catch (e) {
+        console.warn('EventBridge: shopPurchase failed', e);
+      }
     });
-    this.listen('inventory:discard', (p: { itemId: string }) => {
-      actionExecutor.execute({ type: 'inventoryDiscard', params: { itemId: p.itemId } });
+    this.listen('inventory:discard', async (p: { itemId: string }) => {
+      try {
+        await actionExecutor.executeAwait({ type: 'inventoryDiscard', params: { itemId: p.itemId } });
+      } catch (e) {
+        console.warn('EventBridge: inventoryDiscard failed', e);
+      }
     });
     this.listen('shop:closed', () => stateController.setState(GameState.Exploring));
 
-    this.listen('map:travel', (p: { sceneId: string }) => {
+    this.listen('map:travel', async (p: { sceneId: string }) => {
       stateController.setState(GameState.Cutscene);
-      sceneManager.switchScene(p.sceneId)
-        .then(() => stateController.setState(GameState.Exploring))
-        .catch((e) => {
-          console.warn('EventBridge: map:travel switchScene failed', e);
-          stateController.setState(GameState.Exploring);
-        });
+      try {
+        await sceneManager.switchScene(p.sceneId);
+        stateController.setState(GameState.Exploring);
+      } catch (e) {
+        console.warn('EventBridge: map:travel switchScene failed', e);
+        stateController.setState(GameState.Exploring);
+      }
     });
 
     this.listen('menu:newGame', () => { menuUI.close(); stateController.setState(GameState.Exploring); });
@@ -86,7 +99,7 @@ export class EventBridge {
       } catch (e) {
         console.warn('EventBridge: ruleUse:apply actions failed', e);
       }
-      actionExecutor.execute({ type: 'setFlag', params: { key: `rule_used_${p.ruleId}`, value: true } });
+      await actionExecutor.executeAwait({ type: 'setFlag', params: { key: `rule_used_${p.ruleId}`, value: true } });
       if (p.resultText) {
         stateController.setState(GameState.UIOverlay);
         await inspectBox.show(p.resultText);

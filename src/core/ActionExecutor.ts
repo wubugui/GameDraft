@@ -80,7 +80,8 @@ export class ActionExecutor {
     });
   }
 
-  private async executeAwait(action: ActionDef): Promise<void> {
+  /** 单条动作：await handler；供演出/切场景等需与下一条指令严格顺序的场景。 */
+  async executeAwait(action: ActionDef): Promise<void> {
     const handler = this.handlers.get(action.type);
     const zctx = this.getZoneContext();
     if (!handler) {
@@ -124,25 +125,15 @@ export class ActionExecutor {
   }
 
   /**
-   * 按顺序执行并 await handler 返回的 Promise（用于 inspect 等需「上图→对话→下图」的串联）。
+   * 按顺序执行并 await handler（与 `executeBatchAwait` 单条语义一致，失败向上抛）。
    */
   async executeSequential(action: ActionDef): Promise<void> {
-    const handler = this.handlers.get(action.type);
-    const zctx = this.getZoneContext();
-    if (!handler) {
-      console.warn(`ActionExecutor: unknown action type "${action.type}"`);
-      return;
-    }
-    try {
-      await Promise.resolve(handler(action.params, zctx));
-    } catch (e) {
-      console.warn(`ActionExecutor: sequential action "${action.type}" failed`, e);
-    }
+    await this.executeAwait(action);
   }
 
   async executeBatchSequential(actions: ActionDef[]): Promise<void> {
     for (const action of actions) {
-      await this.executeSequential(action);
+      await this.executeAwait(action);
     }
   }
 
