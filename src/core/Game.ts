@@ -66,6 +66,7 @@ import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
+import { TouchMobileControls } from '../ui/TouchMobileControls';
 
 export interface GameStartOptions {
   devMode?: boolean;
@@ -164,6 +165,7 @@ export class Game {
   private tearDownComplete = false;
   private isDevMode = false;
   private devModeUI: DevModeUI | null = null;
+  private touchMobileControls: TouchMobileControls | null = null;
   /** `overlay_images.json`：可写短 id，避免 action 参数里塞长路径 */
   private overlayImageRegistry: Record<string, string> = {};
 
@@ -945,6 +947,15 @@ export class Game {
       this.stateController.setState(GameState.UIOverlay);
       this.menuUI.openPauseMenu();
     });
+
+    const touchMount = document.getElementById('game-mount');
+    if (touchMount) {
+      this.touchMobileControls = new TouchMobileControls(
+        this.inputManager,
+        () => this.stateController.currentState,
+        touchMount,
+      );
+    }
   }
 
   private setupSceneReadyHandler(): void {
@@ -1313,6 +1324,9 @@ export class Game {
 
     this.stateController.destroy();
 
+    this.touchMobileControls?.destroy();
+    this.touchMobileControls = null;
+
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.destroy();
     }
@@ -1421,6 +1435,7 @@ export class Game {
     }
 
     this.renderer.sortEntityLayer();
+    this.touchMobileControls?.update();
     this.inputManager.endFrame();
   }
 }

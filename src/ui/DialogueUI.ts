@@ -29,7 +29,7 @@ export class DialogueUI {
   private willEndAfterAdvance: boolean = false;
   private currentChoices: DialogueChoice[] = [];
 
-  private onClickBound: (e: MouseEvent) => void;
+  private onClickBound: (e: PointerEvent) => void;
   private onKeyBound: (e: KeyboardEvent) => void;
   private dialogueLineCb: (line: DialogueLine) => void;
   private dialogueChoicesCb: (choices: DialogueChoice[]) => void;
@@ -119,7 +119,7 @@ export class DialogueUI {
     this.renderer.uiLayer.addChild(this.container);
     fadeIn(this.container);
 
-    window.addEventListener('mousedown', this.onClickBound);
+    window.addEventListener('pointerdown', this.onClickBound);
     window.addEventListener('keydown', this.onKeyBound);
   }
 
@@ -243,7 +243,7 @@ export class DialogueUI {
     }
   }
 
-  private onClick(_e: MouseEvent): void {
+  private onClick(_e: PointerEvent): void {
     this.handleAdvance();
   }
 
@@ -304,7 +304,7 @@ export class DialogueUI {
     this.waitingForChoice = false;
     this.willEndAfterAdvance = false;
 
-    window.removeEventListener('mousedown', this.onClickBound);
+    window.removeEventListener('pointerdown', this.onClickBound);
     window.removeEventListener('keydown', this.onKeyBound);
   }
 
