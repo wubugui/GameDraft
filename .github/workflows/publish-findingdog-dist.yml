@@ -1,0 +1,43 @@
+# 将 Vite 构建产物推送到独立仓库 wubugui/findingdogdist，供帽子云等静态托管拉取。
+# 需在 GameDraft 仓库 Settings → Secrets → Actions 中添加 FINDINGDOG_DIST_TOKEN：
+# 使用对 findingdogdist 具有 contents:write 的 fine-grained PAT，或 classic PAT 的 repo 权限。
+name: Publish dist to findingdogdist
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-findingdog-dist
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Push dist to findingdogdist
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          token: ${{ secrets.FINDINGDOG_DIST_TOKEN }}
+          repository-name: wubugui/findingdogdist
+          branch: main
+          folder: dist
+          clean: true
+          single-commit: true
