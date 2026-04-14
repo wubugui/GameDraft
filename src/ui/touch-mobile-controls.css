@@ -27,16 +27,17 @@
   -webkit-user-select: none;
 }
 
+/* 置顶：避免矮横屏下与 bottom 区域叠加导致菜单条挤出视口 */
 .touch-mc-menu {
   left: max(8px, env(safe-area-inset-left, 0px));
   right: max(8px, env(safe-area-inset-right, 0px));
-  bottom: calc(200px + max(12px, env(safe-area-inset-bottom, 0px)));
+  top: max(8px, env(safe-area-inset-top, 0px));
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  align-content: flex-end;
+  align-content: flex-start;
   gap: 6px;
-  max-height: 38vh;
+  max-height: min(40vh, 200px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }

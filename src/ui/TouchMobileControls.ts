@@ -6,27 +6,17 @@ import { GameState } from '../data/types';
 type Dir = 'u' | 'd' | 'l' | 'r';
 
 /**
- * 仅在「以粗指针为主、且无精细指针」的环境启用（典型手机），避免触屏笔记本/台式机误出 HUD。
+ * 与 `562335a` 首次触屏 HUD 一致：`(pointer: coarse)` 或存在 `ontouchstart`。
+ * 曾改用 `(hover: none)` + 排除 `fine`，在大量手机浏览器上会得到 false（例如误报 hover:hover），导致整块 HUD 永远不显示。
  */
-function isTouchPhonePrimaryInput(): boolean {
+function useCoarsePointerOrTouchDevice(): boolean {
   if (typeof window === 'undefined') return false;
-  let coarse = false;
   try {
-    coarse = window.matchMedia('(pointer: coarse)').matches;
-  } catch {
-    coarse = 'ontouchstart' in window;
-  }
-  if (!coarse) return false;
-  try {
-    if (window.matchMedia('(pointer: fine)').matches) return false;
+    if (window.matchMedia('(pointer: coarse)').matches) return true;
   } catch {
     /* ignore */
   }
-  try {
-    return window.matchMedia('(hover: none)').matches;
-  } catch {
-    return true;
-  }
+  return 'ontouchstart' in window;
 }
 
 function recomputeAxes(active: Set<Dir>): { x: -1 | 0 | 1; y: -1 | 0 | 1 } {
@@ -250,7 +240,7 @@ export class TouchMobileControls {
 
   update(): void {
     if (this.destroyed) return;
-    const mobile = isTouchPhonePrimaryInput();
+    const mobile = useCoarsePointerOrTouchDevice();
     const st = this.getGameState();
     let explore = false;
     let overlay = false;
