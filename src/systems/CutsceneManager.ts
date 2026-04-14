@@ -164,7 +164,7 @@ export class CutsceneManager implements IGameSystem {
     this.cutsceneRenderer.hideImg(overlayId);
   }
 
-  /** Action「blendOverlayImage」：同 showOverlayImage 布局，双图交叉淡化。 */
+  /** Action「blendOverlayImage」：同 showOverlayImage 百分比布局；片元 mix(from,to,t)，delayMs 后 t 在 durationMs 内 0→1。 */
   blendOverlayImage(
     overlayId: string,
     fromPath: string,
@@ -173,6 +173,7 @@ export class CutsceneManager implements IGameSystem {
     yPercent: number,
     widthPercent: number,
     durationMs: number,
+    delayMs: number,
   ): Promise<void> {
     return this.cutsceneRenderer.blendPercentImg(
       fromPath,
@@ -182,6 +183,7 @@ export class CutsceneManager implements IGameSystem {
       yPercent,
       widthPercent,
       durationMs,
+      delayMs,
     );
   }
 
