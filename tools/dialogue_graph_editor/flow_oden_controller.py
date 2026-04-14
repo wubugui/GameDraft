@@ -1,4 +1,19 @@
-"""用 OdenGraphQt 承载对话流程图（节点、连线、缩放）。"""
+"""用 OdenGraphQt 承载对话流程图（节点、连线、缩放）。
+
+标识分层（避免把策划 id 当 Oden 内部主键）：
+
+- **内部 id**：``NodeObject.id`` / ``AbstractNodeItem.id``，注册在 ``NodeGraph._model.nodes``。
+  命中场景项、viewer 信号携带的选中 id、位移字典键等，一律用 ``get_node_by_id`` 解析。
+- **Gameplay / JSON**：``graphs/*.json`` 的 ``nodes`` 键、``next`` 等边引用，以及编辑器 ``_data["nodes"]``
+  的键；与节点 ``name()`` 对齐（``create_node(..., name=nid)``），便于同一份 JSON 读写。
+  **rebuild** 从边表连边、``select_dialogue_node(nid)``、``center_on_node`` 等从策划侧 id 反查节点时，
+  使用 ``get_node_by_name``。
+- **边界**：改 ``_data``、驱动列表/检查器、右键菜单信号时，在已得到 ``NodeObject`` 之后再读
+  ``name()`` / ``missing_id`` /分组前缀；勿把 JSON 节点键传入 ``get_node_by_id``。
+
+本模块内 ``node_object_from_abstract_item`` / ``node_object_from_internal_id`` /
+``gameplay_ids_for_context_menu`` 封装上述约定。
+"""
 from __future__ import annotations
 
 import types
@@ -206,6 +221,47 @@ from .oden_dialogue_nodes import (
 )
 
 
+def node_object_from_abstract_item(
+    graph: NodeGraph,
+    item: AbstractNodeItem,
+) -> Any | None:
+    """``AbstractNodeItem`` → ``NodeObject``（``get_node_by_id(str(item.id))``）。
+
+    参数为画布运行时内部 id，**勿**传入 graphs JSON 的节点键。
+    """
+    return graph.get_node_by_id(str(item.id))
+
+
+def node_object_from_internal_id(graph: NodeGraph, internal_id: str) -> Any | None:
+    """用 Oden 内部节点 id（与 ``view.id``、viewer 信号一致）解析节点。**勿**传入策划侧节点 id。"""
+    if not internal_id:
+        return None
+    return graph.get_node_by_id(str(internal_id))
+
+
+def gameplay_ids_for_context_menu(
+    node: Any,
+) -> tuple[str | None, str | None, str | None, bool]:
+    """将已解析的 ``NodeObject`` 转为右键菜单用的 gameplay 引用。
+
+    返回 ``(对话节点 id, 编辑器分组 gid, 幽灵缺失 id, stop)``。
+    ``stop`` 为真时表示已消费该场景项（含幽灵即使缺失 id 为空也应停止栈顶遍历）。
+    仅在此类边界向 UI 扩散策划侧 id；图内核路径应先走 ``node_object_from_*``。
+    """
+    if isinstance(node, DialogueGhostNode):
+        mid = (node.missing_id or "").strip() or None
+        return (None, None, mid, True)
+    if isinstance(node, DialogueFlowNode):
+        return (node.name(), None, None, True)
+    if isinstance(node, BackdropNode):
+        nm = node.name()
+        pfx = "__editor_grp_"
+        if nm.startswith(pfx):
+            return (None, nm[len(pfx) :], None, True)
+        return (None, None, None, False)
+    return (None, None, None, False)
+
+
 class DialogueFlowOdenController(QObject):
     """包装 NodeGraph：从 JSON 重建、端口事件写回 _data。"""
 
@@ -215,8 +271,8 @@ class DialogueFlowOdenController(QObject):
     data_topology_changed = Signal()
     """连线/断线导致 JSON 拓扑变化（已写回 _data）。"""
 
-    canvas_context_menu = Signal(float, float, object, object)
-    """右键菜单：场景坐标、对话节点 id 或 None、分组框 gid 或 None。"""
+    canvas_context_menu = Signal(float, float, object, object, object)
+    """右键菜单：场景坐标、对话节点 id 或 None、分组框 gid 或 None、幽灵缺失 id 或 None。"""
 
     editor_frame_rename_requested = Signal(str)
     """双击分组框标题区域：请求改分组显示名（内部分组 id）。"""
@@ -261,34 +317,30 @@ class DialogueFlowOdenController(QObject):
         vw.customContextMenuRequested.connect(self._viewer_context_menu)
         QShortcut(QKeySequence("F"), vw, activated=self.fit_all)
         QShortcut(QKeySequence("A"), vw, activated=self._emit_auto_layout_request)
-        QShortcut(QKeySequence(Qt.Key.Key_Delete), vw, activated=self._emit_delete_key)
+        sc_del = QShortcut(QKeySequence(Qt.Key.Key_Delete), vw, activated=self._emit_delete_key)
+        # 仅当焦点在画布（含 viewport） subtree 内时响应，避免与窗口内其它控件的 Delete 冲突
+        sc_del.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
     def _viewer_context_menu(self, local_pos: QPoint) -> None:
         v = self._graph.viewer()
         sp = v.mapToScene(local_pos)
         hit_id: str | None = None
         hit_frame_gid: str | None = None
-        nodes_keys: set[str] = set()
-        if self._data_get is not None:
-            raw = (self._data_get() or {}).get("nodes")
-            if isinstance(raw, dict):
-                nodes_keys = {str(k) for k in raw.keys()}
+        hit_ghost_missing: str | None = None
+        # 栈顶优先：用 view内部 id → NodeObject，再在边界解析 gameplay 引用
         for it in v.scene().items(sp):
             if not isinstance(it, AbstractNodeItem):
                 continue
-            iid = str(it.id)
-            if iid in nodes_keys:
-                hit_id = iid
+            node_obj = node_object_from_abstract_item(self._graph, it)
+            if node_obj is None:
+                continue
+            hit_id, hit_frame_gid, hit_ghost_missing, stop = (
+                gameplay_ids_for_context_menu(node_obj)
+            )
+            if stop:
                 break
-            node_obj = self._graph.get_node_by_id(iid)
-            if isinstance(node_obj, BackdropNode):
-                nm = node_obj.name()
-                pfx = "__editor_grp_"
-                if nm.startswith(pfx):
-                    hit_frame_gid = nm[len(pfx) :]
-                    break
         self.canvas_context_menu.emit(
-            float(sp.x()), float(sp.y()), hit_id, hit_frame_gid
+            float(sp.x()), float(sp.y()), hit_id, hit_frame_gid, hit_ghost_missing
         )
 
     def _emit_delete_key(self) -> None:
@@ -369,29 +421,75 @@ class DialogueFlowOdenController(QObject):
         n.set_property("selected", True, push_undo=False)
 
     def primary_selected_flow_node_id(self) -> str | None:
-        """当前画布上选中的第一个对话节点 id（非幽灵）。"""
-        for n in self._graph.all_nodes():
-            if not isinstance(n, DialogueFlowNode):
-                continue
-            try:
-                if n.view.isSelected():
-                    return n.name()
-            except Exception:
-                continue
-        return None
+        """当前画布上选中的第一个对话节点 id（非幽灵）。
+
+        优先 ``NodeGraph.selected_nodes()``；若为空再回退 ``view.isSelected()``，
+        避免个别版本/状态下二者不一致导致删键无效。
+        """
+        ids = self.selected_flow_node_ids()
+        return ids[0] if ids else None
 
     def selected_flow_node_ids(self) -> list[str]:
-        """画布上当前选中的全部对话节点 id（非幽灵），稳定排序。"""
+        """画布上当前选中的全部对话节点 id（非幽灵），按 id 排序。"""
         out: list[str] = []
-        for n in self._graph.all_nodes():
-            if not isinstance(n, DialogueFlowNode):
-                continue
-            try:
-                if n.view.isSelected():
+        try:
+            for n in self._graph.selected_nodes():
+                if isinstance(n, DialogueFlowNode):
                     out.append(n.name())
+        except Exception:
+            out = []
+        if not out:
+            try:
+                for n in self._graph.all_nodes():
+                    if not isinstance(n, DialogueFlowNode):
+                        continue
+                    try:
+                        if n.view.isSelected():
+                            out.append(n.name())
+                    except Exception:
+                        continue
             except Exception:
-                continue
-        return sorted(out)
+                pass
+        return sorted(set(out))
+
+    def selected_ghost_missing_ids(self) -> list[str]:
+        """画布上当前选中的幽灵节点对应的缺失目标 id（JSON 中不存在的节点 id）。"""
+        out: list[str] = []
+        try:
+            for n in self._graph.selected_nodes():
+                if isinstance(n, DialogueGhostNode):
+                    mid = (n.missing_id or "").strip()
+                    if mid:
+                        out.append(mid)
+        except Exception:
+            out = []
+        if not out:
+            try:
+                for n in self._graph.all_nodes():
+                    if not isinstance(n, DialogueGhostNode):
+                        continue
+                    try:
+                        if n.view.isSelected():
+                            mid = (n.missing_id or "").strip()
+                            if mid:
+                                out.append(mid)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        return sorted(set(out))
+
+    def _strip_orphan_scene_items_and_clear_model(self) -> None:
+        """delete_nodes 后兜底：去掉仍留在场景中的节点/连线项并清空 model，避免重建叠出「死节点」。"""
+        from OdenGraphQt.qgraphics.pipe import LivePipeItem, PipeItem
+
+        sc = self._graph.scene()
+        for item in list(sc.items()):
+            if isinstance(item, AbstractNodeItem):
+                sc.removeItem(item)
+            elif isinstance(item, PipeItem) and not isinstance(item, LivePipeItem):
+                sc.removeItem(item)
+        self._graph.model.nodes.clear()
 
     def center_on_node(self, nid: str) -> None:
         n = self._graph.get_node_by_name(nid)
@@ -417,7 +515,11 @@ class DialogueFlowOdenController(QObject):
         try:
             existing = self._graph.all_nodes()
             if existing:
-                self._graph.delete_nodes(existing, push_undo=False)
+                try:
+                    self._graph.delete_nodes(existing, push_undo=False)
+                except Exception:
+                    pass
+                self._strip_orphan_scene_items_and_clear_model()
 
             nodes = data.get("nodes") or {}
             if not isinstance(nodes, dict):
@@ -671,7 +773,7 @@ class DialogueFlowOdenController(QObject):
         gh = self._ghost_positions_get()
         changed = False
         for node_id, _prev in node_data.items():
-            node = self._graph.get_node_by_id(str(node_id))
+            node = node_object_from_internal_id(self._graph, str(node_id))
             if node is None:
                 continue
             x, y = node.pos()
@@ -698,7 +800,7 @@ class DialogueFlowOdenController(QObject):
         if not node_id:
             self.canvas_node_selected.emit("")
             return
-        node = self._graph.get_node_by_id(node_id)
+        node = node_object_from_internal_id(self._graph, node_id)
         if node is None:
             self.canvas_node_selected.emit("")
             return
