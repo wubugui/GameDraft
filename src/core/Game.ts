@@ -952,6 +952,7 @@ export class Game {
     if (touchMount) {
       this.touchMobileControls = new TouchMobileControls(
         this.inputManager,
+        this.stateController,
         () => this.stateController.currentState,
         touchMount,
       );
