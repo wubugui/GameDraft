@@ -34,7 +34,7 @@ export class EncounterUI {
   private typewriterTimer: number = 0;
   private textComplete: boolean = false;
 
-  private onClickBound: (e: MouseEvent) => void;
+  private onClickBound: (e: PointerEvent) => void;
   private onKeyBound: (e: KeyboardEvent) => void;
 
   private narrativeCb: (payload: { text: string }) => void;
@@ -67,7 +67,7 @@ export class EncounterUI {
     this.container = new Container();
     this.renderer.uiLayer.addChild(this.container);
 
-    window.addEventListener('mousedown', this.onClickBound);
+    window.addEventListener('pointerdown', this.onClickBound);
     window.addEventListener('keydown', this.onKeyBound);
   }
 
@@ -253,7 +253,7 @@ export class EncounterUI {
     }
   }
 
-  private onClick(_e: MouseEvent): void {
+  private onClick(_e: PointerEvent): void {
     this.handleAdvance();
   }
 
@@ -342,7 +342,7 @@ export class EncounterUI {
     this.fullText = '';
     this.displayedChars = 0;
     this.textComplete = false;
-    window.removeEventListener('mousedown', this.onClickBound);
+    window.removeEventListener('pointerdown', this.onClickBound);
     window.removeEventListener('keydown', this.onKeyBound);
   }
 

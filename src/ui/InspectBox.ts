@@ -9,7 +9,7 @@ export class InspectBox {
   private container: Container | null = null;
   private resolveClose: (() => void) | null = null;
   private onKeyHandler: ((e: KeyboardEvent) => void) | null = null;
-  private onClickHandler: ((e: MouseEvent) => void) | null = null;
+  private onClickHandler: ((e: PointerEvent) => void) | null = null;
   private showTimerId: ReturnType<typeof setTimeout> | null = null;
 
   constructor(renderer: Renderer, strings: StringsProvider) {
@@ -73,7 +73,7 @@ export class InspectBox {
         this.onKeyHandler = () => this.close();
         this.onClickHandler = () => this.close();
         window.addEventListener('keydown', this.onKeyHandler, { once: true });
-        window.addEventListener('mousedown', this.onClickHandler, { once: true });
+        window.addEventListener('pointerdown', this.onClickHandler, { once: true });
       }, 100);
     });
   }
@@ -88,7 +88,7 @@ export class InspectBox {
       this.onKeyHandler = null;
     }
     if (this.onClickHandler) {
-      window.removeEventListener('mousedown', this.onClickHandler);
+      window.removeEventListener('pointerdown', this.onClickHandler);
       this.onClickHandler = null;
     }
     if (this.container) {

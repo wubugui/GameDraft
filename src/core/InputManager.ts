@@ -6,12 +6,17 @@ export class InputManager {
   private mousePos: { x: number; y: number } = { x: 0, y: 0 };
   private mouseDown: boolean = false;
   private mouseJustClicked: boolean = false;
+  /** 触屏虚拟方向 -1/0/1，与键盘合并 */
+  private touchMoveX = 0;
+  private touchMoveY = 0;
+  /** 触屏按住「跑」 */
+  private touchRunHeld = false;
 
   private onKeyDownBound: (e: KeyboardEvent) => void;
   private onKeyUpBound: (e: KeyboardEvent) => void;
-  private onMouseMoveBound: (e: MouseEvent) => void;
-  private onMouseDownBound: (e: MouseEvent) => void;
-  private onMouseUpBound: (e: MouseEvent) => void;
+  private onPointerMoveBound: (e: PointerEvent) => void;
+  private onPointerDownBound: (e: PointerEvent) => void;
+  private onPointerUpBound: (e: PointerEvent) => void;
 
   private keyDownSubscribers: ((e: KeyboardEvent) => void)[] = [];
   private anyInputSubscribers: (() => void)[] = [];
@@ -19,15 +24,15 @@ export class InputManager {
   constructor() {
     this.onKeyDownBound = this.onKeyDown.bind(this);
     this.onKeyUpBound = this.onKeyUp.bind(this);
-    this.onMouseMoveBound = this.onMouseMove.bind(this);
-    this.onMouseDownBound = this.onMouseDown.bind(this);
-    this.onMouseUpBound = this.onMouseUp.bind(this);
+    this.onPointerMoveBound = this.onPointerMove.bind(this);
+    this.onPointerDownBound = this.onPointerDown.bind(this);
+    this.onPointerUpBound = this.onPointerUp.bind(this);
 
     window.addEventListener('keydown', this.onKeyDownBound);
     window.addEventListener('keyup', this.onKeyUpBound);
-    window.addEventListener('mousemove', this.onMouseMoveBound);
-    window.addEventListener('mousedown', this.onMouseDownBound);
-    window.addEventListener('mouseup', this.onMouseUpBound);
+    window.addEventListener('pointermove', this.onPointerMoveBound);
+    window.addEventListener('pointerdown', this.onPointerDownBound);
+    window.addEventListener('pointerup', this.onPointerUpBound);
   }
 
   private onKeyDown(e: KeyboardEvent): void {
@@ -48,18 +53,18 @@ export class InputManager {
     this.keysDown.delete(e.code);
   }
 
-  private onMouseMove(e: MouseEvent): void {
+  private onPointerMove(e: PointerEvent): void {
     this.mousePos.x = e.clientX;
     this.mousePos.y = e.clientY;
   }
 
-  private onMouseDown(_e: MouseEvent): void {
+  private onPointerDown(_e: PointerEvent): void {
     this.mouseDown = true;
     this.mouseJustClicked = true;
     for (const cb of this.anyInputSubscribers) cb();
   }
 
-  private onMouseUp(_e: MouseEvent): void {
+  private onPointerUp(_e: PointerEvent): void {
     this.mouseDown = false;
   }
 
@@ -100,6 +105,9 @@ export class InputManager {
     if (this.isKeyDown('KeyA') || this.isKeyDown('ArrowLeft')) dx -= 1;
     if (this.isKeyDown('KeyD') || this.isKeyDown('ArrowRight')) dx += 1;
 
+    dx = Math.max(-1, Math.min(1, dx + this.touchMoveX));
+    dy = Math.max(-1, Math.min(1, dy + this.touchMoveY));
+
     if (dx !== 0 && dy !== 0) {
       const len = Math.sqrt(dx * dx + dy * dy);
       dx /= len;
@@ -111,7 +119,26 @@ export class InputManager {
 
   isRunning(): boolean {
     if (this.gameKeyboardBlocked) return false;
-    return this.keysDown.has('ShiftLeft') || this.keysDown.has('ShiftRight');
+    return (
+      this.keysDown.has('ShiftLeft') ||
+      this.keysDown.has('ShiftRight') ||
+      this.touchRunHeld
+    );
+  }
+
+  /** 触屏「互动」：本帧内视为按下 E 一次（供 InteractionSystem 使用） */
+  injectKeyJustPressed(code: string): void {
+    if (this.gameKeyboardBlocked) return;
+    this.keyJustPressed.add(code);
+  }
+
+  setTouchMoveAxes(x: -1 | 0 | 1, y: -1 | 0 | 1): void {
+    this.touchMoveX = x;
+    this.touchMoveY = y;
+  }
+
+  setTouchRunHeld(held: boolean): void {
+    this.touchRunHeld = held;
   }
 
   setGameKeyboardBlocked(blocked: boolean): void {
@@ -137,9 +164,9 @@ export class InputManager {
   destroy(): void {
     window.removeEventListener('keydown', this.onKeyDownBound);
     window.removeEventListener('keyup', this.onKeyUpBound);
-    window.removeEventListener('mousemove', this.onMouseMoveBound);
-    window.removeEventListener('mousedown', this.onMouseDownBound);
-    window.removeEventListener('mouseup', this.onMouseUpBound);
+    window.removeEventListener('pointermove', this.onPointerMoveBound);
+    window.removeEventListener('pointerdown', this.onPointerDownBound);
+    window.removeEventListener('pointerup', this.onPointerUpBound);
     this.keyDownSubscribers.length = 0;
     this.anyInputSubscribers.length = 0;
   }

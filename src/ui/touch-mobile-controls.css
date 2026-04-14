@@ -1,0 +1,76 @@
+#touch-mobile-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  display: none;
+}
+
+#touch-mobile-controls.is-visible {
+  display: block;
+}
+
+.touch-mc-dpad,
+.touch-mc-actions {
+  position: absolute;
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.touch-mc-dpad {
+  left: max(10px, env(safe-area-inset-left, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.touch-mc-actions {
+  right: max(10px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.touch-mc-row {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+}
+
+.touch-mc-btn {
+  min-width: 52px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(24, 28, 36, 0.72);
+  color: rgba(230, 235, 245, 0.95);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.touch-mc-btn:active {
+  background: rgba(48, 56, 72, 0.88);
+}
+
+.touch-mc-btn.touch-mc-wide {
+  min-width: 88px;
+}
+
+.touch-mc-spacer {
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+}
