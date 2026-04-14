@@ -32,6 +32,8 @@ export class InteractionCoordinator {
   private eventBus: EventBus;
   private deps: InteractionDeps;
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
+  /** 热区交互串行，避免拾取/inspect/过渡的 executeAwait 与异步链交错 */
+  private hotspotChain: Promise<void> = Promise.resolve();
 
   constructor(eventBus: EventBus, deps: InteractionDeps) {
     this.eventBus = eventBus;
@@ -40,10 +42,15 @@ export class InteractionCoordinator {
 
   init(): void {
     this.listen('hotspot:triggered', (payload: { hotspot: Hotspot; def: HotspotDef }) => {
-      this.handleHotspot(payload.hotspot, payload.def);
+      const job = () => this.handleHotspot(payload.hotspot, payload.def);
+      this.hotspotChain = this.hotspotChain.then(job, job).catch((e) => {
+        console.warn('InteractionCoordinator: hotspot handling failed', e);
+      });
     });
     this.listen('npc:interact', (payload: { npc: Npc }) => {
-      this.handleNpc(payload.npc);
+      void this.handleNpc(payload.npc).catch((e) => {
+        console.warn('InteractionCoordinator: npc interact failed', e);
+      });
     });
   }
 
@@ -62,10 +69,10 @@ export class InteractionCoordinator {
         await this.handleInspect(hotspot, def.data as InspectData);
         break;
       case 'pickup':
-        this.handlePickup(hotspot, def.data as PickupData);
+        await this.handlePickup(hotspot, def.data as PickupData);
         break;
       case 'transition':
-        this.handleTransition(def.data as TransitionData);
+        await this.handleTransition(def.data as TransitionData);
         break;
       case 'encounter':
         this.handleEncounterTrigger(hotspot, def.data as EncounterTriggerData);
@@ -129,19 +136,25 @@ export class InteractionCoordinator {
     stateController.setState(GameState.UIOverlay);
     await inspectBox.show(data.text);
     eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
-    if (data.actions) await actionExecutor.executeBatchSequential(data.actions);
+    if (data.actions) {
+      try {
+        await actionExecutor.executeBatchSequential(data.actions);
+      } catch (e) {
+        console.warn('InteractionCoordinator: inspect actions failed', e);
+      }
+    }
     if (stateController.currentState === GameState.UIOverlay) {
       stateController.setState(GameState.Exploring);
     }
   }
 
-  private handlePickup(hotspot: Hotspot, data: PickupData): void {
+  private async handlePickup(hotspot: Hotspot, data: PickupData): Promise<void> {
     const { actionExecutor, eventBus } = this.deps;
-    actionExecutor.execute({
+    await actionExecutor.executeAwait({
       type: 'pickup',
       params: { itemId: data.itemId, itemName: data.itemName, count: data.count, isCurrency: data.isCurrency },
     });
-    actionExecutor.execute({ type: 'setFlag', params: { key: `picked_up_${hotspot.def.id}`, value: true } });
+    await actionExecutor.executeAwait({ type: 'setFlag', params: { key: `picked_up_${hotspot.def.id}`, value: true } });
     eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
   }
 
@@ -150,8 +163,8 @@ export class InteractionCoordinator {
     this.deps.eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
   }
 
-  private handleTransition(data: TransitionData): void {
-    this.deps.actionExecutor.execute({
+  private async handleTransition(data: TransitionData): Promise<void> {
+    await this.deps.actionExecutor.executeAwait({
       type: 'switchScene',
       params: { targetScene: data.targetScene, targetSpawnPoint: data.targetSpawnPoint },
     });
@@ -160,5 +173,6 @@ export class InteractionCoordinator {
   destroy(): void {
     for (const { event, fn } of this.boundCallbacks) this.eventBus.off(event, fn);
     this.boundCallbacks = [];
+    this.hotspotChain = Promise.resolve();
   }
 }

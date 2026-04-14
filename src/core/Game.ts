@@ -478,9 +478,15 @@ export class Game {
     this.interactionCoordinator.init();
 
     this.listenEvent('archive:firstView', (p: { actions: ActionDef[] }) => {
-      for (const a of p.actions) {
-        this.actionExecutor.execute(a);
-      }
+      void (async () => {
+        for (const a of p.actions) {
+          try {
+            await this.actionExecutor.executeAwait(a);
+          } catch (e) {
+            console.warn('Game: archive:firstView action failed', a.type, e);
+          }
+        }
+      })();
     });
 
     this.eventBridge = new EventBridge(this.eventBus, {
