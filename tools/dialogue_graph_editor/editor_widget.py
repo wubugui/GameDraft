@@ -136,6 +136,7 @@ class DialogueGraphEditorWidget(QWidget):
             ("打开…", self.open_file_dialog),
             ("保存", self.save),
             ("另存为…", self.save_as),
+            ("重命名图…", self._rename_graph_file_dialog),
             ("校验当前图", self.run_validate),
             ("自动布局", self._flow_auto_layout),
             ("适应画布", self._flow_fit_view),
@@ -287,7 +288,10 @@ class DialogueGraphEditorWidget(QWidget):
         gw = QWidget()
         gw.setLayout(erow)
         gform.addRow(
-            _graph_form_label("id", tip="与 graph JSON 文件名一致（不含 .json）"),
+            _graph_form_label(
+                "id",
+                tip="与 graph JSON 文件名一致（不含 .json）。已保存文件请用工具栏「重命名图…」改磁盘文件名；保存后会与文件名同步。",
+            ),
             self._edit_graph_id,
         )
         gform.addRow(_graph_form_label("entry", tip="图入口节点 id"), gw)
@@ -782,6 +786,109 @@ class DialogueGraphEditorWidget(QWidget):
         if not p.suffix:
             p = p.with_suffix(".json")
         return self._write_to_path(p)
+
+    def _rename_graph_file_dialog(self) -> None:
+        """将当前已保存的 graphs/*.json 改名，并迁移 editor_data 中的流程布局键。"""
+        if self._current_path is None:
+            QMessageBox.information(
+                self,
+                "重命名图",
+                "当前没有已关联的磁盘文件（例如仍为「未保存」草稿）。\n"
+                "请先点击「保存」生成 graphs/*.json；或先用「另存为…」指定文件名。\n"
+                "之后可用本功能改文件名。",
+            )
+            return
+        try:
+            self._widgets_to_data_meta()
+            self._flush_current_inspector_to_data()
+        except json.JSONDecodeError as e:
+            QMessageBox.critical(
+                self, "重命名图", f"附加 preconditions（JSON）解析失败：{e}"
+            )
+            return
+        except ValueError as e:
+            QMessageBox.critical(self, "重命名图", str(e))
+            return
+        errors, warnings = validate_graph_tiered(self._data)
+        if errors:
+            QMessageBox.critical(
+                self,
+                "无法重命名",
+                "图数据存在错误，请先修正后再试：\n" + "\n".join(errors[:40]),
+            )
+            return
+        if warnings:
+            wtxt = "\n".join(warnings[:40])
+            if len(warnings) > 40:
+                wtxt += f"\n… 共 {len(warnings)} 条警告"
+            r = QMessageBox.question(
+                self,
+                "校验警告",
+                wtxt + "\n\n仍要重命名吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            old_path = self._current_path.resolve()
+            gdir = self._graphs_dir.resolve()
+        except OSError as e:
+            QMessageBox.critical(self, "重命名图", str(e))
+            return
+        if old_path.parent.resolve() != gdir:
+            QMessageBox.warning(self, "重命名图", "当前文件不在项目 graphs 目录下，无法重命名。")
+            return
+        if not old_path.is_file():
+            QMessageBox.warning(self, "重命名图", "当前路径不是有效文件，已取消。")
+            self._refresh_file_list()
+            return
+        cur_stem = old_path.stem
+        new_stem_raw, ok = QInputDialog.getText(
+            self,
+            "重命名图文件",
+            "新的图 id（将保存为 graphs/<id>.json，不含扩展名）：\n\n"
+            "注意：场景、NPC、动作等里若引用了旧图名，需自行改为新名。",
+            text=cur_stem,
+        )
+        if not ok:
+            return
+        new_stem = self._sanitize_filename_stem(new_stem_raw)
+        new_path = (self._graphs_dir / f"{new_stem}.json").resolve()
+        if new_path == old_path:
+            return
+        if new_path.is_file():
+            QMessageBox.warning(
+                self,
+                "重命名图",
+                f"已存在文件：{new_path.name}\n请改用其它名称，或先处理冲突文件。",
+            )
+            return
+        self._data["id"] = new_stem
+        try:
+            save_json(new_path, self._data)
+        except OSError as e:
+            QMessageBox.critical(self, "重命名图", f"写入新文件失败：{e}")
+            return
+        try:
+            old_path.unlink()
+        except OSError as e:
+            QMessageBox.warning(
+                self,
+                "重命名图",
+                f"新文件已写入 {new_path.name}，但未能删除旧文件 {old_path.name}：{e}\n"
+                "请手动删除重复的旧文件。",
+            )
+        migrate_layout_map_key(self._project, old_path, new_path)
+        self._current_path = new_path
+        self._draft_layout_basename = None
+        self._apply_data_to_widgets()
+        self._set_dirty(False)
+        self._flush_flow_layout_to_disk()
+        self._emit_title()
+        self._toast(f"已重命名为 {new_path.name}", 4000)
+        self._refresh_file_list()
+        self._sync_file_list_selection(new_path)
 
     def run_validate(self) -> None:
         if not self._data.get("nodes"):
