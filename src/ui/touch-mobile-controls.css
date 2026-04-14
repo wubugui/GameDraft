@@ -6,22 +6,44 @@
   display: none;
 }
 
-#touch-mobile-controls.is-visible {
+#touch-mobile-controls.is-explore,
+#touch-mobile-controls.is-overlay {
   display: block;
 }
 
+#touch-mobile-controls.is-explore .touch-mc-overlay-only,
+#touch-mobile-controls.is-overlay .touch-mc-explore-only {
+  display: none !important;
+}
+
 .touch-mc-dpad,
-.touch-mc-actions {
+.touch-mc-actions,
+.touch-mc-menu,
+.touch-mc-overlay-bar {
   position: absolute;
-  bottom: max(12px, env(safe-area-inset-bottom, 0px));
   pointer-events: auto;
-  touch-action: none;
+  touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
 }
 
+.touch-mc-menu {
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: calc(200px + max(12px, env(safe-area-inset-bottom, 0px)));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-end;
+  gap: 6px;
+  max-height: 38vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .touch-mc-dpad {
   left: max(10px, env(safe-area-inset-left, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -30,10 +52,17 @@
 
 .touch-mc-actions {
   right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 10px;
   align-items: stretch;
+}
+
+.touch-mc-overlay-bar {
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
 }
 
 .touch-mc-row {
@@ -45,14 +74,14 @@
 }
 
 .touch-mc-btn {
-  min-width: 52px;
-  min-height: 52px;
-  padding: 8px 12px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 6px 10px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(24, 28, 36, 0.72);
+  background: rgba(24, 28, 36, 0.78);
   color: rgba(230, 235, 245, 0.95);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   font-family: system-ui, sans-serif;
   display: flex;
@@ -62,11 +91,17 @@
 }
 
 .touch-mc-btn:active {
-  background: rgba(48, 56, 72, 0.88);
+  background: rgba(48, 56, 72, 0.9);
 }
 
 .touch-mc-btn.touch-mc-wide {
   min-width: 88px;
+}
+
+.touch-mc-btn.touch-mc-menu-tight {
+  min-width: 44px;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 .touch-mc-spacer {

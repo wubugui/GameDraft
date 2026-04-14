@@ -1,17 +1,32 @@
 import './touch-mobile-controls.css';
 import type { InputManager } from '../core/InputManager';
+import type { GameStateController } from '../core/GameStateController';
 import { GameState } from '../data/types';
 
 type Dir = 'u' | 'd' | 'l' | 'r';
 
-function useCoarsePointer(): boolean {
+/**
+ * 仅在「以粗指针为主、且无精细指针」的环境启用（典型手机），避免触屏笔记本/台式机误出 HUD。
+ */
+function isTouchPhonePrimaryInput(): boolean {
   if (typeof window === 'undefined') return false;
+  let coarse = false;
   try {
-    if (window.matchMedia('(pointer: coarse)').matches) return true;
+    coarse = window.matchMedia('(pointer: coarse)').matches;
+  } catch {
+    coarse = 'ontouchstart' in window;
+  }
+  if (!coarse) return false;
+  try {
+    if (window.matchMedia('(pointer: fine)').matches) return false;
   } catch {
     /* ignore */
   }
-  return 'ontouchstart' in window;
+  try {
+    return window.matchMedia('(hover: none)').matches;
+  } catch {
+    return true;
+  }
 }
 
 function recomputeAxes(active: Set<Dir>): { x: -1 | 0 | 1; y: -1 | 0 | 1 } {
@@ -28,10 +43,11 @@ function recomputeAxes(active: Set<Dir>): { x: -1 | 0 | 1; y: -1 | 0 | 1 } {
 }
 
 /**
- * 粗指针/触屏设备上在探索模式显示：虚拟方向、奔跑、互动（映射到 InputManager）。
+ * 手机专用 HUD：只改 InputManager 触屏轴与调用 GameStateController 已有 API，不介入其它系统。
  */
 export class TouchMobileControls {
   private readonly inputManager: InputManager;
+  private readonly stateController: GameStateController;
   private readonly getGameState: () => GameState;
   private readonly root: HTMLDivElement;
   private readonly pointerDir = new Map<number, Dir>();
@@ -39,16 +55,39 @@ export class TouchMobileControls {
   private runHeld = false;
   private destroyed = false;
 
-  constructor(inputManager: InputManager, getGameState: () => GameState, mountEl: HTMLElement) {
+  constructor(
+    inputManager: InputManager,
+    stateController: GameStateController,
+    getGameState: () => GameState,
+    mountEl: HTMLElement,
+  ) {
     this.inputManager = inputManager;
+    this.stateController = stateController;
     this.getGameState = getGameState;
 
     this.root = document.createElement('div');
     this.root.id = 'touch-mobile-controls';
     this.root.setAttribute('aria-hidden', 'true');
 
+    const menu = document.createElement('div');
+    menu.className = 'touch-mc-menu touch-mc-explore-only';
+    const menuDefs: { id: string; label: string }[] = [
+      { id: 'quest', label: '任务' },
+      { id: 'inventory', label: '背包' },
+      { id: 'rules', label: '规矩' },
+      { id: 'dialogueLog', label: '日志' },
+      { id: 'bookshelf', label: '书架' },
+      { id: 'map', label: '地图' },
+      { id: 'ruleUse', label: '规则牌' },
+      { id: 'shop', label: '商店' },
+      { id: 'menu', label: '菜单' },
+    ];
+    for (const { id, label } of menuDefs) {
+      menu.appendChild(this.makePanelToggleBtn(id, label));
+    }
+
     const dpad = document.createElement('div');
-    dpad.className = 'touch-mc-dpad';
+    dpad.className = 'touch-mc-dpad touch-mc-explore-only';
 
     const rowUp = document.createElement('div');
     rowUp.className = 'touch-mc-row';
@@ -71,7 +110,7 @@ export class TouchMobileControls {
     dpad.appendChild(rowDn);
 
     const actions = document.createElement('div');
-    actions.className = 'touch-mc-actions';
+    actions.className = 'touch-mc-actions touch-mc-explore-only';
 
     const runBtn = document.createElement('button');
     runBtn.type = 'button';
@@ -118,9 +157,35 @@ export class TouchMobileControls {
     actions.appendChild(runBtn);
     actions.appendChild(useBtn);
 
+    const overlayBar = document.createElement('div');
+    overlayBar.className = 'touch-mc-overlay-bar touch-mc-overlay-only';
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'touch-mc-btn touch-mc-wide';
+    backBtn.textContent = '返回';
+    backBtn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.stateController.triggerEscapeFromTouch();
+    });
+    overlayBar.appendChild(backBtn);
+
+    this.root.appendChild(menu);
     this.root.appendChild(dpad);
     this.root.appendChild(actions);
+    this.root.appendChild(overlayBar);
     mountEl.appendChild(this.root);
+  }
+
+  private makePanelToggleBtn(panelName: string, label: string): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'touch-mc-btn touch-mc-menu-tight';
+    btn.textContent = label;
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.stateController.togglePanel(panelName);
+    });
+    return btn;
   }
 
   private makeDirBtn(dir: Dir, label: string): HTMLButtonElement {
@@ -173,31 +238,40 @@ export class TouchMobileControls {
     this.inputManager.setTouchMoveAxes(x, y);
   }
 
+  private clearExploreInput(): void {
+    this.pointerDir.clear();
+    this.activeDirs.clear();
+    this.inputManager.setTouchMoveAxes(0, 0);
+    if (this.runHeld) {
+      this.runHeld = false;
+      this.inputManager.setTouchRunHeld(false);
+    }
+  }
+
   update(): void {
     if (this.destroyed) return;
-    const coarse = useCoarsePointer();
-    const exploring = this.getGameState() === GameState.Exploring;
-    const show = coarse && exploring;
-    this.root.classList.toggle('is-visible', show);
-    this.root.setAttribute('aria-hidden', show ? 'false' : 'true');
-    if (!show) {
-      this.pointerDir.clear();
-      this.activeDirs.clear();
-      this.inputManager.setTouchMoveAxes(0, 0);
-      if (this.runHeld) {
-        this.runHeld = false;
-        this.inputManager.setTouchRunHeld(false);
-      }
+    const mobile = isTouchPhonePrimaryInput();
+    const st = this.getGameState();
+    let explore = false;
+    let overlay = false;
+    if (mobile) {
+      if (st === GameState.Exploring) explore = true;
+      else if (st === GameState.UIOverlay) overlay = true;
+    }
+
+    this.root.classList.toggle('is-explore', explore);
+    this.root.classList.toggle('is-overlay', overlay);
+    this.root.setAttribute('aria-hidden', explore || overlay ? 'false' : 'true');
+
+    if (!explore) {
+      this.clearExploreInput();
     }
   }
 
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.pointerDir.clear();
-    this.activeDirs.clear();
-    this.inputManager.setTouchMoveAxes(0, 0);
-    this.inputManager.setTouchRunHeld(false);
+    this.clearExploreInput();
     this.root.remove();
   }
 }

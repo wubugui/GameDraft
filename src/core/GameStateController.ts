@@ -74,6 +74,14 @@ export class GameStateController {
     this.escapeFallback = fn;
   }
 
+  /**
+   * 与按下 Escape 相同分支（供手机触屏 HUD 使用，不经过键盘事件）。
+   * 与 `handleKeyDown` 里 `e.code === 'Escape'` 行为一致。
+   */
+  triggerEscapeFromTouch(): void {
+    this.handleEscape();
+  }
+
   /** 关闭所有已打开的面板，用于销毁前清理 */
   closeAllPanels(): void {
     for (const [, entry] of this.panels) {
