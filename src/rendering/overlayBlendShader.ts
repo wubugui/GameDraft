@@ -76,7 +76,8 @@ export function createOverlayBlendMesh(
     },
   });
 
-  const mesh = new Mesh({ geometry, shader }) as Mesh;
+  // Pixi v8 Mesh 管线会读取 mesh.texture（及 source.alphaMode）；仅传 shader 时 texture 为 null会报错。
+  const mesh = new Mesh({ geometry, shader, texture: texTo }) as Mesh;
 
   const setT = (t: number): void => {
     const clamped = Math.max(0, Math.min(1, t));

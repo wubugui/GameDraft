@@ -18,10 +18,9 @@ export class CutsceneRenderer {
   private activeEmotes: Container[] = [];
   private images: Map<string, {
     sprite: Sprite | Graphics | Container | Mesh;
+    /** 与 Assets.load 使用的解析路径一致，仅作记录；不在 hideImg 里 unload，避免与 Pixi 缓存键/共享 Texture 冲突。 */
     imagePath: string;
     isPlaceholder?: boolean;
-    /** hideImg 时额外卸载（例如叠化过程中尚未从 Map 元数据移除的「底图」路径） */
-    extraUnloadPaths?: string[];
   }> = new Map();
   private movieBarContainer: Container | null = null;
   private pendingRafIds = new Set<number>();
@@ -359,16 +358,16 @@ export class CutsceneRenderer {
     this.images.set(id, { sprite, imagePath: resolvedPath });
   }
 
-   /** 隐藏并卸载指定 id 的图片 */
+  /**
+   * 从 overlay 移除显示对象。不在此调用 `Assets.unload`：
+   * 缓存键与 `resolveAssetPath` 字符串易不一致；叠化/共享 Texture 时 unload 会破坏仍被引用的 `TextureSource`，
+   * 导致 WebGL `bindSource` 读到 null 的 `alphaMode` / `addressModeU`。贴图留在全局 Assets 缓存即可。
+   */
   hideImg(id: string): void {
     const entry = this.images.get(id);
     if (!entry) return;
     if (entry.sprite.parent) entry.sprite.parent.removeChild(entry.sprite);
-    entry.sprite.destroy({ children: true });
-    if (!entry.isPlaceholder) void Assets.unload(entry.imagePath);
-    for (const p of entry.extraUnloadPaths ?? []) {
-      void Assets.unload(p);
-    }
+    entry.sprite.destroy({ children: true, texture: false, textureSource: false });
     this.images.delete(id);
   }
 
@@ -426,10 +425,6 @@ export class CutsceneRenderer {
     this.renderer.cutsceneOverlay.addChild(mesh);
 
     const finalizeStill = (): void => {
-      if (mesh.parent) mesh.parent.removeChild(mesh);
-      mesh.destroy({ children: true });
-      if (resolvedFrom !== resolvedTo) void Assets.unload(resolvedFrom);
-
       const sprite = new Sprite(texTo!);
       sprite.anchor.set(0.5);
       sprite.width = dispW;
@@ -437,15 +432,15 @@ export class CutsceneRenderer {
       sprite.x = cx;
       sprite.y = cy;
       sprite.label = id;
+      if (mesh.parent) mesh.parent.removeChild(mesh);
+      // 勿对 mesh 使用 destroy(true)：布尔 true 会连带销毁贴图，与后续 Sprite(texTo) 冲突。
+      mesh.destroy({ children: true, texture: false, textureSource: false });
+
       this.renderer.cutsceneOverlay.addChild(sprite);
       this.images.set(id, { sprite, imagePath: resolvedTo });
     };
 
-    this.images.set(id, {
-      sprite: mesh,
-      imagePath: resolvedTo,
-      extraUnloadPaths: resolvedFrom !== resolvedTo ? [resolvedFrom] : undefined,
-    });
+    this.images.set(id, { sprite: mesh, imagePath: resolvedTo });
 
     await this.wait(delay);
     if (dur <= 0) {

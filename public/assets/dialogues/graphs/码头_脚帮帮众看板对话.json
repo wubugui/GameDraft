@@ -1,0 +1,308 @@
+{
+  "schemaVersion": 1,
+  "id": "码头_脚帮帮众看板对话",
+  "entry": "n_2",
+  "meta": {
+    "title": "码头_脚帮帮众看板对话"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_3",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "师傅，这上面写的啥？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "说是这水边闹水猴儿，不准下水。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "这年生不太平哟。码头人来人往的水猴子都敢来闹。"
+        }
+      ],
+      "text": "师傅，这上面写的啥？"
+    },
+    "n_1": {
+      "type": "end"
+    },
+    "n_2": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "码头_看板官差对话完结",
+              "op": "==",
+              "value": true
+            }
+          ],
+          "next": "n_9"
+        }
+      ],
+      "defaultNext": "n_12"
+    },
+    "n_3": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "码头-水鬼-和官差交流过",
+              "op": "==",
+              "value": true
+            }
+          ],
+          "next": "n_4"
+        }
+      ],
+      "defaultNext": "n_1"
+    },
+    "n_4": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_5",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "我前几天还下水洗过澡也，我咋没见过有水猴子？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "嘿！你娃娃命大撒。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "命大你可以去抓水猴子嘛。还有钱拿哟。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "钱？！好多钱哦？"
+        }
+      ],
+      "text": "我前几天还下水洗过澡也，我咋没见过有水猴子？"
+    },
+    "n_5": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "告示X",
+            "image": "/assets/images/illustrations/告示-抓水猴子X.png",
+            "xPercent": 50.0,
+            "yPercent": 50.0,
+            "widthPercent": 40.0
+          }
+        }
+      ],
+      "next": "n_6"
+    },
+    "n_6": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_7",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "你看哈，这上面写的——"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "生擒，五十两。\n击杀，三十两。\n报信都有五百文哟！"
+        }
+      ],
+      "text": "你看哈，这上面写的——"
+    },
+    "n_7": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "blendOverlayImage",
+          "params": {
+            "id": "b",
+            "fromImage": "/assets/images/illustrations/告示-抓水猴子X.png",
+            "toImage": "/assets/images/illustrations/告示-抓水猴子.png",
+            "durationMs": 2000,
+            "delayMs": 0,
+            "xPercent": 50.0,
+            "yPercent": 50.0,
+            "widthPercent": 40.0
+          }
+        },
+        {
+          "type": "waitClickContinue",
+          "params": {
+            "text": ""
+          }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "b"
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "码头_看板官差对话完结",
+            "value": true
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "码头-看板-脚帮交流完结",
+            "value": true
+          }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "告示X"
+          }
+        }
+      ],
+      "next": "n_8"
+    },
+    "n_8": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_1",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "芽儿勒，是不是真的哟？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "（嘻嘻的笑）哄你咋子嘛？要是有本事把这个东西逮到，你娃娃就翻身了撒。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "（思考）......"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "咋子？关二狗。你还当真了索？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "老子跟你说，这个钱想不得哟！"
+        }
+      ],
+      "text": "芽儿勒，是不是真的哟？"
+    },
+    "n_9": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "码头-看板-脚帮交流完结",
+              "op": "==",
+              "value": true
+            }
+          ],
+          "next": "n_10"
+        }
+      ],
+      "defaultNext": "n_15"
+    },
+    "n_10": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_11",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "关二狗，去不得哟！你摸想钱想疯了。"
+        }
+      ],
+      "text": "关二狗，去不得哟！你摸想钱想疯了。"
+    },
+    "n_11": {
+      "type": "end"
+    },
+    "n_12": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "码头_已经和过码头告示交互过",
+              "op": "==",
+              "value": true
+            }
+          ],
+          "next": "n_start"
+        }
+      ],
+      "defaultNext": "n_13"
+    },
+    "n_13": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "n_14",
+      "text": "认真的看着告示......"
+    },
+    "n_14": {
+      "type": "end"
+    },
+    "n_15": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_11",
+      "text": "这年生不太平哟。码头人来人往的水猴子都敢来闹。"
+    }
+  }
+}

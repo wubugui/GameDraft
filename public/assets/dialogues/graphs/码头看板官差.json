@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "码头看板官差",
-  "entry": "n_root",
+  "entry": "n_4",
   "meta": {
     "title": "码头看板官差"
   },
@@ -284,6 +284,13 @@
             "key": "码头_看板官差对话完结",
             "value": true
           }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "码头-水鬼-和官差交流过",
+            "value": false
+          }
         }
       ],
       "next": "e4"
@@ -296,7 +303,7 @@
       "speaker": {
         "kind": "player"
       },
-      "next": "n_main_choice",
+      "next": "n_3",
       "lines": [
         {
           "speaker": {
@@ -371,13 +378,34 @@
       ],
       "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
     },
-    "n_too_2": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "next": "e_too",
-      "text": "……"
+    "n_3": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "码头-水鬼-和官差交流过",
+            "value": true
+          }
+        }
+      ],
+      "next": "n_main_choice"
+    },
+    "n_4": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "码头-看板-脚帮交流完结",
+              "op": "==",
+              "value": true
+            }
+          ],
+          "next": "n_sleep"
+        }
+      ],
+      "defaultNext": "n_root"
     }
   },
   "preconditions": []

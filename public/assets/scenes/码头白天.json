@@ -83,7 +83,8 @@
       "y": 1230.4,
       "interactionRange": 60.0,
       "animFile": "/assets/animation/npc_lifu_anim/anim.json",
-      "initialAnimState": "lifu_stand"
+      "initialAnimState": "lifu_stand",
+      "dialogueGraphId": "码头_脚帮帮众看板对话"
     },
     {
       "id": "new_npc_4",
@@ -175,6 +176,13 @@
             "type": "setFlag",
             "params": {
               "key": "码头_已经和过码头告示交互过",
+              "value": true
+            }
+          },
+          {
+            "type": "setFlag",
+            "params": {
+              "key": "",
               "value": true
             }
           }
