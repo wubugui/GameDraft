@@ -71,6 +71,7 @@ export class TouchMobileControls {
       { id: 'ruleUse', label: '规则牌' },
       { id: 'shop', label: '商店' },
       { id: 'menu', label: '菜单' },
+      { id: 'debug', label: '调试' },
     ];
     for (const { id, label } of menuDefs) {
       menu.appendChild(this.makePanelToggleBtn(id, label));
