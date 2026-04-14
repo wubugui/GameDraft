@@ -42,6 +42,8 @@ export class SceneManager implements IGameSystem {
 
   private fadeOverlay: Graphics | null = null;
   private isSwitching: boolean = false;
+  /** 切场景请求串行队列，避免并发 switch 静默丢弃或交错 isSwitching */
+  private sceneSwitchTail: Promise<void> = Promise.resolve();
   private animRafId: number = 0;
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
@@ -399,20 +401,28 @@ export class SceneManager implements IGameSystem {
   }
 
   async switchScene(targetSceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }): Promise<void> {
-    if (this.isSwitching) return;
-    this.isSwitching = true;
+    const job = async (): Promise<void> => {
+      this.isSwitching = true;
+      try {
+        this.saveCurrentSceneMemory();
 
-    this.saveCurrentSceneMemory();
+        await this.fadeOut(300);
 
-    await this.fadeOut(300);
+        const fromSceneId = this.currentScene?.id ?? null;
+        this.unloadScene();
+        await this.loadScene(targetSceneId, spawnPointId, cameraPosition, fromSceneId);
 
-    const fromSceneId = this.currentScene?.id ?? null;
-    this.unloadScene();
-    await this.loadScene(targetSceneId, spawnPointId, cameraPosition, fromSceneId);
+        await this.fadeIn(300);
+      } finally {
+        this.isSwitching = false;
+      }
+    };
 
-    await this.fadeIn(300);
-
-    this.isSwitching = false;
+    const p = this.sceneSwitchTail.then(job, job);
+    this.sceneSwitchTail = p.catch((e) => {
+      console.warn('SceneManager: switchScene failed', e);
+    });
+    await p;
   }
 
   private saveCurrentSceneMemory(): void {

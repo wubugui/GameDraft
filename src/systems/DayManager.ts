@@ -30,7 +30,11 @@ export class DayManager implements IGameSystem {
     this.eventBus.emit('day:end', { dayNumber: this._currentDay });
     this._currentDay++;
     this.syncFlag();
-    this.processDelayedEvents();
+    void this.finishEndDayAfterDelayed();
+  }
+
+  private async finishEndDayAfterDelayed(): Promise<void> {
+    await this.processDelayedEvents();
     this.eventBus.emit('day:start', { dayNumber: this._currentDay });
   }
 
@@ -38,13 +42,15 @@ export class DayManager implements IGameSystem {
     this.delayedEvents.push({ targetDay, actions });
   }
 
-  private processDelayedEvents(): void {
+  private async processDelayedEvents(): Promise<void> {
     const remaining: DelayedEvent[] = [];
     for (const evt of this.delayedEvents) {
       if (evt.targetDay <= this._currentDay) {
-        void this.actionExecutor.executeBatchAwait(evt.actions).catch((e) => {
+        try {
+          await this.actionExecutor.executeBatchAwait(evt.actions);
+        } catch (e) {
           console.warn('DayManager: delayed actions failed', e);
-        });
+        }
       } else {
         remaining.push(evt);
       }
