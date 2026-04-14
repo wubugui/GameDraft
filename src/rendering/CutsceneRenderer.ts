@@ -15,7 +15,13 @@ export class CutsceneRenderer {
   private worldFadeOverlay: Graphics | null = null;
   private titleContainer: Container | null = null;
   private activeEmotes: Container[] = [];
-  private images: Map<string, { sprite: Sprite | Graphics; imagePath: string; isPlaceholder?: boolean }> = new Map();
+  private images: Map<string, {
+    sprite: Sprite | Graphics | Container;
+    imagePath: string;
+    isPlaceholder?: boolean;
+    /** hideImg 时额外卸载（例如叠化过程中尚未从 Map 元数据移除的「底图」路径） */
+    extraUnloadPaths?: string[];
+  }> = new Map();
   private movieBarContainer: Container | null = null;
   private pendingRafIds = new Set<number>();
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
@@ -352,14 +358,111 @@ export class CutsceneRenderer {
     this.images.set(id, { sprite, imagePath: resolvedPath });
   }
 
-  /** 隐藏并卸载指定 id 的图片 */
+   /** 隐藏并卸载指定 id 的图片 */
   hideImg(id: string): void {
     const entry = this.images.get(id);
     if (!entry) return;
     if (entry.sprite.parent) entry.sprite.parent.removeChild(entry.sprite);
-    entry.sprite.destroy();
+    entry.sprite.destroy({ children: true });
     if (!entry.isPlaceholder) void Assets.unload(entry.imagePath);
+    for (const p of entry.extraUnloadPaths ?? []) {
+      void Assets.unload(p);
+    }
     this.images.delete(id);
+  }
+
+  /**
+   * 与 showPercentImg 相同布局，在 durationMs 内将 from与 to 做线性交叉淡化（底图淡出、顶图淡入）。
+   * 结束后仅保留 to 的显示，与 showOverlayImage 共用 id / hideImg。
+   */
+  async blendPercentImg(
+    fromImagePath: string,
+    toImagePath: string,
+    id: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    durationMs: number,
+  ): Promise<void> {
+    this.hideImg(id);
+    const resolvedFrom = resolveAssetPath(fromImagePath);
+    const resolvedTo = resolveAssetPath(toImagePath);
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const xp = Math.max(0, Math.min(100, xPercent));
+    const yp = Math.max(0, Math.min(100, yPercent));
+    const wPct = Math.max(0.01, Math.min(100, widthPercent));
+    const cx = sw * (xp / 100);
+    const cy = sh * (yp / 100);
+    const dispW = sw * (wPct / 100);
+    const dur = Math.max(0, durationMs);
+
+    let texFrom: Texture | undefined;
+    let texTo: Texture | undefined;
+    try {
+      texFrom = await Assets.load<Texture>(resolvedFrom);
+    } catch (err) {
+      console.error(`[CutsceneRenderer] blendPercentImg 底图加载失败: ${resolvedFrom}`, err);
+    }
+    try {
+      texTo = await Assets.load<Texture>(resolvedTo);
+    } catch (err) {
+      console.error(`[CutsceneRenderer] blendPercentImg 目标图加载失败: ${resolvedTo}`, err);
+    }
+    if (!texFrom && !texTo) return;
+    if (!texFrom) texFrom = texTo;
+    if (!texTo) texTo = texFrom;
+
+    const iwF = Math.max(1, texFrom!.width);
+    const ihF = Math.max(1, texFrom!.height);
+    const dispH = dispW * (ihF / iwF);
+
+    const mkSprite = (tex: Texture): Sprite => {
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      sp.width = dispW;
+      sp.height = dispH;
+      sp.x = cx;
+      sp.y = cy;
+      return sp;
+    };
+
+    const spFrom = mkSprite(texFrom!);
+    const spTo = mkSprite(texTo!);
+    spTo.alpha = 0;
+
+    const container = new Container();
+    container.label = id;
+    container.addChild(spFrom);
+    container.addChild(spTo);
+    this.renderer.cutsceneOverlay.addChild(container);
+
+    const finalizeStill = (): void => {
+      spFrom.alpha = 0;
+      spTo.alpha = 1;
+      container.removeChild(spFrom);
+      spFrom.destroy();
+      if (resolvedFrom !== resolvedTo) void Assets.unload(resolvedFrom);
+      this.images.set(id, { sprite: container, imagePath: resolvedTo });
+    };
+
+    this.images.set(id, {
+      sprite: container,
+      imagePath: resolvedTo,
+      extraUnloadPaths: resolvedFrom !== resolvedTo ? [resolvedFrom] : undefined,
+    });
+
+    if (dur <= 0) {
+      finalizeStill();
+      return;
+    }
+
+    await Promise.all([
+      this.animateAlpha(spFrom, 1, 0, dur),
+      this.animateAlpha(spTo, 0, 1, dur),
+    ]);
+
+    finalizeStill();
   }
 
   /** 显示电影黑边：上下黑色边界，heightPercent 为单边占屏幕高度的比例（0-1） */

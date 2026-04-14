@@ -28,6 +28,62 @@ def _hide_combo_popups_under(widget: QWidget) -> None:
     for cb in widget.findChildren(QComboBox):
         cb.hidePopup()
 
+
+def _hide_active_application_popups(max_rounds: int = 8) -> None:
+    """仅收起 QApplication.activePopupWidget 链，不销毁 QComboBoxPrivateContainer（避免误删仍绑定到新控件的弹层）。"""
+    app = QApplication.instance()
+    if app is None:
+        return
+    for _ in range(max(1, max_rounds)):
+        pop = app.activePopupWidget()
+        if pop is None:
+            break
+        pop.hide()
+
+
+def _dismiss_active_popup_stack(max_rounds: int = 8) -> None:
+    """收起 application 级 Popup，再清理孤儿 QComboBoxPrivateContainer。Windows 上若在 clear()/deleteLater 前不关，会残留带标题栏的小窗并抢焦点。"""
+    _hide_active_application_popups(max_rounds)
+    _purge_qcombobox_private_containers()
+
+
+def _protected_combobox_popup_widget_ids(widget: QWidget | None) -> set[int]:
+    """当前子树内 QComboBox 下拉 view 的父链 widget id（含 QComboBoxPrivateContainer），用于避免误删仍有效的弹层。"""
+    protected: set[int] = set()
+    if widget is None:
+        return protected
+    for cb in widget.findChildren(QComboBox):
+        try:
+            v = cb.view()
+        except Exception:
+            v = None
+        if v is None:
+            continue
+        p: QWidget | None = v.parentWidget()
+        while p is not None:
+            protected.add(id(p))
+            p = p.parentWidget()
+    return protected
+
+
+def _purge_qcombobox_private_containers(*, protected_ids: set[int] | None = None) -> None:
+    """销毁孤儿顶级 QComboBoxPrivateContainer；删树后 Qt 会留下此类窗口并抢焦点。protected_ids 非空时跳过其中 id。"""
+    app = QApplication.instance()
+    if app is None:
+        return
+    for w in list(app.topLevelWidgets()):
+        try:
+            if w.metaObject().className() != "QComboBoxPrivateContainer":
+                continue
+            if protected_ids is not None and id(w) in protected_ids:
+                continue
+            w.hide()
+            w.close()
+            w.deleteLater()
+        except Exception:
+            pass
+
+
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
@@ -47,7 +103,7 @@ ACTION_TYPES = [
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
-    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "startDialogueGraph",
+    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "blendOverlayImage", "startDialogueGraph",
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
@@ -216,6 +272,7 @@ class FilterableTypeCombo(QComboBox):
 
     def _refill_all_items(self, committed_value: str) -> None:
         self.blockSignals(True)
+        self.hidePopup()
         self.clear()
         self._committed = committed_value
         rows = self._entries_with_orphan(committed_value)
@@ -242,6 +299,7 @@ class FilterableTypeCombo(QComboBox):
         if not matches:
             matches = pool
         self.blockSignals(True)
+        self.hidePopup()
         self.clear()
         for disp, val in matches:
             idx = self.count()
@@ -682,6 +740,64 @@ class ActionRow(QWidget):
             self._sync_foldable_visibility()
             return
 
+        if act_type == "blendOverlayImage":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "id：与 hideOverlayImage 共用；fromImage→toImage 在线性时长内交叉淡化；"
+                "布局与 showOverlayImage 相同（百分比）；durationMs 结束后保留目标图。",
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            id_ed = QLineEdit(str(params.get("id", "") or ""))
+            id_ed.setPlaceholderText("如 portrait_blend")
+            id_ed.textChanged.connect(self.changed)
+            self._param_widgets["id"] = id_ed
+            self._params_layout.addRow("id", id_ed)
+            from_row = CutsceneImagePathRow(self._ctx_model, str(params.get("fromImage", "") or ""), self)
+            from_row.changed.connect(self.changed)
+            self._param_widgets["fromImage"] = from_row
+            self._params_layout.addRow("fromImage（起始图）", from_row)
+            to_row = CutsceneImagePathRow(self._ctx_model, str(params.get("toImage", "") or ""), self)
+            to_row.changed.connect(self.changed)
+            self._param_widgets["toImage"] = to_row
+            self._params_layout.addRow("toImage（目标图）", to_row)
+            dur = QSpinBox()
+            dur.setRange(0, 9999999)
+            dur.setSingleStep(100)
+            dval = params.get("durationMs", 600)
+            try:
+                dur.setValue(int(dval))
+            except (TypeError, ValueError):
+                dur.setValue(600)
+            dur.valueChanged.connect(self.changed)
+            self._param_widgets["durationMs"] = dur
+            self._params_layout.addRow("durationMs（毫秒）", dur)
+
+            def _pct_spin(key: str, default: float) -> QDoubleSpinBox:
+                sp = QDoubleSpinBox()
+                sp.setRange(0, 100)
+                sp.setDecimals(2)
+                sp.setSingleStep(0.5)
+                val = params.get(key, default)
+                try:
+                    sp.setValue(float(val))
+                except (TypeError, ValueError):
+                    sp.setValue(float(default))
+                sp.valueChanged.connect(self.changed)
+                return sp
+
+            self._param_widgets["xPercent"] = _pct_spin("xPercent", 50.0)
+            self._params_layout.addRow("xPercent（水平中心）", self._param_widgets["xPercent"])
+            self._param_widgets["yPercent"] = _pct_spin("yPercent", 50.0)
+            self._params_layout.addRow("yPercent（垂直中心）", self._param_widgets["yPercent"])
+            self._param_widgets["widthPercent"] = _pct_spin("widthPercent", 40.0)
+            self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
+            self._sync_foldable_visibility()
+            return
+
         if act_type == "startDialogueGraph":
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
@@ -949,6 +1065,31 @@ class ActionRow(QWidget):
             },
         }
 
+    def _to_dict_blend_overlay_image(self) -> dict:
+        id_w = self._param_widgets.get("id")
+        from_w = self._param_widgets.get("fromImage")
+        to_w = self._param_widgets.get("toImage")
+        dur_w = self._param_widgets.get("durationMs")
+        x_w = self._param_widgets.get("xPercent")
+        y_w = self._param_widgets.get("yPercent")
+        w_w = self._param_widgets.get("widthPercent")
+        pid = id_w.text().strip() if isinstance(id_w, QLineEdit) else ""
+        pfrom = from_w.path() if isinstance(from_w, CutsceneImagePathRow) else ""
+        pto = to_w.path() if isinstance(to_w, CutsceneImagePathRow) else ""
+        dms = int(dur_w.value()) if isinstance(dur_w, QSpinBox) else 600
+        return {
+            "type": "blendOverlayImage",
+            "params": {
+                "id": pid,
+                "fromImage": pfrom,
+                "toImage": pto,
+                "durationMs": dms,
+                "xPercent": float(x_w.value()) if isinstance(x_w, QDoubleSpinBox) else 0.0,
+                "yPercent": float(y_w.value()) if isinstance(y_w, QDoubleSpinBox) else 0.0,
+                "widthPercent": float(w_w.value()) if isinstance(w_w, QDoubleSpinBox) else 0.0,
+            },
+        }
+
     def _to_dict_start_dialogue_graph(self) -> dict:
         gid_w = self._param_widgets.get("graphId")
         ent_w = self._param_widgets.get("entry")
@@ -994,6 +1135,8 @@ class ActionRow(QWidget):
         act_type = self.type_combo.committed_type()
         if act_type == "showOverlayImage":
             return self._to_dict_show_overlay_image()
+        if act_type == "blendOverlayImage":
+            return self._to_dict_blend_overlay_image()
         if act_type == "startDialogueGraph":
             return self._to_dict_start_dialogue_graph()
         if act_type == "playScriptedDialogue":
@@ -1082,6 +1225,7 @@ class ActionEditor(QWidget):
             self._rows_layout.removeWidget(r)
             r.deleteLater()
         self._rows.clear()
+        _dismiss_active_popup_stack()
         QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 

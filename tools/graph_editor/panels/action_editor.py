@@ -11,14 +11,7 @@ from PySide6.QtCore import Signal
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-from tools.editor.shared.action_editor import FilterableTypeCombo
-
-
-ACTION_TYPES = [
-    "setFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
-    "giveRule", "giveFragment", "updateQuest", "startEncounter", "showNotification",
-    "enableRuleOffers", "disableRuleOffers",
-]
+from tools.editor.shared.action_editor import FilterableTypeCombo, ACTION_TYPES
 
 
 class ActionRow(QWidget):

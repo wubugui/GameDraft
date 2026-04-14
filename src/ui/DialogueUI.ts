@@ -36,6 +36,7 @@ export class DialogueUI {
   private dialogueWillEndCb: () => void;
   private dialogueEndCb: () => void;
   private dialoguePrepareBeatCb: () => void;
+  private dialogueHidePanelCb: () => void;
 
   constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider) {
     this.renderer = renderer;
@@ -50,12 +51,14 @@ export class DialogueUI {
     this.dialogueWillEndCb = () => { this.willEndAfterAdvance = true; };
     this.dialogueEndCb = () => this.hide();
     this.dialoguePrepareBeatCb = () => this.onPrepareBeat();
+    this.dialogueHidePanelCb = () => this.hide();
 
     this.eventBus.on('dialogue:line', this.dialogueLineCb);
     this.eventBus.on('dialogue:choices', this.dialogueChoicesCb);
     this.eventBus.on('dialogue:willEnd', this.dialogueWillEndCb);
     this.eventBus.on('dialogue:end', this.dialogueEndCb);
     this.eventBus.on('dialogue:prepareBeat', this.dialoguePrepareBeatCb);
+    this.eventBus.on('dialogue:hidePanel', this.dialogueHidePanelCb);
   }
 
   /** 推进到下一拍之前清空当前台词区（与推迟 action、下一句台词顺序配合）。 */
@@ -315,5 +318,6 @@ export class DialogueUI {
     this.eventBus.off('dialogue:willEnd', this.dialogueWillEndCb);
     this.eventBus.off('dialogue:end', this.dialogueEndCb);
     this.eventBus.off('dialogue:prepareBeat', this.dialoguePrepareBeatCb);
+    this.eventBus.off('dialogue:hidePanel', this.dialogueHidePanelCb);
   }
 }
