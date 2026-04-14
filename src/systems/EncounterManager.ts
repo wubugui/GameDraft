@@ -4,6 +4,8 @@ import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { EncounterDef, IGameSystem, GameContext, ResolvedOption } from '../data/types';
 
+type RuleNameResolveFn = (ruleId: string) => { name: string; incompleteName?: string } | undefined;
+
 export class EncounterManager implements IGameSystem {
   private eventBus: EventBus;
   private flagStore: FlagStore;
@@ -14,7 +16,7 @@ export class EncounterManager implements IGameSystem {
   private currentOptions: ResolvedOption[] = [];
   private active: boolean = false;
 
-  private ruleNameResolver: ((ruleId: string) => { name: string; incompleteName?: string } | undefined) | null = null;
+  private ruleNameResolver: RuleNameResolveFn | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -31,7 +33,7 @@ export class EncounterManager implements IGameSystem {
   }
   update(_dt: number): void {}
 
-  setRuleNameResolver(fn: (ruleId: string) => { name: string; incompleteName?: string } | undefined): void {
+  setRuleNameResolver(fn: RuleNameResolveFn | null): void {
     this.ruleNameResolver = fn;
   }
 
@@ -129,13 +131,13 @@ export class EncounterManager implements IGameSystem {
     this.eventBus.emit('encounter:options', { options: this.currentOptions });
   }
 
-  chooseOption(index: number): void {
+  async chooseOption(index: number): Promise<void> {
     const opt = this.currentOptions[index];
     if (!opt || !opt.enabled) return;
 
     if (opt.consumeItems) {
       for (const req of opt.consumeItems) {
-        this.actionExecutor.execute({
+        await this.actionExecutor.executeAwait({
           type: 'removeItem',
           params: { id: req.id, count: req.count },
         });
@@ -143,9 +145,11 @@ export class EncounterManager implements IGameSystem {
     }
 
     if (opt.resultActions.length > 0) {
-      void this.actionExecutor.executeBatchAwait(opt.resultActions).catch((e) => {
+      try {
+        await this.actionExecutor.executeBatchAwait(opt.resultActions);
+      } catch (e) {
         console.warn('EncounterManager: resultActions failed', e);
-      });
+      }
     }
 
     if (opt.resultText) {
