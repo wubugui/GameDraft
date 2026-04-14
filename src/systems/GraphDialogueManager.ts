@@ -256,7 +256,7 @@ export class GraphDialogueManager implements IGameSystem {
         this.currentNodeId = cur.next;
         await this.drainUntilBlocking();
       } else if (cur?.type === 'end') {
-        /** 与 DialogueUI 走 advanceEnd 等价；防止仅收到 advance 时卡在 end 占位行 */
+        /** 兼容：若仍停留在 end 节点上收到 advance（旧行为曾发占位行），直接收束 */
         this.endDialogue();
       }
       return;
@@ -387,11 +387,8 @@ export class GraphDialogueManager implements IGameSystem {
       }
 
       if (node.type === 'end') {
-        const narrator = this.strings?.get('dialogue', 'narratorLabel');
-        const sp = narrator && narrator !== 'narratorLabel' ? narrator : '旁白';
-        this.eventBus.emit('dialogue:line', { speaker: sp, text: '\u3000', tags: [] });
-        this.awaitingLineDismiss = true;
-        this.eventBus.emit('dialogue:willEnd', {});
+        /** 收束标记：不播占位台词，直接结束（避免多一次「旁白+空白」点击） */
+        this.endDialogue();
         return;
       }
 

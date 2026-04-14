@@ -87,6 +87,7 @@ def _purge_qcombobox_private_containers(*, protected_ids: set[int] | None = None
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
+from .blend_overlay_preview import BlendOverlayPreviewWidget
 from .image_path_picker import CutsceneImagePathRow
 from .scripted_lines_editor import ScriptedLinesEditor
 
@@ -569,6 +570,27 @@ class ActionRow(QWidget):
         self._btn_up.setEnabled(up)
         self._btn_down.setEnabled(down)
 
+    def _blend_preview_params(self) -> dict:
+        """供 BlendOverlayPreviewWidget 读取当前表单（仅 blendOverlayImage 展开时有效）。"""
+        from_w = self._param_widgets.get("fromImage")
+        to_w = self._param_widgets.get("toImage")
+        x_w = self._param_widgets.get("xPercent")
+        y_w = self._param_widgets.get("yPercent")
+        w_w = self._param_widgets.get("widthPercent")
+        dur_w = self._param_widgets.get("durationMs")
+        del_w = self._param_widgets.get("delayMs")
+        fu = from_w.path() if isinstance(from_w, CutsceneImagePathRow) else ""
+        tu = to_w.path() if isinstance(to_w, CutsceneImagePathRow) else ""
+        return {
+            "from_url": fu,
+            "to_url": tu,
+            "x_pct": float(x_w.value()) if isinstance(x_w, QDoubleSpinBox) else 50.0,
+            "y_pct": float(y_w.value()) if isinstance(y_w, QDoubleSpinBox) else 50.0,
+            "width_pct": float(w_w.value()) if isinstance(w_w, QDoubleSpinBox) else 40.0,
+            "delay_ms": int(del_w.value()) if isinstance(del_w, QSpinBox) else 0,
+            "duration_ms": int(dur_w.value()) if isinstance(dur_w, QSpinBox) else 600,
+        }
+
     @staticmethod
     def _normalize_action_params(act_type: str, params: dict) -> None:
         if act_type in ("switchScene", "changeScene"):
@@ -807,6 +829,18 @@ class ActionRow(QWidget):
             self._params_layout.addRow("yPercent（垂直中心）", self._param_widgets["yPercent"])
             self._param_widgets["widthPercent"] = _pct_spin("widthPercent", 40.0)
             self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
+
+            bprev = BlendOverlayPreviewWidget(self._ctx_model, self._blend_preview_params, self)
+            self._params_layout.addRow("过渡预览（Qt 近似）", bprev)
+            from_row.changed.connect(bprev.schedule_refresh)
+            to_row.changed.connect(bprev.schedule_refresh)
+            dur.valueChanged.connect(bprev.schedule_refresh)
+            del_sp.valueChanged.connect(bprev.schedule_refresh)
+            self._param_widgets["xPercent"].valueChanged.connect(bprev.schedule_refresh)
+            self._param_widgets["yPercent"].valueChanged.connect(bprev.schedule_refresh)
+            self._param_widgets["widthPercent"].valueChanged.connect(bprev.schedule_refresh)
+            bprev.schedule_refresh_immediate()
+
             self._sync_foldable_visibility()
             return
 

@@ -350,6 +350,7 @@
             "fromImage": "/assets/images/illustrations/告示-抓水猴子X.png",
             "toImage": "/assets/images/illustrations/告示-抓水猴子.png",
             "durationMs": 2000,
+            "delayMs": 1000,
             "xPercent": 50.0,
             "yPercent": 50.0,
             "widthPercent": 40.0
@@ -375,8 +376,8 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "这片啥时候闹起了水猴子？头几天我还下水洗了澡......",
-      "next": "n_done_flag"
+      "next": "n_done_flag",
+      "text": "这片啥时候闹起了水猴子？头几天我还下水洗了澡......"
     },
     "n_done_flag": {
       "type": "runActions",
