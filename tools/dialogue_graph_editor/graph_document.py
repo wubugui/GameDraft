@@ -341,6 +341,133 @@ def node_search_haystack(nid: str, raw: Any) -> str:
     return " ".join(parts)
 
 
+def node_summary(nid: str, raw: Any, max_text: int = 30) -> str:
+    """节点的一行人类可读摘要，用于列表和画布显示。"""
+    _ = nid
+    if not isinstance(raw, dict):
+        return ""
+    t = raw.get("type")
+    if t == "line":
+        lines = raw.get("lines")
+        if isinstance(lines, list) and lines and isinstance(lines[0], dict):
+            beat = lines[0]
+        else:
+            beat = raw
+        sp = beat.get("speaker") or {}
+        kind = sp.get("kind", "?") if isinstance(sp, dict) else "?"
+        if kind == "literal" and isinstance(sp, dict):
+            kind_label = sp.get("name") or "旁白"
+        else:
+            kind_label = {
+                "player": "玩家",
+                "npc": "NPC",
+                "literal": "旁白",
+                "sceneNpc": "场景NPC",
+            }.get(kind, kind)
+        tx = str(beat.get("text", "") or "").replace("\n", " ").strip()
+        if len(tx) > max_text:
+            tx = tx[: max_text - 1] + "..."
+        return f'{kind_label}: "{tx}"' if tx else str(kind_label)
+    if t == "choice":
+        opts = raw.get("options") or []
+        n = len(opts) if isinstance(opts, list) else 0
+        first = ""
+        pl = raw.get("promptLine")
+        if isinstance(pl, dict):
+            prompt_txt = str(pl.get("text", "") or "").strip()
+            if prompt_txt:
+                first = prompt_txt
+                if len(first) > 20:
+                    first = first[:19] + "..."
+        if not first and n and isinstance(opts[0], dict):
+            first = str(opts[0].get("text", "") or "").strip()
+            if len(first) > 20:
+                first = first[:19] + "..."
+        return f"{n}个选项: {first}" if first else f"{n}个选项"
+    if t == "runActions":
+        acts = raw.get("actions") or []
+        if not isinstance(acts, list):
+            acts = []
+        n = len(acts)
+        if n == 1 and isinstance(acts[0], dict):
+            atype = str(acts[0].get("type", "?"))
+            param_hint = _action_param_hint(acts[0])
+            return f"{atype}: {param_hint}" if param_hint else atype
+        types = [str(a.get("type", "?")) for a in acts[:2] if isinstance(a, dict)]
+        suffix = "..." if n > 2 else ""
+        return f"{n}动作: {', '.join(types)}{suffix}" if types else f"{n}动作"
+    if t == "switch":
+        cases = raw.get("cases") or []
+        if not isinstance(cases, list):
+            cases = []
+        n = len(cases)
+        hint = _switch_case_hint(cases[0]) if n and isinstance(cases[0], dict) else ""
+        suffix = "..." if n > 1 else ""
+        return f"{n}分支: {hint}{suffix}" if hint else f"{n}分支"
+    if t == "end":
+        return "结束"
+    return ""
+
+
+def _action_param_hint(action: dict) -> str:
+    """从单条 ActionDef 中提取最有辨识度的参数值作为摘要后缀。"""
+    p = action.get("params")
+    if not isinstance(p, dict):
+        return ""
+    for key in (
+        "key",
+        "flag",
+        "amount",
+        "target",
+        "scenarioId",
+        "documentId",
+        "itemId",
+        "questId",
+        "text",
+    ):
+        v = p.get(key)
+        if v is not None and str(v).strip():
+            s = str(v).strip()
+            return s[:20] + "..." if len(s) > 20 else s
+    return ""
+
+
+def _switch_case_hint(case: dict) -> str:
+    """从 switch 的第一个 case 提取条件关键字。"""
+    conds = case.get("conditions")
+    if isinstance(conds, list) and conds and isinstance(conds[0], dict):
+        c0 = conds[0]
+        if "flag" in c0:
+            f = str(c0.get("flag", "")).strip()
+            if not f:
+                return "flag?"
+            return f"flag {f[:18]}..." if len(f) > 18 else f"flag {f}"
+        if "scenario" in c0:
+            s = str(c0.get("scenario", "")).strip()
+            ph = str(c0.get("phase", "")).strip()
+            label = f"{s}/{ph}" if ph else s
+            return label[:22] + "..." if len(label) > 22 else label
+        if "quest" in c0:
+            return f"quest {str(c0.get('quest', '')).strip()}"
+        if "questId" in c0:
+            qid = str(c0.get("questId", "")).strip()
+            return f"quest {qid}" if qid else "quest?"
+    cond = case.get("condition")
+    if isinstance(cond, dict) and cond:
+        if any(k in cond for k in ("any", "all", "not")):
+            return "条件表达式"
+        if "flag" in cond:
+            f = str(cond.get("flag", "")).strip()
+            return f"flag {f[:18]}..." if len(f) > 18 else f"flag {f}" if f else "flag?"
+        if "scenario" in cond:
+            s = str(cond.get("scenario", "")).strip()
+            ph = str(cond.get("phase", "")).strip()
+            label = f"{s}/{ph}" if ph else s
+            return label[:22] + "..." if len(label) > 22 else label
+        return "条件表达式"
+    return ""
+
+
 _SAFE_ID_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 

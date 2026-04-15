@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QFormLayout, QScrollArea, QGroupBox, QInputDialog,
     QMenu, QCompleter, QDialog, QSizePolicy, QComboBox,
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel
-from PySide6.QtGui import QUndoStack, QAction, QCursor, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel, QSettings
+from PySide6.QtGui import QUndoStack, QUndoCommand, QAction, QCursor, QKeySequence, QShortcut
 
 from .graph_document import (
     graphs_dir,
@@ -25,6 +25,7 @@ from .graph_document import (
     validate_graph,
     validate_graph_tiered,
     node_search_haystack,
+    node_summary,
     default_node,
     suggest_next_id,
     auto_layout_node_positions,
@@ -35,6 +36,7 @@ from .graph_mutations import (
     collect_incoming_refs,
     clear_incoming_to_node,
 )
+from .graph_document_model import GraphDocumentModel
 from .graph_analysis import analyze_node_tags
 from .flow_layout_store import (
     load_positions_for_graph,
@@ -68,6 +70,40 @@ def _graph_form_label(text: str, tip: str | None = None, *, max_w: int = 100) ->
     return lb
 
 _GRAPH_PRE_FLAG_KEYS = frozenset({"flag", "op", "value"})
+
+
+class _NodeDataChangedCmd(QUndoCommand):
+    """Snapshot-based undo for inspector edits. Merges consecutive edits to the same node."""
+
+    _COALESCE_ID = 9001
+
+    def __init__(self, model: GraphDocumentModel, nid: str, old_data: dict, new_data: dict):
+        super().__init__(f"edit {nid}")
+        self._model = model
+        self._nid = nid
+        self._old = old_data
+        self._new = new_data
+
+    def id(self) -> int:
+        return self._COALESCE_ID
+
+    def mergeWith(self, other: QUndoCommand) -> bool:
+        if not isinstance(other, _NodeDataChangedCmd):
+            return False
+        if other._nid != self._nid:
+            return False
+        self._new = other._new
+        return True
+
+    def redo(self) -> None:
+        nodes = self._model.data.get("nodes")
+        if isinstance(nodes, dict) and self._nid in nodes:
+            nodes[self._nid] = copy.deepcopy(self._new)
+
+    def undo(self) -> None:
+        nodes = self._model.data.get("nodes")
+        if isinstance(nodes, dict) and self._nid in nodes:
+            nodes[self._nid] = copy.deepcopy(self._old)
 
 
 def _split_graph_preconditions(pre: object) -> tuple[list[dict[str, Any]], list[Any]]:
@@ -106,8 +142,8 @@ class DialogueGraphEditorWidget(QWidget):
         self._project = Path(project_path).resolve()
         self._graphs_dir = graphs_dir(self._project)
         self._current_path: Path | None = None
-        self._data: dict = {}
-        self._dirty = False
+        self._model = GraphDocumentModel(self)
+        self._data: dict = self._model.data
         self._editing_node_id: str | None = None
         self._positions: dict[str, tuple[float, float]] = {}
         self._layout_save_timer = QTimer(self)
@@ -116,6 +152,9 @@ class DialogueGraphEditorWidget(QWidget):
         self._inspector_scene_timer = QTimer(self)
         self._inspector_scene_timer.setSingleShot(True)
         self._inspector_scene_timer.timeout.connect(self._rebuild_flow_scene)
+        self._meta_rebuild_timer = QTimer(self)
+        self._meta_rebuild_timer.setSingleShot(True)
+        self._meta_rebuild_timer.timeout.connect(self._rebuild_flow_scene)
         self._ghost_positions: dict[str, tuple[float, float]] = {}
         self._editor_groups: dict[str, dict[str, Any]] = {}
         self._node_to_group: dict[str, str] = {}
@@ -126,26 +165,37 @@ class DialogueGraphEditorWidget(QWidget):
         self._inspector_project_model_failed = False
         self._undo_stack = QUndoStack(self)
         self._undo_stack.indexChanged.connect(self._on_undo_index_changed)
+        self._model.dirty_changed.connect(self.dirty_changed)
+        self._model.topology_changed.connect(self._on_model_topology_changed)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
         outer.setSpacing(4)
 
-        tb = QHBoxLayout()
+        from PySide6.QtWidgets import QToolBar
+        tb = QToolBar("图对话工具栏")
+        tb.setMovable(False)
         for text, slot in (
             ("打开…", self.open_file_dialog),
             ("保存", self.save),
             ("另存为…", self.save_as),
             ("重命名图…", self._rename_graph_file_dialog),
+        ):
+            tb.addAction(text, slot)
+        tb.addSeparator()
+        for text, slot in (
             ("校验当前图", self.run_validate),
             ("自动布局", self._flow_auto_layout),
             ("适应画布", self._flow_fit_view),
+        ):
+            tb.addAction(text, slot)
+        tb.addSeparator()
+        for text, slot in (
             ("重命名节点…", self._rename_node_dialog),
             ("复制子树", self._copy_subtree),
         ):
-            b = QPushButton(text)
-            b.clicked.connect(slot)
-            tb.addWidget(b)
+            tb.addAction(text, slot)
+        tb.addSeparator()
         self._btn_undo = QPushButton("撤销")
         self._btn_undo.clicked.connect(self._undo_stack.undo)
         tb.addWidget(self._btn_undo)
@@ -153,7 +203,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._btn_redo.clicked.connect(self._undo_stack.redo)
         tb.addWidget(self._btn_redo)
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("搜索节点 id 或内容… Enter 定位")
+        self._search_edit.setPlaceholderText("搜索节点 id 或内容… Enter 定位（再按 Enter 下一条）")
         self._search_edit.returnPressed.connect(self._on_search_node)
         self._search_model = QStringListModel(self)
         self._search_completer = QCompleter(self._search_model, self)
@@ -162,8 +212,11 @@ class DialogueGraphEditorWidget(QWidget):
         self._search_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self._search_edit.setCompleter(self._search_completer)
         self._search_edit.textChanged.connect(self._update_search_completions)
-        tb.addWidget(self._search_edit, 1)
-        outer.addLayout(tb)
+        self._search_edit.textChanged.connect(self._reset_search_cycle)
+        self._last_search_hits: list[str] = []
+        self._last_search_idx: int = -1
+        tb.addWidget(self._search_edit)
+        outer.addWidget(tb)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -190,6 +243,7 @@ class DialogueGraphEditorWidget(QWidget):
         splitter.addWidget(file_box)
 
         self._oden = DialogueFlowOdenController(self._undo_stack, self, toast=self._toast)
+        self._oden.set_model(self._model)
         self._oden.set_data_binding(
             lambda: self._data,
             lambda: self._positions,
@@ -260,11 +314,32 @@ class DialogueGraphEditorWidget(QWidget):
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
 
-        self._graph_group = QGroupBox("图属性")
-        gform = QFormLayout()
+        graph_prop_header = QHBoxLayout()
+        from PySide6.QtWidgets import QToolButton
+        self._graph_prop_toggle = QToolButton()
+        self._graph_prop_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self._graph_prop_toggle.setAutoRaise(True)
+        self._graph_prop_toggle.setToolTip("折叠 / 展开图属性")
+        graph_prop_title = QLabel("<b>图属性</b>")
+        graph_prop_header.addWidget(self._graph_prop_toggle)
+        graph_prop_header.addWidget(graph_prop_title, 1)
+        rv.addLayout(graph_prop_header)
+
+        self._graph_prop_body = QWidget()
+        self._graph_group = self._graph_prop_body
+        gform = QFormLayout(self._graph_prop_body)
+        gform.setContentsMargins(4, 2, 4, 2)
         gform.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         gform.setHorizontalSpacing(8)
         gform.setVerticalSpacing(6)
+
+        def _toggle_graph_props():
+            vis = not self._graph_prop_body.isVisible()
+            self._graph_prop_body.setVisible(vis)
+            self._graph_prop_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if vis else Qt.ArrowType.RightArrow
+            )
+        self._graph_prop_toggle.clicked.connect(_toggle_graph_props)
         self._edit_graph_id = QLineEdit()
         self._edit_entry = QLineEdit()
         self._btn_pick_entry = QPushButton("选")
@@ -326,8 +401,7 @@ class DialogueGraphEditorWidget(QWidget):
             ),
             self._edit_pre_extra,
         )
-        self._graph_group.setLayout(gform)
-        rv.addWidget(self._graph_group)
+        rv.addWidget(self._graph_prop_body)
 
         for w in (
             self._edit_graph_id,
@@ -375,7 +449,8 @@ class DialogueGraphEditorWidget(QWidget):
         rv.addWidget(scroll, 1)
 
         splitter.addWidget(right)
-        splitter.setSizes([200, 820, 280])
+        self._main_splitter = splitter
+        self._restore_splitter_sizes()
 
         outer.addWidget(splitter, 1)
 
@@ -579,11 +654,11 @@ class DialogueGraphEditorWidget(QWidget):
         self._duplicate_node(nid)
 
     def _spawn_node_at_canvas(self, node_type: str, scene_x: float, scene_y: float) -> None:
-        nodes = self._data.setdefault("nodes", {})
+        nodes = self._model.nodes
         nid = suggest_next_id(nodes)
-        nodes[nid] = default_node(node_type, {k: v for k, v in nodes.items() if k != nid})
+        self._model.add_node(nid, default_node(node_type, {k: v for k, v in nodes.items() if k != nid}))
         self._positions[nid] = (float(scene_x), float(scene_y))
-        self._mark_dirty()
+        self._emit_title()
         self._ensure_node_visible_in_list(nid)
         self._rebuild_flow_scene()
         self._oden.select_dialogue_node(nid)
@@ -601,7 +676,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._toast("请先选中要删除的节点或幽灵占位", 2500)
 
     def create_new_graph_draft(self) -> None:
-        if self._dirty:
+        if self._model.is_dirty:
             r = QMessageBox.question(
                 self,
                 "未保存",
@@ -611,7 +686,7 @@ class DialogueGraphEditorWidget(QWidget):
             if r != QMessageBox.StandardButton.Yes:
                 return
         stem = "new_dialogue"
-        self._data = {
+        self._model.load({
             "schemaVersion": 1,
             "id": stem,
             "entry": "n_start",
@@ -625,7 +700,8 @@ class DialogueGraphEditorWidget(QWidget):
                     "next": "",
                 },
             },
-        }
+        })
+        self._data = self._model.data
         self._current_path = None
         self._draft_layout_basename = f"__draft_{uuid.uuid4().hex[:10]}.json"
         self._editor_groups.clear()
@@ -648,7 +724,8 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
 
     def _reset_to_no_file_loaded(self) -> None:
-        self._data = {}
+        self._model.load_empty()
+        self._data = self._model.data
         self._current_path = None
         self._draft_layout_basename = None
         self._editing_node_id = None
@@ -703,7 +780,7 @@ class DialogueGraphEditorWidget(QWidget):
             f"永久删除磁盘上的 {path.name}？\n"
             f"将从 editor_data/dialogue_flow_layout.json 中移除该图的布局数据。"
         )
-        if was_open and self._dirty:
+        if was_open and self._model.is_dirty:
             msg += "\n\n当前该图有未保存修改，删除后这些修改将一并丢失。"
         r = QMessageBox.question(
             self,
@@ -734,10 +811,10 @@ class DialogueGraphEditorWidget(QWidget):
                 self._sync_file_list_selection(self._current_path)
 
     def has_unsaved_changes(self) -> bool:
-        return self._dirty
+        return self._model.is_dirty
 
     def confirm_discard_or_save_before_close(self, parent: QWidget | None) -> bool:
-        if not self._dirty:
+        if not self._model.is_dirty:
             return True
         r = QMessageBox.question(
             parent or self,
@@ -969,12 +1046,10 @@ class DialogueGraphEditorWidget(QWidget):
         self._status_label.setText(msg)
         if ms > 0:
             self._status_label.repaint()
+            QTimer.singleShot(ms, self._status_label.clear)
 
     def _set_dirty(self, dirty: bool) -> None:
-        if self._dirty == dirty:
-            return
-        self._dirty = dirty
-        self.dirty_changed.emit(dirty)
+        self._model.set_dirty(dirty)
 
     def _sync_ui_enabled(self, has_file: bool):
         self._graph_group.setEnabled(has_file)
@@ -983,6 +1058,14 @@ class DialogueGraphEditorWidget(QWidget):
         self._flow_view.setEnabled(has_file)
         for b in (self._btn_add, self._btn_del, self._btn_dup):
             b.setEnabled(has_file)
+        saved = self._current_path is not None
+        self._edit_graph_id.setReadOnly(saved)
+        if saved:
+            self._edit_graph_id.setToolTip("保存后由文件名决定，用工具栏「重命名图...」修改")
+            self._edit_graph_id.setStyleSheet("color: #888;")
+        else:
+            self._edit_graph_id.setToolTip("")
+            self._edit_graph_id.setStyleSheet("")
         if not has_file:
             self._positions.clear()
             self._ghost_positions.clear()
@@ -1056,20 +1139,30 @@ class DialogueGraphEditorWidget(QWidget):
     def _on_flow_node_clicked(self, nid: str) -> None:
         if not nid:
             return
-        if nid not in (self._data.get("nodes") or {}):
+        if nid not in self._model.nodes:
             return
         self._node_list.blockSignals(True)
-        self._ensure_node_visible_in_list(nid)
-        self._node_list.blockSignals(False)
+        try:
+            self._ensure_node_visible_in_list(nid)
+        finally:
+            self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
 
     def _on_oden_topology_changed(self) -> None:
-        self._mark_dirty()
-        self._sync_inspector_from_selection()
+        self._emit_title()
+        self._inspector_scene_timer.start(120)
+
+    def _on_model_topology_changed(self, src_nid: str) -> None:
+        """Canvas connection changed via Model -- update inspector if showing this node."""
+        insp_nid = getattr(self._inspector, "_node_id", None)
+        if insp_nid and insp_nid == src_nid:
+            node_data = self._model.nodes.get(src_nid)
+            if node_data:
+                self._inspector.update_topology_from_data(node_data)
 
     def _sync_inspector_from_selection(self) -> None:
-        nid = self._current_node_id_from_list() or self._editing_node_id
-        if nid and nid in (self._data.get("nodes") or {}):
+        nid = self._active_editing_nid()
+        if nid and nid in self._model.nodes:
             raw = copy.deepcopy(self._data["nodes"][nid])
             self._inspector.set_node(
                 nid,
@@ -1088,6 +1181,10 @@ class DialogueGraphEditorWidget(QWidget):
             self._inspector_scene_timer.start(80)
         self._sync_inspector_from_selection()
 
+    def _reset_search_cycle(self) -> None:
+        self._last_search_hits = []
+        self._last_search_idx = -1
+
     def _on_search_node(self) -> None:
         line = (self._search_edit.text() or "").strip()
         if not line:
@@ -1102,11 +1199,22 @@ class DialogueGraphEditorWidget(QWidget):
                 hits.append(nid)
         if not hits:
             self._toast("未找到匹配节点", 3000)
+            self._last_search_hits = []
+            self._last_search_idx = -1
             return
-        hit = hits[0]
+        if hits == self._last_search_hits and self._last_search_idx >= 0:
+            self._last_search_idx = (self._last_search_idx + 1) % len(hits)
+        else:
+            self._last_search_hits = hits
+            self._last_search_idx = 0
+        hit = hits[self._last_search_idx]
+        count_info = f" ({self._last_search_idx + 1}/{len(hits)})" if len(hits) > 1 else ""
+        self._toast(f"定位到 {hit}{count_info}", 3000)
         self._node_list.blockSignals(True)
-        self._ensure_node_visible_in_list(hit)
-        self._node_list.blockSignals(False)
+        try:
+            self._ensure_node_visible_in_list(hit)
+        finally:
+            self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
         self._oden.select_dialogue_node(hit)
         self._oden.center_on_node(hit)
@@ -1119,7 +1227,7 @@ class DialogueGraphEditorWidget(QWidget):
         if not ok or not (new_id or "").strip():
             return
         new_id = new_id.strip()
-        err = rename_node_id(self._data, old, new_id)
+        err = self._model.rename_node(old, new_id)
         if err:
             QMessageBox.warning(self, "重命名", err)
             return
@@ -1128,12 +1236,13 @@ class DialogueGraphEditorWidget(QWidget):
         if old in self._node_to_group:
             self._node_to_group[new_id] = self._node_to_group.pop(old)
         self._editing_node_id = new_id
-        self._undo_stack.clear()
-        self._mark_dirty()
+        self._emit_title()
         self._populate_node_list()
         self._node_list.blockSignals(True)
-        self._ensure_node_visible_in_list(new_id)
-        self._node_list.blockSignals(False)
+        try:
+            self._ensure_node_visible_in_list(new_id)
+        finally:
+            self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
         if validate_graph(self._data):
@@ -1188,10 +1297,9 @@ class DialogueGraphEditorWidget(QWidget):
             nid_new = old_to_new[oid]
             raw = copy.deepcopy(nodes[oid])
             self._remap_local_next(raw, old_to_new, seen)
-            nodes[nid_new] = raw
+            self._model.add_node(nid_new, raw)
             self._positions[nid_new] = (brx + 240.0 + (i % 5) * 40.0, bry + (i // 5) * 85.0)
-        self._undo_stack.clear()
-        self._mark_dirty()
+        self._emit_title()
         self._populate_node_list()
         self._rebuild_flow_scene()
 
@@ -1379,23 +1487,24 @@ class DialogueGraphEditorWidget(QWidget):
             t += f" — {self._current_path.name}"
         elif isinstance(self._data.get("nodes"), dict) and self._data["nodes"]:
             t += f" — 【未保存】{self._data.get('id', '新图')}"
-        if self._dirty:
+        if self._model.is_dirty:
             t += " *"
         self.title_changed.emit(t)
 
     def _mark_dirty(self):
-        self._set_dirty(True)
+        self._model.mark_dirty()
         self._emit_title()
 
     def _load_path(self, path: Path):
         try:
-            self._data = load_json(path)
+            raw = load_json(path)
         except (OSError, json.JSONDecodeError) as e:
             QMessageBox.critical(self, "打开失败", str(e))
             return
+        self._model.load(raw)
+        self._data = self._model.data
         self._current_path = path
         self._draft_layout_basename = None
-        self._set_dirty(False)
         self._editing_node_id = None
         self._apply_data_to_widgets()
         self._reset_node_list_filter()
@@ -1443,20 +1552,22 @@ class DialogueGraphEditorWidget(QWidget):
     def _sync_file_list_selection(self, path: Path) -> None:
         target = path.resolve()
         self._file_list.blockSignals(True)
-        for i in range(self._file_list.count()):
-            it = self._file_list.item(i)
-            if it is None:
-                continue
-            raw = it.data(Qt.ItemDataRole.UserRole)
-            if raw == self._unsaved_list_token:
-                continue
-            try:
-                if Path(str(raw)).resolve() == target:
-                    self._file_list.setCurrentItem(it)
-                    break
-            except OSError:
-                pass
-        self._file_list.blockSignals(False)
+        try:
+            for i in range(self._file_list.count()):
+                it = self._file_list.item(i)
+                if it is None:
+                    continue
+                raw = it.data(Qt.ItemDataRole.UserRole)
+                if raw == self._unsaved_list_token:
+                    continue
+                try:
+                    if Path(str(raw)).resolve() == target:
+                        self._file_list.setCurrentItem(it)
+                        break
+                except OSError:
+                    pass
+        finally:
+            self._file_list.blockSignals(False)
 
     def _refresh_meta_scenario_combo(self) -> None:
         cb = self._edit_meta_scenario
@@ -1542,13 +1653,14 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_meta_scenario.blockSignals(False)
 
     def _widgets_to_data_meta(self):
+        patch: dict[str, Any] = {}
         sv = self._data.get("schemaVersion", 1)
         try:
-            self._data["schemaVersion"] = int(sv)
+            patch["schemaVersion"] = int(sv)
         except (TypeError, ValueError):
-            self._data["schemaVersion"] = 1
-        self._data["id"] = self._edit_graph_id.text().strip()
-        self._data["entry"] = self._edit_entry.text().strip()
+            patch["schemaVersion"] = 1
+        patch["id"] = self._edit_graph_id.text().strip()
+        patch["entry"] = self._edit_entry.text().strip()
         title = self._edit_title.text().strip()
         scenario_id = self._meta_scenario_value()
         prev_meta = self._data.get("meta")
@@ -1559,7 +1671,7 @@ class DialogueGraphEditorWidget(QWidget):
             meta["title"] = title
         if scenario_id:
             meta["scenarioId"] = scenario_id
-        self._data["meta"] = meta
+        patch["meta"] = meta
         merged: list[Any] = list(self._pre_cond_ed.to_list())
         raw_ex = self._edit_pre_extra.toPlainText().strip()
         if raw_ex:
@@ -1567,26 +1679,20 @@ class DialogueGraphEditorWidget(QWidget):
             if not isinstance(extra, list):
                 raise ValueError("附加 preconditions 必须是 JSON 数组")
             merged.extend(extra)
-        self._data["preconditions"] = merged
+        patch["preconditions"] = merged
+        self._model.apply_meta_patch(patch)
 
     def _flush_current_inspector_to_data(self) -> None:
         """保存/校验前：把右侧节点面板内容写回 _data['nodes']。
 
-        以面板 `NodeInspector._node_id` 为准（与 set_node 一致）；若与节点列表当前行不一致则拒绝写入，避免串节点。
+        以面板 _node_id 为准；不一致时以 inspector 当前 id 为 fallback 而非抛异常。
         """
-        nodes = self._data.get("nodes")
-        if not isinstance(nodes, dict) or not nodes:
+        if not self._model.nodes:
             return
-        insp = (getattr(self._inspector, "_node_id", None) or "").strip()
-        lst = self._current_node_id_from_list() or self._editing_node_id
-        if insp and lst and insp != lst:
-            raise ValueError(
-                "节点列表当前行与右侧编辑面板不是同一节点，请在左侧列表中再点选要保存的节点后重试。"
-            )
-        nid = insp or lst
-        if not nid or nid not in nodes:
+        nid = self._active_editing_nid()
+        if not nid:
             return
-        self._data["nodes"][nid] = self._inspector.get_node()
+        self._model.set_node(nid, self._inspector.get_node())
         self._editing_node_id = nid
 
     def _on_graph_meta_changed(self):
@@ -1596,8 +1702,8 @@ class DialogueGraphEditorWidget(QWidget):
             self._widgets_to_data_meta()
         except (json.JSONDecodeError, ValueError):
             return
-        self._mark_dirty()
-        self._rebuild_flow_scene()
+        self._emit_title()
+        self._meta_rebuild_timer.start(300)
         if self._current_path is None and self._draft_layout_basename:
             self._refresh_file_list(select_unsaved=True)
 
@@ -1617,7 +1723,8 @@ class DialogueGraphEditorWidget(QWidget):
             for nid in self._node_ids_sorted():
                 n = (self._data.get("nodes") or {}).get(nid, {})
                 t = n.get("type", "?")
-                label = f"{nid}  ({t})"
+                summ = node_summary(nid, n)
+                label = f"{nid}  ({t})  {summ}" if summ else f"{nid}  ({t})"
                 if q and q not in nid.lower() and q not in label.lower():
                     continue
                 it = QListWidgetItem(label)
@@ -1652,6 +1759,18 @@ class DialogueGraphEditorWidget(QWidget):
             return None
         return str(v)
 
+    def _active_editing_nid(self) -> str | None:
+        """Single source of truth for which node is being edited -- prefers inspector."""
+        insp = (getattr(self._inspector, "_node_id", None) or "").strip()
+        if insp and insp in self._model.nodes:
+            return insp
+        lst = self._current_node_id_from_list()
+        if lst and lst in self._model.nodes:
+            return lst
+        if self._editing_node_id and self._editing_node_id in self._model.nodes:
+            return self._editing_node_id
+        return None
+
     def _on_file_item_changed(self, cur: QListWidgetItem | None, prev: QListWidgetItem | None):
         if not cur:
             return
@@ -1661,7 +1780,7 @@ class DialogueGraphEditorWidget(QWidget):
         path = Path(raw)
         if self._current_path and path.resolve() == self._current_path.resolve():
             return
-        if self._dirty:
+        if self._model.is_dirty:
             r = QMessageBox.question(
                 self,
                 "未保存",
@@ -1682,29 +1801,31 @@ class DialogueGraphEditorWidget(QWidget):
 
     def _revert_file_selection(self, prev: QListWidgetItem | None):
         self._file_list.blockSignals(True)
-        if prev:
-            self._file_list.setCurrentItem(prev)
-        elif self._current_path:
-            for i in range(self._file_list.count()):
-                it = self._file_list.item(i)
-                if it is None:
-                    continue
-                raw = it.data(Qt.ItemDataRole.UserRole)
-                if raw == self._unsaved_list_token:
-                    continue
-                try:
-                    if Path(str(raw)).resolve() == self._current_path.resolve():
+        try:
+            if prev:
+                self._file_list.setCurrentItem(prev)
+            elif self._current_path:
+                for i in range(self._file_list.count()):
+                    it = self._file_list.item(i)
+                    if it is None:
+                        continue
+                    raw = it.data(Qt.ItemDataRole.UserRole)
+                    if raw == self._unsaved_list_token:
+                        continue
+                    try:
+                        if Path(str(raw)).resolve() == self._current_path.resolve():
+                            self._file_list.setCurrentItem(it)
+                            break
+                    except OSError:
+                        pass
+            elif self._current_path is None:
+                for i in range(self._file_list.count()):
+                    it = self._file_list.item(i)
+                    if it and it.data(Qt.ItemDataRole.UserRole) == self._unsaved_list_token:
                         self._file_list.setCurrentItem(it)
                         break
-                except OSError:
-                    pass
-        elif self._current_path is None:
-            for i in range(self._file_list.count()):
-                it = self._file_list.item(i)
-                if it and it.data(Qt.ItemDataRole.UserRole) == self._unsaved_list_token:
-                    self._file_list.setCurrentItem(it)
-                    break
-        self._file_list.blockSignals(False)
+        finally:
+            self._file_list.blockSignals(False)
 
     def _on_node_item_changed(self, _cur=None, _prev=None):
         self._apply_selected_node_to_inspector()
@@ -1718,16 +1839,16 @@ class DialogueGraphEditorWidget(QWidget):
             return
         if nid != self._editing_node_id and self._editing_node_id:
             try:
-                # 切换列表行前先把旧节点写回；若旧 id 已不在图中（例如刚删节点），切勿 setdefault 把它插回去
-                prev_nodes = self._data.get("nodes")
-                if isinstance(prev_nodes, dict) and self._editing_node_id in prev_nodes:
-                    prev_nodes[self._editing_node_id] = self._inspector.get_node()
+                if self._editing_node_id in self._model.nodes and self._inspector._body_valid:
+                    self._model.set_node(self._editing_node_id, self._inspector.get_node())
             except ValueError as e:
                 QMessageBox.warning(self, "无法切换节点", str(e))
                 self._node_list.blockSignals(True)
-                if self._editing_node_id:
-                    self._ensure_node_visible_in_list(self._editing_node_id)
-                self._node_list.blockSignals(False)
+                try:
+                    if self._editing_node_id:
+                        self._ensure_node_visible_in_list(self._editing_node_id)
+                finally:
+                    self._node_list.blockSignals(False)
                 return
         self._editing_node_id = nid
         nodes = self._data.get("nodes") or {}
@@ -1742,21 +1863,19 @@ class DialogueGraphEditorWidget(QWidget):
     def _on_inspector_changed(self):
         if "nodes" not in self._data:
             return
-        nid = (getattr(self._inspector, "_node_id", None) or "").strip()
+        nid = self._active_editing_nid()
         if not nid:
-            nid = self._current_node_id_from_list() or (self._editing_node_id or "")
-        if not nid:
-            return
-        nodes = self._data.get("nodes") or {}
-        if nid not in nodes:
             return
         try:
             new_node = self._inspector.get_node()
         except ValueError as e:
             self._toast(str(e), 5000)
             return
-        self._data.setdefault("nodes", {})[nid] = new_node
-        self._mark_dirty()
+        old_node = copy.deepcopy(self._model.nodes.get(nid, {}))
+        self._model.set_node(nid, new_node)
+        cmd = _NodeDataChangedCmd(self._model, nid, old_node, copy.deepcopy(new_node))
+        self._undo_stack.push(cmd)
+        self._emit_title()
         self._refresh_node_list_row(nid)
         self._inspector_scene_timer.start(120)
 
@@ -1766,7 +1885,8 @@ class DialogueGraphEditorWidget(QWidget):
             if it and str(it.data(Qt.ItemDataRole.UserRole) or "") == nid:
                 n = (self._data.get("nodes") or {}).get(nid, {})
                 t = n.get("type", "?")
-                it.setText(f"{nid}  ({t})")
+                summ = node_summary(nid, n)
+                it.setText(f"{nid}  ({t})  {summ}" if summ else f"{nid}  ({t})")
                 break
 
     def _on_pick_entry_clicked(self):
@@ -1785,24 +1905,45 @@ class DialogueGraphEditorWidget(QWidget):
             self._on_graph_meta_changed()
 
     def _add_node(self):
-        nodes = self._data.setdefault("nodes", {})
-        nid, ok = QInputDialog.getText(self, "新节点 id", "字母/数字/下划线", text=suggest_next_id(nodes))
-        if not ok or not nid.strip():
+        nodes = self._model.nodes
+        dlg = QDialog(self)
+        dlg.setWindowTitle("添加节点")
+        dlg.setMinimumWidth(340)
+        lay = QVBoxLayout(dlg)
+        fl = QFormLayout()
+        id_edit = QLineEdit(suggest_next_id(nodes))
+        type_cb = QComboBox()
+        for t in ("line", "runActions", "choice", "switch", "end"):
+            type_cb.addItem(t)
+        fl.addRow("节点 id", id_edit)
+        fl.addRow("类型", type_cb)
+        lay.addLayout(fl)
+        btns = QHBoxLayout()
+        btn_ok = QPushButton("确定")
+        btn_cancel = QPushButton("取消")
+        btn_ok.clicked.connect(dlg.accept)
+        btn_cancel.clicked.connect(dlg.reject)
+        btns.addStretch()
+        btns.addWidget(btn_ok)
+        btns.addWidget(btn_cancel)
+        lay.addLayout(btns)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        nid = nid.strip()
+        nid = id_edit.text().strip()
+        if not nid:
+            return
         if nid in nodes:
             QMessageBox.warning(self, "重复", f"已存在节点 {nid!r}")
             return
-        items = ["line", "runActions", "choice", "switch", "end"]
-        t, ok = QInputDialog.getItem(self, "节点类型", "type", items, 0, False)
-        if not ok:
-            return
-        nodes[nid] = default_node(t, {k: v for k, v in nodes.items() if k != nid})
-        self._mark_dirty()
+        t = type_cb.currentText()
+        self._model.add_node(nid, default_node(t, {k: v for k, v in nodes.items() if k != nid}))
+        self._emit_title()
         self._populate_node_list()
         self._node_list.blockSignals(True)
-        self._ensure_node_visible_in_list(nid)
-        self._node_list.blockSignals(False)
+        try:
+            self._ensure_node_visible_in_list(nid)
+        finally:
+            self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
 
@@ -1820,8 +1961,8 @@ class DialogueGraphEditorWidget(QWidget):
         return [one] if one else []
 
     def _delete_nodes(self, targets: list[str]) -> None:
-        node_dict = self._data.setdefault("nodes", {})
-        if not isinstance(node_dict, dict):
+        node_dict = self._model.nodes
+        if not node_dict:
             return
         to_del = sorted({n for n in targets if n in node_dict})
         if not to_del:
@@ -1832,35 +1973,38 @@ class DialogueGraphEditorWidget(QWidget):
             for src, *_r in collect_incoming_refs(self._data, nid):
                 if src not in to_del_set:
                     ext_refs += 1
-        if ext_refs:
-            r = QMessageBox.question(
-                self,
-                "删除节点",
-                f"仍有 {ext_refs} 条来自其它节点的连线指向待删除节点。是否先断开这些入边再删除？\n"
-                "选「否」将直接删除（可能留下悬空 next）。",
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.No
-                | QMessageBox.StandardButton.Cancel,
-            )
-            if r == QMessageBox.StandardButton.Cancel:
-                return
-            if r == QMessageBox.StandardButton.Yes:
-                for nid in to_del:
-                    clear_incoming_to_node(self._data, nid)
         preview = "、".join(to_del[:12])
         if len(to_del) > 12:
             preview += f" 等共 {len(to_del)} 个"
-        confirm = QMessageBox.question(
-            self,
-            "删除",
-            f"删除节点 {preview}？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
+        if ext_refs:
+            msg = (
+                f"删除节点 {preview}？\n\n"
+                f"仍有 {ext_refs} 条来自其它节点的连线指向待删除节点。\n"
+                "「断开并删除」将先清除入边再删除；「直接删除」可能留下悬空 next。"
+            )
+            box = QMessageBox(QMessageBox.Icon.Question, "删除节点", msg, parent=self)
+            btn_cut = box.addButton("断开并删除", QMessageBox.ButtonRole.AcceptRole)
+            btn_force = box.addButton("直接删除", QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked == btn_cut:
+                for nid in to_del:
+                    self._model.clear_incoming_to(nid)
+            elif clicked != btn_force:
+                return
+        else:
+            confirm = QMessageBox.question(
+                self,
+                "删除",
+                f"删除节点 {preview}？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+        self._model.remove_nodes(to_del)
         for nid in to_del:
-            node_dict.pop(nid, None)
             self._node_to_group.pop(nid, None)
         if self._editing_node_id in to_del_set:
             self._editing_node_id = None
@@ -1883,7 +2027,6 @@ class DialogueGraphEditorWidget(QWidget):
         if total_refs == 0:
             for mid in u:
                 self._ghost_positions.pop(mid, None)
-            self._mark_dirty()
             self._rebuild_flow_scene()
             if self._layout_path_for_io():
                 self._flush_flow_layout_to_disk()
@@ -1928,7 +2071,7 @@ class DialogueGraphEditorWidget(QWidget):
             nid = self._current_node_id_from_list()
         if not nid:
             return
-        nodes = self._data.setdefault("nodes", {})
+        nodes = self._model.nodes
         new_id, ok = QInputDialog.getText(
             self, "复制为", "新 id", text=suggest_next_id(nodes)
         )
@@ -1938,16 +2081,37 @@ class DialogueGraphEditorWidget(QWidget):
         if new_id in nodes:
             QMessageBox.warning(self, "重复", f"已存在 {new_id!r}")
             return
-        nodes[new_id] = copy.deepcopy(nodes[nid])
+        self._model.add_node(new_id, copy.deepcopy(nodes[nid]))
         ox, oy = self._positions.get(nid, (0.0, 0.0))
         self._positions[new_id] = (float(ox) + 40.0, float(oy) + 40.0)
-        self._mark_dirty()
+        self._emit_title()
         self._populate_node_list()
         self._node_list.blockSignals(True)
-        self._ensure_node_visible_in_list(new_id)
-        self._node_list.blockSignals(False)
+        try:
+            self._ensure_node_visible_in_list(new_id)
+        finally:
+            self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
+
+    def _restore_splitter_sizes(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        raw = s.value("main_splitter_sizes")
+        if isinstance(raw, list) and len(raw) == 3:
+            try:
+                self._main_splitter.setSizes([int(x) for x in raw])
+                return
+            except (TypeError, ValueError):
+                pass
+        self._main_splitter.setSizes([200, 820, 280])
+
+    def _save_splitter_sizes(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        s.setValue("main_splitter_sizes", self._main_splitter.sizes())
+
+    def hideEvent(self, event) -> None:
+        self._save_splitter_sizes()
+        super().hideEvent(event)
 
     def _write_to_path(self, path: Path) -> bool:
         old_draft = self._draft_layout_basename
@@ -1966,8 +2130,18 @@ class DialogueGraphEditorWidget(QWidget):
 
         errors, warnings = validate_graph_tiered(self._data)
         if errors:
-            QMessageBox.critical(self, "保存失败（存在错误）", "\n".join(errors[:50]))
-            return False
+            etxt = "\n".join(errors[:50])
+            if len(errors) > 50:
+                etxt += f"\n... 共 {len(errors)} 条错误"
+            r = QMessageBox.question(
+                self,
+                "校验错误",
+                etxt + "\n\n图数据存在错误。仍要强制保存吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r != QMessageBox.StandardButton.Yes:
+                return False
         if warnings:
             wtxt = "\n".join(warnings[:40])
             if len(warnings) > 40:
