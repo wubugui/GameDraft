@@ -368,6 +368,10 @@ class MainWindow(QMainWindow):
         from .editors.filter_editor import FilterEditor
         from .editors.action_registry_editor import ActionRegistryEditor
         from .editors.overlay_images_editor import OverlayImagesEditor
+        from .editors.narrative_data_editors import (
+            ScenariosCatalogEditor,
+            DocumentRevealsEditor,
+        )
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
 
         editors = [
@@ -388,6 +392,8 @@ class MainWindow(QMainWindow):
             ("Strings", StringEditor),
             ("Config", GameConfigEditor),
             ("叠图 ID", OverlayImagesEditor),
+            ("Scenarios", ScenariosCatalogEditor),
+            ("文档揭示", DocumentRevealsEditor),
             ("Flags", FlagRegistryEditor),
             ("Actions", ActionRegistryEditor),
         ]

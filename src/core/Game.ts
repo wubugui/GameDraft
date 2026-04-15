@@ -45,7 +45,14 @@ import { DebugPanelUI } from '../ui/DebugPanelUI';
 import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
 import { GameState } from '../data/types';
-import type { ActionDef, IGameSystem, AnimationSetDef, GameConfig, SceneDataRaw } from '../data/types';
+import type {
+  ActionDef,
+  IGameSystem,
+  AnimationSetDef,
+  GameConfig,
+  SceneDataRaw,
+  ScenarioCatalogFile,
+} from '../data/types';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
@@ -53,6 +60,8 @@ import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
+import { ScenarioStateManager } from './ScenarioStateManager';
+import { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
@@ -61,6 +70,7 @@ import { SceneDepthSystem } from './SceneDepthSystem';
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
+import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
 import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { depthLog, depthError } from './depthLog';
@@ -99,6 +109,8 @@ export class Game {
   private sceneManager: SceneManager;
   private dialogueManager: DialogueManager;
   private graphDialogueManager: GraphDialogueManager;
+  private scenarioStateManager: ScenarioStateManager;
+  private documentRevealManager: DocumentRevealManager;
   private questManager: QuestManager;
   private rulesManager: RulesManager;
   private inventoryManager: InventoryManager;
@@ -199,6 +211,7 @@ export class Game {
     this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
     this.dialogueManager = new DialogueManager(this.eventBus);
     this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
+    this.scenarioStateManager = new ScenarioStateManager();
     this.graphDialogueManager = new GraphDialogueManager(
       this.eventBus,
       this.flagStore,
@@ -208,6 +221,13 @@ export class Game {
       this.rulesManager,
       this.questManager,
       this.inventoryManager,
+      this.scenarioStateManager,
+    );
+    this.documentRevealManager = new DocumentRevealManager(
+      this.assetManager,
+      this.flagStore,
+      this.questManager,
+      this.scenarioStateManager,
     );
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.audioManager = new AudioManager(this.eventBus);
@@ -226,6 +246,8 @@ export class Game {
       { name: 'inventoryManager', system: this.inventoryManager },
       { name: 'rulesManager', system: this.rulesManager },
       { name: 'questManager', system: this.questManager },
+      { name: 'scenarioStateManager', system: this.scenarioStateManager },
+      { name: 'documentRevealManager', system: this.documentRevealManager },
       { name: 'encounterManager', system: this.encounterManager },
       { name: 'audioManager', system: this.audioManager },
       { name: 'dayManager', system: this.dayManager },
@@ -364,6 +386,30 @@ export class Game {
       return { name: def.name, incompleteName: def.incompleteName };
     });
 
+    this.documentRevealManager.setBlendExecutor((id, from, to, x, y, w, dur, delay) =>
+      this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
+    await this.documentRevealManager.loadDefinitions();
+    try {
+      const scenarioCat = await this.assetManager.loadJson<ScenarioCatalogFile>('/assets/data/scenarios.json');
+      this.scenarioStateManager.configureRuntime(this.flagStore, scenarioCat);
+    } catch {
+      this.scenarioStateManager.configureRuntime(this.flagStore, null);
+    }
+
+    const mkCondCtx = (): ConditionEvalContext => ({
+      flagStore: this.flagStore,
+      questManager: this.questManager,
+      scenarioState: this.scenarioStateManager,
+    });
+    this.flagStore.setConditionEvalContextFactory(mkCondCtx);
+    this.questManager.setConditionEvalContextFactory(mkCondCtx);
+    this.zoneSystem.setConditionEvalContextFactory(mkCondCtx);
+    this.interactionSystem.setConditionEvalContextFactory(mkCondCtx);
+    this.encounterManager.setConditionEvalContextFactory(mkCondCtx);
+    this.mapUI.setConditionEvalContextFactory(mkCondCtx);
+    this.archiveManager.setConditionEvalContextFactory(mkCondCtx);
+    this.inventoryManager.setConditionEvalContextFactory(mkCondCtx);
+
     registerActionHandlers(this.actionExecutor, {
       ruleOfferRegistry: this.ruleOfferRegistry,
       inventoryManager: this.inventoryManager,
@@ -453,6 +499,8 @@ export class Game {
           : this.stringsProvider.get('actions', 'clickToContinue');
         return waitClickContinueWithHint(this.renderer, this.inputManager, label);
       },
+      scenarioStateManager: this.scenarioStateManager,
+      documentRevealManager: this.documentRevealManager,
     });
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
@@ -552,6 +600,12 @@ export class Game {
       clearEntityPixelDensityMatchBlurScaleDebug: () => {
         this.clearEntityPixelDensityMatchBlurScaleDebug();
       },
+      getNarrativeDebugSnapshot: () => ({
+        /** 人类可读的解算路径 + 结构化字段 */
+        narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
+        scenarioState: this.scenarioStateManager.serialize(),
+        documentReveals: this.documentRevealManager.debugSnapshot(),
+      }),
     });
     this.debugTools.init();
 
@@ -1406,6 +1460,11 @@ export class Game {
           this.player.x,
           this.player.y,
           this.flagStore,
+          {
+            flagStore: this.flagStore,
+            questManager: this.questManager,
+            scenarioState: this.scenarioStateManager,
+          },
         );
         this.sceneDepthSystem.updateEntityDepthOcclusion(
           this.playerDepthFilter,
@@ -1423,7 +1482,11 @@ export class Game {
         if (c.filters) {
           for (const f of c.filters) {
             if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
-              const ex = resolveDepthFloorOffsetBoost(zones, c.x, c.y, this.flagStore);
+              const ex = resolveDepthFloorOffsetBoost(zones, c.x, c.y, this.flagStore, {
+                flagStore: this.flagStore,
+                questManager: this.questManager,
+                scenarioState: this.scenarioStateManager,
+              });
               this.sceneDepthSystem.updateEntityDepthOcclusion(
                 f as unknown as DepthOcclusionFilter,
                 c.x,
@@ -1438,7 +1501,11 @@ export class Game {
         const hf = h.getDepthOcclusionFilter();
         if (!hf) continue;
         const footY = h.depthOcclusionFootWorldY();
-        const ex = resolveDepthFloorOffsetBoost(zones, h.container.x, footY, this.flagStore);
+        const ex = resolveDepthFloorOffsetBoost(zones, h.container.x, footY, this.flagStore, {
+          flagStore: this.flagStore,
+          questManager: this.questManager,
+          scenarioState: this.scenarioStateManager,
+        });
         this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
       }
     }

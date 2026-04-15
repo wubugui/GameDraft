@@ -1,5 +1,7 @@
-import type { Condition } from '../data/types';
+import type { Condition, ConditionExpr } from '../data/types';
 import type { EventBus } from './EventBus';
+import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
 
 /** 运行时 Flag 取值 */
 export type FlagValue = boolean | number | string;
@@ -46,9 +48,17 @@ export class FlagStore {
   private flags: Map<string, FlagValue> = new Map();
   private eventBus: EventBus;
   private registryRuntime: RegistryRuntime | null = null;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
+  }
+
+  /**
+   * 与 QuestManager / InteractionSystem 等一致：注入后 {@link checkConditions} 对 ConditionExpr[] 走统一求值。
+   */
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
   }
 
   /** Optional: enables save-time migrations / dev warnings / stripUnknown for deserialized keys. */
@@ -176,7 +186,11 @@ export class FlagStore {
     return this.flags.get(key);
   }
 
-  checkConditions(conditions: Condition[]): boolean {
+  /**
+   * 若干 flag 条件逐项 AND（仅叶子，不经过 ConditionExpr 组合子）。
+   * 供 {@link evaluateConditionExpr} 的 flag 叶子使用，避免 checkConditions 与求值器相互递归。
+   */
+  evalPureFlagConjunction(conditions: Condition[]): boolean {
     for (const cond of conditions) {
       const raw = this.flags.get(cond.flag);
       const op = cond.op ?? '==';
@@ -213,6 +227,40 @@ export class FlagStore {
       }
     }
     return true;
+  }
+
+  private isFlagOnlyAtom(c: ConditionExpr): c is Condition {
+    if (!c || typeof c !== 'object') return false;
+    const o = c as Record<string, unknown>;
+    if (typeof o.flag !== 'string') return false;
+    const keys = Object.keys(o);
+    return keys.every((k) => k === 'flag' || k === 'op' || k === 'value');
+  }
+
+  /**
+   * 对条件列表做组内 AND，语义与热区/任务等一致。
+   * 已注入 {@link setConditionEvalContextFactory} 时与图对话共用 `evaluateConditionExpr`；
+   * 否则仅在每项均为纯 flag 叶子时可求值，否则 dev 下告警并视为不满足。
+   */
+  checkConditions(conditions: ConditionExpr[] | Condition[]): boolean {
+    if (!conditions.length) return true;
+    const ctx = this.conditionCtxFactory?.();
+    if (ctx) {
+      return evaluateConditionExprList(conditions as ConditionExpr[], ctx);
+    }
+    const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV === true;
+    for (const c of conditions) {
+      if (!this.isFlagOnlyAtom(c as ConditionExpr)) {
+        if (isDev) {
+          console.warn(
+            '[FlagStore.checkConditions] 缺少 ConditionEvalContext，无法对非 flag 条件求值',
+            c,
+          );
+        }
+        return false;
+      }
+    }
+    return this.evalPureFlagConjunction(conditions as Condition[]);
   }
 
   private looseEqual(a: FlagValue, b: FlagValue): boolean {

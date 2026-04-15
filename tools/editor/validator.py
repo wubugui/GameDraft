@@ -31,6 +31,8 @@ def validate(model: ProjectModel) -> list[Issue]:
     shop_ids = {s["id"] for s in model.shops}
     filter_ids = set(model.all_filter_ids())
 
+    _validate_scenarios_catalog(model, issues)
+
     # --- scenes ---
     for sid, sc in model.scenes.items():
         for hs in sc.get("hotspots", []):
@@ -121,6 +123,45 @@ def validate(model: ProjectModel) -> list[Issue]:
                 if eid and eid not in encounter_ids:
                     issues.append(Issue("error", "scene", sid,
                                         f"Hotspot '{hs.get('id')}' encounterId '{eid}' not found"))
+            if hs.get("type") == "inspect":
+                idata = hs.get("data") or {}
+                if isinstance(idata, dict):
+                    igraph = str(idata.get("graphId") or "").strip()
+                    itext = str(idata.get("text") or "").strip()
+                    if igraph and itext:
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"Hotspot '{hid}' inspect 不可同时填写 graphId 与 text",
+                        ))
+                    if igraph:
+                        gpath = model.dialogues_path / "graphs" / f"{igraph}.json"
+                        if not gpath.is_file():
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"Hotspot '{hid}' inspect graphId '{igraph}' 缺少 dialogues/graphs/{igraph}.json",
+                            ))
+                        else:
+                            try:
+                                gdata = read_json(gpath)
+                            except (OSError, ValueError, json.JSONDecodeError):
+                                issues.append(Issue(
+                                    "error", "scene", sid,
+                                    f"Hotspot '{hid}' graphs/{igraph}.json 无法解析",
+                                ))
+                            else:
+                                if isinstance(gdata, dict):
+                                    nodes = gdata.get("nodes")
+                                    ent = str(idata.get("entry") or "").strip()
+                                    if ent and isinstance(nodes, dict) and ent not in nodes:
+                                        issues.append(Issue(
+                                            "error", "scene", sid,
+                                            f"Hotspot '{hid}' inspect entry '{ent}' 不在图 nodes 中",
+                                        ))
+                    elif not itext and not idata.get("actions"):
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"Hotspot '{hid}' inspect 未配置 text 或 graphId",
+                        ))
             if hs.get("type") == "pickup":
                 iid = data.get("itemId", "")
                 if iid and iid not in item_ids:
@@ -368,6 +409,8 @@ def validate(model: ProjectModel) -> list[Issue]:
 
     _validate_flags(model, issues)
 
+    _validate_dialogue_graphs(model, issues)
+
     return issues
 
 
@@ -417,6 +460,240 @@ def _walk_conditions(
             _flag_issue(model, issues, str(cond["flag"]), data_type, item_id, scene_id)
 
 
+def _scenario_definitions(model: ProjectModel) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for e in model.scenarios_catalog.get("scenarios") or []:
+        if isinstance(e, dict) and e.get("id"):
+            out[str(e["id"])] = e
+    return out
+
+
+def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> None:
+    """per-phase requires引用与 DAG（无环）。"""
+    raw = model.scenarios_catalog.get("scenarios")
+    if not isinstance(raw, list):
+        return
+    for e in raw:
+        if not isinstance(e, dict):
+            continue
+        sid = str(e.get("id", "")).strip()
+        if not sid:
+            continue
+        phases = e.get("phases")
+        if not isinstance(phases, dict):
+            continue
+        pnames = {str(k) for k in phases.keys()}
+        adj: dict[str, list[str]] = {}
+        for pname, pval in phases.items():
+            pn = str(pname)
+            req_list: list[str] = []
+            if isinstance(pval, dict):
+                req = pval.get("requires")
+                if isinstance(req, list):
+                    for rp in req:
+                        rs = str(rp).strip()
+                        if not rs:
+                            continue
+                        if rs not in pnames:
+                            issues.append(Issue(
+                                "error", "scenarios", sid,
+                                f"phase {pn!r} 的 requires 引用未知 phase {rs!r}",
+                            ))
+                        req_list.append(rs)
+            adj[pn] = req_list
+        _WHITE, _GREY, _BLACK = 0, 1, 2
+        color = {n: _WHITE for n in adj}
+
+        def _dfs(u: str) -> bool:
+            color[u] = _GREY
+            for v in adj.get(u, []):
+                if v not in color:
+                    continue
+                if color.get(v) == _GREY:
+                    return True
+                if color.get(v) == _WHITE and _dfs(v):
+                    return True
+            color[u] = _BLACK
+            return False
+
+        cyc = False
+        for n in adj:
+            if color.get(n) == _WHITE and _dfs(n):
+                cyc = True
+                break
+        if cyc:
+            issues.append(Issue(
+                "error", "scenarios", sid,
+                "phases.requires 存在循环依赖",
+            ))
+
+
+def _scan_condition_expr(
+    model: ProjectModel,
+    issues: list[Issue],
+    expr: object,
+    scen: dict[str, dict],
+    quest_ids: set[str],
+    data_type: str,
+    item_id: str,
+    depth: int,
+) -> None:
+    """switch.condition / 文档揭示等：结构 + flag / scenario / quest 引用粗校验。"""
+    if depth > 32:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "ConditionExpr 嵌套超过 32",
+        ))
+        return
+    if not isinstance(expr, dict):
+        issues.append(Issue("error", data_type, item_id, "条件表达式须为 JSON 对象"))
+        return
+    if "all" in expr:
+        ch = expr.get("all")
+        if not isinstance(ch, list):
+            issues.append(Issue("error", data_type, item_id, "all 须为数组"))
+            return
+        for e in ch:
+            _scan_condition_expr(
+                model, issues, e, scen, quest_ids, data_type, item_id, depth + 1,
+            )
+        return
+    if "any" in expr:
+        ch = expr.get("any")
+        if not isinstance(ch, list):
+            issues.append(Issue("error", data_type, item_id, "any 须为数组"))
+            return
+        for e in ch:
+            _scan_condition_expr(
+                model, issues, e, scen, quest_ids, data_type, item_id, depth + 1,
+            )
+        return
+    if "not" in expr:
+        _scan_condition_expr(
+            model, issues, expr.get("not"), scen, quest_ids, data_type, item_id, depth + 1,
+        )
+        return
+    if expr.get("flag") is not None:
+        _flag_issue(model, issues, str(expr["flag"]), data_type, item_id, None)
+        return
+    if isinstance(expr.get("quest"), str):
+        qid = str(expr["quest"]).strip()
+        if qid and qid not in quest_ids:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"quest 条件引用 {qid!r} 不在 quests.json",
+            ))
+        return
+    if isinstance(expr.get("scenario"), str):
+        sid = str(expr["scenario"]).strip()
+        ph = str(expr.get("phase", "")).strip()
+        if sid and sid not in scen:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"scenario 条件 scenarioId {sid!r} 不在 scenarios.json",
+            ))
+        elif ph:
+            phases = scen[sid].get("phases")
+            if isinstance(phases, dict) and ph not in phases:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"scenario 条件 phase {ph!r} 不在 {sid!r} 的 phases 清单",
+                ))
+        return
+    issues.append(Issue(
+        "warning", data_type, item_id,
+        f"无法识别的条件叶子（键: {sorted(expr.keys())!s}）",
+    ))
+
+
+def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
+    gd = model.dialogues_path / "graphs"
+    if not gd.is_dir():
+        return
+    scen = _scenario_definitions(model)
+    quest_ids = {str(q.get("id", "")) for q in model.quests if q.get("id")}
+    for path in sorted(gd.glob("*.json")):
+        stem = path.stem
+        try:
+            gdata = read_json(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            issues.append(Issue(
+                "error", "dialogueGraph", stem,
+                f"graphs/{path.name} 无法解析为 JSON",
+            ))
+            continue
+        if not isinstance(gdata, dict):
+            issues.append(Issue("error", "dialogueGraph", stem, "图根须为对象"))
+            continue
+        meta = gdata.get("meta")
+        if isinstance(meta, dict):
+            msid = str(meta.get("scenarioId") or "").strip()
+            if msid and msid not in scen:
+                issues.append(Issue(
+                    "warning", "dialogueGraph", stem,
+                    f"meta.scenarioId {msid!r} 不在 scenarios.json 清单中",
+                ))
+        nodes = gdata.get("nodes")
+        if not isinstance(nodes, dict):
+            continue
+        for nid, node in nodes.items():
+            if not isinstance(node, dict):
+                continue
+            ctx = f"{stem}:{nid}"
+            if node.get("type") == "choice":
+                for oi, opt in enumerate(node.get("options") or []):
+                    if not isinstance(opt, dict):
+                        continue
+                    octx = f"{ctx} option[{oi}]"
+                    rc = opt.get("requireCondition")
+                    if rc is not None:
+                        _scan_condition_expr(
+                            model, issues, rc, scen, quest_ids,
+                            "dialogueGraph", octx, 0,
+                        )
+            if node.get("type") == "switch":
+                for ci, case in enumerate(node.get("cases") or []):
+                    if not isinstance(case, dict):
+                        continue
+                    cctx = f"{ctx} case[{ci}]"
+                    cond = case.get("condition")
+                    legacy_conds = case.get("conditions") or []
+                    if cond is not None and legacy_conds:
+                        issues.append(Issue(
+                            "warning", "dialogueGraph", cctx,
+                            "switch case 同时存在 condition 与 conditions；"
+                            "运行时仅使用 condition，conditions 将被忽略",
+                        ))
+                    if cond is not None:
+                        _scan_condition_expr(
+                            model, issues, cond, scen, quest_ids,
+                            "dialogueGraph", cctx, 0,
+                        )
+                    for atom in case.get("conditions") or []:
+                        if not isinstance(atom, dict):
+                            continue
+                        if "all" in atom or "any" in atom or "not" in atom:
+                            _scan_condition_expr(
+                                model, issues, atom, scen, quest_ids,
+                                "dialogueGraph", cctx, 0,
+                            )
+                        elif atom.get("flag") is not None:
+                            _flag_issue(
+                                model, issues, str(atom["flag"]),
+                                "dialogueGraph", cctx, None,
+                            )
+                        else:
+                            _scan_condition_expr(
+                                model, issues, atom, scen, quest_ids,
+                                "dialogueGraph", cctx, 0,
+                            )
+            if node.get("type") == "runActions":
+                _walk_action_defs(
+                    model, issues, node.get("actions"),
+                    "dialogueGraph", ctx, None,
+                )
+
+
 def _walk_action_defs(
     model: ProjectModel, issues: list[Issue], actions: list,
     data_type: str, item_id: str, scene_id: str | None,
@@ -461,6 +738,39 @@ def _walk_action_defs(
                 model, issues, p.get("actions"),
                 data_type, item_id, scene_id,
             )
+        elif t == "setScenarioPhase":
+            scen = _scenario_definitions(model)
+            sid = str(p.get("scenarioId") or "").strip()
+            ph = str(p.get("phase") or "").strip()
+            if not sid:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "setScenarioPhase 缺少 scenarioId",
+                ))
+            elif sid not in scen:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setScenarioPhase scenarioId {sid!r} 不在 scenarios.json",
+                ))
+            elif ph:
+                phases = scen[sid].get("phases")
+                if isinstance(phases, dict) and ph not in phases:
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"setScenarioPhase phase {ph!r} 不在 scenario {sid!r} 的 phases 清单",
+                    ))
+        elif t == "revealDocument":
+            doc_id = str(p.get("documentId") or "").strip()
+            if not doc_id:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "revealDocument 缺少 documentId",
+                ))
+            elif doc_id not in set(model.document_reveal_ids()):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"revealDocument documentId {doc_id!r} 未在 document_reveals.json 注册",
+                ))
 
 
 def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:

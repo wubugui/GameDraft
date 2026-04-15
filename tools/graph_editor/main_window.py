@@ -78,6 +78,7 @@ class MainWindow(QMainWindow):
 
         self._build_menus()
 
+        self._property_panel.set_project_path(project_path)
         self._refresh()
 
     def _build_menus(self) -> None:

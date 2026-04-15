@@ -1,14 +1,17 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
-import type { QuestDef, IGameSystem, GameContext, IQuestDataProvider } from '../data/types';
+import type { Condition, ConditionExpr, QuestDef, IGameSystem, GameContext, IQuestDataProvider } from '../data/types';
 import { QuestStatus } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
+import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 
 export class QuestManager implements IGameSystem, IQuestDataProvider {
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private actionExecutor: ActionExecutor;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   private questDefs: Map<string, QuestDef> = new Map();
   private questStatus: Map<string, QuestStatus> = new Map();
@@ -26,6 +29,18 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     this.actionExecutor = actionExecutor;
 
     this.onFlagChanged = () => this.evaluate();
+  }
+
+  /** 与图对话共用 `evaluateConditionExpr`；未注入时退化为纯 flag AND。 */
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
+  }
+
+  private evalConditions(conds: ConditionExpr[]): boolean {
+    if (!conds.length) return true;
+    const ctx = this.conditionCtxFactory?.();
+    if (ctx) return evaluateConditionExprList(conds, ctx);
+    return this.flagStore.checkConditions(conds as Condition[]);
   }
 
   init(ctx: GameContext): void {
@@ -106,14 +121,13 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
       if (def.nextQuests && def.nextQuests.length > 0) {
         for (const edge of def.nextQuests) {
-          if (edge.conditions.length > 0 &&
-              !this.flagStore.checkConditions(edge.conditions)) {
+          if (edge.conditions.length > 0 && !this.evalConditions(edge.conditions)) {
             continue;
           }
           if (!edge.bypassPreconditions) {
             const targetDef = this.questDefs.get(edge.questId);
             if (targetDef && targetDef.preconditions.length > 0 &&
-                !this.flagStore.checkConditions(targetDef.preconditions)) {
+                !this.evalConditions(targetDef.preconditions)) {
               continue;
             }
           }
@@ -150,14 +164,14 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
       if (status === QuestStatus.Active) {
         if (def.completionConditions.length > 0 &&
-            this.flagStore.checkConditions(def.completionConditions)) {
+            this.evalConditions(def.completionConditions)) {
           this.completeQuest(id);
         }
       }
 
       if (status === QuestStatus.Inactive) {
         if (def.preconditions.length > 0 &&
-            this.flagStore.checkConditions(def.preconditions)) {
+            this.evalConditions(def.preconditions)) {
           this.acceptQuest(id);
         }
       }

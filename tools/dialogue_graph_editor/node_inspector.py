@@ -16,12 +16,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QEventLoop, QEvent
 from PySide6.QtGui import QFontMetrics
 
+from tools.editor.shared.condition_expr_tree import ConditionExprTreeRootWidget
 from tools.editor.shared.action_editor import (
     _hide_combo_popups_under,
     _dismiss_active_popup_stack,
     _hide_active_application_popups,
     _purge_qcombobox_private_containers,
     _protected_combobox_popup_widget_ids,
+    FilterableTypeCombo,
 )
 
 from .editor_asset_catalog import load_rule_id_name_pairs
@@ -1053,6 +1055,24 @@ class NodeInspector(QWidget):
             o_fl.addRow("关联规矩 ruleHintId", rh_cb)
             o_fl.addRow("灰显时点击提示 disabledClickHint", hint_plain)
 
+            req_g = QGroupBox(
+                "可选：requireCondition（ConditionExpr；与 requireFlag 同时存在则均须满足）",
+            )
+            rg_l = QVBoxLayout(req_g)
+
+            def _pm_get() -> Any:
+                return self._project_model_getter() if self._project_model_getter else None
+
+            req_tree = ConditionExprTreeRootWidget(model_getter=_pm_get)
+            rc0 = od.get("requireCondition")
+            if isinstance(rc0, dict):
+                req_tree.set_expr(rc0)
+            else:
+                req_tree.set_expr(None)
+            req_tree.changed.connect(self._emit_changed)
+            rg_l.addWidget(req_tree)
+            o_fl.addRow(req_g)
+
             def update_summary() -> None:
                 oid = id_e.text().strip() or "(未填 id)"
                 tx = text_e.toPlainText().strip().replace("\n", " ")
@@ -1135,6 +1155,7 @@ class NodeInspector(QWidget):
                     "text_e": text_e,
                     "nx": nx,
                     "rf_edit": rf_edit,
+                    "req_tree": req_tree,
                     "cost_sp": cost_sp,
                     "rh_cb": rh_cb,
                     "hint_plain": hint_plain,
@@ -1178,7 +1199,8 @@ class NodeInspector(QWidget):
 
         self._body_layout.addWidget(
             QLabel(
-                "选项：requireFlag 用登记表选择器；ruleHintId 为规矩展示；disabledClickHint 为灰显点击时的自定义全文提示。"
+                "选项：requireFlag 登记表；requireCondition 为 ConditionExpr；"
+                "ruleHintId 规矩样式；disabledClickHint 灰显点击全文提示。"
             )
         )
         self._body_layout.addWidget(rows_wrap)
@@ -1198,6 +1220,9 @@ class NodeInspector(QWidget):
                 rf_s = r["rf_edit"].text().strip()
                 if rf_s:
                     out_opt["requireFlag"] = rf_s
+                rcx = r["req_tree"].get_expr()
+                if rcx is not None:
+                    out_opt["requireCondition"] = rcx
                 if r["cost_sp"].value() >= 0:
                     out_opt["costCoins"] = r["cost_sp"].value()
                 rh_val = r["rh_cb"].committed_type()
@@ -1243,7 +1268,13 @@ class NodeInspector(QWidget):
         rowd.addWidget(pickd)
         fl.addRow("defaultNext", rowd)
         self._body_layout.addLayout(fl)
-        self._body_layout.addWidget(QLabel("分支：自上而下命中第一条；每条含多个条件（AND）"))
+        self._body_layout.addWidget(
+            QLabel(
+                "分支：自上而下命中第一条。"
+                "每条可选用「多条条件 AND」或「单条 ConditionExpr（JSON，与运行时 evaluateConditionExpr 一致）」；"
+                "后者保存时写入 condition字段并优先于 conditions。",
+            ),
+        )
 
         cases_wrap = QWidget()
         cases_outer = QVBoxLayout(cases_wrap)
@@ -1330,6 +1361,25 @@ class NodeInspector(QWidget):
             hr.addWidget(pk)
             cv.addLayout(hr)
 
+            case_mode = QComboBox()
+            case_mode.addItem("多条条件（AND）", "and")
+            case_mode.addItem("ConditionExpr（JSON）", "expr")
+            cm_row = QHBoxLayout()
+            cm_row.addWidget(QLabel("本分支条件"))
+            cm_row.addWidget(case_mode, 1)
+            cv.addLayout(cm_row)
+
+            expr_edit = QPlainTextEdit()
+            expr_edit.setPlaceholderText(
+                '{"all":[...]} / {"scenario":"...","phase":"...","status":"done"} 等',
+            )
+            expr_edit.setMinimumHeight(120)
+            expr_edit.textChanged.connect(self._emit_changed)
+            cv.addWidget(expr_edit)
+
+            btn_and_to_json = QPushButton("将当前 AND 条件导出为 JSON 并切换到 ConditionExpr")
+            cv.addWidget(btn_and_to_json)
+
             cond_rows_layout = QVBoxLayout()
             cond_rows_layout.setSpacing(4)
             cond_rows_wrap = QWidget()
@@ -1406,6 +1456,7 @@ class NodeInspector(QWidget):
                 mode = QComboBox()
                 mode.addItem("标志 flag", "flag")
                 mode.addItem("任务 quest", "quest")
+                mode.addItem("scenario", "scenario")
                 op_cb = QComboBox()
                 for o in ("==", "!=", ">", "<", ">=", "<="):
                     op_cb.addItem(o, o)
@@ -1472,9 +1523,72 @@ class NodeInspector(QWidget):
                 qh.addWidget(qid_e, 1)
                 qh.addWidget(QLabel("状态"))
                 qh.addWidget(st_cb)
+
+                scenario_w = QWidget()
+                sc_form = QFormLayout(scenario_w)
+                sc_form.setContentsMargins(0, 0, 0, 0)
+                scen_entries: list[tuple[str, str]] = []
+                if pm_switch is not None:
+                    scen_entries = [(s, s) for s in pm_switch.scenario_ids_ordered()]
+                if not scen_entries:
+                    scen_entries = [("(无 scenarios.json 数据)", "")]
+                scen_id_combo = FilterableTypeCombo(scen_entries, body)
+                phase_combo = QComboBox()
+                phase_combo.setEditable(True)
+                scen_status = QComboBox()
+                scen_status.setEditable(True)
+                for s in ("pending", "active", "done", "locked"):
+                    scen_status.addItem(s)
+                scen_outcome = QLineEdit()
+                scen_outcome.setPlaceholderText("可选，与 scenario phase 的 outcome 比较")
+
+                def resolved_scenario_id() -> str:
+                    """FilterableTypeCombo 在点选/输入过程中 lineEdit 与 committed_type 可能短暂不同步。"""
+                    cmt = scen_id_combo.committed_type().strip()
+                    if cmt:
+                        return cmt
+                    le = scen_id_combo.lineEdit()
+                    return le.text().strip() if le is not None else ""
+
+                def refill_scen_phases() -> None:
+                    sid = resolved_scenario_id()
+                    phs = (
+                        pm_switch.phases_for_scenario(sid)
+                        if pm_switch and sid
+                        else []
+                    )
+                    phase_combo.blockSignals(True)
+                    phase_combo.clear()
+                    for p in phs:
+                        phase_combo.addItem(p)
+                    phase_combo.blockSignals(False)
+
+                scen_id_combo.typeCommitted.connect(
+                    lambda _t: (refill_scen_phases(), update_csum(), self._emit_changed()),
+                )
+                _sce_le = scen_id_combo.lineEdit()
+                if _sce_le is not None:
+                    _sce_le.editingFinished.connect(
+                        lambda: (refill_scen_phases(), update_csum(), self._emit_changed()),
+                    )
+                for wsig in (phase_combo, scen_status, scen_outcome):
+                    if isinstance(wsig, QComboBox):
+                        wsig.currentTextChanged.connect(
+                            lambda _t: (update_csum(), self._emit_changed()),
+                        )
+                    else:
+                        wsig.textChanged.connect(
+                            lambda _t: (update_csum(), self._emit_changed()),
+                        )
+                sc_form.addRow("scenarioId", scen_id_combo)
+                sc_form.addRow("phase", phase_combo)
+                sc_form.addRow("status", scen_status)
+                sc_form.addRow("outcome", scen_outcome)
+
                 h.addWidget(mode)
                 h.addWidget(flag_w, 1)
                 h.addWidget(quest_w, 1)
+                h.addWidget(scenario_w, 1)
 
                 def _apply_val_kind(which: str) -> None:
                     idx = {"bool": 0, "int": 1, "float": 2, "str": 3}.get(which, 0)
@@ -1506,8 +1620,19 @@ class NodeInspector(QWidget):
                     m = mode.currentData()
                     flag_w.setVisible(m == "flag")
                     quest_w.setVisible(m == "quest")
+                    scenario_w.setVisible(m == "scenario")
+                    if m == "scenario":
+                        refill_scen_phases()
 
                 def update_csum() -> None:
+                    if mode.currentData() == "scenario":
+                        sid_disp = resolved_scenario_id() or "…"
+                        csum.setText(
+                            f"scen {sid_disp} · "
+                            f"{phase_combo.currentText().strip() or '…'} · "
+                            f"{scen_status.currentText().strip() or '…'}",
+                        )
+                        return
                     if mode.currentData() == "quest":
                         csum.setText(
                             f"quest {qid_e.text().strip() or '…'} · {st_cb.currentText()}"
@@ -1527,7 +1652,28 @@ class NodeInspector(QWidget):
                     csum.setText(f"flag {flg} {op} {vv!s}")
 
                 raw_c = cd if isinstance(cd, dict) else {"flag": "", "op": "=="}
-                if isinstance(raw_c.get("quest"), str):
+                if isinstance(raw_c.get("scenario"), str):
+                    mode.setCurrentIndex(2)
+                    sid0 = str(raw_c.get("scenario", "")).strip()
+                    if sid0:
+                        scen_id_combo.set_committed_type(sid0)
+                    refill_scen_phases()
+                    ph0 = str(raw_c.get("phase", "")).strip()
+                    if ph0:
+                        ix = phase_combo.findText(ph0)
+                        if ix >= 0:
+                            phase_combo.setCurrentIndex(ix)
+                        else:
+                            phase_combo.setEditText(ph0)
+                    st0 = str(raw_c.get("status", "pending")).strip() or "pending"
+                    ix2 = scen_status.findText(st0)
+                    if ix2 >= 0:
+                        scen_status.setCurrentIndex(ix2)
+                    else:
+                        scen_status.setEditText(st0)
+                    o0 = raw_c.get("outcome")
+                    scen_outcome.setText("" if o0 is None else str(o0))
+                elif isinstance(raw_c.get("quest"), str):
                     mode.setCurrentIndex(1)
                     qid_e.setText(str(raw_c.get("quest", "")))
                     qs = str(raw_c.get("questStatus") or raw_c.get("status") or "Active")
@@ -1636,6 +1782,16 @@ class NodeInspector(QWidget):
                 c_del.clicked.connect(do_c_del)
 
                 def serialize() -> dict[str, Any]:
+                    if mode.currentData() == "scenario":
+                        out_s: dict[str, Any] = {
+                            "scenario": resolved_scenario_id(),
+                            "phase": phase_combo.currentText().strip(),
+                            "status": scen_status.currentText().strip(),
+                        }
+                        oo = scen_outcome.text().strip()
+                        if oo:
+                            out_s["outcome"] = oo
+                        return out_s
                     if mode.currentData() == "quest":
                         return {
                             "quest": qid_e.text().strip(),
@@ -1675,7 +1831,10 @@ class NodeInspector(QWidget):
 
             def update_case_summary() -> None:
                 nn = nx.text().strip() or "（未填 next）"
-                summary.setText(f"{nn}  ·  {len(cond_rows)} 条条件")
+                if case_mode.currentData() == "expr":
+                    summary.setText(f"{nn}  ·  ConditionExpr")
+                else:
+                    summary.setText(f"{nn}  ·  {len(cond_rows)} 条条件")
 
             def insert_cond_at(pos: int, data_d: dict[str, Any] | None = None) -> None:
                 nb = make_cond_block(
@@ -1691,12 +1850,17 @@ class NodeInspector(QWidget):
                 update_case_summary()
                 self._emit_changed()
 
-            conds_init = (case or {}).get("conditions") if isinstance(case, dict) else []
+            cond_expr_init = (
+                (case or {}).get("condition") if isinstance(case, dict) else None
+            )
+            conds_init = (
+                (case or {}).get("conditions") if isinstance(case, dict) else None
+            )
             if isinstance(conds_init, list) and conds_init:
                 for c in conds_init:
                     if isinstance(c, dict):
                         insert_cond_at(len(cond_rows), c)
-            else:
+            elif not (isinstance(cond_expr_init, dict) and cond_expr_init):
                 insert_cond_at(
                     len(cond_rows),
                     {"flag": "some_flag", "op": "==", "value": True},
@@ -1706,9 +1870,49 @@ class NodeInspector(QWidget):
 
             b_cond_end = QPushButton("在末尾添加条件")
             b_cond_end.clicked.connect(lambda: insert_cond_at(len(cond_rows)))
-            cv.addWidget(QLabel("条件（AND，全部满足）"))
-            cv.addWidget(cond_rows_wrap)
-            cv.addWidget(b_cond_end)
+            and_block = QWidget()
+            and_lay = QVBoxLayout(and_block)
+            and_lay.setContentsMargins(0, 0, 0, 0)
+            and_lay.addWidget(QLabel("条件（AND，全部满足）"))
+            and_lay.addWidget(cond_rows_wrap)
+            and_lay.addWidget(b_cond_end)
+            cv.addWidget(and_block)
+
+            def _sync_case_mode_ui() -> None:
+                ex = case_mode.currentData() == "expr"
+                and_block.setVisible(not ex)
+                btn_and_to_json.setVisible(not ex)
+
+            def on_case_mode_changed(_i: int = 0) -> None:
+                _sync_case_mode_ui()
+                update_case_summary()
+                self._emit_changed()
+
+            case_mode.currentIndexChanged.connect(on_case_mode_changed)
+
+            def on_export_and() -> None:
+                conds_part = [r["serialize"]() for r in cond_rows]
+                wrap: dict[str, Any] = {"all": conds_part} if conds_part else {}
+                expr_edit.setPlainText(
+                    json.dumps(wrap, ensure_ascii=False, indent=2),
+                )
+                case_mode.setCurrentIndex(1)
+                _sync_case_mode_ui()
+                update_case_summary()
+                self._emit_changed()
+
+            btn_and_to_json.clicked.connect(on_export_and)
+
+            if isinstance(cond_expr_init, dict) and cond_expr_init:
+                case_mode.setCurrentIndex(1)
+                try:
+                    expr_edit.setPlainText(
+                        json.dumps(cond_expr_init, ensure_ascii=False, indent=2),
+                    )
+                except (TypeError, ValueError):
+                    expr_edit.setPlainText("{}")
+
+            _sync_case_mode_ui()
 
             def flip_case() -> None:
                 case_rec["collapsed"] = not case_rec["collapsed"]
@@ -1791,6 +1995,8 @@ class NodeInspector(QWidget):
                     "content": content,
                     "next_edit": nx,
                     "cond_rows": cond_rows,
+                    "case_mode": case_mode,
+                    "expr_edit": expr_edit,
                     "btn_up": btn_up,
                     "btn_down": btn_down,
                 }
@@ -1841,8 +2047,27 @@ class NodeInspector(QWidget):
         def getter():
             cs: list[dict[str, Any]] = []
             for cb in switch_case_rows:
-                conds = [r["serialize"]() for r in cb["cond_rows"]]
-                cs.append({"conditions": conds, "next": cb["next_edit"].text().strip()})
+                next_s = cb["next_edit"].text().strip()
+                cm = cb["case_mode"]
+                if cm.currentData() == "expr":
+                    raw = cb["expr_edit"].toPlainText().strip()
+                    if raw:
+                        try:
+                            obj = json.loads(raw)
+                        except json.JSONDecodeError as e:
+                            QMessageBox.warning(
+                                self,
+                                "switch",
+                                f"分支 next={next_s or '?'} 的 ConditionExpr非合法 JSON：{e}",
+                            )
+                            obj = None
+                        if isinstance(obj, dict) and obj:
+                            cs.append({"next": next_s, "condition": obj})
+                            continue
+                    cs.append({"next": next_s, "conditions": []})
+                else:
+                    conds = [r["serialize"]() for r in cb["cond_rows"]]
+                    cs.append({"next": next_s, "conditions": conds})
             return {"type": "switch", "cases": cs, "defaultNext": dn.text().strip()}
 
         self._getter = getter

@@ -1,3 +1,4 @@
+// 废弃稿：叙事以 graphs/码头看板官差.json 为准，运行时勿加载本文件。
 EXTERNAL getFlag(key)
 EXTERNAL getCoins()
 

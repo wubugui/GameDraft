@@ -7,6 +7,7 @@ import type { RulesManager } from './RulesManager';
 import type { QuestManager } from './QuestManager';
 import type { InventoryManager } from './InventoryManager';
 import type { StringsProvider } from '../core/StringsProvider';
+import type { ScenarioStateManager } from '../core/ScenarioStateManager';
 import type {
   ActionDef,
   DialogueChoice,
@@ -18,8 +19,35 @@ import type {
   IGameSystem,
   GameContext,
 } from '../data/types';
-import { evaluateAllGraphConditions } from './graphDialogue/evaluateGraphCondition';
-import { evaluateGraphCondition } from './graphDialogue/evaluateGraphCondition';
+import {
+  evaluateConditionExpr,
+  evaluateConditionExprWithTrace,
+  evaluatePreconditionsWithTrace,
+  formatConditionTrace,
+  type ConditionEvalContext,
+  type ConditionTrace,
+} from './graphDialogue/evaluateGraphCondition';
+
+/** 最近一次图 preconditions 解算（调试用） */
+export interface NarrativePreconditionDebug {
+  graphId: string;
+  satisfied: boolean;
+  traceText: string;
+}
+
+/** 最近一次 switch 节点分支尝试顺序与条件树（调试用） */
+export interface NarrativeSwitchDebug {
+  graphSourceId: string;
+  nodeId: string;
+  defaultNext: string;
+  chosenNext: string;
+  casesTried: Array<{
+    index: number;
+    next: string;
+    matched: boolean;
+    traceText: string;
+  }>;
+}
 
 /**
  * 图对话运行时：语义上**严格串行**（上一拍结束再进下一拍）。使用 Promise/async 是因为加载资源、
@@ -37,6 +65,7 @@ export class GraphDialogueManager implements IGameSystem {
   private rulesManager: RulesManager;
   private questManager: QuestManager;
   private inventoryManager: InventoryManager;
+  private scenarioState: ScenarioStateManager;
   private strings: StringsProvider | null = null;
 
   private graph: DialogueGraphFile | null = null;
@@ -65,7 +94,12 @@ export class GraphDialogueManager implements IGameSystem {
     entry?: string;
     npcName: string;
     npcId?: string;
+    /** true 时加载图后优先使用 `meta.title` 作为对话显示名（Inspect 看板等） */
+    preferGraphMetaTitle?: boolean;
   }> = [];
+
+  private lastPreconditionDebug: NarrativePreconditionDebug | null = null;
+  private lastSwitchDebug: NarrativeSwitchDebug | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -76,6 +110,7 @@ export class GraphDialogueManager implements IGameSystem {
     rulesManager: RulesManager,
     questManager: QuestManager,
     inventoryManager: InventoryManager,
+    scenarioState: ScenarioStateManager,
   ) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
@@ -85,6 +120,60 @@ export class GraphDialogueManager implements IGameSystem {
     this.rulesManager = rulesManager;
     this.questManager = questManager;
     this.inventoryManager = inventoryManager;
+    this.scenarioState = scenarioState;
+  }
+
+  /** F2 叙事调试：最近一次 preconditions / switch 的解算路径与当前图节点 */
+  getNarrativeEvalDebug(): {
+    active: boolean;
+    graphSourceId: string;
+    currentNodeId: string;
+    lastPrecondition: NarrativePreconditionDebug | null;
+    lastSwitch: NarrativeSwitchDebug | null;
+    summaryText: string;
+  } {
+    const parts: string[] = [];
+    parts.push(`对话进行中: ${this.active ? '是' : '否'}`);
+    parts.push(`图(graphSourceId): ${this.graphSourceId || '—'}`);
+    parts.push(`当前节点: ${this.currentNodeId || '—'}`);
+    parts.push('');
+    if (this.lastPreconditionDebug) {
+      parts.push('【最近·图 preconditions】');
+      parts.push(`图: ${this.lastPreconditionDebug.graphId}`);
+      parts.push(`满足: ${this.lastPreconditionDebug.satisfied}`);
+      parts.push(this.lastPreconditionDebug.traceText);
+      parts.push('');
+    } else {
+      parts.push('【最近·图 preconditions】（尚无记录）');
+      parts.push('');
+    }
+    if (this.lastSwitchDebug) {
+      parts.push('【最近·switch】');
+      parts.push(`节点: ${this.lastSwitchDebug.nodeId}`);
+      parts.push(`选中 next: ${this.lastSwitchDebug.chosenNext}（defaultNext=${this.lastSwitchDebug.defaultNext}）`);
+      for (const c of this.lastSwitchDebug.casesTried) {
+        parts.push(`— case[${c.index}] -> ${c.next}命中=${c.matched}`);
+        parts.push(c.traceText.split('\n').map((ln) => `    ${ln}`).join('\n'));
+      }
+    } else {
+      parts.push('【最近·switch】（尚无记录）');
+    }
+    return {
+      active: this.active,
+      graphSourceId: this.graphSourceId,
+      currentNodeId: this.currentNodeId,
+      lastPrecondition: this.lastPreconditionDebug,
+      lastSwitch: this.lastSwitchDebug,
+      summaryText: parts.join('\n'),
+    };
+  }
+
+  private conditionCtx(): ConditionEvalContext {
+    return {
+      flagStore: this.flagStore,
+      questManager: this.questManager,
+      scenarioState: this.scenarioState,
+    };
   }
 
   private runExclusive(fn: () => Promise<void>): Promise<void> {
@@ -138,6 +227,8 @@ export class GraphDialogueManager implements IGameSystem {
     this.npcName = '';
     this.npcId = '';
     this.choicePhase = null;
+    this.lastPreconditionDebug = null;
+    this.lastSwitchDebug = null;
     this.awaitingLineDismiss = false;
     this.lineBeatIndex = 0;
     this.deferredGraphQueue = [];
@@ -159,6 +250,7 @@ export class GraphDialogueManager implements IGameSystem {
     entry?: string;
     npcName: string;
     npcId?: string;
+    preferGraphMetaTitle?: boolean;
   }): Promise<void> {
     const gid = params.graphId?.trim();
     if (!gid) return Promise.resolve();
@@ -169,6 +261,7 @@ export class GraphDialogueManager implements IGameSystem {
         entry: params.entry?.trim() || undefined,
         npcName: params.npcName,
         npcId: params.npcId?.trim() || undefined,
+        preferGraphMetaTitle: params.preferGraphMetaTitle === true,
       });
       return Promise.resolve();
     }
@@ -198,14 +291,28 @@ export class GraphDialogueManager implements IGameSystem {
         console.warn(`GraphDialogueManager: 图 JSON id "${rid}" 与路径 graphId "${gid}" 不一致，以路径为准继续`);
       }
 
-      if (!evaluateAllGraphConditions(raw.preconditions, this.flagStore, this.questManager)) {
+      this.lastSwitchDebug = null;
+
+      const preCtx = this.conditionCtx();
+      const preTrace = evaluatePreconditionsWithTrace(raw.preconditions, preCtx);
+      this.lastPreconditionDebug = {
+        graphId: gid,
+        satisfied: preTrace.result,
+        traceText: formatConditionTrace(preTrace.trace),
+      };
+      if (!preTrace.result) {
         console.warn(`GraphDialogueManager: 图 ${gid} preconditions 不满足`);
         return;
       }
 
       this.graph = raw;
       this.graphSourceId = gid;
-      this.npcName = params.npcName;
+      const metaTitle =
+        raw.meta && typeof raw.meta === 'object' && typeof raw.meta.title === 'string'
+          ? raw.meta.title.trim()
+          : '';
+      const useMeta = params.preferGraphMetaTitle === true && metaTitle.length > 0;
+      this.npcName = useMeta ? metaTitle : params.npcName;
       this.npcId = params.npcId?.trim() ?? '';
       this.currentNodeId = (params.entry?.trim() && raw.nodes[params.entry.trim()])
         ? params.entry.trim()
@@ -299,6 +406,8 @@ export class GraphDialogueManager implements IGameSystem {
     this.npcName = '';
     this.npcId = '';
     this.choicePhase = null;
+    this.lastPreconditionDebug = null;
+    this.lastSwitchDebug = null;
     this.awaitingLineDismiss = false;
     this.lineBeatIndex = 0;
     this.opDrainGeneration++;
@@ -421,11 +530,17 @@ export class GraphDialogueManager implements IGameSystem {
 
   private buildChoicesForNode(node: Extract<DialogueGraphNodeDef, { type: 'choice' }>): DialogueChoice[] {
     const s = this.strings;
+    const ctx = this.conditionCtx();
     return node.options.map((opt, i) => {
       const requireKey = opt.requireFlag?.trim() || undefined;
+      let reqExprOk = true;
+      if (opt.requireCondition !== undefined && opt.requireCondition !== null) {
+        reqExprOk = evaluateConditionExpr(opt.requireCondition, ctx);
+      }
       const reqOk =
-        requireKey === undefined ||
-        this.flagStore.checkConditions([{ flag: requireKey, op: '!=', value: false }]);
+        reqExprOk &&
+        (requireKey === undefined ||
+          this.flagStore.checkConditions([{ flag: requireKey, op: '!=', value: false }]));
       const costAmount = opt.costCoins;
       const coins = this.inventoryCoinsForChoice();
       const costOk = costAmount === undefined || coins >= costAmount;
@@ -433,7 +548,17 @@ export class GraphDialogueManager implements IGameSystem {
       const customHint = !enabled && opt.disabledClickHint?.trim() ? opt.disabledClickHint.trim() : undefined;
       const autoHint = enabled
         ? undefined
-        : this.buildChoiceDisableHint({ requireKey, reqOk, costAmount, costOk, ruleHintId: opt.ruleHintId }, s);
+        : this.buildChoiceDisableHint(
+            {
+              requireKey,
+              reqOk,
+              reqExprOk,
+              costAmount,
+              costOk,
+              ruleHintId: opt.ruleHintId,
+            },
+            s,
+          );
       const disableHint = customHint ?? autoHint;
 
       return {
@@ -451,6 +576,7 @@ export class GraphDialogueManager implements IGameSystem {
     args: {
       requireKey: string | undefined;
       reqOk: boolean;
+      reqExprOk: boolean;
       costAmount: number | undefined;
       costOk: boolean;
       ruleHintId: string | undefined;
@@ -458,6 +584,9 @@ export class GraphDialogueManager implements IGameSystem {
     s: StringsProvider | null,
   ): string | undefined {
     if (!s) return undefined;
+    if (!args.reqExprOk) {
+      return s.get('dialogue', 'choiceFlagLocked');
+    }
     if (!args.reqOk && args.requireKey) {
       if (args.ruleHintId) {
         const def = this.rulesManager.getRuleDef(args.ruleHintId);
@@ -473,12 +602,46 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   private evalSwitch(node: Extract<DialogueGraphNodeDef, { type: 'switch' }>): string {
-    for (const c of node.cases) {
-      if (c.conditions.every(cond => evaluateGraphCondition(cond, this.flagStore, this.questManager))) {
-        return c.next;
+    const ctx = this.conditionCtx();
+    const casesTried: NarrativeSwitchDebug['casesTried'] = [];
+    let chosen = node.defaultNext;
+    for (let i = 0; i < node.cases.length; i++) {
+      const c = node.cases[i]!;
+      let trace: ConditionTrace;
+      let ok: boolean;
+      /** JSON 中 `condition: null` 须视为未写，否则 null !== undefined 会误判并忽略 conditions */
+      if (c.condition != null) {
+        const r = evaluateConditionExprWithTrace(c.condition, ctx);
+        ok = r.result;
+        trace = r.trace;
+      } else {
+        const conds = c.conditions ?? [];
+        const r = evaluateConditionExprWithTrace(
+          conds.length <= 1 ? (conds[0] ?? { all: [] }) : { all: conds },
+          ctx,
+        );
+        ok = r.result;
+        trace = r.trace;
+      }
+      casesTried.push({
+        index: i,
+        next: c.next,
+        matched: ok,
+        traceText: formatConditionTrace(trace),
+      });
+      if (ok) {
+        chosen = c.next;
+        break;
       }
     }
-    return node.defaultNext;
+    this.lastSwitchDebug = {
+      graphSourceId: this.graphSourceId,
+      nodeId: this.currentNodeId,
+      defaultNext: node.defaultNext,
+      chosenNext: chosen,
+      casesTried,
+    };
+    return chosen;
   }
 
   private lineBeatsFor(

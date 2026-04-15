@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "id": "码头看板",
+  "entry": "n_board",
+  "meta": {
+    "title": "码头看板",
+    "scenarioId": "码头水鬼"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_board": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "水猴子告示X",
+            "image": "/assets/images/illustrations/告示-抓水猴子X.png",
+            "xPercent": 50.0,
+            "yPercent": 50.0,
+            "widthPercent": 40.0
+          }
+        },
+        {
+          "type": "waitClickContinue",
+          "params": {
+            "text": ""
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "你",
+                "text": "女......"
+              },
+              {
+                "speaker": "你",
+                "text": "子......"
+              }
+            ]
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "你",
+                "text": "哪家的婆娘能有这么戳，这啥鸡毛丑八怪！"
+              }
+            ]
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "你",
+                "text": "三......五......"
+              },
+              {
+                "speaker": "你",
+                "text": "钱？！不得行，等老子去问哈。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "水猴子告示X"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "看板初读",
+            "status": "done"
+          }
+        }
+      ],
+      "next": "e_end"
+    },
+    "e_end": {
+      "type": "end"
+    }
+  }
+}

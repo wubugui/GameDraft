@@ -6,7 +6,14 @@ import type { DialogueManager } from '../systems/DialogueManager';
 import type { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import type { Hotspot } from '../entities/Hotspot';
 import type { Npc } from '../entities/Npc';
-import type { HotspotDef, InspectData, PickupData, TransitionData, EncounterTriggerData } from '../data/types';
+import type {
+  HotspotDef,
+  InspectData,
+  InspectDataGraphMode,
+  PickupData,
+  TransitionData,
+  EncounterTriggerData,
+} from '../data/types';
 import { GameState } from '../data/types';
 
 export interface InteractionDeps {
@@ -132,9 +139,16 @@ export class InteractionCoordinator {
   }
 
   private async handleInspect(hotspot: Hotspot, data: InspectData): Promise<void> {
+    const graphId = 'graphId' in data && typeof data.graphId === 'string' ? data.graphId.trim() : '';
+    if (graphId) {
+      await this.handleInspectGraph(hotspot, data as InspectDataGraphMode, graphId);
+      return;
+    }
+
     const { stateController, inspectBox, eventBus, actionExecutor } = this.deps;
+    const text = 'text' in data && typeof data.text === 'string' ? data.text : '';
     stateController.setState(GameState.UIOverlay);
-    await inspectBox.show(data.text);
+    await inspectBox.show(text);
     eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
     if (data.actions) {
       try {
@@ -144,6 +158,62 @@ export class InteractionCoordinator {
       }
     }
     if (stateController.currentState === GameState.UIOverlay) {
+      stateController.setState(GameState.Exploring);
+    }
+  }
+
+  /** Inspect 热区配置 `graphId` 时走图对话（与 NPC 共用 GraphDialogueManager，无镜头拉近） */
+  private async handleInspectGraph(
+    hotspot: Hotspot,
+    data: InspectDataGraphMode,
+    graphId: string,
+  ): Promise<void> {
+    const { stateController, graphDialogueManager, eventBus, actionExecutor } = this.deps;
+    if (stateController.currentState !== GameState.Exploring) return;
+    if (graphDialogueManager.isActive) return;
+
+    let cleanupDone = false;
+    const onDialogueEnd = () => {
+      if (cleanupDone) return;
+      cleanupDone = true;
+      eventBus.off('dialogue:end', onDialogueEnd);
+      eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
+      void (async () => {
+        if (data.actions?.length) {
+          try {
+            await actionExecutor.executeBatchSequential(data.actions);
+          } catch (e) {
+            console.warn('InteractionCoordinator: inspect graph actions failed', e);
+          }
+        }
+        if (stateController.currentState === GameState.Dialogue) {
+          stateController.setState(GameState.Exploring);
+        }
+      })();
+    };
+
+    eventBus.on('dialogue:end', onDialogueEnd);
+    stateController.setState(GameState.Dialogue);
+    try {
+      await graphDialogueManager.startDialogueGraph({
+        graphId,
+        entry: data.entry?.trim() || undefined,
+        npcName: '旁白',
+        preferGraphMetaTitle: true,
+      });
+      if (!graphDialogueManager.isActive) {
+        if (!cleanupDone) {
+          cleanupDone = true;
+          eventBus.off('dialogue:end', onDialogueEnd);
+        }
+        stateController.setState(GameState.Exploring);
+      }
+    } catch (e) {
+      if (!cleanupDone) {
+        cleanupDone = true;
+        eventBus.off('dialogue:end', onDialogueEnd);
+      }
+      console.warn('InteractionCoordinator: inspect graph failed', e);
       stateController.setState(GameState.Exploring);
     }
   }

@@ -2,14 +2,17 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { RuleOfferRegistry } from '../core/RuleOfferRegistry';
-import type { ZoneDef, ZoneRuleSlot, IGameSystem, GameContext, IZoneDataProvider } from '../data/types';
+import type { Condition, ConditionExpr, ZoneDef, ZoneRuleSlot, IGameSystem, GameContext, IZoneDataProvider } from '../data/types';
 import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
+import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 
 export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private actionExecutor: ActionExecutor;
   private ruleOfferRegistry: RuleOfferRegistry;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   private zones: ZoneDef[] = [];
   private activeZoneIds: Set<string> = new Set();
@@ -33,6 +36,17 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   }
 
   init(_ctx: GameContext): void {}
+
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
+  }
+
+  private evalZoneConditions(conds: ConditionExpr[] | undefined): boolean {
+    if (!conds?.length) return true;
+    const ctx = this.conditionCtxFactory?.();
+    if (ctx) return evaluateConditionExprList(conds, ctx);
+    return this.flagStore.checkConditions(conds as Condition[]);
+  }
 
   setPlayerPositionGetter(getter: () => { x: number; y: number }): void {
     this.playerPosGetter = getter;
@@ -77,7 +91,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
       if (zone.zoneKind === 'depth_floor') {
         continue;
       }
-      if (zone.conditions && zone.conditions.length > 0 && !this.flagStore.checkConditions(zone.conditions)) {
+      if (zone.conditions && zone.conditions.length > 0 && !this.evalZoneConditions(zone.conditions)) {
         if (this.activeZoneIds.has(zone.id)) this.exitZone(zone);
         continue;
       }
@@ -130,7 +144,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
         continue;
       }
       if (!this.activeZoneIds.has(zone.id)) continue;
-      if (zone.conditions && zone.conditions.length > 0 && !this.flagStore.checkConditions(zone.conditions)) {
+      if (zone.conditions && zone.conditions.length > 0 && !this.evalZoneConditions(zone.conditions)) {
         continue;
       }
       const inside =

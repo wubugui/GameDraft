@@ -1,7 +1,9 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { ItemDef, IGameSystem, GameContext, IInventoryDataProvider } from '../data/types';
+import type { Condition, ConditionExpr, ItemDef, IGameSystem, GameContext, IInventoryDataProvider } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
+import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 
 const MAX_SLOTS = 12;
 
@@ -15,6 +17,7 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   private loaded: boolean = false;
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
@@ -25,6 +28,11 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
     this.strings = ctx.strings;
     this.assetManager = ctx.assetManager;
   }
+
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
+  }
+
   update(_dt: number): void {}
 
   async loadDefs(): Promise<void> {
@@ -124,7 +132,11 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
 
     if (def.dynamicDescriptions) {
       for (const dd of def.dynamicDescriptions) {
-        if (this.flagStore.checkConditions(dd.conditions)) {
+        const ctx = this.conditionCtxFactory?.();
+        const ok = ctx
+          ? evaluateConditionExprList(dd.conditions, ctx)
+          : this.flagStore.checkConditions(dd.conditions as Condition[]);
+        if (ok) {
           return dd.text;
         }
       }

@@ -2,7 +2,9 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
-import type { EncounterDef, IGameSystem, GameContext, ResolvedOption } from '../data/types';
+import type { Condition, ConditionExpr, EncounterDef, IGameSystem, GameContext, ResolvedOption } from '../data/types';
+import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 
 type RuleNameResolveFn = (ruleId: string) => { name: string; incompleteName?: string } | undefined;
 
@@ -10,6 +12,7 @@ export class EncounterManager implements IGameSystem {
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private actionExecutor: ActionExecutor;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   private encounterDefs: Map<string, EncounterDef> = new Map();
   private currentEncounter: EncounterDef | null = null;
@@ -32,6 +35,17 @@ export class EncounterManager implements IGameSystem {
     this.assetManager = ctx.assetManager;
   }
   update(_dt: number): void {}
+
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
+  }
+
+  private evalConditions(conds: ConditionExpr[]): boolean {
+    if (!conds.length) return true;
+    const ctx = this.conditionCtxFactory?.();
+    if (ctx) return evaluateConditionExprList(conds, ctx);
+    return this.flagStore.checkConditions(conds as Condition[]);
+  }
 
   setRuleNameResolver(fn: RuleNameResolveFn | null): void {
     this.ruleNameResolver = fn;
@@ -98,7 +112,7 @@ export class EncounterManager implements IGameSystem {
         }
       }
 
-      if (opt.conditions.length > 0 && !this.flagStore.checkConditions(opt.conditions)) {
+      if (opt.conditions.length > 0 && !this.evalConditions(opt.conditions)) {
         continue;
       }
 

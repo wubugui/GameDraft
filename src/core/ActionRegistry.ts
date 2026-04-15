@@ -24,6 +24,8 @@ import type { ArchiveManager } from '../systems/ArchiveManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
+import type { ScenarioStateManager } from './ScenarioStateManager';
+import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { ActionDef, DialogueLine, ICutsceneActor, ZoneRuleSlot } from '../data/types';
 import { GameState } from '../data/types';
 
@@ -95,6 +97,8 @@ export interface ActionRegistryDeps {
   playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
   /** 显示「点击继续」类提示并阻塞直至任意键或鼠标 */
   waitClickContinue: (hintOverride?: string) => Promise<void>;
+  scenarioStateManager: ScenarioStateManager;
+  documentRevealManager: DocumentRevealManager;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -115,6 +119,21 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     d.ruleOfferRegistry.unregister(zctx.zoneId);
   }, []);
+
+  executor.register('setScenarioPhase', (p) => {
+    const scenarioId = String(p.scenarioId ?? '').trim();
+    const phase = String(p.phase ?? '').trim();
+    const status = String(p.status ?? '').trim();
+    if (!scenarioId || !phase || !status) return;
+    const outcome = p.outcome;
+    d.scenarioStateManager.setScenarioPhase(scenarioId, phase, {
+      status,
+      outcome:
+        outcome === undefined || outcome === null
+          ? undefined
+          : (outcome as string | number | boolean),
+    });
+  }, ['scenarioId', 'phase', 'status']);
 
   executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
   executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
@@ -592,5 +611,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
     if (ms > 0) await new Promise<void>(resolve => setTimeout(resolve, ms));
+  });
+
+  executor.registerDialogueSequential('revealDocument', async (p) => {
+    await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));
   });
 }

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QToolButton, QMessageBox, QDialog, QDialogButtonBox, QAbstractItemView,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
     QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
+    QRadioButton, QButtonGroup,
 )
 from PySide6.QtGui import (
     QPixmap, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
@@ -32,7 +33,7 @@ from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, Signal, QTimer, Q
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
-from ..shared.action_editor import ActionEditor
+from ..shared.action_editor import ActionEditor, FilterableTypeCombo
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 
@@ -2045,8 +2046,8 @@ class ScenePropertyPanel(QScrollArea):
     # ---- hotspot props ----------------------------------------------------
 
     def _build_hotspot_panel(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
+        root = QWidget()
+        lay = QVBoxLayout(root)
         form = QFormLayout()
         self._hs_id = QLineEdit(); form.addRow("id", self._hs_id)
         self._hs_type = QComboBox()
@@ -2153,14 +2154,57 @@ class ScenePropertyPanel(QScrollArea):
         lay.addWidget(QLabel("<b>Data</b>"))
         lay.addWidget(self._hs_data_stack)
 
-        # inspect data
+        # inspect data（纯文本 与 图对话 graphId 互斥）
         ip = QWidget()
         il = QVBoxLayout(ip)
-        self._hs_inspect_text = QTextEdit(); self._hs_inspect_text.setMaximumHeight(80)
-        il.addWidget(QLabel("text")); il.addWidget(self._hs_inspect_text)
-        self._hs_inspect_actions = ActionEditor("actions")
+        mode_row = QHBoxLayout()
+        self._hs_inspect_mode_group = QButtonGroup(self)
+        self._hs_inspect_mode_text = QRadioButton("纯文本 inspect")
+        self._hs_inspect_mode_graph = QRadioButton("图对话（graphId）")
+        self._hs_inspect_mode_text.setChecked(True)
+        self._hs_inspect_mode_group.addButton(self._hs_inspect_mode_text)
+        self._hs_inspect_mode_group.addButton(self._hs_inspect_mode_graph)
+        mode_row.addWidget(self._hs_inspect_mode_text)
+        mode_row.addWidget(self._hs_inspect_mode_graph)
+        mode_row.addStretch()
+        il.addLayout(mode_row)
+        self._hs_inspect_text = QTextEdit()
+        self._hs_inspect_text.setMaximumHeight(80)
+        il.addWidget(QLabel("text（仅纯文本模式）"))
+        il.addWidget(self._hs_inspect_text)
+        graph_row = QFormLayout()
+        gcombo = FilterableTypeCombo([], self)
+        gcombo.setMinimumWidth(160)
+        self._hs_inspect_graph_combo = gcombo
+        graph_row.addRow("graphId", gcombo)
+        self._hs_inspect_entry = QLineEdit()
+        self._hs_inspect_entry.setPlaceholderText("可选 entry节点 id")
+        graph_row.addRow("entry", self._hs_inspect_entry)
+        self._hs_inspect_graph_wrap = QWidget()
+        self._hs_inspect_graph_wrap.setLayout(graph_row)
+        il.addWidget(self._hs_inspect_graph_wrap)
+        self._hs_inspect_actions = ActionEditor("actions（可选；图模式通常留空）")
         il.addWidget(self._hs_inspect_actions)
         self._hs_data_stack.addWidget(ip)
+
+        def _sync_inspect_mode_ui() -> None:
+            graph_on = self._hs_inspect_mode_graph.isChecked()
+            self._hs_inspect_text.setEnabled(not graph_on)
+            self._hs_inspect_graph_wrap.setVisible(graph_on)
+
+        def _on_inspect_mode_clicked(_btn) -> None:
+            _sync_inspect_mode_ui()
+            self.changed.emit()
+
+        self._hs_inspect_mode_group.buttonClicked.connect(_on_inspect_mode_clicked)
+        for sig_widget in (self._hs_inspect_text, gcombo, self._hs_inspect_entry):
+            if isinstance(sig_widget, QTextEdit):
+                sig_widget.textChanged.connect(self.changed.emit)
+            elif isinstance(sig_widget, FilterableTypeCombo):
+                sig_widget.typeCommitted.connect(lambda _t: self.changed.emit())
+            else:
+                sig_widget.textChanged.connect(self.changed.emit)
+        _sync_inspect_mode_ui()
 
         # pickup data
         pp = QWidget(); pf = QFormLayout(pp)
@@ -2212,7 +2256,7 @@ class ScenePropertyPanel(QScrollArea):
 
         self._hs_type.currentTextChanged.connect(self._on_hs_type_changed)
         self._append_entity_delete_footer(lay)
-        return w
+        return root
 
     _TYPE_TO_DATA_IDX = {"inspect": 0, "pickup": 1, "transition": 2, "npc": 3, "encounter": 4}
 
@@ -2563,7 +2607,33 @@ class ScenePropertyPanel(QScrollArea):
         ht = hs.get("type", "inspect")
         self._on_hs_type_changed(ht)
         if ht == "inspect":
-            self._hs_inspect_text.setPlainText(data.get("text", ""))
+            gids = self._model.all_dialogue_graph_ids()
+            self._hs_inspect_graph_combo.set_entries([(g, g) for g in gids])
+            gid = str(data.get("graphId") or "").strip()
+            self._hs_inspect_graph_combo.blockSignals(True)
+            self._hs_inspect_mode_text.blockSignals(True)
+            self._hs_inspect_mode_graph.blockSignals(True)
+            try:
+                if gid:
+                    self._hs_inspect_mode_graph.setChecked(True)
+                    self._hs_inspect_graph_combo.set_committed_type(gid)
+                    self._hs_inspect_entry.setText(str(data.get("entry") or ""))
+                    self._hs_inspect_text.setPlainText("")
+                else:
+                    self._hs_inspect_mode_text.setChecked(True)
+                    self._hs_inspect_text.setPlainText(data.get("text", ""))
+                    self._hs_inspect_entry.clear()
+                    if gids:
+                        self._hs_inspect_graph_combo.set_committed_type(gids[0])
+                    else:
+                        self._hs_inspect_graph_combo.set_committed_type("")
+            finally:
+                self._hs_inspect_graph_combo.blockSignals(False)
+                self._hs_inspect_mode_text.blockSignals(False)
+                self._hs_inspect_mode_graph.blockSignals(False)
+            graph_on = self._hs_inspect_mode_graph.isChecked()
+            self._hs_inspect_text.setEnabled(not graph_on)
+            self._hs_inspect_graph_wrap.setVisible(graph_on)
             self._hs_inspect_actions.set_project_context(
                 self._model, self._editing_scene_id or None,
             )
@@ -2655,10 +2725,22 @@ class ScenePropertyPanel(QScrollArea):
 
         ht = hs["type"]
         if ht == "inspect":
-            hs["data"] = {"text": self._hs_inspect_text.toPlainText()}
             acts = self._hs_inspect_actions.to_list()
-            if acts:
-                hs["data"]["actions"] = acts
+            if self._hs_inspect_mode_graph.isChecked():
+                gid = self._hs_inspect_graph_combo.committed_type().strip()
+                new_data: dict = {}
+                if gid:
+                    new_data["graphId"] = gid
+                ent = self._hs_inspect_entry.text().strip()
+                if ent:
+                    new_data["entry"] = ent
+                if acts:
+                    new_data["actions"] = acts
+                hs["data"] = new_data
+            else:
+                hs["data"] = {"text": self._hs_inspect_text.toPlainText()}
+                if acts:
+                    hs["data"]["actions"] = acts
         elif ht == "pickup":
             hs["data"] = {
                 "itemId": self._hs_pickup_item.current_id(),
@@ -3338,8 +3420,8 @@ class ScenePropertyPanel(QScrollArea):
         kind = self._zn_kind.currentData()
         is_depth = kind == "depth_floor"
         self._zn_boost.setEnabled(is_depth)
-        for w in (self._zn_enter, self._zn_stay, self._zn_exit):
-            w.setEnabled(not is_depth)
+        for ae in (self._zn_enter, self._zn_stay, self._zn_exit):
+            ae.setEnabled(not is_depth)
 
     def _on_zone_kind_changed(self, _idx: int) -> None:
         self._apply_zone_kind_ui()

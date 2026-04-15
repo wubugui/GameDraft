@@ -3,9 +3,11 @@ import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { MapNodeDef } from '../data/types';
+import type { Condition, ConditionExpr, MapNodeDef } from '../data/types';
 import { resolveAssetPath } from '../core/assetPath';
 import type { StringsProvider } from '../core/StringsProvider';
+import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
 
 const PANEL_W = 600;
 const PANEL_H = 450;
@@ -16,6 +18,7 @@ export class MapUI {
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private strings: StringsProvider;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
   private container: Container | null = null;
   private _isOpen = false;
   private nodes: MapNodeDef[] = [];
@@ -26,6 +29,17 @@ export class MapUI {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.strings = strings;
+  }
+
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
+  }
+
+  private evalUnlock(conds: ConditionExpr[]): boolean {
+    if (!conds.length) return true;
+    const ctx = this.conditionCtxFactory?.();
+    if (ctx) return evaluateConditionExprList(conds, ctx);
+    return this.flagStore.checkConditions(conds as Condition[]);
   }
 
   async loadConfig(): Promise<void> {
@@ -109,7 +123,7 @@ export class MapUI {
     }
 
     for (const node of this.nodes) {
-      const unlocked = this.flagStore.checkConditions(node.unlockConditions);
+      const unlocked = this.evalUnlock(node.unlockConditions);
       const isCurrent = node.sceneId === this.currentSceneId;
 
       const nx = px + 50 + node.x;

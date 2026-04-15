@@ -43,6 +43,8 @@ export interface DebugToolsDeps {
   getEntityPixelDensityMatchBlurScaleDebug: () => number | null;
   nudgeEntityPixelDensityMatchBlurScaleDebug: (delta: number) => void;
   clearEntityPixelDensityMatchBlurScaleDebug: () => void;
+  /** ScenarioStateManager + DocumentRevealManager 只读快照（F2 工具页） */
+  getNarrativeDebugSnapshot: () => Record<string, unknown>;
 }
 
 export class DebugTools {
@@ -212,6 +214,32 @@ export class DebugTools {
 
   private setupDebugPanelSections(): void {
     const { debugPanelUI, player, inventoryManager, renderer } = this.deps;
+
+    debugPanelUI.addSection('叙事调试', () => {
+      let text: string;
+      try {
+        const snap = this.deps.getNarrativeDebugSnapshot();
+        const ne = snap.narrativeEval as { summaryText?: string } | undefined;
+        const head =
+          ne && typeof ne.summaryText === 'string' && ne.summaryText.trim()
+            ? `【解算路径与当前图节点】\n${ne.summaryText.trim()}\n\n【完整快照 JSON】\n`
+            : '';
+        text = head + JSON.stringify(snap, null, 2);
+      } catch {
+        text = '（快照序列化失败）';
+      }
+      return {
+        text: text.trim() ? text : '（暂无数据）',
+        actions: [
+          {
+            label: '刷新',
+            fn: () => {
+              debugPanelUI.log('叙事调试：已刷新');
+            },
+          },
+        ],
+      };
+    });
 
     debugPanelUI.addSection('Quick Actions', () => {
       const actions: { label: string; fn: () => void }[] = [

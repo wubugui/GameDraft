@@ -70,6 +70,9 @@ class PropertyStack(QWidget):
 
         self._graph: GameGraph | None = None
 
+    def set_project_path(self, project_path: str) -> None:
+        self._hotspot.set_project_path(project_path)
+
     def set_graph(self, graph: GameGraph):
         self._graph = graph
         self._flag.set_graph(graph)

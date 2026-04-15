@@ -1,0 +1,32 @@
+{
+  "scenarios": [
+    {
+      "id": "码头水鬼",
+      "description": "码头告示与水猴子事件",
+      "exposeAfterPhase": "真相揭示",
+      "exposes": {
+        "码头水鬼真相已揭示": true
+      },
+      "phases": {
+        "看板初读": {
+          "status": "pending"
+        },
+        "官差已套近乎": {
+          "status": "pending"
+        },
+        "询问官差": {
+          "status": "pending"
+        },
+        "询问脚帮": {
+          "status": "pending",
+          "requires": [
+            "询问官差"
+          ]
+        },
+        "真相揭示": {
+          "status": "pending"
+        }
+      }
+    }
+  ]
+}
