@@ -44,9 +44,9 @@
         {
           "conditions": [
             {
-              "flag": "码头_看板官差对话完结",
-              "op": "==",
-              "value": true
+              "scenario": "码头水鬼",
+              "phase": "询问官差",
+              "status": "done"
             }
           ],
           "next": "n_9"
@@ -58,13 +58,32 @@
       "type": "switch",
       "cases": [
         {
-          "conditions": [
-            {
-              "flag": "码头-水鬼-和官差交流过",
-              "op": "==",
-              "value": true
-            }
-          ],
+          "condition": {
+            "any": [
+              {
+                "scenario": "码头水鬼",
+                "phase": "官差已套近乎",
+                "status": "done"
+              },
+              {
+                "all": [
+                  {
+                    "scenario": "码头水鬼",
+                    "phase": "询问官差",
+                    "status": "done"
+                  },
+                  {
+                    "not": {
+                      "scenario": "码头水鬼",
+                      "phase": "询问官差",
+                      "status": "done",
+                      "outcome": "scolded"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
           "next": "n_4"
         }
       ],
@@ -146,16 +165,25 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "blendOverlayImage",
+          "type": "setScenarioPhase",
           "params": {
-            "id": "b",
-            "fromImage": "/assets/images/illustrations/告示-抓水猴子X.png",
-            "toImage": "/assets/images/illustrations/告示-抓水猴子.png",
-            "durationMs": 2000,
-            "delayMs": 0,
-            "xPercent": 50.0,
-            "yPercent": 50.0,
-            "widthPercent": 40.0
+            "scenarioId": "码头水鬼",
+            "phase": "询问脚帮",
+            "status": "done"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "真相揭示",
+            "status": "done"
+          }
+        },
+        {
+          "type": "revealDocument",
+          "params": {
+            "documentId": "告示-水猴子"
           }
         },
         {
@@ -168,20 +196,6 @@
           "type": "hideOverlayImage",
           "params": {
             "id": "b"
-          }
-        },
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "码头_看板官差对话完结",
-            "value": true
-          }
-        },
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "码头-看板-脚帮交流完结",
-            "value": true
           }
         },
         {
@@ -239,9 +253,9 @@
         {
           "conditions": [
             {
-              "flag": "码头-看板-脚帮交流完结",
-              "op": "==",
-              "value": true
+              "scenario": "码头水鬼",
+              "phase": "询问脚帮",
+              "status": "done"
             }
           ],
           "next": "n_10"
@@ -274,9 +288,9 @@
         {
           "conditions": [
             {
-              "flag": "码头_已经和过码头告示交互过",
-              "op": "==",
-              "value": true
+              "scenario": "码头水鬼",
+              "phase": "看板初读",
+              "status": "done"
             }
           ],
           "next": "n_start"

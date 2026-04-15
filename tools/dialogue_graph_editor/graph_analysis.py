@@ -42,3 +42,70 @@ def analyze_node_tags(data: dict[str, Any]) -> dict[str, str]:
             tags[nid] = "warn"
 
     return tags
+
+
+def extract_narrative_refs(data: dict[str, Any]) -> dict[str, Any]:
+    """图内引用的 scenarioId（meta + 条件叶子）及嵌套 graphId（runActions 等），供编辑器分析。"""
+    scenario_ids: set[str] = set()
+    graph_ids: set[str] = set()
+    meta = data.get("meta")
+    if isinstance(meta, dict):
+        ms = str(meta.get("scenarioId") or "").strip()
+        if ms:
+            scenario_ids.add(ms)
+
+    def walk_expr(expr: Any) -> None:
+        if not isinstance(expr, dict):
+            return
+        if "all" in expr and isinstance(expr["all"], list):
+            for x in expr["all"]:
+                walk_expr(x)
+            return
+        if "any" in expr and isinstance(expr["any"], list):
+            for x in expr["any"]:
+                walk_expr(x)
+            return
+        if "not" in expr:
+            walk_expr(expr.get("not"))
+            return
+        sc = expr.get("scenario")
+        if isinstance(sc, str) and sc.strip():
+            scenario_ids.add(sc.strip())
+
+    pre = data.get("preconditions")
+    if isinstance(pre, list):
+        for p in pre:
+            walk_expr(p)
+
+    nodes = data.get("nodes")
+    if isinstance(nodes, dict):
+        for _nid, raw in nodes.items():
+            if not isinstance(raw, dict):
+                continue
+            if raw.get("type") == "switch":
+                for case in raw.get("cases") or []:
+                    if not isinstance(case, dict):
+                        continue
+                    c = case.get("condition")
+                    if c is not None:
+                        walk_expr(c)
+                    for atom in case.get("conditions") or []:
+                        walk_expr(atom)
+            if raw.get("type") == "choice":
+                for opt in raw.get("options") or []:
+                    if isinstance(opt, dict) and opt.get("requireCondition") is not None:
+                        walk_expr(opt.get("requireCondition"))
+            if raw.get("type") == "runActions":
+                for act in raw.get("actions") or []:
+                    if not isinstance(act, dict):
+                        continue
+                    if act.get("type") == "startDialogueGraph":
+                        p = act.get("params") or {}
+                        gid = str(p.get("graphId") or "").strip()
+                        if gid:
+                            graph_ids.add(gid)
+
+    return {
+        "scenarioIds": sorted(scenario_ids),
+        "graphIds": sorted(graph_ids),
+    }

@@ -1,0 +1,37 @@
+[
+  {
+    "id": "告示-水猴子-官差线",
+    "blurredImagePath": "/assets/images/illustrations/告示-抓水猴子X.png",
+    "clearImagePath": "/assets/images/illustrations/告示-抓水猴子.png",
+    "revealCondition": {
+      "all": []
+    },
+    "animation": {
+      "durationMs": 2000,
+      "delayMs": 1000
+    },
+    "overlayId": "blend",
+    "xPercent": 50,
+    "yPercent": 50,
+    "widthPercent": 40
+  },
+  {
+    "id": "告示-水猴子",
+    "blurredImagePath": "/assets/images/illustrations/告示-抓水猴子X.png",
+    "clearImagePath": "/assets/images/illustrations/告示-抓水猴子.png",
+    "revealCondition": {
+      "scenario": "码头水鬼",
+      "phase": "真相揭示",
+      "status": "done"
+    },
+    "animation": {
+      "durationMs": 2000,
+      "delayMs": 0
+    },
+    "overlayId": "b",
+    "xPercent": 50,
+    "yPercent": 50,
+    "widthPercent": 40,
+    "revealedFlag": "document_revealed_告示-水猴子"
+  }
+]

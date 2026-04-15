@@ -3,7 +3,9 @@ import type { Npc } from '../entities/Npc';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { InputManager } from '../core/InputManager';
-import type { IGameSystem, GameContext } from '../data/types';
+import type { Condition, ConditionExpr, IGameSystem, GameContext } from '../data/types';
+import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 
 interface InteractableTarget {
   kind: 'hotspot' | 'npc';
@@ -20,6 +22,7 @@ export class InteractionSystem implements IGameSystem {
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private inputManager: InputManager;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
   private playerPosGetter: (() => { x: number; y: number }) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, inputManager: InputManager) {
@@ -31,6 +34,17 @@ export class InteractionSystem implements IGameSystem {
   init(_ctx: GameContext): void {}
   serialize(): object { return {}; }
   deserialize(_data: object): void {}
+
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
+  }
+
+  private evalHotspotConditions(conds: ConditionExpr[] | undefined): boolean {
+    if (!conds?.length) return true;
+    const ctx = this.conditionCtxFactory?.();
+    if (ctx) return evaluateConditionExprList(conds, ctx);
+    return this.flagStore.checkConditions(conds as Condition[]);
+  }
 
   setPlayerPositionGetter(getter: () => { x: number; y: number }): void {
     this.playerPosGetter = getter;
@@ -76,7 +90,7 @@ export class InteractionSystem implements IGameSystem {
     for (const hotspot of this.hotspots) {
       if (!hotspot.active) continue;
       if (hotspot.def.conditions && hotspot.def.conditions.length > 0) {
-        if (!this.flagStore.checkConditions(hotspot.def.conditions)) continue;
+        if (!this.evalHotspotConditions(hotspot.def.conditions)) continue;
       }
 
       const dx = pos.x - hotspot.centerX;

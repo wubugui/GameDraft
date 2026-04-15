@@ -330,6 +330,10 @@ def node_search_haystack(nid: str, raw: Any) -> str:
             if isinstance(c, dict):
                 parts.append(str(c.get("next", "") or ""))
                 try:
+                    parts.append(json.dumps(c.get("condition"), ensure_ascii=False))
+                except (TypeError, ValueError):
+                    pass
+                try:
                     parts.append(json.dumps(c.get("conditions"), ensure_ascii=False))
                 except (TypeError, ValueError):
                     pass

@@ -145,7 +145,8 @@ export interface HotspotDef {
   x: number;
   y: number;
   interactionRange: number;
-  conditions?: Condition[];
+  /** 组内 AND；可为 flag / quest / scenario 等 `ConditionExpr` 叶子或组合 */
+  conditions?: ConditionExpr[];
   label?: string;
   autoTrigger?: boolean;
   data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData;
@@ -160,10 +161,23 @@ export interface HotspotDef {
   collisionPolygonLocal?: boolean;
 }
 
-export interface InspectData {
+/** 旧版 inspect：纯文本 + 可选 actions */
+export interface InspectDataTextMode {
   text: string;
   actions?: ActionDef[];
+  graphId?: undefined;
+  entry?: undefined;
 }
+
+/** 新版 inspect：图对话（看板等） */
+export interface InspectDataGraphMode {
+  graphId: string;
+  entry?: string;
+  actions?: ActionDef[];
+  text?: undefined;
+}
+
+export type InspectData = InspectDataTextMode | InspectDataGraphMode;
 
 export interface PickupData {
   itemId: string;
@@ -199,10 +213,35 @@ export type DialogueGraphSpeaker =
   | { kind: 'literal'; name: string }
   | { kind: 'sceneNpc'; npcId: string };
 
-/** 图对话条件：flag 条件（同 Condition）或任务状态 */
-export type GraphCondition =
-  | Condition
-  | { quest: string; questStatus: 'Inactive' | 'Active' | 'Completed' };
+/** 任务状态叶子（与 JSON 中 questStatus / status 兼容） */
+export type QuestConditionLeaf = {
+  quest: string;
+  questStatus: 'Inactive' | 'Active' | 'Completed';
+};
+
+/** Scenario 阶段叶子（与 scenarios.json 清单一致）；outcome 可选，与 ScenarioStateManager 存的一致才为真 */
+export type ScenarioConditionLeaf = {
+  scenario: string;
+  phase: string;
+  status: string;
+  outcome?: string | number | boolean | null;
+};
+
+/** 图对话原子条件（无逻辑组合） */
+export type GraphConditionLeaf = Condition | QuestConditionLeaf | ScenarioConditionLeaf;
+
+/**
+ * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
+ * 图对话 preconditions、switch、文档揭示等共用同一求值器。
+ */
+export type ConditionExpr =
+  | GraphConditionLeaf
+  | { all: ConditionExpr[] }
+  | { any: ConditionExpr[] }
+  | { not: ConditionExpr };
+
+/** @deprecated 请用 ConditionExpr；保留别名以减小 diff */
+export type GraphCondition = ConditionExpr;
 
 export interface DialogueLinePayload {
   speaker: DialogueGraphSpeaker;
@@ -215,6 +254,8 @@ export interface GraphChoiceOptionDef {
   text: string;
   next: string;
   requireFlag?: string;
+  /** 与图 switch共用 ConditionExpr；若与 requireFlag 同时存在则两者均须满足。 */
+  requireCondition?: ConditionExpr;
   costCoins?: number;
   /** 与 UI「规矩」标签、灰色样式相关；锁定时可与 strings 中 choiceNeedRule 组合成提示 */
   ruleHintId?: string;
@@ -247,7 +288,13 @@ export type DialogueGraphNodeDef =
     }
   | {
       type: 'switch';
-      cases: { conditions: GraphCondition[]; next: string }[];
+      cases: {
+        /** 单条 ConditionExpr（优先于 conditions） */
+        condition?: ConditionExpr;
+        /** legacy：组内 AND，等价于 all(conditions) */
+        conditions?: ConditionExpr[];
+        next: string;
+      }[];
       defaultNext: string;
     }
   | { type: 'end' };
@@ -257,9 +304,52 @@ export interface DialogueGraphFile {
   schemaVersion: number;
   id: string;
   entry: string;
-  preconditions?: GraphCondition[];
+  /** 每条为独立条件，组间 AND（与旧版一致） */
+  preconditions?: ConditionExpr[];
   nodes: Record<string, DialogueGraphNodeDef>;
-  meta?: { title?: string };
+  meta?: { title?: string; scenarioId?: string };
+}
+
+/** 文档揭示配置（document_reveals.json） */
+export interface DocumentRevealDef {
+  id: string;
+  blurredImagePath: string;
+  clearImagePath: string;
+  revealCondition: ConditionExpr;
+  animation: { durationMs: number; delayMs: number };
+  revealedFlag?: string;
+  /**与 blendOverlayImage 共用 overlay id，缺省为 docReveal_{id} */
+  overlayId?: string;
+  xPercent?: number;
+  yPercent?: number;
+  widthPercent?: number;
+}
+
+/** scenarios.json 中单个 phase 的清单模板（默认 status、依赖、默认 outcome 等） */
+export interface ScenarioCatalogPhaseEntry {
+  status?: string;
+  outcome?: string | number | boolean | null;
+  /** 推进本 phase 前须已为 done 的其它 phase（同一条 scenario 内） */
+  requires?: string[];
+}
+
+/** scenarios.json 根（编辑器与 exposes 运行时） */
+export interface ScenarioCatalogEntry {
+  id: string;
+  description?: string;
+  /**
+   * 进线门槛：开始本条 scenario 前，这些 phase 须已为 done。
+   * 与 `phases[name].requires`（单 phase 前置）语义不同。
+   */
+  requires?: string[];
+  /** 当该 phase 被设为 status done 时，写入 exposes 中的 flag（须同时配置 exposes） */
+  exposeAfterPhase?: string;
+  exposes?: Record<string, boolean>;
+  phases?: Record<string, ScenarioCatalogPhaseEntry>;
+}
+
+export interface ScenarioCatalogFile {
+  scenarios: ScenarioCatalogEntry[];
 }
 
 export interface NpcDef {
@@ -343,7 +433,7 @@ export interface QuestGroupDef {
 
 export interface QuestEdge {
   questId: string;
-  conditions: Condition[];
+  conditions: ConditionExpr[];
   bypassPreconditions?: boolean;
 }
 
@@ -354,8 +444,8 @@ export interface QuestDef {
   sideType?: 'errand' | 'inquiry' | 'investigation' | 'commission';
   title: string;
   description: string;
-  preconditions: Condition[];
-  completionConditions: Condition[];
+  preconditions: ConditionExpr[];
+  completionConditions: ConditionExpr[];
   /** 任务变为 Active（接取）时执行，语义与 rewards 相同，仅触发时机不同 */
   acceptActions?: ActionDef[];
   rewards: ActionDef[];
@@ -403,7 +493,7 @@ export interface ItemDef {
   name: string;
   type: 'consumable' | 'key';
   description: string;
-  dynamicDescriptions?: { conditions: Condition[]; text: string }[];
+  dynamicDescriptions?: { conditions: ConditionExpr[]; text: string }[];
   buyPrice?: number;
   maxStack: number;
 }
@@ -421,7 +511,7 @@ export interface EncounterDef {
 export interface EncounterOptionDef {
   text: string;
   type: 'general' | 'rule' | 'special';
-  conditions: Condition[];
+  conditions: ConditionExpr[];
   requiredRuleId?: string;
   consumeItems?: { id: string; count: number }[];
   resultActions: ActionDef[];
@@ -590,9 +680,9 @@ export interface CharacterEntry {
   id: string;
   name: string;
   title: string;
-  impressions: { text: string; conditions: Condition[] }[];
-  knownInfo: { text: string; conditions: Condition[] }[];
-  unlockConditions: Condition[];
+  impressions: { text: string; conditions: ConditionExpr[] }[];
+  knownInfo: { text: string; conditions: ConditionExpr[] }[];
+  unlockConditions: ConditionExpr[];
   /** 玩家第一次在档案中点开该人物时执行（仅一次，记入存档） */
   firstViewActions?: ActionDef[];
 }
@@ -603,7 +693,7 @@ export interface LoreEntry {
   content: string;
   source: string;
   category: 'legend' | 'geography' | 'folklore' | 'affairs';
-  unlockConditions: Condition[];
+  unlockConditions: ConditionExpr[];
   /** 玩家第一次在档案中点开该条目时执行（仅一次） */
   firstViewActions?: ActionDef[];
 }
@@ -613,7 +703,7 @@ export interface DocumentEntry {
   name: string;
   content: string;
   annotation?: string;
-  discoverConditions: Condition[];
+  discoverConditions: ConditionExpr[];
   /** 玩家第一次在档案中点开该文档时执行（仅一次） */
   firstViewActions?: ActionDef[];
 }
@@ -637,7 +727,7 @@ export interface BookPageEntry {
   annotation?: string;
   illustration?: string;
   /** 满足时自动解锁；与 Action 写入的 archive_book_entry_<id> 等价 */
-  discoverConditions?: Condition[];
+  discoverConditions?: ConditionExpr[];
   /** 已解锁且玩家第一次翻到包含该条目的书页时执行（仅一次） */
   firstViewActions?: ActionDef[];
 }
@@ -647,7 +737,7 @@ export interface BookPage {
   title?: string;
   content: string;
   illustration?: string;
-  unlockConditions?: Condition[];
+  unlockConditions?: ConditionExpr[];
   entries?: BookPageEntry[];
   /** 玩家第一次翻到该页（且页已解锁）时执行（仅一次） */
   firstViewActions?: ActionDef[];
@@ -709,7 +799,7 @@ export interface MapNodeDef {
   name: string;
   x: number;
   y: number;
-  unlockConditions: Condition[];
+  unlockConditions: ConditionExpr[];
 }
 
 // ============================================================
@@ -735,7 +825,7 @@ export interface ZoneDef {
   floorOffsetBoost?: number;
   /** 世界坐标闭合多边形顶点（顺序连接，首尾不重复同一点），至少 3 个。 */
   polygon: Array<{ x: number; y: number }>;
-  conditions?: Condition[];
+  conditions?: ConditionExpr[];
   onEnter?: ActionDef[];
   /** 玩家在区域内时每帧执行的 Action（慎用非幂等 action）。 */
   onStay?: ActionDef[];

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QSplitter, QListWidget, QListWidgetItem, QVBoxLayout,
     QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel, QLineEdit,
     QPlainTextEdit, QFormLayout, QScrollArea, QGroupBox, QInputDialog,
-    QMenu, QCompleter, QDialog, QSizePolicy,
+    QMenu, QCompleter, QDialog, QSizePolicy, QComboBox,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel
 from PySide6.QtGui import QUndoStack, QAction, QCursor, QKeySequence, QShortcut
@@ -299,6 +299,25 @@ class DialogueGraphEditorWidget(QWidget):
             _graph_form_label("标题", tip="写入 meta.title"),
             self._edit_title,
         )
+        self._edit_meta_scenario = QComboBox()
+        self._edit_meta_scenario.setEditable(True)
+        self._edit_meta_scenario.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._edit_meta_scenario.setMinimumWidth(180)
+        self._edit_meta_scenario.setToolTip(
+            "可选。下拉选自 scenarios.json 的 scenario id；与清单一致时可通过校验。\n"
+            "留空表示不写 meta.scenarioId。仅作图级归属标注与检索，与节点内 setScenarioPhase 无自动关联。",
+        )
+        _scen_le = self._edit_meta_scenario.lineEdit()
+        if _scen_le is not None:
+            _scen_le.setPlaceholderText("可选，留空不写 meta.scenarioId")
+        gform.addRow(
+            _graph_form_label(
+                "叙事归属",
+                tip="对应 JSON：meta.scenarioId（可选）。标明本图归属哪条叙事 scenario，便于检索与校验；"
+                "不改变玩法逻辑；节点里推进阶段仍用动作的 setScenarioPhase。",
+            ),
+            self._edit_meta_scenario,
+        )
         gform.addRow(QLabel(), self._pre_cond_ed)
         gform.addRow(
             _graph_form_label(
@@ -319,6 +338,7 @@ class DialogueGraphEditorWidget(QWidget):
                 w.textChanged.connect(self._on_graph_meta_changed)
             else:
                 w.textChanged.connect(self._on_graph_meta_changed)
+        self._edit_meta_scenario.currentTextChanged.connect(self._on_graph_meta_changed)
         self._edit_pre_extra.textChanged.connect(self._on_graph_meta_changed)
 
         self._inspector = NodeInspector(
@@ -1438,6 +1458,45 @@ class DialogueGraphEditorWidget(QWidget):
                 pass
         self._file_list.blockSignals(False)
 
+    def _refresh_meta_scenario_combo(self) -> None:
+        cb = self._edit_meta_scenario
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem("（未指定）", "")
+        pm = self._get_project_model_for_inspector()
+        if pm:
+            for sid in pm.scenario_ids_ordered():
+                cb.addItem(sid, sid)
+        cb.blockSignals(False)
+
+    def _set_meta_scenario_value(self, val: str) -> None:
+        cb = self._edit_meta_scenario
+        cb.blockSignals(True)
+        v = (val or "").strip()
+        if not v:
+            cb.setCurrentIndex(0)
+        else:
+            idx = cb.findData(v)
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+            else:
+                cb.setCurrentIndex(-1)
+                cb.setEditText(v)
+        cb.blockSignals(False)
+
+    def _meta_scenario_value(self) -> str:
+        cb = self._edit_meta_scenario
+        if cb.currentIndex() == 0:
+            return ""
+        t = cb.currentText().strip()
+        if t == "（未指定）":
+            return ""
+        if cb.currentIndex() > 0:
+            d = cb.itemData(cb.currentIndex())
+            if isinstance(d, str) and d.strip():
+                return d.strip()
+        return t
+
     def _apply_data_to_widgets(self):
         for w in (
             self._edit_graph_id,
@@ -1446,12 +1505,16 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_pre_extra,
         ):
             w.blockSignals(True)
+        self._edit_meta_scenario.blockSignals(True)
         self._pre_cond_ed.blockSignals(True)
         try:
             self._edit_graph_id.setText(str(self._data.get("id", "")))
             self._edit_entry.setText(str(self._data.get("entry", "")))
             meta = self._data.get("meta") or {}
             self._edit_title.setText(str(meta.get("title", "")))
+            saved_sc = str(meta.get("scenarioId", "")) if isinstance(meta, dict) else ""
+            self._refresh_meta_scenario_combo()
+            self._set_meta_scenario_value(saved_sc)
             pre = self._data.get("preconditions")
             flag_part, extra_part = _split_graph_preconditions(pre)
             self._pre_cond_ed.set_flag_pattern_context(
@@ -1476,6 +1539,7 @@ class DialogueGraphEditorWidget(QWidget):
                 self._edit_pre_extra,
             ):
                 w.blockSignals(False)
+            self._edit_meta_scenario.blockSignals(False)
 
     def _widgets_to_data_meta(self):
         sv = self._data.get("schemaVersion", 1)
@@ -1486,7 +1550,16 @@ class DialogueGraphEditorWidget(QWidget):
         self._data["id"] = self._edit_graph_id.text().strip()
         self._data["entry"] = self._edit_entry.text().strip()
         title = self._edit_title.text().strip()
-        self._data["meta"] = {"title": title} if title else {}
+        scenario_id = self._meta_scenario_value()
+        prev_meta = self._data.get("meta")
+        meta: dict = {}
+        if isinstance(prev_meta, dict):
+            meta = {k: v for k, v in prev_meta.items() if k not in ("title", "scenarioId")}
+        if title:
+            meta["title"] = title
+        if scenario_id:
+            meta["scenarioId"] = scenario_id
+        self._data["meta"] = meta
         merged: list[Any] = list(self._pre_cond_ed.to_list())
         raw_ex = self._edit_pre_extra.toPlainText().strip()
         if raw_ex:

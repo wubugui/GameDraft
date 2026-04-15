@@ -66,6 +66,8 @@ class ProjectModel(QObject):
         self.filter_defs: dict[str, dict] = {}
         self.flag_registry: dict = {}
         self.overlay_images: dict[str, str] = {}
+        self.scenarios_catalog: dict = {}
+        self.document_reveals: list = []
 
         self._dirty: set[str] = set()
 
@@ -146,6 +148,10 @@ class ProjectModel(QObject):
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
         self.overlay_images = self._load(dp / "overlay_images.json", {})
+        raw_sc = self._load(dp / "scenarios.json", {})
+        self.scenarios_catalog = raw_sc if isinstance(raw_sc, dict) else {}
+        raw_dr = self._load(dp / "document_reveals.json", [])
+        self.document_reveals = raw_dr if isinstance(raw_dr, list) else []
 
         self._dirty.clear()
         self.undo_stack.clear()
@@ -210,6 +216,8 @@ class ProjectModel(QObject):
         from .flag_registry import flag_registry_path
         write_json(flag_registry_path(self.assets_path), self.flag_registry)
         write_json(dp / "overlay_images.json", self.overlay_images)
+        write_json(dp / "scenarios.json", self.scenarios_catalog)
+        write_json(dp / "document_reveals.json", self.document_reveals)
         filters_dir = dp / "filters"
         filters_dir.mkdir(parents=True, exist_ok=True)
         keep = set(self.filter_defs.keys())
@@ -412,6 +420,48 @@ class ProjectModel(QObject):
         if not gp.is_dir():
             return []
         return sorted(p.stem for p in gp.glob("*.json"))
+
+    def scenario_ids_ordered(self) -> list[str]:
+        """scenarios.json 中 ``scenarios[].id``，按文件内数组顺序。"""
+        raw = self.scenarios_catalog.get("scenarios") or []
+        if not isinstance(raw, list):
+            return []
+        out: list[str] = []
+        for e in raw:
+            if isinstance(e, dict):
+                sid = e.get("id")
+                if sid is not None and str(sid).strip():
+                    out.append(str(sid).strip())
+        return out
+
+    def phases_for_scenario(self, scenario_id: str) -> list[str]:
+        """某 scenario 的 ``phases`` 键名列表（与 scenarios.json 中对象键顺序一致）。"""
+        sid = (scenario_id or "").strip()
+        if not sid:
+            return []
+        raw = self.scenarios_catalog.get("scenarios") or []
+        if not isinstance(raw, list):
+            return []
+        for e in raw:
+            if not isinstance(e, dict):
+                continue
+            if str(e.get("id", "")).strip() != sid:
+                continue
+            ph = e.get("phases")
+            if isinstance(ph, dict):
+                return [str(k) for k in ph.keys()]
+            return []
+        return []
+
+    def document_reveal_ids(self) -> list[str]:
+        """document_reveals.json 各条目的 ``id``（去空白，保持列表顺序）。"""
+        out: list[str] = []
+        for d in self.document_reveals or []:
+            if isinstance(d, dict):
+                i = d.get("id")
+                if i is not None and str(i).strip():
+                    out.append(str(i).strip())
+        return out
 
     def anim_asset_path_choices(self) -> list[tuple[str, str]]:
         """(runtime path /assets/animation/<id>/anim.json, 显示名) for npc animFile."""

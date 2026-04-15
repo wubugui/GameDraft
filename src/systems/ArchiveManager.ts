@@ -12,10 +12,13 @@ import type {
   BookReaderSlice,
   BookTocChapter,
   Condition,
+  ConditionExpr,
   IGameSystem,
   GameContext,
   IArchiveDataProvider,
 } from '../data/types';
+import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
+import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 
 type BookType = 'character' | 'lore' | 'document' | 'book' | 'bookEntry';
 
@@ -41,6 +44,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private loreCategoryNames: Record<string, string> = {};
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   private onFlagChanged: () => void;
   private onDialogueStart: (payload: { npcName?: string }) => void;
@@ -60,6 +64,10 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.assetManager = ctx.assetManager;
     this.eventBus.on('flag:changed', this.onFlagChanged);
     this.eventBus.on('dialogue:start', this.onDialogueStart);
+  }
+
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
   }
 
   update(_dt: number): void {}
@@ -320,9 +328,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     }
   }
 
-  private checkConditions(conditions: Condition[]): boolean {
+  private checkConditions(conditions: ConditionExpr[]): boolean {
     if (!conditions || conditions.length === 0) return true;
-    return this.flagStore.checkConditions(conditions);
+    const ctx = this.conditionCtxFactory?.();
+    if (ctx) return evaluateConditionExprList(conditions, ctx);
+    return this.flagStore.checkConditions(conditions as Condition[]);
   }
 
   getUnlockedCharacters(): CharacterEntry[] {

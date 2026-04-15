@@ -1,16 +1,22 @@
-"""Reusable Condition[] editor: flag via FlagPickerDialog only."""
+"""热区/任务等条件编辑：多行 flag 条件 + 可选「附加 ConditionExpr」JSON。
+
+导出为 `ConditionExpr[]` 语义（组内 AND）。JSON 区可写 scenario/quest 叶子或 all/any/not，
+与运行时 evaluateConditionExpr 一致。下方提供递归「表达式树」编辑 all/any/not 与 quest/scenario 叶子（与运行时一致）。
+"""
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QComboBox, QLabel, QFrame, QApplication,
+    QComboBox, QLabel, QFrame, QApplication, QPlainTextEdit,
 )
 from PySide6.QtCore import QEvent, QEventLoop, Signal
 
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
+from .condition_expr_tree import ConditionExprTreeRootWidget
 
 if TYPE_CHECKING:
     from ..project_model import ProjectModel
@@ -150,6 +156,28 @@ class ConditionEditor(QWidget):
         add_btn.clicked.connect(self._add_empty)
         root.addWidget(add_btn)
 
+        self._tree_root = ConditionExprTreeRootWidget(model_getter=self._get_model)
+        self._tree_root.changed.connect(self.changed.emit)
+        root.addWidget(QLabel("<b>表达式树（与上行 flag 条件组内 AND）</b>"))
+        root.addWidget(self._tree_root)
+
+        ej = QLabel("专家：附加 ConditionExpr（JSON，可选；与树二选一导出时优先树）")
+        ej.setToolTip(
+            "单个对象如 {\"scenario\":\"…\",\"phase\":\"…\",\"status\":\"done\"}；"
+            "或多个的数组。与上方 flag 行语义为组内 AND。",
+        )
+        root.addWidget(ej)
+        self._extra_json = QPlainTextEdit()
+        self._extra_json.setPlaceholderText(
+            "例如 {\"scenario\":\"码头水鬼\",\"phase\":\"看板初读\",\"status\":\"done\"}",
+        )
+        self._extra_json.setMaximumHeight(96)
+        self._extra_json.textChanged.connect(self.changed.emit)
+        root.addWidget(self._extra_json)
+
+    def _get_model(self) -> ProjectModel | None:
+        return self._ctx_model
+
     def set_flag_pattern_context(self, model: ProjectModel | None, scene_id: str | None) -> None:
         self._ctx_model = model
         self._ctx_scene_id = scene_id
@@ -170,6 +198,7 @@ class ConditionEditor(QWidget):
         has = model is not None and len(regs) > 0
         self._pattern_frame.setVisible(has)
         self._on_pattern_combo_changed(0)
+        self._tree_root.set_model_refresh()
 
     def _on_pattern_combo_changed(self, _idx: int) -> None:
         self._id_combo.clear()
@@ -216,15 +245,53 @@ class ConditionEditor(QWidget):
     def set_flags(self, *_args, **_kwargs) -> None:
         """Deprecated: no-op for old call sites."""
 
+    @staticmethod
+    def _is_flag_leaf(c: dict) -> bool:
+        if not isinstance(c, dict) or c.get("flag") is None:
+            return False
+        return set(c.keys()) <= {"flag", "op", "value"}
+
     def set_data(self, conditions: list[dict]) -> None:
         self._clear()
+        rest: list[dict] = []
         for c in conditions:
-            self._add_row(c)
+            if isinstance(c, dict) and self._is_flag_leaf(c):
+                self._add_row(c)
+            elif isinstance(c, dict):
+                rest.append(c)
+        if rest:
+            expr: object = rest[0] if len(rest) == 1 else {"all": rest}
+            self._tree_root.set_expr(expr if isinstance(expr, dict) else None)
+            self._extra_json.clear()
+        else:
+            self._tree_root.set_expr(None)
 
     def to_list(self) -> list[dict]:
-        return [r.to_dict() for r in self._rows if r.to_dict().get("flag")]
+        out: list[dict] = [r.to_dict() for r in self._rows if r.to_dict().get("flag")]
+        te = self._tree_root.get_expr()
+        if te is not None:
+            out.append(te)
+            return out
+        raw = self._extra_json.toPlainText().strip()
+        if not raw:
+            return out
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            return out
+        if isinstance(obj, list):
+            for item in obj:
+                if isinstance(item, dict):
+                    out.append(item)
+        elif isinstance(obj, dict):
+            out.append(obj)
+        return out
 
     def _clear(self) -> None:
+        self._tree_root.set_expr(None)
+        self._extra_json.blockSignals(True)
+        self._extra_json.clear()
+        self._extra_json.blockSignals(False)
         for r in self._rows:
             for cb in r.findChildren(QComboBox):
                 cb.hidePopup()

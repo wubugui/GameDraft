@@ -92,7 +92,7 @@ from .image_path_picker import CutsceneImagePathRow
 from .scripted_lines_editor import ScriptedLinesEditor
 
 ACTION_TYPES = [
-    "setFlag", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "setFlag", "setScenarioPhase", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "showEmote", "playNpcAnimation", "setEntityEnabled", "openShop",
@@ -104,7 +104,8 @@ ACTION_TYPES = [
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
-    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "blendOverlayImage", "startDialogueGraph",
+    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "blendOverlayImage",
+    "revealDocument", "startDialogueGraph",
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
@@ -369,6 +370,17 @@ class FilterableTypeCombo(QComboBox):
         self._programmatic = True
         self._refill_all_items(self._committed)
         self._programmatic = False
+
+    def set_entries(self, entries: list[tuple[str, str]]) -> None:
+        """运行时更新下拉条目列表，保留当前 committed 值（若不在列表中则作为孤儿项显示）。"""
+        prev = self._committed
+        self._entries = list(entries)
+        self._rebuild_value_index()
+        self._programmatic = True
+        try:
+            self._refill_all_items(prev)
+        finally:
+            self._programmatic = False
 
 
 class RuleSlotsParamEditor(QWidget):
@@ -762,6 +774,118 @@ class ActionRow(QWidget):
             self._sync_foldable_visibility()
             return
 
+        if act_type == "setScenarioPhase":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "参数须与 public/assets/data/scenarios.json 中清单一致；"
+                "phase 下拉随 scenarioId 更新；outcome 可选。",
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            m = self._ctx_model
+            scen_ids = m.scenario_ids_ordered() if m else []
+            scen_entries = [(s, s) for s in scen_ids] or [
+                ("（请在 data/scenarios.json 添加 scenario）", ""),
+            ]
+            sid_combo = FilterableTypeCombo(scen_entries, self)
+            cur_sid = str(params.get("scenarioId") or "").strip()
+            if cur_sid:
+                sid_combo.set_committed_type(cur_sid)
+            elif scen_ids:
+                sid_combo.set_committed_type(scen_ids[0])
+            self._param_widgets["scenarioId"] = sid_combo
+            self._params_layout.addRow("scenarioId", sid_combo)
+
+            phase_combo = QComboBox()
+            phase_combo.setEditable(True)
+
+            def refill_phases(*, use_saved_phase: bool) -> None:
+                sid = sid_combo.committed_type()
+                ph_list = m.phases_for_scenario(sid) if m and sid else []
+                saved = str(params.get("phase") or "").strip()
+                prev = phase_combo.currentText().strip()
+                prefer = saved if use_saved_phase else prev
+                phase_combo.blockSignals(True)
+                phase_combo.clear()
+                for p in ph_list:
+                    phase_combo.addItem(p)
+                if prefer in ph_list:
+                    pick = prefer
+                elif ph_list:
+                    pick = ph_list[0]
+                else:
+                    pick = prefer
+                if pick and phase_combo.findText(pick) < 0:
+                    phase_combo.addItem(pick)
+                if pick:
+                    i = phase_combo.findText(pick)
+                    if i >= 0:
+                        phase_combo.setCurrentIndex(i)
+                    else:
+                        phase_combo.setEditText(pick)
+                phase_combo.blockSignals(False)
+
+            refill_phases(use_saved_phase=True)
+            sid_combo.typeCommitted.connect(
+                lambda _t: (refill_phases(use_saved_phase=False), self.changed.emit()),
+            )
+            phase_combo.currentTextChanged.connect(lambda _t: self.changed.emit())
+            self._param_widgets["phase"] = phase_combo
+            self._params_layout.addRow("phase", phase_combo)
+
+            status_combo = QComboBox()
+            status_combo.setEditable(True)
+            for st in ("pending", "active", "done", "locked"):
+                status_combo.addItem(st)
+            st_val = str(params.get("status") or "pending").strip() or "pending"
+            i = status_combo.findText(st_val)
+            if i >= 0:
+                status_combo.setCurrentIndex(i)
+            else:
+                status_combo.setEditText(st_val)
+            status_combo.currentTextChanged.connect(lambda _t: self.changed.emit())
+            self._param_widgets["status"] = status_combo
+            self._params_layout.addRow("status", status_combo)
+
+            out_ed = QLineEdit(str(params.get("outcome") or ""))
+            out_ed.setPlaceholderText("可选")
+            out_ed.textChanged.connect(self.changed)
+            self._param_widgets["outcome"] = out_ed
+            self._params_layout.addRow("outcome", out_ed)
+            self._sync_foldable_visibility()
+            return
+
+        if act_type == "revealDocument":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "documentId 须在 document_reveals.json 中注册；"
+                "由 DocumentRevealManager 按 revealCondition 与叠图参数播放揭示。",
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            m = self._ctx_model
+            doc_ids = m.document_reveal_ids() if m else []
+            entries = [(i, i) for i in doc_ids] or [
+                ("（请在 data/document_reveals.json 添加条目）", ""),
+            ]
+            doc_combo = FilterableTypeCombo(entries, self)
+            cur_doc = str(params.get("documentId") or "").strip()
+            if cur_doc:
+                doc_combo.set_committed_type(cur_doc)
+            elif doc_ids:
+                doc_combo.set_committed_type(doc_ids[0])
+            doc_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            self._param_widgets["documentId"] = doc_combo
+            self._params_layout.addRow("documentId", doc_combo)
+            self._sync_foldable_visibility()
+            return
+
         if act_type == "blendOverlayImage":
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
@@ -770,9 +894,12 @@ class ActionRow(QWidget):
             tip = QLabel(
                 "id：与 hideOverlayImage 共用；片元 shader 内 mix(from,to,t)。"
                 "宽度为 widthPercent（占屏宽），高度按 toImage 宽高比自动算。"
-                "delayMs 内 t=0；之后 durationMs 内 t 由 0 线性到 1；结束保留目标图。",
+                "delayMs 内 t=0；之后 durationMs 内 t 由 0 线性到 1；结束保留目标图。\n"
+                "<b>迁移</b>：告示类清晰化优先用 revealDocument + document_reveals.json，"
+                "避免在对话里手写 from/to 路径。",
             )
             tip.setWordWrap(True)
+            tip.setTextFormat(Qt.TextFormat.RichText)
             self._params_layout.addRow(tip)
             id_ed = QLineEdit(str(params.get("id", "") or ""))
             id_ed.setPlaceholderText("如 portrait_blend")
@@ -1180,6 +1307,25 @@ class ActionRow(QWidget):
             params["stateMap"] = sm
         return {"type": "setPlayerAvatar", "params": params}
 
+    def _to_dict_set_scenario_phase(self) -> dict:
+        sid_w = self._param_widgets.get("scenarioId")
+        ph_w = self._param_widgets.get("phase")
+        st_w = self._param_widgets.get("status")
+        out_w = self._param_widgets.get("outcome")
+        sid = sid_w.committed_type() if isinstance(sid_w, FilterableTypeCombo) else ""
+        ph = ph_w.currentText().strip() if isinstance(ph_w, QComboBox) else ""
+        st = st_w.currentText().strip() if isinstance(st_w, QComboBox) else ""
+        out = out_w.text().strip() if isinstance(out_w, QLineEdit) else ""
+        pr: dict = {"scenarioId": sid, "phase": ph, "status": st}
+        if out:
+            pr["outcome"] = out
+        return {"type": "setScenarioPhase", "params": pr}
+
+    def _to_dict_reveal_document(self) -> dict:
+        w = self._param_widgets.get("documentId")
+        did = w.committed_type() if isinstance(w, FilterableTypeCombo) else ""
+        return {"type": "revealDocument", "params": {"documentId": did}}
+
     def to_dict(self) -> dict:
         act_type = self.type_combo.committed_type()
         if act_type == "showOverlayImage":
@@ -1192,6 +1338,10 @@ class ActionRow(QWidget):
             return self._to_dict_play_scripted_dialogue()
         if act_type == "setPlayerAvatar":
             return self._to_dict_set_player_avatar()
+        if act_type == "setScenarioPhase":
+            return self._to_dict_set_scenario_phase()
+        if act_type == "revealDocument":
+            return self._to_dict_reveal_document()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params: dict = {}
         for pname, ptype in schema:

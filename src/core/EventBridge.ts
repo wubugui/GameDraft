@@ -34,23 +34,27 @@ export class EventBridge {
     const { dialogueManager, graphDialogueManager, encounterManager, stateController,
             actionExecutor, sceneManager, mapUI, menuUI, inspectBox } = this.deps;
 
+    // runActions 内嵌 `playScriptedDialogue` 时图对话与 DialogueManager 同时 active；
+    // 点击继续必须推进 DialogueManager，否则脚本台词永远卡在第一句。
     this.listen('dialogue:advance', () => {
-      const run = graphDialogueManager.isActive
-        ? graphDialogueManager.advance()
-        : dialogueManager.advance();
+      const run = dialogueManager.isActive
+        ? dialogueManager.advance()
+        : graphDialogueManager.advance();
       void run.catch((e) => console.warn('Dialogue advance failed', e));
     });
     this.listen('dialogue:advanceEnd', () => {
-      if (graphDialogueManager.isActive) graphDialogueManager.endDialogue();
-      else dialogueManager.endDialogue();
+      if (dialogueManager.isActive) dialogueManager.endDialogue();
+      else if (graphDialogueManager.isActive) graphDialogueManager.endDialogue();
     });
     this.listen('dialogue:choiceSelected', (p: { index: number }) => {
-      const run = graphDialogueManager.isActive
-        ? graphDialogueManager.chooseOption(p.index)
-        : dialogueManager.chooseOption(p.index);
+      const run = dialogueManager.isActive
+        ? dialogueManager.chooseOption(p.index)
+        : graphDialogueManager.chooseOption(p.index);
       void run.catch((e) => console.warn('Dialogue chooseOption failed', e));
     });
-    this.listen('dialogue:end', () => stateController.setState(GameState.Exploring));
+    this.listen('dialogue:end', () => {
+      if (!graphDialogueManager.isActive) stateController.setState(GameState.Exploring);
+    });
 
     this.listen('encounter:narrativeDone', () => encounterManager.generateOptions());
     this.listen('encounter:choiceSelected', (p: { index: number }) => {

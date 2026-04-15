@@ -1,6 +1,25 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QComboBox, QTextEdit
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QFormLayout,
+    QLineEdit,
+    QSpinBox,
+    QComboBox,
+    QTextEdit,
+    QRadioButton,
+    QButtonGroup,
+    QHBoxLayout,
+    QLabel,
+)
 from PySide6.QtCore import Signal
-from ..model.node_types import NodeData, NodeType
+
+from tools.editor.shared.action_editor import ActionEditor, FilterableTypeCombo
+
+from ..model.node_types import NodeData
 from .condition_editor import ConditionEditor
 
 
@@ -57,6 +76,10 @@ class HotspotPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nd: NodeData | None = None
+        self._project_path = ""
+        self._pm = None
+        self._loading = False
+
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
@@ -86,33 +109,141 @@ class HotspotPanel(QWidget):
         form.addRow("Range:", self.range_spin)
         layout.addLayout(form)
 
-        self.cond_editor = ConditionEditor("Conditions")
+        self._inspect_wrap = QWidget()
+        iw = QVBoxLayout(self._inspect_wrap)
+        iw.setContentsMargins(0, 4, 0, 0)
+        iw.addWidget(QLabel("<b>inspect data</b>（纯 text与 graphId 互斥）"))
+        mode_row = QHBoxLayout()
+        self._insp_mode_grp = QButtonGroup(self)
+        self._mode_text = QRadioButton("纯文本")
+        self._mode_graph = QRadioButton("图对话 graphId")
+        self._mode_text.setChecked(True)
+        self._insp_mode_grp.addButton(self._mode_text)
+        self._insp_mode_grp.addButton(self._mode_graph)
+        mode_row.addWidget(self._mode_text)
+        mode_row.addWidget(self._mode_graph)
+        mode_row.addStretch()
+        iw.addLayout(mode_row)
+        self._inspect_text = QTextEdit()
+        self._inspect_text.setPlaceholderText("inspect 纯文本模式…")
+        self._inspect_text.setMaximumHeight(72)
+        iw.addWidget(self._inspect_text)
+        gf = QFormLayout()
+        self._graph_combo = FilterableTypeCombo([], self)
+        self._graph_combo.setMinimumWidth(140)
+        gf.addRow("graphId", self._graph_combo)
+        self._entry = QLineEdit()
+        self._entry.setPlaceholderText("可选 entry 节点 id")
+        gf.addRow("entry", self._entry)
+        gw = QWidget()
+        gw.setLayout(gf)
+        self._graph_outer = gw
+        iw.addWidget(gw)
+        self._inspect_actions = ActionEditor("inspect actions（可选）")
+        iw.addWidget(self._inspect_actions)
+        layout.addWidget(self._inspect_wrap)
+
+        self.cond_editor = ConditionEditor("Conditions（热区显示/交互条件）")
         layout.addWidget(self.cond_editor)
         layout.addStretch()
 
-        for w in (self.type_combo,):
-            w.currentTextChanged.connect(self._mark_dirty)
+        self.type_combo.currentTextChanged.connect(self._on_hs_type_changed)
         for w in (self.label_edit,):
             w.textChanged.connect(self._mark_dirty)
         for w in (self.x_spin, self.y_spin, self.w_spin, self.h_spin, self.range_spin):
             w.valueChanged.connect(self._mark_dirty)
         self.cond_editor.changed.connect(self._mark_dirty)
+        self._insp_mode_grp.buttonClicked.connect(self._on_inspect_mode)
+        self._inspect_text.textChanged.connect(self._mark_dirty)
+        self._graph_combo.typeCommitted.connect(lambda _t: self._mark_dirty())
+        self._entry.textChanged.connect(self._mark_dirty)
+        self._inspect_actions.changed.connect(self._mark_dirty)
+
+    def set_project_path(self, project_path: str) -> None:
+        self._project_path = (project_path or "").strip()
+        self._reload_pm()
+
+    def _reload_pm(self) -> None:
+        self._pm = None
+        if self._project_path:
+            try:
+                from tools.editor.project_model import ProjectModel
+
+                pm = ProjectModel()
+                pm.load_project(Path(self._project_path))
+                self._pm = pm
+            except OSError:
+                self._pm = None
+        self.cond_editor.set_flag_pattern_context(self._pm, None)
+        self._inspect_actions.set_project_context(self._pm, None)
+        self._refresh_graph_ids()
+        if self._nd is not None:
+            self.load_node(self._nd)
+
+    def _refresh_graph_ids(self) -> None:
+        if self._pm:
+            gids = self._pm.all_dialogue_graph_ids()
+            self._graph_combo.set_entries([(g, g) for g in gids])
+        else:
+            self._graph_combo.set_entries([])
+
+    def _sync_inspect_mode_ui(self) -> None:
+        graph_on = self._mode_graph.isChecked()
+        self._inspect_text.setEnabled(not graph_on)
+        self._graph_outer.setVisible(graph_on)
+
+    def _on_inspect_mode(self, _btn=None) -> None:
+        self._sync_inspect_mode_ui()
+        self._mark_dirty()
+
+    def _on_hs_type_changed(self, _t: str) -> None:
+        vis = self.type_combo.currentText() == "inspect"
+        self._inspect_wrap.setVisible(vis)
+        self._mark_dirty()
 
     def load_node(self, nd: NodeData):
         self._nd = nd
         d = nd.data
-        self.id_edit.setText(d.get("id", ""))
-        self.type_combo.setCurrentText(d.get("type", "inspect"))
-        self.label_edit.setText(d.get("label", ""))
-        self.x_spin.setValue(d.get("x", 0))
-        self.y_spin.setValue(d.get("y", 0))
-        self.w_spin.setValue(d.get("width", 40))
-        self.h_spin.setValue(d.get("height", 40))
-        self.range_spin.setValue(d.get("interactionRange", 80))
-        self.cond_editor.set_data(d.get("conditions", []))
+        self._loading = True
+        try:
+            self.id_edit.setText(d.get("id", ""))
+            self.type_combo.setCurrentText(d.get("type", "inspect"))
+            self.label_edit.setText(d.get("label", ""))
+            self.x_spin.setValue(int(d.get("x", 0)))
+            self.y_spin.setValue(int(d.get("y", 0)))
+            self.w_spin.setValue(int(d.get("width", 40)))
+            self.h_spin.setValue(int(d.get("height", 40)))
+            ir = d.get("interactionRange", 80)
+            self.range_spin.setValue(int(ir) if ir is not None else 80)
+            self.cond_editor.set_data(d.get("conditions") or [])
+
+            self._refresh_graph_ids()
+            ht = d.get("type", "inspect")
+            self._inspect_wrap.setVisible(ht == "inspect")
+            data = d.get("data") if isinstance(d.get("data"), dict) else {}
+            gid = str(data.get("graphId") or "").strip()
+            self._mode_text.blockSignals(True)
+            self._mode_graph.blockSignals(True)
+            if gid:
+                self._mode_graph.setChecked(True)
+                self._graph_combo.set_committed_type(gid)
+                self._entry.setText(str(data.get("entry") or ""))
+                self._inspect_text.clear()
+            else:
+                self._mode_text.setChecked(True)
+                self._inspect_text.setPlainText(str(data.get("text") or ""))
+                gids = self._pm.all_dialogue_graph_ids() if self._pm else []
+                self._graph_combo.set_committed_type(gids[0] if gids else "")
+                self._entry.clear()
+            self._mode_text.blockSignals(False)
+            self._mode_graph.blockSignals(False)
+            self._sync_inspect_mode_ui()
+            self._inspect_actions.set_data(data.get("actions") or [])
+        finally:
+            self._loading = False
 
     def _mark_dirty(self):
-        if not self._nd:
+        if not self._nd or self._loading:
             return
         d = self._nd.data
         d["type"] = self.type_combo.currentText()
@@ -127,6 +258,26 @@ class HotspotPanel(QWidget):
             d["conditions"] = conds
         elif "conditions" in d:
             del d["conditions"]
+
+        if d.get("type") == "inspect":
+            prev = d.get("data") if isinstance(d.get("data"), dict) else {}
+            base: dict = dict(prev)
+            for k in ("text", "graphId", "entry", "actions"):
+                base.pop(k, None)
+            if self._mode_graph.isChecked():
+                gid = self._graph_combo.committed_type().strip()
+                if gid:
+                    base["graphId"] = gid
+                ent = self._entry.text().strip()
+                if ent:
+                    base["entry"] = ent
+            else:
+                base["text"] = self._inspect_text.toPlainText()
+            acts = self._inspect_actions.to_list()
+            if acts:
+                base["actions"] = acts
+            d["data"] = base
+
         self._nd.dirty = True
         self.data_changed.emit(self._nd.id)
 

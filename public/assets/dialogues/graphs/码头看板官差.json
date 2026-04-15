@@ -12,9 +12,9 @@
         {
           "conditions": [
             {
-              "flag": "码头_看板官差对话完结",
-              "op": "==",
-              "value": true
+              "scenario": "码头水鬼",
+              "phase": "询问官差",
+              "status": "done"
             }
           ],
           "next": "n_sleep"
@@ -40,8 +40,9 @@
         {
           "conditions": [
             {
-              "flag": "码头_已经和过码头告示交互过",
-              "value": true
+              "scenario": "码头水鬼",
+              "phase": "看板初读",
+              "status": "done"
             }
           ],
           "next": "n_1"
@@ -240,16 +241,9 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "blendOverlayImage",
+          "type": "revealDocument",
           "params": {
-            "id": "blend",
-            "fromImage": "/assets/images/illustrations/告示-抓水猴子X.png",
-            "toImage": "/assets/images/illustrations/告示-抓水猴子.png",
-            "durationMs": 2000,
-            "delayMs": 1000,
-            "xPercent": 50.0,
-            "yPercent": 50.0,
-            "widthPercent": 40.0
+            "documentId": "告示-水猴子-官差线"
           }
         },
         {
@@ -275,21 +269,24 @@
       "next": "n_done_flag",
       "text": "这片啥时候闹起了水猴子？头几天我还下水洗了澡......"
     },
-    "n_done_flag": {
+       "n_done_flag": {
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "setScenarioPhase",
           "params": {
-            "key": "码头_看板官差对话完结",
-            "value": true
+            "scenarioId": "码头水鬼",
+            "phase": "询问官差",
+            "status": "done",
+            "outcome": "scolded"
           }
         },
         {
-          "type": "setFlag",
+          "type": "setScenarioPhase",
           "params": {
-            "key": "码头-水鬼-和官差交流过",
-            "value": false
+            "scenarioId": "码头水鬼",
+            "phase": "官差已套近乎",
+            "status": "pending"
           }
         }
       ],
@@ -382,10 +379,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "setScenarioPhase",
           "params": {
-            "key": "码头-水鬼-和官差交流过",
-            "value": true
+            "scenarioId": "码头水鬼",
+            "phase": "官差已套近乎",
+            "status": "done"
           }
         }
       ],
@@ -397,9 +395,9 @@
         {
           "conditions": [
             {
-              "flag": "码头-看板-脚帮交流完结",
-              "op": "==",
-              "value": true
+              "scenario": "码头水鬼",
+              "phase": "询问脚帮",
+              "status": "done"
             }
           ],
           "next": "n_sleep"
