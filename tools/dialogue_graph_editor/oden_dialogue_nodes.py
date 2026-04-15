@@ -5,6 +5,7 @@ from typing import Any
 
 from OdenGraphQt import BaseNode
 
+from .graph_document import node_summary
 from .graph_mutations import (
     OUT_CHOICE,
     OUT_NEXT,
@@ -159,11 +160,18 @@ class DialogueFlowNode(BaseNode):
 
         label = _dialogue_type_label_zh(t)
         nid = self.name()
-        self.view.text_item.setPlainText(f"{label}\n{nid}")
+        summ = node_summary(nid, raw, max_text=24)
+        if summ:
+            self.view.text_item.setPlainText(f"{label} · {nid}\n{summ}")
+        else:
+            self.view.text_item.setPlainText(f"{label}\n{nid}")
 
         self.view.draw_node()
 
         tip_lines = [f"类型：{label}", f"节点 ID：{nid}"]
+        summ_tip = node_summary(nid, raw, max_text=80)
+        if summ_tip:
+            tip_lines.append(f"摘要：{summ_tip}")
         if is_entry:
             tip_lines.append("入口节点")
         if diag_tag == "warn":
@@ -195,10 +203,34 @@ class DialogueFlowNode(BaseNode):
                     fl = str(c0.get("flag") or "").strip()
                     if fl:
                         return fl[:22] + "…" if len(fl) > 22 else fl
+                if "scenario" in c0:
+                    s = str(c0.get("scenario") or "").strip()
+                    ph = str(c0.get("phase") or "").strip()
+                    label = f"{s}/{ph}" if ph else s
+                    if label:
+                        return label[:22] + "…" if len(label) > 22 else label
                 if "questId" in c0:
                     q = str(c0.get("questId") or "").strip()
                     if q:
                         return f"Q:{q[:18]}" + ("…" if len(q) > 18 else "")
+                if "quest" in c0:
+                    q = str(c0.get("quest") or "").strip()
+                    if q:
+                        return f"Q:{q[:18]}" + ("…" if len(q) > 18 else "")
+        cond = case.get("condition")
+        if isinstance(cond, dict) and cond:
+            if any(k in cond for k in ("any", "all", "not")):
+                return f"[{index}] 条件组"
+            if "flag" in cond:
+                fl = str(cond.get("flag") or "").strip()
+                if fl:
+                    return fl[:22] + "…" if len(fl) > 22 else fl
+            if "scenario" in cond:
+                s = str(cond.get("scenario") or "").strip()
+                ph = str(cond.get("phase") or "").strip()
+                label = f"{s}/{ph}" if ph else s
+                if label:
+                    return label[:22] + "…" if len(label) > 22 else label
         return f"case{index}"
 
     def _set_output_port_caption(self, port_name: str, caption: str) -> None:

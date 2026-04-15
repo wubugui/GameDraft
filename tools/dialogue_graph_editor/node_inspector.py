@@ -138,6 +138,8 @@ class NodeInspector(QWidget):
         self._node_types_getter = node_types_getter
         self._node_id = ""
         self._suppress_change_emit = False
+        self._topology_refs: dict[str, Any] = {}
+        self._body_valid = False
         self._assign_editor_group: Callable[[str, str], None] | None = None
         self._create_editor_group: Callable[[], str | None] | None = None
         self._editor_group_geometry_mode = False
@@ -159,6 +161,8 @@ class NodeInspector(QWidget):
 
     def _clear_body(self) -> None:
         """切换节点类型时整页重建表单；必须拆掉嵌套的 QFormLayout，否则 takeAt 拿不到子布局里的 QLabel，旧标签会残留在 _body 上叠在新控件上。"""
+        self._body_valid = False
+        self._topology_refs = {}
         old_body = self._body
         # 先收起所有 QComboBox 弹出层再销毁，避免 Windows 上短暂出现独立小窗抢焦点（与 ActionEditor._clear 一致）
         _hide_combo_popups_under(old_body)
@@ -233,6 +237,7 @@ class NodeInspector(QWidget):
                 snap = copy.deepcopy(data)
                 self._getter = lambda s=snap: copy.deepcopy(s)
         finally:
+            self._body_valid = True
             self._suppress_change_emit = False
             _hide_combo_popups_under(self._body)
             _hide_active_application_popups()
@@ -247,10 +252,51 @@ class NodeInspector(QWidget):
 
     def get_node(self) -> dict[str, Any]:
         """Return current node dict from form state."""
+        if not self._body_valid:
+            return {"type": "end"}
         getter = getattr(self, "_getter", None)
         if getter:
             return getter()
         return {"type": "end"}
+
+    def update_topology_from_data(self, node_data: dict[str, Any]) -> None:
+        """Update connection fields from fresh data without rebuilding the entire form.
+
+        Called when the canvas modifies a connection (next / options[].next / cases[].next /
+        defaultNext) so the inspector's QLineEdit widgets reflect the new target without
+        losing other in-progress edits.
+        """
+        refs = self._topology_refs
+        if not refs:
+            return
+        self._suppress_change_emit = True
+        try:
+            t = refs.get("type")
+            if t in ("line", "runActions"):
+                ne = refs.get("next_edit")
+                if isinstance(ne, QLineEdit):
+                    ne.setText(str(node_data.get("next", "")))
+            elif t == "choice":
+                opts = node_data.get("options") or []
+                rows = refs.get("option_rows") or []
+                for i, row in enumerate(rows):
+                    if i < len(opts) and isinstance(opts[i], dict):
+                        nx = row.get("nx")
+                        if isinstance(nx, QLineEdit):
+                            nx.setText(str(opts[i].get("next", "")))
+            elif t == "switch":
+                cases = node_data.get("cases") or []
+                rows = refs.get("case_rows") or []
+                for i, row in enumerate(rows):
+                    if i < len(cases) and isinstance(cases[i], dict):
+                        nx = row.get("next_edit")
+                        if isinstance(nx, QLineEdit):
+                            nx.setText(str(cases[i].get("next", "")))
+                dn = refs.get("default_next")
+                if isinstance(dn, QLineEdit):
+                    dn.setText(str(node_data.get("defaultNext", "")))
+        finally:
+            self._suppress_change_emit = False
 
     def _insert_editor_group_row(
         self,
@@ -619,6 +665,7 @@ class NodeInspector(QWidget):
         self._body_layout.addWidget(legacy_wrap)
         self._body_layout.addWidget(beats_wrap)
         self._body_layout.addLayout(fln)
+        self._topology_refs = {"type": "line", "next_edit": next_edit}
 
         def collect_beats() -> list[dict[str, Any]]:
             out_beats: list[dict[str, Any]] = []
@@ -714,6 +761,7 @@ class NodeInspector(QWidget):
         ae.set_data(to_load)
         ae.changed.connect(self._emit_changed)
         self._body_layout.addWidget(ae)
+        self._topology_refs = {"type": "runActions", "next_edit": next_edit}
 
         def getter():
             return {
@@ -1208,10 +1256,10 @@ class NodeInspector(QWidget):
 
         def getter():
             options: list[dict[str, Any]] = []
-            for r in option_rows:
+            for idx_r, r in enumerate(option_rows):
                 oid = r["id_e"].text().strip()
                 if not oid:
-                    continue
+                    raise ValueError(f"选项 {idx_r + 1} 未填 id，请补全后再保存")
                 out_opt: dict[str, Any] = {
                     "id": oid,
                     "text": r["text_e"].toPlainText(),
@@ -1248,6 +1296,7 @@ class NodeInspector(QWidget):
             return out
 
         self._getter = getter
+        self._topology_refs = {"type": "choice", "option_rows": option_rows}
 
     # --- switch ---
     def _build_switch(self, data: dict[str, Any]):
@@ -1373,7 +1422,12 @@ class NodeInspector(QWidget):
             expr_edit.setPlaceholderText(
                 '{"all":[...]} / {"scenario":"...","phase":"...","status":"done"} 等',
             )
-            expr_edit.setMinimumHeight(120)
+            expr_edit.setMinimumHeight(60)
+            expr_edit.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Minimum,
+            )
+            expr_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             expr_edit.textChanged.connect(self._emit_changed)
             cv.addWidget(expr_edit)
 
@@ -2043,6 +2097,8 @@ class NodeInspector(QWidget):
         cbar.addWidget(bc_add)
         self._body_layout.addWidget(cases_wrap)
         self._body_layout.addLayout(cbar)
+
+        self._topology_refs = {"type": "switch", "case_rows": switch_case_rows, "default_next": dn}
 
         def getter():
             cs: list[dict[str, Any]] = []

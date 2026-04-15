@@ -210,6 +210,7 @@ from .graph_mutations import (
     connect_output_to_target,
     clear_output,
 )
+from .graph_document_model import GraphDocumentModel
 from .oden_dialogue_nodes import (
     DialogueFlowNode,
     DialogueGhostNode,
@@ -311,6 +312,7 @@ class DialogueFlowOdenController(QObject):
         self._layout_timer_start: Callable[[int], None] | None = None
         self._editor_frame_drag_end_cb: Callable[[], None] | None = None
         self._rebuilding = False
+        self._doc_model: GraphDocumentModel | None = None
 
         vw = self._graph.viewer()
         vw.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -360,6 +362,10 @@ class DialogueFlowOdenController(QObject):
         self._positions_get = positions_get
         self._ghost_positions_get = ghost_positions_get
         self._layout_timer_start = layout_timer_start
+
+    def set_model(self, model: GraphDocumentModel) -> None:
+        """Provide the document model for topology mutations (connect/disconnect)."""
+        self._doc_model = model
 
     def set_editor_frame_drag_end_callback(self, cb: Callable[[], None] | None) -> None:
         """分组框拖动结束（mouse release）后调用，用于按几何重算 nodeGroups。"""
@@ -836,7 +842,10 @@ class DialogueFlowOdenController(QObject):
             dst_id = dst_node.name()
         else:
             return
-        err = connect_output_to_target(data, src_id, kind, idx, dst_id)
+        if self._doc_model is not None:
+            err = self._doc_model.connect_output(src_id, kind, idx, dst_id)
+        else:
+            err = connect_output_to_target(data, src_id, kind, idx, dst_id)
         if err:
             self._toast(err, 5000)
             try:
@@ -860,5 +869,8 @@ class DialogueFlowOdenController(QObject):
         if spec is None:
             return
         kind, idx = spec
-        clear_output(data, src_node.name(), kind, idx)
+        if self._doc_model is not None:
+            self._doc_model.clear_output(src_node.name(), kind, idx)
+        else:
+            clear_output(data, src_node.name(), kind, idx)
         self.data_topology_changed.emit()
