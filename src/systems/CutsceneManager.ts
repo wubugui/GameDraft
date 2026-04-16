@@ -5,7 +5,7 @@ import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
-import type { CutsceneDef, CutsceneCommand, ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
+import type { ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
 import { CUTSCENE_ACTION_WHITELIST } from '../data/types';
 import { Npc } from '../entities/Npc';
 
@@ -35,7 +35,7 @@ export class CutsceneManager implements IGameSystem {
   private actionExecutor: ActionExecutor;
   private cutsceneRenderer: CutsceneRenderer;
 
-  private cutsceneDefs: Map<string, CutsceneDef | NewCutsceneDef> = new Map();
+  private cutsceneDefs: Map<string, NewCutsceneDef> = new Map();
   private playing: boolean = false;
   private waitClickResolve: (() => void) | null = null;
   private dialogueResolve: (() => void) | null = null;
@@ -54,6 +54,7 @@ export class CutsceneManager implements IGameSystem {
   private unsubInput: (() => void) | null = null;
   private destroyed = false;
   private skipping = false;
+  private _skipCheckRafIds = new Set<number>();
 
   private snapshot: CutsceneSnapshot | null = null;
   private sceneIdGetter: (() => string | null) | null = null;
@@ -137,7 +138,7 @@ export class CutsceneManager implements IGameSystem {
     return Array.from(this.cutsceneDefs.keys());
   }
 
-  getCutsceneDef(id: string): CutsceneDef | NewCutsceneDef | undefined {
+  getCutsceneDef(id: string): NewCutsceneDef | undefined {
     return this.cutsceneDefs.get(id);
   }
 
@@ -209,20 +210,11 @@ export class CutsceneManager implements IGameSystem {
 
   async loadDefs(): Promise<void> {
     try {
-      const list = await this.assetManager.loadJson<(CutsceneDef | NewCutsceneDef)[]>('/assets/data/cutscenes/index.json');
+      const list = await this.assetManager.loadJson<NewCutsceneDef[]>('/assets/data/cutscenes/index.json');
       const imagePaths = new Set<string>();
       for (const def of list) {
         this.cutsceneDefs.set(def.id, def);
-        if ('commands' in def) {
-          for (const cmd of (def as CutsceneDef).commands || []) {
-            if (cmd.type === 'show_img' && typeof cmd.image === 'string') {
-              imagePaths.add(cmd.image);
-            }
-          }
-        }
-        if ('steps' in def) {
-          this.collectImagePathsFromSteps((def as NewCutsceneDef).steps, imagePaths);
-        }
+        this.collectImagePathsFromSteps(def.steps ?? [], imagePaths);
       }
       for (const path of imagePaths) {
         try {
@@ -266,10 +258,10 @@ export class CutsceneManager implements IGameSystem {
         await this.saveAndTransition(def);
       }
 
-      if ('steps' in def && Array.isArray((def as NewCutsceneDef).steps)) {
+      if (!('steps' in def) || !Array.isArray((def as NewCutsceneDef).steps)) {
+        console.warn(`CutsceneManager: cutscene "${id}" has no steps array (old commands format is no longer supported)`);
+      } else {
         await this.executeSteps((def as NewCutsceneDef).steps);
-      } else if ('commands' in def) {
-        await this.executeCommands((def as CutsceneDef).commands);
       }
 
       if (this.destroyed) return;
@@ -309,7 +301,7 @@ export class CutsceneManager implements IGameSystem {
     }
   }
 
-  private async saveAndTransition(def: CutsceneDef | NewCutsceneDef): Promise<void> {
+  private async saveAndTransition(def: NewCutsceneDef): Promise<void> {
     const currentSceneId = this.sceneIdGetter?.() ?? '';
     const pos = this.playerPositionGetter?.() ?? { x: 0, y: 0 };
     this.snapshot = {
@@ -375,15 +367,30 @@ export class CutsceneManager implements IGameSystem {
       case 'present':
         await this.executePresent(step);
         break;
-      case 'parallel':
-        await Promise.all(step.tracks.map(s => this.executeOneStep(s)));
+      case 'parallel': {
+        const raceSkip = new Promise<void>(resolve => {
+          const check = () => {
+            if (this.skipping || this.destroyed) { resolve(); return; }
+            const id = requestAnimationFrame(check);
+            this._skipCheckRafIds.add(id);
+          };
+          check();
+        });
+        await Promise.race([
+          Promise.all(step.tracks.map(s => this.executeOneStep(s))),
+          raceSkip,
+        ]);
+        for (const id of this._skipCheckRafIds) cancelAnimationFrame(id);
+        this._skipCheckRafIds.clear();
         break;
+      }
       default:
         console.warn(`CutsceneManager: unknown step kind "${(step as { kind: string }).kind}"`);
     }
   }
 
-  private async executePresent(step: import('../data/types').PresentStep): Promise<void> {
+  private async executePresent(step: { kind: 'present'; type: string; [key: string]: unknown }): Promise<void> {
+    if (this.skipping || this.destroyed) return;
     switch (step.type) {
       case 'fadeToBlack':
         await this.cutsceneRenderer.fadeToBlack(step.duration as number ?? 1000);
@@ -453,179 +460,6 @@ export class CutsceneManager implements IGameSystem {
     this.entityRemove(id);
   }
 
-  private resolveEntity(id: string): ICutsceneActor | null {
-    const temp = this.tempActors.get(id);
-    if (temp) return temp;
-    return this.entityResolver?.(id) ?? null;
-  }
-
-  private async executeCommands(commands: CutsceneCommand[]): Promise<void> {
-    let i = 0;
-    while (i < commands.length) {
-      if (this.destroyed || this.skipping) return;
-
-      const parallelGroup: CutsceneCommand[] = [commands[i]];
-      while (i + 1 < commands.length && commands[i + 1].parallel) {
-        i++;
-        parallelGroup.push(commands[i]);
-      }
-
-      if (parallelGroup.length === 1) {
-        await this.executeOne(parallelGroup[0]);
-      } else {
-        await Promise.all(parallelGroup.map(c => this.executeOne(c)));
-      }
-      i++;
-    }
-  }
-
-  private async executeOne(cmd: CutsceneCommand): Promise<void> {
-    switch (cmd.type) {
-      case 'fade_black':
-        await this.cutsceneRenderer.fadeToBlack(cmd.duration as number ?? 1000);
-        break;
-      case 'fade_in':
-        await this.cutsceneRenderer.fadeFromBlack(cmd.duration as number ?? 1000);
-        break;
-      case 'flash_white':
-        await this.cutsceneRenderer.flashWhite(cmd.duration as number ?? 200);
-        break;
-      case 'wait_time':
-        await this.cutsceneRenderer.wait(cmd.duration as number ?? 1000);
-        break;
-      case 'wait_click':
-        await this.waitForClick();
-        break;
-      case 'set_flag':
-        await this.actionExecutor.executeAwait({ type: 'setFlag', params: { key: cmd.key as string, value: cmd.value as boolean | number } });
-        break;
-      case 'show_title':
-        await this.cutsceneRenderer.showTitle(cmd.text as string, cmd.duration as number ?? 2000);
-        break;
-      case 'show_dialogue':
-        await this.showDialogueText(cmd.text as string, cmd.speaker as string | undefined);
-        break;
-      case 'play_bgm':
-        await this.actionExecutor.executeAwait({ type: 'playBgm', params: { id: cmd.id as string, fadeMs: cmd.fadeMs as number } });
-        break;
-      case 'stop_bgm':
-        await this.actionExecutor.executeAwait({ type: 'stopBgm', params: { fadeMs: cmd.fadeMs as number } });
-        break;
-      case 'play_sfx':
-        await this.actionExecutor.executeAwait({ type: 'playSfx', params: { id: cmd.id as string } });
-        break;
-      case 'camera_move':
-        await this.cutsceneRenderer.cameraMove(cmd.x as number, cmd.y as number, cmd.duration as number ?? 1000);
-        break;
-      case 'camera_zoom':
-        await this.cutsceneRenderer.cameraZoom(cmd.scale as number, cmd.duration as number ?? 500);
-        break;
-      case 'switch_scene':
-        await this.actionExecutor.executeAwait({
-          type: 'switchScene',
-          params: { targetScene: cmd.sceneId as string, targetSpawnPoint: cmd.spawnPoint as string | undefined },
-        });
-        break;
-      case 'change_scene': {
-        const params: ChangeSceneParams = {
-          targetScene: cmd.sceneId as string,
-          targetSpawnPoint: cmd.spawnPoint as string | undefined,
-          cameraX: cmd.cameraX as number | undefined,
-          cameraY: cmd.cameraY as number | undefined,
-        };
-        if (this.sceneSwitcher) {
-          await this.sceneSwitcher(params);
-        } else {
-          await this.actionExecutor.executeAwait({ type: 'changeScene', params });
-        }
-        break;
-      }
-      case 'show_character':
-        this.entitySetVisible('player', cmd.visible as boolean ?? true);
-        break;
-      case 'show_img':
-        await this.cutsceneRenderer.showImg(cmd.image as string, cmd.id as string);
-        break;
-      case 'hide_img':
-        this.cutsceneRenderer.hideImg(cmd.id as string);
-        break;
-      case 'show_movie_bar':
-        this.cutsceneRenderer.showMovieBar((cmd.heightPercent as number) ?? 0.1);
-        break;
-      case 'hide_movie_bar':
-        this.cutsceneRenderer.hideMovieBar();
-        break;
-      case 'show_subtitle':
-        await this.showSubtitleText(cmd.text as string, cmd.position as string | number | undefined);
-        break;
-      case 'execute_action':
-        await this.actionExecutor.executeAwait({ type: cmd.actionType as string, params: (cmd.params as Record<string, unknown>) ?? {} });
-        break;
-      case 'entity_move':
-        await this.entityMove(cmd.target as string, cmd.x as number, cmd.y as number, cmd.speed as number | undefined);
-        break;
-      case 'entity_anim':
-        this.entityAnim(cmd.target as string, cmd.animation as string);
-        break;
-      case 'entity_face':
-        this.entityFace(cmd.target as string, cmd.direction as string | undefined, cmd.faceTarget as string | undefined);
-        break;
-      case 'entity_spawn':
-        this.entitySpawn(cmd.id as string, cmd.name as string, cmd.x as number, cmd.y as number);
-        break;
-      case 'entity_remove':
-        this.entityRemove(cmd.id as string);
-        break;
-      case 'entity_emote':
-        await this.entityEmote(cmd.target as string, cmd.emote as string, cmd.duration as number | undefined);
-        break;
-      case 'entity_visible':
-        this.entitySetVisible(cmd.target as string, cmd.visible as boolean);
-        break;
-      default:
-        console.warn(`CutsceneManager: unknown command "${cmd.type}"`);
-    }
-  }
-
-  private async entityMove(targetId: string, x: number, y: number, speed?: number): Promise<void> {
-    const actor = this.resolveEntity(targetId);
-    if (!actor) {
-      console.warn(`CutsceneManager entity_move: entity "${targetId}" not found`);
-      return;
-    }
-    await actor.moveTo(x, y, speed ?? 80);
-  }
-
-  private entityAnim(targetId: string, animation: string): void {
-    const actor = this.resolveEntity(targetId);
-    if (!actor) {
-      console.warn(`CutsceneManager entity_anim: entity "${targetId}" not found`);
-      return;
-    }
-    actor.playAnimation(animation);
-  }
-
-  private entityFace(targetId: string, direction?: string, faceTargetId?: string): void {
-    const actor = this.resolveEntity(targetId);
-    if (!actor) {
-      console.warn(`CutsceneManager entity_face: entity "${targetId}" not found`);
-      return;
-    }
-
-    if (faceTargetId) {
-      const other = this.resolveEntity(faceTargetId);
-      if (other) {
-        actor.setFacing(other.x - actor.x, other.y - actor.y);
-      }
-    } else if (direction) {
-      const dirMap: Record<string, [number, number]> = {
-        left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1],
-      };
-      const d = dirMap[direction];
-      if (d) actor.setFacing(d[0], d[1]);
-    }
-  }
-
   private entitySpawn(id: string, name: string, x: number, y: number): void {
     if (this.tempActors.has(id)) {
       console.warn(`CutsceneManager entity_spawn: "${id}" already exists`);
@@ -649,19 +483,8 @@ export class CutsceneManager implements IGameSystem {
     this.tempActors.delete(id);
   }
 
-  private async entityEmote(targetId: string, emote: string, duration?: number): Promise<void> {
-    const actor = this.resolveEntity(targetId);
-    if (!actor) {
-      console.warn(`CutsceneManager entity_emote: entity "${targetId}" not found`);
-      return;
-    }
-    if (this.emoteBubbleProvider) {
-      await this.emoteBubbleProvider.showAndWait(actor, emote, duration ?? 1500);
-    }
-  }
-
   private entitySetVisible(targetId: string, visible: boolean): void {
-    const actor = this.resolveEntity(targetId);
+    const actor = this.entityResolver?.(targetId) ?? null;
     if (!actor) {
       console.warn(`CutsceneManager entity_visible: entity "${targetId}" not found`);
       return;
@@ -752,6 +575,7 @@ export class CutsceneManager implements IGameSystem {
 
   destroy(): void {
     this.destroyed = true;
+    this.skipping = false;
     this.snapshot = null;
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
