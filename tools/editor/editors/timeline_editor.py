@@ -91,6 +91,7 @@ class StepWidget(QFrame):
 
         kind = str(step.get("kind", "present"))
         self._step_data = deepcopy(step)
+        self._original_data = deepcopy(step)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
@@ -361,8 +362,13 @@ class StepWidget(QFrame):
 
         if kind == "present":
             ptype = self._type_combo.committed_type()
-            d: dict = {"kind": "present", "type": ptype}
             schema = _PRESENT_PARAMS.get(ptype, [])
+            if not schema and ptype not in PRESENT_TYPES:
+                base = deepcopy(self._original_data) if self._original_data.get("kind") == "present" else {}
+                base["kind"] = "present"
+                base["type"] = ptype
+                return base
+            d: dict = {"kind": "present", "type": ptype}
             for pname, pt in schema:
                 w = self._widgets.get(pname)
                 if w is None:
