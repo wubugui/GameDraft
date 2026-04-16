@@ -633,6 +633,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const faceTarget = p.faceTarget !== undefined ? String(p.faceTarget).trim() : '';
     const direction = p.direction !== undefined ? String(p.direction).trim() : '';
+    if (!faceTarget && !direction) {
+      console.warn('faceEntity: 需要 direction 或 faceTarget（至少一个）');
+      return;
+    }
     if (faceTarget) {
       const other = d.resolveActor(faceTarget);
       if (other) {

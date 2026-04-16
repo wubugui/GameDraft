@@ -54,7 +54,6 @@ export class CutsceneManager implements IGameSystem {
   private unsubInput: (() => void) | null = null;
   private destroyed = false;
   private skipping = false;
-  private _skipCheckRafIds = new Set<number>();
 
   private snapshot: CutsceneSnapshot | null = null;
   private sceneIdGetter: (() => string | null) | null = null;
@@ -368,20 +367,24 @@ export class CutsceneManager implements IGameSystem {
         await this.executePresent(step);
         break;
       case 'parallel': {
+        let skipRafId = 0;
+        let resolveSkip: (() => void) | null = null;
         const raceSkip = new Promise<void>(resolve => {
+          resolveSkip = resolve;
           const check = () => {
             if (this.skipping || this.destroyed) { resolve(); return; }
-            const id = requestAnimationFrame(check);
-            this._skipCheckRafIds.add(id);
+            skipRafId = requestAnimationFrame(check);
           };
           check();
         });
         await Promise.race([
-          Promise.all(step.tracks.map(s => this.executeOneStep(s))),
+          Promise.all(step.tracks.map(s => this.executeOneStep(s))).then(() => {
+            cancelAnimationFrame(skipRafId);
+            resolveSkip?.();
+          }),
           raceSkip,
         ]);
-        for (const id of this._skipCheckRafIds) cancelAnimationFrame(id);
-        this._skipCheckRafIds.clear();
+        cancelAnimationFrame(skipRafId);
         break;
       }
       default:
