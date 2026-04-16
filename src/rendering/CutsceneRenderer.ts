@@ -25,6 +25,8 @@ export class CutsceneRenderer {
   private movieBarContainer: Container | null = null;
   private pendingRafIds = new Set<number>();
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
+  /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
+  private cutsceneOpResolvers = new Set<() => void>();
   /** 过场结束后恢复的缩放；默认 1。由 Game 设为当前场景的 camera.zoom。 */
   private getRestoreZoom: (() => number) | null = null;
 
@@ -221,12 +223,36 @@ export class CutsceneRenderer {
     this.pendingRafIds.add(id);
   }
 
+  private createOpFinisher(onDone: () => void): () => void {
+    let settled = false;
+    const finish: () => void = () => {
+      if (settled) return;
+      settled = true;
+      this.cutsceneOpResolvers.delete(finish);
+      onDone();
+    };
+    this.cutsceneOpResolvers.add(finish);
+    return finish;
+  }
+
+  /** 取消过场中的 RAF/定时器并让进行中的 Promise 立即结束（供 Esc 跳过等） */
+  abortCutsceneOps(): void {
+    this.pendingRafIds.forEach(id => cancelAnimationFrame(id));
+    this.pendingRafIds.clear();
+    this.pendingTimerIds.forEach(id => clearTimeout(id));
+    this.pendingTimerIds.clear();
+    const pending = [...this.cutsceneOpResolvers];
+    this.cutsceneOpResolvers.clear();
+    for (const f of pending) f();
+  }
+
   async cameraMove(x: number, y: number, duration: number): Promise<void> {
     const startX = this.camera.getX();
     const startY = this.camera.getY();
     const startTime = performance.now();
 
     return new Promise(resolve => {
+      const finish = this.createOpFinisher(() => resolve());
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / duration, 1);
         const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
@@ -234,7 +260,7 @@ export class CutsceneRenderer {
           startX + (x - startX) * ease,
           startY + (y - startY) * ease,
         );
-        if (t < 1) this.trackRaf(tick); else resolve();
+        if (t < 1) this.trackRaf(tick); else finish();
       };
       this.trackRaf(tick);
     });
@@ -246,11 +272,12 @@ export class CutsceneRenderer {
     const dur = Math.max(1, duration);
 
     return new Promise(resolve => {
+      const finish = this.createOpFinisher(() => resolve());
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / dur, 1);
         const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         this.camera.setZoom(startScale + (scale - startScale) * ease);
-        if (t < 1) this.trackRaf(tick); else resolve();
+        if (t < 1) this.trackRaf(tick); else finish();
       };
       this.trackRaf(tick);
     });
@@ -258,9 +285,10 @@ export class CutsceneRenderer {
 
   wait(ms: number): Promise<void> {
     return new Promise(resolve => {
+      const finish = this.createOpFinisher(() => resolve());
       const id = setTimeout(() => {
         this.pendingTimerIds.delete(id);
-        resolve();
+        finish();
       }, ms);
       this.pendingTimerIds.add(id);
     });
@@ -450,12 +478,13 @@ export class CutsceneRenderer {
     }
 
     await new Promise<void>(resolve => {
+      const finish = this.createOpFinisher(() => resolve());
       const start = performance.now();
       const tick = (): void => {
         const u = Math.min((performance.now() - start) / dur, 1);
         setT(u);
         if (u < 1) this.trackRaf(tick);
-        else resolve();
+        else finish();
       };
       this.trackRaf(tick);
     });
@@ -531,22 +560,20 @@ export class CutsceneRenderer {
 
   animateAlpha(target: { alpha: number }, from: number, to: number, duration: number): Promise<void> {
     return new Promise(resolve => {
+      const finish = this.createOpFinisher(() => resolve());
       const startTime = performance.now();
       target.alpha = from;
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / duration, 1);
         target.alpha = from + (to - from) * t;
-        if (t < 1) this.trackRaf(tick); else resolve();
+        if (t < 1) this.trackRaf(tick); else finish();
       };
       this.trackRaf(tick);
     });
   }
 
   cleanup(): void {
-    this.pendingRafIds.forEach(id => cancelAnimationFrame(id));
-    this.pendingRafIds.clear();
-    this.pendingTimerIds.forEach(id => clearTimeout(id));
-    this.pendingTimerIds.clear();
+    this.abortCutsceneOps();
 
     if (this.fadeOverlay) {
       if (this.fadeOverlay.parent) this.fadeOverlay.parent.removeChild(this.fadeOverlay);

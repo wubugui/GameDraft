@@ -20,6 +20,8 @@ export class InputManager {
 
   private keyDownSubscribers: ((e: KeyboardEvent) => void)[] = [];
   private anyInputSubscribers: (() => void)[] = [];
+  /** 仅指针按下（不含键盘），供过场等需与 Esc 区分「推进 / 跳过」的场景 */
+  private pointerDownSubscribers: (() => void)[] = [];
 
   constructor() {
     this.onKeyDownBound = this.onKeyDown.bind(this);
@@ -62,6 +64,7 @@ export class InputManager {
     this.mouseDown = true;
     this.mouseJustClicked = true;
     for (const cb of this.anyInputSubscribers) cb();
+    for (const cb of this.pointerDownSubscribers) cb();
   }
 
   private onPointerUp(_e: PointerEvent): void {
@@ -161,6 +164,14 @@ export class InputManager {
     };
   }
 
+  subscribePointerDown(cb: () => void): () => void {
+    this.pointerDownSubscribers.push(cb);
+    return () => {
+      const idx = this.pointerDownSubscribers.indexOf(cb);
+      if (idx >= 0) this.pointerDownSubscribers.splice(idx, 1);
+    };
+  }
+
   destroy(): void {
     window.removeEventListener('keydown', this.onKeyDownBound);
     window.removeEventListener('keyup', this.onKeyUpBound);
@@ -169,5 +180,6 @@ export class InputManager {
     window.removeEventListener('pointerup', this.onPointerUpBound);
     this.keyDownSubscribers.length = 0;
     this.anyInputSubscribers.length = 0;
+    this.pointerDownSubscribers.length = 0;
   }
 }
