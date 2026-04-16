@@ -522,9 +522,7 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
 
     for c in model.cutscenes:
         cid = str(c.get("id", ""))
-        for cmd in c.get("commands", []) or []:
-            if isinstance(cmd, dict) and cmd.get("type") == "set_flag" and cmd.get("key"):
-                _flag_issue(model, issues, str(cmd["key"]), "cutscene", cid, None)
+        _validate_cutscene_steps(c.get("steps", []) or [], cid, issues)
 
     for it in model.items:
         iid = str(it.get("id", ""))
@@ -584,4 +582,55 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         for fk in sf:
             if fk:
                 _flag_issue(model, issues, str(fk), "config", "game_config", None)
+
+
+_CUTSCENE_ACTION_WHITELIST = frozenset([
+    "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
+    "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
+    "playSfx", "playBgm", "stopBgm",
+])
+
+
+def _validate_cutscene_steps(
+    steps: list, cid: str, issues: list[Issue],
+) -> None:
+    from .shared.action_editor import ACTION_TYPES
+    allowed_types = set(ACTION_TYPES)
+
+    for i, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        kind = step.get("kind", "")
+
+        if kind == "action":
+            t = step.get("type", "")
+            if t and t not in allowed_types:
+                issues.append(Issue(
+                    "error", "cutscene", cid,
+                    f"step #{i+1} action type {t!r} 未在 ACTION_TYPES 中登记",
+                ))
+            if t and t not in _CUTSCENE_ACTION_WHITELIST:
+                issues.append(Issue(
+                    "error", "cutscene", cid,
+                    f"step #{i+1} action type {t!r} 不在 Cutscene 白名单内（Cutscene 仅允许无副作用 Action）",
+                ))
+            if t == "cutsceneSpawnActor":
+                sid = str((step.get("params") or {}).get("id", ""))
+                if sid and not sid.startswith("_cut_"):
+                    issues.append(Issue(
+                        "error", "cutscene", cid,
+                        f"step #{i+1} cutsceneSpawnActor id {sid!r} 必须以 _cut_ 开头",
+                    ))
+
+        elif kind == "present":
+            pass
+
+        elif kind == "parallel":
+            _validate_cutscene_steps(step.get("tracks", []), cid, issues)
+
+        elif kind:
+            issues.append(Issue(
+                "warning", "cutscene", cid,
+                f"step #{i+1} 未知 kind {kind!r}",
+            ))
 
