@@ -86,7 +86,7 @@ class ScriptedLinesEditor(QWidget):
     def to_list(self) -> list[dict]:
         out: list[dict] = []
         for r in self._rows:
-            t = r["text"].toPlainText().strip()
+            t = r["text"].toPlainText()
             if not t:
                 continue
             out.append({

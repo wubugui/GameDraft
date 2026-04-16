@@ -72,7 +72,7 @@
           "speaker": {
             "kind": "npc"
           },
-          "text": "嘿！你娃娃命大撒。"
+          "text": "嘿！那你娃儿有点日白撒。"
         },
         {
           "speaker": {
@@ -168,6 +168,22 @@
           "type": "hideOverlayImage",
           "params": {
             "id": "告示X"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "真相揭示（脚帮）",
+            "status": "done"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "真相揭示",
+            "status": "done"
           }
         }
       ],
@@ -277,8 +293,7 @@
             {
               "scenario": "码头水鬼",
               "phase": "真相揭示",
-              "status": "done",
-              "outcome": "脚帮揭示"
+              "status": "done"
             }
           ]
         }

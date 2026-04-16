@@ -22,9 +22,19 @@ const LOG_MAX_LINES = 50;
 
 const TAB_SYSTEM = 'system';
 const TAB_TOOLS = 'tools';
+const TAB_NARRATIVE = 'narrative';
+const TAB_FLAGS = 'flags';
 const TAB_LOG = 'log';
 
-type TabId = typeof TAB_SYSTEM | typeof TAB_TOOLS | typeof TAB_LOG;
+/** 与 DebugTools.setupDebugPanelSections 注册的区块 id 一致 */
+export const NARRATIVE_DEBUG_SECTION_ID = '叙事调试';
+
+type TabId =
+  | typeof TAB_SYSTEM
+  | typeof TAB_TOOLS
+  | typeof TAB_NARRATIVE
+  | typeof TAB_FLAGS
+  | typeof TAB_LOG;
 
 export class DebugPanelUI implements IDebugPanelAPI {
   private systemInfoProvider?: () => {
@@ -47,6 +57,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private root: HTMLElement;
   private panelSystem: HTMLElement;
   private panelTools: HTMLElement;
+  private panelNarrative: HTMLElement;
+  private panelFlags: HTMLElement;
   private panelLog: HTMLElement;
   private logPre: HTMLElement;
   private tabButtons: Map<TabId, HTMLButtonElement> = new Map();
@@ -113,6 +125,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     };
     mkTab(TAB_SYSTEM, '系统');
     mkTab(TAB_TOOLS, '工具');
+    mkTab(TAB_NARRATIVE, '叙事调试');
+    mkTab(TAB_FLAGS, 'Flag');
     mkTab(TAB_LOG, '日志');
 
     const panels = document.createElement('div');
@@ -120,6 +134,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
     this.panelSystem = this.mkPanel('system-panel');
     this.panelTools = this.mkPanel('tools-panel');
+    this.panelNarrative = this.mkPanel('narrative-panel');
+    this.panelFlags = this.mkPanel('flags-panel');
     this.panelLog = this.mkPanel('log-panel');
 
     const logScroll = document.createElement('div');
@@ -142,6 +158,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
     panels.appendChild(this.panelSystem);
     panels.appendChild(this.panelTools);
+    panels.appendChild(this.panelNarrative);
+    panels.appendChild(this.panelFlags);
     panels.appendChild(this.panelLog);
 
     this.root.appendChild(header);
@@ -168,6 +186,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     }
     this.panelSystem.classList.toggle('is-active', id === TAB_SYSTEM);
     this.panelTools.classList.toggle('is-active', id === TAB_TOOLS);
+    this.panelNarrative.classList.toggle('is-active', id === TAB_NARRATIVE);
+    this.panelFlags.classList.toggle('is-active', id === TAB_FLAGS);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
     this.updateSystemLiveLoop();
   }
@@ -265,6 +285,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.systemStatsPre = null;
     this.panelSystem.replaceChildren();
     this.panelTools.replaceChildren();
+    this.panelNarrative.replaceChildren();
+    this.panelFlags.replaceChildren();
     this.logPre.textContent = '';
   }
 
@@ -275,6 +297,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private render(): void {
     this.renderSystem();
     this.renderTools();
+    this.renderNarrative();
+    this.renderFlags();
     this.renderLogOnly();
   }
 
@@ -323,26 +347,15 @@ export class DebugPanelUI implements IDebugPanelAPI {
     pre.textContent = text;
   }
 
-  private renderTools(): void {
-    this.panelTools.replaceChildren();
-    const column = document.createElement('div');
-    column.className = 'debug-dock__tools-column';
-
-    if (this.flagSectionHandle) {
-      column.appendChild(this.flagSectionHandle.root);
-    }
-
-    const scroll = document.createElement('div');
-    scroll.className = 'debug-dock__scroll';
-
-    if (this.sections.size === 0) {
-      scroll.appendChild(this.p('未注册调试区块。'));
-      column.appendChild(scroll);
-      this.panelTools.appendChild(column);
-      return;
-    }
-
+  /** @returns 实际渲染的区块数量 */
+  private appendSectionBlocks(
+    scroll: HTMLElement,
+    predicate: (id: string) => boolean,
+  ): number {
+    let count = 0;
     for (const [id, getter] of this.sections) {
+      if (!predicate(id)) continue;
+      count++;
       try {
         const data = getter();
         const text = typeof data === 'string' ? data : data.text;
@@ -389,8 +402,50 @@ export class DebugPanelUI implements IDebugPanelAPI {
         scroll.appendChild(err);
       }
     }
+    return count;
+  }
+
+  private renderTools(): void {
+    this.panelTools.replaceChildren();
+    const column = document.createElement('div');
+    column.className = 'debug-dock__tools-column';
+
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+
+    if (this.sections.size === 0) {
+      scroll.appendChild(this.p('未注册调试区块。'));
+    } else {
+      const n = this.appendSectionBlocks(scroll, (id) => id !== NARRATIVE_DEBUG_SECTION_ID);
+      if (n === 0) {
+        scroll.appendChild(this.p('（此页暂无工具项；叙事调试与 Flag 已单独分页。）'));
+      }
+    }
     column.appendChild(scroll);
     this.panelTools.appendChild(column);
+  }
+
+  private renderNarrative(): void {
+    this.panelNarrative.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    const n = this.appendSectionBlocks(scroll, (id) => id === NARRATIVE_DEBUG_SECTION_ID);
+    if (n === 0) {
+      scroll.appendChild(this.p('（未注册叙事调试区块）'));
+    }
+    this.panelNarrative.appendChild(scroll);
+  }
+
+  private renderFlags(): void {
+    this.panelFlags.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    if (this.flagSectionHandle) {
+      scroll.appendChild(this.flagSectionHandle.root);
+    } else {
+      scroll.appendChild(this.p('（Flag 调试未挂载，需在加载 Flag 登记表之后打开面板）'));
+    }
+    this.panelFlags.appendChild(scroll);
   }
 
   private p(text: string): HTMLParagraphElement {

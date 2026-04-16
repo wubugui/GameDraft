@@ -5,6 +5,7 @@ import type { EventBus } from './EventBus';
 import type { Player } from '../entities/Player';
 import type { InventoryManager } from '../systems/InventoryManager';
 import type { DebugPanelUI } from '../ui/DebugPanelUI';
+import { NARRATIVE_DEBUG_SECTION_ID } from '../ui/DebugPanelUI';
 import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
 
 /** 调试缩放下限。原先 0.25 过小幅度就顶死，表现为「只能放大不能缩小」 */
@@ -215,16 +216,15 @@ export class DebugTools {
   private setupDebugPanelSections(): void {
     const { debugPanelUI, player, inventoryManager, renderer } = this.deps;
 
-    debugPanelUI.addSection('叙事调试', () => {
+    debugPanelUI.addSection(NARRATIVE_DEBUG_SECTION_ID, () => {
       let text: string;
       try {
         const snap = this.deps.getNarrativeDebugSnapshot();
         const ne = snap.narrativeEval as { summaryText?: string } | undefined;
-        const head =
+        text =
           ne && typeof ne.summaryText === 'string' && ne.summaryText.trim()
-            ? `【解算路径与当前图节点】\n${ne.summaryText.trim()}\n\n【完整快照 JSON】\n`
+            ? ne.summaryText.trim()
             : '';
-        text = head + JSON.stringify(snap, null, 2);
       } catch {
         text = '（快照序列化失败）';
       }
