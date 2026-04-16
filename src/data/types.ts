@@ -358,6 +358,11 @@ export interface ScenarioCatalogEntry {
   /** 键须为登记表中的 flag；值为 bool / number / string，与登记表 valueType 一致 */
   exposes?: Record<string, boolean | number | string>;
   phases?: Record<string, ScenarioCatalogPhaseEntry>;
+  /**
+   * 归属本 scenario 的图对话资源 id（与 `dialogues/graphs/<id>.json` 及图根字段 `id` 一致）。
+   * 由图 `meta.scenarioId` 与工程加载时扫描维护，写入 scenarios.json。
+   */
+  dialogueGraphIds?: string[];
 }
 
 export interface ScenarioCatalogFile {

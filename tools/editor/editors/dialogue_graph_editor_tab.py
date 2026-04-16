@@ -18,7 +18,9 @@ class DialogueGraphEditorTab(QWidget):
         if model.project_path is None:
             layout.addWidget(QLabel("未加载工程"))
             return
-        self._panel = DialogueGraphEditorWidget(model.project_path, self)
+        self._panel = DialogueGraphEditorWidget(
+            model.project_path, self, project_model=model
+        )
         layout.addWidget(self._panel)
 
     def open_graph_by_id(self, graph_id: str) -> None:

@@ -3,25 +3,10 @@
   "id": "码头看板官差",
   "entry": "n_4",
   "meta": {
-    "title": "码头看板官差"
+    "title": "码头看板官差",
+    "scenarioId": "码头水鬼"
   },
   "nodes": {
-    "n_root": {
-      "type": "switch",
-      "cases": [
-        {
-          "conditions": [
-            {
-              "scenario": "码头水鬼",
-              "phase": "询问官差",
-              "status": "done"
-            }
-          ],
-          "next": "n_sleep"
-        }
-      ],
-      "defaultNext": "n_branch_notice"
-    },
     "n_sleep": {
       "type": "line",
       "speaker": {
@@ -38,14 +23,14 @@
       "type": "switch",
       "cases": [
         {
+          "next": "n_1",
           "conditions": [
             {
               "scenario": "码头水鬼",
               "phase": "看板初读",
               "status": "done"
             }
-          ],
-          "next": "n_1"
+          ]
         }
       ],
       "defaultNext": "n_no_1"
@@ -257,6 +242,22 @@
           "params": {
             "id": "blend"
           }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "真相揭示（官差）",
+            "status": "done"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "真相揭示",
+            "status": "done"
+          }
         }
       ],
       "next": "n_done_line"
@@ -269,7 +270,7 @@
       "next": "n_done_flag",
       "text": "这片啥时候闹起了水猴子？头几天我还下水洗了澡......"
     },
-       "n_done_flag": {
+    "n_done_flag": {
       "type": "runActions",
       "actions": [
         {
@@ -393,17 +394,17 @@
       "type": "switch",
       "cases": [
         {
+          "next": "n_sleep",
           "conditions": [
             {
-              "scenario": "码头水鬼",
-              "phase": "询问脚帮",
-              "status": "done"
+              "flag": "码头水鬼真相已揭示",
+              "op": "==",
+              "value": true
             }
-          ],
-          "next": "n_sleep"
+          ]
         }
       ],
-      "defaultNext": "n_root"
+      "defaultNext": "n_branch_notice"
     }
   },
   "preconditions": []

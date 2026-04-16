@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
-    QWidget, QSplitter, QListWidget, QListWidgetItem, QVBoxLayout,
+    QWidget, QSplitter, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout,
     QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel, QLineEdit,
     QPlainTextEdit, QFormLayout, QScrollArea, QGroupBox, QInputDialog,
     QMenu, QCompleter, QDialog, QSizePolicy, QComboBox, QApplication,
@@ -57,6 +58,13 @@ from .flow_oden_controller import DialogueFlowOdenController
 from .node_inspector import NodeInspector
 from .node_picker_dialog import NodePickerDialog
 from tools.editor.shared.condition_editor import ConditionEditor
+
+# 左侧图列表树：条目类型存在 UserRole；分组稳定 key 存在 _TREE_GROUP_KEY_ROLE。
+_TREE_KIND_ROLE = Qt.ItemDataRole.UserRole + 30
+_TREE_GROUP_KEY_ROLE = Qt.ItemDataRole.UserRole + 31
+_TK_GROUP = 1
+_TK_FILE = 2
+_TK_UNSAVED = 3
 
 
 def _graph_form_label(text: str, tip: str | None = None, *, max_w: int = 100) -> QLabel:
@@ -137,9 +145,16 @@ class DialogueGraphEditorWidget(QWidget):
     title_changed = Signal(str)
     dirty_changed = Signal(bool)
 
-    def __init__(self, project_path: str | Path, parent: QWidget | None = None):
+    def __init__(
+        self,
+        project_path: str | Path,
+        parent: QWidget | None = None,
+        *,
+        project_model: Any | None = None,
+    ):
         super().__init__(parent)
         self._project = Path(project_path).resolve()
+        self._injected_project_model = project_model
         self._graphs_dir = graphs_dir(self._project)
         self._current_path: Path | None = None
         self._model = GraphDocumentModel(self)
@@ -161,6 +176,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._editor_group_frames: dict[str, dict[str, Any]] = {}
         self._draft_layout_basename: str | None = None
         self._unsaved_list_token = "__unsaved__"
+        self._file_tree_group_key: tuple[str, str] | None = None
         self._inspector_project_model = None
         self._inspector_project_model_failed = False
         self._undo_stack = QUndoStack(self)
@@ -224,15 +240,20 @@ class DialogueGraphEditorWidget(QWidget):
 
         file_box = QWidget()
         fv = QVBoxLayout(file_box)
-        fv.addWidget(QLabel("graphs/*.json"))
-        self._file_list_entries: list[tuple[str, Any]] = []
+        fv.addWidget(QLabel("graphs/*.json（按叙事归属分组）"))
         self._file_list_filter = QLineEdit()
-        self._file_list_filter.setPlaceholderText("筛选文件名…")
+        self._file_list_filter.setPlaceholderText("筛选文件名或 scenario…")
         self._file_list_filter.textChanged.connect(self._on_file_list_filter_changed)
         fv.addWidget(self._file_list_filter)
-        self._file_list = QListWidget()
-        self._file_list.currentItemChanged.connect(self._on_file_item_changed)
-        fv.addWidget(self._file_list, 1)
+        self._file_tree = QTreeWidget()
+        self._file_tree.setHeaderHidden(True)
+        self._file_tree.setRootIsDecorated(True)
+        self._file_tree.setAnimated(True)
+        self._file_tree.setIndentation(16)
+        self._file_tree.currentItemChanged.connect(self._on_file_tree_item_changed)
+        self._file_tree.itemExpanded.connect(self._on_file_tree_expand_toggle)
+        self._file_tree.itemCollapsed.connect(self._on_file_tree_expand_toggle)
+        fv.addWidget(self._file_tree, 1)
         b_refresh = QPushButton("刷新列表")
         b_refresh.clicked.connect(self._refresh_file_list)
         fv.addWidget(b_refresh)
@@ -381,19 +402,28 @@ class DialogueGraphEditorWidget(QWidget):
         self._edit_meta_scenario.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._edit_meta_scenario.setMinimumWidth(180)
         self._edit_meta_scenario.setToolTip(
-            "可选。下拉选自 scenarios.json 的 scenario id；与清单一致时可通过校验。\n"
-            "留空表示不写 meta.scenarioId。仅作图级归属标注与检索，与节点内 setScenarioPhase 无自动关联。",
+            "须选自 scenarios.json 清单。保存后写入 meta.scenarioId，并同步更新该 scenario 的 dialogueGraphIds。\n"
+            "留空表示不归属任何 scenario（左侧列表归入「未归属」）。",
         )
         _scen_le = self._edit_meta_scenario.lineEdit()
         if _scen_le is not None:
-            _scen_le.setPlaceholderText("可选，留空不写 meta.scenarioId")
+            _scen_le.setPlaceholderText("从下拉选择 scenario id")
+        self._meta_scenario_row = QWidget(self._graph_prop_body)
+        _ms_lay = QHBoxLayout(self._meta_scenario_row)
+        _ms_lay.setContentsMargins(0, 0, 0, 0)
+        _ms_lay.addWidget(self._edit_meta_scenario, 1)
+        self._btn_open_scenario = QPushButton("打开叙事页…", self._meta_scenario_row)
+        self._btn_open_scenario.setToolTip(
+            "在主编辑器中打开「数据编辑 → 叙事编排 → Scenarios」并选中当前 scenario。",
+        )
+        self._btn_open_scenario.clicked.connect(self._on_open_linked_scenario_clicked)
+        _ms_lay.addWidget(self._btn_open_scenario)
         gform.addRow(
             _graph_form_label(
                 "叙事归属",
-                tip="对应 JSON：meta.scenarioId（可选）。标明本图归属哪条叙事 scenario，便于检索与校验；"
-                "不改变玩法逻辑；节点里推进阶段仍用动作的 setScenarioPhase。",
+                tip="对应 JSON：meta.scenarioId。与 scenarios.json 双向维护：本图会出现在该 scenario 的 dialogueGraphIds 中。",
             ),
-            self._edit_meta_scenario,
+            self._meta_scenario_row,
         )
         gform.addRow(QLabel(), self._pre_cond_ed)
         gform.addRow(
@@ -747,7 +777,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
 
     def delete_selected_graph_file(self) -> None:
-        it = self._file_list.currentItem()
+        it = self._file_tree.currentItem()
         if it is None:
             self._toast("请先在左侧列表选中要删除的 graphs/*.json", 3000)
             return
@@ -795,6 +825,16 @@ class DialogueGraphEditorWidget(QWidget):
         )
         if r != QMessageBox.StandardButton.Yes:
             return
+        try:
+            raw_del = load_json(path)
+        except Exception:
+            raw_del = {}
+        del_gid = path.stem
+        if isinstance(raw_del, dict):
+            del_gid = str(raw_del.get("id", path.stem)).strip() or path.stem
+        pm_del = self._injected_project_model
+        if pm_del is not None and del_gid:
+            pm_del.relink_dialogue_graph_to_scenarios(del_gid, None)
         try:
             path.unlink()
         except OSError as e:
@@ -965,6 +1005,7 @@ class DialogueGraphEditorWidget(QWidget):
                 f"已存在文件：{new_path.name}\n请改用其它名称，或先处理冲突文件。",
             )
             return
+        old_graph_id = str(self._data.get("id", "")).strip()
         self._data["id"] = new_stem
         try:
             save_json(new_path, self._data)
@@ -983,6 +1024,13 @@ class DialogueGraphEditorWidget(QWidget):
         migrate_layout_map_key(self._project, old_path, new_path)
         self._current_path = new_path
         self._draft_layout_basename = None
+        pm_rn = self._injected_project_model
+        if pm_rn is not None:
+            if old_graph_id and old_graph_id != new_stem:
+                pm_rn.rename_dialogue_graph_in_scenarios_catalog(old_graph_id, new_stem)
+            meta_rn = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
+            sc_rn = str(meta_rn.get("scenarioId", "")).strip()
+            pm_rn.relink_dialogue_graph_to_scenarios(new_stem, sc_rn or None)
         self._apply_data_to_widgets()
         self._set_dirty(False)
         self._flush_flow_layout_to_disk()
@@ -1031,6 +1079,8 @@ class DialogueGraphEditorWidget(QWidget):
 
     def _get_project_model_for_inspector(self):
         """供节点检查器打开 FlagPickerDialog；失败则返回 None。"""
+        if self._injected_project_model is not None:
+            return self._injected_project_model
         if self._inspector_project_model_failed:
             return None
         if self._inspector_project_model is None:
@@ -1426,61 +1476,179 @@ class DialogueGraphEditorWidget(QWidget):
             fw.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_file_list_filter_changed(self, _text: str = "") -> None:
-        self._apply_file_list_filter(preserve_selection=True)
+        self._rebuild_file_tree(preserve_selection=True)
 
-    def _apply_file_list_filter(self, *, preserve_selection: bool = True) -> None:
-        prev_role: Any = None
-        if preserve_selection:
-            cur = self._file_list.currentItem()
-            if cur is not None:
-                prev_role = cur.data(Qt.ItemDataRole.UserRole)
+    def _file_tree_settings(self) -> QSettings:
+        proj = str(self._project)
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        s.beginGroup("graph_file_tree")
+        s.beginGroup(proj)
+        return s
+
+    def _on_file_tree_expand_toggle(self, item: QTreeWidgetItem) -> None:
+        gk = item.data(0, _TREE_GROUP_KEY_ROLE)
+        if gk:
+            self._file_tree_settings().setValue(f"grp_expanded/{gk}", item.isExpanded())
+
+    def _read_graph_meta_scenario_for_path(self, path: Path) -> str:
+        try:
+            data = load_json(path)
+        except Exception:
+            return ""
+        if not isinstance(data, dict):
+            return ""
+        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        return str(meta.get("scenarioId", "")).strip()
+
+    def _walk_file_tree_items(self, parent: QTreeWidgetItem | None = None):
+        if parent is None:
+            for i in range(self._file_tree.topLevelItemCount()):
+                yield from self._walk_file_tree_items(self._file_tree.topLevelItem(i))
+        else:
+            yield parent
+            for i in range(parent.childCount()):
+                yield from self._walk_file_tree_items(parent.child(i))
+
+    def _rebuild_file_tree(
+        self,
+        *,
+        select_unsaved: bool = False,
+        preserve_selection: bool = True,
+    ) -> None:
         q = (self._file_list_filter.text() or "").strip().lower()
-        self._file_list.blockSignals(True)
-        self._file_list.clear()
-        for disp, role in self._file_list_entries:
-            if q and q not in disp.lower():
-                continue
-            it = QListWidgetItem(disp)
-            it.setData(Qt.ItemDataRole.UserRole, role)
-            self._file_list.addItem(it)
-        self._file_list.blockSignals(False)
-        if preserve_selection and prev_role is not None:
-            for i in range(self._file_list.count()):
-                it = self._file_list.item(i)
-                if it and it.data(Qt.ItemDataRole.UserRole) == prev_role:
-                    self._file_list.setCurrentItem(it)
-                    return
+        pm = self._injected_project_model or self._get_project_model_for_inspector()
+        known_scenarios: list[str] = []
+        known_set: set[str] = set()
+        if pm is not None:
+            known_scenarios = pm.scenario_ids_ordered()
+            known_set = set(known_scenarios)
 
-    def _refresh_file_list(self, *, select_unsaved: bool = False) -> None:
-        self._file_list_entries.clear()
+        prev_path: Path | None = None
+        prev_unsaved = False
+        if preserve_selection and not select_unsaved:
+            cur = self._file_tree.currentItem()
+            if cur is not None:
+                k = cur.data(0, _TREE_KIND_ROLE)
+                if k == _TK_FILE:
+                    try:
+                        prev_path = Path(str(cur.data(0, Qt.ItemDataRole.UserRole))).resolve()
+                    except OSError:
+                        prev_path = None
+                elif k == _TK_UNSAVED:
+                    prev_unsaved = True
+
+        def gkey_title(sid: str) -> tuple[str, str]:
+            s = (sid or "").strip()
+            if not s:
+                return "__ungrouped__", "未归属"
+            if s in known_set:
+                return s, s
+            return f"__orphan__:{s}", f"未知：{s}"
+
+        bucket: dict[str, tuple[str, list[tuple[str, Any]]]] = {}
+        draft_label = f"【未保存】{self._data.get('id', '新图')}"
         if self._current_path is None and isinstance(self._data.get("nodes"), dict) and self._data["nodes"]:
-            self._file_list_entries.append(
-                (f"【未保存】{self._data.get('id', '新图')}", self._unsaved_list_token)
-            )
+            gk, gt = gkey_title(self._meta_scenario_value())
+            if gk not in bucket:
+                bucket[gk] = (gt, [])
+            bucket[gk][1].append((draft_label, self._unsaved_list_token))
+
         for p in list_graph_files(self._project):
-            self._file_list_entries.append((p.name, str(p)))
-        self._apply_file_list_filter(preserve_selection=not select_unsaved)
+            sid = self._read_graph_meta_scenario_for_path(p)
+            gk, gt = gkey_title(sid)
+            if gk not in bucket:
+                bucket[gk] = (gt, [])
+            bucket[gk][1].append((p.name, p))
+
+        ordered_gkeys: list[str] = []
+        for sid in known_scenarios:
+            if sid in bucket:
+                ordered_gkeys.append(sid)
+        orphans = sorted(k for k in bucket if k.startswith("__orphan__:"))
+        for k in orphans:
+            if k not in ordered_gkeys:
+                ordered_gkeys.append(k)
+        if "__ungrouped__" in bucket and "__ungrouped__" not in ordered_gkeys:
+            ordered_gkeys.append("__ungrouped__")
+        for k in bucket:
+            if k not in ordered_gkeys:
+                ordered_gkeys.append(k)
+
+        settings = self._file_tree_settings()
+        self._file_tree.blockSignals(True)
+        try:
+            self._file_tree.clear()
+            for gkey in ordered_gkeys:
+                if gkey not in bucket:
+                    continue
+                gtitle, entries = bucket[gkey]
+                filtered: list[tuple[str, Any]] = []
+                for lab, role in entries:
+                    role_s = str(role).lower() if not isinstance(role, Path) else lab.lower()
+                    if q and q not in lab.lower() and q not in gtitle.lower() and q not in gkey.lower() and q not in role_s:
+                        continue
+                    filtered.append((lab, role))
+                if not filtered:
+                    continue
+                group_item = QTreeWidgetItem([f"{gtitle}  ({len(filtered)})"])
+                group_item.setData(0, _TREE_KIND_ROLE, _TK_GROUP)
+                group_item.setData(0, _TREE_GROUP_KEY_ROLE, gkey)
+                group_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self._file_tree.addTopLevelItem(group_item)
+                exp = settings.value(f"grp_expanded/{gkey}", True)
+                if not isinstance(exp, bool):
+                    exp = True
+                group_item.setExpanded(bool(exp))
+                for lab, role in sorted(filtered, key=lambda x: (x[0].lower(), str(x[1]))):
+                    child = QTreeWidgetItem([lab])
+                    if role == self._unsaved_list_token:
+                        child.setData(0, _TREE_KIND_ROLE, _TK_UNSAVED)
+                        child.setData(0, Qt.ItemDataRole.UserRole, self._unsaved_list_token)
+                    else:
+                        child.setData(0, _TREE_KIND_ROLE, _TK_FILE)
+                        child.setData(0, Qt.ItemDataRole.UserRole, str(role))
+                    group_item.addChild(child)
+        finally:
+            self._file_tree.blockSignals(False)
+
         if select_unsaved and self._current_path is None:
-            for i in range(self._file_list.count()):
-                it = self._file_list.item(i)
-                if it and it.data(Qt.ItemDataRole.UserRole) == self._unsaved_list_token:
-                    self._file_list.setCurrentItem(it)
+            for it in self._walk_file_tree_items():
+                if it.data(0, _TREE_KIND_ROLE) == _TK_UNSAVED:
+                    self._file_tree.setCurrentItem(it)
+                    break
+        elif prev_path is not None:
+            for it in self._walk_file_tree_items():
+                if it.data(0, _TREE_KIND_ROLE) != _TK_FILE:
+                    continue
+                try:
+                    if Path(str(it.data(0, Qt.ItemDataRole.UserRole))).resolve() == prev_path:
+                        self._file_tree.setCurrentItem(it)
+                        break
+                except OSError:
+                    pass
+        elif prev_unsaved:
+            for it in self._walk_file_tree_items():
+                if it.data(0, _TREE_KIND_ROLE) == _TK_UNSAVED:
+                    self._file_tree.setCurrentItem(it)
                     break
         elif self._current_path:
             self._sync_file_list_selection(self._current_path)
 
+    def _refresh_file_list(self, *, select_unsaved: bool = False) -> None:
+        self._rebuild_file_tree(
+            select_unsaved=select_unsaved,
+            preserve_selection=not select_unsaved,
+        )
+
     def _update_unsaved_file_list_display(self) -> None:
-        """未保存草稿仅改图 id 时更新列表首行文案，避免整表 clear 导致图属性输入框失焦。"""
+        """未保存草稿仅改图 id 时更新列表文案，避免整树重建导致失焦。"""
         if self._current_path is not None:
             return
         new_label = f"【未保存】{self._data.get('id', '新图')}"
-        for i in range(self._file_list.count()):
-            it = self._file_list.item(i)
-            if it is None:
-                continue
-            if it.data(Qt.ItemDataRole.UserRole) == self._unsaved_list_token:
-                if it.text() != new_label:
-                    it.setText(new_label)
+        for it in self._walk_file_tree_items():
+            if it.data(0, _TREE_KIND_ROLE) == _TK_UNSAVED:
+                if it.text(0) != new_label:
+                    it.setText(0, new_label)
                 return
         self._refresh_file_list(select_unsaved=True)
 
@@ -1586,23 +1754,22 @@ class DialogueGraphEditorWidget(QWidget):
 
     def _sync_file_list_selection(self, path: Path) -> None:
         target = path.resolve()
-        self._file_list.blockSignals(True)
+        self._file_tree.blockSignals(True)
         try:
-            for i in range(self._file_list.count()):
-                it = self._file_list.item(i)
-                if it is None:
+            for it in self._walk_file_tree_items():
+                if it.data(0, _TREE_KIND_ROLE) != _TK_FILE:
                     continue
-                raw = it.data(Qt.ItemDataRole.UserRole)
+                raw = it.data(0, Qt.ItemDataRole.UserRole)
                 if raw == self._unsaved_list_token:
                     continue
                 try:
                     if Path(str(raw)).resolve() == target:
-                        self._file_list.setCurrentItem(it)
+                        self._file_tree.setCurrentItem(it)
                         break
                 except OSError:
                     pass
         finally:
-            self._file_list.blockSignals(False)
+            self._file_tree.blockSignals(False)
 
     def _refresh_meta_scenario_combo(self) -> None:
         cb = self._edit_meta_scenario
@@ -1686,8 +1853,27 @@ class DialogueGraphEditorWidget(QWidget):
             ):
                 w.blockSignals(False)
             self._edit_meta_scenario.blockSignals(False)
+        meta_tail = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
+        sc_tail = str(meta_tail.get("scenarioId", "")).strip()
+        self._file_tree_group_key = (str(self._data.get("id", "")).strip(), sc_tail)
+
+    def _sync_scenario_catalog_for_graph_meta(self, old_graph_id: str) -> None:
+        pm = self._injected_project_model
+        if pm is None:
+            return
+        new_id = str(self._data.get("id", "")).strip()
+        meta = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
+        new_sc = str(meta.get("scenarioId", "")).strip()
+        o = (old_graph_id or "").strip()
+        n = new_id
+        if o and n and o != n:
+            pm.rename_dialogue_graph_in_scenarios_catalog(o, n)
+        link_id = n or o
+        if link_id:
+            pm.relink_dialogue_graph_to_scenarios(link_id, new_sc if new_sc else None)
 
     def _widgets_to_data_meta(self):
+        old_graph_id = str(self._data.get("id", "")).strip()
         patch: dict[str, Any] = {}
         sv = self._data.get("schemaVersion", 1)
         try:
@@ -1716,6 +1902,7 @@ class DialogueGraphEditorWidget(QWidget):
             merged.extend(extra)
         patch["preconditions"] = merged
         self._model.apply_meta_patch(patch)
+        self._sync_scenario_catalog_for_graph_meta(old_graph_id)
 
     def _flush_current_inspector_to_data(self) -> None:
         """保存/校验前：把右侧节点面板内容写回 _data['nodes']。
@@ -1733,13 +1920,24 @@ class DialogueGraphEditorWidget(QWidget):
     def _on_graph_meta_changed(self):
         if not isinstance(self._data.get("nodes"), dict):
             return
+        old_id = str(self._data.get("id", "")).strip()
+        old_meta = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
+        old_sc = str(old_meta.get("scenarioId", "")).strip()
+        old_key = (old_id, old_sc)
         try:
             self._widgets_to_data_meta()
         except (json.JSONDecodeError, ValueError):
             return
+        new_id = str(self._data.get("id", "")).strip()
+        new_meta = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
+        new_sc = str(new_meta.get("scenarioId", "")).strip()
+        new_key = (new_id, new_sc)
+        self._file_tree_group_key = new_key
         self._emit_title()
         self._meta_rebuild_timer.start(300)
-        if self._current_path is None and self._draft_layout_basename:
+        if old_key != new_key:
+            self._rebuild_file_tree(preserve_selection=True)
+        elif self._current_path is None and self._draft_layout_basename:
             self._update_unsaved_file_list_display()
 
     def _on_node_list_filter_changed(self, _t: str = "") -> None:
@@ -1806,10 +2004,30 @@ class DialogueGraphEditorWidget(QWidget):
             return self._editing_node_id
         return None
 
-    def _on_file_item_changed(self, cur: QListWidgetItem | None, prev: QListWidgetItem | None):
-        if not cur:
+    def _on_open_linked_scenario_clicked(self) -> None:
+        sid = self._meta_scenario_value().strip()
+        if not sid:
+            QMessageBox.information(self, "叙事归属", "请先在「叙事归属」下拉中选择 scenario。")
             return
-        raw = cur.data(Qt.ItemDataRole.UserRole)
+        w = self.window()
+        fn = getattr(w, "navigate_to_scenario_catalog", None)
+        if callable(fn):
+            fn(sid)
+        else:
+            QMessageBox.information(
+                self,
+                "叙事编排",
+                "请从主编辑器打开：数据编辑 → 叙事编排 → Scenarios。",
+            )
+
+    def _on_file_tree_item_changed(
+        self, cur: QTreeWidgetItem | None, prev: QTreeWidgetItem | None
+    ):
+        if cur is None:
+            return
+        if cur.data(0, _TREE_KIND_ROLE) == _TK_GROUP:
+            return
+        raw = cur.data(0, Qt.ItemDataRole.UserRole)
         if raw == self._unsaved_list_token:
             return
         path = Path(raw)
@@ -1834,33 +2052,31 @@ class DialogueGraphEditorWidget(QWidget):
 
         self._load_path(path)
 
-    def _revert_file_selection(self, prev: QListWidgetItem | None):
-        self._file_list.blockSignals(True)
+    def _revert_file_selection(self, prev: QTreeWidgetItem | None):
+        self._file_tree.blockSignals(True)
         try:
             if prev:
-                self._file_list.setCurrentItem(prev)
+                self._file_tree.setCurrentItem(prev)
             elif self._current_path:
-                for i in range(self._file_list.count()):
-                    it = self._file_list.item(i)
-                    if it is None:
+                for it in self._walk_file_tree_items():
+                    if it.data(0, _TREE_KIND_ROLE) != _TK_FILE:
                         continue
-                    raw = it.data(Qt.ItemDataRole.UserRole)
+                    raw = it.data(0, Qt.ItemDataRole.UserRole)
                     if raw == self._unsaved_list_token:
                         continue
                     try:
                         if Path(str(raw)).resolve() == self._current_path.resolve():
-                            self._file_list.setCurrentItem(it)
+                            self._file_tree.setCurrentItem(it)
                             break
                     except OSError:
                         pass
             elif self._current_path is None:
-                for i in range(self._file_list.count()):
-                    it = self._file_list.item(i)
-                    if it and it.data(Qt.ItemDataRole.UserRole) == self._unsaved_list_token:
-                        self._file_list.setCurrentItem(it)
+                for it in self._walk_file_tree_items():
+                    if it.data(0, Qt.ItemDataRole.UserRole) == self._unsaved_list_token:
+                        self._file_tree.setCurrentItem(it)
                         break
         finally:
-            self._file_list.blockSignals(False)
+            self._file_tree.blockSignals(False)
 
     def _on_node_item_changed(self, _cur=None, _prev=None):
         self._apply_selected_node_to_inspector()
@@ -2194,6 +2410,7 @@ class DialogueGraphEditorWidget(QWidget):
             if r != QMessageBox.StandardButton.Yes:
                 return False
 
+        id_before_disk = str(self._data.get("id", "")).strip()
         try:
             save_json(path, self._data)
         except OSError as e:
@@ -2204,6 +2421,14 @@ class DialogueGraphEditorWidget(QWidget):
         self._current_path = path
         self._draft_layout_basename = None
         self._data["id"] = path.stem
+        pm_sv = self._injected_project_model
+        if pm_sv is not None:
+            final_gid = str(self._data.get("id", "")).strip() or path.stem
+            if id_before_disk and id_before_disk != final_gid:
+                pm_sv.rename_dialogue_graph_in_scenarios_catalog(id_before_disk, final_gid)
+            meta_sv = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
+            sc_sv = str(meta_sv.get("scenarioId", "")).strip()
+            pm_sv.relink_dialogue_graph_to_scenarios(final_gid, sc_sv or None)
         self._apply_data_to_widgets()
         self._flush_flow_layout_to_disk()
         self._set_dirty(False)

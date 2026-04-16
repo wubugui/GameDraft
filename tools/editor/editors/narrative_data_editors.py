@@ -390,6 +390,23 @@ class ScenariosCatalogEditor(QWidget):
         form.addRow("exposeAfterPhase", self._f_expose_after)
         rfl.addLayout(form)
 
+        dg_g = QGroupBox("关联图对话（dialogueGraphIds）")
+        dg_g.setToolTip(
+            "与归属本 scenario 的图一致，由图 JSON 的 meta.scenarioId 与工程内同步逻辑维护；"
+            "只读；双击列表项打开「图对话」页。",
+        )
+        dg_l = QVBoxLayout(dg_g)
+        self._lw_linked_graphs = QListWidget()
+        self._lw_linked_graphs.setMinimumHeight(100)
+        self._lw_linked_graphs.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection,
+        )
+        self._lw_linked_graphs.itemDoubleClicked.connect(
+            self._on_linked_graph_double_clicked,
+        )
+        dg_l.addWidget(self._lw_linked_graphs)
+        rfl.addWidget(dg_g)
+
         exp_g = QGroupBox("exposes（完成 exposeAfterPhase 后写入的 flag 与值）")
         exp_l = QVBoxLayout(exp_g)
         self._tbl_exposes = QTableWidget(0, 2)
@@ -472,7 +489,59 @@ class ScenariosCatalogEditor(QWidget):
         root.addLayout(row)
 
         self._scenarios_data: list[dict] = []
+        self._model.data_changed.connect(self._on_project_data_changed)
         self.reload_from_model()
+
+    def select_scenario_by_id(self, scenario_id: str) -> None:
+        sid = (scenario_id or "").strip()
+        if not sid:
+            return
+        for i, e in enumerate(self._scenarios_data):
+            if str(e.get("id", "")).strip() == sid:
+                self._sc_list.setCurrentRow(i)
+                return
+        QMessageBox.information(self, "Scenarios", f"未找到 scenario：{sid}")
+
+    def _on_project_data_changed(self, data_type: str, _item_id: str) -> None:
+        if data_type != "scenarios":
+            return
+        if self._loading_ui:
+            return
+        cur_sid = ""
+        row = self._sc_list.currentRow()
+        if 0 <= row < len(self._scenarios_data):
+            cur_sid = str(self._scenarios_data[row].get("id", "")).strip()
+        self.reload_from_model()
+        if cur_sid:
+            self.select_scenario_by_id(cur_sid)
+
+    def _on_linked_graph_double_clicked(self, item: QListWidgetItem) -> None:
+        gid = (item.data(Qt.ItemDataRole.UserRole) or item.text() or "").strip()
+        if not gid:
+            return
+        w = self.window()
+        fn = getattr(w, "navigate_to_dialogue_graph", None)
+        if callable(fn):
+            fn(gid)
+        else:
+            QMessageBox.information(
+                self,
+                "图对话",
+                "请从主编辑器打开「数据编辑 → 叙事编排 → 图对话」。",
+            )
+
+    def _refresh_linked_graphs_list(self, d: dict) -> None:
+        self._lw_linked_graphs.clear()
+        raw = d.get("dialogueGraphIds")
+        if not isinstance(raw, list):
+            return
+        for x in raw:
+            gid = str(x).strip()
+            if not gid:
+                continue
+            it = QListWidgetItem(gid)
+            it.setData(Qt.ItemDataRole.UserRole, gid)
+            self._lw_linked_graphs.addItem(it)
 
     # ---- status combo helper ---------------------------------------------
 
@@ -692,6 +761,7 @@ class ScenariosCatalogEditor(QWidget):
 
             self._fill_exposes_table(d.get("exposes") if isinstance(d.get("exposes"), dict) else {})
             self._fill_phases_table(phases)
+            self._refresh_linked_graphs_list(d)
         finally:
             self._loading_ui = False
 
@@ -704,6 +774,7 @@ class ScenariosCatalogEditor(QWidget):
         self._f_expose_after.clear()
         self._f_expose_after.addItem("（不配置）", "")
         self._tbl_exposes.setRowCount(0)
+        self._lw_linked_graphs.clear()
         vh = self._tbl_phases.verticalHeader()
         vh.blockSignals(True)
         try:

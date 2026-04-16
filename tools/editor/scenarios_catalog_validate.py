@@ -96,6 +96,17 @@ def validate_scenarios_list(
         )
         if exp_err:
             return exp_err
+        dg = e.get("dialogueGraphIds")
+        if dg is not None:
+            if not isinstance(dg, list):
+                return f"{sid!r} 的 dialogueGraphIds 须为 JSON 数组"
+            stems = set(model.all_dialogue_graph_ids())
+            for j, x in enumerate(dg):
+                if not isinstance(x, str) or not str(x).strip():
+                    return f"{sid!r} 的 dialogueGraphIds[{j}] 须为非空字符串"
+                xs = str(x).strip()
+                if xs not in stems:
+                    return f"{sid!r} 的 dialogueGraphIds 含未知图 id {xs!r}（无 dialogues/graphs/{xs}.json）"
     return None
 
 

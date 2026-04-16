@@ -878,14 +878,35 @@ class MainWindow(QMainWindow):
                 ed.navigate_to_source.connect(self._on_navigate_to_source)
                 break
 
+    def navigate_to_dialogue_graph(self, graph_id: str) -> None:
+        """切换到「图对话」页并按资源 id 打开对应 graphs/*.json。"""
+        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+
+        gid = (graph_id or "").strip()
+        if not gid:
+            return
+        for i, ed in enumerate(self._editor_instances):
+            if isinstance(ed, DialogueGraphEditorTab):
+                self._show_stack_page(i)
+                ed.open_graph_by_id(gid)
+                return
+
+    def navigate_to_scenario_catalog(self, scenario_id: str) -> None:
+        """切换到「Scenarios」页并选中指定 scenarioId。"""
+        from .editors.narrative_data_editors import ScenariosCatalogEditor
+
+        sid = (scenario_id or "").strip()
+        if not sid:
+            return
+        for i, ed in enumerate(self._editor_instances):
+            if isinstance(ed, ScenariosCatalogEditor):
+                self._show_stack_page(i)
+                ed.select_scenario_by_id(sid)
+                return
+
     def _on_navigate_to_source(self, source_type: str, source_id: str, scene_id: str) -> None:
         if source_type == "dialogue_graph":
-            from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
-            for i, ed in enumerate(self._editor_instances):
-                if isinstance(ed, DialogueGraphEditorTab):
-                    self._show_stack_page(i)
-                    ed.open_graph_by_id(source_id)
-                    return
+            self.navigate_to_dialogue_graph(source_id)
             return
         tab_map = {
             "quest": "Quest",
