@@ -116,6 +116,16 @@ export class FlagStore {
   }
 
   /**
+   * 是否命中登记表 static 或 patterns（形状匹配，不校验 pattern 内 id 是否存在）。
+   * 未配置登记表时返回 true（无法校验）。
+   */
+  isKeyAllowedByRegistry(key: string): boolean {
+    const r = this.registryRuntime;
+    if (!r) return true;
+    return this.isKeyAllowed(key.trim(), r);
+  }
+
+  /**
    * 调试面板：登记表静态键 + 当前内存中已存在的键（含动态 pattern键）。
    */
   getDebugPickableKeys(): string[] {

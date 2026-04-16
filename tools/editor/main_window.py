@@ -109,15 +109,20 @@ class MainWindow(QMainWindow):
         self._pending_launch_params: str | None = None
         self._nav_tree = QTreeWidget()
         self._nav_tree.setHeaderHidden(True)
-        self._nav_tree.setMinimumWidth(260)
-        self._nav_tree.setMaximumWidth(440)
+        self._nav_tree.setRootIsDecorated(True)
+        self._nav_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._nav_tree.setMinimumWidth(0)
+        self._nav_tree.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Expanding,
+        )
         self._stack = QStackedWidget()
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.addWidget(self._nav_tree)
         self._splitter.addWidget(self._stack)
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
-        self._splitter.setSizes([300, 1100])
+        self._splitter.setSizes([200, 1200])
         self.setCentralWidget(self._splitter)
         self._stack_index_to_item: dict[int, QTreeWidgetItem] = {}
         self._editor_instances: list = []
@@ -522,6 +527,26 @@ class MainWindow(QMainWindow):
 
         self._connect_action_nav()
         self._sync_theme_to_editors()
+        QTimer.singleShot(0, self._apply_nav_tree_width_from_content)
+
+    def _apply_nav_tree_width_from_content(self) -> None:
+        """左侧导航宽度按最长条目略留边距，避免大块留白。"""
+        self._nav_tree.resizeColumnToContents(0)
+        col = int(self._nav_tree.sizeHintForColumn(0))
+        if col < 12:
+            col = self._nav_tree.fontMetrics().horizontalAdvance("文档揭示") + 32
+        frame = int(self._nav_tree.frameWidth() * 2)
+        pad = 22
+        nav_w = col + frame + pad
+        nav_w = max(96, min(nav_w, 520))
+        self._nav_tree.setFixedWidth(nav_w)
+
+        sp = self._splitter.sizes()
+        total = int(sum(sp))
+        if total < 200:
+            total = max(900, int(self.width() or 0))
+        right = max(320, total - nav_w)
+        self._splitter.setSizes([nav_w, right])
 
     # ---- save / dirty -----------------------------------------------------
 

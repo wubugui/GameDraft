@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .file_io import read_json
+from .flag_registry import scenario_exposes_flag_errors
 
 if TYPE_CHECKING:
     from .project_model import ProjectModel
@@ -526,6 +527,12 @@ def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> Non
                 "error", "scenarios", sid,
                 "phases.requires 存在循环依赖",
             ))
+
+        exp_msg = scenario_exposes_flag_errors(
+            e.get("exposes"), model.flag_registry, model, scenario_id=sid,
+        )
+        if exp_msg:
+            issues.append(Issue("error", "scenarios", sid, exp_msg))
 
 
 def _scan_condition_expr(

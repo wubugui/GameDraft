@@ -1,5 +1,10 @@
-import type { GameContext, IGameSystem, ScenarioCatalogEntry, ScenarioCatalogFile } from '../data/types';
-import type { FlagStore } from './FlagStore';
+import type {
+  GameContext,
+  IGameSystem,
+  ScenarioCatalogEntry,
+  ScenarioCatalogFile,
+} from '../data/types';
+import type { FlagStore, FlagValue } from './FlagStore';
 
 /** 与主编辑器 `SCENARIO_PHASE_STATUSES` 一致；非法值仅在 dev 下警告 */
 const SCENARIO_STATUS_SUGGESTED = new Set(['pending', 'active', 'done', 'locked']);
@@ -91,14 +96,83 @@ export class ScenarioStateManager implements IGameSystem {
     this.tryApplyExposes(sid, ph, payload.status);
   }
 
+  /**
+   * 将 scenarios.json 中的 exposes 值转为与登记表 valueType 一致的 FlagValue；无法解析时返回 undefined。
+   */
+  private coerceExposeValue(key: string, raw: unknown): FlagValue | undefined {
+    const fs = this.flagStore;
+    const vt = fs?.getRegistryValueType(key.trim()) ?? 'bool';
+    if (raw === null || raw === undefined) return undefined;
+
+    if (vt === 'bool') {
+      if (typeof raw === 'boolean') return raw;
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw !== 0;
+      if (typeof raw === 'string') {
+        const s = raw.trim().toLowerCase();
+        if (s === 'true' || s === '1') return true;
+        if (s === 'false' || s === '0' || s === '') return false;
+      }
+      if (import.meta.env.DEV) {
+        console.warn(
+          `[ScenarioStateManager] exposes 布尔字段 ${JSON.stringify(key)} 的 JSON 值无法解析，已跳过`,
+          raw,
+        );
+      }
+      return undefined;
+    }
+
+    if (vt === 'float') {
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+      if (typeof raw === 'string' && raw.trim() !== '') {
+        const n = Number(raw);
+        if (Number.isFinite(n)) return n;
+      }
+      if (import.meta.env.DEV) {
+        console.warn(
+          `[ScenarioStateManager] exposes 数值字段 ${JSON.stringify(key)} 的 JSON 值无法解析为数字，已跳过`,
+          raw,
+        );
+      }
+      return undefined;
+    }
+
+    if (typeof raw === 'string') return raw;
+    if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+    if (typeof raw === 'boolean') return raw ? 'true' : 'false';
+    if (import.meta.env.DEV) {
+      console.warn(
+        `[ScenarioStateManager] exposes 字符串字段 ${JSON.stringify(key)} 的 JSON 值无法转为字符串，已跳过`,
+        raw,
+      );
+    }
+    return undefined;
+  }
+
   private tryApplyExposes(scenarioId: string, phase: string, status: string): void {
     if (status !== 'done' || !this.flagStore) return;
     const entry = this.catalog.find((c) => c.id === scenarioId);
     if (!entry?.exposes) return;
     const trigger = (entry.exposeAfterPhase ?? '').trim();
     if (!trigger || trigger !== phase) return;
-    for (const [key, on] of Object.entries(entry.exposes)) {
-      if (on) this.flagStore.set(key, true);
+    for (const [rawKey, rawVal] of Object.entries(entry.exposes)) {
+      const k = rawKey.trim();
+      if (!k) continue;
+      if (!this.flagStore.isKeyAllowedByRegistry(k)) {
+        console.error(
+          `[ScenarioStateManager] exposes 跳过未登记 flag：scenario=${JSON.stringify(scenarioId)} phase=${JSON.stringify(phase)} key=${JSON.stringify(k)}`,
+        );
+        continue;
+      }
+      const value = this.coerceExposeValue(k, rawVal);
+      if (value === undefined) {
+        if (import.meta.env.DEV) {
+          console.error(
+            `[ScenarioStateManager] exposes 未写入：scenario=${JSON.stringify(scenarioId)} phase=${JSON.stringify(phase)} key=${JSON.stringify(k)}`,
+          );
+        }
+        continue;
+      }
+      this.flagStore.set(k, value);
     }
   }
 

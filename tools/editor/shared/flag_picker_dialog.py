@@ -4,14 +4,27 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel,
     QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QComboBox,
-    QGroupBox, QFormLayout, QDialogButtonBox, QSplitter,
+    QGroupBox, QFormLayout, QDialogButtonBox, QSplitter, QHeaderView,
 )
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..flag_registry import static_key_set
 from ..flag_registry import ids_for_registry_pattern_source
+from ..flag_registry import normalize_registry_value_type
+from ..flag_registry import registry_value_type_for_key
 from ..editors.flag_registry_editor import FlagRegistryEditor
+
+
+def _flag_value_type_label(vt: str | None) -> str:
+    """登记表 valueType → 选择器第二列展示文案。"""
+    if vt == "float":
+        return "数值"
+    if vt == "string":
+        return "文本"
+    if vt == "bool":
+        return "布尔"
+    return "—"
 
 
 class FlagPickerDialog(QDialog):
@@ -35,14 +48,19 @@ class FlagPickerDialog(QDialog):
         pick = QWidget()
         pl = QVBoxLayout(pick)
         self._search = QLineEdit()
-        self._search.setPlaceholderText("过滤树（按分组名或完整 flag 文本）…")
+        self._search.setPlaceholderText(
+            "过滤树（分组名、flag 文本、类型：布尔 / 数值 / 文本）…",
+        )
         self._search.textChanged.connect(self._filter_tree)
         pl.addWidget(self._search)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["分组 / flag"])
-        self._tree.setMinimumWidth(360)
+        self._tree.setHeaderLabels(["分组 / flag", "类型"])
+        hdr = self._tree.header()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._tree.setMinimumWidth(420)
         self._tree.itemDoubleClicked.connect(self._on_tree_double_click)
         splitter.addWidget(self._tree)
 
@@ -123,7 +141,11 @@ class FlagPickerDialog(QDialog):
                 label = str(p["id"])
                 pre = p.get("prefix", "")
                 suf = p.get("suffix") or ""
-                hint = f"{label}  ({pre}…{suf})" if suf else f"{label}  ({pre}…)"
+                tlab = _flag_value_type_label(normalize_registry_value_type(p.get("valueType")))
+                if suf:
+                    hint = f"{label}  ({pre}…{suf})  · {tlab}"
+                else:
+                    hint = f"{label}  ({pre}…)  · {tlab}"
                 self._pat_combo.addItem(hint, p)
         self._pat_combo.blockSignals(False)
         self._on_pat_changed(0)
@@ -149,10 +171,11 @@ class FlagPickerDialog(QDialog):
         rid = self._id_combo.currentText().strip()
         pre = p.get("prefix", "")
         suf = p.get("suffix") or ""
+        tlab = _flag_value_type_label(normalize_registry_value_type(p.get("valueType")))
         if rid:
-            self._preview_label.setText(f"{pre}{rid}{suf}")
+            self._preview_label.setText(f"{pre}{rid}{suf}  · {tlab}")
         else:
-            self._preview_label.setText("（请选择资源 id）")
+            self._preview_label.setText(f"（请选择资源 id） · {tlab}")
 
     def _apply_quick_assemble(self) -> None:
         p = self._pat_combo.currentData()
@@ -169,10 +192,11 @@ class FlagPickerDialog(QDialog):
         self._tree.clear()
         reg = self._model.flag_registry
 
-        static_root = QTreeWidgetItem(self._tree, ["静态 flag"])
+        static_root = QTreeWidgetItem(self._tree, ["静态 flag", ""])
         static_root.setData(0, Qt.ItemDataRole.UserRole, None)
         for k in sorted(static_key_set(reg)):
-            leaf = QTreeWidgetItem(static_root, [k])
+            vt = registry_value_type_for_key(k, reg)
+            leaf = QTreeWidgetItem(static_root, [k, _flag_value_type_label(vt)])
             leaf.setData(0, Qt.ItemDataRole.UserRole, k)
 
         for p in reg.get("patterns") or []:
@@ -182,15 +206,17 @@ class FlagPickerDialog(QDialog):
             pre = p.get("prefix", "")
             suf = p.get("suffix") or ""
             src = p.get("idSource") or ""
+            p_vt = normalize_registry_value_type(p.get("valueType"))
+            type_lbl = _flag_value_type_label(p_vt)
             header = f"模板「{pid}」  {pre}…{suf}  [{src}]"
-            proot = QTreeWidgetItem(self._tree, [header])
+            proot = QTreeWidgetItem(self._tree, [header, type_lbl])
             proot.setData(0, Qt.ItemDataRole.UserRole, None)
             id_list = ids_for_registry_pattern_source(
                 self._model, scene_id=self._scene_id, id_source=src,
             )
             for rid in id_list:
                 key = f"{pre}{rid}{suf}"
-                leaf = QTreeWidgetItem(proot, [key])
+                leaf = QTreeWidgetItem(proot, [key, type_lbl])
                 leaf.setData(0, Qt.ItemDataRole.UserRole, key)
 
         self._tree.expandToDepth(1)
@@ -217,8 +243,9 @@ class FlagPickerDialog(QDialog):
             if not t:
                 show = True
             else:
-                low = item.text(0).lower()
-                show = t in low or t in data.lower()
+                low0 = item.text(0).lower()
+                low1 = item.text(1).lower()
+                show = t in low0 or t in low1 or t in data.lower()
             item.setHidden(not show)
             return show
         show = True if not t else any_child
