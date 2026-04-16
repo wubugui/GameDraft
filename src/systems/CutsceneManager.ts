@@ -317,6 +317,16 @@ export class CutsceneManager implements IGameSystem {
     return this.tempActors;
   }
 
+  /** 供 cutsceneSpawnActor Action 通过 ActionRegistryDeps 代理调用。 */
+  spawnTempActor(id: string, name: string, x: number, y: number): void {
+    this.entitySpawn(id, name, x, y);
+  }
+
+  /** 供 cutsceneRemoveActor Action 通过 ActionRegistryDeps 代理调用。 */
+  removeTempActor(id: string): void {
+    this.entityRemove(id);
+  }
+
   private resolveEntity(id: string): ICutsceneActor | null {
     const temp = this.tempActors.get(id);
     if (temp) return temp;
