@@ -464,6 +464,12 @@ export class Game {
           : this.stringsProvider.get('actions', 'clickToContinue');
         return waitClickContinueWithHint(this.renderer, this.inputManager, label);
       },
+      spawnCutsceneActor: (id, name, x, y) => {
+        this.cutsceneManager.spawnTempActor(id, name, x, y);
+      },
+      removeCutsceneActor: (id) => {
+        this.cutsceneManager.removeTempActor(id);
+      },
     });
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
