@@ -304,8 +304,10 @@ export class Game {
     this.resolveActorFn = (id: string) => {
       const temp = this.cutsceneManager.getTempActors().get(id);
       if (temp) return temp;
+      const npc = this.sceneManager.getNpcById(id);
+      if (npc) return npc;
       if (id === 'player') return this.player;
-      return this.sceneManager.getNpcById(id);
+      return null;
     };
     this.cutsceneManager.setEntityResolver(this.resolveActorFn);
     this.cutsceneManager.setEmoteBubbleProvider(this.emoteBubbleManager);

@@ -656,6 +656,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('cutsceneSpawnActor: missing id');
       return;
     }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('cutsceneSpawnActor: x/y must be finite numbers');
+      return;
+    }
     d.spawnCutsceneActor(id, name, x, y);
   }, ['id', 'name', 'x', 'y']);
 
