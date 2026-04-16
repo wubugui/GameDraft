@@ -6,6 +6,7 @@ import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
 import type { CutsceneDef, CutsceneCommand, ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
+import { CUTSCENE_ACTION_WHITELIST } from '../data/types';
 import { Npc } from '../entities/Npc';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
@@ -365,6 +366,10 @@ export class CutsceneManager implements IGameSystem {
     if (this.destroyed || this.skipping) return;
     switch (step.kind) {
       case 'action':
+        if (!CUTSCENE_ACTION_WHITELIST.has(step.type)) {
+          console.warn(`CutsceneManager: Action type "${step.type}" is not in the Cutscene whitelist — skipped`);
+          break;
+        }
         await this.actionExecutor.executeAwait({ type: step.type, params: step.params });
         break;
       case 'present':
@@ -457,7 +462,7 @@ export class CutsceneManager implements IGameSystem {
   private async executeCommands(commands: CutsceneCommand[]): Promise<void> {
     let i = 0;
     while (i < commands.length) {
-      if (this.destroyed) return;
+      if (this.destroyed || this.skipping) return;
 
       const parallelGroup: CutsceneCommand[] = [commands[i]];
       while (i + 1 < commands.length && commands[i + 1].parallel) {
@@ -739,6 +744,7 @@ export class CutsceneManager implements IGameSystem {
       this.cleanup();
     }
     this.playing = false;
+    this.skipping = false;
     this.snapshot = null;
     this.dialogueAdvanceNotBefore = 0;
     this.waitClickNotBefore = 0;
