@@ -1,6 +1,7 @@
 import { Game } from './core/Game';
 
 const urlParams = new URLSearchParams(window.location.search);
+/** 开发面板等；另见 `?cutsceneDebug` 可在非 dev 时显示过场当前 step HUD */
 const devMode = urlParams.get('mode') === 'dev';
 const playCutscene = urlParams.get('play_cutscene') ?? undefined;
 

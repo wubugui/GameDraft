@@ -2173,7 +2173,7 @@ class ScenePropertyPanel(QScrollArea):
         il.addWidget(QLabel("text（仅纯文本模式）"))
         il.addWidget(self._hs_inspect_text)
         graph_row = QFormLayout()
-        gcombo = FilterableTypeCombo([], self)
+        gcombo = FilterableTypeCombo([], self, select_only=True)
         gcombo.setMinimumWidth(160)
         self._hs_inspect_graph_combo = gcombo
         graph_row.addRow("graphId", gcombo)

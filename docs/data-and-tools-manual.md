@@ -217,41 +217,39 @@
 
 ---
 
-## 六、Cutscene（演出）
+## 六、Cutscene（过场 / 步骤序列）
+
+主编辑器 **过场** 页编辑的是 **`steps` 顺序列表**（不是 NLE/剪辑软件那种多轨时间轴）：运行时按**从上到下**依次执行；**parallel** 表示组内几条子步骤**同时开始**，**全部结束后**才继续后面的步骤（fork-join）。
+
+### 6.1 与「图对话」的分工
+
+| | **Cutscene（本页）** | **图对话（图对话页）** |
+|--|----------------------|------------------------|
+| 结构 | 线性步骤表 + 少量并行组 | 有向图：line / choice / switch / runActions |
+| 分支 | 无（顺序固定） | 选项、条件跳转 |
+| 演出指令 | **present**（黑场、标题、插图等）+ **action**（白名单内 Action） | 主要在节点的 **runActions** 里写通用 Action |
+| 典型用途 | 开场、转场、全屏演出段落 | NPC/看板对话、任务叙事 |
+
+同一款 Action 可能两处都能写，但 **present 类画面效果**（如 `fadeToBlack`、`showTitle`）只在过场 **present** 里配置；不要在名称上把本页当成「Timeline 时间轴」——数据里没有全局时间坐标，只有顺序与并行组。
+
+### 6.2 字段与步骤类型
 
 | 字段 | 含义 |
 |------|------|
-| id | 演出编号，供任务/动作 `startCutscene` 引用 |
+| id | 过场编号，供任务/动作 `startCutscene` 引用 |
+| targetScene / targetSpawnPoint / targetX/Y | 播放前切入的场景或坐标（按表单说明） |
+| restoreState | 结束后是否恢复进入前的场景与位置（默认是） |
+| steps | **步骤数组**：每项 `kind` 为 `present` / `action` / `parallel` |
 
-**Commands** 自上而下执行。每条可选 **parallel（并行）**：勾选表示可与「下一条」同时进行（具体以程序支持为准）。
+- **present**：选 `type`（如 `fadeToBlack`、`waitTime`、`showDialogue`…）及对应参数；**duration 等单位与运行时一致（多为毫秒）**。  
+- **action**：仅允许编辑器白名单内的类型（与运行时 `CUTSCENE_ACTION_WHITELIST` 一致），如 `playSfx`、`moveEntityTo` 等。  
+- **parallel**：`tracks` 内多条子步骤同时执行，全完成后才进入下一步。
 
-常用命令与参数（名称均为界面英文下拉）：
+常用 **present** 类型与含义可对照编辑器下拉；**勿使用已废弃的旧 `commands` 数组**（数据应只保留 `steps`）。
 
-| 命令 | 作用 | 参数怎么填 |
-|------|------|------------|
-| fade_black / fade_in | 黑屏渐隐 / 渐显 | duration 秒 |
-| flash_white | 白光闪 | duration |
-| wait_time | 单纯等 | duration 秒 |
-| wait_click | 等玩家点一下 | 无 |
-| set_flag | 改标记 | key，value |
-| show_title | 大标题 | text，duration |
-| show_dialogue | 字幕式对白 | speaker，text |
-| play_bgm / stop_bgm / play_sfx | 音频 | id 在 Audio 页；fadeMs 可选 |
-| camera_move | 镜头移动 | x，y，duration |
-| camera_zoom | 镜头缩放 | scale，duration |
-| switch_scene / change_scene | 切场景 | sceneId，spawnPoint |
-| show_img / hide_img | 立绘/大图 | id（图层名），image 路径 |
-| show_movie_bar / hide_movie_bar | 遮幅 | heightPercent |
-| show_subtitle | 底部小字 | text，duration |
-| entity_move | 实体走路 | target（如 player 或 NPC id），x，y，speed |
-| entity_anim | 播动画 | target，animation（状态名） |
-| entity_face | 朝向 | target，faceTarget（另一实体 id） |
-| entity_spawn / entity_remove | 生出 / 移除实体 | id，name，位置等 |
-| entity_emote | 气泡 | target，emote，duration |
-| entity_visible | 显隐 | target，visible |
-| execute_action | 执行「任务同款」的一条动作 | 若界面不展开参数，请复制别的演出里同类写法或问程序 |
+**示例**：`fadeToBlack` → `showTitle` → `waitClick` → `fadeIn` → `showDialogue`；若需「黑场同时出字」，可用 **parallel** 包两条 present 再进入下一步。
 
-**示例**：开场黑屏 1 秒 → 显示标题「三天前」2 秒 → `wait_click` → `fade_in` 并进下一句对白。
+**白名单同步（程序维护）**：过场内 **action** 允许的类型须与源码 `src/data/types.ts` 的 `CUTSCENE_ACTION_WHITELIST`、`tools/editor/validator.py` 的 `_CUTSCENE_ACTION_WHITELIST`、编辑器 `timeline_editor.py` 的 `CUTSCENE_ACTION_WHITELIST` **四处一致**；新增或删减时须一并修改。
 
 ---
 
@@ -445,7 +443,7 @@ NPC **animFile** 选这里登记过的动画包路径。
 | Scene | 场景 |
 | Quest | 任务 |
 | Encounter | 遭遇 |
-| Cutscene | 演出 |
+| 过场 | 过场步骤序列（原 Cutscene 页） |
 | Item | 物品 |
 | Rule | 规矩 |
 | Shop | 商店 |

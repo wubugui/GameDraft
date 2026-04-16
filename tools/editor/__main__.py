@@ -25,8 +25,8 @@ def main() -> None:
     theme.apply_application_theme(app, theme.settings_load_theme())
 
     win = MainWindow()
-    win.show()
 
+    # 先 load_project 再 show，避免空 QTabWidget 先被绘制。
     if len(sys.argv) > 1:
         win.load_project(Path(sys.argv[1]))
     else:
@@ -34,6 +34,8 @@ def main() -> None:
         project_root = script_dir.parent.parent
         if (project_root / "public" / "assets").is_dir():
             win.load_project(project_root)
+
+    win.show()
 
     sys.exit(app.exec())
 

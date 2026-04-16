@@ -14,15 +14,16 @@ class IdRefSelector(QComboBox):
         parent: QWidget | None = None,
         allow_empty: bool = True,
         click_opens_popup: bool = False,
+        editable: bool = True,
     ):
         super().__init__(parent)
-        self.setEditable(True)
+        self.setEditable(editable)
         self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._allow_empty = allow_empty
-        self._click_opens_popup = click_opens_popup
+        self._click_opens_popup = click_opens_popup and editable
         self._ids: list[str] = []
         self.currentIndexChanged.connect(self._on_index)
-        if click_opens_popup:
+        if self._click_opens_popup:
             le = self.lineEdit()
             if le is not None:
                 le.installEventFilter(self)

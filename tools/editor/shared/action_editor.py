@@ -3,6 +3,9 @@
 与 `src/core/ActionRegistry.ts` 成对维护：在 Registry 里新 register 的 type，
 必须在本文件的 ACTION_TYPES 中出现，并补齐 _PARAM_SCHEMAS或自定义 _rebuild_params 分支，
 否则策划无法在场景/任务/遭遇等编辑器里添加该动作；校验器也会对未登记 type 报错。
+
+Action 主类型与过场 present 子类型使用 ``FilterableTypeCombo(select_only=True)``，
+只能从 ACTION_TYPES / PRESENT_TYPES 选，不可手写未登记字符串；改类型会触发参数区重建。
 """
 from __future__ import annotations
 
@@ -185,10 +188,12 @@ class FilterableTypeCombo(QComboBox):
         parent: QWidget | None = None,
         *,
         orphan_label: Callable[[str], str] | None = None,
+        select_only: bool = False,
     ):
         super().__init__(parent)
         self._entries: list[tuple[str, str]] = list(entries)
         self._orphan_label = orphan_label
+        self._select_only = select_only
         self._canonical_values: list[str] = []
         self._value_set: set[str] = set()
         self._lower_value: dict[str, str] = {}
@@ -197,21 +202,34 @@ class FilterableTypeCombo(QComboBox):
         self._programmatic = False
         self._suppress_editing_finish = False
 
-        self.setEditable(True)
         self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        le = self.lineEdit()
-        le.setPlaceholderText("输入以筛选…")
-        le.textEdited.connect(self._on_text_edited)
-        le.editingFinished.connect(self._on_editing_finished)
-        self.activated.connect(self._on_activated)
-        self.setToolTip(
-            "输入关键字筛选（非仅前缀）：展示名与内部取值任一在任意位置含子串即匹配；"
-            "否则按字符顺序模糊匹配。点选列表或输入唯一匹配后失焦确定。",
-        )
+        if select_only:
+            self.setEditable(False)
+            self.currentIndexChanged.connect(self._on_select_only_index_changed)
+            self.setToolTip(
+                "从下拉列表选择（与运行时登记一致）；不可手写未登记项。",
+            )
+        else:
+            self.setEditable(True)
+            le = self.lineEdit()
+            le.setPlaceholderText("输入以筛选…")
+            le.textEdited.connect(self._on_text_edited)
+            le.editingFinished.connect(self._on_editing_finished)
+            self.activated.connect(self._on_activated)
+            self.setToolTip(
+                "输入关键字筛选（非仅前缀）：展示名与内部取值任一在任意位置含子串即匹配；"
+                "否则按字符顺序模糊匹配。点选列表或输入唯一匹配后失焦确定。",
+            )
 
     @classmethod
-    def from_flat_strings(cls, types: list[str], parent: QWidget | None = None) -> FilterableTypeCombo:
-        return cls([(t, t) for t in types], parent=parent)
+    def from_flat_strings(
+        cls,
+        types: list[str],
+        parent: QWidget | None = None,
+        *,
+        select_only: bool = False,
+    ) -> FilterableTypeCombo:
+        return cls([(t, t) for t in types], parent=parent, select_only=select_only)
 
     def _rebuild_value_index(self) -> None:
         self._canonical_values = []
@@ -288,19 +306,32 @@ class FilterableTypeCombo(QComboBox):
             idx = self.count()
             self.addItem(disp)
             self.setItemData(idx, val, _USER_ROLE)
-        disp_show = self._display_for_value(committed_value)
-        self.lineEdit().setText(disp_show)
         for i in range(self.count()):
             if str(self.itemData(i, _USER_ROLE) or "") == committed_value:
                 self.setCurrentIndex(i)
                 break
+        if self.isEditable():
+            le = self.lineEdit()
+            if le is not None:
+                disp_show = self._display_for_value(self._committed)
+                le.setText(disp_show)
         self.blockSignals(False)
+
+    def _on_select_only_index_changed(self, index: int) -> None:
+        if not self._select_only or self._programmatic:
+            return
+        if index < 0:
+            return
+        v = self._value_at(index)
+        if v == self._committed:
+            return
+        self._apply_committed(v)
 
     def _pool_rows(self) -> list[tuple[str, str]]:
         return self._entries_with_orphan(self._committed)
 
     def _on_text_edited(self, text: str) -> None:
-        if self._programmatic:
+        if self._select_only or self._programmatic:
             return
         pool = self._pool_rows()
         matches = [(d, v) for d, v in pool if self._matches_entry(d, v, text)]
@@ -342,7 +373,7 @@ class FilterableTypeCombo(QComboBox):
             self.typeCommitted.emit(value)
 
     def _on_editing_finished(self) -> None:
-        if self._programmatic or self._suppress_editing_finish:
+        if self._select_only or self._programmatic or self._suppress_editing_finish:
             self._suppress_editing_finish = False
             return
         raw = self.lineEdit().text().strip()
@@ -526,7 +557,9 @@ class ActionRow(QWidget):
         self._fold_toggle.setToolTip("折叠 / 展开参数区")
         self._fold_toggle.clicked.connect(self._on_fold_clicked)
         top.addWidget(self._fold_toggle)
-        self.type_combo = FilterableTypeCombo.from_flat_strings(ACTION_TYPES)
+        self.type_combo = FilterableTypeCombo.from_flat_strings(
+            ACTION_TYPES, select_only=True,
+        )
         self._btn_up = QPushButton("\u2191")
         self._btn_up.setFixedWidth(24)
         self._btn_up.setToolTip("上移")
@@ -807,7 +840,7 @@ class ActionRow(QWidget):
             scen_entries = [(s, s) for s in scen_ids] or [
                 ("（请在 data/scenarios.json 添加 scenario）", ""),
             ]
-            sid_combo = FilterableTypeCombo(scen_entries, self)
+            sid_combo = FilterableTypeCombo(scen_entries, self, select_only=True)
             cur_sid = str(params.get("scenarioId") or "").strip()
             if cur_sid:
                 sid_combo.set_committed_type(cur_sid)
@@ -891,7 +924,7 @@ class ActionRow(QWidget):
             entries = [(i, i) for i in doc_ids] or [
                 ("（请在 data/document_reveals.json 添加条目）", ""),
             ]
-            doc_combo = FilterableTypeCombo(entries, self)
+            doc_combo = FilterableTypeCombo(entries, self, select_only=True)
             cur_doc = str(params.get("documentId") or "").strip()
             if cur_doc:
                 doc_combo.set_committed_type(cur_doc)

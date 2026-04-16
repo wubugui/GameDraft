@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import json
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent, QObject, QItemSelectionModel
+from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -30,13 +31,88 @@ from PySide6.QtWidgets import (
 from ..project_model import ProjectModel
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
+from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.blend_overlay_preview import BlendOverlayPreviewWidget
 from ..shared.condition_expr_tree import ConditionExprTreeRootWidget
+from ..shared.pick_strings_dialog import pick_strings_multi
 
 # 与叙事文档、运行时 string 比较一致；策划仅允许选这些（勿手写大小写变体）
 SCENARIO_PHASE_STATUSES: tuple[str, ...] = ("pending", "active", "done", "locked")
 QUEST_STATUSES: tuple[str, ...] = ("Inactive", "Active", "Completed")
+
+
+class _PhaseRequiresCell(QWidget):
+    """阶段 requires：只读摘要 +「选择…」打开多选（禁止手写逗号列表）。"""
+
+    def __init__(
+        self,
+        table: QTableWidget,
+        on_structure_changed,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._table = table
+        self._on_structure_changed = on_structure_changed
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(2, 2, 2, 2)
+        self._line = QLineEdit()
+        self._line.setReadOnly(True)
+        self._line.setPlaceholderText("点击「选择…」指定依赖 phase")
+        self._btn = QPushButton("选择…")
+        self._btn.setFixedWidth(72)
+        lay.addWidget(self._line, stretch=1)
+        lay.addWidget(self._btn)
+        self._btn.clicked.connect(self._pick)
+
+    def _resolve_row(self) -> int:
+        for r in range(self._table.rowCount()):
+            if self._table.cellWidget(r, 2) is self:
+                return r
+        return -1
+
+    def _pick(self) -> None:
+        r = self._resolve_row()
+        if r < 0:
+            return
+        nw = self._table.cellWidget(r, 0)
+        self_name = nw.text().strip() if isinstance(nw, QLineEdit) else ""
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for rr in range(self._table.rowCount()):
+            w0 = self._table.cellWidget(rr, 0)
+            if not isinstance(w0, QLineEdit):
+                continue
+            t = w0.text().strip()
+            if not t or t == self_name or t in seen:
+                continue
+            seen.add(t)
+            ordered.append(t)
+        if not ordered:
+            QMessageBox.information(
+                self, "phase requires",
+                "没有其它可依赖的 phase：请先添加更多阶段，或填写本行「phase 名」。",
+            )
+            return
+        cur = [x.strip() for x in self._line.text().split(",") if x.strip()]
+        picked = pick_strings_multi(
+            self,
+            "选择本 phase 的 requires",
+            ordered,
+            cur,
+            label="勾选：推进本阶段前须已为 done 的其它 phase。",
+            sort_choices=False,
+        )
+        if picked is None:
+            return
+        self._line.setText(", ".join(picked))
+        self._on_structure_changed()
+
+    def set_requires_text(self, text: str) -> None:
+        self._line.setText(text)
+
+    def requires_text(self) -> str:
+        return self._line.text().strip()
 
 
 class ScenariosCatalogEditor(QWidget):
@@ -49,9 +125,10 @@ class ScenariosCatalogEditor(QWidget):
 
         root = QVBoxLayout(self)
         tip = QLabel(
-            "按规范填写 scenario / phase / status（status 仅允许四种枚举）。"
-            "修改后点 Apply 写入内存；保存工程（Ctrl+S）写入 data/scenarios.json。"
-            "图对话里的 setScenarioPhase、scenario 条件须与本页 id、phase 名、status 一致。",
+            "scenarioId、进线 requires、阶段 requires、exposes 的 flag 均通过下拉/对话框选择，勿手写 id。"
+            "phase 名称与 description 为策划文案仅可手写。"
+            "status 仅四种枚举。Apply 写入内存；保存工程写入 data/scenarios.json。"
+            "图对话 setScenarioPhase、scenario 条件须与本页一致。",
         )
         tip.setWordWrap(True)
         root.addWidget(tip)
@@ -79,26 +156,44 @@ class ScenariosCatalogEditor(QWidget):
         rfl = QVBoxLayout(right_host)
 
         form = QFormLayout()
-        self._f_id = QLineEdit()
-        self._f_id.setPlaceholderText("scenarioId，与图内 setScenarioPhase.scenarioId 一致")
-        self._f_desc = QLineEdit()
-        self._f_desc.setPlaceholderText("描述（可选）")
-        self._f_requires = QLineEdit()
-        self._f_requires.setPlaceholderText(
-            "进线门槛（可选）：整条 scenario 开始前须已为 done 的 phase，逗号分隔；"
-            "单 phase 依赖请用下表「requires」列",
+        self._f_id_row = QWidget()
+        _idl = QHBoxLayout(self._f_id_row)
+        _idl.setContentsMargins(0, 0, 0, 0)
+        self._f_id_sel = IdRefSelector(
+            self._f_id_row, allow_empty=True, editable=False,
         )
+        self._f_id_sel.setToolTip(
+            "须与图内 setScenarioPhase.scenarioId、条件里的 scenario 一致；从下拉选择或生成唯一 id。",
+        )
+        self._f_id_sel.value_changed.connect(self._on_detail_edited)
+        self._f_id_new = QPushButton("生成唯一 id")
+        self._f_id_new.setToolTip("分配未占用的 scenarioId（仍可在下拉里改选其它空闲 id）")
+        self._f_id_new.clicked.connect(self._on_gen_scenario_id)
+        _idl.addWidget(self._f_id_sel, stretch=1)
+        _idl.addWidget(self._f_id_new)
+        self._f_desc = QLineEdit()
+        self._f_desc.setPlaceholderText("描述（可选，仅说明文案可手写）")
+        self._f_requires_row = QWidget()
+        _srl = QHBoxLayout(self._f_requires_row)
+        _srl.setContentsMargins(0, 0, 0, 0)
+        self._f_requires_disp = QLineEdit()
+        self._f_requires_disp.setReadOnly(True)
+        self._f_requires_disp.setPlaceholderText("点击「选择…」指定进线所需的 phase（须已列于下方 phases）")
+        self._f_requires_btn = QPushButton("选择…")
+        self._f_requires_btn.setFixedWidth(72)
+        self._f_requires_btn.clicked.connect(self._pick_scenario_requires)
+        _srl.addWidget(self._f_requires_disp, stretch=1)
+        _srl.addWidget(self._f_requires_btn)
         self._f_expose_after = QComboBox()
         self._f_expose_after.setEditable(False)
         self._f_expose_after.setToolTip(
             "当该 phase 被设为 status=done 时，将 exposes 中的 flag 写入全局（与运行时 ScenarioStateManager 一致）",
         )
-        for w in (self._f_id, self._f_desc, self._f_requires):
-            w.textChanged.connect(self._on_detail_edited)
+        self._f_desc.textChanged.connect(self._on_detail_edited)
         self._f_expose_after.currentIndexChanged.connect(self._on_detail_edited)
-        form.addRow("id", self._f_id)
+        form.addRow("id", self._f_id_row)
         form.addRow("description", self._f_desc)
-        form.addRow("scenario 进线 requires", self._f_requires)
+        form.addRow("scenario 进线 requires", self._f_requires_row)
         form.addRow("exposeAfterPhase", self._f_expose_after)
         rfl.addLayout(form)
 
@@ -132,9 +227,23 @@ class ScenariosCatalogEditor(QWidget):
         self._tbl_phases.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.ResizeToContents)
         self._tbl_phases.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self._tbl_phases.setMinimumHeight(160)
+        self._tbl_phases.setMinimumHeight(200)
         self._tbl_phases.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._tbl_phases.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        vh = self._tbl_phases.verticalHeader()
+        vh.setSectionsMovable(True)
+        vh.setMinimumWidth(28)
+        vh.sectionMoved.connect(self._on_phases_section_moved)
+        ph_hint = QLabel(
+            "在单元格内点击也会选中该行（Ctrl 加选、Shift 范围选）；拖曳左侧行号可调整顺序；"
+            "选中后按 Delete 或点「删除所选阶段」删除。",
+        )
+        ph_hint.setWordWrap(True)
+        ph_hint.setStyleSheet("color: #666; font-size: 12px;")
         ph_l.addWidget(self._tbl_phases)
+        _ph_del_sc = QShortcut(QKeySequence(Qt.Key.Key_Delete), self._tbl_phases)
+        _ph_del_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        _ph_del_sc.activated.connect(self._phases_del_row)
         pr = QHBoxLayout()
         pb_a = QPushButton("添加阶段")
         pb_a.clicked.connect(self._phases_add_row)
@@ -144,6 +253,7 @@ class ScenariosCatalogEditor(QWidget):
         pr.addWidget(pb_d)
         pr.addStretch()
         ph_l.addLayout(pr)
+        ph_l.addWidget(ph_hint)
         rfl.addWidget(ph_g)
 
         rfl.addStretch()
@@ -183,6 +293,175 @@ class ScenariosCatalogEditor(QWidget):
         cb.currentIndexChanged.connect(lambda _i: self._on_detail_edited())
         return cb
 
+    def _phase_names_from_phases_table(self) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for r in range(self._tbl_phases.rowCount()):
+            w = self._tbl_phases.cellWidget(r, 0)
+            if isinstance(w, QLineEdit):
+                t = w.text().strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    ordered.append(t)
+        return ordered
+
+    def _scenario_id_choice_tuples(self, editing_row: int) -> list[tuple[str, str]]:
+        if editing_row < 0 or editing_row >= len(self._scenarios_data):
+            return []
+        cur = str(self._scenarios_data[editing_row].get("id", "")).strip()
+        used_elsewhere: set[str] = set()
+        for i, e in enumerate(self._scenarios_data):
+            if i == editing_row:
+                continue
+            s = str(e.get("id", "")).strip()
+            if s:
+                used_elsewhere.add(s)
+        pool: list[str] = []
+        seen: set[str] = set()
+        for sid in self._model.scenario_ids_ordered():
+            s = str(sid).strip()
+            if s and s not in seen:
+                seen.add(s)
+                pool.append(s)
+        for e in self._scenarios_data:
+            s = str(e.get("id", "")).strip()
+            if s and s not in seen:
+                seen.add(s)
+                pool.append(s)
+        candidates: list[str] = []
+        if cur:
+            candidates.append(cur)
+        for s in pool:
+            if s == cur:
+                continue
+            if s not in used_elsewhere:
+                candidates.append(s)
+        return [(s, s) for s in candidates]
+
+    def _suggest_unique_scenario_id(self) -> str:
+        used = {str(e.get("id", "")).strip() for e in self._scenarios_data}
+        used.discard("")
+        pool = {str(x).strip() for x in self._model.scenario_ids_ordered()}
+        n = 1
+        while True:
+            cand = f"新scenario_{n}"
+            if cand not in used and cand not in pool:
+                return cand
+            n += 1
+
+    def _on_gen_scenario_id(self) -> None:
+        if self._loading_ui:
+            return
+        row = self._sc_list.currentRow()
+        if row < 0:
+            return
+        new_id = self._suggest_unique_scenario_id()
+        self._scenarios_data[row]["id"] = new_id
+        self._loading_ui = True
+        try:
+            self._f_id_sel.blockSignals(True)
+            self._f_id_sel.set_items(self._scenario_id_choice_tuples(row))
+            self._f_id_sel.set_current(new_id)
+            self._f_id_sel.blockSignals(False)
+        finally:
+            self._loading_ui = False
+        it = self._sc_list.item(row)
+        if it is not None:
+            it.setText(new_id or "(无 id)")
+        self._on_detail_edited()
+
+    def _pick_scenario_requires(self) -> None:
+        if self._loading_ui:
+            return
+        names = self._phase_names_from_phases_table()
+        if not names:
+            QMessageBox.information(
+                self, "进线 requires",
+                "请先在下方 phases 表中添加至少一个 phase。",
+            )
+            return
+        cur = [x.strip() for x in self._f_requires_disp.text().split(",") if x.strip()]
+        picked = pick_strings_multi(
+            self,
+            "选择 scenario 进线 requires",
+            names,
+            cur,
+            label="勾选：整条 scenario 开始前须已为 done 的 phase（须已出现在 phases 清单中）。",
+            sort_choices=False,
+        )
+        if picked is None:
+            return
+        self._f_requires_disp.setText(", ".join(picked))
+        self._on_detail_edited()
+
+    def _on_phases_section_moved(self, _logical: int, _old_v: int, _new_v: int) -> None:
+        if self._loading_ui:
+            return
+        self._on_phases_or_exposes_structure_changed()
+
+    def _install_phase_cell_event_filters(self, row: int) -> None:
+        for col in range(3):
+            w = self._tbl_phases.cellWidget(row, col)
+            if w is not None:
+                w.removeEventFilter(self)
+                w.installEventFilter(self)
+                if isinstance(w, _PhaseRequiresCell):
+                    w._line.removeEventFilter(self)
+                    w._line.installEventFilter(self)
+                    w._btn.removeEventFilter(self)
+                    w._btn.installEventFilter(self)
+
+    def _apply_phase_table_row_selection(self, row: int, event: QMouseEvent) -> None:
+        sel = self._tbl_phases.selectionModel()
+        if sel is None:
+            self._tbl_phases.selectRow(row)
+            return
+        idx0 = self._tbl_phases.model().index(row, 0)
+        mods = event.modifiers()
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            sel.select(
+                idx0,
+                QItemSelectionModel.SelectionFlag.Toggle | QItemSelectionModel.SelectionFlag.Rows,
+            )
+        elif mods & Qt.KeyboardModifier.ShiftModifier:
+            anchor = self._tbl_phases.currentRow()
+            if anchor < 0:
+                sel.select(
+                    idx0,
+                    QItemSelectionModel.SelectionFlag.ClearAndSelect
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )
+            else:
+                r0, r1 = sorted((anchor, row))
+                sel.clearSelection()
+                for rr in range(r0, r1 + 1):
+                    ix = self._tbl_phases.model().index(rr, 0)
+                    sel.select(
+                        ix,
+                        QItemSelectionModel.SelectionFlag.Select
+                        | QItemSelectionModel.SelectionFlag.Rows,
+                    )
+        else:
+            sel.select(
+                idx0,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QItemSelectionModel.SelectionFlag.Rows,
+            )
+        self._tbl_phases.setCurrentIndex(idx0)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and isinstance(event, QMouseEvent)
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            for r in range(self._tbl_phases.rowCount()):
+                for c in range(3):
+                    if self._tbl_phases.cellWidget(r, c) is watched:
+                        self._apply_phase_table_row_selection(r, event)
+                        return False
+        return super().eventFilter(watched, event)
+
     def reload_from_model(self) -> None:
         raw = getattr(self._model, "scenarios_catalog", None) or {}
         if not isinstance(raw, dict):
@@ -220,13 +499,18 @@ class ScenariosCatalogEditor(QWidget):
         d = self._scenarios_data[row]
         self._loading_ui = True
         try:
-            self._f_id.setText(str(d.get("id", "")))
+            self._f_id_sel.blockSignals(True)
+            self._f_id_sel.set_items(self._scenario_id_choice_tuples(row))
+            self._f_id_sel.set_current(str(d.get("id", "")).strip())
+            self._f_id_sel.blockSignals(False)
             self._f_desc.setText(str(d.get("description", "")))
             req = d.get("requires")
             if isinstance(req, list):
-                self._f_requires.setText(", ".join(str(x).strip() for x in req if str(x).strip()))
+                self._f_requires_disp.setText(
+                    ", ".join(str(x).strip() for x in req if str(x).strip()),
+                )
             else:
-                self._f_requires.setText("")
+                self._f_requires_disp.clear()
 
             phases = d.get("phases") if isinstance(d.get("phases"), dict) else {}
             phase_names = [str(k) for k in phases.keys()]
@@ -247,13 +531,20 @@ class ScenariosCatalogEditor(QWidget):
             self._loading_ui = False
 
     def _clear_detail_fields(self) -> None:
-        self._f_id.clear()
+        self._f_id_sel.blockSignals(True)
+        self._f_id_sel.set_items([])
+        self._f_id_sel.blockSignals(False)
         self._f_desc.clear()
-        self._f_requires.clear()
+        self._f_requires_disp.clear()
         self._f_expose_after.clear()
         self._f_expose_after.addItem("（不配置）", "")
         self._tbl_exposes.setRowCount(0)
-        self._tbl_phases.setRowCount(0)
+        vh = self._tbl_phases.verticalHeader()
+        vh.blockSignals(True)
+        try:
+            self._tbl_phases.setRowCount(0)
+        finally:
+            vh.blockSignals(False)
 
     def _fill_exposes_table(self, exposes: dict) -> None:
         self._tbl_exposes.setRowCount(0)
@@ -262,9 +553,9 @@ class ScenariosCatalogEditor(QWidget):
                 continue
             r = self._tbl_exposes.rowCount()
             self._tbl_exposes.insertRow(r)
-            ke = QLineEdit(str(k))
-            ke.textChanged.connect(self._on_detail_edited)
-            self._tbl_exposes.setCellWidget(r, 0, ke)
+            fk = FlagKeyPickField(self._model, None, str(k), self)
+            fk.valueChanged.connect(self._on_detail_edited)
+            self._tbl_exposes.setCellWidget(r, 0, fk)
             cb = QComboBox()
             cb.addItem("true", True)
             cb.addItem("false", False)
@@ -273,26 +564,33 @@ class ScenariosCatalogEditor(QWidget):
             self._tbl_exposes.setCellWidget(r, 1, cb)
 
     def _fill_phases_table(self, phases: dict) -> None:
-        self._tbl_phases.setRowCount(0)
-        for ph_name, ph_val in phases.items():
-            st = "pending"
-            req_parts: list[str] = []
-            if isinstance(ph_val, dict):
-                if isinstance(ph_val.get("status"), str):
-                    st = ph_val["status"]
-                raw_req = ph_val.get("requires")
-                if isinstance(raw_req, list):
-                    req_parts = [str(x).strip() for x in raw_req if str(x).strip()]
-            r = self._tbl_phases.rowCount()
-            self._tbl_phases.insertRow(r)
-            ne = QLineEdit(str(ph_name))
-            ne.textChanged.connect(self._on_phases_or_exposes_structure_changed)
-            self._tbl_phases.setCellWidget(r, 0, ne)
-            self._tbl_phases.setCellWidget(r, 1, self._make_status_combo(st))
-            re = QLineEdit(", ".join(req_parts))
-            re.setPlaceholderText("依赖的 phase，逗号分隔")
-            re.textChanged.connect(self._on_phases_or_exposes_structure_changed)
-            self._tbl_phases.setCellWidget(r, 2, re)
+        vh = self._tbl_phases.verticalHeader()
+        vh.blockSignals(True)
+        try:
+            self._tbl_phases.setRowCount(0)
+            for ph_name, ph_val in phases.items():
+                st = "pending"
+                req_parts: list[str] = []
+                if isinstance(ph_val, dict):
+                    if isinstance(ph_val.get("status"), str):
+                        st = ph_val["status"]
+                    raw_req = ph_val.get("requires")
+                    if isinstance(raw_req, list):
+                        req_parts = [str(x).strip() for x in raw_req if str(x).strip()]
+                r = self._tbl_phases.rowCount()
+                self._tbl_phases.insertRow(r)
+                ne = QLineEdit(str(ph_name))
+                ne.textChanged.connect(self._on_phases_or_exposes_structure_changed)
+                self._tbl_phases.setCellWidget(r, 0, ne)
+                self._tbl_phases.setCellWidget(r, 1, self._make_status_combo(st))
+                dep = _PhaseRequiresCell(
+                    self._tbl_phases, self._on_phases_or_exposes_structure_changed, self,
+                )
+                dep.set_requires_text(", ".join(req_parts))
+                self._tbl_phases.setCellWidget(r, 2, dep)
+                self._install_phase_cell_event_filters(r)
+        finally:
+            vh.blockSignals(False)
 
     def _on_detail_edited(self) -> None:
         if self._loading_ui:
@@ -336,7 +634,7 @@ class ScenariosCatalogEditor(QWidget):
             return
         d: dict = self._scenarios_data[row]
 
-        sid = self._f_id.text().strip()
+        sid = self._f_id_sel.current_id().strip()
         d["id"] = sid
         desc = self._f_desc.text().strip()
         if desc:
@@ -344,7 +642,7 @@ class ScenariosCatalogEditor(QWidget):
         elif "description" in d:
             del d["description"]
 
-        req_text = self._f_requires.text().strip()
+        req_text = self._f_requires_disp.text().strip()
         if req_text:
             d["requires"] = [x.strip() for x in req_text.split(",") if x.strip()]
         elif "requires" in d:
@@ -360,9 +658,12 @@ class ScenariosCatalogEditor(QWidget):
         for r in range(self._tbl_exposes.rowCount()):
             kw = self._tbl_exposes.cellWidget(r, 0)
             cw = self._tbl_exposes.cellWidget(r, 1)
-            if not isinstance(kw, QLineEdit):
+            if isinstance(kw, FlagKeyPickField):
+                key = kw.key().strip()
+            elif isinstance(kw, QLineEdit):
+                key = kw.text().strip()
+            else:
                 continue
-            key = kw.text().strip()
             if not key:
                 continue
             val = True
@@ -391,10 +692,13 @@ class ScenariosCatalogEditor(QWidget):
                 if isinstance(dv, str):
                     st = dv
             entry: dict = {"status": st}
-            if isinstance(rw, QLineEdit):
-                req_text = rw.text().strip()
-                if req_text:
-                    entry["requires"] = [x.strip() for x in req_text.split(",") if x.strip()]
+            req_cell = ""
+            if isinstance(rw, _PhaseRequiresCell):
+                req_cell = rw.requires_text()
+            elif isinstance(rw, QLineEdit):
+                req_cell = rw.text().strip()
+            if req_cell:
+                entry["requires"] = [x.strip() for x in req_cell.split(",") if x.strip()]
             phases[name] = entry
         d["phases"] = phases
 
@@ -404,7 +708,7 @@ class ScenariosCatalogEditor(QWidget):
 
     def _add_scenario(self) -> None:
         self._sync_current_row_from_ui()
-        new_id = f"新scenario_{len(self._scenarios_data) + 1}"
+        new_id = self._suggest_unique_scenario_id()
         self._scenarios_data.append({
             "id": new_id,
             "phases": {"起始": {"status": "pending"}},
@@ -435,10 +739,9 @@ class ScenariosCatalogEditor(QWidget):
             return
         r = self._tbl_exposes.rowCount()
         self._tbl_exposes.insertRow(r)
-        ke = QLineEdit()
-        ke.setPlaceholderText("flag键名")
-        ke.textChanged.connect(self._on_detail_edited)
-        self._tbl_exposes.setCellWidget(r, 0, ke)
+        fk = FlagKeyPickField(self._model, None, "", self)
+        fk.valueChanged.connect(self._on_detail_edited)
+        self._tbl_exposes.setCellWidget(r, 0, fk)
         cb = QComboBox()
         cb.addItem("true", True)
         cb.addItem("false", False)
@@ -465,10 +768,11 @@ class ScenariosCatalogEditor(QWidget):
         ne.textChanged.connect(self._on_phases_or_exposes_structure_changed)
         self._tbl_phases.setCellWidget(r, 0, ne)
         self._tbl_phases.setCellWidget(r, 1, self._make_status_combo("pending"))
-        re = QLineEdit()
-        re.setPlaceholderText("requires，逗号分隔")
-        re.textChanged.connect(self._on_phases_or_exposes_structure_changed)
-        self._tbl_phases.setCellWidget(r, 2, re)
+        dep = _PhaseRequiresCell(
+            self._tbl_phases, self._on_phases_or_exposes_structure_changed, self,
+        )
+        self._tbl_phases.setCellWidget(r, 2, dep)
+        self._install_phase_cell_event_filters(r)
 
     def _phases_del_row(self) -> None:
         rows = sorted({i.row() for i in self._tbl_phases.selectedIndexes()}, reverse=True)
@@ -574,7 +878,8 @@ class DocumentRevealsEditor(QWidget):
 
         root = QVBoxLayout(self)
         tip = QLabel(
-            "按条目编辑文档揭示；revealCondition 支持 Scenario / flag / 任务 或 JSON（ConditionExpr）。"
+            "条目 id、任务条件 quest、revealedFlag、overlayId 均从工程清单选择；"
+            "Scenario/phase/status 用下拉；outcome 与 JSON/表达式树模式仍为专家手写。"
             "Apply 写入内存；保存工程写入 data/document_reveals.json。",
         )
         tip.setWordWrap(True)
@@ -602,10 +907,20 @@ class DocumentRevealsEditor(QWidget):
         rfl = QVBoxLayout(rh)
 
         form = QFormLayout()
-        self._dr_id = QLineEdit(rh)
-        self._dr_id.setPlaceholderText("documentId，与 revealDocument 参数一致")
-        self._dr_id.textChanged.connect(self._dr_on_edit)
-        form.addRow("id", self._dr_id)
+        self._dr_id_row = QWidget(rh)
+        _drl = QHBoxLayout(self._dr_id_row)
+        _drl.setContentsMargins(0, 0, 0, 0)
+        self._dr_id_sel = IdRefSelector(self._dr_id_row, allow_empty=True, editable=False)
+        self._dr_id_sel.setToolTip(
+            "与 revealDocument 的 documentId、archive/documents 条目 id 对齐；从档案或已有揭示中选。",
+        )
+        self._dr_id_sel.value_changed.connect(self._dr_on_edit)
+        self._dr_id_new = QPushButton("生成唯一 id")
+        self._dr_id_new.setToolTip("分配未占用的揭示 id")
+        self._dr_id_new.clicked.connect(self._dr_on_gen_document_id)
+        _drl.addWidget(self._dr_id_sel, stretch=1)
+        _drl.addWidget(self._dr_id_new)
+        form.addRow("id", self._dr_id_row)
 
         self._dr_blur = CutsceneImagePathRow(
             self._model, "", self, external_copy_subdir="illustrations",
@@ -671,9 +986,9 @@ class DocumentRevealsEditor(QWidget):
 
         w2 = QWidget()
         w2l = QFormLayout(w2)
-        self._dr_q_id = QLineEdit()
-        self._dr_q_id.setPlaceholderText("quest id（quests.json）")
-        self._dr_q_id.textChanged.connect(self._dr_on_edit)
+        self._dr_q_id = IdRefSelector(w2, allow_empty=True, editable=False)
+        self._dr_q_id.setToolTip("quests.json 中的任务 id")
+        self._dr_q_id.value_changed.connect(self._dr_on_edit)
         self._dr_q_st = QComboBox()
         for qs in QUEST_STATUSES:
             self._dr_q_st.addItem(qs, qs)
@@ -720,10 +1035,12 @@ class DocumentRevealsEditor(QWidget):
         rfl.addLayout(anim)
 
         opt = QFormLayout()
-        self._dr_rflag = QLineEdit()
-        self._dr_rflag.setPlaceholderText("可选 revealedFlag")
-        self._dr_oid = QLineEdit()
-        self._dr_oid.setPlaceholderText("可选 overlayId")
+        self._dr_rflag = FlagKeyPickField(self._model, None, "", rh)
+        self._dr_rflag.setToolTip("可选：揭示完成后写入的 flag（与登记表一致）")
+        self._dr_rflag.valueChanged.connect(self._dr_on_edit)
+        self._dr_oid = IdRefSelector(rh, allow_empty=True, editable=False)
+        self._dr_oid.setToolTip("可选：overlay_images.json 中已登记的 overlayId")
+        self._dr_oid.value_changed.connect(self._dr_on_edit)
         self._dr_x = QSpinBox()
         self._dr_x.setRange(0, 100)
         self._dr_x.setValue(50)
@@ -733,8 +1050,6 @@ class DocumentRevealsEditor(QWidget):
         self._dr_w = QSpinBox()
         self._dr_w.setRange(1, 100)
         self._dr_w.setValue(40)
-        for w in (self._dr_rflag, self._dr_oid):
-            w.textChanged.connect(self._dr_on_edit)
         for sp in (self._dr_x, self._dr_y, self._dr_w):
             sp.valueChanged.connect(self._dr_on_edit)
         opt.addRow("revealedFlag", self._dr_rflag)
@@ -798,6 +1113,82 @@ class DocumentRevealsEditor(QWidget):
             "delay_ms": int(self._dr_delay.value()),
             "duration_ms": int(self._dr_dur.value()),
         }
+
+    def _dr_document_id_choice_tuples(self, editing_row: int) -> list[tuple[str, str]]:
+        if editing_row < 0 or editing_row >= len(self._reveals):
+            return []
+        cur = str(self._reveals[editing_row].get("id", "")).strip()
+        used_elsewhere = {
+            str(self._reveals[i].get("id", "")).strip()
+            for i in range(len(self._reveals))
+            if i != editing_row
+        }
+        used_elsewhere.discard("")
+        seen: set[str] = set()
+        pool: list[tuple[str, str]] = []
+        for rid, name in self._model.all_archive_document_ids():
+            if rid not in seen:
+                seen.add(rid)
+                pool.append((rid, name if name else rid))
+        for rid in self._model.document_reveal_ids():
+            r = str(rid).strip()
+            if r and r not in seen:
+                seen.add(r)
+                pool.append((r, r))
+        for e in self._reveals:
+            r = str(e.get("id", "")).strip()
+            if r and r not in seen:
+                seen.add(r)
+                pool.append((r, r))
+        candidates: list[tuple[str, str]] = []
+        if cur:
+            candidates.append((cur, cur))
+        for rid, name in pool:
+            if rid == cur:
+                continue
+            if rid not in used_elsewhere:
+                candidates.append((rid, name))
+        return candidates
+
+    def _dr_suggest_unique_reveal_id(self) -> str:
+        used = {str(e.get("id", "")).strip() for e in self._reveals}
+        used.discard("")
+        arch = {t[0] for t in self._model.all_archive_document_ids()}
+        disk_rev = {str(x).strip() for x in self._model.document_reveal_ids()}
+        n = 1
+        while True:
+            c = f"新揭示_{n}"
+            if c not in used and c not in arch and c not in disk_rev:
+                return c
+            n += 1
+
+    def _dr_on_gen_document_id(self) -> None:
+        if self._loading_ui:
+            return
+        row = self._dr_list.currentRow()
+        if row < 0:
+            return
+        new_id = self._dr_suggest_unique_reveal_id()
+        self._reveals[row]["id"] = new_id
+        self._loading_ui = True
+        try:
+            self._dr_id_sel.blockSignals(True)
+            self._dr_id_sel.set_items(self._dr_document_id_choice_tuples(row))
+            self._dr_id_sel.set_current(new_id)
+            self._dr_id_sel.blockSignals(False)
+        finally:
+            self._loading_ui = False
+        it = self._dr_list.item(row)
+        if it is not None:
+            it.setText(new_id or "(无 id)")
+        self._dr_on_edit()
+
+    def _dr_overlay_choice_tuples(self) -> list[tuple[str, str]]:
+        ov = getattr(self._model, "overlay_images", None) or {}
+        if not isinstance(ov, dict):
+            return []
+        keys = sorted({str(k).strip() for k in ov if str(k).strip()}, key=lambda s: s.casefold())
+        return [(k, k) for k in keys]
 
     def _dr_on_edit(self) -> None:
         if self._loading_ui:
@@ -865,7 +1256,8 @@ class DocumentRevealsEditor(QWidget):
 
     def _dr_refresh_right(self) -> None:
         row = self._dr_list.currentRow()
-        self._dr_id.setEnabled(row >= 0)
+        self._dr_id_sel.setEnabled(row >= 0)
+        self._dr_id_new.setEnabled(row >= 0)
         en = row >= 0
         for w in (
             self._dr_blur, self._dr_clear, self._dr_cond_kind, self._dr_cond_stack,
@@ -883,14 +1275,29 @@ class DocumentRevealsEditor(QWidget):
         try:
             self._dr_fill_scenario_combo()
             self._dr_cond_tree.set_model_refresh()
-            self._dr_id.setText(str(d.get("id", "")))
+            self._dr_q_id.blockSignals(True)
+            self._dr_q_id.set_items(self._model.all_quest_ids())
+            self._dr_q_id.blockSignals(False)
+            self._dr_id_sel.blockSignals(True)
+            self._dr_id_sel.set_items(self._dr_document_id_choice_tuples(row))
+            self._dr_id_sel.set_current(str(d.get("id", "")).strip())
+            self._dr_id_sel.blockSignals(False)
             self._dr_blur.set_path(str(d.get("blurredImagePath", "")))
             self._dr_clear.set_path(str(d.get("clearImagePath", "")))
             anim = d.get("animation") if isinstance(d.get("animation"), dict) else {}
             self._dr_dur.setValue(int(anim.get("durationMs", 2000) or 0))
             self._dr_delay.setValue(int(anim.get("delayMs", 0) or 0))
-            self._dr_rflag.setText(str(d.get("revealedFlag", "")))
-            self._dr_oid.setText(str(d.get("overlayId", "")))
+            self._dr_rflag.blockSignals(True)
+            self._dr_rflag.set_key(str(d.get("revealedFlag", "")))
+            self._dr_rflag.blockSignals(False)
+            self._dr_oid.blockSignals(True)
+            cur_ov = str(d.get("overlayId", "")).strip()
+            o_items = self._dr_overlay_choice_tuples()
+            if cur_ov and cur_ov not in {t[0] for t in o_items}:
+                o_items = [(cur_ov, f"{cur_ov}（数据）")] + o_items
+            self._dr_oid.set_items(o_items)
+            self._dr_oid.set_current(cur_ov)
+            self._dr_oid.blockSignals(False)
             self._dr_x.setValue(int(d.get("xPercent", 50) or 50))
             self._dr_y.setValue(int(d.get("yPercent", 50) or 50))
             self._dr_w.setValue(int(d.get("widthPercent", 40) or 40))
@@ -932,7 +1339,10 @@ class DocumentRevealsEditor(QWidget):
                 self._dr_fl_op.setCurrentIndex(max(0, iop))
                 self._dr_fl_val.set_value(expr.get("value", True))
             elif kind == 2 and isinstance(expr, dict):
-                self._dr_q_id.setText(str(expr.get("quest", "")))
+                self._dr_q_id.blockSignals(True)
+                self._dr_q_id.set_items(self._model.all_quest_ids())
+                self._dr_q_id.set_current(str(expr.get("quest", "")).strip())
+                self._dr_q_id.blockSignals(False)
                 qs = str(expr.get("questStatus", expr.get("status", "Completed")))
                 iqs = self._dr_q_st.findData(qs)
                 if iqs < 0:
@@ -989,19 +1399,19 @@ class DocumentRevealsEditor(QWidget):
         if row < 0 or row >= len(self._reveals):
             return
         d = self._reveals[row]
-        d["id"] = self._dr_id.text().strip()
+        d["id"] = self._dr_id_sel.current_id().strip()
         d["blurredImagePath"] = self._dr_blur.path()
         d["clearImagePath"] = self._dr_clear.path()
         d["animation"] = {
             "durationMs": int(self._dr_dur.value()),
             "delayMs": int(self._dr_delay.value()),
         }
-        rf = self._dr_rflag.text().strip()
+        rf = self._dr_rflag.key().strip()
         if rf:
             d["revealedFlag"] = rf
         elif "revealedFlag" in d:
             del d["revealedFlag"]
-        oid = self._dr_oid.text().strip()
+        oid = self._dr_oid.current_id().strip()
         if oid:
             d["overlayId"] = oid
         elif "overlayId" in d:
@@ -1050,7 +1460,7 @@ class DocumentRevealsEditor(QWidget):
             else:
                 d["revealCondition"] = {"flag": "", "op": "==", "value": True}
         elif kind == 2:
-            qid = self._dr_q_id.text().strip()
+            qid = self._dr_q_id.current_id().strip()
             qs = self._dr_q_st.currentData()
             if not isinstance(qs, str):
                 qs = self._dr_q_st.currentText()
@@ -1076,15 +1486,15 @@ class DocumentRevealsEditor(QWidget):
 
     def _dr_add(self) -> None:
         self._dr_sync_row_from_ui()
-        n = len(self._reveals) + 1
         first = ""
         ids = self._model.scenario_ids_ordered()
         if ids:
             first = ids[0]
         phases = self._model.phases_for_scenario(first)
         ph0 = phases[0] if phases else ""
+        new_id = self._dr_suggest_unique_reveal_id()
         new_e = {
-            "id": f"新揭示_{n}",
+            "id": new_id,
             "blurredImagePath": "",
             "clearImagePath": "",
             "revealCondition": {

@@ -156,13 +156,17 @@ class ActionRegistryEditor(QWidget):
         filter_row.addWidget(QLabel("类型:"))
         self._type_filter = FilterableTypeCombo(
             [("全部", "全部")] + [(t, t) for t in ACTION_TYPES],
+            select_only=True,
         )
         self._type_filter.set_committed_type("全部")
         self._type_filter.typeCommitted.connect(self._apply_filter)
         filter_row.addWidget(self._type_filter)
 
         filter_row.addWidget(QLabel("来源:"))
-        self._source_filter = FilterableTypeCombo([(s, s) for s in _SOURCE_TYPES])
+        self._source_filter = FilterableTypeCombo(
+            [(s, s) for s in _SOURCE_TYPES],
+            select_only=True,
+        )
         self._source_filter.set_committed_type("全部")
         self._source_filter.typeCommitted.connect(self._apply_filter)
         filter_row.addWidget(self._source_filter)
