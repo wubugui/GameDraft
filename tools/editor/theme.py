@@ -1,4 +1,4 @@
-"""Application light/dark theme for the Qt editor (Fusion + palette + flat QSS)."""
+"""Application light / near-black dark theme for the Qt editor (Fusion + palette + flat QSS)."""
 from __future__ import annotations
 
 from typing import Final
@@ -12,14 +12,14 @@ THEME_DARK: Final[str] = "dark"
 
 _APP_PROP = "gameDraftEditorTheme"
 
-# 与 QSS 主区域一致，减少 Fusion 回退绘制色差
-_DARK_WINDOW = "#353535"
-_DARK_BASE = "#232323"
-_DARK_ALT_BASE = "#2d2d2d"
-_DARK_BORDER = "#555555"
-_DARK_BORDER_MUTED = "#444444"
-_DARK_TEXT = "#dcdcdc"
-_DARK_ACCENT = "#2a82da"
+# 与 QSS 主区域一致，减少 Fusion 回退绘制色差（近黑主题，非中性灰）
+_DARK_WINDOW = "#0f0f0f"
+_DARK_BASE = "#050505"
+_DARK_ALT_BASE = "#121212"
+_DARK_BORDER = "#3a3a3a"
+_DARK_BORDER_MUTED = "#262626"
+_DARK_TEXT = "#e8e8e8"
+_DARK_ACCENT = "#3d9eff"
 
 _LIGHT_WINDOW = "#ececec"
 _LIGHT_BASE = "#ffffff"
@@ -50,19 +50,19 @@ def _palette_light() -> QPalette:
 
 def _palette_dark() -> QPalette:
     p = QPalette()
-    p.setColor(QPalette.ColorRole.Window, QColor(0x35, 0x35, 0x35))
-    p.setColor(QPalette.ColorRole.WindowText, QColor(0xDC, 0xDC, 0xDC))
-    p.setColor(QPalette.ColorRole.Base, QColor(0x23, 0x23, 0x23))
-    p.setColor(QPalette.ColorRole.AlternateBase, QColor(0x2D, 0x2D, 0x2D))
-    p.setColor(QPalette.ColorRole.Text, QColor(0xDC, 0xDC, 0xDC))
-    p.setColor(QPalette.ColorRole.Button, QColor(0x40, 0x40, 0x40))
-    p.setColor(QPalette.ColorRole.ButtonText, QColor(0xE8, 0xE8, 0xE8))
-    p.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+    p.setColor(QPalette.ColorRole.Window, QColor(0x0F, 0x0F, 0x0F))
+    p.setColor(QPalette.ColorRole.WindowText, QColor(0xE8, 0xE8, 0xE8))
+    p.setColor(QPalette.ColorRole.Base, QColor(0x05, 0x05, 0x05))
+    p.setColor(QPalette.ColorRole.AlternateBase, QColor(0x12, 0x12, 0x12))
+    p.setColor(QPalette.ColorRole.Text, QColor(0xE8, 0xE8, 0xE8))
+    p.setColor(QPalette.ColorRole.Button, QColor(0x22, 0x22, 0x22))
+    p.setColor(QPalette.ColorRole.ButtonText, QColor(0xEE, 0xEE, 0xEE))
+    p.setColor(QPalette.ColorRole.Highlight, QColor(61, 158, 255))
     p.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
-    p.setColor(QPalette.ColorRole.Link, QColor(125, 180, 255))
-    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(160, 160, 160))
-    p.setColor(QPalette.ColorRole.ToolTipBase, QColor(0x3C, 0x3C, 0x3C))
-    p.setColor(QPalette.ColorRole.ToolTipText, QColor(0xE6, 0xE6, 0xE6))
+    p.setColor(QPalette.ColorRole.Link, QColor(130, 190, 255))
+    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(140, 140, 140))
+    p.setColor(QPalette.ColorRole.ToolTipBase, QColor(0x1A, 0x1A, 0x1A))
+    p.setColor(QPalette.ColorRole.ToolTipText, QColor(0xE8, 0xE8, 0xE8))
     return p
 
 
@@ -101,8 +101,8 @@ def _stylesheet_flat_dark() -> str:
             border-radius: 0px;
             padding: 4px;
         }}
-        QToolButton:hover {{ background-color: #404040; border: 1px solid {brm}; }}
-        QToolButton:pressed {{ background-color: #2a2a2a; }}
+        QToolButton:hover {{ background-color: #252525; border: 1px solid {brm}; }}
+        QToolButton:pressed {{ background-color: #141414; }}
         QStatusBar {{
             background-color: {b};
             border-top: 1px solid {brm};
@@ -114,7 +114,7 @@ def _stylesheet_flat_dark() -> str:
             top: -1px;
         }}
         QTabBar::tab {{
-            background-color: #3a3a3a;
+            background-color: #181818;
             color: {tx};
             border: 1px solid {brm};
             border-bottom: none;
@@ -129,7 +129,7 @@ def _stylesheet_flat_dark() -> str:
             color: #ffffff;
             border-color: {brm};
         }}
-        QTabBar::tab:!selected:hover {{ background-color: #444444; }}
+        QTabBar::tab:!selected:hover {{ background-color: #282828; }}
         QLineEdit, QPlainTextEdit, QTextEdit {{
             background-color: {ab};
             color: #ececec;
@@ -154,7 +154,7 @@ def _stylesheet_flat_dark() -> str:
             padding: 4px 10px;
             min-height: 1.3em;
         }}
-        QComboBox:hover {{ border: 1px solid #666666; }}
+        QComboBox:hover {{ border: 1px solid #505050; }}
         QComboBox::drop-down {{ border: none; width: 22px; }}
         QComboBox QAbstractItemView {{
             background-color: {ab};
@@ -179,12 +179,12 @@ def _stylesheet_flat_dark() -> str:
             margin: 0;
         }}
         QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
-            background: #505050;
+            background: #3a3a3a;
             border: none;
             min-height: 24px;
             min-width: 24px;
         }}
-        QScrollBar::handle:hover {{ background: #5a5a5a; }}
+        QScrollBar::handle:hover {{ background: #4a4a4a; }}
         QScrollBar::add-line, QScrollBar::sub-line {{ border: none; background: none; height: 0; width: 0; }}
         QSplitter::handle {{ background-color: {brm}; }}
         QSplitter::handle:hover {{ background-color: {br}; }}
@@ -198,47 +198,47 @@ def _stylesheet_flat_dark() -> str:
             background-color: {ac};
             color: #ffffff;
         }}
-        QTreeView::item:hover, QTreeWidget::item:hover {{ background-color: #3a3a3a; }}
+        QTreeView::item:hover, QTreeWidget::item:hover {{ background-color: #1c1c1c; }}
         QListWidget {{
             background-color: {b};
             border: 1px solid {brm};
             outline: 0;
         }}
         QListWidget::item:selected {{ background-color: {ac}; color: #ffffff; }}
-        QListWidget::item:hover {{ background-color: #3a3a3a; }}
+        QListWidget::item:hover {{ background-color: #1c1c1c; }}
         QAbstractItemView {{
             selection-background-color: {ac};
             selection-color: #ffffff;
         }}
         QTableWidget {{
             background-color: {ab};
-            alternate-background-color: #323232;
+            alternate-background-color: #0c0c0c;
             color: #ececec;
             gridline-color: {brm};
             border: 1px solid {brm};
         }}
         QTableWidget::item:selected {{ background-color: {ac}; color: #ffffff; }}
         QHeaderView::section {{
-            background-color: #3a3a3a;
+            background-color: #141414;
             color: {tx};
             padding: 5px;
             border: 1px solid {br};
         }}
         QPushButton {{
-            background-color: #404040;
+            background-color: #242424;
             color: #ececec;
             border: 1px solid {br};
             border-radius: 0px;
             padding: 5px 14px;
         }}
-        QPushButton:hover {{ background-color: #4a4a4a; }}
-        QPushButton:pressed {{ background-color: #2a2a2a; }}
-        QPushButton:disabled {{ color: #777777; background-color: #333333; }}
+        QPushButton:hover {{ background-color: #323232; }}
+        QPushButton:pressed {{ background-color: #161616; }}
+        QPushButton:disabled {{ color: #666666; background-color: #141414; }}
         QCheckBox {{ spacing: 8px; }}
         QCheckBox::indicator {{
             width: 16px;
             height: 16px;
-            border: 1px solid #666666;
+            border: 1px solid #4a4a4a;
             border-radius: 0px;
             background-color: {ab};
         }}
@@ -249,7 +249,7 @@ def _stylesheet_flat_dark() -> str:
         QRadioButton::indicator {{
             width: 16px;
             height: 16px;
-            border: 1px solid #666666;
+            border: 1px solid #4a4a4a;
             border-radius: 0px;
             background-color: {ab};
         }}
@@ -269,7 +269,7 @@ def _stylesheet_flat_dark() -> str:
             left: 10px;
             padding: 0 5px;
         }}
-        QToolTip {{ color: #dddddd; background-color: #3c3c3c; border: 1px solid {br}; }}
+        QToolTip {{ color: #e8e8e8; background-color: #1a1a1a; border: 1px solid {br}; }}
         QProgressBar {{
             border: 1px solid {br};
             border-radius: 0px;
@@ -284,7 +284,7 @@ def _stylesheet_flat_dark() -> str:
             margin: 2px 0;
         }}
         QSlider::handle:horizontal {{
-            background: #505050;
+            background: #383838;
             border: 1px solid {br};
             width: 14px;
             margin: -5px 0;
@@ -297,7 +297,7 @@ def _stylesheet_flat_dark() -> str:
             margin: 0 2px;
         }}
         QSlider::handle:vertical {{
-            background: #505050;
+            background: #383838;
             border: 1px solid {br};
             height: 14px;
             margin: 0 -5px;
@@ -573,7 +573,7 @@ def apply_graphics_view_background(view: QGraphicsView, theme_id: str) -> None:
     from PySide6.QtGui import QBrush
 
     if theme_id == THEME_DARK:
-        view.setBackgroundBrush(QBrush(QColor(0x2D, 0x2D, 0x2D)))
+        view.setBackgroundBrush(QBrush(QColor(0x10, 0x10, 0x10)))
     else:
         view.setBackgroundBrush(QBrush(QColor(0xF0, 0xF0, 0xF0)))
 
@@ -600,5 +600,5 @@ def settings_save_theme(theme_id: str) -> None:
 
 def secondary_label_stylesheet(theme_id: str) -> str:
     if theme_id == THEME_DARK:
-        return "color: #A0A0A0;"
+        return "color: #9a9a9a;"
     return "color: #666666;"

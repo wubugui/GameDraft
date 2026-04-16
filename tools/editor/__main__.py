@@ -26,7 +26,7 @@ def main() -> None:
 
     win = MainWindow()
 
-    # 先 load_project 再 show，避免空 QTabWidget 先被绘制。
+    # 先 load_project 再 show，避免空导航/堆叠区先被绘制。
     if len(sys.argv) > 1:
         win.load_project(Path(sys.argv[1]))
     else:
