@@ -57,6 +57,10 @@ export class CutsceneManager implements IGameSystem {
   private skipping = false;
 
   private snapshot: CutsceneSnapshot | null = null;
+  /** 当前播放的过场 id（供调试 HUD / cutscene:step 事件） */
+  private playbackCutsceneId: string | null = null;
+  private playbackPathLast: string | null = null;
+  private playbackLabelLast: string | null = null;
   private sceneIdGetter: (() => string | null) | null = null;
   private playerPositionGetter: (() => { x: number; y: number }) | null = null;
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
@@ -140,6 +144,15 @@ export class CutsceneManager implements IGameSystem {
 
   getCutsceneDef(id: string): NewCutsceneDef | undefined {
     return this.cutsceneDefs.get(id);
+  }
+
+  /** 供 Debug 面板等读取：当前 step 路径与摘要（非播放时 path/label 为 null） */
+  getPlaybackHudSnapshot(): { cutsceneId: string | null; path: string | null; label: string | null } {
+    return {
+      cutsceneId: this.playbackCutsceneId,
+      path: this.playbackPathLast,
+      label: this.playbackLabelLast,
+    };
   }
 
   /**
@@ -249,6 +262,7 @@ export class CutsceneManager implements IGameSystem {
     if (this.playing) return;
     this.playing = true;
     this.skipping = false;
+    this.playbackCutsceneId = id;
     this.eventBus.emit('cutscene:start', { id });
     this.unsubPointer = this.inputManager?.subscribePointerDown(this.onClickBound) ?? null;
     this.unsubKey = this.inputManager?.subscribeKeyDown((e) => {
@@ -298,6 +312,10 @@ export class CutsceneManager implements IGameSystem {
       this.skipping = false;
       this.cleanup();
       this.playing = false;
+      this.playbackCutsceneId = null;
+      this.playbackPathLast = null;
+      this.playbackLabelLast = null;
+      this.eventBus.emit('cutscene:step', { cutsceneId: null, path: null, label: null });
       this.eventBus.emit('cutscene:end', { id });
     }
   }
@@ -368,14 +386,61 @@ export class CutsceneManager implements IGameSystem {
   // ================================================================
 
   private async executeSteps(steps: CutsceneStep[]): Promise<void> {
-    for (const step of steps) {
+    for (let i = 0; i < steps.length; i++) {
       if (this.destroyed || this.skipping) return;
-      await this.executeOneStep(step);
+      await this.executeOneStep(steps[i], String(i));
     }
   }
 
-  private async executeOneStep(step: CutsceneStep): Promise<void> {
+  /** 人类可读的当前 step 摘要（调试用） */
+  private formatPlaybackStepLabel(step: CutsceneStep): string {
+    if (step.kind === 'action') {
+      const raw = step.params && Object.keys(step.params).length > 0
+        ? JSON.stringify(step.params)
+        : '';
+      const ps = raw.length > 72 ? `${raw.slice(0, 69)}…` : raw;
+      return ps ? `action:${step.type} ${ps}` : `action:${step.type}`;
+    }
+    if (step.kind === 'present') {
+      const t = step.type;
+      if (t === 'showDialogue') {
+        const tx = String((step as { text?: string }).text ?? '').replace(/\n/g, ' ');
+        return tx.length > 36 ? `present:showDialogue "${tx.slice(0, 33)}…"` : `present:showDialogue "${tx}"`;
+      }
+      if (t === 'showTitle') {
+        const tx = String((step as { text?: string }).text ?? '');
+        return tx.length > 28 ? `present:showTitle "${tx.slice(0, 25)}…"` : `present:showTitle "${tx}"`;
+      }
+      if (t === 'waitTime' || t === 'fadeToBlack' || t === 'fadeIn' || t === 'flashWhite' || t === 'cameraMove' || t === 'cameraZoom') {
+        const d = (step as { duration?: number }).duration;
+        return `present:${t}${d != null ? ` ${d}ms` : ''}`;
+      }
+      if (t === 'showImg') {
+        return `present:showImg id=${String((step as { id?: string }).id ?? '')}`;
+      }
+      return `present:${t}`;
+    }
+    if (step.kind === 'parallel') {
+      return `parallel (${step.tracks.length} tracks)`;
+    }
+    return String((step as { kind?: string }).kind ?? '?');
+  }
+
+  private emitPlaybackStep(path: string, step: CutsceneStep): void {
+    if (!this.playbackCutsceneId) return;
+    const label = this.formatPlaybackStepLabel(step);
+    this.playbackPathLast = path;
+    this.playbackLabelLast = label;
+    this.eventBus.emit('cutscene:step', {
+      cutsceneId: this.playbackCutsceneId,
+      path,
+      label,
+    });
+  }
+
+  private async executeOneStep(step: CutsceneStep, path: string): Promise<void> {
     if (this.destroyed || this.skipping) return;
+    this.emitPlaybackStep(path, step);
     switch (step.kind) {
       case 'action':
         if (!CUTSCENE_ACTION_WHITELIST.has(step.type)) {
@@ -399,7 +464,7 @@ export class CutsceneManager implements IGameSystem {
           check();
         });
         await Promise.race([
-          Promise.all(step.tracks.map(s => this.executeOneStep(s))).then(() => {
+          Promise.all(step.tracks.map((s, j) => this.executeOneStep(s, `${path}.p${j}`))).then(() => {
             cancelAnimationFrame(skipRafId);
             resolveSkip?.();
           }),
@@ -595,6 +660,9 @@ export class CutsceneManager implements IGameSystem {
     this.playing = false;
     this.skipping = false;
     this.snapshot = null;
+    this.playbackCutsceneId = null;
+    this.playbackPathLast = null;
+    this.playbackLabelLast = null;
     this.dialogueAdvanceNotBefore = 0;
     this.waitClickNotBefore = 0;
   }
@@ -603,6 +671,9 @@ export class CutsceneManager implements IGameSystem {
     this.destroyed = true;
     this.skipping = false;
     this.snapshot = null;
+    this.playbackCutsceneId = null;
+    this.playbackPathLast = null;
+    this.playbackLabelLast = null;
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
       this.waitClickResolve = null;

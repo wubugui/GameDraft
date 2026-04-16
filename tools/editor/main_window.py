@@ -378,7 +378,7 @@ class MainWindow(QMainWindow):
             ("Scene", SceneEditor),
             ("Quest", QuestEditor),
             ("Encounter", EncounterEditor),
-            ("Cutscene", TimelineEditor),
+            ("过场", TimelineEditor),
             ("图对话", DialogueGraphEditorTab),
             ("Item", ItemEditor),
             ("Rule", RuleEditor),

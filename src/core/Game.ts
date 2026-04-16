@@ -142,6 +142,8 @@ export class Game {
   private menuUI!: MenuUI;
   private ruleUseUI!: RuleUseUI;
   private debugPanelUI!: DebugPanelUI;
+  /** 过场当前 step 调试浮层（dev / ?cutsceneDebug） */
+  private cutsceneStepHudEl: HTMLElement | null = null;
 
   private stateController: GameStateController;
   private lastTime: number = 0;
@@ -643,6 +645,7 @@ export class Game {
     ]);
 
     this.debugPanelUI.attachFlagDebug(this.flagStore, this.eventBus);
+    this.setupCutsceneStepHud();
 
     if (!this.gameConfig.initialScene) {
       console.error('Game: initialScene not configured in game_config.json');
@@ -676,6 +679,53 @@ export class Game {
       this.tick(dt);
     };
     ticker.add(this.mainTick);
+  }
+
+  /** 开发模式或 URL 带 `cutsceneDebug` 时显示左上角过场 step 预览 */
+  private cutsceneStepHudWanted(): boolean {
+    if (this.isDevMode) return true;
+    try {
+      return typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('cutsceneDebug');
+    } catch {
+      return false;
+    }
+  }
+
+  private setupCutsceneStepHud(): void {
+    this.debugPanelUI.addSection('cutscene-step', () => {
+      const s = this.cutsceneManager.getPlaybackHudSnapshot();
+      if (!s.cutsceneId) {
+        return '过场步骤：未在播放';
+      }
+      return `过场步骤\ncutsceneId: ${s.cutsceneId}\npath: ${s.path ?? '—'}\n${s.label ?? ''}`;
+    });
+
+    if (!this.cutsceneStepHudWanted()) return;
+    const el = document.createElement('div');
+    el.id = 'cutscene-step-hud';
+    el.setAttribute('aria-live', 'polite');
+    el.style.cssText = [
+      'position:fixed', 'left:8px', 'top:8px', 'z-index:10050', 'max-width:min(560px,92vw)',
+      'padding:8px 12px', 'font:12px/1.45 ui-monospace,monospace',
+      'background:rgba(15,18,24,.88)', 'color:#b8f6c6', 'border:1px solid rgba(120,200,140,.35)',
+      'border-radius:6px', 'pointer-events:none', 'white-space:pre-wrap', 'display:none',
+      'box-shadow:0 2px 12px rgba(0,0,0,.4)',
+    ].join(';');
+    document.body.appendChild(el);
+    this.cutsceneStepHudEl = el;
+    const onStep = (p: { cutsceneId?: string | null; path?: string | null; label?: string | null }) => {
+      if (!this.cutsceneStepHudEl) return;
+      if (p.path == null && p.label == null) {
+        this.cutsceneStepHudEl.style.display = 'none';
+        return;
+      }
+      const id = p.cutsceneId ?? '';
+      const path = p.path ?? '';
+      const lab = p.label ?? '';
+      this.cutsceneStepHudEl.textContent = `[过场 step] ${id}\npath: ${path}\n${lab}`;
+      this.cutsceneStepHudEl.style.display = 'block';
+    };
+    this.listenEvent('cutscene:step', onStep);
   }
 
   private async loadFlagRegistry(): Promise<void> {
@@ -1366,6 +1416,9 @@ export class Game {
       this.eventBus.off(event, fn);
     }
     this.boundCallbacks = [];
+
+    this.cutsceneStepHudEl?.remove();
+    this.cutsceneStepHudEl = null;
 
     for (const { event, fn } of this.boundWindowListeners) {
       window.removeEventListener(event, fn);

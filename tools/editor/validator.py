@@ -936,7 +936,13 @@ def _validate_cutscene_steps(
             pass
 
         elif kind == "parallel":
-            _validate_cutscene_steps(step.get("tracks", []), cid, issues)
+            tr = step.get("tracks") or []
+            if isinstance(tr, list) and len(tr) == 0:
+                issues.append(Issue(
+                    "warning", "cutscene", cid,
+                    f"step #{i+1} parallel 的 tracks 为空（运行时该步将立即结束，确认是否占位遗漏）",
+                ))
+            _validate_cutscene_steps(tr, cid, issues)
 
         elif kind:
             issues.append(Issue(

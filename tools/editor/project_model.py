@@ -463,6 +463,19 @@ class ProjectModel(QObject):
                     out.append(str(i).strip())
         return out
 
+    def all_archive_document_ids(self) -> list[tuple[str, str]]:
+        """archive/documents.json 条目 ``(id, name)``，供文档揭示等选择 documentId。"""
+        out: list[tuple[str, str]] = []
+        for d in self.archive_documents or []:
+            if not isinstance(d, dict):
+                continue
+            i = d.get("id")
+            if i is None or not str(i).strip():
+                continue
+            rid = str(i).strip()
+            out.append((rid, str(d.get("name", rid))))
+        return out
+
     def anim_asset_path_choices(self) -> list[tuple[str, str]]:
         """(runtime path /assets/animation/<id>/anim.json, 显示名) for npc animFile."""
         return [

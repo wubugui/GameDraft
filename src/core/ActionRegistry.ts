@@ -5,6 +5,7 @@
  * `tools/editor/shared/action_editor.py` 的 ACTION_TYPES，并配置 _PARAM_SCHEMAS
  * 或 setPlayerAvatar / enableRuleOffers 等专用表单，否则主编辑器无法添加该 Action，
  * 且 `tools/editor/validator.py` 会对数据中的未知 type 报错。
+ * 主编辑器中 Action 的 type 下拉为「仅选清单」模式，与 ACTION_TYPES 一致，不可手写未登记 type。
  *
  * 图对话节点 `runActions` 与热区共用本文件中的 `register` handler；若 handler 返回 Promise，
  * 对话里会顺序 await。仅当热区必须无效果而对话要等待时，再使用 `registerDialogueSequential`（如 waitMs）。
