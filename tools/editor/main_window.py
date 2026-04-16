@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
         from .editors.scene_editor import SceneEditor
         from .editors.quest_editor import QuestEditor
         from .editors.encounter_editor import EncounterEditor
-        from .editors.cutscene_editor import CutsceneEditor
+        from .editors.timeline_editor import TimelineEditor
         from .editors.item_editor import ItemEditor
         from .editors.rule_editor import RuleEditor
         from .editors.shop_editor import ShopEditor
@@ -378,7 +378,7 @@ class MainWindow(QMainWindow):
             ("Scene", SceneEditor),
             ("Quest", QuestEditor),
             ("Encounter", EncounterEditor),
-            ("Cutscene", CutsceneEditor),
+            ("Cutscene", TimelineEditor),
             ("图对话", DialogueGraphEditorTab),
             ("Item", ItemEditor),
             ("Rule", RuleEditor),
@@ -401,7 +401,7 @@ class MainWindow(QMainWindow):
             ed = cls(self._model)
             self._tabs.addTab(ed, label)
             self._editor_instances.append(ed)
-            if isinstance(ed, CutsceneEditor):
+            if isinstance(ed, TimelineEditor):
                 ed.play_requested.connect(self._on_cutscene_play_requested)
 
         self._game_browser = GameBrowserTab(self)
@@ -766,10 +766,10 @@ class MainWindow(QMainWindow):
     # ---- close ------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        from .editors.cutscene_editor import CutsceneEditor
+        from .editors.timeline_editor import TimelineEditor
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         for ed in self._editor_instances:
-            if isinstance(ed, CutsceneEditor) and ed.has_pending_changes():
+            if isinstance(ed, TimelineEditor) and ed.has_pending_changes():
                 if ed.confirm_apply_or_discard(self) == "cancel":
                     event.ignore()
                     return

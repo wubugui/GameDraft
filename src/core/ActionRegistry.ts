@@ -99,6 +99,10 @@ export interface ActionRegistryDeps {
   waitClickContinue: (hintOverride?: string) => Promise<void>;
   scenarioStateManager: ScenarioStateManager;
   documentRevealManager: DocumentRevealManager;
+  /** 在 CutsceneManager 临时表中 spawn 一个临时实体并挂载到显示层 */
+  spawnCutsceneActor: (id: string, name: string, x: number, y: number) => void;
+  /** 从 CutsceneManager 临时表中移除一个临时实体并销毁 */
+  removeCutsceneActor: (id: string) => void;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -612,6 +616,101 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
     if (ms > 0) await new Promise<void>(resolve => setTimeout(resolve, ms));
   });
+
+  // ----------------------------------------------------------------
+  // Cutscene 白名单 Action（无副作用，可出现在 A 类表演中）
+  // ----------------------------------------------------------------
+
+  executor.register('moveEntityTo', async (p) => {
+    const target = String(p.target ?? '').trim();
+    const x = typeof p.x === 'number' ? p.x : Number(p.x);
+    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const speedRaw = p.speed;
+    const speed = typeof speedRaw === 'number' ? speedRaw : (speedRaw !== undefined ? Number(speedRaw) : 80);
+    if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('moveEntityTo: 需要 target、有限数值 x/y');
+      return;
+    }
+    const actor = d.resolveActor(target);
+    if (!actor) {
+      console.warn(`moveEntityTo: 找不到实体 "${target}"`);
+      return;
+    }
+    await actor.moveTo(x, y, Number.isFinite(speed) && speed > 0 ? speed : 80);
+  }, ['target', 'x', 'y', 'speed']);
+
+  executor.register('faceEntity', (p) => {
+    const target = String(p.target ?? '').trim();
+    if (!target) {
+      console.warn('faceEntity: missing target');
+      return;
+    }
+    const actor = d.resolveActor(target);
+    if (!actor) {
+      console.warn(`faceEntity: 找不到实体 "${target}"`);
+      return;
+    }
+    const faceTarget = p.faceTarget !== undefined ? String(p.faceTarget).trim() : '';
+    const direction = p.direction !== undefined ? String(p.direction).trim() : '';
+    if (!faceTarget && !direction) {
+      console.warn('faceEntity: 需要 direction 或 faceTarget（至少一个）');
+      return;
+    }
+    if (faceTarget) {
+      const other = d.resolveActor(faceTarget);
+      if (other) {
+        actor.setFacing(other.x - actor.x, other.y - actor.y);
+      }
+    } else if (direction) {
+      const dirMap: Record<string, [number, number]> = {
+        left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1],
+      };
+      const dd = dirMap[direction];
+      if (dd) actor.setFacing(dd[0], dd[1]);
+    }
+  }, ['target', 'direction', 'faceTarget']);
+
+  executor.register('cutsceneSpawnActor', (p) => {
+    const id = String(p.id ?? '').trim();
+    const name = String(p.name ?? id).trim();
+    const x = typeof p.x === 'number' ? p.x : Number(p.x);
+    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    if (!id) {
+      console.warn('cutsceneSpawnActor: missing id');
+      return;
+    }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('cutsceneSpawnActor: x/y must be finite numbers');
+      return;
+    }
+    d.spawnCutsceneActor(id, name, x, y);
+  }, ['id', 'name', 'x', 'y']);
+
+  executor.register('cutsceneRemoveActor', (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      console.warn('cutsceneRemoveActor: missing id');
+      return;
+    }
+    d.removeCutsceneActor(id);
+  }, ['id']);
+
+  executor.register('showEmoteAndWait', async (p) => {
+    const target = String(p.target ?? '').trim();
+    const emote = String(p.emote ?? '').trim();
+    const durRaw = p.duration ?? 1500;
+    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    if (!target || !emote) {
+      console.warn('showEmoteAndWait: 需要 target 与 emote');
+      return;
+    }
+    const actor = d.resolveActor(target);
+    if (!actor) {
+      console.warn(`showEmoteAndWait: 找不到实体 "${target}"`);
+      return;
+    }
+    await d.emoteBubbleManager.showAndWait(actor, emote, Number.isFinite(duration) && duration > 0 ? duration : 1500);
+  }, ['target', 'emote', 'duration']);
 
   executor.registerDialogueSequential('revealDocument', async (p) => {
     await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));

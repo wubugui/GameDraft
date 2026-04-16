@@ -14,7 +14,7 @@
 
 ### Cutscene Editor 不校验 ID 唯一性
 
-CutsceneEditor 的 `_apply` 方法只校验命令内容，不检查 cutscene ID 是否与其他 cutscene 重复。用户可以手动修改某个 cutscene 的 ID 为已存在的值，系统不会发出任何警告。游戏运行时通过 `cutscenes.find(c => c.id === x)` 查找 cutscene 会返回不确定的结果（取决于数组遍历顺序），导致过场动画加载到错误的配置。
+（注：旧 CutsceneEditor 已删除，现为 TimelineEditor）TimelineEditor 的 `_apply` 方法不检查 cutscene ID 是否与其他 cutscene 重复。用户可以手动修改某个 cutscene 的 ID 为已存在的值，系统不会发出任何警告。游戏运行时通过 Map 查找 cutscene 时后者覆盖前者。
 
 ### 锁比例修改 worldWidth/Height 后数据可能丢失
 

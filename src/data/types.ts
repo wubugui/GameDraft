@@ -643,21 +643,67 @@ export interface IEmoteBubbleProvider {
   cleanup(): void;
 }
 
-export interface CutsceneDef {
+// ------------------------------------------------------------
+// Cutscene schema
+// ------------------------------------------------------------
+
+/**
+ * Action 步骤——通过 ActionExecutor.executeAwait 执行。
+ * Cutscene 中仅允许无副作用的 Action 子集（白名单）。
+ */
+export interface ActionStep {
+  kind: 'action';
+  type: string;
+  params: Record<string, unknown>;
+}
+
+/**
+ * Present 步骤——CutsceneManager / CutsceneRenderer 直接处理的演出指令。
+ * 如 fadeToBlack / showTitle / showDialogue / showImg / cameraMove 等。
+ */
+export interface PresentStep {
+  kind: 'present';
+  type: string;
+  [key: string]: unknown;
+}
+
+/**
+ * 并行组——组内所有 step 同时启动，全部完成后继续主干。
+ */
+export interface ParallelGroup {
+  kind: 'parallel';
+  tracks: CutsceneStep[];
+}
+
+export type CutsceneStep = ActionStep | PresentStep | ParallelGroup;
+
+export interface NewCutsceneDef {
   id: string;
-  commands: CutsceneCommand[];
+  steps: CutsceneStep[];
   targetScene?: string;
   targetSpawnPoint?: string;
   targetX?: number;
   targetY?: number;
+  /** 默认 true——演出结束后恢复快照（场景、玩家位置、镜头）。 */
   restoreState?: boolean;
 }
 
-export interface CutsceneCommand {
-  type: string;
-  parallel?: boolean;
-  [key: string]: unknown;
-}
+/**
+ * Cutscene Action 白名单——仅允许无副作用的 Action 出现在 Cutscene steps 中。
+ * 编辑器和 validator 据此校验。Present 类型不受此限。
+ */
+export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
+  'moveEntityTo',
+  'faceEntity',
+  'cutsceneSpawnActor',
+  'cutsceneRemoveActor',
+  'showEmoteAndWait',
+  'playNpcAnimation',
+  'setEntityEnabled',
+  'playSfx',
+  'playBgm',
+  'stopBgm',
+]);
 
 // ============================================================
 // 存档数据

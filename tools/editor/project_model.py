@@ -496,10 +496,7 @@ class ProjectModel(QObject):
         self._collect_flags_from_conditions(self.map_nodes, flags)
         for sc in self.scenes.values():
             self._collect_flags_from_scene(sc, flags)
-        for c in self.cutscenes:
-            for cmd in c.get("commands", []):
-                if cmd.get("type") == "set_flag" and "key" in cmd:
-                    flags.add(cmd["key"])
+        # Cutscene 使用新 steps schema（无副作用，不含 set_flag）
         for it in self.items:
             for dd in it.get("dynamicDescriptions", []):
                 for cond in dd.get("conditions", []):
