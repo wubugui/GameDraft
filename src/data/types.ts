@@ -553,30 +553,8 @@ export interface IEmoteBubbleProvider {
   cleanup(): void;
 }
 
-/**
- * @deprecated 旧 schema，将在阶段 4 删除。新代码请使用 NewCutsceneDef。
- */
-export interface CutsceneDef {
-  id: string;
-  commands: CutsceneCommand[];
-  targetScene?: string;
-  targetSpawnPoint?: string;
-  targetX?: number;
-  targetY?: number;
-  restoreState?: boolean;
-}
-
-/**
- * @deprecated 旧 schema，将在阶段 4 删除。新代码请使用 CutsceneStep。
- */
-export interface CutsceneCommand {
-  type: string;
-  parallel?: boolean;
-  [key: string]: unknown;
-}
-
 // ------------------------------------------------------------
-// 新 Cutscene schema（阶段 0 规格冻结）
+// Cutscene schema
 // ------------------------------------------------------------
 
 /**
