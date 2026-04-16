@@ -191,17 +191,23 @@ class MainWindow(QMainWindow):
         ag_theme = QActionGroup(self)
         self._act_theme_light = QAction("浅色主题", self, checkable=True)
         self._act_theme_dark = QAction("黑色主题", self, checkable=True)
+        self._act_theme_modern = QAction("现代清爽 (类 VS Code)", self, checkable=True)
         ag_theme.addAction(self._act_theme_light)
         ag_theme.addAction(self._act_theme_dark)
+        ag_theme.addAction(self._act_theme_modern)
         self._act_theme_light.triggered.connect(
             lambda: self._apply_ui_theme(theme.THEME_LIGHT))
         self._act_theme_dark.triggered.connect(
             lambda: self._apply_ui_theme(theme.THEME_DARK))
+        self._act_theme_modern.triggered.connect(
+            lambda: self._apply_ui_theme(theme.THEME_MODERN))
         view_menu.addAction(self._act_theme_light)
         view_menu.addAction(self._act_theme_dark)
+        view_menu.addAction(self._act_theme_modern)
         tid = theme.current_theme_id()
         self._act_theme_light.setChecked(tid == theme.THEME_LIGHT)
         self._act_theme_dark.setChecked(tid == theme.THEME_DARK)
+        self._act_theme_modern.setChecked(tid == theme.THEME_MODERN)
 
     def _apply_ui_theme(self, theme_id: str) -> None:
         app = QApplication.instance()
@@ -211,6 +217,7 @@ class MainWindow(QMainWindow):
         theme.settings_save_theme(theme_id)
         self._act_theme_light.setChecked(theme_id == theme.THEME_LIGHT)
         self._act_theme_dark.setChecked(theme_id == theme.THEME_DARK)
+        self._act_theme_modern.setChecked(theme_id == theme.THEME_MODERN)
         self._sync_theme_to_editors()
 
     def _sync_theme_to_editors(self) -> None:

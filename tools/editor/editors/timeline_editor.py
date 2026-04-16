@@ -174,7 +174,7 @@ def format_duration_hint(ms: int | None) -> str:
 
 
 def gantt_style_for_ms(ms: int | None, theme_id: str) -> str:
-    dark = theme_id == app_theme.THEME_DARK
+    dark = app_theme.is_dark_theme(theme_id)
     dash = "#868e96" if dark else "#6c757d"
     zero_bg = "#495057" if dark else "#dee2e6"
     fill = "#868e96" if dark else "#6c757d"
@@ -613,14 +613,14 @@ class StepOutlineFrame(QFrame):
 
     def _editor_theme_id(self) -> str:
         tid = getattr(self._editor, "_theme_id", None)
-        if tid in (app_theme.THEME_LIGHT, app_theme.THEME_DARK):
+        if tid in app_theme.ALL_THEME_IDS:
             return str(tid)
         return app_theme.current_theme_id()
 
     def _refresh_header_surface(self) -> None:
         tid = self._editor_theme_id()
         kind = str(self._step.to_dict().get("kind", "present"))
-        if tid == app_theme.THEME_DARK:
+        if app_theme.is_dark_theme(tid):
             border = "#454b54"
             if kind == "action":
                 even, odd = "#273040", "#2f3848"
@@ -643,7 +643,7 @@ class StepOutlineFrame(QFrame):
 
     def _kind_palette(self, kind: str, theme_id: str) -> tuple[str, str, str]:
         """strip, badge_bg, badge_fg"""
-        if theme_id == app_theme.THEME_DARK:
+        if app_theme.is_dark_theme(theme_id):
             if kind == "action":
                 return "#4dabf7", "#1864ab", "#ffffff"
             if kind == "parallel":
@@ -667,8 +667,8 @@ class StepOutlineFrame(QFrame):
         self._badge.setStyleSheet(
             f"background-color: {bb}; color: {bf}; border-radius: 4px; padding: 2px 6px;"
         )
-        primary = "#dcdcdc" if tid == app_theme.THEME_DARK else "#1a1a1a"
-        muted = "#a0a0a0" if tid == app_theme.THEME_DARK else "#666666"
+        primary = "#dcdcdc" if app_theme.is_dark_theme(tid) else "#1a1a1a"
+        muted = "#a0a0a0" if app_theme.is_dark_theme(tid) else "#666666"
         self._idx_lbl.setStyleSheet(f"color: {muted};")
         self._summary.setStyleSheet(f"color: {primary};")
         self._dur_lbl.setStyleSheet(f"color: {muted};")
