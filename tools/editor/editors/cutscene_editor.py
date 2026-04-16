@@ -1,4 +1,10 @@
-"""Cutscene command-list editor (no timeline)."""
+"""Cutscene command-list editor (DEPRECATED — 旧 commands 格式).
+
+本编辑器仅支持旧 CutsceneCommand (commands[]) 格式。
+数据已迁移到新 CutsceneStep (steps[]) 格式，
+本编辑器将在 Timeline 编辑器完成后删除。
+Apply 操作会自动阻止覆盖新格式数据。
+"""
 from __future__ import annotations
 
 import json
@@ -909,6 +915,14 @@ class CutsceneEditor(QWidget):
     def _apply(self) -> bool:
         if self._current_idx < 0:
             return False
+        cs_cur = self._model.cutscenes[self._current_idx]
+        if "steps" in cs_cur:
+            QMessageBox.warning(
+                self,
+                "Cutscene (deprecated editor)",
+                "此演出使用新 steps 格式，旧编辑器不支持编辑。\n请等待 Timeline 编辑器完成。",
+            )
+            return False
         cmds = [cw.to_dict() for cw in self._cmd_widgets]
         errs = _validate_cutscene_commands(cmds)
         if errs:
@@ -956,7 +970,7 @@ class CutsceneEditor(QWidget):
     def _add(self) -> None:
         self._model.cutscenes.append({
             "id": f"cutscene_{len(self._model.cutscenes)}",
-            "commands": [],
+            "steps": [],
         })
         self._model.mark_dirty("cutscene")
         self._pending_changes = False
