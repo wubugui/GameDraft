@@ -1686,6 +1686,81 @@ class TargetSpawnPickerDialog(QDialog):
 # Property panel
 # ---------------------------------------------------------------------------
 
+
+class CollapsibleSection(QWidget):
+    """点击标题行展开或折叠内容，不使用标题旁方框勾选。"""
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        start_open: bool = True,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._plain_title = title
+        self._expanded = start_open
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        self._header = QPushButton()
+        self._header.setFlat(True)
+        self._header.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._header.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.clicked.connect(self._toggle)
+        self._header.setStyleSheet(
+            "QPushButton { text-align: left; padding: 4px 2px; border: none; "
+            "background: transparent; }\n"
+            "QPushButton:hover { background-color: rgba(0, 0, 0, 24); }\n"
+            "QPushButton:pressed { background-color: rgba(0, 0, 0, 40); }",
+        )
+        self._content = QWidget()
+        self._content.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        self._body_layout = QVBoxLayout(self._content)
+        self._body_layout.setContentsMargins(8, 2, 0, 8)
+        self._body_layout.setSpacing(6)
+        self._body_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 2, 0, 2)
+        root.setSpacing(0)
+        root.setAlignment(Qt.AlignmentFlag.AlignTop)
+        root.addWidget(self._header, 0, Qt.AlignmentFlag.AlignTop)
+        root.addWidget(self._content, 0, Qt.AlignmentFlag.AlignTop)
+        self._content.setVisible(self._expanded)
+        self._sync_header_text()
+
+    def _sync_header_text(self) -> None:
+        mark = "\u25bc" if self._expanded else "\u25b6"
+        self._header.setText(f"{mark}  {self._plain_title}")
+
+    def _toggle(self) -> None:
+        self.set_expanded(not self._expanded)
+
+    def add_body(self, widget: QWidget) -> None:
+        self._body_layout.addWidget(widget)
+
+    def set_expanded(self, on: bool) -> None:
+        if self._expanded == on:
+            return
+        self._expanded = on
+        self._content.setVisible(on)
+        self._sync_header_text()
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_header_tool_tip(self, text: str) -> None:
+        self._header.setToolTip(text)
+
+
 class ScenePropertyPanel(QScrollArea):
     changed = Signal()
     # (kind, entity_id, interaction_range) — live canvas sync
@@ -1749,6 +1824,10 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_poly_updating: bool = False
         self._npc_patrol_table_updating: bool = False
 
+    @staticmethod
+    def _section(title: str, *, start_open: bool = True) -> CollapsibleSection:
+        return CollapsibleSection(title, start_open=start_open)
+
     def _append_entity_delete_footer(self, vbox: QVBoxLayout) -> QPushButton:
         vbox.addSpacing(12)
         row = QHBoxLayout()
@@ -1800,7 +1879,11 @@ class ScenePropertyPanel(QScrollArea):
 
     def _build_scene_panel(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        outer = QVBoxLayout(w)
+        outer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        basic = self._section("基本：标识、世界尺寸、滤镜与镜头", start_open=True)
+        basic_inner = QWidget()
+        form = QFormLayout(basic_inner)
         form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint,
         )
@@ -1835,9 +1918,15 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("camera.ppu", self._sc_ppu)
         self._sc_scale = QDoubleSpinBox(); self._sc_scale.setRange(0.01, 10); self._sc_scale.setValue(1)
         form.addRow("worldScale", self._sc_scale)
+        basic.add_body(basic_inner)
+        outer.addWidget(basic)
 
-        depth_box = QGroupBox("depthConfig（2D 遮挡深度）")
-        depth_form = QFormLayout(depth_box)
+        depth_box = CollapsibleSection("depthConfig（2D 遮挡深度）", start_open=False)
+        depth_box.set_header_tool_tip(
+            "默认折叠；与 Scene Depth Editor 导出一致，此处仅微调 tolerance / floor_offset",
+        )
+        depth_inner = QWidget()
+        depth_form = QFormLayout(depth_inner)
         self._sc_depth_tol = QDoubleSpinBox()
         self._sc_depth_tol.setRange(-50.0, 50.0)
         self._sc_depth_tol.setDecimals(4)
@@ -1859,20 +1948,22 @@ class ScenePropertyPanel(QScrollArea):
         depth_form.addRow(self._sc_depth_hint)
         self._sc_depth_tol.valueChanged.connect(self._on_depth_fields_changed)
         self._sc_floor_offset.valueChanged.connect(self._on_depth_fields_changed)
-        form.addRow(depth_box)
+        depth_box.add_body(depth_inner)
+        outer.addWidget(depth_box)
 
+        move_g = self._section("角色移动速度", start_open=True)
+        move_inner = QWidget()
+        move_f = QFormLayout(move_inner)
         self._sc_walk = QDoubleSpinBox(); self._sc_walk.setRange(0, 9999)
-        form.addRow("walkSpeed", self._sc_walk)
+        move_f.addRow("walkSpeed", self._sc_walk)
         self._sc_run = QDoubleSpinBox(); self._sc_run.setRange(0, 9999)
-        form.addRow("runSpeed", self._sc_run)
-        amb_box = QWidget()
-        amb_box.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Maximum,
-        )
-        amb_lay = QVBoxLayout(amb_box)
-        amb_lay.setContentsMargins(0, 0, 0, 0)
-        amb_lay.setSpacing(4)
+        move_f.addRow("runSpeed", self._sc_run)
+        move_g.add_body(move_inner)
+        outer.addWidget(move_g)
+
+        amb_g = self._section("环境音效 ambientSounds", start_open=True)
+        amb_inner = QWidget()
+        amb_lay = QVBoxLayout(amb_inner)
         amb_hint = QLabel(
             "勾选 audio_config.ambient 中的 id；目录外 id 在下方填写（逗号分隔）。",
         )
@@ -1897,11 +1988,9 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_ambient_extra.setPlaceholderText("其它 ambient id，逗号分隔")
         self._sc_ambient_extra.textChanged.connect(lambda _t: self.changed.emit())
         amb_lay.addWidget(self._sc_ambient_extra)
-        amb_lbl = QLabel("ambientSounds")
-        amb_lbl.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
-        )
-        form.addRow(amb_lbl, amb_box)
+        amb_g.add_body(amb_inner)
+        outer.addWidget(amb_g)
+        outer.addStretch(1)
         return w
 
     def load_scene_props(
@@ -2095,7 +2184,10 @@ class ScenePropertyPanel(QScrollArea):
     def _build_hotspot_panel(self) -> QWidget:
         root = QWidget()
         lay = QVBoxLayout(root)
-        form = QFormLayout()
+        lay.setAlignment(Qt.AlignmentFlag.AlignTop)
+        basic_g = self._section("基本：id、类型、位置与交互", start_open=True)
+        basic_inner = QWidget()
+        form = QFormLayout(basic_inner)
         self._hs_id = QLineEdit(); form.addRow("id", self._hs_id)
         self._hs_type = QComboBox()
         self._hs_type.addItems(["inspect", "pickup", "transition", "npc", "encounter"])
@@ -2111,14 +2203,24 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("interactionRange", self._hs_range)
         self._hs_range.valueChanged.connect(self._on_hotspot_interaction_range_live)
         self._hs_auto = QCheckBox(); form.addRow("autoTrigger", self._hs_auto)
-        lay.addLayout(form)
+        basic_g.add_body(basic_inner)
+        lay.addWidget(basic_g)
 
+        cond_g = self._section("触发条件 conditions", start_open=True)
+        cond_inner = QWidget()
+        cond_l = QVBoxLayout(cond_inner)
         self._hs_cond = ConditionEditor("Conditions")
-        lay.addWidget(self._hs_cond)
+        cond_l.addWidget(self._hs_cond)
+        cond_g.add_body(cond_inner)
+        lay.addWidget(cond_g)
 
-        disp = QGroupBox(
-            "显示图（可选，底边中点对齐 x,y；只调世界宽度，高度按图片比例自动算）")
-        dlay = QVBoxLayout(disp)
+        disp = CollapsibleSection(
+            "显示图（可选，底边中点对齐 x,y；只调世界宽度，高度按图片比例自动算）",
+            start_open=False,
+        )
+        disp.set_header_tool_tip("默认折叠；配置立绘/展示图时展开")
+        disp_inner = QWidget()
+        dlay = QVBoxLayout(disp_inner)
         self._hs_disp_row = CutsceneImagePathRow(
             self._model, "", self,
             external_copy_subdir="illustrations",
@@ -2163,10 +2265,17 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_disp_sprite_sort.currentIndexChanged.connect(self._on_hs_disp_sprite_sort_changed)
         df.addRow("精灵排序", self._hs_disp_sprite_sort)
         dlay.addLayout(df)
+        disp.add_body(disp_inner)
+        self._hs_disp_fold = disp
         lay.addWidget(disp)
 
-        colg = QGroupBox("碰撞多边形（可选，世界坐标；区域内阻挡行走）")
-        clay = QVBoxLayout(colg)
+        colg = CollapsibleSection(
+            "碰撞多边形（可选，世界坐标；区域内阻挡行走）",
+            start_open=False,
+        )
+        colg.set_header_tool_tip("默认折叠；需要行走阻挡时展开")
+        col_inner = QWidget()
+        clay = QVBoxLayout(col_inner)
         self._hs_col_enable = QCheckBox("启用碰撞多边形")
         self._hs_col_enable.toggled.connect(self._on_hs_collision_toggle)
         clay.addWidget(self._hs_col_enable)
@@ -2194,12 +2303,18 @@ class ScenePropertyPanel(QScrollArea):
         col_btns.addWidget(self._hs_col_add)
         col_btns.addWidget(self._hs_col_del)
         clay.addLayout(col_btns)
+        colg.add_body(col_inner)
+        self._hs_col_fold = colg
         lay.addWidget(colg)
         self._hs_col_updating = False
 
+        data_g = self._section("按类型的数据（inspect / pickup / transition …）", start_open=True)
+        data_inner = QWidget()
+        data_l = QVBoxLayout(data_inner)
         self._hs_data_stack = QStackedWidget()
-        lay.addWidget(QLabel("<b>Data</b>"))
-        lay.addWidget(self._hs_data_stack)
+        data_l.addWidget(self._hs_data_stack)
+        data_g.add_body(data_inner)
+        lay.addWidget(data_g)
 
         # inspect data（纯文本 与 图对话 graphId 互斥）
         ip = QWidget()
@@ -2302,6 +2417,7 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_data_stack.addWidget(ep)
 
         self._hs_type.currentTextChanged.connect(self._on_hs_type_changed)
+        lay.addStretch(1)
         self._append_entity_delete_footer(lay)
         return root
 
@@ -2650,6 +2766,11 @@ class ScenePropertyPanel(QScrollArea):
             finally:
                 self._hs_col_updating = False
 
+        disp_path = str(di.get("image", "") or "").strip()
+        disp_ww = float(di.get("worldWidth", 0) or 0)
+        self._hs_disp_fold.set_expanded(bool(disp_path and disp_ww > 0))
+        self._hs_col_fold.set_expanded(has_col)
+
         data = hs.get("data", {})
         ht = hs.get("type", "inspect")
         self._on_hs_type_changed(ht)
@@ -2820,7 +2941,10 @@ class ScenePropertyPanel(QScrollArea):
     def _build_npc_panel(self) -> QWidget:
         w = QWidget()
         outer = QVBoxLayout(w)
-        form = QFormLayout()
+        outer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        base_g = self._section("身份、位置、对话与交互范围", start_open=True)
+        base_inner = QWidget()
+        form = QFormLayout(base_inner)
         self._npc_id = QLineEdit(); form.addRow("id", self._npc_id)
         self._npc_name = QLineEdit(); form.addRow("name", self._npc_name)
         self._npc_x = QDoubleSpinBox(); self._npc_x.setRange(-99999, 99999); self._npc_x.setDecimals(1)
@@ -2856,18 +2980,27 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range = QDoubleSpinBox(); self._npc_range.setRange(0, 99999)
         form.addRow("interactionRange", self._npc_range)
         self._npc_range.valueChanged.connect(self._on_npc_interaction_range_live)
+        base_g.add_body(base_inner)
+        outer.addWidget(base_g)
+
+        anim_g = self._section("骨骼动画 animFile / 初始状态", start_open=True)
+        anim_inner = QWidget()
+        anim_f = QFormLayout(anim_inner)
         self._npc_anim = IdRefSelector(allow_empty=True)
         self._npc_anim.setMinimumWidth(220)
         self._npc_anim.value_changed.connect(self._on_npc_anim_file_changed)
-        form.addRow("animFile", self._npc_anim)
+        anim_f.addRow("animFile", self._npc_anim)
         self._npc_initial_state = QComboBox()
         self._npc_initial_state.setMinimumWidth(220)
         self._npc_initial_state.currentIndexChanged.connect(self._on_npc_initial_state_changed)
-        form.addRow("initialAnimState", self._npc_initial_state)
-        outer.addLayout(form)
+        anim_f.addRow("initialAnimState", self._npc_initial_state)
+        anim_g.add_body(anim_inner)
+        outer.addWidget(anim_g)
 
-        patrol_box = QGroupBox("巡逻路径（运行时折返 ping-pong）")
-        patrol_outer = QVBoxLayout(patrol_box)
+        patrol_box = CollapsibleSection("巡逻路径（运行时折返 ping-pong）", start_open=False)
+        patrol_box.set_header_tool_tip("默认折叠；启用巡逻时展开编辑路点")
+        patrol_inner = QWidget()
+        patrol_outer = QVBoxLayout(patrol_inner)
         self._npc_patrol_enable = QCheckBox("启用巡逻")
         self._npc_patrol_enable.toggled.connect(self._on_npc_patrol_enable_toggled)
         patrol_outer.addWidget(self._npc_patrol_enable)
@@ -2914,6 +3047,8 @@ class ScenePropertyPanel(QScrollArea):
         pr_btns.addWidget(self._npc_patrol_add_pt)
         pr_btns.addWidget(self._npc_patrol_del_pt)
         patrol_outer.addLayout(pr_btns)
+        patrol_box.add_body(patrol_inner)
+        self._npc_patrol_fold = patrol_box
         outer.addWidget(patrol_box)
         self._set_npc_patrol_widgets_enabled(False)
 
@@ -2922,6 +3057,7 @@ class ScenePropertyPanel(QScrollArea):
         )
         _npc_scene_hint.setWordWrap(True)
         outer.addWidget(_npc_scene_hint)
+        outer.addStretch(1)
         self._append_entity_delete_footer(outer)
         return w
 
@@ -3029,6 +3165,8 @@ class ScenePropertyPanel(QScrollArea):
         npc = self._pending_npc
         if npc is None or self._stack.currentWidget() != self._npc_panel:
             return
+        if checked:
+            self._npc_patrol_fold.set_expanded(True)
         self._set_npc_patrol_widgets_enabled(checked)
         if checked:
             patrol = npc.setdefault("patrol", {})
@@ -3123,6 +3261,7 @@ class ScenePropertyPanel(QScrollArea):
     def _load_npc_patrol_ui(self, npc: dict) -> None:
         pat = npc.get("patrol")
         en = isinstance(pat, dict) and isinstance(pat.get("route"), list) and len(pat["route"]) >= 2
+        self._npc_patrol_fold.set_expanded(en)
         self._npc_patrol_enable.blockSignals(True)
         self._npc_patrol_enable.setChecked(en)
         self._npc_patrol_enable.blockSignals(False)
@@ -3402,7 +3541,10 @@ class ScenePropertyPanel(QScrollArea):
     def _build_zone_panel(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        form = QFormLayout()
+        lay.setAlignment(Qt.AlignmentFlag.AlignTop)
+        top_g = self._section("基本：id 与区域类型", start_open=True)
+        top_inner = QWidget()
+        form = QFormLayout(top_inner)
         self._zn_id = QLineEdit()
         form.addRow("id", self._zn_id)
         self._zn_kind = QComboBox()
@@ -3417,13 +3559,17 @@ class ScenePropertyPanel(QScrollArea):
             "depth_floor：叠加到深度遮挡 d_base（与场景 floor_offset 同语义）。重叠多区取 |值| 最大者。")
         self._zn_boost.valueChanged.connect(lambda _v: self.changed.emit())
         form.addRow("floorOffsetBoost", self._zn_boost)
-        lay.addLayout(form)
+        top_g.add_body(top_inner)
+        lay.addWidget(top_g)
 
+        poly_g = self._section("polygon 顶点表", start_open=True)
+        poly_inner = QWidget()
+        poly_l = QVBoxLayout(poly_inner)
         poly_label = QLabel(
             "polygon 顶点（顺序为边界，首尾不重复）。画布：拖点 / 拖内部平移 / "
             "双击边中点附近插点 / Shift+单击顶点删点 / Del 删鼠标悬停顶点 / 右键顶点菜单也可删。")
         poly_label.setWordWrap(True)
-        lay.addWidget(poly_label)
+        poly_l.addWidget(poly_label)
 
         self._zn_poly_table = QTableWidget(0, 3)
         self._zn_poly_table.setHorizontalHeaderLabels(["#", "x", "y"])
@@ -3435,7 +3581,7 @@ class ScenePropertyPanel(QScrollArea):
             2, QHeaderView.ResizeMode.Stretch)
         self._zn_poly_table.setMinimumHeight(220)
         self._zn_poly_table.itemChanged.connect(self._on_zone_poly_cell_changed)
-        lay.addWidget(self._zn_poly_table)
+        poly_l.addWidget(self._zn_poly_table)
 
         btn_row = QHBoxLayout()
         self._zn_poly_add = QPushButton("添加顶点")
@@ -3450,16 +3596,31 @@ class ScenePropertyPanel(QScrollArea):
         btn_row.addWidget(self._zn_poly_add)
         btn_row.addWidget(self._zn_poly_del)
         btn_row.addWidget(self._zn_poly_quad)
-        lay.addLayout(btn_row)
+        poly_l.addLayout(btn_row)
+        poly_g.add_body(poly_inner)
+        lay.addWidget(poly_g)
 
+        cond_g = self._section("触发条件 conditions", start_open=True)
+        cond_inner_z = QWidget()
+        cond_l = QVBoxLayout(cond_inner_z)
         self._zn_cond = ConditionEditor("Conditions")
-        lay.addWidget(self._zn_cond)
+        cond_l.addWidget(self._zn_cond)
+        cond_g.add_body(cond_inner_z)
+        lay.addWidget(cond_g)
+
+        act_g = self._section("动作：onEnter / onStay / onExit", start_open=False)
+        act_inner = QWidget()
+        act_l = QVBoxLayout(act_inner)
         self._zn_enter = ActionEditor("onEnter")
-        lay.addWidget(self._zn_enter)
+        act_l.addWidget(self._zn_enter)
         self._zn_stay = ActionEditor("onStay")
-        lay.addWidget(self._zn_stay)
+        act_l.addWidget(self._zn_stay)
         self._zn_exit = ActionEditor("onExit")
-        lay.addWidget(self._zn_exit)
+        act_l.addWidget(self._zn_exit)
+        act_g.add_body(act_inner)
+        self._zn_act_fold = act_g
+        lay.addWidget(act_g)
+        lay.addStretch(1)
         self._append_entity_delete_footer(lay)
         return w
 
@@ -3636,6 +3797,15 @@ class ScenePropertyPanel(QScrollArea):
         except (TypeError, ValueError):
             self._zn_boost.setValue(0.0)
         self._apply_zone_kind_ui()
+        oe = zone.get("onEnter") or []
+        oy = zone.get("onStay") or []
+        ox = zone.get("onExit") or []
+        has_act = bool(
+            (isinstance(oe, list) and len(oe) > 0)
+            or (isinstance(oy, list) and len(oy) > 0)
+            or (isinstance(ox, list) and len(ox) > 0)
+        )
+        self._zn_act_fold.set_expanded(has_act)
 
     def _write_zone_widgets_to_dict(self, zone: dict) -> None:
         zone["id"] = self._zn_id.text().strip()
@@ -3689,6 +3859,10 @@ class ScenePropertyPanel(QScrollArea):
     def _build_spawn_panel(self) -> QWidget:
         w = QWidget()
         outer = QVBoxLayout(w)
+        outer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        sp_g = self._section("出生点 key与坐标", start_open=True)
+        sp_inner = QWidget()
+        sp_l = QVBoxLayout(sp_inner)
         form_host = QWidget()
         form = QFormLayout(form_host)
         self._sp_key = QLineEdit()
@@ -3704,7 +3878,10 @@ class ScenePropertyPanel(QScrollArea):
         self._sp_note = QLabel()
         self._sp_note.setWordWrap(True)
         form.addRow(self._sp_note)
-        outer.addWidget(form_host)
+        sp_l.addWidget(form_host)
+        sp_g.add_body(sp_inner)
+        outer.addWidget(sp_g)
+        outer.addStretch(1)
         self._sp_delete_btn = self._append_entity_delete_footer(outer)
         return w
 

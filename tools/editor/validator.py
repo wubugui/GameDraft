@@ -470,7 +470,9 @@ def _scenario_definitions(model: ProjectModel) -> dict[str, dict]:
 
 
 def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> None:
-    """per-phase requires引用与 DAG（无环）。"""
+    """per-phase /进线 requires 布尔式、引用与纯与链 DAG（无环）。"""
+    from .scenario_requires_expr import flatten_and_of_phase_strings, validate_requires_expr
+
     raw = model.scenarios_catalog.get("scenarios")
     if not isinstance(raw, list):
         return
@@ -484,23 +486,35 @@ def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> Non
         if not isinstance(phases, dict):
             continue
         pnames = {str(k) for k in phases.keys()}
+        entry_req = e.get("requires")
+        if entry_req is not None:
+            err = validate_requires_expr(
+                entry_req,
+                pset=pnames,
+                where=f"{sid!r} 的 scenario 进线 requires",
+            )
+            if err:
+                issues.append(Issue("error", "scenarios", sid, err))
         adj: dict[str, list[str]] = {}
+        skip_cycle = False
         for pname, pval in phases.items():
             pn = str(pname)
             req_list: list[str] = []
             if isinstance(pval, dict):
                 req = pval.get("requires")
-                if isinstance(req, list):
-                    for rp in req:
-                        rs = str(rp).strip()
-                        if not rs:
-                            continue
-                        if rs not in pnames:
-                            issues.append(Issue(
-                                "error", "scenarios", sid,
-                                f"phase {pn!r} 的 requires 引用未知 phase {rs!r}",
-                            ))
-                        req_list.append(rs)
+                if req is not None:
+                    err = validate_requires_expr(
+                        req,
+                        pset=pnames,
+                        where=f"{sid!r} 的 phase {pn!r} requires",
+                    )
+                    if err:
+                        issues.append(Issue("error", "scenarios", sid, err))
+                    flat = flatten_and_of_phase_strings(req)
+                    if flat is None:
+                        skip_cycle = True
+                    else:
+                        req_list = flat
             adj[pn] = req_list
         _WHITE, _GREY, _BLACK = 0, 1, 2
         color = {n: _WHITE for n in adj}
@@ -517,16 +531,17 @@ def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> Non
             color[u] = _BLACK
             return False
 
-        cyc = False
-        for n in adj:
-            if color.get(n) == _WHITE and _dfs(n):
-                cyc = True
-                break
-        if cyc:
-            issues.append(Issue(
-                "error", "scenarios", sid,
-                "phases.requires 存在循环依赖",
-            ))
+        if not skip_cycle:
+            cyc = False
+            for n in adj:
+                if color.get(n) == _WHITE and _dfs(n):
+                    cyc = True
+                    break
+            if cyc:
+                issues.append(Issue(
+                    "error", "scenarios", sid,
+                    "phases.requires 存在循环依赖",
+                ))
 
         exp_msg = scenario_exposes_flag_errors(
             e.get("exposes"), model.flag_registry, model, scenario_id=sid,

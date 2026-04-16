@@ -87,6 +87,50 @@
     },
     "e_end": {
       "type": "end"
+    },
+    "n_1": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_2",
+          "conditions": [
+            {
+              "flag": "码头水鬼真相已揭示",
+              "op": "==",
+              "value": false
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_board"
+    },
+    "n_2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "临时",
+            "image": "/assets/images/illustrations/告示-抓水猴子.png",
+            "xPercent": 50.0,
+            "yPercent": 50.0,
+            "widthPercent": 40.0
+          }
+        },
+        {
+          "type": "waitClickContinue",
+          "params": {
+            "text": ""
+          }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "临时"
+          }
+        }
+      ],
+      "next": "e_end"
     }
   }
 }

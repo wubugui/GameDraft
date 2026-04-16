@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QComboBox, QLabel, QFrame, QApplication, QPlainTextEdit,
+    QComboBox, QLabel, QFrame, QPlainTextEdit,
 )
-from PySide6.QtCore import QEvent, QEventLoop, Signal
+from PySide6.QtCore import Signal
 
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
@@ -45,7 +45,7 @@ class ConditionRow(QWidget):
         self._field.setMinimumWidth(96)
         self._field.valueChanged.connect(self._on_flag_key_changed)
 
-        self.op_combo = QComboBox()
+        self.op_combo = QComboBox(self)
         self.op_combo.addItems(["==", "!=", ">", "<", ">=", "<="])
         if data and "op" in data:
             self.op_combo.setCurrentText(data["op"])
@@ -55,7 +55,7 @@ class ConditionRow(QWidget):
         self._val.set_flag_key(self._field.key())
         self._val.set_value(init_v)
 
-        self.del_btn = QPushButton("\u2212")
+        self.del_btn = QPushButton("\u2212", self)
         self.del_btn.setFixedWidth(24)
         self.del_btn.clicked.connect(lambda: self.removed.emit(self))
 
@@ -298,11 +298,12 @@ class ConditionEditor(QWidget):
             self._rows_layout.removeWidget(r)
             r.deleteLater()
         self._rows.clear()
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        # 禁止主动 processEvents / sendPostedEvents：
+        # 会显式化 QComboBoxPrivateContainer 的 HWND 生命周期，在 Windows 上造成顶层窗闪烁。
 
     def _add_row(self, data: dict | None = None) -> None:
-        row = ConditionRow(data, self._ctx_model, self._ctx_scene_id)
+        # parent=self 避免 QWidget 构造时成为无 parent 的 top-level，Windows 下会短暂 create HWND。
+        row = ConditionRow(data, self._ctx_model, self._ctx_scene_id, parent=self)
         row.removed.connect(self._remove_row)
         row.changed.connect(self.changed)
         self._rows.append(row)

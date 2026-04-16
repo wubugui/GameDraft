@@ -216,6 +216,15 @@ class ProjectModel(QObject):
         from .flag_registry import flag_registry_path
         write_json(flag_registry_path(self.assets_path), self.flag_registry)
         write_json(dp / "overlay_images.json", self.overlay_images)
+        from .scenarios_catalog_validate import validate_scenarios_catalog_for_save
+
+        sc_err = validate_scenarios_catalog_for_save(
+            self.scenarios_catalog,
+            flag_registry=self.flag_registry,
+            model=self,
+        )
+        if sc_err:
+            raise ValueError(sc_err)
         write_json(dp / "scenarios.json", self.scenarios_catalog)
         write_json(dp / "document_reveals.json", self.document_reveals)
         filters_dir = dp / "filters"

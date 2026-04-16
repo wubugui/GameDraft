@@ -20,6 +20,15 @@ _LOGIC_RE = re.compile(r"^\s*[{~}]")
 _BLANK_RE = re.compile(r"^\s*$")
 
 
+# Field label counters per knot
+_TYPE_LABELS = {
+    "ink_dialogue": "对话",
+    "ink_thought": "内心",
+    "ink_choice": "选项",
+    "ink_narration": "叙述",
+}
+
+
 class InkScanner(BaseScanner):
     """Scans .ink source dialogue files for translatable text."""
 
@@ -48,6 +57,8 @@ class InkScanner(BaseScanner):
         current_knot = "root"
         current_speaker: str | None = None
         is_deprecated = False
+        # Track per-type counts within each knot for field labels
+        knot_type_counts: dict[str, int] = {}
 
         for line_no, line in enumerate(lines, start=1):
             stripped = line.strip()
@@ -63,6 +74,7 @@ class InkScanner(BaseScanner):
                 if knot_name:
                     current_knot = knot_name
                     current_speaker = None
+                    knot_type_counts = {}
                 continue
 
             # Skip comments, externals, and directives
@@ -89,9 +101,11 @@ class InkScanner(BaseScanner):
             if thought_match:
                 text = thought_match.group(1).strip()
                 if text:
+                    count = knot_type_counts.get("ink_thought", 0) + 1
+                    knot_type_counts["ink_thought"] = count
                     entries.append(self._make_entry(
                         "ink_thought", text, file_rel, current_knot, line_no,
-                        current_speaker, is_deprecated,
+                        current_speaker, is_deprecated, count,
                     ))
                 continue
 
@@ -100,9 +114,11 @@ class InkScanner(BaseScanner):
             if npc_match:
                 text = npc_match.group(1).strip()
                 if text:
+                    count = knot_type_counts.get("ink_dialogue", 0) + 1
+                    knot_type_counts["ink_dialogue"] = count
                     entries.append(self._make_entry(
                         "ink_dialogue", text, file_rel, current_knot, line_no,
-                        "%(shorthand)", is_deprecated,
+                        "%(shorthand)", is_deprecated, count,
                     ))
                 continue
 
@@ -111,9 +127,11 @@ class InkScanner(BaseScanner):
             if choice_match:
                 text = choice_match.group(2).strip()
                 if text:
+                    count = knot_type_counts.get("ink_choice", 0) + 1
+                    knot_type_counts["ink_choice"] = count
                     entries.append(self._make_entry(
                         "ink_choice", text, file_rel, current_knot, line_no,
-                        current_speaker, is_deprecated,
+                        current_speaker, is_deprecated, count,
                     ))
                 continue
 
@@ -123,15 +141,19 @@ class InkScanner(BaseScanner):
 
             # Bare text line (dialogue or narration)
             if current_speaker:
+                count = knot_type_counts.get("ink_dialogue", 0) + 1
+                knot_type_counts["ink_dialogue"] = count
                 entries.append(self._make_entry(
                     "ink_dialogue", stripped, file_rel, current_knot, line_no,
-                    current_speaker, is_deprecated,
+                    current_speaker, is_deprecated, count,
                 ))
             elif stripped and not stripped.startswith("}") and not stripped.startswith("{"):
                 # Narration (no speaker)
+                count = knot_type_counts.get("ink_narration", 0) + 1
+                knot_type_counts["ink_narration"] = count
                 entries.append(self._make_entry(
                     "ink_narration", stripped, file_rel, current_knot, line_no,
-                    None, is_deprecated,
+                    None, is_deprecated, count,
                 ))
 
         return entries
@@ -145,6 +167,7 @@ class InkScanner(BaseScanner):
         line_no: int,
         speaker: str | None,
         is_deprecated: bool,
+        field_number: int,
     ) -> TextEntry:
         field_path = f"knot:{knot}, line:{line_no}"
         uid = make_uid(file_type, file_rel, field_path)
@@ -156,8 +179,15 @@ class InkScanner(BaseScanner):
             tags.append("deprecated")
 
         category = "dialogue"
-        if file_type in ("ink_choice",):
-            category = "dialogue"
+
+        # Group by knot: group_id = "ink:{file}:{knot}", group_label = knot name
+        file_base = file_rel.rsplit("/", 1)[-1] if "/" in file_rel else file_rel
+        group_id = f"ink:{file_base}:{knot}"
+        group_label = knot
+
+        # Field label with counter: "对话 #3", "选项 #1", etc.
+        type_label = _TYPE_LABELS.get(file_type, "文本")
+        field_label = f"{type_label} #{field_number}"
 
         return TextEntry(
             uid=uid,
@@ -166,5 +196,8 @@ class InkScanner(BaseScanner):
             field_path=field_path,
             file_type=file_type,
             category=category,
+            group_id=group_id,
+            group_label=group_label,
+            field_label=field_label,
             tags=tags,
         )

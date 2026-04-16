@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QDialogButtonBox,
     QLabel,
-    QAbstractItemView,
     QWidget,
 )
 
@@ -23,7 +22,7 @@ def pick_strings_multi(
     label: str = "",
     sort_choices: bool = True,
 ) -> list[str] | None:
-    """返回勾选的字符串列表（顺序与 choices 一致）；取消返回 None。"""
+    """返回勾选的字符串列表（顺序与 choices 一致）；取消返回 None。条目为复选框，可全部取消勾选以清空。"""
     dlg = QDialog(parent)
     dlg.setWindowTitle(title)
     dlg.resize(420, 360)
@@ -33,7 +32,6 @@ def pick_strings_multi(
         lb.setWordWrap(True)
         root.addWidget(lb)
     lw = QListWidget()
-    lw.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
     pick = {str(x).strip() for x in preselected if str(x).strip()}
     ch = [str(c).strip() for c in choices if str(c).strip()]
     if sort_choices:
@@ -48,9 +46,11 @@ def pick_strings_multi(
         ch = uniq
     for s in ch:
         it = QListWidgetItem(s)
+        it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        it.setCheckState(
+            Qt.CheckState.Checked if s in pick else Qt.CheckState.Unchecked,
+        )
         lw.addItem(it)
-        if s in pick:
-            it.setSelected(True)
     root.addWidget(lw)
     bb = QDialogButtonBox(
         QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -61,8 +61,8 @@ def pick_strings_multi(
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return None
     out: list[str] = []
-    sel = {it.text() for it in lw.selectedItems()}
-    for s in ch:
-        if s in sel:
-            out.append(s)
+    for i in range(lw.count()):
+        it = lw.item(i)
+        if it.checkState() == Qt.CheckState.Checked:
+            out.append(it.text())
     return out

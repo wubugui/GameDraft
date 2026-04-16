@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QApplication, QToolButton,
 )
 
-from PySide6.QtCore import QEvent, QEventLoop, Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QWheelEvent
 
 # Qt6: ItemDataRole.UserRole
@@ -32,8 +32,12 @@ def _hide_combo_popups_under(widget: QWidget) -> None:
         cb.hidePopup()
 
 
+# 以下四个函数为历史兜底（曾用于手动清理 Windows 上偶发残留的 QComboBoxPrivateContainer）。
+# 按 Qt 官方立场（https://forum.qt.io/topic/132029），QComboBoxPrivateContainer 是 editable QComboBox
+# 的内部顶层容器，应该「just ignore it」；主动 close/deleteLater 反而会让 HWND 被 DWM 采样到，
+# 表现为任务栏叠图标 + 顶层小窗闪烁。任何新代码禁止在 rebuild 路径中调用这些函数。
 def _hide_active_application_popups(max_rounds: int = 8) -> None:
-    """仅收起 QApplication.activePopupWidget 链，不销毁 QComboBoxPrivateContainer（避免误删仍绑定到新控件的弹层）。"""
+    """[已弃用] 仅收起 QApplication.activePopupWidget 链。勿在重建路径中调用，保留仅为潜在兜底。"""
     app = QApplication.instance()
     if app is None:
         return
@@ -45,13 +49,13 @@ def _hide_active_application_popups(max_rounds: int = 8) -> None:
 
 
 def _dismiss_active_popup_stack(max_rounds: int = 8) -> None:
-    """收起 application 级 Popup，再清理孤儿 QComboBoxPrivateContainer。Windows 上若在 clear()/deleteLater 前不关，会残留带标题栏的小窗并抢焦点。"""
+    """[已弃用] 勿在重建路径中调用。保留仅为潜在兜底。"""
     _hide_active_application_popups(max_rounds)
     _purge_qcombobox_private_containers()
 
 
 def _protected_combobox_popup_widget_ids(widget: QWidget | None) -> set[int]:
-    """当前子树内 QComboBox 下拉 view 的父链 widget id（含 QComboBoxPrivateContainer），用于避免误删仍有效的弹层。"""
+    """[已弃用] 勿在重建路径中调用。保留仅为潜在兜底。"""
     protected: set[int] = set()
     if widget is None:
         return protected
@@ -70,7 +74,7 @@ def _protected_combobox_popup_widget_ids(widget: QWidget | None) -> set[int]:
 
 
 def _purge_qcombobox_private_containers(*, protected_ids: set[int] | None = None) -> None:
-    """销毁孤儿顶级 QComboBoxPrivateContainer；删树后 Qt 会留下此类窗口并抢焦点。protected_ids 非空时跳过其中 id。"""
+    """[已弃用] 按 Qt 官方建议，不应主动清理 QComboBoxPrivateContainer；勿在重建路径中调用。保留仅为潜在兜底。"""
     app = QApplication.instance()
     if app is None:
         return
@@ -360,8 +364,16 @@ class FilterableTypeCombo(QComboBox):
             return
         v = self._value_at(index)
         self._suppress_editing_finish = True
-        self._apply_committed(v)
-        self._suppress_editing_finish = False
+        self.hidePopup()
+
+        def _deferred_apply() -> None:
+            try:
+                self._apply_committed(v)
+            finally:
+                self._suppress_editing_finish = False
+
+        # 若在 activated 栈内立刻 clear()，部分平台/主题下弹出层尚未完全卸载，会闪退
+        QTimer.singleShot(0, _deferred_apply)
 
     def _apply_committed(self, value: str) -> None:
         prev = self._committed
@@ -550,27 +562,29 @@ class ActionRow(QWidget):
         outer.setSpacing(2)
         self._outer_layout = outer
 
+        # 所有子 widget 均显式传 parent=self：避免任何 QWidget 子类（尤其 QComboBox）在构造时
+        # 以"无 parent"短暂成为 top-level HWND，Windows 上会被 DWM 采样表现为任务栏闪现小窗。
         top = QHBoxLayout()
-        self._fold_toggle = QToolButton()
+        self._fold_toggle = QToolButton(self)
         self._fold_toggle.setAutoRaise(True)
         self._fold_toggle.setArrowType(Qt.ArrowType.RightArrow)
         self._fold_toggle.setToolTip("折叠 / 展开参数区")
         self._fold_toggle.clicked.connect(self._on_fold_clicked)
         top.addWidget(self._fold_toggle)
         self.type_combo = FilterableTypeCombo.from_flat_strings(
-            ACTION_TYPES, select_only=True,
+            ACTION_TYPES, parent=self, select_only=True,
         )
-        self._btn_up = QPushButton("\u2191")
+        self._btn_up = QPushButton("\u2191", self)
         self._btn_up.setFixedWidth(24)
         self._btn_up.setToolTip("上移")
         self._btn_up.clicked.connect(self.move_up.emit)
-        self._btn_down = QPushButton("\u2193")
+        self._btn_down = QPushButton("\u2193", self)
         self._btn_down.setFixedWidth(24)
         self._btn_down.setToolTip("下移")
         self._btn_down.clicked.connect(self.move_down.emit)
         self._btn_up.setVisible(show_reorder_buttons)
         self._btn_down.setVisible(show_reorder_buttons)
-        self.del_btn = QPushButton("\u2212")
+        self.del_btn = QPushButton("\u2212", self)
         self.del_btn.setFixedWidth(24)
         self.del_btn.clicked.connect(lambda: self.removed.emit(self))
         self.del_btn.setVisible(show_delete_button)
@@ -582,12 +596,12 @@ class ActionRow(QWidget):
 
         self._rule_slots_editor: RuleSlotsParamEditor | None = None
 
-        self._foldable_body = QWidget()
+        self._foldable_body = QWidget(self)
         self._foldable_layout = QVBoxLayout(self._foldable_body)
         self._foldable_layout.setContentsMargins(0, 0, 0, 0)
         self._foldable_layout.setSpacing(2)
 
-        self._params_frame = QFrame()
+        self._params_frame = QFrame(self._foldable_body)
         self._params_layout = QFormLayout(self._params_frame)
         self._params_layout.setContentsMargins(20, 0, 0, 0)
         self._foldable_layout.addWidget(self._params_frame)
@@ -789,10 +803,11 @@ class ActionRow(QWidget):
             tip = QLabel(
                 "id：与 hideOverlayImage 共用的标记；x/y/width 为 0–100 的屏幕百分比；"
                 "图像中心在 (x,y)，高度由原图宽高比自动计算。",
+                self,
             )
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
-            id_ed = QLineEdit(str(params.get("id", "") or ""))
+            id_ed = QLineEdit(str(params.get("id", "") or ""), self)
             id_ed.setPlaceholderText("如 notice_a")
             id_ed.textChanged.connect(self.changed)
             self._param_widgets["id"] = id_ed
@@ -803,7 +818,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow("image", img_row)
 
             def _pct_spin(key: str, default: float) -> QDoubleSpinBox:
-                sp = QDoubleSpinBox()
+                sp = QDoubleSpinBox(self)
                 sp.setRange(0, 100)
                 sp.setDecimals(2)
                 sp.setSingleStep(0.5)
@@ -832,6 +847,7 @@ class ActionRow(QWidget):
             tip = QLabel(
                 "参数须与 public/assets/data/scenarios.json 中清单一致；"
                 "phase 下拉随 scenarioId 更新；outcome 可选。",
+                self,
             )
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
@@ -849,8 +865,10 @@ class ActionRow(QWidget):
             self._param_widgets["scenarioId"] = sid_combo
             self._params_layout.addRow("scenarioId", sid_combo)
 
-            phase_combo = QComboBox()
-            phase_combo.setEditable(True)
+            phase_combo = QComboBox(self)
+            # 非 editable：避免构造时创建 QComboBoxPrivateContainer 顶层 HWND 闪烁；
+            # 未知 phase（旧数据）会以 "(缺失) xxx" 条目形式保留。
+            phase_combo.setEditable(False)
 
             def refill_phases(*, use_saved_phase: bool) -> None:
                 sid = sid_combo.committed_type()
@@ -882,12 +900,12 @@ class ActionRow(QWidget):
             sid_combo.typeCommitted.connect(
                 lambda _t: (refill_phases(use_saved_phase=False), self.changed.emit()),
             )
-            phase_combo.currentTextChanged.connect(lambda _t: self.changed.emit())
+            phase_combo.currentIndexChanged.connect(lambda _i: self.changed.emit())
             self._param_widgets["phase"] = phase_combo
             self._params_layout.addRow("phase", phase_combo)
 
-            status_combo = QComboBox()
-            status_combo.setEditable(True)
+            status_combo = QComboBox(self)
+            status_combo.setEditable(False)
             for st in ("pending", "active", "done", "locked"):
                 status_combo.addItem(st)
             st_val = str(params.get("status") or "pending").strip() or "pending"
@@ -895,12 +913,13 @@ class ActionRow(QWidget):
             if i >= 0:
                 status_combo.setCurrentIndex(i)
             else:
-                status_combo.setEditText(st_val)
-            status_combo.currentTextChanged.connect(lambda _t: self.changed.emit())
+                status_combo.addItem(f"(非枚举) {st_val}")
+                status_combo.setCurrentIndex(status_combo.count() - 1)
+            status_combo.currentIndexChanged.connect(lambda _i: self.changed.emit())
             self._param_widgets["status"] = status_combo
             self._params_layout.addRow("status", status_combo)
 
-            out_ed = QLineEdit(str(params.get("outcome") or ""))
+            out_ed = QLineEdit(str(params.get("outcome") or ""), self)
             out_ed.setPlaceholderText("可选")
             out_ed.textChanged.connect(self.changed)
             self._param_widgets["outcome"] = out_ed
@@ -916,6 +935,7 @@ class ActionRow(QWidget):
             tip = QLabel(
                 "documentId 须在 document_reveals.json 中注册；"
                 "由 DocumentRevealManager 按 revealCondition 与叠图参数播放揭示。",
+                self,
             )
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
@@ -947,11 +967,12 @@ class ActionRow(QWidget):
                 "delayMs 内 t=0；之后 durationMs 内 t 由 0 线性到 1；结束保留目标图。\n"
                 "<b>迁移</b>：告示类清晰化优先用 revealDocument + document_reveals.json，"
                 "避免在对话里手写 from/to 路径。",
+                self,
             )
             tip.setWordWrap(True)
             tip.setTextFormat(Qt.TextFormat.RichText)
             self._params_layout.addRow(tip)
-            id_ed = QLineEdit(str(params.get("id", "") or ""))
+            id_ed = QLineEdit(str(params.get("id", "") or ""), self)
             id_ed.setPlaceholderText("如 portrait_blend")
             id_ed.textChanged.connect(self.changed)
             self._param_widgets["id"] = id_ed
@@ -964,7 +985,7 @@ class ActionRow(QWidget):
             to_row.changed.connect(self.changed)
             self._param_widgets["toImage"] = to_row
             self._params_layout.addRow("toImage（目标图）", to_row)
-            dur = QSpinBox()
+            dur = QSpinBox(self)
             dur.setRange(0, 9999999)
             dur.setSingleStep(100)
             dval = params.get("durationMs", 600)
@@ -975,7 +996,7 @@ class ActionRow(QWidget):
             dur.valueChanged.connect(self.changed)
             self._param_widgets["durationMs"] = dur
             self._params_layout.addRow("durationMs（t 从 0→1，毫秒）", dur)
-            del_sp = QSpinBox()
+            del_sp = QSpinBox(self)
             del_sp.setRange(0, 9999999)
             del_sp.setSingleStep(50)
             del_val = params.get("delayMs", 0)
@@ -988,7 +1009,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow("delayMs（t 保持 0 的等待，毫秒）", del_sp)
 
             def _pct_spin(key: str, default: float) -> QDoubleSpinBox:
-                sp = QDoubleSpinBox()
+                sp = QDoubleSpinBox(self)
                 sp.setRange(0, 100)
                 sp.setDecimals(2)
                 sp.setSingleStep(0.5)
@@ -1029,20 +1050,21 @@ class ActionRow(QWidget):
             tip = QLabel(
                 "graphId：不含路径，与 assets/dialogues/graphs 下同名 .json 对应；"
                 "entry 覆盖图内入口节点；npcId 用于解析说话人显示名（可选）。",
+                self,
             )
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
-            gid = QLineEdit(str(params.get("graphId", "") or ""))
+            gid = QLineEdit(str(params.get("graphId", "") or ""), self)
             gid.setPlaceholderText("如 码头看板官差")
             gid.textChanged.connect(self.changed)
             self._param_widgets["graphId"] = gid
             self._params_layout.addRow("graphId", gid)
-            ent = QLineEdit(str(params.get("entry", "") or ""))
+            ent = QLineEdit(str(params.get("entry", "") or ""), self)
             ent.setPlaceholderText("可选，覆盖图 JSON 的 entry")
             ent.textChanged.connect(self.changed)
             self._param_widgets["entry"] = ent
             self._params_layout.addRow("entry", ent)
-            nid = QLineEdit(str(params.get("npcId", "") or ""))
+            nid = QLineEdit(str(params.get("npcId", "") or ""), self)
             nid.setPlaceholderText("可选，场景内 NPC id")
             nid.textChanged.connect(self.changed)
             self._param_widgets["npcId"] = nid
@@ -1087,7 +1109,8 @@ class ActionRow(QWidget):
             sm: dict = sm_raw if isinstance(sm_raw, dict) else {}
             tip = QLabel(
                 "填写 <b>animManifest</b> 或 <b>bundleId</b> 其一（若都填则优先使用 animManifest）。"
-                "下方为逻辑状态 idle / walk / run 对应的 clip（states 键）；留空表示与逻辑名同名。"
+                "下方为逻辑状态 idle / walk / run 对应的 clip（states 键）；留空表示与逻辑名同名。",
+                self,
             )
             tip.setWordWrap(True)
             tip.setTextFormat(Qt.TextFormat.RichText)
@@ -1112,14 +1135,14 @@ class ActionRow(QWidget):
             self._param_widgets["bundleId"] = bid
             self._params_layout.addRow("bundleId", bid)
 
-            man = QLineEdit(am)
+            man = QLineEdit(am, self)
             man.setPlaceholderText("/assets/animation/player_anim/anim.json")
             man.textChanged.connect(self.changed)
             self._param_widgets["animManifest"] = man
             self._params_layout.addRow("animManifest", man)
 
             for logical in ("idle", "walk", "run"):
-                le = QLineEdit(str(sm.get(logical, "") or ""))
+                le = QLineEdit(str(sm.get(logical, "") or ""), self)
                 le.setPlaceholderText("留空 = 与逻辑名相同")
                 le.textChanged.connect(self.changed)
                 self._param_widgets[logical] = le
@@ -1137,12 +1160,12 @@ class ActionRow(QWidget):
             val = params.get(pname, "")
             w: QWidget
             if ptype == "int":
-                w = QSpinBox()
+                w = QSpinBox(self)
                 w.setRange(-999999, 999999)
                 w.setValue(int(val) if val != "" else 0)
                 w.valueChanged.connect(self.changed)
             elif ptype == "float":
-                w = QDoubleSpinBox()
+                w = QDoubleSpinBox(self)
                 w.setRange(-50.0, 50.0)
                 w.setDecimals(4)
                 w.setSingleStep(0.05)
@@ -1152,7 +1175,7 @@ class ActionRow(QWidget):
                     w.setValue(0.0)
                 w.valueChanged.connect(self.changed)
             elif ptype == "bool":
-                w = QCheckBox()
+                w = QCheckBox(self)
                 w.setChecked(bool(val))
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
@@ -1195,7 +1218,7 @@ class ActionRow(QWidget):
             elif act_type == "pickup" and pname == "itemId":
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "addArchiveEntry" and pname == "bookType":
-                w = QComboBox()
+                w = QComboBox(self)
                 w.addItems(list(_ARCHIVE_BOOK_TYPES))
                 tv = str(val) if val else "character"
                 i = w.findText(tv)
@@ -1215,24 +1238,26 @@ class ActionRow(QWidget):
                 w.set_current(str(val) if val is not None else "")
                 w.value_changed.connect(self.changed)
             elif act_type == "showNotification" and pname == "type":
-                w = QComboBox()
-                w.setEditable(True)
+                w = QComboBox(self)
+                # 非 editable：notification type 是固定枚举，不需要手写；同时避免 HWND 闪烁。
+                w.setEditable(False)
                 w.addItems(list(_NOTIFICATION_TYPES))
                 tv = str(val) if val is not None else "info"
                 i = w.findText(tv)
                 if i >= 0:
                     w.setCurrentIndex(i)
                 else:
-                    w.setEditText(tv)
-                w.currentTextChanged.connect(self.changed)
+                    w.addItem(f"(非枚举) {tv}")
+                    w.setCurrentIndex(w.count() - 1)
+                w.currentIndexChanged.connect(lambda _i: self.changed.emit())
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
             elif act_type == "waitClickContinue" and pname == "text":
-                w = QLineEdit(str(val))
+                w = QLineEdit(str(val), self)
                 w.setPlaceholderText("留空= strings actions.clickToContinue（默认「点击继续」）")
                 w.textChanged.connect(lambda _t: self.changed.emit())
             else:
-                w = QLineEdit(str(val))
+                w = QLineEdit(str(val), self)
                 w.textChanged.connect(self.changed)
             self._param_widgets[pname] = w
             self._params_layout.addRow(pname, w)
@@ -1474,13 +1499,15 @@ class ActionEditor(QWidget):
             self._rows_layout.removeWidget(r)
             r.deleteLater()
         self._rows.clear()
-        _dismiss_active_popup_stack()
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        # 禁止主动 _dismiss_active_popup_stack / processEvents / sendPostedEvents：
+        # 这些组合会显式化 QComboBoxPrivateContainer 的 HWND 生命周期，在 Windows 上造成闪烁。
 
     def _add_row(self, data: dict | None = None) -> None:
+        # parent=self：让 ActionRow 从构造的第一刻起就不是无 parent 的 top-level，
+        # 避免 Windows 上 QWidget 作为 top-level 短暂 create HWND 引发任务栏闪现。
         row = ActionRow(
             data,
+            parent=self,
             model=self._ctx_model,
             scene_id=self._ctx_scene_id,
             show_reorder_buttons=self._show_reorder_buttons,

@@ -12,10 +12,16 @@
           "status": "pending"
         },
         "官差已套近乎": {
-          "status": "pending"
+          "status": "pending",
+          "requires": [
+            "看板初读"
+          ]
         },
         "询问官差": {
-          "status": "pending"
+          "status": "pending",
+          "requires": [
+            "看板初读"
+          ]
         },
         "询问脚帮": {
           "status": "pending",

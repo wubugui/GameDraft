@@ -12,9 +12,12 @@ from typing import Any
 class TextEntry:
     """A single piece of translatable text extracted from the project."""
     uid: str                   # Unique identifier: "{file_type}:{file_rel_path}:{field_path}"
+    group_id: str              # Parent group key (e.g. "quest[opening_01]", "ink_knot:first_visit")
+    group_label: str           # Human-readable group label (e.g. "听张叨叨摆书", "first_visit")
     source_text: str           # Original text content
     file_path: str             # Relative path from project root (forward slashes)
     field_path: str            # JSON pointer or ink location descriptor
+    field_label: str           # Human-readable field name (e.g. "title", "对话 #3")
     file_type: str             # "json_strings" | "json_quests" | "ink_dialogue" | ...
     category: str              # "ui" | "quest" | "rule" | "item" | "dialogue" | ...
     tags: list[str] = field(default_factory=list)
@@ -31,6 +34,9 @@ class TextEntry:
             "field_path": self.field_path,
             "file_type": self.file_type,
             "category": self.category,
+            "group_id": self.group_id,
+            "group_label": self.group_label,
+            "field_label": self.field_label,
             "tags": self.tags,
             "context_notes": self.context_notes,
             "status": self.status,
@@ -47,6 +53,9 @@ class TextEntry:
             field_path=d.get("field_path", ""),
             file_type=d.get("file_type", ""),
             category=d.get("category", ""),
+            group_id=d.get("group_id", ""),
+            group_label=d.get("group_label", ""),
+            field_label=d.get("field_label", ""),
             tags=d.get("tags", []),
             context_notes=d.get("context_notes", ""),
             status=d.get("status", "pending"),

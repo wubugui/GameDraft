@@ -325,12 +325,23 @@ export interface DocumentRevealDef {
   widthPercent?: number;
 }
 
+/**
+ * scenarios.json 中 requires 的布尔式：叶子为 phase 名，语义为该 phase 当前 status === `done`。
+ * - `string[]`（旧）：等价于逐项与（须全部为 done）。
+ * -对象：`all` 与、`any` 或、`not` 非；可嵌套。
+ */
+export type ScenarioRequiresExpr =
+  | string
+  | { all: ScenarioRequiresExpr[] }
+  | { any: ScenarioRequiresExpr[] }
+  | { not: ScenarioRequiresExpr };
+
 /** scenarios.json 中单个 phase 的清单模板（默认 status、依赖、默认 outcome 等） */
 export interface ScenarioCatalogPhaseEntry {
   status?: string;
   outcome?: string | number | boolean | null;
-  /** 推进本 phase 前须已为 done 的其它 phase（同一条 scenario 内） */
-  requires?: string[];
+  /** 推进本 phase 前应满足的 phase 完成条件（同一条 scenario 内） */
+  requires?: string[] | ScenarioRequiresExpr;
 }
 
 /** scenarios.json 根（编辑器与 exposes 运行时） */
@@ -338,10 +349,10 @@ export interface ScenarioCatalogEntry {
   id: string;
   description?: string;
   /**
-   * 进线门槛：开始本条 scenario 前，这些 phase 须已为 done。
+   * 进线门槛：开始本条 scenario 前应满足的 phase 完成条件。
    * 与 `phases[name].requires`（单 phase 前置）语义不同。
    */
-  requires?: string[];
+  requires?: string[] | ScenarioRequiresExpr;
   /** 当该 phase 被设为 status done 时，写入 exposes 中的 flag（须同时配置 exposes） */
   exposeAfterPhase?: string;
   /** 键须为登记表中的 flag；值为 bool / number / string，与登记表 valueType 一致 */

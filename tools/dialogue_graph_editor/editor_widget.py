@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QSplitter, QListWidget, QListWidgetItem, QVBoxLayout,
     QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel, QLineEdit,
     QPlainTextEdit, QFormLayout, QScrollArea, QGroupBox, QInputDialog,
-    QMenu, QCompleter, QDialog, QSizePolicy, QComboBox,
+    QMenu, QCompleter, QDialog, QSizePolicy, QComboBox, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel, QSettings
 from PySide6.QtGui import QUndoStack, QUndoCommand, QAction, QCursor, QKeySequence, QShortcut
@@ -165,6 +165,8 @@ class DialogueGraphEditorWidget(QWidget):
         self._inspector_project_model_failed = False
         self._undo_stack = QUndoStack(self)
         self._undo_stack.indexChanged.connect(self._on_undo_index_changed)
+        # push(_NodeDataChangedCmd) 会同步触发 indexChanged；若此时再 set_node 会整页重建，丢掉 Action 折叠等 UI 状态。
+        self._suppress_inspector_resync_from_undo = False
         self._model.dirty_changed.connect(self.dirty_changed)
         self._model.topology_changed.connect(self._on_model_topology_changed)
 
@@ -317,7 +319,7 @@ class DialogueGraphEditorWidget(QWidget):
         graph_prop_header = QHBoxLayout()
         from PySide6.QtWidgets import QToolButton
         self._graph_prop_toggle = QToolButton()
-        self._graph_prop_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self._graph_prop_toggle.setArrowType(Qt.ArrowType.RightArrow)
         self._graph_prop_toggle.setAutoRaise(True)
         self._graph_prop_toggle.setToolTip("折叠 / 展开图属性")
         graph_prop_title = QLabel("<b>图属性</b>")
@@ -402,6 +404,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_pre_extra,
         )
         rv.addWidget(self._graph_prop_body)
+        self._collapse_graph_prop_panel()
 
         for w in (
             self._edit_graph_id,
@@ -722,6 +725,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._mark_dirty()
         self._refresh_file_list(select_unsaved=True)
         self._emit_title()
+        self._collapse_graph_prop_panel()
 
     def _reset_to_no_file_loaded(self) -> None:
         self._model.load_empty()
@@ -1179,6 +1183,8 @@ class DialogueGraphEditorWidget(QWidget):
             # 会用尚未写入的 _positions 覆盖刚拖好的坐标，表现为松手弹回原位。
             self._flush_flow_layout_to_disk()
             self._inspector_scene_timer.start(80)
+        if self._suppress_inspector_resync_from_undo:
+            return
         self._sync_inspector_from_selection()
 
     def _reset_search_cycle(self) -> None:
@@ -1369,6 +1375,10 @@ class DialogueGraphEditorWidget(QWidget):
         return changed
 
     def _rebuild_flow_scene(self) -> None:
+        fw = QApplication.focusWidget()
+        restore_graph_prop_focus = (
+            fw is not None and self._graph_prop_body.isAncestorOf(fw)
+        )
         self._canonicalize_editor_layout_to_graph_nodes()
         if not self._layout_path_for_io():
             self._oden.rebuild(
@@ -1383,6 +1393,8 @@ class DialogueGraphEditorWidget(QWidget):
                 node_to_group={},
                 editor_group_frames={},
             )
+            if restore_graph_prop_focus and fw is not None:
+                fw.setFocus(Qt.FocusReason.OtherFocusReason)
             return
         self._ensure_positions_for_nodes()
         sync_node_to_group_from_layout_positions(
@@ -1410,6 +1422,8 @@ class DialogueGraphEditorWidget(QWidget):
         snap = self._oden.snapshot_ghost_positions()
         self._ghost_positions.clear()
         self._ghost_positions.update(snap)
+        if restore_graph_prop_focus and fw is not None:
+            fw.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_file_list_filter_changed(self, _text: str = "") -> None:
         self._apply_file_list_filter(preserve_selection=True)
@@ -1455,6 +1469,21 @@ class DialogueGraphEditorWidget(QWidget):
         elif self._current_path:
             self._sync_file_list_selection(self._current_path)
 
+    def _update_unsaved_file_list_display(self) -> None:
+        """未保存草稿仅改图 id 时更新列表首行文案，避免整表 clear 导致图属性输入框失焦。"""
+        if self._current_path is not None:
+            return
+        new_label = f"【未保存】{self._data.get('id', '新图')}"
+        for i in range(self._file_list.count()):
+            it = self._file_list.item(i)
+            if it is None:
+                continue
+            if it.data(Qt.ItemDataRole.UserRole) == self._unsaved_list_token:
+                if it.text() != new_label:
+                    it.setText(new_label)
+                return
+        self._refresh_file_list(select_unsaved=True)
+
     def _node_ids_sorted(self) -> list[str]:
         nodes = self._data.get("nodes") or {}
         return sorted(nodes.keys(), key=lambda x: (x.lower(), x))
@@ -1494,6 +1523,11 @@ class DialogueGraphEditorWidget(QWidget):
     def _mark_dirty(self):
         self._model.mark_dirty()
         self._emit_title()
+
+    def _collapse_graph_prop_panel(self) -> None:
+        """打开/新建图后默认折叠图属性区域，让节点面板优先占用纵向空间。"""
+        self._graph_prop_body.setVisible(False)
+        self._graph_prop_toggle.setArrowType(Qt.ArrowType.RightArrow)
 
     def _load_path(self, path: Path):
         try:
@@ -1548,6 +1582,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
         self._refresh_file_list()
         self._sync_file_list_selection(path)
+        self._collapse_graph_prop_panel()
 
     def _sync_file_list_selection(self, path: Path) -> None:
         target = path.resolve()
@@ -1705,7 +1740,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
         self._meta_rebuild_timer.start(300)
         if self._current_path is None and self._draft_layout_basename:
-            self._refresh_file_list(select_unsaved=True)
+            self._update_unsaved_file_list_display()
 
     def _on_node_list_filter_changed(self, _t: str = "") -> None:
         if not isinstance(self._data.get("nodes"), dict):
@@ -1874,7 +1909,11 @@ class DialogueGraphEditorWidget(QWidget):
         old_node = copy.deepcopy(self._model.nodes.get(nid, {}))
         self._model.set_node(nid, new_node)
         cmd = _NodeDataChangedCmd(self._model, nid, old_node, copy.deepcopy(new_node))
-        self._undo_stack.push(cmd)
+        self._suppress_inspector_resync_from_undo = True
+        try:
+            self._undo_stack.push(cmd)
+        finally:
+            self._suppress_inspector_resync_from_undo = False
         self._emit_title()
         self._refresh_node_list_row(nid)
         self._inspector_scene_timer.start(120)
