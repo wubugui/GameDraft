@@ -51,7 +51,8 @@ export class CutsceneManager implements IGameSystem {
   private emoteBubbleProvider: IEmoteBubbleProvider | null = null;
   private inputManager: InputManager | null = null;
   private assetManager!: AssetManager;
-  private unsubInput: (() => void) | null = null;
+  private unsubPointer: (() => void) | null = null;
+  private unsubKey: (() => void) | null = null;
   private destroyed = false;
   private skipping = false;
 
@@ -249,7 +250,24 @@ export class CutsceneManager implements IGameSystem {
     this.playing = true;
     this.skipping = false;
     this.eventBus.emit('cutscene:start', { id });
-    this.unsubInput = this.inputManager?.subscribeAnyInput(this.onClickBound) ?? null;
+    this.unsubPointer = this.inputManager?.subscribePointerDown(this.onClickBound) ?? null;
+    this.unsubKey = this.inputManager?.subscribeKeyDown((e) => {
+      if (!this.playing) return;
+      if (e.repeat) return;
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        this.skip();
+        return;
+      }
+      if (
+        e.code === 'Space'
+        || e.code === 'Enter'
+        || e.code === 'NumpadEnter'
+        || e.code === 'KeyE'
+      ) {
+        this.onClickBound();
+      }
+    }) ?? null;
 
     try {
       const needsPositioning = !!def.targetScene || typeof def.targetX === 'number';
@@ -273,8 +291,10 @@ export class CutsceneManager implements IGameSystem {
       console.warn(`CutsceneManager: startCutscene "${id}" failed`, e);
       throw e;
     } finally {
-      this.unsubInput?.();
-      this.unsubInput = null;
+      this.unsubPointer?.();
+      this.unsubPointer = null;
+      this.unsubKey?.();
+      this.unsubKey = null;
       this.skipping = false;
       this.cleanup();
       this.playing = false;
@@ -282,10 +302,11 @@ export class CutsceneManager implements IGameSystem {
     }
   }
 
-  /** 跳过当前演出。无副作用的 A 类表演直接中断 + cleanup。 */
+  /** 跳过当前演出：结束进行中的画面插值/等待，跳过后续 steps，finally 中 cleanup + 恢复快照。 */
   skip(): void {
     if (!this.playing) return;
     this.skipping = true;
+    this.cutsceneRenderer.abortCutsceneOps();
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
       this.waitClickResolve = null;
@@ -565,8 +586,10 @@ export class CutsceneManager implements IGameSystem {
 
   deserialize(_data: any): void {
     if (this.playing) {
-      this.unsubInput?.();
-      this.unsubInput = null;
+      this.unsubPointer?.();
+      this.unsubPointer = null;
+      this.unsubKey?.();
+      this.unsubKey = null;
       this.cleanup();
     }
     this.playing = false;
@@ -592,8 +615,10 @@ export class CutsceneManager implements IGameSystem {
     }
     this.dialogueAdvanceNotBefore = 0;
     this.waitClickNotBefore = 0;
-    this.unsubInput?.();
-    this.unsubInput = null;
+    this.unsubPointer?.();
+    this.unsubPointer = null;
+    this.unsubKey?.();
+    this.unsubKey = null;
     this.cleanup();
     this.cutsceneDefs.clear();
   }
