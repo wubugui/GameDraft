@@ -5,7 +5,7 @@ import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
-import type { CutsceneDef, CutsceneCommand, ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext } from '../data/types';
+import type { CutsceneDef, CutsceneCommand, ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
 import { Npc } from '../entities/Npc';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
@@ -34,7 +34,7 @@ export class CutsceneManager implements IGameSystem {
   private actionExecutor: ActionExecutor;
   private cutsceneRenderer: CutsceneRenderer;
 
-  private cutsceneDefs: Map<string, CutsceneDef> = new Map();
+  private cutsceneDefs: Map<string, CutsceneDef | NewCutsceneDef> = new Map();
   private playing: boolean = false;
   private waitClickResolve: (() => void) | null = null;
   private dialogueResolve: (() => void) | null = null;
@@ -52,6 +52,7 @@ export class CutsceneManager implements IGameSystem {
   private assetManager!: AssetManager;
   private unsubInput: (() => void) | null = null;
   private destroyed = false;
+  private skipping = false;
 
   private snapshot: CutsceneSnapshot | null = null;
   private sceneIdGetter: (() => string | null) | null = null;
@@ -135,7 +136,7 @@ export class CutsceneManager implements IGameSystem {
     return Array.from(this.cutsceneDefs.keys());
   }
 
-  getCutsceneDef(id: string): CutsceneDef | undefined {
+  getCutsceneDef(id: string): CutsceneDef | NewCutsceneDef | undefined {
     return this.cutsceneDefs.get(id);
   }
 
@@ -207,14 +208,19 @@ export class CutsceneManager implements IGameSystem {
 
   async loadDefs(): Promise<void> {
     try {
-      const list = await this.assetManager.loadJson<CutsceneDef[]>('/assets/data/cutscenes/index.json');
+      const list = await this.assetManager.loadJson<(CutsceneDef | NewCutsceneDef)[]>('/assets/data/cutscenes/index.json');
       const imagePaths = new Set<string>();
       for (const def of list) {
         this.cutsceneDefs.set(def.id, def);
-        for (const cmd of def.commands || []) {
-          if (cmd.type === 'show_img' && typeof cmd.image === 'string') {
-            imagePaths.add(cmd.image);
+        if ('commands' in def) {
+          for (const cmd of (def as CutsceneDef).commands || []) {
+            if (cmd.type === 'show_img' && typeof cmd.image === 'string') {
+              imagePaths.add(cmd.image);
+            }
           }
+        }
+        if ('steps' in def) {
+          this.collectImagePathsFromSteps((def as NewCutsceneDef).steps, imagePaths);
         }
       }
       for (const path of imagePaths) {
@@ -229,6 +235,17 @@ export class CutsceneManager implements IGameSystem {
     }
   }
 
+  private collectImagePathsFromSteps(steps: CutsceneStep[], out: Set<string>): void {
+    for (const step of steps) {
+      if (step.kind === 'present' && step.type === 'showImg' && typeof step.image === 'string') {
+        out.add(step.image);
+      }
+      if (step.kind === 'parallel') {
+        this.collectImagePathsFromSteps(step.tracks, out);
+      }
+    }
+  }
+
   async startCutscene(id: string): Promise<void> {
     const def = this.cutsceneDefs.get(id);
     if (!def) {
@@ -238,6 +255,7 @@ export class CutsceneManager implements IGameSystem {
 
     if (this.playing) return;
     this.playing = true;
+    this.skipping = false;
     this.eventBus.emit('cutscene:start', { id });
     this.unsubInput = this.inputManager?.subscribeAnyInput(this.onClickBound) ?? null;
 
@@ -247,7 +265,11 @@ export class CutsceneManager implements IGameSystem {
         await this.saveAndTransition(def);
       }
 
-      await this.executeCommands(def.commands);
+      if ('steps' in def && Array.isArray((def as NewCutsceneDef).steps)) {
+        await this.executeSteps((def as NewCutsceneDef).steps);
+      } else if ('commands' in def) {
+        await this.executeCommands((def as CutsceneDef).commands);
+      }
 
       if (this.destroyed) return;
 
@@ -261,13 +283,32 @@ export class CutsceneManager implements IGameSystem {
     } finally {
       this.unsubInput?.();
       this.unsubInput = null;
+      this.skipping = false;
       this.cleanup();
       this.playing = false;
       this.eventBus.emit('cutscene:end', { id });
     }
   }
 
-  private async saveAndTransition(def: CutsceneDef): Promise<void> {
+  /** 跳过当前演出。无副作用的 A 类表演直接中断 + cleanup。 */
+  skip(): void {
+    if (!this.playing) return;
+    this.skipping = true;
+    if (this.waitClickResolve) {
+      const r = this.waitClickResolve;
+      this.waitClickResolve = null;
+      this.waitClickNotBefore = 0;
+      r();
+    }
+    if (this.dialogueResolve) {
+      const r = this.dialogueResolve;
+      this.dialogueResolve = null;
+      this.dialogueAdvanceNotBefore = 0;
+      r();
+    }
+  }
+
+  private async saveAndTransition(def: CutsceneDef | NewCutsceneDef): Promise<void> {
     const currentSceneId = this.sceneIdGetter?.() ?? '';
     const pos = this.playerPositionGetter?.() ?? { x: 0, y: 0 };
     this.snapshot = {
@@ -307,6 +348,86 @@ export class CutsceneManager implements IGameSystem {
     this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
     this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
     this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+  }
+
+  // ================================================================
+  // 新 schema step 执行（阶段 3）
+  // ================================================================
+
+  private async executeSteps(steps: CutsceneStep[]): Promise<void> {
+    for (const step of steps) {
+      if (this.destroyed || this.skipping) return;
+      await this.executeOneStep(step);
+    }
+  }
+
+  private async executeOneStep(step: CutsceneStep): Promise<void> {
+    if (this.destroyed || this.skipping) return;
+    switch (step.kind) {
+      case 'action':
+        await this.actionExecutor.executeAwait({ type: step.type, params: step.params });
+        break;
+      case 'present':
+        await this.executePresent(step);
+        break;
+      case 'parallel':
+        await Promise.all(step.tracks.map(s => this.executeOneStep(s)));
+        break;
+      default:
+        console.warn(`CutsceneManager: unknown step kind "${(step as { kind: string }).kind}"`);
+    }
+  }
+
+  private async executePresent(step: import('../data/types').PresentStep): Promise<void> {
+    switch (step.type) {
+      case 'fadeToBlack':
+        await this.cutsceneRenderer.fadeToBlack(step.duration as number ?? 1000);
+        break;
+      case 'fadeIn':
+        await this.cutsceneRenderer.fadeFromBlack(step.duration as number ?? 1000);
+        break;
+      case 'flashWhite':
+        await this.cutsceneRenderer.flashWhite(step.duration as number ?? 200);
+        break;
+      case 'waitTime':
+        await this.cutsceneRenderer.wait(step.duration as number ?? 1000);
+        break;
+      case 'waitClick':
+        await this.waitForClick();
+        break;
+      case 'showTitle':
+        await this.cutsceneRenderer.showTitle(step.text as string, step.duration as number ?? 2000);
+        break;
+      case 'showDialogue':
+        await this.showDialogueText(step.text as string, step.speaker as string | undefined);
+        break;
+      case 'showImg':
+        await this.cutsceneRenderer.showImg(step.image as string, step.id as string ?? 'default');
+        break;
+      case 'hideImg':
+        this.cutsceneRenderer.hideImg(step.id as string ?? 'default');
+        break;
+      case 'showMovieBar':
+        this.cutsceneRenderer.showMovieBar((step.heightPercent as number) ?? 0.1);
+        break;
+      case 'hideMovieBar':
+        this.cutsceneRenderer.hideMovieBar();
+        break;
+      case 'showSubtitle':
+        await this.showSubtitleText(step.text as string, step.position as string | number | undefined);
+        break;
+      case 'cameraMove':
+        await this.cutsceneRenderer.cameraMove(step.x as number, step.y as number, step.duration as number ?? 1000);
+        break;
+      case 'cameraZoom':
+        await this.cutsceneRenderer.cameraZoom(step.scale as number, step.duration as number ?? 500);
+        break;
+      case 'showCharacter':
+        this.entitySetVisible('player', step.visible as boolean ?? true);
+        break;
+      default:
+        console.warn(`CutsceneManager: unknown present type "${step.type}"`);
+    }
   }
 
   get isPlaying(): boolean {
