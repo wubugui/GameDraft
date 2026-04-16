@@ -692,9 +692,7 @@ class NodeInspector(QWidget):
                 kk = kcb.currentData()
                 ex = exed.text().strip()
                 b = {"speaker": _ui_to_speaker(kk, ex)}
-                tx = tx_plain.toPlainText().strip()
-                if tx:
-                    b["text"] = tx
+                b["text"] = tx_plain.toPlainText()
                 tk = tked.text().strip()
                 if tk:
                     b["textKey"] = tk
@@ -714,8 +712,7 @@ class NodeInspector(QWidget):
                     "next": nxt,
                     "lines": beats,
                 }
-                if first.get("text") is not None:
-                    out["text"] = first.get("text", "")
+                out["text"] = first.get("text", "")
                 if first.get("textKey"):
                     out["textKey"] = first["textKey"]
                 return out
@@ -726,9 +723,7 @@ class NodeInspector(QWidget):
                 "speaker": _ui_to_speaker(k, ex),
                 "next": nxt,
             }
-            tx = text_edit.toPlainText()
-            if tx.strip():
-                out["text"] = tx
+            out["text"] = text_edit.toPlainText()
             tk = text_key.text().strip()
             if tk:
                 out["textKey"] = tk
@@ -1296,7 +1291,7 @@ class NodeInspector(QWidget):
                 rh_val = r["rh_cb"].committed_type()
                 if isinstance(rh_val, str) and rh_val.strip():
                     out_opt["ruleHintId"] = rh_val.strip()
-                hint_s = r["hint_plain"].toPlainText().strip()
+                hint_s = r["hint_plain"].toPlainText()
                 if hint_s:
                     out_opt["disabledClickHint"] = hint_s
                 options.append(out_opt)

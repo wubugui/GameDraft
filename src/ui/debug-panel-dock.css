@@ -235,6 +235,16 @@
   padding-bottom: 0.45rem;
 }
 
+/* Flag 独占「Flag」标签页时不再限制高度，便于一览列表 */
+#flags-panel .debug-dock__flag-section {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
 .debug-flag__subhead {
   font-size: 0.7rem;
   font-weight: 600;

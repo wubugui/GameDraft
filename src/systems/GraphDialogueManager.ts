@@ -100,6 +100,8 @@ export class GraphDialogueManager implements IGameSystem {
 
   private lastPreconditionDebug: NarrativePreconditionDebug | null = null;
   private lastSwitchDebug: NarrativeSwitchDebug | null = null;
+  /** F2 叙事调试：从本次开图的入口节点到当前节点经过的节点 id（含入口与当前） */
+  private narrativeRouteNodeIds: string[] = [];
 
   constructor(
     eventBus: EventBus,
@@ -133,6 +135,11 @@ export class GraphDialogueManager implements IGameSystem {
     summaryText: string;
   } {
     const parts: string[] = [];
+    if (this.narrativeRouteNodeIds.length > 0) {
+      parts.push(`【节点路由】${this.narrativeRouteNodeIds.join(' -> ')}`);
+    } else {
+      parts.push('【节点路由】（尚无记录，或未在对话中）');
+    }
     parts.push(`对话进行中: ${this.active ? '是' : '否'}`);
     parts.push(`图(graphSourceId): ${this.graphSourceId || '—'}`);
     parts.push(`当前节点: ${this.currentNodeId || '—'}`);
@@ -174,6 +181,11 @@ export class GraphDialogueManager implements IGameSystem {
       questManager: this.questManager,
       scenarioState: this.scenarioState,
     };
+  }
+
+  private pushNarrativeRouteStep(nodeId: string): void {
+    if (!nodeId) return;
+    this.narrativeRouteNodeIds.push(nodeId);
   }
 
   private runExclusive(fn: () => Promise<void>): Promise<void> {
@@ -229,6 +241,7 @@ export class GraphDialogueManager implements IGameSystem {
     this.choicePhase = null;
     this.lastPreconditionDebug = null;
     this.lastSwitchDebug = null;
+    this.narrativeRouteNodeIds = [];
     this.awaitingLineDismiss = false;
     this.lineBeatIndex = 0;
     this.deferredGraphQueue = [];
@@ -317,6 +330,7 @@ export class GraphDialogueManager implements IGameSystem {
       this.currentNodeId = (params.entry?.trim() && raw.nodes[params.entry.trim()])
         ? params.entry.trim()
         : raw.entry;
+      this.narrativeRouteNodeIds = this.currentNodeId ? [this.currentNodeId] : [];
       this.active = true;
       this.choicePhase = null;
       this.awaitingLineDismiss = false;
@@ -361,6 +375,7 @@ export class GraphDialogueManager implements IGameSystem {
           this.eventBus.emit('dialogue:prepareBeat', {});
         }
         this.currentNodeId = cur.next;
+        this.pushNarrativeRouteStep(this.currentNodeId);
         await this.drainUntilBlocking();
       } else if (cur?.type === 'end') {
         /** 兼容：若仍停留在 end 节点上收到 advance（旧行为曾发占位行），直接收束 */
@@ -393,6 +408,7 @@ export class GraphDialogueManager implements IGameSystem {
       this.eventBus.emit('dialogue:choiceSelected:log', { index, text: opt.text });
       this.choicePhase = null;
       this.currentNodeId = opt.next;
+      this.pushNarrativeRouteStep(this.currentNodeId);
       await this.advanceCore();
     });
   }
@@ -408,6 +424,7 @@ export class GraphDialogueManager implements IGameSystem {
     this.choicePhase = null;
     this.lastPreconditionDebug = null;
     this.lastSwitchDebug = null;
+    this.narrativeRouteNodeIds = [];
     this.awaitingLineDismiss = false;
     this.lineBeatIndex = 0;
     this.opDrainGeneration++;
@@ -440,6 +457,7 @@ export class GraphDialogueManager implements IGameSystem {
 
       if (node.type === 'switch') {
         this.currentNodeId = this.evalSwitch(node);
+        this.pushNarrativeRouteStep(this.currentNodeId);
         continue;
       }
 
@@ -455,6 +473,7 @@ export class GraphDialogueManager implements IGameSystem {
           return;
         }
         this.currentNodeId = node.next;
+        this.pushNarrativeRouteStep(this.currentNodeId);
         continue;
       }
 

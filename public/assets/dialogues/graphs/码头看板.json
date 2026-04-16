@@ -97,7 +97,7 @@
             {
               "flag": "码头水鬼真相已揭示",
               "op": "==",
-              "value": false
+              "value": true
             }
           ]
         }

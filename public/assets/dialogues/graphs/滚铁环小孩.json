@@ -8,14 +8,14 @@
       "type": "switch",
       "cases": [
         {
+          "next": "has_ring_1",
           "conditions": [
             {
               "flag": "铁环小孩_已经获得铁环",
               "op": "==",
               "value": true
             }
-          ],
-          "next": "has_ring_1"
+          ]
         }
       ],
       "defaultNext": "anim_branch"
@@ -31,7 +31,7 @@
           "speaker": {
             "kind": "player"
           },
-          "text": "老子又不要你的，还给你还给你。"
+          "text": "列死麻批娃儿才混哦~好，还给你还给你。"
         },
         {
           "speaker": {
@@ -47,7 +47,7 @@
           "text": "不理你......"
         }
       ],
-      "text": "老子又不要你的，还给你还给你。"
+      "text": "列死麻批娃儿才混哦~好，还给你还给你。"
     },
     "end1": {
       "type": "end"
