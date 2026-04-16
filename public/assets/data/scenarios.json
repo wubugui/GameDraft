@@ -31,8 +31,19 @@
         },
         "真相揭示": {
           "status": "pending"
+        },
+        "真相揭示（脚帮）": {
+          "status": "pending"
+        },
+        "真相揭示（官差）": {
+          "status": "pending"
         }
-      }
+      },
+      "dialogueGraphIds": [
+        "码头_脚帮帮众看板对话",
+        "码头看板",
+        "码头看板官差"
+      ]
     }
   ]
 }

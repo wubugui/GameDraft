@@ -1,6 +1,7 @@
 """Central data model that holds every JSON asset in memory."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -156,6 +157,8 @@ class ProjectModel(QObject):
         self._dirty.clear()
         self.undo_stack.clear()
         self.dirty_changed.emit(False)
+        if self._rebuild_dialogue_graph_ids_from_graph_files():
+            self.mark_dirty("scenarios")
 
     def reload_filters_from_disk(self) -> None:
         """重读 public/assets/data/filters，与 tools.filter_tool 写入目录一致（不标脏）。"""
@@ -461,6 +464,135 @@ class ProjectModel(QObject):
                 return [str(k) for k in ph.keys()]
             return []
         return []
+
+    def _rebuild_dialogue_graph_ids_from_graph_files(self) -> bool:
+        """按各图根级 meta.scenarioId 汇总到 scenarios[].dialogueGraphIds；有变化返回 True。"""
+        from .file_io import read_json
+
+        links: dict[str, list[str]] = {}
+        for stem in self.all_dialogue_graph_ids():
+            p = self.dialogues_path / "graphs" / f"{stem}.json"
+            try:
+                data = read_json(p)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            gid = str(data.get("id", stem)).strip() or stem
+            meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+            sid = str(meta.get("scenarioId", "")).strip()
+            if sid:
+                links.setdefault(sid, [])
+                if gid not in links[sid]:
+                    links[sid].append(gid)
+        for ids in links.values():
+            ids.sort(key=lambda x: (x.lower(), x))
+        raw = self.scenarios_catalog.get("scenarios")
+        if not isinstance(raw, list):
+            return False
+        changed = False
+        for e in raw:
+            if not isinstance(e, dict):
+                continue
+            sid = str(e.get("id", "")).strip()
+            new_arr = list(links.get(sid, []))
+            old_raw = e.get("dialogueGraphIds")
+            if not isinstance(old_raw, list):
+                old_norm: list[str] = []
+            else:
+                old_norm = [str(x).strip() for x in old_raw if str(x).strip()]
+            if old_norm != new_arr:
+                changed = True
+                if new_arr:
+                    e["dialogueGraphIds"] = new_arr
+                elif "dialogueGraphIds" in e:
+                    del e["dialogueGraphIds"]
+        return changed
+
+    def relink_dialogue_graph_to_scenarios(self, graph_id: str, scenario_id: str | None) -> bool:
+        """图 meta.scenarioId 变化时：从所有 scenario 的 dialogueGraphIds 去掉本图，再挂到目标 scenario。有改动返回 True。"""
+        gid = (graph_id or "").strip()
+        if not gid:
+            return False
+        raw = self.scenarios_catalog.get("scenarios")
+        if not isinstance(raw, list):
+            return False
+
+        def _dg_snapshot() -> str:
+            snap: list[Any] = []
+            for e in raw:
+                if isinstance(e, dict):
+                    snap.append(e.get("dialogueGraphIds"))
+                else:
+                    snap.append(None)
+            return json.dumps(snap, ensure_ascii=False)
+
+        before = _dg_snapshot()
+        for e in raw:
+            if not isinstance(e, dict):
+                continue
+            arr = e.get("dialogueGraphIds")
+            if not isinstance(arr, list):
+                continue
+            narr = [str(x).strip() for x in arr if str(x).strip() and str(x).strip() != gid]
+            if narr:
+                e["dialogueGraphIds"] = narr
+            elif "dialogueGraphIds" in e:
+                del e["dialogueGraphIds"]
+        new_s = (scenario_id or "").strip()
+        if new_s:
+            for e in raw:
+                if not isinstance(e, dict):
+                    continue
+                if str(e.get("id", "")).strip() != new_s:
+                    continue
+                arr = e.get("dialogueGraphIds")
+                if not isinstance(arr, list):
+                    arr = []
+                else:
+                    arr = [str(x).strip() for x in arr if str(x).strip()]
+                if gid not in arr:
+                    arr.append(gid)
+                    arr.sort(key=lambda x: (x.lower(), x))
+                e["dialogueGraphIds"] = arr
+                break
+        if _dg_snapshot() != before:
+            self.mark_dirty("scenarios")
+            return True
+        return False
+
+    def rename_dialogue_graph_in_scenarios_catalog(self, old_id: str, new_id: str) -> None:
+        """图根 id 重命名时，替换各 scenario.dialogueGraphIds 中的引用。"""
+        o = (old_id or "").strip()
+        n = (new_id or "").strip()
+        if not o or not n or o == n:
+            return
+        raw = self.scenarios_catalog.get("scenarios")
+        if not isinstance(raw, list):
+            return
+        changed = False
+        for e in raw:
+            if not isinstance(e, dict):
+                continue
+            arr = e.get("dialogueGraphIds")
+            if not isinstance(arr, list):
+                continue
+            old_norm = [str(x).strip() for x in arr if str(x).strip()]
+            repl: list[str] = [n if x == o else x for x in old_norm]
+            seen: set[str] = set()
+            dedup: list[str] = []
+            for x in repl:
+                if x not in seen:
+                    seen.add(x)
+                    dedup.append(x)
+            if dedup != old_norm:
+                changed = True
+                if dedup:
+                    e["dialogueGraphIds"] = dedup
+                elif "dialogueGraphIds" in e:
+                    del e["dialogueGraphIds"]
+        if changed:
+            self.mark_dirty("scenarios")
 
     def document_reveal_ids(self) -> list[str]:
         """document_reveals.json 各条目的 ``id``（去空白，保持列表顺序）。"""

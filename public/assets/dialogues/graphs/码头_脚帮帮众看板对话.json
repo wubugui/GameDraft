@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "码头_脚帮帮众看板对话",
-  "entry": "n_2",
+  "entry": "n_17",
   "meta": {
-    "title": "码头_脚帮帮众看板对话"
+    "title": "码头_脚帮帮众看板对话",
+    "scenarioId": "码头水鬼"
   },
   "preconditions": [],
   "nodes": {
@@ -12,7 +13,7 @@
       "speaker": {
         "kind": "player"
       },
-      "next": "n_3",
+      "next": "n_4",
       "lines": [
         {
           "speaker": {
@@ -42,52 +43,17 @@
       "type": "switch",
       "cases": [
         {
+          "next": "n_start",
           "conditions": [
             {
               "scenario": "码头水鬼",
-              "phase": "询问官差",
+              "phase": "官差已套近乎",
               "status": "done"
             }
-          ],
-          "next": "n_9"
+          ]
         }
       ],
-      "defaultNext": "n_12"
-    },
-    "n_3": {
-      "type": "switch",
-      "cases": [
-        {
-          "condition": {
-            "any": [
-              {
-                "scenario": "码头水鬼",
-                "phase": "官差已套近乎",
-                "status": "done"
-              },
-              {
-                "all": [
-                  {
-                    "scenario": "码头水鬼",
-                    "phase": "询问官差",
-                    "status": "done"
-                  },
-                  {
-                    "not": {
-                      "scenario": "码头水鬼",
-                      "phase": "询问官差",
-                      "status": "done",
-                      "outcome": "scolded"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "next": "n_4"
-        }
-      ],
-      "defaultNext": "n_1"
+      "defaultNext": "n_13"
     },
     "n_4": {
       "type": "line",
@@ -247,22 +213,6 @@
       ],
       "text": "芽儿勒，是不是真的哟？"
     },
-    "n_9": {
-      "type": "switch",
-      "cases": [
-        {
-          "conditions": [
-            {
-              "scenario": "码头水鬼",
-              "phase": "询问脚帮",
-              "status": "done"
-            }
-          ],
-          "next": "n_10"
-        }
-      ],
-      "defaultNext": "n_15"
-    },
     "n_10": {
       "type": "line",
       "speaker": {
@@ -281,22 +231,6 @@
     },
     "n_11": {
       "type": "end"
-    },
-    "n_12": {
-      "type": "switch",
-      "cases": [
-        {
-          "conditions": [
-            {
-              "scenario": "码头水鬼",
-              "phase": "看板初读",
-              "status": "done"
-            }
-          ],
-          "next": "n_start"
-        }
-      ],
-      "defaultNext": "n_13"
     },
     "n_13": {
       "type": "line",
@@ -317,6 +251,55 @@
       },
       "next": "n_11",
       "text": "这年生不太平哟。码头人来人往的水猴子都敢来闹。"
+    },
+    "n_16": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_2",
+          "conditions": [
+            {
+              "scenario": "码头水鬼",
+              "phase": "看板初读",
+              "status": "done"
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_13"
+    },
+    "n_17": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_18",
+          "conditions": [
+            {
+              "scenario": "码头水鬼",
+              "phase": "真相揭示",
+              "status": "done",
+              "outcome": "脚帮揭示"
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_16"
+    },
+    "n_18": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_10",
+          "conditions": [
+            {
+              "scenario": "码头水鬼",
+              "phase": "真相揭示（脚帮）",
+              "status": "pending"
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_15"
     }
   }
 }
