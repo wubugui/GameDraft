@@ -388,6 +388,17 @@ class FilterableTypeCombo(QComboBox):
         finally:
             self._programmatic = False
 
+    def set_items(
+        self,
+        items: list[tuple[str, str]],
+        *,
+        orphan_label: Callable[[str], str] | None = None,
+    ) -> None:
+        """与 set_entries 相同；Timeline 等场景可一并更新孤儿项展示文案。"""
+        if orphan_label is not None:
+            self._orphan_label = orphan_label
+        self.set_entries(items)
+
 
 class RuleSlotsParamEditor(QWidget):
     """enableRuleOffers.params.slots：多槽，每槽 ruleId + resultText + resultActions。"""
