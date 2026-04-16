@@ -7,11 +7,13 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtWidgets import (
-    QMainWindow, QTabWidget, QStatusBar, QToolBar, QFileDialog,
+    QMainWindow, QStatusBar, QToolBar, QFileDialog,
     QMessageBox, QTextEdit, QDialog, QVBoxLayout, QLabel,
-    QSizePolicy, QWidget, QStyle,
+    QSizePolicy, QWidget, QStyle, QSplitter, QTreeWidget,
+    QTreeWidgetItem, QStackedWidget,
 )
 from PySide6.QtGui import QAction, QKeySequence, QActionGroup
 from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize
@@ -84,6 +86,9 @@ def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
         env.insert(path_key, os.pathsep.join(merged) + os.pathsep + current)
 
 
+_GAME_BROWSER_SENTINEL = object()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -102,9 +107,22 @@ class MainWindow(QMainWindow):
         self._game_user_stopped: bool = False
         self._last_vite_dev_url: str | None = None
         self._pending_launch_params: str | None = None
-        self._tabs = QTabWidget()
-        self.setCentralWidget(self._tabs)
+        self._nav_tree = QTreeWidget()
+        self._nav_tree.setHeaderHidden(True)
+        self._nav_tree.setMinimumWidth(260)
+        self._nav_tree.setMaximumWidth(440)
+        self._stack = QStackedWidget()
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(self._nav_tree)
+        self._splitter.addWidget(self._stack)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([300, 1100])
+        self.setCentralWidget(self._splitter)
+        self._stack_index_to_item: dict[int, QTreeWidgetItem] = {}
         self._editor_instances: list = []
+        self._editor_labels: list[str] = []
+        self._nav_tree.currentItemChanged.connect(self._on_nav_tree_current_changed)
 
         self._build_menus()
         self._build_toolbar()
@@ -172,7 +190,7 @@ class MainWindow(QMainWindow):
         view_menu = mb.addMenu("View")
         ag_theme = QActionGroup(self)
         self._act_theme_light = QAction("浅色主题", self, checkable=True)
-        self._act_theme_dark = QAction("深色主题", self, checkable=True)
+        self._act_theme_dark = QAction("黑色主题", self, checkable=True)
         ag_theme.addAction(self._act_theme_light)
         ag_theme.addAction(self._act_theme_dark)
         self._act_theme_light.triggered.connect(
@@ -346,9 +364,77 @@ class MainWindow(QMainWindow):
     def _launch_filter_tool_external(self) -> None:
         self._launch_external_tool("tools.filter_tool", [], "Filter Tool")
 
+    def _clear_editor_stack(self) -> None:
+        while self._stack.count():
+            w = self._stack.widget(0)
+            self._stack.removeWidget(w)
+            w.deleteLater()
+
+    @staticmethod
+    def _ensure_nav_path(tree: QTreeWidget, segments: list[str]) -> QTreeWidgetItem:
+        parent: QTreeWidgetItem | None = None
+        for seg in segments:
+            container: QTreeWidgetItem | None = None
+            if parent is None:
+                for i in range(tree.topLevelItemCount()):
+                    it = tree.topLevelItem(i)
+                    if it.text(0) == seg:
+                        container = it
+                        break
+                if container is None:
+                    container = QTreeWidgetItem([seg])
+                    tree.addTopLevelItem(container)
+            else:
+                for i in range(parent.childCount()):
+                    ch = parent.child(i)
+                    if ch.text(0) == seg:
+                        container = ch
+                        break
+                if container is None:
+                    container = QTreeWidgetItem([seg])
+                    parent.addChild(container)
+            parent = container
+        assert parent is not None
+        return parent
+
+    def _expand_nav_tree(self) -> None:
+        def expand_rec(item: QTreeWidgetItem) -> None:
+            item.setExpanded(True)
+            for i in range(item.childCount()):
+                expand_rec(item.child(i))
+
+        for i in range(self._nav_tree.topLevelItemCount()):
+            expand_rec(self._nav_tree.topLevelItem(i))
+
+    def _on_nav_tree_current_changed(
+        self,
+        current: QTreeWidgetItem | None,
+        _previous: QTreeWidgetItem | None,
+    ) -> None:
+        if current is None:
+            return
+        idx = current.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(idx, int):
+            return
+        self._stack.setCurrentIndex(idx)
+
+    def _show_stack_page(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        item = self._stack_index_to_item.get(index)
+        if item is None:
+            return
+        self._nav_tree.blockSignals(True)
+        try:
+            self._nav_tree.setCurrentItem(item)
+        finally:
+            self._nav_tree.blockSignals(False)
+
     def _populate_tabs(self) -> None:
-        self._tabs.clear()
+        self._clear_editor_stack()
+        self._nav_tree.clear()
+        self._stack_index_to_item.clear()
         self._editor_instances.clear()
+        self._editor_labels.clear()
 
         from .editors.scene_editor import SceneEditor
         from .editors.quest_editor import QuestEditor
@@ -374,41 +460,58 @@ class MainWindow(QMainWindow):
         )
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
 
-        editors = [
-            ("Scene", SceneEditor),
-            ("Quest", QuestEditor),
-            ("Encounter", EncounterEditor),
-            ("过场", TimelineEditor),
-            ("图对话", DialogueGraphEditorTab),
-            ("Item", ItemEditor),
-            ("Rule", RuleEditor),
-            ("Shop", ShopEditor),
-            ("Map", MapEditor),
-            ("Archive", ArchiveEditor),
-            ("Audio", AudioEditor),
-            ("Filters", FilterEditor),
-            ("动画浏览", AnimEditor),
-            ("玩家化身", PlayerAvatarEditor),
-            ("Strings", StringEditor),
-            ("Config", GameConfigEditor),
-            ("叠图 ID", OverlayImagesEditor),
-            ("Scenarios", ScenariosCatalogEditor),
-            ("文档揭示", DocumentRevealsEditor),
-            ("Flags", FlagRegistryEditor),
-            ("Actions", ActionRegistryEditor),
+        rows: list[tuple[list[str], str, Any]] = [
+            (["物理世界"], "Scene", SceneEditor),
+            (["物理世界"], "Map", MapEditor),
+            (["数据编辑", "叙事编排"], "过场", TimelineEditor),
+            (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
+            (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
+            (["数据编辑", "叙事编排"], "Scenarios", ScenariosCatalogEditor),
+            (["数据编辑", "叙事编排"], "Quest", QuestEditor),
+            (["数据编辑", "规则与经济"], "Rule", RuleEditor),
+            (["数据编辑", "规则与经济"], "Shop", ShopEditor),
+            (["数据编辑", "规则与经济"], "Item", ItemEditor),
+            (["数据编辑", "规则与经济"], "Filters", FilterEditor),
+            (["数据编辑", "注册表与扩展"], "Flags", FlagRegistryEditor),
+            (["数据编辑", "注册表与扩展"], "Actions", ActionRegistryEditor),
+            (["数据编辑", "资源与本地化"], "Archive", ArchiveEditor),
+            (["数据编辑", "资源与本地化"], "Strings", StringEditor),
+            (["数据编辑", "资源与本地化"], "Audio", AudioEditor),
+            (["数据编辑", "资源与本地化"], "动画浏览", AnimEditor),
+            (["数据编辑", "资源与本地化"], "玩家化身", PlayerAvatarEditor),
+            (["数据编辑", "资源与本地化"], "叠图 ID", OverlayImagesEditor),
+            (["数据编辑", "资源与本地化"], "文档揭示", DocumentRevealsEditor),
+            (["数据编辑", "工程与全局"], "Config", GameConfigEditor),
+            (["运行与预览"], "Game", _GAME_BROWSER_SENTINEL),
         ]
-        for label, cls in editors:
-            ed = cls(self._model)
-            self._tabs.addTab(ed, label)
-            self._editor_instances.append(ed)
-            if isinstance(ed, TimelineEditor):
-                ed.play_requested.connect(self._on_cutscene_play_requested)
 
-        self._game_browser = GameBrowserTab(self)
-        self._game_browser.run_requested.connect(self._run_game)
-        self._game_browser.run_dev_requested.connect(self._run_game_dev)
-        self._game_browser.stop_requested.connect(self._stop_game)
-        self._tabs.addTab(self._game_browser, "Game")
+        stack_idx = 0
+        for path, label, cls in rows:
+            if cls is _GAME_BROWSER_SENTINEL:
+                self._game_browser = GameBrowserTab(self)
+                self._game_browser.run_requested.connect(self._run_game)
+                self._game_browser.run_dev_requested.connect(self._run_game_dev)
+                self._game_browser.stop_requested.connect(self._stop_game)
+                widget: QWidget = self._game_browser
+            else:
+                ed = cls(self._model)
+                widget = ed
+                self._editor_instances.append(ed)
+                self._editor_labels.append(label)
+                if isinstance(ed, TimelineEditor):
+                    ed.play_requested.connect(self._on_cutscene_play_requested)
+
+            self._stack.addWidget(widget)
+            parent_item = self._ensure_nav_path(self._nav_tree, path)
+            leaf = QTreeWidgetItem([label])
+            parent_item.addChild(leaf)
+            leaf.setData(0, Qt.ItemDataRole.UserRole, stack_idx)
+            self._stack_index_to_item[stack_idx] = leaf
+            stack_idx += 1
+
+        self._expand_nav_tree()
+        if self._stack_index_to_item:
+            self._show_stack_page(0)
 
         self._connect_action_nav()
         self._sync_theme_to_editors()
@@ -453,7 +556,7 @@ class MainWindow(QMainWindow):
                 self._last_vite_dev_url,
                 extra_params=launch_params or "",
             )
-            self._status.showMessage("Dev server already running; reloaded Game tab.", 3000)
+            self._status.showMessage("开发服务器已在运行；已切换到「运行与预览」。", 3000)
             return
 
         self._game_server_ready_for_current_run = False
@@ -476,7 +579,9 @@ class MainWindow(QMainWindow):
         self._game_proc.start("cmd.exe", ["/c", "npm run dev"])
         self._status.showMessage("Starting Vite dev server…", 5000)
         self._game_browser.show_message("Starting dev server…")
-        self._tabs.setCurrentWidget(self._game_browser)
+        idx = self._stack.indexOf(self._game_browser)
+        if idx >= 0:
+            self._show_stack_page(idx)
         self._game_ready_timer.start(60_000)
 
     def _run_game_dev(self) -> None:
@@ -507,7 +612,9 @@ class MainWindow(QMainWindow):
                 "Game is running in a separate window.\n"
                 "Press F5 to reopen if closed.",
             )
-            self._tabs.setCurrentWidget(self._game_browser)
+            idx = self._stack.indexOf(self._game_browser)
+            if idx >= 0:
+                self._show_stack_page(idx)
 
         if self._game_play_window is None:
             w, h = self._get_game_window_size()
@@ -572,7 +679,7 @@ class MainWindow(QMainWindow):
         self._pending_launch_params = None
         self._focus_game_tab_and_load(url, extra_params=params)
         self._status.showMessage(
-            "Timeout: opened dev URL; if the page fails, check Game tab or Run output.",
+            "超时：已打开开发 URL；若页面异常请查看「运行与预览」或终端输出。",
             8000,
         )
 
@@ -740,7 +847,7 @@ class MainWindow(QMainWindow):
             from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
             for i, ed in enumerate(self._editor_instances):
                 if isinstance(ed, DialogueGraphEditorTab):
-                    self._tabs.setCurrentIndex(i)
+                    self._show_stack_page(i)
                     ed.open_graph_by_id(source_id)
                     return
             return
@@ -754,10 +861,10 @@ class MainWindow(QMainWindow):
         target_label = tab_map.get(source_type)
         if not target_label:
             return
-        for i, ed in enumerate(self._editor_instances):
-            label = self._tabs.tabText(i)
+        for i, label in enumerate(self._editor_labels):
             if label == target_label:
-                self._tabs.setCurrentIndex(i)
+                self._show_stack_page(i)
+                ed = self._editor_instances[i]
                 select = getattr(ed, "select_by_id", None)
                 if callable(select):
                     select(source_id, scene_id)
