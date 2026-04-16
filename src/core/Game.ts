@@ -52,6 +52,7 @@ import type {
   GameConfig,
   SceneDataRaw,
   ScenarioCatalogFile,
+  ICutsceneActor,
 } from '../data/types';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
@@ -118,6 +119,7 @@ export class Game {
   private audioManager: AudioManager;
   private dayManager: DayManager;
   private cutsceneManager!: CutsceneManager;
+  private resolveActorFn!: (id: string) => ICutsceneActor | null;
   private archiveManager: ArchiveManager;
   private emoteBubbleManager: EmoteBubbleManager;
   private ruleOfferRegistry: RuleOfferRegistry;
@@ -315,10 +317,22 @@ export class Game {
     this.cutsceneManager.setInputManager(this.inputManager);
     const cmEntry = this.registeredSystems.find(e => e.name === 'cutsceneManager');
     if (cmEntry) cmEntry.system = this.cutsceneManager;
-    this.cutsceneManager.setEntityResolver((id: string) => {
+    /**
+     * 唯一 resolveActor 入口。查询顺序：
+     *   1. CutsceneManager 临时表（_cut_ 前缀）
+     *   2. 场景 NPC（sceneManager.getNpcById）
+     *   3. player（id === 'player'）
+     * 对话、热区、过场、Timeline 共用此实例。
+     */
+    this.resolveActorFn = (id: string) => {
+      const temp = this.cutsceneManager.getTempActors().get(id);
+      if (temp) return temp;
+      const npc = this.sceneManager.getNpcById(id);
+      if (npc) return npc;
       if (id === 'player') return this.player;
-      return this.sceneManager.getNpcById(id);
-    });
+      return null;
+    };
+    this.cutsceneManager.setEntityResolver(this.resolveActorFn);
     this.cutsceneManager.setEmoteBubbleProvider(this.emoteBubbleManager);
     this.cutsceneManager.setSceneSwitcher(async (params) => {
       this.pickupNotification.forceCleanup();
@@ -425,7 +439,7 @@ export class Game {
       stateController: this.stateController,
       stringsProvider: this.stringsProvider,
       eventBus: this.eventBus,
-      resolveActor: (id) => id === 'player' ? this.player : this.sceneManager.getNpcById(id),
+      resolveActor: this.resolveActorFn,
       pickupNotification: this.pickupNotification,
       inspectBox: this.inspectBox,
       shopUI: this.shopUI,
@@ -501,6 +515,12 @@ export class Game {
       },
       scenarioStateManager: this.scenarioStateManager,
       documentRevealManager: this.documentRevealManager,
+      spawnCutsceneActor: (id, name, x, y) => {
+        this.cutsceneManager.spawnTempActor(id, name, x, y);
+      },
+      removeCutsceneActor: (id) => {
+        this.cutsceneManager.removeTempActor(id);
+      },
     });
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {

@@ -109,6 +109,7 @@ ACTION_TYPES = [
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
+    "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait",
 ]
 
 _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
@@ -159,6 +160,11 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "hideOverlayImage": [("id", "str")],
     "waitClickContinue": [("text", "str")],
     "waitMs": [("durationMs", "int")],
+    "moveEntityTo": [("target", "str"), ("x", "float"), ("y", "float"), ("speed", "float")],
+    "faceEntity": [("target", "str"), ("direction", "str"), ("faceTarget", "str")],
+    "cutsceneSpawnActor": [("id", "str"), ("name", "str"), ("x", "float"), ("y", "float")],
+    "cutsceneRemoveActor": [("id", "str")],
+    "showEmoteAndWait": [("target", "str"), ("emote", "str"), ("duration", "float")],
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
