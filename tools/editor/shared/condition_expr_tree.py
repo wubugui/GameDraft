@@ -440,11 +440,11 @@ class ConditionExprTreeRootWidget(QWidget):
         self._model_getter = model_getter
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setMaximumHeight(420)
-        host = QWidget()
+        host = QWidget(scroll)
         hl = QVBoxLayout(host)
         self._root = ConditionExprNodeEditor(0, model_getter, host)
         self._root.set_remove_callback(None)
@@ -455,7 +455,8 @@ class ConditionExprTreeRootWidget(QWidget):
         lay.addWidget(scroll)
         tip = QLabel(
             "与运行时 evaluateConditionExpr 一致；嵌套最深32 层。"
-            "根节点可为任意类型；留空 flag / scenario / quest 必填项则导出时省略该分支逻辑（见 get_expr）。"
+            "根节点可为任意类型；留空 flag / scenario / quest 必填项则导出时省略该分支逻辑（见 get_expr）。",
+            self,
         )
         tip.setWordWrap(True)
         lay.addWidget(tip)

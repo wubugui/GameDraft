@@ -1,4 +1,4 @@
-"""Main window: menu bar, toolbar, search, table, detail panel."""
+"""Main window: menu bar, toolbar, search, tree view, detail panel."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QSplitter,
     QStatusBar,
-    QTableView,
+    QTreeView,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -27,9 +27,9 @@ from tools.copy_manager.scanner.ink_scanner import InkScanner
 from tools.copy_manager.scanner.json_scanner import JsonScanner
 from tools.copy_manager.scanner.registry import RegistryManager
 from tools.copy_manager.widgets.entry_detail import EntryDetailPanel
-from tools.copy_manager.widgets.entry_table import EntryTableModel
+from tools.copy_manager.widgets.entry_tree import EntryTreeModel
 from tools.copy_manager.widgets.export_dialog import ExportDialog
-from tools.copy_manager.widgets.search_filter_bar import EntryFilterProxyModel, SearchFilterBar
+from tools.copy_manager.widgets.search_filter_bar import SearchFilterBar, matches_filter
 
 
 class MainWindow(QMainWindow):
@@ -55,11 +55,32 @@ class MainWindow(QMainWindow):
             self._scan_all()
 
     def _init_models(self) -> None:
-        self.table_model = EntryTableModel(self)
-        self.proxy_model = EntryFilterProxyModel(self)
-        self.proxy_model.setSourceModel(self.table_model)
+        self.tree_model = EntryTreeModel(self)
         # Use registry data as dicts (not TextEntry objects) for consistency
-        self.table_model.set_entries(self.registry.data.get("entries", []))
+        self._filter_text = ""
+        self._filter_category = "all"
+        self._filter_status = "all"
+        self.tree_model.set_entries(self.registry.data.get("entries", []))
+
+    def _expand_categories_only(self) -> None:
+        """Expand only the top-level category nodes, collapse groups."""
+        model = self.tree_model
+        for i in range(model.rowCount()):
+            cat_idx = model.index(i, 0)
+            self.tree_view.expand(cat_idx)
+            # Collapse all group children
+            for j in range(model.rowCount(cat_idx)):
+                group_idx = model.index(j, 0, cat_idx)
+                self.tree_view.collapse(group_idx)
+
+    def _apply_filters(self) -> None:
+        """Rebuild the tree model with filtered entries."""
+        all_entries = self.registry.data.get("entries", [])
+        filtered = [
+            e for e in all_entries
+            if matches_filter(e, self._filter_text, self._filter_category, self._filter_status)
+        ]
+        self.tree_model.set_entries(filtered)
 
     def _init_ui(self) -> None:
         central = QWidget()
@@ -67,30 +88,38 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Search/filter bar
-        self.search_bar = SearchFilterBar()
-        layout.addWidget(self.search_bar)
-
-        # Splitter: table (left) + detail (right)
+        # Splitter: tree area (left) + detail (right)
         splitter = QSplitter(Qt.Horizontal)
 
-        # Table
-        self.table_view = QTableView()
-        self.table_view.setModel(self.proxy_model)
-        self.table_view.setSelectionBehavior(QTableView.SelectRows)
-        self.table_view.setSelectionMode(QTableView.SingleSelection)
-        self.table_view.setAlternatingRowColors(True)
-        self.table_view.setWordWrap(True)
-        self.table_view.verticalHeader().setVisible(False)
-        # Set column widths
-        self.table_view.setColumnWidth(0, 300)
-        self.table_view.setColumnWidth(1, 180)
-        self.table_view.setColumnWidth(2, 160)
-        self.table_view.setColumnWidth(3, 80)
-        self.table_view.setColumnWidth(4, 80)
-        self.table_view.setColumnWidth(5, 150)
-        self.table_view.horizontalHeader().setStretchLastSection(True)
-        splitter.addWidget(self.table_view)
+        # Left side: search bar on top of tree
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+
+        # Search/filter bar
+        self.search_bar = SearchFilterBar()
+        left_layout.addWidget(self.search_bar)
+
+        # Tree view
+        self.tree_view = QTreeView()
+        self.tree_view.setModel(self.tree_model)
+        self.tree_view.setSelectionBehavior(QTreeView.SelectRows)
+        self.tree_view.setSelectionMode(QTreeView.SingleSelection)
+        self.tree_view.setAlternatingRowColors(True)
+        self.tree_view.setWordWrap(True)
+        self.tree_view.setHeaderHidden(False)
+        self.tree_view.header().setStretchLastSection(True)
+        self.tree_view.setColumnWidth(0, 300)
+        self.tree_view.setColumnWidth(1, 120)
+        self.tree_view.setColumnWidth(2, 80)
+        self.tree_view.setColumnWidth(3, 70)
+        self.tree_view.setColumnWidth(4, 120)
+        # Expand category level only (collapse groups)
+        self._expand_categories_only()
+        left_layout.addWidget(self.tree_view)
+
+        splitter.addWidget(left_widget)
 
         # Detail panel
         self.detail_panel = EntryDetailPanel()
@@ -152,21 +181,37 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         # Search/filter
-        self.search_bar.text_changed.connect(self.proxy_model.set_filter_text)
-        self.search_bar.category_changed.connect(self.proxy_model.set_filter_category)
-        self.search_bar.status_changed.connect(self.proxy_model.set_filter_status)
+        self.search_bar.text_changed.connect(self._on_filter_text_changed)
+        self.search_bar.category_changed.connect(self._on_filter_category_changed)
+        self.search_bar.status_changed.connect(self._on_filter_status_changed)
 
-        # Table selection → detail panel
-        self.table_view.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        # Tree selection → detail panel
+        self.tree_view.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
         # Detail panel signals
         self.detail_panel.notes_changed.connect(self._on_notes_changed)
         self.detail_panel.status_changed.connect(self._on_status_changed)
         self.detail_panel.translation_changed.connect(self._on_translation_changed)
         self.detail_panel.language_added.connect(self._on_language_added)
+        self.detail_panel.source_changed.connect(self._on_source_changed)
 
         # Auto-save on any registry change
         self.registry.data  # trigger
+
+    def _on_filter_text_changed(self, text: str) -> None:
+        self._filter_text = text.lower()
+        self._apply_filters()
+        self._expand_categories_only()
+
+    def _on_filter_category_changed(self, category: str) -> None:
+        self._filter_category = category
+        self._apply_filters()
+        self._expand_categories_only()
+
+    def _on_filter_status_changed(self, status: str) -> None:
+        self._filter_status = status
+        self._apply_filters()
+        self._expand_categories_only()
 
     def _scan_all(self) -> None:
         """Run all scanners and merge results."""
@@ -184,8 +229,8 @@ class MainWindow(QMainWindow):
 
         new_uids = self.registry.merge_entries(all_entries)
 
-        # Refresh table
-        self.table_model.set_entries(self.registry.data.get("entries", []))
+        # Refresh tree
+        self._apply_filters()
 
         # Update status
         stats = self.registry.stats()
@@ -204,25 +249,28 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("注册表已保存")
 
     def _on_selection_changed(self) -> None:
-        indexes = self.table_view.selectionModel().selectedRows()
+        indexes = self.tree_view.selectionModel().selectedRows()
         if indexes:
-            proxy_row = indexes[0].row()
-            source_row = self.proxy_model.mapToSource(self.proxy_model.index(proxy_row, 0)).row()
-            entry = self.table_model.get_entry(source_row)
+            entry = self.tree_model.get_entry(indexes[0])
             self.detail_panel.load_entry(entry)
         else:
             self.detail_panel.load_entry(None)
+
+    def _on_source_changed(self, uid: str, new_text: str) -> None:
+        """Save user's source text edit to registry."""
+        self.registry.update_entry(uid, {"source_text": new_text})
+        # Refresh the tree to show the updated text
+        self._apply_filters()
+        self.tree_view.expandAll()
 
     def _on_notes_changed(self, uid: str, notes: str) -> None:
         self.registry.update_entry(uid, {"context_notes": notes})
 
     def _on_status_changed(self, uid: str, status: str) -> None:
         self.registry.update_entry(uid, {"status": status})
-        # Refresh the table row
-        for row, entry in enumerate(self.table_model.get_all_entries()):
-            if entry.get("uid") == uid:
-                self.table_model.update_entry_field(row, "status", status)
-                break
+        # Refresh the tree row display
+        self._apply_filters()
+        self.tree_view.expandAll()
 
     def _on_translation_changed(self, uid: str, lang: str, text: str) -> None:
         entry = self.registry.get_entry(uid)

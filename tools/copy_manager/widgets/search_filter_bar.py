@@ -1,7 +1,7 @@
 """Search and filter bar widget."""
 from __future__ import annotations
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QWidget
 
 from tools.copy_manager.constants import CATEGORY_LABELS, STATUSES
@@ -59,53 +59,30 @@ class SearchFilterBar(QWidget):
         self.status_changed.emit(status)
 
 
-class EntryFilterProxyModel(QSortFilterProxyModel):
-    """Multi-field proxy filter for the entry table."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._filter_text = ""
-        self._filter_category = "all"
-        self._filter_status = "all"
-
-    def set_filter_text(self, text: str) -> None:
-        self._filter_text = text.lower()
-        self.invalidateFilter()
-
-    def set_filter_category(self, category: str) -> None:
-        self._filter_category = category
-        self.invalidateFilter()
-
-    def set_filter_status(self, status: str) -> None:
-        self._filter_status = status
-        self.invalidateFilter()
-
-    def filterAcceptsRow(self, source_row, source_parent):
-        model = self.sourceModel()
-        entry = model.get_entry(source_row)
-        if not entry:
+def matches_filter(entry: dict, filter_text: str, filter_category: str, filter_status: str) -> bool:
+    """Check if an entry matches the current filter criteria."""
+    # Status filter
+    if filter_status != "all":
+        if entry.get("status") != filter_status:
             return False
 
-        # Status filter
-        if self._filter_status != "all":
-            if entry.get("status") != self._filter_status:
-                return False
+    # Category filter
+    if filter_category != "all":
+        if entry.get("category") != filter_category:
+            return False
 
-        # Category filter
-        if self._filter_category != "all":
-            if entry.get("category") != self._filter_category:
-                return False
+    # Text filter
+    if filter_text:
+        searchable = " ".join([
+            entry.get("source_text", ""),
+            entry.get("file_path", ""),
+            entry.get("field_path", ""),
+            entry.get("group_label", ""),
+            entry.get("group_id", ""),
+            " ".join(entry.get("tags", [])),
+            entry.get("context_notes", ""),
+        ]).lower()
+        if filter_text not in searchable:
+            return False
 
-        # Text filter: search across source_text, file_path, field_path, tags, context_notes
-        if self._filter_text:
-            searchable = " ".join([
-                entry.get("source_text", ""),
-                entry.get("file_path", ""),
-                entry.get("field_path", ""),
-                " ".join(entry.get("tags", [])),
-                entry.get("context_notes", ""),
-            ]).lower()
-            if self._filter_text not in searchable:
-                return False
-
-        return True
+    return True

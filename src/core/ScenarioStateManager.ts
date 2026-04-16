@@ -4,6 +4,7 @@ import type {
   ScenarioCatalogEntry,
   ScenarioCatalogFile,
 } from '../data/types';
+import type { EventBus } from './EventBus';
 import type { FlagStore, FlagValue } from './FlagStore';
 
 /** 与主编辑器 `SCENARIO_PHASE_STATUSES` 一致；非法值仅在 dev 下警告 */
@@ -24,11 +25,17 @@ export class ScenarioStateManager implements IGameSystem {
   private byScenario: Map<string, Map<string, ScenarioPhasePersisted>> = new Map();
   private flagStore: FlagStore | null = null;
   private catalog: ScenarioCatalogEntry[] = [];
+  private eventBus: EventBus | null = null;
 
-  /** 运行时配置：用于 exposes 写入全局 flag */
-  configureRuntime(flagStore: FlagStore, catalog: ScenarioCatalogFile | null): void {
+  /** 运行时配置：用于 exposes 写入全局 flag；eventBus 供 requires 违规时 UI 提示 */
+  configureRuntime(
+    flagStore: FlagStore,
+    catalog: ScenarioCatalogFile | null,
+    eventBus?: EventBus | null,
+  ): void {
     this.flagStore = flagStore;
     this.catalog = catalog?.scenarios && Array.isArray(catalog.scenarios) ? catalog.scenarios : [];
+    this.eventBus = eventBus ?? null;
   }
 
   init(_ctx: GameContext): void {}
@@ -40,15 +47,48 @@ export class ScenarioStateManager implements IGameSystem {
   }
 
   /**
-   * 清单中该 phase 的 `requires`（同 scenario 内须先 done 的 phase 名）。
+   * 清单 `requires`：数组视为逐项与；对象支持 `all` / `any` / `not`；叶子字符串表示该 phase 须 `done`。
+   * 无法识别的结构视为不满足（并触发上层告警）。
    */
-  getCatalogPhaseRequires(scenarioId: string, phase: string): string[] {
-    const sid = scenarioId.trim();
-    const ph = phase.trim();
-    const entry = this.catalog.find((c) => c.id === sid);
-    const raw = entry?.phases?.[ph]?.requires;
-    if (!Array.isArray(raw)) return [];
-    return raw.map((x) => String(x).trim()).filter(Boolean);
+  private evalCatalogRequiresMet(scenarioId: string, raw: unknown): boolean {
+    if (raw === null || raw === undefined) return true;
+    if (Array.isArray(raw)) {
+      for (const x of raw) {
+        if (!this.evalCatalogRequiresMet(scenarioId, x)) return false;
+      }
+      return true;
+    }
+    if (typeof raw === 'string') {
+      const s = raw.trim();
+      if (!s) return true;
+      return this.phaseStatusEquals(scenarioId, s, 'done');
+    }
+    if (typeof raw === 'object' && !Array.isArray(raw)) {
+      const o = raw as Record<string, unknown>;
+      const allowed = new Set(['all', 'any', 'not']);
+      for (const k of Object.keys(o)) {
+        if (!allowed.has(k)) return false;
+      }
+      const opKeys = Object.keys(o).filter((k) => allowed.has(k));
+      if (opKeys.length !== 1) return false;
+      if ('all' in o && Array.isArray(o.all)) {
+        for (const x of o.all) {
+          if (!this.evalCatalogRequiresMet(scenarioId, x)) return false;
+        }
+        return true;
+      }
+      if ('any' in o && Array.isArray(o.any)) {
+        if (o.any.length === 0) return false;
+        for (const x of o.any) {
+          if (this.evalCatalogRequiresMet(scenarioId, x)) return true;
+        }
+        return false;
+      }
+      if ('not' in o) {
+        return !this.evalCatalogRequiresMet(scenarioId, o.not);
+      }
+    }
+    return false;
   }
 
   setScenarioPhase(
@@ -60,6 +100,8 @@ export class ScenarioStateManager implements IGameSystem {
     const ph = phase.trim();
     if (!sid || !ph) return;
 
+    const st0 = payload.status.trim();
+
     if (import.meta.env.DEV) {
       const entry = this.catalog.find((c) => c.id === sid);
       if (entry?.phases && !(ph in entry.phases)) {
@@ -67,20 +109,27 @@ export class ScenarioStateManager implements IGameSystem {
           `[ScenarioStateManager] setScenarioPhase: phase "${ph}" 未出现在 scenario "${sid}" 的 scenarios.json 清单中`,
         );
       }
-      const st0 = payload.status.trim();
       if (st0 && !SCENARIO_STATUS_SUGGESTED.has(st0)) {
         console.warn(
           `[ScenarioStateManager] setScenarioPhase: 非建议 status "${st0}"（建议 pending|active|done|locked）`,
         );
       }
-      const req = this.getCatalogPhaseRequires(sid, ph);
-      const advancing = st0 === 'done' || st0 === 'active';
-      if (advancing && req.length > 0 && !this.checkPrerequisites(sid, req)) {
-        console.warn(
-          `[ScenarioStateManager] setScenarioPhase: "${sid}"·"${ph}" 的清单 requires 未全部 done`,
-          req,
-        );
-      }
+    }
+
+    const entry = this.catalog.find((c) => c.id === sid);
+    const rawReq = entry?.phases?.[ph]?.requires;
+    const advancing = st0 === 'done' || st0 === 'active';
+    if (advancing && !this.evalCatalogRequiresMet(sid, rawReq)) {
+      const detail =
+        rawReq !== undefined && rawReq !== null
+          ? ` requires=${JSON.stringify(rawReq)}`
+          : '';
+      const logMsg = `[ScenarioStateManager] setScenarioPhase: "${sid}"·"${ph}" 的清单 requires 未满足${detail}`;
+      console.error(logMsg);
+      this.eventBus?.emit('notification:show', {
+        text: `叙事阶段「${ph}」违反 requires 前置（详情见控制台日志）`,
+        type: 'error',
+      });
     }
 
     let m = this.byScenario.get(sid);

@@ -8,6 +8,14 @@ from tools.copy_manager.scanner.base import BaseScanner, TextEntry, find_entry_i
 from tools.copy_manager.utils import read_json
 
 
+# Human labels for cutscene field types
+_FIELD_LABELS = {
+    "text": "文本",
+    "speaker": "说话人",
+    "name": "名称",
+}
+
+
 class CutsceneScanner(BaseScanner):
     """Scans cutscenes/index.json for translatable text."""
 
@@ -32,9 +40,15 @@ class CutsceneScanner(BaseScanner):
             if not isinstance(cutscene, dict):
                 continue
             cs_id = find_entry_id(cutscene, "id", i)
+            cs_name = cutscene.get("name", cs_id)
+            group_id = f"cutscenes[{cs_id}]"
+            group_label = str(cs_name)
             steps = cutscene.get("steps", [])
             if not isinstance(steps, list):
                 continue
+
+            # Track text field counts per cutscene for numbered labels
+            field_counter = 0
 
             for si, step in enumerate(steps):
                 if not isinstance(step, dict):
@@ -47,6 +61,7 @@ class CutsceneScanner(BaseScanner):
                     text = step["text"]
                     if isinstance(text, str) and text.strip():
                         field_path = f"cutscenes[{cs_id}].steps[{si}].text"
+                        field_counter += 1
                         entries.append(TextEntry(
                             uid=make_uid("cutscenes_title", file_rel, field_path),
                             source_text=text,
@@ -54,6 +69,9 @@ class CutsceneScanner(BaseScanner):
                             field_path=field_path,
                             file_type="cutscenes_title",
                             category="cutscene",
+                            group_id=group_id,
+                            group_label=group_label,
+                            field_label=f"标题 #{field_counter}",
                             tags=[f"cutscene_id:{cs_id}", f"step:{step_type}"],
                         ))
 
@@ -63,6 +81,7 @@ class CutsceneScanner(BaseScanner):
                     speaker = step.get("speaker", "")
                     if isinstance(text, str) and text.strip():
                         field_path = f"cutscenes[{cs_id}].steps[{si}].text"
+                        field_counter += 1
                         entries.append(TextEntry(
                             uid=make_uid("cutscenes_dialogue", file_rel, field_path),
                             source_text=text,
@@ -70,11 +89,15 @@ class CutsceneScanner(BaseScanner):
                             field_path=field_path,
                             file_type="cutscenes_dialogue",
                             category="cutscene",
+                            group_id=group_id,
+                            group_label=group_label,
+                            field_label=f"对话 #{field_counter}",
                             tags=[f"cutscene_id:{cs_id}", f"speaker:{speaker}", f"step:{step_type}"],
                         ))
                     # Also capture the speaker name as a separate entry
                     if isinstance(speaker, str) and speaker.strip():
                         field_path_speaker = f"cutscenes[{cs_id}].steps[{si}].speaker"
+                        field_counter += 1
                         entries.append(TextEntry(
                             uid=make_uid("cutscenes_speaker", file_rel, field_path_speaker),
                             source_text=speaker,
@@ -82,6 +105,9 @@ class CutsceneScanner(BaseScanner):
                             field_path=field_path_speaker,
                             file_type="cutscenes_speaker",
                             category="cutscene",
+                            group_id=group_id,
+                            group_label=group_label,
+                            field_label=f"说话人 #{field_counter}",
                             tags=[f"cutscene_id:{cs_id}", f"step:{step_type}"],
                         ))
 
@@ -92,6 +118,7 @@ class CutsceneScanner(BaseScanner):
                         name = params["name"]
                         if isinstance(name, str) and name.strip():
                             field_path = f"cutscenes[{cs_id}].steps[{si}].params.name"
+                            field_counter += 1
                             entries.append(TextEntry(
                                 uid=make_uid("cutscenes_actor_name", file_rel, field_path),
                                 source_text=name,
@@ -99,6 +126,9 @@ class CutsceneScanner(BaseScanner):
                                 field_path=field_path,
                                 file_type="cutscenes_actor_name",
                                 category="cutscene",
+                                group_id=group_id,
+                                group_label=group_label,
+                                field_label=f"角色名 #{field_counter}",
                                 tags=[f"cutscene_id:{cs_id}", f"step:{step_type}"],
                             ))
 
@@ -115,6 +145,7 @@ class CutsceneScanner(BaseScanner):
                                 speaker = track.get("speaker", "")
                                 if isinstance(text, str) and text.strip():
                                     field_path = f"cutscenes[{cs_id}].steps[{si}].tracks[{ti}].text"
+                                    field_counter += 1
                                     entries.append(TextEntry(
                                         uid=make_uid("cutscenes_dialogue", file_rel, field_path),
                                         source_text=text,
@@ -122,6 +153,9 @@ class CutsceneScanner(BaseScanner):
                                         field_path=field_path,
                                         file_type="cutscenes_dialogue",
                                         category="cutscene",
+                                        group_id=group_id,
+                                        group_label=group_label,
+                                        field_label=f"对话(并行) #{field_counter}",
                                         tags=[f"cutscene_id:{cs_id}", f"speaker:{speaker}", f"step:parallel"],
                                     ))
 

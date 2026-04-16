@@ -407,9 +407,9 @@ export class Game {
     await this.documentRevealManager.loadDefinitions();
     try {
       const scenarioCat = await this.assetManager.loadJson<ScenarioCatalogFile>('/assets/data/scenarios.json');
-      this.scenarioStateManager.configureRuntime(this.flagStore, scenarioCat);
+      this.scenarioStateManager.configureRuntime(this.flagStore, scenarioCat, this.eventBus);
     } catch {
-      this.scenarioStateManager.configureRuntime(this.flagStore, null);
+      this.scenarioStateManager.configureRuntime(this.flagStore, null, this.eventBus);
     }
 
     const mkCondCtx = (): ConditionEvalContext => ({

@@ -11,18 +11,14 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QComboBox, QTableWidget, QTableWidgetItem, QPushButton,
     QHeaderView, QMessageBox, QCheckBox, QGroupBox,
     QSizePolicy, QSpinBox, QDoubleSpinBox, QStackedWidget, QToolButton, QDialog,
-    QStyle, QApplication,
+    QStyle,
 )
-from PySide6.QtCore import Qt, QSize, QEventLoop, QEvent
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFontMetrics
 
 from tools.editor.shared.condition_expr_tree import ConditionExprTreeRootWidget
 from tools.editor.shared.action_editor import (
     _hide_combo_popups_under,
-    _dismiss_active_popup_stack,
-    _hide_active_application_popups,
-    _purge_qcombobox_private_containers,
-    _protected_combobox_popup_widget_ids,
     FilterableTypeCombo,
 )
 
@@ -40,9 +36,14 @@ PROMPT_LINE_SCENE_NPC_CONTEXT_TOKEN = "@contextNpc"
 _PLAIN_MIN_LINES = 4
 
 
-def _plain_text_edit(*, placeholder: str = "", min_lines: int = _PLAIN_MIN_LINES) -> QPlainTextEdit:
+def _plain_text_edit(
+    *,
+    placeholder: str = "",
+    min_lines: int = _PLAIN_MIN_LINES,
+    parent: QWidget | None = None,
+) -> QPlainTextEdit:
     _ = min_lines  # 调用处仍传 min_lines；高度固定为单行级，不再随该参数增高
-    w = QPlainTextEdit()
+    w = QPlainTextEdit(parent)
     if placeholder:
         w.setPlaceholderText(placeholder)
     fm = QFontMetrics(w.font())
@@ -145,12 +146,13 @@ class NodeInspector(QWidget):
         self._editor_group_geometry_mode = False
         self._root_layout = QVBoxLayout(self)
 
-        self._type_label = QLabel()
+        self._type_label = QLabel(self)
         self._type_label.setWordWrap(True)
         self._type_label.setTextFormat(Qt.TextFormat.RichText)
         self._root_layout.addWidget(self._type_label)
 
-        self._body = QWidget()
+        # parent=self 从构造的第一刻起就在 inspector 子树内，避免短暂 orphan top-level。
+        self._body = QWidget(self)
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._root_layout.addWidget(self._body, 0)
@@ -164,10 +166,10 @@ class NodeInspector(QWidget):
         self._body_valid = False
         self._topology_refs = {}
         old_body = self._body
-        # 先收起所有 QComboBox 弹出层再销毁，避免 Windows 上短暂出现独立小窗抢焦点（与 ActionEditor._clear 一致）
+        # 只收起所有 QComboBox 公开弹出层（调公开 hidePopup）；
+        # 禁止主动处理 QComboBoxPrivateContainer 或强制 processEvents —— 按 Qt 官方建议忽略这类内部 top-level。
         _hide_combo_popups_under(old_body)
-        _dismiss_active_popup_stack()
-        self._body = QWidget()
+        self._body = QWidget(self)
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         idx = self._root_layout.indexOf(old_body)
@@ -176,9 +178,6 @@ class NodeInspector(QWidget):
         self._root_layout.removeWidget(old_body)
         self._root_layout.insertWidget(idx, self._body)
         old_body.deleteLater()
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        _purge_qcombobox_private_containers()
 
     def _emit_changed(self):
         # Parent connects to slot that reads get_node()
@@ -211,6 +210,11 @@ class NodeInspector(QWidget):
         editor_groups: dict[str, dict[str, Any]] | None = None,
         editor_group_for_node: str | None = None,
     ):
+        # 按 Qt 官方推荐，用 setUpdatesEnabled(False/True) 包住 mass rebuild，避免一次点击里多个
+        # QComboBox popup HWND 创建/销毁被 DWM 采样造成任务栏叠图标与小顶层窗闪烁。
+        _win = self.window()
+        if _win is not None:
+            _win.setUpdatesEnabled(False)
         self._suppress_change_emit = True
         try:
             self._node_id = node_id
@@ -230,25 +234,26 @@ class NodeInspector(QWidget):
             elif t == "switch":
                 self._build_switch(data)
             elif t == "end":
-                self._body_layout.addWidget(QLabel("结束节点，无额外字段。"))
+                self._body_layout.addWidget(QLabel("结束节点，无额外字段。", self._body))
                 self._getter = lambda: {"type": "end"}
             else:
-                self._body_layout.addWidget(QLabel(f"未知类型 {t!r}，请用「原始 JSON」在后续版本编辑。"))
+                self._body_layout.addWidget(
+                    QLabel(
+                        f"未知类型 {t!r}，请用「原始 JSON」在后续版本编辑。",
+                        self._body,
+                    )
+                )
                 snap = copy.deepcopy(data)
                 self._getter = lambda s=snap: copy.deepcopy(s)
         finally:
             self._body_valid = True
             self._suppress_change_emit = False
             _hide_combo_popups_under(self._body)
-            _hide_active_application_popups()
-            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-            _prot = _protected_combobox_popup_widget_ids(self._body)
-            _purge_qcombobox_private_containers(protected_ids=_prot)
-            _mw = self.window()
-            if _mw is not None:
-                _mw.raise_()
-                _mw.activateWindow()
+            if _win is not None:
+                _win.setUpdatesEnabled(True)
+                # raise_/activateWindow 保留做最终兜底（不造成闪烁，仅可能抢焦点）；如后续发现多余可去掉。
+                _win.raise_()
+                _win.activateWindow()
 
     def get_node(self) -> dict[str, Any]:
         """Return current node dict from form state."""
@@ -305,25 +310,25 @@ class NodeInspector(QWidget):
         current_gid: str,
     ) -> None:
         if self._editor_group_geometry_mode:
-            row_w = QWidget()
+            row_w = QWidget(self._body)
             h = QHBoxLayout(row_w)
             h.setContentsMargins(0, 0, 0, 0)
-            h.addWidget(QLabel("编辑器分组"))
+            h.addWidget(QLabel("编辑器分组", row_w))
             if current_gid:
                 g = group_defs.get(current_gid) or {}
                 label = str(g.get("name") or current_gid)
-                sub = QLabel(f"{label}（由画布分组框自动判定，拖入/拖出框即可）")
+                sub = QLabel(f"{label}（由画布分组框自动判定，拖入/拖出框即可）", row_w)
             else:
-                sub = QLabel("（无，节点中心不在任一分组框内）")
+                sub = QLabel("（无，节点中心不在任一分组框内）", row_w)
             sub.setWordWrap(True)
             h.addWidget(sub, 1)
             self._body_layout.addWidget(row_w)
             return
-        row_w = QWidget()
+        row_w = QWidget(self._body)
         h = QHBoxLayout(row_w)
         h.setContentsMargins(0, 0, 0, 0)
-        h.addWidget(QLabel("编辑器分组"))
-        cb = QComboBox()
+        h.addWidget(QLabel("编辑器分组", row_w))
+        cb = QComboBox(row_w)
         cb.addItem("(无)", "")
         for gid in sorted(group_defs.keys(), key=lambda x: (x.lower(), x)):
             g = group_defs.get(gid) or {}
@@ -357,13 +362,13 @@ class NodeInspector(QWidget):
     def _build_line(self, data: dict[str, Any]):
         lines_raw = data.get("lines")
         use_multi = isinstance(lines_raw, list) and len(lines_raw) > 0
-        cb_multi = QCheckBox("多拍连续对白（每句点击继续；存为 lines 数组）")
+        cb_multi = QCheckBox("多拍连续对白（每句点击继续；存为 lines 数组）", self._body)
         cb_multi.setChecked(use_multi)
 
-        beats_wrap = QWidget()
+        beats_wrap = QWidget(self._body)
         beats_v = QVBoxLayout(beats_wrap)
         beats_v.setContentsMargins(0, 0, 0, 0)
-        rows_wrap = QWidget()
+        rows_wrap = QWidget(beats_wrap)
         rows_layout = QVBoxLayout(rows_wrap)
         rows_layout.setContentsMargins(0, 0, 0, 0)
         rows_layout.setSpacing(4)
@@ -404,17 +409,17 @@ class NodeInspector(QWidget):
 
         def make_beat_block(beat: dict[str, Any] | None) -> dict[str, Any]:
             row: dict[str, Any] = {"collapsed": True}
-            outer = QWidget()
+            outer = QWidget(rows_wrap)
             ov = QVBoxLayout(outer)
             ov.setContentsMargins(0, 0, 0, 0)
             ov.setSpacing(4)
 
             header = QHBoxLayout()
-            toggle = QToolButton()
+            toggle = QToolButton(outer)
             toggle.setAutoRaise(True)
             toggle.setArrowType(Qt.ArrowType.RightArrow)
             toggle.setToolTip("折叠 / 展开本句详细表单")
-            summary = QLabel()
+            summary = QLabel(outer)
             summary.setWordWrap(False)
             summary.setStyleSheet("color: #ccc;")
 
@@ -437,7 +442,7 @@ class NodeInspector(QWidget):
             header.addWidget(btn_down)
             header.addWidget(btn_del)
 
-            content = QWidget()
+            content = QWidget(outer)
             o_fl = QFormLayout(content)
             _form_wrap_rows(o_fl)
 
@@ -445,17 +450,20 @@ class NodeInspector(QWidget):
             if not isinstance(spb, dict):
                 spb = {"kind": "player"}
             bk, bex = _speaker_to_ui(spb)
-            kcb = QComboBox()
+            kcb = QComboBox(content)
             for sk in SpeakerKinds:
                 kcb.addItem(sk, sk)
             kcb.setCurrentIndex(max(0, kcb.findData(bk)))
-            exed = QLineEdit(bex)
-            tx_plain = _plain_text_edit(placeholder="本句对白正文", min_lines=2)
+            exed = QLineEdit(bex, content)
+            tx_plain = _plain_text_edit(
+                placeholder="本句对白正文", min_lines=2, parent=content
+            )
             tx_plain.setPlainText(
                 str((beat or {}).get("text", "") if isinstance(beat, dict) else "")
             )
             tked = QLineEdit(
-                str((beat or {}).get("textKey", "") if isinstance(beat, dict) else "")
+                str((beat or {}).get("textKey", "") if isinstance(beat, dict) else ""),
+                content,
             )
             tked.setPlaceholderText("可选：strings 键")
 
@@ -591,7 +599,7 @@ class NodeInspector(QWidget):
         refresh_beat_fold_policy()
 
         bbar = QHBoxLayout()
-        b_add_end = QPushButton("在末尾添加一句")
+        b_add_end = QPushButton("在末尾添加一句", self._body)
         b_add_end.setToolTip("在列表最后追加一条空白句")
 
         def do_add_end_beat() -> None:
@@ -608,17 +616,17 @@ class NodeInspector(QWidget):
             sp = {"kind": "player"}
         kind, extra = _speaker_to_ui(sp)
 
-        kind_cb = QComboBox()
+        legacy_wrap = QWidget(self._body)
+        kind_cb = QComboBox(legacy_wrap)
         for k in SpeakerKinds:
             kind_cb.addItem(k, k)
         idx = kind_cb.findData(kind)
         kind_cb.setCurrentIndex(max(0, idx))
-        extra_edit = QLineEdit(extra)
-        text_edit = _plain_text_edit(placeholder="对白正文")
+        extra_edit = QLineEdit(extra, legacy_wrap)
+        text_edit = _plain_text_edit(placeholder="对白正文", parent=legacy_wrap)
         text_edit.setPlainText(str(data.get("text", "")))
-        text_key = QLineEdit(str(data.get("textKey", "")))
+        text_key = QLineEdit(str(data.get("textKey", "")), legacy_wrap)
         text_key.setPlaceholderText("可选：strings 键")
-        legacy_wrap = QWidget()
         leg_l = QFormLayout(legacy_wrap)
         _form_wrap_rows(leg_l)
         leg_l.addRow("说话人 kind", kind_cb)
@@ -639,9 +647,9 @@ class NodeInspector(QWidget):
                 w.textChanged.connect(self._emit_changed)
         upd_extra_label()
 
-        next_edit = QLineEdit(str(data.get("next", "")))
+        next_edit = QLineEdit(str(data.get("next", "")), self._body)
         next_edit.setPlaceholderText("下一节点 id")
-        pick = QPushButton("选…")
+        pick = QPushButton("选…", self._body)
         pick.clicked.connect(lambda: self._pick_target(next_edit))
         next_edit.textChanged.connect(self._emit_changed)
 
@@ -735,8 +743,8 @@ class NodeInspector(QWidget):
         acts = data.get("actions")
         if not isinstance(acts, list):
             acts = []
-        next_edit = QLineEdit(str(data.get("next", "")))
-        pick = QPushButton("选…")
+        next_edit = QLineEdit(str(data.get("next", "")), self._body)
+        pick = QPushButton("选…", self._body)
         pick.clicked.connect(lambda: self._pick_target(next_edit))
         next_edit.textChanged.connect(self._emit_changed)
 
@@ -749,8 +757,15 @@ class NodeInspector(QWidget):
         self._body_layout.addLayout(fl)
 
         pm = self._project_model_getter() if self._project_model_getter else None
-        ae = ActionEditor("动作（与主编辑器 Action列表同源）", self, show_reorder_buttons=True)
+        # parent=self._body：让 ae 的 parent 链一开始就落在 inspector 的可见子树内；
+        # 先 addWidget 再 set_data，避免 row 构造时父 widget 还未挂到布局里短暂成为 orphan。
+        ae = ActionEditor(
+            "动作（与主编辑器 Action列表同源）",
+            self._body,
+            show_reorder_buttons=True,
+        )
         ae.set_project_context(pm, None)
+        self._body_layout.addWidget(ae)
         to_load: list[dict[str, Any]] = []
         if acts:
             for a in acts:
@@ -760,7 +775,6 @@ class NodeInspector(QWidget):
             to_load = [{"type": "setFlag", "params": {"key": "", "value": True}}]
         ae.set_data(to_load)
         ae.changed.connect(self._emit_changed)
-        self._body_layout.addWidget(ae)
         self._topology_refs = {"type": "runActions", "next_edit": next_edit}
 
         def getter():
@@ -785,8 +799,8 @@ class NodeInspector(QWidget):
             cb.setCurrentIndex(0)
 
     @staticmethod
-    def _make_cost_coins_spin(on_change) -> QSpinBox:
-        sp = QSpinBox()
+    def _make_cost_coins_spin(on_change, parent: QWidget | None = None) -> QSpinBox:
+        sp = QSpinBox(parent)
         sp.setRange(-1, 9_999_999)
         sp.setSingleStep(1)
         sp.setSpecialValueText("无（不校验铜钱）")
@@ -818,29 +832,30 @@ class NodeInspector(QWidget):
         # promptLine optional
         pl = data.get("promptLine")
         has_pl = isinstance(pl, dict) and bool(pl)
-        cb_pl = QCheckBox("有 promptLine（选项前多播一行）")
+        cb_pl = QCheckBox("有 promptLine（选项前多播一行）", self._body)
         cb_pl.setChecked(bool(has_pl))
+        prompt_box = QGroupBox("promptLine", self._body)
 
         sp = (pl or {}).get("speaker") if has_pl else {"kind": "player"}
         if not isinstance(sp, dict):
             sp = {"kind": "player"}
         kind, extra = _speaker_to_ui(sp)
-        pl_kind = QComboBox()
+        pl_kind = QComboBox(prompt_box)
         for k in SpeakerKinds:
             pl_kind.addItem(k, k)
         pl_kind.setCurrentIndex(max(0, pl_kind.findData(kind)))
-        pl_extra_stack = QStackedWidget()
-        pl_extra_line = QLineEdit()
-        pl_npc_wrap = QWidget()
+        pl_extra_stack = QStackedWidget(prompt_box)
+        pl_extra_line = QLineEdit(prompt_box)
+        pl_npc_wrap = QWidget(prompt_box)
         pl_npc_lo = QHBoxLayout(pl_npc_wrap)
         pl_npc_lo.setContentsMargins(0, 0, 0, 0)
-        pl_npc_edit = QLineEdit()
+        pl_npc_edit = QLineEdit(pl_npc_wrap)
         pl_npc_edit.setPlaceholderText("手输 npcId或点「选…」在对话框中搜索")
         pl_npc_edit.setToolTip(
             "可手输任意 npcId。\n"
             f"点「选…」打开可搜索列表（含「{PROMPT_LINE_SCENE_NPC_CONTEXT_TOKEN}」=进入图时传入的 npcId）。"
         )
-        pl_npc_btn = QPushButton("选…")
+        pl_npc_btn = QPushButton("选…", pl_npc_wrap)
         pl_npc_btn.setToolTip("打开可搜索的 NPC 列表")
         pl_npc_lo.addWidget(pl_npc_edit, 1)
         pl_npc_lo.addWidget(pl_npc_btn)
@@ -879,11 +894,10 @@ class NodeInspector(QWidget):
                 self._emit_changed()
 
         pl_npc_btn.clicked.connect(_open_pl_npc_picker)
-        pl_extra_lbl = QLabel()
-        pl_text = _plain_text_edit(placeholder="选项前多播一行对白")
+        pl_extra_lbl = QLabel(prompt_box)
+        pl_text = _plain_text_edit(placeholder="选项前多播一行对白", parent=prompt_box)
         pl_text.setPlainText(str((pl or {}).get("text", "")))
 
-        prompt_box = QGroupBox("promptLine")
         pfl = QFormLayout()
         _form_wrap_rows(pfl)
         pfl.addRow("kind", pl_kind)
@@ -926,7 +940,7 @@ class NodeInspector(QWidget):
         opts = data.get("options")
         if not isinstance(opts, list):
             opts = []
-        rows_wrap = QWidget()
+        rows_wrap = QWidget(self._body)
         rows_layout = QVBoxLayout(rows_wrap)
         rows_layout.setContentsMargins(0, 0, 0, 0)
         option_rows: list[dict[str, Any]] = []
@@ -967,17 +981,17 @@ class NodeInspector(QWidget):
 
         def make_option_block(od: dict[str, Any]) -> dict[str, Any]:
             row: dict[str, Any] = {"collapsed": True}
-            outer = QWidget()
+            outer = QWidget(rows_wrap)
             ov = QVBoxLayout(outer)
             ov.setContentsMargins(0, 0, 0, 0)
             ov.setSpacing(4)
 
             header = QHBoxLayout()
-            toggle = QToolButton()
+            toggle = QToolButton(outer)
             toggle.setAutoRaise(True)
             toggle.setArrowType(Qt.ArrowType.RightArrow)
             toggle.setToolTip("折叠 / 展开本条详细表单")
-            summary = QLabel()
+            summary = QLabel(outer)
             summary.setWordWrap(False)
             summary.setStyleSheet("color: #ccc;")
 
@@ -1000,30 +1014,32 @@ class NodeInspector(QWidget):
             header.addWidget(btn_down)
             header.addWidget(btn_del)
 
-            content = QWidget()
+            content = QWidget(outer)
             o_fl = QFormLayout(content)
             _form_wrap_rows(o_fl)
-            id_e = QLineEdit(str(od.get("id", "")))
-            text_e = _plain_text_edit(placeholder="玩家看到的选项文字", min_lines=2)
+            id_e = QLineEdit(str(od.get("id", "")), content)
+            text_e = _plain_text_edit(
+                placeholder="玩家看到的选项文字", min_lines=2, parent=content
+            )
             text_e.setPlainText(str(od.get("text", "")))
-            nx = QLineEdit(str(od.get("next", "")))
-            pick = QPushButton("选…")
+            nx = QLineEdit(str(od.get("next", "")), content)
+            pick = QPushButton("选…", content)
             pick.clicked.connect(lambda _c=False, le=nx: self._pick_target(le))
             nx_lo = QHBoxLayout()
             nx_lo.addWidget(nx, 1)
             nx_lo.addWidget(pick)
 
-            rf_wrap = QWidget()
+            rf_wrap = QWidget(content)
             rf_lo = QHBoxLayout(rf_wrap)
             rf_lo.setContentsMargins(0, 0, 0, 0)
-            rf_edit = QLineEdit(str(od.get("requireFlag", "") or ""))
+            rf_edit = QLineEdit(str(od.get("requireFlag", "") or ""), rf_wrap)
             rf_edit.setReadOnly(True)
             rf_edit.setPlaceholderText(
                 "（无）点「选择…」打开登记表（与主编辑器 Flag 选择器相同）"
             )
             rf_edit.setToolTip("仅当 flagStore 中该键为真时选项可选；须从登记表选取以保证键名一致。")
-            rf_pick = QPushButton("选择…")
-            rf_clear = QPushButton("清除")
+            rf_pick = QPushButton("选择…", rf_wrap)
+            rf_clear = QPushButton("清除", rf_wrap)
 
             def do_pick_rf() -> None:
                 getter = self._project_model_getter
@@ -1068,7 +1084,7 @@ class NodeInspector(QWidget):
             rf_lo.addWidget(rf_pick)
             rf_lo.addWidget(rf_clear)
 
-            cost_sp = self._make_cost_coins_spin(self._emit_changed)
+            cost_sp = self._make_cost_coins_spin(self._emit_changed, content)
             self._set_cost_coins_spin(cost_sp, od.get("costCoins"))
 
             from tools.editor.shared.action_editor import FilterableTypeCombo
@@ -1078,7 +1094,8 @@ class NodeInspector(QWidget):
             ]
             for rid, rname in rule_pairs:
                 rh_entries.append((f"{rname}（{rid}）", rid))
-            rh_cb = FilterableTypeCombo(rh_entries, self)
+            # select_only=True：不让 editable 模式在构造时触发 QComboBoxPrivateContainer 作为 top-level HWND 闪现。
+            rh_cb = FilterableTypeCombo(rh_entries, content, select_only=True)
             rh_cb.setToolTip(
                 "对话 UI 上「规矩」标签与配色；与 requireFlag 是否满足无关。\n"
                 "若下方「灰显点击提示」留空，锁定时会用 strings 中 choiceNeedRule 并结合该规矩名称生成说明。"
@@ -1089,13 +1106,14 @@ class NodeInspector(QWidget):
             hint_plain = _plain_text_edit(
                 placeholder="可选。选项灰显时玩家点击后弹出此处全文；留空则由游戏按规矩名/铜钱等自动生成。",
                 min_lines=2,
+                parent=content,
             )
             hint_plain.setPlainText(str(od.get("disabledClickHint", "") or ""))
             hint_plain.textChanged.connect(self._emit_changed)
 
             o_fl.addRow("选项 id", id_e)
             o_fl.addRow("选项文案", text_e)
-            wnx = QWidget()
+            wnx = QWidget(content)
             wnx.setLayout(nx_lo)
             o_fl.addRow("连线至 next", wnx)
             o_fl.addRow("前提标志 requireFlag", rf_wrap)
@@ -1105,13 +1123,14 @@ class NodeInspector(QWidget):
 
             req_g = QGroupBox(
                 "可选：requireCondition（ConditionExpr；与 requireFlag 同时存在则均须满足）",
+                content,
             )
             rg_l = QVBoxLayout(req_g)
 
             def _pm_get() -> Any:
                 return self._project_model_getter() if self._project_model_getter else None
 
-            req_tree = ConditionExprTreeRootWidget(model_getter=_pm_get)
+            req_tree = ConditionExprTreeRootWidget(req_g, model_getter=_pm_get)
             rc0 = od.get("requireCondition")
             if isinstance(rc0, dict):
                 req_tree.set_expr(rc0)
@@ -1236,7 +1255,7 @@ class NodeInspector(QWidget):
         refresh_choice_fold_policy()
 
         obar = QHBoxLayout()
-        b_add = QPushButton("在末尾添加选项")
+        b_add = QPushButton("在末尾添加选项", self._body)
         b_add.setToolTip("在列表最后追加一条空白选项")
 
         def do_add_end() -> None:
@@ -1248,7 +1267,8 @@ class NodeInspector(QWidget):
         self._body_layout.addWidget(
             QLabel(
                 "选项：requireFlag 登记表；requireCondition 为 ConditionExpr；"
-                "ruleHintId 规矩样式；disabledClickHint 灰显点击全文提示。"
+                "ruleHintId 规矩样式；disabledClickHint 灰显点击全文提示。",
+                self._body,
             )
         )
         self._body_layout.addWidget(rows_wrap)
@@ -1306,8 +1326,8 @@ class NodeInspector(QWidget):
 
         pm_switch = self._project_model_getter() if self._project_model_getter else None
 
-        dn = QLineEdit(str(data.get("defaultNext", "")))
-        pickd = QPushButton("选…")
+        dn = QLineEdit(str(data.get("defaultNext", "")), self._body)
+        pickd = QPushButton("选…", self._body)
         pickd.clicked.connect(lambda: self._pick_target(dn))
         dn.textChanged.connect(self._emit_changed)
         fl = QFormLayout()
@@ -1322,10 +1342,11 @@ class NodeInspector(QWidget):
                 "分支：自上而下命中第一条。"
                 "每条可选用「多条条件 AND」或「单条 ConditionExpr（JSON，与运行时 evaluateConditionExpr 一致）」；"
                 "后者保存时写入 condition字段并优先于 conditions。",
+                self._body,
             ),
         )
 
-        cases_wrap = QWidget()
+        cases_wrap = QWidget(self._body)
         cases_outer = QVBoxLayout(cases_wrap)
         cases_outer.setContentsMargins(0, 0, 0, 0)
         cases_outer.setSpacing(4)
@@ -1366,17 +1387,17 @@ class NodeInspector(QWidget):
 
         def make_case_block(case: dict[str, Any] | None) -> dict[str, Any]:
             case_rec: dict[str, Any] = {"collapsed": True}
-            outer = QWidget()
+            outer = QWidget(cases_wrap)
             ov = QVBoxLayout(outer)
             ov.setContentsMargins(0, 0, 0, 0)
             ov.setSpacing(4)
 
             header = QHBoxLayout()
-            toggle = QToolButton()
+            toggle = QToolButton(outer)
             toggle.setAutoRaise(True)
             toggle.setArrowType(Qt.ArrowType.RightArrow)
             toggle.setToolTip("折叠 / 展开本分支")
-            summary = QLabel()
+            summary = QLabel(outer)
             summary.setWordWrap(False)
             summary.setStyleSheet("color: #ccc;")
             btn_ins_before, btn_ins_after, btn_up, btn_down, btn_del = (
@@ -1397,28 +1418,28 @@ class NodeInspector(QWidget):
             header.addWidget(btn_down)
             header.addWidget(btn_del)
 
-            content = QWidget()
+            content = QWidget(outer)
             cv = QVBoxLayout(content)
             cv.setContentsMargins(0, 0, 0, 0)
-            nx = QLineEdit(str((case or {}).get("next", "")))
-            pk = QPushButton("选…")
+            nx = QLineEdit(str((case or {}).get("next", "")), content)
+            pk = QPushButton("选…", content)
             pk.clicked.connect(lambda: self._pick_target(nx))
             nx.textChanged.connect(self._emit_changed)
             hr = QHBoxLayout()
-            hr.addWidget(QLabel("next"))
+            hr.addWidget(QLabel("next", content))
             hr.addWidget(nx, 1)
             hr.addWidget(pk)
             cv.addLayout(hr)
 
-            case_mode = QComboBox()
+            case_mode = QComboBox(content)
             case_mode.addItem("多条条件（AND）", "and")
             case_mode.addItem("ConditionExpr（JSON）", "expr")
             cm_row = QHBoxLayout()
-            cm_row.addWidget(QLabel("本分支条件"))
+            cm_row.addWidget(QLabel("本分支条件", content))
             cm_row.addWidget(case_mode, 1)
             cv.addLayout(cm_row)
 
-            expr_edit = QPlainTextEdit()
+            expr_edit = QPlainTextEdit(content)
             expr_edit.setPlaceholderText(
                 '{"all":[...]} / {"scenario":"...","phase":"...","status":"done"} 等',
             )
@@ -1431,12 +1452,14 @@ class NodeInspector(QWidget):
             expr_edit.textChanged.connect(self._emit_changed)
             cv.addWidget(expr_edit)
 
-            btn_and_to_json = QPushButton("将当前 AND 条件导出为 JSON 并切换到 ConditionExpr")
+            btn_and_to_json = QPushButton(
+                "将当前 AND 条件导出为 JSON 并切换到 ConditionExpr", content
+            )
             cv.addWidget(btn_and_to_json)
 
             cond_rows_layout = QVBoxLayout()
             cond_rows_layout.setSpacing(4)
-            cond_rows_wrap = QWidget()
+            cond_rows_wrap = QWidget(content)
             cond_rows_wrap.setLayout(cond_rows_layout)
             cond_rows: list[dict[str, Any]] = []
 
@@ -1475,16 +1498,16 @@ class NodeInspector(QWidget):
 
             def make_cond_block(cd: dict[str, Any] | None) -> dict[str, Any]:
                 crow: dict[str, Any] = {"collapsed": True}
-                cow = QWidget()
+                cow = QWidget(cond_rows_wrap)
                 col = QVBoxLayout(cow)
                 col.setContentsMargins(0, 0, 0, 0)
                 col.setSpacing(4)
                 ch = QHBoxLayout()
-                ctog = QToolButton()
+                ctog = QToolButton(cow)
                 ctog.setAutoRaise(True)
                 ctog.setArrowType(Qt.ArrowType.RightArrow)
                 ctog.setToolTip("折叠 / 展开本条件")
-                csum = QLabel()
+                csum = QLabel(cow)
                 csum.setWordWrap(False)
                 csum.setStyleSheet("color: #aaa;")
                 c_before, c_after, c_up, c_down, c_del = _compact_row_nav_buttons(
@@ -1504,24 +1527,24 @@ class NodeInspector(QWidget):
                 ch.addWidget(c_down)
                 ch.addWidget(c_del)
 
-                body = QWidget()
+                body = QWidget(cow)
                 h = QHBoxLayout(body)
                 h.setContentsMargins(0, 0, 0, 0)
-                mode = QComboBox()
+                mode = QComboBox(body)
                 mode.addItem("标志 flag", "flag")
                 mode.addItem("任务 quest", "quest")
                 mode.addItem("scenario", "scenario")
-                op_cb = QComboBox()
+                op_cb = QComboBox(body)
                 for o in ("==", "!=", ">", "<", ">=", "<="):
                     op_cb.addItem(o, o)
-                qid_e = QLineEdit()
-                st_cb = QComboBox()
+                qid_e = QLineEdit(body)
+                st_cb = QComboBox(body)
                 for s in ("Inactive", "Active", "Completed"):
                     st_cb.addItem(s, s)
-                flag_w = QWidget()
+                flag_w = QWidget(body)
                 fh = QHBoxLayout(flag_w)
                 fh.setContentsMargins(0, 0, 0, 0)
-                fh.addWidget(QLabel("flag"))
+                fh.addWidget(QLabel("flag", flag_w))
                 if pm_switch is not None:
                     from tools.editor.shared.flag_key_field import FlagKeyPickField
 
@@ -1533,7 +1556,7 @@ class NodeInspector(QWidget):
                     def _set_flag(s: str) -> None:
                         flag_ctrl.set_key(s)
                 else:
-                    flag_ctrl = QLineEdit()
+                    flag_ctrl = QLineEdit(body)
                     flag_ctrl.setPlaceholderText(
                         "无法加载 ProjectModel 时可直接输入 flag 键"
                     )
@@ -1547,62 +1570,65 @@ class NodeInspector(QWidget):
 
                 fh.addWidget(flag_ctrl, 1)
                 fh.addWidget(op_cb)
-                val_kind = QComboBox()
+                val_kind = QComboBox(body)
                 val_kind.addItem("布尔", "bool")
                 val_kind.addItem("整数", "int")
                 val_kind.addItem("小数", "float")
                 val_kind.addItem("文本", "str")
-                val_stack = QStackedWidget()
-                val_bool = QComboBox()
+                val_stack = QStackedWidget(body)
+                val_bool = QComboBox(body)
                 val_bool.addItem("false", False)
                 val_bool.addItem("true", True)
-                val_int = QSpinBox()
+                val_int = QSpinBox(body)
                 val_int.setRange(-2_147_483_648, 2_147_483_647)
-                val_float = QDoubleSpinBox()
+                val_float = QDoubleSpinBox(body)
                 val_float.setRange(-1e12, 1e12)
                 val_float.setDecimals(8)
-                val_str = QLineEdit()
+                val_str = QLineEdit(body)
                 val_stack.addWidget(val_bool)
                 val_stack.addWidget(val_int)
                 val_stack.addWidget(val_float)
                 val_stack.addWidget(val_str)
-                fh.addWidget(QLabel("值"))
+                fh.addWidget(QLabel("值", flag_w))
                 fh.addWidget(val_kind)
                 fh.addWidget(val_stack, 1)
 
-                quest_w = QWidget()
+                quest_w = QWidget(body)
                 qh = QHBoxLayout(quest_w)
                 qh.setContentsMargins(0, 0, 0, 0)
-                qh.addWidget(QLabel("questId"))
+                qh.addWidget(QLabel("questId", quest_w))
                 qh.addWidget(qid_e, 1)
-                qh.addWidget(QLabel("状态"))
+                qh.addWidget(QLabel("状态", quest_w))
                 qh.addWidget(st_cb)
 
-                scenario_w = QWidget()
+                scenario_w = QWidget(body)
                 sc_form = QFormLayout(scenario_w)
                 sc_form.setContentsMargins(0, 0, 0, 0)
-                scen_entries: list[tuple[str, str]] = []
+                scen_ids: list[str] = []
                 if pm_switch is not None:
-                    scen_entries = [(s, s) for s in pm_switch.scenario_ids_ordered()]
-                if not scen_entries:
-                    scen_entries = [("(无 scenarios.json 数据)", "")]
-                scen_id_combo = FilterableTypeCombo(scen_entries, body)
-                phase_combo = QComboBox()
-                phase_combo.setEditable(True)
-                scen_status = QComboBox()
-                scen_status.setEditable(True)
+                    scen_ids = list(pm_switch.scenario_ids_ordered())
+                # 直接用不可编辑 QComboBox + 固定 placeholder；规避 editable combobox 在 Windows 下
+                # activated -> clear/addItem 路径引发的原生崩溃。
+                scen_id_combo = QComboBox(scenario_w)
+                scen_id_combo.setEditable(False)
+                scen_id_combo.addItem("(未选)", "")
+                for sid in scen_ids:
+                    scen_id_combo.addItem(sid, sid)
+                if not scen_ids:
+                    scen_id_combo.addItem("(无 scenarios.json 数据)", "")
+                    scen_id_combo.setEnabled(False)
+                phase_combo = QComboBox(scenario_w)
+                phase_combo.setEditable(False)
+                scen_status = QComboBox(scenario_w)
+                scen_status.setEditable(False)
                 for s in ("pending", "active", "done", "locked"):
-                    scen_status.addItem(s)
-                scen_outcome = QLineEdit()
+                    scen_status.addItem(s, s)
+                scen_outcome = QLineEdit(scenario_w)
                 scen_outcome.setPlaceholderText("可选，与 scenario phase 的 outcome 比较")
 
                 def resolved_scenario_id() -> str:
-                    """FilterableTypeCombo 在点选/输入过程中 lineEdit 与 committed_type 可能短暂不同步。"""
-                    cmt = scen_id_combo.committed_type().strip()
-                    if cmt:
-                        return cmt
-                    le = scen_id_combo.lineEdit()
-                    return le.text().strip() if le is not None else ""
+                    dv = scen_id_combo.currentData()
+                    return str(dv).strip() if isinstance(dv, str) else ""
 
                 def refill_scen_phases() -> None:
                     sid = resolved_scenario_id()
@@ -1611,29 +1637,28 @@ class NodeInspector(QWidget):
                         if pm_switch and sid
                         else []
                     )
+                    cur = phase_combo.currentText()
                     phase_combo.blockSignals(True)
                     phase_combo.clear()
+                    phase_combo.addItem("(未选)", "")
                     for p in phs:
-                        phase_combo.addItem(p)
+                        phase_combo.addItem(p, p)
+                    if cur:
+                        ix = phase_combo.findData(cur)
+                        if ix >= 0:
+                            phase_combo.setCurrentIndex(ix)
                     phase_combo.blockSignals(False)
 
-                scen_id_combo.typeCommitted.connect(
-                    lambda _t: (refill_scen_phases(), update_csum(), self._emit_changed()),
+                scen_id_combo.currentIndexChanged.connect(
+                    lambda _i: (refill_scen_phases(), update_csum(), self._emit_changed()),
                 )
-                _sce_le = scen_id_combo.lineEdit()
-                if _sce_le is not None:
-                    _sce_le.editingFinished.connect(
-                        lambda: (refill_scen_phases(), update_csum(), self._emit_changed()),
+                for wsig in (phase_combo, scen_status):
+                    wsig.currentIndexChanged.connect(
+                        lambda _i: (update_csum(), self._emit_changed()),
                     )
-                for wsig in (phase_combo, scen_status, scen_outcome):
-                    if isinstance(wsig, QComboBox):
-                        wsig.currentTextChanged.connect(
-                            lambda _t: (update_csum(), self._emit_changed()),
-                        )
-                    else:
-                        wsig.textChanged.connect(
-                            lambda _t: (update_csum(), self._emit_changed()),
-                        )
+                scen_outcome.textChanged.connect(
+                    lambda _t: (update_csum(), self._emit_changed()),
+                )
                 sc_form.addRow("scenarioId", scen_id_combo)
                 sc_form.addRow("phase", phase_combo)
                 sc_form.addRow("status", scen_status)
@@ -1681,11 +1706,11 @@ class NodeInspector(QWidget):
                 def update_csum() -> None:
                     if mode.currentData() == "scenario":
                         sid_disp = resolved_scenario_id() or "…"
-                        csum.setText(
-                            f"scen {sid_disp} · "
-                            f"{phase_combo.currentText().strip() or '…'} · "
-                            f"{scen_status.currentText().strip() or '…'}",
-                        )
+                        ph_d = phase_combo.currentData()
+                        ph_s = str(ph_d).strip() if isinstance(ph_d, str) and ph_d else "…"
+                        st_d = scen_status.currentData()
+                        st_s = str(st_d).strip() if isinstance(st_d, str) and st_d else "…"
+                        csum.setText(f"scen {sid_disp} · {ph_s} · {st_s}")
                         return
                     if mode.currentData() == "quest":
                         csum.setText(
@@ -1709,22 +1734,29 @@ class NodeInspector(QWidget):
                 if isinstance(raw_c.get("scenario"), str):
                     mode.setCurrentIndex(2)
                     sid0 = str(raw_c.get("scenario", "")).strip()
-                    if sid0:
-                        scen_id_combo.set_committed_type(sid0)
+                    scen_id_combo.blockSignals(True)
+                    try:
+                        ix0 = scen_id_combo.findData(sid0) if sid0 else 0
+                        if ix0 < 0:
+                            scen_id_combo.addItem(f"(缺失) {sid0}", sid0)
+                            ix0 = scen_id_combo.count() - 1
+                        scen_id_combo.setCurrentIndex(ix0)
+                    finally:
+                        scen_id_combo.blockSignals(False)
                     refill_scen_phases()
                     ph0 = str(raw_c.get("phase", "")).strip()
                     if ph0:
-                        ix = phase_combo.findText(ph0)
-                        if ix >= 0:
-                            phase_combo.setCurrentIndex(ix)
-                        else:
-                            phase_combo.setEditText(ph0)
+                        ix = phase_combo.findData(ph0)
+                        if ix < 0:
+                            phase_combo.addItem(f"(缺失) {ph0}", ph0)
+                            ix = phase_combo.count() - 1
+                        phase_combo.setCurrentIndex(ix)
                     st0 = str(raw_c.get("status", "pending")).strip() or "pending"
-                    ix2 = scen_status.findText(st0)
-                    if ix2 >= 0:
-                        scen_status.setCurrentIndex(ix2)
-                    else:
-                        scen_status.setEditText(st0)
+                    ix2 = scen_status.findData(st0)
+                    if ix2 < 0:
+                        scen_status.addItem(f"(非枚举) {st0}", st0)
+                        ix2 = scen_status.count() - 1
+                    scen_status.setCurrentIndex(ix2)
                     o0 = raw_c.get("outcome")
                     scen_outcome.setText("" if o0 is None else str(o0))
                 elif isinstance(raw_c.get("quest"), str):
@@ -1837,10 +1869,12 @@ class NodeInspector(QWidget):
 
                 def serialize() -> dict[str, Any]:
                     if mode.currentData() == "scenario":
+                        ph_d = phase_combo.currentData()
+                        st_d = scen_status.currentData()
                         out_s: dict[str, Any] = {
                             "scenario": resolved_scenario_id(),
-                            "phase": phase_combo.currentText().strip(),
-                            "status": scen_status.currentText().strip(),
+                            "phase": str(ph_d).strip() if isinstance(ph_d, str) else "",
+                            "status": str(st_d).strip() if isinstance(st_d, str) else "",
                         }
                         oo = scen_outcome.text().strip()
                         if oo:
@@ -1922,12 +1956,12 @@ class NodeInspector(QWidget):
 
             nx.textChanged.connect(lambda _t: (update_case_summary(), self._emit_changed()))
 
-            b_cond_end = QPushButton("在末尾添加条件")
+            b_cond_end = QPushButton("在末尾添加条件", content)
             b_cond_end.clicked.connect(lambda: insert_cond_at(len(cond_rows)))
-            and_block = QWidget()
+            and_block = QWidget(content)
             and_lay = QVBoxLayout(and_block)
             and_lay.setContentsMargins(0, 0, 0, 0)
-            and_lay.addWidget(QLabel("条件（AND，全部满足）"))
+            and_lay.addWidget(QLabel("条件（AND，全部满足）", and_block))
             and_lay.addWidget(cond_rows_wrap)
             and_lay.addWidget(b_cond_end)
             cv.addWidget(and_block)
@@ -2077,7 +2111,7 @@ class NodeInspector(QWidget):
         refresh_case_fold_policy()
 
         cbar = QHBoxLayout()
-        bc_add = QPushButton("在末尾添加分支")
+        bc_add = QPushButton("在末尾添加分支", self._body)
 
         def do_add_case_end() -> None:
             switch_case_rows.append(

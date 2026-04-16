@@ -46,6 +46,7 @@ export class NotificationUI {
       rule: UITheme.colors.notifRule,
       item: UITheme.colors.notifItem,
       warning: UITheme.colors.notifWarning,
+      error: UITheme.colors.notifError,
       info: UITheme.colors.notifInfo,
     };
     const color = typeColors[type ?? 'info'] ?? UITheme.colors.notifInfo;

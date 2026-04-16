@@ -77,6 +77,7 @@ export const UITheme = {
     notifRule: 0x88ddaa,
     notifItem: 0xdddddd,
     notifWarning: 0xff8866,
+    notifError: 0xff6666,
     notifInfo: 0xaaaacc,
 
     choiceEnabled: 0xdddddd,

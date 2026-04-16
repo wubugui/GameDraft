@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from PySide6.QtCore import Qt, QEvent, QObject, QItemSelectionModel
 from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
@@ -10,6 +11,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QDialog,
+    QDialogButtonBox,
     QPlainTextEdit,
     QPushButton,
     QMessageBox,
@@ -28,8 +31,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
-from ..flag_registry import scenario_exposes_flag_errors
 from ..project_model import ProjectModel
+from ..scenarios_catalog_validate import validate_scenarios_list
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
 from ..shared.id_ref_selector import IdRefSelector
@@ -43,77 +46,268 @@ SCENARIO_PHASE_STATUSES: tuple[str, ...] = ("pending", "active", "done", "locked
 QUEST_STATUSES: tuple[str, ...] = ("Inactive", "Active", "Completed")
 
 
-class _PhaseRequiresCell(QWidget):
-    """阶段 requires：只读摘要 +「选择…」打开多选（禁止手写逗号列表）。"""
+class ScenarioRequiresExprEdit(QWidget):
+    """requires：与(数组)/或({any})/JSON含非与嵌套；叶子为 phase 名（语义为该 phase 已为 done）。"""
+
+    MODE_AND = "and"
+    MODE_OR = "or"
+    MODE_JSON = "json"
 
     def __init__(
         self,
-        table: QTableWidget,
-        on_structure_changed,
-        parent: QWidget | None = None,
+        parent: QWidget | None,
+        on_change: Callable[[], None],
+        *,
+        phase_table: QTableWidget | None,
+        scenario_choices: Callable[[], list[str]] | None,
     ) -> None:
         super().__init__(parent)
-        self._table = table
-        self._on_structure_changed = on_structure_changed
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(2, 2, 2, 2)
+        if bool(phase_table) == bool(scenario_choices):
+            raise ValueError("须指定 phase_table 或 scenario_choices 之一")
+        self._on_change = on_change
+        self._phase_table = phase_table
+        self._scenario_choices = scenario_choices
+        self._json_doc = ""
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(2, 2, 2, 2)
+        self._mode_cb = QComboBox()
+        self._mode_cb.addItem("与", self.MODE_AND)
+        self._mode_cb.addItem("或", self.MODE_OR)
+        self._mode_cb.addItem("JSON", self.MODE_JSON)
+        self._mode_cb.setMaximumWidth(88)
+        self._mode_cb.setToolTip("与=数组；或={\"any\":[...]}；JSON=含非/嵌套")
+        self._mode_cb.currentIndexChanged.connect(self._on_mode_index)
+        outer.addWidget(self._mode_cb)
+
+        self._stack = QStackedWidget()
+        list_w = QWidget()
+        hl = QHBoxLayout(list_w)
+        hl.setContentsMargins(0, 0, 0, 0)
         self._line = QLineEdit()
         self._line.setReadOnly(True)
-        self._line.setPlaceholderText("点击「选择…」指定依赖 phase")
+        self._line.setPlaceholderText("点「选择…」勾选 phase")
+        self._btn_clear = QPushButton("清空")
+        self._btn_clear.setFixedWidth(44)
+        self._btn_clear.setToolTip("清除与/或列表")
         self._btn = QPushButton("选择…")
         self._btn.setFixedWidth(72)
-        lay.addWidget(self._line, stretch=1)
-        lay.addWidget(self._btn)
+        hl.addWidget(self._line, stretch=1)
+        hl.addWidget(self._btn_clear)
+        hl.addWidget(self._btn)
+        self._stack.addWidget(list_w)
+
+        json_w = QWidget()
+        jh = QHBoxLayout(json_w)
+        jh.setContentsMargins(0, 0, 0, 0)
+        self._json_line = QLineEdit()
+        self._json_line.setReadOnly(True)
+        self._json_line.setPlaceholderText("点「编辑…」写 JSON")
+        self._json_btn = QPushButton("编辑…")
+        self._json_btn.setFixedWidth(52)
+        self._json_btn.setToolTip("在弹出窗口中编辑 requires 表达式 JSON")
+        self._json_btn.clicked.connect(self._open_json_dialog)
+        jh.addWidget(self._json_line, stretch=1)
+        jh.addWidget(self._json_btn)
+        self._stack.addWidget(json_w)
+
+        outer.addWidget(self._stack, stretch=1)
+
+        self._btn_clear.clicked.connect(self._clear_list)
         self._btn.clicked.connect(self._pick)
 
+    @classmethod
+    def for_phase_row(
+        cls,
+        parent: QWidget | None,
+        on_change: Callable[[], None],
+        table: QTableWidget,
+    ) -> ScenarioRequiresExprEdit:
+        return cls(parent, on_change, phase_table=table, scenario_choices=None)
+
+    @classmethod
+    def for_scenario_entry(
+        cls,
+        parent: QWidget | None,
+        on_change: Callable[[], None],
+        get_choices: Callable[[], list[str]],
+    ) -> ScenarioRequiresExprEdit:
+        return cls(parent, on_change, phase_table=None, scenario_choices=get_choices)
+
     def _resolve_row(self) -> int:
-        for r in range(self._table.rowCount()):
-            if self._table.cellWidget(r, 2) is self:
+        if self._phase_table is None:
+            return -1
+        for r in range(self._phase_table.rowCount()):
+            if self._phase_table.cellWidget(r, 2) is self:
                 return r
         return -1
 
-    def _pick(self) -> None:
-        r = self._resolve_row()
-        if r < 0:
+    def _choice_names(self) -> list[str]:
+        ex = ""
+        if self._phase_table is not None:
+            r = self._resolve_row()
+            if r >= 0:
+                w0 = self._phase_table.cellWidget(r, 0)
+                if isinstance(w0, QLineEdit):
+                    ex = w0.text().strip()
+            ordered: list[str] = []
+            seen: set[str] = set()
+            for rr in range(self._phase_table.rowCount()):
+                w0 = self._phase_table.cellWidget(rr, 0)
+                if not isinstance(w0, QLineEdit):
+                    continue
+                t = w0.text().strip()
+                if not t or t == ex or t in seen:
+                    continue
+                seen.add(t)
+                ordered.append(t)
+            return ordered
+        raw = self._scenario_choices() if self._scenario_choices else []
+        return [str(x).strip() for x in raw if str(x).strip()]
+
+    def _on_mode_index(self, _i: int) -> None:
+        mode = self._mode_cb.currentData()
+        self._stack.setCurrentIndex(1 if mode == self.MODE_JSON else 0)
+        self._on_change()
+
+    def _clear_list(self) -> None:
+        self._line.clear()
+        self._on_change()
+
+    def _refresh_json_line_preview(self) -> None:
+        s = self._json_doc.strip()
+        if not s:
+            self._json_line.clear()
+            self._json_line.setPlaceholderText("点「编辑…」写 JSON")
             return
-        nw = self._table.cellWidget(r, 0)
-        self_name = nw.text().strip() if isinstance(nw, QLineEdit) else ""
-        ordered: list[str] = []
-        seen: set[str] = set()
-        for rr in range(self._table.rowCount()):
-            w0 = self._table.cellWidget(rr, 0)
-            if not isinstance(w0, QLineEdit):
-                continue
-            t = w0.text().strip()
-            if not t or t == self_name or t in seen:
-                continue
-            seen.add(t)
-            ordered.append(t)
+        one = " ".join(s.split())
+        if len(one) > 72:
+            one = one[:69] + "…"
+        self._json_line.setText(one)
+
+    def _open_json_dialog(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("requires JSON")
+        dlg.resize(520, 320)
+        root = QVBoxLayout(dlg)
+        tip = QLabel(
+            "对象仅允许单键 all / any / not；叶子为 phase 名字符串（语义为该 phase 已为 done）。",
+        )
+        tip.setWordWrap(True)
+        root.addWidget(tip)
+        te = QPlainTextEdit()
+        te.setPlainText(self._json_doc)
+        root.addWidget(te)
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        )
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        root.addWidget(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._json_doc = te.toPlainText()
+        self._refresh_json_line_preview()
+        self._on_change()
+
+    def _pick(self) -> None:
+        mode = self._mode_cb.currentData()
+        if mode == self.MODE_JSON:
+            return
+        ordered = self._choice_names()
         if not ordered:
             QMessageBox.information(
-                self, "phase requires",
-                "没有其它可依赖的 phase：请先添加更多阶段，或填写本行「phase 名」。",
+                self, "requires",
+                "没有可选 phase：请先在 phases 表中添加阶段并填写名称。",
             )
             return
         cur = [x.strip() for x in self._line.text().split(",") if x.strip()]
+        label = (
+            "勾选：这些 phase 须全部为 done（与）。"
+            if mode == self.MODE_AND
+            else "勾选：至少一个 phase 为 done 即可（或）。"
+        )
         picked = pick_strings_multi(
             self,
-            "选择本 phase 的 requires",
+            "选择 requires 中的 phase",
             ordered,
             cur,
-            label="勾选：推进本阶段前须已为 done 的其它 phase。",
+            label=label,
             sort_choices=False,
         )
         if picked is None:
             return
         self._line.setText(", ".join(picked))
-        self._on_structure_changed()
+        self._on_change()
 
-    def set_requires_text(self, text: str) -> None:
-        self._line.setText(text)
+    def set_requires_value(self, raw: object | None) -> None:
+        self._mode_cb.blockSignals(True)
+        try:
+            self._line.clear()
+            self._json_doc = ""
+            if raw is None:
+                self._mode_cb.setCurrentIndex(0)
+            elif isinstance(raw, list):
+                self._mode_cb.setCurrentIndex(0)
+                self._line.setText(
+                    ", ".join(str(x).strip() for x in raw if str(x).strip()),
+                )
+            elif isinstance(raw, dict):
+                keys = set(raw.keys())
+                if keys == {"all"} and isinstance(raw.get("all"), list):
+                    al = raw["all"]
+                    if all(isinstance(x, str) for x in al):
+                        self._mode_cb.setCurrentIndex(0)
+                        self._line.setText(
+                            ", ".join(str(x).strip() for x in al if str(x).strip()),
+                        )
+                    else:
+                        self._mode_cb.setCurrentIndex(
+                            self._mode_cb.findData(self.MODE_JSON),
+                        )
+                        self._json_doc = json.dumps(raw, ensure_ascii=False, indent=2)
+                elif keys == {"any"} and isinstance(raw.get("any"), list):
+                    al = raw["any"]
+                    if all(isinstance(x, str) for x in al):
+                        self._mode_cb.setCurrentIndex(1)
+                        self._line.setText(
+                            ", ".join(str(x).strip() for x in al if str(x).strip()),
+                        )
+                    else:
+                        self._mode_cb.setCurrentIndex(
+                            self._mode_cb.findData(self.MODE_JSON),
+                        )
+                        self._json_doc = json.dumps(raw, ensure_ascii=False, indent=2)
+                else:
+                    self._mode_cb.setCurrentIndex(
+                        self._mode_cb.findData(self.MODE_JSON),
+                    )
+                    self._json_doc = json.dumps(raw, ensure_ascii=False, indent=2)
+            else:
+                self._mode_cb.setCurrentIndex(self._mode_cb.findData(self.MODE_JSON))
+                self._json_doc = json.dumps(raw, ensure_ascii=False, indent=2)
+        finally:
+            self._mode_cb.blockSignals(False)
+        mode = self._mode_cb.currentData()
+        self._stack.setCurrentIndex(1 if mode == self.MODE_JSON else 0)
+        self._refresh_json_line_preview()
 
-    def requires_text(self) -> str:
-        return self._line.text().strip()
+    def get_requires_value(self) -> object | None:
+        mode = self._mode_cb.currentData()
+        if mode == self.MODE_JSON:
+            text = self._json_doc.strip()
+            if not text:
+                return None
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"requires JSON 无法解析：{e}") from e
+        parts = [x.strip() for x in self._line.text().split(",") if x.strip()]
+        if not parts:
+            return None
+        if mode == self.MODE_AND:
+            return parts
+        return {"any": parts}
 
 
 class ScenariosCatalogEditor(QWidget):
@@ -126,10 +320,9 @@ class ScenariosCatalogEditor(QWidget):
 
         root = QVBoxLayout(self)
         tip = QLabel(
-            "scenarioId、进线 requires、阶段 requires、exposes 的 flag 均通过下拉/对话框选择，勿手写 id；"
-            "exposes 的写入值控件随该 flag 在 flag_registry 中的类型切换（布尔 / 数值 / 字符串）。"
-            "phase 名称与 description 为策划文案仅可手写。"
-            "status 仅四种枚举。Apply 写入内存；保存工程写入 data/scenarios.json。"
+            "scenarioId、exposes 的 flag 须从清单选择；requires 叶子为 phase 名（语义为该 phase 已为 done）。"
+            "与/或可用表单多选；含非或嵌套请用 JSON 模式。"
+            "phase 名称与 description 可手写。status 仅四种枚举。Apply 写入内存；保存工程写入 data/scenarios.json。"
             "图对话 setScenarioPhase、scenario 条件须与本页一致。",
         )
         tip.setWordWrap(True)
@@ -175,17 +368,14 @@ class ScenariosCatalogEditor(QWidget):
         _idl.addWidget(self._f_id_new)
         self._f_desc = QLineEdit()
         self._f_desc.setPlaceholderText("描述（可选，仅说明文案可手写）")
-        self._f_requires_row = QWidget()
-        _srl = QHBoxLayout(self._f_requires_row)
-        _srl.setContentsMargins(0, 0, 0, 0)
-        self._f_requires_disp = QLineEdit()
-        self._f_requires_disp.setReadOnly(True)
-        self._f_requires_disp.setPlaceholderText("点击「选择…」指定进线所需的 phase（须已列于下方 phases）")
-        self._f_requires_btn = QPushButton("选择…")
-        self._f_requires_btn.setFixedWidth(72)
-        self._f_requires_btn.clicked.connect(self._pick_scenario_requires)
-        _srl.addWidget(self._f_requires_disp, stretch=1)
-        _srl.addWidget(self._f_requires_btn)
+        self._f_requires_edit = ScenarioRequiresExprEdit.for_scenario_entry(
+            self,
+            self._on_detail_edited,
+            lambda: self._phase_names_from_phases_table(),
+        )
+        self._f_requires_edit.setToolTip(
+            "进线条件：与=数组；或={\"any\":[...]}；非/嵌套用 JSON。",
+        )
         self._f_expose_after = QComboBox()
         self._f_expose_after.setEditable(False)
         self._f_expose_after.setToolTip(
@@ -196,7 +386,7 @@ class ScenariosCatalogEditor(QWidget):
         self._f_expose_after.currentIndexChanged.connect(self._on_detail_edited)
         form.addRow("id", self._f_id_row)
         form.addRow("description", self._f_desc)
-        form.addRow("scenario 进线 requires", self._f_requires_row)
+        form.addRow("scenario 进线 requires", self._f_requires_edit)
         form.addRow("exposeAfterPhase", self._f_expose_after)
         rfl.addLayout(form)
 
@@ -221,21 +411,24 @@ class ScenariosCatalogEditor(QWidget):
         rfl.addWidget(exp_g)
 
         ph_g = QGroupBox(
-            "phases（阶段清单；requires=推进该 phase 前须 done 的其它 phase，逗号分隔）",
+            "phases（阶段清单；requires=与/或/JSON，叶子为 phase 名=须已为 done）",
         )
         ph_l = QVBoxLayout(ph_g)
         self._tbl_phases = QTableWidget(0, 3)
-        self._tbl_phases.setHorizontalHeaderLabels(["phase 名", "清单默认 status", "requires（逗号）"])
-        self._tbl_phases.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._tbl_phases.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents)
-        self._tbl_phases.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._tbl_phases.setHorizontalHeaderLabels(["phase 名", "清单默认 status", "requires"])
+        _ph_h = self._tbl_phases.horizontalHeader()
+        _ph_h.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        _ph_h.resizeSection(0, 92)
+        _ph_h.setMinimumSectionSize(56)
+        _ph_h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        _ph_h.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self._tbl_phases.setMinimumHeight(200)
         self._tbl_phases.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._tbl_phases.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         vh = self._tbl_phases.verticalHeader()
         vh.setSectionsMovable(True)
         vh.setMinimumWidth(28)
+        vh.setMinimumSectionSize(34)
         vh.sectionMoved.connect(self._on_phases_section_moved)
         ph_hint = QLabel(
             "在单元格内点击也会选中该行（Ctrl 加选、Shift 范围选）；拖曳左侧行号可调整顺序；"
@@ -373,30 +566,6 @@ class ScenariosCatalogEditor(QWidget):
             it.setText(new_id or "(无 id)")
         self._on_detail_edited()
 
-    def _pick_scenario_requires(self) -> None:
-        if self._loading_ui:
-            return
-        names = self._phase_names_from_phases_table()
-        if not names:
-            QMessageBox.information(
-                self, "进线 requires",
-                "请先在下方 phases 表中添加至少一个 phase。",
-            )
-            return
-        cur = [x.strip() for x in self._f_requires_disp.text().split(",") if x.strip()]
-        picked = pick_strings_multi(
-            self,
-            "选择 scenario 进线 requires",
-            names,
-            cur,
-            label="勾选：整条 scenario 开始前须已为 done 的 phase（须已出现在 phases 清单中）。",
-            sort_choices=False,
-        )
-        if picked is None:
-            return
-        self._f_requires_disp.setText(", ".join(picked))
-        self._on_detail_edited()
-
     def _on_phases_section_moved(self, _logical: int, _old_v: int, _new_v: int) -> None:
         if self._loading_ui:
             return
@@ -408,11 +577,10 @@ class ScenariosCatalogEditor(QWidget):
             if w is not None:
                 w.removeEventFilter(self)
                 w.installEventFilter(self)
-                if isinstance(w, _PhaseRequiresCell):
-                    w._line.removeEventFilter(self)
-                    w._line.installEventFilter(self)
-                    w._btn.removeEventFilter(self)
-                    w._btn.installEventFilter(self)
+                if isinstance(w, ScenarioRequiresExprEdit):
+                    for cw in (w, *w.findChildren(QWidget)):
+                        cw.removeEventFilter(self)
+                        cw.installEventFilter(self)
 
     def _apply_phase_table_row_selection(self, row: int, event: QMouseEvent) -> None:
         sel = self._tbl_phases.selectionModel()
@@ -507,13 +675,7 @@ class ScenariosCatalogEditor(QWidget):
             self._f_id_sel.set_current(str(d.get("id", "")).strip())
             self._f_id_sel.blockSignals(False)
             self._f_desc.setText(str(d.get("description", "")))
-            req = d.get("requires")
-            if isinstance(req, list):
-                self._f_requires_disp.setText(
-                    ", ".join(str(x).strip() for x in req if str(x).strip()),
-                )
-            else:
-                self._f_requires_disp.clear()
+            self._f_requires_edit.set_requires_value(d.get("requires"))
 
             phases = d.get("phases") if isinstance(d.get("phases"), dict) else {}
             phase_names = [str(k) for k in phases.keys()]
@@ -538,7 +700,7 @@ class ScenariosCatalogEditor(QWidget):
         self._f_id_sel.set_items([])
         self._f_id_sel.blockSignals(False)
         self._f_desc.clear()
-        self._f_requires_disp.clear()
+        self._f_requires_edit.set_requires_value(None)
         self._f_expose_after.clear()
         self._f_expose_after.addItem("（不配置）", "")
         self._tbl_exposes.setRowCount(0)
@@ -583,23 +745,22 @@ class ScenariosCatalogEditor(QWidget):
             self._tbl_phases.setRowCount(0)
             for ph_name, ph_val in phases.items():
                 st = "pending"
-                req_parts: list[str] = []
+                raw_req: object | None = None
                 if isinstance(ph_val, dict):
                     if isinstance(ph_val.get("status"), str):
                         st = ph_val["status"]
-                    raw_req = ph_val.get("requires")
-                    if isinstance(raw_req, list):
-                        req_parts = [str(x).strip() for x in raw_req if str(x).strip()]
+                    if "requires" in ph_val:
+                        raw_req = ph_val.get("requires")
                 r = self._tbl_phases.rowCount()
                 self._tbl_phases.insertRow(r)
                 ne = QLineEdit(str(ph_name))
                 ne.textChanged.connect(self._on_phases_or_exposes_structure_changed)
                 self._tbl_phases.setCellWidget(r, 0, ne)
                 self._tbl_phases.setCellWidget(r, 1, self._make_status_combo(st))
-                dep = _PhaseRequiresCell(
-                    self._tbl_phases, self._on_phases_or_exposes_structure_changed, self,
+                dep = ScenarioRequiresExprEdit.for_phase_row(
+                    self, self._on_phases_or_exposes_structure_changed, self._tbl_phases,
                 )
-                dep.set_requires_text(", ".join(req_parts))
+                dep.set_requires_value(raw_req)
                 self._tbl_phases.setCellWidget(r, 2, dep)
                 self._install_phase_cell_event_filters(r)
         finally:
@@ -655,11 +816,15 @@ class ScenariosCatalogEditor(QWidget):
         elif "description" in d:
             del d["description"]
 
-        req_text = self._f_requires_disp.text().strip()
-        if req_text:
-            d["requires"] = [x.strip() for x in req_text.split(",") if x.strip()]
-        elif "requires" in d:
-            del d["requires"]
+        try:
+            rqx = self._f_requires_edit.get_requires_value()
+        except ValueError:
+            pass
+        else:
+            if rqx is not None:
+                d["requires"] = rqx
+            elif "requires" in d:
+                del d["requires"]
 
         eat = self._f_expose_after.currentData()
         if isinstance(eat, str) and eat.strip():
@@ -707,13 +872,18 @@ class ScenariosCatalogEditor(QWidget):
                 if isinstance(dv, str):
                     st = dv
             entry: dict = {"status": st}
-            req_cell = ""
-            if isinstance(rw, _PhaseRequiresCell):
-                req_cell = rw.requires_text()
-            elif isinstance(rw, QLineEdit):
-                req_cell = rw.text().strip()
-            if req_cell:
-                entry["requires"] = [x.strip() for x in req_cell.split(",") if x.strip()]
+            if isinstance(rw, ScenarioRequiresExprEdit):
+                try:
+                    prq = rw.get_requires_value()
+                except ValueError:
+                    pass
+                else:
+                    if prq is not None:
+                        entry["requires"] = prq
+            elif isinstance(rw, QLineEdit) and rw.text().strip():
+                entry["requires"] = [
+                    x.strip() for x in rw.text().split(",") if x.strip()
+                ]
             phases[name] = entry
         d["phases"] = phases
 
@@ -784,8 +954,8 @@ class ScenariosCatalogEditor(QWidget):
         ne.textChanged.connect(self._on_phases_or_exposes_structure_changed)
         self._tbl_phases.setCellWidget(r, 0, ne)
         self._tbl_phases.setCellWidget(r, 1, self._make_status_combo("pending"))
-        dep = _PhaseRequiresCell(
-            self._tbl_phases, self._on_phases_or_exposes_structure_changed, self,
+        dep = ScenarioRequiresExprEdit.for_phase_row(
+            self, self._on_phases_or_exposes_structure_changed, self._tbl_phases,
         )
         self._tbl_phases.setCellWidget(r, 2, dep)
         self._install_phase_cell_event_filters(r)
@@ -800,76 +970,30 @@ class ScenariosCatalogEditor(QWidget):
             self._tbl_phases.removeRow(r)
         self._on_phases_or_exposes_structure_changed()
 
-    def _validate(self) -> str | None:
-        seen: set[str] = set()
-        for i, e in enumerate(self._scenarios_data):
-            sid = str(e.get("id", "")).strip()
-            if not sid:
-                return f"第 {i + 1} 条 scenario 的 id 不能为空"
-            if sid in seen:
-                return f"scenario id 重复：{sid!r}"
-            seen.add(sid)
-            phases = e.get("phases") if isinstance(e.get("phases"), dict) else {}
-            pnames = [str(k) for k in phases.keys()]
-            dup_ph = {x for x in pnames if pnames.count(x) > 1}
-            if dup_ph:
-                return f"{sid!r} 下 phase 名重复：{dup_ph!r}"
-            req = e.get("requires")
-            if isinstance(req, list):
-                for rp in req:
-                    rs = str(rp).strip()
-                    if rs and rs not in phases:
-                        return (
-                            f"{sid!r} 的 requires 引用未知 phase {rs!r}（请先在 phases 表中添加）"
-                        )
-            eat = str(e.get("exposeAfterPhase", "")).strip()
-            if eat and eat not in phases:
-                return f"{sid!r} 的 exposeAfterPhase {eat!r} 不在 phases 中"
-            pset = set(phases.keys())
-            adj: dict[str, list[str]] = {}
-            for pname, pval in phases.items():
-                pn = str(pname)
-                req_list: list[str] = []
-                if isinstance(pval, dict):
-                    pr = pval.get("requires")
-                    if isinstance(pr, list):
-                        for x in pr:
-                            xs = str(x).strip()
-                            if not xs:
-                                continue
-                            if xs not in pset:
-                                return (
-                                    f"{sid!r} 的 phase {pn!r} requires 引用未知 phase {xs!r}"
-                                )
-                            req_list.append(xs)
-                adj[pn] = req_list
-            white, grey, black = 0, 1, 2
-            color = {n: white for n in adj}
-
-            def _cyc(u: str) -> bool:
-                color[u] = grey
-                for v in adj.get(u, []):
-                    if v not in color:
-                        continue
-                    if color.get(v) == grey:
-                        return True
-                    if color.get(v) == white and _cyc(v):
-                        return True
-                color[u] = black
-                return False
-
-            for n in adj:
-                if color.get(n) == white and _cyc(n):
-                    return f"{sid!r} 的 phases.requires 存在循环依赖"
-            exp_err = scenario_exposes_flag_errors(
-                e.get("exposes"),
-                getattr(self._model, "flag_registry", None) or {},
-                self._model,
-                scenario_id=sid,
-            )
-            if exp_err:
-                return exp_err
+    def _requires_ui_parse_errors(self) -> str | None:
+        try:
+            self._f_requires_edit.get_requires_value()
+        except ValueError as e:
+            return f"scenario 进线 requires：{e}"
+        for r in range(self._tbl_phases.rowCount()):
+            rw = self._tbl_phases.cellWidget(r, 2)
+            if isinstance(rw, ScenarioRequiresExprEdit):
+                try:
+                    rw.get_requires_value()
+                except ValueError as e:
+                    return f"phases 第 {r + 1} 行 requires：{e}"
         return None
+
+    def _validate(self) -> str | None:
+        self._sync_current_row_from_ui()
+        ui_err = self._requires_ui_parse_errors()
+        if ui_err:
+            return ui_err
+        return validate_scenarios_list(
+            self._scenarios_data,
+            flag_registry=getattr(self._model, "flag_registry", None) or {},
+            model=self._model,
+        )
 
     def _build_catalog_dict(self) -> dict:
         self._sync_current_row_from_ui()

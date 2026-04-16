@@ -191,6 +191,7 @@ class MainWindow(QMainWindow):
         self._act(ext, "Dialogue Graph Editor", self._launch_dialogue_graph_editor_external)
         self._act(ext, "Scene Depth Editor", self._launch_scene_depth_editor_external)
         self._act(ext, "Filter Tool", self._launch_filter_tool_external)
+        self._act(ext, "Copy Manager", self._launch_copy_manager_external)
 
         view_menu = mb.addMenu("View")
         ag_theme = QActionGroup(self)
@@ -375,6 +376,9 @@ class MainWindow(QMainWindow):
 
     def _launch_filter_tool_external(self) -> None:
         self._launch_external_tool("tools.filter_tool", [], "Filter Tool")
+
+    def _launch_copy_manager_external(self) -> None:
+        self._launch_external_tool("tools.copy_manager", [], "Copy Manager")
 
     def _clear_editor_stack(self) -> None:
         while self._stack.count():

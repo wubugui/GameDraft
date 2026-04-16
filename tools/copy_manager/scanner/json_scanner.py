@@ -51,11 +51,16 @@ class JsonScanner(BaseScanner):
                         data["fragments"], rel_path, file_rel, project_root, rule,
                         array_key="fragments"
                     ))
-                # For lore.json: entries is nested
+                # For lore.json / scenarios.json: entries/scenarios is nested
                 if "entries" in data and isinstance(data["entries"], list):
                     entries.extend(self._scan_array(
                         data["entries"], rel_path, file_rel, project_root, rule,
                         array_key="entries"
+                    ))
+                if "scenarios" in data and isinstance(data["scenarios"], list):
+                    entries.extend(self._scan_array(
+                        data["scenarios"], rel_path, file_rel, project_root, rule,
+                        array_key="scenarios"
                     ))
             elif isinstance(data, list):
                 # For top-level arrays (quests.json, items.json, etc.), use category as prefix
@@ -86,14 +91,18 @@ class JsonScanner(BaseScanner):
             for key, text in keys.items():
                 if not is_translatable_text(text):
                     continue
-                uid = make_uid("json_strings", file_rel, f"strings.{category}.{key}")
+                field_path = f"strings.{category}.{key}"
+                uid = make_uid("json_strings", file_rel, field_path)
                 entries.append(TextEntry(
                     uid=uid,
                     source_text=str(text),
                     file_path=file_rel,
-                    field_path=f"strings.{category}.{key}",
+                    field_path=field_path,
                     file_type="json_strings",
                     category="ui",
+                    group_id=f"strings.{category}",
+                    group_label=category,
+                    field_label=key,
                     tags=[f"category:{category}"],
                 ))
         return entries
@@ -116,6 +125,9 @@ class JsonScanner(BaseScanner):
                 continue
 
             entry_id = find_entry_id(item, "id", i)
+            group_id = f"{prefix}[{entry_id}]"
+            # Use title/name as group label if available
+            group_label = str(item.get("title", item.get("name", entry_id)))
             tags: list[str] = []
             if rule.tags_from_id:
                 tags.append(f"{rule.tags_from_id}:{entry_id}")
@@ -125,7 +137,7 @@ class JsonScanner(BaseScanner):
                 if not is_translatable_text(value):
                     continue
 
-                field_path = f"{prefix}[{entry_id}].{field_name}"
+                field_path = f"{group_id}.{field_name}"
                 uid = make_uid(f"json_{rule.category}", file_rel, field_path)
                 entries.append(TextEntry(
                     uid=uid,
@@ -134,6 +146,9 @@ class JsonScanner(BaseScanner):
                     field_path=field_path,
                     file_type=f"json_{rule.category}",
                     category=rule.category,
+                    group_id=group_id,
+                    group_label=group_label,
+                    field_label=field_name,
                     tags=tags,
                 ))
         return entries
@@ -176,6 +191,9 @@ class JsonScanner(BaseScanner):
             if not isinstance(top_item, dict):
                 continue
             top_id = find_entry_id(top_item, "id", ti)
+            group_id = f"{top_item.get('title', top_item.get('name', top_id))}"
+            # Use title/name as group label
+            group_label = str(group_id)
 
             # Get the sub-array for this top item
             if "." in sub_path:
@@ -192,6 +210,9 @@ class JsonScanner(BaseScanner):
                     continue
 
                 sub_id = find_entry_id(sub_item, "id", si)
+                # For nested items, group is still the top-level item
+                nested_group_id = f"{category}[{top_id}].{sub_prefix}[{sub_id}]"
+                nested_group_label = f"{group_label} / {sub_prefix} #{sub_id}"
 
                 for field_name in fields:
                     value = sub_item.get(field_name)
@@ -207,6 +228,9 @@ class JsonScanner(BaseScanner):
                         field_path=field_path,
                         file_type=f"json_{category}",
                         category=category,
+                        group_id=nested_group_id,
+                        group_label=nested_group_label,
+                        field_label=field_name,
                         tags=[f"{category}_id:{top_id}", f"sub_index:{sub_id}"],
                     ))
 

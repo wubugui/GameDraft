@@ -1,7 +1,8 @@
-"""Detail panel: shows full source text, metadata, notes editor, and translation inputs."""
+"""Detail panel: shows editable source text, metadata, notes editor, and translation inputs."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
@@ -26,12 +27,14 @@ class EntryDetailPanel(QWidget):
     status_changed = Signal(str, str)  # (uid, new_status)
     translation_changed = Signal(str, str, str)  # (uid, lang, new_text)
     language_added = Signal(str, str)  # (uid, lang_code)
-    apply_template = Signal(str)  # (uid) — user wants to apply a context template
+    source_changed = Signal(str, str)  # (uid, new_source_text)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_uid: str | None = None
         self._languages: list[str] = ["en", "ja"]
+        self._source_dirty = False
+        self._notes_connected = False
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -46,14 +49,32 @@ class EntryDetailPanel(QWidget):
         inner_layout = QVBoxLayout(inner)
         inner_layout.setSpacing(12)
 
-        # Source text section
+        # Source text section (editable)
         source_group = QGroupBox("原文")
         source_layout = QVBoxLayout(source_group)
+
         self.source_text = QPlainTextEdit()
-        self.source_text.setReadOnly(True)
         self.source_text.setMinimumHeight(100)
         self.source_text.setStyleSheet("QPlainTextEdit { font-size: 14px; }")
+        self.source_text.textChanged.connect(self._on_source_change)
         source_layout.addWidget(self.source_text)
+
+        # Source action bar
+        source_action_bar = QHBoxLayout()
+        self.edit_source_btn = QPushButton("编辑")
+        self.edit_source_btn.setFixedWidth(60)
+        self.edit_source_btn.clicked.connect(self._toggle_edit_source)
+        source_action_bar.addWidget(self.edit_source_btn)
+
+        self.save_source_btn = QPushButton("保存修改")
+        self.save_source_btn.setFixedWidth(80)
+        self.save_source_btn.setVisible(False)
+        self.save_source_btn.setEnabled(False)
+        self.save_source_btn.clicked.connect(self._save_source)
+        source_action_bar.addWidget(self.save_source_btn)
+
+        source_action_bar.addStretch()
+        source_layout.addLayout(source_action_bar)
         inner_layout.addWidget(source_group)
 
         # Metadata
@@ -134,8 +155,44 @@ class EntryDetailPanel(QWidget):
         scroll.setWidget(inner)
         layout.addWidget(scroll)
 
+    def _toggle_edit_source(self) -> None:
+        """Toggle source text between read-only and editable mode."""
+        is_read_only = self.source_text.isReadOnly()
+        self.source_text.setReadOnly(not is_read_only)
+        if is_read_only:
+            self.edit_source_btn.setText("锁定")
+            self.save_source_btn.setVisible(True)
+        else:
+            self.edit_source_btn.setText("编辑")
+            self.save_source_btn.setVisible(False)
+            self._source_dirty = False
+            # Reset to original
+            if self._current_uid:
+                self.source_text.blockSignals(True)
+                self.source_text.setPlainText(self._original_source_text)
+                self.source_text.blockSignals(False)
+
+    def _on_source_change(self) -> None:
+        if not self.source_text.isReadOnly():
+            self._source_dirty = True
+            self.save_source_btn.setEnabled(
+                self.source_text.toPlainText() != self._original_source_text
+            )
+
+    def _save_source(self) -> None:
+        if self._current_uid and self._source_dirty:
+            new_text = self.source_text.toPlainText()
+            self.source_changed.emit(self._current_uid, new_text)
+            self._original_source_text = new_text
+            self._source_dirty = False
+            self.save_source_btn.setEnabled(False)
+
     def load_entry(self, entry: dict | None) -> None:
         """Load an entry into the panel. Pass None to clear."""
+        # Save pending source changes before switching
+        if self._current_uid and self._source_dirty:
+            self._save_source()
+
         if not entry:
             self.source_text.clear()
             self.file_label.setText("文件: —")
@@ -146,10 +203,24 @@ class EntryDetailPanel(QWidget):
             self._current_uid = None
             for editor in self.trans_editors.values():
                 editor.clear()
+            self.source_text.setReadOnly(True)
+            self.edit_source_btn.setText("编辑")
+            self.save_source_btn.setVisible(False)
+            self._source_dirty = False
             return
 
         self._current_uid = entry.get("uid", "")
-        self.source_text.setPlainText(entry.get("source_text", ""))
+        self._original_source_text = entry.get("source_text", "")
+
+        # Reset to read-only mode
+        self.source_text.blockSignals(True)
+        self.source_text.setPlainText(self._original_source_text)
+        self.source_text.setReadOnly(True)
+        self.source_text.blockSignals(False)
+        self.edit_source_btn.setText("编辑")
+        self.save_source_btn.setVisible(False)
+        self._source_dirty = False
+
         self.file_label.setText(f"文件: {entry.get('file_path', '')}")
         self.field_label.setText(f"字段: {entry.get('field_path', '')}")
         ft = entry.get("file_type", "")
@@ -161,7 +232,11 @@ class EntryDetailPanel(QWidget):
         self.notes_editor.blockSignals(True)
         self.notes_editor.setPlainText(entry.get("context_notes", ""))
         self.notes_editor.blockSignals(False)
-        self.notes_editor.textChanged.connect(self._on_notes_change, type=Qt.UniqueConnection)
+        # Reconnect notes signal
+        if self._notes_connected:
+            self.notes_editor.textChanged.disconnect(self._on_notes_change)
+        self.notes_editor.textChanged.connect(self._on_notes_change)
+        self._notes_connected = True
 
         # Set status without triggering callback
         self.status_combo.blockSignals(True)
@@ -200,7 +275,6 @@ class EntryDetailPanel(QWidget):
         trans_group = self.findChild(QGroupBox, "翻译")
         if not trans_group:
             return
-        # Find the add_lang_layout (last layout in trans_group)
         layout = trans_group.layout()
         editor = QLineEdit()
         editor.setPlaceholderText(f"翻译到 {lang}...")
@@ -210,7 +284,6 @@ class EntryDetailPanel(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(f"{lang}:"), 0)
         row.addWidget(editor, 1)
-        # Insert before the add language layout
         layout.insertLayout(layout.count() - 1, row)
         self.trans_editors[lang] = editor
 
@@ -232,7 +305,6 @@ class EntryDetailPanel(QWidget):
             return
         ft = self.template_combo.itemData(index)
         template = CONTEXT_TEMPLATES.get(ft, "")
-        # Fill template variables
         if self._current_uid:
             tags_str = " ".join(self.tags_label.text().replace("标签: ", "").split(", "))
             template = template.replace("{speaker}", "").replace("{knot}", "")
