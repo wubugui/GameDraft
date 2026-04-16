@@ -254,6 +254,52 @@ def validate_flag_key(
     return False, f"flag '{key}' not in registry static/patterns ({severity})"
 
 
+def _scenario_expose_value_type_error(vt: str | None, val: object) -> str | None:
+    """值与登记表 valueType 不一致时返回错误片段，否则 None。"""
+    if isinstance(val, (dict, list)):
+        return f"值不能为对象或数组，当前为 {type(val).__name__}"
+    if vt == "string":
+        if isinstance(val, str):
+            return None
+        return f"在登记表中为 string，值须为 JSON 字符串，当前为 {type(val).__name__}"
+    if vt == "float":
+        if isinstance(val, bool):
+            return "在登记表中为数值，值不能为 JSON 布尔（与数字混淆）"
+        if isinstance(val, (int, float)):
+            return None
+        return f"在登记表中为数值，值须为 JSON 数字，当前为 {type(val).__name__}"
+    if isinstance(val, bool):
+        return None
+    return f"在登记表中为 bool，值须为 JSON true/false，当前为 {type(val).__name__}"
+
+
+def scenario_exposes_flag_errors(
+    exposes: object,
+    registry: dict[str, Any],
+    model: "ProjectModel",
+    *,
+    scenario_id: str,
+) -> str | None:
+    """若 exposes 键不在登记表或值的 JSON 类型与 valueType 不符，返回错误文案；否则 None。"""
+    if not isinstance(exposes, dict) or not exposes:
+        return None
+    if not registry:
+        return None
+    sid = str(scenario_id).strip()
+    for fk, fv in exposes.items():
+        key = str(fk).strip()
+        if not key:
+            return f"{sid!r} 的 exposes 中存在空的 flag 键名"
+        ok, msg = validate_flag_key(key, registry, model, scene_id=None, severity="error")
+        if not ok and msg:
+            return f"{sid!r} 的 exposes：{msg}"
+        vt = registry_value_type_for_key(key, registry)
+        verr = _scenario_expose_value_type_error(vt, fv)
+        if verr:
+            return f"{sid!r} 的 exposes 中 flag {key!r} {verr}"
+    return None
+
+
 def registry_value_type_for_key(key: str, registry: dict[str, Any] | None) -> str | None:
     """若 key 命中 static 或某条 pattern，返回规范化后的 'bool'|'float'|'string'；否则 None。"""
     if not key or not isinstance(key, str):

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from ..flag_registry import scenario_exposes_flag_errors
 from ..project_model import ProjectModel
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
@@ -125,7 +126,8 @@ class ScenariosCatalogEditor(QWidget):
 
         root = QVBoxLayout(self)
         tip = QLabel(
-            "scenarioId、进线 requires、阶段 requires、exposes 的 flag 均通过下拉/对话框选择，勿手写 id。"
+            "scenarioId、进线 requires、阶段 requires、exposes 的 flag 均通过下拉/对话框选择，勿手写 id；"
+            "exposes 的写入值控件随该 flag 在 flag_registry 中的类型切换（布尔 / 数值 / 字符串）。"
             "phase 名称与 description 为策划文案仅可手写。"
             "status 仅四种枚举。Apply 写入内存；保存工程写入 data/scenarios.json。"
             "图对话 setScenarioPhase、scenario 条件须与本页一致。",
@@ -187,7 +189,8 @@ class ScenariosCatalogEditor(QWidget):
         self._f_expose_after = QComboBox()
         self._f_expose_after.setEditable(False)
         self._f_expose_after.setToolTip(
-            "当该 phase 被设为 status=done 时，将 exposes 中的 flag 写入全局（与运行时 ScenarioStateManager 一致）",
+            "当该 phase 被设为 status=done 时，将 exposes 中的键值写入全局 FlagStore；"
+            "值的类型须与 flag_registry 中该键的 valueType 一致（bool / 数值 / 字符串）。",
         )
         self._f_desc.textChanged.connect(self._on_detail_edited)
         self._f_expose_after.currentIndexChanged.connect(self._on_detail_edited)
@@ -197,13 +200,13 @@ class ScenariosCatalogEditor(QWidget):
         form.addRow("exposeAfterPhase", self._f_expose_after)
         rfl.addLayout(form)
 
-        exp_g = QGroupBox("exposes（完成 exposeAfterPhase 后写入的 flag）")
+        exp_g = QGroupBox("exposes（完成 exposeAfterPhase 后写入的 flag 与值）")
         exp_l = QVBoxLayout(exp_g)
         self._tbl_exposes = QTableWidget(0, 2)
-        self._tbl_exposes.setHorizontalHeaderLabels(["flag 键名", "置为 true"])
+        self._tbl_exposes.setHorizontalHeaderLabels(["flag 键名", "写入值（随登记表类型）"])
         self._tbl_exposes.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._tbl_exposes.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents)
+            1, QHeaderView.ResizeMode.Stretch)
         self._tbl_exposes.setMinimumHeight(120)
         exp_l.addWidget(self._tbl_exposes)
         er = QHBoxLayout()
@@ -556,12 +559,22 @@ class ScenariosCatalogEditor(QWidget):
             fk = FlagKeyPickField(self._model, None, str(k), self)
             fk.valueChanged.connect(self._on_detail_edited)
             self._tbl_exposes.setCellWidget(r, 0, fk)
-            cb = QComboBox()
-            cb.addItem("true", True)
-            cb.addItem("false", False)
-            cb.setCurrentIndex(0 if v else 1)
-            cb.currentIndexChanged.connect(self._on_detail_edited)
-            self._tbl_exposes.setCellWidget(r, 1, cb)
+            fv = FlagValueEdit(self, self._model.flag_registry)
+            fv.set_flag_key(str(k))
+            fv.set_value(v)
+            fv.valueChanged.connect(self._on_detail_edited)
+            self._tbl_exposes.setCellWidget(r, 1, fv)
+            self._wire_exposes_key_to_value(fk, fv)
+
+    def _wire_exposes_key_to_value(self, fk: FlagKeyPickField, fv: FlagValueEdit) -> None:
+        """键变化时按登记表刷新值控件的类型（bool / 数值 / 字符串）。"""
+
+        def _sync() -> None:
+            fv.set_registry(self._model.flag_registry)
+            fv.set_flag_key(fk.key())
+
+        fk.valueChanged.connect(_sync)
+        _sync()
 
     def _fill_phases_table(self, phases: dict) -> None:
         vh = self._tbl_phases.verticalHeader()
@@ -654,7 +667,7 @@ class ScenariosCatalogEditor(QWidget):
         elif "exposeAfterPhase" in d:
             del d["exposeAfterPhase"]
 
-        exposes: dict[str, bool] = {}
+        exposes: dict[str, object] = {}
         for r in range(self._tbl_exposes.rowCount()):
             kw = self._tbl_exposes.cellWidget(r, 0)
             cw = self._tbl_exposes.cellWidget(r, 1)
@@ -666,11 +679,13 @@ class ScenariosCatalogEditor(QWidget):
                 continue
             if not key:
                 continue
-            val = True
-            if isinstance(cw, QComboBox):
+            if isinstance(cw, FlagValueEdit):
+                exposes[key] = cw.get_value()
+            elif isinstance(cw, QComboBox):
                 v = cw.currentData()
-                val = bool(v)
-            exposes[key] = val
+                exposes[key] = bool(v)
+            else:
+                continue
         if exposes:
             d["exposes"] = exposes
         elif "exposes" in d:
@@ -742,11 +757,12 @@ class ScenariosCatalogEditor(QWidget):
         fk = FlagKeyPickField(self._model, None, "", self)
         fk.valueChanged.connect(self._on_detail_edited)
         self._tbl_exposes.setCellWidget(r, 0, fk)
-        cb = QComboBox()
-        cb.addItem("true", True)
-        cb.addItem("false", False)
-        cb.currentIndexChanged.connect(self._on_detail_edited)
-        self._tbl_exposes.setCellWidget(r, 1, cb)
+        fv = FlagValueEdit(self, self._model.flag_registry)
+        fv.set_flag_key("")
+        fv.set_value(False)
+        fv.valueChanged.connect(self._on_detail_edited)
+        self._tbl_exposes.setCellWidget(r, 1, fv)
+        self._wire_exposes_key_to_value(fk, fv)
 
     def _exposes_del_row(self) -> None:
         rows = sorted({i.row() for i in self._tbl_exposes.selectedIndexes()}, reverse=True)
@@ -845,6 +861,14 @@ class ScenariosCatalogEditor(QWidget):
             for n in adj:
                 if color.get(n) == white and _cyc(n):
                     return f"{sid!r} 的 phases.requires 存在循环依赖"
+            exp_err = scenario_exposes_flag_errors(
+                e.get("exposes"),
+                getattr(self._model, "flag_registry", None) or {},
+                self._model,
+                scenario_id=sid,
+            )
+            if exp_err:
+                return exp_err
         return None
 
     def _build_catalog_dict(self) -> dict:

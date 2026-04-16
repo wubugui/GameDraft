@@ -1036,6 +1036,8 @@ class SceneCanvas(QGraphicsView):
         self._world_w: float = 800
         self._world_h: float = 600
         self._project_model: ProjectModel | None = None
+        self._auto_fit_after_layout: bool = False
+        self._fit_layout_token: int = 0
 
     def set_project_model(self, model: ProjectModel | None) -> None:
         """用于将 /assets/... 解析为本地路径，在画布上绘制热区 displayImage。"""
@@ -1339,9 +1341,54 @@ class SceneCanvas(QGraphicsView):
         return self._gfx
 
     def fit_all(self) -> None:
-        self.fitInView(self._gfx.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        """将场景矩形适配到视口。
+
+        首次进入 Scene 页时，分割器/堆叠布局常在一两帧内才给到最终视口尺寸；若只 fit
+        一次，会以「临时」视口算变换，之后视口变大但变换不更新，场景会缩在中间一小块。
+        因此在约 320ms 内多次重试，并在 resize 时继续重试直至结束窗口。
+        """
+        self._auto_fit_after_layout = True
+        self._fit_layout_token += 1
+        tok = self._fit_layout_token
+        self._perform_fit_all()
+        for ms in (0, 40, 120, 240):
+            QTimer.singleShot(ms, lambda t=tok: self._fit_stabilize_step(t))
+        QTimer.singleShot(320, lambda t=tok: self._end_auto_fit_after_layout(t))
+
+    def _fit_stabilize_step(self, token: int) -> None:
+        if not self._auto_fit_after_layout or token != self._fit_layout_token:
+            return
+        self._perform_fit_all()
+
+    def _end_auto_fit_after_layout(self, token: int) -> None:
+        if token != self._fit_layout_token:
+            return
+        self._auto_fit_after_layout = False
+
+    def _perform_fit_all(self) -> bool:
+        vp = self.viewport().rect()
+        if vp.width() < 8 or vp.height() < 8:
+            return False
+        sr = self._gfx.sceneRect()
+        if sr.width() <= 0 or sr.height() <= 0:
+            return False
+        self.resetTransform()
+        self.fitInView(sr, Qt.AspectRatioMode.KeepAspectRatio)
+        return True
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._auto_fit_after_layout:
+            self._perform_fit_all()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._auto_fit_after_layout:
+            tok = self._fit_layout_token
+            QTimer.singleShot(0, lambda t=tok: self._fit_stabilize_step(t))
 
     def wheelEvent(self, event: QWheelEvent) -> None:
+        self._auto_fit_after_layout = False
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
         self.scale(factor, factor)
 

@@ -344,7 +344,8 @@ export interface ScenarioCatalogEntry {
   requires?: string[];
   /** 当该 phase 被设为 status done 时，写入 exposes 中的 flag（须同时配置 exposes） */
   exposeAfterPhase?: string;
-  exposes?: Record<string, boolean>;
+  /** 键须为登记表中的 flag；值为 bool / number / string，与登记表 valueType 一致 */
+  exposes?: Record<string, boolean | number | string>;
   phases?: Record<string, ScenarioCatalogPhaseEntry>;
 }
 
