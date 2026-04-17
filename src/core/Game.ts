@@ -359,6 +359,15 @@ export class Game {
       if (!spawnKey) return scene.spawnPoint ?? null;
       return scene.spawnPoints?.[spawnKey] ?? null;
     });
+    this.cutsceneManager.setScriptedSpeakerResolver((raw, scriptedNpcId) =>
+      resolveScriptedSpeakerDisplay(raw, {
+        strings: this.stringsProvider,
+        flagStore: this.flagStore,
+        sceneManager: this.sceneManager,
+        graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
+        fallbackNpcId: scriptedNpcId ?? '',
+      }),
+    );
     this.saveManager = new SaveManager(
       () => this.collectSaveData(),
       (data) => this.distributeSaveData(data),

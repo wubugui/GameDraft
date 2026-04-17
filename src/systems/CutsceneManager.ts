@@ -20,6 +20,9 @@ export type ChangeSceneParams = {
 
 export type SceneSwitcher = (params: ChangeSceneParams) => Promise<void>;
 
+/** 与 playScriptedDialogue 一致：解析 speaker 中的 {{player}} / {{npc}} 等 */
+export type ScriptedSpeakerResolver = (raw: string, scriptedNpcId?: string) => string;
+
 interface CutsceneSnapshot {
   sceneId: string;
   playerX: number;
@@ -66,6 +69,7 @@ export class CutsceneManager implements IGameSystem {
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraAccessor: Camera | null = null;
   private spawnPointResolver: ((spawnKey: string) => { x: number; y: number } | null) | null = null;
+  private scriptedSpeakerResolver: ScriptedSpeakerResolver | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -136,6 +140,11 @@ export class CutsceneManager implements IGameSystem {
 
   setSpawnPointResolver(fn: (spawnKey: string) => { x: number; y: number } | null): void {
     this.spawnPointResolver = fn;
+  }
+
+  /** present:showDialogue 的 speaker 与 playScriptedDialogue 共用占位解析 */
+  setScriptedSpeakerResolver(fn: ScriptedSpeakerResolver | null): void {
+    this.scriptedSpeakerResolver = fn;
   }
 
   getCutsceneIds(): string[] {
@@ -499,9 +508,22 @@ export class CutsceneManager implements IGameSystem {
       case 'showTitle':
         await this.cutsceneRenderer.showTitle(step.text as string, step.duration as number ?? 2000);
         break;
-      case 'showDialogue':
-        await this.showDialogueText(step.text as string, step.speaker as string | undefined);
+      case 'showDialogue': {
+        const rawSpeaker = step.speaker !== undefined && step.speaker !== null
+          ? String(step.speaker).trim()
+          : '';
+        const scriptedNpcId = String((step as { scriptedNpcId?: unknown }).scriptedNpcId ?? '').trim();
+        let speakerOut: string | undefined;
+        if (rawSpeaker && this.scriptedSpeakerResolver) {
+          speakerOut = this.scriptedSpeakerResolver(rawSpeaker, scriptedNpcId || undefined);
+        } else if (rawSpeaker) {
+          speakerOut = rawSpeaker;
+        } else {
+          speakerOut = undefined;
+        }
+        await this.showDialogueText(step.text as string, speakerOut);
         break;
+      }
       case 'showImg':
         await this.cutsceneRenderer.showImg(step.image as string, step.id as string ?? 'default');
         break;
