@@ -212,12 +212,14 @@ class StepWidget(QFrame):
         parent: QWidget | None = None,
         *,
         parallel_parent: StepWidget | None = None,
+        cutscene_id: str | None = None,
     ):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._model = model
         self._editor = editor
         self._parallel_parent = parallel_parent
+        self._cutscene_id = (cutscene_id or "") or None
         self._outline_frame: StepOutlineFrame | None = None
         self._child_outlines: list[StepOutlineFrame] = []
         self._widgets: dict[str, QWidget] = {}
@@ -406,6 +408,7 @@ class StepWidget(QFrame):
             show_delete_button=False,
             show_reorder_buttons=False,
             parent=self,
+            cutscene_id=self._cutscene_id,
         )
         wl_set = set(CUTSCENE_ACTION_WHITELIST)
         self._action_row.type_combo.set_items(
@@ -431,6 +434,7 @@ class StepWidget(QFrame):
                 indent_px=16,
                 parallel_parent=self,
                 zebra_alt=(i % 2 == 1),
+                cutscene_id=self._cutscene_id,
             )
             self._child_outlines.append(ol)
             ol.contentChanged.connect(self._on_parallel_child_changed)
@@ -450,6 +454,7 @@ class StepWidget(QFrame):
             indent_px=16,
             parallel_parent=self,
             zebra_alt=(len(self._child_outlines) % 2 == 1),
+            cutscene_id=self._cutscene_id,
         )
         self._child_outlines.append(ol)
         ol.contentChanged.connect(self._on_parallel_child_changed)
@@ -523,6 +528,7 @@ class StepOutlineFrame(QFrame):
         indent_px: int = 0,
         parallel_parent: StepWidget | None = None,
         zebra_alt: bool = False,
+        cutscene_id: str | None = None,
     ):
         super().__init__(parent)
         self._model = model
@@ -531,6 +537,7 @@ class StepOutlineFrame(QFrame):
         self._indent_px = indent_px
         self._zebra_alt = zebra_alt
         self._collapsed = False
+        self._cutscene_id = (cutscene_id or "") or None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(self._indent_px, 2, 0, 2)
@@ -608,7 +615,11 @@ class StepOutlineFrame(QFrame):
         self._detail_wrap = QWidget()
         dl = QVBoxLayout(self._detail_wrap)
         dl.setContentsMargins(8, 4, 4, 4)
-        self._step = StepWidget(step, model, editor, self._detail_wrap, parallel_parent=parallel_parent)
+        self._step = StepWidget(
+            step, model, editor, self._detail_wrap,
+            parallel_parent=parallel_parent,
+            cutscene_id=self._cutscene_id,
+        )
         self._step._outline_frame = self
         dl.addWidget(self._step)
         root.addWidget(self._detail_wrap)
@@ -771,6 +782,7 @@ class StepOutlineFrame(QFrame):
             indent_px=self._indent_px,
             parallel_parent=self._parallel_parent,
             zebra_alt=(len(lst) % 2 == 1),
+            cutscene_id=self._cutscene_id,
         )
         new_ol.contentChanged.connect(self._editor._on_any_outline_changed)
         lst.insert(i + 1, new_ol)
@@ -1120,17 +1132,25 @@ class TimelineEditor(QWidget):
             self._steps_layout.removeWidget(ol)
             ol.deleteLater()
         self._step_outlines.clear()
+        cid = self._current_cutscene_id()
         for i, step in enumerate(steps):
             ol = StepOutlineFrame(
                 step, self._model, self, self._steps_container,
                 indent_px=0,
                 parallel_parent=None,
                 zebra_alt=(i % 2 == 1),
+                cutscene_id=cid,
             )
             ol.contentChanged.connect(self._on_any_outline_changed)
             self._step_outlines.append(ol)
             self._steps_layout.addWidget(ol)
         self._refresh_outline_indices_and_zebra()
+
+    def _current_cutscene_id(self) -> str | None:
+        if 0 <= self._current_idx < len(self._model.cutscenes):
+            cid = str(self._model.cutscenes[self._current_idx].get("id", "")).strip()
+            return cid or None
+        return None
 
     def _add_step(self, kind: str) -> None:
         if kind == "present":
@@ -1146,6 +1166,7 @@ class TimelineEditor(QWidget):
             indent_px=0,
             parallel_parent=None,
             zebra_alt=(len(self._step_outlines) % 2 == 1),
+            cutscene_id=self._current_cutscene_id(),
         )
         ol.contentChanged.connect(self._on_any_outline_changed)
         self._step_outlines.append(ol)

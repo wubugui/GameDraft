@@ -182,15 +182,38 @@ _ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book", "bookEntry")
 _FACE_DIRECTIONS = ("left", "right", "up", "down")
 
 
-def _cutscene_spawn_id_choices(model) -> list[tuple[str, str]]:
-    """cutsceneSpawnActor / cutsceneRemoveActor 的 id：已有 _cut_ + 预留槽位。"""
+def _read_overlay_id_value(w: object) -> str:
+    """show/hide/blend overlay id 控件兼容读取（FilterableTypeCombo 新式 + QLineEdit 历史兜底）。"""
+    if isinstance(w, FilterableTypeCombo):
+        return w.committed_type().strip()
+    if isinstance(w, QLineEdit):
+        return w.text().strip()
+    return ""
+
+
+def _cutscene_spawn_id_choices(
+    model,
+    cutscene_id: str | None = None,
+) -> list[tuple[str, str]]:
+    """cutsceneSpawnActor / cutsceneRemoveActor 的 id：
+
+    - 有 cutscene_id 时：仅列本过场内已用 _cut_ id + 预留槽位（避免跨过场污染）。
+    - 无 cutscene_id 时（非过场场景调用，一般不应发生）：全工程 _cut_ id + 预留槽位。
+    """
     seen: set[str] = set()
     rows: list[tuple[str, str]] = []
     if model:
-        for tid, disp in model.collect_cutscene_temp_actor_ids():
-            if tid not in seen:
-                seen.add(tid)
-                rows.append((disp, tid))
+        cid = (cutscene_id or "").strip()
+        if cid:
+            for tid in model.cutscene_temp_actor_ids_in_cutscene(cid):
+                if tid not in seen:
+                    seen.add(tid)
+                    rows.append((tid, tid))
+        else:
+            for tid, disp in model.collect_cutscene_temp_actor_ids():
+                if tid not in seen:
+                    seen.add(tid)
+                    rows.append((disp, tid))
         for i in range(1, 48):
             tid = f"_cut_actor_{i}"
             if tid not in seen:
@@ -442,7 +465,10 @@ class FilterableTypeCombo(QComboBox):
         self._programmatic = False
 
     def set_entries(self, entries: list[tuple[str, str]]) -> None:
-        """运行时更新下拉条目列表，保留当前 committed 值（若不在列表中则作为孤儿项显示）。"""
+        """【首选 API】运行时更新下拉条目，保留当前 committed 值（不在列表则作为孤儿项显示）。
+
+        所有新代码应调用本方法。`set_items` 是兼容别名，仅用于可能同时改 orphan_label 的老调用点。
+        """
         prev = self._committed
         self._entries = list(entries)
         self._rebuild_value_index()
@@ -458,7 +484,10 @@ class FilterableTypeCombo(QComboBox):
         *,
         orphan_label: Callable[[str], str] | None = None,
     ) -> None:
-        """与 set_entries 相同；Timeline 等场景可一并更新孤儿项展示文案。"""
+        """【兼容别名】等同于 set_entries，并允许一并更新孤儿项展示文案。
+
+        新代码请使用 `set_entries`；保留本方法以兼容 timeline_editor 等历史调用点。
+        """
         if orphan_label is not None:
             self._orphan_label = orphan_label
         self.set_entries(items)
@@ -509,7 +538,30 @@ class RuleSlotsParamEditor(QWidget):
         _hide_combo_popups_under(box)
         self._list_layout.removeWidget(box)
         box.deleteLater()
+        self._refresh_reorder_buttons()
         self.changed.emit()
+
+    def _move_row(self, rec: dict, delta: int) -> None:
+        if rec not in self._rows:
+            return
+        i = self._rows.index(rec)
+        j = i + delta
+        if j < 0 or j >= len(self._rows):
+            return
+        _hide_combo_popups_under(self)
+        self._rows[i], self._rows[j] = self._rows[j], self._rows[i]
+        for r in self._rows:
+            self._list_layout.removeWidget(r["box"])
+        for r in self._rows:
+            self._list_layout.addWidget(r["box"])
+        self._refresh_reorder_buttons()
+        self.changed.emit()
+
+    def _refresh_reorder_buttons(self) -> None:
+        n = len(self._rows)
+        for i, r in enumerate(self._rows):
+            r["btn_up"].setEnabled(i > 0)
+            r["btn_down"].setEnabled(i < n - 1)
 
     def _append_slot_ui(self, data: dict) -> None:
         box = QFrame()
@@ -523,8 +575,15 @@ class RuleSlotsParamEditor(QWidget):
         rid.set_current(str(data.get("ruleId", "")))
         rid.value_changed.connect(lambda _v: self.changed.emit())
         hdr.addWidget(rid, stretch=1)
+        up = QPushButton("\u2191")
+        up.setFixedWidth(24)
+        up.setToolTip("上移")
+        dn = QPushButton("\u2193")
+        dn.setFixedWidth(24)
+        dn.setToolTip("下移")
         rm = QPushButton("\u2212")
         rm.setFixedWidth(24)
+        rm.setToolTip("删除")
         bl.addWidget(QLabel("resultText"))
         tx = QTextEdit()
         tx.setMaximumHeight(80)
@@ -538,12 +597,20 @@ class RuleSlotsParamEditor(QWidget):
         ae.set_data(list(ra) if isinstance(ra, list) else [])
         ae.changed.connect(self.changed.emit)
         bl.addWidget(ae)
-        rec = {"box": box, "rid": rid, "text": tx, "ae": ae}
+        rec = {
+            "box": box, "rid": rid, "text": tx, "ae": ae,
+            "btn_up": up, "btn_down": dn,
+        }
         rm.clicked.connect(lambda: self._remove_row(rec))
+        up.clicked.connect(lambda: self._move_row(rec, -1))
+        dn.clicked.connect(lambda: self._move_row(rec, 1))
+        hdr.addWidget(up)
+        hdr.addWidget(dn)
         hdr.addWidget(rm)
         bl.insertLayout(0, hdr)
         self._rows.append(rec)
         self._list_layout.addWidget(box)
+        self._refresh_reorder_buttons()
 
     def to_list(self) -> list[dict]:
         out: list[dict] = []
@@ -570,11 +637,14 @@ class ActionRow(QWidget):
         scene_id: str | None = None,
         show_delete_button: bool = True,
         show_reorder_buttons: bool = True,
+        *,
+        cutscene_id: str | None = None,
     ):
         super().__init__(parent)
         self._param_widgets: dict[str, QWidget] = {}
         self._ctx_model = model
         self._ctx_scene_id = scene_id
+        self._ctx_cutscene_id = (cutscene_id or "") or None
         self._delayed_editor = None
         self._collapsed = True
 
@@ -701,10 +771,18 @@ class ActionRow(QWidget):
             if "name" in params and "itemName" not in params:
                 params["itemName"] = params.pop("name")
 
-    def set_project_context(self, model, scene_id: str | None) -> None:
+    def set_project_context(
+        self,
+        model,
+        scene_id: str | None,
+        *,
+        cutscene_id: str | None = None,
+    ) -> None:
         self._data = self.to_dict()
         self._ctx_model = model
         self._ctx_scene_id = scene_id
+        if cutscene_id is not None:
+            self._ctx_cutscene_id = cutscene_id or None
         self._rebuild_params()
 
     def _on_type_committed(self, _text: str) -> None:
@@ -830,6 +908,20 @@ class ActionRow(QWidget):
         tgt_w.value_changed.connect(refresh_state)
         refresh_state()
 
+    def _build_overlay_id_combo(self, value: str) -> FilterableTypeCombo:
+        """show/hide/blend 叠图 id：overlay_images.json 短 id + 自由输入（非 select_only）。"""
+        m = self._ctx_model
+        entries = m.overlay_short_id_entries() if m else []
+        w = FilterableTypeCombo(entries, self, select_only=False)
+        w.setToolTip(
+            "与 hideOverlayImage / blendOverlayImage 共用的标记；"
+            "下拉为 overlay_images.json 的短 id，也可输入任意新 id。",
+        )
+        cur = (value or "").strip()
+        w.set_committed_type(cur)
+        w.typeCommitted.connect(lambda _t: self.changed.emit())
+        return w
+
     def _make_selector(
         self,
         kind: str,
@@ -908,11 +1000,9 @@ class ActionRow(QWidget):
             tip.setWordWrap(True)
             tip.setToolTip("id 须与 hideOverlayImage 共用；可与 overlay_images.json 短 id 对齐。")
             self._params_layout.addRow(tip)
-            id_ed = QLineEdit(str(params.get("id", "") or ""), self)
-            id_ed.setPlaceholderText("如 notice_a")
-            id_ed.textChanged.connect(self.changed)
-            self._param_widgets["id"] = id_ed
-            self._params_layout.addRow("id", id_ed)
+            id_combo = self._build_overlay_id_combo(str(params.get("id", "") or ""))
+            self._param_widgets["id"] = id_combo
+            self._params_layout.addRow("id", id_combo)
             img_row = CutsceneImagePathRow(self._ctx_model, str(params.get("image", "") or ""), self)
             img_row.changed.connect(self.changed)
             self._param_widgets["image"] = img_row
@@ -1072,11 +1162,9 @@ class ActionRow(QWidget):
             tip.setWordWrap(True)
             tip.setTextFormat(Qt.TextFormat.RichText)
             self._params_layout.addRow(tip)
-            id_ed = QLineEdit(str(params.get("id", "") or ""), self)
-            id_ed.setPlaceholderText("如 portrait_blend")
-            id_ed.textChanged.connect(self.changed)
-            self._param_widgets["id"] = id_ed
-            self._params_layout.addRow("id", id_ed)
+            id_combo = self._build_overlay_id_combo(str(params.get("id", "") or ""))
+            self._param_widgets["id"] = id_combo
+            self._params_layout.addRow("id", id_combo)
             from_row = CutsceneImagePathRow(self._ctx_model, str(params.get("fromImage", "") or ""), self)
             from_row.changed.connect(self.changed)
             self._param_widgets["fromImage"] = from_row
@@ -1196,7 +1284,14 @@ class ActionRow(QWidget):
             self._param_widgets["entry"] = ent_combo
             self._params_layout.addRow("entry", ent_combo)
 
-            nid = self._make_selector("actor", str(params.get("npcId", "") or ""))
+            nid = IdRefSelector(self, allow_empty=True)
+            nid.setMinimumWidth(160)
+            nid.set_items(npc_items_for_dialogue_picker(self._ctx_model, self._ctx_scene_id))
+            nid.set_current(str(params.get("npcId", "") or ""))
+            nid.value_changed.connect(self.changed)
+            nid.setToolTip(
+                "解析 {{npc}} 显示名用；有场景上下文时优先场景 NPC，否则列出全局 NPC。",
+            )
             self._param_widgets["npcId"] = nid
             self._params_layout.addRow("npcId（可选）", nid)
             self._sync_foldable_visibility()
@@ -1488,9 +1583,7 @@ class ActionRow(QWidget):
                 w = FilterableTypeCombo([("", "（选 state）")], self, select_only=True)
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "hideOverlayImage" and pname == "id":
-                w = QLineEdit(str(val), self)
-                w.setPlaceholderText("与 showOverlayImage / blend 共用 id")
-                w.textChanged.connect(self.changed)
+                w = self._build_overlay_id_combo(str(val) if val is not None else "")
             elif act_type == "moveEntityTo" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "faceEntity" and pname == "target":
@@ -1511,7 +1604,7 @@ class ActionRow(QWidget):
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "cutsceneSpawnActor" and pname == "id":
                 m = self._ctx_model
-                rows = _cutscene_spawn_id_choices(m)
+                rows = _cutscene_spawn_id_choices(m, self._ctx_cutscene_id)
                 cur = str(val) if val is not None else ""
                 w = FilterableTypeCombo(rows, self, select_only=True)
                 if cur:
@@ -1525,7 +1618,7 @@ class ActionRow(QWidget):
                 w.textChanged.connect(self.changed)
             elif act_type == "cutsceneRemoveActor" and pname == "id":
                 m = self._ctx_model
-                rows = _cutscene_spawn_id_choices(m)
+                rows = _cutscene_spawn_id_choices(m, self._ctx_cutscene_id)
                 cur = str(val) if val is not None else ""
                 w = FilterableTypeCombo(rows, self, select_only=True)
                 if cur:
@@ -1589,7 +1682,7 @@ class ActionRow(QWidget):
         x_w = self._param_widgets.get("xPercent")
         y_w = self._param_widgets.get("yPercent")
         w_w = self._param_widgets.get("widthPercent")
-        pid = id_w.text().strip() if isinstance(id_w, QLineEdit) else ""
+        pid = _read_overlay_id_value(id_w)
         pimg = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
         return {
             "type": "showOverlayImage",
@@ -1611,7 +1704,7 @@ class ActionRow(QWidget):
         x_w = self._param_widgets.get("xPercent")
         y_w = self._param_widgets.get("yPercent")
         w_w = self._param_widgets.get("widthPercent")
-        pid = id_w.text().strip() if isinstance(id_w, QLineEdit) else ""
+        pid = _read_overlay_id_value(id_w)
         pfrom = from_w.path() if isinstance(from_w, CutsceneImagePathRow) else ""
         pto = to_w.path() if isinstance(to_w, CutsceneImagePathRow) else ""
         dms = int(dur_w.value()) if isinstance(dur_w, QSpinBox) else 600
@@ -1679,9 +1772,12 @@ class ActionRow(QWidget):
         sm: dict = {}
         for logical in ("idle", "walk", "run"):
             w = self._param_widgets.get(logical)
-            if not isinstance(w, QLineEdit):
+            if isinstance(w, FilterableTypeCombo):
+                t = w.committed_type().strip()
+            elif isinstance(w, QLineEdit):
+                t = w.text().strip()
+            else:
                 continue
-            t = w.text().strip()
             if t:
                 sm[logical] = t
         if sm:
@@ -1784,6 +1880,7 @@ class ActionEditor(QWidget):
         self._rows: list[ActionRow] = []
         self._ctx_model = None
         self._ctx_scene_id: str | None = None
+        self._ctx_cutscene_id: str | None = None
         self._show_reorder_buttons = show_reorder_buttons
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1795,11 +1892,19 @@ class ActionEditor(QWidget):
         add_btn.clicked.connect(self._add_empty)
         root.addWidget(add_btn)
 
-    def set_project_context(self, model, scene_id: str | None = None) -> None:
+    def set_project_context(
+        self,
+        model,
+        scene_id: str | None = None,
+        *,
+        cutscene_id: str | None = None,
+    ) -> None:
         self._ctx_model = model
         self._ctx_scene_id = scene_id
+        if cutscene_id is not None:
+            self._ctx_cutscene_id = cutscene_id or None
         for r in self._rows:
-            r.set_project_context(model, scene_id)
+            r.set_project_context(model, scene_id, cutscene_id=self._ctx_cutscene_id)
 
     def set_flag_completions(self, _keys: list[str]) -> None:
         """Deprecated: pass set_project_context instead."""
@@ -1834,6 +1939,7 @@ class ActionEditor(QWidget):
             model=self._ctx_model,
             scene_id=self._ctx_scene_id,
             show_reorder_buttons=self._show_reorder_buttons,
+            cutscene_id=self._ctx_cutscene_id,
         )
         row.removed.connect(self._remove_row)
         row.changed.connect(self.changed)
