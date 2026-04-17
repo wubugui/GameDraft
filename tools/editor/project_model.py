@@ -624,6 +624,148 @@ class ProjectModel(QObject):
             for stem in self.all_anim_files()
         ]
 
+    def overlay_short_id_entries(self) -> list[tuple[str, str]]:
+        """overlay_images.json 的短 id 键，供 show/hide/blend 叠图动作 id 下拉。"""
+        if not isinstance(self.overlay_images, dict):
+            return []
+        out: list[tuple[str, str]] = []
+        for k in sorted(self.overlay_images.keys(), key=lambda x: (str(x).lower(), str(x))):
+            ks = str(k).strip()
+            if ks:
+                out.append((ks, ks))
+        return out
+
+    def actor_id_items_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """与 Game.resolveActor 一致：过场临时演员 + 当前场景 NPC + player。"""
+        items: list[tuple[str, str]] = []
+        for tid, disp in self.collect_cutscene_temp_actor_ids():
+            items.append((tid, disp))
+        for nid, label in self.npc_ids_for_scene(scene_id):
+            items.append((nid, label))
+        items.append(("player", "player"))
+        return items
+
+    def npc_actor_items_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """仅场景 NPC（persistNpc* / stopNpcPatrol 等，不含 player 与 _cut_）。"""
+        return list(self.npc_ids_for_scene(scene_id))
+
+    def collect_cutscene_temp_actor_ids(self) -> list[tuple[str, str]]:
+        """从过场 steps 收集 cutsceneSpawnActor 的 _cut_* id。"""
+        found: set[str] = set()
+
+        def walk(steps: list) -> None:
+            for step in steps or []:
+                if not isinstance(step, dict):
+                    continue
+                if step.get("kind") == "action" and step.get("type") == "cutsceneSpawnActor":
+                    p = step.get("params") or {}
+                    i = str(p.get("id") or "").strip()
+                    if i.startswith("_cut_"):
+                        found.add(i)
+                tr = step.get("tracks")
+                if isinstance(tr, list):
+                    for sub in tr:
+                        if isinstance(sub, dict):
+                            walk([sub])
+
+        for cs in self.cutscenes:
+            walk(cs.get("steps") or [])
+        ordered = sorted(found, key=lambda x: (x.lower(), x))
+        return [(i, i) for i in ordered]
+
+    def animation_state_names_for_manifest(self, manifest_path: str) -> list[str]:
+        """anim.json 内 states 的键名列表（有序）。"""
+        p = (manifest_path or "").strip()
+        if not p.startswith("/assets/animation/"):
+            return []
+        rel = p[len("/assets/animation/"):]
+        stem = rel.split("/", 1)[0]
+        if not stem:
+            return []
+        data = self.animations.get(stem)
+        if not isinstance(data, dict):
+            return []
+        st = data.get("states")
+        if not isinstance(st, dict):
+            return []
+        return [str(k) for k in st.keys()]
+
+    def npc_anim_manifest_for_scene(self, scene_id: str | None, npc_id: str) -> str:
+        """某场景 NPC 的 animFile 路径；找不到则返回空字符串。"""
+        nid = (npc_id or "").strip()
+        if not nid or not scene_id:
+            return ""
+        sc = self.scenes.get(scene_id) or {}
+        for npc in sc.get("npcs") or []:
+            if not isinstance(npc, dict):
+                continue
+            raw = npc.get("id") or npc.get("npcId")
+            if raw is None or str(raw).strip() != nid:
+                continue
+            af = npc.get("animFile")
+            if af is not None and str(af).strip():
+                return str(af).strip()
+        return ""
+
+    def player_avatar_anim_manifest(self) -> str:
+        """game_config.playerAvatar.animManifest（默认玩家动画包）。"""
+        pa = self.game_config.get("playerAvatar") if isinstance(self.game_config, dict) else None
+        if not isinstance(pa, dict):
+            return ""
+        am = pa.get("animManifest")
+        return str(am).strip() if am is not None else ""
+
+    def animation_state_names_for_actor(self, scene_id: str | None, actor_id: str) -> list[str]:
+        """resolveActor 目标当前可用的动画 state 名（player 用配置 animManifest，NPC 用 animFile）。"""
+        aid = (actor_id or "").strip()
+        if not aid:
+            return []
+        if aid == "player":
+            return self.animation_state_names_for_manifest(self.player_avatar_anim_manifest())
+        mf = self.npc_anim_manifest_for_scene(scene_id, aid)
+        return self.animation_state_names_for_manifest(mf)
+
+    def dialogue_graph_node_ids(self, graph_id: str) -> list[str]:
+        """对话图 JSON nodes 的键名（与 entry 一致）。"""
+        gid = (graph_id or "").strip()
+        if not gid:
+            return []
+        p = self.dialogues_path / "graphs" / f"{gid}.json"
+        data = self._load(p, {})
+        if not isinstance(data, dict):
+            return []
+        nodes = data.get("nodes")
+        if not isinstance(nodes, dict):
+            return []
+        return sorted((str(k) for k in nodes.keys()), key=lambda x: (x.lower(), x))
+
+    def scenario_phase_outcome_template_value(
+        self, scenario_id: str, phase: str,
+    ) -> str | int | float | bool | None:
+        """scenarios.json 中某 phase 对象上的默认 outcome（若有）。"""
+        sid = (scenario_id or "").strip()
+        ph = (phase or "").strip()
+        if not sid or not ph:
+            return None
+        for e in self.scenarios_catalog.get("scenarios") or []:
+            if not isinstance(e, dict) or str(e.get("id", "")).strip() != sid:
+                continue
+            phases = e.get("phases")
+            if not isinstance(phases, dict):
+                return None
+            ph_obj = phases.get(ph)
+            if not isinstance(ph_obj, dict):
+                return None
+            if "outcome" not in ph_obj:
+                return None
+            return ph_obj.get("outcome")
+        return None
+
+    def all_npc_display_name_choices(self) -> list[tuple[str, str]]:
+        """全项目 NPC 显示名（去重），供 cutsceneSpawnActor.name 等短标签选择。"""
+        names = self.all_npc_names()
+        return [(n, n) for n in names]
+
     def illustration_asset_choices(self) -> list[tuple[str, str]]:
         """Known illustration paths under /assets/images/illustrations/."""
         root = self.assets_path / "images" / "illustrations"
