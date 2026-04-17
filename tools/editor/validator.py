@@ -469,6 +469,190 @@ def _scenario_definitions(model: ProjectModel) -> dict[str, dict]:
     return out
 
 
+def _cutscene_temp_actor_ids_in_steps(steps: list) -> set[str]:
+    """单条过场内 cutsceneSpawnActor 产生的 _cut_* id（含 parallel 子轨）。"""
+    found: set[str] = set()
+
+    def walk(sl: list) -> None:
+        for step in sl or []:
+            if not isinstance(step, dict):
+                continue
+            if step.get("kind") == "action" and step.get("type") == "cutsceneSpawnActor":
+                sid = str((step.get("params") or {}).get("id", "")).strip()
+                if sid.startswith("_cut_"):
+                    found.add(sid)
+            tracks = step.get("tracks")
+            if isinstance(tracks, list):
+                for sub in tracks:
+                    if isinstance(sub, dict):
+                        walk([sub])
+
+    walk(steps)
+    return found
+
+
+def _npc_ids_in_scene(model: ProjectModel, scene_id: str | None) -> set[str]:
+    if not scene_id:
+        return set()
+    return {p[0] for p in model.npc_ids_for_scene(scene_id)}
+
+
+def _all_npc_ids_global_set(model: ProjectModel) -> set[str]:
+    return {p[0] for p in model.all_npc_ids_global()}
+
+
+def _actor_ref_ok(
+    model: ProjectModel,
+    scene_id: str | None,
+    actor_id: str,
+    *,
+    temp_ids: frozenset[str],
+    allow_player: bool,
+) -> bool:
+    aid = actor_id.strip()
+    if not aid:
+        return False
+    if allow_player and aid == "player":
+        return True
+    if aid.startswith("_cut_") and aid in temp_ids:
+        return True
+    if scene_id and aid in _npc_ids_in_scene(model, scene_id):
+        return True
+    if not scene_id and aid in _all_npc_ids_global_set(model):
+        return True
+    return False
+
+
+def _append_action_param_ref_issues(
+    model: ProjectModel,
+    issues: list[Issue],
+    act: dict,
+    data_type: str,
+    item_id: str,
+    scene_id: str | None,
+    *,
+    cutscene_temp_ids: frozenset[str] | None = None,
+) -> None:
+    """Action 参数与工程清单一致性（warning 为主，避免历史数据大量爆红）。"""
+    t = act.get("type")
+    if not isinstance(t, str) or not t:
+        return
+    p = act.get("params") if isinstance(act.get("params"), dict) else {}
+    temp = cutscene_temp_ids or frozenset()
+    graph_ids = set(model.all_dialogue_graph_ids())
+    overlay_keys = set(model.overlay_images.keys()) if isinstance(model.overlay_images, dict) else set()
+
+    if t == "startDialogueGraph":
+        gid = str(p.get("graphId") or "").strip()
+        if gid and gid not in graph_ids:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"startDialogueGraph graphId {gid!r} 在 dialogues/graphs 下无对应 .json",
+            ))
+        ent = str(p.get("entry") or "").strip()
+        if gid and ent:
+            nodes = set(model.dialogue_graph_node_ids(gid))
+            if nodes and ent not in nodes:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"startDialogueGraph entry {ent!r} 不在图 {gid!r} 的 nodes 键中",
+                ))
+        nid = str(p.get("npcId") or "").strip()
+        if nid and not _actor_ref_ok(
+            model, scene_id, nid, temp_ids=temp, allow_player=True,
+        ):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"startDialogueGraph npcId {nid!r} 在当前上下文下无法解析为实体",
+            ))
+
+    if t in ("hideOverlayImage", "showOverlayImage", "blendOverlayImage"):
+        oid = str(p.get("id") or "").strip()
+        if oid and overlay_keys and oid not in overlay_keys:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{t} id {oid!r} 不在 overlay_images.json 的键中",
+            ))
+
+    if t == "faceEntity":
+        d = str(p.get("direction") or "").strip()
+        if d and d not in ("left", "right", "up", "down"):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"faceEntity direction {d!r} 非 left/right/up/down",
+            ))
+
+    actor_actions = (
+        "playNpcAnimation", "setEntityEnabled", "moveEntityTo", "showEmoteAndWait",
+        "faceEntity",
+    )
+    if t in actor_actions:
+        for key in ("target", "faceTarget"):
+            if key not in p:
+                continue
+            aid = str(p.get(key) or "").strip()
+            if not aid:
+                continue
+            if not _actor_ref_ok(
+                model, scene_id, aid, temp_ids=temp, allow_player=True,
+            ):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} {key}={aid!r} 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）",
+                ))
+        if t == "playNpcAnimation":
+            tgt = str(p.get("target") or "").strip()
+            st = str(p.get("state") or "").strip()
+            if tgt and st:
+                known = set(model.animation_state_names_for_actor(scene_id, tgt))
+                if known and st not in known:
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"playNpcAnimation state {st!r} 不在目标 {tgt!r} 的 anim.json states 中",
+                    ))
+
+    if t in ("stopNpcPatrol", "persistNpcDisablePatrol", "persistNpcEnablePatrol"):
+        raw = str(p.get("npcId") or "").strip()
+        key = "npcId"
+        if raw and scene_id:
+            if raw not in _npc_ids_in_scene(model, scene_id):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} {key}={raw!r} 不在当前场景 {scene_id!r} 的 NPC 列表中",
+                ))
+        elif raw and not scene_id:
+            if raw not in _all_npc_ids_global_set(model):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} {key}={raw!r} 不在任意场景的 NPC 清单中",
+                ))
+    if t in ("persistNpcEntityEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation"):
+        raw = str(p.get("target") or "").strip()
+        key = "target"
+        if raw and scene_id:
+            if raw not in _npc_ids_in_scene(model, scene_id):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} {key}={raw!r} 不在当前场景 {scene_id!r} 的 NPC 列表中",
+                ))
+        elif raw and not scene_id:
+            if raw not in _all_npc_ids_global_set(model):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} {key}={raw!r} 不在任意场景的 NPC 清单中",
+                ))
+    if t in ("persistNpcAnimState", "persistPlayNpcAnimation"):
+        tgt = str(p.get("target") or "").strip()
+        st = str(p.get("state") or "").strip()
+        if tgt and st and scene_id:
+            known = set(model.animation_state_names_for_actor(scene_id, tgt))
+            if known and st not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} state {st!r} 不在 NPC {tgt!r} 的 anim.json states 中",
+                ))
+
+
 def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> None:
     """per-phase /进线 requires 布尔式、引用与纯与链 DAG（无环）。"""
     from .scenario_requires_expr import flatten_and_of_phase_strings, validate_requires_expr
@@ -719,6 +903,8 @@ def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
 def _walk_action_defs(
     model: ProjectModel, issues: list[Issue], actions: list,
     data_type: str, item_id: str, scene_id: str | None,
+    *,
+    cutscene_temp_ids: frozenset[str] | None = None,
 ) -> None:
     """遍历 ActionDef 列表：校验 type 已在编辑器登记；setFlag 键；嵌套 enableRuleOffers / addDelayedEvent。"""
     from .shared.action_editor import ACTION_TYPES
@@ -727,6 +913,10 @@ def _walk_action_defs(
     for act in actions or []:
         if not isinstance(act, dict):
             continue
+        _append_action_param_ref_issues(
+            model, issues, act, data_type, item_id, scene_id,
+            cutscene_temp_ids=cutscene_temp_ids,
+        )
         t = act.get("type")
         if isinstance(t, str) and t and t not in allowed_types:
             issues.append(Issue(
@@ -754,11 +944,13 @@ def _walk_action_defs(
                     _walk_action_defs(
                         model, issues, slot.get("resultActions"),
                         data_type, item_id, scene_id,
+                        cutscene_temp_ids=cutscene_temp_ids,
                     )
         elif t == "addDelayedEvent":
             _walk_action_defs(
                 model, issues, p.get("actions"),
                 data_type, item_id, scene_id,
+                cutscene_temp_ids=cutscene_temp_ids,
             )
         elif t == "setScenarioPhase":
             scen = _scenario_definitions(model)
@@ -854,7 +1046,7 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
 
     for c in model.cutscenes:
         cid = str(c.get("id", ""))
-        _validate_cutscene_steps(c.get("steps", []) or [], cid, issues)
+        _validate_cutscene_steps(model, c.get("steps", []) or [], cid, issues)
 
     for it in model.items:
         iid = str(it.get("id", ""))
@@ -923,11 +1115,36 @@ _CUTSCENE_ACTION_WHITELIST = frozenset([
 ])
 
 
+def _walk_cutscene_action_param_refs(
+    model: ProjectModel,
+    issues: list[Issue],
+    steps: list,
+    cid: str,
+    temp_ids: frozenset[str],
+) -> None:
+    for step in steps or []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("kind") == "action":
+            act = {"type": step.get("type"), "params": step.get("params") or {}}
+            _append_action_param_ref_issues(
+                model, issues, act, "cutscene", cid, None,
+                cutscene_temp_ids=temp_ids,
+            )
+        elif step.get("kind") == "parallel":
+            _walk_cutscene_action_param_refs(
+                model, issues, step.get("tracks") or [], cid, temp_ids,
+            )
+
+
 def _validate_cutscene_steps(
-    steps: list, cid: str, issues: list[Issue],
+    model: ProjectModel, steps: list, cid: str, issues: list[Issue],
 ) -> None:
     from .shared.action_editor import ACTION_TYPES
     allowed_types = set(ACTION_TYPES)
+
+    temp_actor_ids = frozenset(_cutscene_temp_actor_ids_in_steps(steps))
+    _walk_cutscene_action_param_refs(model, issues, steps, cid, temp_actor_ids)
 
     for i, step in enumerate(steps):
         if not isinstance(step, dict):
@@ -964,7 +1181,7 @@ def _validate_cutscene_steps(
                     "warning", "cutscene", cid,
                     f"step #{i+1} parallel 的 tracks 为空（运行时该步将立即结束，确认是否占位遗漏）",
                 ))
-            _validate_cutscene_steps(tr, cid, issues)
+            _validate_cutscene_steps(model, tr, cid, issues)
 
         elif kind:
             issues.append(Issue(
