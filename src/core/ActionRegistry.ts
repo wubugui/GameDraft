@@ -31,6 +31,8 @@ import type { ActionDef, DialogueLine, ICutsceneActor, ZoneRuleSlot } from '../d
 import { GameState } from '../data/types';
 
 export interface ActionRegistryDeps {
+  /** playScriptedDialogue speaker 中的 {{player}} / {{npc}} 等占位解析；scriptedNpcId 为 params.scriptedNpcId */
+  resolveScriptedSpeaker: (raw: string, scriptedNpcId?: string) => string;
   ruleOfferRegistry: RuleOfferRegistry;
   inventoryManager: InventoryManager;
   rulesManager: RulesManager;
@@ -586,17 +588,19 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('playScriptedDialogue: params.lines 须为非空数组');
       return;
     }
+    const scriptedNpcId = String(p.scriptedNpcId ?? '').trim();
     const narrKey = d.stringsProvider.get('dialogue', 'narratorLabel');
     const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
     const lines: DialogueLine[] = [];
     for (const item of raw) {
       if (!item || typeof item !== 'object') continue;
       const o = item as Record<string, unknown>;
-      const speaker = String(o.speaker ?? '').trim();
+      const speakerRaw = String(o.speaker ?? '').trim();
+      const speakerResolved = speakerRaw ? d.resolveScriptedSpeaker(speakerRaw, scriptedNpcId) : '';
       const text = String(o.text ?? '').trim();
       if (!text) continue;
       lines.push({
-        speaker: speaker || narratorFallback,
+        speaker: speakerResolved || narratorFallback,
         text,
         tags: [],
       });

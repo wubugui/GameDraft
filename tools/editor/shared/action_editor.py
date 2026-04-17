@@ -9,6 +9,7 @@ Action 主类型与过场 present 子类型使用 ``FilterableTypeCombo(select_o
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Callable
 
@@ -96,6 +97,7 @@ from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .blend_overlay_preview import BlendOverlayPreviewWidget
 from .image_path_picker import CutsceneImagePathRow
+from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
 from .scripted_lines_editor import ScriptedLinesEditor
 
 ACTION_TYPES = [
@@ -176,6 +178,48 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
 _ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book", "bookEntry")
+
+_FACE_DIRECTIONS = ("left", "right", "up", "down")
+
+
+def _read_overlay_id_value(w: object) -> str:
+    """show/hide/blend overlay id 控件兼容读取（FilterableTypeCombo 新式 + QLineEdit 历史兜底）。"""
+    if isinstance(w, FilterableTypeCombo):
+        return w.committed_type().strip()
+    if isinstance(w, QLineEdit):
+        return w.text().strip()
+    return ""
+
+
+def _cutscene_spawn_id_choices(
+    model,
+    cutscene_id: str | None = None,
+) -> list[tuple[str, str]]:
+    """cutsceneSpawnActor / cutsceneRemoveActor 的 id：
+
+    - 有 cutscene_id 时：仅列本过场内已用 _cut_ id + 预留槽位（避免跨过场污染）。
+    - 无 cutscene_id 时（非过场场景调用，一般不应发生）：全工程 _cut_ id + 预留槽位。
+    """
+    seen: set[str] = set()
+    rows: list[tuple[str, str]] = []
+    if model:
+        cid = (cutscene_id or "").strip()
+        if cid:
+            for tid in model.cutscene_temp_actor_ids_in_cutscene(cid):
+                if tid not in seen:
+                    seen.add(tid)
+                    rows.append((tid, tid))
+        else:
+            for tid, disp in model.collect_cutscene_temp_actor_ids():
+                if tid not in seen:
+                    seen.add(tid)
+                    rows.append((disp, tid))
+        for i in range(1, 48):
+            tid = f"_cut_actor_{i}"
+            if tid not in seen:
+                seen.add(tid)
+                rows.append((tid, tid))
+    return rows
 
 
 class FilterableTypeCombo(QComboBox):
@@ -421,7 +465,10 @@ class FilterableTypeCombo(QComboBox):
         self._programmatic = False
 
     def set_entries(self, entries: list[tuple[str, str]]) -> None:
-        """运行时更新下拉条目列表，保留当前 committed 值（若不在列表中则作为孤儿项显示）。"""
+        """【首选 API】运行时更新下拉条目，保留当前 committed 值（不在列表则作为孤儿项显示）。
+
+        所有新代码应调用本方法。`set_items` 是兼容别名，仅用于可能同时改 orphan_label 的老调用点。
+        """
         prev = self._committed
         self._entries = list(entries)
         self._rebuild_value_index()
@@ -437,7 +484,10 @@ class FilterableTypeCombo(QComboBox):
         *,
         orphan_label: Callable[[str], str] | None = None,
     ) -> None:
-        """与 set_entries 相同；Timeline 等场景可一并更新孤儿项展示文案。"""
+        """【兼容别名】等同于 set_entries，并允许一并更新孤儿项展示文案。
+
+        新代码请使用 `set_entries`；保留本方法以兼容 timeline_editor 等历史调用点。
+        """
         if orphan_label is not None:
             self._orphan_label = orphan_label
         self.set_entries(items)
@@ -488,7 +538,30 @@ class RuleSlotsParamEditor(QWidget):
         _hide_combo_popups_under(box)
         self._list_layout.removeWidget(box)
         box.deleteLater()
+        self._refresh_reorder_buttons()
         self.changed.emit()
+
+    def _move_row(self, rec: dict, delta: int) -> None:
+        if rec not in self._rows:
+            return
+        i = self._rows.index(rec)
+        j = i + delta
+        if j < 0 or j >= len(self._rows):
+            return
+        _hide_combo_popups_under(self)
+        self._rows[i], self._rows[j] = self._rows[j], self._rows[i]
+        for r in self._rows:
+            self._list_layout.removeWidget(r["box"])
+        for r in self._rows:
+            self._list_layout.addWidget(r["box"])
+        self._refresh_reorder_buttons()
+        self.changed.emit()
+
+    def _refresh_reorder_buttons(self) -> None:
+        n = len(self._rows)
+        for i, r in enumerate(self._rows):
+            r["btn_up"].setEnabled(i > 0)
+            r["btn_down"].setEnabled(i < n - 1)
 
     def _append_slot_ui(self, data: dict) -> None:
         box = QFrame()
@@ -502,8 +575,15 @@ class RuleSlotsParamEditor(QWidget):
         rid.set_current(str(data.get("ruleId", "")))
         rid.value_changed.connect(lambda _v: self.changed.emit())
         hdr.addWidget(rid, stretch=1)
+        up = QPushButton("\u2191")
+        up.setFixedWidth(24)
+        up.setToolTip("上移")
+        dn = QPushButton("\u2193")
+        dn.setFixedWidth(24)
+        dn.setToolTip("下移")
         rm = QPushButton("\u2212")
         rm.setFixedWidth(24)
+        rm.setToolTip("删除")
         bl.addWidget(QLabel("resultText"))
         tx = QTextEdit()
         tx.setMaximumHeight(80)
@@ -517,12 +597,20 @@ class RuleSlotsParamEditor(QWidget):
         ae.set_data(list(ra) if isinstance(ra, list) else [])
         ae.changed.connect(self.changed.emit)
         bl.addWidget(ae)
-        rec = {"box": box, "rid": rid, "text": tx, "ae": ae}
+        rec = {
+            "box": box, "rid": rid, "text": tx, "ae": ae,
+            "btn_up": up, "btn_down": dn,
+        }
         rm.clicked.connect(lambda: self._remove_row(rec))
+        up.clicked.connect(lambda: self._move_row(rec, -1))
+        dn.clicked.connect(lambda: self._move_row(rec, 1))
+        hdr.addWidget(up)
+        hdr.addWidget(dn)
         hdr.addWidget(rm)
         bl.insertLayout(0, hdr)
         self._rows.append(rec)
         self._list_layout.addWidget(box)
+        self._refresh_reorder_buttons()
 
     def to_list(self) -> list[dict]:
         out: list[dict] = []
@@ -549,11 +637,14 @@ class ActionRow(QWidget):
         scene_id: str | None = None,
         show_delete_button: bool = True,
         show_reorder_buttons: bool = True,
+        *,
+        cutscene_id: str | None = None,
     ):
         super().__init__(parent)
         self._param_widgets: dict[str, QWidget] = {}
         self._ctx_model = model
         self._ctx_scene_id = scene_id
+        self._ctx_cutscene_id = (cutscene_id or "") or None
         self._delayed_editor = None
         self._collapsed = True
 
@@ -680,10 +771,18 @@ class ActionRow(QWidget):
             if "name" in params and "itemName" not in params:
                 params["itemName"] = params.pop("name")
 
-    def set_project_context(self, model, scene_id: str | None) -> None:
+    def set_project_context(
+        self,
+        model,
+        scene_id: str | None,
+        *,
+        cutscene_id: str | None = None,
+    ) -> None:
         self._data = self.to_dict()
         self._ctx_model = model
         self._ctx_scene_id = scene_id
+        if cutscene_id is not None:
+            self._ctx_cutscene_id = cutscene_id or None
         self._rebuild_params()
 
     def _on_type_committed(self, _text: str) -> None:
@@ -739,6 +838,90 @@ class ActionRow(QWidget):
         bt_w.currentTextChanged.connect(refresh_entry)
         refresh_entry()
 
+    def _connect_play_npc_animation_pickers(self, *, initial_state: str) -> None:
+        tgt_w = self._param_widgets.get("target")
+        st_w = self._param_widgets.get("state")
+        if not isinstance(tgt_w, IdRefSelector) or not isinstance(st_w, FilterableTypeCombo):
+            return
+        init_st = (initial_state or "").strip()
+        _refresh_calls = 0
+
+        def refresh_state(_: str = "") -> None:
+            nonlocal _refresh_calls
+            _refresh_calls += 1
+            aid = tgt_w.current_id().strip()
+            m = self._ctx_model
+            states = (
+                m.animation_state_names_for_actor(self._ctx_scene_id, aid)
+                if m
+                else []
+            )
+            rows: list[tuple[str, str]] = [("", "（选 state）")]
+            rows.extend((s, s) for s in states)
+            cur = st_w.committed_type().strip()
+            if _refresh_calls == 1 and not cur and init_st:
+                cur = init_st
+            st_w.set_entries(rows)
+            if cur in states or cur == "":
+                st_w.set_committed_type(cur)
+            elif cur:
+                st_w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                st_w.set_committed_type(cur)
+            else:
+                st_w.set_committed_type("")
+
+        tgt_w.value_changed.connect(refresh_state)
+        refresh_state()
+
+    def _connect_persist_npc_anim_state_pickers(self, *, initial_state: str) -> None:
+        tgt_w = self._param_widgets.get("target")
+        st_w = self._param_widgets.get("state")
+        if not isinstance(tgt_w, IdRefSelector) or not isinstance(st_w, FilterableTypeCombo):
+            return
+        init_st = (initial_state or "").strip()
+        _refresh_calls = 0
+
+        def refresh_state(_: str = "") -> None:
+            nonlocal _refresh_calls
+            _refresh_calls += 1
+            aid = tgt_w.current_id().strip()
+            m = self._ctx_model
+            states = (
+                m.animation_state_names_for_actor(self._ctx_scene_id, aid)
+                if m
+                else []
+            )
+            rows: list[tuple[str, str]] = [("", "（选 state）")]
+            rows.extend((s, s) for s in states)
+            cur = st_w.committed_type().strip()
+            if _refresh_calls == 1 and not cur and init_st:
+                cur = init_st
+            st_w.set_entries(rows)
+            if cur in states or cur == "":
+                st_w.set_committed_type(cur)
+            elif cur:
+                st_w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                st_w.set_committed_type(cur)
+            else:
+                st_w.set_committed_type("")
+
+        tgt_w.value_changed.connect(refresh_state)
+        refresh_state()
+
+    def _build_overlay_id_combo(self, value: str) -> FilterableTypeCombo:
+        """show/hide/blend 叠图 id：overlay_images.json 短 id + 自由输入（非 select_only）。"""
+        m = self._ctx_model
+        entries = m.overlay_short_id_entries() if m else []
+        w = FilterableTypeCombo(entries, self, select_only=False)
+        w.setToolTip(
+            "与 hideOverlayImage / blendOverlayImage 共用的标记；"
+            "下拉为 overlay_images.json 的短 id，也可输入任意新 id。",
+        )
+        cur = (value or "").strip()
+        w.set_committed_type(cur)
+        w.typeCommitted.connect(lambda _t: self.changed.emit())
+        return w
+
     def _make_selector(
         self,
         kind: str,
@@ -770,8 +953,17 @@ class ActionRow(QWidget):
         elif kind == "spawn":
             w.set_items([("", "(default)")])
         elif kind == "emote_target":
-            extra = m.npc_ids_for_scene(self._ctx_scene_id) if m else []
-            w.set_items(extra)
+            items: list[tuple[str, str]] = []
+            if m:
+                items.extend(m.npc_ids_for_scene(self._ctx_scene_id))
+            items.append(("player", "player"))
+            w.set_items(items)
+        elif kind == "actor":
+            items = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
+            w.set_items(items)
+        elif kind == "npc_only":
+            items = m.npc_actor_items_for_scene(self._ctx_scene_id) if m else []
+            w.set_items(items)
         else:
             w.set_items([])
         w.set_current(str(val) if val is not None else "")
@@ -806,12 +998,11 @@ class ActionRow(QWidget):
                 self,
             )
             tip.setWordWrap(True)
+            tip.setToolTip("id 须与 hideOverlayImage 共用；可与 overlay_images.json 短 id 对齐。")
             self._params_layout.addRow(tip)
-            id_ed = QLineEdit(str(params.get("id", "") or ""), self)
-            id_ed.setPlaceholderText("如 notice_a")
-            id_ed.textChanged.connect(self.changed)
-            self._param_widgets["id"] = id_ed
-            self._params_layout.addRow("id", id_ed)
+            id_combo = self._build_overlay_id_combo(str(params.get("id", "") or ""))
+            self._param_widgets["id"] = id_combo
+            self._params_layout.addRow("id", id_combo)
             img_row = CutsceneImagePathRow(self._ctx_model, str(params.get("image", "") or ""), self)
             img_row.changed.connect(self.changed)
             self._param_widgets["image"] = img_row
@@ -844,12 +1035,8 @@ class ActionRow(QWidget):
             while self._params_layout.rowCount() > 0:
                 self._params_layout.removeRow(0)
             self._param_widgets.clear()
-            tip = QLabel(
-                "参数须与 public/assets/data/scenarios.json 中清单一致；"
-                "phase 下拉随 scenarioId 更新；outcome 可选。",
-                self,
-            )
-            tip.setWordWrap(True)
+            tip = QLabel("叙事阶段（scenario / phase / status / outcome）", self)
+            tip.setToolTip("数据来自 scenarios.json；切换 scenario 会刷新 phase。")
             self._params_layout.addRow(tip)
             m = self._ctx_model
             scen_ids = m.scenario_ids_ordered() if m else []
@@ -897,9 +1084,12 @@ class ActionRow(QWidget):
                 phase_combo.blockSignals(False)
 
             refill_phases(use_saved_phase=True)
-            sid_combo.typeCommitted.connect(
-                lambda _t: (refill_phases(use_saved_phase=False), self.changed.emit()),
-            )
+
+            def on_scenario_changed(_t: str = "") -> None:
+                refill_phases(use_saved_phase=False)
+                self.changed.emit()
+
+            sid_combo.typeCommitted.connect(on_scenario_changed)
             phase_combo.currentIndexChanged.connect(lambda _i: self.changed.emit())
             self._param_widgets["phase"] = phase_combo
             self._params_layout.addRow("phase", phase_combo)
@@ -972,11 +1162,9 @@ class ActionRow(QWidget):
             tip.setWordWrap(True)
             tip.setTextFormat(Qt.TextFormat.RichText)
             self._params_layout.addRow(tip)
-            id_ed = QLineEdit(str(params.get("id", "") or ""), self)
-            id_ed.setPlaceholderText("如 portrait_blend")
-            id_ed.textChanged.connect(self.changed)
-            self._param_widgets["id"] = id_ed
-            self._params_layout.addRow("id", id_ed)
+            id_combo = self._build_overlay_id_combo(str(params.get("id", "") or ""))
+            self._param_widgets["id"] = id_combo
+            self._params_layout.addRow("id", id_combo)
             from_row = CutsceneImagePathRow(self._ctx_model, str(params.get("fromImage", "") or ""), self)
             from_row.changed.connect(self.changed)
             self._param_widgets["fromImage"] = from_row
@@ -1047,37 +1235,94 @@ class ActionRow(QWidget):
             while self._params_layout.rowCount() > 0:
                 self._params_layout.removeRow(0)
             self._param_widgets.clear()
-            tip = QLabel(
-                "graphId：不含路径，与 assets/dialogues/graphs 下同名 .json 对应；"
-                "entry 覆盖图内入口节点；npcId 用于解析说话人显示名（可选）。",
-                self,
+            tip = QLabel("对话图入口", self)
+            tip.setToolTip(
+                "graphId 对应 dialogues/graphs 下 .json；entry 选节点 id；npcId 可选，用于说话人显示名。",
             )
-            tip.setWordWrap(True)
             self._params_layout.addRow(tip)
-            gid = QLineEdit(str(params.get("graphId", "") or ""), self)
-            gid.setPlaceholderText("如 码头看板官差")
-            gid.textChanged.connect(self.changed)
-            self._param_widgets["graphId"] = gid
-            self._params_layout.addRow("graphId", gid)
-            ent = QLineEdit(str(params.get("entry", "") or ""), self)
-            ent.setPlaceholderText("可选，覆盖图 JSON 的 entry")
-            ent.textChanged.connect(self.changed)
-            self._param_widgets["entry"] = ent
-            self._params_layout.addRow("entry", ent)
-            nid = QLineEdit(str(params.get("npcId", "") or ""), self)
-            nid.setPlaceholderText("可选，场景内 NPC id")
-            nid.textChanged.connect(self.changed)
+            m = self._ctx_model
+            gids = m.all_dialogue_graph_ids() if m else []
+            g_entries = [(g, g) for g in gids] or [("（请添加对话图 JSON）", "")]
+            gid_combo = FilterableTypeCombo(g_entries, self, select_only=True)
+            cur_gid = str(params.get("graphId", "") or "").strip()
+            if cur_gid:
+                gid_combo.set_committed_type(cur_gid)
+            elif gids:
+                gid_combo.set_committed_type(gids[0])
+            gid_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            self._param_widgets["graphId"] = gid_combo
+            self._params_layout.addRow("graphId", gid_combo)
+
+            ent_combo = FilterableTypeCombo([], self, select_only=True)
+            ent_combo.setToolTip("选图中 nodes 的键；留「（默认图 entry）」不写 params.entry。")
+
+            def refill_entry_nodes(*, keep_saved: bool) -> None:
+                gid = gid_combo.committed_type()
+                nodes = m.dialogue_graph_node_ids(gid) if m and gid else []
+                saved = str(params.get("entry", "") or "").strip()
+                prev = ent_combo.committed_type()
+                prefer = saved if keep_saved else prev
+                rows: list[tuple[str, str]] = [("（默认图 entry）", "")]
+                for nid in nodes:
+                    rows.append((nid, nid))
+                ent_combo.set_entries(rows)
+                if prefer and prefer in nodes:
+                    ent_combo.set_committed_type(prefer)
+                elif prefer:
+                    ent_combo.set_entries(
+                        [(f"(数据) {prefer}", prefer)] + [x for x in rows if x[1] != prefer],
+                    )
+                    ent_combo.set_committed_type(prefer)
+                else:
+                    ent_combo.set_committed_type("")
+
+            refill_entry_nodes(keep_saved=True)
+            gid_combo.typeCommitted.connect(
+                lambda _t: (refill_entry_nodes(keep_saved=False), self.changed.emit()),
+            )
+            ent_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            self._param_widgets["entry"] = ent_combo
+            self._params_layout.addRow("entry", ent_combo)
+
+            nid = IdRefSelector(self, allow_empty=True)
+            nid.setMinimumWidth(160)
+            nid.set_items(npc_items_for_dialogue_picker(self._ctx_model, self._ctx_scene_id))
+            nid.set_current(str(params.get("npcId", "") or ""))
+            nid.value_changed.connect(self.changed)
+            nid.setToolTip(
+                "解析 {{npc}} 显示名用；有场景上下文时优先场景 NPC，否则列出全局 NPC。",
+            )
             self._param_widgets["npcId"] = nid
-            self._params_layout.addRow("npcId", nid)
+            self._params_layout.addRow("npcId（可选）", nid)
             self._sync_foldable_visibility()
             return
 
         if act_type == "playScriptedDialogue":
-            self._params_frame.setVisible(False)
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel("台词上下文", self)
+            tip.setToolTip(
+                "speaker 支持在文本中插入 {{player}}、{{npc}}（用下方「台词用 NPC」作默认）、"
+                "{{npc:某id}}；运行时解析为显示名。",
+            )
+            self._params_layout.addRow(tip)
+            snpc = IdRefSelector(self, allow_empty=True)
+            snpc.setMinimumWidth(160)
+            snpc.set_items(npc_items_for_dialogue_picker(self._ctx_model, self._ctx_scene_id))
+            snpc.set_current(str(params.get("scriptedNpcId", "") or ""))
+            snpc.value_changed.connect(self.changed)
+            snpc.setToolTip("供 speaker 中 {{npc}} 使用；图对话 runActions 时也可用图内 npcId。")
+            self._param_widgets["scriptedNpcId"] = snpc
+            self._params_layout.addRow("scriptedNpcId（{{npc}} 默认）", snpc)
+
             raw_lines = params.get("lines", [])
             ed = ScriptedLinesEditor(
                 list(raw_lines) if isinstance(raw_lines, list) else [],
                 self,
+                model=self._ctx_model,
+                scene_id=self._ctx_scene_id,
             )
             ed.changed.connect(self.changed)
             self._delayed_editor = ed
@@ -1107,46 +1352,113 @@ class ActionRow(QWidget):
             self._param_widgets.clear()
             sm_raw = params.get("stateMap")
             sm: dict = sm_raw if isinstance(sm_raw, dict) else {}
-            tip = QLabel(
-                "填写 <b>animManifest</b> 或 <b>bundleId</b> 其一（若都填则优先使用 animManifest）。"
-                "下方为逻辑状态 idle / walk / run 对应的 clip（states 键）；留空表示与逻辑名同名。",
-                self,
+            tip = QLabel("玩家外观（资源）", self)
+            tip.setToolTip(
+                "animManifest 与 bundleId 二选一写入磁盘；保存时若 manifest 非空则优先 manifest。"
+                "clip 映射从所选动画包 states 键选。",
             )
-            tip.setWordWrap(True)
-            tip.setTextFormat(Qt.TextFormat.RichText)
             self._params_layout.addRow(tip)
 
+            m = self._ctx_model
             bid = IdRefSelector(self, allow_empty=True)
             bid.setMinimumWidth(112)
             bundles = (
-                [(k, k) for k in sorted(self._ctx_model.animations.keys())]
-                if self._ctx_model
+                [(k, k) for k in sorted(m.animations.keys())]
+                if m
                 else []
             )
             bid.set_items(bundles)
             b_from_p = str(params.get("bundleId", "") or "").strip()
             am = str(params.get("animManifest", "") or "").strip()
             if not b_from_p and am:
-                m = _ANIM_MANIFEST_RE.match(am)
-                if m:
-                    b_from_p = m.group(1)
+                mm = _ANIM_MANIFEST_RE.match(am)
+                if mm:
+                    b_from_p = mm.group(1)
             bid.set_current(b_from_p)
-            bid.value_changed.connect(self.changed)
             self._param_widgets["bundleId"] = bid
             self._params_layout.addRow("bundleId", bid)
 
-            man = QLineEdit(am, self)
-            man.setPlaceholderText("/assets/animation/player_anim/anim.json")
-            man.textChanged.connect(self.changed)
-            self._param_widgets["animManifest"] = man
-            self._params_layout.addRow("animManifest", man)
+            man_entries = m.anim_asset_path_choices() if m else []
+            man_rows: list[tuple[str, str]] = [
+                ("", "（留空：仅用 bundleId）"),
+            ] + list(man_entries)
+            man_combo = FilterableTypeCombo(man_rows, self, select_only=True)
+            if am:
+                man_combo.set_committed_type(am)
+            else:
+                man_combo.set_committed_type("")
+            self._param_widgets["animManifest"] = man_combo
+            self._params_layout.addRow("animManifest", man_combo)
+
+            def _state_items_for_bundle(stem: str) -> list[tuple[str, str]]:
+                rows: list[tuple[str, str]] = [("", "（留空=逻辑名）")]
+                if not m or not stem:
+                    return rows
+                names = m.animation_state_names_for_manifest(f"/assets/animation/{stem}/anim.json")
+                for s in names:
+                    rows.append((s, s))
+                return rows
+
+            def _current_bundle_stem() -> str:
+                b = bid.current_id().strip()
+                if b:
+                    return b
+                mp = man_combo.committed_type().strip()
+                mm = _ANIM_MANIFEST_RE.match(mp)
+                return mm.group(1) if mm else ""
+
+            clip_widgets: dict[str, FilterableTypeCombo] = {}
+
+            def refill_clip_selectors(*, preserve: bool) -> None:
+                stem = _current_bundle_stem()
+                items = _state_items_for_bundle(stem)
+                for logical in ("idle", "walk", "run"):
+                    cw = clip_widgets.get(logical)
+                    if not isinstance(cw, FilterableTypeCombo):
+                        continue
+                    prev = cw.committed_type() if preserve else str(sm.get(logical, "") or "").strip()
+                    cw.set_entries(items)
+                    if prev and prev in [x[1] for x in items]:
+                        cw.set_committed_type(prev)
+                    elif prev:
+                        cw.set_entries([(f"(数据) {prev}", prev)] + [x for x in items if x[1] != prev])
+                        cw.set_committed_type(prev)
+                    else:
+                        cw.set_committed_type("")
 
             for logical in ("idle", "walk", "run"):
-                le = QLineEdit(str(sm.get(logical, "") or ""), self)
-                le.setPlaceholderText("留空 = 与逻辑名相同")
-                le.textChanged.connect(self.changed)
-                self._param_widgets[logical] = le
-                self._params_layout.addRow(f"clip:{logical}", le)
+                cw = FilterableTypeCombo([], self, select_only=True)
+                clip_widgets[logical] = cw
+                self._param_widgets[logical] = cw
+                self._params_layout.addRow(f"clip:{logical}", cw)
+
+            def on_bundle_changed(_v: str = "") -> None:
+                stem = bid.current_id().strip()
+                if stem and m:
+                    path = f"/assets/animation/{stem}/anim.json"
+                    man_combo.blockSignals(True)
+                    man_combo.set_committed_type(path)
+                    man_combo.blockSignals(False)
+                refill_clip_selectors(preserve=True)
+                self.changed.emit()
+
+            def on_manifest_changed(_t: str = "") -> None:
+                mp = man_combo.committed_type().strip()
+                mm = _ANIM_MANIFEST_RE.match(mp)
+                if mm and m:
+                    stem = mm.group(1)
+                    bid.blockSignals(True)
+                    bid.set_current(stem)
+                    bid.blockSignals(False)
+                refill_clip_selectors(preserve=True)
+                self.changed.emit()
+
+            bid.value_changed.connect(on_bundle_changed)
+            man_combo.typeCommitted.connect(on_manifest_changed)
+            for logical in ("idle", "walk", "run"):
+                clip_widgets[logical].typeCommitted.connect(lambda _t: self.changed.emit())
+
+            refill_clip_selectors(preserve=False)
             self._sync_foldable_visibility()
             return
 
@@ -1252,6 +1564,68 @@ class ActionRow(QWidget):
                 w.currentIndexChanged.connect(lambda _i: self.changed.emit())
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
+            elif act_type == "showEmoteAndWait" and pname == "target":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type == "playNpcAnimation" and pname == "target":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type == "playNpcAnimation" and pname == "state":
+                w = FilterableTypeCombo([("", "（选 state）")], self, select_only=True)
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "setEntityEnabled" and pname == "target":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type in ("stopNpcPatrol", "persistNpcDisablePatrol", "persistNpcEnablePatrol") and pname == "npcId":
+                w = self._make_selector("npc_only", str(val) if val is not None else "")
+            elif act_type in (
+                "persistNpcEntityEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
+            ) and pname == "target":
+                w = self._make_selector("npc_only", str(val) if val is not None else "")
+            elif act_type in ("persistNpcAnimState", "persistPlayNpcAnimation") and pname == "state":
+                w = FilterableTypeCombo([("", "（选 state）")], self, select_only=True)
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "hideOverlayImage" and pname == "id":
+                w = self._build_overlay_id_combo(str(val) if val is not None else "")
+            elif act_type == "moveEntityTo" and pname == "target":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type == "faceEntity" and pname == "target":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type == "faceEntity" and pname == "direction":
+                dir_rows = [("", "（用 faceTarget）")] + [(d, d) for d in _FACE_DIRECTIONS]
+                curd = str(val) if val is not None else ""
+                w = FilterableTypeCombo(dir_rows, self, select_only=True)
+                if curd in _FACE_DIRECTIONS:
+                    w.set_committed_type(curd)
+                elif curd:
+                    w.set_entries([(f"(数据) {curd}", curd)] + dir_rows)
+                    w.set_committed_type(curd)
+                else:
+                    w.set_committed_type("")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "faceEntity" and pname == "faceTarget":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type == "cutsceneSpawnActor" and pname == "id":
+                m = self._ctx_model
+                rows = _cutscene_spawn_id_choices(m, self._ctx_cutscene_id)
+                cur = str(val) if val is not None else ""
+                w = FilterableTypeCombo(rows, self, select_only=True)
+                if cur:
+                    w.set_committed_type(cur)
+                elif rows:
+                    w.set_committed_type(rows[0][1])
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "cutsceneSpawnActor" and pname == "name":
+                w = QLineEdit(str(val), self)
+                w.setPlaceholderText("显示名，如 ???")
+                w.textChanged.connect(self.changed)
+            elif act_type == "cutsceneRemoveActor" and pname == "id":
+                m = self._ctx_model
+                rows = _cutscene_spawn_id_choices(m, self._ctx_cutscene_id)
+                cur = str(val) if val is not None else ""
+                w = FilterableTypeCombo(rows, self, select_only=True)
+                if cur:
+                    w.set_committed_type(cur)
+                elif rows:
+                    w.set_committed_type(rows[0][1])
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "waitClickContinue" and pname == "text":
                 w = QLineEdit(str(val), self)
                 w.setPlaceholderText("留空= strings actions.clickToContinue（默认「点击继续」）")
@@ -1266,6 +1640,14 @@ class ActionRow(QWidget):
             self._connect_scene_spawn_pickers()
         if act_type == "addArchiveEntry":
             self._connect_archive_pickers()
+        if act_type == "playNpcAnimation":
+            self._connect_play_npc_animation_pickers(
+                initial_state=str(params.get("state", "") or ""),
+            )
+        if act_type in ("persistNpcAnimState", "persistPlayNpcAnimation"):
+            self._connect_persist_npc_anim_state_pickers(
+                initial_state=str(params.get("state", "") or ""),
+            )
 
         if act_type == "setFlag":
             kw = self._param_widgets.get("key")
@@ -1300,7 +1682,7 @@ class ActionRow(QWidget):
         x_w = self._param_widgets.get("xPercent")
         y_w = self._param_widgets.get("yPercent")
         w_w = self._param_widgets.get("widthPercent")
-        pid = id_w.text().strip() if isinstance(id_w, QLineEdit) else ""
+        pid = _read_overlay_id_value(id_w)
         pimg = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
         return {
             "type": "showOverlayImage",
@@ -1322,7 +1704,7 @@ class ActionRow(QWidget):
         x_w = self._param_widgets.get("xPercent")
         y_w = self._param_widgets.get("yPercent")
         w_w = self._param_widgets.get("widthPercent")
-        pid = id_w.text().strip() if isinstance(id_w, QLineEdit) else ""
+        pid = _read_overlay_id_value(id_w)
         pfrom = from_w.path() if isinstance(from_w, CutsceneImagePathRow) else ""
         pto = to_w.path() if isinstance(to_w, CutsceneImagePathRow) else ""
         dms = int(dur_w.value()) if isinstance(dur_w, QSpinBox) else 600
@@ -1345,12 +1727,20 @@ class ActionRow(QWidget):
         gid_w = self._param_widgets.get("graphId")
         ent_w = self._param_widgets.get("entry")
         nid_w = self._param_widgets.get("npcId")
-        graph_id = gid_w.text().strip() if isinstance(gid_w, QLineEdit) else ""
+        graph_id = (
+            gid_w.committed_type().strip()
+            if isinstance(gid_w, FilterableTypeCombo)
+            else ""
+        )
         prm: dict = {"graphId": graph_id}
-        ent = ent_w.text().strip() if isinstance(ent_w, QLineEdit) else ""
+        ent = (
+            ent_w.committed_type().strip()
+            if isinstance(ent_w, FilterableTypeCombo)
+            else ""
+        )
         if ent:
             prm["entry"] = ent
-        nid = nid_w.text().strip() if isinstance(nid_w, QLineEdit) else ""
+        nid = nid_w.current_id().strip() if isinstance(nid_w, IdRefSelector) else ""
         if nid:
             prm["npcId"] = nid
         return {"type": "startDialogueGraph", "params": prm}
@@ -1358,12 +1748,21 @@ class ActionRow(QWidget):
     def _to_dict_play_scripted_dialogue(self) -> dict:
         ed = self._delayed_editor
         lines = ed.to_list() if isinstance(ed, ScriptedLinesEditor) else []
-        return {"type": "playScriptedDialogue", "params": {"lines": lines}}
+        snpc_w = self._param_widgets.get("scriptedNpcId")
+        sid = snpc_w.current_id().strip() if isinstance(snpc_w, IdRefSelector) else ""
+        prm: dict = {"lines": lines}
+        if sid:
+            prm["scriptedNpcId"] = sid
+        return {"type": "playScriptedDialogue", "params": prm}
 
     def _to_dict_set_player_avatar(self) -> dict:
         man_w = self._param_widgets.get("animManifest")
         bid_w = self._param_widgets.get("bundleId")
-        man = man_w.text().strip() if isinstance(man_w, QLineEdit) else ""
+        man = (
+            man_w.committed_type().strip()
+            if isinstance(man_w, FilterableTypeCombo)
+            else ""
+        )
         bid = bid_w.current_id().strip() if isinstance(bid_w, IdRefSelector) else ""
         params: dict = {}
         if man:
@@ -1373,9 +1772,12 @@ class ActionRow(QWidget):
         sm: dict = {}
         for logical in ("idle", "walk", "run"):
             w = self._param_widgets.get(logical)
-            if not isinstance(w, QLineEdit):
+            if isinstance(w, FilterableTypeCombo):
+                t = w.committed_type().strip()
+            elif isinstance(w, QLineEdit):
+                t = w.text().strip()
+            else:
                 continue
-            t = w.text().strip()
             if t:
                 sm[logical] = t
         if sm:
@@ -1390,10 +1792,25 @@ class ActionRow(QWidget):
         sid = sid_w.committed_type() if isinstance(sid_w, FilterableTypeCombo) else ""
         ph = ph_w.currentText().strip() if isinstance(ph_w, QComboBox) else ""
         st = st_w.currentText().strip() if isinstance(st_w, QComboBox) else ""
-        out = out_w.text().strip() if isinstance(out_w, QLineEdit) else ""
+        out_raw = out_w.text().strip() if isinstance(out_w, QLineEdit) else ""
         pr: dict = {"scenarioId": sid, "phase": ph, "status": st}
-        if out:
-            pr["outcome"] = out
+        if out_raw:
+            try:
+                pr["outcome"] = json.loads(out_raw)
+            except json.JSONDecodeError:
+                try:
+                    pr["outcome"] = int(out_raw)
+                except ValueError:
+                    low = out_raw.lower()
+                    if low == "true":
+                        pr["outcome"] = True
+                    elif low == "false":
+                        pr["outcome"] = False
+                    else:
+                        try:
+                            pr["outcome"] = float(out_raw)
+                        except ValueError:
+                            pr["outcome"] = out_raw
         return {"type": "setScenarioPhase", "params": pr}
 
     def _to_dict_reveal_document(self) -> dict:
@@ -1434,6 +1851,8 @@ class ActionRow(QWidget):
                 params[pname] = v if isinstance(v, (bool, str)) else float(v)
             elif act_type in ("setFlag", "appendFlag") and pname == "key" and isinstance(w, FlagKeyPickField):
                 params[pname] = w.key()
+            elif isinstance(w, FilterableTypeCombo):
+                params[pname] = w.committed_type()
             elif isinstance(w, IdRefSelector):
                 params[pname] = w.current_id()
             elif isinstance(w, QComboBox):
@@ -1461,6 +1880,7 @@ class ActionEditor(QWidget):
         self._rows: list[ActionRow] = []
         self._ctx_model = None
         self._ctx_scene_id: str | None = None
+        self._ctx_cutscene_id: str | None = None
         self._show_reorder_buttons = show_reorder_buttons
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1472,11 +1892,19 @@ class ActionEditor(QWidget):
         add_btn.clicked.connect(self._add_empty)
         root.addWidget(add_btn)
 
-    def set_project_context(self, model, scene_id: str | None = None) -> None:
+    def set_project_context(
+        self,
+        model,
+        scene_id: str | None = None,
+        *,
+        cutscene_id: str | None = None,
+    ) -> None:
         self._ctx_model = model
         self._ctx_scene_id = scene_id
+        if cutscene_id is not None:
+            self._ctx_cutscene_id = cutscene_id or None
         for r in self._rows:
-            r.set_project_context(model, scene_id)
+            r.set_project_context(model, scene_id, cutscene_id=self._ctx_cutscene_id)
 
     def set_flag_completions(self, _keys: list[str]) -> None:
         """Deprecated: pass set_project_context instead."""
@@ -1511,6 +1939,7 @@ class ActionEditor(QWidget):
             model=self._ctx_model,
             scene_id=self._ctx_scene_id,
             show_reorder_buttons=self._show_reorder_buttons,
+            cutscene_id=self._ctx_cutscene_id,
         )
         row.removed.connect(self._remove_row)
         row.changed.connect(self.changed)
