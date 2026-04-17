@@ -1,10 +1,10 @@
 {
   "id": "mountain_pass",
   "name": "山路",
-  "worldWidth": 1500,
+  "worldWidth": 1500.0,
   "camera": {
-    "zoom": 1,
-    "pixelsPerUnit": 1
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
   },
   "backgrounds": [
     {

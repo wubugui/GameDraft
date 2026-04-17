@@ -79,6 +79,7 @@ import { DevModeUI } from '../ui/DevModeUI';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
 import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
+import { Texture } from 'pixi.js';
 
 export interface GameStartOptions {
   devMode?: boolean;
@@ -599,6 +600,7 @@ export class Game {
       this.camera,
       this.renderer,
       this.assetManager,
+      (msg) => this.logDepthDiag(msg),
     );
 
     this.debugTools = new DebugTools({
@@ -1047,13 +1049,26 @@ export class Game {
     this.sceneManager.setDepthLoader(async (sceneId, sceneData, worldToPixelX, worldToPixelY) => {
       if (sceneData.depthConfig) {
         const dc = sceneData.depthConfig;
+        const mapPath = `assets/scenes/${sceneId}/${dc.depth_map}`;
         await this.sceneDepthSystem.load(
           sceneId, dc, this.assetManager,
           sceneData.worldWidth, sceneData.worldHeight,
           worldToPixelX, worldToPixelY,
         );
+        const en = this.sceneDepthSystem.isEnabled;
+        const dt = this.sceneDepthSystem.currentDepthTexture;
+        this.logDepthDiag(
+          `depthLoader ${sceneId}: enabled=${en} path=${mapPath} ` +
+            `tex=${dt ? `${dt.width}x${dt.height} uid=${dt.uid} WHITE=${dt === Texture.WHITE}` : 'null'}`,
+        );
+        if (!en) {
+          this.logDepthDiag(
+            `depthLoader ${sceneId}: 深度纹理未加载成功时 F2 深度调试仍为占位白图，遮挡滤镜不会创建`,
+          );
+        }
       } else {
         this.sceneDepthSystem.loadDefault();
+        this.logDepthDiag(`depthLoader ${sceneId}: 无 depthConfig，深度系统关闭`);
       }
       this.refreshPlayerWorldCollision();
     });
@@ -1107,6 +1122,11 @@ export class Game {
         touchMount,
       );
     }
+  }
+
+  /** F2「日志」页：深度加载与背景调试绑定验证（便于真机排查） */
+  private logDepthDiag(message: string): void {
+    this.debugPanelUI?.log(`[深度诊断] ${message}`);
   }
 
   private setupSceneReadyHandler(): void {
@@ -1176,10 +1196,15 @@ export class Game {
       this.syncEntityPixelDensityMatch();
 
       // 背景调试可视化：传递当前场景的深度纹理和配置
+      const sd = this.sceneManager.currentSceneData!;
       const dTex = this.sceneDepthSystem.currentDepthTexture;
       const dCfg = this.sceneDepthSystem.currentConfig;
+      if (sd.depthConfig && (!dTex || !dCfg)) {
+        this.logDepthDiag(
+          `scene:ready ${sd.id}: JSON 含 depthConfig 但运行期无 depthTexture/config，F2 深度仍为占位`,
+        );
+      }
       if (dTex && dCfg) {
-        const sd = this.sceneManager.currentSceneData!;
         this.depthDebugVisualizer.onSceneLoaded(
           this.sceneDepthSystem.currentSceneId,
           dTex,
@@ -1188,6 +1213,9 @@ export class Game {
           sd.worldWidth,
           sd.worldHeight,
           dCfg,
+        );
+        this.logDepthDiag(
+          `scene:ready: 背景调试已绑定 uid=${dTex.uid} ${dTex.width}x${dTex.height} WHITE=${dTex === Texture.WHITE}`,
         );
       }
     });
