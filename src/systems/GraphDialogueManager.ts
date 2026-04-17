@@ -252,6 +252,11 @@ export class GraphDialogueManager implements IGameSystem {
     return this.active;
   }
 
+  /** startDialogueGraph 传入的 npcId（trim）；未开图对话时为空串。供 playScriptedDialogue 的 {{npc}} 解析。 */
+  getContextNpcId(): string {
+    return this.npcId.trim();
+  }
+
   destroy(): void {
     this.deferredGraphQueue.length = 0;
     this.endDialogue();
