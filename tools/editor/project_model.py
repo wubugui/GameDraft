@@ -673,28 +673,6 @@ class ProjectModel(QObject):
         ordered = sorted(found, key=lambda x: (x.lower(), x))
         return [(i, i) for i in ordered]
 
-    def collect_cutscene_present_img_ids(self) -> list[str]:
-        """过场 present showImg/hideImg 已出现的图层 id（供 Timeline 下拉）。"""
-        found: set[str] = set()
-
-        def walk(steps: list) -> None:
-            for step in steps or []:
-                if not isinstance(step, dict):
-                    continue
-                if step.get("kind") == "present" and step.get("type") in ("showImg", "hideImg"):
-                    i = str(step.get("id") or "").strip()
-                    if i:
-                        found.add(i)
-                tr = step.get("tracks")
-                if isinstance(tr, list):
-                    for sub in tr:
-                        if isinstance(sub, dict):
-                            walk([sub])
-
-        for cs in self.cutscenes:
-            walk(cs.get("steps") or [])
-        return sorted(found, key=lambda x: (x.lower(), x))
-
     def animation_state_names_for_manifest(self, manifest_path: str) -> list[str]:
         """anim.json 内 states 的键名列表（有序）。"""
         p = (manifest_path or "").strip()
@@ -760,33 +738,6 @@ class ProjectModel(QObject):
         if not isinstance(nodes, dict):
             return []
         return sorted((str(k) for k in nodes.keys()), key=lambda x: (x.lower(), x))
-
-    def scenario_phase_outcome_template_value(
-        self, scenario_id: str, phase: str,
-    ) -> str | int | float | bool | None:
-        """scenarios.json 中某 phase 对象上的默认 outcome（若有）。"""
-        sid = (scenario_id or "").strip()
-        ph = (phase or "").strip()
-        if not sid or not ph:
-            return None
-        for e in self.scenarios_catalog.get("scenarios") or []:
-            if not isinstance(e, dict) or str(e.get("id", "")).strip() != sid:
-                continue
-            phases = e.get("phases")
-            if not isinstance(phases, dict):
-                return None
-            ph_obj = phases.get(ph)
-            if not isinstance(ph_obj, dict):
-                return None
-            if "outcome" not in ph_obj:
-                return None
-            return ph_obj.get("outcome")
-        return None
-
-    def all_npc_display_name_choices(self) -> list[tuple[str, str]]:
-        """全项目 NPC 显示名（去重），供 cutsceneSpawnActor.name 等短标签选择。"""
-        names = self.all_npc_names()
-        return [(n, n) for n in names]
 
     def illustration_asset_choices(self) -> list[tuple[str, str]]:
         """Known illustration paths under /assets/images/illustrations/."""

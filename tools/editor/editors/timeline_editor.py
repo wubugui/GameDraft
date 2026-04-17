@@ -53,12 +53,12 @@ _PRESENT_PARAMS: dict[str, list[tuple[str, str]]] = {
     "waitTime": [("duration", "float")],
     "waitClick": [],
     "showTitle": [("text", "text"), ("duration", "float")],
-    "showDialogue": [("speaker", "speaker_pick"), ("text", "text")],
-    "showImg": [("id", "cutscene_img_id"), ("image", "image")],
-    "hideImg": [("id", "cutscene_img_id")],
+    "showDialogue": [("speaker", "str"), ("text", "text")],
+    "showImg": [("id", "str"), ("image", "image")],
+    "hideImg": [("id", "str")],
     "showMovieBar": [("heightPercent", "float")],
     "hideMovieBar": [],
-    "showSubtitle": [("text", "text"), ("position", "subtitle_pos")],
+    "showSubtitle": [("text", "text"), ("position", "str")],
     "cameraMove": [("x", "float"), ("y", "float"), ("duration", "float")],
     "cameraZoom": [("scale", "float"), ("duration", "float")],
     "showCharacter": [("visible", "bool")],
@@ -69,50 +69,6 @@ _MS_KEYS = frozenset({"duration"})
 # 与 CutsceneManager.executePresent 默认一致（毫秒）
 _GANTT_MAX_MS = 8000
 _GANTT_BAR_PX = 56
-
-_SUBTITLE_POSITIONS = ("top", "center", "bottom")
-
-
-def _present_speaker_items(model: ProjectModel | None, extra: str | None = None) -> list[tuple[str, str]]:
-    items: list[tuple[str, str]] = [
-        ("", "(留空)"),
-        ("旁白", "旁白"),
-        ("你", "你"),
-    ]
-    seen = {p[0] for p in items}
-    if model:
-        for n in model.all_npc_names():
-            if n not in seen:
-                seen.add(n)
-                items.append((n, n))
-        for nid, label in model.all_npc_ids_global():
-            if nid and nid not in seen:
-                seen.add(nid)
-                items.append((nid, f"{nid} [{label}]"))
-    ex = (extra or "").strip()
-    if ex and ex not in seen:
-        items.append((ex, ex))
-    return items
-
-
-def _cutscene_img_layer_id_entries(model: ProjectModel | None) -> list[tuple[str, str]]:
-    """showImg/hideImg 的 id：常用句柄 + overlay 短 id + 过场已用 id。"""
-    rows: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for preset in ("default", "portrait"):
-        rows.append((preset, preset))
-        seen.add(preset)
-    if model:
-        for k, disp in model.overlay_short_id_entries():
-            if k not in seen:
-                seen.add(k)
-                rows.append((disp, k))
-        for sid in model.collect_cutscene_present_img_ids():
-            if sid not in seen:
-                seen.add(sid)
-                rows.append((sid, sid))
-    return rows
-
 
 def _float_ms(step: dict, key: str, default: float) -> int:
     v = step.get(key)
@@ -416,42 +372,6 @@ class StepWidget(QFrame):
                 w = CutsceneImagePathRow(self._model, str(val) if val else "", self)
                 w.setMinimumWidth(360)
                 w._edit.textChanged.connect(self._emit_dirty)
-            elif pt == "speaker_pick":
-                cur_sp = str(val) if val is not None else ""
-                rows = _present_speaker_items(self._model, cur_sp)
-                w = IdRefSelector(self, allow_empty=True)
-                w.setMinimumWidth(160)
-                w.set_items(rows)
-                w.set_current(cur_sp)
-                w.value_changed.connect(lambda _v: self._emit_dirty())
-            elif pt == "cutscene_img_id":
-                rows = _cutscene_img_layer_id_entries(self._model)
-                cur_id = str(val) if val is not None else ""
-                w = FilterableTypeCombo(rows or [("default", "default")], self, select_only=True)
-                if cur_id:
-                    ids = [r[1] for r in rows]
-                    if cur_id not in ids:
-                        w.set_entries([(f"(数据) {cur_id}", cur_id)] + list(rows))
-                    w.set_committed_type(cur_id)
-                else:
-                    w.set_committed_type("default")
-                w.typeCommitted.connect(lambda _t: self._emit_dirty())
-            elif pt == "subtitle_pos":
-                pos_rows = [(p, p) for p in _SUBTITLE_POSITIONS]
-                raw = val
-                if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-                    cur_s = str(raw)
-                else:
-                    cur_s = str(raw).strip() if raw is not None else ""
-                if not cur_s:
-                    cur_s = "bottom"
-                w = FilterableTypeCombo(pos_rows, self, select_only=True)
-                if cur_s in _SUBTITLE_POSITIONS:
-                    w.set_committed_type(cur_s)
-                else:
-                    w.set_entries([(f"(数据) {cur_s}", cur_s)] + pos_rows)
-                    w.set_committed_type(cur_s)
-                w.typeCommitted.connect(lambda _t: self._emit_dirty())
             else:
                 w = QLineEdit(str(val) if val else "")
                 w.textChanged.connect(self._emit_dirty)
@@ -550,22 +470,6 @@ class StepWidget(QFrame):
                     d[pname] = w.toPlainText()
                 elif pt == "image" and isinstance(w, CutsceneImagePathRow):
                     d[pname] = w.path()
-                elif isinstance(w, IdRefSelector):
-                    d[pname] = w.current_id()
-                elif isinstance(w, FilterableTypeCombo):
-                    raw_s = w.committed_type().strip()
-                    if pt == "subtitle_pos":
-                        if raw_s in _SUBTITLE_POSITIONS:
-                            d[pname] = raw_s
-                        elif raw_s.isdigit():
-                            d[pname] = int(raw_s)
-                        else:
-                            try:
-                                d[pname] = float(raw_s)
-                            except ValueError:
-                                d[pname] = raw_s if raw_s else "bottom"
-                    else:
-                        d[pname] = raw_s
                 else:
                     d[pname] = w.text() if hasattr(w, "text") else str(w)
             return d
