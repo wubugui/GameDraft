@@ -97,6 +97,7 @@ from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .blend_overlay_preview import BlendOverlayPreviewWidget
 from .image_path_picker import CutsceneImagePathRow
+from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
 from .scripted_lines_editor import ScriptedLinesEditor
 
 ACTION_TYPES = [
@@ -1212,10 +1213,11 @@ class ActionRow(QWidget):
                 "{{npc:某id}}；运行时解析为显示名。",
             )
             self._params_layout.addRow(tip)
-            snpc = self._make_selector(
-                "npc_only",
-                str(params.get("scriptedNpcId", "") or ""),
-            )
+            snpc = IdRefSelector(self, allow_empty=True)
+            snpc.setMinimumWidth(160)
+            snpc.set_items(npc_items_for_dialogue_picker(self._ctx_model, self._ctx_scene_id))
+            snpc.set_current(str(params.get("scriptedNpcId", "") or ""))
+            snpc.value_changed.connect(self.changed)
             snpc.setToolTip("供 speaker 中 {{npc}} 使用；图对话 runActions 时也可用图内 npcId。")
             self._param_widgets["scriptedNpcId"] = snpc
             self._params_layout.addRow("scriptedNpcId（{{npc}} 默认）", snpc)

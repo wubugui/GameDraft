@@ -22,6 +22,7 @@ from .. import theme as app_theme
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.action_editor import ActionRow, FilterableTypeCombo
+from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
 from .scene_editor import TargetSpawnPickerDialog
 
 if TYPE_CHECKING:
@@ -53,7 +54,7 @@ _PRESENT_PARAMS: dict[str, list[tuple[str, str]]] = {
     "waitTime": [("duration", "float")],
     "waitClick": [],
     "showTitle": [("text", "text"), ("duration", "float")],
-    "showDialogue": [("speaker", "str"), ("text", "text")],
+    "showDialogue": [],
     "showImg": [("id", "str"), ("image", "image")],
     "hideImg": [("id", "str")],
     "showMovieBar": [("heightPercent", "float")],
@@ -350,6 +351,21 @@ class StepWidget(QFrame):
             self._present_params_layout.removeRow(0)
         self._widgets.clear()
 
+        if ptype == "showDialogue":
+            cur_sid = str(self._step_data.get("scriptedNpcId", "") or "")
+            wdg = CutsceneShowDialogueFields(
+                self._model,
+                None,
+                str(self._step_data.get("speaker", "") or ""),
+                str(self._step_data.get("text", "") or ""),
+                cur_sid,
+                self,
+                on_change=self._emit_dirty,
+            )
+            self._widgets["__showDialogue__"] = wdg
+            self._present_params_layout.addRow(wdg)
+            return
+
         schema = _PRESENT_PARAMS.get(ptype, [])
         for pname, pt in schema:
             val = self._step_data.get(pname, "")
@@ -458,6 +474,11 @@ class StepWidget(QFrame):
                 base["type"] = ptype
                 return base
             d: dict = {"kind": "present", "type": ptype}
+            if ptype == "showDialogue":
+                wdg = self._widgets.get("__showDialogue__")
+                if isinstance(wdg, CutsceneShowDialogueFields):
+                    d.update(wdg.to_step_dict())
+                return d
             for pname, pt in schema:
                 w = self._widgets.get(pname)
                 if w is None:
