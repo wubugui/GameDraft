@@ -15,8 +15,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 515.3,
-    "y": 905.4
+    "x": 1387.0,
+    "y": 969.0
   },
   "depthConfig": {
     "depth_map": "raw_depth_rg.png",
@@ -257,6 +257,29 @@
         "worldHeight": 179.2,
         "facing": "left"
       }
+    },
+    {
+      "id": "T码头到街巷",
+      "type": "transition",
+      "label": "到街巷",
+      "x": 2666.6,
+      "y": 216.1,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "test_room_a",
+        "targetSpawnPoint": "spawn_1"
+      }
+    },
+    {
+      "id": "T到街巷2",
+      "type": "transition",
+      "label": "到街巷",
+      "x": 44.3,
+      "y": 597.7,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "test_room_a"
+      }
     }
   ],
   "zones": [
@@ -299,5 +322,15 @@
       "zoneKind": "depth_floor",
       "floorOffsetBoost": -0.2
     }
-  ]
+  ],
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 63.3,
+      "y": 607.6
+    },
+    "spawn_1": {
+      "x": 2659.7,
+      "y": 282.0
+    }
+  }
 }

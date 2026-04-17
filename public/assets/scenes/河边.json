@@ -15,8 +15,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 457.5,
-    "y": 538.4
+    "x": 605.2,
+    "y": 415.8
   },
   "depthConfig": {
     "depth_map": "raw_depth_rg.png",
@@ -95,6 +95,26 @@
       ],
       "zoneKind": "depth_floor",
       "floorOffsetBoost": 0.6
+    }
+  ],
+  "spawnPoints": {
+    "从山路": {
+      "x": 109.9,
+      "y": 749.1
+    }
+  },
+  "hotspots": [
+    {
+      "id": "T到山路",
+      "type": "transition",
+      "label": "到山路",
+      "x": 116.5,
+      "y": 747.1,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "mountain_pass",
+        "targetSpawnPoint": "spawn_0"
+      }
     }
   ]
 }

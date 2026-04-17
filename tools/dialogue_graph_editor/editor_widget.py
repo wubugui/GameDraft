@@ -647,6 +647,13 @@ class DialogueGraphEditorWidget(QWidget):
             menu.addAction(act_rm)
             menu.addSeparator()
         if nid and nid in self._data["nodes"]:
+            act_entry = QAction("设为入口节点", self)
+            cur_ent = str(self._data.get("entry", "") or "").strip()
+            act_entry.setEnabled(cur_ent != nid)
+            act_entry.triggered.connect(
+                lambda checked=False, n=nid: self._canvas_context_set_entry_node(n)
+            )
+            menu.addAction(act_entry)
             act_del = QAction("删除此节点…", self)
             act_del.triggered.connect(lambda checked=False, n=nid: self._canvas_context_delete_node(n))
             menu.addAction(act_del)
@@ -685,6 +692,18 @@ class DialogueGraphEditorWidget(QWidget):
         if nid not in (self._data.get("nodes") or {}):
             return
         self._duplicate_node(nid)
+
+    def _canvas_context_set_entry_node(self, nid: str) -> None:
+        if nid not in (self._data.get("nodes") or {}):
+            return
+        self._edit_entry.blockSignals(True)
+        try:
+            self._edit_entry.setText(nid)
+        finally:
+            self._edit_entry.blockSignals(False)
+        self._model.apply_meta_patch({"entry": nid})
+        self._emit_title()
+        self._rebuild_flow_scene()
 
     def _spawn_node_at_canvas(self, node_type: str, scene_x: float, scene_y: float) -> None:
         nodes = self._model.nodes
