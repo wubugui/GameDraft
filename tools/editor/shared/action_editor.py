@@ -1202,11 +1202,30 @@ class ActionRow(QWidget):
             return
 
         if act_type == "playScriptedDialogue":
-            self._params_frame.setVisible(False)
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel("台词上下文", self)
+            tip.setToolTip(
+                "speaker 支持在文本中插入 {{player}}、{{npc}}（用下方「台词用 NPC」作默认）、"
+                "{{npc:某id}}；运行时解析为显示名。",
+            )
+            self._params_layout.addRow(tip)
+            snpc = self._make_selector(
+                "npc_only",
+                str(params.get("scriptedNpcId", "") or ""),
+            )
+            snpc.setToolTip("供 speaker 中 {{npc}} 使用；图对话 runActions 时也可用图内 npcId。")
+            self._param_widgets["scriptedNpcId"] = snpc
+            self._params_layout.addRow("scriptedNpcId（{{npc}} 默认）", snpc)
+
             raw_lines = params.get("lines", [])
             ed = ScriptedLinesEditor(
                 list(raw_lines) if isinstance(raw_lines, list) else [],
                 self,
+                model=self._ctx_model,
+                scene_id=self._ctx_scene_id,
             )
             ed.changed.connect(self.changed)
             self._delayed_editor = ed
@@ -1236,10 +1255,10 @@ class ActionRow(QWidget):
             self._param_widgets.clear()
             sm_raw = params.get("stateMap")
             sm: dict = sm_raw if isinstance(sm_raw, dict) else {}
-            tip = QLabel("玩家外观", self)
+            tip = QLabel("玩家外观（资源）", self)
             tip.setToolTip(
-                "填写 animManifest 或 bundleId 其一（若都填则优先 animManifest）。"
-                "idle/walk/run 为逻辑状态对应 clip（states 键）；留空表示与逻辑名同名。",
+                "animManifest 与 bundleId 二选一写入磁盘；保存时若 manifest 非空则优先 manifest。"
+                "clip 映射从所选动画包 states 键选。",
             )
             self._params_layout.addRow(tip)
 
@@ -1259,22 +1278,90 @@ class ActionRow(QWidget):
                 if mm:
                     b_from_p = mm.group(1)
             bid.set_current(b_from_p)
-            bid.value_changed.connect(self.changed)
             self._param_widgets["bundleId"] = bid
             self._params_layout.addRow("bundleId", bid)
 
-            man = QLineEdit(am, self)
-            man.setPlaceholderText("/assets/animation/player_anim/anim.json")
-            man.textChanged.connect(self.changed)
-            self._param_widgets["animManifest"] = man
-            self._params_layout.addRow("animManifest", man)
+            man_entries = m.anim_asset_path_choices() if m else []
+            man_rows: list[tuple[str, str]] = [
+                ("", "（留空：仅用 bundleId）"),
+            ] + list(man_entries)
+            man_combo = FilterableTypeCombo(man_rows, self, select_only=True)
+            if am:
+                man_combo.set_committed_type(am)
+            else:
+                man_combo.set_committed_type("")
+            self._param_widgets["animManifest"] = man_combo
+            self._params_layout.addRow("animManifest", man_combo)
+
+            def _state_items_for_bundle(stem: str) -> list[tuple[str, str]]:
+                rows: list[tuple[str, str]] = [("", "（留空=逻辑名）")]
+                if not m or not stem:
+                    return rows
+                names = m.animation_state_names_for_manifest(f"/assets/animation/{stem}/anim.json")
+                for s in names:
+                    rows.append((s, s))
+                return rows
+
+            def _current_bundle_stem() -> str:
+                b = bid.current_id().strip()
+                if b:
+                    return b
+                mp = man_combo.committed_type().strip()
+                mm = _ANIM_MANIFEST_RE.match(mp)
+                return mm.group(1) if mm else ""
+
+            clip_widgets: dict[str, FilterableTypeCombo] = {}
+
+            def refill_clip_selectors(*, preserve: bool) -> None:
+                stem = _current_bundle_stem()
+                items = _state_items_for_bundle(stem)
+                for logical in ("idle", "walk", "run"):
+                    cw = clip_widgets.get(logical)
+                    if not isinstance(cw, FilterableTypeCombo):
+                        continue
+                    prev = cw.committed_type() if preserve else str(sm.get(logical, "") or "").strip()
+                    cw.set_entries(items)
+                    if prev and prev in [x[1] for x in items]:
+                        cw.set_committed_type(prev)
+                    elif prev:
+                        cw.set_entries([(f"(数据) {prev}", prev)] + [x for x in items if x[1] != prev])
+                        cw.set_committed_type(prev)
+                    else:
+                        cw.set_committed_type("")
 
             for logical in ("idle", "walk", "run"):
-                le = QLineEdit(str(sm.get(logical, "") or ""), self)
-                le.setPlaceholderText("留空 = 与逻辑名相同")
-                le.textChanged.connect(self.changed)
-                self._param_widgets[logical] = le
-                self._params_layout.addRow(f"clip:{logical}", le)
+                cw = FilterableTypeCombo([], self, select_only=True)
+                clip_widgets[logical] = cw
+                self._param_widgets[logical] = cw
+                self._params_layout.addRow(f"clip:{logical}", cw)
+
+            def on_bundle_changed(_v: str = "") -> None:
+                stem = bid.current_id().strip()
+                if stem and m:
+                    path = f"/assets/animation/{stem}/anim.json"
+                    man_combo.blockSignals(True)
+                    man_combo.set_committed_type(path)
+                    man_combo.blockSignals(False)
+                refill_clip_selectors(preserve=True)
+                self.changed.emit()
+
+            def on_manifest_changed(_t: str = "") -> None:
+                mp = man_combo.committed_type().strip()
+                mm = _ANIM_MANIFEST_RE.match(mp)
+                if mm and m:
+                    stem = mm.group(1)
+                    bid.blockSignals(True)
+                    bid.set_current(stem)
+                    bid.blockSignals(False)
+                refill_clip_selectors(preserve=True)
+                self.changed.emit()
+
+            bid.value_changed.connect(on_bundle_changed)
+            man_combo.typeCommitted.connect(on_manifest_changed)
+            for logical in ("idle", "walk", "run"):
+                clip_widgets[logical].typeCommitted.connect(lambda _t: self.changed.emit())
+
+            refill_clip_selectors(preserve=False)
             self._sync_foldable_visibility()
             return
 
@@ -1566,12 +1653,21 @@ class ActionRow(QWidget):
     def _to_dict_play_scripted_dialogue(self) -> dict:
         ed = self._delayed_editor
         lines = ed.to_list() if isinstance(ed, ScriptedLinesEditor) else []
-        return {"type": "playScriptedDialogue", "params": {"lines": lines}}
+        snpc_w = self._param_widgets.get("scriptedNpcId")
+        sid = snpc_w.current_id().strip() if isinstance(snpc_w, IdRefSelector) else ""
+        prm: dict = {"lines": lines}
+        if sid:
+            prm["scriptedNpcId"] = sid
+        return {"type": "playScriptedDialogue", "params": prm}
 
     def _to_dict_set_player_avatar(self) -> dict:
         man_w = self._param_widgets.get("animManifest")
         bid_w = self._param_widgets.get("bundleId")
-        man = man_w.text().strip() if isinstance(man_w, QLineEdit) else ""
+        man = (
+            man_w.committed_type().strip()
+            if isinstance(man_w, FilterableTypeCombo)
+            else ""
+        )
         bid = bid_w.current_id().strip() if isinstance(bid_w, IdRefSelector) else ""
         params: dict = {}
         if man:
