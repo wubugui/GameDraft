@@ -2,7 +2,7 @@ import type { SceneDepthSystem } from '../core/SceneDepthSystem';
 import type { Renderer } from '../rendering/Renderer';
 import type { Camera } from '../rendering/Camera';
 import type { AssetManager } from '../core/AssetManager';
-import type { Texture } from 'pixi.js';
+import { Texture } from 'pixi.js';
 import type { SceneDepthConfig } from '../data/types';
 import { BackgroundDebugFilter } from '../rendering/BackgroundDebugFilter';
 
@@ -34,17 +34,21 @@ export class DepthDebugVisualizer {
   private collisionMapName = '';
   private sceneW = 0;
   private sceneH = 0;
+  /** 写入 F2「日志」页，用于移动端深度/贴图绑定验证 */
+  private readonly panelLog?: (msg: string) => void;
 
   constructor(
     depthSystem: SceneDepthSystem,
     camera: Camera,
     renderer: Renderer,
     assetManager: AssetManager,
+    panelLog?: (msg: string) => void,
   ) {
     this.depthSystem = depthSystem;
     this.camera = camera;
     this.renderer = renderer;
     this.assetManager = assetManager;
+    this.panelLog = panelLog;
 
     this.filter = new BackgroundDebugFilter();
     this.renderer.backgroundLayer.filters = [this.filter];
@@ -58,6 +62,23 @@ export class DepthDebugVisualizer {
 
     if (mode === 'collision' && !this.collisionTextureLoaded) {
       this.loadCollisionTexture();
+    }
+
+    if (mode === 'depth' && this.panelLog) {
+      const wc = this.renderer.worldContainer;
+      const S = this.camera.getProjectionScale();
+      const sw = this.sceneW * S;
+      const sh = this.sceneH * S;
+      const dt = this.depthSystem.currentDepthTexture;
+      const dpr = typeof window !== 'undefined' ? window.devicePixelRatio : 0;
+      const sameWhite = dt != null && dt === Texture.WHITE;
+      const rType = (this.renderer.app.renderer as { type?: number }).type;
+      this.panelLog(
+        `F2深度模式: sceneId=${this.currentSceneId || '—'} depthEnabled=${this.depthSystem.isEnabled} ` +
+          `curTex=${dt ? `${dt.width}x${dt.height} uid=${dt.uid} WHITE=${sameWhite}` : 'null'} ` +
+          `wc=(${wc.x.toFixed(1)},${wc.y.toFixed(1)}) S=${S.toFixed(3)} scenePx=${sw.toFixed(1)}x${sh.toFixed(1)} ` +
+          `appScreen=${this.renderer.screenWidth}x${this.renderer.screenHeight} dpr=${dpr} pixiRendererType=${rType ?? '?'}`,
+      );
     }
   }
 
@@ -77,6 +98,15 @@ export class DepthDebugVisualizer {
     this.sceneW = worldWidth;
     this.sceneH = worldHeight;
     this.filter.loadSceneData(depthTexture, texWidth, texHeight, cfg);
+
+    if (this.panelLog) {
+      const sameWhite = depthTexture === Texture.WHITE;
+      this.panelLog(
+        `onSceneLoaded: ${sceneId} depthTex=${texWidth}x${texHeight} uid=${depthTexture.uid} ` +
+          `WHITE=${sameWhite} depth_map=${cfg.depth_map} invert=${cfg.depth_mapping.invert} ` +
+          `scale=${cfg.depth_mapping.scale} offset=${cfg.depth_mapping.offset}`,
+      );
+    }
 
     if (this.currentMode === 'collision') {
       this.loadCollisionTexture();
