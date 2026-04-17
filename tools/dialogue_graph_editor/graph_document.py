@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,28 @@ def extract_flow_edges_detailed(
     return edges
 
 
+def nodes_reachable_from_entry(nodes: dict[str, Any], entry: str) -> set[str]:
+    """从 entry 沿 next / choice / switch 边 BFS，返回可达节点集（与画布、analyze_node_tags 一致）。"""
+    ent = str(entry or "").strip()
+    if ent not in nodes:
+        return set()
+    edges = extract_flow_edges(nodes)
+    out_adj: dict[str, list[str]] = defaultdict(list)
+    for s, d, _ in edges:
+        if d in nodes:
+            out_adj[s].append(d)
+    reachable: set[str] = set()
+    dq = deque([ent])
+    reachable.add(ent)
+    while dq:
+        u = dq.popleft()
+        for v in out_adj.get(u, ()):
+            if v in nodes and v not in reachable:
+                reachable.add(v)
+                dq.append(v)
+    return reachable
+
+
 def auto_layout_node_positions(
     nodes: dict[str, Any],
     entry: str,
@@ -217,7 +240,7 @@ def _validate_line_beats(nid: str, raw: dict[str, Any], errors: list[str]) -> No
 
 
 def validate_graph_tiered(data: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """(errors, warnings)：errors 阻止保存；warnings 可提示后仍保存。"""
+    """(errors, warnings)：编辑器保存时两者都会提示；errors 更严重，warnings 可确认后仍保存。"""
     errors: list[str] = []
     warnings: list[str] = []
     nodes: dict[str, Any] = data.get("nodes") or {}
@@ -228,8 +251,13 @@ def validate_graph_tiered(data: dict[str, Any]) -> tuple[list[str], list[str]]:
         warnings.append("缺少顶层 id（建议与文件名一致）")
 
     entry = data.get("entry", "")
-    if entry and entry not in nodes:
+    ent = str(entry or "").strip()
+    if ent and ent not in nodes:
         errors.append(f"入口 entry 指向不存在的节点: {entry!r}")
+    elif not ent and nodes:
+        warnings.append(
+            "未设置 entry：无法校验「从图入口能否到达全部节点」；运行时也需指定起始节点"
+        )
 
     for nid, raw in nodes.items():
         if not isinstance(raw, dict):
@@ -285,6 +313,25 @@ def validate_graph_tiered(data: dict[str, Any]) -> tuple[list[str], list[str]]:
                 errors.append(f"节点 {nid}: defaultNext 指向不存在: {dn!r}")
         elif t == "end":
             pass
+
+    if ent in nodes:
+        reachable = nodes_reachable_from_entry(nodes, ent)
+        unreachable = sorted(
+            (nid for nid in nodes if nid not in reachable),
+            key=lambda x: (x.lower(), x),
+        )
+        if unreachable:
+            if len(unreachable) <= 15:
+                for u in unreachable:
+                    warnings.append(
+                        f"节点 {u!r} 无法从入口 entry={ent!r} 沿连线到达（流程孤儿；请调整 entry 或拓扑）"
+                    )
+            else:
+                sample = ", ".join(repr(x) for x in unreachable[:12])
+                warnings.append(
+                    f"共 {len(unreachable)} 个节点无法从入口 entry={ent!r} 到达（流程孤儿）。"
+                    f"示例: {sample}…"
+                )
 
     return (errors, warnings)
 

@@ -1,10 +1,10 @@
 """图对话静态分析（不可达、死路等），仅编辑器。"""
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import Any
 
-from .graph_document import extract_flow_edges
+from .graph_document import extract_flow_edges, nodes_reachable_from_entry
 
 
 def analyze_node_tags(data: dict[str, Any]) -> dict[str, str]:
@@ -17,16 +17,7 @@ def analyze_node_tags(data: dict[str, Any]) -> dict[str, str]:
         if d in nodes:
             out_adj[s].append(d)
 
-    reachable: set[str] = set()
-    if entry in nodes:
-        dq = deque([entry])
-        reachable.add(entry)
-        while dq:
-            u = dq.popleft()
-            for v in out_adj.get(u, ()):
-                if v in nodes and v not in reachable:
-                    reachable.add(v)
-                    dq.append(v)
+    reachable = nodes_reachable_from_entry(nodes, entry)
 
     tags: dict[str, str] = {}
     for nid in nodes:

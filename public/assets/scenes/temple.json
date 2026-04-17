@@ -1,11 +1,11 @@
 {
   "id": "temple",
   "name": "破烂城隍庙",
-  "worldWidth": 2000,
-  "worldHeight": 1116,
+  "worldWidth": 2000.0,
+  "worldHeight": 1116.0,
   "camera": {
-    "zoom": 1,
-    "pixelsPerUnit": 1
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
   },
   "backgrounds": [
     {
@@ -15,13 +15,13 @@
     }
   ],
   "spawnPoint": {
-    "x": 1000.0,
-    "y": 892.8
+    "x": 822.5,
+    "y": 795.5
   },
   "spawnPoints": {
     "from_street": {
-      "x": 1000,
-      "y": 892.8
+      "x": 518.7,
+      "y": 959.4
     },
     "spawn_0": {
       "x": 735.8,
@@ -184,15 +184,15 @@
       }
     },
     {
-      "id": "exit_to_street_from_temple",
+      "id": "T到室外",
       "type": "transition",
-      "label": "出门 (街巷)",
-      "x": 1000,
-      "y": 948.6,
-      "interactionRange": 100,
+      "label": "到室外",
+      "x": 406.6,
+      "y": 998.6,
+      "interactionRange": 50.0,
       "data": {
-        "targetScene": "test_room_a",
-        "targetSpawnPoint": "from_temple"
+        "targetScene": "temple_exterior",
+        "targetSpawnPoint": "spawn_0"
       }
     }
   ],

@@ -25,6 +25,10 @@
     "from_temple_exterior": {
       "x": 1437.7,
       "y": 786.3
+    },
+    "spawn_0": {
+      "x": 1464.2,
+      "y": 62.6
     }
   },
   "hotspots": [
@@ -32,9 +36,9 @@
       "id": "exit_to_street",
       "type": "transition",
       "label": "回街巷",
-      "x": 188,
+      "x": 188.0,
       "y": 821.3,
-      "interactionRange": 203.5,
+      "interactionRange": 53.5,
       "data": {
         "targetScene": "test_room_a",
         "targetSpawnPoint": "from_mountain_pass"
@@ -46,10 +50,22 @@
       "label": "去庙宇",
       "x": 1437.9,
       "y": 786.5,
-      "interactionRange": 203.5,
+      "interactionRange": 53.5,
       "data": {
         "targetScene": "temple_exterior",
         "targetSpawnPoint": "from_mountain_pass"
+      }
+    },
+    {
+      "id": "T到河边",
+      "type": "transition",
+      "label": "到河边",
+      "x": 1466.8,
+      "y": 58.1,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "河边",
+        "targetSpawnPoint": "从山路"
       }
     }
   ],

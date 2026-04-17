@@ -21,6 +21,10 @@
     "from_mountain_pass": {
       "x": 148.7,
       "y": 178.9
+    },
+    "spawn_0": {
+      "x": 790.3,
+      "y": 447.7
     }
   },
   "hotspots": [
@@ -30,10 +34,44 @@
       "label": "回山路",
       "x": 148.7,
       "y": 178.9,
-      "interactionRange": 407,
+      "interactionRange": 27.0,
       "data": {
         "targetScene": "mountain_pass",
         "targetSpawnPoint": "from_temple_exterior"
+      }
+    },
+    {
+      "id": "T到庙宇室内",
+      "type": "transition",
+      "label": "到城隍庙",
+      "x": 786.1,
+      "y": 443.9,
+      "interactionRange": 30.0,
+      "data": {
+        "targetScene": "temple",
+        "targetSpawnPoint": "from_street"
+      }
+    },
+    {
+      "id": "庙宇-纸人",
+      "type": "inspect",
+      "label": "",
+      "x": 619.3,
+      "y": 706.4,
+      "interactionRange": 20.0,
+      "data": {
+        "text": "歪七扭八的纸人......"
+      }
+    },
+    {
+      "id": "庙宇-洋人棺材",
+      "type": "inspect",
+      "label": "",
+      "x": 1199.8,
+      "y": 408.7,
+      "interactionRange": 50.0,
+      "data": {
+        "text": "洋人的棺材"
       }
     }
   ],

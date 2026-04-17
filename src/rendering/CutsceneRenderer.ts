@@ -448,7 +448,7 @@ export class CutsceneRenderer {
     const ihT = Math.max(1, texTo!.height);
     const dispH = dispW * (ihT / iwT);
 
-    const { mesh, setT } = createOverlayBlendMesh(texFrom!, texTo!, sw, sh, cx, cy, dispW, dispH);
+    const { mesh, setT } = createOverlayBlendMesh(texFrom!, texTo!, cx, cy, dispW, dispH);
     mesh.label = id;
     this.renderer.cutsceneOverlay.addChild(mesh);
 

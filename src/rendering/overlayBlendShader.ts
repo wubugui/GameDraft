@@ -1,18 +1,32 @@
 import 'pixi.js/mesh';
 import { Mesh, MeshGeometry, Shader, Texture } from 'pixi.js';
 
+/**
+ * 顶点变换与 Pixi v8 默认 Mesh shader 完全一致（见 high-shader/defaultProgramTemplate 的 vertexGlTemplate）：
+ *   modelMatrix = uTransformMatrix; // 来自 localUniformBit
+ *   mvp = uProjectionMatrix * uWorldTransformMatrix * modelMatrix;
+ *   gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
+ *
+ * 这三个 mat3 uniform 由 Pixi 的 Mesh 渲染管线（GlMeshAdaptor / GpuMeshAdapter）在渲染时自动绑定到 shader：
+ *   - globalUniforms.bindGroup  -> slot 100（uProjectionMatrix / uWorldTransformMatrix / uWorldColorAlpha / uResolution）
+ *   - meshPipe.localUniformsBindGroup -> slot 101（uTransformMatrix / uColor / uRound）
+ * 这样自定义 shader 下的 Mesh 与同父容器下的 Sprite 共享一套投影与世界变换，避免两条路径在窗口 resize、
+ * 渲染到 RenderTexture、父容器变换等场景下出现错位（与 showOverlayImage 的 Sprite 对齐）。
+ */
 const VERT = /* glsl */ `
 in vec2 aPosition;
 in vec2 aUV;
 
-uniform vec2 uResolution;
+uniform mat3 uProjectionMatrix;
+uniform mat3 uWorldTransformMatrix;
+uniform mat3 uTransformMatrix;
+
 out vec2 vUV;
 
 void main(void) {
-    vec2 p = aPosition;
-    float nx = p.x / max(uResolution.x, 1.0) * 2.0 - 1.0;
-    float ny = -(p.y / max(uResolution.y, 1.0) * 2.0 - 1.0);
-    gl_Position = vec4(nx, ny, 0.0, 1.0);
+    mat3 modelMatrix = uTransformMatrix;
+    mat3 modelViewProjectionMatrix = uProjectionMatrix * uWorldTransformMatrix * modelMatrix;
+    gl_Position = vec4((modelViewProjectionMatrix * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
     vUV = aUV;
 }
 `;
@@ -39,13 +53,13 @@ export interface OverlayBlendMeshHandle {
 }
 
 /**
- * 单 Mesh + 双纹理 shader：片元 mix(from, to, t)。几何尺寸为屏幕像素，与 cutsceneOverlay 对齐。
+ * 单 Mesh + 双纹理 shader：片元 mix(from, to, t)。
+ * 几何以 Mesh 的 local 像素坐标给出（Pixi Sprite 同一套空间），投影/世界变换由 Pixi 自动注入的 uniform 负责，
+ * 与 `CutsceneRenderer.showPercentImg` 的 Sprite 保持像素对齐。
  */
 export function createOverlayBlendMesh(
   texFrom: Texture,
   texTo: Texture,
-  screenW: number,
-  screenH: number,
   cx: number,
   cy: number,
   dispW: number,
@@ -69,7 +83,6 @@ export function createOverlayBlendMesh(
     resources: {
       blendUniforms: {
         uT: { value: 0, type: 'f32' },
-        uResolution: { value: new Float32Array([screenW, screenH]), type: 'vec2<f32>' },
       },
       uTextureFrom: texFrom.source,
       uTextureTo: texTo.source,

@@ -56,7 +56,7 @@
       "type": "inspect",
       "x": 151.7,
       "y": 171.2,
-      "interactionRange": 50,
+      "interactionRange": 20.0,
       "conditions": [
         {
           "flag": "got_iron_box",
@@ -72,9 +72,9 @@
     {
       "id": "exit_to_street",
       "type": "transition",
-      "x": 151.7,
-      "y": 171.2,
-      "interactionRange": 50,
+      "x": 153.6,
+      "y": 170.2,
+      "interactionRange": 20.0,
       "conditions": [
         {
           "flag": "got_iron_box"

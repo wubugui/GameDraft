@@ -14,8 +14,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 2011.0,
-    "y": 2141.0
+    "x": 2083.2,
+    "y": 2195.2
   },
   "spawnPoints": {
     "from_b": {
@@ -31,8 +31,8 @@
       "y": 2232.6
     },
     "from_bridge": {
-      "x": 3903.0,
-      "y": 2160.0
+      "x": 3901.4,
+      "y": 1838.9
     },
     "from_mountain_pass": {
       "x": 3810,
@@ -41,6 +41,10 @@
     "spawn_0": {
       "x": 470.7,
       "y": 1060.9
+    },
+    "spawn_1": {
+      "x": 3754.6,
+      "y": 713.7
     }
   },
   "hotspots": [
@@ -94,9 +98,9 @@
       "id": "exit_to_bridge",
       "type": "transition",
       "label": "去桥",
-      "x": 3903,
-      "y": 2160,
-      "interactionRange": 875,
+      "x": 3849.2,
+      "y": 1794.6,
+      "interactionRange": 875.0,
       "data": {
         "targetScene": "bridge_underpass",
         "targetSpawnPoint": "from_street"
@@ -152,6 +156,30 @@
             }
           }
         ]
+      }
+    },
+    {
+      "id": "T到码头1",
+      "type": "transition",
+      "label": "到码头1",
+      "x": 2085.8,
+      "y": 2193.7,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "码头白天",
+        "targetSpawnPoint": "spawn_0"
+      }
+    },
+    {
+      "id": "T到码头2",
+      "type": "transition",
+      "label": "到码头2",
+      "x": 3762.1,
+      "y": 702.6,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "码头白天",
+        "targetSpawnPoint": "spawn_1"
       }
     }
   ],
@@ -264,28 +292,28 @@
       "id": "new_zone_2",
       "polygon": [
         {
-          "x": 3060.9,
-          "y": 1797.7
+          "x": 3073.6,
+          "y": 1772.4
         },
         {
-          "x": 3270.2,
-          "y": 1616.3
+          "x": 3282.9,
+          "y": 1591.0
         },
         {
-          "x": 4023.4,
-          "y": 2059.4
+          "x": 4036.1,
+          "y": 2034.1
         },
         {
-          "x": 3900.9,
-          "y": 2347.6
+          "x": 3913.6,
+          "y": 2322.3
         },
         {
-          "x": 3690.9,
-          "y": 2210.1
+          "x": 3703.6,
+          "y": 2184.8
         },
         {
-          "x": 3480.9,
-          "y": 2072.7
+          "x": 3493.6,
+          "y": 2047.4
         }
       ],
       "zoneKind": "depth_floor",
