@@ -78,6 +78,7 @@ import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
+import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
 
 export interface GameStartOptions {
   devMode?: boolean;
@@ -358,6 +359,15 @@ export class Game {
       if (!spawnKey) return scene.spawnPoint ?? null;
       return scene.spawnPoints?.[spawnKey] ?? null;
     });
+    this.cutsceneManager.setScriptedSpeakerResolver((raw, scriptedNpcId) =>
+      resolveScriptedSpeakerDisplay(raw, {
+        strings: this.stringsProvider,
+        flagStore: this.flagStore,
+        sceneManager: this.sceneManager,
+        graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
+        fallbackNpcId: scriptedNpcId ?? '',
+      }),
+    );
     this.saveManager = new SaveManager(
       () => this.collectSaveData(),
       (data) => this.distributeSaveData(data),
@@ -427,6 +437,14 @@ export class Game {
     this.inventoryManager.setConditionEvalContextFactory(mkCondCtx);
 
     registerActionHandlers(this.actionExecutor, {
+      resolveScriptedSpeaker: (raw, scriptedNpcId) =>
+        resolveScriptedSpeakerDisplay(raw, {
+          strings: this.stringsProvider,
+          flagStore: this.flagStore,
+          sceneManager: this.sceneManager,
+          graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
+          fallbackNpcId: scriptedNpcId ?? '',
+        }),
       ruleOfferRegistry: this.ruleOfferRegistry,
       inventoryManager: this.inventoryManager,
       rulesManager: this.rulesManager,
