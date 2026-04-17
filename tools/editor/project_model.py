@@ -673,6 +673,28 @@ class ProjectModel(QObject):
         ordered = sorted(found, key=lambda x: (x.lower(), x))
         return [(i, i) for i in ordered]
 
+    def collect_cutscene_present_img_ids(self) -> list[str]:
+        """过场 present showImg/hideImg 已出现的图层 id（供 Timeline 下拉）。"""
+        found: set[str] = set()
+
+        def walk(steps: list) -> None:
+            for step in steps or []:
+                if not isinstance(step, dict):
+                    continue
+                if step.get("kind") == "present" and step.get("type") in ("showImg", "hideImg"):
+                    i = str(step.get("id") or "").strip()
+                    if i:
+                        found.add(i)
+                tr = step.get("tracks")
+                if isinstance(tr, list):
+                    for sub in tr:
+                        if isinstance(sub, dict):
+                            walk([sub])
+
+        for cs in self.cutscenes:
+            walk(cs.get("steps") or [])
+        return sorted(found, key=lambda x: (x.lower(), x))
+
     def animation_state_names_for_manifest(self, manifest_path: str) -> list[str]:
         """anim.json 内 states 的键名列表（有序）。"""
         p = (manifest_path or "").strip()
