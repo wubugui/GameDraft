@@ -650,28 +650,43 @@ class ProjectModel(QObject):
         return list(self.npc_ids_for_scene(scene_id))
 
     def collect_cutscene_temp_actor_ids(self) -> list[tuple[str, str]]:
-        """从过场 steps 收集 cutsceneSpawnActor 的 _cut_* id。"""
+        """从所有过场 steps 收集 cutsceneSpawnActor 的 _cut_* id（跨过场全集）。"""
         found: set[str] = set()
-
-        def walk(steps: list) -> None:
-            for step in steps or []:
-                if not isinstance(step, dict):
-                    continue
-                if step.get("kind") == "action" and step.get("type") == "cutsceneSpawnActor":
-                    p = step.get("params") or {}
-                    i = str(p.get("id") or "").strip()
-                    if i.startswith("_cut_"):
-                        found.add(i)
-                tr = step.get("tracks")
-                if isinstance(tr, list):
-                    for sub in tr:
-                        if isinstance(sub, dict):
-                            walk([sub])
-
         for cs in self.cutscenes:
-            walk(cs.get("steps") or [])
+            for tid in self._walk_cutscene_spawn_ids(cs.get("steps") or []):
+                found.add(tid)
         ordered = sorted(found, key=lambda x: (x.lower(), x))
         return [(i, i) for i in ordered]
+
+    def cutscene_temp_actor_ids_in_cutscene(self, cutscene_id: str) -> list[str]:
+        """单个过场内 cutsceneSpawnActor 产生的 _cut_* id 列表（有序、去重）。"""
+        cid = (cutscene_id or "").strip()
+        if not cid:
+            return []
+        target = next((c for c in self.cutscenes if str(c.get("id", "")) == cid), None)
+        if not isinstance(target, dict):
+            return []
+        found: set[str] = set()
+        for tid in self._walk_cutscene_spawn_ids(target.get("steps") or []):
+            found.add(tid)
+        return sorted(found, key=lambda x: (x.lower(), x))
+
+    @staticmethod
+    def _walk_cutscene_spawn_ids(steps: list):
+        """遍历 steps / parallel tracks，产出 _cut_ 开头的 spawn id。"""
+        for step in steps or []:
+            if not isinstance(step, dict):
+                continue
+            if step.get("kind") == "action" and step.get("type") == "cutsceneSpawnActor":
+                p = step.get("params") or {}
+                i = str(p.get("id") or "").strip()
+                if i.startswith("_cut_"):
+                    yield i
+            tr = step.get("tracks")
+            if isinstance(tr, list):
+                for sub in tr:
+                    if isinstance(sub, dict):
+                        yield from ProjectModel._walk_cutscene_spawn_ids([sub])
 
     def animation_state_names_for_manifest(self, manifest_path: str) -> list[str]:
         """anim.json 内 states 的键名列表（有序）。"""
