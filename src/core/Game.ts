@@ -79,7 +79,16 @@ import { DevModeUI } from '../ui/DevModeUI';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
 import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
-import { Texture } from 'pixi.js';
+import { Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { installRuntimeErrorsToDebugPanel } from '../debug/debugPanelRuntimeLog';
+import {
+  drainWebGLErrorsToPanel,
+  logDepthTextureGpuStatus,
+  pixiInitTextureSourceForGpu,
+  tryGetWebGlFromApplication,
+} from '../debug/webglPanelDiagnostics';
+import { warmUpBackgroundDebugGlProgramForDiagnostics } from '../rendering/BackgroundDebugFilter';
+import { warmUpDepthOcclusionGlProgramForDiagnostics } from '../rendering/DepthOcclusionFilter';
 
 export interface GameStartOptions {
   devMode?: boolean;
@@ -174,6 +183,11 @@ export class Game {
    */
   private npcPatrolEpoch = new Map<string, number>();
   private mainTick: (() => void) | null = null;
+  /** Pixi 渲染之后 drain gl.getError（优先级 UTILITY，低于内置 render） */
+  private glPostRenderDrain: (() => void) | null = null;
+  private webglContextLostHandler: ((ev: Event) => void) | null = null;
+  private webglContextRestoredHandler: (() => void) | null = null;
+  private runtimeDebugLogCleanup: (() => void) | null = null;
 
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
@@ -699,6 +713,34 @@ export class Game {
       this.tick(dt);
     };
     ticker.add(this.mainTick);
+    this.setupWebGlPanelDiagnostics();
+  }
+
+  /** F2「日志」页：WebGL getError、深度 GPU 纹理、shader 预热与上下文丢失；JS/Pixi 运行时错误镜像 */
+  private setupWebGlPanelDiagnostics(): void {
+    this.runtimeDebugLogCleanup?.();
+    this.runtimeDebugLogCleanup = installRuntimeErrorsToDebugPanel((m) => this.debugPanelUI?.log(m));
+
+    const canvas = this.renderer.app.canvas as HTMLCanvasElement | undefined;
+    if (!canvas) return;
+
+    this.webglContextLostHandler = (e: Event) => {
+      const msg = (e as WebGLContextEvent).statusMessage || '';
+      this.debugPanelUI?.log(`[GL诊断] webglcontextlost: ${msg || '(no message)'}`);
+    };
+    canvas.addEventListener('webglcontextlost', this.webglContextLostHandler);
+
+    this.webglContextRestoredHandler = () => {
+      this.debugPanelUI?.log('[GL诊断] webglcontextrestored');
+    };
+    canvas.addEventListener('webglcontextrestored', this.webglContextRestoredHandler);
+
+    this.glPostRenderDrain = () => {
+      const gl = tryGetWebGlFromApplication(this.renderer.app);
+      if (!gl) return;
+      drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), '每帧(Pixi渲染后)');
+    };
+    this.renderer.app.ticker.add(this.glPostRenderDrain, undefined, UPDATE_PRIORITY.UTILITY);
   }
 
   /** 开发模式或 URL 带 `cutsceneDebug` 时显示左上角过场 step 预览 */
@@ -1066,9 +1108,16 @@ export class Game {
             `depthLoader ${sceneId}: 深度纹理未加载成功时 F2 深度调试仍为占位白图，遮挡滤镜不会创建`,
           );
         }
+        this.runDepthAndShaderGlDiagnostics(sceneId, dt, en);
       } else {
         this.sceneDepthSystem.loadDefault();
         this.logDepthDiag(`depthLoader ${sceneId}: 无 depthConfig，深度系统关闭`);
+        const gl = tryGetWebGlFromApplication(this.renderer.app);
+        if (!gl) {
+          this.debugPanelUI?.log('[GL诊断] 无 WebGL 上下文（可能 WebGPU），跳过 getError');
+        } else {
+          drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} 无depthConfig`);
+        }
       }
       this.refreshPlayerWorldCollision();
     });
@@ -1127,6 +1176,48 @@ export class Game {
   /** F2「日志」页：深度加载与背景调试绑定验证（便于真机排查） */
   private logDepthDiag(message: string): void {
     this.debugPanelUI?.log(`[深度诊断] ${message}`);
+  }
+
+  /**
+   * 深度图 GPU 侧 isTexture、两个自定义 GlProgram 预热，并在每步后 drain gl.getError 到调试面板。
+   */
+  private runDepthAndShaderGlDiagnostics(sceneId: string, dt: Texture | null, depthEnabled: boolean): void {
+    const gl = tryGetWebGlFromApplication(this.renderer.app);
+    if (!gl) {
+      this.debugPanelUI?.log('[GL诊断] 当前渲染器无 gl（可能为 WebGPU），跳过 getError / isTexture');
+      return;
+    }
+    if (depthEnabled && dt) {
+      pixiInitTextureSourceForGpu(this.renderer.app.renderer, dt.source);
+      drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} 深度 initSource 后`);
+      logDepthTextureGpuStatus(
+        `${sceneId} 深度贴图(GPU)`,
+        dt,
+        this.renderer.app.renderer,
+        gl,
+        (m) => this.debugPanelUI?.log(m),
+      );
+    } else if (!depthEnabled) {
+      this.debugPanelUI?.log(`[GL诊断] ${sceneId}: depthEnabled=false，跳过深度 GPU 探测`);
+    }
+
+    try {
+      warmUpDepthOcclusionGlProgramForDiagnostics();
+      this.debugPanelUI?.log('[GL诊断] DepthOcclusion GlProgram 已创建/命中缓存');
+    } catch (e) {
+      this.debugPanelUI?.log(`[GL诊断] DepthOcclusion GlProgram 失败: ${String(e)}`);
+    }
+    drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} DepthOcclusion shader 后`);
+
+    try {
+      warmUpBackgroundDebugGlProgramForDiagnostics();
+      this.debugPanelUI?.log('[GL诊断] BackgroundDebug GlProgram 已创建/命中缓存');
+    } catch (e) {
+      this.debugPanelUI?.log(`[GL诊断] BackgroundDebug GlProgram 失败: ${String(e)}`);
+    }
+    drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} BackgroundDebug shader 后`);
+
+    drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} depthLoader 收尾`);
   }
 
   private setupSceneReadyHandler(): void {
@@ -1217,6 +1308,18 @@ export class Game {
         this.logDepthDiag(
           `scene:ready: 背景调试已绑定 uid=${dTex.uid} ${dTex.width}x${dTex.height} WHITE=${dTex === Texture.WHITE}`,
         );
+        const glR = tryGetWebGlFromApplication(this.renderer.app);
+        if (glR) {
+          pixiInitTextureSourceForGpu(this.renderer.app.renderer, dTex.source);
+          logDepthTextureGpuStatus(
+            `scene:ready ${sd.id} 深度贴图(GPU)`,
+            dTex,
+            this.renderer.app.renderer,
+            glR,
+            (m) => this.debugPanelUI?.log(m),
+          );
+          drainWebGLErrorsToPanel(glR, (m) => this.debugPanelUI?.log(m), `scene:ready ${sd.id}`);
+        }
       }
     });
   }
@@ -1457,6 +1560,27 @@ export class Game {
       }
       this.mainTick = null;
     }
+    if (this.glPostRenderDrain && this.renderer?.app?.ticker) {
+      try {
+        this.renderer.app.ticker.remove(this.glPostRenderDrain);
+      } catch {
+        /* ignore */
+      }
+      this.glPostRenderDrain = null;
+    }
+    const canvas = this.renderer?.app?.canvas as HTMLCanvasElement | undefined;
+    if (canvas) {
+      if (this.webglContextLostHandler) {
+        canvas.removeEventListener('webglcontextlost', this.webglContextLostHandler);
+      }
+      if (this.webglContextRestoredHandler) {
+        canvas.removeEventListener('webglcontextrestored', this.webglContextRestoredHandler);
+      }
+    }
+    this.webglContextLostHandler = null;
+    this.webglContextRestoredHandler = null;
+    this.runtimeDebugLogCleanup?.();
+    this.runtimeDebugLogCleanup = null;
 
     for (const { event, fn } of this.boundCallbacks) {
       this.eventBus.off(event, fn);

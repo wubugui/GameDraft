@@ -157,6 +157,11 @@ function getSharedProgram(): GlProgram {
     return sharedProgram;
 }
 
+/** 调试：强制创建共享 GlProgram，便于随后对 gl.getError 做 drain */
+export function warmUpDepthOcclusionGlProgramForDiagnostics(): GlProgram {
+    return getSharedProgram();
+}
+
 export class DepthOcclusionFilter extends Filter {
     readonly _isDepthOcclusion = true;
 
