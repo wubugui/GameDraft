@@ -66,7 +66,29 @@ class ScriptedLinesEditor(QWidget):
         box.deleteLater()
         if not self._rows:
             self._append_row({})
+        self._refresh_reorder_buttons()
         self.changed.emit()
+
+    def _move_row(self, rec: dict, delta: int) -> None:
+        if rec not in self._rows:
+            return
+        i = self._rows.index(rec)
+        j = i + delta
+        if j < 0 or j >= len(self._rows):
+            return
+        self._rows[i], self._rows[j] = self._rows[j], self._rows[i]
+        for r in self._rows:
+            self._list_layout.removeWidget(r["box"])
+        for r in self._rows:
+            self._list_layout.addWidget(r["box"])
+        self._refresh_reorder_buttons()
+        self.changed.emit()
+
+    def _refresh_reorder_buttons(self) -> None:
+        n = len(self._rows)
+        for i, r in enumerate(self._rows):
+            r["btn_up"].setEnabled(i > 0)
+            r["btn_down"].setEnabled(i < n - 1)
 
     def _append_row(self, data: dict) -> None:
         box = QFrame()
@@ -79,8 +101,17 @@ class ScriptedLinesEditor(QWidget):
             initial_speaker=str(data.get("speaker", "") or ""),
             on_change=self.changed.emit,
         )
+        up = QPushButton("\u2191")
+        up.setFixedWidth(24)
+        up.setToolTip("上移")
+        dn = QPushButton("\u2193")
+        dn.setFixedWidth(24)
+        dn.setToolTip("下移")
         rm = QPushButton("\u2212")
         rm.setFixedWidth(24)
+        rm.setToolTip("删除")
+        hdr.addWidget(up)
+        hdr.addWidget(dn)
         hdr.addWidget(rm)
         bl.addLayout(hdr)
         bl.addWidget(QLabel("text"))
@@ -92,10 +123,13 @@ class ScriptedLinesEditor(QWidget):
         tx.setPlainText(str(data.get("text", "") or ""))
         tx.textChanged.connect(self.changed.emit)
         bl.addWidget(tx)
-        rec = {"box": box, "speaker": sp, "text": tx}
+        rec = {"box": box, "speaker": sp, "text": tx, "btn_up": up, "btn_down": dn}
         rm.clicked.connect(lambda: self._remove_row(rec))
+        up.clicked.connect(lambda: self._move_row(rec, -1))
+        dn.clicked.connect(lambda: self._move_row(rec, 1))
         self._rows.append(rec)
         self._list_layout.addWidget(box)
+        self._refresh_reorder_buttons()
 
     def to_list(self) -> list[dict]:
         out: list[dict] = []
