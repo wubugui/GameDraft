@@ -19,7 +19,7 @@ from __future__ import annotations
 import types
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QPoint, Qt, Signal
+from PySide6.QtCore import QObject, QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import QGraphicsItem
 
@@ -91,7 +91,9 @@ class _Pyside6SafeNodeViewer(NodeViewer):
             str(n.id): (float(xy_pos[0]), float(xy_pos[1]))
             for n, xy_pos in moved_nodes_raw.items()
         }
-        if moved_nodes and not self.COLLIDING_state:
+        # 始终发出位移：原逻辑在 COLLIDING_state 下不 emit，会导致 _positions 未更新，
+        # 随后 rebuild 用旧坐标把节点拽回 (0,0) 或原位，表现为「跳到视口一角」。
+        if moved_nodes:
             self.moved_nodes.emit(moved_nodes)
 
         self._node_positions = {}
@@ -392,29 +394,24 @@ class DialogueFlowOdenController(QObject):
         return self._graph.viewer()
 
     def fit_all(self) -> None:
-        self._graph.fit_to_selection()
-
-    def apply_oden_auto_layout(self) -> bool:
-        """调用 OdenGraphQt 自带的 ``NodeGraph.auto_layout_nodes``（按连接关系分层）。
-
-        库内无入边的节点作为起点向下游排布；若无起点（例如全是环）则返回 False，由上层改用 BFS 布局。
-        注意：若 ``rank_map`` 键不连续，旧版库在迭代 ``range(len(rank_map))`` 时可能 KeyError，已用 try 捕获。
-        """
-        nodes = [
-            n
-            for n in self._graph.all_nodes()
-            if isinstance(n, (DialogueFlowNode, DialogueGhostNode))
-        ]
-        if not nodes:
-            return False
-        roots = [n for n in nodes if not any(n.connected_input_nodes().values())]
-        if not roots:
-            return False
-        try:
-            self._graph.auto_layout_nodes(nodes=nodes, down_stream=True, start_nodes=[])
-        except Exception:
-            return False
-        return True
+        """适应整幅流程图（含连线与分组框）。无节点时不操作。"""
+        v = self._graph.viewer()
+        sc = v.scene()
+        if sc is None:
+            return
+        rect = sc.itemsBoundingRect()
+        if rect.isNull():
+            return
+        pad = 80.0
+        v.fitInView(
+            QRectF(
+                rect.x() - pad,
+                rect.y() - pad,
+                rect.width() + 2 * pad,
+                rect.height() + 2 * pad,
+            ),
+            Qt.AspectRatioMode.KeepAspectRatio,
+        )
 
     def select_dialogue_node(self, nid: str | None) -> None:
         if not nid:

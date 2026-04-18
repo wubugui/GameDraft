@@ -1,0 +1,168 @@
+{
+  "week": 1,
+  "data": {
+    "runs": [
+      {
+        "run_id": "71fa0ef394",
+        "name": "temp_main_flow_smoke_md",
+        "start_week": 1,
+        "total_weeks": 8,
+        "pacing_profile_id": "default",
+        "llm_config_json": "{\"embeddings\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"text-embedding-v4\"}, \"semantic_memory\": {\"strict\": false}, \"default\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-flash\"}, \"tier_s_npc\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-plus\"}, \"tier_a_npc\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-flash\"}, \"gm\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-plus\"}, \"director\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-plus\"}, \"rumor\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-flash\"}, \"week_summarizer\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-flash\"}, \"month_historian\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-flash\"}, \"style_rewriter\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-flash\"}, \"probe\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-flash\"}, \"initializer\": {\"kind\": \"openai_compat\", \"base_url\": \"https://dashscope.aliyuncs.com/compatible-mode/v1\", \"api_key\": \"sk-b24b63b24f6d4e76847c6786713b5408\", \"model\": \"qwen3.6-plus\"}}",
+        "current_week": 1
+      }
+    ],
+    "agents": [],
+    "tier_changes": [],
+    "cold_memories": [],
+    "cold_beliefs": [],
+    "cold_agent_states": [],
+    "npc_state_cards": [],
+    "factions": [],
+    "locations": [],
+    "relationships": [],
+    "social_graph_edges": [],
+    "beliefs": [],
+    "anchor_events": [],
+    "event_types": [
+      {
+        "id": "misc",
+        "category": "misc",
+        "tier": "minor",
+        "conditions": "true",
+        "actor_slots_json": "[]",
+        "weight": 0.5,
+        "cooldown_weeks": 0,
+        "supernatural_prob": 0.0,
+        "narrative_template": "",
+        "consequences_template": ""
+      },
+      {
+        "id": "river_dispute",
+        "category": "江湖",
+        "tier": "minor",
+        "conditions": "week >= 1",
+        "actor_slots_json": "[{\"role\": \"挑头\", \"tier_min\": \"B\", \"tier_max\": \"S\", \"relation_hint\": null}, {\"role\": \"围观\", \"tier_min\": \"B\", \"tier_max\": \"B\", \"relation_hint\": null}]",
+        "weight": 1.2,
+        "cooldown_weeks": 2,
+        "supernatural_prob": 0.05,
+        "narrative_template": "码头/河岸因分货、争地盘起冲突。",
+        "consequences_template": "关系紧张，或结下梁子。"
+      },
+      {
+        "id": "teahouse_gossip",
+        "category": "传闻",
+        "tier": "flavor",
+        "conditions": "true",
+        "actor_slots_json": "[{\"role\": \"说书\", \"tier_min\": \"B\", \"tier_max\": \"A\", \"relation_hint\": null}]",
+        "weight": 0.9,
+        "cooldown_weeks": 1,
+        "supernatural_prob": 0.0,
+        "narrative_template": "茶馆里说书或闲扯，流言起。",
+        "consequences_template": "传闻入库，belief 可更新。"
+      },
+      {
+        "id": "supernatural_omen",
+        "category": "超自然",
+        "tier": "minor",
+        "conditions": "week >= 2",
+        "actor_slots_json": "[{\"role\": \"见证\", \"tier_min\": \"B\", \"tier_max\": \"S\", \"relation_hint\": null}]",
+        "weight": 0.6,
+        "cooldown_weeks": 3,
+        "supernatural_prob": 0.4,
+        "narrative_template": "异光、异响、托梦、走尸传闻之一，真相暧昧。",
+        "consequences_template": "志怪浓度上升，派系恐慌。"
+      },
+      {
+        "id": "debt_pressure",
+        "category": "经济",
+        "tier": "minor",
+        "conditions": "true",
+        "actor_slots_json": "[{\"role\": \"债主\", \"tier_min\": \"B\", \"tier_max\": \"A\", \"relation_hint\": null}, {\"role\": \"欠债\", \"tier_min\": \"B\", \"tier_max\": \"S\", \"relation_hint\": null}]",
+        "weight": 1.0,
+        "cooldown_weeks": 2,
+        "supernatural_prob": 0.0,
+        "narrative_template": "债、当、勒索、分赃不均。",
+        "consequences_template": "人物动机强化。"
+      }
+    ],
+    "events": [
+      {
+        "id": "evt_w1_river_dispute",
+        "week_number": 1,
+        "location_id": "loc_riverbank_west",
+        "type_id": "river_dispute",
+        "truth_json": "{\"what_happened\": \"上游赵家村为保秧苗私自筑坝截流，导致下游李家庄水车停摆。两村青壮在河岸对峙，赵家老者声称是'龙脉改道'，李家青年投石入水示警，未发生肢体冲突但局势紧张。\", \"who_knows_what\": {\"公开\": \"两村因缺水发生激烈口角，有人向河中投掷石块。\", \"仅当事人\": \"赵家村长私下承认截流是临时起意，并未请示乡绅；李家带头青年手中握有石子，原本瞄准的是赵家领头人的额头，但因犹豫未击中。\"}}",
+        "director_draft_json": "{\"from_draft\": \"river_dispute: 上游村落截流灌溉，导致下游水位骤降，两村村民在河岸对峙...\"}",
+        "witness_accounts_json": "[]",
+        "rumor_versions_json": "[\"赵家请了邪术士截断了龙脉\", \"李家祖坟冒烟，惹怒了河神\"]",
+        "tags_json": "[\"水源\", \"宗族冲突\", \"民生\"]",
+        "supernatural_level": "none"
+      },
+      {
+        "id": "evt_w1_debt_pressure",
+        "week_number": 1,
+        "location_id": "loc_market_entrance",
+        "type_id": "debt_pressure",
+        "truth_json": "{\"what_happened\": \"放贷人钱三在集市入口当众羞辱欠债书生柳文清，诵读借据并撕毁其一角衣袍。柳文清因家中老母病重无钱买药而违约，全程沉默忍受，围观者多为看客，无人援手。\", \"who_knows_what\": {\"公开\": \"书生柳文清欠债不还，被债主当街追讨，颜面扫地。\", \"仅当事人\": \"柳文清怀中藏有一枚当铺死当的玉佩，是他最后的救命稻草，但他不敢在众目睽睽下取出，怕被钱三抢走抵债。\"}}",
+        "director_draft_json": "{\"from_draft\": \"debt_pressure: 债主在集市入口公开堵截一名落魄书生...\"}",
+        "witness_accounts_json": "[]",
+        "rumor_versions_json": "[]",
+        "tags_json": "[\"债务\", \"市井\", \"羞辱\"]",
+        "supernatural_level": "none"
+      },
+      {
+        "id": "evt_w1_teahouse_gossip",
+        "week_number": 1,
+        "location_id": "loc_teahouse_central",
+        "type_id": "teahouse_gossip",
+        "truth_json": "{\"what_happened\": \"城南茶楼内，闲散人员议论昨日在乱葬岗附近发现的无名男尸。尸体衣着考究但面目全非，手中紧握半块玉佩。茶客们猜测死者与城中大户有关，但无人敢深究。\", \"who_knows_what\": {\"公开\": \"城里出了具无名尸，死状可疑，大家正在茶楼里瞎猜。\", \"仅当事人\": \"说书人老周其实认得那半块玉佩的纹样，那是城西王员外家失踪已久的二公子的贴身之物，但他选择装傻，只当趣闻讲。\"}}",
+        "director_draft_json": "{\"from_draft\": \"teahouse_gossip: 茶客们压低声音议论近日城中出现的无名尸首...\"}",
+        "witness_accounts_json": "[]",
+        "rumor_versions_json": "[\"死者是被厉鬼索命\", \"王员外家清理门户\", \"江湖仇杀\"]",
+        "tags_json": "[\"命案\", \"谣言\", \"豪门秘辛\"]",
+        "supernatural_level": "rumor"
+      }
+    ],
+    "event_witnesses": [],
+    "rumors": [],
+    "week_intents": [],
+    "summaries": [
+      {
+        "id": 1,
+        "scope": "week",
+        "week_start": 1,
+        "week_end": 1,
+        "text": "初一至初七，集市的青石板路还泛着潮气，放贷人钱三便带着账本堵在了街口。落魄书生柳文清拱着手立在风里，任债主当众拨弄借据，纸页撕裂的脆响混着衣袍被扯下的毛边，惹得周遭看客只当是寻常市井风波，交头接耳间无人上前搭话。柳文清全程沉默，并非性情软弱，实是家中老母病重无钱抓药，他兜里死死攥着那枚死当在当铺的玉佩，那是最后的救命稻草，却不敢在此刻亮出来招祸。欠债还钱本是天经地义，只是这世道，穷人的体面薄得像张桑皮纸，一戳就破。\n\n转往城西河岸，水势却比人心更急。上游赵家村为保刚插下的秧苗，私自筑坝截流，直教下游李家庄的水车旱得吱呀空转。两村青壮汉子隔着河水对峙，赵家老者捋须高呼“龙脉改道”，李家后生则扬手掬起石子砸进水里，溅起一片白浪示警。明面上是口角相争，暗地里却是各怀鬼胎：赵家家长私下承认截流乃临时起意，未曾请示乡绅；李家带头的青年原本瞄准的是赵家领头人的额头，终究因一时犹豫偏了半寸。水源断续，牵动的是宗族根基，谁也不肯先退半步，只等老天爷降下一场透雨。\n\n及至日头西斜，城南茶楼的八仙桌上已摆满了盖碗与瓜子。闲散人员压低了嗓门，议论起前几日乱葬岗畔寻获的那具无名男尸。尸体衣着考究，面容却糊作一团，指缝里还死死嵌着半块残缺的玉佩。说书人老周坐在角落，手里醒木拍得轻响，心里却清楚那纹样是城西王员外府上失踪已久的二公子贴身之物，但他只当是个奇闻轶事讲给茶客听，绝口不提内情。坊间流言早已沸反盈天，有人说是厉鬼索命，有人猜是豪门清理门户或是江湖仇杀。这些个神神叨叨的传闻，听听便罢，未必当真，只照见市井众生无处安放的惶惑。\n\n纵观这一周，从街头的债务羞辱、河岸的水源对峙，到茶馆里的命案秘辛，种种风波皆未酿成流血大祸，却如暗流般在城厢内外悄然推演。债主的算盘、村夫的锄头、茶客的闲话，交织成一幅粗粝的市井长卷。史笔如刀，记下的不过是些鸡毛蒜皮与口耳相传，可若细究起来，哪一件不是民生冷暖的倒影？下周且看这雨落不落，旧案又该由谁去翻。",
+        "style_applied": 0
+      }
+    ],
+    "director_decisions": [
+      {
+        "id": 1,
+        "week": 1,
+        "candidate_event_type": "river_dispute",
+        "score": 1.08,
+        "chosen": 1,
+        "reason": "ok"
+      },
+      {
+        "id": 2,
+        "week": 1,
+        "candidate_event_type": "debt_pressure",
+        "score": 0.9,
+        "chosen": 1,
+        "reason": "ok"
+      },
+      {
+        "id": 3,
+        "week": 1,
+        "candidate_event_type": "teahouse_gossip",
+        "score": 0.81,
+        "chosen": 1,
+        "reason": "ok"
+      }
+    ],
+    "agent_memories": []
+  }
+}
