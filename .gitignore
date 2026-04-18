@@ -29,8 +29,14 @@ venv/
 .env.local
 .env.*.local
 
+# 编年史模拟器：本地 LLM 密钥（由 private_llm_defaults.example.json 复制改名）
+tools/chronicle_sim/data/private_llm_defaults.json
+
 # 对话编译产物（源文件为 .ink）
 public/assets/dialogues/*.ink.json
 
 # Temp / read zip folder
 _read_zip/
+
+# 宣传视频模板（克隆项目）
+oss-video-skill/

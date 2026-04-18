@@ -1,0 +1,9 @@
+fingerprints:
+  default:
+    ban_words:
+      - 手机
+      - 快递
+      - 二维码
+    flavor_lines:
+      - 莫慌，先吃茶。
+      - 袍哥人家，绝不拉稀摆带。

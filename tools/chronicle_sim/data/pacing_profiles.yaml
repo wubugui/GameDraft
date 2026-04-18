@@ -1,0 +1,18 @@
+profiles:
+  - id: default
+    weeks:
+      - week_start: 1
+        week_end: 4
+        tension: 0.9
+      - week_start: 5
+        week_end: 9
+        tension: 1.2
+      - week_start: 10
+        week_end: 13
+        tension: 1.0
+
+  - id: steady
+    weeks:
+      - week_start: 1
+        week_end: 13
+        tension: 1.0

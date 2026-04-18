@@ -312,7 +312,7 @@ class DialogueGraphEditorWidget(QWidget):
 
         flow_hint = QLabel(
             "流程图（OdenGraphQt）：输出端口拖线到目标节点的「in」· 滚轮缩放 · 中键/右键平移 · "
-            "F 适应 · A /「自动布局」优先用库内 auto_layout_nodes，失败时回退 BFS（节点不会落入已有分组框内）· "
+            "F 适应整图 · A /「自动布局」按图 entry 做 BFS 分层（避开已有分组框占位）· "
             "空白处右键可「新建分组框」；节点中心在框内即归入该组 · "
             "布局写入 editor_data/dialogue_flow_layout.json · "
             "依赖 pip install -r tools/dialogue_graph_editor/requirements.txt"
@@ -1191,17 +1191,11 @@ class DialogueGraphEditorWidget(QWidget):
             return
         entry = str(self._data.get("entry", "") or "")
         avoid = avoid_rects_list(self._editor_group_frames)
-        if self._oden.apply_oden_auto_layout():
-            self._oden.sync_layout_dicts_from_graph()
-            from .editor_group_geometry import nudge_node_positions_avoid_rects
-
-            nudge_node_positions_avoid_rects(self._positions, nodes, avoid)
-            self._rebuild_flow_scene()
-        else:
-            self._positions = auto_layout_node_positions(
-                nodes, entry, avoid_rects=avoid
-            )
-            self._rebuild_flow_scene()
+        # 统一用 entry 拓扑 BFS 分层，避免 Oden 与回退两套规则导致「有时完全不像按图排」。
+        self._positions = auto_layout_node_positions(
+            nodes, entry, avoid_rects=avoid
+        )
+        self._rebuild_flow_scene()
         self._flush_flow_layout_to_disk()
         self._oden.fit_all()
         # 仅更新画布坐标 + editor_data/dialogue_flow_layout.json，不改 graphs/*.json，勿标脏以免切文件误提示保存对话
@@ -1379,16 +1373,30 @@ class DialogueGraphEditorWidget(QWidget):
         self._rebuild_flow_scene()
 
     def _flow_layout_is_collapsed(self) -> bool:
+        """仅当坐标明显是「未初始化脏数据」（全挤在场景原点附近一点）时视为塌缩。
+
+        旧实现用「外包框宽高都 < 2px」判定，会把正常手摆的紧密布局误判为塌缩并整表重算，
+        表现为重新打开或任意 rebuild 后布局错乱。
+        """
         nodes = self._data.get("nodes") or {}
         if len(nodes) < 2:
             return False
-        xs: list[float] = []
-        ys: list[float] = []
+        coords: list[tuple[float, float]] = []
         for nid in nodes:
-            x, y = self._positions.get(nid, (0.0, 0.0))
-            xs.append(x)
-            ys.append(y)
-        return (max(xs) - min(xs) < 2.0) and (max(ys) - min(ys) < 2.0)
+            p = self._positions.get(nid)
+            if p is None:
+                return False
+            coords.append((float(p[0]), float(p[1])))
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        span_x = max(xs) - min(xs)
+        span_y = max(ys) - min(ys)
+        cx = sum(xs) / len(xs)
+        cy = sum(ys) / len(ys)
+        eps = 1e-3
+        if span_x >= eps or span_y >= eps:
+            return False
+        return abs(cx) < 1.0 and abs(cy) < 1.0
 
     def _ensure_positions_for_nodes(self) -> None:
         nodes = self._data.get("nodes") or {}

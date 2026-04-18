@@ -1,0 +1,62 @@
+event_types:
+  - id: river_dispute
+    category: 江湖
+    tier: minor
+    conditions: "week >= 1"
+    weight: 1.2
+    cooldown_weeks: 2
+    supernatural_prob: 0.05
+    narrative_template: "码头/河岸因分货、争地盘起冲突。"
+    consequences_template: "关系紧张，或结下梁子。"
+    actor_slots:
+      - role: 挑头
+        tier_min: B
+        tier_max: S
+      - role: 围观
+        tier_min: B
+        tier_max: B
+
+  - id: teahouse_gossip
+    category: 传闻
+    tier: flavor
+    conditions: "true"
+    weight: 0.9
+    cooldown_weeks: 1
+    supernatural_prob: 0.0
+    narrative_template: "茶馆里说书或闲扯，流言起。"
+    consequences_template: "传闻入库，belief 可更新。"
+    actor_slots:
+      - role: 说书
+        tier_min: B
+        tier_max: A
+
+  - id: supernatural_omen
+    category: 超自然
+    tier: minor
+    conditions: "week >= 2"
+    weight: 0.6
+    cooldown_weeks: 3
+    supernatural_prob: 0.4
+    narrative_template: "异光、异响、托梦、走尸传闻之一，真相暧昧。"
+    consequences_template: "志怪浓度上升，派系恐慌。"
+    actor_slots:
+      - role: 见证
+        tier_min: B
+        tier_max: S
+
+  - id: debt_pressure
+    category: 经济
+    tier: minor
+    conditions: "true"
+    weight: 1.0
+    cooldown_weeks: 2
+    supernatural_prob: 0.0
+    narrative_template: "债、当、勒索、分赃不均。"
+    consequences_template: "人物动机强化。"
+    actor_slots:
+      - role: 债主
+        tier_min: B
+        tier_max: A
+      - role: 欠债
+        tier_min: B
+        tier_max: S
