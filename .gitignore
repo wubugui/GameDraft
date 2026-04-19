@@ -31,6 +31,11 @@ venv/
 
 # 编年史模拟器：本地 LLM 密钥（由 private_llm_defaults.example.json 复制改名）
 tools/chronicle_sim/data/private_llm_defaults.json
+tools/chronicle_sim_v2/data/private_llm_defaults.json
+
+# 编年史模拟器：本地运行产物（快照/数据库等可能含 llm_config 与 api_key）
+tools/chronicle_sim/runs/
+tools/chronicle_sim_v2/runs/
 
 # 对话编译产物（源文件为 .ink）
 public/assets/dialogues/*.ink.json

@@ -12,7 +12,11 @@
       "Bash(curl -s \"https://api.github.com/repos/QwenLM/qwen-code-examples/contents/skills/oss-styles/SKILL.md\")",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); import base64; print\\(base64.b64decode\\(d['content']\\).decode\\(\\)\\)\")",
       "Bash(git clone:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "mcp__puppeteer__puppeteer_navigate",
+      "WebFetch(domain:pydantic.dev)",
+      "Read(//c/users/wubugui/appdata/local/programs/python/python310/lib/site-packages/pydantic_ai/**)",
+      "Read(//c/Users/wubugui/GameDraft/tools/chronicle_sim/core/llm/**)"
     ],
     "additionalDirectories": [
       "F:\\GameDraft\\oss-video-skill\\src"
