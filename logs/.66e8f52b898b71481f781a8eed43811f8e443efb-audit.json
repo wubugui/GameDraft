@@ -19,6 +19,16 @@
             "date": 1776496017335,
             "name": "f:\\GameDraft\\logs\\mcp-puppeteer-2026-04-18.log",
             "hash": "c912564328e865e2259738cb727a1c5bc9e55dbbfc7b35f14b6b708f49cee9ce"
+        },
+        {
+            "date": 1776592445320,
+            "name": "f:\\GameDraft\\logs\\mcp-puppeteer-2026-04-19.log",
+            "hash": "93698df812e4ec16e4db514dc42dd19c6ea1af3434d688a8e3350c6e5476a845"
+        },
+        {
+            "date": 1776620295720,
+            "name": "f:\\GameDraft\\logs\\mcp-puppeteer-2026-04-20.log",
+            "hash": "37fe283371e3cbd0f1a92080b94f4058c3d5feaad9e376ed64212cee9850ba7b"
         }
     ],
     "hashType": "sha256"
