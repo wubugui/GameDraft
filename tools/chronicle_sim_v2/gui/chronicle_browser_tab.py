@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from tools.chronicle_sim_v2.core.llm.client_factory import ClientFactory
 from tools.chronicle_sim_v2.core.llm.config_resolve import provider_profile_for_agent
-from tools.chronicle_sim_v2.core.llm.pa_run import dict_chat_to_message_history
+from tools.chronicle_sim_v2.core.llm.crew_run import format_chat_turns_for_task
 from tools.chronicle_sim_v2.core.world.fs import read_json, read_text, grep_search
 from tools.chronicle_sim_v2.core.world.chroma import is_embedding_configured, search_world
 from tools.chronicle_sim_v2.core.world.week_state import list_weeks
@@ -188,7 +188,7 @@ class ChronicleBrowserTab(QWidget):
         for u, a in self._probe_turns:
             rows.append({"role": "user", "content": u})
             rows.append({"role": "assistant", "content": a})
-        msg_hist = dict_chat_to_message_history(rows) if rows else None
+        prior_text = format_chat_turns_for_task(rows) if rows else None
 
         self.probe_browser.append(f"<p style='margin:8px 0'><b>你：</b>{html_escape(text)}</p>")
         self.probe_input.clear()
@@ -213,7 +213,7 @@ class ChronicleBrowserTab(QWidget):
                 PROMPTS_DIR,
                 run_dir,
                 text,
-                message_history=msg_hist,
+                prior_turns_text=prior_text,
             )
 
         self._probe_worker = CancellableAsyncWorker(_do())

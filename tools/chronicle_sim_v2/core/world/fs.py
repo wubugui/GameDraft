@@ -9,6 +9,24 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+# Agent read_file 工具：文件不存在或路径非法时返回内容使用此前缀（勿与普通正文混淆）。
+READ_TEXT_AGENT_ERROR_PREFIX = "[read_text错误]"
+
+
+def _path_in_run_root(base: Path, rel: str) -> Path:
+    """将 rel 拼到 base 下并 resolve；必须留在 base 内；不创建目录。"""
+    r = (rel or "").replace("\\", "/").strip("/")
+    if not r:
+        p = base.resolve()
+    else:
+        p = (base / r).resolve()
+    br = base.resolve()
+    try:
+        p.relative_to(br)
+    except ValueError as e:
+        raise ValueError(f"路径越界: {rel!r}") from e
+    return p
+
 
 def _resolve(base: Path, rel: str) -> Path:
     """解析相对路径并创建父目录。"""
@@ -19,7 +37,10 @@ def _resolve(base: Path, rel: str) -> Path:
 
 def read_json(base: Path, rel: str) -> Any:
     """读取 JSON 文件。"""
-    p = _resolve(base, rel)
+    try:
+        p = _path_in_run_root(base, rel)
+    except ValueError:
+        return None
     if not p.is_file():
         return None
     with open(p, "r", encoding="utf-8") as f:
@@ -34,10 +55,25 @@ def write_json(base: Path, rel: str, data: Any) -> None:
 
 
 def read_text(base: Path, rel: str) -> str:
-    """读取文本文件。"""
-    p = _resolve(base, rel)
+    """读取文本文件（不创建目录；不存在则返回空串，与其它模块历史行为一致）。"""
+    try:
+        p = _path_in_run_root(base, rel)
+    except ValueError:
+        return ""
     if not p.is_file():
         return ""
+    with open(p, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def read_text_for_agent_tool(base: Path, rel: str) -> str:
+    """供 Agent read_file 工具专用：不创建目录；非法路径或不存在文件返回明确错误句，成功则返回原文。"""
+    try:
+        p = _path_in_run_root(base, rel)
+    except ValueError as e:
+        return f"{READ_TEXT_AGENT_ERROR_PREFIX} {e}"
+    if not p.is_file():
+        return f"{READ_TEXT_AGENT_ERROR_PREFIX} 文件不存在: {rel}"
     with open(p, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -75,7 +111,10 @@ def _atomic_write(path: Path, content: str) -> None:
 
 def list_dir(base: Path, rel: str) -> list[str]:
     """列出目录内容（文件名列表）。"""
-    p = _resolve(base, rel)
+    try:
+        p = _path_in_run_root(base, rel)
+    except ValueError:
+        return []
     if not p.is_dir():
         return []
     return sorted(os.listdir(p))
@@ -83,14 +122,17 @@ def list_dir(base: Path, rel: str) -> list[str]:
 
 def list_dir_recursive(base: Path, rel: str) -> list[str]:
     """递归列出目录中所有文件（相对路径列表）。"""
-    p = _resolve(base, rel)
+    try:
+        p = _path_in_run_root(base, rel)
+    except ValueError:
+        return []
     if not p.is_dir():
         return []
     result = []
     for root, _dirs, files in os.walk(p):
         for f in files:
             full = Path(root) / f
-            result.append(str(full.relative_to(base)))
+            result.append(full.relative_to(base).as_posix())
     return sorted(result)
 
 
@@ -98,7 +140,10 @@ def grep_search(base: Path, pattern: str, rel: str = "") -> list[tuple[str, int,
     """在目录下搜索匹配 pattern 的行。
     返回 [(相对路径, 行号, 行内容)]。
     """
-    root = _resolve(base, rel)
+    try:
+        root = _path_in_run_root(base, rel) if (rel or "").strip() else base.resolve()
+    except ValueError:
+        return []
     if not root.is_dir():
         return []
     regex = re.compile(pattern, re.IGNORECASE)
@@ -112,7 +157,7 @@ def grep_search(base: Path, pattern: str, rel: str = "") -> list[tuple[str, int,
                 with open(fpath, "r", encoding="utf-8") as f:
                     for lineno, line in enumerate(f, 1):
                         if regex.search(line):
-                            rel_path = str(fpath.relative_to(base))
+                            rel_path = fpath.relative_to(base).as_posix()
                             results.append((rel_path, lineno, line.rstrip()))
             except (UnicodeDecodeError, OSError):
                 continue
@@ -121,7 +166,10 @@ def grep_search(base: Path, pattern: str, rel: str = "") -> list[tuple[str, int,
 
 def glob_search(base: Path, pattern: str, rel: str = "") -> list[str]:
     """glob 模式匹配文件。返回相对路径列表。"""
-    root = _resolve(base, rel)
+    try:
+        root = _path_in_run_root(base, rel) if (rel or "").strip() else base.resolve()
+    except ValueError:
+        return []
     if not root.is_dir():
         return []
     results = []
@@ -129,5 +177,5 @@ def glob_search(base: Path, pattern: str, rel: str = "") -> list[str]:
         for fname in filenames:
             if fnmatch.fnmatch(fname, pattern):
                 fpath = Path(dirpath) / fname
-                results.append(str(fpath.relative_to(base)))
+                results.append(fpath.relative_to(base).as_posix())
     return sorted(results)

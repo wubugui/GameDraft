@@ -15,8 +15,11 @@ from tools.chronicle_sim_v2.core.llm.llm_trace import (
     get_llm_gate,
     emit_llm_trace,
 )
-from tools.chronicle_sim_v2.core.llm.pa_chat import PAChatResources, build_pa_chat_resources
+from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources, build_agent_llm_resources
 from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
+
+PAChatResources = AgentLLMResources
+build_pa_chat_resources = build_agent_llm_resources
 
 
 class _GatedTracedEmbeddingBackend(EmbeddingBackend):

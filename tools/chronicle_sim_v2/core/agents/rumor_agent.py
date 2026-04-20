@@ -4,31 +4,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai import Agent
-
-from tools.chronicle_sim_v2.core.agents.tools import rumor_tools
-from tools.chronicle_sim_v2.core.llm.pa_chat import PAChatResources, merged_settings
-
-
-def build_rumor_agent(
-    pa: PAChatResources,
-    prompts_dir: Path,
-    run_dir: Path,
-) -> Agent:
-    p = prompts_dir / "rumor_agent.md"
-    system = p.read_text(encoding="utf-8") if p.is_file() else "你是谣言传播者。"
-
-    agent = Agent(
-        model=pa.model,
-        system_prompt=system,
-        tools=rumor_tools(run_dir),
-        model_settings=merged_settings(pa),
-    )
-    return agent
+from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources
+from tools.chronicle_sim_v2.core.llm.crew_factory import make_single_agent_crew
+from tools.chronicle_sim_v2.core.llm.crew_run import crew_output_text, run_crew_traced
 
 
 async def _distort_snippet(
-    pa: PAChatResources,
+    pa: AgentLLMResources,
     prompts_dir: Path,
     snippet: str,
     hops: int,
@@ -46,11 +28,21 @@ async def _distort_snippet(
         "保留一点可追查的线索；禁止全知叙事与「我亲眼」式口吻。\n"
         "只输出改写后的那一句话，不要引号或解释。"
     )
-    agent = Agent(model=pa.model, system_prompt=rules[:3000] if rules else "你是流言转述者。")
+    backstory = rules[:3000] if rules else "你是流言转述者。"
     try:
-        from tools.chronicle_sim_v2.core.llm.pa_run import run_agent_traced
-        result = await run_agent_traced(pa, agent, user, model_settings=merged_settings(pa, {"temperature": 0.85}))
-        text = (result.output or "").strip().strip('"').strip("「」").strip()
+        crew = make_single_agent_crew(
+            pa,
+            role="流言转述者",
+            goal="只输出一句改写后的传闻。",
+            backstory=backstory,
+            tools=[],
+            task_description=user,
+            expected_output="一句中文传闻。",
+            max_iter=8,
+            llm_overrides={"temperature": 0.85},
+        )
+        out = await run_crew_traced(pa, crew, trace_user_preview=user, audit_system_hint=backstory[:3000])
+        text = (crew_output_text(out) or "").strip().strip('"').strip("「」").strip()
         if text:
             return text[:220]
     except Exception:
@@ -59,7 +51,7 @@ async def _distort_snippet(
 
 
 async def run_rumor_spread(
-    pa: PAChatResources,
+    pa: AgentLLMResources,
     prompts_dir: Path,
     run_dir: Path,
     records: list[dict[str, Any]],
@@ -67,9 +59,8 @@ async def run_rumor_spread(
 ) -> list[dict[str, Any]]:
     """传播谣言：对每个事件的每个目击者，向社交图邻居传播失真版本。"""
     from tools.chronicle_sim_v2.core.world.social_graph import propagation_targets
-
-    # 获取所有活跃 agent_ids 作为谣言持有者
     from tools.chronicle_sim_v2.core.world.seed_reader import load_active_agent_ids_with_tier
+
     active = load_active_agent_ids_with_tier(run_dir)
     holder_ids = {aid for aid, _ in active}
 

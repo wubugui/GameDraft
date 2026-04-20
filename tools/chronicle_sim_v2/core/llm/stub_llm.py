@@ -1,41 +1,22 @@
-"""离线 Stub：FunctionModel，分支逻辑与旧 StubLLMAdapter 一致。"""
+"""离线 Stub：继承 crewai.llm.LLM，覆盖 call，逻辑与旧 FunctionModel 一致。"""
 from __future__ import annotations
 
 import json
+import re
 import uuid
-from typing import Any
+from typing import Any, Dict, List, Optional
 
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    SystemPromptPart,
-    TextPart,
-    UserPromptPart,
-)
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from crewai.llm import LLM
 
 
-def _flatten_stub_context(messages: list[ModelMessage], info: AgentInfo) -> str:
+def _flatten_messages(messages: List[Dict[str, str]]) -> str:
     chunks: list[str] = []
-    if info.instructions:
-        chunks.append(str(info.instructions))
     for m in messages:
-        if isinstance(m, ModelRequest):
-            for p in m.parts:
-                if isinstance(p, UserPromptPart):
-                    c = p.content
-                    if isinstance(c, str):
-                        chunks.append(c)
-                    else:
-                        chunks.append(str(c))
-                elif isinstance(p, SystemPromptPart):
-                    sc = p.content
-                    chunks.append(sc if isinstance(sc, str) else str(sc))
-        elif isinstance(m, ModelResponse):
-            for p in m.parts:
-                if isinstance(p, TextPart) and p.content:
-                    chunks.append(p.content)
+        c = m.get("content")
+        if isinstance(c, str):
+            chunks.append(c)
+        elif c is not None:
+            chunks.append(str(c))
     return "\n".join(chunks)
 
 
@@ -43,7 +24,6 @@ def _stub_text(joined: str) -> str:
     if "【传闻改写任务】" in joined:
         return "码头上有人风传，昨夜货栈闹出动静，细节对不上号，当不得真。"
 
-    # GM arbitration: mentions truth, drafts, EventRecord, records
     if ("truth" in joined or "全知视角" in joined) and ("draft" in joined or "EventRecord" in joined or "records" in joined):
         rid = uuid.uuid4().hex[:12]
         payload = {
@@ -160,10 +140,7 @@ def _stub_text(joined: str) -> str:
         }
         return json.dumps(payload, ensure_ascii=False)
 
-    # NPC intent (matches tier_s/a/b prompts: mentions JSON structure with agent_id, week, mood_delta, intent_text)
     if ("mood_delta" in joined or "intent_text" in joined) and ("agent_id" in joined or "week" in joined):
-        # Extract agent_id and week from the joined context
-        import re
         aid_match = re.search(r"角色id[=:]\s*(\S+?)[\s,，\n]", joined)
         week_match = re.search(r"本周[=:]\s*(\d+)", joined)
         aid = aid_match.group(1) if aid_match else "stub_npc"
@@ -194,29 +171,32 @@ def _stub_text(joined: str) -> str:
         }
         return json.dumps(payload, ensure_ascii=False)
 
-    # Week summary
     if "以下是第" in joined and "周的事件数据" in joined:
         return "本周江面风紧，茶馆里暗流涌动。关二狗在码头转了一圈，没表态。刘三娘闭门会客，不知盘算什么。"
 
-    # Month history
     if "月志" in joined or "合成为一章月志" in joined:
         return "本月川渝风物如常，唯有码头几处暗斗。茶馆里闲话渐多，真真假假难辨。"
 
-    # Style rewrite
     if "润色" in joined and "川渝" in joined:
         return "这个月江风紧得很，码头上的袍哥人家个个绷着脸。茶馆里头，堂倌儿掺茶递水的工夫，闲言碎语就跟江水一样往外淌。"
 
     return "（StubLLM）未识别任务。请改用 openai_compat 或 ollama。"
 
 
-async def chronicle_stub_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    joined = _flatten_stub_context(messages, info)
-    text = _stub_text(joined)
-    return ModelResponse(
-        parts=[TextPart(content=text)],
-        provider_details={"finish_reason": "stop", "stub": True},
-    )
+class ChronicleStubLLM(LLM):
+    """离线占位，不调用 litellm。"""
+
+    def __init__(self) -> None:
+        super().__init__(model="chronicle_stub")
+
+    def call(  # type: ignore[override]
+        self,
+        messages: List[Dict[str, str]],
+        callbacks: Optional[List[Any]] = None,
+    ) -> str:
+        joined = _flatten_messages(messages)
+        return _stub_text(joined)
 
 
-def build_stub_function_model() -> FunctionModel:
-    return FunctionModel(chronicle_stub_model_fn, model_name="chronicle_stub")
+def build_chronicle_stub_llm() -> ChronicleStubLLM:
+    return ChronicleStubLLM()
