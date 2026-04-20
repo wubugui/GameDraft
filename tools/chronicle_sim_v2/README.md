@@ -5,7 +5,7 @@
 ## 架构
 
 - **零 SQLite** — 所有状态用 JSON/MD 文件 + ChromaDB 向量检索
-- **Agent 独立** — 每个 Agent 是独立 pydantic-ai Agent 实例，通过 @tool 获取能力
+- **Agent 独立** — 各槽位使用 CrewAI（单 Agent + Task）与 LangChain 工具调用文件/Chroma
 - **文件即数据库** — 每个 run 是一个文件夹，内容可直接阅读、grep、git 版本控制
 - **NPC 分层** — S 类独立 Agent、A 类共享模型但独立运行、B/C 类统一群演
 

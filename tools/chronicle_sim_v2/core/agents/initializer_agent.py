@@ -4,15 +4,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai import Agent
-
 from tools.chronicle_sim_v2.core.agents.tools import initializer_tools
+from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources, build_agent_llm_resources
 from tools.chronicle_sim_v2.core.llm.config_resolve import effective_connection_block
-from tools.chronicle_sim_v2.core.llm.pa_chat import PAChatResources, build_pa_chat_resources, merged_settings
+from tools.chronicle_sim_v2.core.llm.crew_factory import make_single_agent_crew
+from tools.chronicle_sim_v2.core.llm.crew_run import crew_output_text, run_crew_traced
 from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
 
 
-def build_initializer_pa(llm_config: dict[str, Any], run_dir: Path) -> PAChatResources:
+def build_initializer_pa(llm_config: dict[str, Any], run_dir: Path) -> AgentLLMResources:
     """从 LLM 配置的 initializer 槽位创建 initializer 资源（fallback 到 default）。"""
     cfg = effective_connection_block("initializer", llm_config)
     if not cfg or str(cfg.get("kind", "")).lower() in ("", "stub"):
@@ -26,66 +26,58 @@ def build_initializer_pa(llm_config: dict[str, Any], run_dir: Path) -> PAChatRes
         api_key=cfg.get("api_key", ""),
         ollama_host=cfg.get("ollama_host", ""),
     )
-    return build_pa_chat_resources("initializer", profile, llm_config=llm_config, run_dir=run_dir)
+    return build_agent_llm_resources("initializer", profile, llm_config=llm_config, run_dir=run_dir)
 
 
-def _init_model_settings(pa: PAChatResources) -> dict[str, Any]:
-    """initializer 需要思考，覆盖 DashScope 默认 thinking=False。"""
-    base = merged_settings(pa)
-    return {**(base or {}), "thinking": True, "extra_body": {"enable_thinking": True}}
-
-
-def build_initializer_agent(pa: PAChatResources, prompts_dir: Path, run_dir: Path) -> Agent:
-    p = prompts_dir / "initializer_agent.md"
-    system = p.read_text(encoding="utf-8") if p.is_file() else "你是种子提取器，从设定内容中提取世界种子。"
-    # 替换模板变量
-    system = system.replace("{{TARGET_NPC_COUNT}}", "10")
-    system = system.replace("{{TRUNCATION_NOTE}}", "")
-
-    agent = Agent(
-        model=pa.model,
-        system_prompt=system,
-        tools=initializer_tools(run_dir),
-        model_settings=_init_model_settings(pa),
-        retries=4,
-    )
-    return agent
+def _init_llm_overrides() -> dict[str, Any]:
+    """initializer 需要思考，覆盖 DashScope 默认 thinking=False（与 default_extra 合并）。"""
+    return {"thinking": True, "extra_body": {"enable_thinking": True}}
 
 
 async def run_initializer(
-    pa: PAChatResources,
+    pa: AgentLLMResources,
     prompts_dir: Path,
     run_dir: Path,
     ideas_text: str,
     log_callback=None,
 ) -> dict[str, Any]:
     """运行 Initializer，返回 SeedDraft dict。"""
-    agent = build_initializer_agent(pa, prompts_dir, run_dir)
+    p = prompts_dir / "initializer_agent.md"
+    system = p.read_text(encoding="utf-8") if p.is_file() else "你是种子提取器，从设定内容中提取世界种子。"
+    system = system.replace("{{TARGET_NPC_COUNT}}", "10")
+    system = system.replace("{{TRUNCATION_NOTE}}", "")
 
-    # 打印完整输入供调试
-    sys_prompts = getattr(agent, '_system_prompts', ())
-    sys_text = "\n".join(sys_prompts) if sys_prompts else "(无)"
     user_text = f"以下是设定库内容，请从中提取世界种子：\n\n{ideas_text}"
 
     if log_callback:
         log_callback("=== LLM 调用详情 ===")
-        log_callback(f"  model class: {pa.model.__class__.__name__}")
-        log_callback(f"  model repr: {pa.model}")
-        log_callback(f"--- System Prompt ({len(sys_text)} 字) ---")
-        log_callback(sys_text)
+        log_callback(f"  llm class: {pa.llm.__class__.__name__}")
+        log_callback(f"  llm repr: {pa.llm!r}")
+        log_callback(f"--- System Prompt ({len(system)} 字) ---")
+        log_callback(system)
         log_callback(f"--- User Message ({len(user_text)} 字) ---")
         log_callback(user_text[:5000] + ("…" if len(user_text) > 5000 else ""))
         log_callback("--- User Message End ---")
 
-    result = await agent.run(
-        user_text,
-        model_settings=_init_model_settings(pa),
+    crew = make_single_agent_crew(
+        pa,
+        role="种子提取器",
+        goal="从设定库输出 SeedDraft JSON。",
+        backstory=system,
+        tools=initializer_tools(run_dir),
+        task_description=user_text,
+        expected_output="符合提示的 JSON 世界种子对象。",
+        max_iter=45,
+        llm_overrides=_init_llm_overrides(),
     )
+    out = await run_crew_traced(pa, crew, trace_user_preview=user_text, audit_system_hint=system[:8000])
+    raw = crew_output_text(out)
 
     if log_callback:
-        log_callback(f"--- LLM Raw Response ({len(result.output)} 字) ---")
-        log_callback(result.output[:5000] + ("…" if len(result.output) > 5000 else ""))
+        log_callback(f"--- LLM Raw Response ({len(raw)} 字) ---")
+        log_callback(raw[:5000] + ("…" if len(raw) > 5000 else ""))
         log_callback("--- Raw Response End ---")
 
     from tools.chronicle_sim_v2.core.llm.json_extract import parse_json_object
-    return parse_json_object(result.output)
+
+    return parse_json_object(raw)

@@ -9,6 +9,8 @@ from typing import Any
 
 from PySide6.QtGui import QTextDocument
 
+from tools.chronicle_sim_v2.core.agents.probe_citation_verify import PROBE_CITATION_REJECT_MARKER
+
 _DOC_STYLE = """
 body { font-family: 'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Segoe UI',sans-serif; font-size: 13px; color: #222; }
 h1 { font-size: 17px; margin: 10px 0 6px; color: #1a1a1a; }
@@ -123,6 +125,14 @@ def probe_refs_to_html(refs: Any) -> str:
 
 def probe_reply_to_html(full_text: str) -> str:
     """探针整段回复（含可选引用 JSON）→ HTML。"""
+    if full_text.startswith(PROBE_CITATION_REJECT_MARKER):
+        rest = full_text[len(PROBE_CITATION_REJECT_MARKER) :].lstrip("\n")
+        return (
+            '<div style="margin:8px 0;padding:10px 12px;background:#fff5f5;'
+            "border:1px solid #feb2b2;border-radius:6px;color:#742a2a\">"
+            f"<div style='font-weight:600;margin-bottom:6px'>引用校验未通过</div>"
+            f"<div>{html_escape(rest)}</div></div>"
+        )
     main, refs = probe_split_answer_and_refs(full_text)
     main_html = markdown_fragment_to_html(main) if main else "<p></p>"
     if refs is not None:

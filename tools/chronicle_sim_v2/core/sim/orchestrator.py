@@ -14,8 +14,6 @@ from tools.chronicle_sim_v2.core.llm.config_resolve import (
     effective_connection_block,
     provider_profile_for_agent,
 )
-from tools.chronicle_sim_v2.core.llm.pa_chat import merged_settings
-from tools.chronicle_sim_v2.core.llm.pa_run import run_agent_traced, dict_chat_to_message_history
 from tools.chronicle_sim_v2.core.sim.event_types import load_event_types, pick_top_event_types, event_types_text_for_prompt
 from tools.chronicle_sim_v2.core.sim.pacing import load_pacing_profile, multiplier_for_week
 from tools.chronicle_sim_v2.core.sim.tier_manager import apply_pending_tier_changes

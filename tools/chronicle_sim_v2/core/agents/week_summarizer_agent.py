@@ -1,34 +1,18 @@
 """Week Summarizer Agent：将本周事件总结为叙事文本。"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai import Agent
-
 from tools.chronicle_sim_v2.core.agents.tools import summarizer_tools
-from tools.chronicle_sim_v2.core.llm.pa_chat import PAChatResources, merged_settings
-
-
-def build_summarizer_agent(
-    pa: PAChatResources,
-    prompts_dir: Path,
-    run_dir: Path,
-) -> Agent:
-    p = prompts_dir / "week_summarizer.md"
-    system = p.read_text(encoding="utf-8") if p.is_file() else "你是周总结撰写者。"
-
-    agent = Agent(
-        model=pa.model,
-        system_prompt=system,
-        tools=summarizer_tools(run_dir),
-        model_settings=merged_settings(pa),
-    )
-    return agent
+from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources
+from tools.chronicle_sim_v2.core.llm.crew_factory import make_single_agent_crew
+from tools.chronicle_sim_v2.core.llm.crew_run import crew_output_text, run_crew_traced
 
 
 async def run_week_summary(
-    pa: PAChatResources,
+    pa: AgentLLMResources,
     prompts_dir: Path,
     run_dir: Path,
     events: list[dict[str, Any]],
@@ -36,14 +20,23 @@ async def run_week_summary(
     week: int,
 ) -> str:
     """撰写周总结。"""
-    agent = build_summarizer_agent(pa, prompts_dir, run_dir)
+    p = prompts_dir / "week_summarizer.md"
+    system = p.read_text(encoding="utf-8") if p.is_file() else "你是周总结撰写者。"
     data = {
         "events": events,
         "intents": intents,
         "week": week,
     }
-    import json
     user_prompt = f"以下是第 {week} 周的事件数据：\n{json.dumps(data, ensure_ascii=False)}\n\n请撰写一段3-8段的叙事总结。"
-    from tools.chronicle_sim_v2.core.llm.pa_run import run_agent_traced
-    result = await run_agent_traced(pa, agent, user_prompt, model_settings=merged_settings(pa))
-    return result.output
+    crew = make_single_agent_crew(
+        pa,
+        role="周总结撰写者",
+        goal="撰写叙事周总结。",
+        backstory=system,
+        tools=summarizer_tools(run_dir),
+        task_description=user_prompt,
+        expected_output="3-8 段叙事中文文本。",
+        max_iter=30,
+    )
+    out = await run_crew_traced(pa, crew, trace_user_preview=user_prompt, audit_system_hint=system[:8000])
+    return crew_output_text(out)

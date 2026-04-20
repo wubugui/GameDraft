@@ -1,4 +1,4 @@
-"""可选 LLM 审计：脱敏后记录请求/响应摘要（由 llm_config 与 run_dir 在构建 PAChatResources 时决定是否启用）。"""
+"""可选 LLM 审计：脱敏后记录请求/响应摘要（由 llm_config 与 run_dir 在构建 AgentLLMResources 时决定是否启用）。"""
 from __future__ import annotations
 
 import hashlib
