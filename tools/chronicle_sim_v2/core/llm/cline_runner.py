@@ -9,7 +9,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -34,10 +33,8 @@ from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
 from tools.chronicle_sim_v2.core.llm.stub_llm import ChronicleStubLLM, stub_response_text
 from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
 
-# Windows ``CreateProcess`` 整条命令行上限约 8191 字符；Cline argv 还含 ``--config``、``-c``、
-# ``--timeout``、模型等，且 user 段常为 UTF-16 计宽。过长内联 prompt 会失败（stderr 常显示为乱码
-# 的「命令行太长」）。故在 Windows 上更早改用 ``input.md`` + 短占位末参（见 ``_build_argv``）。
-ARGV_STDIN_THRESHOLD = 2048 if sys.platform == "win32" else 8192
+# 仅测试用：构造「长 user 文本」时超过此长度（与 ``_build_argv`` 策略无关）。
+ARGV_STDIN_THRESHOLD = 8192
 DEFAULT_TIMEOUT_SEC = 3600
 # Cline `cline task --thinking [tokens]` 会把下一 argv 当作 token 数；裸 `--thinking` 会吞掉紧跟的 prompt。
 THINKING_TOKEN_DEFAULT = "1024"
@@ -532,7 +529,12 @@ def _build_argv(
     user_text: str,
     cline_verbose: bool = False,
 ) -> tuple[list[str], bool]:
-    """返回 (argv, use_stdin)。短提示走 argv 末段；超过阈值则末段为 ``INPUT_MD_TASK_PROMPT``，全文在同 cwd 的 ``input.md``。"""
+    """返回 (argv, use_stdin)。
+
+    全文始终在 cwd 的 ``input.md``（由 ``run_agent_cline`` 写入）。argv 末参**恒**为
+    ``INPUT_MD_TASK_PROMPT``，避免 Windows ``CreateProcess`` 命令行总长限制及 UTF-16 计宽导致
+    内联大段 user 文本失败（stderr 常显示为乱码的「命令行太长」）。
+    """
     args: list[str] = [exe]
     if cline_verbose:
         args.append("--verbose")
@@ -558,12 +560,8 @@ def _build_argv(
     if spec.output_mode == "jsonl":
         args.append("--json")
 
-    # 一律通过 argv 传「prompt」以满足 Cline 校验；长文见 cwd 下已写入的 input.md。
     use_stdin = False
-    if len(user_text) > ARGV_STDIN_THRESHOLD:
-        args.append(INPUT_MD_TASK_PROMPT)
-    else:
-        args.append(user_text)
+    args.append(INPUT_MD_TASK_PROMPT)
     return args, use_stdin
 
 
