@@ -1,11 +1,9 @@
-"""从 ProviderProfile + llm_config 构造 CrewAI LLM（显式 api_key/base_url）。"""
+"""Agent 槽位资源：Provider 配置 + 审计/追踪（由 Cline CLI 执行，不再使用 CrewAI LLM）。"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-from crewai import LLM
 
 from tools.chronicle_sim_v2.core.llm.audit_log import audit_enabled_from_config
 from tools.chronicle_sim_v2.core.llm.pa_dashscope import is_dashscope_openai_compat_base
@@ -31,10 +29,11 @@ def trace_options_from_llm_config(llm_config: dict[str, Any] | None) -> dict[str
 
 @dataclass
 class AgentLLMResources:
-    """每个 agent 槽位一份：CrewAI LLM + 默认额外参数 + 可选审计。"""
+    """每个 agent 槽位：连接配置 + 可选 Stub 标记 + 审计。"""
 
     agent_id: str
-    llm: LLM
+    profile: ProviderProfile
+    llm: Any  # ChronicleStubLLM 或 None；保留字段供 isinstance 检测 stub
     default_extra: dict[str, Any]
     audit_run_dir: Path | None
     trace: dict[str, Any] = field(default_factory=dict)
@@ -66,19 +65,6 @@ def _base_extra_for_endpoint(*, kind: str, base_url: str) -> dict[str, Any]:
     return {}
 
 
-def _llm_from_parts(
-    *,
-    model: str,
-    api_key: str | None,
-    base_url: str | None,
-    extra: dict[str, Any],
-) -> LLM:
-    """构造 CrewAI 0.86 LLM；未声明的键进入 litellm kwargs（如 thinking、extra_body）。"""
-    ex = dict(extra)
-    mt = ex.pop("max_tokens", None)
-    return LLM(model=model, api_key=api_key, base_url=base_url, max_tokens=mt, **ex)
-
-
 def build_agent_llm_resources(
     agent_id: str,
     profile: ProviderProfile,
@@ -93,18 +79,11 @@ def build_agent_llm_resources(
 
     if kind == "openai_compat":
         base_url = (profile.base_url or "https://api.openai.com/v1").rstrip("/")
-        model_name = profile.model or "gpt-4o-mini"
-        api_key = (profile.api_key or "").strip() or "no-api-key"
         defaults = _base_extra_for_endpoint(kind="openai_compat", base_url=profile.base_url or "")
-        llm = _llm_from_parts(
-            model=f"openai/{model_name}",
-            api_key=api_key,
-            base_url=base_url,
-            extra=defaults,
-        )
         return AgentLLMResources(
             agent_id=agent_id,
-            llm=llm,
+            profile=profile,
+            llm=None,
             default_extra=defaults,
             audit_run_dir=audit_dir,
             trace=trace_opts,
@@ -112,17 +91,11 @@ def build_agent_llm_resources(
 
     if kind == "ollama":
         host = (profile.ollama_host or "http://127.0.0.1:11434").rstrip("/")
-        model_name = profile.model or "llama3"
         defaults = _base_extra_for_endpoint(kind="ollama", base_url=host)
-        llm = _llm_from_parts(
-            model=f"ollama/{model_name}",
-            api_key="ollama",
-            base_url=host,
-            extra=defaults,
-        )
         return AgentLLMResources(
             agent_id=agent_id,
-            llm=llm,
+            profile=profile,
+            llm=None,
             default_extra=defaults,
             audit_run_dir=audit_dir,
             trace=trace_opts,
@@ -131,6 +104,7 @@ def build_agent_llm_resources(
     stub = build_chronicle_stub_llm()
     return AgentLLMResources(
         agent_id=agent_id,
+        profile=ProviderProfile(kind="stub", model="", base_url="", api_key="", ollama_host=""),
         llm=stub,
         default_extra={},
         audit_run_dir=audit_dir,
@@ -145,18 +119,9 @@ def merged_llm_kwargs(
     return _merge_extra(res.default_extra, *overrides)
 
 
-def resolve_llm_for_run(res: AgentLLMResources, overrides: dict[str, Any]) -> LLM:
-    """将 default_extra 与 overrides 合并后构造新 LLM（用于温度、thinking 等单次覆盖）。"""
-    merged = merged_llm_kwargs(res, overrides)
-    if isinstance(res.llm, ChronicleStubLLM):
-        return res.llm
-    b = res.llm
-    return _llm_from_parts(
-        model=b.model,
-        api_key=b.api_key,
-        base_url=b.base_url,
-        extra=merged,
-    )
+def resolve_llm_for_run(res: AgentLLMResources, overrides: dict[str, Any]) -> Any:
+    """兼容旧代码：合并单次覆盖参数（如 initializer 的 thinking）；Cline 路径在 runner 内消费。"""
+    return merged_llm_kwargs(res, overrides)
 
 
 PAChatResources = AgentLLMResources

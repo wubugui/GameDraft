@@ -1,48 +1,35 @@
-"""Rumor Agent：通过社交图传播谣言，使用 LLM 改写失真内容。"""
+"""Rumor Agent：通过社交图传播谣言，使用 Cline 改写失真内容。"""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
 from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources
-from tools.chronicle_sim_v2.core.llm.crew_factory import make_single_agent_crew
-from tools.chronicle_sim_v2.core.llm.crew_run import crew_output_text, run_crew_traced
+from tools.chronicle_sim_v2.core.llm.agent_spec import load_agent_spec, render_user
+from tools.chronicle_sim_v2.core.llm.cline_runner import run_agent_cline
 
 
 async def _distort_snippet(
     pa: AgentLLMResources,
-    prompts_dir: Path,
+    run_dir: Path,
     snippet: str,
     hops: int,
     event_type_id: str,
 ) -> str:
-    """用 LLM 改写失真谣言。"""
     if not snippet.strip():
         return snippet
-    p = prompts_dir / "rumor_agent.md"
-    rules = p.read_text(encoding="utf-8") if p.is_file() else ""
-    user = (
-        f"【传闻改写任务】传播跳数={hops}，事件类型={event_type_id}\n"
-        f"原句：{snippet}\n"
-        "改写成一条简短中文街头传闻（不超过90字）：允许省略、添油加醋、细节对不上号；"
-        "保留一点可追查的线索；禁止全知叙事与「我亲眼」式口吻。\n"
-        "只输出改写后的那一句话，不要引号或解释。"
+    spec = load_agent_spec("rumor")
+    user_text = render_user(
+        spec,
+        {
+            "hops": str(hops),
+            "event_type_id": event_type_id,
+            "snippet": snippet,
+        },
     )
-    backstory = rules[:3000] if rules else "你是流言转述者。"
     try:
-        crew = make_single_agent_crew(
-            pa,
-            role="流言转述者",
-            goal="只输出一句改写后的传闻。",
-            backstory=backstory,
-            tools=[],
-            task_description=user,
-            expected_output="一句中文传闻。",
-            max_iter=8,
-            llm_overrides={"temperature": 0.85},
-        )
-        out = await run_crew_traced(pa, crew, trace_user_preview=user, audit_system_hint=backstory[:3000])
-        text = (crew_output_text(out) or "").strip().strip('"').strip("「」").strip()
+        res = await run_agent_cline(pa, run_dir, spec, user_text=user_text)
+        text = (res.text or "").strip().strip('"').strip("「」").strip()
         if text:
             return text[:220]
     except Exception:
@@ -52,19 +39,17 @@ async def _distort_snippet(
 
 async def run_rumor_spread(
     pa: AgentLLMResources,
-    prompts_dir: Path,
     run_dir: Path,
     records: list[dict[str, Any]],
     week: int,
 ) -> list[dict[str, Any]]:
-    """传播谣言：对每个事件的每个目击者，向社交图邻居传播失真版本。"""
-    from tools.chronicle_sim_v2.core.world.social_graph import propagation_targets
     from tools.chronicle_sim_v2.core.world.seed_reader import load_active_agent_ids_with_tier
+    from tools.chronicle_sim_v2.core.world.social_graph import propagation_targets
 
     active = load_active_agent_ids_with_tier(run_dir)
     holder_ids = {aid for aid, _ in active}
 
-    all_rumors = []
+    all_rumors: list[dict[str, Any]] = []
     for rec in records:
         eid = rec.get("id", rec.get("type_id", ""))
         witnesses = rec.get("witness_accounts") or []
@@ -92,7 +77,7 @@ async def run_rumor_spread(
                     continue
                 distortion = min(3, hops)
                 if distortion > 1 and snippet:
-                    twisted = await _distort_snippet(pa, prompts_dir, snippet, hops, event_type)
+                    twisted = await _distort_snippet(pa, run_dir, snippet, hops, event_type)
                 else:
                     twisted = snippet
 

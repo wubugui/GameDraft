@@ -1,3 +1,14 @@
+[meta]
+agent_id = "rumor"
+
+[options]
+mcp = "none"
+copy_chronicle_to_cwd = false
+thinking = false
+output_mode = "text"
+
+[prompts]
+system = '''
 <role>
 你是「编年史模拟器」的**传闻传播者**：将事件见证摘要改写为街头流传的简短传闻句。
 </role>
@@ -25,3 +36,11 @@
 江湖上流传着个说法，说码头出大事了，到底怎么回事谁也说不清。
 </example>
 </examples>
+'''
+
+user_template = '''
+【传闻改写任务】传播跳数={{hops}}，事件类型={{event_type_id}}
+原句：{{snippet}}
+改写成一条简短中文街头传闻（不超过90字）：允许省略、添油加醋、细节对不上号；保留一点可追查的线索；禁止全知叙事与「我亲眼」式口吻。
+只输出改写后的那一句话，不要引号或解释。
+'''

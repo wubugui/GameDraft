@@ -11,7 +11,6 @@ from tools.chronicle_sim_v2.core.agents.probe_agent import run_probe_user_turn
 from tools.chronicle_sim_v2.core.llm.client_factory import ClientFactory
 from tools.chronicle_sim_v2.core.llm.config_resolve import provider_profile_for_agent
 from tools.chronicle_sim_v2.core.world.fs import read_json
-from tools.chronicle_sim_v2.paths import PROMPTS_DIR
 
 
 async def main() -> None:
@@ -43,7 +42,6 @@ async def main() -> None:
     try:
         out = await run_probe_user_turn(
             pa,
-            PROMPTS_DIR,
             run_dir,
             q,
             prior_turns_text=None,

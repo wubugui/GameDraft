@@ -5,17 +5,18 @@ import asyncio
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout, QHeaderView, QLabel, QPushButton, QMessageBox,
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from tools.chronicle_sim_v2.core.sim.run_manager import list_runs
+from tools.chronicle_sim_v2.core.sim.run_manager import create_run, list_runs
 from tools.chronicle_sim_v2.core.world.seed_writer import write_seed_to_fs, validate_seed_agents
 from tools.chronicle_sim_v2.core.world.seed_reader import read_all_agents
 from tools.chronicle_sim_v2.core.world.fs import read_json, write_json, delete_json
 from tools.chronicle_sim_v2.gui.app_settings import save_last_run_path, load_last_run_path
+from tools.chronicle_sim_v2.gui.async_runnable import CancellableAsyncWorker
 from tools.chronicle_sim_v2.gui.llm_config_form import LlmConfigForm
 
 
@@ -28,6 +29,7 @@ class SeedEditorTab(QWidget):
         self._run_dir: Path | None = None
         self._llm_config: dict = {}
         self._llm_dirty = False  # 标记 LLM 配置是否已修改未保存
+        self._gen_worker: CancellableAsyncWorker | None = None
 
         layout = QVBoxLayout(self)
 
@@ -281,37 +283,55 @@ class SeedEditorTab(QWidget):
         self._update_preview(demo)
 
     def _generate_from_ideas(self) -> None:
-        """从设定库生成种子。"""
+        """从设定库生成种子（后台线程跑 asyncio，避免卡死主界面）。"""
         if not self._run_dir:
             self.log_signal.emit("请先选择一个 Run")
             return
         from tools.chronicle_sim_v2.core.world.idea_library import build_ideas_blob, list_ideas
+
         ideas = list_ideas(self._run_dir)
         if not ideas:
             self.log_signal.emit("设定库为空，请先导入 MD 文件")
             return
-        default_cfg = self._llm_config.get("default", {})
+        # 必须用表单当前值（与「测试本槽连接」一致）；勿用 self._llm_config，否则未保存时仍是磁盘旧密钥
+        llm_config = self.llm_form.to_dict()
+        default_cfg = llm_config.get("default", {})
         kind = str(default_cfg.get("kind", "")).lower()
         if kind == "stub":
             self.log_signal.emit("未配置 LLM，请在右侧「LLM 配置」设置 default 槽位")
             return
-        self.log_signal.emit("正在从设定库生成种子...")
+
+        run_dir = self._run_dir
+
+        self.log_signal.emit(
+            "[种子生成] 已提交后台任务（主窗口不应再卡死）；进度见本日志，"
+            "若长时间停在「等待 LLM」属正常，请等 HTTP 返回。"
+        )
         self.btn_generate.setEnabled(False)
 
         async def _run_gen():
-            ideas_blob = build_ideas_blob(self._run_dir)
             from tools.chronicle_sim_v2.core.agents.initializer_agent import (
                 build_initializer_pa,
                 run_initializer,
             )
-            from tools.chronicle_sim_v2.paths import PROMPTS_DIR
-            pa = build_initializer_pa(self._llm_config, self._run_dir)
 
-            def _log(msg: str):
+            def _log(msg: str) -> None:
                 self.log_signal.emit(msg)
 
+            _log("[种子生成] 后台协程已启动…")
+            _log("[种子生成] 正在聚合设定库文本（build_ideas_blob）…")
+            ideas_blob = build_ideas_blob(run_dir)
+            _log(f"[种子生成] 设定库聚合完成，约 {len(ideas_blob)} 字符。")
+
+            pa = build_initializer_pa(llm_config, run_dir)
             try:
-                result = await run_initializer(pa, PROMPTS_DIR, self._run_dir, ideas_blob, log_callback=_log)
+                result = await run_initializer(
+                    pa,
+                    run_dir,
+                    ideas_blob,
+                    log_callback=_log,
+                    llm_config_snapshot=llm_config,
+                )
                 return result
             except Exception as exc:
                 raw_full = ""
@@ -327,20 +347,40 @@ class SeedEditorTab(QWidget):
             finally:
                 await pa.aclose()
 
+        self._gen_worker = CancellableAsyncWorker(_run_gen())
+        self._gen_worker.signals.finished.connect(self._on_seed_generate_finished)
+        self._gen_worker.signals.error.connect(self._on_seed_generate_error)
+        self._gen_worker.signals.cancelled.connect(self._on_seed_generate_cancelled)
+        QThreadPool.globalInstance().start(self._gen_worker)
+
+    def _on_seed_generate_finished(self, result: object) -> None:
+        self._gen_worker = None
+        self.btn_generate.setEnabled(True)
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(_run_gen())
+            if isinstance(result, dict):
                 seed_json_text = json.dumps(result, ensure_ascii=False, indent=2)
                 self.seed_json.setPlainText(seed_json_text)
-                self.log_signal.emit("种子生成成功")
-            finally:
-                loop.close()
+                try:
+                    self._update_preview(result)
+                except Exception:
+                    pass
+                self.log_signal.emit("[种子生成] 成功，已填入左侧 JSON。")
+            else:
+                self.log_signal.emit(f"[种子生成] 完成但结果类型异常: {type(result)!r}")
         except Exception as e:
-            self.log_signal.emit(f"生成失败: {e}")
-        finally:
-            self.btn_generate.setEnabled(True)
+            self.log_signal.emit(f"[种子生成] 写入界面失败: {e}")
+
+    def _on_seed_generate_error(self, summary: str, detail: str) -> None:
+        self._gen_worker = None
+        self.btn_generate.setEnabled(True)
+        self.log_signal.emit(f"[种子生成] 失败: {summary}")
+        if detail.strip():
+            self.log_signal.emit(detail)
+
+    def _on_seed_generate_cancelled(self) -> None:
+        self._gen_worker = None
+        self.btn_generate.setEnabled(True)
+        self.log_signal.emit("[种子生成] 已取消")
 
     def _update_preview(self, data: dict) -> None:
         parts = []

@@ -11,7 +11,7 @@ RUNS_DIR: Path = PACKAGE_ROOT / "runs"
 SEED_MD_LIBRARY_ROOT: Path = DATA_DIR / "seed_md_library"
 SEED_MD_FILES_DIR: Path = SEED_MD_LIBRARY_ROOT / "files"
 SEED_MD_MANIFEST_PATH: Path = SEED_MD_LIBRARY_ROOT / "manifest.json"
-PROMPTS_DIR: Path = DATA_DIR / "prompts"
+AGENT_SPECS_DIR: Path = DATA_DIR / "agent_specs"
 
 
 def ensure_runs_dir() -> Path:
