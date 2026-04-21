@@ -184,6 +184,7 @@ def test_resolve_cline_executable_fallback_apdata_npm(
 
 
 def test_build_cline_env_strips_proxy_and_sets_no_proxy_star(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLINE_DIR", raising=False)
     monkeypatch.setenv("CHRONICLE_UNIT_TEST_MARKER", "yes")
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
@@ -195,6 +196,11 @@ def test_build_cline_env_strips_proxy_and_sets_no_proxy_star(monkeypatch: pytest
     assert "CHRONICLE_RUN_DIR" not in env or env.get("CHRONICLE_RUN_DIR") != "(injected)"
     assert "CHRONICLE_PROBE_TOOL_LOG" not in env
     assert "CLINE_DIR" not in env
+
+
+def test_build_cline_env_sets_cline_dir_when_run_dir_given(tmp_path: Path) -> None:
+    env = build_cline_env(run_dir=tmp_path)
+    assert env.get("CLINE_DIR") == str((tmp_path / ".cline_config").resolve())
 
 
 def test_run_agent_cline_stub_short_circuits(tmp_path: Path, monkeypatch) -> None:
