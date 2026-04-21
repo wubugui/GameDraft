@@ -7,7 +7,7 @@
     set PYTHONPATH=%CD%
     set CHRONICLE_SIM_API_KEY=你的密钥
     set CHRONICLE_SIM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-    set CHRONICLE_SIM_MODEL=glm-4.7
+    set CHRONICLE_SIM_MODEL=kimi-k2.5
     python tools\\chronicle_sim_v2\\scripts\\bootstrap_demo_full_seed_and_sim.py
 
 可选：``CHRONICLE_SIM_END_WEEK``（默认 8）、``CHRONICLE_SIM_RUN_NAME``。
@@ -37,6 +37,7 @@ def _demo_seed() -> dict:
             "id": "fac_paoge",
             "name": "袍哥会",
             "description": "码头与场面上说话算数的帮会网络，讲规矩也讲面子。",
+            "weekly_pressure": "本周堂口：码头纠纷先压后报，莫在外头乱嚼舌根。",
         },
         {
             "id": "fac_jiaobang",
@@ -220,7 +221,7 @@ def _llm_block_from_env() -> dict:
         os.environ.get("CHRONICLE_SIM_BASE_URL", "").strip()
         or "https://dashscope.aliyuncs.com/compatible-mode/v1"
     )
-    model = (os.environ.get("CHRONICLE_SIM_MODEL", "").strip() or "glm-4.7")
+    model = (os.environ.get("CHRONICLE_SIM_MODEL", "").strip() or "kimi-k2.5")
     return {
         "kind": "openai_compat",
         "base_url": base,
