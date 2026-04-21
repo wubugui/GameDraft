@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
         # 同步到所有标签页
         self.idea_tab.set_run_dir(run_dir)
         self.seed_tab.set_run_dir(run_dir, self._llm_config)
-        self.sim_tab.set_run_dir(run_dir, self._llm_config)
+        self.sim_tab.set_run_dir(run_dir)
         self.chronicle_tab.set_run_dir(run_dir, self._llm_config)
         self.run_changed.emit(run_dir)
 

@@ -82,9 +82,7 @@ async def _main() -> int:
         print(msg, file=sys.stderr)
 
     try:
-        result = await run_initializer(
-            pa, run_dir, ideas_blob, log_callback=_log, llm_config_snapshot=llm_config
-        )
+        result = await run_initializer(pa, run_dir, ideas_blob, log_callback=_log)
     finally:
         await pa.aclose()
 

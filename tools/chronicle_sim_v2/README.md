@@ -26,6 +26,19 @@ pip install -r tools\chronicle_sim_v2\requirements.txt
 python -m tools.chronicle_sim_v2
 ```
 
+## 命令行周模拟（与 GUI「模拟」同一路径）
+
+模拟逻辑统一在 ``tools.chronicle_sim_v2.core.sim.simulation_pipeline``；GUI 的「运行本周 / 运行范围」在后台线程中调用同一套 ``run_week_async``。LLM 与 Cline 选项**仅**从 ``<run_dir>\config\llm_config.json`` 读取，请先保存界面中的「保存 LLM 配置」。
+
+```bat
+cd /d D:\path\to\GameDraft
+set PYTHONPATH=%CD%
+python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim_v2\runs\<run_id> --week 1
+python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim_v2\runs\<run_id> --from 1 --to 3
+```
+
+或从仓库根目录使用包装脚本 ``run-chronicle-sim-week.cmd``（参数原样传给上述 Python 脚本）。
+
 ## llm_config 可选字段
 
 - `cline_executable`：`cline` 可执行文件路径；不填时先查 PATH，再在 Windows 上尝试 `%APPDATA%\npm\cline.cmd`（解决从 IDE/Conda 启动时 PATH 不含 npm 全局目录的问题）

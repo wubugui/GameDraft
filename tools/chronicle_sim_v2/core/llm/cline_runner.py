@@ -1,6 +1,6 @@
 """Cline CLI 子进程调用：每次 agent 调用独立临时 cwd + Run 级 `--config`。
 
-唯一入口：`run_agent_cline(...)`；可选传入 ``llm_config_snapshot`` 与界面未保存的表单一致。
+唯一入口：`run_agent_cline(...)`；LLM/Cline 相关选项一律从 ``run_dir/config/llm_config.json`` 读取。
 stub 槽位短路返回本地占位文本，不起子进程。
 """
 from __future__ import annotations
@@ -616,7 +616,6 @@ async def run_agent_cline(
     system_ctx: dict[str, str] | None = None,
     phase_log: Any = None,
     keep_temp_ws: bool = False,
-    llm_config_snapshot: dict[str, Any] | None = None,
 ) -> RunnerResult:
     """统一 agent 运行入口。stub 短路；否则物化临时 cwd → auth → cline → 解析 → 审计 → 清理。
 
@@ -629,12 +628,7 @@ async def run_agent_cline(
         fake = f"{system_text}\n\n---\n\n{user_text}"
         return RunnerResult(text=stub_response_text(fake), tool_log=[], exit_code=0)
 
-    # 与 GUI 一致：若调用方传入当前表单快照，勿仅用磁盘 llm_config（未保存时会导致 auth 与 pa.profile 不一致）
-    cfg: dict[str, Any]
-    if isinstance(llm_config_snapshot, dict) and llm_config_snapshot:
-        cfg = llm_config_snapshot
-    else:
-        cfg = load_llm_config(run_dir)
+    cfg = load_llm_config(run_dir)
     config_dir = cline_config_path(run_dir)
     exe = _cline_exe(cfg)
     timeout_sec = _cline_timeout_sec(cfg, default=7200 if spec.output_mode == "jsonl" else DEFAULT_TIMEOUT_SEC)
