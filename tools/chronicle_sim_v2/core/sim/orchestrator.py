@@ -33,6 +33,10 @@ from tools.chronicle_sim_v2.core.world.week_state import (
     write_week_trace,
 )
 
+from tools.chronicle_sim_v2.core.sim.npc_event_visibility import (
+    filter_events_for_agent,
+    filter_events_for_any_agent,
+)
 from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
 
 
@@ -393,10 +397,11 @@ class WeekOrchestrator:
         if prev_intent:
             parts.append("【上周意图】\n" + json.dumps(prev_intent, ensure_ascii=False))
 
-        # 相关事件
-        prev_events = read_week_events(self.run_dir, prev_week)
+        # 上周本人直接参与的事件（非全知；其余仅靠【上周耳边传闻】）
+        prev_events_all = read_week_events(self.run_dir, prev_week)
+        prev_events = filter_events_for_agent(self.run_dir, agent_id, prev_events_all)
         if prev_events:
-            parts.append("【近期事件】\n" + json.dumps(prev_events, ensure_ascii=False))
+            parts.append("【上周亲身相关事件】\n" + json.dumps(prev_events, ensure_ascii=False))
 
         # 上周传闻（本人传过或听过；可能失真，下周行动应纳入考量）
         prev_rumors = self._prev_week_rumors_for_agent(agent_id, prev_week)
@@ -421,6 +426,14 @@ class WeekOrchestrator:
             if agent:
                 parts.append(json.dumps(agent, ensure_ascii=False))
         prev_week = week - 1
+        bc_ids = {aid for aid, _ in b_agents}
+        prev_events_all = read_week_events(self.run_dir, prev_week)
+        bc_events = filter_events_for_any_agent(self.run_dir, bc_ids, prev_events_all)
+        if bc_events:
+            parts.append(
+                "【上周与 B/C 群体亲身相关事件】（任一活跃 B/C 直接参与；非全知）\n"
+                + json.dumps(bc_events, ensure_ascii=False)
+            )
         bc_rumors = self._prev_week_rumors_for_bc_group(b_agents, prev_week)
         if bc_rumors:
             parts.append(
