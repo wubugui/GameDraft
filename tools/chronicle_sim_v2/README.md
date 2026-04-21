@@ -55,7 +55,7 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
   - `p_each_spreader_starts`：每个 `spread_agents` 是否作为本轮起点的概率（默认 0.55）。
   - `p_follow_edge`：沿社交图边是否继续传给邻居的概率（默认 0.38）。
   - `skip_distort_llm`（可选，布尔）：为 `true` 时仍按 ``max_llm_calls_per_event`` 与 ``mutation_probability`` 抽样并扣减配额，但**不调用**走样 LLM，内容用占位缩短句（与把 ``max_llm_calls_per_event`` 改成 0 无关，概率模型不变）。
-  - 变异是否调用 LLM 由 ``sin(π·轮次归一化)·sin(π·剩余配额归一化)`` 与上述概率共同抽样（两端低、中间高）；轮次、剩余分别除以 ``(max_propagation_rounds+1)``、``(max_llm_calls_per_event+1)`` 映射到 ``(0,1)``，避免「满剩余时 sin(π)=0」导致首跳永远无法走样。**不走批量异步 API**，仍为实时逐条调用。
+  - 走样抽样概率 ``mutation_probability``：**轮次因子** ``sin(π·round_idx/(max_propagation_rounds+1))``；在 ``round_idx <= max_propagation_rounds//2`` 前 **LLM 预算因子恒为 1**，过半后为 ``remaining_llm / max_llm_calls_per_event`` 再与轮次因子相乘。**不走批量异步 API**，仍为实时逐条调用。
 
 单独校验谣言传播（默认临时最小世界 + stub）::
 

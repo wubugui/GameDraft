@@ -14,7 +14,7 @@ from tools.chronicle_sim_v2.core.world.fs import write_json
 def test_mutation_probability_ends_lower_than_middle() -> None:
     max_llm, max_r = 20, 10
     mid_r = max_r // 2
-    # 满剩余时变异概率须 >0（历史上 ``remaining==max`` 时 sin(pi)=0 会导致永不走样）
+    # 轮次单峰（满剩余、前半与后半分界用 max_r//2）
     assert mutation_probability(max_llm, max_llm, mid_r, max_r) > 0.0
     p_low_r = mutation_probability(max_llm, max_llm, 1, max_r)
     p_mid_r = mutation_probability(max_llm, max_llm, mid_r, max_r)
@@ -22,11 +22,14 @@ def test_mutation_probability_ends_lower_than_middle() -> None:
     assert p_mid_r >= p_low_r
     assert p_mid_r >= p_high_r
 
-    p_low_b = mutation_probability(1, max_llm, mid_r, max_r)
-    p_mid_b = mutation_probability(max_llm // 2, max_llm, mid_r, max_r)
-    p_high_b = mutation_probability(max_llm, max_llm, mid_r, max_r)
-    assert p_mid_b >= p_low_b
-    assert p_mid_b >= p_high_b
+    # 前半：预算因子恒为 1，与 remaining_llm 无关
+    r_first = min(2, max_r // 2)
+    assert mutation_probability(1, max_llm, r_first, max_r) == mutation_probability(max_llm, max_llm, r_first, max_r)
+
+    # 后半：剩余越少乘积越小（同一轮次）
+    r_late = max_r // 2 + 2
+    assert r_late > max_r // 2
+    assert mutation_probability(max_llm, max_llm, r_late, max_r) > mutation_probability(2, max_llm, r_late, max_r)
 
 
 def test_normalize_spread_subset_related(tmp_path: Path) -> None:
