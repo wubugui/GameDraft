@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
 )
 
 from tools.chronicle_sim_v2.core.sim.run_manager import list_runs, create_run
-from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
 from tools.chronicle_sim_v2.gui.app_settings import (
     save_main_window_geometry,
     load_main_window_geometry,
@@ -47,7 +46,6 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self._run_dir: Path | None = None
-        self._llm_config: dict = {}
 
         # 中央标签页
         self.tabs = QTabWidget()
@@ -216,7 +214,6 @@ class MainWindow(QMainWindow):
         self._run_dir = run_dir
         if run_dir:
             save_last_run_path(str(run_dir))
-            self._llm_config = load_llm_config(run_dir)
             self._append_log(f"切换到 run: {run_dir.name}")
             # 切 Run 时一次性注册所有 MCP（后续 agent 调用即可直接连接）
             try:
@@ -227,9 +224,9 @@ class MainWindow(QMainWindow):
                 self._append_log(f"[MCP] 注册失败：{e!r}")
         # 同步到所有标签页
         self.idea_tab.set_run_dir(run_dir)
-        self.seed_tab.set_run_dir(run_dir, self._llm_config)
+        self.seed_tab.set_run_dir(run_dir)
         self.sim_tab.set_run_dir(run_dir)
-        self.chronicle_tab.set_run_dir(run_dir, self._llm_config)
+        self.chronicle_tab.set_run_dir(run_dir)
         self.run_changed.emit(run_dir)
 
     def _on_run_changed(self, run_dir: Path | None) -> None:

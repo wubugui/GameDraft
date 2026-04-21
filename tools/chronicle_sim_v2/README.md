@@ -28,7 +28,7 @@ python -m tools.chronicle_sim_v2
 
 ## 命令行周模拟（与 GUI「模拟」同一路径）
 
-模拟逻辑统一在 ``tools.chronicle_sim_v2.core.sim.simulation_pipeline``；GUI 的「运行本周 / 运行范围」在后台线程中调用同一套 ``run_week_async``。LLM 与 Cline 选项**仅**从 ``<run_dir>\config\llm_config.json`` 读取，请先保存界面中的「保存 LLM 配置」。
+模拟逻辑统一在 ``tools.chronicle_sim_v2.core.sim.simulation_pipeline``；GUI 的「运行本周 / 运行范围」在后台线程中调用同一套 ``run_week_async``。LLM 与 Cline 选项**仅**从 ``<run_dir>\config\llm_config.json`` 读取，请先保存界面中的「保存 LLM 配置」。编年史「素材探针」与种子后台生成同样在运行时从该文件读取，不依赖主窗口内存缓存。
 
 ```bat
 cd /d D:\path\to\GameDraft
