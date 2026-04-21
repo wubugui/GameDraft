@@ -61,21 +61,22 @@ def _skip_distort_llm_from_config(llm_config: dict[str, Any]) -> bool:
 
 
 def mutation_probability(remaining_llm: int, max_llm: int, round_idx: int, max_rounds: int) -> float:
-    """单峰：轮次与剩余配额都处于中段时最高；任一端趋近 0。
+    """走样概率 = 轮次因子 * 预算因子。
 
-    ``round_idx``、``max_rounds`` 为当前传播轮（从 1 计）与上限；``remaining_llm`` 为本事件剩余可走样调用次数。
-
-    注意：剩余比例不得取到恰为 ``1.0``（否则 ``sin(pi*b)=0``，首跳永远无法触发走样）。
-    因此轮次、剩余均用 ``/(上限+1)`` 映射到 ``(0,1)`` 内。
+    轮次：``t = round_idx / (max_rounds + 1)``，``sin(pi*t)``。
+    预算：``round_idx <= max_rounds // 2`` 时为 1；否则为 ``remaining_llm / max_llm``。
     """
     if max_llm <= 0 or remaining_llm <= 0 or max_rounds <= 0:
         return 0.0
     import math
 
-    # 映射到 (0,1)，避免 sin(pi*1)=0 导致「满配额时变异概率恒为 0」的死锁
     t = min(1.0, max(0.001, round_idx / float(max_rounds + 1)))
-    b = min(1.0, max(0.001, remaining_llm / float(max_llm + 1)))
-    return float(math.sin(math.pi * t) * math.sin(math.pi * b))
+    p_round = math.sin(math.pi * t)
+    if round_idx <= (max_rounds // 2):
+        return float(p_round)
+    budget = remaining_llm / float(max_llm)
+    budget = max(0.0, min(1.0, budget))
+    return float(p_round * budget)
 
 
 def _snippet_for_agent(rec: dict[str, Any], agent_id: str) -> str:
