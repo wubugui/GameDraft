@@ -26,13 +26,10 @@ async def run_initializer(
     run_dir: Path,
     ideas_text: str,
     log_callback=None,
-    *,
-    llm_config_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """运行 Initializer，返回 SeedDraft dict。
 
-    ``llm_config_snapshot``：与界面当前表单一致的字典（如 ``LlmConfigForm.to_dict()``），
-    避免未点击「保存」时 runner 仍读磁盘旧密钥。
+    Cline 与鉴权配置从 ``run_dir/config/llm_config.json`` 读取（与 ``run_agent_cline`` 一致）。
     """
     spec = load_agent_spec("initializer")
     system_ctx = {"TARGET_NPC_COUNT": "10", "TRUNCATION_NOTE": ""}
@@ -67,7 +64,6 @@ async def run_initializer(
         user_text=user_text,
         system_ctx=system_ctx,
         phase_log=log_callback,
-        llm_config_snapshot=llm_config_snapshot,
     )
 
     if log_callback:

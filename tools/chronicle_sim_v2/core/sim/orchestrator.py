@@ -1,7 +1,6 @@
 """WeekOrchestrator：周模拟编排器（文件式，无 SQLite）。"""
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import threading
@@ -10,10 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from tools.chronicle_sim_v2.core.llm.client_factory import ClientFactory, PAChatResources
-from tools.chronicle_sim_v2.core.llm.config_resolve import (
-    effective_connection_block,
-    provider_profile_for_agent,
-)
+from tools.chronicle_sim_v2.core.llm.config_resolve import provider_profile_for_agent
 from tools.chronicle_sim_v2.core.sim.event_types import load_event_types, pick_top_event_types, event_types_text_for_prompt
 from tools.chronicle_sim_v2.core.sim.pacing import load_pacing_profile, multiplier_for_week
 from tools.chronicle_sim_v2.core.sim.tier_manager import apply_pending_tier_changes
@@ -35,6 +31,8 @@ from tools.chronicle_sim_v2.core.world.week_state import (
     write_agent_memory,
     write_week_trace,
 )
+
+from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
 
 
 class WeekLock:
@@ -68,12 +66,10 @@ class WeekOrchestrator:
     def __init__(
         self,
         run_dir: Path,
-        llm_config: dict[str, Any] | None,
         cancel_flag: threading.Event | None = None,
         progress_log: Callable[[str], None] | None = None,
     ):
         self.run_dir = run_dir
-        self.llm_config = llm_config or {}
         self.cancel_flag = cancel_flag or threading.Event()
         self.progress_log = progress_log or (lambda s: print(s))
         self.event_types = load_event_types()
@@ -86,12 +82,13 @@ class WeekOrchestrator:
         return self.cancel_flag.is_set()
 
     def _build_pa(self, agent_kind: str) -> PAChatResources:
-        """为指定 Agent 类型构建 PAChatResources。"""
-        profile = provider_profile_for_agent(agent_kind, self.llm_config)
+        """为指定 Agent 类型构建 PAChatResources（每次从磁盘读取 ``config/llm_config.json``）。"""
+        cfg = load_llm_config(self.run_dir)
+        profile = provider_profile_for_agent(agent_kind, cfg)
         return ClientFactory.build_pa_chat(
             agent_id=agent_kind,
             profile=profile,
-            llm_config=self.llm_config,
+            llm_config=cfg,
             run_dir=self.run_dir,
         )
 

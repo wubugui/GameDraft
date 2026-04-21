@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 # 相对 Run 根目录，UTF-8 追加写入（与界面活动日志一致）
@@ -28,6 +29,7 @@ from tools.chronicle_sim_v2.gui.async_runnable import CancellableAsyncWorker
 from tools.chronicle_sim_v2.core.world.fs import read_json, write_json
 from tools.chronicle_sim_v2.core.world.seed_reader import read_all_agents
 from tools.chronicle_sim_v2.core.sim.run_manager import load_run_meta
+from tools.chronicle_sim_v2.core.sim.simulation_pipeline import run_week_async
 
 
 class SimulationTab(QWidget):
@@ -44,8 +46,8 @@ class SimulationTab(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._run_dir: Path | None = None
-        self._llm_config: dict = {}
         self._worker: CancellableAsyncWorker | None = None
+        self._cancel_flag: threading.Event | None = None
         self._running = False
 
         layout = QVBoxLayout(self)
@@ -132,10 +134,8 @@ class SimulationTab(QWidget):
     def _on_sim_running_done(self) -> None:
         self._set_running(False)
 
-    def set_run_dir(self, run_dir: Path | None, llm_config: dict | None = None) -> None:
+    def set_run_dir(self, run_dir: Path | None) -> None:
         self._run_dir = run_dir
-        if llm_config is not None:
-            self._llm_config = llm_config
         if run_dir:
             meta = load_run_meta(run_dir)
             if meta:
@@ -289,12 +289,16 @@ class SimulationTab(QWidget):
         self.log_signal.emit(f"开始模拟第 {week} 周...")
         self.status_label.setText(f"运行第 {week} 周...")
         self._set_running(True)
+        self._cancel_flag = threading.Event()
 
         async def _do():
             try:
-                from tools.chronicle_sim_v2.core.sim.orchestrator import WeekOrchestrator
-                orch = WeekOrchestrator(self._run_dir, self._llm_config, progress_log=self.log_signal.emit)
-                result = await orch.run_week(week)
+                result = await run_week_async(
+                    self._run_dir,
+                    week,
+                    progress_log=self.log_signal.emit,
+                    cancel_flag=self._cancel_flag,
+                )
                 self.log_signal.emit(f"\n第 {week} 周完成: {result}")
                 self.sim_spins_signal.emit(week + 1)
                 self.sim_status_signal.emit("就绪")
@@ -320,6 +324,7 @@ class SimulationTab(QWidget):
         self.log_signal.emit(f"开始模拟: 周 {start} - {end}")
         self.status_label.setText(f"运行周 {start} - {end}...")
         self._set_running(True)
+        self._cancel_flag = threading.Event()
 
         self._worker = CancellableAsyncWorker(self._do_range(start, end))
         self._worker.signals.error.connect(self._on_worker_error)
@@ -337,11 +342,12 @@ class SimulationTab(QWidget):
                     self.sim_status_signal.emit(f"第 {w} 周 ({idx}/{total})...")
                     self.log_signal.emit(f"\n===== 第 {w} 周 =====")
                     try:
-                        from tools.chronicle_sim_v2.core.sim.orchestrator import WeekOrchestrator
-                        orch = WeekOrchestrator(
-                            self._run_dir, self._llm_config, progress_log=self.log_signal.emit
+                        result = await run_week_async(
+                            self._run_dir,
+                            w,
+                            progress_log=self.log_signal.emit,
+                            cancel_flag=self._cancel_flag,
                         )
-                        result = await orch.run_week(w)
                         self.log_signal.emit(f"第 {w} 周完成: {result}")
                         self.sim_spins_signal.emit(w + 1)
                     except asyncio.CancelledError:
@@ -359,6 +365,8 @@ class SimulationTab(QWidget):
         return _do()
 
     def _cancel(self) -> None:
+        if self._cancel_flag is not None:
+            self._cancel_flag.set()
         if self._worker:
             self._worker.request_cancel()
         self.log_signal.emit("取消请求已发送")

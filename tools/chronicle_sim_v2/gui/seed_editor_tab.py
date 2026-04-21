@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from tools.chronicle_sim_v2.core.sim.run_manager import create_run, list_runs
+from tools.chronicle_sim_v2.core.sim.run_manager import create_run, list_runs, load_llm_config
 from tools.chronicle_sim_v2.core.world.seed_writer import write_seed_to_fs, validate_seed_agents
 from tools.chronicle_sim_v2.core.world.seed_reader import read_all_agents
 from tools.chronicle_sim_v2.core.world.fs import read_json, write_json, delete_json
@@ -135,7 +135,6 @@ class SeedEditorTab(QWidget):
             if llm_config:
                 self._llm_config = llm_config
             else:
-                from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
                 self._llm_config = load_llm_config(run_dir)
             self.llm_form.set_from_dict(self._llm_config)
             # 尝试加载已有种子
@@ -213,7 +212,6 @@ class SeedEditorTab(QWidget):
     def _set_run_dir(self, run_dir: Path) -> None:
         self._run_dir = run_dir
         save_last_run_path(str(run_dir))
-        from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
         self._llm_config = load_llm_config(run_dir)
         self._llm_dirty = False
         self.llm_form.set_from_dict(self._llm_config)
@@ -293,12 +291,14 @@ class SeedEditorTab(QWidget):
         if not ideas:
             self.log_signal.emit("设定库为空，请先导入 MD 文件")
             return
-        # 必须用表单当前值（与「测试本槽连接」一致）；勿用 self._llm_config，否则未保存时仍是磁盘旧密钥
-        llm_config = self.llm_form.to_dict()
+        llm_config = load_llm_config(self._run_dir)
         default_cfg = llm_config.get("default", {})
         kind = str(default_cfg.get("kind", "")).lower()
         if kind == "stub":
-            self.log_signal.emit("未配置 LLM，请在右侧「LLM 配置」设置 default 槽位")
+            self.log_signal.emit(
+                "未配置 LLM：请先在「LLM 配置」中设置 default 槽位并点击「保存 LLM 配置」"
+                "（模拟与生成均从磁盘 config/llm_config.json 读取）。"
+            )
             return
 
         run_dir = self._run_dir
@@ -330,7 +330,6 @@ class SeedEditorTab(QWidget):
                     run_dir,
                     ideas_blob,
                     log_callback=_log,
-                    llm_config_snapshot=llm_config,
                 )
                 return result
             except Exception as exc:
