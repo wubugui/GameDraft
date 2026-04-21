@@ -54,6 +54,7 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
   - `max_propagation_rounds`：传播轮次上限（默认 12）。
   - `p_each_spreader_starts`：每个 `spread_agents` 是否作为本轮起点的概率（默认 0.55）。
   - `p_follow_edge`：沿社交图边是否继续传给邻居的概率（默认 0.38）。
+  - `skip_distort_llm`（可选，布尔）：为 `true` 时仍按 ``max_llm_calls_per_event`` 与 ``mutation_probability`` 抽样并扣减配额，但**不调用**走样 LLM，内容用占位缩短句（与把 ``max_llm_calls_per_event`` 改成 0 无关，概率模型不变）。
   - 变异是否调用 LLM 由 ``sin(π·轮次归一化)·sin(π·剩余配额归一化)`` 与上述概率共同抽样（两端低、中间高）；轮次、剩余分别除以 ``(max_propagation_rounds+1)``、``(max_llm_calls_per_event+1)`` 映射到 ``(0,1)``，避免「满剩余时 sin(π)=0」导致首跳永远无法走样。**不走批量异步 API**，仍为实时逐条调用。
 
 单独校验谣言传播（默认临时最小世界 + stub）::
@@ -61,13 +62,13 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_spread_standalone.py
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_spread_standalone.py --run-dir <已有 run 目录>
 
-对已有 Run 的某一周做**统计**（复制 ``world``、默认强制 ``max_llm_calls_per_event=0``，不调 Cline）::
+对已有 Run 的某一周做**统计**（复制 ``world``、**原样**使用 Run 的 ``rumor_sim``；默认 ``run_rumor_spread(..., skip_distort_llm=True)`` 不调走样 LLM）::
 
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_week_stats.py --run-dir <run 目录> --week 1
 
-沿用 Run 内 ``rumor_sim``（仍为 stub ``pa``，不调 Cline），可看「走样发生」条数::
+若要在统计脚本里真的走 ``_distort_one``（stub 占位或 Cline，取决于 ``pa``）::
 
-    python tools\\chronicle_sim_v2\\scripts\\run_rumor_week_stats.py --run-dir <run 目录> --week 1 --use-source-llm-config
+    python tools\\chronicle_sim_v2\\scripts\\run_rumor_week_stats.py --run-dir <run 目录> --week 1 --call-distort-llm
 
 只读已落盘的 ``rumors.json``，统计 ``distorted: true`` 条数::
 

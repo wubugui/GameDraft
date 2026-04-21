@@ -54,6 +54,12 @@ def _p_edge_follow(llm_config: dict[str, Any]) -> float:
     return max(0.05, min(0.95, p))
 
 
+def _skip_distort_llm_from_config(llm_config: dict[str, Any]) -> bool:
+    """``rumor_sim.skip_distort_llm``：仍为真实抽样与 ``max_llm_calls_per_event`` 扣减，但不调用走样 LLM。"""
+    cfg = _rumor_config(llm_config)
+    return bool(cfg.get("skip_distort_llm", False))
+
+
 def mutation_probability(remaining_llm: int, max_llm: int, round_idx: int, max_rounds: int) -> float:
     """单峰：轮次与剩余配额都处于中段时最高；任一端趋近 0。
 
@@ -90,9 +96,13 @@ async def _distort_one(
     snippet: str,
     hops: int,
     event_type_id: str,
+    *,
+    skip_llm: bool = False,
 ) -> str:
     if not snippet.strip():
         return snippet
+    if skip_llm:
+        return (snippet[:120] + "……（走样占位·未调 LLM）")[:220]
     spec = load_agent_spec("rumor")
     user_text = render_user(
         spec,
@@ -117,6 +127,8 @@ async def run_rumor_spread(
     run_dir: Path,
     records: list[dict[str, Any]],
     week: int,
+    *,
+    skip_distort_llm: bool | None = None,
 ) -> list[dict[str, Any]]:
     from tools.chronicle_sim_v2.core.world.seed_reader import load_active_agent_ids_with_tier
     from tools.chronicle_sim_v2.core.world.social_graph import get_neighbors
@@ -126,6 +138,7 @@ async def run_rumor_spread(
     max_rounds = _max_rounds(llm_cfg)
     p_start = _p_start_spread(llm_cfg)
     p_edge = _p_edge_follow(llm_cfg)
+    skip_llm = _skip_distort_llm_from_config(llm_cfg) if skip_distort_llm is None else bool(skip_distort_llm)
 
     active = load_active_agent_ids_with_tier(run_dir)
     holder_ids = {aid for aid, _ in active}
@@ -184,7 +197,14 @@ async def run_rumor_spread(
                     content = base_u
                     distorted = False
                     if rem > 0 and base_u.strip() and random.random() < p_mut:
-                        content = await _distort_one(pa, run_dir, base_u, rnd, str(rec.get("type_id", "")))
+                        content = await _distort_one(
+                            pa,
+                            run_dir,
+                            base_u,
+                            rnd,
+                            str(rec.get("type_id", "")),
+                            skip_llm=skip_llm,
+                        )
                         used_llm += 1
                         distorted = True
 
