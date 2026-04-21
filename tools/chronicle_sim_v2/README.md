@@ -47,6 +47,7 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
 - `cline_timeout_sec`：单次子进程超时（秒），默认 3600，jsonl 输出时放宽到 7200；同时也是 Python 侧 `asyncio.wait_for` 的上限
 - `cline_verbose`：为 `true` 时在 `cline` 命令行加入 `--verbose`，让 Cline 在默认抑制控制台时仍输出更详细的进度/推理类日志（具体以 Cline CLI 为准）
 - `cline_stream_stderr`：默认 `true`，运行中把 Cline 的 **stderr 按行**转发到种子/模拟日志或 LLM 追踪；设为 `false` 则仅在结束时汇总长度（适合极端刷屏场景）
+- **Windows 长 prompt**：系统命令行长度有限；runner 在 **Windows** 上将内联 prompt 上限降为 **2048** 字符（非 Windows 仍为 8192），超过则与 Linux 相同走临时目录 ``input.md`` + argv 短引导句，避免 GUI/IDE 下 ``cline task`` 因「命令行太长」立即 ``rc=1``（stderr 在部分控制台会显示为乱码）。
 - `llm_audit.enabled`：是否写 `run_dir/llm_audit/<YYYYMMDD>.jsonl`
 - `trace.*`：详细 prompt 追踪开关
 - **`rumor_sim`**（可选，对象）：谣言概率传播与变异 LLM 上限，写在 `config/llm_config.json` 顶层。字段示例：
