@@ -157,7 +157,8 @@ async def run_rumor_spread(
         frontier = [x for x in starters if x in holder_ids]
 
         for rnd in range(1, max_rounds + 1):
-            if used_llm >= max_llm or not frontier:
+            # 仅当前沿为空时结束；``max_llm`` 只限制走样 LLM，不阻塞纯口头传播（``max_llm==0`` 时仍应能传谣）
+            if not frontier:
                 break
             next_frontier: list[str] = []
             random.shuffle(frontier)

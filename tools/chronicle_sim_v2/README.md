@@ -61,6 +61,10 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_spread_standalone.py
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_spread_standalone.py --run-dir <已有 run 目录>
 
+对已有 Run 的某一周做**统计**（复制 ``world``、强制 ``max_llm_calls_per_event=0``，不调 Cline）::
+
+    python tools\\chronicle_sim_v2\\scripts\\run_rumor_week_stats.py --run-dir <run 目录> --week 1
+
 **GM 事件与谣言**：GM 须在每条 `records` 中输出 `related_agents`、`spread_agents`（传播人 ⊆ 相关人）、`actor_ids`；`witness_accounts` 仅绑定**相关人**口供。入库前 `normalize_event_for_rumors` 会补全/过滤非法 id，并保证 `spread_agents ⊆ related_agents`。谣言仅从 `spread_agents` 概率选起点，沿图概率走边。
 
 凡是 Run 特有的目录都不需要用户手填：`run_dir/.cline_config/`（Cline ``clineDir``，其下 ``data/`` 含 settings、secrets、任务状态等）、`run_dir/.chronicle_sim/ws/*`（每次调用的临时 cwd，调用结束即删）、`run_dir/.chronicle_sim/llm_effective/`（脱敏快照）都由代码生成与清理。
