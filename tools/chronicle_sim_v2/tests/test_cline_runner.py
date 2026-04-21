@@ -17,7 +17,9 @@ from tools.chronicle_sim_v2.core.llm.cline_runner import (
     _build_argv,
     _parse_jsonl_output,
     build_cline_env,
+    cline_task_model_flag,
 )
+from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
 
 
 def _spec(**kw) -> AgentSpec:
@@ -32,6 +34,23 @@ def _spec(**kw) -> AgentSpec:
     )
     base.update(kw)
     return AgentSpec(**base)
+
+
+def test_cline_task_model_flag_openai_compat_custom_base_omits_m() -> None:
+    """自定义 OpenAI 兼容网关：task 不传 -m，模型仅由 cline auth 写入。"""
+    p = ProviderProfile(
+        kind="openai_compat",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key="k",
+        model="qwen-turbo",
+    )
+    assert cline_task_model_flag(p, "qwen-turbo") is None
+
+
+def test_cline_task_model_flag_openai_compat_default_base_keeps_m() -> None:
+    """未配 base_url 时仍传 -m（走默认 OpenAI 端点语义）。"""
+    p = ProviderProfile(kind="openai_compat", base_url="", api_key="k", model="gpt-4o-mini")
+    assert cline_task_model_flag(p, "gpt-4o-mini") == "gpt-4o-mini"
 
 
 def test_build_argv_short_goes_inline(tmp_path: Path) -> None:

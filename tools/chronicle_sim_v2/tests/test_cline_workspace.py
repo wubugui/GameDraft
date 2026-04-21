@@ -115,6 +115,11 @@ def test_ensure_mcp_for_run_merges_and_preserves_others(tmp_path: Path) -> None:
     out = ensure_mcp_for_run(tmp_path)
     assert out == settings_path
 
+    gs = tmp_path / ".cline_config" / "data" / "globalState.json"
+    assert gs.is_file()
+    gs_data = json.loads(gs.read_text(encoding="utf-8"))
+    assert gs_data.get("welcomeViewCompleted") is True
+
     data = json.loads(settings_path.read_text(encoding="utf-8"))
     assert "some_other" in data["mcpServers"]
     assert data["mcpServers"]["some_other"]["command"] == "node"

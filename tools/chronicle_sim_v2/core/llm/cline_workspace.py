@@ -46,8 +46,33 @@ def cline_mcp_settings_path(run_dir: Path) -> Path:
     return cline_config_path(run_dir) / CLINE_MCP_SETTINGS_REL
 
 
+def _ensure_cline_headless_global_state(run_dir: Path) -> None:
+    """Cline 2.x：非交互 ``cline auth`` 后若 ``welcomeViewCompleted`` 仍为 false，``cline task`` 可能报未认证。
+
+    合并为 ``true``，与无头首次使用 Cline 的已知规避一致（参见 Cline 社区 issue 讨论）。
+    """
+    gs = cline_config_path(run_dir) / "data" / "globalState.json"
+    gs.parent.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {}
+    if gs.is_file():
+        try:
+            raw = json.loads(gs.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                data = raw
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    if data.get("welcomeViewCompleted") is True:
+        return
+    merged = {**data, "welcomeViewCompleted": True}
+    gs.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def ensure_mcp_for_run(run_dir: Path) -> Path:
-    """合并写入 `cline_mcp_settings.json`：保留已有其它服务，仅更新 `chronicle_sim` 条目。"""
+    """合并写入 `cline_mcp_settings.json`：保留已有其它服务，仅更新 `chronicle_sim` 条目。
+
+    同时确保 Cline 无头就绪标志（见 ``_ensure_cline_headless_global_state``）。
+    """
+    _ensure_cline_headless_global_state(run_dir)
     settings_path = cline_mcp_settings_path(run_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 

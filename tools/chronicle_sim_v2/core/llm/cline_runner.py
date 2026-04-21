@@ -487,6 +487,29 @@ async def refresh_cline_auth_for_profile(
         raise last_exc
 
 
+def cline_task_model_flag(profile: ProviderProfile | Any, resolved_model: str) -> str | None:
+    """返回应传给 ``cline task -m`` 的模型 id；若应**省略** ``-m`` 则返回 ``None``。
+
+    Cline 文档（https://docs.cline.bot/cline-cli/cli-reference）：``cline task`` 的 ``-m`` 用于选用
+    内置目录中的模型（示例为 ``gpt-4o``、``claude-sonnet-4-5-20250929`` 等）。
+
+    对 **OpenAI 兼容 + 自定义 base_url**，网关上的 ``model`` 已由 ``cline auth -p openai -m <modelid> -b <url>``
+    写入 ``--config`` 目录；若在 ``task`` 再追加 ``-m qwen-turbo`` / ``glm-4.7`` 等**裸 id**，当前 Cline CLI
+    会按内置目录解析，易匹配到 **OpenRouter** 并索要 OpenRouter 密钥（报错里出现 ``providerId\":\"openrouter``），
+    这与 DashScope 密钥无关——属于**我们对 argv 的误用**，不是「URL 与模型二选一不合法」。
+
+    因此：``openai_compat`` 且配置了 ``base_url`` 时，不在 ``task`` 上传 ``-m``，让推理沿用 ``auth`` 写入的 model。
+    """
+    if not isinstance(profile, ProviderProfile):
+        m = (resolved_model or "").strip()
+        return m or None
+    kind = (profile.kind or "").lower()
+    if kind == "openai_compat" and (profile.base_url or "").strip():
+        return None
+    m = (resolved_model or "").strip()
+    return m or None
+
+
 def _build_argv(
     exe: str,
     config_dir: Path,
@@ -517,8 +540,8 @@ def _build_argv(
             str(timeout_sec),
         ]
     )
-    if model:
-        args.extend(["-m", model])
+    if (model or "").strip():
+        args.extend(["-m", model.strip()])
     if spec.thinking:
         args.extend(["--thinking", THINKING_TOKEN_DEFAULT])
     if spec.output_mode == "jsonl":
@@ -635,6 +658,7 @@ async def run_agent_cline(
 
     profile = pa.profile
     model = profile.model if isinstance(profile, ProviderProfile) else ""
+    task_model_flag = cline_task_model_flag(profile, model)
 
     def _ph(msg: str) -> None:
         if phase_log:
@@ -664,16 +688,21 @@ async def run_agent_cline(
             exe,
             config_dir,
             temp_ws,
-            model=model,
+            model=task_model_flag or "",
             timeout_sec=timeout_sec,
             spec=spec,
             user_text=user_text,
             cline_verbose=cl_verbose,
         )
 
+        task_m_note = (
+            "（task 省略 -m，OpenAI 兼容模型以 cline auth 为准）"
+            if task_model_flag is None and model
+            else ""
+        )
         _ph(
             f"[Cline] agent={spec.agent_id} cwd={temp_ws.name} "
-            f"model={model!r} timeout={timeout_sec}s stdin={'yes' if use_stdin else 'no'} "
+            f"llm_config.model={model!r}{task_m_note} timeout={timeout_sec}s stdin={'yes' if use_stdin else 'no'} "
             f"verbose={'yes' if cl_verbose else 'no'} stream_stderr={'yes' if cl_stream else 'no'}"
         )
 
