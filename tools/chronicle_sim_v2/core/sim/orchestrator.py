@@ -37,6 +37,17 @@ from tools.chronicle_sim_v2.core.sim.npc_event_visibility import (
     filter_events_for_agent,
     filter_events_for_any_agent,
 )
+from tools.chronicle_sim_v2.core.sim.npc_context_pipeline import (
+    apply_chronicle_state_from_events,
+    faction_pressure_lines,
+    load_beliefs,
+    neighbor_subgraph_for_prompt,
+    update_beliefs_end_of_week,
+    write_intent_outcomes,
+    write_public_digest_file,
+    write_world_observation_file,
+    location_id_for_agent,
+)
 from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
 
 
@@ -135,9 +146,24 @@ class WeekOrchestrator:
             if not agents:
                 self._log("  警告: 没有活跃 NPC，请先在种子编辑中添加 NPC 并设置 life_status=alive")
 
+            if self._is_cancelled():
+                return {}
+            self._log(f"[Week {week}] Phase 2.5: 聚合可观察环境与公开摘要...")
+            active_ids_list = [aid for aid, _ in agents]
+            write_world_observation_file(self.run_dir, week, active_ids_list)
+            prev_w = week - 1
+            if prev_w >= 1:
+                write_public_digest_file(self.run_dir, week, read_week_events(self.run_dir, prev_w))
+            else:
+                write_json(
+                    self.run_dir,
+                    f"chronicle/{week_dir_name(week)}/public_digest.json",
+                    {"week": week, "schema_version": 1, "notices": []},
+                )
+
             # 确保周目录
             wdir = week_dir_name(week)
-            for sub in ["intents", "events", "memories", "drafts"]:
+            for sub in ["intents", "events", "memories", "drafts", "beliefs", "intent_outcomes"]:
                 (self.run_dir / "chronicle" / wdir / sub).mkdir(parents=True, exist_ok=True)
 
             # 3. S 类 NPC 意图生成
@@ -247,6 +273,13 @@ class WeekOrchestrator:
             rumors = await run_rumor_spread(pa_rumor, self.run_dir, records, week)
             write_week_rumors(self.run_dir, week, rumors)
             self._log(f"  传播 {len(rumors)} 条谣言")
+
+            # 8.5 信念与可量化状态、意图结果（落盘，供下周 NPC）
+            self._log(f"[Week {week}] Phase 8.5: 更新信念与 chronicle_state、意图结果...")
+            active_set = {aid for aid, _ in agents}
+            update_beliefs_end_of_week(self.run_dir, week, records, rumors, active_set)
+            apply_chronicle_state_from_events(self.run_dir, week, records)
+            write_intent_outcomes(self.run_dir, week, read_week_intents(self.run_dir, week), records)
 
             # 9. 周总结
             if self._is_cancelled():
@@ -391,6 +424,32 @@ class WeekOrchestrator:
         if agent:
             parts.append("【个人设定】\n" + json.dumps(agent, ensure_ascii=False))
 
+        obs = read_json(self.run_dir, f"chronicle/{week_dir_name(week)}/world_observation.json")
+        if isinstance(obs, dict) and isinstance(obs.get("locations"), list):
+            lid = ""
+            if isinstance(agent, dict):
+                lid = location_id_for_agent(self.run_dir, agent)
+            loc_hits = [x for x in obs["locations"] if isinstance(x, dict) and str(x.get("location_id")) == lid]
+            if loc_hits:
+                parts.append("【本周可观察环境（同场）】\n" + json.dumps(loc_hits[0], ensure_ascii=False))
+            elif obs["locations"]:
+                parts.append(
+                    "【本周可观察环境（全城要点）】\n"
+                    + json.dumps(obs["locations"][:5], ensure_ascii=False)
+                )
+
+        neigh = neighbor_subgraph_for_prompt(self.run_dir, agent_id)
+        if neigh:
+            parts.append("【社会关系摘要】\n" + json.dumps(neigh, ensure_ascii=False))
+
+        pub = read_json(self.run_dir, f"chronicle/{week_dir_name(week)}/public_digest.json")
+        if isinstance(pub, dict) and pub.get("notices"):
+            parts.append("【本周市井公开消息】\n" + json.dumps(pub["notices"], ensure_ascii=False))
+
+        fac = faction_pressure_lines(self.run_dir)
+        if fac:
+            parts.append("【势力本周压力/约束】\n" + json.dumps(fac, ensure_ascii=False))
+
         # 上周意图回顾
         prev_week = week - 1
         prev_intent = read_json(self.run_dir, f"chronicle/{week_dir_name(prev_week)}/intents/{agent_id}.json")
@@ -410,6 +469,15 @@ class WeekOrchestrator:
                 "【上周耳边传闻】（可能失真，请结合身份自行取舍）\n"
                 + json.dumps(prev_rumors, ensure_ascii=False)
             )
+
+        if prev_week >= 1:
+            bel = load_beliefs(self.run_dir, prev_week, agent_id)
+            if bel.get("claims"):
+                parts.append("【信念摘要（上周末）】\n" + json.dumps(bel["claims"][:12], ensure_ascii=False))
+            out_path = f"chronicle/{week_dir_name(prev_week)}/intent_outcomes/{agent_id}.json"
+            outcome = read_json(self.run_dir, out_path)
+            if isinstance(outcome, dict) and outcome.get("status"):
+                parts.append("【上周意图结果】\n" + json.dumps(outcome, ensure_ascii=False))
 
         # 个人记忆
         mem = read_json(self.run_dir, f"chronicle/{week_dir_name(week)}/memories/{agent_id}.json")
@@ -440,6 +508,18 @@ class WeekOrchestrator:
                 "【上周坊间传闻】（涉及下列 B/C NPC 中至少一方；可能失真）\n"
                 + json.dumps(bc_rumors, ensure_ascii=False)
             )
+        obs = read_json(self.run_dir, f"chronicle/{week_dir_name(week)}/world_observation.json")
+        if isinstance(obs, dict) and obs.get("locations"):
+            parts.append(
+                "【本周可观察环境（全城要点）】\n"
+                + json.dumps((obs.get("locations") or [])[:8], ensure_ascii=False)
+            )
+        pub = read_json(self.run_dir, f"chronicle/{week_dir_name(week)}/public_digest.json")
+        if isinstance(pub, dict) and pub.get("notices"):
+            parts.append("【本周市井公开消息】\n" + json.dumps(pub["notices"], ensure_ascii=False))
+        fac = faction_pressure_lines(self.run_dir)
+        if fac:
+            parts.append("【势力本周压力/约束】\n" + json.dumps(fac, ensure_ascii=False))
         return "\n\n".join(parts)
 
     def _load_run_meta(self) -> dict[str, Any] | None:

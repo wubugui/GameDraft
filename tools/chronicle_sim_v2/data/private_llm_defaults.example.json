@@ -18,6 +18,6 @@
     "kind": "openai_compat",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "api_key": "YOUR_API_KEY",
-    "model": "qwen3.6-flash"
+    "model": "kimi-k2.5"
   }
 }

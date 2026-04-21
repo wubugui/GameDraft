@@ -501,7 +501,7 @@ def cline_task_model_flag(profile: ProviderProfile | Any, resolved_model: str) -
     内置目录中的模型（示例为 ``gpt-4o``、``claude-sonnet-4-5-20250929`` 等）。
 
     对 **OpenAI 兼容 + 自定义 base_url**，网关上的 ``model`` 已由 ``cline auth -p openai -m <modelid> -b <url>``
-    写入 ``--config`` 目录；若在 ``task`` 再追加 ``-m qwen-turbo`` / ``glm-4.7`` 等**裸 id**，当前 Cline CLI
+    写入 ``--config`` 目录；若在 ``task`` 再追加 ``-m qwen-turbo`` / ``kimi-k2.5`` 等**裸 id**，当前 Cline CLI
     会按内置目录解析，易匹配到 **OpenRouter** 并索要 OpenRouter 密钥（报错里出现 ``providerId\":\"openrouter``），
     这与 DashScope 密钥无关——属于**我们对 argv 的误用**，不是「URL 与模型二选一不合法」。
 
