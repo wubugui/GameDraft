@@ -39,6 +39,8 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
 
 或从仓库根目录使用包装脚本 ``run-chronicle-sim-week.cmd``（参数原样传给上述 Python 脚本）。
 
+**Cline 与 OpenAI 兼容网关**：官方 CLI 里 ``cline auth -p openai -m <modelid> -b <base>`` 会把网关与模型写入 ``--config``；而 ``cline task -m`` 面向的是 Cline **内置**模型目录。对自定义 ``base_url`` 的 ``openai_compat``，runner 在 ``task`` 上**不再追加** ``-m``，以免裸模型名被误解析为 OpenRouter 等其它提供商（与 DashScope 等密钥无关）。模型名仍以 ``llm_config.json`` 为准，经 ``auth`` 传给网关。
+
 ## llm_config 可选字段
 
 - `cline_executable`：`cline` 可执行文件路径；不填时先查 PATH，再在 Windows 上尝试 `%APPDATA%\npm\cline.cmd`（解决从 IDE/Conda 启动时 PATH 不含 npm 全局目录的问题）
