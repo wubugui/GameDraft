@@ -14,6 +14,8 @@ from tools.chronicle_sim_v2.core.world.fs import write_json
 def test_mutation_probability_ends_lower_than_middle() -> None:
     max_llm, max_r = 20, 10
     mid_r = max_r // 2
+    # 满剩余时变异概率须 >0（历史上 ``remaining==max`` 时 sin(pi)=0 会导致永不走样）
+    assert mutation_probability(max_llm, max_llm, mid_r, max_r) > 0.0
     p_low_r = mutation_probability(max_llm, max_llm, 1, max_r)
     p_mid_r = mutation_probability(max_llm, max_llm, mid_r, max_r)
     p_high_r = mutation_probability(max_llm, max_llm, max_r, max_r)

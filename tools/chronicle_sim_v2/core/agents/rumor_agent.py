@@ -58,15 +58,17 @@ def mutation_probability(remaining_llm: int, max_llm: int, round_idx: int, max_r
     """单峰：轮次与剩余配额都处于中段时最高；任一端趋近 0。
 
     ``round_idx``、``max_rounds`` 为当前传播轮（从 1 计）与上限；``remaining_llm`` 为本事件剩余可走样调用次数。
+
+    注意：剩余比例不得取到恰为 ``1.0``（否则 ``sin(pi*b)=0``，首跳永远无法触发走样）。
+    因此轮次、剩余均用 ``/(上限+1)`` 映射到 ``(0,1)`` 内。
     """
     if max_llm <= 0 or remaining_llm <= 0 or max_rounds <= 0:
         return 0.0
-    # 归一化到 (0,1)，避免端点恰为 0 使全程无变异
-    t = min(1.0, max(0.001, round_idx / (max_rounds + 0.5)))
-    b = min(1.0, max(0.001, remaining_llm / max_llm))
-    # 双因子 sin 积：两端低、中间高
     import math
 
+    # 映射到 (0,1)，避免 sin(pi*1)=0 导致「满配额时变异概率恒为 0」的死锁
+    t = min(1.0, max(0.001, round_idx / float(max_rounds + 1)))
+    b = min(1.0, max(0.001, remaining_llm / float(max_llm + 1)))
     return float(math.sin(math.pi * t) * math.sin(math.pi * b))
 
 
