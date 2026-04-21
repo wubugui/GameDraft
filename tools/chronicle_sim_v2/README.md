@@ -61,9 +61,19 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_spread_standalone.py
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_spread_standalone.py --run-dir <已有 run 目录>
 
-对已有 Run 的某一周做**统计**（复制 ``world``、强制 ``max_llm_calls_per_event=0``，不调 Cline）::
+对已有 Run 的某一周做**统计**（复制 ``world``、默认强制 ``max_llm_calls_per_event=0``，不调 Cline）::
 
     python tools\\chronicle_sim_v2\\scripts\\run_rumor_week_stats.py --run-dir <run 目录> --week 1
+
+沿用 Run 内 ``rumor_sim``（仍为 stub ``pa``，不调 Cline），可看「走样发生」条数::
+
+    python tools\\chronicle_sim_v2\\scripts\\run_rumor_week_stats.py --run-dir <run 目录> --week 1 --use-source-llm-config
+
+只读已落盘的 ``rumors.json``，统计 ``distorted: true`` 条数::
+
+    python tools\\chronicle_sim_v2\\scripts\\run_rumor_week_stats.py --run-dir <run 目录> --week 1 --from-disk-rumors
+
+写入 ``chronicle/week_XXX/rumors.json`` 的每条谣言可含布尔字段 ``distorted``：本条传播是否进入了走样分支（抽样命中且调用了走样逻辑；stub 下为占位文本，真实 Run 下为 Cline）。
 
 **GM 事件与谣言**：GM 须在每条 `records` 中输出 `related_agents`、`spread_agents`（传播人 ⊆ 相关人）、`actor_ids`；`witness_accounts` 仅绑定**相关人**口供。入库前 `normalize_event_for_rumors` 会补全/过滤非法 id，并保证 `spread_agents ⊆ related_agents`。谣言仅从 `spread_agents` 概率选起点，沿图概率走边。
 
