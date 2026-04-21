@@ -13,6 +13,8 @@ async def run_month_summary(
     run_dir: Path,
     week_summaries: list[tuple[int, str]],
     month_num: int,
+    *,
+    world_bible_text: str = "",
 ) -> str:
     spec = load_agent_spec("month_historian")
     summaries_text = "\n\n".join(f"第{w}周：\n{s}" for w, s in week_summaries)
@@ -21,6 +23,7 @@ async def run_month_summary(
         {
             "month_num": str(month_num),
             "summaries_text": summaries_text,
+            "world_bible_text": world_bible_text or "（本 run 暂无世界 JSON）",
         },
     )
     res = await run_agent_cline(pa, run_dir, spec, user_text=user_text)

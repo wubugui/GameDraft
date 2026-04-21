@@ -10,7 +10,13 @@ from typing import Any, Callable
 
 from tools.chronicle_sim_v2.core.llm.client_factory import ClientFactory, PAChatResources
 from tools.chronicle_sim_v2.core.llm.config_resolve import provider_profile_for_agent
-from tools.chronicle_sim_v2.core.sim.event_types import load_event_types, pick_top_event_types, event_types_text_for_prompt
+from tools.chronicle_sim_v2.core.sim.event_types import (
+    DEFAULT_EVENT_PICK_MAX,
+    DEFAULT_EVENT_PICK_MIN,
+    load_event_types,
+    select_event_types_for_week,
+    event_types_text_for_prompt,
+)
 from tools.chronicle_sim_v2.core.sim.pacing import load_pacing_profile, multiplier_for_week
 from tools.chronicle_sim_v2.core.sim.tier_manager import apply_pending_tier_changes
 from tools.chronicle_sim_v2.core.world.chroma import add_world_doc
@@ -237,11 +243,43 @@ class WeekOrchestrator:
                 (self._load_run_meta() or {}).get("pacing_profile_id", "default")
             )
             pacing_mult = multiplier_for_week(pacing_profile, week)
-            ev_text = event_types_text_for_prompt(self.event_types)
-            self._log(f"  节奏系数={pacing_mult}, 可用事件类型={len(self.event_types)}")
+            meta = self._load_run_meta() or {}
+            ev_pick = meta.get("event_pick") if isinstance(meta.get("event_pick"), dict) else {}
+            min_pick = int(ev_pick.get("min", DEFAULT_EVENT_PICK_MIN))
+            max_pick = int(ev_pick.get("max", DEFAULT_EVENT_PICK_MAX))
+            selected_types, selection_notes = select_event_types_for_week(
+                self.event_types,
+                week,
+                pacing_mult,
+                self.run_dir,
+                min_types=min_pick,
+                max_types=max_pick,
+            )
+            if not selected_types and self.event_types:
+                selected_types = [self.event_types[0]]
+                selection_notes = (
+                    "（保底：未抽到可用类型，已使用 YAML 中第一条事件类型；请检查 conditions/cooldown。）\n"
+                    + selection_notes
+                )
+                self._log("  警告: event_pick 为空，已回退到首条事件类型")
+            ev_text = event_types_text_for_prompt(selected_types)
+            self._log(
+                f"  节奏系数={pacing_mult}, 全集类型={len(self.event_types)}, "
+                f"本周入选={len(selected_types)}: {[et.id for et in selected_types]}"
+            )
             from tools.chronicle_sim_v2.core.agents.director_agent import run_director_drafts
             pa_dir = self._build_pa("director")
-            drafts = await run_director_drafts(pa_dir, self.run_dir, all_intents, ev_text, week, pacing_mult)
+            world_for_director = build_world_bible_text(self.run_dir)
+            drafts = await run_director_drafts(
+                pa_dir,
+                self.run_dir,
+                all_intents,
+                ev_text,
+                week,
+                pacing_mult,
+                event_selection_notes=selection_notes,
+                world_bible_text=world_for_director,
+            )
             self._log(f"  Director 生成 {len(drafts)} 条草稿")
             for d in drafts:
                 did = d.get("type_id", uuid.uuid4().hex[:8])
@@ -289,7 +327,14 @@ class WeekOrchestrator:
             intents = read_week_intents(self.run_dir, week)
             pa_sum = self._build_pa("week_summarizer")
             from tools.chronicle_sim_v2.core.agents.week_summarizer_agent import run_week_summary
-            summary_text = await run_week_summary(pa_sum, self.run_dir, events, intents, week)
+            summary_text = await run_week_summary(
+                pa_sum,
+                self.run_dir,
+                events,
+                intents,
+                week,
+                world_bible_text=build_world_bible_text(self.run_dir),
+            )
             write_week_summary(self.run_dir, week, summary_text)
             self._log(f"  周总结: {summary_text[:80]}...")
 
@@ -344,12 +389,15 @@ class WeekOrchestrator:
         pa_hist = self._build_pa("month_historian")
         from tools.chronicle_sim_v2.core.agents.month_historian_agent import run_month_summary
         month_num = week // 4
-        month_text = await run_month_summary(pa_hist, self.run_dir, summaries, month_num)
+        wb = build_world_bible_text(self.run_dir)
+        month_text = await run_month_summary(
+            pa_hist, self.run_dir, summaries, month_num, world_bible_text=wb
+        )
 
         # 文风润色
         pa_rw = self._build_pa("style_rewriter")
         from tools.chronicle_sim_v2.core.agents.style_rewriter_agent import run_style_rewrite
-        polished = await run_style_rewrite(pa_rw, self.run_dir, month_text)
+        polished = await run_style_rewrite(pa_rw, self.run_dir, month_text, world_bible_text=wb)
 
         write_text(self.run_dir, f"chronicle/month_{month_num:02d}.md", polished)
 
@@ -414,10 +462,17 @@ class WeekOrchestrator:
         """构建 NPC 上下文文本。"""
         parts = []
 
-        # 世界背景
-        world = read_json(self.run_dir, "world/world_setting.json")
-        if world:
-            parts.append("【世界】\n" + json.dumps(world, ensure_ascii=False))
+        # 世界背景（全文：与 GM/Director 同源，避免只看见 world_setting 片段）
+        bible = build_world_bible_text(self.run_dir)
+        if bible.strip():
+            parts.append(
+                "【世界背景与设定全文（工作前须充分理解；名物、势力、地点以下来自本 run 种子）】\n"
+                + bible
+            )
+        else:
+            world = read_json(self.run_dir, "world/world_setting.json")
+            if world:
+                parts.append("【世界】\n" + json.dumps(world, ensure_ascii=False))
 
         # NPC 个人设定
         agent = read_agent(self.run_dir, agent_id)
@@ -489,6 +544,11 @@ class WeekOrchestrator:
     def _build_b_context(self, b_agents: list[tuple[str, str]], week: int) -> str:
         """构建 B/C 类上下文。"""
         parts = []
+        bible = build_world_bible_text(self.run_dir)
+        if bible.strip():
+            parts.append(
+                "【世界背景与设定全文（工作前须充分理解）】\n" + bible + "\n\n【以下为龙套名单与档案】"
+            )
         for aid, _ in b_agents:
             agent = read_agent(self.run_dir, aid)
             if agent:

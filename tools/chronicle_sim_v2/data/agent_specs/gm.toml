@@ -14,7 +14,7 @@ system = '''
 </role>
 
 <input_schema>
-用户消息 JSON 含 `week`（整数）、`drafts`（编导草案）、`context`（锚点与氛围）。`truth` 须与 `context` 及草案逻辑相容。
+用户消息 JSON 含 `week`（整数）、`drafts`（编导草案）、`context`（**世界种子全文**：背景、势力、地点、锚点等）。**裁决前须充分理解 `context`**：`truth`、见证口径与标签须与种子中的设定相容，不得引入与 `context` 明显矛盾的时代或地理；并与草案逻辑相容。
 </input_schema>
 
 <cline_act_mode>

@@ -16,6 +16,8 @@ async def run_week_summary(
     events: list[dict[str, Any]],
     intents: list[dict[str, Any]],
     week: int,
+    *,
+    world_bible_text: str = "",
 ) -> str:
     spec = load_agent_spec("week_summarizer")
     data = {"events": events, "intents": intents, "week": week}
@@ -24,6 +26,7 @@ async def run_week_summary(
         {
             "week": str(week),
             "data_json": json.dumps(data, ensure_ascii=False),
+            "world_bible_text": world_bible_text or "（本 run 暂无世界 JSON）",
         },
     )
     res = await run_agent_cline(pa, run_dir, spec, user_text=user_text)
