@@ -224,7 +224,11 @@ class WeekOrchestrator:
             pa_gm = self._build_pa("gm")
             from tools.chronicle_sim_v2.core.agents.gm_agent import run_gm_arbitrate
             records = await run_gm_arbitrate(pa_gm, self.run_dir, drafts, world_ctx, week)
+            from tools.chronicle_sim_v2.core.agents.event_normalize import normalize_event_for_rumors
+
             for rec in records:
+                if isinstance(rec, dict):
+                    normalize_event_for_rumors(self.run_dir, rec)
                 write_event_record(self.run_dir, week, rec)
                 self._log(f"    事件: {rec.get('type_id', '')}")
             self._log(f"  GM 产出 {len(records)} 条事件记录")
