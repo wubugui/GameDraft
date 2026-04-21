@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from tools.chronicle_sim_v2.core.llm.client_factory import ClientFactory
 from tools.chronicle_sim_v2.core.llm.config_resolve import provider_profile_for_agent
 from tools.chronicle_sim_v2.core.llm.chat_format import format_chat_turns_for_task
+from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
 from tools.chronicle_sim_v2.core.world.fs import read_json, read_text, grep_search
 from tools.chronicle_sim_v2.core.world.chroma import is_embedding_configured, search_world
 from tools.chronicle_sim_v2.core.world.week_state import list_weeks
@@ -41,7 +42,6 @@ class ChronicleBrowserTab(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._run_dir: Path | None = None
-        self._llm_config: dict = {}
         self._visible = False
         self._probe_turns: list[tuple[str, str]] = []
         self._probe_worker: CancellableAsyncWorker | None = None
@@ -138,7 +138,7 @@ class ChronicleBrowserTab(QWidget):
 
         self._tabs.addTab(probe, "素材探针")
 
-    def set_run_dir(self, run_dir: Path | None, llm_config: dict | None = None) -> None:
+    def set_run_dir(self, run_dir: Path | None) -> None:
         prev = self._run_dir
         if prev != run_dir and self._probe_worker is not None:
             try:
@@ -146,8 +146,6 @@ class ChronicleBrowserTab(QWidget):
             except Exception:
                 pass
         self._run_dir = run_dir
-        if llm_config is not None:
-            self._llm_config = llm_config
         if prev != run_dir:
             self._clear_probe_session()
             self._set_probe_busy(False)
@@ -196,7 +194,7 @@ class ChronicleBrowserTab(QWidget):
         self._probe_job_run = self._run_dir
 
         run_dir = self._run_dir
-        llm = self._llm_config
+        llm = load_llm_config(run_dir)
 
         async def _do() -> str:
             pa = ClientFactory.build_pa_chat(

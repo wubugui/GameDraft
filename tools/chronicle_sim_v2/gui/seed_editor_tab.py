@@ -126,16 +126,12 @@ class SeedEditorTab(QWidget):
         main_splitter.setStretchFactor(1, 1)
         layout.addWidget(main_splitter)
 
-    def set_run_dir(self, run_dir: Path | None, llm_config: dict | None = None) -> None:
+    def set_run_dir(self, run_dir: Path | None) -> None:
         self._run_dir = run_dir
         self._llm_dirty = False
         if run_dir:
             self._refresh_agents()
-            # 加载 LLM 配置
-            if llm_config:
-                self._llm_config = llm_config
-            else:
-                self._llm_config = load_llm_config(run_dir)
+            self._llm_config = load_llm_config(run_dir)
             self.llm_form.set_from_dict(self._llm_config)
             # 尝试加载已有种子
             from tools.chronicle_sim_v2.core.world.fs import read_json, list_dir as fs_list
@@ -319,11 +315,12 @@ class SeedEditorTab(QWidget):
                 self.log_signal.emit(msg)
 
             _log("[种子生成] 后台协程已启动…")
+            cfg = load_llm_config(run_dir)
             _log("[种子生成] 正在聚合设定库文本（build_ideas_blob）…")
             ideas_blob = build_ideas_blob(run_dir)
             _log(f"[种子生成] 设定库聚合完成，约 {len(ideas_blob)} 字符。")
 
-            pa = build_initializer_pa(llm_config, run_dir)
+            pa = build_initializer_pa(cfg, run_dir)
             try:
                 result = await run_initializer(
                     pa,
@@ -363,6 +360,10 @@ class SeedEditorTab(QWidget):
                     self._update_preview(result)
                 except Exception:
                     pass
+                if self._run_dir:
+                    self._llm_config = load_llm_config(self._run_dir)
+                    self.llm_form.set_from_dict(self._llm_config)
+                    self._llm_dirty = False
                 self.log_signal.emit("[种子生成] 成功，已填入左侧 JSON。")
             else:
                 self.log_signal.emit(f"[种子生成] 完成但结果类型异常: {type(result)!r}")
