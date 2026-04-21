@@ -84,7 +84,7 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
 
 1. **设定库**：录入灵感、导入 MD 文件
 2. **种子编辑**：由 `initializer` Agent 从设定库生成初始世界，或直接手填
-3. **模拟**：按周推进，S/A/B 类 NPC 分层、Director 拟事件、GM 仲裁、谣言传播、周 / 月总结、文风润色。生成**当周**意图时，会把**上周** ``chronicle/week_{N-1}/rumors.json`` 里与该 NPC（S/A：本人作 teller 或 hearer）或 B/C 群体相关的传闻摘要一并写入 prompt，使下周行动可体现「听过的谣」。
+3. **模拟**：按周推进，S/A/B 类 NPC 分层、Director 拟事件、GM 仲裁、谣言传播、周 / 月总结、文风润色。生成**当周**意图时：上周 **GM 事件**仅注入「**本人直接参与**」的子集（``actor_ids`` / ``related_agents`` / ``spread_agents`` / ``witness_accounts`` / ``truth_json.actor_ids``；``tier_b_group`` 见证对 tier B/C 个体视为参与）；**上周谣言**仅注入本人作 ``teller_id`` 或 ``hearer_id`` 的条。B/C 群体另汇总「任一活跃 B/C 亲身相关事件」+ 涉及 B/C 的传闻。
 4. **编年史**：浏览、搜索、探针问答；探针答案强制通过「`read_file` + 引用子串」校验，不合格会自动走诊断补救一轮
 
 ## 测试
