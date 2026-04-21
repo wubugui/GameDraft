@@ -212,10 +212,24 @@ def parse_json_lenient(text: str) -> Any:
     except Exception:
         pass
 
+    detail_parts = [f"预处理后 json.loads 与 json-repair 均失败，去空白后长度={len(s.strip())}"]
+    head = (raw_full or "").strip()[:2000]
+    if head and not re.search(r"[\{\[]", head):
+        detail_parts.append("输出不像 JSON（前段未见 `{` 或 `[`），可能为自然语言拒答或说明。")
+    if "input.md" in head and ("未找到" in head or "找不到" in head):
+        detail_parts.append(
+            "若提示缺少 input.md：种子生成已向临时 cwd 写入 input.md，仍出现则说明模型未按角色输出 JSON。"
+        )
+    if "已按契约输出" in head and "{" not in head:
+        detail_parts.append(
+            "常见于 Cline ACT：模型仅在 attempt_completion 里写了摘要，未写入约定文件（"
+            "initializer：`seed_draft.json`；director/gm/NPC 槽：`agent_output.json`）。"
+        )
+
     err = LLMJSONError(
         "无法在输出中找到可解析的 JSON 对象或数组",
         raw_preview,
-        details=f"预处理后 json.loads 与 json-repair 均失败，去空白后长度={len(s.strip())}",
+        details=" ".join(detail_parts),
     )
     err.raw_text = raw_full
     raise err
@@ -225,11 +239,11 @@ def _diagnose_wrong_root_type(val: Any) -> str:
     if isinstance(val, list):
         n = len(val)
         if n == 0:
-            return "根为 []，种子需要非空对象"
+            return "根为 []；期望 `{...}` 单对象根，或与调用方约定之数组折叠逻辑。"
         head = val[0]
         return (
             f"根为长度 {n} 的数组；首元素类型为 {type(head).__name__}。"
-            " 期望单一 JSON 对象根（world_setting、agents 等与 world_setting 并列）。"
+            " 此处期望 JSON 对象的根 `{{...}}`（若为多条目数组，需合并为单一对象或由上游专门解析）。"
         )
     return f"根类型为 {type(val).__name__}，期望 object"
 

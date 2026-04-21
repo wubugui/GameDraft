@@ -26,13 +26,12 @@ from PySide6.QtWidgets import (
 
 from tools.chronicle_sim_v2.core.llm.client_factory import ClientFactory
 from tools.chronicle_sim_v2.core.llm.config_resolve import provider_profile_for_agent
-from tools.chronicle_sim_v2.core.llm.crew_run import format_chat_turns_for_task
+from tools.chronicle_sim_v2.core.llm.chat_format import format_chat_turns_for_task
 from tools.chronicle_sim_v2.core.world.fs import read_json, read_text, grep_search
 from tools.chronicle_sim_v2.core.world.chroma import is_embedding_configured, search_world
 from tools.chronicle_sim_v2.core.world.week_state import list_weeks
 from tools.chronicle_sim_v2.gui.async_runnable import CancellableAsyncWorker
 from tools.chronicle_sim_v2.gui.human_display import probe_reply_to_html
-from tools.chronicle_sim_v2.paths import PROMPTS_DIR
 
 
 class ChronicleBrowserTab(QWidget):
@@ -210,7 +209,6 @@ class ChronicleBrowserTab(QWidget):
 
             return await run_probe_user_turn(
                 pa,
-                PROMPTS_DIR,
                 run_dir,
                 text,
                 prior_turns_text=prior_text,

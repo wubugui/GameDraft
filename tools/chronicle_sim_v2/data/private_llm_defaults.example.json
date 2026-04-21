@@ -2,7 +2,7 @@
   "_comment": "复制本文件为 private_llm_defaults.json（与示例同目录），填入真实 api_key；该文件已列入 .gitignore。",
   "embeddings": {
     "kind": "openai_compat",
-    "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "api_key": "YOUR_API_KEY",
     "model": "text-embedding-v4"
   },
@@ -16,8 +16,8 @@
   },
   "default": {
     "kind": "openai_compat",
-    "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "api_key": "YOUR_API_KEY",
-    "model": "qwen3.6-plus"
+    "model": "qwen3.6-flash"
   }
 }

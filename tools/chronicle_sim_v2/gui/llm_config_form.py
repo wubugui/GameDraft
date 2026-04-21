@@ -62,7 +62,19 @@ def agent_llm_config_keys() -> tuple[str, ...]:
 
 
 KNOWN_TOP_LEVEL = frozenset(
-    {"embeddings", "semantic_memory", "llm_audit", "trace", *(k for k, _ in _AGENT_ENTRIES)},
+    {
+        "embeddings",
+        "semantic_memory",
+        "llm_audit",
+        "trace",
+        "cline_executable",
+        "cline_timeout_sec",
+        "cline_verbose",
+        "cline_stream_stderr",
+        "cline_isolated_state",
+        "cline_skip_auth_refresh",
+        *(k for k, _ in _AGENT_ENTRIES),
+    },
 )
 
 
@@ -166,7 +178,7 @@ class LlmConfigForm(QWidget):
         trace_box = QGroupBox("调试追踪（stderr / 活动日志）")
         trace_box.setToolTip(
             "写入 llm_config_json.trace，随当前 run 保存，不使用环境变量。\n"
-            "勾选「输出 new/all messages JSON」会打印 Crew 任务与原始输出等调试信息，日志可能很长。"
+            "勾选「输出 new/all messages JSON」会打印 Cline 调用与原始输出等调试信息，日志可能很长。"
         )
         trace_lay = QFormLayout(trace_box)
         tighten_form(trace_lay, vertical=4, horizontal=8)

@@ -1,12 +1,10 @@
-"""离线 Stub：继承 crewai.llm.LLM，覆盖 call，逻辑与旧 FunctionModel 一致。"""
+"""离线 Stub：不调用 Cline / 外部 API，用于无密钥或 CI。"""
 from __future__ import annotations
 
 import json
 import re
 import uuid
 from typing import Any, Dict, List, Optional
-
-from crewai.llm import LLM
 
 
 def _flatten_messages(messages: List[Dict[str, str]]) -> str:
@@ -20,7 +18,8 @@ def _flatten_messages(messages: List[Dict[str, str]]) -> str:
     return "\n".join(chunks)
 
 
-def _stub_text(joined: str) -> str:
+def stub_response_text(joined: str) -> str:
+    """根据合并后的提示文本返回占位 JSON/正文（与旧 StubLLM 行为一致）。"""
     if "【传闻改写任务】" in joined:
         return "码头上有人风传，昨夜货栈闹出动静，细节对不上号，当不得真。"
 
@@ -101,7 +100,7 @@ def _stub_text(joined: str) -> str:
         }
         return json.dumps(payload, ensure_ascii=False)
 
-    if "你是游戏世界策划助手" in joined:
+    if "你是游戏世界策划助手" in joined or "种子抽取器" in joined or "SeedDraft" in joined:
         payload = {
             "world_setting": {
                 "title": "Stub 世界观",
@@ -180,22 +179,21 @@ def _stub_text(joined: str) -> str:
     if "润色" in joined and "川渝" in joined:
         return "这个月江风紧得很，码头上的袍哥人家个个绷着脸。茶馆里头，堂倌儿掺茶递水的工夫，闲言碎语就跟江水一样往外淌。"
 
-    return "（StubLLM）未识别任务。请改用 openai_compat 或 ollama。"
+    return "（StubLLM）未识别任务。请配置 Cline（非 stub）或改用有效提示。"
 
 
-class ChronicleStubLLM(LLM):
-    """离线占位，不调用 litellm。"""
+class ChronicleStubLLM:
+    """占位类型标记；不与外部 API 通信。"""
 
-    def __init__(self) -> None:
-        super().__init__(model="chronicle_stub")
+    model = "chronicle_stub"
 
-    def call(  # type: ignore[override]
+    def call(
         self,
         messages: List[Dict[str, str]],
         callbacks: Optional[List[Any]] = None,
     ) -> str:
         joined = _flatten_messages(messages)
-        return _stub_text(joined)
+        return stub_response_text(joined)
 
 
 def build_chronicle_stub_llm() -> ChronicleStubLLM:

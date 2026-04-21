@@ -1,4 +1,4 @@
-"""Style Rewriter Agent：对月志进行文风润色，增加川渝方言和民国风味。"""
+"""Style Rewriter Agent：对月志进行文风润色（Cline CLI）。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,40 +6,31 @@ from pathlib import Path
 import yaml
 
 from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources
-from tools.chronicle_sim_v2.core.llm.crew_factory import make_single_agent_crew
-from tools.chronicle_sim_v2.core.llm.crew_run import crew_output_text, run_crew_traced
+from tools.chronicle_sim_v2.core.llm.agent_spec import load_agent_spec, render_user
+from tools.chronicle_sim_v2.core.llm.cline_runner import run_agent_cline
 from tools.chronicle_sim_v2.paths import DATA_DIR
+
+
+def _fingerprints_block() -> str:
+    fp_file = DATA_DIR / "style_fingerprints.yaml"
+    if not fp_file.is_file():
+        return ""
+    with fp_file.open("r", encoding="utf-8") as f:
+        fingerprint_text = yaml.safe_dump(yaml.safe_load(f), allow_unicode=True)
+    if not fingerprint_text:
+        return ""
+    return f"<style_fingerprints>\n{fingerprint_text}\n</style_fingerprints>"
 
 
 async def run_style_rewrite(
     pa: AgentLLMResources,
-    prompts_dir: Path,
     run_dir: Path,
     text: str,
 ) -> str:
-    """润色文本的川渝/民国风味。"""
-    _ = run_dir
-    p = prompts_dir / "style_rewriter.md"
-    system = p.read_text(encoding="utf-8") if p.is_file() else "你是文风润色者。"
-    fp_file = DATA_DIR / "style_fingerprints.yaml"
-    fingerprint_text = ""
-    if fp_file.is_file():
-        with open(fp_file, "r", encoding="utf-8") as f:
-            fingerprint_text = yaml.safe_dump(yaml.safe_load(f), allow_unicode=True)
-
-    if fingerprint_text:
-        system += f"\n\n<style_fingerprints>\n{fingerprint_text}\n</style_fingerprints>"
-
-    user_prompt = f"请润色以下文本，增强川渝方言和民国市井风味，但不改变事实：\n\n{text}"
-    crew = make_single_agent_crew(
-        pa,
-        role="文风润色者",
-        goal="润色文本并保持事实。",
-        backstory=system,
-        tools=[],
-        task_description=user_prompt,
-        expected_output="润色后的正文。",
-        max_iter=15,
+    spec = load_agent_spec("style_rewriter")
+    system_ctx = {"style_fingerprints_block": _fingerprints_block()}
+    user_text = render_user(spec, {"text": text})
+    res = await run_agent_cline(
+        pa, run_dir, spec, user_text=user_text, system_ctx=system_ctx
     )
-    out = await run_crew_traced(pa, crew, trace_user_preview=user_prompt, audit_system_hint=system[:8000])
-    return crew_output_text(out)
+    return res.text

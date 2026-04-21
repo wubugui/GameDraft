@@ -86,11 +86,11 @@ class MainWindow(QMainWindow):
         # 顶部 Run 选择栏
         self._setup_run_bar()
 
-        # 连接日志信号
-        self.idea_tab.log_signal.connect(self._append_log)
-        self.seed_tab.log_signal.connect(self._append_log)
-        self.sim_tab.log_signal.connect(self._append_log)
-        self.chronicle_tab.log_signal.connect(self._append_log)
+        # 连接日志信号（Queued：工作线程里 emit 时安全投递到主线程刷新 UI）
+        self.idea_tab.log_signal.connect(self._append_log, Qt.QueuedConnection)
+        self.seed_tab.log_signal.connect(self._append_log, Qt.QueuedConnection)
+        self.sim_tab.log_signal.connect(self._append_log, Qt.QueuedConnection)
+        self.chronicle_tab.log_signal.connect(self._append_log, Qt.QueuedConnection)
 
         # 订阅全局 Run 切换
         self.idea_tab.run_changed.connect(self._on_run_changed)
@@ -218,6 +218,13 @@ class MainWindow(QMainWindow):
             save_last_run_path(str(run_dir))
             self._llm_config = load_llm_config(run_dir)
             self._append_log(f"切换到 run: {run_dir.name}")
+            # 切 Run 时一次性注册所有 MCP（后续 agent 调用即可直接连接）
+            try:
+                from tools.chronicle_sim_v2.core.llm.cline_workspace import ensure_mcp_for_run
+                settings_path = ensure_mcp_for_run(run_dir)
+                self._append_log(f"[MCP] 已注册 chronicle_sim: {settings_path}")
+            except Exception as e:
+                self._append_log(f"[MCP] 注册失败：{e!r}")
         # 同步到所有标签页
         self.idea_tab.set_run_dir(run_dir)
         self.seed_tab.set_run_dir(run_dir, self._llm_config)

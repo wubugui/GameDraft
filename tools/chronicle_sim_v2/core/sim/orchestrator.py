@@ -35,7 +35,6 @@ from tools.chronicle_sim_v2.core.world.week_state import (
     write_agent_memory,
     write_week_trace,
 )
-from tools.chronicle_sim_v2.paths import PROMPTS_DIR
 
 
 class WeekLock:
@@ -150,7 +149,7 @@ class WeekOrchestrator:
                 pa = self._build_pa("tier_s_npc")
                 context = self._build_npc_context(aid, week)
                 from tools.chronicle_sim_v2.core.agents.npc_agent_s import run_npc_s_intent
-                intent = await run_npc_s_intent(pa, PROMPTS_DIR, self.run_dir, aid, week, context)
+                intent = await run_npc_s_intent(pa, self.run_dir, aid, week, context)
                 write_week_intent(self.run_dir, week, aid, intent)
                 all_intents.append(intent)
                 self._log(f"    {aid}: {intent.get('intent_text', '')[:60]}")
@@ -178,7 +177,7 @@ class WeekOrchestrator:
                     self._log(f"  计算 {aid} 意图...")
                     context = self._build_npc_context(aid, week)
                     from tools.chronicle_sim_v2.core.agents.npc_agent_a import run_npc_a_intent
-                    intent = await run_npc_a_intent(pa, PROMPTS_DIR, self.run_dir, aid, week, context)
+                    intent = await run_npc_a_intent(pa, self.run_dir, aid, week, context)
                     write_week_intent(self.run_dir, week, aid, intent)
                     all_intents.append(intent)
                     self._log(f"    {aid}: {intent.get('intent_text', '')[:60]}")
@@ -193,7 +192,9 @@ class WeekOrchestrator:
                 pa = self._build_pa("tier_b_npc")
                 b_text = self._build_b_context(b_agents)
                 from tools.chronicle_sim_v2.core.agents.npc_agent_b import run_npc_b_intent
-                b_intent = await run_npc_b_intent(pa, PROMPTS_DIR, self.run_dir, b_text, week)
+                b_intent = await run_npc_b_intent(
+                    pa, self.run_dir, b_text, week, log_callback=self._log
+                )
                 write_json(self.run_dir, f"chronicle/{wdir}/intents/tier_b_group.json", b_intent)
                 all_intents.append(b_intent)
                 self._log(f"  B/C 群体意图: {str(b_intent.get('intent_text', ''))[:60]}")
@@ -212,7 +213,7 @@ class WeekOrchestrator:
             self._log(f"  节奏系数={pacing_mult}, 可用事件类型={len(self.event_types)}")
             from tools.chronicle_sim_v2.core.agents.director_agent import run_director_drafts
             pa_dir = self._build_pa("director")
-            drafts = await run_director_drafts(pa_dir, PROMPTS_DIR, self.run_dir, all_intents, ev_text, week, pacing_mult)
+            drafts = await run_director_drafts(pa_dir, self.run_dir, all_intents, ev_text, week, pacing_mult)
             self._log(f"  Director 生成 {len(drafts)} 条草稿")
             for d in drafts:
                 did = d.get("type_id", uuid.uuid4().hex[:8])
@@ -225,7 +226,7 @@ class WeekOrchestrator:
             world_ctx = build_world_bible_text(self.run_dir)
             pa_gm = self._build_pa("gm")
             from tools.chronicle_sim_v2.core.agents.gm_agent import run_gm_arbitrate
-            records = await run_gm_arbitrate(pa_gm, PROMPTS_DIR, self.run_dir, drafts, world_ctx, week)
+            records = await run_gm_arbitrate(pa_gm, self.run_dir, drafts, world_ctx, week)
             for rec in records:
                 write_event_record(self.run_dir, week, rec)
                 self._log(f"    事件: {rec.get('type_id', '')}")
@@ -237,7 +238,7 @@ class WeekOrchestrator:
             self._log(f"[Week {week}] Phase 8: 谣言传播...")
             pa_rumor = self._build_pa("rumor")
             from tools.chronicle_sim_v2.core.agents.rumor_agent import run_rumor_spread
-            rumors = await run_rumor_spread(pa_rumor, PROMPTS_DIR, self.run_dir, records, week)
+            rumors = await run_rumor_spread(pa_rumor, self.run_dir, records, week)
             write_week_rumors(self.run_dir, week, rumors)
             self._log(f"  传播 {len(rumors)} 条谣言")
 
@@ -249,7 +250,7 @@ class WeekOrchestrator:
             intents = read_week_intents(self.run_dir, week)
             pa_sum = self._build_pa("week_summarizer")
             from tools.chronicle_sim_v2.core.agents.week_summarizer_agent import run_week_summary
-            summary_text = await run_week_summary(pa_sum, PROMPTS_DIR, self.run_dir, events, intents, week)
+            summary_text = await run_week_summary(pa_sum, self.run_dir, events, intents, week)
             write_week_summary(self.run_dir, week, summary_text)
             self._log(f"  周总结: {summary_text[:80]}...")
 
@@ -304,12 +305,12 @@ class WeekOrchestrator:
         pa_hist = self._build_pa("month_historian")
         from tools.chronicle_sim_v2.core.agents.month_historian_agent import run_month_summary
         month_num = week // 4
-        month_text = await run_month_summary(pa_hist, PROMPTS_DIR, self.run_dir, summaries, month_num)
+        month_text = await run_month_summary(pa_hist, self.run_dir, summaries, month_num)
 
         # 文风润色
         pa_rw = self._build_pa("style_rewriter")
         from tools.chronicle_sim_v2.core.agents.style_rewriter_agent import run_style_rewrite
-        polished = await run_style_rewrite(pa_rw, PROMPTS_DIR, self.run_dir, month_text)
+        polished = await run_style_rewrite(pa_rw, self.run_dir, month_text)
 
         write_text(self.run_dir, f"chronicle/month_{month_num:02d}.md", polished)
 

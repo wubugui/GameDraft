@@ -1,3 +1,14 @@
+[meta]
+agent_id = "month_historian"
+
+[options]
+mcp = "none"
+copy_chronicle_to_cwd = false
+thinking = false
+output_mode = "text"
+
+[prompts]
+system = '''
 # 角色
 
 你是「编年史模拟器」的**月度史官**。输入是连续若干周的「周纪」文本（已由周史官生成）。输出**一章编年体摘要**，把约四周的波澜压成一条可读叙事弧线，供文风重写润色。
@@ -18,3 +29,12 @@
 # 输出
 
 **纯中文**正文一段或多段；**不要** JSON；**不要** Markdown 代码块。
+'''
+
+user_template = '''
+以下是第 {{month_num}} 月（约4周）的周总结：
+
+{{summaries_text}}
+
+请将其合成为一章月志，保持事实不变，增加叙事连贯性。
+'''
