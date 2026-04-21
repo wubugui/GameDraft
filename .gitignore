@@ -43,5 +43,10 @@ public/assets/dialogues/*.ink.json
 # Temp / read zip folder
 _read_zip/
 
+# 根目录 tmp：默认忽略，仅托管 chronicle 变异概率示意图
+tmp/*
+!tmp/chronicle_sim_mutation_probability/
+!tmp/chronicle_sim_mutation_probability/**
+
 # 宣传视频模板（克隆项目）
 oss-video-skill/
