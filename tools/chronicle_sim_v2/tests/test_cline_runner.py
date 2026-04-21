@@ -53,7 +53,7 @@ def test_cline_task_model_flag_openai_compat_default_base_keeps_m() -> None:
     assert cline_task_model_flag(p, "gpt-4o-mini") == "gpt-4o-mini"
 
 
-def test_build_argv_short_goes_inline(tmp_path: Path) -> None:
+def test_build_argv_short_uses_input_md_placeholder(tmp_path: Path) -> None:
     cfg = tmp_path / "cfg"
     ws = tmp_path / "ws"
     argv, use_stdin = _build_argv(
@@ -68,7 +68,8 @@ def test_build_argv_short_goes_inline(tmp_path: Path) -> None:
     assert use_stdin is False
     assert argv[0] == "cline"
     assert argv[1] == "task", "必须走 cline task 子命令，裸 cline 会误触 Kanban"
-    assert argv[-1] == "short"
+    assert argv[-1] == INPUT_MD_TASK_PROMPT
+    assert "short" not in argv
     assert "--config" in argv and str(cfg) in argv
     assert "-c" in argv and str(ws) in argv
     assert "--timeout" in argv and "600" in argv
