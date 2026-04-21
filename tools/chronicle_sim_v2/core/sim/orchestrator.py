@@ -26,6 +26,7 @@ from tools.chronicle_sim_v2.core.world.week_state import (
     read_week_intents,
     write_event_record,
     read_week_events,
+    read_week_rumors,
     write_week_summary,
     write_week_rumors,
     write_agent_memory,
@@ -187,7 +188,7 @@ class WeekOrchestrator:
             if b_agents:
                 self._log(f"[Week {week}] Phase 5: 计算 B/C 类 NPC 群体意图...")
                 pa = self._build_pa("tier_b_npc")
-                b_text = self._build_b_context(b_agents)
+                b_text = self._build_b_context(b_agents, week)
                 from tools.chronicle_sim_v2.core.agents.npc_agent_b import run_npc_b_intent
                 b_intent = await run_npc_b_intent(
                     pa, self.run_dir, b_text, week, log_callback=self._log
@@ -315,6 +316,63 @@ class WeekOrchestrator:
 
         write_text(self.run_dir, f"chronicle/month_{month_num:02d}.md", polished)
 
+    def _prev_week_rumors_for_agent(self, agent_id: str, prev_week: int, *, limit: int = 50) -> list[dict[str, Any]]:
+        """上周谣言中涉及该 NPC 的条目（作 teller 或 hearer），供下周意图参考。"""
+        if prev_week < 1:
+            return []
+        rumors = read_week_rumors(self.run_dir, prev_week)
+        out: list[dict[str, Any]] = []
+        for r in rumors:
+            if not isinstance(r, dict):
+                continue
+            tid = str(r.get("teller_id", "") or "").strip()
+            hid = str(r.get("hearer_id", "") or "").strip()
+            if tid != agent_id and hid != agent_id:
+                continue
+            role = "teller" if tid == agent_id else "hearer"
+            counterpart = hid if tid == agent_id else tid
+            out.append(
+                {
+                    "role": role,
+                    "counterpart": counterpart,
+                    "content": str(r.get("content", "") or "")[:400],
+                    "originating_event_id": r.get("originating_event_id"),
+                    "propagation_hop": r.get("propagation_hop"),
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+
+    def _prev_week_rumors_for_bc_group(
+        self, b_agents: list[tuple[str, str]], prev_week: int, *, limit: int = 80
+    ) -> list[dict[str, Any]]:
+        """上周谣言中至少一端为当周活跃 B/C NPC 的条目，供群体意图参考。"""
+        if prev_week < 1 or not b_agents:
+            return []
+        bc_ids = {aid for aid, _ in b_agents}
+        rumors = read_week_rumors(self.run_dir, prev_week)
+        out: list[dict[str, Any]] = []
+        for r in rumors:
+            if not isinstance(r, dict):
+                continue
+            tid = str(r.get("teller_id", "") or "").strip()
+            hid = str(r.get("hearer_id", "") or "").strip()
+            if tid not in bc_ids and hid not in bc_ids:
+                continue
+            out.append(
+                {
+                    "teller_id": tid,
+                    "hearer_id": hid,
+                    "content": str(r.get("content", "") or "")[:300],
+                    "originating_event_id": r.get("originating_event_id"),
+                    "propagation_hop": r.get("propagation_hop"),
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+
     def _build_npc_context(self, agent_id: str, week: int) -> str:
         """构建 NPC 上下文文本。"""
         parts = []
@@ -340,6 +398,14 @@ class WeekOrchestrator:
         if prev_events:
             parts.append("【近期事件】\n" + json.dumps(prev_events, ensure_ascii=False))
 
+        # 上周传闻（本人传过或听过；可能失真，下周行动应纳入考量）
+        prev_rumors = self._prev_week_rumors_for_agent(agent_id, prev_week)
+        if prev_rumors:
+            parts.append(
+                "【上周耳边传闻】（可能失真，请结合身份自行取舍）\n"
+                + json.dumps(prev_rumors, ensure_ascii=False)
+            )
+
         # 个人记忆
         mem = read_json(self.run_dir, f"chronicle/{week_dir_name(week)}/memories/{agent_id}.json")
         if mem:
@@ -347,13 +413,20 @@ class WeekOrchestrator:
 
         return "\n\n".join(parts)
 
-    def _build_b_context(self, b_agents: list[tuple[str, str]]) -> str:
+    def _build_b_context(self, b_agents: list[tuple[str, str]], week: int) -> str:
         """构建 B/C 类上下文。"""
         parts = []
         for aid, _ in b_agents:
             agent = read_agent(self.run_dir, aid)
             if agent:
                 parts.append(json.dumps(agent, ensure_ascii=False))
+        prev_week = week - 1
+        bc_rumors = self._prev_week_rumors_for_bc_group(b_agents, prev_week)
+        if bc_rumors:
+            parts.append(
+                "【上周坊间传闻】（涉及下列 B/C NPC 中至少一方；可能失真）\n"
+                + json.dumps(bc_rumors, ensure_ascii=False)
+            )
         return "\n\n".join(parts)
 
     def _load_run_meta(self) -> dict[str, Any] | None:
