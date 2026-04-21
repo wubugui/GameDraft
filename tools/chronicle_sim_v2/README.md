@@ -17,7 +17,7 @@
 
 - **Python 3.12+**：`pip install -r tools\chronicle_sim_v2\requirements.txt`
 - **Node.js 20+**：`npm install -g cline`（CLI 文档：https://docs.cline.bot/cline-cli/installation）
-- **Cline 凭据**：每次 Agent 任务前，runner 会按当前槽位 `ProviderProfile` 非交互跑一次 `cline auth --config <run_dir>\.cline_config ...`，与界面里填的 `api_key` / `base_url` / `model` 对齐，无需提前手工 `cline auth`
+- **Cline 凭据**：每次 Agent 任务前，runner 会设置 ``CLINE_DIR=<run_dir>/.cline_config``，并按当前槽位 `ProviderProfile` 非交互跑一次 ``cline auth --config <run_dir>\\.cline_config ...``（与官方 CLI 一致：``--config`` 为 ``clineDir``，凭据落在其下 ``data/``），与界面里填的 `api_key` / `base_url` / `model` 对齐，无需提前手工 `cline auth`
 
 ## 启动
 
@@ -39,7 +39,7 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
 
 或从仓库根目录使用包装脚本 ``run-chronicle-sim-week.cmd``（参数原样传给上述 Python 脚本）。
 
-**Cline 与 OpenAI 兼容网关**：官方 CLI 里 ``cline auth -p openai -m <modelid> -b <base>`` 会把网关与模型写入 ``--config``；而 ``cline task -m`` 面向的是 Cline **内置**模型目录。对自定义 ``base_url`` 的 ``openai_compat``，runner 在 ``task`` 上**不再追加** ``-m``，以免裸模型名被误解析为 OpenRouter 等其它提供商（与 DashScope 等密钥无关）。模型名仍以 ``llm_config.json`` 为准，经 ``auth`` 传给网关。
+**Cline 与 OpenAI 兼容网关**：子进程设置 ``CLINE_DIR=<run_dir>/.cline_config``，凭据写入 ``<run_dir>/.cline_config/data/secrets.json``，且 ``cline auth`` / ``cline task`` 的 ``--config`` 同为 ``<run_dir>/.cline_config``（与 Cline 内部 ``join(clineDir, \"data\")`` 布局一致）。若未设置 ``CLINE_DIR``，密钥会落到用户 ``~/.cline/data``，易出现 ``auth`` 与 ``task`` 读的不是同一套凭据、任务回退默认路由等问题。官方 CLI 里 ``cline task -m`` 面向 Cline **内置**模型目录；对自定义 ``base_url`` 的 ``openai_compat``，runner 在 ``task`` 上**不追加** ``-m``，模型由 ``cline auth -p openai -m <modelid> -b <base>`` 与 ``llm_config.json`` 决定。
 
 ## llm_config 可选字段
 
@@ -50,7 +50,7 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
 - `llm_audit.enabled`：是否写 `run_dir/llm_audit/<YYYYMMDD>.jsonl`
 - `trace.*`：详细 prompt 追踪开关
 
-凡是 Run 特有的目录都不需要用户手填：`run_dir/.cline_config/`（Cline 配置与 secrets）、`run_dir/.chronicle_sim/ws/*`（每次调用的临时 cwd，调用结束即删）、`run_dir/.chronicle_sim/llm_effective/`（脱敏快照）都由代码生成与清理。
+凡是 Run 特有的目录都不需要用户手填：`run_dir/.cline_config/`（Cline ``clineDir``，其下 ``data/`` 含 settings、secrets、任务状态等）、`run_dir/.chronicle_sim/ws/*`（每次调用的临时 cwd，调用结束即删）、`run_dir/.chronicle_sim/llm_effective/`（脱敏快照）都由代码生成与清理。
 
 ## 流程
 

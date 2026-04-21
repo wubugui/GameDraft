@@ -339,8 +339,12 @@ _CLINE_STRIP_PROXY_ENV = frozenset(
 )
 
 
-def build_cline_env() -> dict[str, str]:
-    """Cline 子进程环境：继承当前进程环境，但剔除代理相关变量，并强制 ``NO_PROXY=*``（不走 HTTP(S) 代理）。"""
+def build_cline_env(*, run_dir: Path | None = None) -> dict[str, str]:
+    """Cline 子进程环境：继承当前进程环境，但剔除代理相关变量，并强制 ``NO_PROXY=*``（不走 HTTP(S) 代理）。
+
+    设置 ``CLINE_DIR``：Cline 在 ``clineDir/data/`` 下存放 ``secrets.json`` 等；若不设则落到用户 ``~/.cline/data``，
+    会导致 ``cline auth --config <run>/...`` 与任务实际读写的凭据目录不一致（任务回退默认模型 / OpenRouter）。
+    """
     env = dict(os.environ)
     for k in list(env.keys()):
         if k in _CLINE_STRIP_PROXY_ENV:
@@ -352,6 +356,9 @@ def build_cline_env() -> dict[str, str]:
     # 明确声明不经过代理（覆盖系统/用户此前对 NO_PROXY 的设置）
     env["NO_PROXY"] = "*"
     env["no_proxy"] = "*"
+    if run_dir is not None:
+        # 与 ``cline_workspace.cline_config_path`` 的父目录一致：``run_dir/.cline_config``。
+        env["CLINE_DIR"] = str((run_dir / ".cline_config").resolve())
     return env
 
 
@@ -446,7 +453,7 @@ async def refresh_cline_auth_for_profile(
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=build_cline_env(),
+                env=build_cline_env(run_dir=run_dir),
                 cwd=str(run_dir.resolve()),
                 **_cline_subprocess_kwargs(),
             )
@@ -725,7 +732,7 @@ async def run_agent_cline(
                     stdin=asyncio.subprocess.PIPE if use_stdin else asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=build_cline_env(),
+                    env=build_cline_env(run_dir=run_dir),
                     cwd=str(temp_ws),
                     **_cline_subprocess_kwargs(),
                 )

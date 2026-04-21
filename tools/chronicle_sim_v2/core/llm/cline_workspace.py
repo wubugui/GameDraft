@@ -17,7 +17,8 @@ from tools.chronicle_sim_v2.core.llm.agent_spec import AgentSpec, render_system
 from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
 
 CLINE_CONFIG_DIRNAME = ".cline_config"
-# Cline CLI ``--config`` 对应官方 ``~/.cline``（其下再有 ``data/`` 放 globalState、secrets）。勿传 ``.../.cline_config/data``，否则会再套一层 ``data/data``。
+# Cline 内部：``clineDir`` 默认为 ``~/.cline``，真实状态在 ``join(clineDir, \"data\")``（含 ``secrets.json``、``globalState.json``）。
+# CLI 的 ``--config`` 传入的是**与** ``~/.cline`` **同级**的目录（即本 Run 的 ``run_dir/.cline_config``），**不是** ``.../data``；若误传 ``.../data`` 会再套一层 ``data/data``。
 CLINE_MCP_SETTINGS_REL = Path("data") / "settings" / "cline_mcp_settings.json"
 CHRONICLE_SIM_DIR = ".chronicle_sim"
 WS_SUBDIR = "ws"
@@ -33,9 +34,9 @@ MCP_CLINE_RULE_TEXT = (
 
 
 def cline_config_path(run_dir: Path) -> Path:
-    """Run 级 Cline ``--config`` 目录：``run_dir/.cline_config``（其下 ``data/`` 由 Cline 管理）。
+    """Run 级 Cline ``clineDir``：``run_dir/.cline_config``（与 ``cline auth`` / ``cline task`` 的 ``--config`` 一致）。
 
-    与 ``cline auth --config <此路径>``、``cline task --config <此路径>`` 一致。
+    凭据与全局状态在 ``run_dir/.cline_config/data/`` 下，由 Cline 自行创建。
     """
     p = run_dir / CLINE_CONFIG_DIRNAME
     p.mkdir(parents=True, exist_ok=True)
