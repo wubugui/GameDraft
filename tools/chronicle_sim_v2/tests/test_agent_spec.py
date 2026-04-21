@@ -80,5 +80,8 @@ def test_invalid_output_mode(tmp_path, monkeypatch) -> None:
 
 def test_probe_user_template_wants_expected_keys() -> None:
     sp = load_agent_spec("probe")
-    text = render_user(sp, {"prior_turns_block": "", "user_question": "Q?"})
+    text = render_user(
+        sp,
+        {"prior_turns_block": "", "user_question": "Q?", "world_bible_text": "{}"},
+    )
     assert "Q?" in text

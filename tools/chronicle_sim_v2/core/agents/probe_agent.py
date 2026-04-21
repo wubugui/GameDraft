@@ -16,7 +16,8 @@ from tools.chronicle_sim_v2.core.agents.probe_citation_verify import (
 from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources
 from tools.chronicle_sim_v2.core.llm.agent_spec import AgentSpec, load_agent_spec, render_user
 from tools.chronicle_sim_v2.core.llm.cline_runner import RunnerResult, run_agent_cline
-from tools.chronicle_sim_v2.core.llm.cline_workspace import cleanup_temp_ws
+from tools.chronicle_sim_v2.core.world.seed_reader import build_world_bible_text
+from tools.chronicle_sim_v2.core.llm.cline_workspace import archive_workspace_after_run
 from tools.chronicle_sim_v2.core.llm.llm_trace import emit_llm_trace
 
 _READ_FILE_NUDGE = (
@@ -33,7 +34,11 @@ _SYSTEM_NOTE_NO_TOOL = (
 
 
 def _build_user_text(
-    spec: AgentSpec, *, user_question: str, prior_turns_text: str | None
+    spec: AgentSpec,
+    *,
+    run_dir: Path,
+    user_question: str,
+    prior_turns_text: str | None,
 ) -> str:
     prior_block = ""
     if prior_turns_text and prior_turns_text.strip():
@@ -41,11 +46,13 @@ def _build_user_text(
             "以下为此前对话（旧消息在上，新消息在下）：\n\n"
             f"{prior_turns_text.strip()}\n\n---\n\n当前用户问题：\n"
         )
+    wb = build_world_bible_text(run_dir) or "（本 run 暂无世界 JSON）"
     return render_user(
         spec,
         {
             "prior_turns_block": prior_block,
             "user_question": user_question.strip(),
+            "world_bible_text": wb,
         },
     )
 
@@ -83,7 +90,10 @@ async def run_probe_user_turn(
 
     spec = load_agent_spec("probe")
     base_user = _build_user_text(
-        spec, user_question=user_text, prior_turns_text=prior_turns_text
+        spec,
+        run_dir=run_dir,
+        user_question=user_text,
+        prior_turns_text=prior_turns_text,
     )
 
     pending_ws: list[Path] = []
@@ -92,13 +102,13 @@ async def run_probe_user_turn(
         if res.temp_ws_path is not None:
             pending_ws.append(res.temp_ws_path)
 
-    def _cleanup_all() -> None:
+    def _archive_all() -> None:
         while pending_ws:
             ws = pending_ws.pop()
             try:
-                cleanup_temp_ws(ws)
+                archive_workspace_after_run(run_dir, ws, "probe")
             except OSError as e:
-                emit_llm_trace(f"[probe·cleanup] rmtree failed ws={ws.name} err={e!r}")
+                emit_llm_trace(f"[probe·archive] failed ws={ws.name} err={e!r}")
 
     try:
         r1 = await _run_once(pa, run_dir, spec, base_user)
@@ -131,4 +141,4 @@ async def run_probe_user_turn(
         emit_llm_trace(f"[probe·citation] second_pass=false reasons={reasons2!r}")
         return PROBE_CITATION_REJECT_MARKER + PROBE_CITATION_FAILURE_MESSAGE
     finally:
-        _cleanup_all()
+        _archive_all()

@@ -1,13 +1,28 @@
+# 事件类型全集。模拟器每周按 pick_weight × 节奏系数 × 周期系数 加权抽样 3～6 条（默认），
+# 仅将入选类型交给 Director；不会每周触发全部类型。
+#
+# dramatic_brief / effect_brief：只描述「这一类事件在叙事上承担什么功能、可能牵动哪些轴」，
+# 不写具体场面、对白、器物与地点情节；具体内容由 Director 根据 run 内世界种子与意图推演。
+# 兼容旧字段：若仅有 narrative_template / consequences_template，加载器会映射到上述两项。
+#
+# 字段说明：
+#   pick_weight: 相对入选权重
+#   period_every_n_weeks / period_phase / period_weight_mult: 周期加码
+#   cooldown_weeks: 同类型最小间隔周数
+#   conditions: 如 "week >= 2"
+#
+# run.json 可选: "event_pick": { "min": 3, "max": 7 }
+
 event_types:
   - id: river_dispute
     category: 江湖
     tier: minor
     conditions: "week >= 1"
-    weight: 1.2
+    pick_weight: 1.05
     cooldown_weeks: 2
     supernatural_prob: 0.05
-    narrative_template: "码头/河岸因分货、争地盘起冲突。"
-    consequences_template: "关系紧张，或结下梁子。"
+    dramatic_brief: "群体在生计资源或势力边界上的公开摊牌与对峙。"
+    effect_brief: "关系张力、结盟或结仇、后续报复风险。"
     actor_slots:
       - role: 挑头
         tier_min: B
@@ -20,43 +35,274 @@ event_types:
     category: 传闻
     tier: flavor
     conditions: "true"
-    weight: 0.9
+    pick_weight: 1.12
     cooldown_weeks: 1
     supernatural_prob: 0.0
-    narrative_template: "茶馆里说书或闲扯，流言起。"
-    consequences_template: "传闻入库，belief 可更新。"
+    dramatic_brief: "公共闲话空间里信息扩散、误读与议程被谁推着走。"
+    effect_brief: "信念与流言层更新；人物被贴上或撕下标签。"
     actor_slots:
       - role: 说书
         tier_min: B
         tier_max: A
 
-  - id: supernatural_omen
-    category: 超自然
-    tier: minor
-    conditions: "week >= 2"
-    weight: 0.6
-    cooldown_weeks: 3
-    supernatural_prob: 0.4
-    narrative_template: "异光、异响、托梦、走尸传闻之一，真相暧昧。"
-    consequences_template: "志怪浓度上升，派系恐慌。"
-    actor_slots:
-      - role: 见证
-        tier_min: B
-        tier_max: S
-
   - id: debt_pressure
     category: 经济
     tier: minor
     conditions: "true"
-    weight: 1.0
+    pick_weight: 1.08
     cooldown_weeks: 2
     supernatural_prob: 0.0
-    narrative_template: "债、当、勒索、分赃不均。"
-    consequences_template: "人物动机强化。"
+    dramatic_brief: "金钱、人情债或资源分配逼迫人做选择。"
+    effect_brief: "动机强化、把柄形成、短期生存策略被迫改变。"
     actor_slots:
       - role: 债主
         tier_min: B
         tier_max: A
       - role: 欠债
+        tier_min: B
+        tier_max: S
+
+  - id: dock_cargo_squeeze
+    category: 行会
+    tier: minor
+    conditions: "true"
+    pick_weight: 0.92
+    cooldown_weeks: 2
+    supernatural_prob: 0.0
+    dramatic_brief: "行会、脚价或物流链条上的卡扣与议价。"
+    effect_brief: "行会关系恶化或暂时妥协；小人物首当其冲。"
+    actor_slots:
+      - role: 行头
+        tier_min: B
+        tier_max: A
+      - role: 脚夫
+        tier_min: B
+        tier_max: B
+
+  - id: pao_ge_tribunal
+    category: 势力
+    tier: minor
+    conditions: "true"
+    pick_weight: 0.88
+    cooldown_weeks: 2
+    supernatural_prob: 0.0
+    dramatic_brief: "秘密结社或地方秩序中的裁断、立威与和稀泥。"
+    effect_brief: "派系声望与个人被裹挟；规矩被重申或擦边。"
+    actor_slots:
+      - role: 执事
+        tier_min: A
+        tier_max: S
+      - role: 苦主
+        tier_min: B
+        tier_max: A
+
+  - id: folk_taboo_violation
+    category: 民俗
+    tier: minor
+    conditions: "true"
+    pick_weight: 0.48
+    cooldown_weeks: 2
+    supernatural_prob: 0.15
+    dramatic_brief: "禁忌、规矩或脸面被触犯后的群体反应。"
+    effect_brief: "人际撕裂、私了或排斥；可与志怪疑云挂钩但不必坐实。"
+    actor_slots:
+      - role: 触犯者
+        tier_min: B
+        tier_max: A
+      - role: 问罪方
+        tier_min: B
+        tier_max: A
+
+  - id: bandit_raid_rumor
+    category: 乱世
+    tier: flavor
+    conditions: "true"
+    pick_weight: 0.42
+    cooldown_weeks: 2
+    supernatural_prob: 0.0
+    dramatic_brief: "外部威胁或秩序崩坏的传闻在坊间放大、变形。"
+    effect_brief: "恐慌、囤积、迁徙或盲目跟从；真相可滞后。"
+    actor_slots:
+      - role: 传话人
+        tier_min: B
+        tier_max: B
+      - role: 听信者
+        tier_min: B
+        tier_max: A
+
+  - id: jiao_bang_grave_job
+    category: 阴活
+    tier: minor
+    conditions: "week >= 2"
+    pick_weight: 0.38
+    cooldown_weeks: 3
+    supernatural_prob: 0.22
+    dramatic_brief: "与亡者、阴地或脏活相关的委托、交接与伦理冲突。"
+    effect_brief: "结仇、封口、忌讳加深；志怪氛围可升不可滥。"
+    actor_slots:
+      - role: 脚帮头目
+        tier_min: B
+        tier_max: A
+      - role: 主家
+        tier_min: B
+        tier_max: A
+
+  - id: grave_mound_incident
+    category: 地缘
+    tier: minor
+    conditions: "week >= 2"
+    pick_weight: 0.4
+    cooldown_weeks: 2
+    supernatural_prob: 0.25
+    dramatic_brief: "葬地、动土权或边界上的争夺与人事纠葛。"
+    effect_brief: "地缘矛盾；异象宜克制，以人事驱动为主。"
+    actor_slots:
+      - role: 动土者
+        tier_min: B
+        tier_max: S
+      - role: 阻拦方
+        tier_min: B
+        tier_max: A
+
+  - id: refugee_surge
+    category: 乱世
+    tier: minor
+    conditions: "week >= 1"
+    pick_weight: 0.32
+    cooldown_weeks: 3
+    period_every_n_weeks: 5
+    period_phase: 1
+    period_weight_mult: 2.4
+    supernatural_prob: 0.0
+    dramatic_brief: "流动人口骤增挤压本地资源与秩序。"
+    effect_brief: "资源紧张、排斥或吸纳；流言与暴力风险上升。"
+    actor_slots:
+      - role: 流民头
+        tier_min: B
+        tier_max: B
+      - role: 本地管事
+        tier_min: B
+        tier_max: A
+
+  - id: charlatan_swindle
+    category: 人间技
+    tier: flavor
+    conditions: "true"
+    pick_weight: 0.36
+    cooldown_weeks: 2
+    supernatural_prob: 0.05
+    dramatic_brief: "术数、方术或权威表演下的信任与欺骗。"
+    effect_brief: "信念被修正或反噬；骗局收场方式影响人际。"
+    actor_slots:
+      - role: 术士
+        tier_min: B
+        tier_max: A
+      - role: 事主
+        tier_min: B
+        tier_max: B
+
+  - id: hunshui_night_trade
+    category: 浑水
+    tier: minor
+    conditions: "week >= 3"
+    pick_weight: 0.2
+    cooldown_weeks: 3
+    supernatural_prob: 0.08
+    dramatic_brief: "灰色利益链上的夜行交易、背约与黑吃黑风险。"
+    effect_brief: "把柄、仇隙；可被更大秩序追问。"
+    actor_slots:
+      - role: 浑水头目
+        tier_min: B
+        tier_max: A
+      - role: 下家
+        tier_min: B
+        tier_max: B
+
+  - id: warlord_levy
+    category: 兵燹
+    tier: minor
+    conditions: "week >= 2"
+    pick_weight: 0.18
+    cooldown_weeks: 4
+    supernatural_prob: 0.0
+    dramatic_brief: "兵燹秩序下人力、粮秣或关卡对底层的挤压。"
+    effect_brief: "生计断裂、逃亡或被迫站队；势力借机敛财。"
+    actor_slots:
+      - role: 征办
+        tier_min: B
+        tier_max: A
+      - role: 受害人
+        tier_min: B
+        tier_max: S
+
+  - id: supernatural_omen
+    category: 超自然
+    tier: minor
+    conditions: "week >= 2"
+    pick_weight: 0.16
+    cooldown_weeks: 3
+    supernatural_prob: 0.45
+    dramatic_brief: "感官或传闻层面的异兆，真相应保留解释空间。"
+    effect_brief: "恐慌、忌讳或派系互相甩锅；不宜一次坐实。"
+    actor_slots:
+      - role: 见证
+        tier_min: B
+        tier_max: S
+
+  # 与 supernatural_omen 区分：近「实体」层面的邪祟介入；pick_weight 极低 + 长冷却，模拟现实中罕见
+  - id: spectral_manifestation
+    category: 志怪
+    tier: major
+    conditions: "week >= 6"
+    pick_weight: 0.035
+    cooldown_weeks: 8
+    supernatural_prob: 0.92
+    dramatic_brief: "邪祟、精怪、怨灵等民间观念中的『有形或近有形』存在，对人身、居所或器物产生直接侵扰（具体形象与来由须由种子与周势推演，禁止修仙斗法叙事）。"
+    effect_brief: "人命与神志风险骤升；驱禳、逃亡、封口或宗族应对；可牵动更大志怪线但不宜周周出现。"
+    actor_slots:
+      - role: 直接遭际者
+        tier_min: B
+        tier_max: S
+      - role: 在场或施救者
+        tier_min: B
+        tier_max: A
+
+  - id: temple_fair_ritual
+    category: 庙会
+    tier: minor
+    conditions: "week >= 4"
+    pick_weight: 0.14
+    cooldown_weeks: 4
+    period_every_n_weeks: 4
+    period_phase: 0
+    period_weight_mult: 2.9
+    supernatural_prob: 0.2
+    dramatic_brief: "聚众祭祀、集市或仪式场合把私人矛盾摊到公共目光下。"
+    effect_brief: "注意力转移；禁忌话题被点燃；民俗与权术交织。"
+    actor_slots:
+      - role: 司仪/神职
+        tier_min: B
+        tier_max: A
+      - role: 香客
+        tier_min: B
+        tier_max: B
+
+  - id: mountain_pass_pilgrim
+    category: 地缘
+    tier: minor
+    conditions: "week >= 5"
+    pick_weight: 0.11
+    cooldown_weeks: 5
+    period_every_n_weeks: 6
+    period_phase: 2
+    period_weight_mult: 3.0
+    supernatural_prob: 0.18
+    dramatic_brief: "边地山径或险途上外来者与本地权的交汇、试探与冲突。"
+    effect_brief: "资源、传说或路网被争夺；长途风险与人命压力。"
+    actor_slots:
+      - role: 外来客
+        tier_min: B
+        tier_max: A
+      - role: 地头蛇
         tier_min: B
         tier_max: S

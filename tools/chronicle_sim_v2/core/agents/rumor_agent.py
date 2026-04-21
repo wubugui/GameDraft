@@ -9,6 +9,16 @@ from tools.chronicle_sim_v2.core.llm.agent_llm import AgentLLMResources
 from tools.chronicle_sim_v2.core.llm.agent_spec import load_agent_spec, render_user
 from tools.chronicle_sim_v2.core.llm.cline_runner import run_agent_cline
 from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
+from tools.chronicle_sim_v2.core.world.seed_reader import build_world_bible_text
+
+_BIBLE_BY_RUN: dict[str, str] = {}
+
+
+def _world_bible_cached(run_dir: Path) -> str:
+    key = str(run_dir.resolve())
+    if key not in _BIBLE_BY_RUN:
+        _BIBLE_BY_RUN[key] = build_world_bible_text(run_dir)
+    return _BIBLE_BY_RUN[key]
 
 
 def _rumor_config(llm_config: dict[str, Any]) -> dict[str, Any]:
@@ -111,6 +121,7 @@ async def _distort_one(
             "hops": str(hops),
             "event_type_id": event_type_id,
             "snippet": snippet,
+            "world_bible_text": _world_bible_cached(run_dir) or "（本 run 暂无世界 JSON）",
         },
     )
     try:

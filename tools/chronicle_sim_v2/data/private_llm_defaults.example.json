@@ -16,8 +16,8 @@
   },
   "default": {
     "kind": "openai_compat",
-    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "base_url": "https://coding.dashscope.aliyuncs.com/v1",
     "api_key": "YOUR_API_KEY",
-    "model": "kimi-k2.5"
+    "model": "qwen3.5-plus"
   }
 }

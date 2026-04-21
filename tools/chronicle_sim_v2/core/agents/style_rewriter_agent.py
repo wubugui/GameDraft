@@ -26,10 +26,18 @@ async def run_style_rewrite(
     pa: AgentLLMResources,
     run_dir: Path,
     text: str,
+    *,
+    world_bible_text: str = "",
 ) -> str:
     spec = load_agent_spec("style_rewriter")
     system_ctx = {"style_fingerprints_block": _fingerprints_block()}
-    user_text = render_user(spec, {"text": text})
+    user_text = render_user(
+        spec,
+        {
+            "text": text,
+            "world_bible_text": world_bible_text or "（本 run 暂无世界 JSON）",
+        },
+    )
     res = await run_agent_cline(
         pa, run_dir, spec, user_text=user_text, system_ctx=system_ctx
     )

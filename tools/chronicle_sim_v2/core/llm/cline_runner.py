@@ -23,6 +23,7 @@ from tools.chronicle_sim_v2.core.llm.audit_log import (
     audit_enabled_from_config,
 )
 from tools.chronicle_sim_v2.core.llm.cline_workspace import (
+    archive_workspace_after_run,
     cleanup_temp_ws,
     cline_config_path,
     materialize_temp_ws,
@@ -56,6 +57,146 @@ _ACT_JSON_ARTIFACT: dict[str, str] = {
     "tier_a_npc": _DEFAULT_ACT_JSON_FILENAME,
     "tier_b_npc": _DEFAULT_ACT_JSON_FILENAME,
 }
+
+# 已从工作区 JSON 文件合并成功时，勿再用 Markdown 保底覆盖（避免破坏结构化输出）
+_JSON_MERGED_AGENT_IDS = frozenset(_ACT_JSON_ARTIFACT.keys())
+
+_META_COMPLETION_RE = re.compile(
+    r"(已按\s*\.?clinerules|已完成(?:撰写)?|全文共\s*\d+|约\s*\d+\s*字|共\s*\d+\s*段)",
+    re.IGNORECASE,
+)
+
+
+def _stdout_looks_meta_only(stdout: str) -> bool:
+    s = (stdout or "").strip()
+    if len(s) > 1200:
+        return False
+    if len(s) < 30:
+        return True
+    return bool(_META_COMPLETION_RE.search(s)) and len(s) < 700
+
+
+def _is_json_payload_text(s: str) -> bool:
+    t = (s or "").lstrip("\ufeff").strip()
+    return len(t) > 2 and t[0] in "{["
+
+
+def _iter_text_fallback_files(temp_ws: Path) -> list[Path]:
+    """工作区根目录下常见「模型落盘」文件名（不含 .clinerules）。"""
+    prefer = (
+        "output.md",
+        "summary.md",
+        "week_summary.md",
+        "result.md",
+        "agent_output.md",
+        "response.md",
+        "final.md",
+        "answer.md",
+        "chronicle_summary.md",
+    )
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for name in prefer:
+        p = temp_ws / name
+        if p.is_file():
+            seen.add(p.resolve())
+            out.append(p)
+    for p in sorted(temp_ws.glob("*.md")):
+        if p.name == "input.md":
+            continue
+        if p.resolve() in seen:
+            continue
+        seen.add(p.resolve())
+        out.append(p)
+    for name in ("result.txt", "output.txt"):
+        p = temp_ws / name
+        if p.is_file() and p.resolve() not in seen:
+            out.append(p)
+    aj = temp_ws / _DEFAULT_ACT_JSON_FILENAME
+    if aj.is_file() and aj.resolve() not in seen:
+        out.append(aj)
+    return out
+
+
+def _recover_text_from_workspace_files(
+    temp_ws: Path, stdout_text: str, user_text: str
+) -> tuple[str, bool, str]:
+    """从 output.md 等文件保底回读；若 stdout 像元叙述或明显短于文件正文则采用文件。"""
+    stdout_text = (stdout_text or "").strip()
+    ut = (user_text or "").strip()
+    best_body = stdout_text
+    best_name = "<stdout>"
+    for path in _iter_text_fallback_files(temp_ws):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        body = raw.strip()
+        if len(body) < 40:
+            continue
+        if ut and body == ut:
+            continue
+        if ut and len(body) <= len(ut) + 120:
+            pref = ut[: min(200, len(ut))]
+            if pref and body.startswith(pref):
+                continue
+        if len(body) > len(best_body):
+            best_body = body
+            best_name = path.name
+
+    if best_name == "<stdout>":
+        return stdout_text, False, ""
+
+    if len(best_body) <= len(stdout_text) + 40:
+        return stdout_text, False, ""
+
+    if _stdout_looks_meta_only(stdout_text):
+        return best_body, True, best_name
+
+    if len(best_body) >= max(len(stdout_text) * 2, 400):
+        return best_body, True, best_name
+
+    return stdout_text, False, ""
+
+
+def _merge_workspace_outputs(
+    temp_ws: Path,
+    stdout_or_jsonl: str,
+    agent_id: str,
+    user_text: str,
+    *,
+    output_mode: str,
+) -> tuple[str, list[dict[str, Any]], list[str]]:
+    """合并 JSON 约定文件 + 全体 Agent 公用的 Markdown/文本保底。返回 (text, tool_log, log_msgs)。"""
+    log_msgs: list[str] = []
+    if output_mode == "jsonl":
+        final_text, tool_log = _parse_jsonl_output(stdout_or_jsonl)
+        rec, took, fname = _recover_text_from_workspace_files(temp_ws, final_text, user_text)
+        if took:
+            log_msgs.append(f"jsonl 保底采用工作区 {fname}（stdout 偏短或像元叙述）")
+            final_text = rec
+        return final_text, tool_log, log_msgs
+
+    final_text = (stdout_or_jsonl or "").strip()
+    merged, took_file, used_name = _merge_act_json_file_from_workspace(
+        temp_ws, final_text, agent_id
+    )
+    if took_file and used_name:
+        log_msgs.append(
+            f"已采用工作区 {used_name}（ACT 下 stdout 常为 attempt_completion 摘要）"
+        )
+        final_text = merged
+
+    if took_file and used_name and agent_id in _JSON_MERGED_AGENT_IDS and _is_json_payload_text(
+        final_text
+    ):
+        return final_text, [], log_msgs
+
+    rec2, took2, fname2 = _recover_text_from_workspace_files(temp_ws, final_text, user_text)
+    if took2:
+        log_msgs.append(f"文本保底采用工作区 {fname2}")
+        final_text = rec2
+    return final_text, [], log_msgs
 
 
 def _merge_act_json_file_from_workspace(
@@ -649,10 +790,13 @@ async def run_agent_cline(
     phase_log: Any = None,
     keep_temp_ws: bool = False,
 ) -> RunnerResult:
-    """统一 agent 运行入口。stub 短路；否则物化临时 cwd → auth → cline → 解析 → 审计 → 清理。
+    """统一 agent 运行入口。stub 短路；否则物化临时 cwd → auth → cline → 解析 → 合并保底 → 归档/审计。
 
-    `keep_temp_ws=True` 时保留 cwd 并通过 `RunnerResult.temp_ws_path` 返回，
-    调用方（探针校验）用完后**必须**自己调 `cleanup_temp_ws`。
+    成功且 ``keep_temp_ws=False`` 时，本次 cwd 会**整体移入**
+    ``run_dir/.chronicle_sim/ws_archive/<时间戳>_<agent_id>_<uuid>/``，不删除，便于审计与从磁盘找回正文。
+
+    ``keep_temp_ws=True`` 时保留 cwd 并通过 ``RunnerResult.temp_ws_path`` 返回；
+    调用方用完后须归档（探针在 ``finally`` 中调用 ``archive_workspace_after_run``）。
     """
     if _is_stub(pa):
         # stub 不走 Cline：直接合成占位文本，system 仍按 TOML 渲染以便确定性
@@ -767,25 +911,9 @@ async def run_agent_cline(
         text_out = (out_b or b"").decode("utf-8", errors="replace")
         text_err = (err_b or b"").decode("utf-8", errors="replace")
 
-        if spec.output_mode == "jsonl":
-            final_text, tool_log = _parse_jsonl_output(text_out)
-        else:
-            final_text, tool_log = text_out.strip(), []
-
-        if spec.output_mode == "text":
-            merged, took_file, used_name = _merge_act_json_file_from_workspace(
-                temp_ws, final_text, spec.agent_id
-            )
-            if took_file and used_name:
-                _ph(
-                    f"[Cline] {spec.agent_id}：已采用工作区 {used_name} "
-                    "（ACT 模式下 stdout 常为 attempt_completion 摘要，非完整 JSON）"
-                )
-                final_text = merged
-
         emit_llm_trace(
             f"[cline·out] agent_id={pa.agent_id!r} rc={rc} "
-            f"stdout_len={len(text_out)} stderr_len={len(text_err)} tools={len(tool_log)}"
+            f"stdout_len={len(text_out)} stderr_len={len(text_err)}"
         )
 
         if rc != 0:
@@ -803,6 +931,24 @@ async def run_agent_cline(
                 parts.append(f"stdout: {os_[:2000]}")
             detail = " | ".join(parts) if parts else "(stderr 与 stdout 皆空)"
             raise RuntimeError(f"Cline 退出码 {rc}: {detail}")
+
+        final_text, tool_log, merge_msgs = _merge_workspace_outputs(
+            temp_ws,
+            text_out,
+            spec.agent_id,
+            user_text,
+            output_mode=spec.output_mode,
+        )
+        for m in merge_msgs:
+            _ph(f"[Cline] {spec.agent_id}：{m}")
+        emit_llm_trace(
+            f"[cline·merged] agent_id={pa.agent_id!r} final_len={len(final_text)} "
+            f"tool_log_n={len(tool_log)}"
+        )
+
+        archived_path: Path | None = None
+        if not keep_temp_ws:
+            archived_path = archive_workspace_after_run(run_dir, temp_ws, pa.agent_id)
 
         timings = {
             "total_ms": int((monotonic() - t_start) * 1000),
@@ -823,6 +969,7 @@ async def run_agent_cline(
                     "thinking": spec.thinking,
                     "copy_chronicle_to_cwd": spec.copy_chronicle_to_cwd,
                     "temp_ws_name": temp_ws.name,
+                    "ws_archive_path": str(archived_path) if archived_path else None,
                     "user_len": len(user_text),
                     "stdout_len": len(text_out),
                     "tool_log_n": len(tool_log),
@@ -841,6 +988,7 @@ async def run_agent_cline(
                 extra={
                     "argv_head": argv[:8],
                     "temp_ws_name": temp_ws.name,
+                    "ws_archive_path": str(archived_path) if archived_path else None,
                     "tool_log_n": len(tool_log),
                 },
             )
@@ -851,5 +999,5 @@ async def run_agent_cline(
             text=final_text, tool_log=tool_log, exit_code=rc, temp_ws_path=kept_ws
         )
     finally:
-        if not keep_on_return:
-            cleanup_temp_ws(temp_ws)
+        if not keep_on_return and temp_ws.is_dir():
+            archive_workspace_after_run(run_dir, temp_ws, pa.agent_id)

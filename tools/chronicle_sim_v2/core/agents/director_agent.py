@@ -17,6 +17,8 @@ async def run_director_drafts(
     event_types_text: str,
     week: int,
     pacing_mult: float = 1.0,
+    event_selection_notes: str = "",
+    world_bible_text: str = "",
 ) -> list[dict[str, Any]]:
     spec = load_agent_spec("director")
     user_text = render_user(
@@ -26,6 +28,8 @@ async def run_director_drafts(
             "pacing_mult": str(pacing_mult),
             "intents_json": json.dumps(intents, ensure_ascii=False),
             "event_types_text": event_types_text,
+            "event_selection_notes": event_selection_notes or "（无）",
+            "world_bible_text": world_bible_text or "（无世界种子 JSON，请仅依据意图谨慎发挥）",
         },
     )
     res = await run_agent_cline(pa, run_dir, spec, user_text=user_text)

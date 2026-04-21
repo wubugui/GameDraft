@@ -102,6 +102,21 @@ def build_world_bible_text(run_dir: Path) -> str:
     if locations:
         parts.append("【地点】\n" + json.dumps(locations, ensure_ascii=False))
 
+    agents = read_all_agents(run_dir)
+    if agents:
+        roster: list[dict[str, str]] = []
+        for a in sorted(agents, key=lambda x: str(x.get("id", x.get("name", "")))):
+            aid = a.get("id") or a.get("name")
+            roster.append(
+                {
+                    "id": str(aid) if aid else "",
+                    "name": str(a.get("name", "") or ""),
+                    "tier": str(a.get("current_tier") or a.get("tier") or ""),
+                    "life_status": str(a.get("life_status", "")),
+                }
+            )
+        parts.append("【人物名册摘要】\n" + json.dumps(roster, ensure_ascii=False))
+
     anchors = read_anchor_events(run_dir)
     if anchors:
         parts.append("【锚点事件】\n" + json.dumps(anchors, ensure_ascii=False))

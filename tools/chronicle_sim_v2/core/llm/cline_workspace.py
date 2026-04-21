@@ -15,6 +15,7 @@ from typing import Any
 
 from tools.chronicle_sim_v2.core.llm.agent_spec import AgentSpec, render_system
 from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
+from tools.chronicle_sim_v2.paths import AGENT_SPECS_DIR
 
 CLINE_CONFIG_DIRNAME = ".cline_config"
 # Cline 内部：``clineDir`` 默认为 ``~/.cline``，真实状态在 ``join(clineDir, \"data\")``（含 ``secrets.json``、``globalState.json``）。
@@ -22,7 +23,9 @@ CLINE_CONFIG_DIRNAME = ".cline_config"
 CLINE_MCP_SETTINGS_REL = Path("data") / "settings" / "cline_mcp_settings.json"
 CHRONICLE_SIM_DIR = ".chronicle_sim"
 WS_SUBDIR = "ws"
+WS_ARCHIVE_SUBDIR = "ws_archive"
 LLM_EFFECTIVE_SUBDIR = "llm_effective"
+_UNIVERSAL_CONTRACT_FILENAME = "_universal_output_contract.md"
 
 MCP_SERVER_ID = "chronicle_sim"
 _log = logging.getLogger(__name__)
@@ -136,6 +139,13 @@ def materialize_temp_ws(
     if spec.mcp == "chroma":
         (rules_dir / "02_mcp.md").write_text(MCP_CLINE_RULE_TEXT, encoding="utf-8")
 
+    u_path = AGENT_SPECS_DIR / _UNIVERSAL_CONTRACT_FILENAME
+    if u_path.is_file():
+        (rules_dir / "03_output_contract.md").write_text(
+            u_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
     if spec.copy_chronicle_to_cwd:
         src = run_dir / "chronicle"
         if src.is_dir():
@@ -157,6 +167,28 @@ def _is_transient_dir_unlink_err(exc: BaseException) -> bool:
     if getattr(exc, "errno", None) in (errno.EACCES, errno.EPERM, errno.EBUSY):
         return True
     return False
+
+
+def archive_workspace_after_run(run_dir: Path, temp_ws: Path, agent_id: str) -> Path | None:
+    """将本次 agent 的 cwd **整体移入** ``run_dir/.chronicle_sim/ws_archive/``，不删除。
+
+    供审计、保底回读与人工回溯；每次调用仍使用独立 UUID 目录，互不覆盖。
+    若移动失败则回退为 ``cleanup_temp_ws``。
+    """
+    if not temp_ws.is_dir():
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    dest_root = run_dir / CHRONICLE_SIM_DIR / WS_ARCHIVE_SUBDIR
+    dest_root.mkdir(parents=True, exist_ok=True)
+    dest = dest_root / f"{ts}_{agent_id}_{temp_ws.name}"
+    try:
+        shutil.move(str(temp_ws.resolve()), str(dest))
+        _log.info("工作区已归档: %s", dest)
+        return dest
+    except OSError as e:
+        _log.warning("工作区归档失败，尝试删除: %s err=%s", temp_ws, e)
+        cleanup_temp_ws(temp_ws)
+        return None
 
 
 def cleanup_temp_ws(temp_ws: Path) -> None:
