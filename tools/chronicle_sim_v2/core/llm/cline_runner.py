@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -33,7 +34,10 @@ from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
 from tools.chronicle_sim_v2.core.llm.stub_llm import ChronicleStubLLM, stub_response_text
 from tools.chronicle_sim_v2.core.sim.run_manager import load_llm_config
 
-ARGV_STDIN_THRESHOLD = 8192
+# Windows ``CreateProcess`` 整条命令行上限约 8191 字符；Cline argv 还含 ``--config``、``-c``、
+# ``--timeout``、模型等，且 user 段常为 UTF-16 计宽。过长内联 prompt 会失败（stderr 常显示为乱码
+# 的「命令行太长」）。故在 Windows 上更早改用 ``input.md`` + 短占位末参（见 ``_build_argv``）。
+ARGV_STDIN_THRESHOLD = 2048 if sys.platform == "win32" else 8192
 DEFAULT_TIMEOUT_SEC = 3600
 # Cline `cline task --thinking [tokens]` 会把下一 argv 当作 token 数；裸 `--thinking` 会吞掉紧跟的 prompt。
 THINKING_TOKEN_DEFAULT = "1024"
