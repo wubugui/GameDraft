@@ -182,9 +182,11 @@ async def run_rumor_spread(
                     rem = max_llm - used_llm
                     p_mut = mutation_probability(rem, max_llm, rnd, max_rounds)
                     content = base_u
+                    distorted = False
                     if rem > 0 and base_u.strip() and random.random() < p_mut:
                         content = await _distort_one(pa, run_dir, base_u, rnd, str(rec.get("type_id", "")))
                         used_llm += 1
+                        distorted = True
 
                     all_rumors.append(
                         {
@@ -196,6 +198,7 @@ async def run_rumor_spread(
                             "distortion_level": rnd,
                             "propagation_hop": rnd,
                             "rumor_llm_used": used_llm,
+                            "distorted": distorted,
                         }
                     )
                     visited_hearers.add(v)

@@ -60,7 +60,7 @@ def _copy_world(src_run: Path, dst_run: Path) -> None:
     shutil.copytree(world_src, world_dst, symlinks=True)
 
 
-async def _run(source_run: Path, week: int, seed: int | None) -> int:
+async def _run(source_run: Path, week: int, seed: int | None, *, force_zero_llm: bool) -> int:
     import random
 
     if seed is not None:
@@ -72,7 +72,19 @@ async def _run(source_run: Path, week: int, seed: int | None) -> int:
         return 1
 
     raw_cfg = load_llm_config(source_run)
-    merged = _merge_llm_config_for_stats(raw_cfg, seed=seed)
+    merged = (
+        _merge_llm_config_for_stats(raw_cfg, seed=seed)
+        if force_zero_llm
+        else json.loads(json.dumps(raw_cfg)) if isinstance(raw_cfg, dict) else {}
+    )
+    if not force_zero_llm:
+        if not isinstance(merged, dict):
+            merged = {}
+        merged.setdefault("default", {"kind": "stub"})
+        if seed is not None:
+            merged.setdefault("trace", {})
+            if isinstance(merged["trace"], dict):
+                merged["trace"]["rumor_stats_seed"] = seed
 
     tmp = Path(tempfile.mkdtemp(prefix="chronicle_rumor_week_stats_"))
     try:
@@ -102,16 +114,22 @@ async def _run(source_run: Path, week: int, seed: int | None) -> int:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    max_llm_cfg = int((merged.get("rumor_sim") or {}).get("max_llm_calls_per_event", -1))
+    from tools.chronicle_sim_v2.core.agents.rumor_agent import _max_llm_per_event
+
+    max_llm_effective = _max_llm_per_event(merged if isinstance(merged, dict) else {})
     p_edge = float((merged.get("rumor_sim") or {}).get("p_follow_edge", 0.38))
     p_start = float((merged.get("rumor_sim") or {}).get("p_each_spreader_starts", 0.55))
     max_rounds = int((merged.get("rumor_sim") or {}).get("max_propagation_rounds", 12))
 
-    print("=== 谣言传播统计（仅算法 + stub，max_llm_calls_per_event=0，不调 Cline）===")
+    mode = "强制 max_llm_calls_per_event=0（不调 Cline）" if force_zero_llm else "沿用 Run 的 llm_config.rumor_sim + stub（不调 Cline，可走样 stub）"
+    print(f"=== 谣言传播统计（仅算法 + stub，{mode}）===")
     print(f"源 Run: {source_run.resolve()}")
     print(f"周次: {week}")
     print(f"随机种子: {seed!r}")
-    print(f"本统计使用的 rumor_sim: max_llm_calls_per_event={max_llm_cfg}, max_propagation_rounds={max_rounds}, p_follow_edge={p_edge}, p_each_spreader_starts={p_start}")
+    print(
+        f"本统计使用的 rumor_sim: max_llm_calls_per_event(有效值)={max_llm_effective}, "
+        f"max_propagation_rounds={max_rounds}, p_follow_edge={p_edge}, p_each_spreader_starts={p_start}"
+    )
     print()
 
     print(f"参与传播的事件数: {len(records)}")
@@ -126,6 +144,19 @@ async def _run(source_run: Path, week: int, seed: int | None) -> int:
     print()
     print(f"谣言边条数（每条为 teller→hearer 一次传递）: {len(rumors)}")
 
+    n_distorted = sum(1 for r in rumors if r.get("distorted") is True)
+    print(f"其中发生走样（进入走样分支，本条计 1）: {n_distorted}")
+    if max_llm_effective == 0:
+        print("（当前有效 max_llm_calls_per_event=0，走样次数恒为 0；要看走样条数请加参数 --use-source-llm-config）")
+    by_event_dist = Counter()
+    for r in rumors:
+        if r.get("distorted") is True:
+            by_event_dist[str(r.get("originating_event_id", ""))] += 1
+    if by_event_dist:
+        print("走样次数按 originating_event_id:")
+        for eid, c in by_event_dist.most_common():
+            print(f"  {eid or '(空)'}: {c}")
+
     by_event = Counter(str(r.get("originating_event_id", "")) for r in rumors)
     print("按 originating_event_id 条数:")
     for eid, c in by_event.most_common():
@@ -137,7 +168,7 @@ async def _run(source_run: Path, week: int, seed: int | None) -> int:
         print(f"  hop={h}: {hops[h]}")
 
     max_llm_field = [int(r.get("rumor_llm_used", 0) or 0) for r in rumors]
-    print(f"rumor_llm_used 字段最大值（应为 0）: {max(max_llm_field) if max_llm_field else 0}")
+    print(f"rumor_llm_used 字段最大值（全周累计到该条为止）: {max(max_llm_field) if max_llm_field else 0}")
 
     edges = {(str(r.get("teller_id", "")), str(r.get("hearer_id", ""))) for r in rumors}
     agents = set()
@@ -165,15 +196,42 @@ async def _run(source_run: Path, week: int, seed: int | None) -> int:
     return 0
 
 
+def _print_disk_rumor_distort_stats(source_run: Path, week: int) -> int:
+    from tools.chronicle_sim_v2.core.world.week_state import read_week_rumors
+
+    rumors = read_week_rumors(source_run, week)
+    n = len(rumors)
+    n_dist = sum(1 for r in rumors if isinstance(r, dict) and r.get("distorted") is True)
+    print("=== 从磁盘已写入的 rumors.json 统计走样 ===")
+    print(f"路径: {(source_run / 'chronicle' / f'week_{week:03d}' / 'rumors.json').resolve()}")
+    print(f"谣言条数: {n}")
+    print(f"标记 distorted=true 的条数（走样发生次数）: {n_dist}")
+    if n and n_dist == 0 and not any(isinstance(r, dict) and "distorted" in r for r in rumors):
+        print("（旧数据无 distorted 字段时，无法从磁盘区分走样；请用新模拟重跑该周或看下方重算统计）")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="单周谣言传播统计（不调 LLM）")
     ap.add_argument("--run-dir", type=Path, required=True, help="已有 Run 根目录")
     ap.add_argument("--week", type=int, default=1)
     ap.add_argument("--seed", type=int, default=42, help="固定随机；传 -1 表示不固定")
+    ap.add_argument(
+        "--from-disk-rumors",
+        action="store_true",
+        help="只读 chronicle/week_XXX/rumors.json，统计其中 distorted 字段（不重跑传播）",
+    )
+    ap.add_argument(
+        "--use-source-llm-config",
+        action="store_true",
+        help="不强制 max_llm=0，沿用 Run 的 rumor_sim（仍为 stub，可统计走样发生条数）",
+    )
     args = ap.parse_args()
     src = args.run_dir.resolve()
+    if args.from_disk_rumors:
+        return _print_disk_rumor_distort_stats(src, args.week)
     seed = None if args.seed is not None and args.seed < 0 else args.seed
-    return asyncio.run(_run(src, args.week, seed))
+    return asyncio.run(_run(src, args.week, seed, force_zero_llm=not args.use_source_llm_config))
 
 
 if __name__ == "__main__":
