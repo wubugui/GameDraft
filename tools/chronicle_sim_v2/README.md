@@ -49,6 +49,14 @@ python tools\chronicle_sim_v2\scripts\run_simulation_once.py tools\chronicle_sim
 - `cline_stream_stderr`：默认 `true`，运行中把 Cline 的 **stderr 按行**转发到种子/模拟日志或 LLM 追踪；设为 `false` 则仅在结束时汇总长度（适合极端刷屏场景）
 - `llm_audit.enabled`：是否写 `run_dir/llm_audit/<YYYYMMDD>.jsonl`
 - `trace.*`：详细 prompt 追踪开关
+- **`rumor_sim`**（可选，对象）：谣言概率传播与变异 LLM 上限，写在 `config/llm_config.json` 顶层。字段示例：
+  - `max_llm_calls_per_event`：每条 GM 事件衍生的谣言过程最多调用几次「走样」LLM（默认 32，上限 256）。
+  - `max_propagation_rounds`：传播轮次上限（默认 12）。
+  - `p_each_spreader_starts`：每个 `spread_agents` 是否作为本轮起点的概率（默认 0.55）。
+  - `p_follow_edge`：沿社交图边是否继续传给邻居的概率（默认 0.38）。
+  - 变异是否调用 LLM 由 ``sin(π·轮次归一化)·sin(π·剩余配额归一化)`` 与上述概率共同抽样（两端低、中间高）；**不走批量异步 API**，仍为实时逐条调用。
+
+**GM 事件与谣言**：GM 须在每条 `records` 中输出 `related_agents`、`spread_agents`（传播人 ⊆ 相关人）、`actor_ids`；`witness_accounts` 仅绑定**相关人**口供。入库前 `normalize_event_for_rumors` 会补全/过滤非法 id，并保证 `spread_agents ⊆ related_agents`。谣言仅从 `spread_agents` 概率选起点，沿图概率走边。
 
 凡是 Run 特有的目录都不需要用户手填：`run_dir/.cline_config/`（Cline ``clineDir``，其下 ``data/`` 含 settings、secrets、任务状态等）、`run_dir/.chronicle_sim/ws/*`（每次调用的临时 cwd，调用结束即删）、`run_dir/.chronicle_sim/llm_effective/`（脱敏快照）都由代码生成与清理。
 

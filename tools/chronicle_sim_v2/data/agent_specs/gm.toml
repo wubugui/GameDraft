@@ -26,8 +26,9 @@ system = '''
 </output_contract>
 
 <type_rules>
-- `records` 每项含：`id`（字符串）、`type_id`（字符串）、`week_number`（**整数**，必须等于输入 `week`）、`location_id`（字符串或 JSON `null`）、`truth_json`（**对象**）、`director_draft_json`（**对象**）、`witness_accounts`（**数组**）、`tags`（**字符串数组**）、`supernatural_level`（字符串，建议小写：`none` / `rumor` / `ambiguous` / `strong`）、`rumor_versions`（**字符串数组**，无则 `[]`）。
-- `witness_accounts` 每项**仅**三键：`agent_id`（字符串）、`account_text`（字符串）、`supernatural_hint`（字符串，可为 `""`）。
+- `records` 每项含：`id`（字符串）、`type_id`（字符串）、`week_number`（**整数**，必须等于输入 `week`）、`location_id`（字符串或 JSON `null`）、`truth_json`（**对象**）、`director_draft_json`（**对象**）、`actor_ids`（**字符串数组**，事件当事人/在场核心 NPC，可为空但有助于谣言）、`related_agents`（**字符串数组**，与事件事理直接相关的 NPC id）、`spread_agents`（**字符串数组**，**会**对外口头扩散者）、`witness_accounts`（**数组**）、`tags`（**字符串数组**）、`supernatural_level`（字符串，建议小写：`none` / `rumor` / `ambiguous` / `strong`）、`rumor_versions`（**字符串数组**，无则 `[]`）。
+- **相关人 vs 传播人**：`spread_agents` 必须是 `related_agents` 的**子集**（传播人一定是相关人；相关人未必传播）。守秘密的当事人、死党等**只能**出现在 `related_agents` 与 `witness_accounts`，**不得**出现在 `spread_agents`。
+- `witness_accounts` **绑定相关人**：每条仅三键 `agent_id`、`account_text`、`supernatural_hint`；`agent_id` **必须**属于 `related_agents`（或事后可由管线从口供与 `actor_ids` 推断相关人，但输出时仍应自洽）。
 - `truth_json` 分层键值；勿把整个真相塞进单键超长字符串；值内换行用 `\n`，勿裸换行断引号。
 </type_rules>
 
@@ -35,6 +36,7 @@ system = '''
 - 合并草案时在 `truth_json` 中写清链条；不在场者不得出现在见证中。
 - `witness_accounts`：每人只写其可能感知的内容；禁止全员全知；`supernatural_hint` 可 `""`，异象用克制措辞。
 - `witness_accounts[].agent_id` **必须**来自输入 `drafts` 里某条的 `actor_ids`，或来自 `context` 中明确给出的可扮演 NPC 的 `id`；**禁止**编造新的 id（如 `boat_captain_xxx`、随机路人代号）；无合适在场者时可减少见证条数或合并进已有角色的叙述。
+- `related_agents` 应覆盖所有 `witness_accounts[].agent_id` 及关键当事人；`spread_agents` 由事理推断谁会外传，**不得**把明显会守口的人列为传播人。
 </constraints>
 
 <json_structure>
@@ -57,6 +59,9 @@ system = '''
       "director_draft_json": {
         "from_draft": "占位：追溯或裁决备注"
       },
+      "actor_ids": ["占位：当事人或核心在场者 id"],
+      "related_agents": ["占位：与事件直接相关的 id，含见证与当事人"],
+      "spread_agents": ["占位：会外传者的 id，须为 related 子集"],
       "witness_accounts": [
         {
           "agent_id": "占位：在场者 id",
