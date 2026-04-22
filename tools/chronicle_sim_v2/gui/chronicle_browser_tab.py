@@ -7,6 +7,7 @@ from html import escape as html_escape
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThreadPool, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -15,9 +16,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTextBrowser,
-    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -32,6 +33,17 @@ from tools.chronicle_sim_v2.core.world.fs import read_json, read_text, grep_sear
 from tools.chronicle_sim_v2.core.world.chroma import is_embedding_configured, search_world
 from tools.chronicle_sim_v2.core.world.week_state import list_weeks
 from tools.chronicle_sim_v2.gui.async_runnable import CancellableAsyncWorker
+from tools.chronicle_sim_v2.gui.chronicle_display import (
+    event_json_to_html,
+    generic_json_preview,
+    intent_json_to_html,
+    memory_json_to_html,
+    month_markdown_to_html,
+    rumors_html_stats_and_table_only,
+    summary_markdown_to_html,
+)
+from tools.chronicle_sim_v2.gui.rumor_graph_view import RumorGraphView
+from tools.chronicle_sim_v2.gui.world_viz_widget import WorldVizWidget
 from tools.chronicle_sim_v2.gui.human_display import probe_reply_to_html
 
 
@@ -91,15 +103,45 @@ class ChronicleBrowserTab(QWidget):
         self.tree.itemClicked.connect(self._on_tree_click)
         splitter.addWidget(self.tree)
 
-        self.detail = QTextEdit()
-        self.detail.setReadOnly(True)
-        splitter.addWidget(self.detail)
+        self._detail_tabs = QTabWidget()
+        self._detail_tabs.setMinimumHeight(420)
+        self._preview_stack = QStackedWidget()
+        self._preview_stack.setMinimumHeight(400)
+        self.detail_preview = QTextBrowser()
+        self.detail_preview.setReadOnly(True)
+        self.detail_preview.setOpenExternalLinks(True)
+        self.detail_preview.setMinimumHeight(400)
+        self._preview_stack.addWidget(self.detail_preview)
+
+        self._rumor_page = QWidget()
+        _rumor_lay = QVBoxLayout(self._rumor_page)
+        _rumor_lay.setContentsMargins(0, 0, 0, 0)
+        self.rumor_graph_view = RumorGraphView()
+        self.rumor_graph_view.setMinimumHeight(440)
+        _rumor_lay.addWidget(self.rumor_graph_view, stretch=3)
+        self.rumor_text = QTextBrowser()
+        self.rumor_text.setReadOnly(True)
+        self.rumor_text.setOpenExternalLinks(True)
+        self.rumor_text.setMinimumHeight(220)
+        _rumor_lay.addWidget(self.rumor_text, stretch=2)
+        self._preview_stack.addWidget(self._rumor_page)
+
+        self.detail_raw = QPlainTextEdit()
+        self.detail_raw.setReadOnly(True)
+        self.detail_raw.setFont(QFont("Consolas", 10))
+        self.detail_raw.setPlaceholderText("JSON / Markdown 原文")
+        self._detail_tabs.addTab(self._preview_stack, "预览")
+        self._detail_tabs.addTab(self.detail_raw, "JSON / 原文")
+        splitter.addWidget(self._detail_tabs)
 
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         browse_layout.addWidget(splitter)
 
         self._tabs.addTab(browse, "浏览")
+
+        self._world_viz = WorldVizWidget()
+        self._tabs.addTab(self._world_viz, "世界")
 
         # —— 素材探针 ——
         probe = QWidget()
@@ -138,6 +180,39 @@ class ChronicleBrowserTab(QWidget):
 
         self._tabs.addTab(probe, "素材探针")
 
+    def _clear_detail_pane(self) -> None:
+        self.detail_preview.clear()
+        self.rumor_text.clear()
+        self._preview_stack.setCurrentIndex(0)
+        self.detail_raw.clear()
+
+    def _set_detail_view(self, preview_html: str, raw_text: str) -> None:
+        self._preview_stack.setCurrentIndex(0)
+        self.detail_preview.setHtml(preview_html)
+        self.detail_raw.setPlainText(raw_text)
+        self._detail_tabs.setCurrentIndex(0)
+
+    def _set_rumor_view(self, rows: list, raw: str) -> None:
+        self._preview_stack.setCurrentIndex(1)
+        self.rumor_graph_view.populate(self._run_dir, rows)
+        self.rumor_text.setHtml(
+            rumors_html_stats_and_table_only(self._run_dir, rows, graph_hint=True)
+        )
+        self.detail_raw.setPlainText(raw)
+        self._detail_tabs.setCurrentIndex(0)
+
+    def _set_detail_plain_both(self, text: str) -> None:
+        self._preview_stack.setCurrentIndex(0)
+        esc = html_escape(text)
+        self.detail_preview.setHtml(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<style>body{font-family:Consolas,monospace;font-size:12px;padding:12px;background:#fafafa;}"
+            "pre{white-space:pre-wrap;word-break:break-word;}</style></head>"
+            f"<body><pre>{esc}</pre></body></html>"
+        )
+        self.detail_raw.setPlainText(text)
+        self._detail_tabs.setCurrentIndex(0)
+
     def set_run_dir(self, run_dir: Path | None) -> None:
         prev = self._run_dir
         if prev != run_dir and self._probe_worker is not None:
@@ -153,7 +228,8 @@ class ChronicleBrowserTab(QWidget):
             self._refresh_tree()
         else:
             self.tree.clear()
-            self.detail.clear()
+            self._clear_detail_pane()
+        self._world_viz.set_run_dir(run_dir)
 
     def showEvent(self, event) -> None:  # type: ignore
         super().showEvent(event)
@@ -331,17 +407,23 @@ class ChronicleBrowserTab(QWidget):
                     rel_path = f"chronicle/week_{week:03d}/rumors.json"
                     data = read_json(self._run_dir, rel_path)
                     if data is not None:
-                        self.detail.setPlainText(json.dumps(data, ensure_ascii=False, indent=2))
+                        raw = json.dumps(data, ensure_ascii=False, indent=2)
+                        rows = data if isinstance(data, list) else []
+                        self._set_rumor_view(rows, raw)
                     else:
-                        self.detail.setPlainText("(空文件)")
+                        self._set_detail_view(
+                            "<html><body><p>（空文件）</p></body></html>", "(空文件)"
+                        )
                     return
                 if parent_text.startswith("总结"):
                     rel_path = f"chronicle/week_{week:03d}/summary.md"
-                    content = read_text(self._run_dir, rel_path)
-                    self.detail.setPlainText(content)
+                    content = read_text(self._run_dir, rel_path) or ""
+                    preview = summary_markdown_to_html(content)
+                    self._set_detail_view(preview, content)
                     return
 
             rel_path = f"chronicle/week_{week:03d}/"
+            parent_text = ""
             if item.parent():
                 parent_text = item.parent().text(0)
                 if parent_text.startswith("事件"):
@@ -354,18 +436,39 @@ class ChronicleBrowserTab(QWidget):
 
             if text.endswith(".json"):
                 data = read_json(self._run_dir, rel_path)
-                if data:
-                    self.detail.setPlainText(json.dumps(data, ensure_ascii=False, indent=2))
+                if data is None:
+                    self._set_detail_view(
+                        "<html><body><p>（空文件）</p></body></html>", "(空文件)"
+                    )
+                    return
+                raw = json.dumps(data, ensure_ascii=False, indent=2)
+                if not isinstance(data, dict):
+                    preview = generic_json_preview(data, text)
+                    self._set_detail_view(preview, raw)
+                elif parent_text.startswith("事件"):
+                    self._set_detail_view(
+                        event_json_to_html(self._run_dir, data, text), raw
+                    )
+                elif parent_text.startswith("意图"):
+                    self._set_detail_view(
+                        intent_json_to_html(self._run_dir, data), raw
+                    )
+                elif parent_text.startswith("记忆"):
+                    self._set_detail_view(
+                        memory_json_to_html(self._run_dir, data), raw
+                    )
                 else:
-                    self.detail.setPlainText("(空文件)")
+                    preview = generic_json_preview(data, text)
+                    self._set_detail_view(preview, raw)
             else:
-                content = read_text(self._run_dir, rel_path)
-                self.detail.setPlainText(content)
+                content = read_text(self._run_dir, rel_path) or ""
+                self._set_detail_plain_both(content)
 
         elif text.startswith("month_"):
             rel_path = f"chronicle/{text}.md"
-            content = read_text(self._run_dir, rel_path)
-            self.detail.setPlainText(content)
+            content = read_text(self._run_dir, rel_path) or ""
+            preview = month_markdown_to_html(content, text.replace("month_", "月度 "))
+            self._set_detail_view(preview, content)
 
     def _rebuild_index(self) -> None:
         if not self._run_dir:
@@ -379,7 +482,7 @@ class ChronicleBrowserTab(QWidget):
 
     def _clear_search(self) -> None:
         self.search_edit.clear()
-        self.detail.clear()
+        self._clear_detail_pane()
 
     def _grep_search(self) -> None:
         if not self._run_dir:
@@ -389,10 +492,10 @@ class ChronicleBrowserTab(QWidget):
             return
         results = grep_search(self._run_dir, q, "chronicle")
         if not results:
-            self.detail.setPlainText("未找到匹配")
+            self._set_detail_plain_both("未找到匹配")
             return
         lines = [f"{rel}:{ln}: {txt}" for rel, ln, txt in results[:50]]
-        self.detail.setPlainText("\n".join(lines))
+        self._set_detail_plain_both("\n".join(lines))
         self.log_signal.emit(f"Grep '{q}' → {len(results)} 条结果")
 
     def _semantic_search(self) -> None:
@@ -406,7 +509,7 @@ class ChronicleBrowserTab(QWidget):
             return
         results = search_world(self._run_dir, q, n_results=10)
         if not results:
-            self.detail.setPlainText("未找到相关结果")
+            self._set_detail_plain_both("未找到相关结果")
             return
         parts = []
         for i, r in enumerate(results, 1):
@@ -414,7 +517,7 @@ class ChronicleBrowserTab(QWidget):
             doc = r.get("document", "")
             kind = meta.get("kind", "unknown")
             parts.append(f"[{i}] kind={kind}\n{doc[:500]}")
-        self.detail.setPlainText("\n\n".join(parts))
+        self._set_detail_plain_both("\n\n".join(parts))
         self.log_signal.emit(f"语义搜索 '{q}' → {len(results)} 条结果")
 
     def _export_md(self) -> None:
