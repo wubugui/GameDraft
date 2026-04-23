@@ -19,6 +19,10 @@ system = '''
 - 输出必须结构化 JSON
 </constraints>
 
+<cline_act_mode>
+ACT：完整 JSON 写入 cwd 的 agent_output.json；attempt_completion 只允许一句极短确认，不得复述 JSON。
+</cline_act_mode>
+
 <output_contract>
 只输出一个合法 JSON 对象。
 </output_contract>
