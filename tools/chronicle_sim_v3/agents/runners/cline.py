@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import json
+import re
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -59,6 +61,309 @@ _DEFAULT_OUTPUT_CONTRACT = """\
 - 若 OutputSpec.kind 为 text：直接输出最终文本
 - 完成后调用 attempt_completion 结束任务
 """
+
+
+def _safe_json_load(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _extract_json_block(text: str) -> Any:
+    from tools.chronicle_sim_v3.llm.output_parse import _extract_json_candidate
+
+    cand = _extract_json_candidate(text)
+    if not cand:
+        return None
+    return _safe_json_load(cand)
+
+
+def _parse_jsonish(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        obj = _safe_json_load(value)
+        if obj is not None:
+            return obj
+    return default
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            s = str(item).strip()
+            if s:
+                out.append(s)
+        return out
+    return [str(value)]
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _lookup_nested(data: dict[str, Any], *keys: str) -> Any:
+    cur: Any = data
+    for key in keys:
+        if not isinstance(cur, dict) or key not in cur:
+            return None
+        cur = cur[key]
+    return cur
+
+
+def _normalize_npc_intent(
+    role_vars: dict[str, Any],
+    parsed: Any,
+    raw_text: str,
+) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    agent_id = str(data.get("agent_id") or role_vars.get("agent_id") or "")
+    week = _coerce_int(data.get("week"), _coerce_int(role_vars.get("week"), 0))
+    intent_text = str(data.get("intent_text") or raw_text.strip() or "观望、打听消息")
+    out = {
+        "agent_id": agent_id,
+        "week": week,
+        "mood_delta": str(data.get("mood_delta") or "平"),
+        "intent_text": intent_text,
+        "target_ids": _coerce_str_list(data.get("target_ids")),
+    }
+    rel = _coerce_str_list(data.get("relationship_hints"))
+    if rel:
+        out["relationship_hints"] = rel
+    return out
+
+
+def _normalize_npc_perception(
+    role_vars: dict[str, Any],
+    parsed: Any,
+    raw_text: str,
+) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    location_json = _parse_jsonish(role_vars.get("location_json"), {})
+    return {
+        "agent_id": str(data.get("agent_id") or role_vars.get("agent_id") or ""),
+        "week": _coerce_int(data.get("week"), _coerce_int(role_vars.get("week"), 0)),
+        "known_facts": _coerce_str_list(data.get("known_facts")),
+        "rumor_inputs": _coerce_str_list(data.get("rumor_inputs")),
+        "attention_points": _coerce_str_list(data.get("attention_points")) or ([raw_text.strip()] if raw_text.strip() else []),
+        "uncertainties": _coerce_str_list(data.get("uncertainties")),
+        "location_focus": str(data.get("location_focus") or location_json.get("id") or location_json.get("name") or ""),
+        "social_focus": _coerce_str_list(data.get("social_focus")),
+    }
+
+
+def _normalize_npc_action(
+    role_vars: dict[str, Any],
+    parsed: Any,
+    raw_text: str,
+) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    return {
+        "agent_id": str(data.get("agent_id") or role_vars.get("agent_id") or ""),
+        "week": _coerce_int(data.get("week"), _coerce_int(role_vars.get("week"), 0)),
+        "action_summary": str(data.get("action_summary") or raw_text.strip() or "本周保持观望"),
+        "action_type": str(data.get("action_type") or "observe"),
+        "target_ids": _coerce_str_list(data.get("target_ids")),
+        "location_hint": str(data.get("location_hint") or ""),
+        "public_effect": str(data.get("public_effect") or ""),
+        "private_effect": str(data.get("private_effect") or ""),
+    }
+
+
+def _normalize_npc_reflection(
+    role_vars: dict[str, Any],
+    parsed: Any,
+    raw_text: str,
+) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    summary = str(data.get("memory_summary") or raw_text.strip())
+    return {
+        "agent_id": str(data.get("agent_id") or role_vars.get("agent_id") or ""),
+        "week": _coerce_int(data.get("week"), _coerce_int(role_vars.get("week"), 0)),
+        "reflection": str(data.get("reflection") or raw_text.strip() or ""),
+        "lessons": _coerce_str_list(data.get("lessons")),
+        "belief_shift": _coerce_str_list(data.get("belief_shift")),
+        "memory_summary": summary,
+        # 为周流程后续沉积保留稳定字段
+        "short_memory": {"summary": summary, "lessons": _coerce_str_list(data.get("lessons"))},
+        "long_memory": {"summary": summary, "belief_shift": _coerce_str_list(data.get("belief_shift"))},
+    }
+
+
+def _normalize_group_intents(
+    role_vars: dict[str, Any],
+    parsed: Any,
+    raw_text: str,
+) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    group_agents = _parse_jsonish(role_vars.get("group_agents_json"), [])
+    intents = data.get("intents")
+    out_intents: list[dict[str, Any]] = []
+    if isinstance(intents, list):
+        for item in intents:
+            if not isinstance(item, dict):
+                continue
+            aid = str(item.get("agent_id") or "")
+            if not aid:
+                continue
+            out_intents.append({
+                "agent_id": aid,
+                "week": _coerce_int(item.get("week"), _coerce_int(role_vars.get("week"), 0)),
+                "intent_text": str(item.get("intent_text") or "观望"),
+            })
+    if not out_intents and isinstance(group_agents, list):
+        for agent in group_agents:
+            if not isinstance(agent, dict):
+                continue
+            aid = str(agent.get("id") or "")
+            if not aid:
+                continue
+            out_intents.append({
+                "agent_id": aid,
+                "week": _coerce_int(role_vars.get("week"), 0),
+                "intent_text": "观望、打听消息",
+            })
+    return {
+        "tier": str(data.get("tier") or role_vars.get("tier") or ""),
+        "week": _coerce_int(data.get("week"), _coerce_int(role_vars.get("week"), 0)),
+        "group_summary": str(data.get("group_summary") or raw_text.strip() or ""),
+        "intents": out_intents,
+    }
+
+
+def _normalize_director_output(parsed: Any) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    drafts = data.get("drafts")
+    out: list[dict[str, Any]] = []
+    if isinstance(drafts, list):
+        for d in drafts:
+            if not isinstance(d, dict):
+                continue
+            out.append({
+                "type_id": str(d.get("type_id") or ""),
+                "week": _coerce_int(d.get("week"), 0),
+                "location_id": d.get("location_id"),
+                "actor_ids": _coerce_str_list(d.get("actor_ids")),
+                "summary": str(d.get("summary") or ""),
+                "draft_json": d.get("draft_json") if isinstance(d.get("draft_json"), dict) else {},
+            })
+    return {"drafts": out}
+
+
+def _normalize_gm_output(parsed: Any) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    events = data.get("events")
+    out: list[dict[str, Any]] = []
+    if isinstance(events, list):
+        for e in events:
+            if not isinstance(e, dict):
+                continue
+            out.append({
+                "id": str(e.get("id") or ""),
+                "type_id": str(e.get("type_id") or ""),
+                "week": _coerce_int(e.get("week"), 0),
+                "location_id": e.get("location_id"),
+                "actor": str(e.get("actor") or ""),
+                "related": _coerce_str_list(e.get("related")),
+                "witness": _coerce_str_list(e.get("witness")),
+                "summary": str(e.get("summary") or ""),
+                "truth": e.get("truth") if isinstance(e.get("truth"), dict) else {},
+                "witness_accounts": e.get("witness_accounts") if isinstance(e.get("witness_accounts"), dict) else {},
+            })
+    return {"events": out}
+
+
+def _normalize_social_state(parsed: Any, raw_text: str) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    return {
+        "overview": str(data.get("overview") or raw_text.strip() or ""),
+        "faction_states": data.get("faction_states") if isinstance(data.get("faction_states"), list) else [],
+        "location_states": data.get("location_states") if isinstance(data.get("location_states"), list) else [],
+        "group_states": data.get("group_states") if isinstance(data.get("group_states"), list) else [],
+    }
+
+
+def _normalize_story_clusters(parsed: Any) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    clusters = data.get("clusters")
+    out: list[dict[str, Any]] = []
+    if isinstance(clusters, list):
+        for c in clusters:
+            if not isinstance(c, dict):
+                continue
+            out.append({
+                "id": str(c.get("id") or ""),
+                "title": str(c.get("title") or ""),
+                "focus": str(c.get("focus") or ""),
+                "event_ids": _coerce_str_list(c.get("event_ids")),
+                "rumor_keys": _coerce_str_list(c.get("rumor_keys")),
+                "participants": _coerce_str_list(c.get("participants")),
+                "story_hook": str(c.get("story_hook") or ""),
+            })
+    return {"clusters": out}
+
+
+def _normalize_storylines(parsed: Any) -> dict[str, Any]:
+    data = parsed if isinstance(parsed, dict) else {}
+    storylines = data.get("storylines")
+    out: list[dict[str, Any]] = []
+    if isinstance(storylines, list):
+        for s in storylines:
+            if not isinstance(s, dict):
+                continue
+            out.append({
+                "id": str(s.get("id") or ""),
+                "title": str(s.get("title") or ""),
+                "weeks": s.get("weeks") if isinstance(s.get("weeks"), list) else [],
+                "cluster_ids": _coerce_str_list(s.get("cluster_ids")),
+                "focus": str(s.get("focus") or ""),
+                "next_hook": str(s.get("next_hook") or ""),
+            })
+    return {"storylines": out}
+
+
+def _normalize_structured_output(
+    *,
+    spec_ref: str,
+    role_vars: dict[str, Any],
+    raw_text: str,
+    parsed: Any,
+) -> Any:
+    name = Path(spec_ref).name
+    if name in {"tier_s_npc.toml", "tier_a_npc.toml", "tier_b_npc.toml", "tier_c_npc.toml"}:
+        return _normalize_npc_intent(role_vars, parsed, raw_text)
+    if name == "npc_perception.toml":
+        return _normalize_npc_perception(role_vars, parsed, raw_text)
+    if name == "npc_action.toml":
+        return _normalize_npc_action(role_vars, parsed, raw_text)
+    if name == "npc_reflection.toml":
+        return _normalize_npc_reflection(role_vars, parsed, raw_text)
+    if name == "group_intent_pack.toml":
+        return _normalize_group_intents(role_vars, parsed, raw_text)
+    if name == "director.toml":
+        return _normalize_director_output(parsed)
+    if name == "gm.toml":
+        return _normalize_gm_output(parsed)
+    if name == "social_state_settler.toml":
+        return _normalize_social_state(parsed, raw_text)
+    if name == "story_clusterer.toml":
+        return _normalize_story_clusters(parsed)
+    if name == "storyline_aggregator.toml":
+        return _normalize_storylines(parsed)
+    return parsed
 
 
 def resolve_cline_executable(explicit: str = "") -> str:
@@ -343,12 +648,33 @@ class ClineRunner(SubprocessAgentRunner):
                 kind=ref_output_kind,
                 artifact_filename=ref_artifact_filename,
             )
+            tool_log: list[dict] = []
             try:
                 parsed, tool_log = parse_output(final_text, output_spec)
             except Exception as e:
-                raise AgentRunnerError(
-                    f"cline 输出解析失败(kind={ref_output_kind}): {e}"
-                ) from e
+                if ref_output_kind in ("json_object", "json_array"):
+                    # 真实 cline 偶发先输出解释、再给半结构化内容；这里不直接信任原样 JSON，
+                    # 而是回退到「从原始文本 + 输入变量中抽取/组装目标结构」。
+                    observer.on_phase("cline.parse_fallback", {
+                        "spec_ref": task.spec_ref,
+                        "error": str(e)[:240],
+                    })
+                    tool_log = [{
+                        "type": "parse_fallback",
+                        "spec_ref": task.spec_ref,
+                        "error": str(e),
+                    }]
+                    parsed = None
+                else:
+                    raise AgentRunnerError(
+                        f"cline 输出解析失败(kind={ref_output_kind}): {e}"
+                    ) from e
+            parsed = _normalize_structured_output(
+                spec_ref=task.spec_ref,
+                role_vars=dict(task.vars),
+                raw_text=final_text,
+                parsed=parsed,
+            )
             archived_path = archive_workspace(
                 ctx.run_dir, ws, role=resolved.physical
             )
