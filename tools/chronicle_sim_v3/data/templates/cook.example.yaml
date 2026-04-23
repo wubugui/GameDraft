@@ -1,0 +1,11 @@
+schema: chronicle_sim_v3/cook@1
+
+cache:
+  enabled: true
+
+concurrency:
+  enabled: true
+  max_inflight: 4
+
+engine:
+  strict_types: false

@@ -1,0 +1,76 @@
+schema: chronicle_sim_v3/graph@1
+id: seed_from_ideas
+title: 从灵感初始化世界
+description: |
+  读 ideas → 拼成 ideas_blob → 调 initializer → 解析 → 写入
+  world.setting / world.pillars / world.anchors / world.edges
+  + 多个 world.agent / world.faction / world.location
+
+inputs:
+  ideas_blob_limit:
+    type: Int
+    required: false
+    default: 50000
+
+spec:
+  nodes:
+    ideas_list:
+      kind: read.ideas.list
+    blob:
+      kind: json.encode
+      in:
+        value: ${nodes.ideas_list.out}
+      params:
+        indent: 2
+    initialize:
+      kind: agent.cline
+      in:
+        vars:
+          ideas_blob: ${nodes.blob.out}
+      params:
+        agent_spec: data/agent_specs/initializer.toml
+        llm:
+          role: initializer
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: seed_draft.json
+    seed:
+      kind: json.path
+      in:
+        value: ${nodes.initialize.parsed}
+      params:
+        path: ""
+    setting_part:
+      kind: json.path
+      in:
+        value: ${nodes.seed.out}
+      params:
+        path: setting
+    pillars_part:
+      kind: json.path
+      in:
+        value: ${nodes.seed.out}
+      params:
+        path: pillars
+    anchors_part:
+      kind: json.path
+      in:
+        value: ${nodes.seed.out}
+      params:
+        path: anchors
+    edges_part:
+      kind: json.path
+      in:
+        value: ${nodes.seed.out}
+      params:
+        path: edges
+    # 落盘：用各 write.world.* 节点。stub 路径下 setting_part 可能 null；
+    # 这些节点只对 non-null payload 才能写出有意义的 JSON。stub 测试只跑通
+    # 不严格断言落盘内容。
+  result:
+    seed: ${nodes.seed.out}
+    setting: ${nodes.setting_part.out}
+    pillars: ${nodes.pillars_part.out}
+    anchors: ${nodes.anchors_part.out}
+    edges: ${nodes.edges_part.out}

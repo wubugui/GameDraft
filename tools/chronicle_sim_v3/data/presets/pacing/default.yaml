@@ -1,0 +1,5 @@
+schema: chronicle_sim_v3/pacing_preset@1
+preset: default
+
+multiplier: 1.0
+windows: []
