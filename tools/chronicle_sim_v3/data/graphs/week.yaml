@@ -69,33 +69,29 @@ spec:
           agent_spec: data/agent_specs/tier_a_npc.toml
           week: ${inputs.week}
     intent_b:
-      kind: flow.fanout_per_agent
-      in:
-        over: ${nodes.by_tier.B}
+      kind: flow.subgraph
       params:
-        body: ${subgraph:single_agent_intent}
-        body_inputs:
+        ref: ${subgraph:group_tier_intents}
+        inputs:
           tier: "B"
-          agent_spec: data/agent_specs/tier_b_npc.toml
           week: ${inputs.week}
+          agents: ${nodes.by_tier.B}
     intent_c:
-      kind: flow.fanout_per_agent
-      in:
-        over: ${nodes.by_tier.C}
+      kind: flow.subgraph
       params:
-        body: ${subgraph:single_agent_intent}
-        body_inputs:
+        ref: ${subgraph:group_tier_intents}
+        inputs:
           tier: "C"
-          agent_spec: data/agent_specs/tier_c_npc.toml
           week: ${inputs.week}
+          agents: ${nodes.by_tier.C}
     all_intents:
       kind: list.concat
       in:
         lists:
           - ${nodes.intent_s.collected}
           - ${nodes.intent_a.collected}
-          - ${nodes.intent_b.collected}
-          - ${nodes.intent_c.collected}
+          - ${nodes.intent_b.out.intents}
+          - ${nodes.intent_c.out.intents}
     intents_text:
       kind: json.encode
       in:
