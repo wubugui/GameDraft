@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as _dt
 import json
 import os
 import sys
@@ -185,6 +186,10 @@ def _write_configs(run_dir: Path, *, base_url: str, model: str) -> None:
     )
 
 
+def _cook_suffix() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
 async def _run_graph(run_dir: Path, graph_name: str, inputs: dict[str, object], cook_id: str) -> None:
     spec = GraphLoader().load(Path("/workspace/tools/chronicle_sim_v3/data/graphs") / f"{graph_name}.yaml")
     eng = Engine(run_dir)
@@ -204,6 +209,46 @@ async def _run_graph(run_dir: Path, graph_name: str, inputs: dict[str, object], 
         await llm.aclose()
 
 
+async def _run_storyline_aggregation(run_dir: Path, from_week: int, to_week: int) -> None:
+    ps = ProviderService(run_dir)
+    llm = LLMService(run_dir, ps, spec_search_root=run_dir)
+    agents = AgentService(run_dir, ps, llm_service=llm, spec_search_root=run_dir)
+    try:
+        from tools.chronicle_sim_v3.agents.types import AgentRef, AgentTask
+        from tools.chronicle_sim_v3.engine.context import ContextStore
+        from tools.chronicle_sim_v3.engine.keymap import scan_keys
+
+        cs = ContextStore(run_dir)
+        clusters: list[dict] = []
+        for key in scan_keys("chronicle.story_clusters_all", run_dir):
+            payload = cs.read_view().read_key(key)
+            if payload is None:
+                continue
+            clusters.append({"key": key, "payload": payload})
+        ref = AgentRef(
+            agent="summary",
+            role="storyline_aggregator",
+            output_kind="json_object",
+            artifact_filename="agent_output.json",
+            cache="off",
+            timeout_sec=240,
+        )
+        task = AgentTask(
+            spec_ref="data/agent_specs/storyline_aggregator.toml",
+            vars={
+                "weekly_clusters_text": json.dumps(clusters, ensure_ascii=False, indent=2),
+            },
+        )
+        result = await agents.run(ref, task)
+        out = result.parsed if isinstance(result.parsed, dict) else {"storylines": []}
+        target = run_dir / "chronicle" / "storylines" / f"from_{from_week:03d}_to_{to_week:03d}.json"
+        _write_json(target, out)
+        print("STORYLINES_WRITTEN=", target)
+    finally:
+        await agents.aclose()
+        await llm.aclose()
+
+
 def main() -> None:
     args = _build_parser().parse_args()
     run_dir = Path(args.run_dir).resolve()
@@ -217,20 +262,25 @@ def main() -> None:
     print(f"AGENTS={len(seed.get('agents', []))}")
 
     if args.week > 0:
-        asyncio.run(_run_graph(run_dir, "week", {"week": args.week}, f"real-w{args.week}"))
-    elif args.from_week > 0 and args.to_week >= args.from_week:
         asyncio.run(
             _run_graph(
                 run_dir,
-                "range",
-                {
-                    "from_week": args.from_week,
-                    "to_week": args.to_week,
-                    "pacing_preset": "default",
-                },
-                f"real-range-{args.from_week}-{args.to_week}",
+                "week",
+                {"week": args.week},
+                f"real-w{args.week}-{_cook_suffix()}",
             )
         )
+    elif args.from_week > 0 and args.to_week >= args.from_week:
+        for week in range(args.from_week, args.to_week + 1):
+            asyncio.run(
+                _run_graph(
+                    run_dir,
+                    "week",
+                    {"week": week},
+                    f"real-w{week}-{_cook_suffix()}",
+                )
+            )
+        asyncio.run(_run_storyline_aggregation(run_dir, args.from_week, args.to_week))
 
 
 if __name__ == "__main__":

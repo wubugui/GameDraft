@@ -625,8 +625,16 @@ class Engine:
         cook_inputs: dict[str, Any],
     ) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        preserve_item = (
+            nref.kind in {"flow.foreach", "flow.fanout_per_agent"}
+        )
         for k, v in nref.params.items():
-            out[k] = self._resolve_value(v, nodes_outputs, cook_inputs)
+            if preserve_item and k == "body_inputs":
+                out[k] = self._resolve_value(
+                    v, nodes_outputs, cook_inputs, preserve_item_refs=True,
+                )
+            else:
+                out[k] = self._resolve_value(v, nodes_outputs, cook_inputs)
         return out
 
     def _resolve_value(
@@ -634,14 +642,34 @@ class Engine:
         value: Any,
         nodes_outputs: dict[str, dict],
         cook_inputs: dict[str, Any],
+        *,
+        preserve_item_refs: bool = False,
     ) -> Any:
         """递归解析容器 / 字面量 / placeholder。"""
         if isinstance(value, str) and "${" in value:
+            if preserve_item_refs and "${item" in value:
+                return value
             return self._eval_top_expr(value, nodes_outputs, cook_inputs)
         if isinstance(value, dict):
-            return {k: self._resolve_value(v, nodes_outputs, cook_inputs) for k, v in value.items()}
+            return {
+                k: self._resolve_value(
+                    v,
+                    nodes_outputs,
+                    cook_inputs,
+                    preserve_item_refs=preserve_item_refs,
+                )
+                for k, v in value.items()
+            }
         if isinstance(value, list):
-            return [self._resolve_value(v, nodes_outputs, cook_inputs) for v in value]
+            return [
+                self._resolve_value(
+                    v,
+                    nodes_outputs,
+                    cook_inputs,
+                    preserve_item_refs=preserve_item_refs,
+                )
+                for v in value
+            ]
         return value
 
     def _eval_top_expr(

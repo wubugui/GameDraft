@@ -17,10 +17,18 @@ system = '''
 - storyline 数量克制，通常 1–4 条
 - 每条 storyline 只保留最关键的周、参与者、核心矛盾和延续钩子
 - 输出必须结构化 JSON
+- 若模型拿不准，也必须给出最小可用 storylines，不要返回空说明
+- 禁止输出解释、前言、后记、围栏
+- 首字符必须是 {，末字符必须是 }
 </constraints>
+
+<cline_act_mode>
+ACT：完整 JSON 写入 cwd 的 agent_output.json；attempt_completion 只允许一句极短确认，不得复述 JSON。
+</cline_act_mode>
 
 <output_contract>
 只输出一个合法 JSON 对象。
+禁止自然语言前言与 markdown 围栏。
 </output_contract>
 
 <json_structure>

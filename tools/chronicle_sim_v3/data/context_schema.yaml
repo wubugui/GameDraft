@@ -252,3 +252,18 @@ collections:
     scan_glob: "*.json"
     scan_regex: "^(?P<location_id>[^/]+)\\.json$"
     item_key_template: "chronicle.location_state:week={week},location_id={location_id}"
+  - base: chronicle.story_clusters_all
+    path: chronicle
+    scan_glob: "week_*/story_clusters.json"
+    scan_regex: "^week_(?P<week>\\d+)/story_clusters\\.json$"
+    item_key_template: "chronicle.story_clusters:week={week}"
+  - base: chronicle.story_clusters_list
+    path: chronicle
+    scan_glob: "week_*/story_clusters.json"
+    scan_regex: "^week_(?P<week>\\d+)/story_clusters\\.json$"
+    item_key_template: "chronicle.story_clusters:week={week}"
+  - base: chronicle.story_clusters_all
+    path: chronicle
+    scan_glob: "week_*/story_clusters.json"
+    scan_regex: "^week_(?P<week>\\d+)/story_clusters\\.json$"
+    item_key_template: "chronicle.story_clusters:week={week}"
