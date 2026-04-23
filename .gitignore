@@ -36,6 +36,14 @@ tools/chronicle_sim_v2/data/private_llm_defaults.json
 # 编年史模拟器：本地运行产物（快照/数据库等可能含 llm_config 与 api_key）
 tools/chronicle_sim/runs/
 tools/chronicle_sim_v2/runs/
+tools/chronicle_sim_v3/runs/
+
+# 编年史 v3：根级 runs/ 真实测试数据（含 api_key 文件 / cline session / 子任务历史）
+runs/
+
+# 编年史 v3：cook 调试时的根级时间线落盘
+_tl.json
+*.tl.json
 
 # 对话编译产物（源文件为 .ink）
 public/assets/dialogues/*.ink.json

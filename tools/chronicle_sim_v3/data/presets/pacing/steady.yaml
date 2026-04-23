@@ -1,0 +1,6 @@
+schema: chronicle_sim_v3/pacing_preset@1
+preset: steady
+
+# 平稳节奏：全程 multiplier=0.9
+multiplier: 0.9
+windows: []

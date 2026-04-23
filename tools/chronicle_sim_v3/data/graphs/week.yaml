@@ -1,0 +1,141 @@
+schema: chronicle_sim_v3/graph@1
+id: week
+title: 标准周流水线（v3）
+description: |
+  完整一周流程：
+    读 agents → 过滤活跃 → 按 tier 分组
+      → S/A 分别 fanout 单 NPC 意图（agent.cline）
+      → 编导草稿（director）
+      → GM 裁定（gm）
+      → 写入 events
+      → week_end 子图（写 summary 等）
+
+inputs:
+  week:
+    type: Week
+    required: true
+  pacing_preset:
+    type: Str
+    required: false
+    default: default
+
+outputs:
+  summary:
+    type: Str
+  intents_count:
+    type: Int
+
+spec:
+  nodes:
+    bible:
+      kind: read.world.bible_text
+    agents:
+      kind: read.world.agents
+    alive:
+      kind: npc.filter_active
+      in:
+        agents: ${nodes.agents.out}
+    by_tier:
+      kind: npc.partition_by_tier
+      in:
+        agents: ${nodes.alive.out}
+    pacing:
+      kind: read.config.pacing
+      params:
+        preset: default
+    pacing_mult:
+      kind: pacing.multiplier
+      in:
+        week: ${inputs.week}
+        pacing: ${nodes.pacing.out}
+    intent_s:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.S}
+      params:
+        body: ${subgraph:single_agent_intent}
+        body_inputs:
+          tier: "S"
+          agent_spec: data/agent_specs/tier_s_npc.toml
+          week: ${inputs.week}
+    intent_a:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.A}
+      params:
+        body: ${subgraph:single_agent_intent}
+        body_inputs:
+          tier: "A"
+          agent_spec: data/agent_specs/tier_a_npc.toml
+          week: ${inputs.week}
+    all_intents:
+      kind: list.concat
+      in:
+        lists:
+          - ${nodes.intent_s.collected}
+          - ${nodes.intent_a.collected}
+    intents_text:
+      kind: json.encode
+      in:
+        value: ${nodes.all_intents.out}
+      params:
+        indent: 2
+    event_types:
+      kind: read.config.event_types
+    event_types_text:
+      kind: eventtype.format_for_prompt
+      in:
+        types: ${nodes.event_types.out}
+    director:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          pacing_mult: ${nodes.pacing_mult.out}
+          world_bible_text: ${nodes.bible.out}
+          intents_json: ${nodes.intents_text.out}
+          event_types_text: ${nodes.event_types_text.out}
+          event_selection_notes: ""
+      params:
+        agent_spec: data/agent_specs/director.toml
+        llm:
+          role: director
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    drafts_text:
+      kind: json.encode
+      in:
+        value: ${nodes.director.parsed}
+      params:
+        indent: 2
+    gm:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          world_bible_text: ${nodes.bible.out}
+          drafts_json: ${nodes.drafts_text.out}
+      params:
+        agent_spec: data/agent_specs/gm.toml
+        llm:
+          role: gm
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    week_end:
+      kind: flow.subgraph
+      params:
+        ref: ${subgraph:week_end}
+        inputs:
+          week: ${inputs.week}
+    intents_n:
+      kind: count
+      in:
+        list: ${nodes.all_intents.out}
+
+  result:
+    summary: ${nodes.week_end.out.summary}
+    intents_count: ${nodes.intents_n.out}
