@@ -94,8 +94,8 @@ class BeliefFromRumors:
         category="belief",
         title="belief.from_rumors",
         description=(
-            "把 rumor 中包含 agent_id 的项转 belief。conf_heard 用于"
-            "首次听说，conf_spread 用于多次传播叠加（depth>=2）。"
+            "把 rumor 中包含 agent_id 的项转 belief。支持首次听闻、"
+            "重复暴露与冲突/回流触发思考元数据。"
         ),
         inputs=(
             PortSpec(name="rumors", type="RumorList"),
@@ -105,6 +105,7 @@ class BeliefFromRumors:
         params=(
             Param(name="conf_heard", type="float", required=False, default=0.38),
             Param(name="conf_spread", type="float", required=False, default=0.55),
+            Param(name="conf_repeat", type="float", required=False, default=0.62),
         ),
         version="1",
     )
@@ -113,16 +114,29 @@ class BeliefFromRumors:
         aid = str(inputs.get("agent_id", ""))
         conf_h = float(params.get("conf_heard", 0.38))
         conf_s = float(params.get("conf_spread", 0.55))
+        conf_r = float(params.get("conf_repeat", 0.62))
         out: list[dict] = []
         for r in inputs.get("rumors") or []:
             for a in r.get("audience") or []:
                 if str(a.get("agent_id")) == aid:
                     hops = int(a.get("hops", 1))
+                    repeated = bool(a.get("repeated_exposure", False))
+                    returned = bool(a.get("returned_to_origin", False))
+                    source_kind = str(a.get("source_kind", "rumor"))
                     out.append({
                         "key": f"rumor:{r.get('source_event_id') or r.get('id')}",
-                        "conf": conf_s if hops >= 2 else conf_h,
-                        "source": "rumor",
+                        "conf": (
+                            conf_r if repeated
+                            else (conf_s if hops >= 2 else conf_h)
+                        ),
+                        "source": source_kind,
                         "weight": float(a.get("weight", 1.0)),
+                        "hops": hops,
+                        "repeated_exposure": repeated,
+                        "returned_to_origin": returned,
+                        "should_reflect": bool(
+                            repeated or returned or a.get("source_conflict", False)
+                        ),
                     })
                     break
         return NodeOutput(values={"out": out})

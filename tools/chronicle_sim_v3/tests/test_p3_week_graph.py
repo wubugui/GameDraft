@@ -78,7 +78,7 @@ async def test_week_yaml_e2e_stub(tmp_path: Path) -> None:
     res = await eng.run(spec, inputs={"week": 1}, cook_id="w1")
     assert res.status == "completed", f"failed_nodes={res.failed_nodes}"
     # 关键产出
-    assert res.outputs["intents_count"] == 2  # 1 S + 1 A alive
+    assert res.outputs["intents_count"] == 3  # 1 S + 1 A + 1 B alive
     assert isinstance(res.outputs["summary"], str)
     assert res.outputs["summary"]
     # 周末 summary 已落盘
