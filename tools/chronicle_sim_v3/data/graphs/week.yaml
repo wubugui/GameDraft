@@ -131,6 +131,8 @@ spec:
         ref: ${subgraph:week_end}
         inputs:
           week: ${inputs.week}
+        # 仅用于 DAG：让周末子图在 GM 之后调度（否则 chronicle.events 尚未写入）
+        _after_gm: ${nodes.gm.parsed}
     intents_n:
       kind: count
       in:
