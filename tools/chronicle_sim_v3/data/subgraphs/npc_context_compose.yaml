@@ -2,7 +2,7 @@ schema: chronicle_sim_v3/graph@1
 id: npc_context_compose
 title: 单 NPC 上下文拼装
 description: |
-  把世界圣经 + 本周已知信念 + 个人意图历史拼成 LLM 注入文本。
+  把世界圣经 + 角色档案 + 记忆/信念/感知拼成 LLM 注入文本。
   inputs: agent_id (AgentId), week (Week)
   outputs: context_text (Str)
 
@@ -18,18 +18,93 @@ spec:
   nodes:
     bible:
       kind: read.world.bible_text
+    personality_key:
+      kind: text.format
+      in:
+        vars:
+          agent_id: ${inputs.agent_id}
+      params:
+        pattern: "world.agent_personality:agent_id={agent_id}"
+    personality:
+      kind: read.schema.key
+      in:
+        key: ${nodes.personality_key.out}
     beliefs:
       kind: read.chronicle.beliefs
       in:
         week: ${inputs.week}
+        agent_id: ${inputs.agent_id}
+    short_memory_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${inputs.agent_id}
+      params:
+        pattern: "chronicle.short_memory:week={week},agent_id={agent_id}"
+    short_memory:
+      kind: read.schema.key
+      in:
+        key: ${nodes.short_memory_key.out}
+    long_memory_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${inputs.agent_id}
+      params:
+        pattern: "chronicle.long_memory:week={week},agent_id={agent_id}"
+    long_memory:
+      kind: read.schema.key
+      in:
+        key: ${nodes.long_memory_key.out}
+    reflection_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${inputs.agent_id}
+      params:
+        pattern: "chronicle.reflection:week={week},agent_id={agent_id}"
+    reflection:
+      kind: read.schema.key
+      in:
+        key: ${nodes.reflection_key.out}
+    perception_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${inputs.agent_id}
+      params:
+        pattern: "chronicle.perception:week={week},agent_id={agent_id}"
+    perception:
+      kind: read.schema.key
+      in:
+        key: ${nodes.perception_key.out}
+    agent_profile:
+      kind: read.world.agent
+      params:
         agent_id: ${inputs.agent_id}
     composed:
       kind: npc.context_compose
       in:
         parts:
           世界设定: ${nodes.bible.out}
+          角色档案: ${nodes.agent_profile.out}
+          性格与稳定特征: ${nodes.personality.out}
           本人信念: ${nodes.beliefs.out}
+          本周短期记忆: ${nodes.short_memory.out}
+          长期记忆: ${nodes.long_memory.out}
+          本周感知: ${nodes.perception.out}
+          本周反思: ${nodes.reflection.out}
       params:
         format: headed
   result:
     context_text: ${nodes.composed.out}
+    world_bible_text: ${nodes.bible.out}
+    agent_json: ${nodes.agent_profile.out}
+    personality_json: ${nodes.personality.out}
+    beliefs_json: ${nodes.beliefs.out}
+    short_memory_json: ${nodes.short_memory.out}
+    long_memory_json: ${nodes.long_memory.out}

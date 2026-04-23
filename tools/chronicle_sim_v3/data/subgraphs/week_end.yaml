@@ -21,6 +21,17 @@ spec:
       kind: read.chronicle.rumors
       in:
         week: ${inputs.week}
+    social_state_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+      params:
+        pattern: "chronicle.social_state:week={week}"
+    social_state:
+      kind: read.schema.key
+      in:
+        key: ${nodes.social_state_key.out}
     events_text:
       kind: json.encode
       in:
@@ -33,6 +44,12 @@ spec:
         value: ${nodes.rumors.out}
       params:
         indent: 2
+    social_state_text:
+      kind: json.encode
+      in:
+        value: ${nodes.social_state.out}
+      params:
+        indent: 2
     summarize:
       kind: agent.cline
       in:
@@ -40,6 +57,7 @@ spec:
           week: ${inputs.week}
           events_text: ${nodes.events_text.out}
           rumors_text: ${nodes.rumors_text.out}
+          social_state_text: ${nodes.social_state_text.out}
       params:
         agent_spec: data/agent_specs/week_summarizer.toml
         llm:

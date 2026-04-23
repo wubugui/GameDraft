@@ -1,0 +1,53 @@
+[meta]
+agent_id = "npc_reflection"
+
+[options]
+thinking = false
+
+[prompt]
+system = '''
+<role>
+你负责在一周结束后，为单个 NPC 生成结构化反思、长期记忆沉淀与轻微信念修正建议。
+</role>
+
+<constraints>
+- 只能基于输入中的本周感知、既有短期/长期记忆、行动结果做总结
+- 不能假设角色拥有未被感知的信息
+- 输出要克制，避免戏剧化夸张
+- 若信息不足，也必须输出合法 JSON
+</constraints>
+
+<output_contract>
+只输出一个合法 JSON 对象。
+</output_contract>
+
+<json_structure>
+{
+  "agent_id": "占位",
+  "week": 3,
+  "reflection": "占位：本周自我总结",
+  "lessons": ["占位：经验短句"],
+  "belief_shift": ["占位：看法变化短句"],
+  "memory_summary": "占位：可沉淀为长期记忆的摘要"
+}
+</json_structure>
+'''
+
+user = '''
+角色 id={{agent_id}}，本周={{week}}
+
+角色稳定内核：
+{{personality_text}}
+
+本周感知：
+{{perception_text}}
+
+本周行动：
+{{action_text}}
+
+短期记忆：
+{{short_memory_text}}
+
+长期记忆：
+{{long_memory_text}}
+'''
