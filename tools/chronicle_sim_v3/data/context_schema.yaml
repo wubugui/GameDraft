@@ -113,6 +113,10 @@ records:
     path: chronicle/week_{week:03d}/group_behavior/{tier}.json
     storage: json
     key_template: "week={week},tier={tier}"
+  - base: chronicle.story_clusters
+    path: chronicle/week_{week:03d}/story_clusters.json
+    storage: json
+    key_template: "week={week}"
   - base: chronicle.month
     path: chronicle/month_{n:02d}.md
     storage: text
