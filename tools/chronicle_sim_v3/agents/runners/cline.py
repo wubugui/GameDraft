@@ -339,11 +339,23 @@ class ClineRunner(SubprocessAgentRunner):
             final_text = _read_artifact_or_stdout(
                 ws, ref_artifact_filename, text_out
             )
+            output_spec = OutputSpec(
+                kind=ref_output_kind,
+                artifact_filename=ref_artifact_filename,
+            )
+            try:
+                parsed, tool_log = parse_output(final_text, output_spec)
+            except Exception as e:
+                raise AgentRunnerError(
+                    f"cline 输出解析失败(kind={ref_output_kind}): {e}"
+                ) from e
             archived_path = archive_workspace(
                 ctx.run_dir, ws, role=resolved.physical
             )
             return AgentResult(
                 text=final_text,
+                parsed=parsed,
+                tool_log=tool_log,
                 exit_code=0,
                 timings={
                     "total_ms": int((monotonic() - t_start) * 1000),

@@ -113,10 +113,22 @@ records:
     path: chronicle/week_{week:03d}/group_behavior/{tier}.json
     storage: json
     key_template: "week={week},tier={tier}"
+  - base: chronicle.faction_state
+    path: chronicle/week_{week:03d}/faction_state/{faction_id}.json
+    storage: json
+    key_template: "week={week},faction_id={faction_id}"
+  - base: chronicle.location_state
+    path: chronicle/week_{week:03d}/location_state/{location_id}.json
+    storage: json
+    key_template: "week={week},location_id={location_id}"
   - base: chronicle.story_clusters
     path: chronicle/week_{week:03d}/story_clusters.json
     storage: json
     key_template: "week={week}"
+  - base: chronicle.storylines
+    path: chronicle/storylines/from_{from_week:03d}_to_{to_week:03d}.json
+    storage: json
+    key_template: "from_week={from_week},to_week={to_week}"
   - base: chronicle.month
     path: chronicle/month_{n:02d}.md
     storage: text
@@ -230,3 +242,13 @@ collections:
     scan_glob: "*.json"
     scan_regex: "^(?P<tier>[^/]+)\\.json$"
     item_key_template: "chronicle.group_behavior:week={week},tier={tier}"
+  - base: chronicle.faction_states
+    path: chronicle/week_{week:03d}/faction_state
+    scan_glob: "*.json"
+    scan_regex: "^(?P<faction_id>[^/]+)\\.json$"
+    item_key_template: "chronicle.faction_state:week={week},faction_id={faction_id}"
+  - base: chronicle.location_states
+    path: chronicle/week_{week:03d}/location_state
+    scan_glob: "*.json"
+    scan_regex: "^(?P<location_id>[^/]+)\\.json$"
+    item_key_template: "chronicle.location_state:week={week},location_id={location_id}"
