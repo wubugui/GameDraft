@@ -1,0 +1,33 @@
+schema: chronicle_sim_v3/graph@1
+id: range
+title: 范围多周
+description: |
+  对 [from_week, to_week] 范围的每个 week 跑一次 week 子图。
+
+inputs:
+  from_week:
+    type: Int
+    required: true
+  to_week:
+    type: Int
+    required: true
+  pacing_preset:
+    type: Str
+    required: false
+    default: default
+
+spec:
+  nodes:
+    weeks:
+      kind: math.range
+      params:
+        start: 1
+        end: 9
+    loop:
+      kind: flow.foreach
+      in:
+        over: ${nodes.weeks.out}
+      params:
+        body: ${subgraph:week}
+  result:
+    weeks_done: ${nodes.loop.collected}

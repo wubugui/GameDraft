@@ -1,0 +1,85 @@
+schema: chronicle_sim_v3/llm@1
+
+# 物理模型注册：每个 model 引用 providers.yaml 里的 provider_id。
+# 三层架构后：base_url / api_key 都来自 providers.yaml；本文件不持有凭据。
+models:
+  qwen-max-direct:
+    provider: dashscope_main
+    model_id: qwen-max
+    invocation: openai_compat_chat
+    extra:
+      enable_thinking: false
+
+  qwen-turbo-direct:
+    provider: dashscope_main
+    model_id: qwen-turbo
+    invocation: openai_compat_chat
+
+  embed-cn:
+    provider: dashscope_main
+    model_id: text-embedding-v4
+    invocation: openai_compat_embed
+
+  stub:
+    provider: stub_local
+    model_id: ""
+    invocation: stub
+
+# 路由：业务节点引用 model="smart" / "fast" / "embed"
+routes:
+  smart: qwen-max-direct
+  fast: qwen-turbo-direct
+  rumor: qwen-turbo-direct
+  probe: qwen-max-direct
+  embed: embed-cn
+  offline: stub
+
+concurrency:
+  enabled: true
+  max_inflight: 4
+
+rate_limits:
+  default:
+    qpm: 60
+    tpm: 200000
+  routes:
+    smart: { qpm: 30, tpm: 100000 }
+    embed: { qpm: 200 }
+
+retry:
+  default:
+    max_attempts: 3
+    backoff: exp
+    base_ms: 800
+    retry_on:
+      - timeout
+      - network
+      - rate_limit
+      - server_5xx
+      - cline_libuv_crash
+    no_retry_on:
+      - auth_error
+      - bad_request
+
+cache:
+  enabled: true
+  default_mode: off
+  per_route:
+    embed: hash
+    offline: hash
+
+timeout:
+  default_sec: 600
+  per_route:
+    smart: 1200
+    embed: 60
+
+audit:
+  enabled: true
+  log_user_prompt: false
+  log_user_prompt_max_chars: 4000
+
+stub:
+  fixed_seed: 42
+
+providers_ref: config/providers.yaml

@@ -1,0 +1,84 @@
+schema: chronicle_sim_v3/event_types@1
+
+# 事件类型表：v3 重写格式（v2 的 motif/dimensions 概念合并到 description）
+# 每项是 EventType（catalog 第 8 节）
+event_types:
+  - id: gossip_spread
+    name: 流言走街
+    pick_weight: 1.0
+    period: null
+    cooldown_weeks: 1
+    tags: [rumor, social]
+    description: |
+      街头巷尾的传言扩散。母题：信息不对称下的失真与放大。
+    conditions: []
+
+  - id: faction_friction
+    name: 势力摩擦
+    pick_weight: 0.8
+    period: null
+    cooldown_weeks: 2
+    tags: [conflict, faction]
+    description: |
+      两股势力因利益 / 面子 / 地盘而起冲突。
+    conditions: ["${ctx.week >= 1}"]
+
+  - id: market_incident
+    name: 市集风波
+    pick_weight: 1.2
+    period: null
+    cooldown_weeks: 1
+    tags: [market, public]
+    description: |
+      码头 / 茶馆 / 商铺发生的小事，可能引出后续。
+    conditions: []
+
+  - id: oath_or_betrayal
+    name: 誓言或背叛
+    pick_weight: 0.6
+    period: 4
+    cooldown_weeks: 4
+    tags: [drama, relationship]
+    description: |
+      关键角色之间立誓 / 撕约。优先与 S/A 档相关。
+    conditions: ["${ctx.week >= 2}"]
+
+  - id: night_strange
+    name: 夜里怪事
+    pick_weight: 0.5
+    period: null
+    cooldown_weeks: 3
+    tags: [supernatural, mystery]
+    description: |
+      克制的志怪：疑云 / 误听 / 忌讳；不要坐实灵异。
+    conditions: []
+
+  - id: official_visit
+    name: 官面光顾
+    pick_weight: 0.4
+    period: 6
+    cooldown_weeks: 6
+    tags: [authority, public]
+    description: |
+      官府或上级人物造访，引出新规矩 / 旧账。
+    conditions: ["${ctx.week >= 3}"]
+
+  - id: trade_deal
+    name: 一桩生意
+    pick_weight: 0.7
+    period: null
+    cooldown_weeks: 2
+    tags: [economy, faction]
+    description: |
+      买卖 / 合伙 / 交割中的算计与变数。
+    conditions: []
+
+  - id: festival
+    name: 节庆
+    pick_weight: 0.3
+    period: 8
+    cooldown_weeks: 8
+    tags: [public, color]
+    description: |
+      节日 / 集会 / 庙会，多线交织的舞台。
+    conditions: ["${ctx.week >= 4}"]

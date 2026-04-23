@@ -1,9 +1,12 @@
 # RFC: ChronicleSim v3 — Engine（图编排核心）
 
-状态：Draft  
+状态：Draft（**Provider+Agent 三层重构后** 修订）  
 作者：架构组  
 范围：v3 引擎、Context、节点、Graph、Cook、Cache、CLI（Layer 0–2）  
-配套：`v3-llm.md`（LLM 抽象层）、`v3-node-catalog.md`（节点目录）、`v3-implementation.md`（实施计划）
+配套：`v3-provider.md`（Provider 层）、`v3-llm.md`（LLM 层）、`v3-agent.md`（Agent 层）、`v3-node-catalog.md`（节点目录）、`v3-implementation.md`（实施计划）
+
+> **重构提示（2025）**：原 LLM 层是业务节点的唯一入口；现已变为 **Provider → LLM → Agent → Engine → Node** 四层。
+> 业务节点只见 `services.agents`（AgentService），不再 import `llm.service` / `providers.service`；详见 §2、§6.2、`v3-agent.md`。
 
 ---
 
@@ -41,9 +44,11 @@ GUI 是 Layer 3，本 RFC **不涉及**任何 Qt / 渲染细节，仅约定 GUI 
 
 ## 2. 三层架构
 
+> 重构后 Layer 0 子层：Provider → LLM → Agent → Engine → Node。详见 `v3-provider.md` §8、`v3-agent.md` §2。
+
 ```
-Layer 0  Programmatic API     tools/chronicle_sim_v3/engine/, llm/, nodes/
-         无 Qt 依赖；CI lint 强制保证
+Layer 0  Programmatic API     tools/chronicle_sim_v3/{providers,llm,agents,engine,nodes}/
+         无 Qt 依赖；CI lint 强制保证（含五层依赖方向 lint）
 
 Layer 1  CLI                  tools/chronicle_sim_v3/cli/  (typer 子命令)
          所有 GUI 能做的事都对应一条 CLI
@@ -60,7 +65,9 @@ Layer 2  配置文件 (单一事实)
            style_fingerprints.yaml
          数据层：<run>/                          （不进 git）
            meta.json
-           config/llm.yaml       Run 级 LLM 路由与凭据
+           config/providers.yaml Run 级 Provider 凭据（唯一持有 raw key 的位置）
+           config/llm.yaml       Run 级 LLM 路由（models 引用 provider_id）
+           config/agents.yaml    Run 级 Agent 注册（runner / provider 或 llm_route）
            config/cook.yaml      cache / 调度开关
            ideas/                设定库
            world/                世界状态
@@ -77,11 +84,16 @@ Layer 3  GUI                  tools/chronicle_sim_v3/gui/  (PySide6)
 
 ### 2.1 隔离纪律（CI 强制）
 
-- `engine/`、`llm/`、`nodes/`、`cli/` 任何文件 **import PySide6 / Qt 即 CI red**
-- `engine/`、`nodes/` 任何文件 **import gui/ 即 CI red**
+- `providers/` / `llm/` / `agents/` / `engine/` / `nodes/` / `cli/` 任何文件 **import PySide6 / Qt 即 CI red**
+- `engine/` / `nodes/` 任何文件 **import gui/ 即 CI red**
 - v3 任何文件 **import tools.chronicle_sim_v2.* 即 CI red**
+- **重构后五层 lint**：
+  - `providers/` 不许 import `llm.*` / `agents.*` / `engine.*` / `nodes.*` / `cli.*`
+  - `llm/` 不许 import `agents.*` / `nodes.*` / `cli.*`（可 import `providers.*`）
+  - `agents/` 不许 import `nodes.*` / `cli.*`（可 import `llm.*` / `providers.*`）
+  - `nodes/` 不许 import `llm.service` / `providers.*` / `agents.runners.*` / `agents.service`（仅可通过 `services.agents` 间接调用）
 
-实现：在 `tests/test_layering.py` 加一个 `ast` 扫描，遍历包内所有 `.py`，违反规则即 fail。
+实现：在 `tests/test_layering.py` + `_layering_scan.py` 加一个 `ast` 扫描，遍历包内所有 `.py`，违反规则即 fail。少数无状态工具模块（如 `engine.io` / `engine.canonical`）列入 whitelist，可被 `providers/` 等下层 import。
 
 ---
 
@@ -100,7 +112,9 @@ tools/chronicle_sim_v3/
     graph.py                     # csim graph *
     cook.py                      # csim cook *
     node.py                      # csim node *
-    llm.py                       # csim llm *
+    provider.py                  # csim provider *  (重构后新增)
+    llm.py                       # csim llm *  (调试入口)
+    agent.py                     # csim agent *  (重构后新增；业务入口)
     chron.py                     # csim chron *
     ideas.py                     # csim ideas *
     cache.py                     # csim cache *
@@ -120,8 +134,12 @@ tools/chronicle_sim_v3/
     errors.py                    # 异常体系
     canonical.py                 # canonical hash 计算
     registry.py                  # NodeKind 注册表
+  providers/
+    ...                          # 见 v3-provider.md（最底层凭据管理）
   llm/
-    ...                          # 见 v3-llm.md
+    ...                          # 见 v3-llm.md（chat/embed 调度；Agent 内部依赖）
+  agents/
+    ...                          # 见 v3-agent.md（业务入口；4 种 Runner）
   nodes/
     __init__.py                  # 集中注册所有 NodeKind
     io/                          # read.* / write.*
@@ -590,12 +608,16 @@ class Node(Protocol):
 ```python
 @dataclass
 class NodeServices:
-    llm: "LLMService"              # 见 v3-llm.md
+    """Provider+Agent 三层重构后：业务节点只见 agents 字段。"""
+    agents: "AgentService"         # 见 v3-agent.md（业务唯一入口）
     rng: random.Random             # 由引擎按 (run_id, cook_id, node_id) 派生确定性种子
     clock: "Clock"                 # 可注入（测试用），默认 datetime.now
     chroma: "ChromaService"        # 嵌入与检索
     eventbus: "EventBus"           # 节点发自定义事件
-    artifacts: "ArtifactDir"       # cook 中写大文件的临时区（落到 cooks/<id>/<node>/payload/）
+    artifacts: "ArtifactDir"       # cook 中写大文件的临时区
+    _llm: "LLMService" | None = None
+    # ↑ 私有字段：仅 chroma.* 等基础设施节点（embed 调用）与 csim llm test 调试入口可用
+    # CI lint 强制业务节点不许使用 services._llm
 
 @dataclass
 class NodeOutput:

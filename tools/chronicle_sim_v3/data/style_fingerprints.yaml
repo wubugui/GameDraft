@@ -1,0 +1,36 @@
+schema: chronicle_sim_v3/style_fingerprints@1
+
+# 风格指纹库：style_rewriter 节点按 fingerprint id 取条改写。
+fingerprints:
+  - id: minguo_chongqing
+    tone: 老说书 / 市井白描
+    era: 民国
+    region: 川渝
+    taboos:
+      - 修仙词
+      - 系统面板
+      - 现代网络梗
+      - 中英夹杂
+    examples:
+      - 茶馆里那位老汉摇头叹气，说世道乱得很。
+      - 码头管事的眯起眼，话只说半截，便回头招呼伙计上船。
+
+  - id: terse_journal
+    tone: 简练日志体
+    era: 民国
+    region: 川渝
+    taboos:
+      - 抒情
+      - 长句
+    examples:
+      - 三月初九，朝天门，张某与王某争口角。
+      - 翌日，张某不见。
+
+  - id: poetic_legend
+    tone: 半文半白 / 略带传奇色彩
+    era: 民国
+    region: 川渝
+    taboos:
+      - 直白
+    examples:
+      - 那夜江上起雾，雾里有人哭，无人见其面。

@@ -1,0 +1,7 @@
+schema: chronicle_sim_v3/rumor_sim_preset@1
+preset: default
+
+max_hops: 3
+decay_per_hop: 0.6
+p_pass: 0.7
+seed_base: rumor_default

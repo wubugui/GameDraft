@@ -1,0 +1,57 @@
+schema: chronicle_sim_v3/graph@1
+id: week_end
+title: 周末更新
+description: |
+  周末执行：读本周 events / rumors → 调 week_summarizer → 写周总结。
+  P3 简化版：只生成 summary 文本。
+  完整版（信念注入 / state / chroma 索引）在 P5 扩展。
+
+inputs:
+  week:
+    type: Week
+    required: true
+
+spec:
+  nodes:
+    events:
+      kind: read.chronicle.events
+      in:
+        week: ${inputs.week}
+    rumors:
+      kind: read.chronicle.rumors
+      in:
+        week: ${inputs.week}
+    events_text:
+      kind: json.encode
+      in:
+        value: ${nodes.events.out}
+      params:
+        indent: 2
+    rumors_text:
+      kind: json.encode
+      in:
+        value: ${nodes.rumors.out}
+      params:
+        indent: 2
+    summarize:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          events_text: ${nodes.events_text.out}
+          rumors_text: ${nodes.rumors_text.out}
+      params:
+        agent_spec: data/agent_specs/week_summarizer.toml
+        llm:
+          role: week_summarizer
+          model: smart
+          output:
+            kind: text
+    write_summary:
+      kind: write.chronicle.summary
+      in:
+        week: ${inputs.week}
+        text: ${nodes.summarize.text}
+  result:
+    summary: ${nodes.summarize.text}
+    written_key: ${nodes.write_summary.key}
