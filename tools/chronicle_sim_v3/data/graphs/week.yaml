@@ -4,10 +4,10 @@ title: 标准周流水线（v3）
 description: |
   完整一周流程：
     读 agents → 过滤活跃 → 按 tier 分组
-      → S/A 分别 fanout 单 NPC 意图（agent.cline）
+      → S/A 分别 fanout 单 NPC 闭环（感知/意图/行动/反思）
       → 编导草稿（director）
       → GM 裁定（gm）
-      → 写入 events
+      → 写入 events → 谣言传播 → 社会状态沉积
       → week_end 子图（写 summary 等）
 
 inputs:
@@ -125,6 +125,68 @@ spec:
           output:
             kind: json_object
             artifact_filename: agent_output.json
+    gm_events:
+      kind: json.path
+      in:
+        value: ${nodes.gm.parsed}
+      params:
+        path: events
+    write_events:
+      kind: flow.foreach
+      in:
+        over: ${nodes.gm_events.out}
+      params:
+        body: ${subgraph:write_event_result}
+        body_inputs:
+          week: ${inputs.week}
+    edges:
+      kind: read.world.edges
+    rumor_sim:
+      kind: read.config.rumor_sim
+      params:
+        preset: default
+    rumors_generated:
+      kind: rumor.bfs_engine
+      in:
+        events: ${nodes.gm_events.out}
+        edges: ${nodes.edges.out}
+        params: ${nodes.rumor_sim.out}
+        week: ${inputs.week}
+    write_rumors:
+      kind: write.chronicle.rumors
+      in:
+        week: ${inputs.week}
+        rumors: ${nodes.rumors_generated.rumors}
+    social_state:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          world_bible_text: ${nodes.bible.out}
+          intents_json: ${nodes.intents_text.out}
+          drafts_json: ${nodes.drafts_text.out}
+          events_json: ${nodes.gm_events.out}
+          rumors_json: ${nodes.rumors_generated.rumors}
+      params:
+        agent_spec: data/agent_specs/week_summarizer.toml
+        llm:
+          role: summary
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    social_state_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+      params:
+        pattern: "chronicle.social_state:week={week}"
+    write_social_state:
+      kind: write.schema.json
+      in:
+        key: ${nodes.social_state_key.out}
+        payload: ${nodes.social_state.parsed}
     week_end:
       kind: flow.subgraph
       params:

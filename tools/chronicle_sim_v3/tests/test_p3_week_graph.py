@@ -99,11 +99,12 @@ async def test_week_yaml_cache_replay(tmp_path: Path) -> None:
     eng2 = Engine(run)
     _wire_engine(eng2, run)
     await eng2.run(spec, inputs={"week": 1}, cook_id="w2")
-    # 至少 agents / alive / by_tier / event_types / pacing 这些纯算法节点命中
+    # 至少 world/config 纯读节点与部分纯算法节点应命中
     hit_files = list((run / "cooks" / "w2").rglob("cache_hit.txt"))
     hit_nodes = {p.parent.name for p in hit_files}
     assert "agents" in hit_nodes
-    assert "alive" in hit_nodes
-    assert "by_tier" in hit_nodes
+    assert "bible" in hit_nodes
+    assert "event_types" in hit_nodes
+    assert "pacing" in hit_nodes
     await _close_engine(eng)
     await _close_engine(eng2)

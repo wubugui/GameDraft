@@ -1,12 +1,11 @@
 schema: chronicle_sim_v3/graph@1
 id: single_agent_intent
-title: 单 NPC 周意图生成
+title: 单 NPC 周闭环
 description: |
-  对单个 agent（${item}）跑：拼上下文 → agent.cline → 输出 intent dict。
-  上层用 flow.fanout_per_agent 调用，每项 item 是 agent dict。
-
-  inputs: tier (str), agent_spec (str), week (Week)
-  body 内通过 ${item.id} 取当前 agent id
+  对单个 agent（${item}）跑一条简化闭环：
+    上下文拼装 → 感知 → 意图/行动规划 → 反思
+  并把 perception / intent / executed_action / reflection / long_memory / short_memory
+  这些周状态直接写入 chronicle。
 
 inputs:
   tier:
@@ -21,6 +20,54 @@ inputs:
 
 spec:
   nodes:
+    perception_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${item.id}
+      params:
+        pattern: "chronicle.perception:week={week},agent_id={agent_id}"
+    action_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${item.id}
+      params:
+        pattern: "chronicle.executed_action:week={week},agent_id={agent_id}"
+    reflection_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${item.id}
+      params:
+        pattern: "chronicle.reflection:week={week},agent_id={agent_id}"
+    short_memory_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${item.id}
+      params:
+        pattern: "chronicle.short_memory:week={week},agent_id={agent_id}"
+    long_memory_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${item.id}
+      params:
+        pattern: "chronicle.long_memory:week={week},agent_id={agent_id}"
+    intent_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${item.id}
+      params:
+        pattern: "chronicle.intent:week={week},id={agent_id}"
     ctx:
       kind: flow.subgraph
       params:
@@ -28,13 +75,55 @@ spec:
         inputs:
           agent_id: ${item.id}
           week: ${inputs.week}
-    npc_call:
+
+    perceive:
       kind: agent.cline
       in:
         vars:
           agent_id: ${item.id}
           week: ${inputs.week}
           context_text: ${nodes.ctx.out.context_text}
+          world_bible_text: ${nodes.ctx.out.world_bible_text}
+          agent_json: ${nodes.ctx.out.agent_json}
+          personality_json: ${nodes.ctx.out.personality_json}
+          beliefs_json: ${nodes.ctx.out.beliefs_json}
+          short_memory_json: ${nodes.ctx.out.short_memory_json}
+          long_memory_json: ${nodes.ctx.out.long_memory_json}
+          visible_events_json: []
+          heard_rumors_json: []
+          location_json: {}
+      params:
+        agent_spec: data/agent_specs/npc_perception.toml
+        llm:
+          role: npc_perception
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+
+    write_perception:
+      kind: write.schema.json
+      in:
+        key: ${nodes.perception_key.out}
+        payload: ${nodes.perceive.parsed}
+
+    plan:
+      kind: agent.cline
+      in:
+        vars:
+          agent_id: ${item.id}
+          week: ${inputs.week}
+          context_text: ${nodes.ctx.out.context_text}
+          world_bible_text: ${nodes.ctx.out.world_bible_text}
+          agent_json: ${nodes.ctx.out.agent_json}
+          personality_json: ${nodes.ctx.out.personality_json}
+          beliefs_json: ${nodes.ctx.out.beliefs_json}
+          short_memory_json: ${nodes.ctx.out.short_memory_json}
+          long_memory_json: ${nodes.ctx.out.long_memory_json}
+          visible_events_json: []
+          heard_rumors_json: []
+          location_json: {}
+          perception_json: ${nodes.perceive.parsed}
       params:
         agent_spec: ${inputs.agent_spec}
         llm:
@@ -43,6 +132,106 @@ spec:
           output:
             kind: json_object
             artifact_filename: agent_output.json
+
+    write_intent:
+      kind: write.schema.json
+      in:
+        key: ${nodes.intent_key.out}
+        payload: ${nodes.plan.parsed}
+
+    act:
+      kind: agent.cline
+      in:
+        vars:
+          agent_id: ${item.id}
+          week: ${inputs.week}
+          context_text: ${nodes.ctx.out.context_text}
+          perception_json: ${nodes.perceive.parsed}
+          intent_json: ${nodes.plan.parsed}
+          personality_text: ${nodes.ctx.out.personality_json}
+          perception_text: ${nodes.perceive.parsed}
+          short_memory_text: ${nodes.ctx.out.short_memory_json}
+          long_memory_text: ${nodes.ctx.out.long_memory_json}
+          intent_text: ${nodes.plan.parsed}
+      params:
+        agent_spec: data/agent_specs/npc_action.toml
+        llm:
+          role: npc_action
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+
+    write_action:
+      kind: write.schema.json
+      in:
+        key: ${nodes.action_key.out}
+        payload: ${nodes.act.parsed}
+
+    reflect:
+      kind: agent.cline
+      in:
+        vars:
+          agent_id: ${item.id}
+          week: ${inputs.week}
+          context_text: ${nodes.ctx.out.context_text}
+          intent_json: ${nodes.plan.parsed}
+          executed_action_json: ${nodes.act.parsed}
+          personality_text: ${nodes.ctx.out.personality_json}
+          perception_text: ${nodes.perceive.parsed}
+          short_memory_text: ${nodes.ctx.out.short_memory_json}
+          long_memory_text: ${nodes.ctx.out.long_memory_json}
+          action_text: ${nodes.act.parsed}
+      params:
+        agent_spec: data/agent_specs/npc_reflection.toml
+        llm:
+          role: npc_reflection
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+
+    write_reflection:
+      kind: write.schema.json
+      in:
+        key: ${nodes.reflection_key.out}
+        payload: ${nodes.reflect.parsed}
+
+    write_short_memory:
+      kind: write.schema.json
+      in:
+        key: ${nodes.short_memory_key.out}
+        payload:
+          agent_id: ${item.id}
+          week: ${inputs.week}
+          perception: ${nodes.perceive.parsed}
+          intent: ${nodes.plan.parsed}
+          action: ${nodes.act.parsed}
+          reflection: ${nodes.reflect.parsed}
+
+    write_long_memory:
+      kind: write.schema.json
+      in:
+        key: ${nodes.long_memory_key.out}
+        payload:
+          agent_id: ${item.id}
+          week: ${inputs.week}
+          reflection: ${nodes.reflect.parsed}
+          last_action: ${nodes.act.parsed}
+          last_intent: ${nodes.plan.parsed}
+
+    write_intent_outcome:
+      kind: write.chronicle.intent_outcome
+      in:
+        week: ${inputs.week}
+        agent_id: ${item.id}
+        payload:
+          intent: ${nodes.plan.parsed}
+          action: ${nodes.act.parsed}
+          reflection: ${nodes.reflect.parsed}
+
   result:
-    intent: ${nodes.npc_call.parsed}
-    text: ${nodes.npc_call.text}
+    intent: ${nodes.plan.parsed}
+    perception: ${nodes.perceive.parsed}
+    action: ${nodes.act.parsed}
+    reflection: ${nodes.reflect.parsed}

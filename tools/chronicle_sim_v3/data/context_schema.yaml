@@ -25,6 +25,21 @@ records:
     path: world/locations/{id}.json
     storage: json
     key_template: "{id}"
+  - base: world.agent_personality
+    path: world/agent_personality/{agent_id}.json
+    storage: json
+    key_template: "agent_id={agent_id}"
+  - base: world.faction_state
+    path: world/faction_state/{faction_id}.json
+    storage: json
+    key_template: "faction_id={faction_id}"
+  - base: world.location_state
+    path: world/location_state/{location_id}.json
+    storage: json
+    key_template: "location_id={location_id}"
+  - base: world.social_state
+    path: world/social_state.json
+    storage: json
 
   - base: chronicle.event
     path: chronicle/week_{week:03d}/events/{id}.json
@@ -62,6 +77,34 @@ records:
     path: chronicle/week_{week:03d}/intent_outcomes/{agent_id}.json
     storage: json
     key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.perception
+    path: chronicle/week_{week:03d}/perception/{agent_id}.json
+    storage: json
+    key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.short_memory
+    path: chronicle/week_{week:03d}/short_memory/{agent_id}.json
+    storage: json
+    key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.long_memory
+    path: chronicle/week_{week:03d}/long_memory/{agent_id}.json
+    storage: json
+    key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.reflection
+    path: chronicle/week_{week:03d}/reflection/{agent_id}.json
+    storage: json
+    key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.executed_action
+    path: chronicle/week_{week:03d}/executed_actions/{agent_id}.json
+    storage: json
+    key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.rumor_trace
+    path: chronicle/week_{week:03d}/rumor_trace.json
+    storage: json
+    key_template: "week={week}"
+  - base: chronicle.social_state
+    path: chronicle/week_{week:03d}/social_state.json
+    storage: json
+    key_template: "week={week}"
   - base: chronicle.month
     path: chronicle/month_{n:02d}.md
     storage: text
@@ -104,6 +147,21 @@ collections:
     scan_glob: "*.json"
     scan_regex: "^(?P<id>[^/]+)\\.json$"
     item_key_template: "world.location:{id}"
+  - base: world.agent_personalities
+    path: world/agent_personality
+    scan_glob: "*.json"
+    scan_regex: "^(?P<agent_id>[^/]+)\\.json$"
+    item_key_template: "world.agent_personality:agent_id={agent_id}"
+  - base: world.faction_states
+    path: world/faction_state
+    scan_glob: "*.json"
+    scan_regex: "^(?P<faction_id>[^/]+)\\.json$"
+    item_key_template: "world.faction_state:faction_id={faction_id}"
+  - base: world.location_states
+    path: world/location_state
+    scan_glob: "*.json"
+    scan_regex: "^(?P<location_id>[^/]+)\\.json$"
+    item_key_template: "world.location_state:location_id={location_id}"
 
   - base: chronicle.events
     path: chronicle/week_{week:03d}/events
@@ -125,3 +183,28 @@ collections:
     scan_glob: "week_*"
     scan_regex: "^week_(?P<week>\\d+)$"
     item_key_template: "week={week}"
+  - base: chronicle.perceptions
+    path: chronicle/week_{week:03d}/perception
+    scan_glob: "*.json"
+    scan_regex: "^(?P<agent_id>[^/]+)\\.json$"
+    item_key_template: "chronicle.perception:week={week},agent_id={agent_id}"
+  - base: chronicle.short_memories
+    path: chronicle/week_{week:03d}/short_memory
+    scan_glob: "*.json"
+    scan_regex: "^(?P<agent_id>[^/]+)\\.json$"
+    item_key_template: "chronicle.short_memory:week={week},agent_id={agent_id}"
+  - base: chronicle.long_memories
+    path: chronicle/week_{week:03d}/long_memory
+    scan_glob: "*.json"
+    scan_regex: "^(?P<agent_id>[^/]+)\\.json$"
+    item_key_template: "chronicle.long_memory:week={week},agent_id={agent_id}"
+  - base: chronicle.reflections
+    path: chronicle/week_{week:03d}/reflection
+    scan_glob: "*.json"
+    scan_regex: "^(?P<agent_id>[^/]+)\\.json$"
+    item_key_template: "chronicle.reflection:week={week},agent_id={agent_id}"
+  - base: chronicle.executed_actions
+    path: chronicle/week_{week:03d}/executed_actions
+    scan_glob: "*.json"
+    scan_regex: "^(?P<agent_id>[^/]+)\\.json$"
+    item_key_template: "chronicle.executed_action:week={week},agent_id={agent_id}"

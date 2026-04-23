@@ -84,6 +84,80 @@ class ReadSchemaListing:
 
 
 @register_node
+class WriteSchemaJson:
+    spec = NodeKindSpec(
+        kind="write.schema.json", category="io",
+        title="按 schema key 写 JSON",
+        description="按完整 schema key 写入任意 JSON 内容；要求 key 不是 listing key。",
+        inputs=(
+            PortSpec(name="key", type="Str"),
+            PortSpec(name="payload", type="Any"),
+        ),
+        outputs=(PortSpec(name="key", type="Str"),),
+        version="1",
+        cacheable=False,
+    )
+
+    async def cook(self, ctx, inputs, params, services, cancel):
+        key = str(inputs.get("key", "") or "")
+        if not key:
+            raise NodeBusinessError("write.schema.json 需要输入 key")
+        if is_listing_key(key):
+            raise NodeBusinessError(f"write.schema.json 不接受 listing key: {key}")
+        mut = Mutation(op="put_json", key=key, payload=inputs.get("payload"))
+        return NodeOutput(values={"key": key}, mutations=[mut])
+
+
+@register_node
+class WriteSchemaText:
+    spec = NodeKindSpec(
+        kind="write.schema.text", category="io",
+        title="按 schema key 写文本",
+        description="按完整 schema key 写入文本内容；要求 key 不是 listing key 且目标是 text key。",
+        inputs=(
+            PortSpec(name="key", type="Str"),
+            PortSpec(name="text", type="Str"),
+        ),
+        outputs=(PortSpec(name="key", type="Str"),),
+        version="1",
+        cacheable=False,
+    )
+
+    async def cook(self, ctx, inputs, params, services, cancel):
+        key = str(inputs.get("key", "") or "")
+        if not key:
+            raise NodeBusinessError("write.schema.text 需要输入 key")
+        if is_listing_key(key):
+            raise NodeBusinessError(f"write.schema.text 不接受 listing key: {key}")
+        if not is_text_key(key):
+            raise NodeBusinessError(f"write.schema.text 需要 text key，得到: {key}")
+        mut = Mutation(op="put_text", key=key, payload=str(inputs.get("text", "") or ""))
+        return NodeOutput(values={"key": key}, mutations=[mut])
+
+
+@register_node
+class DeleteSchemaKey:
+    spec = NodeKindSpec(
+        kind="delete.schema.key", category="io",
+        title="删除 schema key",
+        description="删除完整 schema key 对应的单条内容；不接受 listing key。",
+        inputs=(PortSpec(name="key", type="Str"),),
+        outputs=(PortSpec(name="key", type="Str"),),
+        version="1",
+        cacheable=False,
+    )
+
+    async def cook(self, ctx, inputs, params, services, cancel):
+        key = str(inputs.get("key", "") or "")
+        if not key:
+            raise NodeBusinessError("delete.schema.key 需要输入 key")
+        if is_listing_key(key):
+            raise NodeBusinessError(f"delete.schema.key 不接受 listing key: {key}")
+        mut = Mutation(op="delete", key=key)
+        return NodeOutput(values={"key": key}, mutations=[mut])
+
+
+@register_node
 class ReadWorldAgents:
     spec = NodeKindSpec(
         kind="read.world.agents", category="io",

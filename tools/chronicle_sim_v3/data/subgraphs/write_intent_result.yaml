@@ -1,0 +1,28 @@
+schema: chronicle_sim_v3/graph@1
+id: write_intent_result
+title: 写单个 intent
+description: |
+  接收 foreach/fanout 子项返回的 intent 结果，写入 chronicle.intent。
+
+inputs:
+  week:
+    type: Week
+    required: true
+
+spec:
+  nodes:
+    item_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          agent_id: ${item.intent.agent_id}
+      params:
+        pattern: "chronicle.intent:week={week},id={agent_id}"
+    write_intent:
+      kind: write.schema.json
+      in:
+        key: ${nodes.item_key.out}
+        payload: ${item.intent}
+  result:
+    key: ${nodes.write_intent.key}

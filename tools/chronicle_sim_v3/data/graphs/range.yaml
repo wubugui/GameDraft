@@ -29,5 +29,8 @@ spec:
         over: ${nodes.weeks.out}
       params:
         body: ${subgraph:week}
+        body_inputs:
+          week: ${item}
+          pacing_preset: ${inputs.pacing_preset}
   result:
     weeks_done: ${nodes.loop.collected}
