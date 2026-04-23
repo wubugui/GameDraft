@@ -1,0 +1,93 @@
+schema: chronicle_sim_v3/agents@1
+
+agents:
+  cline_default:
+    runner: cline
+    provider: dashscope_coding
+    model_id: qwen3.5-plus
+    timeout_sec: 600
+    config:
+      cline_executable: ""
+      cline_verbose: false
+      cline_stream_stderr: true
+      # 注意：系统强制禁用所有代理；no_proxy / proxies 等开关已移除
+
+  cline_real:
+    runner: cline
+    provider: dashscope_coding
+    model_id: qwen3.5-plus
+    timeout_sec: 900
+
+  simple_chat_default:
+    runner: simple_chat
+    llm_route: smart
+    timeout_sec: 120
+
+  simple_chat_offline:
+    runner: simple_chat
+    llm_route: offline
+    timeout_sec: 30
+
+  react_default:
+    runner: react
+    llm_route: smart
+    timeout_sec: 300
+    config:
+      max_iter: 10
+      tools: ["read_key", "chroma_search", "final"]
+
+  react_offline:
+    runner: react
+    llm_route: offline
+    timeout_sec: 60
+    config:
+      max_iter: 4
+      tools: ["read_key", "final"]
+
+  aider_default:
+    runner: external
+    provider: dashscope_main
+    model_id: qwen-max
+    timeout_sec: 900
+    config:
+      executable: aider
+      argv_template:
+        - "--no-pretty"
+        - "--message-file"
+        - "${input_file}"
+        - "--openai-api-base"
+        - "${base_url}"
+        - "--model"
+        - "${model_id}"
+        - "--out-file"
+        - "${output_file}"
+      env_vars:
+        OPENAI_API_KEY: "${api_key}"
+      output_file: "agent_output.txt"
+
+routes:
+  npc:         cline_default
+  director:    cline_default
+  gm:         cline_default
+  rumor:       simple_chat_default
+  summary:     simple_chat_default
+  initializer: cline_default
+  probe:       react_default
+
+limiter:
+  per_runner:
+    cline: 1
+    simple_chat: 4
+    react: 2
+    external: 1
+
+cache:
+  enabled: true
+  default_mode: hash
+  per_route:
+    npc: off
+
+audit:
+  enabled: true
+  log_user_prompt: false
+  log_user_prompt_max_chars: 4000

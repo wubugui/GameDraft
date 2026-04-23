@@ -5,7 +5,7 @@
 ---
 
 ```text
-# 任务：ChronicleSim v3 实施 — <<PR-ID>>: <<PR-标题>>
+# 任务：ChronicleSim v3 实施 
 
 ## 背景
 

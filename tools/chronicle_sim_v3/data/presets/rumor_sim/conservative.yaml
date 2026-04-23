@@ -1,0 +1,8 @@
+schema: chronicle_sim_v3/rumor_sim_preset@1
+preset: conservative
+
+# 信息保守：跳数少 / 衰减快 / 通过率低
+max_hops: 2
+decay_per_hop: 0.4
+p_pass: 0.5
+seed_base: rumor_conservative

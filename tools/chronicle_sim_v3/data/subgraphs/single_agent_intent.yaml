@@ -1,0 +1,48 @@
+schema: chronicle_sim_v3/graph@1
+id: single_agent_intent
+title: 单 NPC 周意图生成
+description: |
+  对单个 agent（${item}）跑：拼上下文 → agent.cline → 输出 intent dict。
+  上层用 flow.fanout_per_agent 调用，每项 item 是 agent dict。
+
+  inputs: tier (str), agent_spec (str), week (Week)
+  body 内通过 ${item.id} 取当前 agent id
+
+inputs:
+  tier:
+    type: Str
+    required: true
+  agent_spec:
+    type: Str
+    required: true
+  week:
+    type: Week
+    required: true
+
+spec:
+  nodes:
+    ctx:
+      kind: flow.subgraph
+      params:
+        ref: ${subgraph:npc_context_compose}
+        inputs:
+          agent_id: ${item.id}
+          week: ${inputs.week}
+    npc_call:
+      kind: agent.cline
+      in:
+        vars:
+          agent_id: ${item.id}
+          week: ${inputs.week}
+          context_text: ${nodes.ctx.out.context_text}
+      params:
+        agent_spec: ${inputs.agent_spec}
+        llm:
+          role: npc
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+  result:
+    intent: ${nodes.npc_call.parsed}
+    text: ${nodes.npc_call.text}

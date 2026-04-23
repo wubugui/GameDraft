@@ -1,0 +1,35 @@
+schema: chronicle_sim_v3/graph@1
+id: npc_context_compose
+title: 单 NPC 上下文拼装
+description: |
+  把世界圣经 + 本周已知信念 + 个人意图历史拼成 LLM 注入文本。
+  inputs: agent_id (AgentId), week (Week)
+  outputs: context_text (Str)
+
+inputs:
+  agent_id:
+    type: AgentId
+    required: true
+  week:
+    type: Week
+    required: true
+
+spec:
+  nodes:
+    bible:
+      kind: read.world.bible_text
+    beliefs:
+      kind: read.chronicle.beliefs
+      in:
+        week: ${inputs.week}
+        agent_id: ${inputs.agent_id}
+    composed:
+      kind: npc.context_compose
+      in:
+        parts:
+          世界设定: ${nodes.bible.out}
+          本人信念: ${nodes.beliefs.out}
+      params:
+        format: headed
+  result:
+    context_text: ${nodes.composed.out}
