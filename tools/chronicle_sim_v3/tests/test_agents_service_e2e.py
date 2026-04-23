@@ -25,18 +25,18 @@ def _build(run: Path) -> tuple[AgentService, LLMService, ProviderService]:
 
 
 @pytest.mark.asyncio
-async def test_e2e_simple_chat_offline_basic(tmp_path: Path) -> None:
+async def test_e2e_cline_offline_basic(tmp_path: Path) -> None:
     run = make_stub_run(tmp_path)
     svc, llm, _ = _build(run)
     res = await svc.run(
-        AgentRef(agent="simple_chat_offline", role="t", output_kind="text"),
+        AgentRef(agent="cline_offline", role="t", output_kind="text"),
         AgentTask(spec_ref="_inline", vars={"__system": "s", "__user": "hi"}),
     )
     assert res.text
-    assert res.runner_kind == "simple_chat"
-    assert res.physical_agent == "simple_chat_offline"
+    assert res.runner_kind == "cline"
+    assert res.physical_agent == "cline_offline"
     assert res.cache_hit is False
-    assert res.llm_calls_count == 1
+    assert res.llm_calls_count is None
     assert res.agent_run_id
     await svc.aclose()
     await llm.aclose()
@@ -48,7 +48,7 @@ async def test_e2e_cache_hit_second_call(tmp_path: Path) -> None:
     run = make_stub_run(tmp_path)
     svc, llm, _ = _build(run)
     ref = AgentRef(
-        agent="simple_chat_offline", role="t", output_kind="text", cache="hash",
+        agent="cline_offline", role="t", output_kind="text", cache="hash",
     )
     task = AgentTask(spec_ref="_inline", vars={"__system": "s", "__user": "ping"})
     r1 = await svc.run(ref, task)
@@ -65,7 +65,7 @@ async def test_e2e_cache_off_disables_cache(tmp_path: Path) -> None:
     run = make_stub_run(tmp_path)
     svc, llm, _ = _build(run)
     ref = AgentRef(
-        agent="simple_chat_offline", role="t", output_kind="text", cache="off",
+        agent="cline_offline", role="t", output_kind="text", cache="off",
     )
     task = AgentTask(spec_ref="_inline", vars={"__system": "s", "__user": "x"})
     r1 = await svc.run(ref, task)
@@ -77,7 +77,7 @@ async def test_e2e_cache_off_disables_cache(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_e2e_alias_npc_routes_to_cline_default(tmp_path: Path) -> None:
-    """逻辑 npc → cline_default（在 stub run 中实际是 simple_chat+stub）。"""
+    """逻辑 npc → cline_default（在 stub run 中实际是 cline+stub provider）。"""
     run = make_stub_run(tmp_path)
     svc, llm, _ = _build(run)
     res = await svc.run(
@@ -85,7 +85,7 @@ async def test_e2e_alias_npc_routes_to_cline_default(tmp_path: Path) -> None:
         AgentTask(spec_ref="_inline", vars={"__system": "s", "__user": "u"}),
     )
     assert res.physical_agent == "cline_default"
-    assert res.runner_kind == "simple_chat"
+    assert res.runner_kind == "cline"
     await svc.aclose()
     await llm.aclose()
 
@@ -108,7 +108,7 @@ async def test_e2e_usage_aggregated(tmp_path: Path) -> None:
     run = make_stub_run(tmp_path)
     svc, llm, _ = _build(run)
     ref = AgentRef(
-        agent="simple_chat_offline", role="t", output_kind="text", cache="hash",
+        agent="cline_offline", role="t", output_kind="text", cache="hash",
     )
     for _ in range(3):
         await svc.run(
@@ -116,8 +116,8 @@ async def test_e2e_usage_aggregated(tmp_path: Path) -> None:
                            vars={"__system": "s", "__user": "x"}),
         )
     snap = svc.usage.snapshot()
-    assert "simple_chat_offline" in snap
-    s = snap["simple_chat_offline"]
+    assert "cline_offline" in snap
+    s = snap["cline_offline"]
     # 第一次 miss + 后两次 hit（offline 配置 hash cache 模式）
     assert s["calls"] == 3
     assert s["cache_hits"] >= 1
@@ -130,7 +130,7 @@ async def test_e2e_audit_file_written(tmp_path: Path) -> None:
     run = make_stub_run(tmp_path)
     svc, llm, _ = _build(run)
     await svc.run(
-        AgentRef(agent="simple_chat_offline", role="t", output_kind="text"),
+        AgentRef(agent="cline_offline", role="t", output_kind="text"),
         AgentTask(spec_ref="_inline", vars={"__system": "s", "__user": "u"}),
     )
     audit_dir = run / "audit" / "agents"
@@ -166,7 +166,7 @@ async def test_e2e_close_then_run_raises(tmp_path: Path) -> None:
     await svc.aclose()
     with pytest.raises(AgentConfigError):
         await svc.run(
-            AgentRef(agent="simple_chat_offline", role="t", output_kind="text"),
+            AgentRef(agent="cline_offline", role="t", output_kind="text"),
             AgentTask(spec_ref="_inline", vars={"__user": "x"}),
         )
     await llm.aclose()

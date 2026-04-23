@@ -50,16 +50,14 @@ _STUB_AGENTS_YAML = """\
 schema: chronicle_sim_v3/agents@1
 agents:
   cline_default:
-    runner: simple_chat
-    llm_route: smart
+    runner: cline
+    provider: stub_local
+    model_id: stub-smart
     timeout_sec: 60
-  simple_chat_offline:
-    runner: simple_chat
-    llm_route: offline
-    timeout_sec: 30
-  simple_chat_default:
-    runner: simple_chat
-    llm_route: smart
+  cline_offline:
+    runner: cline
+    provider: stub_local
+    model_id: stub-offline
     timeout_sec: 60
   react_default:
     runner: react
@@ -72,10 +70,10 @@ routes:
   npc: cline_default
   director: cline_default
   gm: cline_default
-  rumor: simple_chat_default
-  summary: simple_chat_default
+  rumor: cline_default
+  summary: cline_default
   initializer: cline_default
-  probe: react_default
+  probe: cline_default
 limiter:
   per_runner:
     cline: 2
@@ -94,8 +92,8 @@ audit:
 def make_stub_run(tmp_path: Path) -> Path:
     """造一个最小 Run 目录：providers / llm / agents 都是 stub。
 
-    `cline_default` 在 stub run 中故意映射到 simple_chat + stub，
-    避免测试触发真实 cline 子进程；P3 graph 用 alias `agent.cline` 跑得通。
+    `cline_default` 在 stub run 中走 runner=cline + provider.kind=stub，
+    由 ClineRunner 的离线 stub 分支返回稳定结果，避免触发真实 cline 子进程。
     """
     run = tmp_path / "run_stub"
     cfg = run / "config"

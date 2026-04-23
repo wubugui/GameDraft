@@ -1,0 +1,127 @@
+schema: chronicle_sim_v3/context_schema@1
+
+records:
+  - base: world.setting
+    path: world/setting.json
+    storage: json
+  - base: world.pillars
+    path: world/pillars.json
+    storage: json
+  - base: world.anchors
+    path: world/anchors.json
+    storage: json
+  - base: world.edges
+    path: world/edges.json
+    storage: json
+  - base: world.agent
+    path: world/agents/{id}.json
+    storage: json
+    key_template: "{id}"
+  - base: world.faction
+    path: world/factions/{id}.json
+    storage: json
+    key_template: "{id}"
+  - base: world.location
+    path: world/locations/{id}.json
+    storage: json
+    key_template: "{id}"
+
+  - base: chronicle.event
+    path: chronicle/week_{week:03d}/events/{id}.json
+    storage: json
+    key_template: "week={week},id={id}"
+  - base: chronicle.intent
+    path: chronicle/week_{week:03d}/intents/{id}.json
+    storage: json
+    key_template: "week={week},id={id}"
+  - base: chronicle.draft
+    path: chronicle/week_{week:03d}/drafts/{id}.json
+    storage: json
+    key_template: "week={week},id={id}"
+  - base: chronicle.rumors
+    path: chronicle/week_{week:03d}/rumors.json
+    storage: json
+    key_template: "week={week}"
+  - base: chronicle.summary
+    path: chronicle/week_{week:03d}/summary.md
+    storage: text
+    key_template: "week={week}"
+  - base: chronicle.observation
+    path: chronicle/week_{week:03d}/observation.json
+    storage: json
+    key_template: "week={week}"
+  - base: chronicle.public_digest
+    path: chronicle/week_{week:03d}/public_digest.json
+    storage: json
+    key_template: "week={week}"
+  - base: chronicle.beliefs
+    path: chronicle/week_{week:03d}/beliefs/{agent_id}.json
+    storage: json
+    key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.intent_outcome
+    path: chronicle/week_{week:03d}/intent_outcomes/{agent_id}.json
+    storage: json
+    key_template: "week={week},agent_id={agent_id}"
+  - base: chronicle.month
+    path: chronicle/month_{n:02d}.md
+    storage: text
+    key_template: "n={n}"
+
+  - base: ideas.list
+    path: ideas/manifest.json
+    storage: json
+  - base: ideas.entry
+    path: ideas/{id}.md
+    storage: text
+    key_template: "id={id}"
+
+  - base: config.llm
+    path: config/llm.yaml
+    storage: yaml
+  - base: config.cook
+    path: config/cook.yaml
+    storage: yaml
+  - base: config.providers
+    path: config/providers.yaml
+    storage: yaml
+  - base: config.agents
+    path: config/agents.yaml
+    storage: yaml
+
+collections:
+  - base: world.agents
+    path: world/agents
+    scan_glob: "*.json"
+    scan_regex: "^(?P<id>[^/]+)\\.json$"
+    item_key_template: "world.agent:{id}"
+  - base: world.factions
+    path: world/factions
+    scan_glob: "*.json"
+    scan_regex: "^(?P<id>[^/]+)\\.json$"
+    item_key_template: "world.faction:{id}"
+  - base: world.locations
+    path: world/locations
+    scan_glob: "*.json"
+    scan_regex: "^(?P<id>[^/]+)\\.json$"
+    item_key_template: "world.location:{id}"
+
+  - base: chronicle.events
+    path: chronicle/week_{week:03d}/events
+    scan_glob: "*.json"
+    scan_regex: "^(?P<id>[^/]+)\\.json$"
+    item_key_template: "chronicle.event:week={week},id={id}"
+  - base: chronicle.intents
+    path: chronicle/week_{week:03d}/intents
+    scan_glob: "*.json"
+    scan_regex: "^(?P<id>[^/]+)\\.json$"
+    item_key_template: "chronicle.intent:week={week},id={id}"
+  - base: chronicle.drafts
+    path: chronicle/week_{week:03d}/drafts
+    scan_glob: "*.json"
+    scan_regex: "^(?P<id>[^/]+)\\.json$"
+    item_key_template: "chronicle.draft:week={week},id={id}"
+  - base: chronicle.weeks
+    path: chronicle
+    scan_glob: "week_*"
+    scan_regex: "^week_(?P<week>\\d+)$"
+    item_key_template: "week={week}"

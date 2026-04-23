@@ -22,6 +22,7 @@ from tools.chronicle_sim_v3.engine.node import (
 )
 from tools.chronicle_sim_v3.engine.registry import register_node
 from tools.chronicle_sim_v3.engine.types import PortSpec
+from tools.chronicle_sim_v3.engine.keymap import is_listing_key, is_text_key
 
 
 # ============================================================================
@@ -40,6 +41,46 @@ class ReadWorldSetting:
 
     async def cook(self, ctx, inputs, params, services, cancel):
         return NodeOutput(values={"out": ctx.world_setting()})
+
+
+@register_node
+class ReadSchemaKey:
+    spec = NodeKindSpec(
+        kind="read.schema.key", category="io",
+        title="按 schema key 读内容",
+        description="按完整 schema key 读取单条记录或文本内容；要求 key 不是 listing key。",
+        inputs=(PortSpec(name="key", type="Str"),),
+        outputs=(PortSpec(name="out", type="Any"),),
+        version="1",
+    )
+
+    async def cook(self, ctx, inputs, params, services, cancel):
+        key = str(inputs.get("key", "") or "")
+        if not key:
+            raise NodeBusinessError("read.schema.key 需要输入 key")
+        if is_listing_key(key):
+            raise NodeBusinessError(f"read.schema.key 不接受 listing key: {key}")
+        return NodeOutput(values={"out": ctx.read_key(key)})
+
+
+@register_node
+class ReadSchemaListing:
+    spec = NodeKindSpec(
+        kind="read.schema.listing", category="io",
+        title="按 schema listing 读列表",
+        description="按完整 schema listing key 列举并读取所有子项。",
+        inputs=(PortSpec(name="key", type="Str"),),
+        outputs=(PortSpec(name="out", type="List[Any]"),),
+        version="1",
+    )
+
+    async def cook(self, ctx, inputs, params, services, cancel):
+        key = str(inputs.get("key", "") or "")
+        if not key:
+            raise NodeBusinessError("read.schema.listing 需要输入 key")
+        if not is_listing_key(key):
+            raise NodeBusinessError(f"read.schema.listing 需要 listing key，得到: {key}")
+        return NodeOutput(values={"out": ctx.read_listing(key)})
 
 
 @register_node

@@ -6,6 +6,7 @@
   - simple_chat / react 用 `llm_route`（走 LLMService.Resolver）
 - runner ∈ {cline, simple_chat, react, external}
 - routes 必须把所有引用过的逻辑 agent 名映射到注册的物理 agent
+- 生产逻辑角色必须走 cline（npc/director/gm/rumor/summary/initializer）
 - 字面 api_key 拒绝（即便 agents.yaml 不该写 key）
 """
 from __future__ import annotations
@@ -20,6 +21,9 @@ from tools.chronicle_sim_v3.agents.errors import AgentConfigError
 from tools.chronicle_sim_v3.engine.io import read_yaml
 
 _RUNNER_KINDS = {"cline", "simple_chat", "react", "external"}
+_PRODUCTION_LOGICAL_ROUTES = frozenset(
+    {"npc", "director", "gm", "rumor", "summary", "initializer"}
+)
 
 
 class AgentDef(BaseModel):
@@ -98,6 +102,12 @@ class AgentsConfig(BaseModel):
             if physical not in self.agents:
                 raise ValueError(
                     f"routes {logical}→{physical} 但 {physical} 未在 agents 注册"
+                )
+            adef = self.agents[physical]
+            if logical in _PRODUCTION_LOGICAL_ROUTES and adef.runner != "cline":
+                raise ValueError(
+                    f"逻辑 route {logical!r} 必须指向 runner=cline 的 agent，"
+                    f"当前为 {physical!r} (runner={adef.runner})"
                 )
         return self
 
