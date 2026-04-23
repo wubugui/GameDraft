@@ -105,6 +105,14 @@ records:
     path: chronicle/week_{week:03d}/social_state.json
     storage: json
     key_template: "week={week}"
+  - base: chronicle.group_state
+    path: chronicle/week_{week:03d}/group_state/{tier}.json
+    storage: json
+    key_template: "week={week},tier={tier}"
+  - base: chronicle.group_behavior
+    path: chronicle/week_{week:03d}/group_behavior/{tier}.json
+    storage: json
+    key_template: "week={week},tier={tier}"
   - base: chronicle.month
     path: chronicle/month_{n:02d}.md
     storage: text
@@ -208,3 +216,13 @@ collections:
     scan_glob: "*.json"
     scan_regex: "^(?P<agent_id>[^/]+)\\.json$"
     item_key_template: "chronicle.executed_action:week={week},agent_id={agent_id}"
+  - base: chronicle.group_states
+    path: chronicle/week_{week:03d}/group_state
+    scan_glob: "*.json"
+    scan_regex: "^(?P<tier>[^/]+)\\.json$"
+    item_key_template: "chronicle.group_state:week={week},tier={tier}"
+  - base: chronicle.group_behaviors
+    path: chronicle/week_{week:03d}/group_behavior
+    scan_glob: "*.json"
+    scan_regex: "^(?P<tier>[^/]+)\\.json$"
+    item_key_template: "chronicle.group_behavior:week={week},tier={tier}"
