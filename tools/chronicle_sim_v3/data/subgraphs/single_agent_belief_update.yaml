@@ -1,0 +1,47 @@
+schema: chronicle_sim_v3/graph@1
+id: single_agent_belief_update
+title: 单 NPC 周信念更新
+description: |
+  把本人可见事件与听闻传言合并成一周 belief，并写回 chronicle.beliefs。
+
+inputs:
+  week:
+    type: Week
+    required: true
+
+spec:
+  nodes:
+    event_beliefs:
+      kind: belief.from_events
+      in:
+        events: ${inputs.events}
+        agent_id: ${item.id}
+    rumor_beliefs:
+      kind: belief.from_rumors
+      in:
+        rumors: ${inputs.rumors}
+        agent_id: ${item.id}
+    merged:
+      kind: belief.merge_truncate
+      in:
+        lists:
+          - ${nodes.event_beliefs.out}
+          - ${nodes.rumor_beliefs.out}
+      params:
+        top_k: 24
+    decayed:
+      kind: belief.decay
+      in:
+        beliefs: ${nodes.merged.out}
+      params:
+        factor: 0.96
+        threshold: 0.1
+    write_beliefs:
+      kind: write.chronicle.belief
+      in:
+        week: ${inputs.week}
+        agent_id: ${item.id}
+        beliefs: ${nodes.decayed.out}
+  result:
+    beliefs: ${nodes.decayed.out}
+    key: ${nodes.write_beliefs.key}

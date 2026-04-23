@@ -78,6 +78,16 @@ spec:
           tier: "B"
           agent_spec: data/agent_specs/tier_b_npc.toml
           week: ${inputs.week}
+    intent_c:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.C}
+      params:
+        body: ${subgraph:single_agent_intent}
+        body_inputs:
+          tier: "C"
+          agent_spec: data/agent_specs/tier_c_npc.toml
+          week: ${inputs.week}
     all_intents:
       kind: list.concat
       in:
@@ -85,6 +95,7 @@ spec:
           - ${nodes.intent_s.collected}
           - ${nodes.intent_a.collected}
           - ${nodes.intent_b.collected}
+          - ${nodes.intent_c.collected}
     intents_text:
       kind: json.encode
       in:
@@ -172,6 +183,46 @@ spec:
       in:
         week: ${inputs.week}
         rumors: ${nodes.rumors_generated.rumors}
+    belief_s:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.S}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+    belief_a:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.A}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+    belief_b:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.B}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+    belief_c:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.C}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
     social_state:
       kind: agent.cline
       in:
