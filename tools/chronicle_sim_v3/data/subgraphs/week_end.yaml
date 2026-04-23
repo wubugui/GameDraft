@@ -50,6 +50,34 @@ spec:
         value: ${nodes.social_state.out}
       params:
         indent: 2
+    story_clusters_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+      params:
+        pattern: "chronicle.story_clusters:week={week}"
+    story_clusterer:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          events_text: ${nodes.events_text.out}
+          rumors_text: ${nodes.rumors_text.out}
+          social_state_text: ${nodes.social_state_text.out}
+      params:
+        agent_spec: data/agent_specs/story_clusterer.toml
+        llm:
+          role: story_clusterer
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    write_story_clusters:
+      kind: write.schema.json
+      in:
+        key: ${nodes.story_clusters_key.out}
+        payload: ${nodes.story_clusterer.parsed}
     summarize:
       kind: agent.cline
       in:
@@ -73,3 +101,4 @@ spec:
   result:
     summary: ${nodes.summarize.text}
     written_key: ${nodes.write_summary.key}
+    story_clusters_key: ${nodes.write_story_clusters.key}
