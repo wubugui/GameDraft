@@ -57,6 +57,31 @@ def _resolve_subgraph(services, params_body: Any, *, name: str = "body"):
     return loader.load(ref)
 
 
+def _resolve_body_inputs(
+    runner: Any,
+    body_inputs: dict[str, Any],
+    *,
+    item: Any,
+    parent_inputs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """在 foreach/fanout 迭代时解析 body_inputs 中残留的 ${item...}。
+
+    规则：
+    - 父图阶段已解析 `${inputs.*}` / `${nodes.*}`；这里只补 `${item.*}` 为主
+    - 若 body_inputs 中还残留 `${inputs.*}`，则继续使用 parent_inputs 解析
+    """
+    scope_extra = {
+        "item": item,
+        "inputs": parent_inputs or {},
+    }
+    return {
+        k: runner._resolve_value(v, {}, scope_extra)
+        if isinstance(v, (str, dict, list))
+        else v
+        for k, v in body_inputs.items()
+    }
+
+
 @register_node
 class FlowMerge:
     spec = NodeKindSpec(
@@ -109,7 +134,12 @@ class FlowForeach:
         runner = SubgraphRunner(eng)
         collected = []
         for item in (inputs.get("over") or []):
-            r = await runner.run(sub_spec, body_inputs, cancel=cancel, item=item)
+            resolved_body_inputs = _resolve_body_inputs(
+                runner, body_inputs, item=item, parent_inputs=inputs,
+            )
+            r = await runner.run(
+                sub_spec, resolved_body_inputs, cancel=cancel, item=item,
+            )
             collected.append(r)
         return NodeOutput(values={"collected": collected})
 
@@ -183,7 +213,12 @@ class FlowFanoutPerAgent:
         runner = SubgraphRunner(eng)
         collected = []
         for agent in (inputs.get("over") or []):
-            r = await runner.run(sub_spec, body_inputs, cancel=cancel, item=agent)
+            resolved_body_inputs = _resolve_body_inputs(
+                runner, body_inputs, item=agent, parent_inputs=inputs,
+            )
+            r = await runner.run(
+                sub_spec, resolved_body_inputs, cancel=cancel, item=agent,
+            )
             collected.append(r)
         return NodeOutput(values={"collected": collected})
 

@@ -41,7 +41,7 @@ spec:
     storyline_clusters:
       kind: read.schema.listing
       in:
-        key: chronicle.story_clusters
+        key: chronicle.story_clusters_all
     storyline_clusters_text:
       kind: json.encode
       in:
@@ -55,7 +55,7 @@ spec:
           from_week: ${inputs.from_week}
           to_week: ${inputs.to_week}
           weeks_done_text: ${nodes.weeks_done_text.out}
-          story_clusters_text: ${nodes.storyline_clusters_text.out}
+          weekly_clusters_text: ${nodes.storyline_clusters_text.out}
       params:
         agent_spec: data/agent_specs/storyline_aggregator.toml
         llm:

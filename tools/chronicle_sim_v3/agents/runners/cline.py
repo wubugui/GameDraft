@@ -316,7 +316,98 @@ def _normalize_story_clusters(parsed: Any) -> dict[str, Any]:
     return {"clusters": out}
 
 
-def _normalize_storylines(parsed: Any) -> dict[str, Any]:
+def _keyword_set(text: str) -> set[str]:
+    parts = re.split(r"[^0-9A-Za-z_\u4e00-\u9fff]+", text or "")
+    return {p for p in parts if len(p) >= 2}
+
+
+def _fallback_storylines_from_clusters(role_vars: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = _parse_jsonish(role_vars.get("weekly_clusters_text"), [])
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        key = str(entry.get("key") or "")
+        payload = entry.get("payload") or {}
+        if not isinstance(payload, dict):
+            continue
+        clusters = payload.get("clusters") or []
+        if not isinstance(clusters, list):
+            continue
+        week = 0
+        m = re.search(r"week=(\d+)", key)
+        if m:
+            week = _coerce_int(m.group(1), 0)
+        for c in clusters:
+            if not isinstance(c, dict):
+                continue
+            participants = set(_coerce_str_list(c.get("participants")))
+            keywords = _keyword_set(
+                " ".join(
+                    [
+                        str(c.get("title") or ""),
+                        str(c.get("focus") or ""),
+                        str(c.get("story_hook") or ""),
+                    ]
+                )
+            )
+            normalized.append(
+                {
+                    "week": week,
+                    "cluster_ref": f"week_{week:03d}:{c.get('id')}" if week else str(c.get("id") or ""),
+                    "title": str(c.get("title") or ""),
+                    "focus": str(c.get("focus") or ""),
+                    "story_hook": str(c.get("story_hook") or ""),
+                    "participants": participants,
+                    "keywords": keywords,
+                }
+            )
+    normalized.sort(key=lambda x: (x["week"], x["cluster_ref"]))
+    groups: list[list[dict[str, Any]]] = []
+    for cluster in normalized:
+        best_group: list[dict[str, Any]] | None = None
+        for group in groups:
+            last = group[-1]
+            same_or_later = cluster["week"] >= last["week"]
+            participant_overlap = bool(cluster["participants"] & last["participants"])
+            keyword_overlap = bool(cluster["keywords"] & last["keywords"])
+            if same_or_later and (participant_overlap or keyword_overlap):
+                best_group = group
+                break
+        if best_group is None:
+            groups.append([cluster])
+        else:
+            best_group.append(cluster)
+    out: list[dict[str, Any]] = []
+    for idx, group in enumerate(groups, start=1):
+        weeks = sorted({int(g["week"]) for g in group if g["week"]})
+        participants = sorted({p for g in group for p in g["participants"]})
+        title = str(group[-1]["title"] or group[0]["title"] or f"storyline_{idx}")
+        focus = "；".join(
+            s for s in [str(g["focus"]) for g in group if str(g["focus"]).strip()]
+        )
+        hook = str(group[-1]["story_hook"] or "")
+        out.append(
+            {
+                "id": f"storyline_{idx}",
+                "title": title,
+                "weeks": weeks,
+                "cluster_ids": [str(g["cluster_ref"]) for g in group if str(g["cluster_ref"])],
+                "focus": focus[:400],
+                "next_hook": hook,
+                "participants": participants,
+            }
+        )
+    return out
+
+
+def _normalize_storylines(
+    role_vars: dict[str, Any],
+    parsed: Any,
+    raw_text: str,
+) -> dict[str, Any]:
     data = parsed if isinstance(parsed, dict) else {}
     storylines = data.get("storylines")
     out: list[dict[str, Any]] = []
@@ -332,6 +423,8 @@ def _normalize_storylines(parsed: Any) -> dict[str, Any]:
                 "focus": str(s.get("focus") or ""),
                 "next_hook": str(s.get("next_hook") or ""),
             })
+    if not out:
+        out = _fallback_storylines_from_clusters(role_vars)
     return {"storylines": out}
 
 
@@ -362,7 +455,7 @@ def _normalize_structured_output(
     if name == "story_clusterer.toml":
         return _normalize_story_clusters(parsed)
     if name == "storyline_aggregator.toml":
-        return _normalize_storylines(parsed)
+        return _normalize_storylines(role_vars, parsed, raw_text)
     return parsed
 
 
