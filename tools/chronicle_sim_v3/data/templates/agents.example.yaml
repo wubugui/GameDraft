@@ -68,11 +68,11 @@ agents:
 routes:
   npc:         cline_default
   director:    cline_default
-  gm:         cline_default
-  rumor:       simple_chat_default
-  summary:     simple_chat_default
+  gm:          cline_default
+  rumor:       cline_default
+  summary:     cline_default
   initializer: cline_default
-  probe:       react_default
+  probe:       cline_default
 
 limiter:
   per_runner:

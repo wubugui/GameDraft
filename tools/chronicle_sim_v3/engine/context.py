@@ -23,6 +23,7 @@ from tools.chronicle_sim_v3.engine.io import (
     read_json,
     read_yaml,
 )
+from tools.chronicle_sim_v3.engine.context_schema import load_context_schema_registry
 from tools.chronicle_sim_v3.engine.keymap import (
     is_listing_key,
     is_text_key,
@@ -86,6 +87,14 @@ class ContextRead:
     # 通用读入口（节点也可以直接调，便于扩展）
     def read_key(self, key: str) -> Any:
         return self._store._read_key(key)
+
+    def read_listing(self, key: str) -> list[Any]:
+        out: list[Any] = []
+        for sub_key in scan_keys(key, self.run_dir):
+            v = self.read_key(sub_key)
+            if v is not None:
+                out.append(v)
+        return out
 
     # ---- 世界 ----
     def world_setting(self) -> dict:
@@ -229,7 +238,8 @@ class ContextStore:
     def _load_from_disk(self, key: str) -> Any:
         base, _ = parse_key(key)
         path = key_to_path(key, self.run_dir)
-        if base == "config.llm" or base == "config.cook":
+        storage = load_context_schema_registry().storage_for(base)
+        if storage == "yaml":
             return read_yaml(path) if path.is_file() else None
         if is_text_key(key):
             return path.read_text(encoding="utf-8") if path.is_file() else None
@@ -283,7 +293,7 @@ class ContextStore:
             self._value_cache.pop(k, None)
             # 同前缀的列表型父 key 也要失效（如 add agent → world.agents 父列表）
             base, _ = parse_key(k)
-            parent_listings = _PARENT_LISTING_BASES.get(base, ())
+            parent_listings = load_context_schema_registry().parent_listings_for(base)
             for cached in list(self._slice_cache.keys()):
                 cb, _ = parse_key(cached)
                 if cb in parent_listings:
@@ -319,17 +329,6 @@ class ContextStore:
             atomic_write_json(p, payload)
             return
         raise ContextError(f"未知 mutation op: {m.op!r}")
-
-
-# 子条目 base → 受影响的父列表 base（commit 失效用）
-_PARENT_LISTING_BASES: dict[str, tuple[str, ...]] = {
-    "world.agent": ("world.agents",),
-    "world.faction": ("world.factions",),
-    "world.location": ("world.locations",),
-    "chronicle.event": ("chronicle.events",),
-    "chronicle.intent": ("chronicle.intents",),
-    "chronicle.draft": ("chronicle.drafts",),
-}
 
 
 def _normalize_for_hash(v: Any) -> Any:

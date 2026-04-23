@@ -41,7 +41,7 @@ agents:
       argv_template: ["${input_file}"]
 routes:
   npc: cline_real
-  director: simple_default
+  director: cline_real
 limiter:
   per_runner:
     cline: 1

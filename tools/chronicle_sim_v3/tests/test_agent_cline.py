@@ -1,7 +1,7 @@
 """agent.cline alias 节点 + agent.run 节点 + flow.merge / flow 占位节点。
 
 三层架构后：业务节点只见 services.agents（AgentService）；
-- agent.cline 是 alias，内部走 cline_default（在 stub run 中映射到 simple_chat+stub）
+- agent.cline 是 alias，内部走 cline_default
 - agent.run 是统一入口
 """
 from __future__ import annotations
@@ -76,7 +76,7 @@ async def test_agent_run_with_stub(tmp_path: Path) -> None:
         cs.read_view(),
         {"vars": {"__system": "你是测试", "__user": "你好"}},
         {
-            "agent": "simple_chat_offline",
+            "agent": "cline_offline",
             "spec": "_inline",
             "role": "smoke",
             "output": {"kind": "text"},

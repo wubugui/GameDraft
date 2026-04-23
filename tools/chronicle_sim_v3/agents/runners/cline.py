@@ -37,6 +37,9 @@ from tools.chronicle_sim_v3.agents.runners.base import (
 )
 from tools.chronicle_sim_v3.agents.types import AgentResult, AgentTask
 from tools.chronicle_sim_v3.llm.render import AgentSpec, load_spec
+from tools.chronicle_sim_v3.llm.output_parse import parse_output
+from tools.chronicle_sim_v3.llm.render import render
+from tools.chronicle_sim_v3.llm.types import OutputSpec, Prompt as LLMPrompt
 from tools.chronicle_sim_v3.providers.errors import ProviderError
 from tools.chronicle_sim_v3.providers.types import ProviderKind, ResolvedProvider
 
@@ -183,6 +186,34 @@ def _read_artifact_or_stdout(
     return stdout_text.strip()
 
 
+def _stub_cline_text(seed: str, rendered_user: str, physical: str, output_kind: str) -> str:
+    import json
+    if output_kind == "text":
+        return f"[cline-stub:{physical}] seed={seed} prompt={rendered_user[:60]!r}"
+    if output_kind == "json_object":
+        return json.dumps({
+            "ok": True,
+            "seed": seed,
+            "runner": "cline",
+            "physical": physical,
+            "echo": rendered_user[:200],
+        }, ensure_ascii=False)
+    if output_kind == "json_array":
+        return json.dumps([{
+            "ok": True,
+            "seed": seed,
+            "runner": "cline",
+            "physical": physical,
+            "echo": rendered_user[:120],
+        }], ensure_ascii=False)
+    if output_kind == "jsonl":
+        return "\n".join([
+            json.dumps({"type": "say", "text": f"[cline-stub] {rendered_user[:60]}"}, ensure_ascii=False),
+            json.dumps({"final": {"ok": True, "seed": seed, "runner": "cline"}}, ensure_ascii=False),
+        ])
+    return f"[cline-stub:{physical}:unknown_kind={output_kind}]"
+
+
 class ClineRunner(SubprocessAgentRunner):
     runner_kind = "cline"
 
@@ -228,6 +259,30 @@ class ClineRunner(SubprocessAgentRunner):
         _materialize_clinerules(ws, spec)
         if rendered_user.strip():
             (ws / "input.md").write_text(rendered_user, encoding="utf-8")
+
+        if provider.kind == "stub":
+            import hashlib
+            t_start = monotonic()
+            output_spec = OutputSpec(
+                kind=ref_output_kind,
+                artifact_filename=ref_artifact_filename,
+            )
+            seed = hashlib.sha256(
+                f"{resolved.physical}|{task.spec_ref}|{rendered_user}".encode("utf-8")
+            ).hexdigest()[:16]
+            raw_text = _stub_cline_text(seed, rendered_user, resolved.physical, ref_output_kind)
+            parsed, tool_log = parse_output(raw_text, output_spec)
+            elapsed_ms = int((monotonic() - t_start) * 1000)
+            return AgentResult(
+                text=raw_text if ref_output_kind == "text" else (raw_text if isinstance(parsed, str) else raw_text),
+                parsed=parsed,
+                tool_log=tool_log,
+                exit_code=0,
+                timings={"total_ms": elapsed_ms, "stub_ms": elapsed_ms},
+                runner_kind=self.runner_kind,
+                physical_agent=resolved.physical,
+                llm_calls_count=None,
+            )
 
         cfg = resolved.config or {}
         verbose = bool(cfg.get("cline_verbose", False))
