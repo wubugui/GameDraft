@@ -225,15 +225,15 @@ spec:
         vars:
           week: ${inputs.week}
           world_bible_text: ${nodes.bible.out}
-          intents_json: ${nodes.intents_text.out}
+          intents_text: ${nodes.intents_text.out}
           drafts_json: ${nodes.drafts_text.out}
           events_text: ${nodes.gm_events_text.out}
           rumors_text: ${nodes.rumors_generated_text.out}
           social_state_text: ""
       params:
-        agent_spec: data/agent_specs/week_summarizer.toml
+        agent_spec: data/agent_specs/social_state_settler.toml
         llm:
-          role: summary
+          role: social_state
           model: smart
           output:
             kind: json_object
@@ -256,6 +256,12 @@ spec:
         ref: ${subgraph:week_end}
         inputs:
           week: ${inputs.week}
+          events_json: ${nodes.gm_events.out}
+          rumors_json: ${nodes.rumors_generated.rumors}
+          social_state_json: ${nodes.social_state.parsed}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+          social_state: ${nodes.social_state.parsed}
     intents_n:
       kind: count
       in:

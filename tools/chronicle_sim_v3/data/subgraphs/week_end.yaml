@@ -10,17 +10,30 @@ inputs:
   week:
     type: Week
     required: true
+  events_json:
+    type: Json
+    required: false
+  rumors_json:
+    type: Json
+    required: false
+  social_state_json:
+    type: Json
+    required: false
 
 spec:
   nodes:
     events:
-      kind: read.chronicle.events
+      kind: json.path
       in:
-        week: ${inputs.week}
+        value: ${inputs.events_json}
+      params:
+        path: ""
     rumors:
-      kind: read.chronicle.rumors
+      kind: json.path
       in:
-        week: ${inputs.week}
+        value: ${inputs.rumors_json}
+      params:
+        path: ""
     social_state_key:
       kind: text.format
       in:
@@ -29,9 +42,11 @@ spec:
       params:
         pattern: "chronicle.social_state:week={week}"
     social_state:
-      kind: read.schema.key
+      kind: json.path
       in:
-        key: ${nodes.social_state_key.out}
+        value: ${inputs.social_state_json}
+      params:
+        path: ""
     events_text:
       kind: json.encode
       in:

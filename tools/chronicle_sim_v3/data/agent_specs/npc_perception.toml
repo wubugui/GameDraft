@@ -19,6 +19,10 @@ system = '''
 来整理“这个 NPC 本周知道了什么、在意什么、误解了什么”。
 </role>
 
+<cline_act_mode>
+ACT：完整 JSON 写入 cwd 的 agent_output.json；attempt_completion 仅一句短说明。
+</cline_act_mode>
+
 <output_contract>
 只输出一个合法 JSON 对象。
 </output_contract>

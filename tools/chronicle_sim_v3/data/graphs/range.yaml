@@ -21,8 +21,8 @@ spec:
     weeks:
       kind: math.range
       params:
-        start: 1
-        end: 9
+        start: ${inputs.from_week}
+        end: ${inputs.to_week + 1}
     loop:
       kind: flow.foreach
       in:
@@ -32,5 +32,51 @@ spec:
         body_inputs:
           week: ${item}
           pacing_preset: ${inputs.pacing_preset}
+    weeks_done_text:
+      kind: json.encode
+      in:
+        value: ${nodes.loop.collected}
+      params:
+        indent: 2
+    storyline_clusters:
+      kind: read.schema.listing
+      in:
+        key: chronicle.story_clusters
+    storyline_clusters_text:
+      kind: json.encode
+      in:
+        value: ${nodes.storyline_clusters.out}
+      params:
+        indent: 2
+    storyline_agent:
+      kind: agent.cline
+      in:
+        vars:
+          from_week: ${inputs.from_week}
+          to_week: ${inputs.to_week}
+          weeks_done_text: ${nodes.weeks_done_text.out}
+          story_clusters_text: ${nodes.storyline_clusters_text.out}
+      params:
+        agent_spec: data/agent_specs/storyline_aggregator.toml
+        llm:
+          role: storyline_aggregator
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    storyline_key:
+      kind: text.format
+      in:
+        vars:
+          from_week: ${inputs.from_week}
+          to_week: ${inputs.to_week}
+      params:
+        pattern: "chronicle.storylines:from_week={from_week},to_week={to_week}"
+    write_storylines:
+      kind: write.schema.json
+      in:
+        key: ${nodes.storyline_key.out}
+        payload: ${nodes.storyline_agent.parsed}
   result:
     weeks_done: ${nodes.loop.collected}
+    storyline_key: ${nodes.write_storylines.key}

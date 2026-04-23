@@ -25,11 +25,38 @@ def _parse_strict_or_repair(text: str) -> Any:
         return json.loads(text)
     except json.JSONDecodeError:
         if repair_json is None:
-            raise
+            extracted = _extract_json_candidate(text)
+            if extracted is None:
+                raise
+            return json.loads(extracted)
+        extracted = _extract_json_candidate(text)
+        if extracted is not None:
+            try:
+                return json.loads(extracted)
+            except json.JSONDecodeError:
+                pass
         repaired = repair_json(text, return_objects=False)
         if not repaired:
-            raise
+            extracted = _extract_json_candidate(text)
+            if extracted is None:
+                raise
+            repaired = repair_json(extracted, return_objects=False)
+            if not repaired:
+                raise
         return json.loads(repaired)
+
+
+def _extract_json_candidate(text: str) -> str | None:
+    stripped = text.strip()
+    first_obj = stripped.find("{")
+    last_obj = stripped.rfind("}")
+    if first_obj >= 0 and last_obj > first_obj:
+        return stripped[first_obj : last_obj + 1]
+    first_arr = stripped.find("[")
+    last_arr = stripped.rfind("]")
+    if first_arr >= 0 and last_arr > first_arr:
+        return stripped[first_arr : last_arr + 1]
+    return None
 
 
 def parse_output(text: str, spec: OutputSpec) -> tuple[Any, list[dict]]:
