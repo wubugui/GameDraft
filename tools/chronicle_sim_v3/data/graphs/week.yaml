@@ -131,14 +131,6 @@ spec:
         value: ${nodes.gm.parsed}
       params:
         path: events
-    write_events:
-      kind: flow.foreach
-      in:
-        over: ${nodes.gm_events.out}
-      params:
-        body: ${subgraph:write_event_result}
-        body_inputs:
-          week: ${inputs.week}
     edges:
       kind: read.world.edges
     rumor_sim:
@@ -152,6 +144,18 @@ spec:
         edges: ${nodes.edges.out}
         params: ${nodes.rumor_sim.out}
         week: ${inputs.week}
+    gm_events_text:
+      kind: json.encode
+      in:
+        value: ${nodes.gm_events.out}
+      params:
+        indent: 2
+    rumors_generated_text:
+      kind: json.encode
+      in:
+        value: ${nodes.rumors_generated.rumors}
+      params:
+        indent: 2
     write_rumors:
       kind: write.chronicle.rumors
       in:
@@ -165,8 +169,9 @@ spec:
           world_bible_text: ${nodes.bible.out}
           intents_json: ${nodes.intents_text.out}
           drafts_json: ${nodes.drafts_text.out}
-          events_json: ${nodes.gm_events.out}
-          rumors_json: ${nodes.rumors_generated.rumors}
+          events_text: ${nodes.gm_events_text.out}
+          rumors_text: ${nodes.rumors_generated_text.out}
+          social_state_text: ""
       params:
         agent_spec: data/agent_specs/week_summarizer.toml
         llm:
