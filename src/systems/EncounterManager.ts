@@ -2,7 +2,15 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
-import type { Condition, ConditionExpr, EncounterDef, IGameSystem, GameContext, ResolvedOption } from '../data/types';
+import type {
+  Condition,
+  ConditionExpr,
+  EncounterDef,
+  IGameSystem,
+  GameContext,
+  ResolvedOption,
+  RuleLayerKey,
+} from '../data/types';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 
@@ -60,6 +68,12 @@ export class EncounterManager implements IGameSystem {
     return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
+  private layerLabel(layer: RuleLayerKey): string {
+    if (layer === 'xiang') return this.strings.get('rulesPanel', 'layerXiang');
+    if (layer === 'li') return this.strings.get('rulesPanel', 'layerLi');
+    return this.strings.get('rulesPanel', 'layerShu');
+  }
+
   async loadDefs(): Promise<void> {
     try {
       const defs = await this.assetManager.loadJson<EncounterDef[]>('/assets/data/encounters.json');
@@ -97,26 +111,50 @@ export class EncounterManager implements IGameSystem {
         const ruleId = opt.requiredRuleId;
         const ruleAcquired = this.flagStore.get(`rule_${ruleId}_acquired`) === true;
         const ruleDiscovered = this.flagStore.get(`rule_${ruleId}_discovered`) === true;
+        const layerReq = opt.requiredRuleLayers;
+        const needLayers = !!(layerReq && layerReq.length > 0);
+        const layersOk =
+          needLayers &&
+          (layerReq as RuleLayerKey[]).every(
+            (L) => this.flagStore.get(`rule_${ruleId}_${L}_done`) === true,
+          );
+        const requirementMet = needLayers ? layersOk : ruleAcquired;
 
-        if (ruleAcquired) {
-          // rule acquired -- show normally
-        } else if (ruleDiscovered) {
-          const ruleInfo = this.ruleNameResolver?.(ruleId);
-          const collected = (this.flagStore.get(`rule_${ruleId}_fragments_collected`) as number) ?? 0;
-          const total = (this.flagStore.get(`rule_${ruleId}_fragments_total`) as number) ?? 0;
-          const displayName = this.r(ruleInfo?.incompleteName ?? this.strings.get('encounter', 'unknownRule'));
-          this.currentOptions.push({
-            index: idx++,
-            text: `${displayName} (${collected}/${total})`,
-            type: opt.type,
-            enabled: false,
-            disableReason: this.strings.get('encounter', 'fragmentInsufficient', { collected, total }),
-            consumeItems: opt.consumeItems,
-            resultActions: opt.resultActions,
-            resultText: opt.resultText ? this.r(opt.resultText) : opt.resultText,
-          });
-          continue;
+        if (requirementMet) {
+          // 满足规矩条件，继续走下方 conditions / consumeItems
         } else {
+          const visible = ruleAcquired || ruleDiscovered;
+          if (!visible) {
+            continue;
+          }
+          const ruleInfo = this.ruleNameResolver?.(ruleId);
+          const displayName = this.r(ruleInfo?.incompleteName ?? this.strings.get('encounter', 'unknownRule'));
+          if (needLayers) {
+            const labels = (layerReq as RuleLayerKey[]).map((L) => this.layerLabel(L)).join('、');
+            this.currentOptions.push({
+              index: idx++,
+              text: `${displayName} (${labels})`,
+              type: opt.type,
+              enabled: false,
+              disableReason: this.strings.get('encounter', 'layerInsufficient', { layers: labels }),
+              consumeItems: opt.consumeItems,
+              resultActions: opt.resultActions,
+              resultText: opt.resultText ? this.r(opt.resultText) : opt.resultText,
+            });
+          } else {
+            const collected = (this.flagStore.get(`rule_${ruleId}_fragments_collected`) as number) ?? 0;
+            const total = (this.flagStore.get(`rule_${ruleId}_fragments_total`) as number) ?? 0;
+            this.currentOptions.push({
+              index: idx++,
+              text: `${displayName} (${collected}/${total})`,
+              type: opt.type,
+              enabled: false,
+              disableReason: this.strings.get('encounter', 'fragmentInsufficient', { collected, total }),
+              consumeItems: opt.consumeItems,
+              resultActions: opt.resultActions,
+              resultText: opt.resultText ? this.r(opt.resultText) : opt.resultText,
+            });
+          }
           continue;
         }
       }

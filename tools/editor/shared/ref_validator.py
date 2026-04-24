@@ -121,9 +121,18 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
             continue
         rid = r.get("id", i)
         errs.extend(scan_refs(r.get("name"), f"rules[{rid}].name", model))
-        errs.extend(scan_refs(r.get("description"), f"rules[{rid}].description", model))
-        errs.extend(scan_refs(r.get("source"), f"rules[{rid}].source", model))
         errs.extend(scan_refs(r.get("incompleteName"), f"rules[{rid}].incompleteName", model))
+        layers = r.get("layers")
+        if isinstance(layers, dict):
+            for lk in ("xiang", "li", "shu"):
+                lob = layers.get(lk)
+                if isinstance(lob, dict):
+                    errs.extend(scan_refs(
+                        lob.get("text"), f"rules[{rid}].layers.{lk}.text", model,
+                    ))
+                    errs.extend(scan_refs(
+                        lob.get("lockedHint"), f"rules[{rid}].layers.{lk}.lockedHint", model,
+                    ))
     frags = model.rules_data.get("fragments", []) if isinstance(model.rules_data, dict) else []
     for i, f in enumerate(frags):
         if not isinstance(f, dict):

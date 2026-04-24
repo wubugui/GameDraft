@@ -4,9 +4,9 @@ from __future__ import annotations
 import copy
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
-    QFormLayout, QLineEdit, QComboBox, QPushButton,
+    QFormLayout, QLineEdit, QComboBox, QPushButton, QCheckBox,
     QScrollArea, QGroupBox, QSpinBox, QMessageBox, QToolButton,
-    QMenu, QSizePolicy, QFrame, QStyle,
+    QMenu, QSizePolicy, QFrame, QStyle, QLabel,
 )
 from PySide6.QtCore import Qt, QSize
 
@@ -240,6 +240,25 @@ class OptionWidget(QFrame):
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._rule.setMaximumWidth(360)
         f.addRow("requiredRuleId", self._rule)
+        f.addRow(
+            QLabel(
+                "requiredRuleLayers（不勾=须完整掌握；勾选者须对应层已解锁）",
+            ),
+        )
+        rl_row = QHBoxLayout()
+        self._rl_xiang = QCheckBox("象")
+        self._rl_li = QCheckBox("理")
+        self._rl_shu = QCheckBox("术")
+        rl_raw = data.get("requiredRuleLayers") or []
+        rl_set = set(rl_raw) if isinstance(rl_raw, list) else set()
+        self._rl_xiang.setChecked("xiang" in rl_set)
+        self._rl_li.setChecked("li" in rl_set)
+        self._rl_shu.setChecked("shu" in rl_set)
+        rl_row.addWidget(self._rl_xiang)
+        rl_row.addWidget(self._rl_li)
+        rl_row.addWidget(self._rl_shu)
+        rl_row.addStretch(1)
+        f.addRow(rl_row)
         self._result_text = RichTextTextEdit(model)
         self._result_text.setPlainText(data.get("resultText", ""))
         self._result_text.setMaximumHeight(80)
@@ -310,6 +329,15 @@ class OptionWidget(QFrame):
         rid = self._rule.current_id()
         if rid:
             d["requiredRuleId"] = rid
+        rq: list[str] = []
+        if self._rl_xiang.isChecked():
+            rq.append("xiang")
+        if self._rl_li.isChecked():
+            rq.append("li")
+        if self._rl_shu.isChecked():
+            rq.append("shu")
+        if rq:
+            d["requiredRuleLayers"] = rq
         rt = self._result_text.toPlainText()
         if rt:
             d["resultText"] = rt

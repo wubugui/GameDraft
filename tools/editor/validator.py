@@ -350,16 +350,75 @@ def validate(model: ProjectModel) -> list[Issue]:
             if rid and rid not in rule_ids:
                 issues.append(Issue("error", "encounter", enc["id"],
                                     f"requiredRuleId '{rid}' not found"))
+            rl = opt.get("requiredRuleLayers")
+            if rid and isinstance(rl, list) and rl:
+                rule = next(
+                    (x for x in model.rules_data.get("rules", []) if x.get("id") == rid),
+                    None,
+                )
+                layers_obj = rule.get("layers") if isinstance(rule, dict) else None
+                if not isinstance(layers_obj, dict):
+                    layers_obj = {}
+                for L in rl:
+                    if L not in ("xiang", "li", "shu"):
+                        issues.append(Issue(
+                            "error", "encounter", enc["id"],
+                            f"选项 requiredRuleLayers 含非法层 {L!r}",
+                        ))
+                    elif L not in layers_obj or not isinstance(layers_obj.get(L), dict):
+                        issues.append(Issue(
+                            "error", "encounter", enc["id"],
+                            f"规矩 '{rid}' 未定义层 {L!r}（layers 中缺少该键）",
+                        ))
             for ci in opt.get("consumeItems", []):
                 if ci.get("id") and ci["id"] not in item_ids:
                     issues.append(Issue("error", "encounter", enc["id"],
                                         f"consumeItem '{ci['id']}' not found"))
+
+    # --- rules definitions ---
+    _layer_keys = ("xiang", "li", "shu")
+    for r in model.rules_data.get("rules", []):
+        if not isinstance(r, dict):
+            continue
+        rid = r.get("id", "?")
+        layers = r.get("layers")
+        if not isinstance(layers, dict):
+            issues.append(Issue("error", "rule", rid, "须有 layers 对象（象/理/术）"))
+            continue
+        has_text = any(
+            isinstance(layers.get(k), dict) and str(layers[k].get("text", "")).strip()
+            for k in _layer_keys
+        )
+        if not has_text:
+            issues.append(Issue("error", "rule", rid, "layers 至少有一层含非空 text"))
+        _verified_vals = ("unverified", "effective", "questionable")
+        for lk in _layer_keys:
+            lob = layers.get(lk)
+            if not isinstance(lob, dict):
+                continue
+            lver = lob.get("verified")
+            if lver is not None and lver not in _verified_vals:
+                issues.append(Issue(
+                    "error", "rule", rid,
+                    f"layers.{lk}.verified 须为 unverified|effective|questionable，当前为 {lver!r}",
+                ))
 
     # --- rules fragments ---
     for frag in model.rules_data.get("fragments", []):
         if frag.get("ruleId") and frag["ruleId"] not in rule_ids:
             issues.append(Issue("error", "rule", frag["id"],
                                 f"Fragment ruleId '{frag['ruleId']}' not found"))
+        lay = frag.get("layer", "xiang")
+        if lay not in _layer_keys:
+            issues.append(Issue(
+                "error", "rule", frag.get("id", "?"),
+                f"fragment.layer 须为 xiang|li|shu，当前为 {lay!r}",
+            ))
+        if not str(frag.get("source", "")).strip():
+            issues.append(Issue(
+                "error", "rule", frag.get("id", "?"),
+                "fragment.source 不能为空",
+            ))
 
     # --- shops ---
     for shop in model.shops:

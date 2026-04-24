@@ -27,7 +27,7 @@ import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import type { ScenarioStateManager } from './ScenarioStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
-import type { ActionDef, DialogueLine, ICutsceneActor, ZoneRuleSlot } from '../data/types';
+import type { ActionDef, DialogueLine, ICutsceneActor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 
 export interface ActionRegistryDeps {
@@ -156,6 +156,15 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('giveCurrency', (p) => { void d.inventoryManager.addCoins(p.amount as number); }, ['amount']);
   executor.register('removeCurrency', (p) => { void d.inventoryManager.removeCoins(p.amount as number); }, ['amount']);
   executor.register('giveRule', (p) => { void d.rulesManager.giveRule(p.id as string); }, ['id']);
+  executor.register('grantRuleLayer', (p) => {
+    const ruleId = String(p.ruleId ?? '').trim();
+    const layerRaw = String(p.layer ?? '').trim();
+    if (!ruleId || !['xiang', 'li', 'shu'].includes(layerRaw)) {
+      console.warn('grantRuleLayer: 需要 params.ruleId 与 params.layer（xiang|li|shu）');
+      return;
+    }
+    d.rulesManager.grantLayer(ruleId, layerRaw as RuleLayerKey);
+  }, ['ruleId', 'layer']);
   executor.register('giveFragment', (p) => { void d.rulesManager.giveFragment(p.id as string); }, ['id']);
   executor.register('updateQuest', (p) => { void d.questManager.acceptQuest(p.id as string); }, ['id']);
 

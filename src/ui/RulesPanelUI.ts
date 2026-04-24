@@ -1,13 +1,15 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
-import type { IRulesDataProvider } from '../data/types';
+import type { IRulesDataProvider, RuleLayerKey } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
 
 const PANEL_W_MAX = 600;
 const PADDING = 20;
 const SECTION_GAP = 14;
 const ITEM_GAP = 4;
+
+const LAYER_ORDER: RuleLayerKey[] = ['xiang', 'li', 'shu'];
 
 const VERIFIED_COLORS: Record<string, number> = {
   unverified: UITheme.colors.ruleUnverified,
@@ -136,9 +138,6 @@ export class RulesPanelUI {
           addSectionLabel(`-- ${catName} --`);
 
           for (const r of rulesInCat) {
-            const vLabel = this.rulesData.getVerifiedLabel(r.def.verified);
-            const vColor = VERIFIED_COLORS[r.def.verified] ?? VERIFIED_COLORS.unverified;
-
             const nameText = new Text({
               text: `${this.r(r.def.name)}`,
               style: { fontSize: 13, fill: UITheme.colors.ruleName, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 520 },
@@ -146,36 +145,43 @@ export class RulesPanelUI {
             nameText.x = 10;
             nameText.y = cy;
             content.addChild(nameText);
-
-            const tagText = new Text({
-              text: `[${vLabel}]`,
-              style: { fontSize: 11, fill: vColor, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 200 },
-            });
-            tagText.x = 10 + nameText.width + 8;
-            tagText.y = cy + 1;
-            content.addChild(tagText);
             cy += 20;
 
-            if (r.def.description) {
+            for (const L of LAYER_ORDER) {
+              const layerDef = r.def.layers[L];
+              const t = layerDef?.text?.trim();
+              if (!t) continue;
+              const layerLabel = this.strings.get(
+                'rulesPanel',
+                L === 'xiang' ? 'layerXiang' : L === 'li' ? 'layerLi' : 'layerShu',
+              );
+              const vKey = layerDef?.verified ?? 'unverified';
+              const vLabel = this.rulesData.getVerifiedLabel(vKey);
+              const vColor = VERIFIED_COLORS[vKey] ?? VERIFIED_COLORS.unverified;
+              const headLine = `「${layerLabel}」`;
+              const layerHead = new Text({
+                text: headLine,
+                style: { fontSize: 11, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
+              });
+              layerHead.x = 10;
+              layerHead.y = cy;
+              content.addChild(layerHead);
+              const layerVerifiedTag = new Text({
+                text: `[${vLabel}]`,
+                style: { fontSize: 10, fill: vColor, fontFamily: UITheme.fonts.ui },
+              });
+              layerVerifiedTag.x = 10 + layerHead.width + 4;
+              layerVerifiedTag.y = cy + 1;
+              content.addChild(layerVerifiedTag);
+              cy += 16;
               const descText = new Text({
-                text: this.r(r.def.description),
+                text: this.r(t),
                 style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
               });
               descText.x = 10;
               descText.y = cy;
               content.addChild(descText);
               cy += descText.height + ITEM_GAP;
-            }
-
-            if (r.def.source) {
-              const srcText = new Text({
-                text: `${this.strings.get('rulesPanel', 'source')} ${this.r(r.def.source)}`,
-                style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
-              });
-              srcText.x = 10;
-              srcText.y = cy;
-              content.addChild(srcText);
-              cy += 16;
             }
 
             const progress = this.rulesData.getFragmentProgress(r.def.id);
@@ -257,6 +263,23 @@ export class RulesPanelUI {
           cy += barH + 8;
 
           if (isExpanded) {
+            const perLayer = this.rulesData.getLayerFragmentProgress(entry.def.id);
+            for (const L of LAYER_ORDER) {
+              const lp = perLayer[L];
+              if (!lp || lp.total === 0) continue;
+              const layerLabel = this.strings.get(
+                'rulesPanel',
+                L === 'xiang' ? 'layerXiang' : L === 'li' ? 'layerLi' : 'layerShu',
+              );
+              const layerCap = new Text({
+                text: `「${layerLabel}」 ${lp.collected}/${lp.total}`,
+                style: { fontSize: 11, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
+              });
+              layerCap.x = 16;
+              layerCap.y = cy;
+              content.addChild(layerCap);
+              cy += 16;
+            }
             const allFragProgress = this.rulesData.getFragmentProgress(entry.def.id);
             for (const frag of allFragProgress.fragments) {
               const isCollected = this.rulesData.hasFragment(frag.id);

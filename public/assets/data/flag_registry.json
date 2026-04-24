@@ -247,6 +247,27 @@
       "valueType": "float"
     },
     {
+      "id": "rule_layer_xiang_done",
+      "prefix": "rule_",
+      "suffix": "_xiang_done",
+      "idSource": "rule",
+      "valueType": "bool"
+    },
+    {
+      "id": "rule_layer_li_done",
+      "prefix": "rule_",
+      "suffix": "_li_done",
+      "idSource": "rule",
+      "valueType": "bool"
+    },
+    {
+      "id": "rule_layer_shu_done",
+      "prefix": "rule_",
+      "suffix": "_shu_done",
+      "idSource": "rule",
+      "valueType": "bool"
+    },
+    {
       "id": "fragment_acquired",
       "prefix": "fragment_",
       "suffix": "_acquired",

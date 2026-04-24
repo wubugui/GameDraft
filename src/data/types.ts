@@ -481,24 +481,34 @@ export enum QuestStatus {
 // 规矩数据
 // ============================================================
 
+export type RuleLayerKey = 'xiang' | 'li' | 'shu';
+
+export type RuleVerified = 'unverified' | 'effective' | 'questionable';
+
+export interface RuleLayerDef {
+  text: string;
+  lockedHint?: string;
+  /** 该层的验证状态；未填时默认 unverified */
+  verified?: RuleVerified;
+}
+
 export interface RuleDef {
   id: string;
   name: string;
   incompleteName?: string;
   category: 'ward' | 'taboo' | 'jargon' | 'streetwise';
-  description: string;
-  source: string;
-  sourceType: 'npc' | 'fragment' | 'experience';
-  verified: 'unverified' | 'effective' | 'questionable';
-  fragmentCount?: number;
+  /** 象 / 理 / 术；至少一层须有内容（由数据与编辑器校验保证） */
+  layers: Partial<Record<RuleLayerKey, RuleLayerDef>>;
+  /** @deprecated 规矩级验证状态已迁移到各层 RuleLayerDef.verified；仍可读用于旧存档兼容 */
+  verified?: RuleVerified;
 }
 
 export interface RuleFragmentDef {
   id: string;
   text: string;
   ruleId: string;
-  index: number;
-  source?: string;
+  layer: RuleLayerKey;
+  source: string;
 }
 
 // ============================================================
@@ -530,6 +540,8 @@ export interface EncounterOptionDef {
   type: 'general' | 'rule' | 'special';
   conditions: ConditionExpr[];
   requiredRuleId?: string;
+  /** 已填时：要求所列层均已解锁（读 FlagStore `rule_<id>_<layer>_done`）；未填时仍要求完整 `rule_<id>_acquired` */
+  requiredRuleLayers?: RuleLayerKey[];
   consumeItems?: { id: string; count: number }[];
   resultActions: ActionDef[];
   resultText?: string;
@@ -897,6 +909,8 @@ export interface ZoneDef {
 
 export interface ZoneRuleSlot {
   ruleId: string;
+  /** 未填时等价于完整掌握该规矩；已填时要求每层均已解锁才可用 */
+  requiredLayers?: RuleLayerKey[];
   resultActions: ActionDef[];
   resultText?: string;
 }
@@ -969,6 +983,12 @@ export interface IRulesDataProvider {
   isDiscovered(ruleId: string): boolean;
   getCategoryName(key: string): string;
   getVerifiedLabel(key: string): string;
+  getRuleDepth(ruleId: string): { unlocked: number; total: number };
+  hasLayer(ruleId: string, layer: RuleLayerKey): boolean;
+  getUnlockedLayerTexts(ruleId: string): Partial<Record<RuleLayerKey, string>>;
+  getLayerFragmentProgress(ruleId: string): Partial<
+    Record<RuleLayerKey, { collected: number; total: number; fragments: RuleFragmentDef[] }>
+  >;
 }
 
 export interface IArchiveDataProvider {

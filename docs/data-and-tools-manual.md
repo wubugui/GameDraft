@@ -45,7 +45,9 @@
 | giveItem | 给物品 | id=物品编号，count=数量 | 奖励钥匙：`key_temple`，1 |
 | removeItem | 扣物品 | id，count | 交出证物：`evidence_letter`，1 |
 | giveCurrency / removeCurrency | 加钱 / 扣钱 | amount | 打赏：`50` |
-| giveRule / giveFragment | 学会整条规矩 / 只学会一块碎片 | id=规矩或碎片编号 | 从 NPC 学到规矩：`rule_curfew` |
+| giveRule | 一次性解锁该规矩在数据里**已定义的全部层**（象/理/术） | id=规矩编号 | NPC 口传整条：`rule_curfew` |
+| grantRuleLayer | 只解锁一条规矩的**某一层** | ruleId=规矩编号，layer=`xiang` / `li` / `shu` | 只教「象」：`rule_curfew`，`xiang` |
+| giveFragment | 获得一块碎片（挂在某规矩的某一层上） | id=碎片编号 | 捡到纸条：`frag_curfew_01` |
 | updateQuest | 推进任务到「已接取/进行中」态 | id=任务编号 | 对话里接任务：`main_03` |
 | startEncounter | 进入一场遭遇 | id=遭遇编号 | 踩雷：`enc_bandit_01` |
 | playBgm / stopBgm | 播背景乐 / 停背景乐 | id（播时），fadeMs（毫秒渐变） | 进店：`shop_bgm`，1000 |
@@ -147,7 +149,7 @@
 | polygon | 顶点数组，每项 `{ "x", "y" }`，至少 3 个点 | 场景编辑器画布拖动 / 侧栏顶点表；图编辑器 Zone 页同结构表格 |
 | Conditions | 区域生效前提 | 仅夜间：`night_time` 为真 |
 | onEnter / onStay / onExit | 进入时、停留在区内每帧、离开时执行的动作列表 | 进雾区：`playSfx`，或 `setFlag` |
-| 区内规矩 | 不在 Zone 上挂槽位；在 `onEnter` 用 `enableRuleOffers`（`params.slots` 与旧 `ruleSlots` 条目形状相同）、`onExit` 用 `disableRuleOffers` | |
+| 区内规矩 | 不在 Zone 上挂槽位；在 `onEnter` 用 `enableRuleOffers`（`params.slots`：每槽 `ruleId`、可选 `requiredLayers`（象/理/术多选，不填则须**完整掌握**该规矩）、`resultText`、`resultActions`）、`onExit` 用 `disableRuleOffers` | |
 
 ### 3.5 出生点（Spawn Point）
 
@@ -209,7 +211,8 @@
 |------|------|------|
 | text | 按钮上的字 | 「交钱消灾」 |
 | type | general=普通；rule=与「规矩」相关；special=特殊 | `general` |
-| requiredRuleId | 需要已学会某条规矩才出现 | `rule_trade_custom` |
+| requiredRuleId | 与「规矩」相关的选项：绑定某条规矩；是否须**完整掌握**或仅须**若干层**由 `requiredRuleLayers` 决定 | `rule_trade_custom` |
+| requiredRuleLayers | **可选**。勾选象/理/术中若干层时：只要求这些层在运行时均已解锁（标记形如 `rule_<id>_xiang_done`、`rule_<id>_li_done`、`rule_<id>_shu_done`）；**不勾任何层**时等价于要求 `rule_<id>_acquired`（整条规矩完整掌握） | 仅需「象」「理」时勾选两层 |
 | Conditions | 该选项亮不亮 | `money_500` 为真 |
 | consumeItems | **若界面未显示**：需要扣物品时问程序或沿用旧数据格式 | `[{id:'coin',count:50}]` 一类 |
 | resultText | 选完后追加说明 | 「他们让开了一条路。」 |
@@ -267,33 +270,59 @@
 
 ---
 
-## 八、Rule（规矩与碎片）
+## 八、Rule（规矩与碎片，象 / 理 / 术）
 
-**Rules 表**：一条完整规矩。
+一条规矩在数据里拆成最多三层：**象（xiang）**、**理（li）**、**术（shu）**。每层有一段正文 `text`，可选 `lockedHint`（未解锁时在 UI 上提示用，按项目实现为准）。**至少有一层**带非空 `text`，校验才会通过。
+
+**玩家侧进度（与标记对应，便于条件与遭遇里写）：**
+
+- 某层解锁：标记 `rule_<规矩id>_xiang_done` / `_li_done` / `_shu_done` 中对应层为真。  
+- 碎片收集进度：`rule_<id>_fragments_collected` / `rule_<id>_fragments_total`。  
+- 已发现但未完整掌握：`rule_<id>_discovered`。  
+- 整条规矩完整掌握（数据里**已定义**的层全部解锁）：`rule_<id>_acquired`。
+
+**解锁一层的规则（运行时）：**
+
+- 该层在 `fragments` 里**挂有碎片**时：须**集齐该层全部碎片**才解锁该层。  
+- 该层**没有碎片**时：只能靠 **`giveRule`**（整条）或 **`grantRuleLayer`**（单层）或剧情上等价逻辑解锁，**不能**单靠「碎片表为空」自动解锁。
+
+### 8.1 Rules 表（主编辑器 Rules 页 / 图编辑器规矩节点）
 
 | 字段 | 含义 | 选项说明 |
 |------|------|----------|
 | id | 唯一 | |
-| name | 玩家看到的规矩名 | |
-| incompleteName | 未集齐碎片时的名称 | 可空 |
-| category | ward / taboo / jargon / streetwise | 忌讳、禁忌、黑话、世故（文案包装用） |
-| description | 正文 | |
-| source | 来历说明 | 「听码头老李说的」 |
-| sourceType | npc / fragment / experience | |
-| verified | unverified / effective / questionable | 未验证、有效、可疑 |
-| fragmentCount | 与碎片收集相关总数提示 | 数字 |
+| name | 玩家已掌握或展示完整名时看到的规矩名 | |
+| incompleteName | 未完整掌握时的名称 | 可空 |
+| category | ward / taboo / jargon / streetwise | 忌讳、禁忌、黑话、世故（分类展示用） |
+| layers | 对象，键为 `xiang` / `li` / `shu`（可只填其中一部分） | 每层子对象含 **`text`**（正文，可含 `[tag:…]`）、可选 **`lockedHint`**、以及该层的 **`verified`** |
 
-**Fragments 表**：粘在规矩上的小段落。
+**层内 `verified`**：`unverified`（未验证）/ `effective`（有效）/ `questionable`（存疑）；**不同层可以有不同验证状态**（如「象」只是听说未验证，「理」已亲历验证有效）。验证标签展示在规矩本各层标题旁，而非规矩名旁。
+
+已废弃、勿再填写的旧字段：`description`、`source`、`sourceType`、`fragmentCount`、规矩级 `verified`（若从旧档打开，编辑器会尽量把旧 `description` 迁到 `layers.xiang.text`、把旧 `verified` 下推到各层，再保存）。
+
+### 8.2 Fragments 表
 
 | 字段 | 含义 |
 |------|------|
 | id | 唯一 |
 | text | 碎片文案 |
 | ruleId | 属于哪条规矩 |
-| index | 排序序号 |
-| source | 可选出处 |
+| layer | `xiang` / `li` / `shu`，表示该碎片计入哪一层的收集 |
+| source | **必填**：碎片出处（对话、谁说的、哪本书等） |
 
-*示例*：规矩 `rule_night_trade`，碎片 3 条，`index` 0、1、2。
+已废弃：`index`（排序以列表顺序或 id 为准即可）。
+
+**主编辑器**：**Fragments** 子页须在上方筛选中**选定具体规矩**后，**+ Fragment** 才可点；选「全部规矩」时禁止新增（避免无 `ruleId` 的碎片）。仍可从 **Rules** 页「+ 新增关联碎片」在已选规矩下直接新增。
+
+*示例*：规矩 `rule_night_trade` 仅在「象」层挂了 3 条碎片，则三条 `layer` 均填 `xiang`；若日后增加「理」层正文与碎片，再在 `layers.li` 与碎片表里补。
+
+### 8.3 与拷贝管理器（copy_manager）
+
+抽取可翻译文案时，`rules.json` 的规则层路径为 **`rules[<id>].layers.xiang.text`**（以及 `li`、`shu` 同结构的 `text` / `lockedHint`），碎片仍为 **`fragments[<id>].text`** / **`source`**。若本地 **registry** 里仍有旧路径 `rules[*].description`，请对工程**重新扫描**生成 registry，避免 UID 与字段不一致。
+
+### 8.4 界面文案（strings.json）
+
+规矩本等处使用 **`rulesPanel.layerXiang` / `layerLi` / `layerShu`**（象/理/术显示名）；遭遇里分层不足时的提示使用 **`encounter.layerInsufficient`**（可含占位 `{layers}`）。
 
 ---
 

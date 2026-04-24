@@ -50,6 +50,11 @@ def _extract_flags_from_actions(graph: GameGraph, owner_id: str, actions: list[d
             if rule_id:
                 graph.add_edge(owner_id, f"rule:{rule_id}", EdgeType.GIVES)
 
+        elif atype == "grantRuleLayer":
+            rule_id = params.get("ruleId", "")
+            if rule_id:
+                graph.add_edge(owner_id, f"rule:{rule_id}", EdgeType.GIVES)
+
         elif atype == "giveFragment":
             frag_id = params.get("id", "")
             if frag_id:

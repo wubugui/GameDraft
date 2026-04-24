@@ -2,7 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
-import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, ActionDef } from '../data/types';
+import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
 
 interface ResolvedRuleSlot {
@@ -70,16 +70,26 @@ export class RuleUseUI {
       const ruleDef = this.rulesData.getRuleDef(slot.ruleId);
       if (!ruleDef) continue;
 
-      if (this.rulesData.hasRule(slot.ruleId)) {
+      const req = slot.requiredLayers;
+      const layersOk =
+        !req?.length
+          ? this.rulesData.hasRule(slot.ruleId)
+          : req.every((L: RuleLayerKey) => this.rulesData.hasLayer(slot.ruleId, L));
+
+      if (layersOk) {
         result.push({ slot, ruleName: this.r(ruleDef.name), enabled: true });
       } else if (this.rulesData.isDiscovered(slot.ruleId)) {
         const progress = this.rulesData.getFragmentProgress(slot.ruleId);
         const displayName = this.r(ruleDef.incompleteName ?? this.strings.get('ruleUse', 'unknown'));
+        const depth = this.rulesData.getRuleDepth(slot.ruleId);
+        const progressText = req?.length
+          ? `${depth.unlocked}/${depth.total}`
+          : `${progress.collected}/${progress.total}`;
         result.push({
           slot,
           ruleName: displayName,
           enabled: false,
-          progressText: `${progress.collected}/${progress.total}`,
+          progressText,
         });
       }
     }

@@ -22,7 +22,7 @@ JSON_EXTRACTION_RULES: dict[str, FieldRule] = {
         tags_from_id="quest_id",
     ),
     "public/assets/data/rules.json": FieldRule(
-        fields=["name", "description", "source", "incompleteName"],
+        fields=["name", "incompleteName"],
         category="rule",
         tags_from_id="rule_id",
     ),

@@ -15,43 +15,47 @@
       "id": "rule_no_go_night",
       "name": "城隍庙后山三更勿去",
       "category": "taboo",
-      "description": "王大爷说的，城隍庙后山半夜三更有白影子飘来飘去的，还会唱戏。老辈人都说那地方不干净，三更天别往那儿跑。",
-      "source": "王大爷闲聊所述",
-      "sourceType": "npc",
-      "verified": "unverified",
-      "fragmentCount": 0
+      "layers": {
+        "xiang": {
+          "text": "王大爷说的，城隍庙后山半夜三更有白影子飘来飘去的，还会唱戏。老辈人都说那地方不干净，三更天别往那儿跑。",
+          "verified": "unverified"
+        }
+      }
     },
     {
       "id": "rule_zombie_fire",
       "name": "白毛僵尸怕火",
       "incompleteName": "某种关于僵尸的传闻",
       "category": "ward",
-      "description": "据说白毛僵尸最怕火，见了明火就不敢靠近。桃木点燃效果更佳，寻常松脂火把也管用。",
-      "source": "碎片拼凑",
-      "sourceType": "fragment",
-      "verified": "unverified",
-      "fragmentCount": 2
+      "layers": {
+        "xiang": {
+          "text": "据说白毛僵尸最怕火，见了明火就不敢靠近。桃木点燃效果更佳，寻常松脂火把也管用。",
+          "verified": "unverified"
+        }
+      }
     },
     {
       "id": "rule_ghost_verified",
       "name": "后山确有古怪",
       "category": "taboo",
-      "description": "亲身经历过了，城隍庙后山确实不太平。那唱戏的白影子……不像是活人。",
-      "source": "亲身经历",
-      "sourceType": "experience",
-      "verified": "effective",
-      "fragmentCount": 0
+      "layers": {
+        "xiang": {
+          "text": "亲身经历过了，城隍庙后山确实不太平。那唱戏的白影子……不像是活人。",
+          "verified": "effective"
+        }
+      }
     },
     {
       "id": "rule_ghost_origin",
       "name": "唱戏白影的来历",
       "incompleteName": "某个关于白影子的传闻",
       "category": "streetwise",
-      "description": "据各方传闻拼凑，城隍庙后山的唱戏白影子，很可能是早年间[tag:string:place:wujin]柳家戏班子的人。她不是在害人，而是在找人。",
-      "source": "多方传闻汇集",
-      "sourceType": "fragment",
-      "verified": "unverified",
-      "fragmentCount": 3
+      "layers": {
+        "xiang": {
+          "text": "据各方传闻拼凑，城隍庙后山的唱戏白影子，很可能是早年间[tag:string:place:wujin]柳家戏班子的人。她不是在害人，而是在找人。",
+          "verified": "unverified"
+        }
+      }
     }
   ],
   "fragments": [
@@ -59,35 +63,35 @@
       "id": "frag_zombie_fire_01",
       "text": "听一个老道说过，僵尸这东西，年份越久越厉害，白毛的最怕火……",
       "ruleId": "rule_zombie_fire",
-      "index": 0,
+      "layer": "xiang",
       "source": "老道士"
     },
     {
       "id": "frag_zombie_fire_02",
       "text": "赶尸匠的手札上写着：遇白毛，速点桃木，火光所及，其不敢进。",
       "ruleId": "rule_zombie_fire",
-      "index": 1,
+      "layer": "xiang",
       "source": "赶尸匠手札"
     },
     {
       "id": "frag_ghost_origin_01",
       "text": "说书人说：有人在后山看到白影子唱戏，回来就疯了，嘟囔着'好一似食尽鸟投林'。那是《红楼》里的曲词。",
       "ruleId": "rule_ghost_origin",
-      "index": 0,
+      "layer": "xiang",
       "source": "说书人张叨叨"
     },
     {
       "id": "frag_ghost_origin_02",
       "text": "据说早年间[tag:string:place:wujin]有个柳家戏班子，后来不知怎么就散了。有人说唱戏的白影子就是戏班里的人。",
       "ruleId": "rule_ghost_origin",
-      "index": 1,
+      "layer": "xiang",
       "source": "说书人张叨叨"
     },
     {
       "id": "frag_ghost_origin_03",
       "text": "茶馆小二说，有个书生见了白影后说了句话：她不是在害人，她是在找人。",
       "ruleId": "rule_ghost_origin",
-      "index": 2,
+      "layer": "xiang",
       "source": "茶馆小二"
     }
   ]

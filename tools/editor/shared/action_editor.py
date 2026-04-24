@@ -102,7 +102,7 @@ from .scripted_lines_editor import ScriptedLinesEditor
 
 ACTION_TYPES = [
     "setFlag", "setScenarioPhase", "startScenario", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
-    "giveRule", "giveFragment", "updateQuest", "startEncounter",
+    "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "showEmote", "playNpcAnimation", "setEntityEnabled", "openShop",
     "pickup", "switchScene", "changeScene", "showNotification", "stopNpcPatrol",
@@ -129,6 +129,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "giveCurrency": [("amount", "int")],
     "removeCurrency": [("amount", "int")],
     "giveRule": [("id", "str")],
+    "grantRuleLayer": [("ruleId", "str"), ("layer", "str")],
     "giveFragment": [("id", "str")],
     "updateQuest": [("id", "str")],
     "startEncounter": [("id", "str")],
@@ -608,6 +609,28 @@ class RuleSlotsParamEditor(QWidget):
         hdr.addWidget(dn)
         hdr.addWidget(rm)
         bl.insertLayout(0, hdr)
+        layer_row = QWidget()
+        ll = QHBoxLayout(layer_row)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.addWidget(QLabel("requiredLayers"), stretch=0)
+        cb_xiang = QCheckBox("象")
+        cb_li = QCheckBox("理")
+        cb_shu = QCheckBox("术")
+        rl_raw = data.get("requiredLayers") or []
+        rl_set = set(rl_raw) if isinstance(rl_raw, list) else set()
+        cb_xiang.setChecked("xiang" in rl_set)
+        cb_li.setChecked("li" in rl_set)
+        cb_shu.setChecked("shu" in rl_set)
+        for cb in (cb_xiang, cb_li, cb_shu):
+            cb.toggled.connect(lambda _v: self.changed.emit())
+        ll.addWidget(cb_xiang)
+        ll.addWidget(cb_li)
+        ll.addWidget(cb_shu)
+        ll.addStretch(1)
+        bl.addWidget(layer_row)
+        rec["cb_xiang"] = cb_xiang
+        rec["cb_li"] = cb_li
+        rec["cb_shu"] = cb_shu
         self._rows.append(rec)
         self._list_layout.addWidget(box)
         self._refresh_reorder_buttons()
@@ -615,11 +638,21 @@ class RuleSlotsParamEditor(QWidget):
     def to_list(self) -> list[dict]:
         out: list[dict] = []
         for r in self._rows:
-            out.append({
+            req: list[str] = []
+            if r.get("cb_xiang") is not None and r["cb_xiang"].isChecked():
+                req.append("xiang")
+            if r.get("cb_li") is not None and r["cb_li"].isChecked():
+                req.append("li")
+            if r.get("cb_shu") is not None and r["cb_shu"].isChecked():
+                req.append("shu")
+            slot: dict = {
                 "ruleId": r["rid"].current_id(),
                 "resultText": r["text"].toPlainText(),
                 "resultActions": r["ae"].to_list(),
-            })
+            }
+            if req:
+                slot["requiredLayers"] = req
+            out.append(slot)
         return out
 
 
@@ -1540,6 +1573,15 @@ class ActionRow(QWidget):
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "giveRule" and pname == "id":
                 w = self._make_selector("rule", str(val) if val is not None else "")
+            elif act_type == "grantRuleLayer" and pname == "ruleId":
+                w = self._make_selector("rule", str(val) if val is not None else "")
+            elif act_type == "grantRuleLayer" and pname == "layer":
+                w = QComboBox(self)
+                w.addItems(["xiang", "li", "shu"])
+                tv = str(val) if val else "xiang"
+                i = w.findText(tv)
+                w.setCurrentIndex(i if i >= 0 else 0)
+                w.currentTextChanged.connect(self.changed)
             elif act_type == "giveFragment" and pname == "id":
                 w = self._make_selector("fragment", str(val) if val is not None else "")
             elif act_type == "updateQuest" and pname == "id":

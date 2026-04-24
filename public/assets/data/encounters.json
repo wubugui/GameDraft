@@ -37,7 +37,7 @@
             }
           }
         ],
-        "resultText": "你合上了箱盖。那些发霉的味道让你不想继续翻了。"
+        "resultText": "你合上了箱盖。那些发霉的味道让你不想继续翻了。[tag:rule:rule_ghost_origin]"
       }
     ]
   },

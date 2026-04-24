@@ -151,6 +151,32 @@ class JsonScanner(BaseScanner):
                     field_label=field_name,
                     tags=tags,
                 ))
+
+            if file_rel.replace("\\", "/").endswith("public/assets/data/rules.json") and prefix == "rules":
+                layers = item.get("layers")
+                if isinstance(layers, dict):
+                    for layer_key in ("xiang", "li", "shu"):
+                        lob = layers.get(layer_key)
+                        if not isinstance(lob, dict):
+                            continue
+                        for lf in ("text", "lockedHint"):
+                            value = lob.get(lf)
+                            if not is_translatable_text(value):
+                                continue
+                            field_path = f"{group_id}.layers.{layer_key}.{lf}"
+                            uid = make_uid(f"json_{rule.category}", file_rel, field_path)
+                            entries.append(TextEntry(
+                                uid=uid,
+                                source_text=str(value),
+                                file_path=file_rel,
+                                field_path=field_path,
+                                file_type=f"json_{rule.category}",
+                                category=rule.category,
+                                group_id=group_id,
+                                group_label=group_label,
+                                field_label=f"layers.{layer_key}.{lf}",
+                                tags=tags,
+                            ))
         return entries
 
     def _scan_nested_array(

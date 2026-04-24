@@ -10,6 +10,7 @@ export class RuleOfferRegistry {
     const copy = slots.map((s) => ({
       ruleId: s.ruleId,
       resultActions: s.resultActions,
+      ...(s.requiredLayers?.length ? { requiredLayers: s.requiredLayers } : {}),
       ...(s.resultText !== undefined ? { resultText: s.resultText } : {}),
     }));
     this.byZone.set(zoneId, copy);

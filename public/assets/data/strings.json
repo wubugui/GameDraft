@@ -34,6 +34,7 @@
   "encounter": {
     "unknownRule": "未知规矩",
     "fragmentInsufficient": "碎片不足 {collected}/{total}",
+    "layerInsufficient": "规矩要义不足（需要：{layers}）",
     "itemInsufficient": "道具不足",
     "ruleTag": "[规矩]",
     "specialTag": "[特殊]"
@@ -115,6 +116,9 @@
     "title": "规矩本",
     "mastered": "== 已掌握 ==",
     "collecting": "== 搜集中 ==",
+    "layerXiang": "象",
+    "layerLi": "理",
+    "layerShu": "术",
     "source": "来源:",
     "fragments": "碎片:",
     "empty": "(尚未习得任何规矩)",
