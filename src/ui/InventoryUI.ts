@@ -18,12 +18,21 @@ export class InventoryUI {
   private container: Container | null = null;
   private detailContainer: Container | null = null;
   private _isOpen: boolean = false;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.inventoryData = inventoryData;
     this.strings = strings;
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
   get isOpen(): boolean {
@@ -109,7 +118,7 @@ export class InventoryUI {
 
       if (i < items.length) {
         const item = items[i];
-        const nameStr = item.def?.name ?? item.id;
+        const nameStr = this.r(item.def?.name ?? item.id);
 
         const nameText = new Text({
           text: nameStr,
@@ -171,7 +180,7 @@ export class InventoryUI {
 
     const def = this.inventoryData.getItemDef(itemId);
     const desc = this.inventoryData.getItemDescription(itemId);
-    const name = def?.name ?? itemId;
+    const name = this.r(def?.name ?? itemId);
     const count = this.inventoryData.getItemCount(itemId);
 
     const nameText = new Text({
@@ -182,7 +191,7 @@ export class InventoryUI {
     nameText.y = y + 12;
 
     const descText = new Text({
-      text: desc || this.strings.get('inventory', 'noDesc'),
+      text: this.r(desc || this.strings.get('inventory', 'noDesc')),
       style: { fontSize: 12, fill: UITheme.colors.descTextDim, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 176, lineHeight: 18 },
     });
     descText.x = x + 12;

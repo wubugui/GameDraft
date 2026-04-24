@@ -9,7 +9,7 @@
         "conditions": []
       },
       {
-        "text": "看起来对雾津的老事知道不少。",
+        "text": "看起来对[tag:string:place:wujin]的老事知道不少。",
         "conditions": [
           {
             "flag": "talked_wang_about_ghost"
@@ -43,7 +43,7 @@
         "conditions": []
       },
       {
-        "text": "对雾津的各种传说如数家珍，也不知道哪些是真的哪些是编的。",
+        "text": "对[tag:string:place:wujin]的各种传说如数家珍，也不知道哪些是真的哪些是编的。",
         "conditions": [
           {
             "flag": "heard_ghost_story"

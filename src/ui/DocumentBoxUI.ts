@@ -122,7 +122,7 @@ export class DocumentBoxUI {
       for (const doc of docs) {
         const isNew = !this.archiveData.isRead(`doc_${doc.id}`);
         const label = new Text({
-          text: (isNew ? '* ' : '') + doc.name,
+          text: (isNew ? '* ' : '') + this.archiveData.resolveLine(doc.name),
           style: { fontSize: 13, fill: isNew ? UITheme.colors.title : UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 160 },
         });
         label.x = px + PADDING;
@@ -132,7 +132,12 @@ export class DocumentBoxUI {
         label.on('pointerdown', () => {
           this.archiveData.triggerFirstViewIfNeeded(`doc_${doc.id}`, doc.firstViewActions);
           this.archiveData.markRead(`doc_${doc.id}`);
-          this.showContent(doc.content, doc.annotation, px + CONTENT_X_OFFSET, py + 50);
+          this.showContent(
+            this.archiveData.resolveLine(doc.content),
+            doc.annotation !== undefined ? this.archiveData.resolveLine(doc.annotation) : undefined,
+            px + CONTENT_X_OFFSET,
+            py + 50,
+          );
         });
         this.listContainer.addChild(label);
         cy += ENTRY_H;

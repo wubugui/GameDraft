@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
-    QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton,
+    QFormLayout, QLineEdit, QComboBox, QPushButton,
     QScrollArea, QGroupBox, QSpinBox, QMessageBox, QToolButton,
     QMenu, QSizePolicy, QFrame, QStyle,
 )
@@ -14,6 +14,7 @@ from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 
 def _tool_std_icon_btn(
@@ -220,7 +221,8 @@ class OptionWidget(QFrame):
         body_lay.setContentsMargins(0, 4, 0, 0)
 
         f = QFormLayout()
-        self._text = QLineEdit(data.get("text", ""))
+        self._text = RichTextLineEdit(model)
+        self._text.setText(data.get("text", ""))
         self._text.setPlaceholderText("选项显示文案")
         self._text.textChanged.connect(self._refresh_header_label)
         f.addRow("text", self._text)
@@ -238,8 +240,9 @@ class OptionWidget(QFrame):
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._rule.setMaximumWidth(360)
         f.addRow("requiredRuleId", self._rule)
-        self._result_text = QTextEdit(data.get("resultText", ""))
-        self._result_text.setMaximumHeight(60)
+        self._result_text = RichTextTextEdit(model)
+        self._result_text.setPlainText(data.get("resultText", ""))
+        self._result_text.setMaximumHeight(80)
         self._result_text.setPlaceholderText("选择该选项后的叙事（可选）")
         f.addRow("resultText", self._result_text)
         body_lay.addLayout(f)
@@ -383,8 +386,8 @@ class EncounterEditor(QWidget):
         _idl.addWidget(self._e_id_sel, stretch=1)
         _idl.addWidget(self._e_id_new)
         f.addRow("id", self._e_id_row)
-        self._e_narr = QTextEdit()
-        self._e_narr.setMaximumHeight(80)
+        self._e_narr = RichTextTextEdit(self._model)
+        self._e_narr.setMaximumHeight(100)
         self._e_narr.setPlaceholderText("遭遇叙事正文")
         f.addRow("narrative", self._e_narr)
         self._detail_layout.addLayout(f)

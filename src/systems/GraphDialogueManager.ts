@@ -67,6 +67,7 @@ export class GraphDialogueManager implements IGameSystem {
   private inventoryManager: InventoryManager;
   private scenarioState: ScenarioStateManager;
   private strings: StringsProvider | null = null;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   private graph: DialogueGraphFile | null = null;
   /** 加载时使用的 graphId（文件名），与 JSON 内 `id` 可能不一致时仍以路径为准 */
@@ -215,6 +216,14 @@ export class GraphDialogueManager implements IGameSystem {
 
   init(ctx: GameContext): void {
     this.strings = ctx.strings;
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
   update(_dt: number): void {}
@@ -587,11 +596,11 @@ export class GraphDialogueManager implements IGameSystem {
 
       return {
         index: i,
-        text: opt.text,
+        text: this.r(opt.text),
         tags: [],
         enabled,
         ruleHintId: opt.ruleHintId,
-        disableHint,
+        disableHint: disableHint ? this.r(disableHint) : undefined,
       };
     });
   }
@@ -679,7 +688,7 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   private linePayloadToDialogueLine(p: DialogueLinePayload): DialogueLine {
-    const speaker = this.resolveSpeaker(p.speaker);
+    const speaker = this.r(this.resolveSpeaker(p.speaker));
     let text = '';
     if (p.textKey?.trim()) {
       const k = p.textKey.trim();
@@ -688,7 +697,7 @@ export class GraphDialogueManager implements IGameSystem {
     } else {
       text = p.text ?? '';
     }
-    return { speaker, text, tags: [] };
+    return { speaker, text: this.r(text), tags: [] };
   }
 
   private resolveSpeaker(s: DialogueGraphSpeaker): string {

@@ -1,12 +1,12 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit, QLabel,
-    QScrollArea, QGroupBox, QComboBox, QPushButton,
+    QWidget, QVBoxLayout, QFormLayout, QLineEdit, QLabel,
+    QGroupBox, QComboBox,
 )
 from PySide6.QtCore import Signal
-import json
+from tools.editor.project_model import ProjectModel
+from tools.editor.shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+
 from ..model.node_types import NodeData
-from .condition_editor import ConditionEditor
-from .action_editor import ActionEditor
 
 
 class EncounterPanel(QWidget):
@@ -15,12 +15,13 @@ class EncounterPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nd: NodeData | None = None
+        self._pm = ProjectModel()
         layout = QVBoxLayout(self)
 
         form = QFormLayout()
         self.id_edit = QLineEdit()
         self.id_edit.setReadOnly(True)
-        self.narrative_edit = QTextEdit()
+        self.narrative_edit = RichTextTextEdit(self._pm)
         self.narrative_edit.setMaximumHeight(100)
         form.addRow("ID:", self.id_edit)
         form.addRow("Narrative:", self.narrative_edit)
@@ -32,6 +33,12 @@ class EncounterPanel(QWidget):
 
         layout.addStretch()
         self.narrative_edit.textChanged.connect(self._mark_dirty)
+
+    def set_editor_model(self, pm: ProjectModel | None) -> None:
+        if pm is None:
+            return
+        self._pm = pm
+        self.narrative_edit.set_model(pm)
 
     def load_node(self, nd: NodeData):
         self._nd = nd
@@ -47,14 +54,16 @@ class EncounterPanel(QWidget):
         for i, opt in enumerate(d.get("options", [])):
             group = QGroupBox(f"Option {i + 1}")
             gl = QFormLayout(group)
-            text_edit = QLineEdit(opt.get("text", ""))
+            text_edit = RichTextLineEdit(self._pm)
+            text_edit.setText(opt.get("text", ""))
             type_combo = QComboBox()
             type_combo.addItems(["general", "rule", "special"])
             type_combo.setCurrentText(opt.get("type", "general"))
             required_rule_edit = QLineEdit(opt.get("requiredRuleId", ""))
             required_rule_edit.setPlaceholderText("关联规矩ID (可选)")
-            result_edit = QTextEdit(opt.get("resultText", ""))
-            result_edit.setMaximumHeight(60)
+            result_edit = RichTextTextEdit(self._pm)
+            result_edit.setPlainText(opt.get("resultText", ""))
+            result_edit.setMaximumHeight(72)
 
             gl.addRow("Text:", text_edit)
             gl.addRow("Type:", type_combo)

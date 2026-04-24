@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -9,7 +7,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QSpinBox,
     QComboBox,
-    QTextEdit,
     QRadioButton,
     QButtonGroup,
     QHBoxLayout,
@@ -17,7 +14,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
+from tools.editor.project_model import ProjectModel
 from tools.editor.shared.action_editor import ActionEditor, FilterableTypeCombo
+from tools.editor.shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 from ..model.node_types import NodeData
 from .condition_editor import ConditionEditor
@@ -29,12 +28,13 @@ class ScenePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nd: NodeData | None = None
+        self._pm = ProjectModel()
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self.id_edit = QLineEdit()
         self.id_edit.setReadOnly(True)
-        self.name_edit = QLineEdit()
+        self.name_edit = RichTextLineEdit(self._pm)
         self.w_spin = QSpinBox()
         self.w_spin.setRange(100, 10000)
         self.h_spin = QSpinBox()
@@ -50,6 +50,12 @@ class ScenePanel(QWidget):
         self.name_edit.textChanged.connect(self._mark_dirty)
         self.w_spin.valueChanged.connect(self._mark_dirty)
         self.h_spin.valueChanged.connect(self._mark_dirty)
+
+    def set_editor_model(self, pm: ProjectModel | None) -> None:
+        if pm is None:
+            return
+        self._pm = pm
+        self.name_edit.set_model(pm)
 
     def load_node(self, nd: NodeData):
         self._nd = nd
@@ -77,7 +83,7 @@ class HotspotPanel(QWidget):
         super().__init__(parent)
         self._nd: NodeData | None = None
         self._project_path = ""
-        self._pm = None
+        self._pm = ProjectModel()
         self._loading = False
 
         layout = QVBoxLayout(self)
@@ -87,7 +93,7 @@ class HotspotPanel(QWidget):
         self.id_edit.setReadOnly(True)
         self.type_combo = QComboBox()
         self.type_combo.addItems(["inspect", "pickup", "transition", "encounter", "npc"])
-        self.label_edit = QLineEdit()
+        self.label_edit = RichTextLineEdit(self._pm)
         self.x_spin = QSpinBox()
         self.x_spin.setRange(0, 10000)
         self.y_spin = QSpinBox()
@@ -124,9 +130,9 @@ class HotspotPanel(QWidget):
         mode_row.addWidget(self._mode_graph)
         mode_row.addStretch()
         iw.addLayout(mode_row)
-        self._inspect_text = QTextEdit()
+        self._inspect_text = RichTextTextEdit(self._pm)
         self._inspect_text.setPlaceholderText("inspect 纯文本模式…")
-        self._inspect_text.setMaximumHeight(72)
+        self._inspect_text.setMaximumHeight(120)
         iw.addWidget(self._inspect_text)
         gf = QFormLayout()
         self._graph_combo = FilterableTypeCombo([], self)
@@ -161,21 +167,15 @@ class HotspotPanel(QWidget):
 
     def set_project_path(self, project_path: str) -> None:
         self._project_path = (project_path or "").strip()
-        self._reload_pm()
 
-    def _reload_pm(self) -> None:
-        self._pm = None
-        if self._project_path:
-            try:
-                from tools.editor.project_model import ProjectModel
-
-                pm = ProjectModel()
-                pm.load_project(Path(self._project_path))
-                self._pm = pm
-            except OSError:
-                self._pm = None
-        self.cond_editor.set_flag_pattern_context(self._pm, None)
-        self._inspect_actions.set_project_context(self._pm, None)
+    def set_editor_model(self, pm: ProjectModel | None) -> None:
+        if pm is None:
+            return
+        self._pm = pm
+        self.label_edit.set_model(pm)
+        self._inspect_text.set_model(pm)
+        self.cond_editor.set_flag_pattern_context(pm, None)
+        self._inspect_actions.set_project_context(pm, None)
         self._refresh_graph_ids()
         if self._nd is not None:
             self.load_node(self._nd)
@@ -288,12 +288,13 @@ class NpcPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nd: NodeData | None = None
+        self._pm = ProjectModel()
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self.id_edit = QLineEdit()
         self.id_edit.setReadOnly(True)
-        self.name_edit = QLineEdit()
+        self.name_edit = RichTextLineEdit(self._pm)
         self.x_spin = QSpinBox()
         self.x_spin.setRange(0, 10000)
         self.y_spin = QSpinBox()
@@ -319,6 +320,12 @@ class NpcPanel(QWidget):
         self.dlg_graph_edit.textChanged.connect(self._mark_dirty)
         self.dlg_entry_edit.textChanged.connect(self._mark_dirty)
         self.range_spin.valueChanged.connect(self._mark_dirty)
+
+    def set_editor_model(self, pm: ProjectModel | None) -> None:
+        if pm is None:
+            return
+        self._pm = pm
+        self.name_edit.set_model(pm)
 
     def load_node(self, nd: NodeData):
         self._nd = nd

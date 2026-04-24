@@ -100,6 +100,8 @@ export interface ActionRegistryDeps {
   playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
   /** 显示「点击继续」类提示并阻塞直至任意键或鼠标 */
   waitClickContinue: (hintOverride?: string) => Promise<void>;
+  /** 统一解析 JSON 字符串中的 [tag:…] */
+  resolveDisplayText: (raw: string) => string;
   scenarioStateManager: ScenarioStateManager;
   documentRevealManager: DocumentRevealManager;
   /** 在 CutsceneManager 临时表中 spawn 一个临时实体并挂载到显示层 */
@@ -586,7 +588,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('waitClickContinue', (p) => {
     const raw = p.text;
     const hint = raw !== undefined && raw !== null ? String(raw).trim() : '';
-    return d.waitClickContinue(hint || undefined);
+    return d.waitClickContinue(hint ? d.resolveDisplayText(hint) : undefined);
   }, ['text']);
 
   executor.register('playScriptedDialogue', (p) => {
@@ -607,8 +609,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       const text = String(o.text ?? '').trim();
       if (!text) continue;
       lines.push({
-        speaker: speakerResolved || narratorFallback,
-        text,
+        speaker: d.resolveDisplayText(speakerResolved || narratorFallback),
+        text: d.resolveDisplayText(text),
         tags: [],
       });
     }

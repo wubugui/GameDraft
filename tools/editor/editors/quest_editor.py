@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
-    QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QLabel,
+    QFormLayout, QLineEdit, QComboBox, QPushButton, QLabel,
     QGraphicsView, QScrollArea, QCheckBox, QFrame, QMessageBox,
     QAbstractItemView,
 )
@@ -14,6 +14,7 @@ from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from .quest_graph_scene import QuestGraphScene
 from .quest_graph_items import QuestGroupItem, QuestNodeItem
 
@@ -379,7 +380,7 @@ class QuestEditor(QWidget):
         f = QFormLayout()
         self._g_id = QLineEdit()
         f.addRow("id", self._g_id)
-        self._g_name = QLineEdit()
+        self._g_name = RichTextLineEdit(self._model)
         f.addRow("name", self._g_name)
         self._g_type = QComboBox()
         self._g_type.addItems(["main", "side"])
@@ -412,10 +413,10 @@ class QuestEditor(QWidget):
         self._q_side_type = QComboBox()
         self._q_side_type.addItems(["", "errand", "inquiry", "investigation", "commission"])
         f.addRow("sideType", self._q_side_type)
-        self._q_title = QLineEdit()
+        self._q_title = RichTextLineEdit(self._model)
         f.addRow("title", self._q_title)
-        self._q_desc = QTextEdit()
-        self._q_desc.setMaximumHeight(80)
+        self._q_desc = RichTextTextEdit(self._model)
+        self._q_desc.setMaximumHeight(100)
         f.addRow("description", self._q_desc)
         ql.addLayout(f)
 

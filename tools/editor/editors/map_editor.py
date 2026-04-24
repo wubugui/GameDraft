@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt, QPoint, QPointF
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.rich_text_field import RichTextLineEdit
 
 
 class _ZoomableView(QGraphicsView):
@@ -201,7 +202,7 @@ class MapEditor(QWidget):
         f = QFormLayout(detail)
         self._m_scene = IdRefSelector(allow_empty=False)
         f.addRow("sceneId", self._m_scene)
-        self._m_name = QLineEdit()
+        self._m_name = RichTextLineEdit(self._model)
         f.addRow("name", self._m_name)
         self._m_x = QDoubleSpinBox()
         self._m_x.setRange(-9999, 9999)

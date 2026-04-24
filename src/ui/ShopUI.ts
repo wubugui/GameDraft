@@ -20,12 +20,17 @@ export class ShopUI {
   private currentShop: ShopDef | null = null;
   private shopDefs: Map<string, ShopDef> = new Map();
   private rebuildTimerId: ReturnType<typeof setTimeout> | null = null;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.inventoryData = inventoryData;
     this.strings = strings;
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
   }
 
   async loadDefs(): Promise<void> {
@@ -84,8 +89,11 @@ export class ShopUI {
     bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
     this.container.addChild(bg);
 
+    const shopTitle = this.resolveDisplay
+      ? this.resolveDisplay(this.currentShop.name)
+      : this.currentShop.name;
     const title = new Text({
-      text: this.currentShop.name,
+      text: shopTitle,
       style: { fontSize: 18, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: PANEL_W - PADDING * 2 - 120 },
     });
     title.x = px + PADDING;
@@ -104,7 +112,8 @@ export class ShopUI {
     let cy = 50;
     for (const item of items) {
       const itemDef = this.inventoryData.getItemDef(item.itemId);
-      const name = itemDef?.name ?? item.itemId;
+      const rawName = itemDef?.name ?? item.itemId;
+      const name = this.resolveDisplay ? this.resolveDisplay(rawName) : rawName;
       const price = item.price ?? itemDef?.buyPrice ?? 0;
       const canBuy = coins >= price;
 

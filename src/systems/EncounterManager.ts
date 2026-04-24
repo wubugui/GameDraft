@@ -20,6 +20,7 @@ export class EncounterManager implements IGameSystem {
   private active: boolean = false;
 
   private ruleNameResolver: RuleNameResolveFn | null = null;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -51,6 +52,14 @@ export class EncounterManager implements IGameSystem {
     this.ruleNameResolver = fn;
   }
 
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
+  }
+
   async loadDefs(): Promise<void> {
     try {
       const defs = await this.assetManager.loadJson<EncounterDef[]>('/assets/data/encounters.json');
@@ -74,7 +83,7 @@ export class EncounterManager implements IGameSystem {
 
     this.eventBus.emit('encounter:start', { encounterId });
 
-    this.eventBus.emit('encounter:narrative', { text: def.narrative });
+    this.eventBus.emit('encounter:narrative', { text: this.r(def.narrative) });
   }
 
   generateOptions(): void {
@@ -95,7 +104,7 @@ export class EncounterManager implements IGameSystem {
           const ruleInfo = this.ruleNameResolver?.(ruleId);
           const collected = (this.flagStore.get(`rule_${ruleId}_fragments_collected`) as number) ?? 0;
           const total = (this.flagStore.get(`rule_${ruleId}_fragments_total`) as number) ?? 0;
-          const displayName = ruleInfo?.incompleteName ?? this.strings.get('encounter', 'unknownRule');
+          const displayName = this.r(ruleInfo?.incompleteName ?? this.strings.get('encounter', 'unknownRule'));
           this.currentOptions.push({
             index: idx++,
             text: `${displayName} (${collected}/${total})`,
@@ -104,7 +113,7 @@ export class EncounterManager implements IGameSystem {
             disableReason: this.strings.get('encounter', 'fragmentInsufficient', { collected, total }),
             consumeItems: opt.consumeItems,
             resultActions: opt.resultActions,
-            resultText: opt.resultText,
+            resultText: opt.resultText ? this.r(opt.resultText) : opt.resultText,
           });
           continue;
         } else {
@@ -132,13 +141,13 @@ export class EncounterManager implements IGameSystem {
 
       this.currentOptions.push({
         index: idx++,
-        text: opt.text,
+        text: this.r(opt.text),
         type: opt.type,
         enabled,
         disableReason,
         consumeItems: opt.consumeItems,
         resultActions: opt.resultActions,
-        resultText: opt.resultText,
+        resultText: opt.resultText ? this.r(opt.resultText) : opt.resultText,
       });
     }
 
@@ -167,7 +176,7 @@ export class EncounterManager implements IGameSystem {
     }
 
     if (opt.resultText) {
-      this.eventBus.emit('encounter:result', { text: opt.resultText });
+      this.eventBus.emit('encounter:result', { text: this.r(opt.resultText) });
     } else {
       this.endEncounter();
     }

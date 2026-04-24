@@ -1,7 +1,6 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { AssetManager } from '../core/AssetManager';
-import { expandGameTags } from '../core/expandGameTags';
 import type {
   ActionDef,
   CharacterEntry,
@@ -48,6 +47,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private onFlagChanged: () => void;
   private onDialogueStart: (payload: { npcName?: string }) => void;
+  private resolveForDisplay: ((raw: string | undefined) => string) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
@@ -68,6 +68,24 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
     this.conditionCtxFactory = factory;
+  }
+
+  /** 由 Game 注入：统一解析 [tag:…] */
+  setResolveForDisplay(fn: ((raw: string | undefined) => string) | null): void {
+    this.resolveForDisplay = fn;
+  }
+
+  /** UI 侧展示档案正文时调用（ Lore / Document / Character 等） */
+  resolveLine(raw: string | undefined): string {
+    return this.resolveForDisplay ? this.resolveForDisplay(raw) : (raw ?? '');
+  }
+
+  getItemDisplayNames(): ReadonlyMap<string, string> {
+    return this.itemDisplayNames;
+  }
+
+  private rd(raw: string | undefined): string {
+    return this.resolveLine(raw);
   }
 
   update(_dt: number): void {}
@@ -344,13 +362,13 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   getCharacterVisibleImpressions(entry: CharacterEntry): string[] {
     return entry.impressions
       .filter(i => this.checkConditions(i.conditions))
-      .map(i => i.text);
+      .map(i => this.rd(i.text));
   }
 
   getCharacterVisibleInfo(entry: CharacterEntry): string[] {
     return entry.knownInfo
       .filter(i => this.checkConditions(i.conditions))
-      .map(i => i.text);
+      .map(i => this.rd(i.text));
   }
 
   getUnlockedLore(): LoreEntry[] {
@@ -375,18 +393,6 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       .filter((e): e is BookDef => !!e);
   }
 
-  private bookExpandOpts(): {
-    strings: (c: string, k: string, v?: Record<string, string | number>) => string;
-    flagStore: FlagStore;
-    itemNames: Map<string, string>;
-  } {
-    return {
-      strings: (c, k, v) => this.strings.get(c, k, v),
-      flagStore: this.flagStore,
-      itemNames: this.itemDisplayNames,
-    };
-  }
-
   getBookTocChapters(book: BookDef): BookTocChapter[] {
     const pages = [...book.pages].sort((a, b) => a.pageNum - b.pageNum);
     return pages.map((p) => {
@@ -395,12 +401,12 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
         .filter((ent): ent is BookPageEntry => !!ent?.id)
         .map((ent) => ({
           id: ent.id,
-          title: ent.title?.trim() || this.strings.get('bookReader', 'untitledEntry'),
+          title: this.rd(ent.title?.trim() || this.strings.get('bookReader', 'untitledEntry')),
           unlocked: this.flagStore.get(`archive_book_entry_${ent.id}`) === true,
         }));
       return {
         pageNum: p.pageNum,
-        title: p.title,
+        title: p.title !== undefined ? this.rd(p.title) : undefined,
         unlocked,
         entries,
       };
@@ -414,8 +420,8 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     return {
       kind: 'page',
       pageNum: p.pageNum,
-      title: p.title,
-      content: p.content,
+      title: p.title !== undefined ? this.rd(p.title) : undefined,
+      content: this.rd(p.content),
       illustration: p.illustration,
       unlocked,
     };
@@ -433,14 +439,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     const annRaw = ent.annotation?.trim();
     const ill = ent.illustration?.trim();
     if (!titleTrim && !contentTrim && !annRaw && !ill) return null;
-    const annotation = annRaw ? expandGameTags(annRaw, this.bookExpandOpts()) : undefined;
+    const annotation = annRaw ? this.rd(annRaw) : undefined;
     return {
       kind: 'entry',
       pageNum: p.pageNum,
-      chapterTitle: p.title,
+      chapterTitle: p.title !== undefined ? this.rd(p.title) : undefined,
       entryId: ent.id,
-      title: titleTrim || this.strings.get('bookReader', 'untitledEntry'),
-      content: contentTrim,
+      title: this.rd(titleTrim || this.strings.get('bookReader', 'untitledEntry')),
+      content: this.rd(contentTrim),
       annotation,
       illustration: ill,
       unlocked: true,

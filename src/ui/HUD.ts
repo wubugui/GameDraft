@@ -22,6 +22,7 @@ export class HUD {
   private mapNameText: Text;
   private onResizeBound: () => void;
   private sceneEnterCb: (p: { sceneId: string; sceneName?: string }) => void;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   private currencyCb: (p: { newTotal: number }) => void;
   private questAcceptedCb: (p: { title: string }) => void;
@@ -99,7 +100,8 @@ export class HUD {
     window.addEventListener('resize', this.onResizeBound);
 
     this.sceneEnterCb = (p) => {
-      this.mapNameText.text = p.sceneName ?? p.sceneId ?? '';
+      const raw = p.sceneName ?? p.sceneId ?? '';
+      this.mapNameText.text = this.r(raw);
       this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
     };
 
@@ -126,6 +128,14 @@ export class HUD {
     this.eventBus.on('zone:ruleUnavailable', this.zoneExitCb);
   }
 
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
+  }
+
   setCoins(amount: number): void {
     this.coinText.text = `${this.strings.get('hud', 'coins')} ${amount}`;
     this.coinBg.clear();
@@ -135,7 +145,7 @@ export class HUD {
 
   setQuestHint(title: string): void {
     if (title) {
-      this.questText.text = `${this.strings.get('hud', 'current')}${title}`;
+      this.questText.text = `${this.strings.get('hud', 'current')}${this.r(title)}`;
       this.questBg.clear();
       this.questBg.roundRect(0, 0, this.questText.width + 20, 28, UITheme.panel.borderRadiusSmall);
       this.questBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });

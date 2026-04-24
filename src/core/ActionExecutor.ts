@@ -21,11 +21,16 @@ export class ActionExecutor {
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private zoneContextStack: ZoneActionContext[] = [];
+  private resolveNotificationText: ((s: string) => string) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.registerBuiltinHandlers();
+  }
+
+  setResolveNotificationText(fn: ((s: string) => string) | null): void {
+    this.resolveNotificationText = fn;
   }
 
   private registerBuiltinHandlers(): void {
@@ -38,7 +43,9 @@ export class ActionExecutor {
     }, ['key', 'text']);
 
     this.register('showNotification', (params) => {
-      this.eventBus.emit('notification:show', { text: params.text as string, type: params.type as string });
+      let text = String(params.text ?? '');
+      if (this.resolveNotificationText) text = this.resolveNotificationText(text);
+      this.eventBus.emit('notification:show', { text, type: params.type as string });
     }, ['text', 'type']);
   }
 

@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.rich_text_field import RichTextLineEdit
 
 
 class ShopEditor(QWidget):
@@ -36,7 +37,7 @@ class ShopEditor(QWidget):
         rl = QVBoxLayout(right)
         f = QFormLayout()
         self._s_id = QLineEdit(); f.addRow("id", self._s_id)
-        self._s_name = QLineEdit(); f.addRow("name", self._s_name)
+        self._s_name = RichTextLineEdit(self._model); f.addRow("name", self._s_name)
         rl.addLayout(f)
         rl.addWidget(QLabel("<b>Items</b>"))
         self._table = QTableWidget(0, 2)

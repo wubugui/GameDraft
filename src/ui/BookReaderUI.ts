@@ -123,7 +123,7 @@ export class BookReaderUI {
     this.container.addChild(bg);
 
     const title = new Text({
-      text: this.currentBook.title,
+      text: this.archiveData.resolveLine(this.currentBook.title),
       style: {
         fontSize: 18,
         fill: UITheme.colors.title,

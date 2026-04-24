@@ -32,6 +32,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, Signal, QTimer, QElapsedTimer
 
 from ..project_model import ProjectModel
+from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
 from ..shared.id_ref_selector import IdRefSelector
@@ -2192,7 +2193,7 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_type = QComboBox()
         self._hs_type.addItems(["inspect", "pickup", "transition", "npc", "encounter"])
         form.addRow("type", self._hs_type)
-        self._hs_label = QLineEdit(); form.addRow("label", self._hs_label)
+        self._hs_label = RichTextLineEdit(self._model); form.addRow("label", self._hs_label)
         self._hs_x = QDoubleSpinBox(); self._hs_x.setRange(-99999, 99999); self._hs_x.setDecimals(1)
         self._hs_x.valueChanged.connect(self._on_hs_xy_live_refresh)
         form.addRow("x", self._hs_x)
@@ -2330,8 +2331,8 @@ class ScenePropertyPanel(QScrollArea):
         mode_row.addWidget(self._hs_inspect_mode_graph)
         mode_row.addStretch()
         il.addLayout(mode_row)
-        self._hs_inspect_text = QTextEdit()
-        self._hs_inspect_text.setMaximumHeight(80)
+        self._hs_inspect_text = RichTextTextEdit(self._model)
+        self._hs_inspect_text.setMaximumHeight(140)
         il.addWidget(QLabel("text（仅纯文本模式）"))
         il.addWidget(self._hs_inspect_text)
         graph_row = QFormLayout()

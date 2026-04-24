@@ -1,5 +1,8 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QTextEdit, QSpinBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QSpinBox
 from PySide6.QtCore import Signal
+from tools.editor.project_model import ProjectModel
+from tools.editor.shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+
 from ..model.node_types import NodeData
 
 
@@ -9,19 +12,20 @@ class RulePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nd: NodeData | None = None
+        self._pm = ProjectModel()
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self.id_edit = QLineEdit()
         self.id_edit.setReadOnly(True)
-        self.name_edit = QLineEdit()
-        self.incomplete_name_edit = QLineEdit()
+        self.name_edit = RichTextLineEdit(self._pm)
+        self.incomplete_name_edit = RichTextLineEdit(self._pm)
         self.incomplete_name_edit.setPlaceholderText("规矩未集齐时的显示名称")
         self.cat_combo = QComboBox()
         self.cat_combo.addItems(["ward", "taboo", "jargon", "streetwise"])
-        self.desc_edit = QTextEdit()
+        self.desc_edit = RichTextTextEdit(self._pm)
         self.desc_edit.setMaximumHeight(80)
-        self.source_edit = QLineEdit()
+        self.source_edit = RichTextLineEdit(self._pm)
         self.src_type_combo = QComboBox()
         self.src_type_combo.addItems(["npc", "fragment", "experience"])
         self.verified_combo = QComboBox()
@@ -47,6 +51,15 @@ class RulePanel(QWidget):
             c.currentTextChanged.connect(self._mark_dirty)
         self.desc_edit.textChanged.connect(self._mark_dirty)
         self.frag_count.valueChanged.connect(self._mark_dirty)
+
+    def set_editor_model(self, pm: ProjectModel | None) -> None:
+        if pm is None:
+            return
+        self._pm = pm
+        self.name_edit.set_model(pm)
+        self.incomplete_name_edit.set_model(pm)
+        self.desc_edit.set_model(pm)
+        self.source_edit.set_model(pm)
 
     def load_node(self, nd: NodeData):
         self._nd = nd

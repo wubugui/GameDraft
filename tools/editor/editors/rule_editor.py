@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QTabWidget,
-    QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
+    QFormLayout, QLineEdit, QComboBox, QPushButton, QSpinBox,
     QScrollArea, QLabel,
 )
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 
 class RuleEditor(QWidget):
@@ -47,14 +48,14 @@ class RuleEditor(QWidget):
         detail = QWidget()
         f = QFormLayout(detail)
         self._r_id = QLineEdit(); f.addRow("id", self._r_id)
-        self._r_name = QLineEdit(); f.addRow("name", self._r_name)
-        self._r_iname = QLineEdit(); f.addRow("incompleteName", self._r_iname)
+        self._r_name = RichTextLineEdit(self._model); f.addRow("name", self._r_name)
+        self._r_iname = RichTextLineEdit(self._model); f.addRow("incompleteName", self._r_iname)
         self._r_cat = QComboBox()
         self._r_cat.addItems(["ward", "taboo", "jargon", "streetwise"])
         f.addRow("category", self._r_cat)
-        self._r_desc = QTextEdit(); self._r_desc.setMaximumHeight(80)
+        self._r_desc = RichTextTextEdit(self._model); self._r_desc.setMaximumHeight(100)
         f.addRow("description", self._r_desc)
-        self._r_src = QLineEdit(); f.addRow("source", self._r_src)
+        self._r_src = RichTextLineEdit(self._model); f.addRow("source", self._r_src)
         self._r_stype = QComboBox()
         self._r_stype.addItems(["npc", "fragment", "experience"])
         f.addRow("sourceType", self._r_stype)
@@ -154,13 +155,13 @@ class RuleEditor(QWidget):
         detail = QWidget()
         f = QFormLayout(detail)
         self._f_id = QLineEdit(); f.addRow("id", self._f_id)
-        self._f_text = QTextEdit(); self._f_text.setMaximumHeight(80)
+        self._f_text = RichTextTextEdit(self._model); self._f_text.setMaximumHeight(100)
         f.addRow("text", self._f_text)
         self._f_rule = IdRefSelector(allow_empty=False)
         f.addRow("ruleId", self._f_rule)
         self._f_idx = QSpinBox(); self._f_idx.setRange(0, 99)
         f.addRow("index", self._f_idx)
-        self._f_src = QLineEdit(); f.addRow("source", self._f_src)
+        self._f_src = RichTextLineEdit(self._model); f.addRow("source", self._f_src)
         apply_btn = QPushButton("Apply"); f.addRow(apply_btn)
         apply_btn.clicked.connect(self._apply_frag)
         scroll.setWidget(detail)

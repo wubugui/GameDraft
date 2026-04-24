@@ -1,5 +1,8 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QTextEdit, QSpinBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QSpinBox
 from PySide6.QtCore import Signal
+from tools.editor.project_model import ProjectModel
+from tools.editor.shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+
 from ..model.node_types import NodeData
 
 
@@ -9,15 +12,16 @@ class ItemPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nd: NodeData | None = None
+        self._pm = ProjectModel()
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self.id_edit = QLineEdit()
         self.id_edit.setReadOnly(True)
-        self.name_edit = QLineEdit()
+        self.name_edit = RichTextLineEdit(self._pm)
         self.type_combo = QComboBox()
         self.type_combo.addItems(["consumable", "key"])
-        self.desc_edit = QTextEdit()
+        self.desc_edit = RichTextTextEdit(self._pm)
         self.desc_edit.setMaximumHeight(80)
         self.price_edit = QSpinBox()
         self.price_edit.setRange(0, 9999)
@@ -38,6 +42,13 @@ class ItemPanel(QWidget):
         self.desc_edit.textChanged.connect(self._mark_dirty)
         self.price_edit.valueChanged.connect(self._mark_dirty)
         self.stack_edit.valueChanged.connect(self._mark_dirty)
+
+    def set_editor_model(self, pm: ProjectModel | None) -> None:
+        if pm is None:
+            return
+        self._pm = pm
+        self.name_edit.set_model(pm)
+        self.desc_edit.set_model(pm)
 
     def load_node(self, nd: NodeData):
         self._nd = nd

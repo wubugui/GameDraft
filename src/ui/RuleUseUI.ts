@@ -21,6 +21,7 @@ export class RuleUseUI {
 
   private container: Container | null = null;
   private _isOpen: boolean = false;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(
     renderer: Renderer,
@@ -34,6 +35,14 @@ export class RuleUseUI {
     this.zoneData = zoneData;
     this.rulesData = rulesData;
     this.strings = strings;
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
   get isOpen(): boolean { return this._isOpen; }
@@ -62,10 +71,10 @@ export class RuleUseUI {
       if (!ruleDef) continue;
 
       if (this.rulesData.hasRule(slot.ruleId)) {
-        result.push({ slot, ruleName: ruleDef.name, enabled: true });
+        result.push({ slot, ruleName: this.r(ruleDef.name), enabled: true });
       } else if (this.rulesData.isDiscovered(slot.ruleId)) {
         const progress = this.rulesData.getFragmentProgress(slot.ruleId);
-        const displayName = ruleDef.incompleteName ?? this.strings.get('ruleUse', 'unknown');
+        const displayName = this.r(ruleDef.incompleteName ?? this.strings.get('ruleUse', 'unknown'));
         result.push({
           slot,
           ruleName: displayName,

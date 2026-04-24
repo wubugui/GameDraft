@@ -6,19 +6,21 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QTabWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
-    QScrollArea, QLabel, QGroupBox, QFileDialog, QDialog, QDialogButtonBox,
-    QStackedWidget,
+    QScrollArea, QLabel, QGroupBox, QFileDialog, QDialog,
 )
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
-from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.action_editor import ActionEditor
+from ..shared.rich_text_field import InsertRefDialog, RichTextLineEdit, RichTextTextEdit
 
 
-def _make_insert_image_btn(text_edit: QTextEdit, model: ProjectModel) -> QPushButton:
+def _make_insert_image_btn(
+    text_edit: QTextEdit | RichTextTextEdit,
+    model: ProjectModel,
+) -> QPushButton:
     """Create a button that inserts an [img:] marker into *text_edit*."""
 
     def _pick() -> None:
@@ -38,9 +40,14 @@ def _make_insert_image_btn(text_edit: QTextEdit, model: ProjectModel) -> QPushBu
         except ValueError:
             rel = Path(path).name
         marker = f"[img:{rel}]"
-        cursor = text_edit.textCursor()
+        core = (
+            text_edit.core_text_edit()
+            if isinstance(text_edit, RichTextTextEdit)
+            else text_edit
+        )
+        cursor = core.textCursor()
         cursor.insertText(marker)
-        text_edit.setTextCursor(cursor)
+        core.setTextCursor(cursor)
 
     btn = QPushButton("Insert Image")
     btn.setMaximumWidth(120)
@@ -51,101 +58,27 @@ def _make_insert_image_btn(text_edit: QTextEdit, model: ProjectModel) -> QPushBu
 def _open_game_tag_insert_dialog(
     parent: QWidget,
     model: ProjectModel,
-    text_edit: QTextEdit,
+    text_edit: QTextEdit | RichTextTextEdit,
 ) -> None:
-    """插入与运行时 expandGameTags 一致的标记：string / flag / item。"""
-    d = QDialog(parent)
-    d.setWindowTitle("插入游戏 tag")
-    d.setMinimumWidth(360)
-    root = QVBoxLayout(d)
-    kind = QComboBox()
-    kind.addItems(["strings（文案表）", "flag（变量键）", "item（道具）"])
-    root.addWidget(kind)
-    stack = QStackedWidget()
-
-    w0 = QWidget()
-    f0 = QFormLayout(w0)
-    cat_combo = QComboBox()
-    key_combo = QComboBox()
-    key_combo.setEditable(True)
-    cats = sorted(model.strings.keys()) if isinstance(model.strings, dict) else []
-    cat_combo.addItems(cats)
-
-    def _refresh_keys() -> None:
-        key_combo.clear()
-        c = cat_combo.currentText()
-        sub = model.strings.get(c) if isinstance(model.strings, dict) else None
-        if isinstance(sub, dict):
-            key_combo.addItems(sorted(str(k) for k in sub.keys()))
-
-    cat_combo.currentTextChanged.connect(lambda _t: _refresh_keys())
-    _refresh_keys()
-    f0.addRow("category", cat_combo)
-    f0.addRow("key", key_combo)
-    stack.addWidget(w0)
-
-    w1 = QWidget()
-    f1 = QFormLayout(w1)
-    flag_pick = FlagKeyPickField(model, None, "", w1)
-    f1.addRow("flag 键", flag_pick)
-    stack.addWidget(w1)
-
-    w2 = QWidget()
-    f2 = QFormLayout(w2)
-    item_combo = QComboBox()
-    item_combo.setEditable(True)
-    for iid, label in model.all_item_ids():
-        if iid:
-            item_combo.addItem(f"{label} ({iid})", iid)
-    f2.addRow("道具", item_combo)
-    stack.addWidget(w2)
-
-    root.addWidget(stack)
-
-    def _on_kind(idx: int) -> None:
-        stack.setCurrentIndex(idx)
-
-    kind.currentIndexChanged.connect(_on_kind)
-    _on_kind(0)
-
-    bb = QDialogButtonBox(
-        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+    """统一插入对话框（8 种 tag，与运行时 resolveText 一致）。"""
+    core = (
+        text_edit.core_text_edit()
+        if isinstance(text_edit, RichTextTextEdit)
+        else text_edit
     )
-    root.addWidget(bb)
-
-    def _accept() -> None:
-        idx = kind.currentIndex()
-        marker = ""
-        if idx == 0:
-            c = cat_combo.currentText().strip()
-            k = key_combo.currentText().strip()
-            if c and k:
-                marker = f"[tag:string:{c}:{k}]"
-        elif idx == 1:
-            k = flag_pick.key().strip()
-            if k:
-                marker = f"[tag:flag:{k}]"
-        else:
-            k = item_combo.currentData()
-            if k is None or k == "":
-                k = item_combo.currentText().strip()
-            else:
-                k = str(k)
-            if k:
-                marker = f"[tag:item:{k}]"
-        if marker:
-            cur = text_edit.textCursor()
-            cur.insertText(marker)
-            text_edit.setTextCursor(cur)
-        d.accept()
-
-    bb.accepted.connect(_accept)
-    bb.rejected.connect(d.reject)
-    d.exec()
+    dlg = InsertRefDialog(model, parent)
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return
+    marker = dlg.marker()
+    if not marker:
+        return
+    cur = core.textCursor()
+    cur.insertText(marker)
+    core.setTextCursor(cur)
 
 
 def _make_insert_game_tag_btn(
-    text_edit: QTextEdit,
+    text_edit: QTextEdit | RichTextTextEdit,
     model: ProjectModel,
     parent: QWidget,
 ) -> QPushButton:
@@ -172,8 +105,10 @@ class _CondTextGroup(QGroupBox):
         self._cond.set_flag_pattern_context(model, None)
         self._cond.set_data(data.get("conditions", []))
         lay.addWidget(self._cond)
-        self._text = QTextEdit(data.get("text", ""))
-        self._text.setMaximumHeight(50)
+        pm = model if model is not None else ProjectModel()
+        self._text = RichTextTextEdit(pm)
+        self._text.setPlainText(data.get("text", ""))
+        self._text.setMaximumHeight(120)
         lay.addWidget(self._text)
 
     def to_dict(self) -> dict:
@@ -295,8 +230,8 @@ class ArchiveEditor(QWidget):
         dl = QVBoxLayout(detail)
         f = QFormLayout()
         self._ch_id = QLineEdit(); f.addRow("id", self._ch_id)
-        self._ch_name = QLineEdit(); f.addRow("name", self._ch_name)
-        self._ch_title = QLineEdit(); f.addRow("title", self._ch_title)
+        self._ch_name = RichTextLineEdit(self._model); f.addRow("name", self._ch_name)
+        self._ch_title = RichTextLineEdit(self._model); f.addRow("title", self._ch_title)
         dl.addLayout(f)
         self._ch_unlock = ConditionEditor("unlockConditions")
         dl.addWidget(self._ch_unlock)
@@ -430,13 +365,13 @@ class ArchiveEditor(QWidget):
         detail = QWidget()
         f = QFormLayout(detail)
         self._lo_id = QLineEdit(); f.addRow("id", self._lo_id)
-        self._lo_title = QLineEdit(); f.addRow("title", self._lo_title)
-        self._lo_content = QTextEdit(); self._lo_content.setMaximumHeight(100)
+        self._lo_title = RichTextLineEdit(self._model); f.addRow("title", self._lo_title)
+        self._lo_content = RichTextTextEdit(self._model); self._lo_content.setMaximumHeight(100)
         lo_content_row = QHBoxLayout()
         lo_content_row.addWidget(self._lo_content)
         lo_content_row.addWidget(_make_insert_image_btn(self._lo_content, self._model))
         f.addRow("content", lo_content_row)
-        self._lo_source = QLineEdit(); f.addRow("source", self._lo_source)
+        self._lo_source = RichTextLineEdit(self._model); f.addRow("source", self._lo_source)
         self._lo_cat = QComboBox()
         self._lo_cat.addItems(["legend", "geography", "folklore", "affairs"])
         f.addRow("category", self._lo_cat)
@@ -547,13 +482,13 @@ class ArchiveEditor(QWidget):
         dl = QVBoxLayout(detail)
         f = QFormLayout()
         self._doc_id = QLineEdit(); f.addRow("id", self._doc_id)
-        self._doc_name = QLineEdit(); f.addRow("name", self._doc_name)
-        self._doc_content = QTextEdit(); self._doc_content.setMaximumHeight(120)
+        self._doc_name = RichTextLineEdit(self._model); f.addRow("name", self._doc_name)
+        self._doc_content = RichTextTextEdit(self._model); self._doc_content.setMaximumHeight(120)
         doc_content_row = QHBoxLayout()
         doc_content_row.addWidget(self._doc_content)
         doc_content_row.addWidget(_make_insert_image_btn(self._doc_content, self._model))
         f.addRow("content", doc_content_row)
-        self._doc_annot = QTextEdit(); self._doc_annot.setMaximumHeight(60)
+        self._doc_annot = RichTextTextEdit(self._model); self._doc_annot.setMaximumHeight(100)
         f.addRow("annotation", self._doc_annot)
         dl.addLayout(f)
         self._doc_cond = ConditionEditor("discoverConditions")
@@ -652,7 +587,7 @@ class ArchiveEditor(QWidget):
         dl = QVBoxLayout(detail)
         f = QFormLayout()
         self._bk_id = QLineEdit(); f.addRow("id", self._bk_id)
-        self._bk_title = QLineEdit(); f.addRow("title", self._bk_title)
+        self._bk_title = RichTextLineEdit(self._model); f.addRow("title", self._bk_title)
         self._bk_pages_spin = QSpinBox(); self._bk_pages_spin.setRange(0, 99)
         f.addRow("totalPages", self._bk_pages_spin)
         dl.addLayout(f)
@@ -666,8 +601,8 @@ class ArchiveEditor(QWidget):
         dl.addLayout(page_btns)
 
         pf = QFormLayout()
-        self._pg_title = QLineEdit(); pf.addRow("title", self._pg_title)
-        self._pg_content = QTextEdit(); self._pg_content.setMaximumHeight(100)
+        self._pg_title = RichTextLineEdit(self._model); pf.addRow("title", self._pg_title)
+        self._pg_content = RichTextTextEdit(self._model); self._pg_content.setMaximumHeight(100)
         pg_content_row = QHBoxLayout()
         pg_content_row.addWidget(self._pg_content)
         pg_content_row.addWidget(_make_insert_image_btn(self._pg_content, self._model))
@@ -697,17 +632,17 @@ class ArchiveEditor(QWidget):
         ef = QFormLayout()
         self._en_id = QLineEdit()
         ef.addRow("entry id", self._en_id)
-        self._en_title = QLineEdit()
+        self._en_title = RichTextLineEdit(self._model)
         ef.addRow("title", self._en_title)
-        self._en_content = QTextEdit()
-        self._en_content.setMaximumHeight(90)
+        self._en_content = RichTextTextEdit(self._model)
+        self._en_content.setMaximumHeight(120)
         en_content_row = QHBoxLayout()
         en_content_row.addWidget(self._en_content)
         en_content_row.addWidget(_make_insert_image_btn(self._en_content, self._model))
         ef.addRow("content", en_content_row)
         ann_row = QHBoxLayout()
-        self._en_annotation = QTextEdit()
-        self._en_annotation.setMaximumHeight(76)
+        self._en_annotation = RichTextTextEdit(self._model)
+        self._en_annotation.setMaximumHeight(100)
         self._en_annotation.setPlaceholderText(
             "按语；可点右侧插入 [tag:string:类:key]、[tag:flag:键]、[tag:item:道具id]",
         )

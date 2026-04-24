@@ -113,7 +113,7 @@ export class CharacterBookUI {
     characters.forEach((ch, i) => {
       const isNew = !this.archiveData.isRead(`char_${ch.id}`);
       const label = new Text({
-        text: (isNew ? '* ' : '') + ch.name,
+        text: (isNew ? '* ' : '') + this.archiveData.resolveLine(ch.name),
         style: { fontSize: 13, fill: isNew ? UITheme.colors.title : UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 160 },
       });
       label.x = px + PADDING;
@@ -158,7 +158,7 @@ export class CharacterBookUI {
     if (!ch) return;
 
     const parts: string[] = [];
-    parts.push(`${ch.name} - ${ch.title}`);
+    parts.push(`${this.archiveData.resolveLine(ch.name)} - ${this.archiveData.resolveLine(ch.title)}`);
 
     const impressions = this.archiveData.getCharacterVisibleImpressions(ch);
     if (impressions.length > 0) {

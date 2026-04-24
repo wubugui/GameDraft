@@ -22,6 +22,10 @@ class Issue:
 
 def validate(model: ProjectModel) -> list[Issue]:
     issues: list[Issue] = []
+    from .shared.ref_validator import validate_all_embedded_refs
+
+    for i, msg in enumerate(validate_all_embedded_refs(model)):
+        issues.append(Issue("error", "embeddedRef", f"#{i}", msg))
     scene_ids = set(model.all_scene_ids())
     item_ids = {it["id"] for it in model.items}
     quest_ids = {q["id"] for q in model.quests}

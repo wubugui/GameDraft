@@ -972,6 +972,8 @@ export interface IRulesDataProvider {
 }
 
 export interface IArchiveDataProvider {
+  /** 将档案/书籍等 JSON 正文中的 [tag:…] 展开为当前展示文案 */
+  resolveLine(raw: string | undefined): string;
   hasUnread(bookType: 'character' | 'lore' | 'document' | 'book'): boolean;
   getUnlockedCharacters(): CharacterEntry[];
   getCharacterVisibleImpressions(entry: CharacterEntry): string[];

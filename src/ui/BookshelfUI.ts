@@ -128,7 +128,7 @@ export class BookshelfUI {
       const col = idx % 5;
       const row = Math.floor(idx / 5);
       this.drawBookSlot(
-        { id: `book_${book.id}`, label: book.title, color: 0x4a3728, hasUnread: false },
+        { id: `book_${book.id}`, label: this.archiveData.resolveLine(book.title), color: 0x4a3728, hasUnread: false },
         startX + col * (BOOK_W + BOOK_GAP),
         startY + row * (BOOK_H + 30),
       );

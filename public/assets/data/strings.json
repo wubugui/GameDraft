@@ -94,7 +94,7 @@
     "closeHint": "按 I 关闭"
   },
   "map": {
-    "title": "雾津城区图",
+    "title": "[tag:string:place:wujin]城区图",
     "closeHint": "按 M 关闭",
     "noData": "(地图数据暂未配置)",
     "locked": "???"
@@ -155,5 +155,9 @@
     "flagFalse": "否",
     "flagUnset": "—",
     "unknownItem": "（道具：{id}）"
+  },
+  "place": {
+    "wujin": "雾津县",
+    "wujin_long": "雾津，地处西南山区盆地。时值军阀割据，外面没个太平日子，城里也好不到哪里去。"
   }
 }

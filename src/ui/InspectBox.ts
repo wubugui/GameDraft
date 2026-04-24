@@ -6,6 +6,7 @@ import type { StringsProvider } from '../core/StringsProvider';
 export class InspectBox {
   private renderer: Renderer;
   private strings: StringsProvider;
+  private resolveDisplay: ((s: string) => string) | null = null;
   private container: Container | null = null;
   private resolveClose: (() => void) | null = null;
   private onKeyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -17,6 +18,10 @@ export class InspectBox {
     this.strings = strings;
   }
 
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
   show(text: string): Promise<void> {
     return new Promise(resolve => {
       this.resolveClose = resolve;
@@ -24,9 +29,10 @@ export class InspectBox {
       this.container = new Container();
 
       const boxWidth = Math.min(this.renderer.screenWidth - 40, 600);
+      const displayText = this.resolveDisplay ? this.resolveDisplay(text) : text;
 
       const textObj = new Text({
-        text,
+        text: displayText,
         style: {
           fontSize: 16,
           fill: UITheme.colors.body,

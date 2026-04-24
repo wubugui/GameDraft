@@ -50,6 +50,7 @@ import type {
   IGameSystem,
   AnimationSetDef,
   GameConfig,
+  MapNodeDef,
   SceneDataRaw,
   ScenarioCatalogFile,
   ICutsceneActor,
@@ -76,6 +77,7 @@ import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
 import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
+import { resolveText, type ResolveContext } from './resolveText';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
 import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
@@ -130,7 +132,11 @@ export class Game {
   private audioManager: AudioManager;
   private dayManager: DayManager;
   private cutsceneManager!: CutsceneManager;
+  private cutsceneRenderer!: CutsceneRenderer;
   private resolveActorFn!: (id: string) => ICutsceneActor | null;
+  /** 地图节点 sceneId -> 显示名；供 [tag:scene:…] 与 NPC 全局名缓存扫描 */
+  private sceneDisplayNameById = new Map<string, string>();
+  private npcDisplayNameById = new Map<string, string>();
   private archiveManager: ArchiveManager;
   private emoteBubbleManager: EmoteBubbleManager;
   private ruleOfferRegistry: RuleOfferRegistry;
@@ -282,6 +288,91 @@ export class Game {
     }
   }
 
+  private buildResolveContext(): ResolveContext {
+    const strings = this.stringsProvider;
+    return {
+      stringsRaw: (c, k) => strings.getRaw(c, k),
+      flagStore: this.flagStore,
+      itemNames: this.archiveManager.getItemDisplayNames(),
+      npcName: (id) => {
+        const t = id.trim();
+        if (!t) return undefined;
+        const live = this.sceneManager.getNpcById(t);
+        if (live) return live.def.name;
+        return this.npcDisplayNameById.get(t);
+      },
+      contextNpcId: this.graphDialogueManager.getContextNpcId(),
+      playerDisplayName: () => {
+        const v = this.flagStore.get('player_display_name');
+        if (typeof v === 'string' && v.trim()) return v.trim();
+        const fb = strings.getRaw('dialogue', 'defaultProtagonistName');
+        return fb && fb !== 'defaultProtagonistName' ? fb : '你';
+      },
+      questTitle: (id) => this.questManager.getQuestTitle(id),
+      ruleName: (id) => this.rulesManager.getRuleDef(id)?.name,
+      sceneDisplayName: (sid) => {
+        const t = sid.trim();
+        return this.sceneDisplayNameById.get(t) ?? t;
+      },
+    };
+  }
+
+  /** 统一解析 JSON / strings 模板中的 [tag:…]（供 Action、UI、档案等共用） */
+  resolveDisplayText(raw: string | undefined): string {
+    return resolveText(raw, this.buildResolveContext());
+  }
+
+  private async refreshTextResolveLookups(): Promise<void> {
+    this.sceneDisplayNameById.clear();
+    try {
+      const nodes = await this.assetManager.loadJson<MapNodeDef[]>('/assets/data/map_config.json');
+      for (const n of nodes) {
+        if (n.sceneId) this.sceneDisplayNameById.set(n.sceneId, n.name);
+      }
+    } catch {
+      /* no map */
+    }
+
+    this.npcDisplayNameById.clear();
+    const sceneIds = new Set<string>();
+    for (const sid of this.sceneDisplayNameById.keys()) sceneIds.add(sid);
+    if (this.gameConfig.initialScene) sceneIds.add(this.gameConfig.initialScene);
+    if (this.gameConfig.fallbackScene) sceneIds.add(this.gameConfig.fallbackScene);
+
+    await Promise.all(
+      [...sceneIds].map(async (sid) => {
+        try {
+          const raw = await this.assetManager.loadJson<{ npcs?: { id: string; name: string }[] }>(
+            `assets/scenes/${sid}.json`,
+          );
+          for (const npc of raw.npcs ?? []) {
+            if (npc?.id) this.npcDisplayNameById.set(npc.id, npc.name ?? npc.id);
+          }
+        } catch {
+          /* missing scene */
+        }
+      }),
+    );
+  }
+
+  private wireTextResolve(): void {
+    const fn = (s: string) => this.resolveDisplayText(s);
+    this.stringsProvider.setResolveDisplay(fn);
+    this.actionExecutor.setResolveNotificationText(fn);
+    this.graphDialogueManager.setResolveDisplay(fn);
+    this.encounterManager.setResolveDisplay(fn);
+    this.archiveManager.setResolveForDisplay((raw) => this.resolveDisplayText(raw));
+    this.inspectBox.setResolveDisplay(fn);
+    this.shopUI.setResolveDisplay(fn);
+    this.mapUI.setResolveDisplay(fn);
+    this.questPanelUI.setResolveDisplay(fn);
+    this.rulesPanelUI.setResolveDisplay(fn);
+    this.inventoryUI.setResolveDisplay(fn);
+    this.cutsceneRenderer.setResolveDisplay(fn);
+    this.hud.setResolveDisplay(fn);
+    this.ruleUseUI.setResolveDisplay(fn);
+  }
+
   async start(options: GameStartOptions = {}): Promise<void> {
     this.isDevMode = !!options.devMode;
     await this.renderer.init();
@@ -325,11 +416,11 @@ export class Game {
     this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider);
     this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider);
 
-    const cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera);
-    cutsceneRenderer.setZoomRestoreProvider(() => this.sceneManager.currentSceneData?.camera?.zoom ?? 1);
+    this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera);
+    this.cutsceneRenderer.setZoomRestoreProvider(() => this.sceneManager.currentSceneData?.camera?.zoom ?? 1);
     this.cutsceneManager = new CutsceneManager(
       this.eventBus, this.flagStore, this.actionExecutor,
-      cutsceneRenderer,
+      this.cutsceneRenderer,
     );
     this.cutsceneManager.init({ eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager });
     this.cutsceneManager.setInputManager(this.inputManager);
@@ -556,6 +647,7 @@ export class Game {
       removeCutsceneActor: (id) => {
         this.cutsceneManager.removeTempActor(id);
       },
+      resolveDisplayText: (raw) => this.resolveDisplayText(raw),
     });
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
@@ -677,6 +769,9 @@ export class Game {
       this.shopUI.loadDefs(),
       this.mapUI.loadConfig(),
     ]);
+
+    await this.refreshTextResolveLookups();
+    this.wireTextResolve();
 
     this.debugPanelUI.attachFlagDebug(this.flagStore, this.eventBus);
     this.setupCutsceneStepHud();

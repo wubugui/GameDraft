@@ -2,7 +2,7 @@
   {
     "id": "doc_city_defense_notice",
     "name": "城防署告示",
-    "content": "近日城外流民日增，城内治安堪忧。凡有生面孔者，各铺保甲须即时登记报备。夜间宵禁自亥时始，卯时止，违者以扰乱治安论处。\n[img:images/backgrounds/day_alley_bg.png]\n特此告示。\n雾津城防署 民国十三年秋",
+    "content": "近日城外流民日增，城内治安堪忧。凡有生面孔者，各铺保甲须即时登记报备。夜间宵禁自亥时始，卯时止，违者以扰乱治安论处。\n[img:images/backgrounds/day_alley_bg.png]\n特此告示。\n[tag:string:place:wujin]城防署 民国十三年秋",
     "annotation": "告示的纸已经泛黄了，看日期是去年秋天贴的。",
     "discoverConditions": [
       {
@@ -34,7 +34,7 @@
   {
     "id": "doc_opera_playbill",
     "name": "旧戏单",
-    "content": "柳家班 庚申年 新春公演\n\n头折《牡丹亭·惊梦》 旦角：柳如烟\n二折《窦娥冤·斩娥》 旦角：柳如烟\n三折《红楼梦·葬花》 旦角：柳如烟\n\n地点：雾津城隍庙戏台\n票价：铜钱十文",
+    "content": "柳家班 庚申年 新春公演\n\n头折《牡丹亭·惊梦》 旦角：柳如烟\n二折《窦娥冤·斩娥》 旦角：柳如烟\n三折《红楼梦·葬花》 旦角：柳如烟\n\n地点：[tag:string:place:wujin]城隍庙戏台\n票价：铜钱十文",
     "annotation": "一张已经发黄发脆的老戏单。柳如烟这个名字被人用红笔圈了起来。",
     "discoverConditions": [
       {

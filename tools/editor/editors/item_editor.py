@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
-    QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
+    QFormLayout, QLineEdit, QComboBox, QPushButton, QSpinBox,
     QDoubleSpinBox, QScrollArea, QGroupBox, QLabel,
 )
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
+from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 
 class DynDescWidget(QGroupBox):
@@ -21,8 +22,10 @@ class DynDescWidget(QGroupBox):
         self._cond.set_flag_pattern_context(model, None)
         self._cond.set_data(data.get("conditions", []))
         lay.addWidget(self._cond)
-        self._text = QTextEdit(data.get("text", ""))
-        self._text.setMaximumHeight(60)
+        pm = model if model is not None else ProjectModel()
+        self._text = RichTextTextEdit(pm)
+        self._text.setPlainText(data.get("text", ""))
+        self._text.setMaximumHeight(100)
         lay.addWidget(self._text)
 
     def to_dict(self) -> dict:
@@ -54,10 +57,10 @@ class ItemEditor(QWidget):
         dl = QVBoxLayout(detail)
         f = QFormLayout()
         self._i_id = QLineEdit(); f.addRow("id", self._i_id)
-        self._i_name = QLineEdit(); f.addRow("name", self._i_name)
+        self._i_name = RichTextLineEdit(self._model); f.addRow("name", self._i_name)
         self._i_type = QComboBox(); self._i_type.addItems(["consumable", "key"])
         f.addRow("type", self._i_type)
-        self._i_desc = QTextEdit(); self._i_desc.setMaximumHeight(80)
+        self._i_desc = RichTextTextEdit(self._model); self._i_desc.setMaximumHeight(100)
         f.addRow("description", self._i_desc)
         self._i_stack = QSpinBox(); self._i_stack.setRange(1, 999)
         f.addRow("maxStack", self._i_stack)

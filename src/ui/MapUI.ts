@@ -23,12 +23,17 @@ export class MapUI {
   private _isOpen = false;
   private nodes: MapNodeDef[] = [];
   private currentSceneId: string = '';
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(renderer: Renderer, eventBus: EventBus, flagStore: FlagStore, strings: StringsProvider) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.strings = strings;
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
   }
 
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
@@ -154,8 +159,11 @@ export class MapUI {
       }
       this.container.addChild(circle);
 
+      const labelText = unlocked
+        ? (this.resolveDisplay ? this.resolveDisplay(node.name) : node.name)
+        : this.strings.get('map', 'locked');
       const label = new Text({
-        text: unlocked ? node.name : this.strings.get('map', 'locked'),
+        text: labelText,
         style: {
           fontSize: 11,
           fill: isCurrent ? UITheme.colors.mapCurrentBorder : (unlocked ? UITheme.colors.mapUnlockedText : UITheme.colors.mapLockedText),

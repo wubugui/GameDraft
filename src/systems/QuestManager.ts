@@ -188,6 +188,10 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     return this.questStatus.get(questId) ?? QuestStatus.Inactive;
   }
 
+  getQuestTitle(questId: string): string | undefined {
+    return this.questDefs.get(questId)?.title;
+  }
+
   getActiveQuests(): { def: QuestDef; status: QuestStatus }[] {
     const result: { def: QuestDef; status: QuestStatus }[] = [];
     this.questDefs.forEach((def, id) => {

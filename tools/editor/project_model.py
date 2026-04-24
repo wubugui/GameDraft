@@ -220,6 +220,11 @@ class ProjectModel(QObject):
         write_json(flag_registry_path(self.assets_path), self.flag_registry)
         write_json(dp / "overlay_images.json", self.overlay_images)
         from .scenarios_catalog_validate import validate_scenarios_catalog_for_save
+        from .shared.ref_validator import validate_refs_for_save
+
+        ref_err = validate_refs_for_save(self)
+        if ref_err:
+            raise ValueError(ref_err)
 
         sc_err = validate_scenarios_catalog_for_save(
             self.scenarios_catalog,

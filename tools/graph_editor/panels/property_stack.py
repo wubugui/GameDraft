@@ -1,5 +1,9 @@
+from pathlib import Path
+
 from PySide6.QtWidgets import QStackedWidget, QWidget, QVBoxLayout, QLabel, QScrollArea, QPushButton
 from PySide6.QtCore import Signal, Qt
+
+from tools.editor.project_model import ProjectModel
 
 from ..model.node_types import NodeData, NodeType
 from ..model.graph_model import GameGraph
@@ -69,9 +73,26 @@ class PropertyStack(QWidget):
             self._stack.addWidget(panel)
 
         self._graph: GameGraph | None = None
+        self._editor_pm: ProjectModel | None = None
 
     def set_project_path(self, project_path: str) -> None:
         self._hotspot.set_project_path(project_path)
+        self._editor_pm = None
+        p = (project_path or "").strip()
+        if p:
+            try:
+                pm = ProjectModel()
+                pm.load_project(Path(p))
+                self._editor_pm = pm
+            except OSError:
+                self._editor_pm = None
+        self._distribute_editor_model(self._editor_pm)
+
+    def _distribute_editor_model(self, pm: ProjectModel | None) -> None:
+        for panel in self._panels.values():
+            fn = getattr(panel, "set_editor_model", None)
+            if callable(fn):
+                fn(pm)
 
     def set_graph(self, graph: GameGraph):
         self._graph = graph

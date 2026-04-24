@@ -8,6 +8,7 @@ import { createOverlayBlendMesh } from './overlayBlendShader';
 export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
 
 export class CutsceneRenderer {
+  private resolveDisplay: ((s: string) => string) | null = null;
   private renderer: Renderer;
   private camera: Camera;
 
@@ -38,6 +39,14 @@ export class CutsceneRenderer {
   /** 过场 cleanup 时把相机 zoom 设回该回调的返回值（通常为场景配置）。 */
   setZoomRestoreProvider(fn: () => number): void {
     this.getRestoreZoom = fn;
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
   get screenWidth(): number { return this.renderer.screenWidth; }
@@ -119,7 +128,7 @@ export class CutsceneRenderer {
     this.titleContainer.addChild(bg);
 
     const t = new Text({
-      text,
+      text: this.r(text),
       style: { fontSize: 36, fill: 0xffeecc, fontFamily: 'serif', fontWeight: 'bold', align: 'center' },
     });
     t.x = (sw - t.width) / 2;
@@ -152,7 +161,7 @@ export class CutsceneRenderer {
 
     if (speaker) {
       const sp = new Text({
-        text: speaker,
+        text: this.r(speaker),
         style: { fontSize: 16, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
       });
       sp.x = 30;
@@ -161,7 +170,7 @@ export class CutsceneRenderer {
     }
 
     const t = new Text({
-      text,
+      text: this.r(text),
       style: { fontSize: 14, fill: 0xdddddd, fontFamily: 'sans-serif', wordWrap: true, wordWrapWidth: sw - 60 },
     });
     t.x = 30;

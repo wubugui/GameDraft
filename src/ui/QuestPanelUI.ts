@@ -21,6 +21,7 @@ export class QuestPanelUI {
   private panelInnerH = 0;
   private onWheelBound: (e: WheelEvent) => void;
   private onScrollKeyBound: (e: KeyboardEvent) => void;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(renderer: Renderer, questData: IQuestDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
@@ -28,6 +29,14 @@ export class QuestPanelUI {
     this.strings = strings;
     this.onWheelBound = this.onWheel.bind(this);
     this.onScrollKeyBound = this.onScrollKey.bind(this);
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
   get isOpen(): boolean {
@@ -79,7 +88,9 @@ export class QuestPanelUI {
     };
 
     const addQuestEntry = (title: string, desc: string, titleColor: number, descColor: number, prefix: string = '') => {
-      const displayTitle = prefix ? `${prefix} ${title}` : title;
+      const rt = this.r(title);
+      const rd = this.r(desc);
+      const displayTitle = prefix ? `${prefix} ${rt}` : rt;
       const qt = new Text({
         text: displayTitle,
         style: { fontSize: 13, fill: titleColor, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 520 },
@@ -91,7 +102,7 @@ export class QuestPanelUI {
 
       if (desc) {
         const qd = new Text({
-          text: desc,
+          text: rd,
           style: { fontSize: 11, fill: descColor, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
         });
         qd.x = 10;
@@ -117,7 +128,7 @@ export class QuestPanelUI {
     addSectionLabel(this.strings.get('quest', 'mainline'));
     const mainQuest = this.questData.getCurrentMainQuest();
     if (mainQuest) {
-      addQuestEntry(mainQuest.title, mainQuest.description, UITheme.colors.questMain, UITheme.colors.descText);
+      addQuestEntry(mainQuest.title, mainQuest.description ?? '', UITheme.colors.questMain, UITheme.colors.descText);
     } else {
       addEmpty(this.strings.get('quest', 'empty'));
     }

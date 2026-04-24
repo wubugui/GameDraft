@@ -1,5 +1,8 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit, QSpinBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox
 from PySide6.QtCore import Signal
+from tools.editor.project_model import ProjectModel
+from tools.editor.shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+
 from ..model.node_types import NodeData
 
 
@@ -9,6 +12,7 @@ class FragmentPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nd: NodeData | None = None
+        self._pm = ProjectModel()
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
@@ -18,9 +22,9 @@ class FragmentPanel(QWidget):
         self.rule_id_edit.setPlaceholderText("所属规矩ID")
         self.index_spin = QSpinBox()
         self.index_spin.setRange(0, 99)
-        self.text_edit = QTextEdit()
+        self.text_edit = RichTextTextEdit(self._pm)
         self.text_edit.setMaximumHeight(100)
-        self.source_edit = QLineEdit()
+        self.source_edit = RichTextLineEdit(self._pm)
         self.source_edit.setPlaceholderText("碎片来源描述")
 
         form.addRow("ID:", self.id_edit)
@@ -35,6 +39,13 @@ class FragmentPanel(QWidget):
         self.index_spin.valueChanged.connect(self._mark_dirty)
         self.text_edit.textChanged.connect(self._mark_dirty)
         self.source_edit.textChanged.connect(self._mark_dirty)
+
+    def set_editor_model(self, pm: ProjectModel | None) -> None:
+        if pm is None:
+            return
+        self._pm = pm
+        self.text_edit.set_model(pm)
+        self.source_edit.set_model(pm)
 
     def load_node(self, nd: NodeData):
         self._nd = nd

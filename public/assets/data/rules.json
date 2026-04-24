@@ -47,7 +47,7 @@
       "name": "唱戏白影的来历",
       "incompleteName": "某个关于白影子的传闻",
       "category": "streetwise",
-      "description": "据各方传闻拼凑，城隍庙后山的唱戏白影子，很可能是早年间雾津柳家戏班子的人。她不是在害人，而是在找人。",
+      "description": "据各方传闻拼凑，城隍庙后山的唱戏白影子，很可能是早年间[tag:string:place:wujin]柳家戏班子的人。她不是在害人，而是在找人。",
       "source": "多方传闻汇集",
       "sourceType": "fragment",
       "verified": "unverified",
@@ -78,7 +78,7 @@
     },
     {
       "id": "frag_ghost_origin_02",
-      "text": "据说早年间雾津有个柳家戏班子，后来不知怎么就散了。有人说唱戏的白影子就是戏班里的人。",
+      "text": "据说早年间[tag:string:place:wujin]有个柳家戏班子，后来不知怎么就散了。有人说唱戏的白影子就是戏班里的人。",
       "ruleId": "rule_ghost_origin",
       "index": 1,
       "source": "说书人张叨叨"

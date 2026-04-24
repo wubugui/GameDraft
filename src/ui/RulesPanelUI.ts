@@ -28,6 +28,7 @@ export class RulesPanelUI {
   private panelInnerH = 0;
   private onWheelBound: (e: WheelEvent) => void;
   private onScrollKeyBound: (e: KeyboardEvent) => void;
+  private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(renderer: Renderer, rulesData: IRulesDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
@@ -35,6 +36,14 @@ export class RulesPanelUI {
     this.strings = strings;
     this.onWheelBound = this.onWheel.bind(this);
     this.onScrollKeyBound = this.onScrollKey.bind(this);
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
   get isOpen(): boolean {
@@ -131,7 +140,7 @@ export class RulesPanelUI {
             const vColor = VERIFIED_COLORS[r.def.verified] ?? VERIFIED_COLORS.unverified;
 
             const nameText = new Text({
-              text: `${r.def.name}`,
+              text: `${this.r(r.def.name)}`,
               style: { fontSize: 13, fill: UITheme.colors.ruleName, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 520 },
             });
             nameText.x = 10;
@@ -149,7 +158,7 @@ export class RulesPanelUI {
 
             if (r.def.description) {
               const descText = new Text({
-                text: r.def.description,
+                text: this.r(r.def.description),
                 style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
               });
               descText.x = 10;
@@ -160,7 +169,7 @@ export class RulesPanelUI {
 
             if (r.def.source) {
               const srcText = new Text({
-                text: `${this.strings.get('rulesPanel', 'source')} ${r.def.source}`,
+                text: `${this.strings.get('rulesPanel', 'source')} ${this.r(r.def.source)}`,
                 style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
               });
               srcText.x = 10;
@@ -193,7 +202,7 @@ export class RulesPanelUI {
         addSectionLabel(this.strings.get('rulesPanel', 'collecting'));
 
         for (const entry of discoveredRules) {
-          const displayName = entry.def.incompleteName ?? this.strings.get('rulesPanel', 'unknown');
+          const displayName = this.r(entry.def.incompleteName ?? this.strings.get('rulesPanel', 'unknown'));
           const isExpanded = this.expandedRules.has(entry.def.id);
           const arrow = isExpanded ? '▼' : '▶';
 
@@ -253,7 +262,7 @@ export class RulesPanelUI {
               const isCollected = this.rulesData.hasFragment(frag.id);
               if (isCollected) {
                 const fragText = new Text({
-                  text: `"${frag.text}"`,
+                  text: `"${this.r(frag.text)}"`,
                   style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth - 20 },
                 });
                 fragText.x = 20;
@@ -263,7 +272,7 @@ export class RulesPanelUI {
 
                 if (frag.source) {
                   const srcText = new Text({
-                    text: `-- ${frag.source}`,
+                    text: `-- ${this.r(frag.source)}`,
                     style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
                   });
                   srcText.x = 24;

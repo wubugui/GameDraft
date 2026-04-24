@@ -113,7 +113,7 @@ export class LoreBookUI {
       for (const entry of lore) {
         const isNew = !this.archiveData.isRead(`lore_${entry.id}`);
         const label = new Text({
-          text: (isNew ? '* ' : '') + `[${this.categoryLabel(entry.category)}] ${entry.title}`,
+          text: (isNew ? '* ' : '') + `[${this.categoryLabel(entry.category)}] ${this.archiveData.resolveLine(entry.title)}`,
           style: { fontSize: 13, fill: isNew ? UITheme.colors.title : UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 160 },
         });
         label.x = px + PADDING;
@@ -123,7 +123,12 @@ export class LoreBookUI {
         label.on('pointerdown', () => {
           this.archiveData.triggerFirstViewIfNeeded(`lore_${entry.id}`, entry.firstViewActions);
           this.archiveData.markRead(`lore_${entry.id}`);
-          this.showContent(entry.content, entry.source, px + CONTENT_X_OFFSET, py + 50);
+          this.showContent(
+            this.archiveData.resolveLine(entry.content),
+            this.archiveData.resolveLine(entry.source),
+            px + CONTENT_X_OFFSET,
+            py + 50,
+          );
         });
         listContainer.addChild(label);
         cy += ENTRY_H;
