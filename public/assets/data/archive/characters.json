@@ -9,7 +9,7 @@
         "conditions": []
       },
       {
-        "text": "看起来对渝都卫的老事知道不少。",
+        "text": "看起来对雾津的老事知道不少。",
         "conditions": [
           {
             "flag": "talked_wang_about_ghost"
@@ -43,7 +43,7 @@
         "conditions": []
       },
       {
-        "text": "对渝都卫的各种传说如数家珍，也不知道哪些是真的哪些是编的。",
+        "text": "对雾津的各种传说如数家珍，也不知道哪些是真的哪些是编的。",
         "conditions": [
           {
             "flag": "heard_ghost_story"

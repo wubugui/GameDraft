@@ -16,6 +16,20 @@ export interface ScenarioPhasePersisted {
   outcome?: string | number | boolean | null;
 }
 
+/** 首次写入本 scenario 桶时 scenario 级进线 `requires` 未满足。 */
+export class ScenarioLineEntryRequiresError extends Error {
+  readonly scenarioId: string;
+  readonly requires: unknown;
+  constructor(scenarioId: string, requires: unknown) {
+    super(
+      `Scenario 进线 requires 未满足: scenarioId=${JSON.stringify(scenarioId)} requires=${JSON.stringify(requires)}`,
+    );
+    this.name = 'ScenarioLineEntryRequiresError';
+    this.scenarioId = scenarioId;
+    this.requires = requires;
+  }
+}
+
 /**
  * 按 scenarioId 分桶的叙事局部状态；不参与 FlagStore。
  * 持久化经 IGameSystem.serialize 进入存档。
@@ -40,10 +54,42 @@ export class ScenarioStateManager implements IGameSystem {
 
   init(_ctx: GameContext): void {}
 
+  /**
+   * 供 `startScenario` 动作用：在尚未有本线任意 phase 存档前校验进线 `requires`；
+   * 未满足时抛出 `ScenarioLineEntryRequiresError`。
+   * 若已有本 scenario 的状态桶则直接返回（与 `setScenarioPhase` 首次写入口径一致）。
+   */
+  assertScenarioLineEntryForAction(scenarioId: string): void {
+    this.assertScenarioLineEntryMetOrThrow(scenarioId.trim());
+  }
+
   update(_dt: number): void {}
 
   destroy(): void {
     this.byScenario.clear();
+  }
+
+  /**
+   * 本 scenario 是否尚无任意 phase 的持久化条目（进线前 / 进线后）。
+   */
+  private isFirstWriteToScenario(scenarioId: string): boolean {
+    const m = this.byScenario.get(scenarioId);
+    return !m || m.size === 0;
+  }
+
+  /**
+   * 进线门槛：第一次写入本 scenario 桶前须满足 `ScenarioCatalogEntry.requires`。
+   * 不满足时 `console.error` 后抛出 `ScenarioLineEntryRequiresError`；非首次写入不校验。
+   */
+  private assertScenarioLineEntryMetOrThrow(scenarioId: string): void {
+    if (!this.isFirstWriteToScenario(scenarioId)) return;
+    const entry = this.catalog.find((c) => c.id === scenarioId);
+    const raw = entry?.requires;
+    if (raw === undefined || raw === null) return;
+    if (this.evalCatalogRequiresMet(scenarioId, raw)) return;
+    const logMsg = `[ScenarioStateManager] 进线 requires 未满足: scenario ${JSON.stringify(scenarioId)} requires=${JSON.stringify(raw)}`;
+    console.error(logMsg);
+    throw new ScenarioLineEntryRequiresError(scenarioId, raw);
   }
 
   /**
@@ -117,6 +163,8 @@ export class ScenarioStateManager implements IGameSystem {
     }
 
     const entry = this.catalog.find((c) => c.id === sid);
+    this.assertScenarioLineEntryMetOrThrow(sid);
+
     const rawReq = entry?.phases?.[ph]?.requires;
     const advancing = st0 === 'done' || st0 === 'active';
     if (advancing && !this.evalCatalogRequiresMet(sid, rawReq)) {
@@ -124,12 +172,13 @@ export class ScenarioStateManager implements IGameSystem {
         rawReq !== undefined && rawReq !== null
           ? ` requires=${JSON.stringify(rawReq)}`
           : '';
-      const logMsg = `[ScenarioStateManager] setScenarioPhase: "${sid}"·"${ph}" 的清单 requires 未满足${detail}`;
+      const logMsg = `[ScenarioStateManager] setScenarioPhase: "${sid}"·"${ph}" 的清单 requires 未满足${detail}；已放弃写入`;
       console.error(logMsg);
       this.eventBus?.emit('notification:show', {
         text: `叙事阶段「${ph}」违反 requires 前置（详情见控制台日志）`,
         type: 'error',
       });
+      return;
     }
 
     let m = this.byScenario.get(sid);

@@ -18,7 +18,7 @@
       {
         "kind": "present",
         "type": "showTitle",
-        "text": "渝都卫",
+        "text": "雾津",
         "duration": 1000
       },
       {
@@ -51,7 +51,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "渝都卫，地处西南山区盆地。时值军阀割据，外面没个太平日子，城里也好不到哪里去。"
+        "text": "雾津，地处西南山区盆地。时值军阀割据，外面没个太平日子，城里也好不到哪里去。"
       },
       {
         "kind": "present",

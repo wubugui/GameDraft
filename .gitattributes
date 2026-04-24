@@ -1,0 +1,61 @@
+# 文本在仓库中统一为 LF，减轻 Windows 下与 core.autocrlf 混用时的「假脏」
+# 更具体的规则在下方覆盖通配
+* text=auto eol=lf
+
+# Windows 批处理 / PowerShell：工作区用 CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：禁止按文本做换行归一
+*.7z binary
+*.aif binary
+*.aiff binary
+*.apng binary
+*.avi binary
+*.bin binary
+*.bmp binary
+*.cur binary
+*.dll binary
+*.eot binary
+*.exe binary
+*.fbx binary
+*.flac binary
+*.gif binary
+*.glb binary
+*.gz binary
+*.icns binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.m4a binary
+*.mkv binary
+*.mo binary
+*.mov binary
+*.mp3 binary
+*.mp4 binary
+*.obj binary
+*.ogg binary
+*.otf binary
+*.pdf binary
+*.png binary
+*.psd binary
+*.pyc binary
+*.pyd binary
+*.rar binary
+*.so binary
+*.tar binary
+*.tga binary
+*.tif binary
+*.tiff binary
+*.ttf binary
+*.usdz binary
+*.wav binary
+*.webm binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+
+# glTF 源文件为 JSON 文本
+*.gltf text eol=lf

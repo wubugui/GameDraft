@@ -3,7 +3,7 @@
     "id": "copper_coins",
     "name": "铜钱",
     "type": "consumable",
-    "description": "几文铜钱，在渝都卫能买碗面。",
+    "description": "几文铜钱，在雾津能买碗面。",
     "maxStack": 99
   },
   {

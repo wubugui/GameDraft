@@ -656,6 +656,7 @@ def _append_action_param_ref_issues(
 def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> None:
     """per-phase /进线 requires 布尔式、引用与纯与链 DAG（无环）。"""
     from .scenario_requires_expr import flatten_and_of_phase_strings, validate_requires_expr
+    from .scenarios_catalog_validate import scenario_entry_prereq_cycle_among_leaves
 
     raw = model.scenarios_catalog.get("scenarios")
     if not isinstance(raw, list):
@@ -679,6 +680,12 @@ def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> Non
             )
             if err:
                 issues.append(Issue("error", "scenarios", sid, err))
+            else:
+                cyc = scenario_entry_prereq_cycle_among_leaves(
+                    entry_req, phases, sid=sid,
+                )
+                if cyc:
+                    issues.append(Issue("error", "scenarios", sid, cyc))
         adj: dict[str, list[str]] = {}
         skip_cycle = False
         for pname, pval in phases.items():
@@ -973,6 +980,19 @@ def _walk_action_defs(
                         "error", data_type, item_id,
                         f"setScenarioPhase phase {ph!r} 不在 scenario {sid!r} 的 phases 清单",
                     ))
+        elif t == "startScenario":
+            scen = _scenario_definitions(model)
+            sid = str(p.get("scenarioId") or "").strip()
+            if not sid:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "startScenario 缺少 scenarioId",
+                ))
+            elif sid not in scen:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"startScenario scenarioId {sid!r} 不在 scenarios.json",
+                ))
         elif t == "revealDocument":
             doc_id = str(p.get("documentId") or "").strip()
             if not doc_id:

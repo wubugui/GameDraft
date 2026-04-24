@@ -5,12 +5,70 @@ from typing import Any, TYPE_CHECKING
 
 from .flag_registry import scenario_exposes_flag_errors
 from .scenario_requires_expr import (
+    collect_requires_phase_leaves,
     flatten_and_of_phase_strings,
     validate_requires_expr,
 )
 
 if TYPE_CHECKING:
     from .project_model import ProjectModel
+
+
+def scenario_entry_prereq_cycle_among_leaves(
+    entry_req: Any,
+    phases: dict[str, Any],
+    *,
+    sid: str,
+) -> str | None:
+    """
+    进线 requires 中引用的 phase，若在同 scenario 的 per-phase requires（纯与链可展开）下
+    彼此形成前置有向环，则运行时永远无法进线。保存/校验时报错。
+    """
+    if entry_req is None:
+        return None
+    leaves = collect_requires_phase_leaves(entry_req, into=None)
+    if len(leaves) < 2:
+        return None
+    adj: dict[str, list[str]] = {n: [] for n in leaves}
+    could_build = True
+    for p in leaves:
+        pval = phases.get(p)
+        if not isinstance(pval, dict):
+            continue
+        pr = pval.get("requires")
+        if pr is None:
+            continue
+        flat = flatten_and_of_phase_strings(pr)
+        if flat is None:
+            could_build = False
+            break
+        for r in flat:
+            if r in leaves and r != p:
+                adj[r].append(p)
+    if not could_build:
+        return None
+    _WHITE, _GREY, _BLACK = 0, 1, 2
+    color: dict[str, int] = {n: _WHITE for n in leaves}
+
+    def _cyc(u: str) -> bool:
+        color[u] = _GREY
+        for v in adj.get(u, ()):
+            if v not in color:
+                continue
+            if color.get(v) == _GREY:
+                return True
+            if color.get(v) == _WHITE and _cyc(v):
+                return True
+        color[u] = _BLACK
+        return False
+
+    for n in leaves:
+        if color.get(n) == _WHITE and _cyc(n):
+            return (
+                f"{sid!r} 的 scenario 进线 requires 所引用的 phase 在 per-phase 前置中形成有向环，"
+                "无法进线；请调整 requires 或进线条件"
+            )
+    return None
 
 
 def validate_scenarios_list(
@@ -37,13 +95,17 @@ def validate_scenarios_list(
             return f"{sid!r} 下 phase 名重复：{dup_ph!r}"
         req = e.get("requires")
         if req is not None:
+            pset = set(phases.keys())
             err = validate_requires_expr(
                 req,
-                pset=set(phases.keys()),
+                pset=pset,
                 where=f"{sid!r} 的 scenario 进线 requires",
             )
             if err:
                 return err
+            cyc = scenario_entry_prereq_cycle_among_leaves(req, phases, sid=sid)
+            if cyc:
+                return cyc
         eat = str(e.get("exposeAfterPhase", "")).strip()
         if eat and eat not in phases:
             return f"{sid!r} 的 exposeAfterPhase {eat!r} 不在 phases 中"

@@ -101,7 +101,7 @@ from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
 from .scripted_lines_editor import ScriptedLinesEditor
 
 ACTION_TYPES = [
-    "setFlag", "setScenarioPhase", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "setFlag", "setScenarioPhase", "startScenario", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "showEmote", "playNpcAnimation", "setEntityEnabled", "openShop",
@@ -1117,6 +1117,37 @@ class ActionRow(QWidget):
             self._sync_foldable_visibility()
             return
 
+        if act_type == "startScenario":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "仅校验 scenarios.json 中本条线的进线 requires；不写入 phase。"
+                "未满足时与首次 setScenarioPhase 相同：抛出 ScenarioLineEntryRequiresError。"
+                "可放在图入口的 runActions 最前。",
+                self,
+            )
+            tip.setToolTip("与 setScenarioPhase 的进线检查一致，用于显式表达剧情起点。")
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            m = self._ctx_model
+            scen_ids = m.scenario_ids_ordered() if m else []
+            scen_entries = [(s, s) for s in scen_ids] or [
+                ("（请在 data/scenarios.json 添加 scenario）", ""),
+            ]
+            sid_combo = FilterableTypeCombo(scen_entries, self, select_only=True)
+            cur_sid = str(params.get("scenarioId") or "").strip()
+            if cur_sid:
+                sid_combo.set_committed_type(cur_sid)
+            elif scen_ids:
+                sid_combo.set_committed_type(scen_ids[0])
+            sid_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            self._param_widgets["scenarioId"] = sid_combo
+            self._params_layout.addRow("scenarioId", sid_combo)
+            self._sync_foldable_visibility()
+            return
+
         if act_type == "revealDocument":
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
@@ -1832,6 +1863,10 @@ class ActionRow(QWidget):
             return self._to_dict_set_player_avatar()
         if act_type == "setScenarioPhase":
             return self._to_dict_set_scenario_phase()
+        if act_type == "startScenario":
+            sid_w = self._param_widgets.get("scenarioId")
+            sid0 = sid_w.committed_type() if isinstance(sid_w, FilterableTypeCombo) else ""
+            return {"type": "startScenario", "params": {"scenarioId": sid0}}
         if act_type == "revealDocument":
             return self._to_dict_reveal_document()
         schema = _PARAM_SCHEMAS.get(act_type, [])

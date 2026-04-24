@@ -5,7 +5,7 @@ from tools.chronicle_sim.core.llm.json_extract import parse_json_lenient, parse_
 JSON_TEXT = '''
 {
   "world_setting": {
-    "title": "渝都卫纪事",
+    "title": "雾津纪事",
     "logline": "test"
   },
   "design_pillars": [],

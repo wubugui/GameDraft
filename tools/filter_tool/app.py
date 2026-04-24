@@ -116,7 +116,7 @@ PRESET_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\u4e00-\u9fa5-]+$")
 class FilterToolApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("滤镜工具 - 渝都卫")
+        self.root.title("滤镜工具 - 雾津")
         self.root.geometry("1000x700")
         self.root.minsize(800, 550)
 

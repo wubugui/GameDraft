@@ -1282,7 +1282,7 @@
     },
     {
       "uid": "json_strings:public/assets/data/strings.json:strings.map.title",
-      "source_text": "渝都卫城区图",
+      "source_text": "雾津城区图",
       "file_path": "public/assets/data/strings.json",
       "field_path": "strings.map.title",
       "file_type": "json_strings",
@@ -2560,7 +2560,7 @@
     },
     {
       "uid": "json_rule:public/assets/data/rules.json:rules[rule_ghost_origin].description",
-      "source_text": "据各方传闻拼凑，城隍庙后山的唱戏白影子，很可能是早年间渝都卫柳家戏班子的人。她不是在害人，而是在找人。",
+      "source_text": "据各方传闻拼凑，城隍庙后山的唱戏白影子，很可能是早年间雾津柳家戏班子的人。她不是在害人，而是在找人。",
       "file_path": "public/assets/data/rules.json",
       "field_path": "rules[rule_ghost_origin].description",
       "file_type": "json_rule",
@@ -2722,7 +2722,7 @@
     },
     {
       "uid": "json_item:public/assets/data/items.json:item[copper_coins].description",
-      "source_text": "几文铜钱，在渝都卫能买碗面。",
+      "source_text": "几文铜钱，在雾津能买碗面。",
       "file_path": "public/assets/data/items.json",
       "field_path": "item[copper_coins].description",
       "file_type": "json_item",
@@ -3749,7 +3749,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/characters.json:impressions[wang_grandpa][1].text",
-      "source_text": "看起来对渝都卫的老事知道不少。",
+      "source_text": "看起来对雾津的老事知道不少。",
       "file_path": "public/assets/data/archive/characters.json",
       "field_path": "impressions[wang_grandpa][1].text",
       "file_type": "json_archive",
@@ -3787,7 +3787,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/characters.json:impressions[storyteller_zhang][1].text",
-      "source_text": "对渝都卫的各种传说如数家珍，也不知道哪些是真的哪些是编的。",
+      "source_text": "对雾津的各种传说如数家珍，也不知道哪些是真的哪些是编的。",
       "file_path": "public/assets/data/archive/characters.json",
       "field_path": "impressions[storyteller_zhang][1].text",
       "file_type": "json_archive",
@@ -4236,7 +4236,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/lore.json:entries[lore_yanwang_ridge].content",
-      "source_text": "城北有一片死黑死黑的山脉叫做阎王岭。老辈子传下来的话：人死了，魂往北走，过了阎王岭就回不来了。但偏偏有不少活人往那边跑——找金子的、找药的、自称能通阴阳的。去的人多，回来的人少，渝都卫人管他们叫短命娃娃。",
+      "source_text": "城北有一片死黑死黑的山脉叫做阎王岭。老辈子传下来的话：人死了，魂往北走，过了阎王岭就回不来了。但偏偏有不少活人往那边跑——找金子的、找药的、自称能通阴阳的。去的人多，回来的人少，雾津人管他们叫短命娃娃。",
       "file_path": "public/assets/data/archive/lore.json",
       "field_path": "entries[lore_yanwang_ridge].content",
       "file_type": "json_archive",
@@ -4344,7 +4344,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/documents.json:archive[doc_city_defense_notice].content",
-      "source_text": "近日城外流民日增，城内治安堪忧。凡有生面孔者，各铺保甲须即时登记报备。夜间宵禁自亥时始，卯时止，违者以扰乱治安论处。\n[img:images/backgrounds/day_alley_bg.png]\n特此告示。\n渝都卫城防署 民国十三年秋",
+      "source_text": "近日城外流民日增，城内治安堪忧。凡有生面孔者，各铺保甲须即时登记报备。夜间宵禁自亥时始，卯时止，违者以扰乱治安论处。\n[img:images/backgrounds/day_alley_bg.png]\n特此告示。\n雾津城防署 民国十三年秋",
       "file_path": "public/assets/data/archive/documents.json",
       "field_path": "archive[doc_city_defense_notice].content",
       "file_type": "json_archive",
@@ -4488,7 +4488,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/documents.json:archive[doc_opera_playbill].content",
-      "source_text": "柳家班 庚申年 新春公演\n\n头折《牡丹亭·惊梦》 旦角：柳如烟\n二折《窦娥冤·斩娥》 旦角：柳如烟\n三折《红楼梦·葬花》 旦角：柳如烟\n\n地点：渝都卫城隍庙戏台\n票价：铜钱十文",
+      "source_text": "柳家班 庚申年 新春公演\n\n头折《牡丹亭·惊梦》 旦角：柳如烟\n二折《窦娥冤·斩娥》 旦角：柳如烟\n三折《红楼梦·葬花》 旦角：柳如烟\n\n地点：雾津城隍庙戏台\n票价：铜钱十文",
       "file_path": "public/assets/data/archive/documents.json",
       "field_path": "archive[doc_opera_playbill].content",
       "file_type": "json_archive",
@@ -4524,7 +4524,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/books.json:archive[book_erta_guide].title",
-      "source_text": "《渝都卫风物志》",
+      "source_text": "《雾津风物志》",
       "file_path": "public/assets/data/archive/books.json",
       "field_path": "archive[book_erta_guide].title",
       "file_type": "json_archive",
@@ -4561,7 +4561,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/books.json:pages[book_erta_guide][0].content",
-      "source_text": "渝都卫，古称渝都，地处西南山区盆地之中。城沿江而建，西北两方有巍峨雪山连绵不断。\n\n此志记载渝都卫之风土人情、山川地理、奇闻异事，聊供后人查考。",
+      "source_text": "雾津，古称渝都，地处西南山区盆地之中。城沿江而建，西北两方有巍峨雪山连绵不断。\n\n此志记载雾津之风土人情、山川地理、奇闻异事，聊供后人查考。",
       "file_path": "public/assets/data/archive/books.json",
       "field_path": "pages[book_erta_guide][0].content",
       "file_type": "json_archive",
@@ -4637,7 +4637,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/books.json:pages[book_erta_guide][2].content",
-      "source_text": "渝都卫人口组成极为复杂。本地居民不过十之三四，其余皆为外来者。\n\n有去神仙顶寻龙脉的江湖客，有去阎王岭盗墓的短命娃娃，有从各地逃难来的流民，还有各色三教九流。\n\n城中治安全仰仗城防署的一队兵丁，人手严重不足。",
+      "source_text": "雾津人口组成极为复杂。本地居民不过十之三四，其余皆为外来者。\n\n有去神仙顶寻龙脉的江湖客，有去阎王岭盗墓的短命娃娃，有从各地逃难来的流民，还有各色三教九流。\n\n城中治安全仰仗城防署的一队兵丁，人手严重不足。",
       "file_path": "public/assets/data/archive/books.json",
       "field_path": "pages[book_erta_guide][2].content",
       "file_type": "json_archive",
@@ -4713,7 +4713,7 @@
     },
     {
       "uid": "json_archive:public/assets/data/archive/books.json:pages[book_erta_guide][4].content",
-      "source_text": "渝都卫旧有柳家班，班主柳老板。班中旦角柳如烟，唱腔婉转，一时名动渝都。\n\n然庚申年冬，戏班忽散，柳如烟不知所终。坊间传言纷纭，有人说她嫁了富商，有人说她投了江，也有人说她根本不是人……\n\n此后城隍庙后山便常有白影唱曲。",
+      "source_text": "雾津旧有柳家班，班主柳老板。班中旦角柳如烟，唱腔婉转，一时名动渝都。\n\n然庚申年冬，戏班忽散，柳如烟不知所终。坊间传言纷纭，有人说她嫁了富商，有人说她投了江，也有人说她根本不是人……\n\n此后城隍庙后山便常有白影唱曲。",
       "file_path": "public/assets/data/archive/books.json",
       "field_path": "pages[book_erta_guide][4].content",
       "file_type": "json_archive",
@@ -5089,7 +5089,7 @@
     },
     {
       "uid": "ink_dialogue:public/assets/dialogues/blind_li.ink:knot:honest_motive, line:57",
-      "source_text": "这个盒子你拿着，七天之内不许打开。若七天之后它还是好好的，就在最后一晚带着它去渝都卫水库桥下找我。",
+      "source_text": "这个盒子你拿着，七天之内不许打开。若七天之后它还是好好的，就在最后一晚带着它去雾津水库桥下找我。",
       "file_path": "public/assets/dialogues/blind_li.ink",
       "field_path": "knot:honest_motive, line:57",
       "file_type": "ink_dialogue",
@@ -8311,7 +8311,7 @@
     },
     {
       "uid": "cutscenes_title:public/assets/data/cutscenes/index.json:cutscenes[prologue_opening].steps[2].text",
-      "source_text": "渝都卫",
+      "source_text": "雾津",
       "file_path": "public/assets/data/cutscenes/index.json",
       "field_path": "cutscenes[prologue_opening].steps[2].text",
       "file_type": "cutscenes_title",
@@ -8388,7 +8388,7 @@
     },
     {
       "uid": "cutscenes_dialogue:public/assets/data/cutscenes/index.json:cutscenes[prologue_opening].steps[8].text",
-      "source_text": "渝都卫，地处西南山区盆地。时值军阀割据，外面没个太平日子，城里也好不到哪里去。",
+      "source_text": "雾津，地处西南山区盆地。时值军阀割据，外面没个太平日子，城里也好不到哪里去。",
       "file_path": "public/assets/data/cutscenes/index.json",
       "field_path": "cutscenes[prologue_opening].steps[8].text",
       "file_type": "cutscenes_dialogue",

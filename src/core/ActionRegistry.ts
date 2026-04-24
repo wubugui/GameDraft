@@ -142,6 +142,13 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     });
   }, ['scenarioId', 'phase', 'status']);
 
+  /** 显式进线：校验进线 `requires`（不写入状态）；未满足时抛出 `ScenarioLineEntryRequiresError`（与首次 `setScenarioPhase` 一致）。 */
+  executor.register('startScenario', (p) => {
+    const scenarioId = String(p.scenarioId ?? '').trim();
+    if (!scenarioId) return;
+    d.scenarioStateManager.assertScenarioLineEntryForAction(scenarioId);
+  }, ['scenarioId']);
+
   executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
   executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
   executor.register('giveCurrency', (p) => { void d.inventoryManager.addCoins(p.amount as number); }, ['amount']);

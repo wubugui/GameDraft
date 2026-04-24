@@ -54,7 +54,7 @@ EXTERNAL getFlag(key)
 # action:setFlag:box_taboo_active:true
 # action:showNotification:获得关键道具：铁盒子:info
 # speaker:瞎子李
-这个盒子你拿着，七天之内不许打开。若七天之后它还是好好的，就在最后一晚带着它去渝都卫水库桥下找我。
+这个盒子你拿着，七天之内不许打开。若七天之后它还是好好的，就在最后一晚带着它去雾津水库桥下找我。
 + [这差事就这么简单？]
     # speaker:瞎子李
     简单不简单，要看你手贱不手贱。

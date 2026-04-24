@@ -95,13 +95,13 @@ interface CutsceneDef {
   "steps": [
     { "kind": "present", "type": "showImg", "image": "/assets/images/illustrations/taoist_finds_scroll_cliff.png" },
     { "kind": "action",  "type": "playSfx", "params": { "id": "story_intro" } },
-    { "kind": "present", "type": "showTitle", "text": "渝都卫", "duration": 1000 },
+    { "kind": "present", "type": "showTitle", "text": "雾津", "duration": 1000 },
     { "kind": "present", "type": "waitTime", "duration": 1000 },
     { "kind": "present", "type": "showTitle", "text": "第一天", "duration": 1000 },
     { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "茶馆里，张叨叨正说到李天狗的段子。..." },
     { "kind": "present", "type": "hideImg" },
     { "kind": "present", "type": "fadeIn", "duration": 1000 },
-    { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "渝都卫，地处西南山区盆地。..." },
+    { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "雾津，地处西南山区盆地。..." },
     { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "你——关二狗，从小没爹没娘..." }
   ]
 }
