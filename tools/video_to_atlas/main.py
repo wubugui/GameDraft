@@ -67,7 +67,15 @@ try:
 except Exception:
     pass
 
-from main_window import MainWindow
+# 在子目录中直接执行 python main.py 时无包名，从仓库根以绝对路径导入
+if __package__ is None:
+    _repo = Path(__file__).resolve().parents[2]
+    _r = str(_repo)
+    if _r not in sys.path:
+        sys.path.insert(0, _r)
+    from tools.video_to_atlas.main_window import MainWindow
+else:
+    from .main_window import MainWindow
 
 
 def main() -> None:

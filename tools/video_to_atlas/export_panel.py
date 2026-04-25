@@ -25,14 +25,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atlas_core import (
+from .atlas_core import (
     build_atlas_native_equal_cells,
     export_gamedraft_anim,
     export_gamedraft_anim_multi,
     save_outputs,
     scale_bgra_uniform,
 )
-from workspace_model import AnimationClip, ExportJob, Workspace, new_id
+from .workspace_model import AnimationClip, ExportJob, Workspace, new_id
 
 _SAFE_DIR_RE = re.compile(r'[<>:"/\\|?*]')
 

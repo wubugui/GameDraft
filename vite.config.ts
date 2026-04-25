@@ -66,7 +66,8 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    // 避免 Windows 动态排除端口段（常见含 2948–3047，3000 会 EACCES）
+    port: 5173,
     // Editor embed: bind explicitly so Local: URL matches WebEngine (127.0.0.1).
     host: process.env.GAMEDRAFT_EDITOR_EMBED === '1' ? '127.0.0.1' : undefined,
     // Editor embed: do not open external browser.

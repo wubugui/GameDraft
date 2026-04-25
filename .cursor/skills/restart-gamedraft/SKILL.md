@@ -33,6 +33,6 @@ GameDraft\start-game.cmd
 
 ## 说明
 
-- `stop-game.cmd` 会结束占用 **3000–3003** 端口的监听进程（与多次启动 Vite 时的端口顺延一致）。
+- `stop-game.cmd` 会结束占用 **5173–5176** 端口的监听进程（与多次启动 Vite 时的端口顺延一致）。
 - 双击运行 `stop-game.cmd` 时仍可不带参数，末尾会 `pause`；仅自动化/重启流程使用 `nopause`。
 - 本流程针对 **GameDraft + Vite 开发服**，不是独立游戏服务端进程。

@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from atlas_core import flip_bgra_horizontal
+from .atlas_core import flip_bgra_horizontal
 
 _WORKSPACE_VERSION = 1
 _THUMB_SIZE = 64

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from atlas_core import (
+from .atlas_core import (
     build_atlas_native_equal_cells,
     export_gamedraft_anim,
     export_gamedraft_anim_multi,

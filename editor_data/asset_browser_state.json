@@ -1,0 +1,27 @@
+{
+  "splitter_h": [
+    280,
+    570,
+    420
+  ],
+  "splitter_v_fav": [
+    242,
+    485
+  ],
+  "view_mode": "table",
+  "thumb_size": 96,
+  "last_dir": "F:\\GameDraft",
+  "favorites": [],
+  "recent_dirs": [
+    "F:\\GameDraft"
+  ],
+  "window": {
+    "x": 1045,
+    "y": 525,
+    "w": 1280,
+    "h": 800
+  },
+  "filter_type": "all",
+  "search": "",
+  "search_recursive": false
+}

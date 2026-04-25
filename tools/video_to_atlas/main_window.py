@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from workspace_model import (
+from .workspace_model import (
     AnimationClip,
     ExportJob,
     FrameItem,
@@ -54,10 +54,10 @@ from workspace_model import (
     make_animation_clip,
     new_id,
 )
-from frame_sequence_player import FrameSequencePlayer
-from frame_viewer import FrameViewerDialog
-from import_dialog import ImportDialog
-from export_panel import ExportPanel
+from .frame_sequence_player import FrameSequencePlayer
+from .frame_viewer import FrameViewerDialog
+from .import_dialog import ImportDialog
+from .export_panel import ExportPanel
 
 _THUMB = 64
 _SETTINGS_ORG = "GameDraft"
@@ -132,7 +132,7 @@ class _FrameListModel(QAbstractListModel):
             pm = QPixmap(_THUMB, _THUMB)
             pm.fill(QColor(80, 20, 20))
             return pm
-        from atlas_core import bgra_to_bgr_preview
+        from .atlas_core import bgra_to_bgr_preview
         bgr = bgra_to_bgr_preview(item.rgba)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         rgb = np.ascontiguousarray(rgb)
@@ -813,7 +813,7 @@ class MainWindow(QWidget):
         t_item = self._ws.frame_by_id(ids[self._tail_idx])
         if h_item is None or t_item is None:
             return
-        from atlas_core import bgra_to_bgr_preview
+        from .atlas_core import bgra_to_bgr_preview
         head_bgr = bgra_to_bgr_preview(h_item.rgba)
         tail_bgr = bgra_to_bgr_preview(t_item.rgba)
         if tail_bgr.shape[:2] != head_bgr.shape[:2]:

@@ -28,9 +28,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from atlas_core import bgr_to_rgba_frame, decode_segment_rgba_frames
-from loop_range_bar import LoopRangeBar
-from workspace_model import (
+from .atlas_core import bgr_to_rgba_frame, decode_segment_rgba_frames
+from .loop_range_bar import LoopRangeBar
+from .workspace_model import (
     ChromaParams,
     FrameItem,
     VideoSource,

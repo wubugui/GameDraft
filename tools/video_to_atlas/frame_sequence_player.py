@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, Qt, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
 
 if TYPE_CHECKING:
-    from workspace_model import SlotRef, Workspace
+    from .workspace_model import SlotRef, Workspace
 
 # 与 Game.tick 一致，避免一帧卡死后 dt 爆炸、一次跳过多格只画最后一帧
 _MAX_DT_SEC = 0.1
@@ -218,7 +218,7 @@ class FrameSequencePlayer(QObject):
             self.frame_changed.emit(cached, self._index)
             return
 
-        from atlas_core import flip_bgra_horizontal
+        from .atlas_core import flip_bgra_horizontal
         bgra = item.rgba
         if bgra.ndim == 2 or (bgra.ndim == 3 and bgra.shape[2] == 1):
             return

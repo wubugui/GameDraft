@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 
 from PIL import Image
 
-from atlas_core import (
+from .atlas_core import (
     BuildConfig,
     bgr_to_rgba_frame,
     bgra_to_bgr_preview,
@@ -50,8 +50,8 @@ from atlas_core import (
     save_outputs,
     scale_bgra_uniform,
 )
-from loop_range_bar import LoopRangeBar
-from project_model import (
+from .loop_range_bar import LoopRangeBar
+from .project_model import (
     AnimationClip,
     FrameItem,
     VideoProject,

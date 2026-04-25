@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 # Default must match vite.config.ts server.port
-GAME_DEV_URL = "http://127.0.0.1:3000/"
+GAME_DEV_URL = "http://127.0.0.1:5173/"
 
 _PLACEHOLDER_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <style>body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
