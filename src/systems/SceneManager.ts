@@ -13,11 +13,21 @@ import type {
   SceneCameraConfig,
   NpcPersistentSnapshot,
   HotspotDisplayImage,
+  SceneEntityRuntimeOverrides,
+  SceneEntityRuntimeValue,
+  NpcRuntimeOverride,
+  HotspotRuntimeOverride,
 } from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from '../core/assetPath';
 import type { IGameSystem } from '../data/types';
+import {
+  applyHotspotRuntimeOverride,
+  applyNpcRuntimeOverride,
+  coerceRuntimeFieldValue,
+  type SceneEntityKind,
+} from '../data/EntityRuntimeFieldSchema';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -27,9 +37,7 @@ export type ApplyDebugWorldSizeResult =
 interface SceneMemory {
   inspectedHotspots: string[];
   pickedUpHotspots: string[];
-  npcSnapshots: Record<string, NpcPersistentSnapshot>;
-  /** 运行时 setHotspotDisplayImage 对展示图的覆盖，进场景时合并到 Hotspot def（与 JSON 分离，进存档） */
-  hotspotDisplayImageOverrides?: Record<string, HotspotDisplayImage>;
+  entityOverrides: SceneEntityRuntimeOverrides;
 }
 
 export class SceneManager implements IGameSystem {
@@ -132,6 +140,32 @@ export class SceneManager implements IGameSystem {
     return this.isSwitching;
   }
 
+  private emptyEntityOverrides(): SceneEntityRuntimeOverrides {
+    return { npcs: {}, hotspots: {} };
+  }
+
+  private createEmptyMemory(): SceneMemory {
+    return {
+      inspectedHotspots: [],
+      pickedUpHotspots: [],
+      entityOverrides: this.emptyEntityOverrides(),
+    };
+  }
+
+  private ensureSceneMemory(sceneId: string): SceneMemory {
+    let mem = this.sceneMemory.get(sceneId);
+    if (!mem) {
+      mem = this.createEmptyMemory();
+      this.sceneMemory.set(sceneId, mem);
+    }
+    if (!mem.entityOverrides) {
+      mem.entityOverrides = this.emptyEntityOverrides();
+    }
+    if (!mem.entityOverrides.npcs) mem.entityOverrides.npcs = {};
+    if (!mem.entityOverrides.hotspots) mem.entityOverrides.hotspots = {};
+    return mem;
+  }
+
   /**
    * 记录某场景某热点展示图运行态（供非当前图 setHotspotDisplayImage 或进图时合并）。
    */
@@ -140,20 +174,41 @@ export class SceneManager implements IGameSystem {
     hotspotId: string,
     di: HotspotDisplayImage,
   ): void {
+    this.setEntityRuntimeField(sceneId, 'hotspot', hotspotId, 'displayImage', di);
+  }
+
+  setEntityRuntimeField(
+    sceneId: string,
+    kind: SceneEntityKind,
+    entityId: string,
+    fieldName: string,
+    rawValue: unknown,
+  ): { ok: true; value: SceneEntityRuntimeValue } | { ok: false; error: string } {
     const sid = sceneId.trim();
-    const hid = hotspotId.trim();
-    if (!sid || !hid) {
-      return;
+    const id = entityId.trim();
+    const field = fieldName.trim();
+    if (!sid || !id || !field) {
+      return { ok: false, error: 'setEntityRuntimeField: sceneId/entityId/fieldName 不能为空' };
     }
-    let mem = this.sceneMemory.get(sid);
-    if (!mem) {
-      mem = { inspectedHotspots: [], pickedUpHotspots: [], npcSnapshots: {} };
-      this.sceneMemory.set(sid, mem);
-    }
-    if (!mem.hotspotDisplayImageOverrides) {
-      mem.hotspotDisplayImageOverrides = {};
-    }
-    mem.hotspotDisplayImageOverrides[hid] = di;
+    const coerced = coerceRuntimeFieldValue(kind, field, rawValue);
+    if (!coerced.ok) return coerced;
+    const mem = this.ensureSceneMemory(sid);
+    const bucket = kind === 'npc' ? mem.entityOverrides.npcs : mem.entityOverrides.hotspots;
+    const prev = bucket[id] ?? {};
+    bucket[id] = { ...prev, [field]: coerced.value };
+    return { ok: true, value: coerced.value };
+  }
+
+  getEntityRuntimeOverride(
+    sceneId: string,
+    kind: SceneEntityKind,
+    entityId: string,
+  ): NpcRuntimeOverride | HotspotRuntimeOverride | undefined {
+    const mem = this.sceneMemory.get(sceneId);
+    if (!mem?.entityOverrides) return undefined;
+    return kind === 'npc'
+      ? mem.entityOverrides.npcs?.[entityId]
+      : mem.entityOverrides.hotspots?.[entityId];
   }
 
   /**
@@ -171,18 +226,9 @@ export class SceneManager implements IGameSystem {
       console.warn('SceneManager.mergePersistentNpcState: 空 npcId');
       return;
     }
-    let mem = this.sceneMemory.get(sceneId);
-    if (!mem) {
-      mem = { inspectedHotspots: [], pickedUpHotspots: [], npcSnapshots: {} };
-      this.sceneMemory.set(sceneId, mem);
-    } else if (!mem.npcSnapshots) {
-      mem.npcSnapshots = {};
-    }
-    if (mem && !mem.hotspotDisplayImageOverrides) {
-      mem.hotspotDisplayImageOverrides = {};
-    }
-    const prev = mem.npcSnapshots[id] ?? {};
-    mem.npcSnapshots[id] = { ...prev, ...patch };
+    const mem = this.ensureSceneMemory(sceneId);
+    const prev = mem.entityOverrides.npcs[id] ?? {};
+    mem.entityOverrides.npcs[id] = { ...prev, ...patch };
   }
 
   /** 再次进入场景时是否不应启动该 NPC 的巡逻 */
@@ -190,7 +236,7 @@ export class SceneManager implements IGameSystem {
     const sid = this.currentScene?.id;
     if (!sid) return false;
     const mem = this.sceneMemory.get(sid);
-    return mem?.npcSnapshots?.[npcId]?.patrolDisabled === true;
+    return mem?.entityOverrides?.npcs?.[npcId]?.patrolDisabled === true;
   }
 
   /**
@@ -314,10 +360,9 @@ export class SceneManager implements IGameSystem {
       for (const def of sceneData.hotspots) {
         if (memory?.pickedUpHotspots.includes(def.id)) continue;
 
-        const ovr = memory?.hotspotDisplayImageOverrides?.[def.id];
-        const defToUse = ovr
-          ? { ...def, displayImage: ovr }
-          : def;
+        const ovr = memory?.entityOverrides?.hotspots?.[def.id];
+        if (ovr?.enabled === false) continue;
+        const defToUse = applyHotspotRuntimeOverride(def, ovr as Record<string, SceneEntityRuntimeValue> | undefined);
 
         const hotspot = new Hotspot(defToUse);
         this.currentHotspots.push(hotspot);
@@ -336,29 +381,21 @@ export class SceneManager implements IGameSystem {
 
     if (sceneData.npcs) {
       for (const npcDef of sceneData.npcs) {
-        const npc = new Npc(npcDef);
-        if (npcDef.animFile) {
+        const snap = memory?.entityOverrides?.npcs?.[npcDef.id];
+        const defToUse = applyNpcRuntimeOverride(npcDef, snap as Record<string, SceneEntityRuntimeValue> | undefined);
+        const npc = new Npc(defToUse);
+        if (defToUse.animFile) {
           try {
-            const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(npcDef.animFile);
-            const sheetPath = resolvePathRelativeToAnimManifest(npcDef.animFile, animRaw.spritesheet);
+            const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
+            const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
             const tex = await this.assetManager.loadTexture(sheetPath);
             const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
-            npc.loadSprite(tex, animDef, npcDef.initialAnimState);
+            npc.loadSprite(tex, animDef, defToUse.initialAnimState);
           } catch (_e) {
             // 加载失败时保留占位外观
           }
         }
-        const snap = memory?.npcSnapshots?.[npcDef.id];
         if (snap) {
-          if (
-            typeof snap.x === 'number' &&
-            Number.isFinite(snap.x) &&
-            typeof snap.y === 'number' &&
-            Number.isFinite(snap.y)
-          ) {
-            npc.x = snap.x;
-            npc.y = snap.y;
-          }
           if (typeof snap.enabled === 'boolean') {
             npc.setVisible(snap.enabled);
           }
@@ -485,8 +522,7 @@ export class SceneManager implements IGameSystem {
     this.sceneMemory.set(this.currentScene.id, {
       inspectedHotspots: inspected,
       pickedUpHotspots: pickedUp,
-      npcSnapshots: existing?.npcSnapshots ?? {},
-      hotspotDisplayImageOverrides: existing?.hotspotDisplayImageOverrides ?? {},
+      entityOverrides: existing?.entityOverrides ?? this.emptyEntityOverrides(),
     });
   }
 
@@ -499,7 +535,7 @@ export class SceneManager implements IGameSystem {
 
   private markHotspotInspected(hotspotId: string): void {
     if (!this.currentScene) return;
-    const mem = this.sceneMemory.get(this.currentScene.id);
+    const mem = this.ensureSceneMemory(this.currentScene.id);
     if (mem && !mem.inspectedHotspots.includes(hotspotId)) {
       mem.inspectedHotspots.push(hotspotId);
     }
@@ -567,16 +603,14 @@ export class SceneManager implements IGameSystem {
       {
         inspected: string[];
         pickedUp: string[];
-        npcSnapshots: Record<string, NpcPersistentSnapshot>;
-        hotspotDisplayImageOverrides: Record<string, HotspotDisplayImage>;
+        entityOverrides: SceneEntityRuntimeOverrides;
       }
     > = {};
     this.sceneMemory.forEach((mem, sceneId) => {
       data[sceneId] = {
         inspected: mem.inspectedHotspots,
         pickedUp: mem.pickedUpHotspots,
-        npcSnapshots: mem.npcSnapshots ?? {},
-        hotspotDisplayImageOverrides: mem.hotspotDisplayImageOverrides ?? {},
+        entityOverrides: mem.entityOverrides ?? this.emptyEntityOverrides(),
       };
     });
     return { currentSceneId: this.currentScene?.id ?? null, memory: data };
@@ -589,6 +623,7 @@ export class SceneManager implements IGameSystem {
       {
         inspected: string[];
         pickedUp: string[];
+        entityOverrides?: SceneEntityRuntimeOverrides;
         npcSnapshots?: Record<string, NpcPersistentSnapshot>;
         hotspotDisplayImageOverrides?: Record<string, HotspotDisplayImage>;
       }
@@ -596,11 +631,22 @@ export class SceneManager implements IGameSystem {
   }): void {
     this.sceneMemory.clear();
     for (const [sceneId, mem] of Object.entries(data.memory)) {
+      const entityOverrides = mem.entityOverrides ?? this.emptyEntityOverrides();
+      if (mem.npcSnapshots) {
+        entityOverrides.npcs = { ...entityOverrides.npcs, ...mem.npcSnapshots };
+      }
+      if (mem.hotspotDisplayImageOverrides) {
+        for (const [hotspotId, displayImage] of Object.entries(mem.hotspotDisplayImageOverrides)) {
+          entityOverrides.hotspots[hotspotId] = {
+            ...(entityOverrides.hotspots[hotspotId] ?? {}),
+            displayImage,
+          };
+        }
+      }
       this.sceneMemory.set(sceneId, {
         inspectedHotspots: mem.inspected,
         pickedUpHotspots: mem.pickedUp,
-        npcSnapshots: mem.npcSnapshots ?? {},
-        hotspotDisplayImageOverrides: mem.hotspotDisplayImageOverrides ?? {},
+        entityOverrides,
       });
     }
   }

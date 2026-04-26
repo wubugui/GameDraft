@@ -29,6 +29,7 @@ import type { ScenarioStateManager } from './ScenarioStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { ActionDef, DialogueLine, ICutsceneActor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
+import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 
 export interface ActionRegistryDeps {
   /** playScriptedDialogue speaker 中的 {{player}} / {{npc}} 等占位解析；scriptedNpcId 为 params.scriptedNpcId */
@@ -108,8 +109,16 @@ export interface ActionRegistryDeps {
   spawnCutsceneActor: (id: string, name: string, x: number, y: number) => void;
   /** 从 CutsceneManager 临时表中移除一个临时实体并销毁 */
   removeCutsceneActor: (id: string) => void;
-  /** 将当前场景内指定热点的展示图换为已存在的贴图路径（与 scene JSON displayImage 同语义） */
-  setHotspotDisplayImage: (hotspotId: string, imagePath: string) => Promise<void>;
+  /** 写入 sceneId/entityKind/entityId/fieldName 的可存档字段，并在已加载时即时应用 */
+  setSceneEntityField: (
+    sceneId: string,
+    kind: SceneEntityKind,
+    entityId: string,
+    fieldName: string,
+    value: RuntimeFieldValue,
+  ) => Promise<void>;
+  /** 将指定热点的展示图换为已存在的贴图路径（与 scene JSON displayImage 同语义） */
+  setHotspotDisplayImage: (sceneId: string, hotspotId: string, imagePath: string) => Promise<void>;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -547,16 +556,36 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['id', 'image', 'xPercent', 'yPercent', 'widthPercent']);
 
   executor.register('setHotspotDisplayImage', (p) => {
+    const sceneId = String(p.sceneId ?? '').trim();
     const hid = String(p.hotspotId ?? '').trim();
     const image = String(p.image ?? '').trim();
-    if (!hid || !image) {
-      console.warn('setHotspotDisplayImage: 需要 hotspotId 与 image');
+    if (!sceneId || !hid || !image) {
+      console.warn('setHotspotDisplayImage: 需要 sceneId、hotspotId 与 image');
       return;
     }
-    return d.setHotspotDisplayImage(hid, image).catch((e) => {
+    return d.setHotspotDisplayImage(sceneId, hid, image).catch((e) => {
       console.warn('ActionRegistry: setHotspotDisplayImage failed', e);
     });
-  }, ['hotspotId', 'image']);
+  }, ['sceneId', 'hotspotId', 'image']);
+
+  executor.register('setEntityField', (p) => {
+    const sceneId = String(p.sceneId ?? '').trim();
+    const entityKind = String(p.entityKind ?? '').trim();
+    const entityId = String(p.entityId ?? '').trim();
+    const fieldName = String(p.fieldName ?? '').trim();
+    const value = p.value as RuntimeFieldValue;
+    if (entityKind !== 'npc' && entityKind !== 'hotspot') {
+      console.warn('setEntityField: entityKind 必须是 npc 或 hotspot');
+      return;
+    }
+    if (!sceneId || !entityId || !fieldName) {
+      console.warn('setEntityField: 需要 sceneId、entityId、fieldName');
+      return;
+    }
+    return d.setSceneEntityField(sceneId, entityKind, entityId, fieldName, value).catch((e) => {
+      console.warn('ActionRegistry: setEntityField failed', e);
+    });
+  }, ['sceneId', 'entityKind', 'entityId', 'fieldName', 'value']);
 
   executor.register('hideOverlayImage', (p) => {
     const id = String(p.id ?? '').trim();

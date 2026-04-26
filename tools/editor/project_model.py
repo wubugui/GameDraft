@@ -367,6 +367,37 @@ class ProjectModel(QObject):
                 out.append((str(nid), str(label)[:40]))
         return out
 
+    def hotspot_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """Hotspot ids in a scene."""
+        if not scene_id:
+            return []
+        sc = self.scenes.get(scene_id) or {}
+        out: list[tuple[str, str]] = []
+        for hs in sc.get("hotspots") or []:
+            if not isinstance(hs, dict):
+                continue
+            hid = str(hs.get("id", "") or "").strip()
+            if not hid:
+                continue
+            label = hs.get("label") or hs.get("type") or hid
+            out.append((hid, str(label)[:40]))
+        return out
+
+    def entity_ids_for_scene(self, scene_id: str | None, kind: str) -> list[tuple[str, str]]:
+        if kind == "npc":
+            return self.npc_ids_for_scene(scene_id)
+        if kind == "hotspot":
+            return self.hotspot_ids_for_scene(scene_id)
+        return []
+
+    def runtime_entity_field_choices(self, kind: str) -> list[tuple[str, str]]:
+        from .shared.runtime_field_schema import field_choices
+        return field_choices(kind)
+
+    def runtime_entity_field_meta(self, kind: str, field_name: str) -> dict[str, str] | None:
+        from .shared.runtime_field_schema import field_meta
+        return field_meta(kind, field_name)
+
     def all_hotspot_ids(self) -> list[tuple[str, str]]:
         """全场景热点 id 列表 (id, 展示说明)，供 Action 等筛选器使用。"""
         from collections import defaultdict

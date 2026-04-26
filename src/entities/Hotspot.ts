@@ -197,6 +197,18 @@ export class Hotspot {
     return this.def.y;
   }
 
+  setPosition(x: number, y: number): void {
+    this.def.x = x;
+    this.def.y = y;
+    this._syncContainerPosition();
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.active = enabled;
+    if (!enabled) this.hidePrompt();
+    this.container.visible = enabled;
+  }
+
   showPrompt(): void {
     if (this.showingPrompt) return;
     this.showingPrompt = true;

@@ -54,6 +54,7 @@ import type {
   SceneDataRaw,
   ScenarioCatalogFile,
   ICutsceneActor,
+  HotspotDisplayImage,
 } from '../data/types';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
@@ -82,6 +83,12 @@ import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
 import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
 import { Texture, UPDATE_PRIORITY } from 'pixi.js';
+import {
+  coerceRuntimeFieldValue,
+  isHotspotDisplayImage,
+  type RuntimeFieldValue,
+  type SceneEntityKind,
+} from '../data/EntityRuntimeFieldSchema';
 import { installRuntimeErrorsToDebugPanel } from '../debug/debugPanelRuntimeLog';
 import {
   drainWebGLErrorsToPanel,
@@ -647,8 +654,10 @@ export class Game {
       removeCutsceneActor: (id) => {
         this.cutsceneManager.removeTempActor(id);
       },
-      setHotspotDisplayImage: (hotspotId, imagePath) =>
-        this.setHotspotDisplayImageFromAction(hotspotId, imagePath),
+      setSceneEntityField: (sceneId, kind, entityId, fieldName, value) =>
+        this.setSceneEntityFieldFromAction(sceneId, kind, entityId, fieldName, value),
+      setHotspotDisplayImage: (sceneId, hotspotId, imagePath) =>
+        this.setHotspotDisplayImageFromAction(sceneId, hotspotId, imagePath),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
     });
 
@@ -1589,19 +1598,144 @@ export class Game {
     this.syncEntityPixelDensityMatch();
   }
 
-  /**
-   * 按配置与背景密度同步玩家 / NPC / 热点展示的低通（仅 Pixi filters，不影响深度与碰撞）。
-   */
-  private async setHotspotDisplayImageFromAction(hotspotId: string, imagePath: string): Promise<void> {
-    const hid = hotspotId.trim();
-    const path = imagePath.trim();
-    if (!hid || !path) {
-      console.warn('setHotspotDisplayImage: 需要 hotspotId 与 image');
+  private async setSceneEntityFieldFromAction(
+    sceneId: string,
+    kind: SceneEntityKind,
+    entityId: string,
+    fieldName: string,
+    value: RuntimeFieldValue,
+  ): Promise<void> {
+    const checked = coerceRuntimeFieldValue(kind, fieldName, value);
+    if (!checked.ok) {
+      console.warn('setEntityField:', checked.error);
       return;
     }
-    const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === hid);
-    if (!h) {
-      console.warn(`setHotspotDisplayImage: 当前场景无热点 "${hid}"`);
+    const stored = this.sceneManager.setEntityRuntimeField(sceneId, kind, entityId, fieldName, checked.value);
+    if (!stored.ok) {
+      console.warn('setEntityField:', stored.error);
+      return;
+    }
+    if (this.sceneManager.currentSceneData?.id !== sceneId) return;
+    if (kind === 'npc') {
+      await this.applyNpcRuntimeFieldNow(entityId, fieldName, checked.value);
+    } else {
+      await this.applyHotspotRuntimeFieldNow(entityId, fieldName, checked.value);
+    }
+  }
+
+  private async setHotspotDisplayImageFromAction(
+    sceneId: string,
+    hotspotId: string,
+    imagePath: string,
+  ): Promise<void> {
+    const sid = sceneId.trim();
+    const hid = hotspotId.trim();
+    const path = imagePath.trim();
+    if (!sid || !hid || !path) {
+      console.warn('setHotspotDisplayImage: 需要 sceneId、hotspotId 与 image');
+      return;
+    }
+    const tex = await this.assetManager.loadTexture(path);
+    const current = this.sceneManager.currentSceneData?.id === sid
+      ? this.sceneManager.getCurrentHotspots().find((x) => x.def.id === hid)
+      : null;
+    const sceneData = this.sceneManager.currentSceneData?.id === sid
+      ? this.sceneManager.currentSceneData
+      : await this.assetManager.loadSceneData(sid);
+    const base = sceneData.hotspots?.find((h) => h.id === hid);
+    const override = this.sceneManager.getEntityRuntimeOverride(sid, 'hotspot', hid);
+    const overrideDisplay = override && 'displayImage' in override ? override.displayImage : undefined;
+    const prev = current?.def.displayImage ?? overrideDisplay ?? base?.displayImage;
+    const ww =
+      typeof prev?.worldWidth === 'number' && Number.isFinite(prev.worldWidth) && prev.worldWidth > 0
+        ? prev.worldWidth
+        : 100;
+    const hh =
+      typeof prev?.worldHeight === 'number' && Number.isFinite(prev.worldHeight) && prev.worldHeight > 0
+        ? prev.worldHeight
+        : Math.max(0.1, Math.round(ww * (tex.height / Math.max(1, tex.width)) * 10) / 10);
+    const displayImage: HotspotDisplayImage = {
+      image: path,
+      worldWidth: ww,
+      worldHeight: hh,
+      ...(prev?.facing !== undefined ? { facing: prev.facing } : {}),
+      ...(prev?.spriteSort !== undefined ? { spriteSort: prev.spriteSort } : {}),
+    };
+    await this.setSceneEntityFieldFromAction(sid, 'hotspot', hid, 'displayImage', displayImage);
+  }
+
+  private async applyNpcRuntimeFieldNow(
+    npcId: string,
+    fieldName: string,
+    value: RuntimeFieldValue,
+  ): Promise<void> {
+    const npc = this.sceneManager.getNpcById(npcId);
+    if (!npc) return;
+    const def = npc.def as unknown as Record<string, unknown>;
+    if (value === null) delete def[fieldName];
+    else def[fieldName] = value;
+    if (fieldName === 'x' && typeof value === 'number') npc.x = value;
+    else if (fieldName === 'y' && typeof value === 'number') npc.y = value;
+    else if (fieldName === 'enabled' && typeof value === 'boolean') npc.setVisible(value);
+    else if (fieldName === 'animState' && typeof value === 'string') npc.playAnimation(value);
+    else if (fieldName === 'patrolDisabled' && typeof value === 'boolean') {
+      if (value) this.stopNpcPatrol(npcId);
+      else this.startNpcPatrolForNpc(npcId);
+    } else if (fieldName === 'animFile' || fieldName === 'initialAnimState') {
+      await this.reloadNpcSpriteFromDef(npc);
+    }
+    this.syncEntityPixelDensityMatch();
+  }
+
+  private async reloadNpcSpriteFromDef(npc: Npc): Promise<void> {
+    const animFile = npc.def.animFile?.trim();
+    if (!animFile) return;
+    try {
+      const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(animFile);
+      const sheetPath = resolvePathRelativeToAnimManifest(animFile, animRaw.spritesheet);
+      const tex = await this.assetManager.loadTexture(sheetPath);
+      const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
+      npc.loadSprite(tex, animDef, npc.def.initialAnimState);
+    } catch (e) {
+      console.warn('setEntityField: reload NPC animation failed', npc.id, animFile, e);
+    }
+  }
+
+  private async applyHotspotRuntimeFieldNow(
+    hotspotId: string,
+    fieldName: string,
+    value: RuntimeFieldValue,
+  ): Promise<void> {
+    const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === hotspotId);
+    if (!h) return;
+    if (fieldName === 'x' && typeof value === 'number') h.setPosition(value, h.def.y);
+    else if (fieldName === 'y' && typeof value === 'number') h.setPosition(h.def.x, value);
+    else if (fieldName === 'enabled' && typeof value === 'boolean') h.setEnabled(value);
+    else if (fieldName === 'displayImage') {
+      if (value === null) {
+        delete h.def.displayImage;
+        const oldF = h.detachDepthOcclusionFilter();
+        if (oldF) {
+          this.sceneDepthSystem.removeFilter(oldF);
+          oldF.destroy();
+        }
+        h.setDisplayTexture(Texture.EMPTY, 0, 0);
+      } else if (isHotspotDisplayImage(value)) {
+        await this.applyHotspotDisplayImageNow(h, value);
+      }
+    }
+    this.syncEntityPixelDensityMatch();
+  }
+
+  private async applyHotspotDisplayImageNow(
+    h: ReturnType<SceneManager['getCurrentHotspots']>[number],
+    displayImage: HotspotDisplayImage,
+  ): Promise<void> {
+    let tex: Texture;
+    try {
+      tex = await this.assetManager.loadTexture(displayImage.image);
+    } catch (e) {
+      console.warn('setEntityField: hotspot displayImage 加载失败', displayImage.image, e);
       return;
     }
     const oldF = h.detachDepthOcclusionFilter();
@@ -1609,48 +1743,24 @@ export class Game {
       this.sceneDepthSystem.removeFilter(oldF);
       oldF.destroy();
     }
-    let tex: Texture;
-    try {
-      tex = await this.assetManager.loadTexture(path);
-    } catch (e) {
-      console.warn('setHotspotDisplayImage: 加载图失败', path, e);
-      return;
-    }
-    const prev = h.def.displayImage;
-    let ww: number;
-    if (typeof prev?.worldWidth === 'number' && Number.isFinite(prev.worldWidth) && prev.worldWidth > 0) {
-      ww = prev.worldWidth;
-    } else {
-      ww = 100;
-    }
-    let hh: number;
-    if (typeof prev?.worldHeight === 'number' && Number.isFinite(prev.worldHeight) && prev.worldHeight > 0) {
-      hh = prev.worldHeight;
-    } else {
-      const ar = tex.height / Math.max(1, tex.width);
-      hh = Math.max(0.1, Math.round(ww * ar * 10) / 10);
-    }
-    h.def.displayImage = {
-      image: path,
-      worldWidth: ww,
-      worldHeight: hh,
-      ...(prev?.facing !== undefined ? { facing: prev.facing } : {}),
-      ...(prev?.spriteSort !== undefined ? { spriteSort: prev.spriteSort } : {}),
-    };
-    h.setDisplayTexture(tex, ww, hh);
+    h.def.displayImage = displayImage;
+    h.setDisplayTexture(tex, displayImage.worldWidth, displayImage.worldHeight);
     if (h.hasDepthDisplayImage()) {
       try {
         const hf = this.sceneDepthSystem.createFilterForEntity();
         if (hf) {
-          depthLog('Game', 'setHotspotDisplayImage: reattach depth to', hid);
+          depthLog('Game', 'setEntityField: reattach depth to hotspot display:', h.def.id);
           h.attachDepthOcclusionFilter(hf);
         }
       } catch (e) {
-        depthError('Game', 'setHotspotDisplayImage: hotspot depth filter FAILED', hid, e);
+        depthError('Game', 'setEntityField: hotspot depth filter FAILED', h.def.id, e);
       }
     }
-    this.syncEntityPixelDensityMatch();
   }
+
+  /**
+   * 按配置与背景密度同步玩家 / NPC / 热点展示的低通（仅 Pixi filters，不影响深度与碰撞）。
+   */
 
   private syncEntityPixelDensityMatch(): void {
     const dBg = this.sceneManager.getBackgroundTexelsPerWorld();

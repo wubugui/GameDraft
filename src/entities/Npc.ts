@@ -61,6 +61,11 @@ export class Npc implements ICutsceneActor {
   }
 
   loadSprite(texture: Texture, animDef: AnimationSetDef, initialState?: string): void {
+    if (this.sprite) {
+      this.container.removeChild(this.sprite.container);
+      this.sprite.destroy();
+      this.sprite = null;
+    }
     if (this.marker) {
       this.container.removeChild(this.marker);
       this.marker.destroy();

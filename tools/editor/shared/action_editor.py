@@ -99,6 +99,7 @@ from .blend_overlay_preview import BlendOverlayPreviewWidget
 from .image_path_picker import CutsceneImagePathRow
 from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
 from .scripted_lines_editor import ScriptedLinesEditor
+from .runtime_field_schema import entity_kind_choices, field_meta
 
 ACTION_TYPES = [
     "setFlag", "setScenarioPhase", "startScenario", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
@@ -113,7 +114,7 @@ ACTION_TYPES = [
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
-    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage", "blendOverlayImage",
+    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage", "setEntityField", "blendOverlayImage",
     "revealDocument", "startDialogueGraph",
     "waitClickContinue",
     "waitMs",
@@ -1020,28 +1021,246 @@ class ActionRow(QWidget):
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params = self._data.get("params", {})
 
+        if act_type == "setEntityField":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "按 Save.* 字段 schema 写入可存档运行时覆盖；目标实体未加载时也会在进入场景后生效。",
+                self,
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            m = self._ctx_model
+            scene_entries = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+            scene_combo = FilterableTypeCombo(scene_entries, self, select_only=True)
+            cur_scene = str(params.get("sceneId") or self._ctx_scene_id or "").strip()
+            if cur_scene:
+                scene_combo.set_committed_type(cur_scene)
+            elif scene_entries and scene_entries[0][1]:
+                scene_combo.set_committed_type(scene_entries[0][1])
+            self._param_widgets["sceneId"] = scene_combo
+            self._params_layout.addRow("sceneId", scene_combo)
+
+            kind_combo = FilterableTypeCombo(entity_kind_choices(), self, select_only=True)
+            cur_kind = str(params.get("entityKind") or "npc").strip()
+            if cur_kind in ("npc", "hotspot"):
+                kind_combo.set_committed_type(cur_kind)
+            self._param_widgets["entityKind"] = kind_combo
+            self._params_layout.addRow("entityKind", kind_combo)
+
+            entity_combo = FilterableTypeCombo([], self, select_only=True)
+            self._param_widgets["entityId"] = entity_combo
+            self._params_layout.addRow("entityId", entity_combo)
+
+            field_combo = FilterableTypeCombo([], self, select_only=True)
+            self._param_widgets["fieldName"] = field_combo
+            self._params_layout.addRow("fieldName", field_combo)
+
+            value_frame = QFrame(self)
+            value_layout = QFormLayout(value_frame)
+            value_layout.setContentsMargins(0, 0, 0, 0)
+            self._param_widgets["_valueFrame"] = value_frame
+            self._params_layout.addRow("value", value_frame)
+
+            def _clear_value_widgets() -> None:
+                while value_layout.rowCount() > 0:
+                    value_layout.removeRow(0)
+                for key in list(self._param_widgets.keys()):
+                    if key.startswith("value.") or key == "value":
+                        self._param_widgets.pop(key, None)
+
+            def _anim_manifest_entries() -> list[tuple[str, str]]:
+                ids = m.all_anim_files() if m else []
+                return [(f"{aid} (/assets/animation/{aid}/anim.json)", f"/assets/animation/{aid}/anim.json") for aid in ids]
+
+            def _refill_entities(*, keep_saved: bool) -> None:
+                sid = scene_combo.committed_type()
+                kind = kind_combo.committed_type()
+                raw_rows = m.entity_ids_for_scene(sid, kind) if m else []
+                rows = [(f"{eid} ({label})", eid) for eid, label in raw_rows]
+                if not rows:
+                    rows = [("（当前场景无实体）", "")]
+                saved = str(params.get("entityId") or "").strip()
+                prev = entity_combo.committed_type()
+                prefer = saved if keep_saved else prev
+                entity_combo.set_entries(rows)
+                values = {v for _d, v in rows}
+                if prefer in values:
+                    entity_combo.set_committed_type(prefer)
+                elif rows:
+                    entity_combo.set_committed_type(rows[0][1])
+
+            def _refill_fields(*, keep_saved: bool) -> None:
+                kind = kind_combo.committed_type()
+                rows = m.runtime_entity_field_choices(kind) if m else []
+                if not rows:
+                    rows = [("（无可存档字段）", "")]
+                saved = str(params.get("fieldName") or "").strip()
+                prev = field_combo.committed_type()
+                prefer = saved if keep_saved else prev
+                field_combo.set_entries(rows)
+                values = {v for _d, v in rows}
+                if prefer in values:
+                    field_combo.set_committed_type(prefer)
+                elif rows:
+                    field_combo.set_committed_type(rows[0][1])
+
+            def _rebuild_value(*, keep_saved: bool) -> None:
+                _clear_value_widgets()
+                kind = kind_combo.committed_type()
+                field = field_combo.committed_type()
+                meta = m.runtime_entity_field_meta(kind, field) if m else None
+                raw_value = params.get("value") if keep_saved else None
+                if not meta:
+                    return
+                fkind = meta.get("kind")
+                picker = meta.get("picker")
+                if fkind == "number":
+                    sp = QDoubleSpinBox(self)
+                    sp.setRange(-9999999, 9999999)
+                    sp.setDecimals(3)
+                    try:
+                        sp.setValue(float(raw_value if raw_value is not None else 0))
+                    except (TypeError, ValueError):
+                        sp.setValue(0)
+                    sp.valueChanged.connect(self.changed)
+                    self._param_widgets["value"] = sp
+                    value_layout.addRow(field, sp)
+                elif fkind == "boolean":
+                    cb = QCheckBox(self)
+                    cb.setChecked(bool(raw_value) if isinstance(raw_value, bool) else False)
+                    cb.toggled.connect(self.changed)
+                    self._param_widgets["value"] = cb
+                    value_layout.addRow(field, cb)
+                elif fkind == "string" and picker == "animationManifest":
+                    rows = _anim_manifest_entries() or [("（无动画包）", "")]
+                    w = FilterableTypeCombo(rows, self, select_only=True)
+                    cur = str(raw_value or "").strip()
+                    if cur:
+                        w.set_committed_type(cur)
+                    elif rows:
+                        w.set_committed_type(rows[0][1])
+                    w.typeCommitted.connect(lambda _t: self.changed.emit())
+                    self._param_widgets["value"] = w
+                    value_layout.addRow(field, w)
+                elif fkind == "string" and picker == "animationState":
+                    sid = scene_combo.committed_type()
+                    eid = entity_combo.committed_type()
+                    states = m.animation_state_names_for_actor(sid, eid) if m and eid else []
+                    rows = [(s, s) for s in states] or [("（无动画 state）", "")]
+                    w = FilterableTypeCombo(rows, self, select_only=True)
+                    cur = str(raw_value or "").strip()
+                    if cur:
+                        w.set_committed_type(cur)
+                    elif rows:
+                        w.set_committed_type(rows[0][1])
+                    w.typeCommitted.connect(lambda _t: self.changed.emit())
+                    self._param_widgets["value"] = w
+                    value_layout.addRow(field, w)
+                elif fkind == "object" and picker == "hotspotDisplayImage":
+                    raw = raw_value if isinstance(raw_value, dict) else {}
+                    img = CutsceneImagePathRow(self._ctx_model, str(raw.get("image") or ""), self)
+                    img.changed.connect(self.changed)
+                    self._param_widgets["value.image"] = img
+                    value_layout.addRow("image", img)
+                    for k, label in (("worldWidth", "worldWidth"), ("worldHeight", "worldHeight")):
+                        sp = QDoubleSpinBox(self)
+                        sp.setRange(0.1, 9999999)
+                        sp.setDecimals(2)
+                        try:
+                            sp.setValue(float(raw.get(k, 100)))
+                        except (TypeError, ValueError):
+                            sp.setValue(100)
+                        sp.valueChanged.connect(self.changed)
+                        self._param_widgets[f"value.{k}"] = sp
+                        value_layout.addRow(label, sp)
+                    facing = FilterableTypeCombo([("(默认 right)", ""), ("left", "left"), ("right", "right")], self, select_only=True)
+                    facing.set_committed_type(str(raw.get("facing") or ""))
+                    facing.typeCommitted.connect(lambda _t: self.changed.emit())
+                    self._param_widgets["value.facing"] = facing
+                    value_layout.addRow("facing", facing)
+                    sort = FilterableTypeCombo([("(按 Y 排序)", ""), ("back", "back"), ("front", "front")], self, select_only=True)
+                    sort.set_committed_type(str(raw.get("spriteSort") or ""))
+                    sort.typeCommitted.connect(lambda _t: self.changed.emit())
+                    self._param_widgets["value.spriteSort"] = sort
+                    value_layout.addRow("spriteSort", sort)
+                else:
+                    w = QLineEdit(str(raw_value or ""), self)
+                    w.textChanged.connect(self.changed)
+                    self._param_widgets["value"] = w
+                    value_layout.addRow(field, w)
+
+            def _on_scene_or_kind(_t: str = "") -> None:
+                _refill_entities(keep_saved=False)
+                _refill_fields(keep_saved=False)
+                _rebuild_value(keep_saved=False)
+                self.changed.emit()
+
+            def _on_field(_t: str = "") -> None:
+                _rebuild_value(keep_saved=False)
+                self.changed.emit()
+
+            def _on_entity(_t: str = "") -> None:
+                if (m.runtime_entity_field_meta(kind_combo.committed_type(), field_combo.committed_type()) or {}).get("picker") == "animationState":
+                    _rebuild_value(keep_saved=False)
+                self.changed.emit()
+
+            scene_combo.typeCommitted.connect(_on_scene_or_kind)
+            kind_combo.typeCommitted.connect(_on_scene_or_kind)
+            entity_combo.typeCommitted.connect(_on_entity)
+            field_combo.typeCommitted.connect(_on_field)
+            _refill_entities(keep_saved=True)
+            _refill_fields(keep_saved=True)
+            _rebuild_value(keep_saved=True)
+            self._sync_foldable_visibility()
+            return
+
         if act_type == "setHotspotDisplayImage":
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
                 self._params_layout.removeRow(0)
             self._param_widgets.clear()
             tip = QLabel(
-                "仅影响当前已加载场景中的热点；世界宽高沿用 JSON 中已有 displayImage 尺寸，"
-                "无配置时宽 100、高按新图比例推算。",
+                "写入 Hotspot displayImage 的 Save 字段覆盖；目标场景未加载时也会在进入场景后生效。",
                 self,
             )
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
             m = self._ctx_model
-            hs_rows = m.all_hotspot_ids() if m else []
+            scene_entries = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+            scene_combo = FilterableTypeCombo(scene_entries, self, select_only=True)
+            cur_scene = str(params.get("sceneId") or self._ctx_scene_id or "").strip()
+            if cur_scene:
+                scene_combo.set_committed_type(cur_scene)
+            elif scene_entries and scene_entries[0][1]:
+                scene_combo.set_committed_type(scene_entries[0][1])
+            self._param_widgets["sceneId"] = scene_combo
+            self._params_layout.addRow("sceneId", scene_combo)
+            hs_raw = m.hotspot_ids_for_scene(scene_combo.committed_type()) if m else []
+            hs_rows = [(f"{hid} ({label})", hid) for hid, label in hs_raw]
             if not hs_rows:
-                hs_rows = [("", "（无热点，请先在场景 JSON 中配置 hotspots）")]
+                hs_rows = [("（当前场景无热点）", "")]
             id_combo = FilterableTypeCombo(hs_rows, self, select_only=True)
             cur_id = str(params.get("hotspotId", "") or "").strip()
             if cur_id:
                 id_combo.set_committed_type(cur_id)
             elif hs_rows and hs_rows[0][0]:
-                id_combo.set_committed_type(hs_rows[0][0])
+                id_combo.set_committed_type(hs_rows[0][1])
+
+            def _refill_hotspots(_t: str = "") -> None:
+                raw_rows = m.hotspot_ids_for_scene(scene_combo.committed_type()) if m else []
+                rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
+                if not rows:
+                    rows = [("（当前场景无热点）", "")]
+                cur = id_combo.committed_type()
+                id_combo.set_entries(rows)
+                values = {v for _d, v in rows}
+                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                self.changed.emit()
+
+            scene_combo.typeCommitted.connect(_refill_hotspots)
             id_combo.typeCommitted.connect(lambda _v: self.changed.emit())
             self._param_widgets["hotspotId"] = id_combo
             self._params_layout.addRow("hotspotId", id_combo)
@@ -1782,13 +2001,68 @@ class ActionRow(QWidget):
         self._sync_foldable_visibility()
 
     def _to_dict_set_hotspot_display_image(self) -> dict:
+        scene_w = self._param_widgets.get("sceneId")
         id_w = self._param_widgets.get("hotspotId")
         img_w = self._param_widgets.get("image")
+        sid = scene_w.committed_type().strip() if isinstance(scene_w, FilterableTypeCombo) else ""
         hid = id_w.committed_type().strip() if isinstance(id_w, FilterableTypeCombo) else ""
         pimg = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
         return {
             "type": "setHotspotDisplayImage",
-            "params": {"hotspotId": hid, "image": pimg},
+            "params": {"sceneId": sid, "hotspotId": hid, "image": pimg},
+        }
+
+    def _to_dict_set_entity_field(self) -> dict:
+        scene_w = self._param_widgets.get("sceneId")
+        kind_w = self._param_widgets.get("entityKind")
+        ent_w = self._param_widgets.get("entityId")
+        field_w = self._param_widgets.get("fieldName")
+        scene_id = scene_w.committed_type().strip() if isinstance(scene_w, FilterableTypeCombo) else ""
+        kind = kind_w.committed_type().strip() if isinstance(kind_w, FilterableTypeCombo) else ""
+        entity_id = ent_w.committed_type().strip() if isinstance(ent_w, FilterableTypeCombo) else ""
+        field = field_w.committed_type().strip() if isinstance(field_w, FilterableTypeCombo) else ""
+        meta = self._ctx_model.runtime_entity_field_meta(kind, field) if self._ctx_model else None
+        value = None
+        if meta and meta.get("kind") == "number":
+            w = self._param_widgets.get("value")
+            value = float(w.value()) if isinstance(w, QDoubleSpinBox) else 0.0
+        elif meta and meta.get("kind") == "boolean":
+            w = self._param_widgets.get("value")
+            value = bool(w.isChecked()) if isinstance(w, QCheckBox) else False
+        elif meta and meta.get("kind") == "object" and field == "displayImage":
+            img = self._param_widgets.get("value.image")
+            ww = self._param_widgets.get("value.worldWidth")
+            hh = self._param_widgets.get("value.worldHeight")
+            facing = self._param_widgets.get("value.facing")
+            sort = self._param_widgets.get("value.spriteSort")
+            value = {
+                "image": img.path() if isinstance(img, CutsceneImagePathRow) else "",
+                "worldWidth": float(ww.value()) if isinstance(ww, QDoubleSpinBox) else 100.0,
+                "worldHeight": float(hh.value()) if isinstance(hh, QDoubleSpinBox) else 100.0,
+            }
+            fv = facing.committed_type().strip() if isinstance(facing, FilterableTypeCombo) else ""
+            sv = sort.committed_type().strip() if isinstance(sort, FilterableTypeCombo) else ""
+            if fv:
+                value["facing"] = fv
+            if sv:
+                value["spriteSort"] = sv
+        else:
+            w = self._param_widgets.get("value")
+            if isinstance(w, FilterableTypeCombo):
+                value = w.committed_type().strip()
+            elif isinstance(w, QLineEdit):
+                value = w.text().strip()
+            else:
+                value = ""
+        return {
+            "type": "setEntityField",
+            "params": {
+                "sceneId": scene_id,
+                "entityKind": kind,
+                "entityId": entity_id,
+                "fieldName": field,
+                "value": value,
+            },
         }
 
     def _to_dict_show_overlay_image(self) -> dict:
@@ -1935,6 +2209,8 @@ class ActionRow(QWidget):
 
     def to_dict(self) -> dict:
         act_type = self.type_combo.committed_type()
+        if act_type == "setEntityField":
+            return self._to_dict_set_entity_field()
         if act_type == "setHotspotDisplayImage":
             return self._to_dict_set_hotspot_display_image()
         if act_type == "showOverlayImage":

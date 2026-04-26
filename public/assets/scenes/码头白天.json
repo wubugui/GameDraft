@@ -359,7 +359,16 @@
       "y": 1175.4,
       "interactionRange": 50.0,
       "data": {
-        "text": ""
+        "text": "",
+        "actions": [
+          {
+            "type": "setHotspotDisplayImage",
+            "params": {
+              "hotspotId": "new_hotspot_8（码头白天）",
+              "image": ""
+            }
+          }
+        ]
       },
       "displayImage": {
         "image": "/assets/images/illustrations/埃德加/侧视站姿.png",

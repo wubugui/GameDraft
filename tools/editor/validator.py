@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from .file_io import read_json
 from .flag_registry import scenario_exposes_flag_errors
+from .shared.runtime_field_schema import field_meta, is_valid_field, value_matches_field
 
 if TYPE_CHECKING:
     from .project_model import ProjectModel
@@ -665,14 +666,74 @@ def _append_action_param_ref_issues(
             ))
 
     if t == "setHotspotDisplayImage":
+        sid = str(p.get("sceneId") or "").strip()
         hid = str(p.get("hotspotId") or "").strip()
-        if hid:
-            known = {x[0] for x in model.all_hotspot_ids()}
+        img = str(p.get("image") or "").strip()
+        if not sid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "setHotspotDisplayImage 缺少 sceneId",
+            ))
+        elif sid not in set(model.all_scene_ids()):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"setHotspotDisplayImage sceneId {sid!r} 不在场景列表中",
+            ))
+        if hid and sid:
+            known = {x[0] for x in model.hotspot_ids_for_scene(sid)}
             if known and hid not in known:
                 issues.append(Issue(
                     "warning", data_type, item_id,
-                    f"setHotspotDisplayImage hotspotId {hid!r} 不在任意场景 hotspots 列表中",
+                    f"setHotspotDisplayImage hotspotId {hid!r} 不在场景 {sid!r} 的 hotspots 列表中",
                 ))
+        if not img:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "setHotspotDisplayImage 缺少 image",
+            ))
+
+    if t == "setEntityField":
+        sid = str(p.get("sceneId") or "").strip()
+        kind = str(p.get("entityKind") or "").strip()
+        eid = str(p.get("entityId") or "").strip()
+        field = str(p.get("fieldName") or "").strip()
+        value = p.get("value")
+        if sid and sid not in set(model.all_scene_ids()):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"setEntityField sceneId {sid!r} 不在场景列表中",
+            ))
+        if kind not in ("npc", "hotspot"):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setEntityField entityKind {kind!r} 非 npc/hotspot",
+            ))
+        elif field and not is_valid_field(kind, field):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setEntityField {kind}.{field} 不是 Save.* 可存档字段",
+            ))
+        if sid and kind in ("npc", "hotspot") and eid:
+            known = {x[0] for x in model.entity_ids_for_scene(sid, kind)}
+            if known and eid not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"setEntityField {kind} id {eid!r} 不在场景 {sid!r} 中",
+                ))
+        if kind in ("npc", "hotspot") and field and field_meta(kind, field):
+            if not value_matches_field(kind, field, value):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setEntityField {kind}.{field} 的 value 类型不匹配",
+                ))
+            meta = field_meta(kind, field) or {}
+            if meta.get("picker") == "animationState" and sid and eid and isinstance(value, str) and value:
+                states = set(model.animation_state_names_for_actor(sid, eid))
+                if states and value not in states:
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"setEntityField {kind}.{field} state {value!r} 不在 {eid!r} 的 anim.json states 中",
+                    ))
 
     if t in ("hideOverlayImage", "showOverlayImage", "blendOverlayImage"):
         oid = str(p.get("id") or "").strip()

@@ -428,6 +428,30 @@ export interface NpcPersistentSnapshot {
   animState?: string;
 }
 
+export type SceneEntityRuntimeValue = string | number | boolean | HotspotDisplayImage | null;
+
+export interface NpcRuntimeOverride {
+  patrolDisabled?: boolean;
+  enabled?: boolean;
+  x?: number;
+  y?: number;
+  animFile?: string | null;
+  initialAnimState?: string | null;
+  animState?: string | null;
+}
+
+export interface HotspotRuntimeOverride {
+  enabled?: boolean;
+  x?: number;
+  y?: number;
+  displayImage?: HotspotDisplayImage | null;
+}
+
+export interface SceneEntityRuntimeOverrides {
+  npcs: Record<string, NpcRuntimeOverride>;
+  hotspots: Record<string, HotspotRuntimeOverride>;
+}
+
 export interface SceneRuntimeState {
   inspectedHotspots: Set<string>;
   pickedUpHotspots: Set<string>;
