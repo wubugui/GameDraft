@@ -367,7 +367,8 @@
               "sceneId": "码头白天",
               "hotspotId": "new_hotspot_8",
               "image": "/assets/images/illustrations/埃德加/拿钱大喊.png",
-              "worldHeight": 184.0
+              "worldHeight": 184.0,
+              "facing": "right"
             }
           },
           {
