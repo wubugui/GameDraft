@@ -1,12 +1,10 @@
 # 文本在仓库中统一为 LF，减轻 Windows 下与 core.autocrlf 混用时的「假脏」
 # 更具体的规则在下方覆盖通配
 * text=auto eol=lf
-
 # Windows 批处理 / PowerShell：工作区用 CRLF
 *.cmd text eol=crlf
 *.bat text eol=crlf
 *.ps1 text eol=crlf
-
 # 二进制：禁止按文本做换行归一
 *.7z binary
 *.aif binary
@@ -56,6 +54,9 @@
 *.woff binary
 *.woff2 binary
 *.zip binary
-
 # glTF 源文件为 JSON 文本
 *.gltf text eol=lf
+
+# TagSpaces 便携版：单文件超 GitHub 100MiB 上限，用 LFS 托管
+tagspaces-win-x64-6.11.2/TagSpaces.exe filter=lfs diff=lfs merge=lfs -text
+tagspaces-win-x64-6.11.2/resources/app.asar filter=lfs diff=lfs merge=lfs -text
