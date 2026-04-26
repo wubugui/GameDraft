@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from ..project_model import ProjectModel
-from ..shared.action_editor import ACTION_TYPES, FilterableTypeCombo
+from ..shared.action_editor import ACTION_TYPES, ActionTypePickerField, FilterableTypeCombo
 
 if TYPE_CHECKING:
     pass
@@ -154,9 +154,9 @@ class ActionRegistryEditor(QWidget):
 
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("类型:"))
-        self._type_filter = FilterableTypeCombo(
+        self._type_filter = ActionTypePickerField(
             [("全部", "全部")] + [(t, t) for t in ACTION_TYPES],
-            select_only=True,
+            self,
         )
         self._type_filter.set_committed_type("全部")
         self._type_filter.typeCommitted.connect(self._apply_filter)

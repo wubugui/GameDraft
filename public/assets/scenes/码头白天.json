@@ -222,9 +222,9 @@
       "id": "new_hotspot_3",
       "type": "inspect",
       "label": "",
-      "x": 1480.5,
-      "y": 1414.0,
-      "interactionRange": 50,
+      "x": 1471.1,
+      "y": 1417.8,
+      "interactionRange": 50.0,
       "data": {
         "text": ""
       }
@@ -323,7 +323,7 @@
         },
         {
           "x": 0.0,
-          "y": 40.0
+          "y": 29.4
         }
       ],
       "collisionPolygonLocal": true
@@ -364,8 +364,21 @@
           {
             "type": "setHotspotDisplayImage",
             "params": {
-              "hotspotId": "new_hotspot_8（码头白天）",
-              "image": ""
+              "sceneId": "码头白天",
+              "hotspotId": "new_hotspot_8",
+              "image": "/assets/images/illustrations/埃德加/拿钱大喊.png",
+              "worldHeight": 184.0
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "{{player}}",
+                  "text": "ssssssssssssssssssss"
+                }
+              ]
             }
           }
         ]
@@ -462,16 +475,16 @@
           "y": 1277.3
         },
         {
-          "x": 1686.3,
-          "y": 1259.5
+          "x": 1687.9,
+          "y": 1275.0
         },
         {
-          "x": 1654.4,
-          "y": 1241.7
+          "x": 1647.9,
+          "y": 1257.2
         },
         {
-          "x": 1399.4,
-          "y": 1099.4
+          "x": 1384.7,
+          "y": 1132.1
         },
         {
           "x": 1614.0,

@@ -117,8 +117,17 @@ export interface ActionRegistryDeps {
     fieldName: string,
     value: RuntimeFieldValue,
   ) => Promise<void>;
-  /** 将指定热点的展示图换为已存在的贴图路径（与 scene JSON displayImage 同语义） */
-  setHotspotDisplayImage: (sceneId: string, hotspotId: string, imagePath: string) => Promise<void>;
+  /**
+   * 将指定热点的展示图换为已存在的贴图路径（与 scene JSON displayImage 同语义）。
+   * worldWidth / worldHeight 可选：见 Game.setHotspotDisplayImageFromAction 合并规则。
+   */
+  setHotspotDisplayImage: (
+    sceneId: string,
+    hotspotId: string,
+    imagePath: string,
+    worldWidth?: number,
+    worldHeight?: number,
+  ) => Promise<void>;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -563,10 +572,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('setHotspotDisplayImage: 需要 sceneId、hotspotId 与 image');
       return;
     }
-    return d.setHotspotDisplayImage(sceneId, hid, image).catch((e) => {
-      console.warn('ActionRegistry: setHotspotDisplayImage failed', e);
-    });
-  }, ['sceneId', 'hotspotId', 'image']);
+    const wRaw = p.worldWidth;
+    const hRaw = p.worldHeight;
+    const wNum = wRaw === undefined || wRaw === null || wRaw === '' ? NaN : Number(wRaw);
+    const hNum = hRaw === undefined || hRaw === null || hRaw === '' ? NaN : Number(hRaw);
+    const worldWidth = Number.isFinite(wNum) && wNum > 0 ? wNum : undefined;
+    const worldHeight = Number.isFinite(hNum) && hNum > 0 ? hNum : undefined;
+    return d
+      .setHotspotDisplayImage(sceneId, hid, image, worldWidth, worldHeight)
+      .catch((e) => {
+        console.warn('ActionRegistry: setHotspotDisplayImage failed', e);
+      });
+  }, ['sceneId', 'hotspotId', 'image', 'worldWidth', 'worldHeight']);
 
   executor.register('setEntityField', (p) => {
     const sceneId = String(p.sceneId ?? '').trim();

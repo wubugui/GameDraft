@@ -413,7 +413,7 @@ class StepWidget(QFrame):
         wl_set = set(CUTSCENE_ACTION_WHITELIST)
         self._action_row.type_combo.set_items(
             [(t, t) for t in CUTSCENE_ACTION_WHITELIST],
-            orphan_label=lambda v: f"[not whitelisted] {v}",
+            orphan_label=lambda v: f"{v} · 过场白名单外",
         )
         ct = ad["type"]
         if ct in wl_set:

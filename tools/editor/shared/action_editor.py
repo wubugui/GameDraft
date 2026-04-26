@@ -4,8 +4,9 @@
 必须在本文件的 ACTION_TYPES 中出现，并补齐 _PARAM_SCHEMAS或自定义 _rebuild_params 分支，
 否则策划无法在场景/任务/遭遇等编辑器里添加该动作；校验器也会对未登记 type 报错。
 
-Action 主类型与过场 present 子类型使用 ``FilterableTypeCombo(select_only=True)``，
-只能从 ACTION_TYPES / PRESENT_TYPES 选，不可手写未登记字符串；改类型会触发参数区重建。
+Action 主类型在 ``ActionTypePickerField`` 中通过红圆点标记「会改存档」类动作（悬停有说明）；
+参数区内大量枚举仍用 ``FilterableTypeCombo``。过场 present 子类型使用
+``FilterableTypeCombo(select_only=True)``。改 Action 主类型会触发参数区重建。
 """
 from __future__ import annotations
 
@@ -16,10 +17,11 @@ from typing import Callable
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QFormLayout, QFrame,
-    QTextEdit, QApplication, QToolButton,
+    QTextEdit, QApplication, QToolButton, QDialog, QListWidget, QListWidgetItem,
+    QDialogButtonBox, QSizePolicy,
 )
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QWheelEvent
 
 # Qt6: ItemDataRole.UserRole
@@ -121,6 +123,102 @@ ACTION_TYPES = [
     "enableRuleOffers", "disableRuleOffers",
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait",
 ]
+
+# 编辑器用：会改动存档/可持久化数据 vs 以运行时演出与瞬时状态为主（与实现细节若有出入以策划理解为准，见文档注释）。
+# "save" = 常关联存档、任务、背包、flag、持久化 override 等；"memory" = 多为镜头、UI、过场、等待、切场景、音效等
+ACTION_PERSISTENCE: dict[str, str] = {
+    "setFlag": "save",
+    "setScenarioPhase": "save",
+    "startScenario": "save",
+    "appendFlag": "save",
+    "giveItem": "save",
+    "removeItem": "save",
+    "giveCurrency": "save",
+    "removeCurrency": "save",
+    "giveRule": "save",
+    "grantRuleLayer": "save",
+    "giveFragment": "save",
+    "updateQuest": "save",
+    "startEncounter": "save",
+    "playBgm": "memory",
+    "stopBgm": "memory",
+    "playSfx": "memory",
+    "endDay": "save",
+    "addDelayedEvent": "save",
+    "addArchiveEntry": "save",
+    "startCutscene": "memory",
+    "showEmote": "memory",
+    "playNpcAnimation": "memory",
+    "setEntityEnabled": "memory",
+    "openShop": "memory",
+    "pickup": "save",
+    "switchScene": "memory",
+    "changeScene": "memory",
+    "showNotification": "memory",
+    "stopNpcPatrol": "memory",
+    "persistNpcDisablePatrol": "save",
+    "persistNpcEnablePatrol": "save",
+    "persistNpcEntityEnabled": "save",
+    "persistNpcAt": "save",
+    "persistNpcAnimState": "save",
+    "persistPlayNpcAnimation": "save",
+    "shopPurchase": "save",
+    "inventoryDiscard": "save",
+    "setPlayerAvatar": "save",
+    "resetPlayerAvatar": "save",
+    "setSceneDepthFloorOffset": "save",
+    "resetSceneDepthFloorOffset": "save",
+    "setCameraZoom": "memory",
+    "restoreSceneCameraZoom": "memory",
+    "fadingZoom": "memory",
+    "fadingRestoreSceneCameraZoom": "memory",
+    "fadeWorldToBlack": "memory",
+    "fadeWorldFromBlack": "memory",
+    "hideOverlayImage": "memory",
+    "playScriptedDialogue": "memory",
+    "showOverlayImage": "memory",
+    "setHotspotDisplayImage": "save",
+    "setEntityField": "save",
+    "blendOverlayImage": "memory",
+    "revealDocument": "save",
+    "startDialogueGraph": "memory",
+    "waitClickContinue": "memory",
+    "waitMs": "memory",
+    "enableRuleOffers": "save",
+    "disableRuleOffers": "save",
+    "moveEntityTo": "memory",
+    "faceEntity": "memory",
+    "cutsceneSpawnActor": "memory",
+    "cutsceneRemoveActor": "memory",
+    "showEmoteAndWait": "memory",
+}
+
+ACTION_SAVE_DOT_TOOLTIP = (
+    "该 Action 会修改或影响已持久化数据（如 flag、任务、背包、档案、可存档实体覆盖等）。"
+    "与「仅演出/过场/瞬时显隐」类动作相区分，具体以运行与数据校验为准。"
+)
+
+
+def action_type_writes_save(type_id: str) -> bool:
+    return ACTION_PERSISTENCE.get(type_id) == "save"
+
+
+def _assert_action_persistence_covers_types() -> None:
+    tset = set(ACTION_TYPES)
+    for a in tset:
+        if a not in ACTION_PERSISTENCE:
+            raise RuntimeError(
+                f"action_editor: ACTION_PERSISTENCE 缺少动作 {a!r}，"
+                "新增 ACTION_TYPES 时必须同步写持久化分类",
+            )
+    extra = set(ACTION_PERSISTENCE.keys()) - tset
+    if extra:
+        raise RuntimeError(
+            f"action_editor: ACTION_PERSISTENCE 存在多余项 {sorted(extra)}",
+        )
+
+
+_assert_action_persistence_covers_types()
 
 _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "setFlag": [("key", "str"), ("value", "flag_val")],
@@ -495,6 +593,343 @@ class FilterableTypeCombo(QComboBox):
         self.set_entries(items)
 
 
+def _type_entry_matches(disp: str, value: str, q: str) -> bool:
+    return FilterableTypeCombo._matches(disp, q) or FilterableTypeCombo._matches(value, q)
+
+
+class _InlineSaveDot(QFrame):
+    """行内/列表：仅红圆 + 悬停说明（无点击逻辑）。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("actionSavePersistDot")
+        self.setFixedSize(10, 10)
+        self.setStyleSheet(
+            "QFrame#actionSavePersistDot {"
+            " background-color: #c62828; border: none; border-radius: 5px; }",
+        )
+        self.setToolTip(ACTION_SAVE_DOT_TOOLTIP)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+
+class _ListSaveDot(QFrame):
+    """列表行内红圆：点击即选中本行，双击会驱动对话框确定。"""
+
+    def __init__(
+        self,
+        on_select: Callable[[], None],
+        on_double: Callable[[], None],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("actionSavePersistDot")
+        self.setFixedSize(10, 10)
+        self.setStyleSheet(
+            "QFrame#actionSavePersistDot {"
+            " background-color: #c62828; border: none; border-radius: 5px; }",
+        )
+        self.setToolTip(ACTION_SAVE_DOT_TOOLTIP)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._on_select = on_select
+        self._on_double = on_double
+
+    def mousePressEvent(self, e) -> None:
+        self._on_select()
+        e.accept()
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        self._on_select()
+        self._on_double()
+        e.accept()
+
+
+class _ActionTypeListRow(QWidget):
+    """带可选红圆、支持点击/双击整行的列表项。"""
+
+    def __init__(
+        self,
+        list_widget: QListWidget,
+        list_item: QListWidgetItem,
+        dialog: "ActionTypePickerDialog",
+        text: str,
+        value: str,
+    ) -> None:
+        super().__init__(list_widget)
+        self._list_widget = list_widget
+        self._item = list_item
+        self._dialog = dialog
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 3, 6, 3)
+        lay.setSpacing(8)
+        name = QLabel(text, self)
+        name.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        lay.addWidget(name, 1)
+        if action_type_writes_save(value):
+            lay.addWidget(
+                _ListSaveDot(
+                    on_select=lambda: self._list_widget.setCurrentItem(self._item),
+                    on_double=self._dialog._on_row_double_confirm,
+                    parent=self,
+                ),
+                0,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            )
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred,
+        )
+
+    def mousePressEvent(self, e) -> None:
+        self._list_widget.setCurrentItem(self._item)
+        e.accept()
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        self._list_widget.setCurrentItem(self._item)
+        self._dialog._on_row_double_confirm()
+        e.accept()
+
+
+class ActionTypePickerDialog(QDialog):
+    """在独立窗口中可搜索的 (展示名, 取值) 选择器，给 Action 主类型等长列表用。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("选择 Action 类型")
+        self.setMinimumSize(760, 560)
+        self.resize(760, 560)
+        self._all_rows: list[tuple[str, str]] = []
+        self._selected: str = ""
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        legend = QLabel(
+            "红圆点仅标「会改存档/可持久化数据」的动作，悬停圆点查看说明；无圆点为偏演出/瞬时/流程类。",
+            self,
+        )
+        legend.setWordWrap(True)
+        legend.setStyleSheet("color: palette(mid);")
+        root.addWidget(legend)
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText("输入以筛选…")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(self._apply_filter)
+        root.addWidget(self._search)
+
+        self._list = QListWidget(self)
+        self._list.setAlternatingRowColors(True)
+        self._list.setMinimumHeight(400)
+        root.addWidget(self._list, stretch=1)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+    def set_rows(
+        self,
+        rows: list[tuple[str, str]],
+        *,
+        current: str,
+    ) -> None:
+        self._all_rows = list(rows)
+        self._search.blockSignals(True)
+        self._search.setText("")
+        self._search.blockSignals(False)
+        self._apply_filter("")
+        self._select_value_or_first(current)
+        self._search.setFocus()
+
+    def selected_value(self) -> str:
+        return self._selected
+
+    def _apply_filter(self, q: str) -> None:
+        self._list.clear()
+        query = (q or "").strip()
+        for disp, val in self._all_rows:
+            if not query or _type_entry_matches(disp, val, query):
+                it = QListWidgetItem()
+                it.setData(_USER_ROLE, val)
+                self._list.addItem(it)
+                row = _ActionTypeListRow(self._list, it, self, disp, val)
+                self._list.setItemWidget(it, row)
+                sh = row.sizeHint()
+                it.setSizeHint(
+                    QSize(max(200, sh.width()), max(sh.height() + 2, 26)),
+                )
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+
+    def _on_row_double_confirm(self) -> None:
+        self._on_accept()
+
+    def _select_value_or_first(self, value: str) -> None:
+        want = (value or "").strip()
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            if it and str(it.data(_USER_ROLE) or "") == want:
+                self._list.setCurrentRow(i)
+                self._list.scrollToItem(it)
+                return
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+
+    def _on_accept(self) -> None:
+        it = self._list.currentItem()
+        if it is not None:
+            self._selected = str(it.data(_USER_ROLE) or "")
+        elif self._list.count() > 0:
+            it0 = self._list.item(0)
+            self._selected = str(it0.data(_USER_ROLE) or "") if it0 else ""
+        self.accept()
+
+
+class ActionTypePickerField(QWidget):
+    """
+    替代 ``FilterableTypeCombo(select_only=True)`` 用于 Action 主类型等长列表：
+    行内不展开超长下拉，点击按钮在独立可搜索窗口中选择。
+    """
+
+    typeCommitted = Signal(str)
+
+    def __init__(
+        self,
+        entries: list[tuple[str, str]],
+        parent: QWidget | None = None,
+        *,
+        orphan_label: Callable[[str], str] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._entries: list[tuple[str, str]] = list(entries)
+        self._orphan_label = orphan_label
+        self._value_set: set[str] = set()
+        self._lower_value: dict[str, str] = {}
+        self._rebuild_value_index()
+        self._committed: str = self._entries[0][1] if self._entries else ""
+        self._programmatic = False
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._line = QLineEdit(self)
+        self._line.setReadOnly(True)
+        self._line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._line.setToolTip(
+            "当前 Action 类型。红圆点表示会改存档/持久化，悬停圆点查看；"
+            "无圆点多为演出/流程类。点「选择…」在独立窗口中搜索。",
+        )
+        self._save_dot = _InlineSaveDot(self)
+        self._save_dot.setVisible(False)
+        pick = QPushButton("选择…", self)
+        pick.setToolTip("打开可搜索的 Action 类型选择窗口；红圆点与窗口内含义一致。")
+        pick.setFixedWidth(64)
+        pick.clicked.connect(self._open_dialog)
+        lay.addWidget(self._line, stretch=1)
+        lay.addWidget(self._save_dot, stretch=0)
+        lay.addWidget(pick, stretch=0)
+        self._refill_line()
+
+    @classmethod
+    def from_flat_strings(
+        cls,
+        types: list[str],
+        parent: QWidget | None = None,
+    ) -> ActionTypePickerField:
+        return cls([(t, t) for t in types], parent=parent)
+
+    def _rebuild_value_index(self) -> None:
+        self._value_set = set()
+        self._lower_value = {}
+        for _d, v in self._entries:
+            if v not in self._value_set:
+                self._value_set.add(v)
+                self._lower_value.setdefault(v.lower(), v)
+
+    def _entries_with_orphan(self, committed_value: str) -> list[tuple[str, str]]:
+        out = list(self._entries)
+        if committed_value and committed_value not in self._value_set:
+            if all(v != committed_value for _, v in out):
+                disp = (
+                    self._orphan_label(committed_value)
+                    if self._orphan_label
+                    else committed_value
+                )
+                out.insert(0, (disp, committed_value))
+        return out
+
+    def _display_for_value(self, value: str) -> str:
+        for d, v in self._entries:
+            if v == value:
+                return d
+        if value and value not in self._value_set:
+            if self._orphan_label:
+                return self._orphan_label(value)
+        return value
+
+    def _refill_line(self) -> None:
+        self._line.setText(self._display_for_value(self._committed))
+        if hasattr(self, "_save_dot") and self._save_dot is not None:
+            self._save_dot.setVisible(
+                bool(self._committed) and action_type_writes_save(self._committed),
+            )
+
+    def committed_type(self) -> str:
+        return self._committed
+
+    def set_committed_type(self, value: str, *, emit: bool = False) -> None:
+        self._programmatic = True
+        try:
+            self._committed = value if value else (self._entries[0][1] if self._entries else "")
+            self._refill_line()
+        finally:
+            self._programmatic = False
+        if emit:
+            self.typeCommitted.emit(self._committed)
+
+    def _apply_committed(self, value: str) -> None:
+        prev = self._committed
+        self._committed = value
+        self._refill_line()
+        if prev != value and not self._programmatic:
+            self.typeCommitted.emit(value)
+
+    def set_entries(self, entries: list[tuple[str, str]]) -> None:
+        prev = self._committed
+        self._entries = list(entries)
+        self._rebuild_value_index()
+        self._programmatic = True
+        try:
+            self._committed = prev
+            if not self._committed and self._entries:
+                self._committed = self._entries[0][1]
+            self._refill_line()
+        finally:
+            self._programmatic = False
+
+    def set_items(
+        self,
+        items: list[tuple[str, str]],
+        *,
+        orphan_label: Callable[[str], str] | None = None,
+    ) -> None:
+        if orphan_label is not None:
+            self._orphan_label = orphan_label
+        self.set_entries(items)
+
+    def _open_dialog(self) -> None:
+        rows = self._entries_with_orphan(self._committed)
+        dlg = ActionTypePickerDialog(self)
+        dlg.set_rows(rows, current=self._committed)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            val = dlg.selected_value()
+            if val != self._committed:
+                self._apply_committed(val)
+
+    def wheelEvent(self, ev: QWheelEvent) -> None:
+        ev.ignore()
+
+
 class RuleSlotsParamEditor(QWidget):
     """enableRuleOffers.params.slots：多槽，每槽 ruleId + resultText + resultActions。"""
 
@@ -696,8 +1131,8 @@ class ActionRow(QWidget):
         self._fold_toggle.setToolTip("折叠 / 展开参数区")
         self._fold_toggle.clicked.connect(self._on_fold_clicked)
         top.addWidget(self._fold_toggle)
-        self.type_combo = FilterableTypeCombo.from_flat_strings(
-            ACTION_TYPES, parent=self, select_only=True,
+        self.type_combo = ActionTypePickerField.from_flat_strings(
+            ACTION_TYPES, parent=self,
         )
         self._btn_up = QPushButton("\u2191", self)
         self._btn_up.setFixedWidth(24)
@@ -1268,6 +1703,43 @@ class ActionRow(QWidget):
             img_row.changed.connect(self.changed)
             self._param_widgets["image"] = img_row
             self._params_layout.addRow("image", img_row)
+            opt_tip = QLabel(
+                "worldWidth / worldHeight 可选：均不填则仅换图、保留原世界尺寸；"
+                "只填其一则另一维按新图素比计算；都填则按填写值。",
+                self,
+            )
+            opt_tip.setWordWrap(True)
+            self._params_layout.addRow(opt_tip)
+            w_ww = QDoubleSpinBox()
+            w_ww.setRange(0, 999999)
+            w_ww.setDecimals(1)
+            w_ww.setSingleStep(1.0)
+            w_ww.setSpecialValueText("不指定")
+            try:
+                _raw_ww = params.get("worldWidth", 0)
+                wv = float(_raw_ww) if _raw_ww is not None and _raw_ww != "" else 0.0
+            except (TypeError, ValueError):
+                wv = 0.0
+            w_ww.setValue(0.0 if wv <= 0 else wv)
+            w_ww.setToolTip("为 0（不指定）则不在本动作中设置该维；>0 时按合并规则写入")
+            w_ww.valueChanged.connect(self.changed.emit)
+            self._param_widgets["worldWidth"] = w_ww
+            self._params_layout.addRow("worldWidth（可选）", w_ww)
+            w_hh = QDoubleSpinBox()
+            w_hh.setRange(0, 999999)
+            w_hh.setDecimals(1)
+            w_hh.setSingleStep(1.0)
+            w_hh.setSpecialValueText("不指定")
+            try:
+                _raw_hh = params.get("worldHeight", 0)
+                hv = float(_raw_hh) if _raw_hh is not None and _raw_hh != "" else 0.0
+            except (TypeError, ValueError):
+                hv = 0.0
+            w_hh.setValue(0.0 if hv <= 0 else hv)
+            w_hh.setToolTip("为 0（不指定）则不在本动作中设置该维；>0 时按合并规则写入")
+            w_hh.valueChanged.connect(self.changed.emit)
+            self._param_widgets["worldHeight"] = w_hh
+            self._params_layout.addRow("worldHeight（可选）", w_hh)
             self._sync_foldable_visibility()
             return
 
@@ -2007,9 +2479,16 @@ class ActionRow(QWidget):
         sid = scene_w.committed_type().strip() if isinstance(scene_w, FilterableTypeCombo) else ""
         hid = id_w.committed_type().strip() if isinstance(id_w, FilterableTypeCombo) else ""
         pimg = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
+        pr: dict = {"sceneId": sid, "hotspotId": hid, "image": pimg}
+        ww = self._param_widgets.get("worldWidth")
+        hh = self._param_widgets.get("worldHeight")
+        if isinstance(ww, QDoubleSpinBox) and float(ww.value()) > 0:
+            pr["worldWidth"] = float(ww.value())
+        if isinstance(hh, QDoubleSpinBox) and float(hh.value()) > 0:
+            pr["worldHeight"] = float(hh.value())
         return {
             "type": "setHotspotDisplayImage",
-            "params": {"sceneId": sid, "hotspotId": hid, "image": pimg},
+            "params": pr,
         }
 
     def _to_dict_set_entity_field(self) -> dict:

@@ -111,6 +111,12 @@ def _display_world_height_from_width(ww: float, pw: int, ph: int) -> float:
     return round(ww * (ph / pw), 1)
 
 
+def _display_world_width_from_height(hh: float, pw: int, ph: int) -> float:
+    if hh <= 0 or pw <= 0 or ph <= 0:
+        return 0.0
+    return round(hh * (pw / ph), 1)
+
+
 def _hotspot_display_image_dict(
     path: str, ww: float, hh: float, facing: str, sprite_sort: str,
 ) -> dict:
@@ -2372,7 +2378,8 @@ class ScenePropertyPanel(QScrollArea):
         lay.addWidget(cond_g)
 
         disp = CollapsibleSection(
-            "显示图（可选，底边中点对齐 x,y；只调世界宽度，高度按图片比例自动算）",
+            "显示图（可选，底边中点对齐 x,y；世界宽高可独立编辑，换图不会自动改尺寸；"
+            "「自动」按当前图素比从另一维推导）",
             start_open=False,
         )
         disp.set_header_tool_tip("默认折叠；配置立绘/展示图时展开")
@@ -2385,14 +2392,24 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_disp_row.changed.connect(self._on_hs_display_row_changed)
         dlay.addWidget(self._hs_disp_row)
         df = QFormLayout()
+        ww_row = QWidget()
+        ww_h = QHBoxLayout(ww_row)
+        ww_h.setContentsMargins(0, 0, 0, 0)
         self._hs_disp_ww = QDoubleSpinBox()
         self._hs_disp_ww.setRange(1, 999999)
         self._hs_disp_ww.setDecimals(1)
         self._hs_disp_ww.setSingleStep(1.0)
         self._hs_disp_ww.setValue(100)
         self._hs_disp_ww.setToolTip("世界宽度（世界单位）；可手输或拖动下方滑块")
-        self._hs_disp_ww.valueChanged.connect(self._on_hs_display_dim_changed)
-        df.addRow("worldWidth", self._hs_disp_ww)
+        self._hs_disp_ww.valueChanged.connect(self._on_hs_disp_ww_value_changed)
+        self._hs_disp_auto_h_btn = QPushButton("自动")
+        self._hs_disp_auto_h_btn.setToolTip(
+            "按当前图片长宽比，用已填的 worldWidth 计算 worldHeight（无有效图片时禁用）",
+        )
+        self._hs_disp_auto_h_btn.clicked.connect(self._on_hs_disp_auto_height_from_width)
+        ww_h.addWidget(self._hs_disp_ww, 1)
+        ww_h.addWidget(self._hs_disp_auto_h_btn)
+        df.addRow("worldWidth", ww_row)
         self._hs_disp_ww_slider = QSlider(Qt.Orientation.Horizontal)
         self._hs_disp_ww_slider.setRange(100, 10_000)
         self._hs_disp_ww_slider.setValue(1000)
@@ -2401,10 +2418,28 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._hs_disp_ww_slider.valueChanged.connect(self._on_hs_disp_ww_slider_changed)
         df.addRow(self._hs_disp_ww_slider)
-        self._hs_disp_hh_label = QLabel("worldHeight（自动）: —")
-        self._hs_disp_hh_label.setStyleSheet("color:#aaa;")
-        self._hs_disp_hh_label.setWordWrap(True)
-        df.addRow("worldHeight", self._hs_disp_hh_label)
+        hh_row = QWidget()
+        hh_h = QHBoxLayout(hh_row)
+        hh_h.setContentsMargins(0, 0, 0, 0)
+        self._hs_disp_hh = QDoubleSpinBox()
+        self._hs_disp_hh.setRange(1, 999999)
+        self._hs_disp_hh.setDecimals(1)
+        self._hs_disp_hh.setSingleStep(1.0)
+        self._hs_disp_hh.setValue(100)
+        self._hs_disp_hh.setToolTip("世界高度（世界单位）")
+        self._hs_disp_hh.valueChanged.connect(self._on_hs_disp_hh_value_changed)
+        self._hs_disp_auto_w_btn = QPushButton("自动")
+        self._hs_disp_auto_w_btn.setToolTip(
+            "按当前图片长宽比，用已填的 worldHeight 计算 worldWidth（无有效图片时禁用）",
+        )
+        self._hs_disp_auto_w_btn.clicked.connect(self._on_hs_disp_auto_width_from_height)
+        hh_h.addWidget(self._hs_disp_hh, 1)
+        hh_h.addWidget(self._hs_disp_auto_w_btn)
+        df.addRow("worldHeight", hh_row)
+        self._hs_disp_ratio_hint = QLabel("")
+        self._hs_disp_ratio_hint.setStyleSheet("color:#888;")
+        self._hs_disp_ratio_hint.setWordWrap(True)
+        df.addRow("", self._hs_disp_ratio_hint)
         self._hs_disp_facing = QComboBox()
         self._hs_disp_facing.addItem("朝右（默认）", "right")
         self._hs_disp_facing.addItem("朝左", "left")
@@ -2620,7 +2655,8 @@ class ScenePropertyPanel(QScrollArea):
 
     def _on_hs_display_row_changed(self) -> None:
         self._sync_hs_disp_width_slider_from_spin()
-        self._update_hs_disp_height_label()
+        self._update_hs_disp_ratio_hint()
+        self._update_hs_disp_auto_buttons()
         self._sync_hs_display_to_dict_and_refresh()
 
     def _compute_hs_display_world_height(self, path: str, ww: float) -> float:
@@ -2632,22 +2668,73 @@ class ScenePropertyPanel(QScrollArea):
         pw, ph = px
         return _display_world_height_from_width(ww, pw, ph)
 
-    def _update_hs_disp_height_label(self) -> None:
+    def _update_hs_disp_ratio_hint(self) -> None:
         path = self._hs_disp_row.path().strip()
+        if not path:
+            self._hs_disp_ratio_hint.setText("（无图片路径，「自动」按钮不可用）")
+            return
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            self._hs_disp_ratio_hint.setText(
+                "（无法读取图素尺寸，「自动」不可用；可手填宽高）",
+            )
+            return
+        pw, ph = px
+        self._hs_disp_ratio_hint.setText(f"当前图素: {pw}×{ph}")
+
+    def _update_hs_disp_auto_buttons(self) -> None:
+        path = self._hs_disp_row.path().strip()
+        ok = bool(
+            path and _hotspot_display_image_pixel_size(self._model, path) is not None,
+        )
+        self._hs_disp_auto_h_btn.setEnabled(ok)
+        self._hs_disp_auto_w_btn.setEnabled(ok)
+
+    def _on_hs_disp_auto_height_from_width(self) -> None:
+        path = self._hs_disp_row.path().strip()
+        if not path:
+            return
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            return
+        pw, ph = px
         ww = float(self._hs_disp_ww.value())
-        hh = self._compute_hs_display_world_height(path, ww)
-        px = _hotspot_display_image_pixel_size(self._model, path) if path else None
-        if path and ww > 0 and hh > 0:
-            if px is None:
-                self._hs_disp_hh_label.setText(
-                    f"worldHeight（自动）: {hh:g}（无法读取图尺寸，暂按正方形）",
-                )
-            else:
-                self._hs_disp_hh_label.setText(
-                    f"worldHeight（自动，按图比例）: {hh:g}",
-                )
-        else:
-            self._hs_disp_hh_label.setText("worldHeight（自动）: —")
+        hh = _display_world_height_from_width(ww, pw, ph)
+        if hh <= 0:
+            return
+        self._hs_disp_hh.blockSignals(True)
+        self._hs_disp_hh.setValue(hh)
+        self._hs_disp_hh.blockSignals(False)
+        self._update_hs_disp_ratio_hint()
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _on_hs_disp_auto_width_from_height(self) -> None:
+        path = self._hs_disp_row.path().strip()
+        if not path:
+            return
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            return
+        pw, ph = px
+        hh = float(self._hs_disp_hh.value())
+        ww = _display_world_width_from_height(hh, pw, ph)
+        if ww <= 0:
+            return
+        self._hs_disp_ww.blockSignals(True)
+        self._hs_disp_ww.setValue(ww)
+        self._hs_disp_ww.blockSignals(False)
+        self._sync_hs_disp_width_slider_from_spin()
+        self._update_hs_disp_ratio_hint()
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _on_hs_disp_ww_value_changed(self, _v: float) -> None:
+        self._sync_hs_disp_width_slider_from_spin()
+        self._update_hs_disp_ratio_hint()
+        self._sync_hs_display_to_dict_and_refresh()
+
+    def _on_hs_disp_hh_value_changed(self, _v: float) -> None:
+        self._update_hs_disp_ratio_hint()
+        self._sync_hs_display_to_dict_and_refresh()
 
     def _sync_hs_disp_width_slider_from_spin(self) -> None:
         raw = int(round(float(self._hs_disp_ww.value()) * 10))
@@ -2663,12 +2750,7 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_disp_ww.blockSignals(True)
         self._hs_disp_ww.setValue(v / 10.0)
         self._hs_disp_ww.blockSignals(False)
-        self._update_hs_disp_height_label()
-        self._sync_hs_display_to_dict_and_refresh()
-
-    def _on_hs_display_dim_changed(self, _v: float) -> None:
-        self._sync_hs_disp_width_slider_from_spin()
-        self._update_hs_disp_height_label()
+        self._update_hs_disp_ratio_hint()
         self._sync_hs_display_to_dict_and_refresh()
 
     def _on_hs_disp_facing_changed(self, _i: int) -> None:
@@ -2703,7 +2785,7 @@ class ScenePropertyPanel(QScrollArea):
             return
         path = self._hs_disp_row.path().strip()
         ww = float(self._hs_disp_ww.value())
-        hh = self._compute_hs_display_world_height(path, ww)
+        hh = float(self._hs_disp_hh.value())
         if path and ww > 0 and hh > 0:
             fac = self._hs_disp_facing.currentData()
             sort = self._hs_disp_sprite_sort.currentData()
@@ -2885,14 +2967,29 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_cond.set_data(hs.get("conditions", []))
 
         di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
-        self._hs_disp_row.set_path(str(di.get("image", "") or ""))
+        pimg = str(di.get("image", "") or "")
+        self._hs_disp_row.set_path(pimg)
         self._hs_disp_ww.blockSignals(True)
         self._hs_disp_ww_slider.blockSignals(True)
-        self._hs_disp_ww.setValue(float(di.get("worldWidth", 100) or 100))
+        self._hs_disp_hh.blockSignals(True)
+        ww0 = float(di.get("worldWidth", 100) or 100)
+        self._hs_disp_ww.setValue(ww0)
         self._sync_hs_disp_width_slider_from_spin()
+        raw_hh = di.get("worldHeight")
+        try:
+            hh0 = float(raw_hh) if raw_hh is not None and raw_hh != "" else 0.0
+        except (TypeError, ValueError):
+            hh0 = 0.0
+        if hh0 <= 0 and pimg.strip() and ww0 > 0:
+            hh0 = self._compute_hs_display_world_height(pimg.strip(), ww0)
+        if hh0 <= 0:
+            hh0 = max(1.0, ww0)
+        self._hs_disp_hh.setValue(hh0)
         self._hs_disp_ww_slider.blockSignals(False)
         self._hs_disp_ww.blockSignals(False)
-        self._update_hs_disp_height_label()
+        self._hs_disp_hh.blockSignals(False)
+        self._update_hs_disp_ratio_hint()
+        self._update_hs_disp_auto_buttons()
         fac = str(di.get("facing", "") or "right").strip().lower()
         self._hs_disp_facing.blockSignals(True)
         self._hs_disp_facing.setCurrentIndex(1 if fac == "left" else 0)
@@ -2924,8 +3021,13 @@ class ScenePropertyPanel(QScrollArea):
                 self._hs_col_updating = False
 
         disp_path = str(di.get("image", "") or "").strip()
-        disp_ww = float(di.get("worldWidth", 0) or 0)
-        self._hs_disp_fold.set_expanded(bool(disp_path and disp_ww > 0))
+        self._hs_disp_fold.set_expanded(
+            bool(
+                disp_path
+                and float(self._hs_disp_ww.value()) > 0
+                and float(self._hs_disp_hh.value()) > 0,
+            ),
+        )
         self._hs_col_fold.set_expanded(has_col)
 
         data = hs.get("data", {})
@@ -3176,7 +3278,7 @@ class ScenePropertyPanel(QScrollArea):
 
         path = self._hs_disp_row.path().strip()
         ww = float(self._hs_disp_ww.value())
-        hh = self._compute_hs_display_world_height(path, ww)
+        hh = float(self._hs_disp_hh.value())
         fac = self._hs_disp_facing.currentData()
         sort = self._hs_disp_sprite_sort.currentData()
         if path and ww > 0 and hh > 0:

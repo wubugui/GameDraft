@@ -656,8 +656,14 @@ export class Game {
       },
       setSceneEntityField: (sceneId, kind, entityId, fieldName, value) =>
         this.setSceneEntityFieldFromAction(sceneId, kind, entityId, fieldName, value),
-      setHotspotDisplayImage: (sceneId, hotspotId, imagePath) =>
-        this.setHotspotDisplayImageFromAction(sceneId, hotspotId, imagePath),
+      setHotspotDisplayImage: (sceneId, hotspotId, imagePath, worldWidth, worldHeight) =>
+        this.setHotspotDisplayImageFromAction(
+          sceneId,
+          hotspotId,
+          imagePath,
+          worldWidth,
+          worldHeight,
+        ),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
     });
 
@@ -1615,7 +1621,18 @@ export class Game {
       console.warn('setEntityField:', stored.error);
       return;
     }
-    if (this.sceneManager.currentSceneData?.id !== sceneId) return;
+    if (this.sceneManager.currentSceneData?.id !== sceneId) {
+      if (fieldName === 'displayImage' && kind === 'hotspot') {
+        console.info(
+          'setEntityField: displayImage 已写入运行态，但当前显式场景 id 为',
+          this.sceneManager.currentSceneData?.id ?? '(无)',
+          '与动作中的 sceneId',
+          sceneId,
+          '不一致；进入该场景时会合并显示。',
+        );
+      }
+      return;
+    }
     if (kind === 'npc') {
       await this.applyNpcRuntimeFieldNow(entityId, fieldName, checked.value);
     } else {
@@ -1627,6 +1644,8 @@ export class Game {
     sceneId: string,
     hotspotId: string,
     imagePath: string,
+    worldWidthIn?: number,
+    worldHeightIn?: number,
   ): Promise<void> {
     const sid = sceneId.trim();
     const hid = hotspotId.trim();
@@ -1635,7 +1654,20 @@ export class Game {
       console.warn('setHotspotDisplayImage: 需要 sceneId、hotspotId 与 image');
       return;
     }
-    const tex = await this.assetManager.loadTexture(path);
+    const pathResolved =
+      path.startsWith('/') ||
+      path.startsWith('http://') ||
+      path.startsWith('https://') ||
+      path.startsWith('assets/')
+        ? path
+        : this.assetManager.resolveSceneAssetPath(sid, path);
+    let tex: Texture;
+    try {
+      tex = await this.assetManager.loadTexture(pathResolved);
+    } catch (e) {
+      console.warn('setHotspotDisplayImage: 贴图加载失败', pathResolved, e);
+      return;
+    }
     const current = this.sceneManager.currentSceneData?.id === sid
       ? this.sceneManager.getCurrentHotspots().find((x) => x.def.id === hid)
       : null;
@@ -1646,16 +1678,50 @@ export class Game {
     const override = this.sceneManager.getEntityRuntimeOverride(sid, 'hotspot', hid);
     const overrideDisplay = override && 'displayImage' in override ? override.displayImage : undefined;
     const prev = current?.def.displayImage ?? overrideDisplay ?? base?.displayImage;
-    const ww =
-      typeof prev?.worldWidth === 'number' && Number.isFinite(prev.worldWidth) && prev.worldWidth > 0
-        ? prev.worldWidth
-        : 100;
-    const hh =
-      typeof prev?.worldHeight === 'number' && Number.isFinite(prev.worldHeight) && prev.worldHeight > 0
-        ? prev.worldHeight
-        : Math.max(0.1, Math.round(ww * (tex.height / Math.max(1, tex.width)) * 10) / 10);
+    const tw = Math.max(1, tex.width);
+    const th = Math.max(1, tex.height);
+    const hFromW = (w: number) => Math.max(0.1, Math.round((w * th) / tw * 10) / 10);
+    const wFromH = (h: number) => Math.max(0.1, Math.round((h * tw) / th * 10) / 10);
+    const pW =
+      worldWidthIn !== undefined && Number.isFinite(worldWidthIn) && worldWidthIn > 0
+        ? worldWidthIn
+        : undefined;
+    const pH =
+      worldHeightIn !== undefined && Number.isFinite(worldHeightIn) && worldHeightIn > 0
+        ? worldHeightIn
+        : undefined;
+    const hasW =
+      typeof prev?.worldWidth === 'number' && Number.isFinite(prev.worldWidth) && prev.worldWidth > 0;
+    const hasH =
+      typeof prev?.worldHeight === 'number' &&
+      Number.isFinite(prev.worldHeight) &&
+      prev.worldHeight > 0;
+    let ww: number;
+    let hh: number;
+    if (pW !== undefined && pH !== undefined) {
+      ww = pW;
+      hh = pH;
+    } else if (pW !== undefined) {
+      ww = pW;
+      hh = hFromW(ww);
+    } else if (pH !== undefined) {
+      hh = pH;
+      ww = wFromH(hh);
+    } else if (hasW && hasH) {
+      ww = prev.worldWidth;
+      hh = prev.worldHeight;
+    } else if (hasW) {
+      ww = prev.worldWidth;
+      hh = hFromW(ww);
+    } else if (hasH) {
+      hh = prev.worldHeight;
+      ww = wFromH(hh);
+    } else {
+      ww = 100;
+      hh = hFromW(100);
+    }
     const displayImage: HotspotDisplayImage = {
-      image: path,
+      image: pathResolved,
       worldWidth: ww,
       worldHeight: hh,
       ...(prev?.facing !== undefined ? { facing: prev.facing } : {}),
@@ -1707,7 +1773,21 @@ export class Game {
     value: RuntimeFieldValue,
   ): Promise<void> {
     const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === hotspotId);
-    if (!h) return;
+    if (!h) {
+      if (fieldName === 'displayImage') {
+        const ids = this.sceneManager
+          .getCurrentHotspots()
+          .map((x) => x.def.id)
+          .join(', ');
+        console.warn(
+          'setHotspotDisplayImage: 当前场景找不到同 id 热点，无法立刻换图（运行态已记录）。' +
+            ` 请求的 hotspotId=${JSON.stringify(hotspotId)}；` +
+            ` 当前场景内热点 id: [${ids || '无'}]。` +
+            ' 请与场景 JSON 里 hotspots[].id 一字不差；下拉框只把不带括注的 id 写入参数。',
+        );
+      }
+      return;
+    }
     if (fieldName === 'x' && typeof value === 'number') h.setPosition(value, h.def.y);
     else if (fieldName === 'y' && typeof value === 'number') h.setPosition(h.def.x, value);
     else if (fieldName === 'enabled' && typeof value === 'boolean') h.setEnabled(value);

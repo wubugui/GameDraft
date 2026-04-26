@@ -691,6 +691,30 @@ def _append_action_param_ref_issues(
                 "error", data_type, item_id,
                 "setHotspotDisplayImage 缺少 image",
             ))
+        for key, label in (("worldWidth", "worldWidth"), ("worldHeight", "worldHeight")):
+            if key not in p:
+                continue
+            raw = p.get(key)
+            if raw is None or raw is False:
+                continue
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setHotspotDisplayImage 的 {label} 须为数值",
+                ))
+                continue
+            if v < 0:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setHotspotDisplayImage 的 {label} 不可为负",
+                ))
+            elif v == 0:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"setHotspotDisplayImage 的 {label} 为 0 时按未填写处理，建议从 JSON 中省略",
+                ))
 
     if t == "setEntityField":
         sid = str(p.get("sceneId") or "").strip()
