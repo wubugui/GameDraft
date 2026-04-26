@@ -367,6 +367,31 @@ class ProjectModel(QObject):
                 out.append((str(nid), str(label)[:40]))
         return out
 
+    def all_hotspot_ids(self) -> list[tuple[str, str]]:
+        """全场景热点 id 列表 (id, 展示说明)，供 Action 等筛选器使用。"""
+        from collections import defaultdict
+
+        by_id: dict[str, list[str]] = defaultdict(list)
+        for sid, sc in self.scenes.items():
+            if not isinstance(sc, dict):
+                continue
+            for hs in sc.get("hotspots") or []:
+                if not isinstance(hs, dict):
+                    continue
+                hid = str(hs.get("id", "") or "").strip()
+                if not hid:
+                    continue
+                by_id[hid].append(str(sid))
+        out: list[tuple[str, str]] = []
+        for hid in sorted(by_id.keys(), key=str.lower):
+            scenes = by_id[hid]
+            if len(scenes) <= 3:
+                scen_part = ", ".join(scenes)
+            else:
+                scen_part = ", ".join(scenes[:3]) + "…"
+            out.append((hid, f"{hid}（{scen_part}）"[:100]))
+        return out
+
     def scene_transitions(self) -> list[dict]:
         """All transition edges between scenes, derived from hotspot data.
 

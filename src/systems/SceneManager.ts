@@ -12,6 +12,7 @@ import type {
   GameContext,
   SceneCameraConfig,
   NpcPersistentSnapshot,
+  HotspotDisplayImage,
 } from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
@@ -27,6 +28,8 @@ interface SceneMemory {
   inspectedHotspots: string[];
   pickedUpHotspots: string[];
   npcSnapshots: Record<string, NpcPersistentSnapshot>;
+  /** 运行时 setHotspotDisplayImage 对展示图的覆盖，进场景时合并到 Hotspot def（与 JSON 分离，进存档） */
+  hotspotDisplayImageOverrides?: Record<string, HotspotDisplayImage>;
 }
 
 export class SceneManager implements IGameSystem {
@@ -130,6 +133,30 @@ export class SceneManager implements IGameSystem {
   }
 
   /**
+   * 记录某场景某热点展示图运行态（供非当前图 setHotspotDisplayImage 或进图时合并）。
+   */
+  mergeHotspotDisplayImageOverride(
+    sceneId: string,
+    hotspotId: string,
+    di: HotspotDisplayImage,
+  ): void {
+    const sid = sceneId.trim();
+    const hid = hotspotId.trim();
+    if (!sid || !hid) {
+      return;
+    }
+    let mem = this.sceneMemory.get(sid);
+    if (!mem) {
+      mem = { inspectedHotspots: [], pickedUpHotspots: [], npcSnapshots: {} };
+      this.sceneMemory.set(sid, mem);
+    }
+    if (!mem.hotspotDisplayImageOverrides) {
+      mem.hotspotDisplayImageOverrides = {};
+    }
+    mem.hotspotDisplayImageOverrides[hid] = di;
+  }
+
+  /**
    * 合并当前场景内某 NPC 的持久快照（仅 `persistNpc*` Action 应调用）。
    * 不写场景 JSON；随 `sceneMemory` 进存档。
    */
@@ -150,6 +177,9 @@ export class SceneManager implements IGameSystem {
       this.sceneMemory.set(sceneId, mem);
     } else if (!mem.npcSnapshots) {
       mem.npcSnapshots = {};
+    }
+    if (mem && !mem.hotspotDisplayImageOverrides) {
+      mem.hotspotDisplayImageOverrides = {};
     }
     const prev = mem.npcSnapshots[id] ?? {};
     mem.npcSnapshots[id] = { ...prev, ...patch };
@@ -284,10 +314,15 @@ export class SceneManager implements IGameSystem {
       for (const def of sceneData.hotspots) {
         if (memory?.pickedUpHotspots.includes(def.id)) continue;
 
-        const hotspot = new Hotspot(def);
+        const ovr = memory?.hotspotDisplayImageOverrides?.[def.id];
+        const defToUse = ovr
+          ? { ...def, displayImage: ovr }
+          : def;
+
+        const hotspot = new Hotspot(defToUse);
         this.currentHotspots.push(hotspot);
         this.renderer.entityLayer.addChild(hotspot.container);
-        const di = def.displayImage;
+        const di = defToUse.displayImage;
         if (di?.image && di.worldWidth > 0 && di.worldHeight > 0) {
           try {
             const tex = await this.assetManager.loadTexture(di.image);
@@ -451,6 +486,7 @@ export class SceneManager implements IGameSystem {
       inspectedHotspots: inspected,
       pickedUpHotspots: pickedUp,
       npcSnapshots: existing?.npcSnapshots ?? {},
+      hotspotDisplayImageOverrides: existing?.hotspotDisplayImageOverrides ?? {},
     });
   }
 
@@ -528,13 +564,19 @@ export class SceneManager implements IGameSystem {
   serialize(): object {
     const data: Record<
       string,
-      { inspected: string[]; pickedUp: string[]; npcSnapshots: Record<string, NpcPersistentSnapshot> }
+      {
+        inspected: string[];
+        pickedUp: string[];
+        npcSnapshots: Record<string, NpcPersistentSnapshot>;
+        hotspotDisplayImageOverrides: Record<string, HotspotDisplayImage>;
+      }
     > = {};
     this.sceneMemory.forEach((mem, sceneId) => {
       data[sceneId] = {
         inspected: mem.inspectedHotspots,
         pickedUp: mem.pickedUpHotspots,
         npcSnapshots: mem.npcSnapshots ?? {},
+        hotspotDisplayImageOverrides: mem.hotspotDisplayImageOverrides ?? {},
       };
     });
     return { currentSceneId: this.currentScene?.id ?? null, memory: data };
@@ -548,6 +590,7 @@ export class SceneManager implements IGameSystem {
         inspected: string[];
         pickedUp: string[];
         npcSnapshots?: Record<string, NpcPersistentSnapshot>;
+        hotspotDisplayImageOverrides?: Record<string, HotspotDisplayImage>;
       }
     >;
   }): void {
@@ -557,6 +600,7 @@ export class SceneManager implements IGameSystem {
         inspectedHotspots: mem.inspected,
         pickedUpHotspots: mem.pickedUp,
         npcSnapshots: mem.npcSnapshots ?? {},
+        hotspotDisplayImageOverrides: mem.hotspotDisplayImageOverrides ?? {},
       });
     }
   }

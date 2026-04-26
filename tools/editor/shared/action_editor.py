@@ -113,7 +113,7 @@ ACTION_TYPES = [
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
-    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "blendOverlayImage",
+    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage", "blendOverlayImage",
     "revealDocument", "startDialogueGraph",
     "waitClickContinue",
     "waitMs",
@@ -1020,6 +1020,38 @@ class ActionRow(QWidget):
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params = self._data.get("params", {})
 
+        if act_type == "setHotspotDisplayImage":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "仅影响当前已加载场景中的热点；世界宽高沿用 JSON 中已有 displayImage 尺寸，"
+                "无配置时宽 100、高按新图比例推算。",
+                self,
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            m = self._ctx_model
+            hs_rows = m.all_hotspot_ids() if m else []
+            if not hs_rows:
+                hs_rows = [("", "（无热点，请先在场景 JSON 中配置 hotspots）")]
+            id_combo = FilterableTypeCombo(hs_rows, self, select_only=True)
+            cur_id = str(params.get("hotspotId", "") or "").strip()
+            if cur_id:
+                id_combo.set_committed_type(cur_id)
+            elif hs_rows and hs_rows[0][0]:
+                id_combo.set_committed_type(hs_rows[0][0])
+            id_combo.typeCommitted.connect(lambda _v: self.changed.emit())
+            self._param_widgets["hotspotId"] = id_combo
+            self._params_layout.addRow("hotspotId", id_combo)
+            img_row = CutsceneImagePathRow(self._ctx_model, str(params.get("image", "") or ""), self)
+            img_row.changed.connect(self.changed)
+            self._param_widgets["image"] = img_row
+            self._params_layout.addRow("image", img_row)
+            self._sync_foldable_visibility()
+            return
+
         if act_type == "showOverlayImage":
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
@@ -1749,6 +1781,16 @@ class ActionRow(QWidget):
 
         self._sync_foldable_visibility()
 
+    def _to_dict_set_hotspot_display_image(self) -> dict:
+        id_w = self._param_widgets.get("hotspotId")
+        img_w = self._param_widgets.get("image")
+        hid = id_w.committed_type().strip() if isinstance(id_w, FilterableTypeCombo) else ""
+        pimg = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
+        return {
+            "type": "setHotspotDisplayImage",
+            "params": {"hotspotId": hid, "image": pimg},
+        }
+
     def _to_dict_show_overlay_image(self) -> dict:
         id_w = self._param_widgets.get("id")
         img_w = self._param_widgets.get("image")
@@ -1893,6 +1935,8 @@ class ActionRow(QWidget):
 
     def to_dict(self) -> dict:
         act_type = self.type_combo.committed_type()
+        if act_type == "setHotspotDisplayImage":
+            return self._to_dict_set_hotspot_display_image()
         if act_type == "showOverlayImage":
             return self._to_dict_show_overlay_image()
         if act_type == "blendOverlayImage":

@@ -108,6 +108,8 @@ export interface ActionRegistryDeps {
   spawnCutsceneActor: (id: string, name: string, x: number, y: number) => void;
   /** 从 CutsceneManager 临时表中移除一个临时实体并销毁 */
   removeCutsceneActor: (id: string) => void;
+  /** 将当前场景内指定热点的展示图换为已存在的贴图路径（与 scene JSON displayImage 同语义） */
+  setHotspotDisplayImage: (hotspotId: string, imagePath: string) => Promise<void>;
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -543,6 +545,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('ActionRegistry: showOverlayImage failed', e);
     });
   }, ['id', 'image', 'xPercent', 'yPercent', 'widthPercent']);
+
+  executor.register('setHotspotDisplayImage', (p) => {
+    const hid = String(p.hotspotId ?? '').trim();
+    const image = String(p.image ?? '').trim();
+    if (!hid || !image) {
+      console.warn('setHotspotDisplayImage: 需要 hotspotId 与 image');
+      return;
+    }
+    return d.setHotspotDisplayImage(hid, image).catch((e) => {
+      console.warn('ActionRegistry: setHotspotDisplayImage failed', e);
+    });
+  }, ['hotspotId', 'image']);
 
   executor.register('hideOverlayImage', (p) => {
     const id = String(p.id ?? '').trim();

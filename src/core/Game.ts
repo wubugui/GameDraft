@@ -647,6 +647,8 @@ export class Game {
       removeCutsceneActor: (id) => {
         this.cutsceneManager.removeTempActor(id);
       },
+      setHotspotDisplayImage: (hotspotId, imagePath) =>
+        this.setHotspotDisplayImageFromAction(hotspotId, imagePath),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
     });
 
@@ -1590,6 +1592,66 @@ export class Game {
   /**
    * 按配置与背景密度同步玩家 / NPC / 热点展示的低通（仅 Pixi filters，不影响深度与碰撞）。
    */
+  private async setHotspotDisplayImageFromAction(hotspotId: string, imagePath: string): Promise<void> {
+    const hid = hotspotId.trim();
+    const path = imagePath.trim();
+    if (!hid || !path) {
+      console.warn('setHotspotDisplayImage: 需要 hotspotId 与 image');
+      return;
+    }
+    const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === hid);
+    if (!h) {
+      console.warn(`setHotspotDisplayImage: 当前场景无热点 "${hid}"`);
+      return;
+    }
+    const oldF = h.detachDepthOcclusionFilter();
+    if (oldF) {
+      this.sceneDepthSystem.removeFilter(oldF);
+      oldF.destroy();
+    }
+    let tex: Texture;
+    try {
+      tex = await this.assetManager.loadTexture(path);
+    } catch (e) {
+      console.warn('setHotspotDisplayImage: 加载图失败', path, e);
+      return;
+    }
+    const prev = h.def.displayImage;
+    let ww: number;
+    if (typeof prev?.worldWidth === 'number' && Number.isFinite(prev.worldWidth) && prev.worldWidth > 0) {
+      ww = prev.worldWidth;
+    } else {
+      ww = 100;
+    }
+    let hh: number;
+    if (typeof prev?.worldHeight === 'number' && Number.isFinite(prev.worldHeight) && prev.worldHeight > 0) {
+      hh = prev.worldHeight;
+    } else {
+      const ar = tex.height / Math.max(1, tex.width);
+      hh = Math.max(0.1, Math.round(ww * ar * 10) / 10);
+    }
+    h.def.displayImage = {
+      image: path,
+      worldWidth: ww,
+      worldHeight: hh,
+      ...(prev?.facing !== undefined ? { facing: prev.facing } : {}),
+      ...(prev?.spriteSort !== undefined ? { spriteSort: prev.spriteSort } : {}),
+    };
+    h.setDisplayTexture(tex, ww, hh);
+    if (h.hasDepthDisplayImage()) {
+      try {
+        const hf = this.sceneDepthSystem.createFilterForEntity();
+        if (hf) {
+          depthLog('Game', 'setHotspotDisplayImage: reattach depth to', hid);
+          h.attachDepthOcclusionFilter(hf);
+        }
+      } catch (e) {
+        depthError('Game', 'setHotspotDisplayImage: hotspot depth filter FAILED', hid, e);
+      }
+    }
+    this.syncEntityPixelDensityMatch();
+  }
+
   private syncEntityPixelDensityMatch(): void {
     const dBg = this.sceneManager.getBackgroundTexelsPerWorld();
     const on = dBg != null && this.getEntityPixelDensityMatchEffective();

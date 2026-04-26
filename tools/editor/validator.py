@@ -664,6 +664,16 @@ def _append_action_param_ref_issues(
                 f"startDialogueGraph npcId {nid!r} 在当前上下文下无法解析为实体",
             ))
 
+    if t == "setHotspotDisplayImage":
+        hid = str(p.get("hotspotId") or "").strip()
+        if hid:
+            known = {x[0] for x in model.all_hotspot_ids()}
+            if known and hid not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"setHotspotDisplayImage hotspotId {hid!r} 不在任意场景 hotspots 列表中",
+                ))
+
     if t in ("hideOverlayImage", "showOverlayImage", "blendOverlayImage"):
         oid = str(p.get("id") or "").strip()
         if oid and overlay_keys and oid not in overlay_keys:
