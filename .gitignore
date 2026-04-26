@@ -51,6 +51,9 @@ public/assets/dialogues/*.ink.json
 # Temp / read zip folder
 _read_zip/
 
+# TagSpaces 安装包：根目录单文件超 GitHub 限制，只托管 tagspaces-*.zip_split/ 分片
+tagspaces-win-x64-6.11.2.zip
+
 # 根目录 tmp：默认忽略，仅托管 chronicle 变异概率示意图
 tmp/*
 !tmp/chronicle_sim_mutation_probability/
