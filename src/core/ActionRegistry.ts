@@ -119,7 +119,7 @@ export interface ActionRegistryDeps {
   ) => Promise<void>;
   /**
    * 将指定热点的展示图换为已存在的贴图路径（与 scene JSON displayImage 同语义）。
-   * worldWidth / worldHeight 可选：见 Game.setHotspotDisplayImageFromAction 合并规则。
+   * worldWidth / worldHeight / facing 可选：见 Game.setHotspotDisplayImageFromAction。
    */
   setHotspotDisplayImage: (
     sceneId: string,
@@ -127,6 +127,7 @@ export interface ActionRegistryDeps {
     imagePath: string,
     worldWidth?: number,
     worldHeight?: number,
+    facing?: 'left' | 'right',
   ) => Promise<void>;
 }
 
@@ -578,12 +579,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const hNum = hRaw === undefined || hRaw === null || hRaw === '' ? NaN : Number(hRaw);
     const worldWidth = Number.isFinite(wNum) && wNum > 0 ? wNum : undefined;
     const worldHeight = Number.isFinite(hNum) && hNum > 0 ? hNum : undefined;
+    const fRaw = String(p.facing ?? '').trim().toLowerCase();
+    const facing: 'left' | 'right' | undefined =
+      fRaw === 'left' || fRaw === 'right' ? fRaw : undefined;
+    if (fRaw && fRaw !== 'left' && fRaw !== 'right') {
+      console.warn('setHotspotDisplayImage: facing 须为 left 或 right，已忽略', p.facing);
+    }
     return d
-      .setHotspotDisplayImage(sceneId, hid, image, worldWidth, worldHeight)
+      .setHotspotDisplayImage(sceneId, hid, image, worldWidth, worldHeight, facing)
       .catch((e) => {
         console.warn('ActionRegistry: setHotspotDisplayImage failed', e);
       });
-  }, ['sceneId', 'hotspotId', 'image', 'worldWidth', 'worldHeight']);
+  }, ['sceneId', 'hotspotId', 'image', 'worldWidth', 'worldHeight', 'facing']);
 
   executor.register('setEntityField', (p) => {
     const sceneId = String(p.sceneId ?? '').trim();

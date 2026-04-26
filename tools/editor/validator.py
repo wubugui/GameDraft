@@ -715,6 +715,13 @@ def _append_action_param_ref_issues(
                     "warning", data_type, item_id,
                     f"setHotspotDisplayImage 的 {label} 为 0 时按未填写处理，建议从 JSON 中省略",
                 ))
+        if "facing" in p and p.get("facing") not in (None, ""):
+            fv = str(p.get("facing") or "").strip().lower()
+            if fv not in ("left", "right"):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "setHotspotDisplayImage 的 facing 须为 left 或 right",
+                ))
 
     if t == "setEntityField":
         sid = str(p.get("sceneId") or "").strip()

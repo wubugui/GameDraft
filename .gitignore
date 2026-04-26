@@ -1,3 +1,6 @@
+# 仅忽略名为 .ts 的文件夹
+**/.ts/
+
 # Dependencies and package manager
 node_modules/
 

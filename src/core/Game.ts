@@ -656,13 +656,14 @@ export class Game {
       },
       setSceneEntityField: (sceneId, kind, entityId, fieldName, value) =>
         this.setSceneEntityFieldFromAction(sceneId, kind, entityId, fieldName, value),
-      setHotspotDisplayImage: (sceneId, hotspotId, imagePath, worldWidth, worldHeight) =>
+      setHotspotDisplayImage: (sceneId, hotspotId, imagePath, worldWidth, worldHeight, facing) =>
         this.setHotspotDisplayImageFromAction(
           sceneId,
           hotspotId,
           imagePath,
           worldWidth,
           worldHeight,
+          facing,
         ),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
     });
@@ -1646,6 +1647,7 @@ export class Game {
     imagePath: string,
     worldWidthIn?: number,
     worldHeightIn?: number,
+    facingIn?: 'left' | 'right',
   ): Promise<void> {
     const sid = sceneId.trim();
     const hid = hotspotId.trim();
@@ -1724,9 +1726,15 @@ export class Game {
       image: pathResolved,
       worldWidth: ww,
       worldHeight: hh,
-      ...(prev?.facing !== undefined ? { facing: prev.facing } : {}),
-      ...(prev?.spriteSort !== undefined ? { spriteSort: prev.spriteSort } : {}),
     };
+    if (facingIn === 'left' || facingIn === 'right') {
+      displayImage.facing = facingIn;
+    } else if (prev?.facing !== undefined) {
+      displayImage.facing = prev.facing;
+    }
+    if (prev?.spriteSort !== undefined) {
+      displayImage.spriteSort = prev.spriteSort;
+    }
     await this.setSceneEntityFieldFromAction(sid, 'hotspot', hid, 'displayImage', displayImage);
   }
 

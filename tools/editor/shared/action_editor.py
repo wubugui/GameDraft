@@ -1704,8 +1704,8 @@ class ActionRow(QWidget):
             self._param_widgets["image"] = img_row
             self._params_layout.addRow("image", img_row)
             opt_tip = QLabel(
-                "worldWidth / worldHeight 可选：均不填则仅换图、保留原世界尺寸；"
-                "只填其一则另一维按新图素比计算；都填则按填写值。",
+                "worldWidth / worldHeight / facing 可选：宽高均不填则仅换图、保留原世界尺寸；"
+                "只填宽或高则另一维按新图素比计算。朝向不选则保留原 displayImage 的 facing。",
                 self,
             )
             opt_tip.setWordWrap(True)
@@ -1740,6 +1740,21 @@ class ActionRow(QWidget):
             w_hh.valueChanged.connect(self.changed.emit)
             self._param_widgets["worldHeight"] = w_hh
             self._params_layout.addRow("worldHeight（可选）", w_hh)
+            fac_raw = str(params.get("facing", "") or "").strip().lower()
+            fac_v = fac_raw if fac_raw in ("left", "right") else ""
+            fac_rows = [
+                ("不指定（保留原朝向）", ""),
+                ("朝右（默认）", "right"),
+                ("朝左", "left"),
+            ]
+            fac_combo = FilterableTypeCombo(fac_rows, self, select_only=True)
+            if fac_v:
+                fac_combo.set_committed_type(fac_v)
+            else:
+                fac_combo.set_committed_type("")
+            fac_combo.typeCommitted.connect(lambda _v: self.changed.emit())
+            self._param_widgets["facing"] = fac_combo
+            self._params_layout.addRow("facing（可选）", fac_combo)
             self._sync_foldable_visibility()
             return
 
@@ -2486,6 +2501,11 @@ class ActionRow(QWidget):
             pr["worldWidth"] = float(ww.value())
         if isinstance(hh, QDoubleSpinBox) and float(hh.value()) > 0:
             pr["worldHeight"] = float(hh.value())
+        fac_w = self._param_widgets.get("facing")
+        if isinstance(fac_w, FilterableTypeCombo):
+            fv = fac_w.committed_type().strip().lower()
+            if fv in ("left", "right"):
+                pr["facing"] = fv
         return {
             "type": "setHotspotDisplayImage",
             "params": pr,
