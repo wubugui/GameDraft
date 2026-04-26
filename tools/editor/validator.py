@@ -238,6 +238,41 @@ def validate(model: ProjectModel) -> list[Issue]:
                                         "error", "scene", sid,
                                         f"NPC '{npc.get('id')}' dialogueGraphEntry '{dge}' 不在图 nodes 中",
                                     ))
+            cpl = npc.get("collisionPolygonLocal")
+            if cpl is not None and not isinstance(cpl, bool):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{npc.get('id')}' collisionPolygonLocal 须为布尔",
+                ))
+            cpoly = npc.get("collisionPolygon")
+            if cpoly is not None:
+                if not isinstance(cpoly, list):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"NPC '{npc.get('id')}' collisionPolygon 须为数组",
+                    ))
+                elif len(cpoly) > 0 and len(cpoly) < 3:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"NPC '{npc.get('id')}' collisionPolygon 至少 3 个顶点或省略",
+                    ))
+                else:
+                    for pi, p in enumerate(cpoly):
+                        if not isinstance(p, dict):
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"NPC '{npc.get('id')}' collisionPolygon[{pi}] 须为 {{x,y}} 对象",
+                            ))
+                            continue
+                        for coord in ("x", "y"):
+                            v = p.get(coord)
+                            try:
+                                float(v)
+                            except (TypeError, ValueError):
+                                issues.append(Issue(
+                                    "error", "scene", sid,
+                                    f"NPC '{npc.get('id')}' collisionPolygon[{pi}].{coord} 须为数值",
+                                ))
         fid = sc.get("filterId")
         if fid and fid not in filter_ids:
             issues.append(Issue("warning", "scene", sid,

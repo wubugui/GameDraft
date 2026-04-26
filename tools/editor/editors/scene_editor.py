@@ -50,6 +50,8 @@ _ZONE_COLOR = QColor(255, 200, 0, 60)
 _ZONE_COLOR_DEPTH_FLOOR = QColor(80, 160, 255, 72)
 
 _HOTSPOT_COLLISION_ZONE_COLOR = QColor(255, 120, 60, 95)
+# NPC 行走阻挡碰撞多边形（与 Hotspot 分色，便于叠放区分）
+_NPC_COLLISION_ZONE_COLOR = QColor(80, 200, 140, 95)
 # 画布「禁止点选 Zone」时使用的填充与线色（与实体原色解耦，仅作冻结提示）
 _ZONE_PICK_FROZEN_FILL = QColor(150, 150, 150, 88)
 _ZONE_PICK_FROZEN_PEN = QColor(95, 95, 95, 220)
@@ -543,7 +545,12 @@ class _EditableZonePolygon(QGraphicsObject):
         super().__init__()
         self._canvas = canvas
         self.entity_id = entity_id
-        self.entity_kind = "zone" if poly_kind == "zone" else "hotspot_collision"
+        if poly_kind == "zone":
+            self.entity_kind = "zone"
+        elif poly_kind == "npc_collision":
+            self.entity_kind = "npc_collision"
+        else:
+            self.entity_kind = "hotspot_collision"
         self._poly_kind = poly_kind
         self._color = color
         self._points: list[list[float]] = [[float(x), float(y)] for x, y in points]
@@ -606,6 +613,8 @@ class _EditableZonePolygon(QGraphicsObject):
         poly = self.points_to_model()
         if self._poly_kind == "zone":
             self._canvas._emit_zone_polygon_committed(self.entity_id, poly)
+        elif self._poly_kind == "npc_collision":
+            self._canvas._emit_npc_collision_polygon_committed(self.entity_id, poly)
         else:
             self._canvas._emit_hotspot_collision_polygon_committed(self.entity_id, poly)
 
@@ -741,8 +750,8 @@ class _EditableZonePolygon(QGraphicsObject):
             self._select_exclusively()
             event.accept()
             return
-        # hotspot 附带 collisionPolygon：仅允许拖顶点，禁止像独立 zone 那样拖内部整体平移。
-        if self._poly_kind != "hotspot_collision" and self._point_in_polygon(
+        # hotspot / npc 附带 collisionPolygon：仅允许拖顶点，禁止像独立 zone 那样拖内部整体平移。
+        if self._poly_kind not in ("hotspot_collision", "npc_collision") and self._point_in_polygon(
             sp.x(), sp.y()
         ):
             self._drag_vertex = None
@@ -1076,6 +1085,8 @@ class SceneCanvas(QGraphicsView):
     item_zone_polygon_committed = Signal(str, str, object)
     # hotspot_id, polygon: list[{"x","y"}, ...]
     item_hotspot_collision_polygon_committed = Signal(str, object)
+    # npc_id, polygon: list[{"x","y"}, ...]
+    item_npc_collision_polygon_committed = Signal(str, object)
     # npc_id, route: list[{"x","y"}, ...]
     item_npc_patrol_route_committed = Signal(str, object)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
@@ -1115,7 +1126,7 @@ class SceneCanvas(QGraphicsView):
         self._project_model = model
 
     def set_zone_pick_frozen(self, frozen: bool) -> None:
-        """若 True：独立 Zone 与 Hotspot collisionPolygon 在画布上呈灰色，且不可鼠标选中/拖动（属性表仍可改）。"""
+        """若 True：独立 Zone 与 Hotspot/NPC collisionPolygon 在画布上呈灰色，且不可鼠标选中/拖动（属性表仍可改）。"""
         self._zone_pick_frozen = bool(frozen)
         for it in self._entity_items.values():
             if isinstance(it, _EditableZonePolygon):
@@ -1157,7 +1168,7 @@ class SceneCanvas(QGraphicsView):
                 continue
             if skip_z:
                 ek = getattr(it, "entity_kind", None)
-                if ek in ("zone", "hotspot_collision"):
+                if ek in ("zone", "hotspot_collision", "npc_collision"):
                     continue
             iid = id(it)
             if iid in seen:
@@ -1286,6 +1297,51 @@ class SceneCanvas(QGraphicsView):
         if isinstance(item, _EditableZonePolygon):
             item.set_points_from_model(polygon)
 
+    def refresh_npc_collision_visuals(self, npc: dict) -> None:
+        """同步 NPC 的 collisionPolygon 画布多边形（世界坐标与 Hotspot 一致，锚点为 x,y）。"""
+        nid = str(npc.get("id", "")).strip()
+        if not nid:
+            return
+        col_key = f"npc_collision:{nid}"
+        poly = npc.get("collisionPolygon")
+        pts: list[tuple[float, float]] = []
+        if isinstance(poly, list) and len(poly) >= 3:
+            if npc.get("collisionPolygonLocal") is True:
+                for p in _hotspot_collision_local_to_world(npc, poly):
+                    pts.append((float(p["x"]), float(p["y"])))
+            else:
+                for p in poly:
+                    if isinstance(p, dict):
+                        pts.append((float(p.get("x", 0)), float(p.get("y", 0))))
+        if len(pts) >= 3:
+            model_pts = [{"x": px, "y": py} for px, py in pts]
+            existing = self._entity_items.get(col_key)
+            if isinstance(existing, _EditableZonePolygon):
+                existing.set_points_from_model(model_pts)
+            else:
+                old_col = self._entity_items.pop(col_key, None)
+                if old_col is not None and old_col.scene() is self._gfx:
+                    self._gfx.removeItem(old_col)
+                poly_item = _EditableZonePolygon(
+                    self, pts, _NPC_COLLISION_ZONE_COLOR, nid,
+                    poly_kind="npc_collision",
+                )
+                poly_item.setZValue(-2)
+                self._gfx.addItem(poly_item)
+                self._entity_items[col_key] = poly_item
+                if self._zone_pick_frozen:
+                    poly_item.set_zone_pick_frozen(True)
+        else:
+            old_col = self._entity_items.pop(col_key, None)
+            if old_col is not None and old_col.scene() is self._gfx:
+                self._gfx.removeItem(old_col)
+
+    def update_npc_collision_polygon(self, entity_id: str, polygon: list) -> None:
+        key = f"npc_collision:{entity_id}"
+        item = self._entity_items.get(key)
+        if isinstance(item, _EditableZonePolygon):
+            item.set_points_from_model(polygon)
+
     def add_npc(self, npc: dict) -> None:
         ir = npc.get("interactionRange", 50)
         item = _DraggableCircle(
@@ -1294,6 +1350,7 @@ class SceneCanvas(QGraphicsView):
             range_radius=ir, scene_view=self)
         self._gfx.addItem(item)
         self._entity_items[f"npc:{npc.get('id', '')}"] = item
+        self.refresh_npc_collision_visuals(npc)
 
     def add_zone(self, zone: dict) -> None:
         pts = _zone_polygon_points_for_editor(zone)
@@ -1326,6 +1383,13 @@ class SceneCanvas(QGraphicsView):
         polygon: list,
     ) -> None:
         self.item_hotspot_collision_polygon_committed.emit(eid, polygon)
+
+    def _emit_npc_collision_polygon_committed(
+        self,
+        eid: str,
+        polygon: list,
+    ) -> None:
+        self.item_npc_collision_polygon_committed.emit(eid, polygon)
 
     def _emit_npc_patrol_route_committed(
         self, npc_id: str, route: list,
@@ -1573,7 +1637,9 @@ class SceneCanvas(QGraphicsView):
                 # property panel. If item_selected runs before item_moved, the
                 # spin boxes are filled with stale x/y and stay wrong until the
                 # next gesture.
-                emit_move = it.entity_kind not in ("zone", "hotspot_collision")
+                emit_move = it.entity_kind not in (
+                    "zone", "hotspot_collision", "npc_collision",
+                )
                 if emit_move:
                     self.item_moved.emit(
                         it.entity_kind, it.entity_id,
@@ -1857,6 +1923,7 @@ class ScenePropertyPanel(QScrollArea):
     # entity_id, polygon list[{"x","y"}, ...] — 侧栏顶点表驱动画布
     zone_polygon_changed = Signal(str, object)
     hotspot_collision_polygon_changed = Signal(str, object)
+    npc_collision_polygon_changed = Signal(str, object)
     hotspot_visual_refresh_requested = Signal(str)
     # 侧栏改 anim/初始状态后，让主窗口按 npc id 重建该 NPC 的场景动画层
     npc_scene_anim_refresh_requested = Signal(str)
@@ -1912,6 +1979,7 @@ class ScenePropertyPanel(QScrollArea):
         self._editing_scene_id: str = ""
         self._zn_poly_updating: bool = False
         self._npc_patrol_table_updating: bool = False
+        self._npc_col_updating: bool = False
 
     @staticmethod
     def _section(title: str, *, start_open: bool = True) -> CollapsibleSection:
@@ -2940,6 +3008,155 @@ class ScenePropertyPanel(QScrollArea):
             self.interaction_range_changed.emit("npc", eid, float(value))
         self.changed.emit()
 
+    def _npc_col_polygon_from_table(self) -> list[dict[str, float]]:
+        t = self._npc_col_table
+        out: list[dict[str, float]] = []
+        for r in range(t.rowCount()):
+            x_it = t.item(r, 1)
+            y_it = t.item(r, 2)
+            try:
+                x = round(float((x_it.text() if x_it else "0").strip()), 1)
+                y = round(float((y_it.text() if y_it else "0").strip()), 1)
+            except (TypeError, ValueError, AttributeError):
+                x, y = 0.0, 0.0
+            out.append({"x": x, "y": y})
+        return out
+
+    def _set_npc_col_table(self, polygon: list) -> None:
+        self._npc_col_updating = True
+        try:
+            t = self._npc_col_table
+            t.blockSignals(True)
+            t.setRowCount(0)
+            for i, p in enumerate(polygon):
+                if not isinstance(p, dict):
+                    continue
+                r = t.rowCount()
+                t.insertRow(r)
+                ix = QTableWidgetItem(str(i))
+                ix.setFlags(ix.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                t.setItem(r, 0, ix)
+                t.setItem(
+                    r, 1, QTableWidgetItem(str(round(float(p.get("x", 0)), 1))))
+                t.setItem(
+                    r, 2, QTableWidgetItem(str(round(float(p.get("y", 0)), 1))))
+            t.blockSignals(False)
+            for r in range(t.rowCount()):
+                it = t.item(r, 0)
+                if it:
+                    it.setText(str(r))
+        finally:
+            self._npc_col_updating = False
+
+    def _on_npc_collision_toggle(self, checked: bool) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        if checked:
+            poly = npc.get("collisionPolygon")
+            if not (isinstance(poly, list) and len(poly) >= 3):
+                npc["collisionPolygon"] = _default_hotspot_collision_triangle_local()
+                npc["collisionPolygonLocal"] = True
+            wpoly = _hotspot_collision_local_to_world(npc, npc["collisionPolygon"])
+            self._set_npc_col_table(wpoly)
+        else:
+            npc.pop("collisionPolygon", None)
+            npc.pop("collisionPolygonLocal", None)
+            self._npc_col_updating = True
+            try:
+                self._npc_col_table.setRowCount(0)
+            finally:
+                self._npc_col_updating = False
+        self.changed.emit()
+        eid = str(npc.get("id", "")).strip()
+        if eid:
+            if checked and isinstance(npc.get("collisionPolygon"), list):
+                wpoly = _hotspot_collision_local_to_world(npc, npc["collisionPolygon"])
+                self.npc_collision_polygon_changed.emit(eid, wpoly)
+            else:
+                self.npc_collision_polygon_changed.emit(eid, [])
+
+    def _emit_npc_col_polygon_if_valid(self) -> None:
+        if self._npc_col_updating:
+            return
+        if self._stack.currentWidget() != self._npc_panel:
+            return
+        if not self._npc_col_enable.isChecked():
+            return
+        npc = self._pending_npc
+        if npc is None:
+            return
+        eid = str(npc.get("id", "")).strip()
+        if not eid:
+            return
+        poly_world = self._npc_col_polygon_from_table()
+        if len(poly_world) < 3:
+            return
+        npc["collisionPolygon"] = _hotspot_collision_world_to_local(npc, poly_world)
+        npc["collisionPolygonLocal"] = True
+        self.npc_collision_polygon_changed.emit(eid, poly_world)
+        self.changed.emit()
+
+    def _on_npc_col_cell_changed(self, item: QTableWidgetItem) -> None:
+        if self._npc_col_updating:
+            return
+        if item.column() == 0:
+            return
+        self._emit_npc_col_polygon_if_valid()
+
+    def _on_npc_col_add_vertex(self) -> None:
+        if self._stack.currentWidget() != self._npc_panel:
+            return
+        if not self._npc_col_enable.isChecked():
+            return
+        npc = self._pending_npc
+        if npc is None:
+            return
+        t = self._npc_col_table
+        poly = self._npc_col_polygon_from_table()
+        row = t.currentRow()
+        if len(poly) < 3:
+            npc["collisionPolygon"] = _default_hotspot_collision_triangle_local()
+            npc["collisionPolygonLocal"] = True
+            poly = _hotspot_collision_local_to_world(npc, npc["collisionPolygon"])
+        else:
+            if row < 0 and t.rowCount() > 0:
+                row = t.rowCount() - 1
+            i = max(0, min(row, len(poly) - 1))
+            j = (i + 1) % len(poly)
+            nx = (poly[i]["x"] + poly[j]["x"]) * 0.5
+            ny = (poly[i]["y"] + poly[j]["y"]) * 0.5
+            poly.insert(i + 1, {"x": round(nx, 1), "y": round(ny, 1)})
+        self._set_npc_col_table(poly)
+        self._emit_npc_col_polygon_if_valid()
+
+    def _on_npc_col_remove_vertex(self) -> None:
+        if self._stack.currentWidget() != self._npc_panel:
+            return
+        t = self._npc_col_table
+        row = t.currentRow()
+        if row < 0 or t.rowCount() <= 3:
+            return
+        poly = self._npc_col_polygon_from_table()
+        if row < len(poly):
+            del poly[row]
+        self._set_npc_col_table(poly)
+        self._emit_npc_col_polygon_if_valid()
+
+    def refresh_npc_collision_table(self, eid: str) -> None:
+        if self._stack.currentWidget() != self._npc_panel:
+            return
+        npc = self._pending_npc
+        if npc is None or str(npc.get("id", "")) != eid:
+            return
+        col = npc.get("collisionPolygon")
+        if not isinstance(col, list) or len(col) < 3:
+            return
+        if npc.get("collisionPolygonLocal") is True:
+            self._set_npc_col_table(_hotspot_collision_local_to_world(npc, col))
+        else:
+            self._set_npc_col_table(col)
+
     def _write_hotspot_widgets_to_dict(self, hs: dict) -> None:
         hs["id"] = self._hs_id.text().strip()
         hs["type"] = self._hs_type.currentText()
@@ -3071,6 +3288,42 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range.valueChanged.connect(self._on_npc_interaction_range_live)
         base_g.add_body(base_inner)
         outer.addWidget(base_g)
+
+        ncc_g = self._section("行走阻挡碰撞多边形", start_open=False)
+        ncc_g.set_header_tool_tip(
+            "与 Hotspot 相同：作为玩家行走碰撞（与互动范围圈无关），相对 NPC 的 x,y 存局部多边形。",
+        )
+        ncc_inner = QWidget()
+        ncc_l = QVBoxLayout(ncc_inner)
+        self._npc_col_enable = QCheckBox("启用碰撞多边形")
+        self._npc_col_enable.toggled.connect(self._on_npc_collision_toggle)
+        ncc_l.addWidget(self._npc_col_enable)
+        h_cc = QLabel(
+            "侧栏为「世界坐标」；写入 JSON 时相对当前 x,y 存局部坐标。画布仅拖顶点/插点/删点，不拖整体平移。")
+        h_cc.setWordWrap(True)
+        ncc_l.addWidget(h_cc)
+        self._npc_col_table = QTableWidget(0, 3)
+        self._npc_col_table.setHorizontalHeaderLabels(["#", "x", "y"])
+        self._npc_col_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        self._npc_col_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self._npc_col_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch)
+        self._npc_col_table.setMinimumHeight(120)
+        self._npc_col_table.itemChanged.connect(self._on_npc_col_cell_changed)
+        ncc_l.addWidget(self._npc_col_table)
+        ncc_btns = QHBoxLayout()
+        self._npc_col_add = QPushButton("添加顶点")
+        self._npc_col_add.clicked.connect(self._on_npc_col_add_vertex)
+        self._npc_col_del = QPushButton("删除选中顶点")
+        self._npc_col_del.clicked.connect(self._on_npc_col_remove_vertex)
+        ncc_btns.addWidget(self._npc_col_add)
+        ncc_btns.addWidget(self._npc_col_del)
+        ncc_l.addLayout(ncc_btns)
+        ncc_g.add_body(ncc_inner)
+        self._npc_col_fold = ncc_g
+        outer.addWidget(ncc_g)
 
         anim_g = self._section("骨骼动画 animFile / 初始状态", start_open=True)
         anim_inner = QWidget()
@@ -3402,6 +3655,14 @@ class ScenePropertyPanel(QScrollArea):
             return
         npc["x"] = round(float(self._npc_x.value()), 1)
         npc["y"] = round(float(self._npc_y.value()), 1)
+        if self._npc_col_enable.isChecked():
+            col = npc.get("collisionPolygon")
+            if isinstance(col, list) and len(col) >= 3 and npc.get("collisionPolygonLocal") is True:
+                self._npc_col_updating = True
+                try:
+                    self._set_npc_col_table(_hotspot_collision_local_to_world(npc, col))
+                finally:
+                    self._npc_col_updating = False
         self.changed.emit()
         self.npc_xy_live_changed.emit(str(npc.get("id", "")))
 
@@ -3557,6 +3818,23 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_anim.blockSignals(False)
         self._fill_npc_initial_state_combo()
         self._load_npc_patrol_ui(npc)
+        colp = npc.get("collisionPolygon")
+        has_ncc = isinstance(colp, list) and len(colp) >= 3
+        self._npc_col_enable.blockSignals(True)
+        self._npc_col_enable.setChecked(has_ncc)
+        self._npc_col_enable.blockSignals(False)
+        if has_ncc:
+            if npc.get("collisionPolygonLocal") is True:
+                self._set_npc_col_table(_hotspot_collision_local_to_world(npc, colp))
+            else:
+                self._set_npc_col_table(colp)
+        else:
+            self._npc_col_updating = True
+            try:
+                self._npc_col_table.setRowCount(0)
+            finally:
+                self._npc_col_updating = False
+        self._npc_col_fold.set_expanded(has_ncc)
         self.npc_patrol_overlay_refresh_requested.emit()
 
     def _write_npc_widgets_to_dict(self, npc: dict) -> None:
@@ -3616,6 +3894,19 @@ class ScenePropertyPanel(QScrollArea):
             npc["patrol"] = pat_out
         elif "patrol" in npc:
             del npc["patrol"]
+        if self._npc_col_enable.isChecked():
+            poly_world = self._npc_col_polygon_from_table()
+            if len(poly_world) >= 3:
+                npc["collisionPolygon"] = _hotspot_collision_world_to_local(
+                    npc, poly_world,
+                )
+                npc["collisionPolygonLocal"] = True
+            elif "collisionPolygon" in npc:
+                del npc["collisionPolygon"]
+                npc.pop("collisionPolygonLocal", None)
+        else:
+            npc.pop("collisionPolygon", None)
+            npc.pop("collisionPolygonLocal", None)
         self.changed.emit()
 
     def save_npc_props(self) -> dict | None:
@@ -4089,11 +4380,11 @@ class SceneEditor(QWidget):
         ll.addWidget(self._chk_npc_ref)
 
         self._chk_block_zone_pick = QCheckBox(
-            "场景视图：禁止点选/拖动 Zone 与 Hotspot 碰撞多边形")
+            "场景视图：禁止点选/拖动 Zone 与 Hotspot/NPC 碰撞多边形")
         self._chk_block_zone_pick.setChecked(False)
         self._chk_block_zone_pick.setToolTip(
-            "勾选后，独立 Zone 与 Hotspot 的碰撞多边形在画布上显示为灰色，且无法用鼠标选中、"
-            "拖顶点或整体平移，便于点选叠在一起的热区、NPC 等。右侧属性与顶点表仍可编辑。"
+            "勾选后，独立 Zone 与 Hotspot、NPC 的碰撞多边形在画布上显示为灰色，且无法用鼠标选中、"
+            "拖顶点或整体平移，便于点选叠在一起的其它实体。右侧属性与顶点表仍可编辑。"
         )
         self._chk_block_zone_pick.toggled.connect(self._on_block_zone_pick_toggled)
         ll.addWidget(self._chk_block_zone_pick)
@@ -4113,6 +4404,8 @@ class SceneEditor(QWidget):
             self._on_item_zone_polygon_committed)
         self._canvas.item_hotspot_collision_polygon_committed.connect(
             self._on_item_hotspot_collision_polygon_committed)
+        self._canvas.item_npc_collision_polygon_committed.connect(
+            self._on_item_npc_collision_polygon_committed)
         self._canvas.context_add_entity.connect(self._on_canvas_context_add_entity)
 
         # right: property panel
@@ -4122,6 +4415,8 @@ class SceneEditor(QWidget):
         self._props.zone_polygon_changed.connect(self._on_props_zone_polygon_changed)
         self._props.hotspot_collision_polygon_changed.connect(
             self._on_props_hotspot_collision_polygon_changed)
+        self._props.npc_collision_polygon_changed.connect(
+            self._on_props_npc_collision_polygon_changed)
         self._props.hotspot_visual_refresh_requested.connect(
             self._on_hotspot_visual_refresh_requested)
         self._props.npc_scene_anim_refresh_requested.connect(
@@ -4448,13 +4743,14 @@ class SceneEditor(QWidget):
     def _on_npc_xy_live_changed(self, npc_id: str) -> None:
         self._patrol_preview_state.pop(npc_id, None)
         rt = self._scene_npc_runtimes.get(npc_id)
-        if rt is None:
-            return
         sc = self._model.scenes.get(self._current_scene_id or "")
         if not sc:
             return
         for n in sc.get("npcs", []):
             if isinstance(n, dict) and str(n.get("id", "")) == npc_id:
+                self._canvas.refresh_npc_collision_visuals(n)
+                if rt is None:
+                    return
                 if npc_id not in self._patrol_preview_ids:
                     rt.draw_at(float(n.get("x", 0)), float(n.get("y", 0)))
                     self._canvas.viewport().update()
@@ -4537,7 +4833,7 @@ class SceneEditor(QWidget):
         self._canvas.set_zone_pick_frozen(checked)
 
     def _on_item_selected(self, kind: str, eid: str) -> None:
-        if kind != "npc":
+        if kind not in ("npc", "npc_collision"):
             self._patrol_preview_ids.clear()
             self._patrol_preview_state.clear()
         sc = self._model.scenes.get(self._current_scene_id or "")
@@ -4548,7 +4844,7 @@ class SceneEditor(QWidget):
                 if hs.get("id") == eid:
                     self._props.load_hotspot_props(hs)
                     return
-        elif kind == "npc":
+        elif kind in ("npc", "npc_collision"):
             for npc in sc.get("npcs", []):
                 if npc.get("id") == eid:
                     self._props.load_npc_props(npc)
@@ -4643,6 +4939,41 @@ class SceneEditor(QWidget):
             return
         self._canvas.update_hotspot_collision_polygon(eid, poly_list)
 
+    def _on_item_npc_collision_polygon_committed(self, eid: str, polygon: object) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None:
+            return
+        poly_list = polygon if isinstance(polygon, list) else []
+        if len(poly_list) < 3:
+            return
+        for npc in sc.get("npcs", []):
+            if npc.get("id") == eid:
+                npc["collisionPolygon"] = _hotspot_collision_world_to_local(npc, poly_list)
+                npc["collisionPolygonLocal"] = True
+                break
+        else:
+            return
+        self._model.mark_dirty("scene", self._current_scene_id or "")
+
+        def _deferred_npc_collision_ui() -> None:
+            self._props.refresh_npc_collision_table(eid)
+            self._canvas.item_selected.emit("npc_collision", eid)
+
+        QTimer.singleShot(0, _deferred_npc_collision_ui)
+
+    def _on_props_npc_collision_polygon_changed(self, eid: str, polygon: object) -> None:
+        poly_list = polygon if isinstance(polygon, list) else []
+        if len(poly_list) < 3:
+            sc = self._model.scenes.get(self._current_scene_id or "")
+            if sc is None:
+                return
+            for npc in sc.get("npcs", []):
+                if str(npc.get("id", "")) == eid:
+                    self._canvas.refresh_npc_collision_visuals(npc)
+                    return
+            return
+        self._canvas.update_npc_collision_polygon(eid, poly_list)
+
     def _on_hotspot_visual_refresh_requested(self, eid: str) -> None:
         sc = self._model.scenes.get(self._current_scene_id or "")
         if sc is None or not eid:
@@ -4677,6 +5008,7 @@ class SceneEditor(QWidget):
                     if rt is not None:
                         rt.draw_at(float(rx), float(ry))
                         self._canvas.viewport().update()
+                    self._canvas.refresh_npc_collision_visuals(npc)
                     return
         elif kind == "spawn":
             if eid == "default":
@@ -4706,6 +5038,7 @@ class SceneEditor(QWidget):
                     if rt is not None:
                         rt.draw_at(float(npc["x"]), float(npc["y"]))
                         self._canvas.viewport().update()
+                    self._canvas.refresh_npc_collision_visuals(npc)
                     break
         elif kind == "spawn":
             if eid == "default":
@@ -4877,7 +5210,11 @@ class SceneEditor(QWidget):
             return
         if kind == "hotspot":
             sc["hotspots"] = [h for h in sc.get("hotspots", []) if h.get("id") != eid]
+        elif kind == "hotspot_collision":
+            sc["hotspots"] = [h for h in sc.get("hotspots", []) if h.get("id") != eid]
         elif kind == "npc":
+            sc["npcs"] = [n for n in sc.get("npcs", []) if n.get("id") != eid]
+        elif kind == "npc_collision":
             sc["npcs"] = [n for n in sc.get("npcs", []) if n.get("id") != eid]
         elif kind == "zone":
             sc["zones"] = [z for z in sc.get("zones", []) if z.get("id") != eid]

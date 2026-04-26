@@ -401,6 +401,14 @@ export interface NpcDef {
    */
   initialFacing?: 'left' | 'right';
   patrol?: PatrolDef;
+  /**
+   * 可选：相对场景 JSON 中 NPC 锚点 (x,y) 的局部多边形；与 `collisionPolygonLocal` 配合。
+   * 与 Hotspot 一致；未写 `collisionPolygonLocal` 时按世界坐标兼容旧数据。
+   * 运行时用当前 NPC 世界坐标作锚点（含巡逻中位移）。
+   */
+  collisionPolygon?: { x: number; y: number }[];
+  /** 为 true 时 `collisionPolygon` 为相对 (x,y) 的局部坐标；缺省视为旧版世界坐标 */
+  collisionPolygonLocal?: boolean;
 }
 
 // ============================================================

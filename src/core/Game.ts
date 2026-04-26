@@ -74,7 +74,7 @@ import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
-import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
+import { hotspotCollisionPolygonToWorld, npcCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
@@ -1224,13 +1224,18 @@ export class Game {
     });
   }
 
-  /** 深度图碰撞与热区多边形碰撞合并（已拾取/失效的热区不参与） */
+  /** 深度图、热区与 NPC 多边形碰撞合并（已拾取/失效的热区不参与；不可见 NPC 不参与） */
   private refreshPlayerWorldCollision(): void {
     this.player.setDepthCollision((wx, wy) => {
       if (this.sceneDepthSystem.isCollision(wx, wy)) return true;
       for (const h of this.sceneManager.getCurrentHotspots()) {
         if (!h.active) continue;
         const worldPoly = hotspotCollisionPolygonToWorld(h.def);
+        if (worldPoly && isValidZonePolygon(worldPoly) && isPointInPolygon(worldPoly, wx, wy)) return true;
+      }
+      for (const n of this.sceneManager.getCurrentNpcs()) {
+        if (!n.container.visible) continue;
+        const worldPoly = npcCollisionPolygonToWorld(n);
         if (worldPoly && isValidZonePolygon(worldPoly) && isPointInPolygon(worldPoly, wx, wy)) return true;
       }
       return false;
