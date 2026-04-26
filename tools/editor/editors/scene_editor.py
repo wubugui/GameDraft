@@ -85,9 +85,9 @@ def _hotspot_collision_local_to_world(hs: dict, local_poly: list) -> list[dict[s
 
 def _default_hotspot_collision_triangle_local() -> list[dict[str, float]]:
     return [
-        {"x": -40.0, "y": -30.0},
-        {"x": 40.0, "y": -30.0},
-        {"x": 0.0, "y": 40.0},
+        {"x": -20.0, "y": -15.0},
+        {"x": 20.0, "y": -15.0},
+        {"x": 0.0, "y": 20.0},
     ]
 
 

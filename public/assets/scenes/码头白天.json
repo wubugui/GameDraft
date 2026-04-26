@@ -74,7 +74,22 @@
       "interactionRange": 50.0,
       "animFile": "/assets/animation/npc_yangren_anim/anim.json",
       "initialAnimState": "idle",
-      "initialFacing": "left"
+      "initialFacing": "left",
+      "collisionPolygon": [
+        {
+          "x": -20.0,
+          "y": -15.0
+        },
+        {
+          "x": 20.0,
+          "y": -15.0
+        },
+        {
+          "x": 0.0,
+          "y": 20.0
+        }
+      ],
+      "collisionPolygonLocal": true
     },
     {
       "id": "npc_脚帮告示",
@@ -228,7 +243,22 @@
         "image": "/assets/images/illustrations/洋人女性.png",
         "worldWidth": 90.0,
         "worldHeight": 161.2
-      }
+      },
+      "collisionPolygon": [
+        {
+          "x": -20.0,
+          "y": -15.0
+        },
+        {
+          "x": 20.0,
+          "y": -15.0
+        },
+        {
+          "x": 0.0,
+          "y": 20.0
+        }
+      ],
+      "collisionPolygonLocal": true
     },
     {
       "id": "new_hotspot_箱子堆",
@@ -281,7 +311,22 @@
         "worldHeight": 179.2,
         "facing": "left",
         "spriteSort": "front"
-      }
+      },
+      "collisionPolygon": [
+        {
+          "x": -40.0,
+          "y": -30.0
+        },
+        {
+          "x": 40.0,
+          "y": -30.0
+        },
+        {
+          "x": 0.0,
+          "y": 40.0
+        }
+      ],
+      "collisionPolygonLocal": true
     },
     {
       "id": "T码头到街巷",
@@ -318,8 +363,8 @@
       },
       "displayImage": {
         "image": "/assets/images/illustrations/埃德加/侧视站姿.png",
-        "worldWidth": 55.1,
-        "worldHeight": 181.0,
+        "worldWidth": 56.1,
+        "worldHeight": 184.3,
         "facing": "left",
         "spriteSort": "front"
       },
@@ -343,8 +388,8 @@
       "id": "new_hotspot_9",
       "type": "inspect",
       "label": "",
-      "x": 1658.3,
-      "y": 1120.6,
+      "x": 1657.0,
+      "y": 1139.7,
       "interactionRange": 50.0,
       "data": {
         "text": ""
@@ -353,7 +398,22 @@
         "image": "/assets/images/illustrations/克拉拉/侧视站姿.png",
         "worldWidth": 87.5,
         "worldHeight": 159.5
-      }
+      },
+      "collisionPolygon": [
+        {
+          "x": -27.0,
+          "y": -15.8
+        },
+        {
+          "x": 18.4,
+          "y": -17.0
+        },
+        {
+          "x": 4.3,
+          "y": 4.8
+        }
+      ],
+      "collisionPolygonLocal": true
     }
   ],
   "zones": [
