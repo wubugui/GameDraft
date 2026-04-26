@@ -1,0 +1,206 @@
+{
+  "version": 2,
+  "packMode": "native_equal_cells",
+  "video": "",
+  "exportFps": 12.0,
+  "cols": 5,
+  "rows": 5,
+  "cellWidth": 428,
+  "cellHeight": 688,
+  "padding": 4,
+  "frameCount": 21,
+  "frameIndexBase": 0,
+  "anchor": "bottom_center",
+  "rowMajorOrder": "col=index%cols, row=index//cols（与 GameDraft SpriteEntity 一致）",
+  "frames": [
+    {
+      "logicalIndex": 0,
+      "atlasIndex": 0,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 234,
+      "contentHeight": 680
+    },
+    {
+      "logicalIndex": 1,
+      "atlasIndex": 1,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 374,
+      "contentHeight": 668
+    },
+    {
+      "logicalIndex": 2,
+      "atlasIndex": 2,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 420,
+      "contentHeight": 649
+    },
+    {
+      "logicalIndex": 3,
+      "atlasIndex": 3,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 297,
+      "contentHeight": 662
+    },
+    {
+      "logicalIndex": 4,
+      "atlasIndex": 4,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 234,
+      "contentHeight": 670
+    },
+    {
+      "logicalIndex": 5,
+      "atlasIndex": 5,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 353,
+      "contentHeight": 661
+    },
+    {
+      "logicalIndex": 6,
+      "atlasIndex": 6,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 400,
+      "contentHeight": 651
+    },
+    {
+      "logicalIndex": 7,
+      "atlasIndex": 7,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 313,
+      "contentHeight": 669
+    },
+    {
+      "logicalIndex": 8,
+      "atlasIndex": 8,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 226,
+      "contentHeight": 679
+    },
+    {
+      "logicalIndex": 9,
+      "atlasIndex": 9,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 326,
+      "contentHeight": 671
+    },
+    {
+      "logicalIndex": 10,
+      "atlasIndex": 10,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 408,
+      "contentHeight": 652
+    },
+    {
+      "logicalIndex": 11,
+      "atlasIndex": 11,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 391,
+      "contentHeight": 653
+    },
+    {
+      "logicalIndex": 12,
+      "atlasIndex": 12,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 226,
+      "contentHeight": 667
+    },
+    {
+      "logicalIndex": 13,
+      "atlasIndex": 13,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 286,
+      "contentHeight": 664
+    },
+    {
+      "logicalIndex": 14,
+      "atlasIndex": 14,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 411,
+      "contentHeight": 647
+    },
+    {
+      "logicalIndex": 15,
+      "atlasIndex": 15,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 355,
+      "contentHeight": 662
+    },
+    {
+      "logicalIndex": 16,
+      "atlasIndex": 16,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 216,
+      "contentHeight": 674
+    },
+    {
+      "logicalIndex": 17,
+      "atlasIndex": 17,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 248,
+      "contentHeight": 676
+    },
+    {
+      "logicalIndex": 18,
+      "atlasIndex": 18,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 391,
+      "contentHeight": 661
+    },
+    {
+      "logicalIndex": 19,
+      "atlasIndex": 19,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 410,
+      "contentHeight": 648
+    },
+    {
+      "logicalIndex": 20,
+      "atlasIndex": 20,
+      "timeSec": 0.0,
+      "cellWidth": 428,
+      "cellHeight": 688,
+      "contentWidth": 256,
+      "contentHeight": 663
+    }
+  ]
+}

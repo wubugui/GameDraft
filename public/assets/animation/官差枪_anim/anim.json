@@ -1,0 +1,102 @@
+{
+  "spritesheet": "atlas.png",
+  "cols": 4,
+  "rows": 3,
+  "states": {
+    "官兵枪_走路": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "frameRate": 5,
+      "loop": true
+    }
+  },
+  "worldHeight": 150,
+  "cellWidth": 372,
+  "cellHeight": 726,
+  "atlasFrames": [
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 332,
+      "contentHeight": 698
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 281,
+      "contentHeight": 700
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 320,
+      "contentHeight": 682
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 327,
+      "contentHeight": 682
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 302,
+      "contentHeight": 708
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 364,
+      "contentHeight": 678
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 303,
+      "contentHeight": 718
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 347,
+      "contentHeight": 674
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 300,
+      "contentHeight": 697
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 323,
+      "contentHeight": 695
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 324,
+      "contentHeight": 689
+    },
+    {
+      "width": 372,
+      "height": 726,
+      "contentWidth": 311,
+      "contentHeight": 697
+    }
+  ]
+}

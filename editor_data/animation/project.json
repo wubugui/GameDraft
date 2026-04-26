@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "activeVideoId": "6ba484fa24ea46c7",
+  "activeVideoId": "ed2b2f41d639467a",
   "settings": {
     "frameIndexBase": 0,
     "saveMeta": true,
@@ -498,6 +498,216 @@
         "48813b310169445a",
         "b39636d1a1ee41cc",
         "6b6b8d72b7244601"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          0,
+          0,
+          0
+        ],
+        "tolerance": 10.0
+      }
+    },
+    {
+      "videoId": "bbb56f37ebe7487f",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\箱子漂浮.mp4",
+      "displayName": "箱子漂浮",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "e85c7ed57d614c4c",
+        "ccedc880e1e34d58",
+        "14922a7494744dfd",
+        "cdbeb7b99f7746a3",
+        "56cba5c04688431c",
+        "3e4fd1c65d1a4d02",
+        "5a9c44d109994351",
+        "9d050d23bbed4107",
+        "50a46c355a6e42f2",
+        "c8fd2ce05def4696",
+        "2736d4977fcd455a",
+        "f5daf8f8a1d640ec",
+        "82f33115605e40f0",
+        "a7b22551050d49a5",
+        "8e20f82cb1ed4f96",
+        "d9ea1a3ae0d7445e",
+        "06264004f9d94532",
+        "51a5b4cd998d42c4",
+        "52ea4d0a8174415d",
+        "8a1d7f40c7704e36",
+        "8ea86fb790864be3",
+        "c140a191cb764b74",
+        "568c1295ba234c52",
+        "3d8a6169012744eb",
+        "d9540f8eb4124b8f",
+        "f7f608e490d7440c",
+        "9cc086a4bebb42b5",
+        "459270321f754870",
+        "e626c39dfeaa4f9a",
+        "ca4d932f06ae409b",
+        "2b46e3ab38b84160",
+        "7a61d88954704f3d",
+        "bc41b55551454d6b",
+        "b44906065a6448d0",
+        "9b54e5cea751498e",
+        "c7489b5707cc4ac2"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          0,
+          0,
+          0
+        ],
+        "tolerance": 10.0
+      }
+    },
+    {
+      "videoId": "162aed1d08c04f12",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\清末民初官差步行循环动画 (1).mp4",
+      "displayName": "清末民初官差步行循环动画 (1)",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "efda8bd13ccb4db4",
+        "79e908a1e742452c",
+        "7466c581ca2c4ece",
+        "099c136272274f72",
+        "2814d8e99f694371",
+        "a0f297a5f4d14ad4",
+        "a118217e643c4dc8",
+        "8c5211de5d9c421d",
+        "5675fd2579bf434c",
+        "00fb570bbf6c482f",
+        "772a2f8159a04978",
+        "8286c8d752194b4e"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 40.0
+      }
+    },
+    {
+      "videoId": "f0ef7039f2454484",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\清末民初官差步行循环动画 (2).mp4",
+      "displayName": "清末民初官差步行循环动画 (2)",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "f5fd128e1db04dc3",
+        "9d30debb725d4743",
+        "7b39219a3d464074",
+        "6cde595eeadc458a",
+        "26abcae77f7c43c8",
+        "e304ce0c7d324eb4",
+        "bf159caca4734b8a",
+        "9e71c7ee89da47b0",
+        "8b22610832bc4889",
+        "197bc12e86494cf2",
+        "19cd86e63b654428",
+        "81974fbdf11a4427",
+        "7287846fc4234161",
+        "ad3338d94d9d4aa0",
+        "e5e551971d7544b9",
+        "50226059dec242d1",
+        "6fb8a397a61a4833",
+        "f2bc6297b75a43da",
+        "43a5f8e186b24735",
+        "606bc95c60454653",
+        "296a837963444d49",
+        "1ff9418066ea465d",
+        "38b15712cbbf442e",
+        "3e4d5deab0754810"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 40.0
+      }
+    },
+    {
+      "videoId": "270ee67177c74eaf",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\原地步行循环动画.mp4",
+      "displayName": "原地步行循环动画",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "b7ecd0204ff34f23",
+        "668b43b515964b62",
+        "88f95699d0dd44d1",
+        "44bc469ffe264402",
+        "ed2fda1032fd49c0",
+        "d9ba5b753730485f",
+        "755d17da14e940c7",
+        "d6c26e308a0e49d7",
+        "93f465fa69354ea0",
+        "4252eda6896646d8",
+        "b60dfa61309f4478",
+        "29a4d751a6de486e",
+        "f58dba8f302f46c0",
+        "29dd68ea3ba7429e",
+        "821239c74d3643bd",
+        "ba0920f88c5a4bfb",
+        "83794936f49742d3",
+        "d3912eb2edad4e79",
+        "c578093f839b4592",
+        "da6bd0f9006140fb",
+        "8a06c39c05664b84",
+        "77178dba2b7e42e7",
+        "18adc83241764c36",
+        "09efd0b57b964af9"
+      ],
+      "chromaParams": {
+        "enabled": true,
+        "keyRgb": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 40.0
+      }
+    },
+    {
+      "videoId": "ed2b2f41d639467a",
+      "sourcePath": "F:\\GameDraft\\editor_data\\animvideo\\原地步行循环动画 (1).mp4",
+      "displayName": "原地步行循环动画 (1)",
+      "durationSec": 5.042,
+      "fps": 24.0,
+      "frameIds": [
+        "bd4f3ac982ef47f6",
+        "8955be66c4c24676",
+        "9e5106bbb6c042cd",
+        "63ddeefd96cc450e",
+        "8c223d7f8ecf4fcb",
+        "f7b0ecfd37d240a5",
+        "85381daa997f4904",
+        "8fc2e565faa04fd8",
+        "24facb58a63640b9",
+        "3587b30706ce4f86",
+        "6b58319f375e42b1",
+        "584f860889e540d5",
+        "7bf15204593149b6",
+        "f285c9fc7f234bea",
+        "c476e525fd9c466c",
+        "0d6e86dbdde146ee",
+        "b4e8db989c5d48ed",
+        "99bfa32e26c644b3",
+        "d2b94c612f164b88",
+        "8f1b8dc9700d4155",
+        "e8ce69611c174244",
+        "d58fbda2dda14b73",
+        "034ce4f139464461",
+        "233ed2ba745a49ff"
       ],
       "chromaParams": {
         "enabled": true,
@@ -1718,6 +1928,486 @@
     "6b6b8d72b7244601": {
       "videoId": "6ba484fa24ea46c7",
       "tSec": 4.1676756554307115
+    },
+    "e85c7ed57d614c4c": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 0.0
+    },
+    "ccedc880e1e34d58": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 0.14404761904761906
+    },
+    "14922a7494744dfd": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 0.2880952380952381
+    },
+    "cdbeb7b99f7746a3": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 0.43214285714285716
+    },
+    "56cba5c04688431c": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 0.5761904761904763
+    },
+    "3e4fd1c65d1a4d02": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 0.7202380952380952
+    },
+    "5a9c44d109994351": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 0.8642857142857143
+    },
+    "9d050d23bbed4107": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 1.0083333333333335
+    },
+    "50a46c355a6e42f2": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 1.1523809523809525
+    },
+    "c8fd2ce05def4696": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 1.2964285714285715
+    },
+    "2736d4977fcd455a": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 1.4404761904761905
+    },
+    "f5daf8f8a1d640ec": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 1.5845238095238097
+    },
+    "82f33115605e40f0": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 1.7285714285714286
+    },
+    "a7b22551050d49a5": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 1.8726190476190478
+    },
+    "8e20f82cb1ed4f96": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 2.016666666666667
+    },
+    "d9ea1a3ae0d7445e": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 2.1607142857142856
+    },
+    "06264004f9d94532": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 2.304761904761905
+    },
+    "51a5b4cd998d42c4": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 2.448809523809524
+    },
+    "52ea4d0a8174415d": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 2.592857142857143
+    },
+    "8a1d7f40c7704e36": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 2.736904761904762
+    },
+    "8ea86fb790864be3": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 2.880952380952381
+    },
+    "c140a191cb764b74": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 3.025
+    },
+    "568c1295ba234c52": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 3.1690476190476193
+    },
+    "3d8a6169012744eb": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 3.3130952380952383
+    },
+    "d9540f8eb4124b8f": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 3.4571428571428573
+    },
+    "f7f608e490d7440c": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 3.6011904761904763
+    },
+    "9cc086a4bebb42b5": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 3.7452380952380957
+    },
+    "459270321f754870": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 3.8892857142857147
+    },
+    "e626c39dfeaa4f9a": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 4.033333333333334
+    },
+    "ca4d932f06ae409b": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 4.177380952380953
+    },
+    "2b46e3ab38b84160": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 4.321428571428571
+    },
+    "7a61d88954704f3d": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 4.46547619047619
+    },
+    "bc41b55551454d6b": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 4.60952380952381
+    },
+    "b44906065a6448d0": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 4.753571428571429
+    },
+    "9b54e5cea751498e": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 4.897619047619048
+    },
+    "c7489b5707cc4ac2": {
+      "videoId": "bbb56f37ebe7487f",
+      "tSec": 5.041666666666667
+    },
+    "efda8bd13ccb4db4": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 0.8290029962546815
+    },
+    "79e908a1e742452c": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 1.2119724208375893
+    },
+    "7466c581ca2c4ece": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 1.594941845420497
+    },
+    "099c136272274f72": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 1.9779112700034047
+    },
+    "2814d8e99f694371": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 2.360880694586313
+    },
+    "a0f297a5f4d14ad4": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 2.7438501191692204
+    },
+    "a118217e643c4dc8": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 3.126819543752128
+    },
+    "8c5211de5d9c421d": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 3.5097889683350356
+    },
+    "5675fd2579bf434c": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 3.8927583929179437
+    },
+    "00fb570bbf6c482f": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 4.275727817500852
+    },
+    "772a2f8159a04978": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 4.658697242083759
+    },
+    "8286c8d752194b4e": {
+      "videoId": "162aed1d08c04f12",
+      "tSec": 5.041666666666667
+    },
+    "f5fd128e1db04dc3": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 0.0
+    },
+    "9d30debb725d4743": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 0.21920289855072464
+    },
+    "7b39219a3d464074": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 0.4384057971014493
+    },
+    "6cde595eeadc458a": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 0.657608695652174
+    },
+    "26abcae77f7c43c8": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 0.8768115942028986
+    },
+    "e304ce0c7d324eb4": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 1.0960144927536233
+    },
+    "bf159caca4734b8a": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 1.315217391304348
+    },
+    "9e71c7ee89da47b0": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 1.5344202898550727
+    },
+    "8b22610832bc4889": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 1.7536231884057971
+    },
+    "197bc12e86494cf2": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 1.972826086956522
+    },
+    "19cd86e63b654428": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 2.1920289855072466
+    },
+    "81974fbdf11a4427": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 2.411231884057971
+    },
+    "7287846fc4234161": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 2.630434782608696
+    },
+    "ad3338d94d9d4aa0": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 2.8496376811594204
+    },
+    "e5e551971d7544b9": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 3.0688405797101455
+    },
+    "50226059dec242d1": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 3.2880434782608696
+    },
+    "6fb8a397a61a4833": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 3.5072463768115942
+    },
+    "f2bc6297b75a43da": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 3.726449275362319
+    },
+    "43a5f8e186b24735": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 3.945652173913044
+    },
+    "606bc95c60454653": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 4.1648550724637685
+    },
+    "296a837963444d49": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 4.384057971014493
+    },
+    "1ff9418066ea465d": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 4.603260869565218
+    },
+    "38b15712cbbf442e": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 4.822463768115942
+    },
+    "3e4d5deab0754810": {
+      "videoId": "f0ef7039f2454484",
+      "tSec": 5.041666666666667
+    },
+    "b7ecd0204ff34f23": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 1.3124307116104867
+    },
+    "668b43b515964b62": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 1.4745714053085814
+    },
+    "88f95699d0dd44d1": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 1.6367120990066764
+    },
+    "44bc469ffe264402": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 1.798852792704771
+    },
+    "ed2fda1032fd49c0": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 1.9609934864028657
+    },
+    "d9ba5b753730485f": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 2.1231341801009607
+    },
+    "755d17da14e940c7": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 2.2852748737990556
+    },
+    "d6c26e308a0e49d7": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 2.44741556749715
+    },
+    "93f465fa69354ea0": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 2.609556261195245
+    },
+    "4252eda6896646d8": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 2.77169695489334
+    },
+    "b60dfa61309f4478": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 2.9338376485914344
+    },
+    "29a4d751a6de486e": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 3.0959783422895297
+    },
+    "f58dba8f302f46c0": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 3.258119035987624
+    },
+    "29dd68ea3ba7429e": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 3.4202597296857187
+    },
+    "821239c74d3643bd": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 3.582400423383814
+    },
+    "ba0920f88c5a4bfb": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 3.7445411170819085
+    },
+    "83794936f49742d3": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 3.906681810780003
+    },
+    "d3912eb2edad4e79": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 4.0688225044780975
+    },
+    "c578093f839b4592": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 4.230963198176193
+    },
+    "da6bd0f9006140fb": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 4.393103891874287
+    },
+    "8a06c39c05664b84": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 4.555244585572383
+    },
+    "77178dba2b7e42e7": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 4.717385279270477
+    },
+    "18adc83241764c36": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 4.8795259729685725
+    },
+    "09efd0b57b964af9": {
+      "videoId": "270ee67177c74eaf",
+      "tSec": 5.041666666666667
+    },
+    "bd4f3ac982ef47f6": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 1.7618674157303371
+    },
+    "8955be66c4c24676": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 1.9044673831623515
+    },
+    "9e5106bbb6c042cd": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 2.0470673505943657
+    },
+    "63ddeefd96cc450e": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 2.1896673180263804
+    },
+    "8c223d7f8ecf4fcb": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 2.3322672854583946
+    },
+    "f7b0ecfd37d240a5": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 2.4748672528904088
+    },
+    "85381daa997f4904": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 2.617467220322423
+    },
+    "8fc2e565faa04fd8": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 2.7600671877544376
+    },
+    "24facb58a63640b9": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 2.902667155186452
+    },
+    "3587b30706ce4f86": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 3.0452671226184664
+    },
+    "6b58319f375e42b1": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 3.1878670900504806
+    },
+    "584f860889e540d5": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 3.330467057482495
+    },
+    "7bf15204593149b6": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 3.473067024914509
+    },
+    "f285c9fc7f234bea": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 3.6156669923465232
+    },
+    "c476e525fd9c466c": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 3.7582669597785383
+    },
+    "0d6e86dbdde146ee": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 3.9008669272105525
+    },
+    "b4e8db989c5d48ed": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 4.043466894642567
+    },
+    "99bfa32e26c644b3": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 4.186066862074581
+    },
+    "d2b94c612f164b88": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 4.328666829506596
+    },
+    "8f1b8dc9700d4155": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 4.47126679693861
+    },
+    "e8ce69611c174244": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 4.613866764370624
+    },
+    "d58fbda2dda14b73": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 4.756466731802639
+    },
+    "034ce4f139464461": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 4.899066699234653
+    },
+    "233ed2ba745a49ff": {
+      "videoId": "ed2b2f41d639467a",
+      "tSec": 5.041666666666667
     }
   },
   "clips": [
@@ -2380,6 +3070,438 @@
       ],
       "frameRate": 5.0,
       "loop": true
+    },
+    {
+      "id": "5edeccfde1d042ad",
+      "name": "箱子漂浮",
+      "slots": [
+        {
+          "frameId": "e85c7ed57d614c4c",
+          "flipH": false
+        },
+        {
+          "frameId": "ccedc880e1e34d58",
+          "flipH": false
+        },
+        {
+          "frameId": "14922a7494744dfd",
+          "flipH": false
+        },
+        {
+          "frameId": "cdbeb7b99f7746a3",
+          "flipH": false
+        },
+        {
+          "frameId": "56cba5c04688431c",
+          "flipH": false
+        },
+        {
+          "frameId": "3e4fd1c65d1a4d02",
+          "flipH": false
+        },
+        {
+          "frameId": "5a9c44d109994351",
+          "flipH": false
+        },
+        {
+          "frameId": "9d050d23bbed4107",
+          "flipH": false
+        },
+        {
+          "frameId": "50a46c355a6e42f2",
+          "flipH": false
+        },
+        {
+          "frameId": "c8fd2ce05def4696",
+          "flipH": false
+        },
+        {
+          "frameId": "2736d4977fcd455a",
+          "flipH": false
+        },
+        {
+          "frameId": "f5daf8f8a1d640ec",
+          "flipH": false
+        },
+        {
+          "frameId": "82f33115605e40f0",
+          "flipH": false
+        },
+        {
+          "frameId": "a7b22551050d49a5",
+          "flipH": false
+        },
+        {
+          "frameId": "8e20f82cb1ed4f96",
+          "flipH": false
+        },
+        {
+          "frameId": "d9ea1a3ae0d7445e",
+          "flipH": false
+        },
+        {
+          "frameId": "06264004f9d94532",
+          "flipH": false
+        },
+        {
+          "frameId": "51a5b4cd998d42c4",
+          "flipH": false
+        },
+        {
+          "frameId": "52ea4d0a8174415d",
+          "flipH": false
+        },
+        {
+          "frameId": "8a1d7f40c7704e36",
+          "flipH": false
+        },
+        {
+          "frameId": "8ea86fb790864be3",
+          "flipH": false
+        },
+        {
+          "frameId": "c140a191cb764b74",
+          "flipH": false
+        },
+        {
+          "frameId": "568c1295ba234c52",
+          "flipH": false
+        },
+        {
+          "frameId": "3d8a6169012744eb",
+          "flipH": false
+        },
+        {
+          "frameId": "d9540f8eb4124b8f",
+          "flipH": false
+        },
+        {
+          "frameId": "f7f608e490d7440c",
+          "flipH": false
+        },
+        {
+          "frameId": "9cc086a4bebb42b5",
+          "flipH": false
+        },
+        {
+          "frameId": "459270321f754870",
+          "flipH": false
+        },
+        {
+          "frameId": "e626c39dfeaa4f9a",
+          "flipH": false
+        },
+        {
+          "frameId": "ca4d932f06ae409b",
+          "flipH": false
+        },
+        {
+          "frameId": "2b46e3ab38b84160",
+          "flipH": false
+        },
+        {
+          "frameId": "7a61d88954704f3d",
+          "flipH": false
+        },
+        {
+          "frameId": "bc41b55551454d6b",
+          "flipH": false
+        },
+        {
+          "frameId": "b44906065a6448d0",
+          "flipH": false
+        },
+        {
+          "frameId": "9b54e5cea751498e",
+          "flipH": false
+        },
+        {
+          "frameId": "c7489b5707cc4ac2",
+          "flipH": false
+        }
+      ],
+      "frameRate": 12.0,
+      "loop": true
+    },
+    {
+      "id": "20d1d7d01c274153",
+      "name": "官兵枪_走路",
+      "slots": [
+        {
+          "frameId": "efda8bd13ccb4db4",
+          "flipH": false
+        },
+        {
+          "frameId": "79e908a1e742452c",
+          "flipH": false
+        },
+        {
+          "frameId": "7466c581ca2c4ece",
+          "flipH": false
+        },
+        {
+          "frameId": "099c136272274f72",
+          "flipH": false
+        },
+        {
+          "frameId": "2814d8e99f694371",
+          "flipH": false
+        },
+        {
+          "frameId": "a0f297a5f4d14ad4",
+          "flipH": false
+        },
+        {
+          "frameId": "a118217e643c4dc8",
+          "flipH": false
+        },
+        {
+          "frameId": "8c5211de5d9c421d",
+          "flipH": false
+        },
+        {
+          "frameId": "5675fd2579bf434c",
+          "flipH": false
+        },
+        {
+          "frameId": "00fb570bbf6c482f",
+          "flipH": false
+        },
+        {
+          "frameId": "772a2f8159a04978",
+          "flipH": false
+        },
+        {
+          "frameId": "8286c8d752194b4e",
+          "flipH": false
+        }
+      ],
+      "frameRate": 5.0,
+      "loop": true
+    },
+    {
+      "id": "a2e1f6328f28438e",
+      "name": "官兵刀_走路",
+      "slots": [
+        {
+          "frameId": "6cde595eeadc458a",
+          "flipH": false
+        },
+        {
+          "frameId": "26abcae77f7c43c8",
+          "flipH": false
+        },
+        {
+          "frameId": "e304ce0c7d324eb4",
+          "flipH": false
+        },
+        {
+          "frameId": "bf159caca4734b8a",
+          "flipH": false
+        },
+        {
+          "frameId": "9e71c7ee89da47b0",
+          "flipH": false
+        },
+        {
+          "frameId": "8b22610832bc4889",
+          "flipH": false
+        },
+        {
+          "frameId": "197bc12e86494cf2",
+          "flipH": false
+        },
+        {
+          "frameId": "19cd86e63b654428",
+          "flipH": false
+        },
+        {
+          "frameId": "81974fbdf11a4427",
+          "flipH": false
+        },
+        {
+          "frameId": "7287846fc4234161",
+          "flipH": false
+        },
+        {
+          "frameId": "ad3338d94d9d4aa0",
+          "flipH": false
+        },
+        {
+          "frameId": "e5e551971d7544b9",
+          "flipH": false
+        },
+        {
+          "frameId": "50226059dec242d1",
+          "flipH": false
+        },
+        {
+          "frameId": "6fb8a397a61a4833",
+          "flipH": false
+        },
+        {
+          "frameId": "f2bc6297b75a43da",
+          "flipH": false
+        },
+        {
+          "frameId": "43a5f8e186b24735",
+          "flipH": false
+        },
+        {
+          "frameId": "606bc95c60454653",
+          "flipH": false
+        },
+        {
+          "frameId": "296a837963444d49",
+          "flipH": false
+        }
+      ],
+      "frameRate": 8.0,
+      "loop": true
+    },
+    {
+      "id": "3794d82e175c48a0",
+      "name": "官兵刀_站立",
+      "slots": [
+        {
+          "frameId": "f5fd128e1db04dc3",
+          "flipH": false
+        }
+      ],
+      "frameRate": 8.0,
+      "loop": true
+    },
+    {
+      "id": "11cc283c752c4fe8",
+      "name": "克拉拉_走路",
+      "slots": [
+        {
+          "frameId": "44bc469ffe264402",
+          "flipH": false
+        },
+        {
+          "frameId": "ed2fda1032fd49c0",
+          "flipH": false
+        },
+        {
+          "frameId": "d9ba5b753730485f",
+          "flipH": false
+        },
+        {
+          "frameId": "755d17da14e940c7",
+          "flipH": false
+        },
+        {
+          "frameId": "d6c26e308a0e49d7",
+          "flipH": false
+        },
+        {
+          "frameId": "93f465fa69354ea0",
+          "flipH": false
+        },
+        {
+          "frameId": "4252eda6896646d8",
+          "flipH": false
+        },
+        {
+          "frameId": "b60dfa61309f4478",
+          "flipH": false
+        },
+        {
+          "frameId": "29a4d751a6de486e",
+          "flipH": false
+        },
+        {
+          "frameId": "f58dba8f302f46c0",
+          "flipH": false
+        },
+        {
+          "frameId": "29dd68ea3ba7429e",
+          "flipH": false
+        },
+        {
+          "frameId": "821239c74d3643bd",
+          "flipH": false
+        },
+        {
+          "frameId": "ba0920f88c5a4bfb",
+          "flipH": false
+        },
+        {
+          "frameId": "83794936f49742d3",
+          "flipH": false
+        },
+        {
+          "frameId": "d3912eb2edad4e79",
+          "flipH": false
+        },
+        {
+          "frameId": "c578093f839b4592",
+          "flipH": false
+        },
+        {
+          "frameId": "da6bd0f9006140fb",
+          "flipH": false
+        },
+        {
+          "frameId": "8a06c39c05664b84",
+          "flipH": false
+        },
+        {
+          "frameId": "77178dba2b7e42e7",
+          "flipH": false
+        },
+        {
+          "frameId": "18adc83241764c36",
+          "flipH": false
+        },
+        {
+          "frameId": "09efd0b57b964af9",
+          "flipH": false
+        }
+      ],
+      "frameRate": 8.0,
+      "loop": true
+    },
+    {
+      "id": "12cd9a45ac294cf9",
+      "name": "埃德加_走路",
+      "slots": [
+        {
+          "frameId": "9e5106bbb6c042cd",
+          "flipH": false
+        },
+        {
+          "frameId": "63ddeefd96cc450e",
+          "flipH": false
+        },
+        {
+          "frameId": "8c223d7f8ecf4fcb",
+          "flipH": false
+        },
+        {
+          "frameId": "f7b0ecfd37d240a5",
+          "flipH": false
+        },
+        {
+          "frameId": "85381daa997f4904",
+          "flipH": false
+        },
+        {
+          "frameId": "8fc2e565faa04fd8",
+          "flipH": false
+        },
+        {
+          "frameId": "24facb58a63640b9",
+          "flipH": false
+        },
+        {
+          "frameId": "3587b30706ce4f86",
+          "flipH": false
+        }
+      ],
+      "frameRate": 8.0,
+      "loop": true
     }
   ],
   "exportJobs": [
@@ -2516,6 +3638,66 @@
     {
       "id": "adc8edb3d4ec4692",
       "clipId": "adeac7f7e97e4460",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "d32e806f882c440c",
+      "clipId": "5edeccfde1d042ad",
+      "scale": 0.2,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 40.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "cb0fb60ea06e4ccc",
+      "clipId": "20d1d7d01c274153",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "7dbb9dc62d1d4c12",
+      "clipId": "a2e1f6328f28438e",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "8bea9495717d4579",
+      "clipId": "3794d82e175c48a0",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "81154d568b9c460c",
+      "clipId": "11cc283c752c4fe8",
+      "scale": 0.5,
+      "padding": 4,
+      "featherIgnorePx": 0,
+      "worldW": null,
+      "worldH": 150.0,
+      "includeInMerge": false
+    },
+    {
+      "id": "de0de184a85044ea",
+      "clipId": "12cd9a45ac294cf9",
       "scale": 0.5,
       "padding": 4,
       "featherIgnorePx": 0,

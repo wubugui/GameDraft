@@ -1,0 +1,74 @@
+{
+  "spritesheet": "atlas.png",
+  "cols": 3,
+  "rows": 3,
+  "states": {
+    "埃德加_走路": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "frameRate": 8,
+      "loop": true
+    }
+  },
+  "worldHeight": 160,
+  "cellWidth": 375,
+  "cellHeight": 700,
+  "atlasFrames": [
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 290,
+      "contentHeight": 681
+    },
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 367,
+      "contentHeight": 669
+    },
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 270,
+      "contentHeight": 680
+    },
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 259,
+      "contentHeight": 689
+    },
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 309,
+      "contentHeight": 692
+    },
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 346,
+      "contentHeight": 667
+    },
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 303,
+      "contentHeight": 668
+    },
+    {
+      "width": 375,
+      "height": 700,
+      "contentWidth": 280,
+      "contentHeight": 683
+    }
+  ]
+}

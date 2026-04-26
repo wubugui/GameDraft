@@ -1,0 +1,341 @@
+{
+  "version": 2,
+  "packMode": "native_equal_cells",
+  "video": "",
+  "exportFps": 12.0,
+  "cols": 6,
+  "rows": 6,
+  "cellWidth": 319,
+  "cellHeight": 212,
+  "padding": 4,
+  "frameCount": 36,
+  "frameIndexBase": 0,
+  "anchor": "bottom_center",
+  "rowMajorOrder": "col=index%cols, row=index//cols（与 GameDraft SpriteEntity 一致）",
+  "frames": [
+    {
+      "logicalIndex": 0,
+      "atlasIndex": 0,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 198
+    },
+    {
+      "logicalIndex": 1,
+      "atlasIndex": 1,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 198
+    },
+    {
+      "logicalIndex": 2,
+      "atlasIndex": 2,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 198
+    },
+    {
+      "logicalIndex": 3,
+      "atlasIndex": 3,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 197
+    },
+    {
+      "logicalIndex": 4,
+      "atlasIndex": 4,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 196
+    },
+    {
+      "logicalIndex": 5,
+      "atlasIndex": 5,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 195
+    },
+    {
+      "logicalIndex": 6,
+      "atlasIndex": 6,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 192
+    },
+    {
+      "logicalIndex": 7,
+      "atlasIndex": 7,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 191
+    },
+    {
+      "logicalIndex": 8,
+      "atlasIndex": 8,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 191
+    },
+    {
+      "logicalIndex": 9,
+      "atlasIndex": 9,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 195
+    },
+    {
+      "logicalIndex": 10,
+      "atlasIndex": 10,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 196
+    },
+    {
+      "logicalIndex": 11,
+      "atlasIndex": 11,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 310,
+      "contentHeight": 199
+    },
+    {
+      "logicalIndex": 12,
+      "atlasIndex": 12,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 311,
+      "contentHeight": 203
+    },
+    {
+      "logicalIndex": 13,
+      "atlasIndex": 13,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 310,
+      "contentHeight": 204
+    },
+    {
+      "logicalIndex": 14,
+      "atlasIndex": 14,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 310,
+      "contentHeight": 204
+    },
+    {
+      "logicalIndex": 15,
+      "atlasIndex": 15,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 203
+    },
+    {
+      "logicalIndex": 16,
+      "atlasIndex": 16,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 201
+    },
+    {
+      "logicalIndex": 17,
+      "atlasIndex": 17,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 200
+    },
+    {
+      "logicalIndex": 18,
+      "atlasIndex": 18,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 198
+    },
+    {
+      "logicalIndex": 19,
+      "atlasIndex": 19,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 196
+    },
+    {
+      "logicalIndex": 20,
+      "atlasIndex": 20,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 194
+    },
+    {
+      "logicalIndex": 21,
+      "atlasIndex": 21,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 193
+    },
+    {
+      "logicalIndex": 22,
+      "atlasIndex": 22,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 306,
+      "contentHeight": 192
+    },
+    {
+      "logicalIndex": 23,
+      "atlasIndex": 23,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 191
+    },
+    {
+      "logicalIndex": 24,
+      "atlasIndex": 24,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 194
+    },
+    {
+      "logicalIndex": 25,
+      "atlasIndex": 25,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 197
+    },
+    {
+      "logicalIndex": 26,
+      "atlasIndex": 26,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 310,
+      "contentHeight": 199
+    },
+    {
+      "logicalIndex": 27,
+      "atlasIndex": 27,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 310,
+      "contentHeight": 201
+    },
+    {
+      "logicalIndex": 28,
+      "atlasIndex": 28,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 201
+    },
+    {
+      "logicalIndex": 29,
+      "atlasIndex": 29,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 201
+    },
+    {
+      "logicalIndex": 30,
+      "atlasIndex": 30,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 200
+    },
+    {
+      "logicalIndex": 31,
+      "atlasIndex": 31,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 200
+    },
+    {
+      "logicalIndex": 32,
+      "atlasIndex": 32,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 308,
+      "contentHeight": 198
+    },
+    {
+      "logicalIndex": 33,
+      "atlasIndex": 33,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 309,
+      "contentHeight": 197
+    },
+    {
+      "logicalIndex": 34,
+      "atlasIndex": 34,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 195
+    },
+    {
+      "logicalIndex": 35,
+      "atlasIndex": 35,
+      "timeSec": 0.0,
+      "cellWidth": 319,
+      "cellHeight": 212,
+      "contentWidth": 307,
+      "contentHeight": 194
+    }
+  ]
+}

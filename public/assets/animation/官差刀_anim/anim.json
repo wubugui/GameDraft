@@ -1,0 +1,157 @@
+{
+  "spritesheet": "atlas.png",
+  "cols": 5,
+  "rows": 4,
+  "states": {
+    "官兵刀_走路": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
+      ],
+      "frameRate": 8,
+      "loop": true
+    },
+    "官兵刀_站立": {
+      "frames": [
+        18
+      ],
+      "frameRate": 8,
+      "loop": true
+    }
+  },
+  "worldHeight": 150,
+  "cellWidth": 380,
+  "cellHeight": 714,
+  "atlasFrames": [
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 349,
+      "contentHeight": 702
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 367,
+      "contentHeight": 699
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 362,
+      "contentHeight": 687
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 370,
+      "contentHeight": 687
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 338,
+      "contentHeight": 693
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 362,
+      "contentHeight": 691
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 368,
+      "contentHeight": 687
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 364,
+      "contentHeight": 677
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 372,
+      "contentHeight": 692
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 341,
+      "contentHeight": 706
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 335,
+      "contentHeight": 706
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 359,
+      "contentHeight": 701
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 367,
+      "contentHeight": 689
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 371,
+      "contentHeight": 692
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 342,
+      "contentHeight": 691
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 343,
+      "contentHeight": 692
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 366,
+      "contentHeight": 688
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 365,
+      "contentHeight": 674
+    },
+    {
+      "width": 380,
+      "height": 714,
+      "contentWidth": 336,
+      "contentHeight": 700
+    }
+  ]
+}

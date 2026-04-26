@@ -1,0 +1,165 @@
+{
+  "spritesheet": "atlas.png",
+  "cols": 5,
+  "rows": 5,
+  "states": {
+    "克拉拉_走路": {
+      "frames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "frameRate": 8,
+      "loop": true
+    }
+  },
+  "worldHeight": 150,
+  "cellWidth": 428,
+  "cellHeight": 688,
+  "atlasFrames": [
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 234,
+      "contentHeight": 680
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 374,
+      "contentHeight": 668
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 420,
+      "contentHeight": 649
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 297,
+      "contentHeight": 662
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 234,
+      "contentHeight": 670
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 353,
+      "contentHeight": 661
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 400,
+      "contentHeight": 651
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 313,
+      "contentHeight": 669
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 226,
+      "contentHeight": 679
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 326,
+      "contentHeight": 671
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 408,
+      "contentHeight": 652
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 391,
+      "contentHeight": 653
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 226,
+      "contentHeight": 667
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 286,
+      "contentHeight": 664
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 411,
+      "contentHeight": 647
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 355,
+      "contentHeight": 662
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 216,
+      "contentHeight": 674
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 248,
+      "contentHeight": 676
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 391,
+      "contentHeight": 661
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 410,
+      "contentHeight": 648
+    },
+    {
+      "width": 428,
+      "height": 688,
+      "contentWidth": 256,
+      "contentHeight": 663
+    }
+  ]
+}
