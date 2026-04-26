@@ -56,7 +56,3 @@
 *.zip binary
 # glTF 源文件为 JSON 文本
 *.gltf text eol=lf
-
-# TagSpaces 便携版：单文件超 GitHub 100MiB 上限，用 LFS 托管
-tagspaces-win-x64-6.11.2/TagSpaces.exe filter=lfs diff=lfs merge=lfs -text
-tagspaces-win-x64-6.11.2/resources/app.asar filter=lfs diff=lfs merge=lfs -text
