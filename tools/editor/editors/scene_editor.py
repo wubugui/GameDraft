@@ -50,6 +50,9 @@ _ZONE_COLOR = QColor(255, 200, 0, 60)
 _ZONE_COLOR_DEPTH_FLOOR = QColor(80, 160, 255, 72)
 
 _HOTSPOT_COLLISION_ZONE_COLOR = QColor(255, 120, 60, 95)
+# 画布「禁止点选 Zone」时使用的填充与线色（与实体原色解耦，仅作冻结提示）
+_ZONE_PICK_FROZEN_FILL = QColor(150, 150, 150, 88)
+_ZONE_PICK_FROZEN_PEN = QColor(95, 95, 95, 220)
 
 
 def _hotspot_collision_world_to_local(hs: dict, world_poly: list) -> list[dict[str, float]]:
@@ -549,6 +552,9 @@ class _EditableZonePolygon(QGraphicsObject):
             | self.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setAcceptHoverEvents(True)
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self._base_color = QColor(color)
+        self._pick_frozen = False
         self._drag_vertex: int | None = None
         self._drag_body = False
         self._last_scene: QPointF | None = None
@@ -564,6 +570,37 @@ class _EditableZonePolygon(QGraphicsObject):
 
     def points_to_model(self) -> list[dict[str, float]]:
         return [{"x": round(px, 1), "y": round(py, 1)} for px, py in self._points]
+
+    def set_zone_pick_frozen(self, frozen: bool) -> None:
+        """场景编辑：禁止用鼠标点选/拖动多边形时，灰色显示并忽略画布交互（属性面板仍可用）。"""
+        if self._pick_frozen == frozen:
+            return
+        self._pick_frozen = frozen
+        if frozen:
+            self._drag_vertex = None
+            self._drag_body = False
+            self._last_scene = None
+            self._hover_vertex = None
+            a = self._base_color.alpha()
+            self._color = QColor(
+                _ZONE_PICK_FROZEN_FILL.red(),
+                _ZONE_PICK_FROZEN_FILL.green(),
+                _ZONE_PICK_FROZEN_FILL.blue(),
+                min(255, max(20, a)),
+            )
+            self.setFlag(
+                self.GraphicsItemFlag.ItemIsSelectable, False,
+            )
+            self.setAcceptHoverEvents(False)
+            self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        else:
+            self._color = QColor(self._base_color)
+            self.setFlag(
+                self.GraphicsItemFlag.ItemIsSelectable, True,
+            )
+            self.setAcceptHoverEvents(True)
+            self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.update()
 
     def _emit_polygon_committed(self) -> None:
         poly = self.points_to_model()
@@ -600,13 +637,21 @@ class _EditableZonePolygon(QGraphicsObject):
         del option, widget
         painter.save()
         pf = self._polyf()
-        painter.setPen(QPen(self._color.darker(180), 0, Qt.PenStyle.DashLine))
+        if self._pick_frozen:
+            painter.setPen(QPen(_ZONE_PICK_FROZEN_PEN, 0, Qt.PenStyle.DashLine))
+        else:
+            painter.setPen(QPen(self._color.darker(180), 0, Qt.PenStyle.DashLine))
         painter.setBrush(QBrush(self._color))
         painter.drawPolygon(pf)
         hrad = self.HANDLE_WORLD_R * 0.38
         for i, (px, py) in enumerate(self._points):
-            c = QColor(255, 230, 100)
-            if self._hover_vertex == i or self._drag_vertex == i:
+            if self._pick_frozen:
+                c = QColor(170, 170, 180)
+            else:
+                c = QColor(255, 230, 100)
+            if not self._pick_frozen and (
+                self._hover_vertex == i or self._drag_vertex == i
+            ):
                 c = QColor(255, 200, 60)
             painter.setBrush(QBrush(c))
             painter.setPen(QPen(QColor(100, 70, 0), 0))
@@ -655,6 +700,8 @@ class _EditableZonePolygon(QGraphicsObject):
 
     def try_delete_hovered_vertex(self) -> bool:
         """删除当前悬停的顶点（须多于 3 点）；用于 Del/Backspace 快捷操作。"""
+        if self._pick_frozen:
+            return False
         vi = self._hover_vertex
         if vi is None or len(self._points) <= 3:
             return False
@@ -666,6 +713,9 @@ class _EditableZonePolygon(QGraphicsObject):
         return True
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._pick_frozen:
+            event.ignore()
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
@@ -704,6 +754,9 @@ class _EditableZonePolygon(QGraphicsObject):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._pick_frozen:
+            event.ignore()
+            return
         if self._drag_vertex is not None and self._last_scene is not None:
             sp = event.scenePos()
             dx = sp.x() - self._last_scene.x()
@@ -730,6 +783,9 @@ class _EditableZonePolygon(QGraphicsObject):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._pick_frozen:
+            event.ignore()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             if self._drag_vertex is not None or self._drag_body:
                 self._drag_vertex = None
@@ -741,6 +797,9 @@ class _EditableZonePolygon(QGraphicsObject):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._pick_frozen:
+            event.ignore()
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mouseDoubleClickEvent(event)
             return
@@ -776,6 +835,9 @@ class _EditableZonePolygon(QGraphicsObject):
         event.accept()
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        if self._pick_frozen:
+            event.ignore()
+            return
         vi = self._vertex_at_scene(event.scenePos())
         if vi is not None and len(self._points) > 3:
             menu = QMenu()
@@ -791,11 +853,17 @@ class _EditableZonePolygon(QGraphicsObject):
         super().contextMenuEvent(event)
 
     def hoverMoveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        if self._pick_frozen:
+            event.ignore()
+            return
         self._hover_vertex = self._vertex_at_scene(event.scenePos())
         self.update()
         super().hoverMoveEvent(event)
 
     def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        if self._pick_frozen:
+            event.ignore()
+            return
         self._hover_vertex = None
         self.update()
         super().hoverLeaveEvent(event)
@@ -1039,10 +1107,19 @@ class SceneCanvas(QGraphicsView):
         self._project_model: ProjectModel | None = None
         self._auto_fit_after_layout: bool = False
         self._fit_layout_token: int = 0
+        # True 时：画布上禁止点选/拖动所有 Zone 与 Hotspot 碰撞多边形，以便点选其下方实体
+        self._zone_pick_frozen: bool = False
 
     def set_project_model(self, model: ProjectModel | None) -> None:
         """用于将 /assets/... 解析为本地路径，在画布上绘制热区 displayImage。"""
         self._project_model = model
+
+    def set_zone_pick_frozen(self, frozen: bool) -> None:
+        """若 True：独立 Zone 与 Hotspot collisionPolygon 在画布上呈灰色，且不可鼠标选中/拖动（属性表仍可改）。"""
+        self._zone_pick_frozen = bool(frozen)
+        for it in self._entity_items.values():
+            if isinstance(it, _EditableZonePolygon):
+                it.set_zone_pick_frozen(self._zone_pick_frozen)
 
     @property
     def handle_radius(self) -> float:
@@ -1067,14 +1144,21 @@ class SceneCanvas(QGraphicsView):
                 it.setZValue(z)
         self._saved_item_z = None
 
-    @staticmethod
-    def _entity_stack_at(scene: QGraphicsScene, scene_pos: QPointF) -> list[QGraphicsItem]:
-        """同一落点下、按 Z 从高到低排列的可编辑实体（hotspot/npc/zone/spawn）。"""
+    def _entity_stack_at(self, scene_pos: QPointF) -> list[QGraphicsItem]:
+        """同一落点下、按 Z 从高到低排列的可编辑实体（hotspot/npc/zone/spawn）。
+
+        zone_pick_frozen 为 True 时，不计入独立 Zone 与 Hotspot 碰撞多边形，以便叠点循环到下层。
+        """
         seen: set[int] = set()
         out: list[QGraphicsItem] = []
-        for it in scene.items(scene_pos):
+        skip_z = self._zone_pick_frozen
+        for it in self._gfx.items(scene_pos):
             if not hasattr(it, "entity_kind"):
                 continue
+            if skip_z:
+                ek = getattr(it, "entity_kind", None)
+                if ek in ("zone", "hotspot_collision"):
+                    continue
             iid = id(it)
             if iid in seen:
                 continue
@@ -1189,6 +1273,8 @@ class SceneCanvas(QGraphicsView):
                 poly_item.setZValue(-2)
                 self._gfx.addItem(poly_item)
                 self._entity_items[col_key] = poly_item
+                if self._zone_pick_frozen:
+                    poly_item.set_zone_pick_frozen(True)
         else:
             old_col = self._entity_items.pop(col_key, None)
             if old_col is not None and old_col.scene() is self._gfx:
@@ -1215,6 +1301,8 @@ class SceneCanvas(QGraphicsView):
             self, pts, _zone_canvas_color(zone), zone.get("id", "?"))
         self._gfx.addItem(item)
         self._entity_items[f"zone:{zone.get('id', '')}"] = item
+        if self._zone_pick_frozen:
+            item.set_zone_pick_frozen(True)
 
     def update_zone_polygon(
         self, entity_id: str, polygon: list,
@@ -1425,7 +1513,7 @@ class SceneCanvas(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton:
             self._restore_pick_z_order()
             sp = self.mapToScene(event.pos())
-            stack = self._entity_stack_at(self._gfx, sp)
+            stack = self._entity_stack_at(sp)
             if len(stack) < 2:
                 self._pick_cycle_key = None
             else:
@@ -4000,6 +4088,16 @@ class SceneEditor(QWidget):
         self._chk_npc_ref.toggled.connect(self._on_npc_ref_toggled)
         ll.addWidget(self._chk_npc_ref)
 
+        self._chk_block_zone_pick = QCheckBox(
+            "场景视图：禁止点选/拖动 Zone 与 Hotspot 碰撞多边形")
+        self._chk_block_zone_pick.setChecked(False)
+        self._chk_block_zone_pick.setToolTip(
+            "勾选后，独立 Zone 与 Hotspot 的碰撞多边形在画布上显示为灰色，且无法用鼠标选中、"
+            "拖顶点或整体平移，便于点选叠在一起的热区、NPC 等。右侧属性与顶点表仍可编辑。"
+        )
+        self._chk_block_zone_pick.toggled.connect(self._on_block_zone_pick_toggled)
+        ll.addWidget(self._chk_block_zone_pick)
+
         self._scene_list = QListWidget()
         self._scene_list.currentItemChanged.connect(self._on_scene_selected)
         ll.addWidget(self._scene_list)
@@ -4421,6 +4519,7 @@ class SceneEditor(QWidget):
             self._canvas.fit_all()
         self._props.load_scene_props(sc, clear_pending_edits=True)
         self._rebuild_scene_npc_anim_layers()
+        self._canvas.set_zone_pick_frozen(self._chk_block_zone_pick.isChecked())
 
     def _on_npc_ref_toggled(self, checked: bool) -> None:
         self._canvas.set_npc_reference_visible(checked)
@@ -4429,6 +4528,13 @@ class SceneEditor(QWidget):
         ww, wh = self._last_canvas_world
         rw, rh = _npc_reference_world_size(self._model)
         self._canvas.rebuild_npc_reference(ww, wh, rw, rh)
+
+    def _on_block_zone_pick_toggled(self, checked: bool) -> None:
+        if checked:
+            for it in list(self._canvas._gfx.selectedItems()):
+                if isinstance(it, _EditableZonePolygon):
+                    it.setSelected(False)
+        self._canvas.set_zone_pick_frozen(checked)
 
     def _on_item_selected(self, kind: str, eid: str) -> None:
         if kind != "npc":
