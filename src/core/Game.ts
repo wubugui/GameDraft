@@ -55,6 +55,7 @@ import type {
   ScenarioCatalogFile,
   ICutsceneActor,
   HotspotDisplayImage,
+  IEmoteBubbleAnchor,
 } from '../data/types';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
@@ -329,6 +330,48 @@ export class Game {
     return resolveText(raw, this.buildResolveContext());
   }
 
+  /**
+   * showEmote / showEmoteAndWait / showSubtitle.subtitleEmote 共用：resolveActor 未命中时再匹配当前场景热点 id。
+   */
+  private resolveEmoteTarget(raw: string): IEmoteBubbleAnchor | null {
+    const id = String(raw ?? '').trim();
+    const log = (m: string) => this.debugPanelUI?.log(`[emote/target] ${m}`);
+    if (!id) {
+      log('目标 id 为空');
+      return null;
+    }
+    const actor = this.resolveActorFn(id);
+    if (actor) {
+      log(`命中 resolveActor entityId=${JSON.stringify(actor.entityId)}`);
+      return actor;
+    }
+    const scene = this.sceneManager.currentSceneData?.id ?? '';
+    const hs = this.sceneManager.getCurrentHotspots();
+    const enumerate = hs
+      .slice(0, 40)
+      .map((h) => {
+        const hid = h.def.id;
+        const key = `${JSON.stringify(hid)}`;
+        return String(hid ?? '').trim() === id ? `${key}⇐match` : key;
+      })
+      .join(', ');
+    log(
+      `resolveActor 未命中 scene=${scene || '(?)'} ` +
+      `热点数=${hs.length}${hs.length > 40 ? `（以下仅列前40个 id）` : ''}：[${enumerate}]`,
+    );
+    const h = hs.find((x) => String(x.def.id ?? '').trim() === id);
+    if (!h) {
+      log(`仍未匹配 query=${JSON.stringify(id)}`);
+      return null;
+    }
+    log(
+      `命中热点: def.id=${JSON.stringify(h.def.id)} active=${h.active} ` +
+      `container.visible=${h.container.visible} ` +
+      `parent=${h.container.parent ? 'yes' : 'no'} y=${Math.round(h.container.y)}`,
+    );
+    return h;
+  }
+
   private async refreshTextResolveLookups(): Promise<void> {
     this.sceneDisplayNameById.clear();
     try {
@@ -376,6 +419,7 @@ export class Game {
     this.rulesPanelUI.setResolveDisplay(fn);
     this.inventoryUI.setResolveDisplay(fn);
     this.cutsceneRenderer.setResolveDisplay(fn);
+    this.cutsceneManager.setDisplayTextResolver(fn);
     this.hud.setResolveDisplay(fn);
     this.ruleUseUI.setResolveDisplay(fn);
   }
@@ -453,6 +497,7 @@ export class Game {
     };
     this.cutsceneManager.setEntityResolver(this.resolveActorFn);
     this.cutsceneManager.setEmoteBubbleProvider(this.emoteBubbleManager);
+    this.cutsceneManager.setEmoteTargetResolver((raw) => this.resolveEmoteTarget(raw));
     this.cutsceneManager.setSceneSwitcher(async (params) => {
       this.pickupNotification.forceCleanup();
       if (this.inspectBox.isOpen) this.inspectBox.close();
@@ -579,44 +624,7 @@ export class Game {
       stringsProvider: this.stringsProvider,
       eventBus: this.eventBus,
       resolveActor: this.resolveActorFn,
-      resolveEmoteTarget: (raw: string) => {
-        const id = String(raw ?? '').trim();
-        const log = (m: string) => this.debugPanelUI?.log(`[emote/target] ${m}`);
-        if (!id) {
-          log('目标 id 为空');
-          return null;
-        }
-        const actor = this.resolveActorFn(id);
-        if (actor) {
-          log(`命中 resolveActor entityId=${JSON.stringify(actor.entityId)}`);
-          return actor;
-        }
-        const scene = this.sceneManager.currentSceneData?.id ?? '';
-        const hs = this.sceneManager.getCurrentHotspots();
-        const enumerate = hs
-          .slice(0, 40)
-          .map((h) => {
-            const hid = h.def.id;
-            const key = `${JSON.stringify(hid)}`;
-            return String(hid ?? '').trim() === id ? `${key}⇐match` : key;
-          })
-          .join(', ');
-        log(
-          `resolveActor 未命中 scene=${scene || '(?)'} ` +
-          `热点数=${hs.length}${hs.length > 40 ? `（以下仅列前40个 id）` : ''}：[${enumerate}]`,
-        );
-        const h = hs.find((x) => String(x.def.id ?? '').trim() === id);
-        if (!h) {
-          log(`仍未匹配 query=${JSON.stringify(id)}`);
-          return null;
-        }
-        log(
-          `命中热点: def.id=${JSON.stringify(h.def.id)} active=${h.active} ` +
-          `container.visible=${h.container.visible} ` +
-          `parent=${h.container.parent ? 'yes' : 'no'} y=${Math.round(h.container.y)}`,
-        );
-        return h;
-      },
+      resolveEmoteTarget: (raw: string) => this.resolveEmoteTarget(raw),
       debugPanelLog: (msg) => this.debugPanelUI?.log(msg),
       pickupNotification: this.pickupNotification,
       inspectBox: this.inspectBox,

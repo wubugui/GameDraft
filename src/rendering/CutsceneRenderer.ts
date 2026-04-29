@@ -7,6 +7,23 @@ import { createOverlayBlendMesh } from './overlayBlendShader';
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
 export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
 
+/** 相对电影黑边的槽位：上/下条带 + 左/中/右 */
+export type SubtitleMovieBand = 'movieTop' | 'movieBottom';
+export type SubtitleAlign = 'left' | 'center' | 'right';
+
+export interface ShowSubtitleMovieSlot {
+  subtitleBand: SubtitleMovieBand;
+  subtitleAlign: SubtitleAlign;
+}
+
+export type ShowSubtitleLayout = SubtitlePosition | ShowSubtitleMovieSlot;
+
+function isShowSubtitleMovieSlot(layout: ShowSubtitleLayout): layout is ShowSubtitleMovieSlot {
+  return typeof layout === 'object' && layout !== null
+    && ('subtitleBand' in layout)
+    && ('subtitleAlign' in layout);
+}
+
 /** 两端缓、中间快（ease-in-out cubic），用于沿位移方向的标量进度 s∈[0,1] */
 function easeInOutCubic(t: number): number {
   const x = Math.min(1, Math.max(0, t));
@@ -30,6 +47,8 @@ export class CutsceneRenderer {
     isPlaceholder?: boolean;
   }> = new Map();
   private movieBarContainer: Container | null = null;
+  /** 单边电影黑边高度（像素），供 showSubtitle 槽位布局；hideMovieBar / cleanup 时归零 */
+  private movieBarHeightPx: number = 0;
   private pendingRafIds = new Set<number>();
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
   /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
@@ -53,6 +72,34 @@ export class CutsceneRenderer {
 
   private r(s: string): string {
     return this.resolveDisplay ? this.resolveDisplay(s) : s;
+  }
+
+  /**
+   * 按「解析后」文案的 local 包围盒定位：几何中心落在 (screenX, screenY)。
+   * 不可依赖 anchor=0.5 + 整块 wordWrap 宽，否则短行视觉中心会偏。
+   */
+  private placeSubtitleTextCenterAt(t: Text, screenX: number, screenY: number): void {
+    t.anchor.set(0);
+    const lb = t.getLocalBounds();
+    const cx = lb.x + lb.width * 0.5;
+    const cy = lb.y + lb.height * 0.5;
+    t.position.set(screenX - cx, screenY - cy);
+  }
+
+  /** 包围盒左缘对齐到 leftX，垂直方向几何中心对齐 screenY */
+  private placeSubtitleTextLeftAt(t: Text, leftX: number, screenY: number): void {
+    t.anchor.set(0);
+    const lb = t.getLocalBounds();
+    const cy = lb.y + lb.height * 0.5;
+    t.position.set(leftX - lb.x, screenY - cy);
+  }
+
+  /** 包围盒右缘对齐到 rightX，垂直方向几何中心对齐 screenY */
+  private placeSubtitleTextRightAt(t: Text, rightX: number, screenY: number): void {
+    t.anchor.set(0);
+    const lb = t.getLocalBounds();
+    const cy = lb.y + lb.height * 0.5;
+    t.position.set(rightX - lb.x - lb.width, screenY - cy);
   }
 
   get screenWidth(): number { return this.renderer.screenWidth; }
@@ -519,6 +566,7 @@ export class CutsceneRenderer {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
     const barHeight = Math.round(sh * Math.max(0, Math.min(1, heightPercent)));
+    this.movieBarHeightPx = barHeight;
     this.movieBarContainer = new Container();
     const top = new Graphics();
     top.rect(0, 0, sw, barHeight);
@@ -532,17 +580,61 @@ export class CutsceneRenderer {
   }
 
   hideMovieBar(): void {
+    this.movieBarHeightPx = 0;
     if (!this.movieBarContainer) return;
     if (this.movieBarContainer.parent) this.movieBarContainer.parent.removeChild(this.movieBarContainer);
     this.movieBarContainer.destroy({ children: true });
     this.movieBarContainer = null;
   }
 
-  /** 显示字幕：无背景框，可指定位置。返回的 container 供 dismissSubtitle 关闭 */
-  showSubtitle(text: string, position: SubtitlePosition = 'bottom'): Container {
+  /** 显示字幕：text 须为已解析的展示串（由 CutsceneManager 调用 Game.resolveDisplayText）。 */
+  showSubtitle(text: string, layout: ShowSubtitleLayout = 'bottom'): Container {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
     const container = new Container();
+    const margin = 40;
+
+    if (isShowSubtitleMovieSlot(layout)) {
+      if (this.movieBarHeightPx <= 0) {
+        console.warn('[CutsceneRenderer] showSubtitle: 黑边槽位模式但当前无 movie bar（请先 showMovieBar），已回退纵向安全区');
+      }
+      const barH = this.movieBarHeightPx;
+      const band = layout.subtitleBand === 'movieBottom' ? 'movieBottom' : 'movieTop';
+      let y: number;
+      if (barH > 0) {
+        y = band === 'movieTop' ? barH / 2 : sh - barH / 2;
+      } else {
+        y = band === 'movieTop' ? 60 : sh - 80;
+      }
+      const align = layout.subtitleAlign === 'left' || layout.subtitleAlign === 'right'
+        ? layout.subtitleAlign
+        : 'center';
+      const wrapW = sw - margin * 2;
+      const pixiAlign = align === 'left' ? 'left' : align === 'right' ? 'right' : 'center';
+      const t = new Text({
+        text,
+        style: {
+          fontSize: 18,
+          fill: 0xffffff,
+          fontFamily: 'sans-serif',
+          wordWrap: true,
+          wordWrapWidth: Math.max(80, wrapW),
+          align: pixiAlign,
+        },
+      });
+      if (align === 'left') {
+        this.placeSubtitleTextLeftAt(t, margin, y);
+      } else if (align === 'right') {
+        this.placeSubtitleTextRightAt(t, sw - margin, y);
+      } else {
+        this.placeSubtitleTextCenterAt(t, sw / 2, y);
+      }
+      container.addChild(t);
+      this.renderer.uiLayer.addChild(container);
+      return container;
+    }
+
+    const position = layout;
     const t = new Text({
       text,
       style: {
@@ -554,8 +646,6 @@ export class CutsceneRenderer {
         align: 'center',
       },
     });
-    t.anchor.set(0.5);
-    t.x = sw / 2;
     let y: number;
     if (position === 'top') {
       y = 60;
@@ -568,7 +658,7 @@ export class CutsceneRenderer {
     } else {
       y = sh - 80;
     }
-    t.y = y;
+    this.placeSubtitleTextCenterAt(t, sw / 2, y);
     container.addChild(t);
     this.renderer.uiLayer.addChild(container);
     return container;

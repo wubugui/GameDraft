@@ -145,8 +145,8 @@
     {
       "id": "new_npc_3",
       "name": "New NPC",
-      "x": 1060.6,
-      "y": 1634.1,
+      "x": 1268.9,
+      "y": 1524.3,
       "interactionRange": 50.0,
       "animFile": "/assets/animation/箱子_anim/anim.json",
       "initialAnimState": "箱子漂浮",
@@ -416,8 +416,8 @@
       "id": "new_hotspot_9",
       "type": "inspect",
       "label": "克拉拉",
-      "x": 1657.0,
-      "y": 1139.7,
+      "x": 1734.2,
+      "y": 1142.5,
       "interactionRange": 50.0,
       "data": {
         "text": ""

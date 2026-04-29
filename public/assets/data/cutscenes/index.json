@@ -732,17 +732,22 @@
         "heightPercent": 0.1
       },
       {
-        "kind": "present",
-        "type": "cameraMove",
-        "x": 1647.78,
-        "y": 1095.98,
-        "duration": 6000.0
-      },
-      {
-        "kind": "present",
-        "type": "cameraZoom",
-        "scale": 0.8,
-        "duration": 1000.0
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 1274.84,
+            "y": 1552.64,
+            "duration": 1000.0
+          },
+          {
+            "kind": "present",
+            "type": "cameraZoom",
+            "scale": 1.5,
+            "duration": 1000.0
+          }
+        ]
       },
       {
         "kind": "action",
@@ -754,27 +759,255 @@
         }
       },
       {
-        "kind": "action",
-        "type": "showEmoteAndWait",
-        "params": {
-          "target": "new_hotspot_9",
-          "emote": "?",
-          "duration": 5000.0,
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：GET DOWN！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "!!",
+          "duration": 1500.0,
           "anchorOffsetX": 0.0,
-          "anchorOffsetY": 20.0
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：GET IT! NOW!",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "搬运工：捞？水里有水猴子哦，哪个敢下？",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_6",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "[tag:string:角色:埃德加]：QUICKLY！",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleEmote": {
+              "target": "new_hotspot_8",
+              "emote": "!",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          },
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 1716.28,
+            "y": 1092.18,
+            "duration": 2000.0
+          },
+          {
+            "kind": "present",
+            "type": "cameraZoom",
+            "scale": 1.0,
+            "duration": 2000.0
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：HEY! YOU! DEAF?!",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "路人乙：喊大夫？",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_11",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "路人甲：洋毛子在找郎中？",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_12",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "路人妇女：洋婆子，喊大夫也能下去捞啊? 大夫可治不了水猴子。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_10",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
         }
       },
       {
         "kind": "action",
-        "type": "persistHotspotEnabled",
+        "type": "tempSetHotspotDisplayFacing",
         "params": {
           "sceneId": "码头白天",
           "hotspotId": "new_hotspot_9",
-          "enabled": false
+          "facing": "right"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:克拉拉]：水猴子？尼是说......水里......有危险？",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_9",
+          "emote": "?",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：Move, you damned coolies — I'm not paying you to gawk like cattle!",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "!!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "搬运工：哎呀。你用那边那个网网网嘛。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_6",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "路人甲：哦，用网网嘛！找张大网来网嘛！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_11",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:克拉拉]：汪汪汪？",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_9",
+          "emote": "?",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "妇人：是撒。喊你男家，用网网网嘛，洋婆子。这水里前几天还死两个，真的下不得哦。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_10",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：Why is everyone barking at me?! What the FUCK?!",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "?！",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：My Box！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "!!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
         }
       }
     ],
     "targetScene": "码头白天",
     "targetSpawnPoint": "spawn_0"
+  },
+  {
+    "id": "cutscene_10",
+    "steps": []
   }
 ]

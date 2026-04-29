@@ -3,9 +3,9 @@ import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
-import type { CutsceneRenderer } from '../rendering/CutsceneRenderer';
+import type { CutsceneRenderer, ShowSubtitleLayout } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
-import type { ICutsceneActor, IEmoteBubbleProvider, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
+import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
 import { CUTSCENE_ACTION_WHITELIST } from '../data/types';
 import { Npc } from '../entities/Npc';
 
@@ -52,6 +52,7 @@ export class CutsceneManager implements IGameSystem {
   private sceneSwitcher: SceneSwitcher | null = null;
   private tempActors: Map<string, Npc> = new Map();
   private emoteBubbleProvider: IEmoteBubbleProvider | null = null;
+  private emoteTargetResolver: ((raw: string) => IEmoteBubbleAnchor | null) | null = null;
   private inputManager: InputManager | null = null;
   private assetManager!: AssetManager;
   private unsubPointer: (() => void) | null = null;
@@ -70,6 +71,8 @@ export class CutsceneManager implements IGameSystem {
   private cameraAccessor: Camera | null = null;
   private spawnPointResolver: ((spawnKey: string) => { x: number; y: number } | null) | null = null;
   private scriptedSpeakerResolver: ScriptedSpeakerResolver | null = null;
+  /** 与 Game.resolveDisplayText 同源；过场字幕在此解析后再交给 CutsceneRenderer（避免绕开统一解析链）。 */
+  private displayTextResolver: ((s: string) => string) | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -118,6 +121,10 @@ export class CutsceneManager implements IGameSystem {
     this.emoteBubbleProvider = provider;
   }
 
+  setEmoteTargetResolver(resolver: ((raw: string) => IEmoteBubbleAnchor | null) | null): void {
+    this.emoteTargetResolver = resolver;
+  }
+
   setSceneSwitcher(switcher: SceneSwitcher): void {
     this.sceneSwitcher = switcher;
   }
@@ -145,6 +152,11 @@ export class CutsceneManager implements IGameSystem {
   /** present:showDialogue 的 speaker 与 playScriptedDialogue 共用占位解析 */
   setScriptedSpeakerResolver(fn: ScriptedSpeakerResolver | null): void {
     this.scriptedSpeakerResolver = fn;
+  }
+
+  /** present 字幕等：走与 UI 相同的 [tag:…] / resolveText */
+  setDisplayTextResolver(fn: ((s: string) => string) | null): void {
+    this.displayTextResolver = fn;
   }
 
   getCutsceneIds(): string[] {
@@ -427,6 +439,18 @@ export class CutsceneManager implements IGameSystem {
       if (t === 'showImg') {
         return `present:showImg id=${String((step as { id?: string }).id ?? '')}`;
       }
+      if (t === 'showSubtitle') {
+        const st = step as { subtitleEmote?: unknown };
+        const se = st.subtitleEmote;
+        let em = '';
+        if (se && typeof se === 'object') {
+          const o = se as Record<string, unknown>;
+          const tg = typeof o.target === 'string' ? o.target.trim() : '';
+          const emt = typeof o.emote === 'string' ? o.emote.trim() : '';
+          if (tg && emt) em = ` emote=${JSON.stringify(emt)}@${tg}`;
+        }
+        return `present:showSubtitle${em}`;
+      }
       return `present:${t}`;
     }
     if (step.kind === 'parallel') {
@@ -537,7 +561,11 @@ export class CutsceneManager implements IGameSystem {
         this.cutsceneRenderer.hideMovieBar();
         break;
       case 'showSubtitle':
-        await this.showSubtitleText(step.text as string, step.position as string | number | undefined);
+        await this.showSubtitleText(
+          step.text as string,
+          this.resolveShowSubtitleLayout(step as Record<string, unknown>),
+          this.parseSubtitleEmoteSpec(step as Record<string, unknown>),
+        );
         break;
       case 'cameraMove':
         await this.cutsceneRenderer.cameraMove(step.x as number, step.y as number, step.duration as number ?? 1000);
@@ -637,11 +665,80 @@ export class CutsceneManager implements IGameSystem {
     this.cutsceneRenderer.dismissDialogueBox(box);
   }
 
-  private async showSubtitleText(text: string, position?: string | number): Promise<void> {
-    const pos = position === 'top' || position === 'center' || position === 'bottom' || typeof position === 'number'
-      ? position
-      : 'bottom';
-    const container = this.cutsceneRenderer.showSubtitle(text, pos);
+  /** showSubtitle：`subtitleBand`+`subtitleAlign` 同时为白名单值时走黑边槽位，否则走经典 `position`。 */
+  private resolveShowSubtitleLayout(step: Record<string, unknown>): ShowSubtitleLayout {
+    const rawBand = step.subtitleBand;
+    const rawAlign = step.subtitleAlign;
+    const band = typeof rawBand === 'string' ? rawBand.trim() : '';
+    const align = typeof rawAlign === 'string' ? rawAlign.trim() : '';
+    const bandOk = band === 'movieTop' || band === 'movieBottom';
+    const alignOk = align === 'left' || align === 'center' || align === 'right';
+    if (bandOk && alignOk) {
+      return {
+        subtitleBand: band,
+        subtitleAlign: align,
+      };
+    }
+    const pos = step.position;
+    if (pos === 'top' || pos === 'center' || pos === 'bottom' || typeof pos === 'number') {
+      return pos;
+    }
+    return 'bottom';
+  }
+
+  /** `subtitleEmote`：target/emote/偏移同 showEmote；**展示时长随字幕**，`duration` 仅兼容数据字段不驱动消失。 */
+  private parseSubtitleEmoteSpec(step: Record<string, unknown>): {
+    target: string;
+    emote: string;
+    durationMs: number;
+    opts: EmoteBubbleOffsetOpts;
+  } | null {
+    const raw = step.subtitleEmote;
+    if (!raw || typeof raw !== 'object') return null;
+    const o = raw as Record<string, unknown>;
+    const target = typeof o.target === 'string' ? o.target.trim() : '';
+    const emote = typeof o.emote === 'string' ? o.emote.trim() : '';
+    if (!target || !emote) return null;
+    const durRaw = o.duration;
+    const durationParsed = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const durationMs = Number.isFinite(durationParsed) && durationParsed > 0 ? durationParsed : 1500;
+    const ox = Number(o.anchorOffsetX);
+    const oy = Number(o.anchorOffsetY);
+    return {
+      target,
+      emote,
+      durationMs,
+      opts: {
+        anchorOffsetX: Number.isFinite(ox) ? ox : 0,
+        anchorOffsetY: Number.isFinite(oy) ? oy : 0,
+      },
+    };
+  }
+
+  private async showSubtitleText(
+    text: string,
+    layout: ShowSubtitleLayout,
+    subtitleEmote: ReturnType<CutsceneManager['parseSubtitleEmoteSpec']>,
+  ): Promise<void> {
+    const raw = String(text ?? '');
+    const display = this.displayTextResolver ? this.displayTextResolver(raw) : raw;
+    const container = this.cutsceneRenderer.showSubtitle(display, layout);
+    let dismissSubtitleEmote: (() => void) | null = null;
+    if (subtitleEmote && this.emoteBubbleProvider) {
+      const anchor = this.emoteTargetResolver?.(subtitleEmote.target) ?? null;
+      if (anchor) {
+        const emoteText = this.displayTextResolver
+          ? this.displayTextResolver(subtitleEmote.emote)
+          : subtitleEmote.emote;
+        dismissSubtitleEmote = this.emoteBubbleProvider.showSticky(
+          anchor,
+          emoteText,
+          subtitleEmote.opts,
+        );
+      } else {
+        console.warn(`CutsceneManager showSubtitle: subtitleEmote 目标未解析 "${subtitleEmote.target}"`);
+      }
+    }
     await new Promise<void>(resolve => {
       const arm = () => {
         this.dialogueAdvanceNotBefore = performance.now() + 120;
@@ -655,6 +752,7 @@ export class CutsceneManager implements IGameSystem {
         requestAnimationFrame(arm);
       });
     });
+    dismissSubtitleEmote?.();
     this.cutsceneRenderer.dismissSubtitle(container);
   }
 

@@ -21,8 +21,14 @@ from ..project_model import ProjectModel
 from .. import theme as app_theme
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
-from ..shared.action_editor import ActionRow, FilterableTypeCombo
+from ..shared.action_editor import (
+    ActionRow,
+    EmoteBubbleParamWidget,
+    FilterableTypeCombo,
+    _id_ref_rows_with_orphan,
+)
 from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
+from ..shared.rich_text_field import RichTextTextEdit
 from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
 
 if TYPE_CHECKING:
@@ -68,6 +74,64 @@ _PRESENT_PARAMS: dict[str, list[tuple[str, str]]] = {
 }
 
 _MS_KEYS = frozenset({"duration"})
+
+
+def _cutscene_subtitle_emote_target_rows(
+    model: ProjectModel | None,
+    scene_id: str,
+    committed: str,
+    cutscene_id: str | None = None,
+) -> list[tuple[str, str]]:
+    """与 ActionEditor emote_target 一致：绑定场景 NPC + 热点 + player + 本过场 _cut_ 演员。"""
+    pairs: list[tuple[str, str]] = []
+    sid = (scene_id or "").strip()
+    if model and sid:
+        pairs.extend(model.npc_ids_for_scene(sid))
+        pairs.extend(model.hotspot_ids_for_scene(sid))
+    pairs.append(("player", "player"))
+    cid = (cutscene_id or "").strip()
+    if model and cid:
+        seen = {p[0] for p in pairs}
+        for tid in model.cutscene_temp_actor_ids_in_cutscene(cid):
+            if tid not in seen:
+                seen.add(tid)
+                pairs.append((tid, tid))
+    return _id_ref_rows_with_orphan(pairs, (committed or "").strip())
+
+
+class _CollapsibleSection(QWidget):
+    """折叠区块（默认折叠），与 encounter_editor 同款。"""
+
+    def __init__(self, title: str, inner: QWidget, parent: QWidget | None = None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        self._toggle = QToolButton()
+        self._toggle.setText(title)
+        self._toggle.setCheckable(True)
+        self._toggle.setChecked(False)
+        self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._toggle.toggled.connect(self._on_toggled)
+        lay.addWidget(self._toggle)
+        self._inner = inner
+        lay.addWidget(self._inner)
+        self._inner.setVisible(False)
+
+    def _on_toggled(self, expanded: bool) -> None:
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self._inner.setVisible(expanded)
+
+    def expand_if(self, on: bool) -> None:
+        self._toggle.blockSignals(True)
+        self._toggle.setChecked(on)
+        self._toggle.blockSignals(False)
+        self._inner.setVisible(on)
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+
 
 # 与 CutsceneManager.executePresent 默认一致（毫秒）
 _GANTT_MAX_MS = 8000
@@ -119,6 +183,23 @@ def step_summary_line(d: dict) -> str:
             return f"{t}  {_float_ms(d, 'duration', 0)}ms"
         if t == "showImg":
             return f"showImg  {d.get('id', '')}"
+        if t == "showSubtitle":
+            b = str(d.get("subtitleBand", "") or "").strip()
+            a = str(d.get("subtitleAlign", "") or "").strip()
+            se = d.get("subtitleEmote")
+            em_suf = ""
+            if isinstance(se, dict):
+                tg = str(se.get("target") or "").strip()
+                em = str(se.get("emote") or "").strip()
+                if tg and em:
+                    em_suf = f" · {em}@{tg}"
+            if b in ("movieTop", "movieBottom") and a in ("left", "center", "right"):
+                return f"showSubtitle · {b}/{a}{em_suf}"
+            tx = str(d.get("text", "")).replace("\n", " ")
+            if len(tx) > 32:
+                tx = tx[:29] + "…"
+            base = f"showSubtitle: {tx}" if tx else "showSubtitle"
+            return f"{base}{em_suf}"
         return t
     return kind
 
@@ -490,6 +571,29 @@ class StepWidget(QFrame):
             wy_w.setValue(float(py))
             self._emit_dirty()
 
+    def refresh_subtitle_emote_target_items(self) -> None:
+        """过场 targetScene 变更时刷新 showSubtitle 表情锚点下拉候选项。"""
+        if self._kind_combo.currentData() != "present":
+            return
+        if self._type_combo.committed_type() != "showSubtitle":
+            return
+        sel = self._widgets.get("_subtitle_emote_target")
+        if not isinstance(sel, IdRefSelector):
+            return
+        ed = self._editor
+        sid = ""
+        if ed is not None and hasattr(ed, "cutscene_binding_target_scene"):
+            sid = ed.cutscene_binding_target_scene()
+        cur = sel.current_id().strip()
+        rows = _cutscene_subtitle_emote_target_rows(
+            self._model, sid, cur, cutscene_id=self._cutscene_id)
+        sel.blockSignals(True)
+        try:
+            sel.set_items(rows)
+            sel.set_current(cur)
+        finally:
+            sel.blockSignals(False)
+
     def _subtitle_on_present_mode_changed(self) -> None:
         combo = self._widgets.get("_subtitle_mode")
         spin = self._widgets.get("_subtitle_frac")
@@ -497,14 +601,83 @@ class StepWidget(QFrame):
             spin.setVisible(combo.committed_type().strip() == "__num__")
         self._emit_dirty()
 
+    def _subtitle_on_layout_mode_changed(self) -> None:
+        lm = self._widgets.get("_subtitle_layout_mode")
+        classic = self._widgets.get("_subtitle_classic_wrap")
+        movie = self._widgets.get("_subtitle_movie_wrap")
+        if isinstance(lm, FilterableTypeCombo):
+            is_classic = lm.committed_type().strip() == "__classic__"
+            if isinstance(classic, QWidget):
+                classic.setVisible(is_classic)
+            if isinstance(movie, QWidget):
+                movie.setVisible(not is_classic)
+        self._subtitle_on_present_mode_changed()
+
+    def _show_subtitle_merge_emote_optional(self, d: dict) -> None:
+        """target+emote 均非空时写入 subtitleEmote，与 CutsceneManager.parseSubtitleEmoteSpec 对齐。"""
+        tgt_w = self._widgets.get("_subtitle_emote_target")
+        emo_w = self._widgets.get("_subtitle_emote_emote")
+        tt = ""
+        if isinstance(tgt_w, IdRefSelector):
+            tt = tgt_w.current_id().strip()
+        elif isinstance(tgt_w, QLineEdit):
+            tt = tgt_w.text().strip()
+        ee = ""
+        if isinstance(emo_w, EmoteBubbleParamWidget):
+            ee = emo_w.emote_text().strip()
+        elif isinstance(emo_w, QLineEdit):
+            ee = emo_w.text().strip()
+        if not tt or not ee:
+            return
+        dur_w = self._widgets.get("_subtitle_emote_duration")
+        dur = 1500.0
+        if isinstance(dur_w, QDoubleSpinBox):
+            dur = max(1.0, float(dur_w.value()))
+        ox_w = self._widgets.get("_subtitle_emote_ox")
+        oy_w = self._widgets.get("_subtitle_emote_oy")
+        ox, oy = 0.0, 0.0
+        if isinstance(ox_w, QDoubleSpinBox):
+            ox = float(ox_w.value())
+        if isinstance(oy_w, QDoubleSpinBox):
+            oy = float(oy_w.value())
+        d["subtitleEmote"] = {
+            "target": tt,
+            "emote": ee,
+            "duration": dur,
+            "anchorOffsetX": ox,
+            "anchorOffsetY": oy,
+        }
+
     def _build_show_subtitle_present_params(self) -> None:
         raw_txt = self._step_data.get("text", "")
         raw_pos = self._step_data.get("position", "bottom")
+        rb = str(self._step_data.get("subtitleBand", "") or "").strip()
+        ra = str(self._step_data.get("subtitleAlign", "") or "").strip()
+        use_movie = rb in ("movieTop", "movieBottom") and ra in ("left", "center", "right")
 
-        tw = QTextEdit(str(raw_txt))
-        tw.setMinimumHeight(64)
-        tw.setMaximumHeight(120)
-        tw.textChanged.connect(self._emit_dirty)
+        if self._model is not None:
+            tw = RichTextTextEdit(self._model, self)
+            tw.setPlainText(str(raw_txt))
+            tw.textChanged.connect(self._emit_dirty)
+            tw.setPlaceholderText(
+                "字幕文案；请用右侧「插入引用」添加 [tag:…]，勿手打。"
+            )
+            tw.core_text_edit().setMinimumHeight(72)
+            tw.setMaximumHeight(152)
+        else:
+            tw = QTextEdit(str(raw_txt))
+            tw.setMinimumHeight(64)
+            tw.setMaximumHeight(120)
+            tw.textChanged.connect(self._emit_dirty)
+            tw.setPlaceholderText("载入工程后可使用完整引用插入能力。")
+
+        layout_mode_rows = [
+            ("经典 position（top/center/bottom 或比例）", "__classic__"),
+            ("相对黑边（上/下区 × 左/中/右）", "__movie__"),
+        ]
+        layout_combo = FilterableTypeCombo(layout_mode_rows, self, select_only=True)
+        layout_combo.set_committed_type("__classic__" if not use_movie else "__movie__")
+        layout_combo.typeCommitted.connect(self._subtitle_on_layout_mode_changed)
 
         mode_rows = [
             ("顶部 · top", "top"),
@@ -547,19 +720,159 @@ class StepWidget(QFrame):
         frac.valueChanged.connect(self._emit_dirty)
         cw.typeCommitted.connect(self._subtitle_on_present_mode_changed)
 
-        row = QWidget(self)
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(cw, 1)
-        lay.addWidget(frac)
-        row.setToolTip("预设三档或屏幕纵向数值；与运行时 showSubtitle(position) 对齐。")
+        classic_row = QWidget(self)
+        classic_lay = QHBoxLayout(classic_row)
+        classic_lay.setContentsMargins(0, 0, 0, 0)
+        classic_lay.addWidget(cw, 1)
+        classic_lay.addWidget(frac)
+        classic_row.setToolTip("预设三档或屏幕纵向数值；与运行时 showSubtitle(position) 对齐。")
+
+        classic_wrap = QWidget(self)
+        classic_wrap_l = QVBoxLayout(classic_wrap)
+        classic_wrap_l.setContentsMargins(0, 0, 0, 0)
+        classic_wrap_l.addWidget(classic_row)
+
+        band_rows = [
+            ("上黑边区 · movieTop", "movieTop"),
+            ("下黑边区 · movieBottom", "movieBottom"),
+        ]
+        band_c = FilterableTypeCombo(band_rows, self, select_only=True)
+        if rb == "movieBottom":
+            band_c.set_committed_type("movieBottom")
+        else:
+            band_c.set_committed_type("movieTop")
+
+        align_rows = [
+            ("居左 · left", "left"),
+            ("居中 · center", "center"),
+            ("居右 · right", "right"),
+        ]
+        align_c = FilterableTypeCombo(align_rows, self, select_only=True)
+        if ra == "left":
+            align_c.set_committed_type("left")
+        elif ra == "right":
+            align_c.set_committed_type("right")
+        else:
+            align_c.set_committed_type("center")
+
+        band_c.typeCommitted.connect(self._emit_dirty)
+        align_c.typeCommitted.connect(self._emit_dirty)
+
+        movie_row = QWidget(self)
+        movie_lay = QHBoxLayout(movie_row)
+        movie_lay.setContentsMargins(0, 0, 0, 0)
+        movie_lay.addWidget(QLabel("条带"))
+        movie_lay.addWidget(band_c, 1)
+        movie_lay.addWidget(QLabel("水平"))
+        movie_lay.addWidget(align_c, 1)
+        movie_row.setToolTip(
+            "须先在同过场中 showMovieBar；仅写入 subtitleBand + subtitleAlign，不写 position。"
+        )
+
+        movie_wrap = QWidget(self)
+        movie_wrap_l = QVBoxLayout(movie_wrap)
+        movie_wrap_l.setContentsMargins(0, 0, 0, 0)
+        movie_wrap_l.addWidget(movie_row)
+
+        se_raw = self._step_data.get("subtitleEmote")
+        se_t, se_e, se_d, se_ox, se_oy = "", "", 1500.0, 0.0, 0.0
+        if isinstance(se_raw, dict):
+            se_t = str(se_raw.get("target") or "").strip()
+            se_e = str(se_raw.get("emote") or "").strip()
+            try:
+                se_d = float(se_raw.get("duration", 1500))
+            except (TypeError, ValueError):
+                se_d = 1500.0
+            if not (se_d > 0 and se_d == se_d):
+                se_d = 1500.0
+            try:
+                se_ox = float(se_raw.get("anchorOffsetX", 0))
+            except (TypeError, ValueError):
+                se_ox = 0.0
+            try:
+                se_oy = float(se_raw.get("anchorOffsetY", 0))
+            except (TypeError, ValueError):
+                se_oy = 0.0
+
+        emote_body = QWidget(self)
+        emote_form = QFormLayout(emote_body)
+        emote_form.setContentsMargins(8, 4, 8, 4)
+        ed_sc = self._editor
+        bind_sid = ""
+        if ed_sc is not None and hasattr(ed_sc, "cutscene_binding_target_scene"):
+            bind_sid = ed_sc.cutscene_binding_target_scene()
+        emote_tgt = IdRefSelector(self, allow_empty=True, editable=False)
+        emote_tgt.setMinimumWidth(220)
+        emote_tgt.set_items(_cutscene_subtitle_emote_target_rows(
+            self._model,
+            bind_sid,
+            se_t,
+            cutscene_id=self._cutscene_id,
+        ))
+        emote_tgt.set_current(se_t)
+        emote_tgt.value_changed.connect(self._emit_dirty)
+        emote_tgt.setToolTip(
+            "仅下拉选择；候选项为本过场「targetScene」中 NPC、热点、player，"
+            "及本过场步骤树中已用的 _cut_ 临时演员（与 showEmoteAndWait 一致）。"
+        )
+        emote_txt = EmoteBubbleParamWidget(
+            self,
+            self._model,
+            se_e,
+            self._emit_dirty,
+            include_empty_choice=True,
+        )
+        emote_txt.setMinimumWidth(360)
+        emote_dur = QDoubleSpinBox()
+        emote_dur.setRange(1.0, 999999.0)
+        emote_dur.setDecimals(0)
+        emote_dur.setValue(max(1.0, se_d))
+        emote_dur.setToolTip("毫秒，与 showEmoteAndWait 一致；字幕仍为点击关闭。")
+        emote_dur.valueChanged.connect(self._emit_dirty)
+        emote_ox = QDoubleSpinBox()
+        emote_ox.setRange(-9999.0, 9999.0)
+        emote_ox.setDecimals(1)
+        emote_ox.setValue(se_ox)
+        emote_ox.valueChanged.connect(self._emit_dirty)
+        emote_oy = QDoubleSpinBox()
+        emote_oy.setRange(-9999.0, 9999.0)
+        emote_oy.setDecimals(1)
+        emote_oy.setValue(se_oy)
+        emote_oy.valueChanged.connect(self._emit_dirty)
+        emote_form.addRow("target", emote_tgt)
+        emote_form.addRow("emote", emote_txt)
+        emote_form.addRow("duration (ms)", emote_dur)
+        emote_form.addRow("anchorOffsetX", emote_ox)
+        emote_form.addRow("anchorOffsetY", emote_oy)
+
+        emote_section = _CollapsibleSection("字幕旁表情（可选）", emote_body, self)
+        emote_section.setToolTip(
+            "目标仅能从绑定场景实体下拉；气泡文案用下拉与「插入」快捷键，也可用「其他…」。"
+            "选定目标且气泡非「(无)」时写入 subtitleEmote。"
+        )
+        if se_t and se_e:
+            emote_section.expand_if(True)
 
         self._widgets["text"] = tw
+        self._widgets["_subtitle_layout_mode"] = layout_combo
         self._widgets["_subtitle_mode"] = cw
         self._widgets["_subtitle_frac"] = frac
+        self._widgets["_subtitle_classic_wrap"] = classic_wrap
+        self._widgets["_subtitle_movie_band"] = band_c
+        self._widgets["_subtitle_movie_align"] = align_c
+        self._widgets["_subtitle_movie_wrap"] = movie_wrap
+        self._widgets["_subtitle_emote_target"] = emote_tgt
+        self._widgets["_subtitle_emote_emote"] = emote_txt
+        self._widgets["_subtitle_emote_duration"] = emote_dur
+        self._widgets["_subtitle_emote_ox"] = emote_ox
+        self._widgets["_subtitle_emote_oy"] = emote_oy
+
         self._present_params_layout.addRow("text", tw)
-        self._present_params_layout.addRow("position", row)
-        self._subtitle_on_present_mode_changed()
+        self._present_params_layout.addRow("布局模式", layout_combo)
+        self._present_params_layout.addRow("", classic_wrap)
+        self._present_params_layout.addRow("", movie_wrap)
+        self._present_params_layout.addRow("", emote_section)
+        self._subtitle_on_layout_mode_changed()
 
     def _build_show_img_present_params(self) -> None:
         pool_s: set[str] = set()
@@ -721,11 +1034,34 @@ class StepWidget(QFrame):
                 return d
             if ptype == "showSubtitle":
                 wt = self._widgets.get("text")
-                cw = self._widgets.get("_subtitle_mode")
-                frac = self._widgets.get("_subtitle_frac")
+                lm = self._widgets.get("_subtitle_layout_mode")
                 txt = (
                     wt.toPlainText().strip("\ufeff") if hasattr(wt, "toPlainText") else ""
                 )
+                if isinstance(lm, FilterableTypeCombo) and lm.committed_type().strip() == "__movie__":
+                    band_w = self._widgets.get("_subtitle_movie_band")
+                    align_w = self._widgets.get("_subtitle_movie_align")
+                    sb = "movieTop"
+                    sa = "center"
+                    if isinstance(band_w, FilterableTypeCombo):
+                        sb = band_w.committed_type().strip() or "movieTop"
+                        if sb not in ("movieTop", "movieBottom"):
+                            sb = "movieTop"
+                    if isinstance(align_w, FilterableTypeCombo):
+                        sa = align_w.committed_type().strip() or "center"
+                        if sa not in ("left", "center", "right"):
+                            sa = "center"
+                    d.update({
+                        "kind": "present",
+                        "type": "showSubtitle",
+                        "text": txt,
+                        "subtitleBand": sb,
+                        "subtitleAlign": sa,
+                    })
+                    self._show_subtitle_merge_emote_optional(d)
+                    return d
+                cw = self._widgets.get("_subtitle_mode")
+                frac = self._widgets.get("_subtitle_frac")
                 po: Any = "bottom"
                 if isinstance(cw, FilterableTypeCombo):
                     pv = cw.committed_type().strip()
@@ -734,6 +1070,7 @@ class StepWidget(QFrame):
                     else:
                         po = pv
                 d.update({"kind": "present", "type": "showSubtitle", "text": txt, "position": po})
+                self._show_subtitle_merge_emote_optional(d)
                 return d
             for pname, pt in schema:
                 w = self._widgets.get(pname)
@@ -1547,6 +1884,7 @@ class TimelineEditor(QWidget):
             ar = getattr(sw, "_action_row", None)
             if isinstance(ar, ActionRow):
                 ar.set_project_context(self._model, sid_n, cutscene_id=cid)
+            sw.refresh_subtitle_emote_target_items()
 
     def _refresh_all_present_overlay_id_selectors(self) -> None:
         """步骤树变化后刷新 showImg / hideImg 的 id 下拉候选项。"""

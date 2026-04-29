@@ -6,6 +6,8 @@ interface ActiveBubble {
   bubble: Container;
   parent: Container;
   remainingMs: number;
+  /** true：仅能通过返回的 dismiss 或 cleanup 移除（不参与 update 倒计时） */
+  noAutoExpire?: boolean;
 }
 
 /**
@@ -13,7 +15,6 @@ interface ActiveBubble {
  * quad 直接来自 Hotspot 的世界数据：展示图为底中锚点，x/y/worldWidth/worldHeight 已定义完整世界四边形。
  * 不走 getBounds / toGlobal / toLocal，避免屏幕空间与 entityLayer 世界空间混用。
  */
-const EMOTE_BUBBLE_Z_BASE = 30_000_000;
 /** 气泡底边落在 quad 顶边之上（世界单位近似，与 NPC headGap 同量级） */
 const QUAD_ABOVE_GAP = 8;
 
@@ -45,16 +46,15 @@ export class EmoteBubbleManager implements IGameSystem {
   serialize(): object { return {}; }
   deserialize(_data: object): void { this.cleanup(); }
 
-  show(
+  private buildAndMountBubble(
     anchor: IEmoteBubbleAnchor,
     emote: string,
-    durationMs: number = 1500,
     opts?: EmoteBubbleOffsetOpts,
-  ): void {
+  ): { bubble: Container; parent: Container; bw: number; bh: number } {
     const displayObj = anchor.getDisplayObject() as Container;
 
     this.dbg(
-      `show 开始 anchor=${anchor.constructor?.name ?? '?'} emoteLen=${emote.length} ` +
+      `mount 开始 anchor=${anchor.constructor?.name ?? '?'} emoteLen=${emote.length} ` +
         `entityAttachLayer=${this.entityAttachLayer ? 'ok' : '(null)'}`,
     );
     this.dbg(
@@ -119,9 +119,51 @@ export class EmoteBubbleManager implements IGameSystem {
     this.dbg(
       `  已 addChild: 父=${attachParent === this.entityAttachLayer ? 'entityLayer' : 'anchor本地'} ` +
         `bubble.xy=(${bx.toFixed(1)},${by.toFixed(1)}) bw×bh=${bw.toFixed(0)}×${bh.toFixed(0)} ` +
-        `bubble.visible=${bubble.visible} bubble.renderable=${(bubble as { renderable?: boolean }).renderable ?? '?'} durMs=${durationMs}`,
+        `bubble.visible=${bubble.visible} bubble.renderable=${(bubble as { renderable?: boolean }).renderable ?? '?'}`,
     );
-    this.activeBubbles.push({ bubble, parent: attachParent, remainingMs: durationMs });
+    return { bubble, parent: attachParent, bw, bh };
+  }
+
+  show(
+    anchor: IEmoteBubbleAnchor,
+    emote: string,
+    durationMs: number = 1500,
+    opts?: EmoteBubbleOffsetOpts,
+  ): void {
+    const { bubble, parent } = this.buildAndMountBubble(anchor, emote, opts);
+    this.dbg(`show 定时消失 durMs=${durationMs}`);
+    this.activeBubbles.push({
+      bubble,
+      parent,
+      remainingMs: durationMs,
+      noAutoExpire: false,
+    });
+  }
+
+  /**
+   * 不参与每帧倒计时；须调用返回的 dismiss() 或 cleanup() 移除。
+   * 供 showSubtitle.subtitleEmote；Action showEmoteAndWait 仍用 showAndWait(duration)。
+   */
+  showSticky(
+    anchor: IEmoteBubbleAnchor,
+    emote: string,
+    opts?: EmoteBubbleOffsetOpts,
+  ): () => void {
+    const { bubble, parent } = this.buildAndMountBubble(anchor, emote, opts);
+    this.dbg('showSticky 无自动消失，须与字幕等同生命周期 dismiss');
+    const entry: ActiveBubble = {
+      bubble,
+      parent,
+      remainingMs: 0,
+      noAutoExpire: true,
+    };
+    this.activeBubbles.push(entry);
+    return () => {
+      const i = this.activeBubbles.indexOf(entry);
+      if (i < 0) return;
+      this.removeBubble(entry);
+      this.activeBubbles.splice(i, 1);
+    };
   }
 
   showAndWait(
@@ -143,6 +185,7 @@ export class EmoteBubbleManager implements IGameSystem {
   update(dt: number): void {
     for (let i = this.activeBubbles.length - 1; i >= 0; i--) {
       const entry = this.activeBubbles[i];
+      if (entry.noAutoExpire) continue;
       entry.remainingMs -= dt * 1000;
       if (entry.remainingMs <= 0) {
         this.removeBubble(entry);

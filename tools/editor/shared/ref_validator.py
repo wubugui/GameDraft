@@ -9,7 +9,7 @@ from ..project_model import ProjectModel
 from .tag_catalog import TagCatalog
 
 STRING_TAG_RE: re.Pattern[str] = re.compile(
-    r"\[tag:string:([a-zA-Z0-9_.-]+):([a-zA-Z0-9_.-]+)\]",
+    r"\[tag:string:([^:]+):([^\]]+)\]",
 )
 
 _TAG_PATTERNS: list[tuple[str, re.Pattern[str]]] = [

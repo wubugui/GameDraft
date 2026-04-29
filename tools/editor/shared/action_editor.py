@@ -299,6 +299,8 @@ _FACE_DIRECTIONS = ("left", "right", "up", "down")
 
 # showEmote / showEmoteAndWait：运行时仅为气泡 Text；编辑器侧提供常用占位 + 工程扫描去重。
 _EMOTE_QUICK_PRESETS = ("?", "!", "!!", "...", "…")
+# 可选字幕旁表情：下拉「(无)」条目的内部取值（勿用作真实气泡文案）。
+_EMOTE_OPTION_NONE = "__subtitle_emote_none__"
 
 
 def _build_emote_action_combo_entries(
@@ -354,14 +356,21 @@ class EmoteBubbleParamWidget(QWidget):
         model,
         committed: str,
         on_change: Callable[[], None],
+        *,
+        include_empty_choice: bool = False,
     ) -> None:
         super().__init__(parent)
         self._model = model
         self._on_change = on_change
+        self._include_empty_choice = include_empty_choice
 
-        cur = str(committed if committed is not None else "")
-        rows = _build_emote_action_combo_entries(model, cur)
-        pick = cur.strip() or (rows[0][1] if rows else "?")
+        cur = str(committed if committed is not None else "").strip()
+        scan = cur if cur else "?"
+        rows = self._full_entry_rows(scan)
+        if self._include_empty_choice and not cur:
+            pick = _EMOTE_OPTION_NONE
+        else:
+            pick = cur or (rows[0][1] if rows else "?")
         self._combo = FilterableTypeCombo(rows, self, select_only=True)
         self._combo.set_committed_type(pick)
         self._combo.typeCommitted.connect(lambda _t: on_change())
@@ -383,27 +392,38 @@ class EmoteBubbleParamWidget(QWidget):
         btn.clicked.connect(self._on_custom_text)
         row.addWidget(btn)
 
+    def _full_entry_rows(self, scan_hint: str) -> list[tuple[str, str]]:
+        base = _build_emote_action_combo_entries(self._model, scan_hint)
+        if self._include_empty_choice:
+            return [("(无)", _EMOTE_OPTION_NONE)] + base
+        return base
+
     def _apply_quick(self, segment: str) -> None:
-        rows = _build_emote_action_combo_entries(self._model, segment)
+        rows = self._full_entry_rows(segment)
         self._combo.set_entries(rows)
         self._combo.set_committed_type(segment)
         self._on_change()
 
     def _on_custom_text(self) -> None:
         cur = self._combo.committed_type().strip()
+        if cur == _EMOTE_OPTION_NONE:
+            cur = ""
         txt, ok = QInputDialog.getText(self, "气泡文案", "输入气泡内显示文字：", text=cur)
         if not ok:
             return
         t = txt.strip()
         if not t:
             return
-        rows = _build_emote_action_combo_entries(self._model, t)
+        rows = self._full_entry_rows(t)
         self._combo.set_entries(rows)
         self._combo.set_committed_type(t)
         self._on_change()
 
     def emote_text(self) -> str:
-        return self._combo.committed_type().strip()
+        v = self._combo.committed_type().strip()
+        if self._include_empty_choice and v == _EMOTE_OPTION_NONE:
+            return ""
+        return v
 
 
 def _read_overlay_id_value(w: object) -> str:

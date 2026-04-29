@@ -726,6 +726,15 @@ export interface IEmoteBubbleProvider {
     durationMs?: number,
     opts?: EmoteBubbleOffsetOpts,
   ): Promise<void>;
+  /**
+   * 不按时长自动消失（与 showAndWait 不同）；返回的函数在适当时机调用以移除气泡，
+   * 用于 showSubtitle.subtitleEmote 等与另一条演出同生命周期。
+   */
+  showSticky(
+    anchor: IEmoteBubbleAnchor,
+    emote: string,
+    opts?: EmoteBubbleOffsetOpts,
+  ): () => void;
   cleanup(): void;
 }
 
@@ -746,6 +755,11 @@ export interface ActionStep {
 /**
  * Present 步骤——CutsceneManager / CutsceneRenderer 直接处理的演出指令。
  * 如 fadeToBlack / showTitle / showDialogue / showImg / cameraMove 等。
+ * `showSubtitle` 可选用 `subtitleBand`（movieTop|movieBottom）与 `subtitleAlign`（left|center|right）相对当前 movie bar，
+ * 二者齐备时优先于 `position`；否则沿用 `position`（top/center/bottom 或 0–1 比例）。
+ * 另可选用 `subtitleEmote`：`{ target, emote, duration?, anchorOffsetX?, anchorOffsetY? }`（target/emote/偏移解析同 showEmoteAndWait），
+ * `target`+`emote` 均非空时在字幕展示期间显示头顶表情气泡；**气泡随字幕存在至玩家点击关闭字幕**（`duration` 仅作数据兼容，不参与结束时机）。
+ * 单独 Action `showEmoteAndWait` 仍完全由 `duration` 控制消失与 await。
  */
 export interface PresentStep {
   kind: 'present';

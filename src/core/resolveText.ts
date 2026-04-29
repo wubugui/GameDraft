@@ -1,7 +1,10 @@
 import type { FlagStore, FlagValue } from './FlagStore';
 
-/** 与 strings.json 中 [tag:string:cat:key] 的 cat/key 段一致 */
-const TAG_STRING = /\[tag:string:([a-zA-Z0-9_.-]+):([a-zA-Z0-9_.-]+)\]/g;
+/**
+ * strings 引用：分类与键与编辑器 TagCatalog / JSON 一致，允许 Unicode（不得仅限 ASCII）。
+ * 第一段为 category（不含冒号），余下直至 ] 为 key（可含冒号等）。
+ */
+const TAG_STRING = /\[tag:string:([^:]+):([^\]]+)\]/g;
 const TAG_FLAG = /\[tag:flag:([^\]]+)\]/g;
 const TAG_ITEM = /\[tag:item:([^\]]+)\]/g;
 const TAG_NPC = /\[tag:npc:([^\]]+)\]/g;
@@ -50,13 +53,18 @@ function warnUnknownTag(kind: string, detail: string): void {
   console.warn(`resolveText: unknown or invalid [tag:${kind}] ${detail}`);
 }
 
+/** 将全角括号规范为 ASCII，避免整段 tag 无法被正则识别 */
+function normalizeEmbeddedTagsSyntax(s: string): string {
+  return s.replace(/［/g, '[').replace(/］/g, ']');
+}
+
 /**
  * 统一解析玩家可见字符串中的项目级引用（just-in-time）。
  * 多轮替换直至无变化或达到 MAX_RESOLVE_DEPTH。
  */
 export function resolveText(raw: string | undefined, ctx: ResolveContext): string {
   if (raw === undefined || raw === '') return '';
-  let out = raw;
+  let out = normalizeEmbeddedTagsSyntax(raw);
   for (let pass = 0; pass < MAX_RESOLVE_DEPTH; pass++) {
     const prev = out;
 
