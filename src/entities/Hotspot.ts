@@ -21,6 +21,8 @@ export class Hotspot {
 
   private marker: Graphics;
   private displaySprite: Sprite | null = null;
+  /** 仅运行时覆盖展示朝向，不改 def.displayImage/Save；null 则用 def（缺省视同为 right）。 */
+  private runtimeDisplayFacingOverride: 'left' | 'right' | null = null;
   /** displayImage 世界高度；贴图为底中锚点，与 NPC/Player 脚底一致 */
   private _displayWorldHeight = 0;
   private depthOcclusionFilter: DepthOcclusionFilter | null = null;
@@ -102,10 +104,25 @@ export class Hotspot {
     this._syncEntitySortBand();
   }
 
+  private _effectiveDisplayFacing(): 'left' | 'right' {
+    if (this.runtimeDisplayFacingOverride !== null) return this.runtimeDisplayFacingOverride;
+    return this.def.displayImage?.facing === 'left' ? 'left' : 'right';
+  }
+
   private _applyDisplayImageFacing(spr: Sprite): void {
-    const f = this.def.displayImage?.facing;
-    const flip = f === 'left' ? -1 : 1;
+    const flip = this._effectiveDisplayFacing() === 'left' ? -1 : 1;
     spr.scale.x = flip * Math.abs(spr.scale.x);
+  }
+
+  /**
+   * 仅运行时：设定展示图左右朝向，或传入 null 清除覆盖（改用 def.displayImage.facing）。
+   * 不写入场景 JSON/Save/displayImage。
+   */
+  setRuntimeDisplayFacing(facing: 'left' | 'right' | null): void {
+    this.runtimeDisplayFacingOverride = facing;
+    if (this.displaySprite) {
+      this._applyDisplayImageFacing(this.displaySprite);
+    }
   }
 
   /** 与 Player/NPC 一致：底中锚点下脚底即 container.y */
@@ -207,6 +224,49 @@ export class Hotspot {
     this.active = enabled;
     if (!enabled) this.hidePrompt();
     this.container.visible = enabled;
+  }
+
+  /** showEmote 取包围盒：有展示 sprite 则只量sprite（世界四边形）；否则量整容器（含占位圆点）。 */
+  getEmoteBoundsProbe(): Container {
+    return this.displaySprite ?? this.container;
+  }
+
+  /** showEmote 使用的热点世界 quad：展示图按底中锚点，未加载展示图时退化到占位圆点范围。 */
+  getEmoteWorldQuad(): { left: number; top: number; width: number; height: number } {
+    const di = this.def.displayImage;
+    if (this.displaySprite && di && di.worldWidth > 0 && this._displayWorldHeight > 0) {
+      return {
+        left: this.container.x - di.worldWidth / 2,
+        top: this.container.y - this._displayWorldHeight,
+        width: di.worldWidth,
+        height: this._displayWorldHeight,
+      };
+    }
+    const markerSize = 16;
+    return {
+      left: this.container.x - markerSize / 2,
+      top: this.container.y - markerSize / 2,
+      width: markerSize,
+      height: markerSize,
+    };
+  }
+
+  /** 气泡父节点容器（与本类其它展示一致）。 */
+  getDisplayObject(): unknown {
+    return this.container;
+  }
+
+  /**
+   * 有 displayImage 时：贴图为底中锚点，世界高度即为四边形竖直范围；
+   * 气泡底边对齐在「sprite 顶端」之上 headGap（与 NPC 语义一致）。
+   * 仅有彩色圆点时：对齐在圆点上方的估算位置。
+   */
+  getEmoteBubbleAnchorLocalY(): number {
+    const headGap = 8;
+    if (this.displaySprite && this._displayWorldHeight > 0) {
+      return -this._displayWorldHeight - headGap;
+    }
+    return -16 - headGap;
   }
 
   showPrompt(): void {

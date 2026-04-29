@@ -245,7 +245,7 @@
 | steps | **步骤数组**：每项 `kind` 为 `present` / `action` / `parallel` |
 
 - **present**：选 `type`（如 `fadeToBlack`、`waitTime`、`showDialogue`…）及对应参数；**duration 等单位与运行时一致（多为毫秒）**。  
-- **action**：仅允许编辑器白名单内的类型（与运行时 `CUTSCENE_ACTION_WHITELIST` 一致），如 `playSfx`、`moveEntityTo` 等。  
+- **action**：仅允许编辑器白名单内的类型（与运行时 `CUTSCENE_ACTION_WHITELIST` 一致），如 `playSfx`、`moveEntityTo`、`setEntityEnabled`、`persistNpcEntityEnabled`、`persistHotspotEnabled`（显式写入 sceneMemory 的可存档类）等。  
 - **parallel**：`tracks` 内多条子步骤同时执行，全完成后才进入下一步。
 
 常用 **present** 类型与含义可对照编辑器下拉；**勿使用已废弃的旧 `commands` 数组**（数据应只保留 `steps`）。

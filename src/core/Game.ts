@@ -383,6 +383,8 @@ export class Game {
   async start(options: GameStartOptions = {}): Promise<void> {
     this.isDevMode = !!options.devMode;
     await this.renderer.init();
+    this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
+
     await this.stringsProvider.load(this.assetManager);
 
     await this.loadGameConfig();
@@ -438,7 +440,8 @@ export class Game {
      *   1. CutsceneManager 临时表（_cut_ 前缀）
      *   2. 场景 NPC（sceneManager.getNpcById）
      *   3. player（id === 'player'）
-     * 对话、热区、过场、Timeline 共用此实例。
+     * 对话、热区、过场、Timeline、移动/朝向等共用此实例。
+     * showEmote 另见 resolveEmoteTarget：在以上结果之外可解析当前场景热点 id。
      */
     this.resolveActorFn = (id: string) => {
       const temp = this.cutsceneManager.getTempActors().get(id);
@@ -505,6 +508,9 @@ export class Game {
       }),
       this.inputManager,
     );
+    this.emoteBubbleManager.setDebugPanelLog((msg) => {
+      this.debugPanelUI?.log(msg);
+    });
 
     this.camera.setScreenSize(this.renderer.screenWidth, this.renderer.screenHeight);
     this.unsubRendererResize = this.renderer.subscribeAfterResize(() => {
@@ -573,6 +579,45 @@ export class Game {
       stringsProvider: this.stringsProvider,
       eventBus: this.eventBus,
       resolveActor: this.resolveActorFn,
+      resolveEmoteTarget: (raw: string) => {
+        const id = String(raw ?? '').trim();
+        const log = (m: string) => this.debugPanelUI?.log(`[emote/target] ${m}`);
+        if (!id) {
+          log('目标 id 为空');
+          return null;
+        }
+        const actor = this.resolveActorFn(id);
+        if (actor) {
+          log(`命中 resolveActor entityId=${JSON.stringify(actor.entityId)}`);
+          return actor;
+        }
+        const scene = this.sceneManager.currentSceneData?.id ?? '';
+        const hs = this.sceneManager.getCurrentHotspots();
+        const enumerate = hs
+          .slice(0, 40)
+          .map((h) => {
+            const hid = h.def.id;
+            const key = `${JSON.stringify(hid)}`;
+            return String(hid ?? '').trim() === id ? `${key}⇐match` : key;
+          })
+          .join(', ');
+        log(
+          `resolveActor 未命中 scene=${scene || '(?)'} ` +
+          `热点数=${hs.length}${hs.length > 40 ? `（以下仅列前40个 id）` : ''}：[${enumerate}]`,
+        );
+        const h = hs.find((x) => String(x.def.id ?? '').trim() === id);
+        if (!h) {
+          log(`仍未匹配 query=${JSON.stringify(id)}`);
+          return null;
+        }
+        log(
+          `命中热点: def.id=${JSON.stringify(h.def.id)} active=${h.active} ` +
+          `container.visible=${h.container.visible} ` +
+          `parent=${h.container.parent ? 'yes' : 'no'} y=${Math.round(h.container.y)}`,
+        );
+        return h;
+      },
+      debugPanelLog: (msg) => this.debugPanelUI?.log(msg),
       pickupNotification: this.pickupNotification,
       inspectBox: this.inspectBox,
       shopUI: this.shopUI,
@@ -665,6 +710,8 @@ export class Game {
           worldHeight,
           facing,
         ),
+      tempSetHotspotDisplayFacing: (sceneId, hotspotId, facing) =>
+        this.tempSetHotspotDisplayFacingFromAction(sceneId, hotspotId, facing),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
     });
 
@@ -1339,6 +1386,13 @@ export class Game {
   }
 
   private setupSceneReadyHandler(): void {
+    this.listenEvent('cutscene:start', (p: { id: string }) => {
+      if (p?.id) this.sceneManager.setActiveCutsceneBindingId(p.id);
+    });
+    this.listenEvent('cutscene:end', (_p: { id: string }) => {
+      this.sceneManager.setActiveCutsceneBindingId(null);
+    });
+
     this.listenEvent('scene:beforeUnload', () => {
       this.patrolGeneration++;
       this.npcPatrolEpoch.clear();
@@ -1381,6 +1435,7 @@ export class Game {
         }
         const patrol = npc.def.patrol;
         if (
+          npc.container.visible &&
           patrol?.route &&
           patrol.route.length > 0 &&
           !this.sceneManager.isNpcPatrolPersistentlyDisabled(npc.id)
@@ -1736,6 +1791,41 @@ export class Game {
       displayImage.spriteSort = prev.spriteSort;
     }
     await this.setSceneEntityFieldFromAction(sid, 'hotspot', hid, 'displayImage', displayImage);
+  }
+
+  /**
+   * 仅当前会话、当前已加载场景：运行时翻转热点展示朝向，不写 Save 与 hotspot def。
+   */
+  private tempSetHotspotDisplayFacingFromAction(
+    sceneId: string,
+    hotspotId: string,
+    facing: 'left' | 'right' | 'restore',
+  ): void {
+    const sid = sceneId.trim();
+    const hid = hotspotId.trim();
+    if (!sid || !hid) {
+      console.warn('tempSetHotspotDisplayFacing: 需要 sceneId、hotspotId');
+      return;
+    }
+    if (this.sceneManager.currentSceneData?.id !== sid) {
+      console.warn(
+        'tempSetHotspotDisplayFacing: 仅在目标场景已加载时生效（不写档，无法在离屏场景施加）。当前场景:',
+        this.sceneManager.currentSceneData?.id ?? '(无)',
+        '请求:',
+        sid,
+      );
+      return;
+    }
+    const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === hid);
+    if (!h) {
+      console.warn('tempSetHotspotDisplayFacing: 当前场景找不到热点', hid);
+      return;
+    }
+    if (facing === 'restore') {
+      h.setRuntimeDisplayFacing(null);
+    } else {
+      h.setRuntimeDisplayFacing(facing);
+    }
   }
 
   private async applyNpcRuntimeFieldNow(

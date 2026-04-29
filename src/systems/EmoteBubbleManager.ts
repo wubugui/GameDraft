@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
-import type { ICutsceneActor, IGameSystem, GameContext } from '../data/types';
+import type { EmoteBubbleOffsetOpts, IEmoteBubbleAnchor, IGameSystem, GameContext } from '../data/types';
+import { Hotspot } from '../entities/Hotspot';
 
 interface ActiveBubble {
   bubble: Container;
@@ -7,16 +8,60 @@ interface ActiveBubble {
   remainingMs: number;
 }
 
+/**
+ * 热点整块容器可能 `spriteSort: back` 排到最底，气泡单挂 entityLayer。
+ * quad 直接来自 Hotspot 的世界数据：展示图为底中锚点，x/y/worldWidth/worldHeight 已定义完整世界四边形。
+ * 不走 getBounds / toGlobal / toLocal，避免屏幕空间与 entityLayer 世界空间混用。
+ */
+const EMOTE_BUBBLE_Z_BASE = 30_000_000;
+/** 气泡底边落在 quad 顶边之上（世界单位近似，与 NPC headGap 同量级） */
+const QUAD_ABOVE_GAP = 8;
+
 export class EmoteBubbleManager implements IGameSystem {
   private activeBubbles: ActiveBubble[] = [];
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** 与 SceneManager 放入 NPC/热点的层一致；不设则热点气泡仍挂在热点容器下 */
+  private entityAttachLayer: Container | null = null;
+  /** F2 调试面板 */
+  private debugPanelLog: ((message: string) => void) | null = null;
+
+  /**
+   * 由 Game 在 renderer.init() 之后设置；供热点气泡挂靠世界实体层。
+   */
+  setEntityAttachLayer(layer: Container | null): void {
+    this.entityAttachLayer = layer;
+  }
+
+  /** F2 调试面板「日志」路由（与 ActionRegistry 同源）。 */
+  setDebugPanelLog(fn: ((message: string) => void) | null): void {
+    this.debugPanelLog = fn;
+  }
+
+  private dbg(message: string): void {
+    this.debugPanelLog?.(`[EmoteBubble] ${message}`);
+  }
 
   init(_ctx: GameContext): void {}
   serialize(): object { return {}; }
   deserialize(_data: object): void { this.cleanup(); }
 
-  show(actor: ICutsceneActor, emote: string, durationMs: number = 1500): void {
-    const displayObj = actor.getDisplayObject() as Container;
+  show(
+    anchor: IEmoteBubbleAnchor,
+    emote: string,
+    durationMs: number = 1500,
+    opts?: EmoteBubbleOffsetOpts,
+  ): void {
+    const displayObj = anchor.getDisplayObject() as Container;
+
+    this.dbg(
+      `show 开始 anchor=${anchor.constructor?.name ?? '?'} emoteLen=${emote.length} ` +
+        `entityAttachLayer=${this.entityAttachLayer ? 'ok' : '(null)'}`,
+    );
+    this.dbg(
+      `  displayObj parent=${displayObj.parent ? 'yes' : 'no'} visible=${displayObj.visible} ` +
+        `renderable=${(displayObj as { renderable?: boolean }).renderable ?? '?'} alpha=${displayObj.alpha} ` +
+        `y=${Number.isFinite(displayObj.y) ? displayObj.y.toFixed(1) : String(displayObj.y)}`,
+    );
 
     const bubble = new Container();
 
@@ -40,16 +85,52 @@ export class EmoteBubbleManager implements IGameSystem {
     txt.y = padY;
     bubble.addChild(txt);
 
-    bubble.x = -bw / 2;
-    const anchorY = actor.getEmoteBubbleAnchorLocalY();
-    bubble.y = anchorY - bh;
+    const ox = opts?.anchorOffsetX ?? 0;
+    const oy = opts?.anchorOffsetY ?? 0;
+    const anchorY = anchor.getEmoteBubbleAnchorLocalY() + oy;
+    const bubbleLocalLeft = -bw / 2 + ox;
+    const bubbleLocalTop = anchorY - bh;
 
-    displayObj.addChild(bubble);
-    this.activeBubbles.push({ bubble, parent: displayObj, remainingMs: durationMs });
+    let attachParent: Container = displayObj;
+    let bx = bubbleLocalLeft;
+    let by = bubbleLocalTop;
+
+    if (this.entityAttachLayer !== null && anchor instanceof Hotspot) {
+      attachParent = this.entityAttachLayer;
+      (bubble as Container & { entitySortBand?: 'front' }).entitySortBand = 'front';
+      const quad = anchor.getEmoteWorldQuad();
+      bx = quad.left + quad.width / 2 - bw / 2 + ox;
+      by = quad.top - QUAD_ABOVE_GAP - bh + oy;
+      this.dbg(
+        `  热点 worldQuad→entityLayer ` +
+          `quad xywh=(${quad.left.toFixed(1)},${quad.top.toFixed(1)}) ${quad.width.toFixed(1)}×${quad.height.toFixed(1)} ` +
+          `bubble=(${bx.toFixed(1)},${by.toFixed(1)}) band=front`,
+      );
+    } else if (anchor instanceof Hotspot && this.entityAttachLayer === null) {
+      this.dbg('  警告: Hotspot 但 entityAttachLayer 未设置，气泡仅在热点容器内（易被遮挡）');
+    }
+
+    bubble.x = bx;
+    bubble.y = by;
+    attachParent.addChild(bubble);
+    if (attachParent.sortableChildren) {
+      attachParent.sortChildren();
+    }
+    this.dbg(
+      `  已 addChild: 父=${attachParent === this.entityAttachLayer ? 'entityLayer' : 'anchor本地'} ` +
+        `bubble.xy=(${bx.toFixed(1)},${by.toFixed(1)}) bw×bh=${bw.toFixed(0)}×${bh.toFixed(0)} ` +
+        `bubble.visible=${bubble.visible} bubble.renderable=${(bubble as { renderable?: boolean }).renderable ?? '?'} durMs=${durationMs}`,
+    );
+    this.activeBubbles.push({ bubble, parent: attachParent, remainingMs: durationMs });
   }
 
-  showAndWait(actor: ICutsceneActor, emote: string, durationMs: number = 1500): Promise<void> {
-    this.show(actor, emote, durationMs);
+  showAndWait(
+    anchor: IEmoteBubbleAnchor,
+    emote: string,
+    durationMs: number = 1500,
+    opts?: EmoteBubbleOffsetOpts,
+  ): Promise<void> {
+    this.show(anchor, emote, durationMs, opts);
     return new Promise(resolve => {
       const id = setTimeout(() => {
         this.pendingTimers.delete(id);

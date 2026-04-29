@@ -27,7 +27,7 @@ import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import type { ScenarioStateManager } from './ScenarioStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
-import type { ActionDef, DialogueLine, ICutsceneActor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 
@@ -49,6 +49,11 @@ export interface ActionRegistryDeps {
   stringsProvider: StringsProvider;
   eventBus: EventBus;
   resolveActor: (id: string) => ICutsceneActor | null;
+  /**
+   * showEmote：`target` 可为 NPC / `player` / 过场 `_cut_*` / **当前场景热点 id**；
+   * 热点仅作气泡挂载点（无朝向/动画），锚点见 `Hotspot.getEmoteBubbleAnchorLocalY()`。
+   */
+  resolveEmoteTarget: (id: string) => IEmoteBubbleAnchor | null;
   pickupNotification: { show(name: string, count: number): void; forceCleanup(): void };
   inspectBox: { readonly isOpen: boolean; close(): void };
   shopUI: { openShop(shopId: string): void };
@@ -129,6 +134,31 @@ export interface ActionRegistryDeps {
     worldHeight?: number,
     facing?: 'left' | 'right',
   ) => Promise<void>;
+  /**
+   * 仅当前已加载场景实例：临时覆盖热点展示图朝向，不写 Save/场景 JSON。
+   * facing 为 restore 时清除覆盖，回到 displayImage.facing。
+   */
+  tempSetHotspotDisplayFacing: (
+    sceneId: string,
+    hotspotId: string,
+    facing: 'left' | 'right' | 'restore',
+  ) => void;
+  /** F2 调试面板「日志」(与 Console 并行，供 showEmote 等运行时诊断)。 */
+  debugPanelLog?: (message: string) => void;
+}
+
+function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
+  const ox = Number(params.anchorOffsetX);
+  const oy = Number(params.anchorOffsetY);
+  return {
+    anchorOffsetX: Number.isFinite(ox) ? ox : 0,
+    anchorOffsetY: Number.isFinite(oy) ? oy : 0,
+  };
+}
+
+/** 写入 F2 调试面板日志（ deps 可选时 no-op）。 */
+function dbg(deps: ActionRegistryDeps, line: string): void {
+  deps.debugPanelLog?.(`[showEmote] ${line}`);
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -230,9 +260,40 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['id']);
 
   executor.register('showEmote', (p) => {
-    const actor = d.resolveActor(p.target as string);
-    if (actor) d.emoteBubbleManager.show(actor, p.emote as string, (p.duration as number) ?? 1500);
-  }, ['target', 'emote', 'duration']);
+    const target = String(p.target ?? '').trim();
+    const emote = String(p.emote ?? '').trim();
+    const sceneId = d.sceneManager.currentSceneData?.id ?? '';
+    dbg(d, `开始 scene=${sceneId || '(?)'} target=${JSON.stringify(target)} emote=${JSON.stringify(emote)}`);
+    if (!target || !emote) {
+      dbg(d, '中止：缺少 target 或 emote');
+      console.warn('showEmote: 需要 target 与 emote');
+      return;
+    }
+    const subject = d.resolveEmoteTarget(target);
+    const kind =
+      subject && typeof (subject as ICutsceneActor).entityId === 'string'
+        ? `ICutsceneActor(${(subject as ICutsceneActor).entityId})`
+        : subject
+          ? (subject.constructor?.name ?? 'unknown anchor')
+          : 'null';
+    dbg(d, `resolve 结果: ${kind}`);
+    if (!subject) {
+      dbg(d, '中止：resolveEmoteTarget 返回 null');
+      console.warn(`showEmote: 找不到 NPC / player / 过场实体 / 当前场景热点 "${target}"`);
+      return;
+    }
+    const durRaw = p.duration ?? 1500;
+    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const off = parseEmoteOffsetParams(p);
+    dbg(d, `调用 bubble.show durMs=${Number.isFinite(duration) && duration > 0 ? duration : 1500} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
+    d.emoteBubbleManager.show(
+      subject,
+      emote,
+      Number.isFinite(duration) && duration > 0 ? duration : 1500,
+      off,
+    );
+    dbg(d, `bubble.show 已返回`);
+  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   /** `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。 */
   executor.register('playNpcAnimation', (p) => {
@@ -488,6 +549,40 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
   }, ['target', 'enabled']);
 
+  /** 写入 Save 热点 enabled 覆盖并立即 setEnabled；与 setEntityField(hotspot, enabled) 等价 */
+  executor.register('persistHotspotEnabled', (p) => {
+    const sceneId = String(p.sceneId ?? '').trim();
+    const hotspotId = String(p.hotspotId ?? '').trim();
+    if (!sceneId || !hotspotId) {
+      console.warn('persistHotspotEnabled: 需要 sceneId、hotspotId');
+      return;
+    }
+    const raw = p.enabled;
+    if (raw === undefined || raw === null) {
+      console.warn('persistHotspotEnabled: missing enabled');
+      return;
+    }
+    let enabled: boolean;
+    if (typeof raw === 'boolean') {
+      enabled = raw;
+    } else if (typeof raw === 'number') {
+      enabled = raw !== 0;
+    } else {
+      const s = String(raw).trim().toLowerCase();
+      if (s === 'true' || s === '1') enabled = true;
+      else if (s === 'false' || s === '0') enabled = false;
+      else {
+        console.warn(`persistHotspotEnabled: invalid enabled ${String(raw)}`);
+        return;
+      }
+    }
+    return d
+      .setSceneEntityField(sceneId, 'hotspot', hotspotId, 'enabled', enabled)
+      .catch((e) => {
+        console.warn('ActionRegistry: persistHotspotEnabled failed', e);
+      });
+  }, ['sceneId', 'hotspotId', 'enabled']);
+
   /** 写入场景记忆并立即移动 NPC */
   executor.register('persistNpcAt', (p) => {
     const target = String(p.target ?? '').trim();
@@ -591,6 +686,28 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         console.warn('ActionRegistry: setHotspotDisplayImage failed', e);
       });
   }, ['sceneId', 'hotspotId', 'image', 'worldWidth', 'worldHeight', 'facing']);
+
+  executor.register(
+    'tempSetHotspotDisplayFacing',
+    (p) => {
+      const sceneId = String(p.sceneId ?? '').trim();
+      const hid = String(p.hotspotId ?? '').trim();
+      if (!sceneId || !hid) {
+        console.warn('tempSetHotspotDisplayFacing: 需要 sceneId、hotspotId');
+        return;
+      }
+      const fr = String(p.facing ?? '').trim().toLowerCase();
+      let facing: 'left' | 'right' | 'restore';
+      if (fr === 'left' || fr === 'right' || fr === 'restore') {
+        facing = fr;
+      } else {
+        console.warn('tempSetHotspotDisplayFacing: facing 须为 left、right 或 restore', p.facing);
+        return;
+      }
+      d.tempSetHotspotDisplayFacing(sceneId, hid, facing);
+    },
+    ['sceneId', 'hotspotId', 'facing'],
+  );
 
   executor.register('setEntityField', (p) => {
     const sceneId = String(p.sceneId ?? '').trim();
@@ -790,17 +907,36 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const emote = String(p.emote ?? '').trim();
     const durRaw = p.duration ?? 1500;
     const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const sceneId = d.sceneManager.currentSceneData?.id ?? '';
+    dbg(d, `AndWait 开始 scene=${sceneId || '(?)'} target=${JSON.stringify(target)} emote=${JSON.stringify(emote)}`);
     if (!target || !emote) {
+      dbg(d, 'AndWait 中止：缺少 target 或 emote');
       console.warn('showEmoteAndWait: 需要 target 与 emote');
       return;
     }
-    const actor = d.resolveActor(target);
-    if (!actor) {
-      console.warn(`showEmoteAndWait: 找不到实体 "${target}"`);
+    const subject = d.resolveEmoteTarget(target);
+    const kindAw =
+      subject && typeof (subject as ICutsceneActor).entityId === 'string'
+        ? `ICutsceneActor(${(subject as ICutsceneActor).entityId})`
+        : subject
+          ? (subject.constructor?.name ?? 'anchor')
+          : 'null';
+    dbg(d, `AndWait resolve=${kindAw}`);
+    if (!subject) {
+      dbg(d, 'AndWait 中止：resolveEmoteTarget 返回 null');
+      console.warn(`showEmoteAndWait: 找不到 NPC / player / 过场实体 / 当前场景热点 "${target}"`);
       return;
     }
-    await d.emoteBubbleManager.showAndWait(actor, emote, Number.isFinite(duration) && duration > 0 ? duration : 1500);
-  }, ['target', 'emote', 'duration']);
+    const off = parseEmoteOffsetParams(p);
+    dbg(d, `AndWait await showAndWait durMs=${Number.isFinite(duration) && duration > 0 ? duration : 1500} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
+    await d.emoteBubbleManager.showAndWait(
+      subject,
+      emote,
+      Number.isFinite(duration) && duration > 0 ? duration : 1500,
+      off,
+    );
+    dbg(d, 'AndWait showAndWait 结束');
+  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   executor.registerDialogueSequential('revealDocument', async (p) => {
     await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));

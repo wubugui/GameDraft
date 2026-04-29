@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 CUTSCENE_ACTION_WHITELIST = [
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
     "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
+    "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
 ]
 

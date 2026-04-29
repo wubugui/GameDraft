@@ -83,6 +83,14 @@ def validate(model: ProjectModel) -> list[Issue]:
                             "error", "scene", sid,
                             f"Hotspot '{hid}' displayImage.spriteSort 须为 back 或 front",
                         ))
+            cs_b = hs.get("cutsceneId")
+            if cs_b is not None and str(cs_b).strip():
+                cid = str(cs_b).strip()
+                if cid not in cutscene_ids:
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"Hotspot '{hid}' cutsceneId {cid!r} 不在过场 index 列表中",
+                    ))
             cpl = hs.get("collisionPolygonLocal")
             if cpl is not None and not isinstance(cpl, bool):
                 issues.append(Issue(
@@ -174,6 +182,15 @@ def validate(model: ProjectModel) -> list[Issue]:
                     issues.append(Issue("warning", "scene", sid,
                                         f"Hotspot '{hs.get('id')}' itemId '{iid}' not found"))
         for npc in sc.get("npcs", []):
+            nid = str(npc.get("id", "") or "?")
+            ncs = npc.get("cutsceneId")
+            if ncs is not None and str(ncs).strip():
+                cid = str(ncs).strip()
+                if cid not in cutscene_ids:
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"NPC '{nid}' cutsceneId {cid!r} 不在过场 index 列表中",
+                    ))
             ifi = npc.get("initialFacing")
             if ifi is not None and ifi not in ("left", "right"):
                 issues.append(Issue(
@@ -596,6 +613,16 @@ def _npc_ids_in_scene(model: ProjectModel, scene_id: str | None) -> set[str]:
     return {p[0] for p in model.npc_ids_for_scene(scene_id)}
 
 
+def _hotspot_ids_in_scene(model: ProjectModel, scene_id: str | None) -> set[str]:
+    if not scene_id:
+        return set()
+    return {p[0] for p in model.hotspot_ids_for_scene(scene_id)}
+
+
+def _all_hotspot_ids_global_set(model: ProjectModel) -> set[str]:
+    return {p[0] for p in model.all_hotspot_ids()}
+
+
 def _all_npc_ids_global_set(model: ProjectModel) -> set[str]:
     return {p[0] for p in model.all_npc_ids_global()}
 
@@ -618,6 +645,35 @@ def _actor_ref_ok(
     if scene_id and aid in _npc_ids_in_scene(model, scene_id):
         return True
     if not scene_id and aid in _all_npc_ids_global_set(model):
+        return True
+    return False
+
+
+def _emote_subject_ref_ok(
+    model: ProjectModel,
+    scene_id: str | None,
+    actor_id: str,
+    *,
+    temp_ids: frozenset[str],
+    allow_player: bool,
+) -> bool:
+    """showEmote 目标：NPC / player / _cut_* / 当前场景热点（无场景上下文时用全局清单）。"""
+    aid = actor_id.strip()
+    if not aid:
+        return False
+    if allow_player and aid == "player":
+        return True
+    if aid.startswith("_cut_") and aid in temp_ids:
+        return True
+    if scene_id:
+        if aid in _npc_ids_in_scene(model, scene_id):
+            return True
+        if aid in _hotspot_ids_in_scene(model, scene_id):
+            return True
+        return False
+    if aid in _all_npc_ids_global_set(model):
+        return True
+    if aid in _all_hotspot_ids_global_set(model):
         return True
     return False
 
@@ -723,6 +779,82 @@ def _append_action_param_ref_issues(
                     "setHotspotDisplayImage 的 facing 须为 left 或 right",
                 ))
 
+    if t == "tempSetHotspotDisplayFacing":
+        sid = str(p.get("sceneId") or "").strip()
+        hid = str(p.get("hotspotId") or "").strip()
+        fac = str(p.get("facing") or "").strip().lower()
+        if not sid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "tempSetHotspotDisplayFacing 缺少 sceneId",
+            ))
+        elif sid not in set(model.all_scene_ids()):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"tempSetHotspotDisplayFacing sceneId {sid!r} 不在场景列表中",
+            ))
+        if hid and sid:
+            known = {x[0] for x in model.hotspot_ids_for_scene(sid)}
+            if known and hid not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"tempSetHotspotDisplayFacing hotspotId {hid!r} 不在场景 {sid!r} 的 hotspots 列表中",
+                ))
+        if not hid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "tempSetHotspotDisplayFacing 缺少 hotspotId",
+            ))
+        if fac not in ("left", "right", "restore"):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "tempSetHotspotDisplayFacing 的 facing 须为 left、right 或 restore",
+            ))
+
+    if t == "persistHotspotEnabled":
+        sid_h = str(p.get("sceneId") or "").strip()
+        hid_h = str(p.get("hotspotId") or "").strip()
+        if not sid_h:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "persistHotspotEnabled 缺少 sceneId",
+            ))
+        elif sid_h not in set(model.all_scene_ids()):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"persistHotspotEnabled sceneId {sid_h!r} 不在场景列表中",
+            ))
+        if hid_h and sid_h:
+            known = {x[0] for x in model.hotspot_ids_for_scene(sid_h)}
+            if known and hid_h not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"persistHotspotEnabled hotspotId {hid_h!r} 不在场景 {sid_h!r} 的 hotspots 列表中",
+                ))
+        if not hid_h:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "persistHotspotEnabled 缺少 hotspotId",
+            ))
+        en_h = p.get("enabled")
+        if en_h is None:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "persistHotspotEnabled 缺少 enabled",
+            ))
+        elif not isinstance(en_h, (bool, int, float, str)):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "persistHotspotEnabled 的 enabled 须为布尔或可解析为布尔",
+            ))
+        elif isinstance(en_h, str):
+            el = en_h.strip().lower()
+            if el and el not in ("true", "false", "1", "0"):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "persistHotspotEnabled 的 enabled 字符串须为 true/false/1/0",
+                ))
+
     if t == "setEntityField":
         sid = str(p.get("sceneId") or "").strip()
         kind = str(p.get("entityKind") or "").strip()
@@ -782,8 +914,18 @@ def _append_action_param_ref_issues(
                 f"faceEntity direction {d!r} 非 left/right/up/down",
             ))
 
+    if t in ("showEmote", "showEmoteAndWait"):
+        aid = str(p.get("target") or "").strip()
+        if aid and not _emote_subject_ref_ok(
+            model, scene_id, aid, temp_ids=temp, allow_player=True,
+        ):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{t} target={aid!r} 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）",
+            ))
+
     actor_actions = (
-        "playNpcAnimation", "setEntityEnabled", "moveEntityTo", "showEmoteAndWait",
+        "playNpcAnimation", "setEntityEnabled", "moveEntityTo",
         "faceEntity",
     )
     if t in actor_actions:
@@ -1331,6 +1473,8 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
 _CUTSCENE_ACTION_WHITELIST = frozenset([
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
     "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
+    "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
 ])
 

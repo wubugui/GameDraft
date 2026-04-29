@@ -2532,6 +2532,22 @@ class ScenePropertyPanel(QScrollArea):
             del sc["ambientSounds"]
         self.changed.emit()
 
+    def _refill_entity_cutscene_combo(
+        self, combo: FilterableTypeCombo, current: str | None = None,
+    ) -> None:
+        rows_append: list[tuple[str, str]] = [("（未绑定）", "")]
+        cut_list = sorted({str(a).strip() for a, _ in self._model.all_cutscene_ids() if str(a).strip()})
+        cur = (current or "").strip()
+        if cur and cur not in cut_list:
+            rows_append.append((f"(数据中) {cur}", cur))
+        rows_append += [(c, c) for c in cut_list]
+        combo.blockSignals(True)
+        try:
+            combo.set_entries(rows_append)
+            combo.set_committed_type(cur if cur else "")
+        finally:
+            combo.blockSignals(False)
+
     def flush_pending_to_model(self) -> None:
         """Apply whatever the property widgets last referred to into model dicts."""
         self.save_scene_props()
@@ -2568,6 +2584,13 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("interactionRange", self._hs_range)
         self._hs_range.valueChanged.connect(self._on_hotspot_interaction_range_live)
         self._hs_auto = QCheckBox(); form.addRow("autoTrigger", self._hs_auto)
+        self._hs_cutscene = FilterableTypeCombo([], self, select_only=True)
+        self._hs_cutscene.setToolTip(
+            "可选。填写后：该热点仅在其过场播放时显示；探索画布默认隐藏，须在左侧「过场编辑视图」中加载同名过场才可见。"
+            "运行时亦同（非该过场窗口内不可用）。清空为普通热点。"
+        )
+        self._hs_cutscene.typeCommitted.connect(lambda _v: self.changed.emit())
+        form.addRow("cutsceneId", self._hs_cutscene)
         basic_g.add_body(basic_inner)
         lay.addWidget(basic_g)
 
@@ -3165,6 +3188,7 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_range.setValue(hs.get("interactionRange", 50))
         self._hs_range.blockSignals(False)
         self._hs_auto.setChecked(hs.get("autoTrigger", False))
+        self._refill_entity_cutscene_combo(self._hs_cutscene, str(hs.get("cutsceneId") or ""))
         self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
         self._hs_cond.set_data(hs.get("conditions", []))
 
@@ -3472,6 +3496,11 @@ class ScenePropertyPanel(QScrollArea):
             hs["autoTrigger"] = True
         elif "autoTrigger" in hs:
             del hs["autoTrigger"]
+        csx = self._hs_cutscene.committed_type().strip()
+        if csx:
+            hs["cutsceneId"] = csx
+        else:
+            hs.pop("cutsceneId", None)
         conds = self._hs_cond.to_list()
         if conds:
             hs["conditions"] = conds
@@ -3590,6 +3619,13 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range = QDoubleSpinBox(); self._npc_range.setRange(0, 99999)
         form.addRow("interactionRange", self._npc_range)
         self._npc_range.valueChanged.connect(self._on_npc_interaction_range_live)
+        self._npc_cutscene = FilterableTypeCombo([], self, select_only=True)
+        self._npc_cutscene.setToolTip(
+            "可选。绑定后：该 NPC 仅在其过场播放时可用；画布默认隐藏，须在「过场编辑视图」中选同名过场后显示。"
+            "运行时亦同。"
+        )
+        self._npc_cutscene.typeCommitted.connect(lambda _v: self.changed.emit())
+        form.addRow("cutsceneId", self._npc_cutscene)
         base_g.add_body(base_inner)
         outer.addWidget(base_g)
 
@@ -4103,6 +4139,7 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range.blockSignals(True)
         self._npc_range.setValue(npc.get("interactionRange", 50))
         self._npc_range.blockSignals(False)
+        self._refill_entity_cutscene_combo(self._npc_cutscene, str(npc.get("cutsceneId") or ""))
         self._npc_facing.blockSignals(True)
         try:
             cur_f = str(npc.get("initialFacing", "") or "").strip().lower()
@@ -4170,6 +4207,11 @@ class ScenePropertyPanel(QScrollArea):
         elif "dialogueCameraZoom" in npc:
             del npc["dialogueCameraZoom"]
         npc["interactionRange"] = self._npc_range.value()
+        ncx = self._npc_cutscene.committed_type().strip()
+        if ncx:
+            npc["cutsceneId"] = ncx
+        else:
+            npc.pop("cutsceneId", None)
         anim = self._npc_anim.current_id().strip()
         if anim:
             npc["animFile"] = anim
@@ -4693,6 +4735,18 @@ class SceneEditor(QWidget):
         self._chk_block_zone_pick.toggled.connect(self._on_block_zone_pick_toggled)
         ll.addWidget(self._chk_block_zone_pick)
 
+        self._scene_edit_cutscene_id = ""
+        _ctx_lab = QLabel("过场编辑视图")
+        _ctx_lab.setToolTip(
+            "不加载过场时画布隐藏所有绑定了 cutsceneId 的 NPC/Hotspot；选择某过场后仅显示绑定该 id 的实体。"
+            "未绑定的常规实体始终显示。"
+        )
+        ll.addWidget(_ctx_lab)
+        self._combo_cutscene_ctx = FilterableTypeCombo([], self, select_only=True)
+        self._combo_cutscene_ctx.setToolTip(_ctx_lab.toolTip())
+        self._combo_cutscene_ctx.typeCommitted.connect(self._on_cutscene_edit_context_changed)
+        ll.addWidget(self._combo_cutscene_ctx)
+
         self._scene_list = QListWidget()
         self._scene_list.currentItemChanged.connect(self._on_scene_selected)
         ll.addWidget(self._scene_list)
@@ -4748,6 +4802,39 @@ class SceneEditor(QWidget):
         bs_sc.activated.connect(self._on_delete_key_shortcut)
 
         self._refresh_scene_list()
+        self._refill_scene_cutscene_ctx_combo(init=True)
+
+    def _refill_scene_cutscene_ctx_combo(self, *, init: bool = False) -> None:
+        w = getattr(self, "_combo_cutscene_ctx", None)
+        if not isinstance(w, FilterableTypeCombo):
+            return
+        prev = ""
+        if not init:
+            prev = w.committed_type().strip()
+        rows = [("（不加载：隐藏绑定实体）", "")]
+        rows += [(cid, cid) for cid, _ in self._model.all_cutscene_ids()]
+        w.set_entries(rows)
+        keys = {v for _a, v in rows}
+        if prev and prev in keys:
+            w.set_committed_type(prev)
+        elif not init:
+            w.set_committed_type("")
+
+    def _on_cutscene_edit_context_changed(self, _t: str = "") -> None:
+        w = getattr(self, "_combo_cutscene_ctx", None)
+        cid = ""
+        if isinstance(w, FilterableTypeCombo):
+            cid = w.committed_type().strip()
+        self._scene_edit_cutscene_id = cid
+        if self._current_scene_id:
+            self._load_scene(self._current_scene_id, reset_view=False)
+
+    def _entity_visible_for_cutscene_edit(self, ent: dict) -> bool:
+        c = str(ent.get("cutsceneId") or "").strip()
+        if not c:
+            return True
+        ctx = getattr(self, "_scene_edit_cutscene_id", "").strip()
+        return bool(ctx) and c == ctx
 
     def _clear_scene_npc_anim_layers(self) -> None:
         self._scene_npc_anim_timer.stop()
@@ -5098,10 +5185,18 @@ class SceneEditor(QWidget):
         if img_path:
             self._canvas.load_background(img_path, world_w, world_h)
 
+        try:
+            self._canvas._gfx.clearSelection()
+        except (AttributeError, RuntimeError):
+            pass
+        self._on_item_deselected()
+
         for hs in sc.get("hotspots", []):
-            self._canvas.add_hotspot(hs)
+            if isinstance(hs, dict) and self._entity_visible_for_cutscene_edit(hs):
+                self._canvas.add_hotspot(hs)
         for npc in sc.get("npcs", []):
-            self._canvas.add_npc(npc)
+            if isinstance(npc, dict) and self._entity_visible_for_cutscene_edit(npc):
+                self._canvas.add_npc(npc)
         for zone in sc.get("zones", []):
             self._canvas.add_zone(zone)
         sp = sc.get("spawnPoint")

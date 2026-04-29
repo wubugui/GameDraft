@@ -144,6 +144,11 @@ export interface HotspotDef {
   type: HotspotType;
   x: number;
   y: number;
+  /**
+   * 若设置：该热点仅在其过场播放窗口内显示/可交互；优先级高于 Save 的 enabled 覆盖。
+   * 非所属过场或未在过场中时始终视为隐藏（与场景编辑器「过场编辑上下文」一致）。
+   */
+  cutsceneId?: string;
   interactionRange: number;
   /** 组内 AND；可为 flag / quest / scenario 等 `ConditionExpr` 叶子或组合 */
   conditions?: ConditionExpr[];
@@ -374,6 +379,11 @@ export interface NpcDef {
   name: string;
   x: number;
   y: number;
+  /**
+   * 若设置：该 NPC 仅在其过场播放窗口内可见/可交互；优先级高于 persistNpcEntityEnabled 与 Save 覆盖。
+   * 探索态未播放所属过场时始终隐藏。
+   */
+  cutsceneId?: string;
   /**
    * 图对话：资源 id（不含路径），对应 `public/assets/dialogues/graphs/<id>.json`。
    * 未配置时按 E 不会进入对话。
@@ -681,7 +691,17 @@ export interface DelayedEvent {
 // 演出数据
 // ============================================================
 
-export interface ICutsceneActor {
+/** showEmote 挂载点：父节点局部坐标下的气泡锚点（与 NPC/Player/Hotspot 展示图语义一致时可混用）。 */
+export interface IEmoteBubbleAnchor {
+  getDisplayObject(): unknown;
+  /**
+   * 表情气泡锚点：在 `getDisplayObject()` 局部坐标中，气泡**底边**应对齐的 Y（脚点在 0，向上为负）。
+   * EmoteBubbleManager 会将气泡顶端置于 `anchorY - bubbleHeight`。
+   */
+  getEmoteBubbleAnchorLocalY(): number;
+}
+
+export interface ICutsceneActor extends IEmoteBubbleAnchor {
   readonly entityId: string;
   x: number;
   y: number;
@@ -689,18 +709,23 @@ export interface ICutsceneActor {
   playAnimation(name: string): void;
   setFacing(dx: number, dy: number): void;
   setVisible(visible: boolean): void;
-  getDisplayObject(): unknown;
   cutsceneUpdate(dt: number): void;
-  /**
-   * 表情气泡锚点：在 getDisplayObject() 局部坐标中，气泡**底边**应对齐的 Y（脚点在 0，向上为负）。
-   * EmoteBubbleManager 会把气泡顶边放在该 Y 上方 `bubbleHeight` 处。
-   */
-  getEmoteBubbleAnchorLocalY(): number;
 }
+
+/** 可选：`showEmote` / `showEmoteAndWait` 气泡相对默认锚点的额外像素偏移（局部坐标）。 */
+export type EmoteBubbleOffsetOpts = {
+  anchorOffsetX?: number;
+  anchorOffsetY?: number;
+};
 
 /** 演出气泡提供者接口，用于 CutsceneManager 解耦对 EmoteBubbleManager 的直接依赖 */
 export interface IEmoteBubbleProvider {
-  showAndWait(actor: ICutsceneActor, emote: string, durationMs?: number): Promise<void>;
+  showAndWait(
+    anchor: IEmoteBubbleAnchor,
+    emote: string,
+    durationMs?: number,
+    opts?: EmoteBubbleOffsetOpts,
+  ): Promise<void>;
   cleanup(): void;
 }
 
@@ -750,8 +775,8 @@ export interface NewCutsceneDef {
 }
 
 /**
- * Cutscene Action 白名单——仅允许无副作用的 Action 出现在 Cutscene steps 中。
- * 编辑器和 validator 据此校验。Present 类型不受此限。
+ * Cutscene Timeline 内允许的 action.type（与安全、策划审阅相关）。
+ * 含瞬时演出类动作与明示的存档类 persist*（写入 sceneMemory，随存档）。
  */
 export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'moveEntityTo',
@@ -761,6 +786,9 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'showEmoteAndWait',
   'playNpcAnimation',
   'setEntityEnabled',
+  'persistNpcEntityEnabled',
+  'persistHotspotEnabled',
+  'tempSetHotspotDisplayFacing',
   'playSfx',
   'playBgm',
   'stopBgm',

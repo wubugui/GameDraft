@@ -57,6 +57,9 @@ export class SceneManager implements IGameSystem {
   private sceneSwitchTail: Promise<void> = Promise.resolve();
   private animRafId: number = 0;
 
+  /** 当前播放或过场预览绑定的 cutscene id；用于仅在该过场内向玩家展示绑定了 `cutsceneId` 的热点/NPC。 */
+  private activeCutsceneBindingId: string | null = null;
+
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
   private boundsOnlySetter: ((boundsW: number, boundsH: number) => void) | null = null;
@@ -134,6 +137,50 @@ export class SceneManager implements IGameSystem {
 
   getCurrentHotspots(): readonly Hotspot[] {
     return this.currentHotspots;
+  }
+
+  /**
+   * 未播放过场时为 null；由 Game 在 cutscene:start / cutscene:end 调用。
+   */
+  setActiveCutsceneBindingId(id: string | null): void {
+    const t = id?.trim() || null;
+    this.activeCutsceneBindingId = t;
+    this.refreshCutsceneBoundEntityVisibility();
+  }
+
+  getActiveCutsceneBindingId(): string | null {
+    return this.activeCutsceneBindingId;
+  }
+
+  /**
+   * 绑定了 cutsceneId 的热点/NPC：仅当 activeCutsceneBindingId 与之相同且非 null 时可显示；
+   * 存档 enabled 等对绑定实体不占优（由绑定强制隐藏）。
+   */
+  private refreshCutsceneBoundEntityVisibility(): void {
+    const active = this.activeCutsceneBindingId?.trim() || null;
+
+    for (const h of this.currentHotspots) {
+      const bid = h.def.cutsceneId?.trim();
+      if (bid) {
+        h.setEnabled(active !== null && bid === active);
+      }
+    }
+
+    for (const n of this.currentNpcs) {
+      const bid = n.def.cutsceneId?.trim();
+      if (bid) {
+        n.setVisible(active !== null && bid === active);
+      } else {
+        const sid = this.currentScene?.id;
+        const mem = sid ? this.sceneMemory.get(sid) : undefined;
+        const snap = mem?.entityOverrides?.npcs?.[n.def.id];
+        if (snap && typeof snap.enabled === 'boolean') {
+          n.setVisible(snap.enabled);
+        } else {
+          n.setVisible(true);
+        }
+      }
+    }
   }
 
   get switching(): boolean {
@@ -361,7 +408,8 @@ export class SceneManager implements IGameSystem {
         if (memory?.pickedUpHotspots.includes(def.id)) continue;
 
         const ovr = memory?.entityOverrides?.hotspots?.[def.id];
-        if (ovr?.enabled === false) continue;
+        const boundCs = def.cutsceneId?.trim();
+        if (ovr?.enabled === false && !boundCs) continue;
         const defToUse = applyHotspotRuntimeOverride(def, ovr as Record<string, SceneEntityRuntimeValue> | undefined);
 
         const hotspot = new Hotspot(defToUse);
@@ -396,9 +444,6 @@ export class SceneManager implements IGameSystem {
           }
         }
         if (snap) {
-          if (typeof snap.enabled === 'boolean') {
-            npc.setVisible(snap.enabled);
-          }
           const anim = snap.animState?.trim();
           if (anim) {
             npc.playAnimation(anim);
@@ -408,6 +453,7 @@ export class SceneManager implements IGameSystem {
         this.renderer.entityLayer.addChild(npc.container);
       }
     }
+    this.refreshCutsceneBoundEntityVisibility();
     this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
 
     let spawn: Position = sceneData.spawnPoint;

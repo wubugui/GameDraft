@@ -109,14 +109,16 @@ ACTION_TYPES = [
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "showEmote", "playNpcAnimation", "setEntityEnabled", "openShop",
     "pickup", "switchScene", "changeScene", "showNotification", "stopNpcPatrol",
-    "persistNpcDisablePatrol", "persistNpcEnablePatrol", "persistNpcEntityEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
+    "persistNpcDisablePatrol", "persistNpcEnablePatrol", "persistNpcEntityEnabled",
+    "persistHotspotEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "shopPurchase", "inventoryDiscard",
     "setPlayerAvatar", "resetPlayerAvatar",
     "setSceneDepthFloorOffset", "resetSceneDepthFloorOffset",
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
-    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage", "setEntityField", "blendOverlayImage",
+    "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage",
+    "tempSetHotspotDisplayFacing", "setEntityField", "blendOverlayImage",
     "revealDocument", "startDialogueGraph",
     "waitClickContinue",
     "waitMs",
@@ -159,6 +161,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "persistNpcDisablePatrol": "save",
     "persistNpcEnablePatrol": "save",
     "persistNpcEntityEnabled": "save",
+    "persistHotspotEnabled": "save",
     "persistNpcAt": "save",
     "persistNpcAnimState": "save",
     "persistPlayNpcAnimation": "save",
@@ -178,6 +181,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "playScriptedDialogue": "memory",
     "showOverlayImage": "memory",
     "setHotspotDisplayImage": "save",
+    "tempSetHotspotDisplayFacing": "memory",
     "setEntityField": "save",
     "blendOverlayImage": "memory",
     "revealDocument": "save",
@@ -238,7 +242,13 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "endDay": [],
     "addArchiveEntry": [("bookType", "str"), ("entryId", "str")],
     "startCutscene": [("id", "str")],
-    "showEmote": [("target", "str"), ("emote", "str")],
+    "showEmote": [
+        ("target", "str"),
+        ("emote", "str"),
+        ("duration", "float"),
+        ("anchorOffsetX", "float"),
+        ("anchorOffsetY", "float"),
+    ],
     "playNpcAnimation": [("target", "str"), ("state", "str")],
     "setEntityEnabled": [("target", "str"), ("enabled", "bool")],
     "openShop": [("shopId", "str")],
@@ -273,7 +283,13 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "faceEntity": [("target", "str"), ("direction", "str"), ("faceTarget", "str")],
     "cutsceneSpawnActor": [("id", "str"), ("name", "str"), ("x", "float"), ("y", "float")],
     "cutsceneRemoveActor": [("id", "str")],
-    "showEmoteAndWait": [("target", "str"), ("emote", "str"), ("duration", "float")],
+    "showEmoteAndWait": [
+        ("target", "str"),
+        ("emote", "str"),
+        ("duration", "float"),
+        ("anchorOffsetX", "float"),
+        ("anchorOffsetY", "float"),
+    ],
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
@@ -1535,6 +1551,7 @@ class ActionRow(QWidget):
         elif kind == "emote_target":
             if m:
                 pairs.extend(m.npc_ids_for_scene(self._ctx_scene_id))
+                pairs.extend(m.hotspot_ids_for_scene(self._ctx_scene_id))
             pairs.append(("player", "player"))
         elif kind == "actor":
             pairs = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
@@ -1556,7 +1573,7 @@ class ActionRow(QWidget):
         w.value_changed.connect(self.changed)
         tip = {
             "actor": "仅下拉选择；无场景上下文时列表可能不全，请先设置过场 targetScene。",
-            "emote_target": "仅下拉选择；列表为当前场景 NPC + player。",
+            "emote_target": "仅下拉选择；列表为当前场景 NPC + 热点 + player。",
             "npc_only": "仅下拉选择；列表为当前场景 NPC。",
         }.get(kind)
         if tip:
@@ -1879,6 +1896,132 @@ class ActionRow(QWidget):
             fac_combo.typeCommitted.connect(lambda _v: self.changed.emit())
             self._param_widgets["facing"] = fac_combo
             self._params_layout.addRow("facing（可选）", fac_combo)
+            self._sync_foldable_visibility()
+            return
+
+        if act_type == "tempSetHotspotDisplayFacing":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "仅运行时：临时覆盖热点展示朝向，不改场景 JSON/Save/displayImage。"
+                " 离开场景或重新加载后失效；朝向 restore 时恢复为数据中 facing。",
+                self,
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            m = self._ctx_model
+            scene_entries = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+            scene_combo = FilterableTypeCombo(scene_entries, self, select_only=True)
+            cur_scene = str(params.get("sceneId") or self._ctx_scene_id or "").strip()
+            if cur_scene:
+                scene_combo.set_committed_type(cur_scene)
+            elif scene_entries and scene_entries[0][1]:
+                scene_combo.set_committed_type(scene_entries[0][1])
+            self._param_widgets["sceneId"] = scene_combo
+            self._params_layout.addRow("sceneId", scene_combo)
+            hs_raw = m.hotspot_ids_for_scene(scene_combo.committed_type()) if m else []
+            hs_rows = [(f"{hid} ({label})", hid) for hid, label in hs_raw]
+            if not hs_rows:
+                hs_rows = [("（当前场景无热点）", "")]
+            id_combo = FilterableTypeCombo(hs_rows, self, select_only=True)
+            cur_id = str(params.get("hotspotId", "") or "").strip()
+            if cur_id:
+                id_combo.set_committed_type(cur_id)
+            elif hs_rows and hs_rows[0][1]:
+                id_combo.set_committed_type(hs_rows[0][1])
+
+            def _refill_hotspots_fac(_t: str = "") -> None:
+                raw_rows = m.hotspot_ids_for_scene(scene_combo.committed_type()) if m else []
+                rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
+                if not rows:
+                    rows = [("（当前场景无热点）", "")]
+                cur = id_combo.committed_type()
+                id_combo.set_entries(rows)
+                values = {v for _d, v in rows}
+                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                self.changed.emit()
+
+            scene_combo.typeCommitted.connect(_refill_hotspots_fac)
+            id_combo.typeCommitted.connect(lambda _v: self.changed.emit())
+            self._param_widgets["hotspotId"] = id_combo
+            self._params_layout.addRow("hotspotId", id_combo)
+            fac_raw = str(params.get("facing") or "").strip().lower()
+            fac_v = fac_raw if fac_raw in ("left", "right", "restore") else "restore"
+            fac_rows = [
+                ("恢复到数据朝向（restore）", "restore"),
+                ("朝左（临时）", "left"),
+                ("朝右（临时）", "right"),
+            ]
+            fac_combo = FilterableTypeCombo(fac_rows, self, select_only=True)
+            fac_combo.set_committed_type(fac_v if fac_v in ("left", "right", "restore") else "restore")
+            fac_combo.typeCommitted.connect(lambda _v: self.changed.emit())
+            self._param_widgets["facing"] = fac_combo
+            self._params_layout.addRow("facing", fac_combo)
+            self._sync_foldable_visibility()
+            return
+
+        if act_type == "persistHotspotEnabled":
+            self._params_frame.setVisible(True)
+            while self._params_layout.rowCount() > 0:
+                self._params_layout.removeRow(0)
+            self._param_widgets.clear()
+            tip = QLabel(
+                "写入 Hotspot enabled 的 Save 字段覆盖；与其他 persist* 一样随 sceneMemory 存盘；"
+                "目标场景未加载时进入该场景后也会合并。",
+                self,
+            )
+            tip.setWordWrap(True)
+            self._params_layout.addRow(tip)
+            m = self._ctx_model
+            scene_entries = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+            scene_combo = FilterableTypeCombo(scene_entries, self, select_only=True)
+            cur_scene = str(params.get("sceneId") or self._ctx_scene_id or "").strip()
+            if cur_scene:
+                scene_combo.set_committed_type(cur_scene)
+            elif scene_entries and scene_entries[0][1]:
+                scene_combo.set_committed_type(scene_entries[0][1])
+            self._param_widgets["sceneId"] = scene_combo
+            self._params_layout.addRow("sceneId", scene_combo)
+            hs_raw = m.hotspot_ids_for_scene(scene_combo.committed_type()) if m else []
+            hs_rows = [(f"{hid} ({label})", hid) for hid, label in hs_raw]
+            if not hs_rows:
+                hs_rows = [("（当前场景无热点）", "")]
+            id_combo = FilterableTypeCombo(hs_rows, self, select_only=True)
+            cur_id = str(params.get("hotspotId", "") or "").strip()
+            if cur_id:
+                id_combo.set_committed_type(cur_id)
+            elif hs_rows and hs_rows[0][1]:
+                id_combo.set_committed_type(hs_rows[0][1])
+
+            def _refill_hotspots_pe(_t: str = "") -> None:
+                raw_rows = m.hotspot_ids_for_scene(scene_combo.committed_type()) if m else []
+                rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
+                if not rows:
+                    rows = [("（当前场景无热点）", "")]
+                cur = id_combo.committed_type()
+                id_combo.set_entries(rows)
+                values = {v for _d, v in rows}
+                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                self.changed.emit()
+
+            scene_combo.typeCommitted.connect(_refill_hotspots_pe)
+            id_combo.typeCommitted.connect(lambda _v: self.changed.emit())
+            self._param_widgets["hotspotId"] = id_combo
+            self._params_layout.addRow("hotspotId", id_combo)
+            en_cb = QCheckBox("enabled（显示/可交互）", self)
+            en_raw = params.get("enabled", True)
+            if isinstance(en_raw, bool):
+                en_cb.setChecked(en_raw)
+            elif isinstance(en_raw, (int, float)):
+                en_cb.setChecked(en_raw != 0)
+            else:
+                sv = str(en_raw).strip().lower()
+                en_cb.setChecked(sv not in ("false", "0", ""))
+            en_cb.stateChanged.connect(lambda _s: self.changed.emit())
+            self._param_widgets["enabled"] = en_cb
+            self._params_layout.addRow("enabled", en_cb)
             self._sync_foldable_visibility()
             return
 
@@ -2404,13 +2547,33 @@ class ActionRow(QWidget):
                 w.valueChanged.connect(self.changed)
             elif ptype == "float":
                 w = QDoubleSpinBox(self)
-                w.setRange(-50.0, 50.0)
-                w.setDecimals(4)
-                w.setSingleStep(0.05)
-                try:
-                    w.setValue(float(val))
-                except (TypeError, ValueError):
-                    w.setValue(0.0)
+                if act_type in ("showEmote", "showEmoteAndWait") and pname == "duration":
+                    w.setRange(0, 9999999)
+                    w.setDecimals(0)
+                    w.setSingleStep(50)
+                    try:
+                        w.setValue(float(val) if val != "" else 1500)
+                    except (TypeError, ValueError):
+                        w.setValue(1500.0)
+                elif act_type in ("showEmote", "showEmoteAndWait") and pname in (
+                    "anchorOffsetX",
+                    "anchorOffsetY",
+                ):
+                    w.setRange(-500.0, 500.0)
+                    w.setDecimals(2)
+                    w.setSingleStep(1)
+                    try:
+                        w.setValue(float(val))
+                    except (TypeError, ValueError):
+                        w.setValue(0.0)
+                else:
+                    w.setRange(-50.0, 50.0)
+                    w.setDecimals(4)
+                    w.setSingleStep(0.05)
+                    try:
+                        w.setValue(float(val))
+                    except (TypeError, ValueError):
+                        w.setValue(0.0)
                 w.valueChanged.connect(self.changed)
             elif ptype == "bool":
                 w = QCheckBox(self)
@@ -2500,7 +2663,8 @@ class ActionRow(QWidget):
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
                 w.setToolTip(
-                    "选 NPC id 或 player；列表来自当前 Action 场景上下文，过场请先绑 targetScene。",
+                    "选 NPC、热点 id 或 player；热点气泡锚在展示 sprite 四边形顶边（与 NPC 语义一致），"
+                    "可用 anchorOffset 微调。列表依赖当前 Action 场景上下文。",
                 )
             elif act_type == "showEmote" and pname == "emote":
                 w = EmoteBubbleParamWidget(
@@ -2510,9 +2674,9 @@ class ActionRow(QWidget):
                     lambda: self.changed.emit(),
                 )
             elif act_type == "showEmoteAndWait" and pname == "target":
-                w = self._make_selector("actor", str(val) if val is not None else "")
+                w = self._make_selector("emote_target", str(val) if val is not None else "")
                 w.setToolTip(
-                    "选 NPC、player 或过场 _cut_*；依赖过场 targetScene 与_spawn 列表。",
+                    "选 NPC、热点、player 或过场 _cut_*；热点锚在展示贴图顶边，可用 anchorOffset 微调。",
                 )
             elif act_type == "showEmoteAndWait" and pname == "emote":
                 w = EmoteBubbleParamWidget(
@@ -2653,6 +2817,32 @@ class ActionRow(QWidget):
         return {
             "type": "setHotspotDisplayImage",
             "params": pr,
+        }
+
+    def _to_dict_temp_set_hotspot_display_facing(self) -> dict:
+        scene_w = self._param_widgets.get("sceneId")
+        id_w = self._param_widgets.get("hotspotId")
+        fac_w = self._param_widgets.get("facing")
+        sid = scene_w.committed_type().strip() if isinstance(scene_w, FilterableTypeCombo) else ""
+        hid = id_w.committed_type().strip() if isinstance(id_w, FilterableTypeCombo) else ""
+        fv = fac_w.committed_type().strip().lower() if isinstance(fac_w, FilterableTypeCombo) else "restore"
+        if fv not in ("left", "right", "restore"):
+            fv = "restore"
+        return {
+            "type": "tempSetHotspotDisplayFacing",
+            "params": {"sceneId": sid, "hotspotId": hid, "facing": fv},
+        }
+
+    def _to_dict_persist_hotspot_enabled(self) -> dict:
+        scene_w = self._param_widgets.get("sceneId")
+        id_w = self._param_widgets.get("hotspotId")
+        en_w = self._param_widgets.get("enabled")
+        sid = scene_w.committed_type().strip() if isinstance(scene_w, FilterableTypeCombo) else ""
+        hid = id_w.committed_type().strip() if isinstance(id_w, FilterableTypeCombo) else ""
+        en = bool(en_w.isChecked()) if isinstance(en_w, QCheckBox) else True
+        return {
+            "type": "persistHotspotEnabled",
+            "params": {"sceneId": sid, "hotspotId": hid, "enabled": en},
         }
 
     def _to_dict_set_entity_field(self) -> dict:
@@ -2856,6 +3046,10 @@ class ActionRow(QWidget):
             return self._to_dict_set_entity_field()
         if act_type == "setHotspotDisplayImage":
             return self._to_dict_set_hotspot_display_image()
+        if act_type == "tempSetHotspotDisplayFacing":
+            return self._to_dict_temp_set_hotspot_display_facing()
+        if act_type == "persistHotspotEnabled":
+            return self._to_dict_persist_hotspot_enabled()
         if act_type == "showOverlayImage":
             return self._to_dict_show_overlay_image()
         if act_type == "blendOverlayImage":
