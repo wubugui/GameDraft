@@ -1844,6 +1844,208 @@ class TargetSpawnPickerDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Cutscene cameraMove: pick world point on scene background
+# ---------------------------------------------------------------------------
+
+_MARKER_CAM_PICK = QColor(255, 70, 90, 210)
+_MARKER_CAM_EDGE = QPen(QColor(255, 210, 220), 0)
+
+
+class _WorldPointPickView(QGraphicsView):
+    """仅背景 + 选点标记；左键设点，中键平移，滚轮缩放。"""
+
+    picked = Signal(float, float)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._gfx = QGraphicsScene(self)
+        self.setScene(self._gfx)
+        self.setRenderHints(
+            QPainter.RenderHint.Antialiasing
+            | QPainter.RenderHint.SmoothPixmapTransform)
+        self.setViewportUpdateMode(
+            QGraphicsView.ViewportUpdateMode.SmartViewportUpdate)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self._bg_item: QGraphicsPixmapItem | None = None
+        self._marker: QGraphicsEllipseItem | None = None
+        self._world_w: float = 800.0
+        self._world_h: float = 600.0
+        self._middle_panning = False
+        self._pan_last_pos = QPoint()
+
+    def clear_visual(self) -> None:
+        self._gfx.clear()
+        self._bg_item = None
+        self._marker = None
+
+    def setup_from_scene_json(
+        self,
+        model: ProjectModel,
+        scene_id: str,
+    ) -> tuple[float, float]:
+        """返回 (world_w, world_h)。无场景数据时占位 800×600。"""
+        self.clear_visual()
+        sc = model.scenes.get(scene_id) or {}
+        bgs = sc.get("backgrounds", [])
+        img_path: Path | None = None
+        if bgs:
+            img_name = bgs[0].get("image", "background.png")
+            img_path = model.scenes_path / scene_id / str(img_name)
+        if img_path is not None and not img_path.is_file():
+            img_path = None
+        ww, wh = _resolve_world_size(sc, img_path)
+        self._world_w = float(ww)
+        self._world_h = float(wh)
+        self._gfx.setSceneRect(QRectF(0, 0, ww, wh))
+        if img_path is not None and img_path.is_file():
+            pm = QPixmap(str(img_path))
+            if not pm.isNull():
+                self._bg_item = QGraphicsPixmapItem(pm)
+                self._bg_item.setZValue(-100)
+                sx = ww / pm.width()
+                sy = wh / pm.height()
+                self._bg_item.setTransform(QTransform.fromScale(sx, sy))
+                self._gfx.addItem(self._bg_item)
+        return ww, wh
+
+    def marker_radius_world(self) -> float:
+        return max(self._world_w, self._world_h) * 0.01
+
+    def set_marker_world(self, wx: float, wy: float) -> None:
+        rx = float(max(0.0, min(self._world_w, wx)))
+        ry = float(max(0.0, min(self._world_h, wy)))
+        rr = self.marker_radius_world()
+        if self._marker is not None and self._marker.scene() is self._gfx:
+            self._gfx.removeItem(self._marker)
+        self._marker = QGraphicsEllipseItem(rx - rr, ry - rr, rr * 2, rr * 2)
+        self._marker.setBrush(QBrush(_MARKER_CAM_PICK))
+        self._marker.setPen(_MARKER_CAM_EDGE)
+        self._marker.setZValue(50.0)
+        self._gfx.addItem(self._marker)
+
+    def fit_scene(self) -> None:
+        sr = self._gfx.sceneRect()
+        if sr.width() <= 0 or sr.height() <= 0:
+            return
+        self.resetTransform()
+        self.fitInView(sr, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._middle_panning = True
+            self._pan_last_pos = event.pos()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            sp = self.mapToScene(event.pos())
+            r = self._gfx.sceneRect()
+            rx = float(max(r.left(), min(r.right(), sp.x())))
+            ry = float(max(r.top(), min(r.bottom(), sp.y())))
+            rx = round(rx, 2)
+            ry = round(ry, 2)
+            self.set_marker_world(rx, ry)
+            self.picked.emit(rx, ry)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._middle_panning:
+            if not (event.buttons() & Qt.MouseButton.MiddleButton):
+                self._middle_panning = False
+                self.unsetCursor()
+            else:
+                delta = event.pos() - self._pan_last_pos
+                self._pan_last_pos = event.pos()
+                self.horizontalScrollBar().setValue(
+                    self.horizontalScrollBar().value() - delta.x())
+                self.verticalScrollBar().setValue(
+                    self.verticalScrollBar().value() - delta.y())
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.MiddleButton:
+            if self._middle_panning:
+                self._middle_panning = False
+                self.unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+        self.scale(factor, factor)
+        event.accept()
+
+
+class CutsceneCameraPointPickerDialog(QDialog):
+    """过场 cameraMove：在绑定场景背景上点击得到世界坐标 x,y。"""
+
+    def __init__(
+        self,
+        model: ProjectModel,
+        scene_id: str,
+        initial_x: float,
+        initial_y: float,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._scene_id = scene_id
+        sc0 = model.scenes.get(scene_id, {})
+        title_nm = sc0.get("name", scene_id)
+        self.setWindowTitle(f"镜头目标点 — {scene_id}（{title_nm}）")
+        self.resize(960, 560)
+
+        self._px = round(float(initial_x), 2)
+        self._py = round(float(initial_y), 2)
+
+        root = QVBoxLayout(self)
+        hint = QLabel(
+            "左键在地图上点击选取镜头移动目标世界坐标；中键拖动画布，滚轮缩放。"
+        )
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        self._coord_lbl = QLabel()
+        self._coord_lbl.setStyleSheet("font-family: Consolas; font-size: 12px;")
+        root.addWidget(self._coord_lbl)
+
+        self._view = _WorldPointPickView(self)
+        self._view.picked.connect(self._on_picked)
+        main = QHBoxLayout()
+        main.addWidget(self._view, 1)
+        root.addLayout(main, 1)
+
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+        root.addWidget(bbox)
+
+        self._view.setup_from_scene_json(model, scene_id)
+        self._view.set_marker_world(self._px, self._py)
+        self._sync_lbl()
+        QTimer.singleShot(0, self._view.fit_scene)
+
+    def _sync_lbl(self) -> None:
+        self._coord_lbl.setText(f"x = {self._px:.2f}   y = {self._py:.2f}  （世界单位）")
+
+    def _on_picked(self, x: float, y: float) -> None:
+        self._px = float(x)
+        self._py = float(y)
+        self._sync_lbl()
+
+    def picked_xy(self) -> tuple[float, float]:
+        return self._px, self._py
+
+
+# ---------------------------------------------------------------------------
 # Property panel
 # ---------------------------------------------------------------------------
 

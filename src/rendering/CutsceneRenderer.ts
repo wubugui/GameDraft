@@ -7,6 +7,12 @@ import { createOverlayBlendMesh } from './overlayBlendShader';
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
 export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
 
+/** 两端缓、中间快（ease-in-out cubic），用于沿位移方向的标量进度 s∈[0,1] */
+function easeInOutCubic(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+}
+
 export class CutsceneRenderer {
   private resolveDisplay: ((s: string) => string) | null = null;
   private renderer: Renderer;
@@ -258,17 +264,23 @@ export class CutsceneRenderer {
   async cameraMove(x: number, y: number, duration: number): Promise<void> {
     const startX = this.camera.getX();
     const startY = this.camera.getY();
+    const dx = x - startX;
+    const dy = y - startY;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-6 || duration <= 0) {
+      this.camera.snapTo(x, y);
+      return;
+    }
+    const ux = dx / dist;
+    const uy = dy / dist;
     const startTime = performance.now();
 
     return new Promise(resolve => {
       const finish = this.createOpFinisher(() => resolve());
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / duration, 1);
-        const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        this.camera.snapTo(
-          startX + (x - startX) * ease,
-          startY + (y - startY) * ease,
-        );
+        const s = easeInOutCubic(t);
+        this.camera.snapTo(startX + ux * dist * s, startY + uy * dist * s);
         if (t < 1) this.trackRaf(tick); else finish();
       };
       this.trackRaf(tick);

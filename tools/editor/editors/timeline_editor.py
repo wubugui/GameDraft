@@ -6,16 +6,16 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QLabel,
     QScrollArea, QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
-    QDialog, QGroupBox, QToolButton, QSizePolicy,
+    QDialog, QGroupBox, QToolButton, QSizePolicy, QMenu,
 )
 from PySide6.QtCore import Qt, Signal, QEvent, QObject
-from PySide6.QtGui import QFont, QMouseEvent
+from PySide6.QtGui import QAction, QFont, QMouseEvent
 
 from ..project_model import ProjectModel
 from .. import theme as app_theme
@@ -23,7 +23,7 @@ from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.action_editor import ActionRow, FilterableTypeCombo
 from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
-from .scene_editor import TargetSpawnPickerDialog
+from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
 
 if TYPE_CHECKING:
     pass
@@ -368,6 +368,10 @@ class StepWidget(QFrame):
             self._present_params_layout.addRow(wdg)
             return
 
+        if ptype == "cameraMove":
+            self._build_camera_move_present_params()
+            return
+
         schema = _PRESENT_PARAMS.get(ptype, [])
         for pname, pt in schema:
             val = self._step_data.get(pname, "")
@@ -395,6 +399,82 @@ class StepWidget(QFrame):
                 w.textChanged.connect(self._emit_dirty)
             self._widgets[pname] = w
             self._present_params_layout.addRow(label, w)
+
+    def _build_camera_move_present_params(self) -> None:
+        """cameraMove：x/y 可手输，也可用绑定场景地图点选。"""
+        val_x = self._step_data.get("x", "")
+        val_y = self._step_data.get("y", "")
+        val_dur = self._step_data.get("duration", "")
+        sx = QDoubleSpinBox()
+        sx.setRange(-99999, 99999)
+        sx.setDecimals(2)
+        sx.setValue(float(val_x) if val_x != "" else 0.0)
+        sx.valueChanged.connect(self._emit_dirty)
+        sy = QDoubleSpinBox()
+        sy.setRange(-99999, 99999)
+        sy.setDecimals(2)
+        sy.setValue(float(val_y) if val_y != "" else 0.0)
+        sy.valueChanged.connect(self._emit_dirty)
+        sd = QDoubleSpinBox()
+        sd.setRange(0, 999999)
+        sd.setDecimals(2)
+        sd.setValue(float(val_dur) if val_dur != "" else 1000.0)
+        sd.valueChanged.connect(self._emit_dirty)
+
+        row = QWidget()
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.addWidget(QLabel("x"))
+        hl.addWidget(sx, 1)
+        hl.addWidget(QLabel("y"))
+        hl.addWidget(sy, 1)
+        pick = QPushButton("地图选点…")
+        pick.setToolTip(
+            "在过场顶部「targetScene」绑定的场景背景上点击，写入 x / y 世界坐标。"
+        )
+        pick.clicked.connect(self._on_pick_camera_move_point)
+        hl.addWidget(pick)
+        self._widgets["x"] = sx
+        self._widgets["y"] = sy
+        self._widgets["duration"] = sd
+        self._present_params_layout.addRow("目标位置（世界坐标）", row)
+        self._present_params_layout.addRow("duration (ms)", sd)
+
+    def _on_pick_camera_move_point(self) -> None:
+        ed = self._editor
+        model = self._model
+        if ed is None or model is None:
+            QMessageBox.warning(self, "选点", "未绑定编辑器或工程模型。")
+            return
+        sid = ""
+        if hasattr(ed, "cutscene_binding_target_scene"):
+            sid = ed.cutscene_binding_target_scene()
+        sid = str(sid or "").strip()
+        if not sid:
+            QMessageBox.information(
+                self,
+                "过场",
+                "请先在过场表单中设置「targetScene」，再在地图上选取镜头目标点。",
+            )
+            return
+        if sid not in model.scenes:
+            QMessageBox.warning(
+                self,
+                "选点",
+                f"场景「{sid}」未载入工程，无法打开预览。请检查 ID 或过场绑定。",
+            )
+            return
+        wx_w = self._widgets.get("x")
+        wy_w = self._widgets.get("y")
+        if not isinstance(wx_w, QDoubleSpinBox) or not isinstance(wy_w, QDoubleSpinBox):
+            return
+        dlg = CutsceneCameraPointPickerDialog(
+            model, sid, float(wx_w.value()), float(wy_w.value()), self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            px, py = dlg.picked_xy()
+            wx_w.setValue(float(px))
+            wy_w.setValue(float(py))
+            self._emit_dirty()
 
     def _build_action(self) -> None:
         ad = {
@@ -599,6 +679,16 @@ class StepOutlineFrame(QFrame):
         hl.addWidget(self._btn_down)
         hl.addWidget(self._btn_copy)
         hl.addWidget(self._btn_del)
+
+        self._menu_btn = QToolButton()
+        self._menu_btn.setText("\u22ee")
+        self._menu_btn.setToolTip("并行移入/移出等")
+        self._menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._menu_btn.setFixedWidth(28)
+        self._step_menu = QMenu(self._menu_btn)
+        self._menu_btn.setMenu(self._step_menu)
+        self._step_menu.aboutToShow.connect(self._populate_step_menu)
+        hl.addWidget(self._menu_btn)
 
         self._expand = QToolButton()
         self._expand.setArrowType(Qt.ArrowType.DownArrow)
@@ -810,6 +900,33 @@ class StepOutlineFrame(QFrame):
         self._editor.mark_pending_changes()
         self.contentChanged.emit()
 
+    def _populate_step_menu(self) -> None:
+        ed = self._editor
+        m = self._step_menu
+        m.clear()
+
+        a_lift = QAction("从并行移出到外层（插在该并行块之后）", self)
+        a_lift.setEnabled(self._parallel_parent is not None)
+        a_lift.triggered.connect(lambda: ed.lift_parallel_track_out(self))
+        m.addAction(a_lift)
+
+        m.addSeparator()
+
+        a_adj = QAction("与下一项合并为并行（两项 fork-join）", self)
+        a_adj.setEnabled(ed.can_merge_adjacent_into_parallel(self))
+        a_adj.triggered.connect(lambda: ed.merge_adjacent_into_parallel(self))
+        m.addAction(a_adj)
+
+        a_prev = QAction("并入上一并行（作为最后一轨）", self)
+        a_prev.setEnabled(ed.can_merge_into_prev_parallel(self))
+        a_prev.triggered.connect(lambda: ed.merge_into_prev_parallel(self))
+        m.addAction(a_prev)
+
+        a_next = QAction("并入下一并行（作为第一轨）", self)
+        a_next.setEnabled(ed.can_merge_into_next_parallel(self))
+        a_next.triggered.connect(lambda: ed.merge_into_next_parallel(self))
+        m.addAction(a_next)
+
 
 # ===============================================================
 # TimelineEditor — 主 Tab
@@ -860,11 +977,12 @@ class TimelineEditor(QWidget):
         rl.addLayout(top_row)
 
         bind_form = QFormLayout()
-        self._target_scene = IdRefSelector(self, allow_empty=True)
-        self._target_scene.setMinimumWidth(200)
-        if self._model:
-            self._target_scene.set_items(
-                [("", "(none)")] + [(s, s) for s in self._model.all_scene_ids()])
+        self._target_scene = IdRefSelector(self, allow_empty=True, editable=False)
+        self._target_scene.setMinimumWidth(240)
+        self._target_scene.setToolTip(
+            "从项目已加载场景列表选择；若 JSON 中已有但工程未载入的场景，会显示为「未在项目场景表中」。"
+        )
+        self._refresh_target_scene_combo_items("")
         bind_form.addRow("targetScene", self._target_scene)
 
         self._spawn_key = ""
@@ -911,7 +1029,8 @@ class TimelineEditor(QWidget):
         hint_row = QHBoxLayout()
         hint = QLabel(
             "<b>步骤序列</b>（竖排 = 执行顺序；PRESENT / ACTION / PARALLEL 色条区分；"
-            "点击表头空白或摘要可折叠/展开详情；右侧「不定/~ms」与灰条为粗估，仅供参考）"
+            "点击表头空白或摘要可折叠/展开详情；右侧「不定/~ms」与灰条为粗估，仅供参考；"
+            "「⋯」菜单：并行轨移出到外层、两项合并为并行、并入上/下一并行）"
         )
         hint.setWordWrap(True)
         hint_row.addWidget(hint, stretch=1)
@@ -1005,12 +1124,36 @@ class TimelineEditor(QWidget):
             self._zebra_descendant_tracks(ol._step)
 
     def _on_model_data_changed(self, data_type: str, _item_id: str) -> None:
-        pass
+        if data_type != "scene":
+            return
+        if self._loading_ui:
+            return
+        if self._current_idx < 0:
+            return
+        self._refresh_target_scene_combo_items(self._target_scene.current_id().strip())
 
     def mark_pending_changes(self, *args) -> None:
         if self._loading_ui:
             return
         self._pending_changes = True
+
+    def _scene_dropdown_rows(self, orphan_if_missing: str) -> list[tuple[str, str]]:
+        """(id, 展示名)：含场景 name；孤儿 targetScene 保留一项以免无法表示未入库引用。"""
+        rows: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for sid in sorted(self._model.all_scene_ids()):
+            seen.add(sid)
+            sc = self._model.scenes.get(sid) or {}
+            label = sc.get("name") or sid
+            rows.append((sid, str(label)))
+        o = (orphan_if_missing or "").strip()
+        if o and o not in seen:
+            rows.append((o, f"{o} · 未在项目场景表中"))
+        return rows
+
+    def _refresh_target_scene_combo_items(self, committed: str) -> None:
+        self._target_scene.set_items(self._scene_dropdown_rows(committed))
+        self._target_scene.set_current((committed or "").strip())
 
     def has_pending_changes(self) -> bool:
         return self._pending_changes
@@ -1113,7 +1256,8 @@ class TimelineEditor(QWidget):
             self._spawn_loading = True
             try:
                 self._spawn_key = (cs.get("targetSpawnPoint") or "").strip()
-                self._target_scene.set_current(cs.get("targetScene", "") or "")
+                committed = str(cs.get("targetScene") or "").strip()
+                self._refresh_target_scene_combo_items(committed)
             finally:
                 self._spawn_loading = False
             self._refresh_spawn_display()
@@ -1151,6 +1295,14 @@ class TimelineEditor(QWidget):
             cid = str(self._model.cutscenes[self._current_idx].get("id", "")).strip()
             return cid or None
         return None
+
+    def cutscene_binding_target_scene(self) -> str:
+        """当前选中过场表单里绑定的 targetScene（cameraMove「地图选点」用）。"""
+        if self._current_idx < 0 or self._current_idx >= len(self._model.cutscenes):
+            return ""
+        return str(
+            self._model.cutscenes[self._current_idx].get("targetScene") or ""
+        ).strip()
 
     def _add_step(self, kind: str) -> None:
         if kind == "present":
@@ -1228,6 +1380,212 @@ class TimelineEditor(QWidget):
         cid = self._c_id.text().strip()
         if cid:
             self.play_requested.emit(cid)
+
+    # ----- 并行结构：移出 / 并入（供 StepOutlineFrame 菜单调用） -----
+
+    def outline_list_and_layout(self, ol: StepOutlineFrame) -> tuple[list[Any], Any]:
+        """包含 ol 所在大纲行的列表与纵向 layout（顶层 steps 或某一 parallel 的子轨）。"""
+        if ol._parallel_parent is None:
+            return self._step_outlines, self._steps_layout
+        pw = ol._parallel_parent
+        return pw._child_outlines, pw._parallel_layout
+
+    def lift_parallel_track_out(self, child_ol: StepOutlineFrame) -> None:
+        """将并行中的一轨移到外层，插在该 parallel 步骤之后（同级）；若并行因此为空则删掉该 parallel。"""
+        pw = child_ol._parallel_parent
+        if pw is None or pw._outline_frame is None or pw._parallel_layout is None:
+            return
+        par_ol = pw._outline_frame
+        lst, layout = self.outline_list_and_layout(par_ol)
+        try:
+            idx_par = lst.index(par_ol)
+        except ValueError:
+            return
+        try:
+            idx_ch = pw._child_outlines.index(child_ol)
+        except ValueError:
+            return
+        data = deepcopy(child_ol.to_dict())
+        pw._child_outlines.pop(idx_ch)
+        pw._parallel_layout.removeWidget(child_ol)
+        child_ol.deleteLater()
+
+        host = par_ol.parentWidget()
+        if host is None:
+            host = self._steps_container
+        cid = self._current_cutscene_id()
+        new_ol = StepOutlineFrame(
+            data, self._model, self, host,
+            indent_px=par_ol._indent_px,
+            parallel_parent=par_ol._parallel_parent,
+            zebra_alt=False,
+            cutscene_id=cid,
+        )
+        new_ol.contentChanged.connect(self._on_any_outline_changed)
+        lst.insert(idx_par + 1, new_ol)
+        self._relayout_outline_list(lst, layout)
+
+        if not pw._child_outlines:
+            lst2, layout2 = self.outline_list_and_layout(par_ol)
+            try:
+                lst2.remove(par_ol)
+            except ValueError:
+                pass
+            if layout2 is not None:
+                layout2.removeWidget(par_ol)
+            par_ol.deleteLater()
+            if layout2 is not None:
+                self._relayout_outline_list(lst2, layout2)
+
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def _relayout_outline_list(self, lst: list[Any], layout: Any) -> None:
+        for w in lst:
+            layout.removeWidget(w)
+        for w in lst:
+            layout.addWidget(w)
+
+    def can_merge_adjacent_into_parallel(self, ol: StepOutlineFrame) -> bool:
+        if ol._step._kind_combo.currentData() == "parallel":
+            return False
+        lst, _ = self.outline_list_and_layout(ol)
+        try:
+            i = lst.index(ol)
+        except ValueError:
+            return False
+        if i + 1 >= len(lst):
+            return False
+        return lst[i + 1]._step._kind_combo.currentData() != "parallel"
+
+    def merge_adjacent_into_parallel(self, ol: StepOutlineFrame) -> None:
+        """当前项与下一项（须均为 present/action）合并为一个 parallel（两轨）。"""
+        if not self.can_merge_adjacent_into_parallel(ol):
+            return
+        lst, layout = self.outline_list_and_layout(ol)
+        i = lst.index(ol)
+        ol_next = lst[i + 1]
+        d1 = deepcopy(ol.to_dict())
+        d2 = deepcopy(ol_next.to_dict())
+        pdata = {"kind": "parallel", "tracks": [d1, d2]}
+        host = ol.parentWidget() or self._steps_container
+        indent = ol._indent_px
+        pp = ol._parallel_parent
+        cid = self._current_cutscene_id()
+
+        lst.pop(i + 1)
+        lst.pop(i)
+        layout.removeWidget(ol_next)
+        layout.removeWidget(ol)
+        ol_next.deleteLater()
+        ol.deleteLater()
+
+        new_par = StepOutlineFrame(
+            pdata, self._model, self, host,
+            indent_px=indent,
+            parallel_parent=pp,
+            zebra_alt=False,
+            cutscene_id=cid,
+        )
+        new_par.contentChanged.connect(self._on_any_outline_changed)
+        lst.insert(i, new_par)
+        self._relayout_outline_list(lst, layout)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def can_merge_into_prev_parallel(self, ol: StepOutlineFrame) -> bool:
+        if ol._step._kind_combo.currentData() == "parallel":
+            return False
+        lst, _ = self.outline_list_and_layout(ol)
+        try:
+            i = lst.index(ol)
+        except ValueError:
+            return False
+        if i == 0:
+            return False
+        return lst[i - 1]._step._kind_combo.currentData() == "parallel"
+
+    def merge_into_prev_parallel(self, ol: StepOutlineFrame) -> None:
+        if not self.can_merge_into_prev_parallel(ol):
+            return
+        lst, layout = self.outline_list_and_layout(ol)
+        i = lst.index(ol)
+        prev_ol = lst[i - 1]
+        data = deepcopy(ol.to_dict())
+        lst.pop(i)
+        layout.removeWidget(ol)
+        ol.deleteLater()
+
+        par_sw = prev_ol._step
+        self._append_track_to_parallel(par_sw, data)
+        prev_ol.refresh_header()
+        self._relayout_outline_list(lst, layout)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def can_merge_into_next_parallel(self, ol: StepOutlineFrame) -> bool:
+        if ol._step._kind_combo.currentData() == "parallel":
+            return False
+        lst, _ = self.outline_list_and_layout(ol)
+        try:
+            i = lst.index(ol)
+        except ValueError:
+            return False
+        if i + 1 >= len(lst):
+            return False
+        return lst[i + 1]._step._kind_combo.currentData() == "parallel"
+
+    def merge_into_next_parallel(self, ol: StepOutlineFrame) -> None:
+        if not self.can_merge_into_next_parallel(ol):
+            return
+        lst, layout = self.outline_list_and_layout(ol)
+        i = lst.index(ol)
+        next_ol = lst[i + 1]
+        data = deepcopy(ol.to_dict())
+        lst.pop(i)
+        layout.removeWidget(ol)
+        ol.deleteLater()
+
+        par_sw = next_ol._step
+        self._prepend_track_to_parallel(par_sw, data)
+        next_ol.refresh_header()
+        self._relayout_outline_list(lst, layout)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def _append_track_to_parallel(self, par_sw: StepWidget, data: dict) -> StepOutlineFrame:
+        assert par_sw._parallel_layout is not None and par_sw._parallel_group is not None
+        cid = self._current_cutscene_id()
+        ol = StepOutlineFrame(
+            deepcopy(data), self._model, self,
+            par_sw._parallel_group,
+            indent_px=16,
+            parallel_parent=par_sw,
+            zebra_alt=(len(par_sw._child_outlines) % 2 == 1),
+            cutscene_id=cid,
+        )
+        ol.contentChanged.connect(self._on_any_outline_changed)
+        par_sw._child_outlines.append(ol)
+        par_sw._parallel_layout.insertWidget(par_sw._parallel_layout.count() - 1, ol)
+        par_sw._on_parallel_child_changed()
+        return ol
+
+    def _prepend_track_to_parallel(self, par_sw: StepWidget, data: dict) -> StepOutlineFrame:
+        assert par_sw._parallel_layout is not None and par_sw._parallel_group is not None
+        cid = self._current_cutscene_id()
+        ol = StepOutlineFrame(
+            deepcopy(data), self._model, self,
+            par_sw._parallel_group,
+            indent_px=16,
+            parallel_parent=par_sw,
+            zebra_alt=False,
+            cutscene_id=cid,
+        )
+        ol.contentChanged.connect(self._on_any_outline_changed)
+        par_sw._child_outlines.insert(0, ol)
+        par_sw._parallel_layout.insertWidget(0, ol)
+        par_sw._on_parallel_child_changed()
+        return ol
 
     def _delete(self) -> None:
         if self._current_idx >= 0:

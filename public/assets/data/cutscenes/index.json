@@ -722,5 +722,30 @@
         "duration": 800
       }
     ]
+  },
+  {
+    "id": "洋人第一次出场",
+    "steps": [
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.1
+      },
+      {
+        "kind": "present",
+        "type": "cameraMove",
+        "x": 1647.78,
+        "y": 1095.98,
+        "duration": 6000.0
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 1.3,
+        "duration": 6000.0
+      }
+    ],
+    "targetScene": "码头白天",
+    "targetSpawnPoint": "spawn_0"
   }
 ]
