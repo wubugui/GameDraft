@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
     QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QFormLayout, QFrame,
     QTextEdit, QApplication, QToolButton, QDialog, QListWidget, QListWidgetItem,
-    QDialogButtonBox, QSizePolicy,
+    QDialogButtonBox, QSizePolicy, QInputDialog,
 )
 
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
@@ -280,6 +280,114 @@ _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
 _ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book", "bookEntry")
 
 _FACE_DIRECTIONS = ("left", "right", "up", "down")
+
+# showEmote / showEmoteAndWait：运行时仅为气泡 Text；编辑器侧提供常用占位 + 工程扫描去重。
+_EMOTE_QUICK_PRESETS = ("?", "!", "!!", "...", "…")
+
+
+def _build_emote_action_combo_entries(
+    model,
+    committed: str,
+) -> list[tuple[str, str]]:
+    merged: list[str] = []
+    ord_seen: set[str] = set()
+    for s in list(_EMOTE_QUICK_PRESETS):
+        if s not in ord_seen:
+            ord_seen.add(s)
+            merged.append(s)
+    if model:
+        for s in model.collect_emote_strings_used_in_project():
+            if s not in ord_seen:
+                ord_seen.add(s)
+                merged.append(s)
+    cur = (committed or "").strip()
+    if cur:
+        if cur not in ord_seen:
+            merged.insert(0, cur)
+        else:
+            # 当前值置顶便于编辑
+            merged.remove(cur)
+            merged.insert(0, cur)
+    if not merged:
+        merged.append("?")
+    return [(x, x) for x in merged]
+
+
+def _id_ref_rows_with_orphan(
+    pairs: list[tuple[str, str]],
+    committed_raw: str,
+) -> list[tuple[str, str]]:
+    """IdRefSelector 用：数据里已有 id 但不在当前工程候选项时追加一行，避免只能手打。"""
+    c = (committed_raw or "").strip()
+    if not c:
+        return list(pairs)
+    keys = {a for a, _ in pairs}
+    if c in keys:
+        return list(pairs)
+    out = list(pairs)
+    out.append((c, f"{c} · 仅数据引用"))
+    return out
+
+
+class EmoteBubbleParamWidget(QWidget):
+    """气泡 emote：必选下拉 + 快捷「插入」占位 +「其他…」对话框；禁止当纯手输框用。"""
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        model,
+        committed: str,
+        on_change: Callable[[], None],
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._on_change = on_change
+
+        cur = str(committed if committed is not None else "")
+        rows = _build_emote_action_combo_entries(model, cur)
+        pick = cur.strip() or (rows[0][1] if rows else "?")
+        self._combo = FilterableTypeCombo(rows, self, select_only=True)
+        self._combo.set_committed_type(pick)
+        self._combo.typeCommitted.connect(lambda _t: on_change())
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self._combo, 1)
+        ins = QLabel("插入")
+        ins.setToolTip("点按钮将气泡文案设为该占位（可再在「其他…」里改）")
+        row.addWidget(ins)
+        for seg in _EMOTE_QUICK_PRESETS:
+            b = QPushButton(seg)
+            b.setFixedWidth(32)
+            b.setToolTip(f"设为 {seg!r}")
+            b.clicked.connect(lambda _=False, s=seg: self._apply_quick(s))
+            row.addWidget(b)
+        btn = QPushButton("其他…")
+        btn.setToolTip("输入任意气泡内文字")
+        btn.clicked.connect(self._on_custom_text)
+        row.addWidget(btn)
+
+    def _apply_quick(self, segment: str) -> None:
+        rows = _build_emote_action_combo_entries(self._model, segment)
+        self._combo.set_entries(rows)
+        self._combo.set_committed_type(segment)
+        self._on_change()
+
+    def _on_custom_text(self) -> None:
+        cur = self._combo.committed_type().strip()
+        txt, ok = QInputDialog.getText(self, "气泡文案", "输入气泡内显示文字：", text=cur)
+        if not ok:
+            return
+        t = txt.strip()
+        if not t:
+            return
+        rows = _build_emote_action_combo_entries(self._model, t)
+        self._combo.set_entries(rows)
+        self._combo.set_committed_type(t)
+        self._on_change()
+
+    def emote_text(self) -> str:
+        return self._combo.committed_type().strip()
 
 
 def _read_overlay_id_value(w: object) -> str:
@@ -1395,48 +1503,64 @@ class ActionRow(QWidget):
         self,
         kind: str,
         val: str,
-    ) -> QWidget:
+    ) -> IdRefSelector:
+        """下拉选 id；actor / emote_target / npc_only 仅允许点选并合并数据孤儿 id。"""
         m = self._ctx_model
-        w = IdRefSelector(self, allow_empty=True)
-        w.setMinimumWidth(96)
+        committed = str(val if val is not None else "").strip()
+        strict_pick = kind in ("actor", "emote_target", "npc_only")
+
+        pairs: list[tuple[str, str]] = []
         if kind == "scene":
-            w.set_items([(s, s) for s in (m.all_scene_ids() if m else [])])
+            pairs = [(s, s) for s in (m.all_scene_ids() if m else [])]
         elif kind == "item":
-            w.set_items(m.all_item_ids() if m else [])
+            pairs = m.all_item_ids() if m else []
         elif kind == "quest":
-            w.set_items(m.all_quest_ids() if m else [])
+            pairs = m.all_quest_ids() if m else []
         elif kind == "encounter":
-            w.set_items(m.all_encounter_ids() if m else [])
+            pairs = m.all_encounter_ids() if m else []
         elif kind == "rule":
-            w.set_items(m.all_rule_ids() if m else [])
+            pairs = m.all_rule_ids() if m else []
         elif kind == "fragment":
-            w.set_items(m.all_fragment_ids() if m else [])
+            pairs = m.all_fragment_ids() if m else []
         elif kind == "cutscene":
-            w.set_items(m.all_cutscene_ids() if m else [])
+            pairs = m.all_cutscene_ids() if m else []
         elif kind == "shop":
-            w.set_items(m.all_shop_ids() if m else [])
+            pairs = m.all_shop_ids() if m else []
         elif kind == "audio_bgm":
-            w.set_items([(a, a) for a in (m.all_audio_ids("bgm") if m else [])])
+            pairs = [(a, a) for a in (m.all_audio_ids("bgm") if m else [])]
         elif kind == "audio_sfx":
-            w.set_items([(a, a) for a in (m.all_audio_ids("sfx") if m else [])])
+            pairs = [(a, a) for a in (m.all_audio_ids("sfx") if m else [])]
         elif kind == "spawn":
-            w.set_items([("", "(default)")])
+            pairs = [("", "(default)")]
         elif kind == "emote_target":
-            items: list[tuple[str, str]] = []
             if m:
-                items.extend(m.npc_ids_for_scene(self._ctx_scene_id))
-            items.append(("player", "player"))
-            w.set_items(items)
+                pairs.extend(m.npc_ids_for_scene(self._ctx_scene_id))
+            pairs.append(("player", "player"))
         elif kind == "actor":
-            items = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
-            w.set_items(items)
+            pairs = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
         elif kind == "npc_only":
-            items = m.npc_actor_items_for_scene(self._ctx_scene_id) if m else []
-            w.set_items(items)
+            pairs = m.npc_actor_items_for_scene(self._ctx_scene_id) if m else []
+        else:
+            pairs = []
+
+        if strict_pick:
+            pairs = _id_ref_rows_with_orphan(pairs, committed)
+
+        w = IdRefSelector(self, allow_empty=True, editable=not strict_pick)
+        w.setMinimumWidth(96)
+        if pairs:
+            w.set_items(pairs)
         else:
             w.set_items([])
-        w.set_current(str(val) if val is not None else "")
+        w.set_current(committed)
         w.value_changed.connect(self.changed)
+        tip = {
+            "actor": "仅下拉选择；无场景上下文时列表可能不全，请先设置过场 targetScene。",
+            "emote_target": "仅下拉选择；列表为当前场景 NPC + player。",
+            "npc_only": "仅下拉选择；列表为当前场景 NPC。",
+        }.get(kind)
+        if tip:
+            w.setToolTip(tip)
         return w
 
     def _rebuild_params(self) -> None:
@@ -2375,8 +2499,28 @@ class ActionRow(QWidget):
                 w.currentIndexChanged.connect(lambda _i: self.changed.emit())
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
+                w.setToolTip(
+                    "选 NPC id 或 player；列表来自当前 Action 场景上下文，过场请先绑 targetScene。",
+                )
+            elif act_type == "showEmote" and pname == "emote":
+                w = EmoteBubbleParamWidget(
+                    self,
+                    self._ctx_model,
+                    str(val) if val is not None else "",
+                    lambda: self.changed.emit(),
+                )
             elif act_type == "showEmoteAndWait" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
+                w.setToolTip(
+                    "选 NPC、player 或过场 _cut_*；依赖过场 targetScene 与_spawn 列表。",
+                )
+            elif act_type == "showEmoteAndWait" and pname == "emote":
+                w = EmoteBubbleParamWidget(
+                    self,
+                    self._ctx_model,
+                    str(val) if val is not None else "",
+                    lambda: self.changed.emit(),
+                )
             elif act_type == "playNpcAnimation" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "playNpcAnimation" and pname == "state":
@@ -2747,6 +2891,8 @@ class ActionRow(QWidget):
                 params[pname] = v if isinstance(v, (bool, str)) else float(v)
             elif act_type in ("setFlag", "appendFlag") and pname == "key" and isinstance(w, FlagKeyPickField):
                 params[pname] = w.key()
+            elif isinstance(w, EmoteBubbleParamWidget):
+                params[pname] = w.emote_text()
             elif isinstance(w, FilterableTypeCombo):
                 params[pname] = w.committed_type()
             elif isinstance(w, IdRefSelector):

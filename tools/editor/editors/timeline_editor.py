@@ -372,6 +372,18 @@ class StepWidget(QFrame):
             self._build_camera_move_present_params()
             return
 
+        if ptype == "showSubtitle":
+            self._build_show_subtitle_present_params()
+            return
+
+        if ptype == "showImg":
+            self._build_show_img_present_params()
+            return
+
+        if ptype == "hideImg":
+            self._build_hide_img_present_params()
+            return
+
         schema = _PRESENT_PARAMS.get(ptype, [])
         for pname, pt in schema:
             val = self._step_data.get(pname, "")
@@ -476,6 +488,147 @@ class StepWidget(QFrame):
             wy_w.setValue(float(py))
             self._emit_dirty()
 
+    def _subtitle_on_present_mode_changed(self) -> None:
+        combo = self._widgets.get("_subtitle_mode")
+        spin = self._widgets.get("_subtitle_frac")
+        if isinstance(combo, FilterableTypeCombo) and isinstance(spin, QDoubleSpinBox):
+            spin.setVisible(combo.committed_type().strip() == "__num__")
+        self._emit_dirty()
+
+    def _build_show_subtitle_present_params(self) -> None:
+        raw_txt = self._step_data.get("text", "")
+        raw_pos = self._step_data.get("position", "bottom")
+
+        tw = QTextEdit(str(raw_txt))
+        tw.setMinimumHeight(64)
+        tw.setMaximumHeight(120)
+        tw.textChanged.connect(self._emit_dirty)
+
+        mode_rows = [
+            ("顶部 · top", "top"),
+            ("居中 · center", "center"),
+            ("底部 · bottom", "bottom"),
+            ("纵向 0–1 比例 …", "__num__"),
+        ]
+        cw = FilterableTypeCombo(mode_rows, self, select_only=True)
+
+        frac = QDoubleSpinBox(self)
+        frac.setRange(0.0, 1.0)
+        frac.setDecimals(4)
+        frac.setSingleStep(0.05)
+        frac.setToolTip(
+            "与运行时 CutsceneRenderer 一致：0–1 映射到屏上纵向位置。"
+        )
+
+        rp = raw_pos
+        if isinstance(rp, bool):
+            cw.set_committed_type("bottom")
+            frac.setValue(0.5)
+        elif isinstance(rp, (int, float)):
+            cw.set_committed_type("__num__")
+            fv = float(rp)
+            frac.setValue(max(0.0, min(1.0, fv)))
+        else:
+            s = str(rp).strip().lower()
+            if s in ("top", "center", "bottom"):
+                cw.set_committed_type(s)
+                frac.setValue(0.5)
+            else:
+                try:
+                    fv = float(s)
+                    cw.set_committed_type("__num__")
+                    frac.setValue(max(0.0, min(1.0, fv)))
+                except (TypeError, ValueError):
+                    cw.set_committed_type("bottom")
+                    frac.setValue(0.5)
+
+        frac.valueChanged.connect(self._emit_dirty)
+        cw.typeCommitted.connect(self._subtitle_on_present_mode_changed)
+
+        row = QWidget(self)
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(cw, 1)
+        lay.addWidget(frac)
+        row.setToolTip("预设三档或屏幕纵向数值；与运行时 showSubtitle(position) 对齐。")
+
+        self._widgets["text"] = tw
+        self._widgets["_subtitle_mode"] = cw
+        self._widgets["_subtitle_frac"] = frac
+        self._present_params_layout.addRow("text", tw)
+        self._present_params_layout.addRow("position", row)
+        self._subtitle_on_present_mode_changed()
+
+    def _build_show_img_present_params(self) -> None:
+        pool_s: set[str] = set()
+        pool_h: set[str] = set()
+        ed = self._editor
+        if ed is not None and hasattr(ed, "_outline_overlay_show_and_hide_sets"):
+            pool_s, pool_h = ed._outline_overlay_show_and_hide_sets()
+
+        uni = sorted(pool_s | pool_h, key=lambda x: (x.lower(), x))
+        committed = str(self._step_data.get("id", "") or "").strip()
+        orphan = (f"{committed} · 仅此数据引用") if committed else "未命名"
+        sel = IdRefSelector(self, allow_empty=True, editable=True)
+        sel.setMinimumWidth(220)
+        if ed is not None and hasattr(ed, "_merged_overlay_rows"):
+            rows_u = ed._merged_overlay_rows(uni, committed, orphan)
+        else:
+            rows_u = [(x, x) for x in uni]
+            if committed and committed not in {x[0] for x in rows_u}:
+                rows_u.append((committed, orphan))
+        if not rows_u:
+            rows_u = [("img", "img")]
+        sel.set_items(rows_u)
+        sel.set_current(committed)
+        sel.value_changed.connect(self._emit_dirty)
+        sel.setToolTip(
+            "与 hideImg 配对；下拉为步骤树中出现的 id（可再行内输入）。"
+        )
+
+        img = CutsceneImagePathRow(self._model, str(self._step_data.get("image") or ""), self)
+        img.setMinimumWidth(320)
+        img._edit.textChanged.connect(self._emit_dirty)
+
+        self._widgets["id"] = sel
+        self._widgets["image"] = img
+        self._present_params_layout.addRow("id", sel)
+        self._present_params_layout.addRow("image", img)
+
+    def _build_hide_img_present_params(self) -> None:
+        pool_s: set[str] = set()
+        ed = self._editor
+        if ed is not None and hasattr(ed, "_outline_overlay_show_and_hide_sets"):
+            pool_s, _ = ed._outline_overlay_show_and_hide_sets()
+
+        uni_show = sorted(pool_s, key=lambda x: (x.lower(), x))
+        committed = str(self._step_data.get("id", "") or "").strip()
+        orphan = (f"{committed} · 先于 showImg") if committed else "未命名"
+        sel = IdRefSelector(self, allow_empty=True, editable=True)
+        sel.setMinimumWidth(220)
+        if ed is not None and hasattr(ed, "_merged_overlay_rows"):
+            rows_u = ed._merged_overlay_rows(uni_show, committed, orphan)
+        else:
+            rows_u = [(x, x) for x in uni_show]
+            if committed and committed not in {x[0] for x in rows_u}:
+                rows_u.append((committed, orphan))
+        if not rows_u:
+            rows_u = [("main", "main")]
+        sel.set_items(rows_u)
+        sel.set_current(committed)
+        sel.value_changed.connect(self._emit_dirty)
+        sel.setToolTip("选需隐藏的叠图 id（候选项为本步骤树内 showImg id）")
+
+        self._widgets["id"] = sel
+        self._present_params_layout.addRow("id", sel)
+
+    def _ctx_scene_for_cutscene_actions(self) -> str | None:
+        ed = self._editor
+        if ed is None or not hasattr(ed, "cutscene_binding_target_scene"):
+            return None
+        s = ed.cutscene_binding_target_scene().strip()
+        return s if s else None
+
     def _build_action(self) -> None:
         ad = {
             "type": str(self._step_data.get("type", CUTSCENE_ACTION_WHITELIST[0])),
@@ -484,7 +637,7 @@ class StepWidget(QFrame):
         self._action_row = ActionRow(
             ad,
             model=self._model,
-            scene_id=None,
+            scene_id=self._ctx_scene_for_cutscene_actions(),
             show_delete_button=False,
             show_reorder_buttons=False,
             parent=self,
@@ -564,6 +717,22 @@ class StepWidget(QFrame):
                 if isinstance(wdg, CutsceneShowDialogueFields):
                     d.update(wdg.to_step_dict())
                 return d
+            if ptype == "showSubtitle":
+                wt = self._widgets.get("text")
+                cw = self._widgets.get("_subtitle_mode")
+                frac = self._widgets.get("_subtitle_frac")
+                txt = (
+                    wt.toPlainText().strip("\ufeff") if hasattr(wt, "toPlainText") else ""
+                )
+                po: Any = "bottom"
+                if isinstance(cw, FilterableTypeCombo):
+                    pv = cw.committed_type().strip()
+                    if pv == "__num__" and isinstance(frac, QDoubleSpinBox):
+                        po = float(frac.value())
+                    else:
+                        po = pv
+                d.update({"kind": "present", "type": "showSubtitle", "text": txt, "position": po})
+                return d
             for pname, pt in schema:
                 w = self._widgets.get(pname)
                 if w is None:
@@ -576,6 +745,8 @@ class StepWidget(QFrame):
                     d[pname] = w.toPlainText()
                 elif pt == "image" and isinstance(w, CutsceneImagePathRow):
                     d[pname] = w.path()
+                elif isinstance(w, IdRefSelector):
+                    d[pname] = w.current_id().strip()
                 else:
                     d[pname] = w.text() if hasattr(w, "text") else str(w)
             return d
@@ -1103,6 +1274,7 @@ class TimelineEditor(QWidget):
 
     def _on_any_outline_changed(self) -> None:
         self._refresh_outline_indices_and_zebra()
+        self._refresh_all_present_overlay_id_selectors()
 
     def _refresh_outline_indices_and_zebra(self) -> None:
         for i, ol in enumerate(self._step_outlines):
@@ -1190,13 +1362,14 @@ class TimelineEditor(QWidget):
         if not sid:
             self._spawn_key = ""
             self._refresh_spawn_display()
+            self._propagate_cutscene_scene_to_action_rows()
             return
         sc = self._model.scenes.get(sid)
         if sc and self._spawn_key:
             if self._spawn_key not in (sc.get("spawnPoints") or {}):
                 self._spawn_key = ""
         self._refresh_spawn_display()
-        self.mark_pending_changes()
+        self._propagate_cutscene_scene_to_action_rows()
 
     def _refresh_spawn_display(self) -> None:
         sid = self._target_scene.current_id()
@@ -1297,12 +1470,120 @@ class TimelineEditor(QWidget):
         return None
 
     def cutscene_binding_target_scene(self) -> str:
-        """当前选中过场表单里绑定的 targetScene（cameraMove「地图选点」用）。"""
-        if self._current_idx < 0 or self._current_idx >= len(self._model.cutscenes):
+        """当前过场绑定的场景 ID。
+
+        载入 UI 中与磁盘对齐；绑定表单可操作且未载入时一律以控件为准（含未 Apply 修改），
+        以便 action 的 NPC 列表与表单一致。
+        """
+        if (
+            self._current_idx < 0
+            or self._current_idx >= len(self._model.cutscenes)
+        ):
             return ""
+        if getattr(self, "_loading_ui", False):
+            return str(
+                self._model.cutscenes[self._current_idx].get("targetScene") or "",
+            ).strip()
+        ts = getattr(self, "_target_scene", None)
+        if ts is not None:
+            return ts.current_id().strip()
         return str(
-            self._model.cutscenes[self._current_idx].get("targetScene") or ""
+            self._model.cutscenes[self._current_idx].get("targetScene") or "",
         ).strip()
+
+    def _outline_overlay_show_and_hide_sets(self) -> tuple[set[str], set[str]]:
+        """基于当前编辑器内步骤快照（含未 Apply），收集 showImg / hideImg 的 overlay id。"""
+        show_ids: set[str] = set()
+        hide_ids: set[str] = set()
+        for ol in self._step_outlines:
+            self._walk_collect_overlay_ids(ol.to_dict(), show_ids, hide_ids)
+        return show_ids, hide_ids
+
+    @staticmethod
+    def _walk_collect_overlay_ids(step: dict, show_ids: set[str], hide_ids: set[str]) -> None:
+        if not isinstance(step, dict):
+            return
+        k = str(step.get("kind", ""))
+        if k == "present":
+            t = str(step.get("type", ""))
+            oid = str(step.get("id") or "").strip()
+            if oid:
+                if t == "showImg":
+                    show_ids.add(oid)
+                elif t == "hideImg":
+                    hide_ids.add(oid)
+            return
+        if k == "parallel":
+            for tr in step.get("tracks") or []:
+                TimelineEditor._walk_collect_overlay_ids(tr, show_ids, hide_ids)
+
+    def _merged_overlay_rows(
+        self, pool_sorted: list[str], committed: str, orphan_hint: str,
+    ) -> list[tuple[str, str]]:
+        seen: set[str] = set()
+        rows: list[tuple[str, str]] = []
+        for i in pool_sorted:
+            if i and i not in seen:
+                seen.add(i)
+                rows.append((i, i))
+        c = committed.strip()
+        if c and c not in seen:
+            rows.append((c, orphan_hint))
+        return rows
+
+    def _propagate_cutscene_scene_to_action_rows(self) -> None:
+        """绑定 targetScene 变更后刷新各 action 的 NPC/target 下拉候选项。"""
+        if getattr(self, "_loading_ui", False):
+            return
+        sid_raw = self.cutscene_binding_target_scene()
+        sid_n = sid_raw if sid_raw else None
+        cid = self._current_cutscene_id()
+        for ol in self._iter_all_step_outlines():
+            sw = getattr(ol, "_step", None)
+            if sw is None:
+                continue
+            ar = getattr(sw, "_action_row", None)
+            if isinstance(ar, ActionRow):
+                ar.set_project_context(self._model, sid_n, cutscene_id=cid)
+
+    def _refresh_all_present_overlay_id_selectors(self) -> None:
+        """步骤树变化后刷新 showImg / hideImg 的 id 下拉候选项。"""
+        if getattr(self, "_loading_ui", False):
+            return
+        show_set, hide_set = self._outline_overlay_show_and_hide_sets()
+        show_sorted = sorted(show_set, key=lambda x: (x.lower(), x))
+        union_sorted = sorted(
+            show_set | hide_set, key=lambda x: (x.lower(), x),
+        )
+        for ol in self._iter_all_step_outlines():
+            sw = ol._step
+            if sw._kind_combo.currentData() != "present":
+                continue
+            ptype = sw._type_combo.committed_type()
+            if ptype not in ("showImg", "hideImg"):
+                continue
+            sel = sw._widgets.get("id")
+            if not isinstance(sel, IdRefSelector):
+                continue
+            cur = sel.current_id().strip()
+            if ptype == "showImg":
+                hint = (
+                    (f"{cur} · 仅本条数据引用")
+                    if cur else "(空 id)"
+                )
+                rows = self._merged_overlay_rows(union_sorted, cur, hint)
+            else:
+                hint = (
+                    (f"{cur} · hide 先于 showImg 或缺同名 showImg")
+                    if cur else "(空 id)"
+                )
+                rows = self._merged_overlay_rows(show_sorted, cur, hint)
+            sel.blockSignals(True)
+            try:
+                sel.set_items(rows)
+                sel.set_current(cur)
+            finally:
+                sel.blockSignals(False)
 
     def _add_step(self, kind: str) -> None:
         if kind == "present":

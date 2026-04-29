@@ -271,6 +271,36 @@ class ProjectModel(QObject):
     def all_scene_ids(self) -> list[str]:
         return list(self.scenes.keys())
 
+    def collect_emote_strings_used_in_project(self) -> list[str]:
+        """扫描内存数据树中 Action 等的 ``emote`` 参数，汇总已出现过的气泡文案（去重排序）。"""
+        seen: set[str] = set()
+
+        def walk(o: Any) -> None:
+            if isinstance(o, dict):
+                em = o.get("emote")
+                if isinstance(em, str):
+                    s = em.strip()
+                    if s:
+                        seen.add(s)
+                for v in o.values():
+                    walk(v)
+            elif isinstance(o, list):
+                for it in o:
+                    walk(it)
+
+        for root in (
+            self.cutscenes,
+            self.quests,
+            self.quest_groups,
+            self.encounters,
+            self.map_nodes,
+            self.scenarios_catalog,
+            self.rules_data,
+            self.game_config,
+        ):
+            walk(root)
+        return sorted(seen, key=lambda x: (str(x).lower(), x))
+
     def spawn_point_keys_for_scene(self, scene_id: str) -> list[str]:
         """Spawn point id strings from scene JSON ``spawnPoints`` (empty first = default)."""
         sc = self.scenes.get(scene_id) or {}

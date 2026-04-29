@@ -743,6 +743,15 @@
         "type": "cameraZoom",
         "scale": 1.3,
         "duration": 6000.0
+      },
+      {
+        "kind": "action",
+        "type": "showEmoteAndWait",
+        "params": {
+          "target": "",
+          "emote": "",
+          "duration": 0.0
+        }
       }
     ],
     "targetScene": "码头白天",
