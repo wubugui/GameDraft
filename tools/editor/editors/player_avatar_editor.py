@@ -125,6 +125,7 @@ class PlayerAvatarEditor(QWidget):
         scroll.setWidget(inner)
         root.addWidget(scroll)
 
+        self._sync_player_avatar_deferred: bool = False
         self._model.data_changed.connect(self._on_model_changed)
         self._rebuild_bundle_combo()
         self._load_from_model()
@@ -133,9 +134,22 @@ class PlayerAvatarEditor(QWidget):
         self._apply()
 
     def _on_model_changed(self, data_type: str, _item_id: str) -> None:
-        if data_type in ("config", "animation", ""):
-            self._rebuild_bundle_combo()
-            self._load_from_model()
+        if data_type not in ("config", "animation", ""):
+            return
+        self._sync_player_avatar_deferred = True
+        if self.isVisible():
+            self._flush_player_avatar_model_sync()
+
+    def _flush_player_avatar_model_sync(self) -> None:
+        if not self._sync_player_avatar_deferred:
+            return
+        self._sync_player_avatar_deferred = False
+        self._rebuild_bundle_combo()
+        self._load_from_model()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._flush_player_avatar_model_sync()
 
     def _reload_anims(self) -> None:
         self._model.reload_animations_from_disk()

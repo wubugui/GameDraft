@@ -245,12 +245,21 @@ class AnimEditor(QWidget):
         splitter.addWidget(scroll)
         splitter.setSizes([260, 760])
         root.addWidget(splitter)
+        self._anim_list_reload_deferred: bool = False
         self._model.data_changed.connect(self._on_model_data_changed)
         self._refresh()
 
     def _on_model_data_changed(self, data_type: str, _item_id: str) -> None:
         if data_type != "animation":
             return
+        self._anim_list_reload_deferred = True
+        if self.isVisible():
+            self._flush_anim_list_from_model()
+
+    def _flush_anim_list_from_model(self) -> None:
+        if not self._anim_list_reload_deferred:
+            return
+        self._anim_list_reload_deferred = False
         keep = self._current_key
         self._list.blockSignals(True)
         self._list.clear()
@@ -264,6 +273,10 @@ class AnimEditor(QWidget):
             self._list.setCurrentRow(0)
         else:
             self._clear_detail()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._flush_anim_list_from_model()
 
     def _open_video_atlas_detached(self) -> None:
         if self._model.project_path is None:

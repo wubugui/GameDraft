@@ -739,13 +739,13 @@
             "type": "cameraMove",
             "x": 1274.84,
             "y": 1552.64,
-            "duration": 1000.0
+            "duration": 5000.0
           },
           {
             "kind": "present",
             "type": "cameraZoom",
             "scale": 1.5,
-            "duration": 1000.0
+            "duration": 5000.0
           }
         ]
       },
@@ -761,7 +761,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "[tag:string:角色:埃德加]：GET DOWN！",
+        "text": "[tag:string:角色:埃德加]：GET DOWN！GET IT!",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleEmote": {
@@ -775,7 +775,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "[tag:string:角色:埃德加]：GET IT! NOW!",
+        "text": "[tag:string:角色:埃德加]：NOW!",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
@@ -828,7 +828,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "[tag:string:角色:埃德加]：HEY! YOU! DEAF?!",
+        "text": "[tag:string:角色:埃德加]：Hey! You DEAF?!",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleEmote": {
@@ -991,7 +991,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "[tag:string:角色:埃德加]：My Box！",
+        "text": "[tag:string:角色:埃德加]：My package！",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleEmote": {
@@ -1001,6 +1001,299 @@
           "anchorOffsetX": 0.0,
           "anchorOffsetY": 0.0
         }
+      },
+      {
+        "kind": "present",
+        "type": "fadeToBlack",
+        "duration": 1000.0
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]解开衣服想要自己跳下去...",
+        "position": "center"
+      },
+      {
+        "kind": "action",
+        "type": "setSceneEntityPosition",
+        "params": {
+          "sceneId": "码头白天",
+          "entityKind": "hotspot",
+          "entityId": "new_hotspot_9",
+          "x": 1603.15,
+          "y": 1139.9
+        }
+      },
+      {
+        "kind": "present",
+        "type": "fadeIn",
+        "duration": 1000.0
+      },
+      {
+        "kind": "action",
+        "type": "tempSetHotspotDisplayFacing",
+        "params": {
+          "sceneId": "码头白天",
+          "hotspotId": "new_hotspot_9",
+          "facing": "left"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:克拉拉]：别去，埃德加！这水里不对劲！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_9",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：该死，我们的地图全部在那里面！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:克拉拉]：冷静点！也许用钱解决。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_9",
+          "emote": "…",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：钱？你说得对！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "action",
+        "type": "setHotspotDisplayImage",
+        "params": {
+          "sceneId": "码头白天",
+          "hotspotId": "new_hotspot_8",
+          "image": "/assets/images/illustrations/埃德加/拿钱大喊.png",
+          "worldHeight": 190.0,
+          "facing": "right"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:埃德加]：Money！Ten DOLLARS!",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_8",
+          "emote": "!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "action",
+        "type": "tempSetHotspotDisplayFacing",
+        "params": {
+          "sceneId": "码头白天",
+          "hotspotId": "new_hotspot_9",
+          "facing": "right"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "[tag:string:角色:克拉拉]：十——块！谁捞箱子！十块！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_9",
+          "emote": "!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "showEmoteAndWait",
+            "params": {
+              "target": "new_hotspot_12",
+              "emote": "?！",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          },
+          {
+            "kind": "action",
+            "type": "showEmoteAndWait",
+            "params": {
+              "target": "new_hotspot_10",
+              "emote": "!",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          },
+          {
+            "kind": "action",
+            "type": "showEmoteAndWait",
+            "params": {
+              "target": "new_hotspot_11",
+              "emote": "!!",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "路人甲：也！十块大洋！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_11",
+          "emote": "...",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "路人乙：哎呀那个水鬼其实也不凶——",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_12",
+          "emote": "!!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "路人丙：芽儿！我来！！（开始脱下衣裤）",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "new_hotspot_6",
+          "emote": "!!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "showEmoteAndWait",
+            "params": {
+              "target": "new_hotspot_6",
+              "emote": "!!",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          },
+          {
+            "kind": "action",
+            "type": "showEmoteAndWait",
+            "params": {
+              "target": "new_hotspot_11",
+              "emote": "!!",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          },
+          {
+            "kind": "action",
+            "type": "showEmoteAndWait",
+            "params": {
+              "target": "new_hotspot_12",
+              "emote": "!!",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "众人（骚乱）：我来！我来！我来！",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center"
+          }
+        ]
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "fadeToBlack",
+            "duration": 1000.0
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "码头上的男人们纷纷开始脱下衣裤，跃跃欲试......\n女人们开始寻找自己的男人.......\n小孩在旁边看的哈哈笑......",
+            "position": "center"
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "场面十分的混乱......",
+        "position": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "说时迟那时快，只听得\"噗通\"一声\n[tag:string:角色:关二狗]跳进了水里......",
+        "position": "center"
       }
     ],
     "targetScene": "码头白天",

@@ -32,7 +32,7 @@ SpeakerKinds = ("player", "npc", "literal", "sceneNpc")
 # 与 GraphDialogueManager.resolveSpeaker（sceneNpc）约定一致
 PROMPT_LINE_SCENE_NPC_CONTEXT_TOKEN = "@contextNpc"
 
-# 兼容旧调用签名；高度不再按 min_lines 放大（避免在表单/滚动区里被撑成大片空白）
+# line / choice 等共用；默认 4 行可视高度（图对话 line 节点正文）
 _PLAIN_MIN_LINES = 4
 
 
@@ -42,14 +42,14 @@ def _plain_text_edit(
     min_lines: int = _PLAIN_MIN_LINES,
     parent: QWidget | None = None,
 ) -> QPlainTextEdit:
-    _ = min_lines  # 调用处仍传 min_lines；高度固定为单行级，不再随该参数增高
     w = QPlainTextEdit(parent)
     if placeholder:
         w.setPlaceholderText(placeholder)
     fm = QFontMetrics(w.font())
     lh = max(1, int(fm.lineSpacing()))
-    # 单行级高度：长文靠框内滚动，禁止随布局在竖向被拉成「大块空框」
-    h = max(24, lh + 14)
+    lines = max(1, int(min_lines))
+    # 约 lines 行可视高度 + 边框/内边距；超出部分框内滚动
+    h = max(32, lh * lines + 18)
     w.setFixedHeight(h)
     w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     w.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -456,7 +456,7 @@ class NodeInspector(QWidget):
             kcb.setCurrentIndex(max(0, kcb.findData(bk)))
             exed = QLineEdit(bex, content)
             tx_plain = _plain_text_edit(
-                placeholder="本句对白正文", min_lines=2, parent=content
+                placeholder="本句对白正文", min_lines=4, parent=content
             )
             tx_plain.setPlainText(
                 str((beat or {}).get("text", "") if isinstance(beat, dict) else "")
@@ -623,7 +623,7 @@ class NodeInspector(QWidget):
         idx = kind_cb.findData(kind)
         kind_cb.setCurrentIndex(max(0, idx))
         extra_edit = QLineEdit(extra, legacy_wrap)
-        text_edit = _plain_text_edit(placeholder="对白正文", parent=legacy_wrap)
+        text_edit = _plain_text_edit(placeholder="对白正文", min_lines=4, parent=legacy_wrap)
         text_edit.setPlainText(str(data.get("text", "")))
         text_key = QLineEdit(str(data.get("textKey", "")), legacy_wrap)
         text_key.setPlaceholderText("可选：strings 键")
@@ -890,7 +890,9 @@ class NodeInspector(QWidget):
 
         pl_npc_btn.clicked.connect(_open_pl_npc_picker)
         pl_extra_lbl = QLabel(prompt_box)
-        pl_text = _plain_text_edit(placeholder="选项前多播一行对白", parent=prompt_box)
+        pl_text = _plain_text_edit(
+            placeholder="选项前多播一行对白", min_lines=2, parent=prompt_box
+        )
         pl_text.setPlainText(str((pl or {}).get("text", "")))
 
         pfl = QFormLayout()

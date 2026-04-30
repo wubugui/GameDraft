@@ -898,6 +898,53 @@ def _append_action_param_ref_issues(
                         f"setEntityField {kind}.{field} state {value!r} 不在 {eid!r} 的 anim.json states 中",
                     ))
 
+    if t == "setSceneEntityPosition":
+        sid = str(p.get("sceneId") or "").strip()
+        kind = str(p.get("entityKind") or "").strip().lower()
+        eid = str(p.get("entityId") or "").strip()
+        if not sid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "setSceneEntityPosition 缺少 sceneId",
+            ))
+        elif sid not in set(model.all_scene_ids()):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"setSceneEntityPosition sceneId {sid!r} 不在场景列表中",
+            ))
+        if kind not in ("npc", "hotspot"):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setSceneEntityPosition entityKind {kind!r} 须为 npc 或 hotspot",
+            ))
+        if not eid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "setSceneEntityPosition 缺少 entityId",
+            ))
+        elif sid and kind in ("npc", "hotspot"):
+            known = {x[0] for x in model.entity_ids_for_scene(sid, kind)}
+            if known and eid not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"setSceneEntityPosition {kind} id {eid!r} 不在场景 {sid!r} 中",
+                ))
+        for key in ("x", "y"):
+            rv = p.get(key)
+            try:
+                fv = float(rv)
+            except (TypeError, ValueError):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setSceneEntityPosition 的 {key} 须为数值",
+                ))
+                continue
+            if not math.isfinite(fv):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setSceneEntityPosition 的 {key} 须为有限数",
+                ))
+
     if t in ("hideOverlayImage", "showOverlayImage", "blendOverlayImage"):
         oid = str(p.get("id") or "").strip()
         if oid and overlay_keys and oid not in overlay_keys:
@@ -1474,6 +1521,8 @@ _CUTSCENE_ACTION_WHITELIST = frozenset([
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
     "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
     "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "setSceneEntityPosition",
+    "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
 ])

@@ -30,6 +30,7 @@ import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
+import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
 
 export interface ActionRegistryDeps {
   /** playScriptedDialogue speaker 中的 {{player}} / {{npc}} 等占位解析；scriptedNpcId 为 params.scriptedNpcId */
@@ -583,6 +584,27 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       });
   }, ['sceneId', 'hotspotId', 'enabled']);
 
+  /**
+   * 将场景内 NPC 或 Hotspot 的 **存档** x/y 写入 sceneMemory，并在当前已加载该场景时立即应用。
+   * 与 persistNpcAt 不同：按 sceneId + entityKind + entityId 寻址，支持热点与任意场景。
+   */
+  executor.register('setSceneEntityPosition', async (p) => {
+    const sceneId = String(p.sceneId ?? '').trim();
+    const rawKind = String(p.entityKind ?? '').trim().toLowerCase();
+    const entityKind: SceneEntityKind = rawKind === 'hotspot' ? 'hotspot' : 'npc';
+    const entityId = String(p.entityId ?? '').trim();
+    const x = typeof p.x === 'number' ? p.x : Number(p.x);
+    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    if (!sceneId || !entityId || !Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('setSceneEntityPosition: 需要 sceneId、entityId 与有限数值 x/y');
+      return;
+    }
+    const rx = Math.round(x * 100) / 100;
+    const ry = Math.round(y * 100) / 100;
+    await d.setSceneEntityField(sceneId, entityKind, entityId, 'x', rx);
+    await d.setSceneEntityField(sceneId, entityKind, entityId, 'y', ry);
+  }, ['sceneId', 'entityKind', 'entityId', 'x', 'y']);
+
   /** 写入场景记忆并立即移动 NPC */
   executor.register('persistNpcAt', (p) => {
     const target = String(p.target ?? '').trim();
@@ -793,6 +815,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const scriptedNpcId = String(p.scriptedNpcId ?? '').trim();
     const narrKey = d.stringsProvider.get('dialogue', 'narratorLabel');
     const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
+    const narratorBaselineResolved = d.resolveDisplayText(narratorFallback);
     const lines: DialogueLine[] = [];
     for (const item of raw) {
       if (!item || typeof item !== 'object') continue;
@@ -801,9 +824,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       const speakerResolved = speakerRaw ? d.resolveScriptedSpeaker(speakerRaw, scriptedNpcId) : '';
       const text = String(o.text ?? '').trim();
       if (!text) continue;
+      const speakerResolvedDisplay = d.resolveDisplayText(speakerResolved || narratorFallback);
+      const textResolvedDisplay = d.resolveDisplayText(text);
+      const { speaker: lineSpeaker, text: lineText } = applyDialogueColonSpeakerFromResolvedText(
+        speakerResolvedDisplay,
+        textResolvedDisplay,
+        narratorBaselineResolved,
+      );
       lines.push({
-        speaker: d.resolveDisplayText(speakerResolved || narratorFallback),
-        text: d.resolveDisplayText(text),
+        speaker: lineSpeaker,
+        text: lineText,
         tags: [],
       });
     }

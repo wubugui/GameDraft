@@ -95,12 +95,35 @@
       ],
       "zoneKind": "depth_floor",
       "floorOffsetBoost": 0.6
+    },
+    {
+      "id": "new_zone_1",
+      "polygon": [
+        {
+          "x": 3.0,
+          "y": 669.8
+        },
+        {
+          "x": 493.1,
+          "y": 461.7
+        },
+        {
+          "x": 593.3,
+          "y": 510.1
+        },
+        {
+          "x": -0.0,
+          "y": 946.0
+        }
+      ],
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": 0.1
     }
   ],
   "spawnPoints": {
     "从山路": {
-      "x": 109.9,
-      "y": 749.1
+      "x": 136.6,
+      "y": 724.5
     }
   },
   "hotspots": [

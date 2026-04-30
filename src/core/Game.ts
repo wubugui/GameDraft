@@ -419,6 +419,9 @@ export class Game {
     this.rulesPanelUI.setResolveDisplay(fn);
     this.inventoryUI.setResolveDisplay(fn);
     this.cutsceneRenderer.setResolveDisplay(fn);
+    const narrKey = this.stringsProvider.get('dialogue', 'narratorLabel');
+    const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
+    this.cutsceneManager.setColonSpeakerNarratorBaselineResolved(this.resolveDisplayText(narratorFallback));
     this.cutsceneManager.setDisplayTextResolver(fn);
     this.hud.setResolveDisplay(fn);
     this.ruleUseUI.setResolveDisplay(fn);

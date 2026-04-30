@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, Sprite, Assets, Texture, type Mesh } from 'pixi.js';
+import { Container, Graphics, Text, HTMLText, Sprite, Assets, Texture, type Mesh } from 'pixi.js';
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
 import { resolveAssetPath } from '../core/assetPath';
@@ -17,6 +17,15 @@ export interface ShowSubtitleMovieSlot {
 }
 
 export type ShowSubtitleLayout = SubtitlePosition | ShowSubtitleMovieSlot;
+
+/** 解引用后切成「说话人 + 分隔符 + 正文」，用于字幕同行异色（与纯字符串二选一） */
+export type ShowSubtitleStyledParts = {
+  speaker: string;
+  separator: ':' | '：';
+  body: string;
+};
+
+export type ShowSubtitleContent = string | ShowSubtitleStyledParts;
 
 function isShowSubtitleMovieSlot(layout: ShowSubtitleLayout): layout is ShowSubtitleMovieSlot {
   return typeof layout === 'object' && layout !== null
@@ -74,11 +83,57 @@ export class CutsceneRenderer {
     return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
+  private escapeSubtitleHtml(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  private subtitleStyledHtml(parts: ShowSubtitleStyledParts): string {
+    const head = this.escapeSubtitleHtml(parts.speaker + parts.separator);
+    const tail = this.escapeSubtitleHtml(parts.body);
+    return `<span style="color:#ffcc88">${head}</span>${tail}`;
+  }
+
+  private makeSubtitleNode(
+    content: ShowSubtitleContent,
+    wrapW: number,
+    pixiAlign: 'left' | 'center' | 'right',
+  ): Text | HTMLText {
+    const ww = Math.max(80, wrapW);
+    if (typeof content === 'string') {
+      return new Text({
+        text: content,
+        style: {
+          fontSize: 18,
+          fill: 0xffffff,
+          fontFamily: 'sans-serif',
+          wordWrap: true,
+          wordWrapWidth: ww,
+          align: pixiAlign,
+        },
+      });
+    }
+    return new HTMLText({
+      text: this.subtitleStyledHtml(content),
+      style: {
+        fontSize: 18,
+        fill: '#ffffff',
+        fontFamily: 'sans-serif',
+        wordWrap: true,
+        wordWrapWidth: ww,
+        align: pixiAlign,
+      },
+    });
+  }
+
   /**
    * 按「解析后」文案的 local 包围盒定位：几何中心落在 (screenX, screenY)。
    * 不可依赖 anchor=0.5 + 整块 wordWrap 宽，否则短行视觉中心会偏。
    */
-  private placeSubtitleTextCenterAt(t: Text, screenX: number, screenY: number): void {
+  private placeSubtitleTextCenterAt(t: Text | HTMLText, screenX: number, screenY: number): void {
     t.anchor.set(0);
     const lb = t.getLocalBounds();
     const cx = lb.x + lb.width * 0.5;
@@ -87,7 +142,7 @@ export class CutsceneRenderer {
   }
 
   /** 包围盒左缘对齐到 leftX，垂直方向几何中心对齐 screenY */
-  private placeSubtitleTextLeftAt(t: Text, leftX: number, screenY: number): void {
+  private placeSubtitleTextLeftAt(t: Text | HTMLText, leftX: number, screenY: number): void {
     t.anchor.set(0);
     const lb = t.getLocalBounds();
     const cy = lb.y + lb.height * 0.5;
@@ -95,7 +150,7 @@ export class CutsceneRenderer {
   }
 
   /** 包围盒右缘对齐到 rightX，垂直方向几何中心对齐 screenY */
-  private placeSubtitleTextRightAt(t: Text, rightX: number, screenY: number): void {
+  private placeSubtitleTextRightAt(t: Text | HTMLText, rightX: number, screenY: number): void {
     t.anchor.set(0);
     const lb = t.getLocalBounds();
     const cy = lb.y + lb.height * 0.5;
@@ -130,6 +185,23 @@ export class CutsceneRenderer {
   fadeFromBlack(duration: number): Promise<void> {
     const overlay = this.ensureFadeOverlay();
     return this.animateAlpha(overlay, overlay.alpha, 0, duration);
+  }
+
+  /**
+   * 过场正常结束、即将 cleanup 前：若全屏或「仅遮世界」的渐黑仍不透明，则先淡出到 0。
+   * 若编排里未再插 present:fadeIn，可避免黑场被 cleanup 瞬间拆掉造成的「硬切」。
+   * Esc 跳过时不应调用（由 CutsceneManager 判断）。
+   */
+  settleFadeOverlaysBeforeCleanup(durationMs: number): Promise<void> {
+    const d = Math.max(1, durationMs);
+    const tasks: Promise<void>[] = [];
+    if (this.fadeOverlay && this.fadeOverlay.alpha > 0.01) {
+      tasks.push(this.fadeFromBlack(d));
+    }
+    if (this.worldFadeOverlay && this.worldFadeOverlay.alpha > 0.01) {
+      tasks.push(this.fadeWorldFromBlack(d));
+    }
+    return tasks.length > 0 ? Promise.all(tasks).then(() => undefined) : Promise.resolve();
   }
 
   private ensureWorldFadeOverlay(): Graphics {
@@ -587,8 +659,10 @@ export class CutsceneRenderer {
     this.movieBarContainer = null;
   }
 
-  /** 显示字幕：text 须为已解析的展示串（由 CutsceneManager 调用 Game.resolveDisplayText）。 */
-  showSubtitle(text: string, layout: ShowSubtitleLayout = 'bottom'): Container {
+  /**
+   * 显示字幕：已解析的整串，或说话人/正文对象（同行；布局与纯 string 一致，仅说话人段变色）。
+   */
+  showSubtitle(content: ShowSubtitleContent, layout: ShowSubtitleLayout = 'bottom'): Container {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
     const container = new Container();
@@ -611,17 +685,7 @@ export class CutsceneRenderer {
         : 'center';
       const wrapW = sw - margin * 2;
       const pixiAlign = align === 'left' ? 'left' : align === 'right' ? 'right' : 'center';
-      const t = new Text({
-        text,
-        style: {
-          fontSize: 18,
-          fill: 0xffffff,
-          fontFamily: 'sans-serif',
-          wordWrap: true,
-          wordWrapWidth: Math.max(80, wrapW),
-          align: pixiAlign,
-        },
-      });
+      const t = this.makeSubtitleNode(content, wrapW, pixiAlign);
       if (align === 'left') {
         this.placeSubtitleTextLeftAt(t, margin, y);
       } else if (align === 'right') {
@@ -635,17 +699,7 @@ export class CutsceneRenderer {
     }
 
     const position = layout;
-    const t = new Text({
-      text,
-      style: {
-        fontSize: 18,
-        fill: 0xffffff,
-        fontFamily: 'sans-serif',
-        wordWrap: true,
-        wordWrapWidth: sw - 80,
-        align: 'center',
-      },
-    });
+    const t = this.makeSubtitleNode(content, sw - 80, 'center');
     let y: number;
     if (position === 'top') {
       y = 60;

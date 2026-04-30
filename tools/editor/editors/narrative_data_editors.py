@@ -489,6 +489,7 @@ class ScenariosCatalogEditor(QWidget):
         root.addLayout(row)
 
         self._scenarios_data: list[dict] = []
+        self._scenarios_reload_deferred: bool = False
         self._model.data_changed.connect(self._on_project_data_changed)
         self.reload_from_model()
 
@@ -507,6 +508,13 @@ class ScenariosCatalogEditor(QWidget):
             return
         if self._loading_ui:
             return
+        if not self.isVisible():
+            self._scenarios_reload_deferred = True
+            return
+        self._scenarios_reload_deferred = False
+        self._reload_scenarios_keep_selection()
+
+    def _reload_scenarios_keep_selection(self) -> None:
         cur_sid = ""
         row = self._sc_list.currentRow()
         if 0 <= row < len(self._scenarios_data):
@@ -514,6 +522,12 @@ class ScenariosCatalogEditor(QWidget):
         self.reload_from_model()
         if cur_sid:
             self.select_scenario_by_id(cur_sid)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._scenarios_reload_deferred and not self._loading_ui:
+            self._scenarios_reload_deferred = False
+            self._reload_scenarios_keep_selection()
 
     def _on_linked_graph_double_clicked(self, item: QListWidgetItem) -> None:
         gid = (item.data(Qt.ItemDataRole.UserRole) or item.text() or "").strip()

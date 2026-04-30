@@ -536,6 +536,29 @@
       ],
       "zoneKind": "depth_floor",
       "floorOffsetBoost": -0.2
+    },
+    {
+      "id": "new_zone_1",
+      "polygon": [
+        {
+          "x": 1823.4,
+          "y": 609.1
+        },
+        {
+          "x": 2674.8,
+          "y": 156.7
+        },
+        {
+          "x": 2955.0,
+          "y": 207.4
+        },
+        {
+          "x": 2009.1,
+          "y": 745.1
+        }
+      ],
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": -0.2
     }
   ],
   "spawnPoints": {

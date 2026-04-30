@@ -802,6 +802,8 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'setEntityEnabled',
   'persistNpcEntityEnabled',
   'persistHotspotEnabled',
+  'setSceneEntityPosition',
+  'setHotspotDisplayImage',
   'tempSetHotspotDisplayFacing',
   'playSfx',
   'playBgm',

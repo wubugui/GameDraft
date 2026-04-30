@@ -419,7 +419,7 @@ export class GraphDialogueManager implements IGameSystem {
       const bc = built[index];
       if (!bc?.enabled) return;
 
-      this.eventBus.emit('dialogue:choiceSelected:log', { index, text: opt.text });
+      this.eventBus.emit('dialogue:choiceSelected:log', { index, text: bc.text });
       this.choicePhase = null;
       this.currentNodeId = opt.next;
       this.pushNarrativeRouteStep(this.currentNodeId);

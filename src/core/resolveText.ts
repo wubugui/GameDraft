@@ -58,6 +58,59 @@ function normalizeEmbeddedTagsSyntax(s: string): string {
   return s.replace(/［/g, '[').replace(/］/g, ']');
 }
 
+/** 解引用完成后的「说话人：正文」里，第一个分隔符的字面量类型（仅 `:` / `：`）。 */
+export type SpeakerColonSeparator = ':' | '：';
+
+export interface SplitSpeakerBodyResult {
+  speaker: string;
+  /** 第一个冒号之后的全文；其中可含更多 `:` / `：`，不再切分 */
+  body: string;
+  /** 原串中命中的第一个分隔符，便于拼回时保持风格 */
+  separator: SpeakerColonSeparator;
+}
+
+/**
+ * 在 **已完整解引用** 的展示串上，从左到右找 **第一个** ASCII `:` 或全角 `：` 并切一刀：
+ * 前半为说话人、后半为正文；正文内其余冒号全部保留。
+ *
+ * 两半经 trim 后若任一侧为空，返回 null（不把「以冒号开头/结尾」的串当成说话人格式）。
+ */
+export function splitSpeakerBodyAfterResolve(resolved: string): SplitSpeakerBodyResult | null {
+  if (!resolved) return null;
+  let sepAt = -1;
+  let separator: SpeakerColonSeparator = '：';
+  for (let i = 0; i < resolved.length; i++) {
+    const c = resolved[i];
+    if (c === ':' || c === '：') {
+      sepAt = i;
+      separator = c;
+      break;
+    }
+  }
+  if (sepAt < 0) return null;
+  const speaker = resolved.slice(0, sepAt).trim();
+  const body = resolved.slice(sepAt + 1).trim();
+  if (!speaker || !body) return null;
+  return { speaker, body, separator };
+}
+
+/**
+ * 剧本 playScriptedDialogue：合并「显式 speaker」与正文首冒号说话人。
+ * 仅当 resolvedExplicitSpeaker 与 narratorBaselineResolved 相同（JSON 未写 speaker、当前为旁白占位）时，
+ * 才对正文做首冒号切分并采用切出的说话人；否则保留显式 speaker，正文不切分。
+ */
+export function applyDialogueColonSpeakerFromResolvedText(
+  resolvedExplicitSpeaker: string,
+  textResolvedDisplay: string,
+  narratorBaselineResolved: string,
+): { speaker: string; text: string } {
+  const split = splitSpeakerBodyAfterResolve(textResolvedDisplay);
+  if (split && resolvedExplicitSpeaker === narratorBaselineResolved) {
+    return { speaker: split.speaker, text: split.body };
+  }
+  return { speaker: resolvedExplicitSpeaker, text: textResolvedDisplay };
+}
+
 /**
  * 统一解析玩家可见字符串中的项目级引用（just-in-time）。
  * 多轮替换直至无变化或达到 MAX_RESOLVE_DEPTH。

@@ -8,6 +8,7 @@ import type { Camera } from '../rendering/Camera';
 import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
 import { CUTSCENE_ACTION_WHITELIST } from '../data/types';
 import { Npc } from '../entities/Npc';
+import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
 
@@ -71,6 +72,11 @@ export class CutsceneManager implements IGameSystem {
   private cameraAccessor: Camera | null = null;
   private spawnPointResolver: ((spawnKey: string) => { x: number; y: number } | null) | null = null;
   private scriptedSpeakerResolver: ScriptedSpeakerResolver | null = null;
+  /**
+   * 与 playScriptedDialogue 一致：解引用后的 narratorLabel 展示串。
+   * 仅当 present.showDialogue 的显式 speaker（解引用后）与此串相等时，才允许从正文首冒号剥皮。
+   */
+  private colonSpeakerNarratorBaselineResolved: string | null = null;
   /** 与 Game.resolveDisplayText 同源；过场字幕在此解析后再交给 CutsceneRenderer（避免绕开统一解析链）。 */
   private displayTextResolver: ((s: string) => string) | null = null;
 
@@ -157,6 +163,11 @@ export class CutsceneManager implements IGameSystem {
   /** present 字幕等：走与 UI 相同的 [tag:…] / resolveText */
   setDisplayTextResolver(fn: ((s: string) => string) | null): void {
     this.displayTextResolver = fn;
+  }
+
+  /** 已由 Game.resolveDisplayText 处理的 narratorLabel，供过场对白与剧本台词规则对齐 */
+  setColonSpeakerNarratorBaselineResolved(s: string | null): void {
+    this.colonSpeakerNarratorBaselineResolved = s;
   }
 
   getCutsceneIds(): string[] {
@@ -326,11 +337,19 @@ export class CutsceneManager implements IGameSystem {
       console.warn(`CutsceneManager: startCutscene "${id}" failed`, e);
       throw e;
     } finally {
+      const wasSkipping = this.skipping;
       this.unsubPointer?.();
       this.unsubPointer = null;
       this.unsubKey?.();
       this.unsubKey = null;
       this.skipping = false;
+      try {
+        if (!this.destroyed && !wasSkipping) {
+          await this.cutsceneRenderer.settleFadeOverlaysBeforeCleanup(500);
+        }
+      } catch {
+        // 淡出失败时仍继续 cleanup，避免卡住过场结束
+      }
       this.cleanup();
       this.playing = false;
       this.playbackCutsceneId = null;
@@ -545,7 +564,8 @@ export class CutsceneManager implements IGameSystem {
         } else {
           speakerOut = undefined;
         }
-        await this.showDialogueText(step.text as string, speakerOut);
+        const merged = this.mergePresentShowDialogueLine(step.text as string, speakerOut);
+        await this.showDialogueText(merged.text, merged.speaker);
         break;
       }
       case 'showImg':
@@ -647,6 +667,31 @@ export class CutsceneManager implements IGameSystem {
     });
   }
 
+  private mergePresentShowDialogueLine(
+    rawText: string,
+    speakerOut: string | undefined,
+  ): { text: string; speaker?: string } {
+    const resolve = this.displayTextResolver ?? ((s: string) => s);
+    const textR = resolve(String(rawText ?? ''));
+    const split = splitSpeakerBodyAfterResolve(textR);
+    const rawSp =
+      speakerOut !== undefined && speakerOut !== null ? String(speakerOut).trim() : '';
+
+    if (!rawSp) {
+      if (split) {
+        return { speaker: split.speaker, text: split.body };
+      }
+      return { text: textR };
+    }
+
+    const speakerR = resolve(rawSp);
+    const baseline = this.colonSpeakerNarratorBaselineResolved;
+    if (split && baseline !== null && speakerR === baseline) {
+      return { speaker: split.speaker, text: split.body };
+    }
+    return { speaker: speakerR, text: textR };
+  }
+
   private async showDialogueText(text: string, speaker?: string): Promise<void> {
     const box = this.cutsceneRenderer.showDialogueBox(text, speaker);
     await new Promise<void>(resolve => {
@@ -721,8 +766,12 @@ export class CutsceneManager implements IGameSystem {
     subtitleEmote: ReturnType<CutsceneManager['parseSubtitleEmoteSpec']>,
   ): Promise<void> {
     const raw = String(text ?? '');
-    const display = this.displayTextResolver ? this.displayTextResolver(raw) : raw;
-    const container = this.cutsceneRenderer.showSubtitle(display, layout);
+    const resolved = this.displayTextResolver ? this.displayTextResolver(raw) : raw;
+    const split = splitSpeakerBodyAfterResolve(resolved);
+    const subtitleContent = split
+      ? { speaker: split.speaker, separator: split.separator, body: split.body }
+      : resolved;
+    const container = this.cutsceneRenderer.showSubtitle(subtitleContent, layout);
     let dismissSubtitleEmote: (() => void) | null = null;
     if (subtitleEmote && this.emoteBubbleProvider) {
       const anchor = this.emoteTargetResolver?.(subtitleEmote.target) ?? null;

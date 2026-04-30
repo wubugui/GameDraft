@@ -9,6 +9,8 @@ from __future__ import annotations
 import copy
 import json
 import math
+import time
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 from PySide6.QtWidgets import (
@@ -2045,6 +2047,101 @@ class CutsceneCameraPointPickerDialog(QDialog):
         return self._px, self._py
 
 
+def scene_entity_xy_for_action(
+    model: ProjectModel | None,
+    scene_id: str,
+    kind: str,
+    entity_id: str,
+) -> tuple[float, float]:
+    """场景 JSON 中 NPC/Hotspot 的锚点 x,y（世界单位）；用于 Action 表单默认坐标。"""
+    if not model or not scene_id or not entity_id:
+        return 0.0, 0.0
+    sc = model.scenes.get(scene_id) or {}
+    if (kind or "").strip().lower() == "hotspot":
+        for h in sc.get("hotspots") or []:
+            if isinstance(h, dict) and str(h.get("id", "")).strip() == entity_id:
+                try:
+                    return float(h.get("x", 0) or 0), float(h.get("y", 0) or 0)
+                except (TypeError, ValueError):
+                    return 0.0, 0.0
+    else:
+        for n in sc.get("npcs") or []:
+            if isinstance(n, dict) and str(n.get("id", "")).strip() == entity_id:
+                try:
+                    return float(n.get("x", 0) or 0), float(n.get("y", 0) or 0)
+                except (TypeError, ValueError):
+                    return 0.0, 0.0
+    return 0.0, 0.0
+
+
+class SceneEntityPositionPickerDialog(QDialog):
+    """过场 setSceneEntityPosition：在绑定场景背景上点击得到世界坐标（与 cameraMove 同源）。"""
+
+    def __init__(
+        self,
+        model: ProjectModel,
+        scene_id: str,
+        entity_kind: str,
+        entity_id: str,
+        initial_x: float,
+        initial_y: float,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._scene_id = scene_id
+        k = (entity_kind or "npc").strip().lower()
+        ek = "hotspot" if k == "hotspot" else "npc"
+        sc0 = model.scenes.get(scene_id, {})
+        title_nm = sc0.get("name", scene_id)
+        self.setWindowTitle(f"实体位置 — {scene_id}（{title_nm}） / {ek} · {entity_id}")
+        self.resize(960, 560)
+
+        self._px = round(float(initial_x), 2)
+        self._py = round(float(initial_y), 2)
+
+        root = QVBoxLayout(self)
+        hint = QLabel(
+            "左键在地图上点击选取该实体的目标世界坐标；中键拖动画布，滚轮缩放。"
+            "确定后写入 Action 的 x/y（不在此对话框内改写场景 JSON）。",
+        )
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        self._coord_lbl = QLabel()
+        self._coord_lbl.setStyleSheet("font-family: Consolas; font-size: 12px;")
+        root.addWidget(self._coord_lbl)
+
+        self._view = _WorldPointPickView(self)
+        self._view.picked.connect(self._on_picked)
+        main = QHBoxLayout()
+        main.addWidget(self._view, 1)
+        root.addLayout(main, 1)
+
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        )
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+        root.addWidget(bbox)
+
+        self._view.setup_from_scene_json(model, scene_id)
+        self._view.set_marker_world(self._px, self._py)
+        self._sync_lbl()
+        QTimer.singleShot(0, self._view.fit_scene)
+
+    def _sync_lbl(self) -> None:
+        self._coord_lbl.setText(f"x = {self._px:.2f}   y = {self._py:.2f}  （世界单位）")
+
+    def _on_picked(self, x: float, y: float) -> None:
+        self._px = float(x)
+        self._py = float(y)
+        self._sync_lbl()
+
+    def picked_xy(self) -> tuple[float, float]:
+        return self._px, self._py
+
+
 # ---------------------------------------------------------------------------
 # Property panel
 # ---------------------------------------------------------------------------
@@ -2550,15 +2647,35 @@ class ScenePropertyPanel(QScrollArea):
 
     def flush_pending_to_model(self) -> None:
         """Apply whatever the property widgets last referred to into model dicts."""
+        t0 = time.perf_counter()
+        last = t0
+
+        def _stamp(msg: str) -> None:
+            nonlocal last
+            wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            now = time.perf_counter()
+            print(
+                f"[SaveAll {wall}] ScenePropertyPanel {msg}  "
+                f"Δ{now - last:.3f}s  Σ{now - t0:.3f}s",
+                flush=True,
+            )
+            last = now
+
+        stack_name = type(self._stack.currentWidget()).__name__
         self.save_scene_props()
+        _stamp(f"save_scene_props（属性栈顶={stack_name}）")
         if self._pending_hotspot is not None:
             self._write_hotspot_widgets_to_dict(self._pending_hotspot)
+            _stamp("_write_hotspot_widgets_to_dict")
         if self._pending_npc is not None:
             self._write_npc_widgets_to_dict(self._pending_npc)
+            _stamp("_write_npc_widgets_to_dict")
         if self._pending_zone is not None:
             self._write_zone_widgets_to_dict(self._pending_zone)
+            _stamp("_write_zone_widgets_to_dict")
         if self._spawn_flush_scene is not None and self._spawn_scene is not None:
             self._write_spawn_widgets_to_dict(self._spawn_scene)
+            _stamp("_write_spawn_widgets_to_dict")
 
     # ---- hotspot props ----------------------------------------------------
 

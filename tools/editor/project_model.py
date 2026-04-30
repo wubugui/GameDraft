@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -197,6 +199,20 @@ class ProjectModel(QObject):
     # ---- saving -----------------------------------------------------------
 
     def save_all(self) -> None:
+        t0 = time.perf_counter()
+        last = t0
+
+        def _stamp(label: str) -> None:
+            nonlocal last
+            wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            now = time.perf_counter()
+            print(
+                f"[SaveAll {wall}] model.save_all {label}  Δ{now - last:.3f}s  Σ{now - t0:.3f}s",
+                flush=True,
+            )
+            last = now
+
+        _stamp("开始")
         dp = self.data_path
         sp = self.scenes_path
         write_json(dp / "game_config.json", self.game_config)
@@ -214,15 +230,21 @@ class ProjectModel(QObject):
         write_json(dp / "archive" / "lore.json", self.archive_lore)
         write_json(dp / "archive" / "books.json", self.archive_books)
         write_json(dp / "archive" / "documents.json", self.archive_documents)
+        _stamp("已写入 data 下聚合 JSON（不含场景）")
+        n_scenes = 0
         for sid, data in self.scenes.items():
             write_json(sp / f"{sid}.json", data)
+            n_scenes += 1
+        _stamp(f"已写入 {n_scenes} 个场景 JSON")
         from .flag_registry import flag_registry_path
         write_json(flag_registry_path(self.assets_path), self.flag_registry)
         write_json(dp / "overlay_images.json", self.overlay_images)
+        _stamp("已写入 flag_registry、overlay_images")
         from .scenarios_catalog_validate import validate_scenarios_catalog_for_save
         from .shared.ref_validator import validate_refs_for_save
 
         ref_err = validate_refs_for_save(self)
+        _stamp("validate_refs_for_save 完成")
         if ref_err:
             raise ValueError(ref_err)
 
@@ -231,10 +253,12 @@ class ProjectModel(QObject):
             flag_registry=self.flag_registry,
             model=self,
         )
+        _stamp("validate_scenarios_catalog_for_save 完成")
         if sc_err:
             raise ValueError(sc_err)
         write_json(dp / "scenarios.json", self.scenarios_catalog)
         write_json(dp / "document_reveals.json", self.document_reveals)
+        _stamp("已写入 scenarios.json、document_reveals.json")
         filters_dir = dp / "filters"
         filters_dir.mkdir(parents=True, exist_ok=True)
         keep = set(self.filter_defs.keys())
@@ -244,8 +268,10 @@ class ProjectModel(QObject):
                     p.unlink()
         for stem, data in self.filter_defs.items():
             write_json(filters_dir / f"{stem}.json", data)
+        _stamp("filters 同步完成")
         self._dirty.clear()
         self.dirty_changed.emit(False)
+        _stamp("结束（清 dirty）")
 
     def mark_dirty(self, data_type: str, item_id: str = "") -> None:
         was_dirty = self.is_dirty

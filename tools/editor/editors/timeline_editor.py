@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
     QDialog, QGroupBox, QToolButton, QSizePolicy, QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QEvent, QObject
+from PySide6.QtCore import Qt, Signal, QEvent, QObject, QSignalBlocker, QTimer
 from PySide6.QtGui import QAction, QFont, QMouseEvent
 
 from ..project_model import ProjectModel
@@ -41,6 +41,8 @@ CUTSCENE_ACTION_WHITELIST = [
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
     "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
     "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "setSceneEntityPosition",
+    "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
 ]
@@ -1453,6 +1455,13 @@ class TimelineEditor(QWidget):
         self._loading_ui = False
         self._step_outlines: list[StepOutlineFrame] = []
         self._theme_id: str = app_theme.current_theme_id()
+        self._pending_scene_refresh_need_propagate: bool = False
+        self._scene_model_refresh_pending_while_hidden: bool = False
+        self._scene_data_changed_debounce = QTimer(self)
+        self._scene_data_changed_debounce.setSingleShot(True)
+        self._scene_data_changed_debounce.timeout.connect(
+            self._run_debounced_scene_model_refresh,
+        )
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1634,14 +1643,42 @@ class TimelineEditor(QWidget):
             ol.refresh_header()
             self._zebra_descendant_tracks(ol._step)
 
-    def _on_model_data_changed(self, data_type: str, _item_id: str) -> None:
+    def _on_model_data_changed(self, data_type: str, item_id: str) -> None:
         if data_type != "scene":
             return
         if self._loading_ui:
             return
         if self._current_idx < 0:
             return
-        self._refresh_target_scene_combo_items(self._target_scene.current_id().strip())
+        tid = self._target_scene.current_id().strip()
+        changed_sid = (item_id or "").strip()
+        # 仅当变更的是本过场 targetScene（或未携带具体场景 id）时，才刷新各 Action 绑定的 NPC 等上下文；
+        # 否则保存其它场景时也会 walk 整棵步骤树，过场复杂时极慢。
+        propagate = (not changed_sid) or (changed_sid == tid)
+        self._pending_scene_refresh_need_propagate |= propagate
+        # Save All 等会在同一调用栈里连续 mark_dirty 多次；合并为一次刷新，避免 O(步骤数)×N。
+        self._scene_data_changed_debounce.start(0)
+
+    def _run_debounced_scene_model_refresh(self) -> None:
+        if self._loading_ui or self._current_idx < 0:
+            self._pending_scene_refresh_need_propagate = False
+            self._scene_model_refresh_pending_while_hidden = False
+            return
+        if not self.isVisible():
+            # 避免在其它 Tab（如场景）Apply 时对本页整棵步骤树做 NPC/Action 上下文传播。
+            self._scene_model_refresh_pending_while_hidden = True
+            return
+        self._scene_model_refresh_pending_while_hidden = False
+        tid = self._target_scene.current_id().strip()
+        need = self._pending_scene_refresh_need_propagate
+        self._pending_scene_refresh_need_propagate = False
+        self._refresh_target_scene_combo_items(tid, propagate_context=need)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._scene_model_refresh_pending_while_hidden:
+            self._scene_model_refresh_pending_while_hidden = False
+            QTimer.singleShot(0, self._run_debounced_scene_model_refresh)
 
     def mark_pending_changes(self, *args) -> None:
         if self._loading_ui:
@@ -1662,9 +1699,15 @@ class TimelineEditor(QWidget):
             rows.append((o, f"{o} · 未在项目场景表中"))
         return rows
 
-    def _refresh_target_scene_combo_items(self, committed: str) -> None:
-        self._target_scene.set_items(self._scene_dropdown_rows(committed))
-        self._target_scene.set_current((committed or "").strip())
+    def _refresh_target_scene_combo_items(
+        self, committed: str, *, propagate_context: bool = True,
+    ) -> None:
+        committed = (committed or "").strip()
+        with QSignalBlocker(self._target_scene):
+            self._target_scene.set_items(self._scene_dropdown_rows(committed))
+            self._target_scene.set_current(committed)
+        if propagate_context:
+            self._propagate_cutscene_scene_to_action_rows()
 
     def has_pending_changes(self) -> bool:
         return self._pending_changes

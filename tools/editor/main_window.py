@@ -6,6 +6,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -561,14 +563,45 @@ class MainWindow(QMainWindow):
     def _save_all(self) -> None:
         if self._model.project_path is None:
             return
+        t0 = time.perf_counter()
+        last = t0
+
+        def _stamp(msg: str) -> None:
+            nonlocal last
+            wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            now = time.perf_counter()
+            print(
+                f"[SaveAll {wall}] {msg}  Δ{now - last:.3f}s  Σ{now - t0:.3f}s",
+                flush=True,
+            )
+            last = now
+
         try:
+            _stamp("开始")
             for inst in self._editor_instances:
                 flush = getattr(inst, "flush_to_model", None)
                 if callable(flush):
+                    name = type(inst).__name__
+                    t_flush = time.perf_counter()
                     flush()
+                    wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    now = time.perf_counter()
+                    print(
+                        f"[SaveAll {wall}] flush {name}  Δ{now - t_flush:.3f}s  Σ{now - t0:.3f}s",
+                        flush=True,
+                    )
+                    last = now
+            _stamp("全部 flush 完成，调用 model.save_all")
             self._model.save_all()
+            _stamp("model.save_all 完成")
             self._status.showMessage("Saved.", 3000)
         except Exception as e:
+            wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            now = time.perf_counter()
+            print(
+                f"[SaveAll {wall}] 失败（异常） Σ{now - t0:.3f}s: {e!r}",
+                flush=True,
+            )
             QMessageBox.critical(self, "Save Error", str(e))
 
     def _on_dirty(self, dirty: bool) -> None:

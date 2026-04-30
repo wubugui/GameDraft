@@ -129,6 +129,7 @@ class FilterEditor(QWidget):
         split.setSizes([220, 560])
         root.addWidget(split)
 
+        self._filter_model_changed_deferred: bool = False
         self._model.data_changed.connect(self._on_model_data_changed)
         self._refresh_list()
         self._update_path_label()
@@ -147,6 +148,14 @@ class FilterEditor(QWidget):
     def _on_model_data_changed(self, data_type: str, _item_id: str) -> None:
         if data_type != "filter":
             return
+        self._filter_model_changed_deferred = True
+        if self.isVisible():
+            self._flush_filter_model_changed()
+
+    def _flush_filter_model_changed(self) -> None:
+        if not self._filter_model_changed_deferred:
+            return
+        self._filter_model_changed_deferred = False
         prev = self._current_stem
         self._refresh_list()
         if prev and prev in self._model.filter_defs:
@@ -161,6 +170,10 @@ class FilterEditor(QWidget):
             self._current_stem = None
             self._lbl_stem.setText("-")
             self._matrix_edit.clear()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._flush_filter_model_changed()
 
     def _launch_filter_tool(self) -> None:
         if self._model.project_path is None:
