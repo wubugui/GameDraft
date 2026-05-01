@@ -59,6 +59,25 @@ _ZONE_PICK_FROZEN_FILL = QColor(150, 150, 150, 88)
 _ZONE_PICK_FROZEN_PEN = QColor(95, 95, 95, 220)
 
 
+def _entity_cutscene_ids_from_data(ent: dict) -> list[str]:
+    out: list[str] = []
+    raw = ent.get("cutsceneIds")
+    if isinstance(raw, list):
+        for cid in raw:
+            s = str(cid or "").strip()
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
+def _entity_has_cutscene_binding(ent: dict) -> bool:
+    return len(_entity_cutscene_ids_from_data(ent)) > 0
+
+
+def _entity_is_cutscene_only(ent: dict) -> bool:
+    return _entity_has_cutscene_binding(ent) and ent.get("cutsceneOnly", True) is not False
+
+
 def _hotspot_collision_world_to_local(hs: dict, world_poly: list) -> list[dict[str, float]]:
     x0 = float(hs.get("x", 0))
     y0 = float(hs.get("y", 0))
@@ -2280,6 +2299,8 @@ class ScenePropertyPanel(QScrollArea):
         self._pending_hotspot: dict | None = None
         self._pending_npc: dict | None = None
         self._pending_zone: dict | None = None
+        self._hs_cutscene_ids_pending: list[str] = []
+        self._npc_cutscene_ids_pending: list[str] = []
         self._spawn_flush_scene: dict | None = None
         self._editing_scene_id: str = ""
         self._zn_poly_updating: bool = False
@@ -2629,21 +2650,65 @@ class ScenePropertyPanel(QScrollArea):
             del sc["ambientSounds"]
         self.changed.emit()
 
-    def _refill_entity_cutscene_combo(
-        self, combo: FilterableTypeCombo, current: str | None = None,
-    ) -> None:
-        rows_append: list[tuple[str, str]] = [("（未绑定）", "")]
-        cut_list = sorted({str(a).strip() for a, _ in self._model.all_cutscene_ids() if str(a).strip()})
-        cur = (current or "").strip()
-        if cur and cur not in cut_list:
-            rows_append.append((f"(数据中) {cur}", cur))
-        rows_append += [(c, c) for c in cut_list]
-        combo.blockSignals(True)
-        try:
-            combo.set_entries(rows_append)
-            combo.set_committed_type(cur if cur else "")
-        finally:
-            combo.blockSignals(False)
+    def _entity_cutscene_ids_from_data(self, ent: dict) -> list[str]:
+        return _entity_cutscene_ids_from_data(ent)
+
+    def _entity_has_cutscene_binding(self, ent: dict) -> bool:
+        return len(self._entity_cutscene_ids_from_data(ent)) > 0
+
+    def _entity_is_cutscene_only(self, ent: dict) -> bool:
+        return self._entity_has_cutscene_binding(ent) and ent.get("cutsceneOnly", True) is not False
+
+    def _format_cutscene_ids_label(self, ids: list[str]) -> str:
+        return "、".join(ids) if ids else "（未关联）"
+
+    def _pick_cutscene_ids(self, current: list[str]) -> list[str] | None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("选择关联过场")
+        dlg.resize(420, 520)
+        lay = QVBoxLayout(dlg)
+        hint = QLabel("可多选。这里写入 cutsceneIds，作为实体参与过场的唯一绑定来源。")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        lw = QListWidget(dlg)
+        lw.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        all_ids = sorted({str(a).strip() for a, _ in self._model.all_cutscene_ids() if str(a).strip()})
+        cur = {x for x in current if x}
+        for cid in all_ids:
+            it = QListWidgetItem(cid)
+            if cid in cur:
+                it.setSelected(True)
+            lw.addItem(it)
+        lay.addWidget(lw, 1)
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dlg,
+        )
+        bbox.accepted.connect(dlg.accept)
+        bbox.rejected.connect(dlg.reject)
+        lay.addWidget(bbox)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return [it.text() for it in lw.selectedItems()]
+
+    def _open_hs_cutscene_ids_picker(self) -> None:
+        picked = self._pick_cutscene_ids(self._hs_cutscene_ids_pending)
+        if picked is None:
+            return
+        self._hs_cutscene_ids_pending = picked
+        self._hs_cutscene_ids_label.setText(self._format_cutscene_ids_label(picked))
+        self._on_entity_cutscene_bindings_changed()
+
+    def _open_npc_cutscene_ids_picker(self) -> None:
+        picked = self._pick_cutscene_ids(self._npc_cutscene_ids_pending)
+        if picked is None:
+            return
+        self._npc_cutscene_ids_pending = picked
+        self._npc_cutscene_ids_label.setText(self._format_cutscene_ids_label(picked))
+        self._on_entity_cutscene_bindings_changed()
+
+    def _on_entity_cutscene_bindings_changed(self, _v: object = None) -> None:
+        self.changed.emit()
 
     def flush_pending_to_model(self) -> None:
         """Apply whatever the property widgets last referred to into model dicts."""
@@ -2701,13 +2766,23 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("interactionRange", self._hs_range)
         self._hs_range.valueChanged.connect(self._on_hotspot_interaction_range_live)
         self._hs_auto = QCheckBox(); form.addRow("autoTrigger", self._hs_auto)
-        self._hs_cutscene = FilterableTypeCombo([], self, select_only=True)
-        self._hs_cutscene.setToolTip(
-            "可选。填写后：该热点仅在其过场播放时显示；探索画布默认隐藏，须在左侧「过场编辑视图」中加载同名过场才可见。"
-            "运行时亦同（非该过场窗口内不可用）。清空为普通热点。"
+        self._hs_cutscene_only = QCheckBox("仅过场实体（普通场景不生成）")
+        self._hs_cutscene_only.setToolTip(
+            "默认开启：实体只在关联过场中从场景文件初始化，不读 committed sceneMemory。"
+            "关闭：普通场景也存在，进出关联过场时会从场景文件 + committed sceneMemory 重建。"
         )
-        self._hs_cutscene.typeCommitted.connect(lambda _v: self.changed.emit())
-        form.addRow("cutsceneId", self._hs_cutscene)
+        self._hs_cutscene_only.toggled.connect(self._on_entity_cutscene_bindings_changed)
+        form.addRow("cutsceneOnly", self._hs_cutscene_only)
+        hs_multi_row = QWidget()
+        hs_multi_l = QHBoxLayout(hs_multi_row)
+        hs_multi_l.setContentsMargins(0, 0, 0, 0)
+        self._hs_cutscene_ids_label = QLabel("（未关联）")
+        self._hs_cutscene_ids_label.setWordWrap(True)
+        self._hs_cutscene_ids_btn = QPushButton("选择多个…")
+        self._hs_cutscene_ids_btn.clicked.connect(self._open_hs_cutscene_ids_picker)
+        hs_multi_l.addWidget(self._hs_cutscene_ids_label, 1)
+        hs_multi_l.addWidget(self._hs_cutscene_ids_btn)
+        form.addRow("cutsceneIds", hs_multi_row)
         basic_g.add_body(basic_inner)
         lay.addWidget(basic_g)
 
@@ -3305,7 +3380,13 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_range.setValue(hs.get("interactionRange", 50))
         self._hs_range.blockSignals(False)
         self._hs_auto.setChecked(hs.get("autoTrigger", False))
-        self._refill_entity_cutscene_combo(self._hs_cutscene, str(hs.get("cutsceneId") or ""))
+        self._hs_cutscene_only.blockSignals(True)
+        self._hs_cutscene_only.setChecked(hs.get("cutsceneOnly", True) is not False)
+        self._hs_cutscene_only.blockSignals(False)
+        self._hs_cutscene_ids_pending = self._entity_cutscene_ids_from_data(hs)
+        self._hs_cutscene_ids_label.setText(
+            self._format_cutscene_ids_label(self._hs_cutscene_ids_pending),
+        )
         self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
         self._hs_cond.set_data(hs.get("conditions", []))
 
@@ -3613,11 +3694,19 @@ class ScenePropertyPanel(QScrollArea):
             hs["autoTrigger"] = True
         elif "autoTrigger" in hs:
             del hs["autoTrigger"]
-        csx = self._hs_cutscene.committed_type().strip()
-        if csx:
-            hs["cutsceneId"] = csx
+        hs_ids = [x for x in self._hs_cutscene_ids_pending if str(x).strip()]
+        if hs_ids:
+            hs["cutsceneIds"] = hs_ids
         else:
-            hs.pop("cutsceneId", None)
+            hs.pop("cutsceneIds", None)
+        hs.pop("cutsceneId", None)
+        if self._entity_has_cutscene_binding(hs):
+            if self._hs_cutscene_only.isChecked():
+                hs.pop("cutsceneOnly", None)
+            else:
+                hs["cutsceneOnly"] = False
+        else:
+            hs.pop("cutsceneOnly", None)
         conds = self._hs_cond.to_list()
         if conds:
             hs["conditions"] = conds
@@ -3736,13 +3825,23 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range = QDoubleSpinBox(); self._npc_range.setRange(0, 99999)
         form.addRow("interactionRange", self._npc_range)
         self._npc_range.valueChanged.connect(self._on_npc_interaction_range_live)
-        self._npc_cutscene = FilterableTypeCombo([], self, select_only=True)
-        self._npc_cutscene.setToolTip(
-            "可选。绑定后：该 NPC 仅在其过场播放时可用；画布默认隐藏，须在「过场编辑视图」中选同名过场后显示。"
-            "运行时亦同。"
+        self._npc_cutscene_only = QCheckBox("仅过场实体（普通场景不生成）")
+        self._npc_cutscene_only.setToolTip(
+            "默认开启：实体只在关联过场中从场景文件初始化，不读 committed sceneMemory。"
+            "关闭：普通场景也存在，进出关联过场时会从场景文件 + committed sceneMemory 重建。"
         )
-        self._npc_cutscene.typeCommitted.connect(lambda _v: self.changed.emit())
-        form.addRow("cutsceneId", self._npc_cutscene)
+        self._npc_cutscene_only.toggled.connect(self._on_entity_cutscene_bindings_changed)
+        form.addRow("cutsceneOnly", self._npc_cutscene_only)
+        npc_multi_row = QWidget()
+        npc_multi_l = QHBoxLayout(npc_multi_row)
+        npc_multi_l.setContentsMargins(0, 0, 0, 0)
+        self._npc_cutscene_ids_label = QLabel("（未关联）")
+        self._npc_cutscene_ids_label.setWordWrap(True)
+        self._npc_cutscene_ids_btn = QPushButton("选择多个…")
+        self._npc_cutscene_ids_btn.clicked.connect(self._open_npc_cutscene_ids_picker)
+        npc_multi_l.addWidget(self._npc_cutscene_ids_label, 1)
+        npc_multi_l.addWidget(self._npc_cutscene_ids_btn)
+        form.addRow("cutsceneIds", npc_multi_row)
         base_g.add_body(base_inner)
         outer.addWidget(base_g)
 
@@ -4256,7 +4355,13 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_range.blockSignals(True)
         self._npc_range.setValue(npc.get("interactionRange", 50))
         self._npc_range.blockSignals(False)
-        self._refill_entity_cutscene_combo(self._npc_cutscene, str(npc.get("cutsceneId") or ""))
+        self._npc_cutscene_only.blockSignals(True)
+        self._npc_cutscene_only.setChecked(npc.get("cutsceneOnly", True) is not False)
+        self._npc_cutscene_only.blockSignals(False)
+        self._npc_cutscene_ids_pending = self._entity_cutscene_ids_from_data(npc)
+        self._npc_cutscene_ids_label.setText(
+            self._format_cutscene_ids_label(self._npc_cutscene_ids_pending),
+        )
         self._npc_facing.blockSignals(True)
         try:
             cur_f = str(npc.get("initialFacing", "") or "").strip().lower()
@@ -4324,11 +4429,19 @@ class ScenePropertyPanel(QScrollArea):
         elif "dialogueCameraZoom" in npc:
             del npc["dialogueCameraZoom"]
         npc["interactionRange"] = self._npc_range.value()
-        ncx = self._npc_cutscene.committed_type().strip()
-        if ncx:
-            npc["cutsceneId"] = ncx
+        npc_ids = [x for x in self._npc_cutscene_ids_pending if str(x).strip()]
+        if npc_ids:
+            npc["cutsceneIds"] = npc_ids
         else:
-            npc.pop("cutsceneId", None)
+            npc.pop("cutsceneIds", None)
+        npc.pop("cutsceneId", None)
+        if self._entity_has_cutscene_binding(npc):
+            if self._npc_cutscene_only.isChecked():
+                npc.pop("cutsceneOnly", None)
+            else:
+                npc["cutsceneOnly"] = False
+        else:
+            npc.pop("cutsceneOnly", None)
         anim = self._npc_anim.current_id().strip()
         if anim:
             npc["animFile"] = anim
@@ -4855,8 +4968,8 @@ class SceneEditor(QWidget):
         self._scene_edit_cutscene_id = ""
         _ctx_lab = QLabel("过场编辑视图")
         _ctx_lab.setToolTip(
-            "不加载过场时画布隐藏所有绑定了 cutsceneId 的 NPC/Hotspot；选择某过场后仅显示绑定该 id 的实体。"
-            "未绑定的常规实体始终显示。"
+            "不加载过场时画布隐藏 cutsceneOnly 的 NPC/Hotspot；cutsceneOnly 关闭的共享实体与常规实体始终显示。"
+            "选择某过场后会额外显示绑定该 id 的仅过场实体。"
         )
         ll.addWidget(_ctx_lab)
         self._combo_cutscene_ctx = FilterableTypeCombo([], self, select_only=True)
@@ -4947,11 +5060,13 @@ class SceneEditor(QWidget):
             self._load_scene(self._current_scene_id, reset_view=False)
 
     def _entity_visible_for_cutscene_edit(self, ent: dict) -> bool:
-        c = str(ent.get("cutsceneId") or "").strip()
-        if not c:
+        bindings = _entity_cutscene_ids_from_data(ent)
+        if not bindings:
+            return True
+        if not _entity_is_cutscene_only(ent):
             return True
         ctx = getattr(self, "_scene_edit_cutscene_id", "").strip()
-        return bool(ctx) and c == ctx
+        return bool(ctx) and ctx in bindings
 
     def _clear_scene_npc_anim_layers(self) -> None:
         self._scene_npc_anim_timer.stop()

@@ -12,6 +12,30 @@ import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
 
+const CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST: ReadonlySet<string> = new Set([
+  'setFlag',
+  'appendFlag',
+  'setScenarioPhase',
+  'startScenario',
+  'giveItem',
+  'removeItem',
+  'giveCurrency',
+  'removeCurrency',
+  'giveRule',
+  'grantRuleLayer',
+  'giveFragment',
+  'updateQuest',
+  'startEncounter',
+  'endDay',
+  'addDelayedEvent',
+  'addArchiveEntry',
+  'openShop',
+  'pickup',
+  'shopPurchase',
+  'inventoryDiscard',
+  'revealDocument',
+]);
+
 export type ChangeSceneParams = {
   targetScene: string;
   targetSpawnPoint?: string;
@@ -23,6 +47,11 @@ export type SceneSwitcher = (params: ChangeSceneParams) => Promise<void>;
 
 /** 与 playScriptedDialogue 一致：解析 speaker 中的 {{player}} / {{npc}} 等 */
 export type ScriptedSpeakerResolver = (raw: string, scriptedNpcId?: string) => string;
+
+export interface CutsceneSceneSessionHooks {
+  begin: (cutsceneId: string, sceneId: string, position: { x: number; y: number }) => void | Promise<void>;
+  end: (position: { x: number; y: number }) => void | Promise<void>;
+}
 
 interface CutsceneSnapshot {
   sceneId: string;
@@ -79,6 +108,7 @@ export class CutsceneManager implements IGameSystem {
   private colonSpeakerNarratorBaselineResolved: string | null = null;
   /** 与 Game.resolveDisplayText 同源；过场字幕在此解析后再交给 CutsceneRenderer（避免绕开统一解析链）。 */
   private displayTextResolver: ((s: string) => string) | null = null;
+  private sceneSessionHooks: CutsceneSceneSessionHooks | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -168,6 +198,10 @@ export class CutsceneManager implements IGameSystem {
   /** 已由 Game.resolveDisplayText 处理的 narratorLabel，供过场对白与剧本台词规则对齐 */
   setColonSpeakerNarratorBaselineResolved(s: string | null): void {
     this.colonSpeakerNarratorBaselineResolved = s;
+  }
+
+  setCutsceneSceneSessionHooks(hooks: CutsceneSceneSessionHooks | null): void {
+    this.sceneSessionHooks = hooks;
   }
 
   getCutsceneIds(): string[] {
@@ -315,10 +349,19 @@ export class CutsceneManager implements IGameSystem {
       }
     }) ?? null;
 
+    let sceneSessionBegun = false;
     try {
+      this.captureSnapshot();
       const needsPositioning = !!def.targetScene || typeof def.targetX === 'number';
       if (needsPositioning) {
         await this.saveAndTransition(def);
+      }
+
+      const stagingSceneId = this.sceneIdGetter?.()?.trim() || '';
+      const stagingPos = this.playerPositionGetter?.() ?? { x: 0, y: 0 };
+      if (stagingSceneId && this.sceneSessionHooks) {
+        await this.sceneSessionHooks.begin(id, stagingSceneId, stagingPos);
+        sceneSessionBegun = true;
       }
 
       if (!('steps' in def) || !Array.isArray((def as NewCutsceneDef).steps)) {
@@ -329,10 +372,6 @@ export class CutsceneManager implements IGameSystem {
 
       if (this.destroyed) return;
 
-      if (needsPositioning && def.restoreState !== false) {
-        await this.restoreSnapshot();
-      }
-      this.snapshot = null;
     } catch (e) {
       console.warn(`CutsceneManager: startCutscene "${id}" failed`, e);
       throw e;
@@ -350,6 +389,22 @@ export class CutsceneManager implements IGameSystem {
       } catch {
         // 淡出失败时仍继续 cleanup，避免卡住过场结束
       }
+      if (sceneSessionBegun && this.sceneSessionHooks) {
+        const restorePos = this.snapshot
+          ? { x: this.snapshot.playerX, y: this.snapshot.playerY }
+          : (this.playerPositionGetter?.() ?? { x: 0, y: 0 });
+        try {
+          await this.sceneSessionHooks.end(restorePos);
+          if (!this.destroyed && def.restoreState !== false) {
+            await this.restoreSnapshot();
+          } else if (def.restoreState === false) {
+            console.warn(`CutsceneManager: cutscene "${id}" has restoreState=false; staging was discarded but scene/player snapshot restore was skipped`);
+          }
+        } catch (e) {
+          console.warn('CutsceneManager: restore cutscene scene session failed', e);
+        }
+      }
+      this.snapshot = null;
       this.cleanup();
       this.playing = false;
       this.playbackCutsceneId = null;
@@ -381,15 +436,6 @@ export class CutsceneManager implements IGameSystem {
 
   private async saveAndTransition(def: NewCutsceneDef): Promise<void> {
     const currentSceneId = this.sceneIdGetter?.() ?? '';
-    const pos = this.playerPositionGetter?.() ?? { x: 0, y: 0 };
-    this.snapshot = {
-      sceneId: currentSceneId,
-      playerX: pos.x,
-      playerY: pos.y,
-      cameraX: this.cameraAccessor?.getX() ?? 0,
-      cameraY: this.cameraAccessor?.getY() ?? 0,
-      cameraZoom: this.cameraAccessor?.getZoom() ?? 1,
-    };
 
     if (def.targetScene && def.targetScene !== currentSceneId && this.sceneSwitcher) {
       await this.sceneSwitcher({
@@ -408,6 +454,19 @@ export class CutsceneManager implements IGameSystem {
       this.playerPositionSetter?.(def.targetX, def.targetY);
       this.cameraAccessor?.snapTo(def.targetX, def.targetY);
     }
+  }
+
+  private captureSnapshot(): void {
+    const currentSceneId = this.sceneIdGetter?.() ?? '';
+    const pos = this.playerPositionGetter?.() ?? { x: 0, y: 0 };
+    this.snapshot = {
+      sceneId: currentSceneId,
+      playerX: pos.x,
+      playerY: pos.y,
+      cameraX: this.cameraAccessor?.getX() ?? 0,
+      cameraY: this.cameraAccessor?.getY() ?? 0,
+      cameraZoom: this.cameraAccessor?.getZoom() ?? 1,
+    };
   }
 
   private async restoreSnapshot(): Promise<void> {
@@ -495,6 +554,10 @@ export class CutsceneManager implements IGameSystem {
     this.emitPlaybackStep(path, step);
     switch (step.kind) {
       case 'action':
+        if (CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST.has(step.type)) {
+          console.warn(`CutsceneManager: Action type "${step.type}" modifies global save state and is ignored inside cutscenes`);
+          break;
+        }
         if (!CUTSCENE_ACTION_WHITELIST.has(step.type)) {
           console.warn(`CutsceneManager: Action type "${step.type}" is not in the Cutscene whitelist — skipped`);
           break;

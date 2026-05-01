@@ -21,6 +21,20 @@ class Issue:
     message: str
 
 
+def _entity_cutscene_bindings(ent: dict) -> list[str]:
+    out: list[str] = []
+    def add(raw: object) -> None:
+        cid = str(raw or "").strip()
+        if cid and cid not in out:
+            out.append(cid)
+    ids = ent.get("cutsceneIds")
+    if ids is not None and not isinstance(ids, list):
+        return out
+    for raw in ids or []:
+        add(raw)
+    return out
+
+
 def validate(model: ProjectModel) -> list[Issue]:
     issues: list[Issue] = []
     from .shared.ref_validator import validate_all_embedded_refs
@@ -83,14 +97,28 @@ def validate(model: ProjectModel) -> list[Issue]:
                             "error", "scene", sid,
                             f"Hotspot '{hid}' displayImage.spriteSort 须为 back 或 front",
                         ))
-            cs_b = hs.get("cutsceneId")
-            if cs_b is not None and str(cs_b).strip():
-                cid = str(cs_b).strip()
+            bindings = _entity_cutscene_bindings(hs)
+            if hs.get("cutsceneId") is not None:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Hotspot '{hid}' 已废弃 cutsceneId，请改用 cutsceneIds 数组",
+                ))
+            if hs.get("cutsceneIds") is not None and not isinstance(hs.get("cutsceneIds"), list):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Hotspot '{hid}' cutsceneIds 须为数组",
+                ))
+            for cid in bindings:
                 if cid not in cutscene_ids:
                     issues.append(Issue(
                         "warning", "scene", sid,
-                        f"Hotspot '{hid}' cutsceneId {cid!r} 不在过场 index 列表中",
+                        f"Hotspot '{hid}' cutsceneIds 包含 {cid!r}，不在过场 index 列表中",
                     ))
+            if "cutsceneOnly" in hs and not isinstance(hs.get("cutsceneOnly"), bool):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Hotspot '{hid}' cutsceneOnly 须为布尔",
+                ))
             cpl = hs.get("collisionPolygonLocal")
             if cpl is not None and not isinstance(cpl, bool):
                 issues.append(Issue(
@@ -183,14 +211,28 @@ def validate(model: ProjectModel) -> list[Issue]:
                                         f"Hotspot '{hs.get('id')}' itemId '{iid}' not found"))
         for npc in sc.get("npcs", []):
             nid = str(npc.get("id", "") or "?")
-            ncs = npc.get("cutsceneId")
-            if ncs is not None and str(ncs).strip():
-                cid = str(ncs).strip()
+            bindings = _entity_cutscene_bindings(npc)
+            if npc.get("cutsceneId") is not None:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{nid}' 已废弃 cutsceneId，请改用 cutsceneIds 数组",
+                ))
+            if npc.get("cutsceneIds") is not None and not isinstance(npc.get("cutsceneIds"), list):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{nid}' cutsceneIds 须为数组",
+                ))
+            for cid in bindings:
                 if cid not in cutscene_ids:
                     issues.append(Issue(
                         "warning", "scene", sid,
-                        f"NPC '{nid}' cutsceneId {cid!r} 不在过场 index 列表中",
+                        f"NPC '{nid}' cutsceneIds 包含 {cid!r}，不在过场 index 列表中",
                     ))
+            if "cutsceneOnly" in npc and not isinstance(npc.get("cutsceneOnly"), bool):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{nid}' cutsceneOnly 须为布尔",
+                ))
             ifi = npc.get("initialFacing")
             if ifi is not None and ifi not in ("left", "right"):
                 issues.append(Issue(
@@ -1521,10 +1563,19 @@ _CUTSCENE_ACTION_WHITELIST = frozenset([
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
     "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
     "persistNpcEntityEnabled", "persistHotspotEnabled",
-    "setSceneEntityPosition",
+    "persistNpcDisablePatrol", "persistNpcEnablePatrol",
+    "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
+    "setEntityField", "setSceneEntityPosition",
     "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
+])
+
+_CUTSCENE_STAGING_SAVE_ACTIONS = frozenset([
+    "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "persistNpcDisablePatrol", "persistNpcEnablePatrol",
+    "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
+    "setEntityField", "setSceneEntityPosition", "setHotspotDisplayImage",
 ])
 
 
@@ -1553,7 +1604,7 @@ def _walk_cutscene_action_param_refs(
 def _validate_cutscene_steps(
     model: ProjectModel, steps: list, cid: str, issues: list[Issue],
 ) -> None:
-    from .shared.action_editor import ACTION_TYPES
+    from .shared.action_editor import ACTION_PERSISTENCE, ACTION_TYPES
     allowed_types = set(ACTION_TYPES)
 
     temp_actor_ids = frozenset(_cutscene_temp_actor_ids_in_steps(steps))
@@ -1575,6 +1626,11 @@ def _validate_cutscene_steps(
                 issues.append(Issue(
                     "error", "cutscene", cid,
                     f"step #{i+1} action type {t!r} 不在 Cutscene 白名单内（Cutscene 仅允许无副作用 Action）",
+                ))
+            if t and ACTION_PERSISTENCE.get(t) == "save" and t not in _CUTSCENE_STAGING_SAVE_ACTIONS:
+                issues.append(Issue(
+                    "error", "cutscene", cid,
+                    f"step #{i+1} action type {t!r} 会修改全局存档状态，必须放到 startCutscene 外层 action 列表",
                 ))
             if t == "cutsceneSpawnActor":
                 sid = str((step.get("params") or {}).get("id", ""))

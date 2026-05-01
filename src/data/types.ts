@@ -144,11 +144,13 @@ export interface HotspotDef {
   type: HotspotType;
   x: number;
   y: number;
+  /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
+  cutsceneIds?: string[];
   /**
-   * 若设置：该热点仅在其过场播放窗口内显示/可交互；优先级高于 Save 的 enabled 覆盖。
-   * 非所属过场或未在过场中时始终视为隐藏（与场景编辑器「过场编辑上下文」一致）。
+   * 有过场关联时默认 true：普通场景不生成，仅在关联过场中从场景文件初始化。
+   * 显式 false 时是普通场景/过场共享实体，普通场景从 sceneMemory 初始化。
    */
-  cutsceneId?: string;
+  cutsceneOnly?: boolean;
   interactionRange: number;
   /** 组内 AND；可为 flag / quest / scenario 等 `ConditionExpr` 叶子或组合 */
   conditions?: ConditionExpr[];
@@ -379,11 +381,13 @@ export interface NpcDef {
   name: string;
   x: number;
   y: number;
+  /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
+  cutsceneIds?: string[];
   /**
-   * 若设置：该 NPC 仅在其过场播放窗口内可见/可交互；优先级高于 persistNpcEntityEnabled 与 Save 覆盖。
-   * 探索态未播放所属过场时始终隐藏。
+   * 有过场关联时默认 true：普通场景不生成，仅在关联过场中从场景文件初始化。
+   * 显式 false 时是普通场景/过场共享实体，普通场景从 sceneMemory 初始化。
    */
-  cutsceneId?: string;
+  cutsceneOnly?: boolean;
   /**
    * 图对话：资源 id（不含路径），对应 `public/assets/dialogues/graphs/<id>.json`。
    * 未配置时按 E 不会进入对话。
@@ -419,6 +423,37 @@ export interface NpcDef {
   collisionPolygon?: { x: number; y: number }[];
   /** 为 true 时 `collisionPolygon` 为相对 (x,y) 的局部坐标；缺省视为旧版世界坐标 */
   collisionPolygonLocal?: boolean;
+}
+
+export type CutsceneBindableEntityDef = Pick<NpcDef | HotspotDef, 'cutsceneIds' | 'cutsceneOnly'>;
+
+export function entityCutsceneIds(def: CutsceneBindableEntityDef): string[] {
+  const out: string[] = [];
+  const add = (raw: unknown) => {
+    const id = typeof raw === 'string' ? raw.trim() : '';
+    if (id && !out.includes(id)) out.push(id);
+  };
+  if (Array.isArray(def.cutsceneIds)) {
+    for (const id of def.cutsceneIds) add(id);
+  }
+  return out;
+}
+
+export function isEntityBoundToCutscene(def: CutsceneBindableEntityDef, activeId: string | null | undefined): boolean {
+  const id = activeId?.trim();
+  return !!id && entityCutsceneIds(def).includes(id);
+}
+
+export function hasCutsceneBinding(def: CutsceneBindableEntityDef): boolean {
+  return entityCutsceneIds(def).length > 0;
+}
+
+export function isCutsceneOnlyEntity(def: CutsceneBindableEntityDef): boolean {
+  return hasCutsceneBinding(def) && def.cutsceneOnly !== false;
+}
+
+export function isSharedCutsceneEntity(def: CutsceneBindableEntityDef): boolean {
+  return hasCutsceneBinding(def) && def.cutsceneOnly === false;
 }
 
 // ============================================================
@@ -800,8 +835,14 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'showEmoteAndWait',
   'playNpcAnimation',
   'setEntityEnabled',
+  'persistNpcDisablePatrol',
+  'persistNpcEnablePatrol',
   'persistNpcEntityEnabled',
   'persistHotspotEnabled',
+  'persistNpcAt',
+  'persistNpcAnimState',
+  'persistPlayNpcAnimation',
+  'setEntityField',
   'setSceneEntityPosition',
   'setHotspotDisplayImage',
   'tempSetHotspotDisplayFacing',

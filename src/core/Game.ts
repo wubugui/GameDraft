@@ -517,6 +517,16 @@ export class Game {
     this.cutsceneManager.setPlayerPositionGetter(() => ({ x: this.player.x, y: this.player.y }));
     this.cutsceneManager.setPlayerPositionSetter((x, y) => { this.player.x = x; this.player.y = y; });
     this.cutsceneManager.setCameraAccessor(this.camera);
+    this.cutsceneManager.setCutsceneSceneSessionHooks({
+      begin: async (cutsceneId, sceneId, position) => {
+        this.sceneManager.beginCutsceneStaging(cutsceneId, sceneId);
+        await this.sceneManager.reloadCurrentSceneView(position);
+      },
+      end: async (position) => {
+        this.sceneManager.endCutsceneStaging();
+        await this.sceneManager.reloadCurrentSceneView(position);
+      },
+    });
     this.cutsceneManager.setSpawnPointResolver((spawnKey: string) => {
       const scene = this.sceneManager.currentSceneData;
       if (!scene) return null;
@@ -1397,13 +1407,6 @@ export class Game {
   }
 
   private setupSceneReadyHandler(): void {
-    this.listenEvent('cutscene:start', (p: { id: string }) => {
-      if (p?.id) this.sceneManager.setActiveCutsceneBindingId(p.id);
-    });
-    this.listenEvent('cutscene:end', (_p: { id: string }) => {
-      this.sceneManager.setActiveCutsceneBindingId(null);
-    });
-
     this.listenEvent('scene:beforeUnload', () => {
       this.patrolGeneration++;
       this.npcPatrolEpoch.clear();
@@ -1678,6 +1681,13 @@ export class Game {
     fieldName: string,
     value: RuntimeFieldValue,
   ): Promise<void> {
+    const currentSceneId = this.sceneManager.currentSceneData?.id ?? '';
+    if (this.sceneManager.isCutsceneStagingActive() && sceneId !== currentSceneId) {
+      console.warn(
+        `setEntityField: 过场中忽略跨场景写入 "${sceneId}"（当前场景 "${currentSceneId || '(无)'}"）`,
+      );
+      return;
+    }
     const checked = coerceRuntimeFieldValue(kind, fieldName, value);
     if (!checked.ok) {
       console.warn('setEntityField:', checked.error);
@@ -1720,6 +1730,13 @@ export class Game {
     const path = imagePath.trim();
     if (!sid || !hid || !path) {
       console.warn('setHotspotDisplayImage: 需要 sceneId、hotspotId 与 image');
+      return;
+    }
+    const currentSceneId = this.sceneManager.currentSceneData?.id ?? '';
+    if (this.sceneManager.isCutsceneStagingActive() && sid !== currentSceneId) {
+      console.warn(
+        `setHotspotDisplayImage: 过场中忽略跨场景写入 "${sid}"（当前场景 "${currentSceneId || '(无)'}"）`,
+      );
       return;
     }
     const pathResolved =

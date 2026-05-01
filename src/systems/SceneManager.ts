@@ -17,7 +17,9 @@ import type {
   SceneEntityRuntimeValue,
   NpcRuntimeOverride,
   HotspotRuntimeOverride,
+  CutsceneBindableEntityDef,
 } from '../data/types';
+import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from '../core/assetPath';
@@ -40,6 +42,12 @@ interface SceneMemory {
   entityOverrides: SceneEntityRuntimeOverrides;
 }
 
+interface CutsceneStaging {
+  cutsceneId: string;
+  sceneId: string;
+  memory: SceneMemory;
+}
+
 export class SceneManager implements IGameSystem {
   private assetManager: AssetManager;
   private eventBus: EventBus;
@@ -50,6 +58,7 @@ export class SceneManager implements IGameSystem {
   private currentNpcs: Npc[] = [];
   private sceneContainerBg: Container | null = null;
   private sceneMemory: Map<string, SceneMemory> = new Map();
+  private cutsceneStaging: CutsceneStaging | null = null;
 
   private fadeOverlay: Graphics | null = null;
   private isSwitching: boolean = false;
@@ -57,7 +66,7 @@ export class SceneManager implements IGameSystem {
   private sceneSwitchTail: Promise<void> = Promise.resolve();
   private animRafId: number = 0;
 
-  /** 当前播放或过场预览绑定的 cutscene id；用于仅在该过场内向玩家展示绑定了 `cutsceneId` 的热点/NPC。 */
+  /** 当前播放或过场预览绑定的 cutscene id；用于筛选 cutsceneOnly 实体。 */
   private activeCutsceneBindingId: string | null = null;
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
@@ -152,28 +161,25 @@ export class SceneManager implements IGameSystem {
     return this.activeCutsceneBindingId;
   }
 
-  /**
-   * 绑定了 cutsceneId 的热点/NPC：仅当 activeCutsceneBindingId 与之相同且非 null 时可显示；
-   * 存档 enabled 等对绑定实体不占优（由绑定强制隐藏）。
-   */
+  /** 根据 cutsceneOnly/shared/普通实体语义刷新当前已加载实体显隐。 */
   private refreshCutsceneBoundEntityVisibility(): void {
     const active = this.activeCutsceneBindingId?.trim() || null;
+    const sceneId = this.currentScene?.id ?? '';
 
     for (const h of this.currentHotspots) {
-      const bid = h.def.cutsceneId?.trim();
-      if (bid) {
-        h.setEnabled(active !== null && bid === active);
+      if (isCutsceneOnlyEntity(h.def)) {
+        h.setEnabled(isEntityBoundToCutscene(h.def, active));
+      } else {
+        const snap = sceneId ? this.getEntityRuntimeOverrideForDef(sceneId, 'hotspot', h.def.id, h.def) : undefined;
+        if (typeof snap?.enabled === 'boolean') h.setEnabled(snap.enabled);
       }
     }
 
     for (const n of this.currentNpcs) {
-      const bid = n.def.cutsceneId?.trim();
-      if (bid) {
-        n.setVisible(active !== null && bid === active);
+      if (isCutsceneOnlyEntity(n.def)) {
+        n.setVisible(isEntityBoundToCutscene(n.def, active));
       } else {
-        const sid = this.currentScene?.id;
-        const mem = sid ? this.sceneMemory.get(sid) : undefined;
-        const snap = mem?.entityOverrides?.npcs?.[n.def.id];
+        const snap = sceneId ? this.getEntityRuntimeOverrideForDef(sceneId, 'npc', n.def.id, n.def) : undefined;
         if (snap && typeof snap.enabled === 'boolean') {
           n.setVisible(snap.enabled);
         } else {
@@ -199,18 +205,104 @@ export class SceneManager implements IGameSystem {
     };
   }
 
+  private normalizeMemory(mem: SceneMemory): SceneMemory {
+    if (!mem.entityOverrides) mem.entityOverrides = this.emptyEntityOverrides();
+    if (!mem.entityOverrides.npcs) mem.entityOverrides.npcs = {};
+    if (!mem.entityOverrides.hotspots) mem.entityOverrides.hotspots = {};
+    if (!mem.inspectedHotspots) mem.inspectedHotspots = [];
+    if (!mem.pickedUpHotspots) mem.pickedUpHotspots = [];
+    return mem;
+  }
+
   private ensureSceneMemory(sceneId: string): SceneMemory {
     let mem = this.sceneMemory.get(sceneId);
     if (!mem) {
       mem = this.createEmptyMemory();
       this.sceneMemory.set(sceneId, mem);
     }
-    if (!mem.entityOverrides) {
-      mem.entityOverrides = this.emptyEntityOverrides();
+    return this.normalizeMemory(mem);
+  }
+
+  beginCutsceneStaging(cutsceneId: string, sceneId: string): void {
+    const cid = cutsceneId.trim();
+    const sid = sceneId.trim();
+    if (!cid || !sid) {
+      console.warn('SceneManager.beginCutsceneStaging: cutsceneId/sceneId 不能为空');
+      return;
     }
-    if (!mem.entityOverrides.npcs) mem.entityOverrides.npcs = {};
-    if (!mem.entityOverrides.hotspots) mem.entityOverrides.hotspots = {};
-    return mem;
+    this.cutsceneStaging = {
+      cutsceneId: cid,
+      sceneId: sid,
+      memory: this.createEmptyMemory(),
+    };
+    this.setActiveCutsceneBindingId(cid);
+  }
+
+  endCutsceneStaging(): void {
+    this.cutsceneStaging = null;
+    this.setActiveCutsceneBindingId(null);
+  }
+
+  isCutsceneStagingActive(): boolean {
+    return this.cutsceneStaging !== null;
+  }
+
+  getActiveCutsceneStagingSceneId(): string | null {
+    return this.cutsceneStaging?.sceneId ?? null;
+  }
+
+  getActiveCutsceneStagingId(): string | null {
+    return this.cutsceneStaging?.cutsceneId ?? null;
+  }
+
+  private getCommittedMemory(sceneId: string): SceneMemory | undefined {
+    const mem = this.sceneMemory.get(sceneId);
+    return mem ? this.normalizeMemory(mem) : undefined;
+  }
+
+  private getWritableMemory(sceneId: string): SceneMemory | null {
+    if (this.cutsceneStaging) {
+      if (sceneId !== this.cutsceneStaging.sceneId) {
+        console.warn(
+          `SceneManager: 过场中忽略跨场景 sceneMemory 写入 "${sceneId}"（当前过场场景 "${this.cutsceneStaging.sceneId}"）`,
+        );
+        return null;
+      }
+      return this.normalizeMemory(this.cutsceneStaging.memory);
+    }
+    return this.ensureSceneMemory(sceneId);
+  }
+
+  private findEntityDef(
+    sceneId: string,
+    kind: SceneEntityKind,
+    entityId: string,
+  ): CutsceneBindableEntityDef | undefined {
+    if (this.currentScene?.id !== sceneId) return undefined;
+    return kind === 'npc'
+      ? this.currentScene.npcs?.find(n => n.id === entityId)
+      : this.currentScene.hotspots?.find(h => h.id === entityId);
+  }
+
+  private isCurrentCutsceneOnlyEntity(sceneId: string, kind: SceneEntityKind, entityId: string): boolean {
+    const def = this.findEntityDef(sceneId, kind, entityId);
+    return !!def && isCutsceneOnlyEntity(def);
+  }
+
+  private getEntityRuntimeOverrideForDef(
+    sceneId: string,
+    kind: SceneEntityKind,
+    entityId: string,
+    def: CutsceneBindableEntityDef,
+  ): NpcRuntimeOverride | HotspotRuntimeOverride | undefined {
+    const committed = isCutsceneOnlyEntity(def)
+      ? undefined
+      : this.getCommittedMemory(sceneId)?.entityOverrides?.[kind === 'npc' ? 'npcs' : 'hotspots']?.[entityId];
+    const staging = this.cutsceneStaging?.sceneId === sceneId
+      ? this.cutsceneStaging.memory.entityOverrides?.[kind === 'npc' ? 'npcs' : 'hotspots']?.[entityId]
+      : undefined;
+    if (!committed && !staging) return undefined;
+    return { ...(committed as object | undefined), ...(staging as object | undefined) } as NpcRuntimeOverride | HotspotRuntimeOverride;
   }
 
   /**
@@ -239,7 +331,11 @@ export class SceneManager implements IGameSystem {
     }
     const coerced = coerceRuntimeFieldValue(kind, field, rawValue);
     if (!coerced.ok) return coerced;
-    const mem = this.ensureSceneMemory(sid);
+    if (!this.cutsceneStaging && this.isCurrentCutsceneOnlyEntity(sid, kind, id)) {
+      return { ok: false, error: `setEntityRuntimeField: ${kind}.${id} 是仅过场实体，普通上下文不写 committed sceneMemory` };
+    }
+    const mem = this.getWritableMemory(sid);
+    if (!mem) return { ok: false, error: `setEntityRuntimeField: 过场中忽略跨场景写入 ${sid}` };
     const bucket = kind === 'npc' ? mem.entityOverrides.npcs : mem.entityOverrides.hotspots;
     const prev = bucket[id] ?? {};
     bucket[id] = { ...prev, [field]: coerced.value };
@@ -251,11 +347,14 @@ export class SceneManager implements IGameSystem {
     kind: SceneEntityKind,
     entityId: string,
   ): NpcRuntimeOverride | HotspotRuntimeOverride | undefined {
-    const mem = this.sceneMemory.get(sceneId);
-    if (!mem?.entityOverrides) return undefined;
-    return kind === 'npc'
-      ? mem.entityOverrides.npcs?.[entityId]
-      : mem.entityOverrides.hotspots?.[entityId];
+    const def = this.findEntityDef(sceneId, kind, entityId);
+    if (def) return this.getEntityRuntimeOverrideForDef(sceneId, kind, entityId, def);
+    const mem = this.getCommittedMemory(sceneId);
+    const staging = this.cutsceneStaging?.sceneId === sceneId ? this.cutsceneStaging.memory : undefined;
+    const committed = kind === 'npc' ? mem?.entityOverrides.npcs?.[entityId] : mem?.entityOverrides.hotspots?.[entityId];
+    const staged = kind === 'npc' ? staging?.entityOverrides.npcs?.[entityId] : staging?.entityOverrides.hotspots?.[entityId];
+    if (!committed && !staged) return undefined;
+    return { ...(committed as object | undefined), ...(staged as object | undefined) } as NpcRuntimeOverride | HotspotRuntimeOverride;
   }
 
   /**
@@ -273,7 +372,12 @@ export class SceneManager implements IGameSystem {
       console.warn('SceneManager.mergePersistentNpcState: 空 npcId');
       return;
     }
-    const mem = this.ensureSceneMemory(sceneId);
+    if (!this.cutsceneStaging && this.isCurrentCutsceneOnlyEntity(sceneId, 'npc', id)) {
+      console.warn(`SceneManager.mergePersistentNpcState: "${id}" 是仅过场 NPC，普通上下文不写 committed sceneMemory`);
+      return;
+    }
+    const mem = this.getWritableMemory(sceneId);
+    if (!mem) return;
     const prev = mem.entityOverrides.npcs[id] ?? {};
     mem.entityOverrides.npcs[id] = { ...prev, ...patch };
   }
@@ -282,7 +386,7 @@ export class SceneManager implements IGameSystem {
   isNpcPatrolPersistentlyDisabled(npcId: string): boolean {
     const sid = this.currentScene?.id;
     if (!sid) return false;
-    const mem = this.sceneMemory.get(sid);
+    const mem = this.getCommittedMemory(sid);
     return mem?.entityOverrides?.npcs?.[npcId]?.patrolDisabled === true;
   }
 
@@ -401,15 +505,18 @@ export class SceneManager implements IGameSystem {
     }
     this.renderer.backgroundLayer.addChild(this.sceneContainerBg);
 
-    const memory = this.sceneMemory.get(sceneId);
+    const committedMemory = this.getCommittedMemory(sceneId);
+    const activeCutsceneId = this.cutsceneStaging?.sceneId === sceneId ? this.cutsceneStaging.cutsceneId : null;
 
     if (sceneData.hotspots) {
       for (const def of sceneData.hotspots) {
-        if (memory?.pickedUpHotspots.includes(def.id)) continue;
+        const cutsceneOnly = isCutsceneOnlyEntity(def);
+        const boundToActive = isEntityBoundToCutscene(def, activeCutsceneId);
+        if (cutsceneOnly && !boundToActive) continue;
+        if (!cutsceneOnly && committedMemory?.pickedUpHotspots.includes(def.id)) continue;
 
-        const ovr = memory?.entityOverrides?.hotspots?.[def.id];
-        const boundCs = def.cutsceneId?.trim();
-        if (ovr?.enabled === false && !boundCs) continue;
+        const ovr = this.getEntityRuntimeOverrideForDef(sceneId, 'hotspot', def.id, def);
+        if (ovr?.enabled === false && !cutsceneOnly) continue;
         const defToUse = applyHotspotRuntimeOverride(def, ovr as Record<string, SceneEntityRuntimeValue> | undefined);
 
         const hotspot = new Hotspot(defToUse);
@@ -429,7 +536,10 @@ export class SceneManager implements IGameSystem {
 
     if (sceneData.npcs) {
       for (const npcDef of sceneData.npcs) {
-        const snap = memory?.entityOverrides?.npcs?.[npcDef.id];
+        const cutsceneOnly = isCutsceneOnlyEntity(npcDef);
+        const boundToActive = isEntityBoundToCutscene(npcDef, activeCutsceneId);
+        if (cutsceneOnly && !boundToActive) continue;
+        const snap = this.getEntityRuntimeOverrideForDef(sceneId, 'npc', npcDef.id, npcDef) as NpcRuntimeOverride | undefined;
         const defToUse = applyNpcRuntimeOverride(npcDef, snap as Record<string, SceneEntityRuntimeValue> | undefined);
         const npc = new Npc(defToUse);
         if (defToUse.animFile) {
@@ -543,8 +653,17 @@ export class SceneManager implements IGameSystem {
     await p;
   }
 
+  async reloadCurrentSceneView(cameraPosition?: { x: number; y: number }): Promise<void> {
+    const sceneId = this.currentScene?.id;
+    if (!sceneId) return;
+    const fromSceneId = sceneId;
+    this.unloadScene();
+    await this.loadScene(sceneId, undefined, cameraPosition, fromSceneId);
+  }
+
   private saveCurrentSceneMemory(): void {
     if (!this.currentScene) return;
+    if (this.cutsceneStaging) return;
 
     const inspected: string[] = [];
     const pickedUp: string[] = [];
@@ -555,7 +674,7 @@ export class SceneManager implements IGameSystem {
       }
     }
 
-    const existing = this.sceneMemory.get(this.currentScene.id);
+    const existing = this.getCommittedMemory(this.currentScene.id);
     if (existing) {
       for (const id of existing.inspectedHotspots) {
         if (!inspected.includes(id)) inspected.push(id);
@@ -581,7 +700,7 @@ export class SceneManager implements IGameSystem {
 
   private markHotspotInspected(hotspotId: string): void {
     if (!this.currentScene) return;
-    const mem = this.ensureSceneMemory(this.currentScene.id);
+    const mem = this.getWritableMemory(this.currentScene.id);
     if (mem && !mem.inspectedHotspots.includes(hotspotId)) {
       mem.inspectedHotspots.push(hotspotId);
     }
@@ -705,6 +824,7 @@ export class SceneManager implements IGameSystem {
     this.unloadScene();
     this.removeFadeOverlay();
     this.sceneMemory.clear();
+    this.cutsceneStaging = null;
     this.playerPositionSetter = null;
     this.cameraSetter = null;
     this.boundsOnlySetter = null;

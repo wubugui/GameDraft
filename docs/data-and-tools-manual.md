@@ -245,7 +245,7 @@
 | steps | **步骤数组**：每项 `kind` 为 `present` / `action` / `parallel` |
 
 - **present**：选 `type`（如 `fadeToBlack`、`waitTime`、`showDialogue`…）及对应参数；**duration 等单位与运行时一致（多为毫秒）**。  
-- **action**：仅允许编辑器白名单内的类型（与运行时 `CUTSCENE_ACTION_WHITELIST` 一致），如 `playSfx`、`moveEntityTo`、`setEntityEnabled`、`persistNpcEntityEnabled`、`persistHotspotEnabled`（显式写入 sceneMemory 的可存档类）等。  
+- **action**：仅允许编辑器白名单内的类型（与运行时 `CUTSCENE_ACTION_WHITELIST` 一致），如 `playSfx`、`moveEntityTo`、`setEntityEnabled`、`persistNpcEntityEnabled`、`persistHotspotEnabled` 等。过场内 scene/entity 写入只进入本次 staging，会在结束、跳过或异常退出后丢弃；Flag、背包、任务、ScenarioState、档案、跨日事件、规矩获取等全局存档 Action 禁止写在过场内部，应放在 `startCutscene` 外层 Action 列表。  
 - **parallel**：`tracks` 内多条子步骤同时执行，全完成后才进入下一步。
 
 常用 **present** 类型与含义可对照编辑器下拉；**勿使用已废弃的旧 `commands` 数组**（数据应只保留 `steps`）。
@@ -253,6 +253,16 @@
 **示例**：`fadeToBlack` → `showTitle` → `waitClick` → `fadeIn` → `showDialogue`；若需「黑场同时出字」，可用 **parallel** 包两条 present 再进入下一步。
 
 **白名单同步（程序维护）**：过场内 **action** 允许的类型须与源码 `src/data/types.ts` 的 `CUTSCENE_ACTION_WHITELIST`、`tools/editor/validator.py` 的 `_CUTSCENE_ACTION_WHITELIST`、编辑器 `timeline_editor.py` 的 `CUTSCENE_ACTION_WHITELIST` **四处一致**；新增或删减时须一并修改。
+
+### 6.3 过场实体与临时 staging
+
+场景内 NPC / Hotspot 统一通过 `cutsceneIds`（数组，可多个过场）关联过场，并可选 `cutsceneOnly`：
+
+- 无 `cutsceneIds`：普通场景实体，从场景 JSON + committed sceneMemory 初始化。过场内如果被 Action 修改，只影响本次 staging，退出后恢复 committed 状态。
+- 有过场关联且 `cutsceneOnly` 未写或为 `true`：仅过场实体。普通探索不生成、不交互；进入关联过场时只从场景 JSON 初始化，不读取 committed sceneMemory；退出过场后销毁。
+- 有过场关联且 `cutsceneOnly: false`：共享实体。普通探索正常参与 gameplay；进入关联过场时丢弃当前 live 状态，从场景 JSON + committed sceneMemory 重建；退出过场后再次按 committed 状态恢复普通场景版本。
+
+同一实体可关联多个过场。编辑器使用多选写入 `cutsceneIds`，校验器会拒绝旧字段 `cutsceneId`。
 
 ---
 
