@@ -1131,7 +1131,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "[tag:string:角色:克拉拉]：十——块！谁捞箱子！十块！",
+        "text": "[tag:string:角色:克拉拉]：十——块！箱子！十块！",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleEmote": {
@@ -1183,12 +1183,12 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "路人甲：也！十块大洋！",
+        "text": "路人甲：十块大洋？！捞箱子麦？（跑去找捕捞网）",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleEmote": {
           "target": "new_hotspot_11",
-          "emote": "...",
+          "emote": "?！",
           "duration": 1500.0,
           "anchorOffsetX": 0.0,
           "anchorOffsetY": 0.0
@@ -1211,7 +1211,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "路人丙：芽儿！我来！！（开始脱下衣裤）",
+        "text": "路人丙：芽儿！怕锤子！我来！！（开始脱下衣裤）",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleEmote": {
@@ -1252,6 +1252,17 @@
             "type": "showEmoteAndWait",
             "params": {
               "target": "new_hotspot_12",
+              "emote": "!!",
+              "duration": 1500.0,
+              "anchorOffsetX": 0.0,
+              "anchorOffsetY": 0.0
+            }
+          },
+          {
+            "kind": "action",
+            "type": "showEmoteAndWait",
+            "params": {
+              "target": "new_hotspot_10",
               "emote": "!!",
               "duration": 1500.0,
               "anchorOffsetX": 0.0,
