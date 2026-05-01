@@ -991,7 +991,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "[tag:string:角色:埃德加]：My package！",
+        "text": "[tag:string:角色:埃德加]：My crate!",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleEmote": {
