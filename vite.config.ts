@@ -60,6 +60,10 @@ function debugFlagFavoritesApi(): Plugin {
 export default defineConfig({
   plugins: [debugFlagFavoritesApi()],
   base: './',
+  test: {
+    globals: true,
+    environment: 'node',
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
