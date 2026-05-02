@@ -117,7 +117,10 @@ class ShopEditor(QWidget):
                 items.append(si)
         s["items"] = items
         self._model.mark_dirty("shop")
-        self._refresh()
+        row = self._current_idx
+        lw = self._list.item(row)
+        if lw is not None:
+            lw.setText(f"{s.get('id', '?')}  [{s.get('name', '')}]")
 
     def _add(self) -> None:
         self._model.shops.append({"id": f"shop_{len(self._model.shops)}", "name": "", "items": []})

@@ -131,6 +131,8 @@ _SOURCE_MAP = {
     "ZoneRule": "scene_zone_rule",
 }
 
+_ACTION_REGISTRY_DIRTY_TYPES = frozenset({"scene", "quest", "encounter"})
+
 
 class ActionRegistryEditor(QWidget):
     navigate_to_source = Signal(str, str, str)
@@ -247,7 +249,9 @@ class ActionRegistryEditor(QWidget):
         if self._needs_refresh:
             self._full_scan()
 
-    def _mark_needs_refresh(self, *_args):
+    def _mark_needs_refresh(self, data_type: str, *_args) -> None:
+        if data_type not in _ACTION_REGISTRY_DIRTY_TYPES:
+            return
         self._needs_refresh = True
 
     def _full_scan(self) -> None:

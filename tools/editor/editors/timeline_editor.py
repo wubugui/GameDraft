@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QLabel,
     QScrollArea, QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
-    QDialog, QGroupBox, QToolButton, QSizePolicy, QMenu,
+    QDialog, QGroupBox, QToolButton, QSizePolicy, QMenu, QStyle,
 )
 from PySide6.QtCore import Qt, Signal, QEvent, QObject, QSignalBlocker, QTimer
 from PySide6.QtGui import QAction, QFont, QMouseEvent
@@ -29,6 +29,7 @@ from ..shared.action_editor import (
 )
 from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
 from ..shared.rich_text_field import RichTextTextEdit
+from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
 
 if TYPE_CHECKING:
@@ -151,11 +152,23 @@ def _float_ms(step: dict, key: str, default: float) -> int:
         return int(default)
 
 
+def _parallel_track_fold_label(tr: dict) -> str:
+    """并行块折叠摘要中单轨标签：字幕步优先显示正文。"""
+    k = str(tr.get("kind", "?"))
+    t = str(tr.get("type", "?"))
+    if k == "present" and t == "showSubtitle":
+        tx = str(tr.get("text") or "").replace("\n", " ").strip()
+        if tx:
+            return tx[:36] + "…" if len(tx) > 36 else tx
+        return "showSubtitle"
+    return f"{k}:{t}"
+
+
 def parallel_tracks_summary(tracks: list) -> str:
     types: list[str] = []
     for tr in tracks:
         if isinstance(tr, dict):
-            types.append(f'{tr.get("kind", "?")}:{tr.get("type", "?")}')
+            types.append(_parallel_track_fold_label(tr))
     s = " | ".join(types[:6])
     if len(types) > 6:
         s += "…"
@@ -197,13 +210,18 @@ def step_summary_line(d: dict) -> str:
                 em = str(se.get("emote") or "").strip()
                 if tg and em:
                     em_suf = f" · {em}@{tg}"
+            geo = ""
             if b in ("movieTop", "movieBottom") and a in ("left", "center", "right"):
-                return f"showSubtitle · {b}/{a}{em_suf}"
-            tx = str(d.get("text", "")).replace("\n", " ")
-            if len(tx) > 32:
-                tx = tx[:29] + "…"
-            base = f"showSubtitle: {tx}" if tx else "showSubtitle"
-            return f"{base}{em_suf}"
+                geo = f" · {b}/{a}"
+            tx = str(d.get("text") or "").replace("\n", " ").strip()
+            if len(tx) > 56:
+                tx = tx[:53] + "…"
+            # 折叠摘要优先正文；版式/表情挂件排在后面（与对白行一致的思路）
+            if tx:
+                return f"showSubtitle: {tx}{geo}{em_suf}"
+            if geo:
+                return f"showSubtitle{geo}{em_suf}"
+            return f"showSubtitle{em_suf}" if em_suf else "showSubtitle"
         return t
     return kind
 
@@ -313,6 +331,8 @@ class StepWidget(QFrame):
         self._action_row: ActionRow | None = None
         self._parallel_layout: QVBoxLayout | None = None
         self._parallel_group: QGroupBox | None = None
+        # 构造期各控件程序化赋值会触发 valueChanged/typeCommitted；勿标为「未 Apply」
+        self._report_editor_dirty: bool = False
 
         kind = str(step.get("kind", "present"))
         self._step_data = deepcopy(step)
@@ -340,6 +360,7 @@ class StepWidget(QFrame):
         lay.addLayout(self._body)
 
         self._rebuild(kind)
+        self._report_editor_dirty = True
 
     def _on_parallel_child_changed(self) -> None:
         of = self._outline_frame
@@ -355,7 +376,9 @@ class StepWidget(QFrame):
 
     def _emit_dirty(self) -> None:
         self.contentChanged.emit()
-        if self._editor is not None and hasattr(self._editor, "mark_pending_changes"):
+        if self._report_editor_dirty and (
+            self._editor is not None and hasattr(self._editor, "mark_pending_changes")
+        ):
             self._editor.mark_pending_changes()
         if self._parallel_parent is not None:
             self._parallel_parent._on_parallel_child_changed()
@@ -1130,8 +1153,10 @@ class StepOutlineFrame(QFrame):
         self._parallel_parent = parallel_parent
         self._indent_px = indent_px
         self._zebra_alt = zebra_alt
-        self._collapsed = False
+        self._collapsed = True
         self._cutscene_id = (cutscene_id or "") or None
+        self._step_snapshot = deepcopy(step)
+        self._step: StepWidget | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(self._indent_px, 2, 0, 2)
@@ -1179,34 +1204,54 @@ class StepOutlineFrame(QFrame):
         self._gantt.setToolTip("相对时长（只读，仅供参考）")
         hl.addWidget(self._gantt)
 
-        self._btn_up = QPushButton("\u2191")
-        self._btn_up.setFixedWidth(26)
-        self._btn_up.setToolTip("上移")
-        self._btn_down = QPushButton("\u2193")
-        self._btn_down.setFixedWidth(26)
-        self._btn_down.setToolTip("下移")
-        self._btn_copy = QPushButton("Copy")
-        self._btn_copy.setToolTip("复制")
-        self._btn_del = QPushButton("Del")
-        self._btn_del.setToolTip("删除")
+        self._btn_up = outline_row_tool_button(
+            self._header, "上移",
+            std=QStyle.StandardPixmap.SP_ArrowUp,
+            fixed_width=28,
+            fixed_height=26,
+        )
+        self._btn_down = outline_row_tool_button(
+            self._header, "下移",
+            std=QStyle.StandardPixmap.SP_ArrowDown,
+            fixed_width=28,
+            fixed_height=26,
+        )
+        self._btn_copy = outline_row_tool_button(
+            self._header, "复制本步",
+            theme_names=("edit-copy", "edit-duplicate"),
+            std=QStyle.StandardPixmap.SP_FileDialogContentsView,
+            fallback_text="C",
+        )
+        self._btn_del = outline_row_tool_button(
+            self._header, "删除",
+            theme_names=("edit-delete", "user-trash"),
+            std=delete_standard_pixmap(),
+            fallback_text="删",
+        )
         hl.addWidget(self._btn_up)
         hl.addWidget(self._btn_down)
         hl.addWidget(self._btn_copy)
         hl.addWidget(self._btn_del)
 
-        self._menu_btn = QToolButton()
-        self._menu_btn.setText("\u22ee")
-        self._menu_btn.setToolTip("并行移入/移出等")
+        self._menu_btn = outline_row_tool_button(
+            self._header, "并行移入/移出等",
+            theme_names=("view-more-symbolic", "open-menu"),
+            std=QStyle.StandardPixmap.SP_ToolBarHorizontalExtensionButton,
+            fixed_width=28,
+            fixed_height=26,
+        )
         self._menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._menu_btn.setFixedWidth(28)
         self._step_menu = QMenu(self._menu_btn)
         self._menu_btn.setMenu(self._step_menu)
         self._step_menu.aboutToShow.connect(self._populate_step_menu)
         hl.addWidget(self._menu_btn)
 
-        self._expand = QToolButton()
-        self._expand.setArrowType(Qt.ArrowType.DownArrow)
+        self._expand = QToolButton(self._header)
+        self._expand.setArrowType(Qt.ArrowType.RightArrow)
         self._expand.setToolTip("折叠/展开详情")
+        self._expand.setAutoRaise(True)
+        self._expand.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._expand.setFixedSize(28, 26)
         self._expand.clicked.connect(self._toggle_collapse)
         hl.addWidget(self._expand)
 
@@ -1219,25 +1264,47 @@ class StepOutlineFrame(QFrame):
         self._detail_wrap = QWidget()
         dl = QVBoxLayout(self._detail_wrap)
         dl.setContentsMargins(8, 4, 4, 4)
-        self._step = StepWidget(
-            step, model, editor, self._detail_wrap,
-            parallel_parent=parallel_parent,
-            cutscene_id=self._cutscene_id,
-        )
-        self._step._outline_frame = self
-        dl.addWidget(self._step)
         root.addWidget(self._detail_wrap)
 
         self._btn_up.clicked.connect(lambda: self._do_move(-1))
         self._btn_down.clicked.connect(lambda: self._do_move(1))
         self._btn_copy.clicked.connect(self._do_copy)
         self._btn_del.clicked.connect(self._do_delete)
-        self._step.contentChanged.connect(self._on_step_content_changed)
 
+        self._detail_wrap.setVisible(False)
         self.refresh_header()
 
+    def _header_dict(self) -> dict:
+        if self._step is not None:
+            return self._step.to_dict()
+        return deepcopy(self._step_snapshot)
+
+    def ensure_step_detail(self) -> None:
+        self._ensure_detail_built()
+
+    def _ensure_detail_built(self) -> None:
+        if self._step is not None:
+            return
+        self._step = StepWidget(
+            self._step_snapshot, self._model, self._editor, self._detail_wrap,
+            parallel_parent=self._parallel_parent,
+            cutscene_id=self._cutscene_id,
+        )
+        self._step._outline_frame = self
+        lay = self._detail_wrap.layout()
+        if isinstance(lay, QVBoxLayout):
+            lay.addWidget(self._step)
+        self._step.contentChanged.connect(self._on_step_content_changed)
+
+    def step_kind(self) -> str:
+        if self._step is not None:
+            return str(self._step._kind_combo.currentData())
+        return str(self._step_snapshot.get("kind", "present"))
+
     def to_dict(self) -> dict:
-        return self._step.to_dict()
+        if self._step is not None:
+            return self._step.to_dict()
+        return deepcopy(self._step_snapshot)
 
     def set_row_index(self, idx: int) -> None:
         self._idx_lbl.setText(str(idx))
@@ -1254,7 +1321,7 @@ class StepOutlineFrame(QFrame):
 
     def _refresh_header_surface(self) -> None:
         tid = self._editor_theme_id()
-        kind = str(self._step.to_dict().get("kind", "present"))
+        kind = str(self._header_dict().get("kind", "present"))
         if app_theme.is_dark_theme(tid):
             border = "#454b54"
             if kind == "action":
@@ -1292,7 +1359,7 @@ class StepOutlineFrame(QFrame):
 
     def refresh_header(self) -> None:
         tid = self._editor_theme_id()
-        d = self._step.to_dict()
+        d = self._header_dict()
         kind = str(d.get("kind", "present"))
         self._refresh_header_surface()
         sp, bb, bf = self._kind_palette(kind, tid)
@@ -1308,8 +1375,11 @@ class StepOutlineFrame(QFrame):
         self._summary.setStyleSheet(f"color: {primary};")
         self._dur_lbl.setStyleSheet(f"color: {muted};")
         if kind == "parallel":
-            tracks = [ol.to_dict() for ol in self._step._child_outlines]
-            summ = parallel_tracks_summary(tracks)
+            if self._step is not None:
+                tracks = [ol.to_dict() for ol in self._step._child_outlines]
+                summ = parallel_tracks_summary(tracks)
+            else:
+                summ = parallel_tracks_summary(d.get("tracks") or [])
         else:
             summ = step_summary_line(d)
         self._summary.setText(summ)
@@ -1331,6 +1401,8 @@ class StepOutlineFrame(QFrame):
         return super().eventFilter(watched, event)
 
     def set_collapsed(self, collapsed: bool, *, refresh: bool = True) -> None:
+        if not collapsed:
+            self._ensure_detail_built()
         self._collapsed = collapsed
         self._detail_wrap.setVisible(not collapsed)
         self._expand.setArrowType(
@@ -1464,6 +1536,14 @@ class TimelineEditor(QWidget):
         self._scene_data_changed_debounce.timeout.connect(
             self._run_debounced_scene_model_refresh,
         )
+        self._overlay_id_selectors_debounce = QTimer(self)
+        self._overlay_id_selectors_debounce.setSingleShot(True)
+        self._overlay_id_selectors_debounce.setInterval(48)
+        self._overlay_id_selectors_debounce.timeout.connect(
+            self._refresh_all_present_overlay_id_selectors,
+        )
+        self._overlay_selectors_fp_cache = ""
+        self._overlay_selectors_fp_valid = False
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1611,6 +1691,8 @@ class TimelineEditor(QWidget):
     def _iter_all_step_outlines(self):
         def walk(ol: StepOutlineFrame):
             yield ol
+            if ol._step is None:
+                return
             if ol._step._kind_combo.currentData() == "parallel":
                 for c in ol._step._child_outlines:
                     yield from walk(c)
@@ -1619,12 +1701,22 @@ class TimelineEditor(QWidget):
             yield from walk(top)
 
     def _set_all_step_collapsed(self, collapsed: bool) -> None:
-        for ol in self._iter_all_step_outlines():
-            ol.set_collapsed(collapsed, refresh=False)
+        if collapsed:
+            for ol in self._iter_all_step_outlines():
+                ol.set_collapsed(True, refresh=False)
+            return
+        # 展开全部：parallel 子轨在父级 StepWidget 构建后才进入迭代，需多轮直到无仍折叠的结点
+        while True:
+            batch = list(self._iter_all_step_outlines())
+            pending = [ol for ol in batch if ol._collapsed]
+            if not pending:
+                break
+            for ol in pending:
+                ol.set_collapsed(False, refresh=False)
 
     def _on_any_outline_changed(self) -> None:
         self._refresh_outline_indices_and_zebra()
-        self._refresh_all_present_overlay_id_selectors()
+        self._overlay_id_selectors_debounce.start()
 
     def _refresh_outline_indices_and_zebra(self) -> None:
         for i, ol in enumerate(self._step_outlines):
@@ -1635,6 +1727,8 @@ class TimelineEditor(QWidget):
 
     def _refresh_parallel_track_zebra(self) -> None:
         for top in self._step_outlines:
+            if top._step is None:
+                continue
             self._zebra_descendant_tracks(top._step)
 
     def _zebra_descendant_tracks(self, sw: StepWidget) -> None:
@@ -1643,6 +1737,8 @@ class TimelineEditor(QWidget):
         for i, ol in enumerate(sw._child_outlines):
             ol.set_zebra_alt(i % 2 == 1)
             ol.refresh_header()
+            if ol._step is None:
+                continue
             self._zebra_descendant_tracks(ol._step)
 
     def _on_model_data_changed(self, data_type: str, item_id: str) -> None:
@@ -1829,6 +1925,7 @@ class TimelineEditor(QWidget):
             self._loading_ui = False
 
     def _rebuild_steps(self, steps: list[dict]) -> None:
+        self._overlay_selectors_fp_valid = False
         for ol in self._step_outlines:
             self._steps_layout.removeWidget(ol)
             ol.deleteLater()
@@ -1936,12 +2033,22 @@ class TimelineEditor(QWidget):
         if getattr(self, "_loading_ui", False):
             return
         show_set, hide_set = self._outline_overlay_show_and_hide_sets()
+        fp = "|".join(
+            (
+                "+:" + ":".join(sorted(show_set, key=lambda x: (x.lower(), x))),
+                "-:" + ":".join(sorted(hide_set, key=lambda x: (x.lower(), x))),
+            ),
+        )
+        if self._overlay_selectors_fp_valid and fp == self._overlay_selectors_fp_cache:
+            return
         show_sorted = sorted(show_set, key=lambda x: (x.lower(), x))
         union_sorted = sorted(
             show_set | hide_set, key=lambda x: (x.lower(), x),
         )
         for ol in self._iter_all_step_outlines():
             sw = ol._step
+            if sw is None:
+                continue
             if sw._kind_combo.currentData() != "present":
                 continue
             ptype = sw._type_combo.committed_type()
@@ -1969,6 +2076,8 @@ class TimelineEditor(QWidget):
                 sel.set_current(cur)
             finally:
                 sel.blockSignals(False)
+        self._overlay_selectors_fp_cache = fp
+        self._overlay_selectors_fp_valid = True
 
     def _add_step(self, kind: str) -> None:
         if kind == "present":
@@ -1993,6 +2102,10 @@ class TimelineEditor(QWidget):
         self.mark_pending_changes()
 
     def _apply(self) -> bool:
+        from ..editor_perf import PerfClock, maybe_stamp, perf_log_enabled
+
+        _ap_clk = PerfClock(label="TimelineEditor._apply") if perf_log_enabled() else None
+
         if self._current_idx < 0:
             return False
         steps = [ol.to_dict() for ol in self._step_outlines]
@@ -2028,9 +2141,17 @@ class TimelineEditor(QWidget):
         cs.pop("commands", None)
         self._model.mark_dirty("cutscene")
         self._pending_changes = False
-        self._refresh()
+        nid = self._c_id.text().strip()
+        label = nid or cs.get("id") or "?"
         if 0 <= self._current_idx < self._list.count():
-            self._list.setCurrentRow(self._current_idx)
+            self._list.blockSignals(True)
+            try:
+                it = self._list.item(self._current_idx)
+                if it is not None:
+                    it.setText(str(label))
+            finally:
+                self._list.blockSignals(False)
+        maybe_stamp(_ap_clk, f"done steps={len(steps)} idx={self._current_idx}")
         return True
 
     def _add(self) -> None:
@@ -2113,7 +2234,7 @@ class TimelineEditor(QWidget):
             layout.addWidget(w)
 
     def can_merge_adjacent_into_parallel(self, ol: StepOutlineFrame) -> bool:
-        if ol._step._kind_combo.currentData() == "parallel":
+        if ol.step_kind() == "parallel":
             return False
         lst, _ = self.outline_list_and_layout(ol)
         try:
@@ -2122,7 +2243,7 @@ class TimelineEditor(QWidget):
             return False
         if i + 1 >= len(lst):
             return False
-        return lst[i + 1]._step._kind_combo.currentData() != "parallel"
+        return lst[i + 1].step_kind() != "parallel"
 
     def merge_adjacent_into_parallel(self, ol: StepOutlineFrame) -> None:
         """当前项与下一项（须均为 present/action）合并为一个 parallel（两轨）。"""
@@ -2160,7 +2281,7 @@ class TimelineEditor(QWidget):
         self.mark_pending_changes()
 
     def can_merge_into_prev_parallel(self, ol: StepOutlineFrame) -> bool:
-        if ol._step._kind_combo.currentData() == "parallel":
+        if ol.step_kind() == "parallel":
             return False
         lst, _ = self.outline_list_and_layout(ol)
         try:
@@ -2169,7 +2290,7 @@ class TimelineEditor(QWidget):
             return False
         if i == 0:
             return False
-        return lst[i - 1]._step._kind_combo.currentData() == "parallel"
+        return lst[i - 1].step_kind() == "parallel"
 
     def merge_into_prev_parallel(self, ol: StepOutlineFrame) -> None:
         if not self.can_merge_into_prev_parallel(ol):
@@ -2182,7 +2303,10 @@ class TimelineEditor(QWidget):
         layout.removeWidget(ol)
         ol.deleteLater()
 
+        prev_ol.ensure_step_detail()
         par_sw = prev_ol._step
+        if par_sw is None:
+            return
         self._append_track_to_parallel(par_sw, data)
         prev_ol.refresh_header()
         self._relayout_outline_list(lst, layout)
@@ -2190,7 +2314,7 @@ class TimelineEditor(QWidget):
         self.mark_pending_changes()
 
     def can_merge_into_next_parallel(self, ol: StepOutlineFrame) -> bool:
-        if ol._step._kind_combo.currentData() == "parallel":
+        if ol.step_kind() == "parallel":
             return False
         lst, _ = self.outline_list_and_layout(ol)
         try:
@@ -2199,7 +2323,7 @@ class TimelineEditor(QWidget):
             return False
         if i + 1 >= len(lst):
             return False
-        return lst[i + 1]._step._kind_combo.currentData() == "parallel"
+        return lst[i + 1].step_kind() == "parallel"
 
     def merge_into_next_parallel(self, ol: StepOutlineFrame) -> None:
         if not self.can_merge_into_next_parallel(ol):
@@ -2212,7 +2336,10 @@ class TimelineEditor(QWidget):
         layout.removeWidget(ol)
         ol.deleteLater()
 
+        next_ol.ensure_step_detail()
         par_sw = next_ol._step
+        if par_sw is None:
+            return
         self._prepend_track_to_parallel(par_sw, data)
         next_ol.refresh_header()
         self._relayout_outline_list(lst, layout)

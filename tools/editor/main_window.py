@@ -563,45 +563,27 @@ class MainWindow(QMainWindow):
     def _save_all(self) -> None:
         if self._model.project_path is None:
             return
-        t0 = time.perf_counter()
-        last = t0
+        from .editor_perf import PerfClock, maybe_stamp, perf_log_enabled
 
-        def _stamp(msg: str) -> None:
-            nonlocal last
-            wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            now = time.perf_counter()
-            print(
-                f"[SaveAll {wall}] {msg}  Δ{now - last:.3f}s  Σ{now - t0:.3f}s",
-                flush=True,
-            )
-            last = now
+        clk = PerfClock(label="MainWindow.SaveAll")
 
         try:
-            _stamp("开始")
+            flush_clk = PerfClock(label="SaveAll.flush") if perf_log_enabled() else None
+            maybe_stamp(clk, "开始 flush 编辑器")
             for inst in self._editor_instances:
                 flush = getattr(inst, "flush_to_model", None)
                 if callable(flush):
                     name = type(inst).__name__
-                    t_flush = time.perf_counter()
+                    t0 = time.perf_counter()
                     flush()
-                    wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    now = time.perf_counter()
-                    print(
-                        f"[SaveAll {wall}] flush {name}  Δ{now - t_flush:.3f}s  Σ{now - t0:.3f}s",
-                        flush=True,
-                    )
-                    last = now
-            _stamp("全部 flush 完成，调用 model.save_all")
+                    dt = time.perf_counter() - t0
+                    maybe_stamp(flush_clk, f"{name} ok {dt*1000:.1f}ms")
+            maybe_stamp(clk, "全部 flush 完成，调用 model.save_all")
             self._model.save_all()
-            _stamp("model.save_all 完成")
+            maybe_stamp(clk, "model.save_all 完成")
             self._status.showMessage("Saved.", 3000)
         except Exception as e:
-            wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            now = time.perf_counter()
-            print(
-                f"[SaveAll {wall}] 失败（异常） Σ{now - t0:.3f}s: {e!r}",
-                flush=True,
-            )
+            print(f"[SaveAll] 失败: {e!r}", flush=True)
             QMessageBox.critical(self, "Save Error", str(e))
 
     def _on_dirty(self, dirty: bool) -> None:

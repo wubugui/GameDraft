@@ -8,13 +8,14 @@ from PySide6.QtWidgets import (
     QScrollArea, QGroupBox, QSpinBox, QMessageBox, QToolButton,
     QMenu, QSizePolicy, QFrame, QStyle, QLabel,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 
 
 def _tool_std_icon_btn(
@@ -23,27 +24,17 @@ def _tool_std_icon_btn(
     tip: str,
     px: int = 26,
     text_fallback: str = "",
-) -> QPushButton:
-    """图标按钮（避免依赖字体里不存在的 Unicode 箭头/减号）。"""
-    btn = QPushButton(parent)
-    btn.setToolTip(tip)
-    btn.setFixedSize(px, px)
-    ic = btn.style().standardIcon(std)
-    if not ic.isNull():
-        btn.setIcon(ic)
-        btn.setIconSize(QSize(max(16, px - 8), max(16, px - 8)))
-    elif text_fallback:
-        btn.setText(text_fallback)
-    return btn
-
-
-def _delete_std_icon() -> QStyle.StandardPixmap:
-    pm = getattr(
-        QStyle.StandardPixmap,
-        "SP_TrashIcon",
-        QStyle.StandardPixmap.SP_DialogCancelButton,
+) -> QToolButton:
+    """工具条式 QToolButton，与主窗口/遭遇/过场行内按钮视觉一致。"""
+    return outline_row_tool_button(
+        parent,
+        tip,
+        theme_names=(),
+        std=std,
+        fallback_text=text_fallback,
+        fixed_width=px,
+        fixed_height=px,
     )
-    return pm
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +97,7 @@ class _ConsumeItemRow(QWidget):
         lay.addWidget(self._count)
 
         self._del_btn = _tool_std_icon_btn(
-            self, _delete_std_icon(), "移除此行", px=24, text_fallback="删")
+            self, delete_standard_pixmap(), "移除此行", px=24, text_fallback="删")
         lay.addWidget(self._del_btn)
         lay.addStretch(1)
 
@@ -209,7 +200,7 @@ class OptionWidget(QFrame):
         self._btn_down = _tool_std_icon_btn(
             self, QStyle.StandardPixmap.SP_ArrowDown, "下移", text_fallback="下")
         self._btn_del = _tool_std_icon_btn(
-            self, _delete_std_icon(), "删除该选项", text_fallback="删")
+            self, delete_standard_pixmap(), "删除该选项", text_fallback="删")
         head.addWidget(self._btn_up)
         head.addWidget(self._btn_down)
         head.addWidget(self._btn_del)
@@ -511,10 +502,14 @@ class EncounterEditor(QWidget):
         if self._loading_ui or self._current_idx < 0:
             return
         new_id = self._suggest_unique_encounter_id()
-        self._model.encounters[self._current_idx]["id"] = new_id
+        row = self._current_idx
+        self._model.encounters[row]["id"] = new_id
         self._model.mark_dirty("encounter")
-        self._sync_id_selector_for_row(self._current_idx)
-        self._refresh(select_id=new_id)
+        self._sync_id_selector_for_row(row)
+        lw = self._list.item(row)
+        if lw is not None:
+            lw.setText(new_id)
+        self._take_snapshot_from_model_row(row)
 
     def _enc_from_ui(self) -> dict:
         eid = self._e_id_sel.current_id().strip()
@@ -758,16 +753,37 @@ class EncounterEditor(QWidget):
                 + ("\n..." if len(errs) > 12 else ""))
             return False
         enc = self._model.encounters[self._current_idx]
+        row_saved = self._current_idx
         enc["id"] = self._e_id_sel.current_id().strip()
         enc["narrative"] = self._e_narr.toPlainText()
         enc["options"] = [ow.to_dict() for ow in self._opt_widgets]
         self._model.mark_dirty("encounter")
-        sel_id = (
-            refresh_select_id
-            if refresh_select_id is not None
-            else enc["id"])
-        self._take_snapshot_from_model_row(self._current_idx)
-        self._refresh(select_id=sel_id)
+        sel_raw = refresh_select_id if refresh_select_id is not None else enc["id"]
+        sel_id = str(sel_raw).strip() if sel_raw else ""
+        target_row = -1
+        if sel_id:
+            for i, e in enumerate(self._model.encounters):
+                if str(e.get("id", "")).strip() == sel_id:
+                    target_row = i
+                    break
+            if target_row < 0 and self._model.encounters:
+                target_row = 0
+        elif self._model.encounters:
+            target_row = 0
+
+        lw = self._list.item(row_saved)
+        if lw is not None:
+            lw.setText(f"{enc.get('id', '?')}")
+
+        self._list.selectionModel().blockSignals(True)
+        try:
+            if target_row >= 0:
+                self._list.setCurrentRow(target_row)
+            else:
+                self._list.setCurrentRow(-1)
+        finally:
+            self._list.selectionModel().blockSignals(False)
+        self._load_row(target_row)
         return True
 
     def _apply(self) -> None:

@@ -217,11 +217,25 @@ class RuleEditor(QWidget):
                     self._frag_list.setCurrentRow(row)
                     break
 
+    def _restore_frag_row_by_global_index(self, frag_index: int) -> None:
+        if frag_index < 0:
+            return
+        self._frag_list.blockSignals(True)
+        try:
+            for row in range(self._frag_list.count()):
+                it = self._frag_list.item(row)
+                if it and it.data(Qt.ItemDataRole.UserRole) == frag_index:
+                    self._frag_list.setCurrentRow(row)
+                    return
+        finally:
+            self._frag_list.blockSignals(False)
+
     def _apply_rule(self) -> None:
         rules = self._model.rules_data.get("rules", [])
         if self._rule_idx < 0 or self._rule_idx >= len(rules):
             return
         r = rules[self._rule_idx]
+        prev_id = str(r.get("id", "")).strip()
         r["id"] = self._r_id.text().strip()
         r["name"] = self._r_name.text()
         iname = self._r_iname.text()
@@ -252,7 +266,16 @@ class RuleEditor(QWidget):
         for k in ("description", "source", "sourceType", "fragmentCount", "verified"):
             r.pop(k, None)
         self._model.mark_dirty("rules")
-        self._refresh()
+        rid = str(r.get("id", "")).strip()
+        lw = self._rule_list.item(self._rule_idx)
+        if lw is not None:
+            lw.setText(f"{r.get('id', '?')}  [{r.get('name', '')}]")
+        self._refresh_rule_fragments_sidebar()
+        if rid != prev_id:
+            self._populate_frag_rule_filter()
+        saved_frag = self._frag_idx
+        self._refresh_frag_list()
+        self._restore_frag_row_by_global_index(saved_frag)
 
     def _add_rule(self) -> None:
         rules = self._model.rules_data.setdefault("rules", [])
@@ -438,7 +461,10 @@ class RuleEditor(QWidget):
         elif "source" in fr:
             del fr["source"]
         self._model.mark_dirty("rules")
-        self._refresh()
+        saved_frag = self._frag_idx
+        self._refresh_frag_list()
+        self._restore_frag_row_by_global_index(saved_frag)
+        self._refresh_rule_fragments_sidebar()
 
     def _add_frag(self) -> None:
         rid0 = self._filter_rule_id()

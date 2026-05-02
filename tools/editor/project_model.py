@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +71,8 @@ class ProjectModel(QObject):
         self.document_reveals: list = []
 
         self._dirty: set[str] = set()
+        self._dirty_scene_ids: set[str] = set()
+        self._dirty_scenes_all: bool = False
 
     # ---- properties -------------------------------------------------------
 
@@ -157,6 +157,8 @@ class ProjectModel(QObject):
         self.document_reveals = raw_dr if isinstance(raw_dr, list) else []
 
         self._dirty.clear()
+        self._dirty_scene_ids.clear()
+        self._dirty_scenes_all = False
         self.undo_stack.clear()
         self.dirty_changed.emit(False)
         if self._rebuild_dialogue_graph_ids_from_graph_files():
@@ -199,83 +201,116 @@ class ProjectModel(QObject):
     # ---- saving -----------------------------------------------------------
 
     def save_all(self) -> None:
-        t0 = time.perf_counter()
-        last = t0
+        if self.project_path is None:
+            return
+        from .editor_perf import PerfClock, maybe_stamp, perf_span
 
-        def _stamp(label: str) -> None:
-            nonlocal last
-            wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            now = time.perf_counter()
-            print(
-                f"[SaveAll {wall}] model.save_all {label}  Δ{now - last:.3f}s  Σ{now - t0:.3f}s",
-                flush=True,
-            )
-            last = now
+        clk = PerfClock(label="model.save_all")
+        if not self.is_dirty:
+            maybe_stamp(clk, "无 dirty，跳过保存与校验")
+            return
 
-        _stamp("开始")
+        maybe_stamp(clk, "开始（有 dirty）")
         dp = self.data_path
         sp = self.scenes_path
-        write_json(dp / "game_config.json", self.game_config)
-        write_json(dp / "items.json", self.items)
-        write_json(dp / "quests.json", self.quests)
-        write_json(dp / "questGroups.json", self.quest_groups)
-        write_json(dp / "encounters.json", self.encounters)
-        write_json(dp / "rules.json", self.rules_data)
-        write_json(dp / "shops.json", self.shops)
-        write_json(dp / "map_config.json", self.map_nodes)
-        write_json(dp / "cutscenes" / "index.json", self.cutscenes)
-        write_json(dp / "audio_config.json", self.audio_config)
-        write_json(dp / "strings.json", self.strings)
-        write_json(dp / "archive" / "characters.json", self.archive_characters)
-        write_json(dp / "archive" / "lore.json", self.archive_lore)
-        write_json(dp / "archive" / "books.json", self.archive_books)
-        write_json(dp / "archive" / "documents.json", self.archive_documents)
-        _stamp("已写入 data 下聚合 JSON（不含场景）")
-        n_scenes = 0
-        for sid, data in self.scenes.items():
-            write_json(sp / f"{sid}.json", data)
-            n_scenes += 1
-        _stamp(f"已写入 {n_scenes} 个场景 JSON")
-        from .flag_registry import flag_registry_path
-        write_json(flag_registry_path(self.assets_path), self.flag_registry)
-        write_json(dp / "overlay_images.json", self.overlay_images)
-        _stamp("已写入 flag_registry、overlay_images")
+        dty = self._dirty
+
         from .scenarios_catalog_validate import validate_scenarios_catalog_for_save
         from .shared.ref_validator import validate_refs_for_save
 
-        ref_err = validate_refs_for_save(self)
-        _stamp("validate_refs_for_save 完成")
-        if ref_err:
-            raise ValueError(ref_err)
+        with perf_span("model.save_all.presave_validators"):
+            ref_err = validate_refs_for_save(self)
+            if ref_err:
+                raise ValueError(ref_err)
 
-        sc_err = validate_scenarios_catalog_for_save(
-            self.scenarios_catalog,
-            flag_registry=self.flag_registry,
-            model=self,
-        )
-        _stamp("validate_scenarios_catalog_for_save 完成")
-        if sc_err:
-            raise ValueError(sc_err)
-        write_json(dp / "scenarios.json", self.scenarios_catalog)
-        write_json(dp / "document_reveals.json", self.document_reveals)
-        _stamp("已写入 scenarios.json、document_reveals.json")
-        filters_dir = dp / "filters"
-        filters_dir.mkdir(parents=True, exist_ok=True)
-        keep = set(self.filter_defs.keys())
-        if filters_dir.is_dir():
-            for p in list(filters_dir.glob("*.json")):
-                if p.stem not in keep:
-                    p.unlink()
-        for stem, data in self.filter_defs.items():
-            write_json(filters_dir / f"{stem}.json", data)
-        _stamp("filters 同步完成")
+            sc_err = validate_scenarios_catalog_for_save(
+                self.scenarios_catalog,
+                flag_registry=self.flag_registry,
+                model=self,
+            )
+            if sc_err:
+                raise ValueError(sc_err)
+
+        maybe_stamp(clk, "预校验通过 — 顺序：refs → scenarios → writes")
+
+        try:
+            if "config" in dty:
+                write_json(dp / "game_config.json", self.game_config)
+            if "item" in dty:
+                write_json(dp / "items.json", self.items)
+            if "quest" in dty:
+                write_json(dp / "quests.json", self.quests)
+            if "questGroup" in dty:
+                write_json(dp / "questGroups.json", self.quest_groups)
+            if "encounter" in dty:
+                write_json(dp / "encounters.json", self.encounters)
+            if "rules" in dty:
+                write_json(dp / "rules.json", self.rules_data)
+            if "shop" in dty:
+                write_json(dp / "shops.json", self.shops)
+            if "map" in dty:
+                write_json(dp / "map_config.json", self.map_nodes)
+            if "cutscene" in dty:
+                write_json(dp / "cutscenes" / "index.json", self.cutscenes)
+            if "audio" in dty:
+                write_json(dp / "audio_config.json", self.audio_config)
+            if "strings" in dty:
+                write_json(dp / "strings.json", self.strings)
+            if "archive" in dty:
+                write_json(dp / "archive" / "characters.json", self.archive_characters)
+                write_json(dp / "archive" / "lore.json", self.archive_lore)
+                write_json(dp / "archive" / "books.json", self.archive_books)
+                write_json(dp / "archive" / "documents.json", self.archive_documents)
+            maybe_stamp(clk, "已写入 data 下聚合 JSON（按 dirty）")
+            if "scene" in dty:
+                if self._dirty_scenes_all or not self._dirty_scene_ids:
+                    scene_ids = sorted(self.scenes.keys())
+                else:
+                    scene_ids = sorted(
+                        set(self._dirty_scene_ids) & set(self.scenes.keys()),
+                    )
+                for sid in scene_ids:
+                    write_json(sp / f"{sid}.json", self.scenes[sid])
+                maybe_stamp(clk, f"已写入 {len(scene_ids)} 个场景 JSON")
+            if "flag_registry" in dty:
+                from .flag_registry import flag_registry_path
+
+                write_json(flag_registry_path(self.assets_path), self.flag_registry)
+            if "overlay_images" in dty:
+                write_json(dp / "overlay_images.json", self.overlay_images)
+            if "scenarios" in dty:
+                write_json(dp / "scenarios.json", self.scenarios_catalog)
+            if "document_reveals" in dty:
+                write_json(dp / "document_reveals.json", self.document_reveals)
+            if "filter" in dty:
+                filters_dir = dp / "filters"
+                filters_dir.mkdir(parents=True, exist_ok=True)
+                keep = set(self.filter_defs.keys())
+                if filters_dir.is_dir():
+                    for p in list(filters_dir.glob("*.json")):
+                        if p.stem not in keep:
+                            p.unlink()
+                for stem, data in sorted(self.filter_defs.items()):
+                    write_json(filters_dir / f"{stem}.json", data)
+                maybe_stamp(clk, "filters 同步完成")
+        except Exception:
+            raise
+
         self._dirty.clear()
+        self._dirty_scene_ids.clear()
+        self._dirty_scenes_all = False
         self.dirty_changed.emit(False)
-        _stamp("结束（清 dirty）")
+        maybe_stamp(clk, "结束（清 dirty）")
 
     def mark_dirty(self, data_type: str, item_id: str = "") -> None:
         was_dirty = self.is_dirty
         self._dirty.add(data_type)
+        if data_type == "scene":
+            sid = (item_id or "").strip()
+            if sid:
+                self._dirty_scene_ids.add(sid)
+            else:
+                self._dirty_scenes_all = True
         self.data_changed.emit(data_type, item_id)
         if not was_dirty:
             self.dirty_changed.emit(True)

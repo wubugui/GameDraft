@@ -1,7 +1,7 @@
 """Rich text widgets with insert-[tag:…] dialog (策划勿手打引用)."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -165,18 +165,32 @@ class RichTextTextEdit(QWidget):
         self._hint.setWordWrap(True)
         self._hint.setStyleSheet("font-size:11px;color:#888;")
         lay.addWidget(self._hint)
-        self._edit.textChanged.connect(self._update_hint)
+        self._hint_timer = QTimer(self)
+        self._hint_timer.setSingleShot(True)
+        self._hint_timer.setInterval(240)
+        self._hint_timer.timeout.connect(self._flush_hint)
+        self._edit.textChanged.connect(self._schedule_hint)
+        self._edit.installEventFilter(self)
+
+    def eventFilter(self, obj: QObject, ev: QEvent) -> bool:  # noqa: ANN001
+        if obj is self._edit and ev.type() == QEvent.Type.FocusOut:
+            self._hint_timer.stop()
+            self._flush_hint()
+        return super().eventFilter(obj, ev)
 
     def set_model(self, model: ProjectModel) -> None:
         """切换工程模型（图编辑器 PropertyStack 在载入工程后注入）。"""
         self._model = model
-        self._update_hint()
+        self._schedule_hint()
 
     def core_text_edit(self) -> QTextEdit:
         """供插入图片等需直接操作 QTextCursor 的逻辑使用。"""
         return self._edit
 
-    def _update_hint(self) -> None:
+    def _schedule_hint(self) -> None:
+        self._hint_timer.start()
+
+    def _flush_hint(self) -> None:
         t = self._edit.toPlainText()
         errs = scan_refs(t, "预览", self._model)
         self._hint.setText(_format_errs(errs))
@@ -189,13 +203,16 @@ class RichTextTextEdit(QWidget):
         if not m:
             return
         self._edit.textCursor().insertText(m)
-        self._update_hint()
+        self._hint_timer.stop()
+        self._flush_hint()
 
     def toPlainText(self) -> str:
         return self._edit.toPlainText()
 
     def setPlainText(self, text: str) -> None:
         self._edit.setPlainText(text)
+        self._hint_timer.stop()
+        self._flush_hint()
 
     def setMaximumHeight(self, maxh: int) -> None:
         self._edit.setMaximumHeight(maxh)
@@ -215,18 +232,50 @@ class RichTextLineEdit(QWidget):
     def __init__(self, model: ProjectModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._model = model
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         self._edit = QLineEdit()
         self._edit.textChanged.connect(self.textChanged.emit)
         btn = QPushButton("引用")
         btn.setMaximumWidth(44)
         btn.clicked.connect(self._insert_ref)
-        lay.addWidget(self._edit, 1)
-        lay.addWidget(btn)
+        row.addWidget(self._edit, 1)
+        row.addWidget(btn)
+        outer.addLayout(row)
+        self._hint = QLabel("")
+        self._hint.setWordWrap(True)
+        self._hint.setStyleSheet("font-size:11px;color:#888;")
+        outer.addWidget(self._hint)
+        self._hint_timer = QTimer(self)
+        self._hint_timer.setSingleShot(True)
+        self._hint_timer.setInterval(240)
+        self._hint_timer.timeout.connect(self._flush_hint)
+        self._edit.textChanged.connect(self._schedule_hint)
+        self._edit.editingFinished.connect(self._flush_hint_after_edit)
 
     def set_model(self, model: ProjectModel) -> None:
         self._model = model
+        self._schedule_hint()
+
+    def _schedule_hint(self) -> None:
+        if "[tag:" not in self._edit.text():
+            self._hint.setText("")
+            return
+        self._hint_timer.start()
+
+    def _flush_hint_after_edit(self) -> None:
+        self._hint_timer.stop()
+        self._flush_hint()
+
+    def _flush_hint(self) -> None:
+        t = self._edit.text()
+        if "[tag:" not in t:
+            self._hint.setText("")
+            return
+        errs = scan_refs(t, "单行预览", self._model)
+        self._hint.setText(_format_errs(errs))
 
     def _insert_ref(self) -> None:
         dlg = InsertRefDialog(self._model, self)
@@ -236,12 +285,16 @@ class RichTextLineEdit(QWidget):
         if not m:
             return
         self._edit.insert(m)
+        self._hint_timer.stop()
+        self._flush_hint()
 
     def text(self) -> str:
         return self._edit.text()
 
     def setText(self, text: str) -> None:
         self._edit.setText(text)
+        self._hint_timer.stop()
+        self._flush_hint()
 
     def setPlaceholderText(self, text: str) -> None:
         self._edit.setPlaceholderText(text)

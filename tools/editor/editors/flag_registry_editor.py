@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QMessageBox, QInputDialog, QComboBox,
     QAbstractItemView, QFrame,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 
 from ..project_model import ProjectModel
 from ..flag_registry import normalize_registry_value_type
@@ -25,6 +25,10 @@ class FlagRegistryEditor(QWidget):
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
         self._model = model
+        self._patterns_flush_timer = QTimer(self)
+        self._patterns_flush_timer.setSingleShot(True)
+        self._patterns_flush_timer.setInterval(220)
+        self._patterns_flush_timer.timeout.connect(self._flush_patterns_to_model)
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -274,6 +278,9 @@ class FlagRegistryEditor(QWidget):
         self._refresh_patterns()
 
     def _on_pattern_changed(self) -> None:
+        self._patterns_flush_timer.start()
+
+    def _flush_patterns_to_model(self) -> None:
         new_list = []
         for i in range(self._patterns_layout.count()):
             child = self._patterns_layout.itemAt(i)

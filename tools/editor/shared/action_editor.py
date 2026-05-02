@@ -1393,12 +1393,28 @@ class ActionRow(QWidget):
         *,
         cutscene_id: str | None = None,
     ) -> None:
+        from ..editor_perf import PerfClock, maybe_stamp, perf_log_enabled
+
+        _pct = PerfClock(label="ActionRow.set_project_ctx") if perf_log_enabled() else None
+        new_cut = (
+            (cutscene_id or None)
+            if cutscene_id is not None
+            else self._ctx_cutscene_id
+        )
+        if (
+            model is self._ctx_model
+            and scene_id == self._ctx_scene_id
+            and new_cut == self._ctx_cutscene_id
+        ):
+            maybe_stamp(_pct, "skip (上下文未变)")
+            return
         self._data = self.to_dict()
         self._ctx_model = model
         self._ctx_scene_id = scene_id
         if cutscene_id is not None:
             self._ctx_cutscene_id = cutscene_id or None
         self._rebuild_params()
+        maybe_stamp(_pct, f'rebuild done type={self.type_combo.committed_type()!s}')
 
     def _on_type_committed(self, _text: str) -> None:
         self._data["params"] = {}
@@ -3321,12 +3337,24 @@ class ActionEditor(QWidget):
         *,
         cutscene_id: str | None = None,
     ) -> None:
+        new_cut = (
+            (cutscene_id or None)
+            if cutscene_id is not None
+            else self._ctx_cutscene_id
+        )
+        if (
+            model is self._ctx_model
+            and scene_id == self._ctx_scene_id
+            and new_cut == self._ctx_cutscene_id
+        ):
+            return
         self._ctx_model = model
         self._ctx_scene_id = scene_id
         if cutscene_id is not None:
             self._ctx_cutscene_id = cutscene_id or None
+        cid = self._ctx_cutscene_id
         for r in self._rows:
-            r.set_project_context(model, scene_id, cutscene_id=self._ctx_cutscene_id)
+            r.set_project_context(model, scene_id, cutscene_id=cid)
 
     def set_flag_completions(self, _keys: list[str]) -> None:
         """Deprecated: pass set_project_context instead."""

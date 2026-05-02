@@ -30,23 +30,46 @@ class IdRefSelector(QComboBox):
 
     def set_items(self, items: list[tuple[str, str]] | list[str]) -> None:
         """Populate with (id, display_name) pairs or plain id strings."""
-        current = self.current_id()
+        from ..editor_perf import PerfClock, maybe_stamp, perf_log_enabled
+
+        _clk = PerfClock(label="IdRefSelector.set_items") if perf_log_enabled() else None
+        normalized: tuple[tuple[str, str], ...] = ()
+        pairs: list[tuple[str, str]] = []
+        for it in items:
+            if isinstance(it, tuple):
+                rid = str(it[0])
+                nm = str(it[1]) if len(it) > 1 else rid
+                pairs.append((rid, nm))
+            else:
+                s = str(it)
+                pairs.append((s, s))
+        normalized = tuple(pairs)
+        cached = getattr(self, "_items_normalized_cache", None)
+        cur_id = self.current_id()
+        if cached == normalized and self.count() == (
+            len(normalized) + (1 if self._allow_empty else 0)
+        ):
+            self.blockSignals(True)
+            try:
+                self.set_current(cur_id)
+            finally:
+                self.blockSignals(False)
+            maybe_stamp(_clk, f"skipped n={len(normalized)}")
+            return
+
+        self._items_normalized_cache = normalized
         self.blockSignals(True)
         self.clear()
         self._ids.clear()
         if self._allow_empty:
             self.addItem("(none)")
             self._ids.append("")
-        for it in items:
-            if isinstance(it, tuple):
-                rid, name = it
-                self.addItem(f"{rid}  [{name}]")
-            else:
-                rid = it
-                self.addItem(rid)
+        for rid, name in normalized:
+            self.addItem(f"{rid}  [{name}]")
             self._ids.append(rid)
         self.blockSignals(False)
-        self.set_current(current)
+        self.set_current(cur_id)
+        maybe_stamp(_clk, f"rebuilt n={len(normalized)}")
 
     def set_current(self, item_id: str) -> None:
         if item_id in self._ids:

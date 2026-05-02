@@ -140,7 +140,11 @@ class ItemEditor(QWidget):
         elif "dynamicDescriptions" in it:
             del it["dynamicDescriptions"]
         self._model.mark_dirty("item")
-        self._refresh()
+        row = self._current_idx
+        tag = "[K]" if it.get("type") == "key" else "[C]"
+        iw = self._list.item(row)
+        if iw is not None:
+            iw.setText(f"{tag} {it.get('id', '?')}  {it.get('name', '')}")
 
     def _add(self) -> None:
         self._model.items.append({
