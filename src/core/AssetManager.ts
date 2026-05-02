@@ -52,7 +52,8 @@ export class AssetManager {
    * 如果某个为 0 或缺失，用背景图尺寸按比例计算。
    */
   async loadSceneData(sceneId: string): Promise<SceneData> {
-    const raw = await this.loadJson<SceneDataRaw>(`assets/scenes/${sceneId}.json`);
+    const cached = await this.loadJson<SceneDataRaw>(`assets/scenes/${sceneId}.json`);
+    const raw = JSON.parse(JSON.stringify(cached)) as SceneDataRaw;
 
     if (raw.backgrounds) {
       for (const layer of raw.backgrounds) {
