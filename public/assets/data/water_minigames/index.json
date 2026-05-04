@@ -1,0 +1,27 @@
+[
+  {
+    "id": "dev_pond",
+    "label": "Dev 占位池塘",
+    "file": "dev_pond.json"
+  },
+  {
+    "id": "wild_morning",
+    "label": "野外河湾 · 清晨 · 晴",
+    "file": "wild_morning.json"
+  },
+  {
+    "id": "dock_rain",
+    "label": "雾津码头 · 雨后 · 雾",
+    "file": "dock_rain.json"
+  },
+  {
+    "id": "grave_night",
+    "label": "义冢浅滩 · 夜里 · 雾",
+    "file": "grave_night.json"
+  },
+  {
+    "id": "dock_crate_tutorial",
+    "label": "码头捞箱教学",
+    "file": "dock_crate_tutorial.json"
+  }
+]

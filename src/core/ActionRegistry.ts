@@ -27,6 +27,7 @@ import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import type { ScenarioStateManager } from './ScenarioStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
+import type { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
@@ -146,6 +147,7 @@ export interface ActionRegistryDeps {
   ) => void;
   /** F2 调试面板「日志」(与 Console 并行，供 showEmote 等运行时诊断)。 */
   debugPanelLog?: (message: string) => void;
+  waterMinigameManager: WaterMinigameManager;
 }
 
 function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
@@ -258,6 +260,15 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         console.warn('ActionRegistry: startCutscene failed', e);
         d.stateController.setState(GameState.Exploring);
       });
+  }, ['id']);
+
+  executor.register('startWaterMinigame', async (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      console.warn('startWaterMinigame: 需要 params.id');
+      return;
+    }
+    await d.waterMinigameManager.runUntilDone(id);
   }, ['id']);
 
   executor.register('showEmote', (p) => {

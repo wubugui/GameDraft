@@ -1569,6 +1569,7 @@ _CUTSCENE_ACTION_WHITELIST = frozenset([
     "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
+    "startWaterMinigame",
 ])
 
 _CUTSCENE_STAGING_SAVE_ACTIONS = frozenset([

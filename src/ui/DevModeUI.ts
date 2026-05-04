@@ -12,9 +12,12 @@ export interface DevModeCallbacks {
   /** 进入指定场景（默认出生点） */
   loadScene(id: string): void;
   reload(): void;
+  /** Minigames 列表（同步自 water_minigames index） */
+  getMinigameEntries(): Array<{ id: string; label: string }>;
+  launchMinigame(id: string): void;
 }
 
-const CATEGORY_WIDTH = 160;
+const CATEGORY_WIDTH = 178;
 const HEADER_HEIGHT = 48;
 const ITEM_HEIGHT = 36;
 const SCROLL_SPEED = 30;
@@ -30,7 +33,7 @@ export class DevModeUI {
   private contentMask: Graphics | null = null;
   private contentContainer: Container | null = null;
   private boundWheel: ((e: WheelEvent) => void) | null = null;
-  private section: 'cutscene' | 'scene' = 'cutscene';
+  private section: 'cutscene' | 'scene' | 'minigames' = 'cutscene';
 
   constructor(renderer: Renderer, callbacks: DevModeCallbacks) {
     this.renderer = renderer;
@@ -90,7 +93,7 @@ export class DevModeUI {
     const sh = this.renderer.screenHeight;
     const pad = 40;
     const panelW = Math.min(sw - pad * 2, 800);
-    const panelH = Math.min(sh - pad * 2, 600);
+    const panelH = Math.min(sh - pad * 2, 660);
     const panelX = (sw - panelW) / 2;
     const panelY = (sh - panelH) / 2;
 
@@ -150,6 +153,12 @@ export class DevModeUI {
         this.rebuild();
       },
     ));
+    this.container.addChild(this.makeSectionTab(
+      'Minigames', panelX, tabY0 + (TAB_H + 4) * 2, this.section === 'minigames', () => {
+        this.section = 'minigames';
+        this.rebuild();
+      },
+    ));
 
     const catDivider = new Graphics();
     catDivider.rect(panelX + CATEGORY_WIDTH, bodyY, 1, bodyH);
@@ -160,8 +169,10 @@ export class DevModeUI {
     const contentW = panelW - CATEGORY_WIDTH - 1;
     if (this.section === 'cutscene') {
       this.buildCutsceneList(contentX, bodyY, contentW, bodyH);
-    } else {
+    } else if (this.section === 'scene') {
       this.buildSceneList(contentX, bodyY, contentW, bodyH);
+    } else {
+      this.buildMinigameList(contentX, bodyY, contentW, bodyH);
     }
   }
 
@@ -195,6 +206,46 @@ export class DevModeUI {
     for (const id of ids) {
       const row = this.makeListItem(id, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
         this.callbacks.playCutscene(id);
+      });
+      this.contentContainer.addChild(row);
+      cy += ITEM_HEIGHT + 2;
+    }
+
+    const totalH = cy;
+    this.maxScrollY = Math.max(0, totalH - h);
+    this.applyScroll();
+  }
+
+  private buildMinigameList(x: number, y: number, w: number, h: number): void {
+    const entries = this.callbacks.getMinigameEntries();
+
+    this.contentMask = new Graphics();
+    this.contentMask.rect(x, y, w, h);
+    this.contentMask.fill(0xffffff);
+    this.container.addChild(this.contentMask);
+
+    this.contentContainer = new Container();
+    this.contentContainer.mask = this.contentMask;
+    this.container.addChild(this.contentContainer);
+
+    const pad = 8;
+    let cy = 0;
+
+    if (entries.length === 0) {
+      const empty = new Text({
+        text: '未加载 water_minigames/index.json 或无条目。',
+        style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+      });
+      empty.x = x + pad;
+      empty.y = y + pad;
+      this.contentContainer.addChild(empty);
+      this.maxScrollY = 0;
+      return;
+    }
+
+    for (const { id, label } of entries) {
+      const row = this.makeListItem(label, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
+        this.callbacks.launchMinigame(id);
       });
       this.contentContainer.addChild(row);
       cy += ITEM_HEIGHT + 2;

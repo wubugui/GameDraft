@@ -4,9 +4,10 @@ const urlParams = new URLSearchParams(window.location.search);
 /** 开发面板等；另见 `?cutsceneDebug` 可在非 dev 时显示过场当前 step HUD */
 const devMode = urlParams.get('mode') === 'dev';
 const playCutscene = urlParams.get('play_cutscene') ?? undefined;
+const waterPreview = urlParams.get('waterPreview') ?? undefined;
 
 let game: Game | null = new Game();
-game.start({ devMode, playCutscene }).catch(console.error);
+game.start({ devMode, playCutscene, waterPreview }).catch(console.error);
 
 function destroyGame(): void {
   window.removeEventListener('beforeunload', onBeforeUnload);

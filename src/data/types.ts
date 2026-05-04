@@ -35,6 +35,7 @@ export enum GameState {
   Encounter = 'Encounter',
   Cutscene = 'Cutscene',
   UIOverlay = 'UIOverlay',
+  Minigame = 'Minigame',
 }
 
 // ============================================================
@@ -849,6 +850,7 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'playSfx',
   'playBgm',
   'stopBgm',
+  'startWaterMinigame',
 ]);
 
 // ============================================================

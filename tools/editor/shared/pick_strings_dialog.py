@@ -10,7 +10,10 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QLabel,
     QWidget,
+    QLineEdit,
 )
+
+from ..project_model import ProjectModel
 
 
 def pick_strings_multi(
@@ -66,3 +69,75 @@ def pick_strings_multi(
         if it.checkState() == Qt.CheckState.Checked:
             out.append(it.text())
     return out
+
+
+def pick_string_tag_marker(
+    parent: QWidget | None,
+    model: ProjectModel,
+    *,
+    title: str = "选择 Strings 词条",
+    hint: str = "",
+    current_marker: str = "",
+) -> str | None:
+    """从 TagCatalog 清单中单选一条 string，返回 `[tag:string:cat:key]`；取消返回 None。"""
+    from .tag_catalog import TagCatalog
+
+    cat = TagCatalog(model)
+    items = cat.list_string_keys()
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.resize(520, 420)
+    root = QVBoxLayout(dlg)
+    if hint:
+        lb = QLabel(hint)
+        lb.setWordWrap(True)
+        root.addWidget(lb)
+
+    sel_ref = ""
+    cur = (current_marker or "").strip()
+    for ti in items:
+        if cat.marker_for(ti) == cur:
+            sel_ref = ti.ref_id
+            break
+
+    search = QLineEdit()
+    search.setPlaceholderText("筛选 category.key 或预览文案…")
+    root.addWidget(search)
+
+    lw = QListWidget()
+
+    def refill(q: str) -> None:
+        lw.clear()
+        qq = q.strip().lower()
+        for ti in items:
+            hay = f"{ti.ref_id} {ti.label} {ti.hint}".lower()
+            if qq and qq not in hay:
+                continue
+            marker = cat.marker_for(ti)
+            row = QListWidgetItem(f"{ti.label}  →  {marker}")
+            row.setData(Qt.ItemDataRole.UserRole, marker)
+            lw.addItem(row)
+            if ti.ref_id == sel_ref:
+                lw.setCurrentItem(row)
+
+    refill("")
+    search.textChanged.connect(refill)
+    root.addWidget(lw)
+
+    bb = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+    )
+    bb.accepted.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    root.addWidget(bb)
+
+    if lw.count() > 0 and lw.currentItem() is None:
+        lw.setCurrentRow(0)
+
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return None
+    it = lw.currentItem()
+    if it is None:
+        return None
+    m = it.data(Qt.ItemDataRole.UserRole)
+    return str(m) if m else None

@@ -48,6 +48,7 @@ CUTSCENE_ACTION_WHITELIST = [
     "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
+    "startWaterMinigame",
 ]
 
 # ---------------------------------------------------------------

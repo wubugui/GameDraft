@@ -102,6 +102,28 @@ def _walk_books(model: ProjectModel, errs: list[str]) -> None:
                 errs.extend(scan_refs(ent.get("annotation"), f"{ep}.annotation", model))
 
 
+def _walk_water_minigames_embedded_refs(model: ProjectModel, errs: list[str]) -> None:
+    """扫描 water_minigames JSON 树中的字符串叶子（cue/hint/动作参数中的 [tag:…]）。"""
+    bag = getattr(model, "water_minigames_instances", None)
+    if not isinstance(bag, dict):
+        return
+
+    def walk(obj: Any, ctx: str) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, f"{ctx}.{k}")
+        elif isinstance(obj, list):
+            for i, it in enumerate(obj):
+                walk(it, f"{ctx}[{i}]")
+        elif isinstance(obj, str):
+            errs.extend(scan_refs(obj, ctx, model))
+
+    for iid, doc in bag.items():
+        if not isinstance(doc, dict):
+            continue
+        walk(doc, f"water_minigames[{iid}]")
+
+
 def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
     errs: list[str] = []
     for i, it in enumerate(model.items):
@@ -221,6 +243,7 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
         for ni, npc in enumerate(sc.get("npcs") or []):
             if isinstance(npc, dict):
                 errs.extend(scan_refs(npc.get("name"), f"scenes[{sid}].npcs[{ni}].name", model))
+    _walk_water_minigames_embedded_refs(model, errs)
     _walk_dialogue_graphs(model, errs)
     errs.extend(_string_ref_cycle_errors(model))
     return errs

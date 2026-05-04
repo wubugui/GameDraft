@@ -1,0 +1,157 @@
+{
+  "id": "dock_crate_tutorial",
+  "label": "码头捞箱教学",
+  "spotId": "dock_wharf",
+  "waterBottom": {
+    "texture": "/assets/images/illustrations/堆积的箱子.png",
+    "tint": "#1b2f42",
+    "depth": 10.58
+  },
+  "surface": {
+    "location": "dock",
+    "time": "day",
+    "weather": "clear"
+  },
+  "bounds": {
+    "width": 720,
+    "height": 480
+  },
+  "entities": [
+    {
+      "id": "dead_grass",
+      "category": "grass",
+      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "pos": {
+        "x": 160,
+        "y": 360
+      },
+      "depth": 0.14,
+      "hint": "[水草] 水下安静得吓人。",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "crate_target",
+      "category": "sunken",
+      "sprite": "/assets/images/illustrations/堆积的箱子.png",
+      "pos": {
+        "x": 420,
+        "y": 380
+      },
+      "depth": 0.85,
+      "valueTier": "premium",
+      "consumeOnSuccess": true,
+      "pull": {
+        "zoneSize": 0.1,
+        "sliderSpeed": 0.92,
+        "rhythm": "heavy_sink",
+        "failurePolicy": "snap",
+        "timeLimitSec": 15
+      },
+      "cue": "洋人落水那只箱子的一角",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 10
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "foreigner_crate_event_done",
+            "value": true
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "捞箱_完成",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockCrateSuccess]",
+            "type": "info"
+          }
+        }
+      ],
+      "onPullFail": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockCrateFail]",
+            "type": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "id": "monkey_distraction",
+      "category": "swimming",
+      "sprite": "/assets/images/illustrations/ghost_bride_flashback.png",
+      "pos": {
+        "x": 560,
+        "y": 280
+      },
+      "depth": 0.48,
+      "motion": {
+        "path": "patrol",
+        "speed": 0.55
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.14,
+        "sliderSpeed": 1.05,
+        "rhythm": "spasm",
+        "failurePolicy": "bite",
+        "timeLimitSec": 11
+      },
+      "cue": "像是水猴子拖过的涟漪",
+      "onPullFail": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "水边拉扯咬伤",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockMonkeyBite]",
+            "type": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "id": "surface_glitter",
+      "category": "floating",
+      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "pos": {
+        "x": 320,
+        "y": 190
+      },
+      "depth": 0.03,
+      "motion": {
+        "path": "drift",
+        "speed": 0.05
+      },
+      "cue": "晃眼的波纹",
+      "onPick": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockRipple]",
+            "type": "info"
+          }
+        }
+      ]
+    }
+  ]
+}

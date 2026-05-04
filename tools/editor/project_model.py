@@ -70,6 +70,9 @@ class ProjectModel(QObject):
         self.scenarios_catalog: dict = {}
         self.document_reveals: list = []
 
+        self.water_minigames_index: list[dict] = []
+        self.water_minigames_instances: dict[str, dict] = {}
+
         self._dirty: set[str] = set()
         self._dirty_scene_ids: set[str] = set()
         self._dirty_scenes_all: bool = False
@@ -155,6 +158,27 @@ class ProjectModel(QObject):
         self.scenarios_catalog = raw_sc if isinstance(raw_sc, dict) else {}
         raw_dr = self._load(dp / "document_reveals.json", [])
         self.document_reveals = raw_dr if isinstance(raw_dr, list) else []
+
+        self.water_minigames_index = []
+        self.water_minigames_instances = {}
+        wm_dir = dp / "water_minigames"
+        wm_idx = wm_dir / "index.json"
+        if wm_idx.is_file():
+            raw_wm = self._load(wm_idx, [])
+            if isinstance(raw_wm, list):
+                self.water_minigames_index = [x for x in raw_wm if isinstance(x, dict)]
+            for row in self.water_minigames_index:
+                fid = row.get("file")
+                iid = str(row.get("id") or "").strip()
+                if not iid or not isinstance(fid, str) or not fid.endswith(".json"):
+                    continue
+                inst_path = wm_dir / fid
+                data = self._load(inst_path, {})
+                if not isinstance(data, dict):
+                    continue
+                if str(data.get("id") or "").strip() != iid:
+                    data["id"] = iid
+                self.water_minigames_instances[iid] = data
 
         self._dirty.clear()
         self._dirty_scene_ids.clear()
@@ -282,6 +306,20 @@ class ProjectModel(QObject):
                 write_json(dp / "scenarios.json", self.scenarios_catalog)
             if "document_reveals" in dty:
                 write_json(dp / "document_reveals.json", self.document_reveals)
+            if "water_minigames" in dty:
+                wm_dir = dp / "water_minigames"
+                wm_dir.mkdir(parents=True, exist_ok=True)
+                write_json(wm_dir / "index.json", self.water_minigames_index)
+                for row in self.water_minigames_index:
+                    if not isinstance(row, dict):
+                        continue
+                    iid = str(row.get("id") or "").strip()
+                    fid = row.get("file")
+                    inst = self.water_minigames_instances.get(iid)
+                    if not inst or not isinstance(fid, str):
+                        continue
+                    write_json(wm_dir / fid, inst)
+                maybe_stamp(clk, "water_minigames 已写入")
             if "filter" in dty:
                 filters_dir = dp / "filters"
                 filters_dir.mkdir(parents=True, exist_ok=True)

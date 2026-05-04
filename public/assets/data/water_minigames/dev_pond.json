@@ -1,0 +1,196 @@
+{
+  "id": "dev_pond",
+  "label": "Dev 占位池塘",
+  "spotId": "dev_pond",
+  "waterBottom": {
+    "texture": "/assets/images/illustrations/iron_box_closeup.png",
+    "tint": "#18324a",
+    "depth": 0.55
+  },
+  "surface": {
+    "location": "dev",
+    "time": "day",
+    "weather": "clear"
+  },
+  "bounds": {
+    "width": 720,
+    "height": 520
+  },
+  "entities": [
+    {
+      "id": "weed_a",
+      "category": "grass",
+      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "pos": {
+        "x": 122,
+        "y": 71
+      },
+      "depth": 0.15,
+      "hint": "[水草] 叶子细长，随波一晃一晃。",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "junk_float",
+      "category": "floating",
+      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "pos": {
+        "x": 372,
+        "y": 71
+      },
+      "depth": 0.05,
+      "motion": {
+        "path": "drift",
+        "speed": 0.06
+      },
+      "cue": "泡烂的纸片团",
+      "onPick": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 1
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "捞起几片泡烂的碎纸片。",
+            "type": "info"
+          }
+        }
+      ],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "crate_heavy",
+      "category": "sunken",
+      "sprite": "/assets/images/illustrations/堆积的箱子.png",
+      "pos": {
+        "x": 288,
+        "y": 58
+      },
+      "depth": 0.82,
+      "pull": {
+        "zoneSize": 0.11,
+        "sliderSpeed": 0.95,
+        "rhythm": "heavy_sink",
+        "failurePolicy": "snap",
+        "timeLimitSec": 14
+      },
+      "cue": "沉甸甸的箱子角",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 3
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:devPullOk]",
+            "type": "info"
+          }
+        }
+      ],
+      "onPullFail": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "绳子打滑，箱子又沉了下去。",
+            "type": "warning"
+          }
+        }
+      ],
+      "onPick": []
+    },
+    {
+      "id": "minnow",
+      "category": "swimming",
+      "sprite": "/assets/images/illustrations/洋人女性.png",
+      "pos": {
+        "x": 202,
+        "y": 64
+      },
+      "depth": 0.45,
+      "motion": {
+        "path": "patrol",
+        "speed": 0.35,
+        "jitter": 0.08
+      },
+      "depthOsc": {
+        "curve": "sine",
+        "amplitude": 0.08,
+        "period": 2.4
+      },
+      "glow": {
+        "enabled": true,
+        "color": "#66ccff",
+        "daylightHint": 0.25
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.16,
+        "sliderSpeed": 1,
+        "rhythm": "stable",
+        "failurePolicy": "escape",
+        "timeLimitSec": 11
+      },
+      "cue": "一闪即逝的小鱼",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "nuomi",
+            "count": 1
+          }
+        }
+      ],
+      "onPick": [],
+      "onPullFail": []
+    },
+    {
+      "id": "spasm_fish",
+      "category": "swimming",
+      "sprite": "/assets/images/illustrations/ghost_bride_flashback.png",
+      "pos": {
+        "x": 560,
+        "y": 340
+      },
+      "depth": 0.55,
+      "motion": {
+        "path": "drift",
+        "speed": 0.45
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.13,
+        "sliderSpeed": 1.05,
+        "rhythm": "spasm",
+        "failurePolicy": "bite",
+        "timeLimitSec": 12
+      },
+      "cue": "挣得非常厉害的影子",
+      "onPullFail": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "水边拉扯咬伤",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "指尖传来剧痛——像是被什么东西叼了一口。",
+            "type": "warning"
+          }
+        }
+      ]
+    }
+  ]
+}

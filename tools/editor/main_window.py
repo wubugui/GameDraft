@@ -481,6 +481,7 @@ class MainWindow(QMainWindow):
             DocumentRevealsEditor,
         )
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+        from .editors.water_minigame_editor import WaterMinigameEditor
 
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
@@ -488,6 +489,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "叙事编排"], "过场", TimelineEditor),
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
+            (["数据编辑", "叙事编排"], "水域小游戏", WaterMinigameEditor),
             (["数据编辑", "叙事编排"], "Scenarios", ScenariosCatalogEditor),
             (["数据编辑", "叙事编排"], "Quest", QuestEditor),
             (["数据编辑", "规则与经济"], "Rule", RuleEditor),
@@ -522,6 +524,9 @@ class MainWindow(QMainWindow):
                 self._editor_labels.append(label)
                 if isinstance(ed, TimelineEditor):
                     ed.play_requested.connect(self._on_cutscene_play_requested)
+                preview_sig = getattr(ed, "preview_requested", None)
+                if preview_sig is not None:
+                    preview_sig.connect(self._on_water_minigame_preview_requested)
 
             self._stack.addWidget(widget)
             parent_item = self._ensure_nav_path(self._nav_tree, path)
@@ -642,6 +647,15 @@ class MainWindow(QMainWindow):
     def _run_game_dev(self) -> None:
         """与 F5 相同流程，但加载 URL 带 mode=dev（开发模式 UI）。"""
         self._run_game(launch_params="mode=dev")
+
+    def _on_water_minigame_preview_requested(self, instance_id: str) -> None:
+        """编辑器「水域小游戏」页一键预览：保存后以开发模式启动并直达指定实例。"""
+        from urllib.parse import quote
+
+        iid = (instance_id or "").strip()
+        if not iid:
+            return
+        self._run_game(launch_params=f"mode=dev&waterPreview={quote(iid)}")
 
     def _get_game_window_size(self) -> tuple[int, int]:
         cfg = self._model.game_config

@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import unquote
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
@@ -43,10 +44,10 @@ def disk_path_for_runtime_url(model: ProjectModel | None, url: str) -> Path | No
     u = url.strip()
     if not u.startswith("/assets/"):
         return None
-    rel = u[len("/assets/") :].lstrip("/")
+    rel = unquote(u[len("/assets/") :].lstrip("/"))
     if not rel or ".." in rel:
         return None
-    p = model.assets_path / rel
+    p = (model.assets_path / rel).resolve()
     return p if p.is_file() else None
 
 
@@ -135,6 +136,7 @@ class CutsceneImagePathRow(QWidget):
         *,
         external_copy_subdir: str = "cutscene",
         external_copy_hint: str | None = None,
+        path_edit_read_only: bool = False,
     ):
         super().__init__(parent)
         self._model = model
@@ -153,6 +155,7 @@ class CutsceneImagePathRow(QWidget):
         right = QVBoxLayout()
         row = QHBoxLayout()
         self._edit = QLineEdit(initial)
+        self._edit.setReadOnly(path_edit_read_only)
         self._edit.setPlaceholderText("/assets/... 或点 Browse 从任意位置选择")
         self._edit.textChanged.connect(lambda _t: self.changed.emit())
         btn = QPushButton("Browse…")

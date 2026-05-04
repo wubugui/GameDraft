@@ -1,0 +1,166 @@
+{
+  "id": "wild_morning",
+  "label": "野外河湾 · 清晨 · 晴",
+  "spotId": "wild_river",
+  "waterBottom": {
+    "texture": "/assets/images/illustrations/female_corpse_portrait.png",
+    "tint": "#244a3c",
+    "depth": 0.48
+  },
+  "surface": {
+    "location": "wild",
+    "time": "morning",
+    "weather": "clear"
+  },
+  "bounds": {
+    "width": 800,
+    "height": 560
+  },
+  "entities": [
+    {
+      "id": "grass_1",
+      "category": "grass",
+      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "pos": {
+        "x": 120,
+        "y": 400
+      },
+      "depth": 0.12,
+      "hint": "[水草] 河湾边的芦苇根。",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "grass_2",
+      "category": "grass",
+      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "pos": {
+        "x": 640,
+        "y": 420
+      },
+      "depth": 0.1,
+      "hint": "[水草] 缠成一团。"
+    },
+    {
+      "id": "floater_leaf",
+      "category": "floating",
+      "sprite": "/assets/images/illustrations/female_corpse_portrait.png",
+      "pos": {
+        "x": 420,
+        "y": 180
+      },
+      "depth": 0.02,
+      "motion": {
+        "path": "drift",
+        "speed": 0.05
+      },
+      "cue": "枯叶",
+      "onPick": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "fish_a",
+      "category": "swimming",
+      "sprite": "/assets/images/illustrations/洋人女性.png",
+      "pos": {
+        "x": 260,
+        "y": 280
+      },
+      "depth": 0.35,
+      "motion": {
+        "path": "patrol",
+        "speed": 0.42
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.18,
+        "sliderSpeed": 1,
+        "rhythm": "stable",
+        "failurePolicy": "escape",
+        "timeLimitSec": 12
+      },
+      "cue": "晨光里的小鱼群",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "fish_b",
+      "category": "swimming",
+      "sprite": "/assets/images/illustrations/洋人女性.png",
+      "pos": {
+        "x": 540,
+        "y": 320
+      },
+      "depth": 0.42,
+      "motion": {
+        "path": "drift",
+        "speed": 0.38
+      },
+      "depthOsc": {
+        "curve": "sine",
+        "amplitude": 0.06,
+        "period": 1.8
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.14,
+        "sliderSpeed": 1.08,
+        "rhythm": "burst",
+        "failurePolicy": "escape",
+        "timeLimitSec": 11
+      },
+      "cue": "倏忽掠过的一道影子",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "sunk_branch",
+      "category": "sunken",
+      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "pos": {
+        "x": 380,
+        "y": 440
+      },
+      "depth": 0.75,
+      "pull": {
+        "zoneSize": 0.15,
+        "sliderSpeed": 0.92,
+        "rhythm": "heavy_sink",
+        "failurePolicy": "snap",
+        "timeLimitSec": 13
+      },
+      "cue": "陷在泥里的硬物",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "taomu",
+            "count": 1
+          }
+        }
+      ]
+    }
+  ]
+}

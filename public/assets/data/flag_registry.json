@@ -203,6 +203,14 @@
     {
       "key": "铁环小孩_已经获得铁环",
       "valueType": "bool"
+    },
+    {
+      "key": "水边拉扯咬伤",
+      "valueType": "bool"
+    },
+    {
+      "key": "捞箱_完成",
+      "valueType": "bool"
     }
   ],
   "patterns": [
