@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------
 CUTSCENE_ACTION_WHITELIST = [
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
-    "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
+    "showEmoteAndWait", "showSpeechBubble", "showSpeechBubbleAndWait",
+    "playNpcAnimation", "setEntityEnabled",
     "persistNpcDisablePatrol", "persistNpcEnablePatrol",
     "persistNpcEntityEnabled", "persistHotspotEnabled",
     "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
@@ -48,7 +49,8 @@ CUTSCENE_ACTION_WHITELIST = [
     "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
-    "startWaterMinigame",
+    "startWaterMinigame", "startSugarWheelMinigame",
+    "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
 ]
 
 # ---------------------------------------------------------------

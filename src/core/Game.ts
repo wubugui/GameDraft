@@ -343,7 +343,7 @@ export class Game {
   }
 
   /**
-   * showEmote / showEmoteAndWait / showSubtitle.subtitleEmote 共用：resolveActor 未命中时再匹配当前场景热点 id。
+   * showEmote / showSpeechBubble / showEmoteAndWait / showSpeechBubbleAndWait / showSubtitle.subtitleEmote 共用：resolveActor 未命中时再匹配当前场景热点 id。
    */
   private resolveEmoteTarget(raw: string): IEmoteBubbleAnchor | null {
     const id = String(raw ?? '').trim();
@@ -764,6 +764,7 @@ export class Game {
       renderer: this.renderer,
       inputManager: this.inputManager,
       stateController: this.stateController,
+      actionExecutor: this.actionExecutor,
       resolveDisplayText: (s) => this.resolveDisplayText(s),
     });
     await this.sugarWheelMinigameManager.loadIndex();
@@ -872,6 +873,11 @@ export class Game {
         scenarioState: this.scenarioStateManager.serialize(),
         documentReveals: this.documentRevealManager.debugSnapshot(),
       }),
+      getDepthOcclusionBlendFactor: () => this.sceneDepthSystem.occlusionBlendFactor,
+      setDepthOcclusionBlendFactor: (factor) => {
+        this.sceneDepthSystem.occlusionBlendFactor = factor;
+      },
+      depthOcclusionActive: () => this.sceneDepthSystem.isEnabled,
     });
     this.debugTools.init();
 

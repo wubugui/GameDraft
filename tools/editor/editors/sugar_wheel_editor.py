@@ -28,17 +28,22 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QGroupBox,
+    QSpinBox,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ..project_model import ProjectModel
+from ..shared.action_editor import ActionEditor
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 
 
@@ -515,6 +520,8 @@ class SugarWheelEditor(QWidget):
         self._charge_json_explicit = False
         self._current_id: str | None = None
         self._doc: dict | None = None
+        self._prev_sector_row = -1
+        self._selected_sector_row = -1
 
         root = QHBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
@@ -757,6 +764,149 @@ class SugarWheelEditor(QWidget):
         swl.addWidget(self._sector_table)
         rv.addWidget(sw)
 
+        self._g_sector_actions = QGroupBox("选中格 · Action（与水族馆实体相同筛选器）")
+        self._g_sector_actions.setToolTip(
+            "在左侧表格选中一行格子后编辑。\n"
+            "· actionsOnPointerDrag：idle/查看结果时在盘面上拖指针并松手后执行（命中当前针对的扇区）。\n"
+            "· actionsOnSpinLanding：蓄力开奖停针落在该格后顺序执行，再横幅与 minigame:sugarWheelResult。",
+        )
+        ga_l = QVBoxLayout(self._g_sector_actions)
+        ga_l.setContentsMargins(8, 12, 8, 8)
+        self._ae_sector_drag = ActionEditor("actionsOnPointerDrag（拖指针松手后）")
+        self._ae_sector_landing = ActionEditor("actionsOnSpinLanding（开奖停在该格后）")
+        for ae in (self._ae_sector_drag, self._ae_sector_landing):
+            ae.set_project_context(model, scene_id=None)
+            ae.changed.connect(self._on_sector_actions_editor_changed)
+        ga_l.addWidget(self._ae_sector_drag)
+        ga_l.addWidget(self._ae_sector_landing)
+        rv.addWidget(self._g_sector_actions)
+
+        # ── 旋转氛围脚本 ──
+        g_atmos = QGroupBox("旋转氛围脚本 atmosphereGroups")
+        g_atmos.setToolTip(
+            "每次抽奖随机选一组；每组四阶段（start / spinning / slowing / stop），\n"
+            "每阶段是有序步骤列表。步骤使用固定 opcode。"
+        )
+        atmos_root = QVBoxLayout(g_atmos)
+        atmos_root.setContentsMargins(6, 10, 6, 6)
+
+        atmos_bar = QHBoxLayout()
+        self._atmos_group_list = QListWidget()
+        self._atmos_group_list.setMaximumHeight(100)
+        self._atmos_group_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._btn_add_atmos_group = QPushButton("+组")
+        self._btn_del_atmos_group = QPushButton("-组")
+        self._btn_dup_atmos_group = QPushButton("复制")
+        atmos_bar.addWidget(QLabel("氛围组"))
+        atmos_bar.addStretch()
+        atmos_bar.addWidget(self._btn_add_atmos_group)
+        atmos_bar.addWidget(self._btn_dup_atmos_group)
+        atmos_bar.addWidget(self._btn_del_atmos_group)
+        atmos_root.addLayout(atmos_bar)
+        atmos_root.addWidget(self._atmos_group_list)
+
+        ag_form = QFormLayout()
+        self._atmos_group_id = QLineEdit()
+        self._atmos_group_id.setPlaceholderText("组 id")
+        self._atmos_group_label = QLineEdit()
+        self._atmos_group_label.setPlaceholderText("展示名（可选）")
+        self._atmos_group_weight = QDoubleSpinBox()
+        self._atmos_group_weight.setRange(0, 100)
+        self._atmos_group_weight.setDecimals(1)
+        self._atmos_group_weight.setValue(1)
+        self._atmos_group_weight.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        ag_form.addRow("id", self._atmos_group_id)
+        ag_form.addRow("label", self._atmos_group_label)
+        ag_form.addRow("weight", self._atmos_group_weight)
+        atmos_root.addLayout(ag_form)
+
+        # ── vars: 池列表 + 池内文案列表 ──
+        vars_split = QSplitter(Qt.Orientation.Horizontal)
+        vars_split.setMaximumHeight(180)
+        vars_left = QWidget()
+        vll = QVBoxLayout(vars_left)
+        vll.setContentsMargins(0, 0, 0, 0)
+        vars_bar = QHBoxLayout()
+        vars_bar.addWidget(QLabel("文案池"))
+        vars_bar.addStretch()
+        self._btn_add_var_pool = QPushButton("+池")
+        self._btn_del_var_pool = QPushButton("-池")
+        self._btn_rename_var_pool = QPushButton("改名")
+        vars_bar.addWidget(self._btn_add_var_pool)
+        vars_bar.addWidget(self._btn_rename_var_pool)
+        vars_bar.addWidget(self._btn_del_var_pool)
+        vll.addLayout(vars_bar)
+        self._var_pool_list = QListWidget()
+        self._var_pool_list.setMaximumWidth(160)
+        vll.addWidget(self._var_pool_list)
+        vars_right = QWidget()
+        vrl = QVBoxLayout(vars_right)
+        vrl.setContentsMargins(0, 0, 0, 0)
+        lines_bar = QHBoxLayout()
+        lines_bar.addWidget(QLabel("台词"))
+        lines_bar.addStretch()
+        self._btn_add_var_line = QPushButton("+台词")
+        self._btn_del_var_line = QPushButton("-台词")
+        lines_bar.addWidget(self._btn_add_var_line)
+        lines_bar.addWidget(self._btn_del_var_line)
+        vrl.addLayout(lines_bar)
+        self._var_lines_list = QListWidget()
+        self._var_lines_list.setToolTip("双击编辑台词")
+        vrl.addWidget(self._var_lines_list)
+        vars_split.addWidget(vars_left)
+        vars_split.addWidget(vars_right)
+        vars_split.setStretchFactor(0, 0)
+        vars_split.setStretchFactor(1, 1)
+        atmos_root.addWidget(vars_split)
+
+        # ── 四阶段步骤：表格式 ──
+        self._atmos_phase_tabs = QTabWidget()
+        self._atmos_phase_tabs.setTabPosition(QTabWidget.TabPosition.North)
+        self._ATMOS_PHASE_NAMES = ["start", "spinning", "slowing", "stop"]
+        self._ATMOS_PHASE_LABELS = ["start 开始转", "spinning 旋转中", "slowing 慢下来", "stop 停止"]
+        self._atmos_step_tables: dict[str, QTableWidget] = {}
+        _op_choices = ["say", "pick", "wait", "chance", "when_near_sector"]
+        _role_choices = ["child_a", "child_b", "child_c", "child_d", "protagonist", "stall_owner"]
+        for pname, plabel in zip(self._ATMOS_PHASE_NAMES, self._ATMOS_PHASE_LABELS):
+            page = QWidget()
+            pl = QVBoxLayout(page)
+            pl.setContentsMargins(0, 0, 0, 0)
+            step_bar = QHBoxLayout()
+            btn_add = QPushButton("+步骤")
+            btn_del = QPushButton("-步骤")
+            btn_up = QPushButton("上移")
+            btn_down = QPushButton("下移")
+            step_bar.addStretch()
+            step_bar.addWidget(btn_add)
+            step_bar.addWidget(btn_del)
+            step_bar.addWidget(btn_up)
+            step_bar.addWidget(btn_down)
+            pl.addLayout(step_bar)
+            tbl = QTableWidget(0, 7)
+            tbl.setHorizontalHeaderLabels(["op", "role", "pool/text", "sec", "p(0-1)", "sectorId", "degBuf"])
+            tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            tbl.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            tbl.verticalHeader().setVisible(False)
+            tbl.setMinimumHeight(140)
+            tbl.horizontalHeader().setStretchLastSection(True)
+            h0 = tbl.horizontalHeaderItem(0)
+            if h0:
+                h0.setToolTip("say=说话  pick=抽句入槽  wait=等待  chance=概率  when_near_sector=邻近扇区")
+            h2 = tbl.horizontalHeaderItem(2)
+            if h2:
+                h2.setToolTip("say: 填 pool 名则从文案池随机抽；填直接文案则直接说。\npick: 填 pool 名。")
+            pl.addWidget(tbl)
+            self._atmos_step_tables[pname] = tbl
+            btn_add.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_add(_p))
+            btn_del.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_del(_p))
+            btn_up.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_move(_p, -1))
+            btn_down.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_move(_p, 1))
+            tbl.itemChanged.connect(lambda _it, _p=pname: self._on_atmos_step_item_changed(_p))
+            self._atmos_phase_tabs.addTab(page, plabel)
+        atmos_root.addWidget(self._atmos_phase_tabs)
+
+        rv.addWidget(g_atmos)
+
         rv.addStretch()
         right.setWidget(right_inner)
 
@@ -835,6 +985,21 @@ class SugarWheelEditor(QWidget):
         self._btn_del_sector.clicked.connect(self._delete_sector)
         self._btn_add_speech.clicked.connect(self._add_speech_row)
         self._btn_del_speech.clicked.connect(self._delete_speech_row)
+        self._sector_table.itemSelectionChanged.connect(self._on_sector_selection_changed)
+        self._atmos_group_list.currentRowChanged.connect(self._on_atmos_group_selected)
+        self._btn_add_atmos_group.clicked.connect(self._add_atmos_group)
+        self._btn_del_atmos_group.clicked.connect(self._del_atmos_group)
+        self._btn_dup_atmos_group.clicked.connect(self._dup_atmos_group)
+        self._atmos_group_id.textChanged.connect(self._on_atmos_group_field_changed)
+        self._atmos_group_label.textChanged.connect(self._on_atmos_group_field_changed)
+        self._atmos_group_weight.valueChanged.connect(self._on_atmos_group_field_changed)
+        self._var_pool_list.currentRowChanged.connect(self._on_var_pool_selected)
+        self._btn_add_var_pool.clicked.connect(self._add_var_pool)
+        self._btn_del_var_pool.clicked.connect(self._del_var_pool)
+        self._btn_rename_var_pool.clicked.connect(self._rename_var_pool)
+        self._btn_add_var_line.clicked.connect(self._add_var_line)
+        self._btn_del_var_line.clicked.connect(self._del_var_line)
+        self._var_lines_list.itemChanged.connect(self._on_var_line_changed)
 
     def _on_model_data_changed(self, dtype: str, _key: str) -> None:
         if dtype == "sugar_wheel":
@@ -956,16 +1121,100 @@ class SugarWheelEditor(QWidget):
             self._a_hl, self._stop_w, self._stop_settle, self._dry_fric, self._bias_creep,
             self._speech_dur, self._speech_max,
             self._sector_table, self._btn_add_sector, self._btn_del_sector,
+            self._g_sector_actions,
             self._speech_table, self._btn_add_speech, self._btn_del_speech,
             self._btn_preview,
         ):
             w.setEnabled(on)
         self._right_scroll.setEnabled(on)
 
+    def _flush_sector_actions_row(self, row: int) -> None:
+        """把 Action 编辑器写回 sectors[row]。"""
+        if row < 0 or not self._doc:
+            return
+        sectors = self._sectors()
+        if row >= len(sectors):
+            return
+        sec = sectors[row]
+        lst_drag = self._ae_sector_drag.to_list()
+        if lst_drag:
+            sec["actionsOnPointerDrag"] = lst_drag
+        else:
+            sec.pop("actionsOnPointerDrag", None)
+        lst_land = self._ae_sector_landing.to_list()
+        if lst_land:
+            sec["actionsOnSpinLanding"] = lst_land
+        else:
+            sec.pop("actionsOnSpinLanding", None)
+
+    def _fill_sector_action_editors(self, row: int) -> None:
+        self._loading = True
+        try:
+            sectors = self._sectors()
+            if row < 0 or row >= len(sectors):
+                self._ae_sector_drag.set_data([])
+                self._ae_sector_landing.set_data([])
+            else:
+                sec = sectors[row]
+                self._ae_sector_drag.set_data(
+                    list(sec.get("actionsOnPointerDrag") or [])
+                    if isinstance(sec.get("actionsOnPointerDrag"), list)
+                    else [],
+                )
+                self._ae_sector_landing.set_data(
+                    list(sec.get("actionsOnSpinLanding") or [])
+                    if isinstance(sec.get("actionsOnSpinLanding"), list)
+                    else [],
+                )
+        finally:
+            self._loading = False
+
+    def _sync_sector_selection_from_table(self, prev_sel: int) -> None:
+        sectors = self._sectors()
+        if not sectors:
+            self._prev_sector_row = -1
+            self._selected_sector_row = -1
+            self._fill_sector_action_editors(-1)
+            return
+        r = prev_sel if prev_sel >= 0 else 0
+        r = min(r, len(sectors) - 1)
+        self._sector_table.blockSignals(True)
+        self._sector_table.selectRow(r)
+        self._sector_table.blockSignals(False)
+        self._prev_sector_row = r
+        self._selected_sector_row = r
+        self._fill_sector_action_editors(r)
+
+    def _on_sector_selection_changed(self) -> None:
+        if self._loading or not self._doc:
+            return
+        new_r = self._sector_table.currentRow()
+        old = self._prev_sector_row
+        if old >= 0 and old != new_r:
+            self._flush_sector_actions_row(old)
+        self._prev_sector_row = new_r
+        self._selected_sector_row = new_r
+        self._fill_sector_action_editors(new_r)
+
+    def _on_sector_actions_editor_changed(self) -> None:
+        if self._loading or not self._doc:
+            return
+        self._flush_sector_actions_row(self._selected_sector_row)
+        self._mark_dirty(refresh_canvas=False)
+
     def _on_row_changed(self, row: int) -> None:
+        if self._doc is not None:
+            self._flush_sector_actions_row(self._selected_sector_row)
         if row < 0:
             self._current_id = None
             self._doc = None
+            self._prev_sector_row = -1
+            self._selected_sector_row = -1
+            self._loading = True
+            try:
+                self._fill_sector_action_editors(-1)
+            finally:
+                self._loading = False
             self._canvas.refresh(None)
             self._set_enabled(False)
             return
@@ -1039,6 +1288,10 @@ class SugarWheelEditor(QWidget):
             self._speech_max.setValue(_num(d.get("speechMaxVisible"), 2))
             self._fill_speech_rows()
             self._fill_sectors()
+            self._fill_atmos_group_list()
+            if self._atmos_group_list.count() > 0:
+                self._atmos_group_list.setCurrentRow(0)
+            self._fill_atmos_group_detail()
         finally:
             self._loading = False
 
@@ -1046,8 +1299,9 @@ class SugarWheelEditor(QWidget):
         idx = cb.findText(text)
         cb.setCurrentIndex(idx if idx >= 0 else 0)
 
-    def _fill_sectors(self) -> None:
+    def _fill_sectors(self, selection_hint: int | None = None) -> None:
         sectors = self._sectors()
+        prev_sel = self._sector_table.currentRow() if selection_hint is None else selection_hint
         self._sector_table.blockSignals(True)
         self._sector_table.setRowCount(len(sectors))
         for r, sec in enumerate(sectors):
@@ -1060,6 +1314,7 @@ class SugarWheelEditor(QWidget):
             for c, val in enumerate(values):
                 self._sector_table.setItem(r, c, QTableWidgetItem(val))
         self._sector_table.blockSignals(False)
+        self._sync_sector_selection_from_table(prev_sel)
 
     def _sectors(self) -> list[dict]:
         assert self._doc is not None
@@ -1270,8 +1525,7 @@ class SugarWheelEditor(QWidget):
         n = len(sectors) + 1
         sectors.append({"id": f"sector_{n}", "label": f"格子{n}"})
         self._mark_dirty()
-        self._fill_sectors()
-        self._sector_table.selectRow(len(sectors) - 1)
+        self._fill_sectors(len(sectors) - 1)
 
     def _delete_sector(self) -> None:
         if not self._doc:
@@ -1282,7 +1536,9 @@ class SugarWheelEditor(QWidget):
             return
         sectors.pop(r)
         self._mark_dirty()
-        self._fill_sectors()
+        n = len(sectors)
+        hint = max(0, min(r, n - 1)) if n > 0 else -1
+        self._fill_sectors(hint)
 
     def _add_instance(self) -> None:
         raw, ok = QInputDialog.getText(self, "新增转盘实例", "实例 id（将作为文件名 stem）：")
@@ -1358,6 +1614,411 @@ class SugarWheelEditor(QWidget):
         if self._current_id:
             self.preview_requested.emit(self._current_id)
 
+    # ── 氛围脚本 helpers ──
+
+    def _atmos_groups(self) -> list[dict]:
+        assert self._doc is not None
+        raw = self._doc.setdefault("atmosphereGroups", [])
+        if not isinstance(raw, list):
+            raw = []
+            self._doc["atmosphereGroups"] = raw
+        return raw
+
+    def _fill_atmos_group_list(self) -> None:
+        self._atmos_group_list.blockSignals(True)
+        self._atmos_group_list.clear()
+        if self._doc:
+            for g in self._atmos_groups():
+                gid = str(g.get("id") or "").strip()
+                lab = str(g.get("label") or gid)
+                self._atmos_group_list.addItem(f"{lab}  [{gid}]")
+        self._atmos_group_list.blockSignals(False)
+
+    def _fill_atmos_group_detail(self) -> None:
+        self._loading = True
+        try:
+            r = self._atmos_group_list.currentRow()
+            groups = self._atmos_groups() if self._doc else []
+            if r < 0 or r >= len(groups):
+                self._atmos_group_id.setText("")
+                self._atmos_group_label.setText("")
+                self._atmos_group_weight.setValue(1)
+                self._var_pool_list.clear()
+                self._var_lines_list.clear()
+                for pname in self._ATMOS_PHASE_NAMES:
+                    self._atmos_step_tables[pname].setRowCount(0)
+                return
+            g = groups[r]
+            self._atmos_group_id.setText(str(g.get("id") or ""))
+            self._atmos_group_label.setText(str(g.get("label") or ""))
+            self._atmos_group_weight.setValue(_num(g.get("weight"), 1))
+            self._fill_var_pool_list(g)
+            for pname in self._ATMOS_PHASE_NAMES:
+                self._fill_atmos_step_table(pname, g.get(pname))
+        finally:
+            self._loading = False
+
+    def _on_atmos_group_selected(self, _row: int) -> None:
+        self._fill_atmos_group_detail()
+
+    def _add_atmos_group(self) -> None:
+        if not self._doc:
+            return
+        groups = self._atmos_groups()
+        n = len(groups) + 1
+        groups.append({"id": f"group_{n}", "label": f"氛围{n}", "weight": 1, "vars": {}})
+        self._fill_atmos_group_list()
+        self._atmos_group_list.setCurrentRow(len(groups) - 1)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _del_atmos_group(self) -> None:
+        if not self._doc:
+            return
+        r = self._atmos_group_list.currentRow()
+        groups = self._atmos_groups()
+        if r < 0 or r >= len(groups):
+            return
+        groups.pop(r)
+        self._fill_atmos_group_list()
+        self._fill_atmos_group_detail()
+        self._mark_dirty(refresh_canvas=False)
+
+    def _dup_atmos_group(self) -> None:
+        if not self._doc:
+            return
+        r = self._atmos_group_list.currentRow()
+        groups = self._atmos_groups()
+        if r < 0 or r >= len(groups):
+            return
+        import copy
+        dup = copy.deepcopy(groups[r])
+        dup["id"] = str(dup.get("id", "")) + "_copy"
+        dup["label"] = str(dup.get("label", "")) + " (副本)"
+        groups.insert(r + 1, dup)
+        self._fill_atmos_group_list()
+        self._atmos_group_list.setCurrentRow(r + 1)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _on_atmos_group_field_changed(self, *_a: Any) -> None:
+        if self._loading or not self._doc:
+            return
+        r = self._atmos_group_list.currentRow()
+        groups = self._atmos_groups()
+        if r < 0 or r >= len(groups):
+            return
+        g = groups[r]
+        g["id"] = self._atmos_group_id.text().strip()
+        g["label"] = self._atmos_group_label.text().strip()
+        g["weight"] = float(self._atmos_group_weight.value())
+        old_text = self._atmos_group_list.item(r)
+        if old_text:
+            old_text.setText(f"{g.get('label') or g['id']}  [{g['id']}]")
+        self._mark_dirty(refresh_canvas=False)
+
+    # ── vars 文案池 UI ──
+
+    def _cur_atmos_group(self) -> dict | None:
+        if not self._doc:
+            return None
+        r = self._atmos_group_list.currentRow()
+        groups = self._atmos_groups()
+        if r < 0 or r >= len(groups):
+            return None
+        return groups[r]
+
+    def _cur_vars(self) -> dict:
+        g = self._cur_atmos_group()
+        if g is None:
+            return {}
+        v = g.setdefault("vars", {})
+        if not isinstance(v, dict):
+            v = {}
+            g["vars"] = v
+        return v
+
+    def _fill_var_pool_list(self, g: dict) -> None:
+        self._var_pool_list.blockSignals(True)
+        self._var_pool_list.clear()
+        self._var_lines_list.clear()
+        v = g.get("vars")
+        if isinstance(v, dict):
+            for k in v:
+                self._var_pool_list.addItem(str(k))
+        self._var_pool_list.blockSignals(False)
+        if self._var_pool_list.count() > 0:
+            self._var_pool_list.setCurrentRow(0)
+            self._fill_var_lines()
+
+    def _fill_var_lines(self) -> None:
+        self._var_lines_list.blockSignals(True)
+        self._var_lines_list.clear()
+        v = self._cur_vars()
+        pool_name = self._var_pool_list.currentItem()
+        if pool_name is not None:
+            arr = v.get(pool_name.text())
+            if isinstance(arr, list):
+                for line in arr:
+                    it = QListWidgetItem(str(line))
+                    it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
+                    self._var_lines_list.addItem(it)
+        self._var_lines_list.blockSignals(False)
+
+    def _on_var_pool_selected(self, _row: int) -> None:
+        self._fill_var_lines()
+
+    def _add_var_pool(self) -> None:
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        name, ok = QInputDialog.getText(self, "新文案池", "池名称：")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        v = self._cur_vars()
+        if name in v:
+            QMessageBox.warning(self, "文案池", f"池 '{name}' 已存在")
+            return
+        v[name] = []
+        self._loading = True
+        try:
+            self._fill_var_pool_list(g)
+            for i in range(self._var_pool_list.count()):
+                if self._var_pool_list.item(i).text() == name:
+                    self._var_pool_list.setCurrentRow(i)
+                    break
+        finally:
+            self._loading = False
+        self._mark_dirty(refresh_canvas=False)
+
+    def _del_var_pool(self) -> None:
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        cur = self._var_pool_list.currentItem()
+        if cur is None:
+            return
+        v = self._cur_vars()
+        v.pop(cur.text(), None)
+        self._loading = True
+        try:
+            self._fill_var_pool_list(g)
+        finally:
+            self._loading = False
+        self._mark_dirty(refresh_canvas=False)
+
+    def _rename_var_pool(self) -> None:
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        cur = self._var_pool_list.currentItem()
+        if cur is None:
+            return
+        old_name = cur.text()
+        new_name, ok = QInputDialog.getText(self, "改名", "新池名称：", text=old_name)
+        if not ok or not new_name.strip() or new_name.strip() == old_name:
+            return
+        new_name = new_name.strip()
+        v = self._cur_vars()
+        if new_name in v:
+            QMessageBox.warning(self, "文案池", f"池 '{new_name}' 已存在")
+            return
+        arr = v.pop(old_name, [])
+        v[new_name] = arr
+        self._loading = True
+        try:
+            self._fill_var_pool_list(g)
+        finally:
+            self._loading = False
+        self._mark_dirty(refresh_canvas=False)
+
+    def _add_var_line(self) -> None:
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        cur = self._var_pool_list.currentItem()
+        if cur is None:
+            return
+        v = self._cur_vars()
+        arr = v.setdefault(cur.text(), [])
+        arr.append("")
+        it = QListWidgetItem("")
+        it.setFlags(it.flags() | Qt.ItemFlag.ItemIsEditable)
+        self._var_lines_list.addItem(it)
+        self._var_lines_list.setCurrentItem(it)
+        self._var_lines_list.editItem(it)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _del_var_line(self) -> None:
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        cur_pool = self._var_pool_list.currentItem()
+        if cur_pool is None:
+            return
+        r = self._var_lines_list.currentRow()
+        v = self._cur_vars()
+        arr = v.get(cur_pool.text())
+        if not isinstance(arr, list) or r < 0 or r >= len(arr):
+            return
+        arr.pop(r)
+        self._var_lines_list.takeItem(r)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _on_var_line_changed(self, item: QListWidgetItem) -> None:
+        if self._loading:
+            return
+        cur_pool = self._var_pool_list.currentItem()
+        if cur_pool is None:
+            return
+        r = self._var_lines_list.row(item)
+        v = self._cur_vars()
+        arr = v.get(cur_pool.text())
+        if not isinstance(arr, list) or r < 0 or r >= len(arr):
+            return
+        arr[r] = item.text()
+        self._mark_dirty(refresh_canvas=False)
+
+    # ── 步骤表格 UI ──
+
+    _STEP_OP_CHOICES = ["say", "pick", "wait", "chance", "when_near_sector"]
+    _STEP_ROLE_CHOICES = ["child_a", "child_b", "child_c", "child_d", "protagonist", "stall_owner", ""]
+
+    def _fill_atmos_step_table(self, pname: str, steps: Any) -> None:
+        tbl = self._atmos_step_tables[pname]
+        tbl.blockSignals(True)
+        tbl.setRowCount(0)
+        if isinstance(steps, list):
+            tbl.setRowCount(len(steps))
+            for i, s in enumerate(steps):
+                if not isinstance(s, dict):
+                    s = {}
+                tbl.setItem(i, 0, QTableWidgetItem(str(s.get("op", "say"))))
+                tbl.setItem(i, 1, QTableWidgetItem(str(s.get("role", ""))))
+                pool_or_text = str(s.get("pool") or s.get("text") or "")
+                tbl.setItem(i, 2, QTableWidgetItem(pool_or_text))
+                tbl.setItem(i, 3, QTableWidgetItem(str(s.get("sec", "")) if "sec" in s else ""))
+                tbl.setItem(i, 4, QTableWidgetItem(str(s.get("p", "")) if "p" in s else ""))
+                tbl.setItem(i, 5, QTableWidgetItem(str(s.get("sectorId", ""))))
+                tbl.setItem(i, 6, QTableWidgetItem(str(s.get("degBuffer", "")) if "degBuffer" in s else ""))
+        tbl.blockSignals(False)
+
+    def _read_atmos_step_table(self, pname: str) -> list[dict]:
+        tbl = self._atmos_step_tables[pname]
+        out: list[dict] = []
+        for r in range(tbl.rowCount()):
+            def _cell(c: int) -> str:
+                it = tbl.item(r, c)
+                return it.text().strip() if it else ""
+            op = _cell(0) or "say"
+            step: dict[str, Any] = {"op": op}
+            role = _cell(1)
+            pool_or_text = _cell(2)
+            sec = _cell(3)
+            p = _cell(4)
+            sid = _cell(5)
+            deg = _cell(6)
+            if op == "say":
+                if role:
+                    step["role"] = role
+                v = self._cur_vars()
+                if pool_or_text in v:
+                    step["pool"] = pool_or_text
+                elif pool_or_text:
+                    step["text"] = pool_or_text
+            elif op == "pick":
+                if pool_or_text:
+                    step["pool"] = pool_or_text
+            elif op == "wait":
+                try:
+                    step["sec"] = float(sec) if sec else 1.0
+                except ValueError:
+                    step["sec"] = 1.0
+            elif op == "chance":
+                try:
+                    step["p"] = max(0.0, min(1.0, float(p))) if p else 0.5
+                except ValueError:
+                    step["p"] = 0.5
+            elif op == "when_near_sector":
+                if sid:
+                    step["sectorId"] = sid
+                try:
+                    step["degBuffer"] = float(deg) if deg else 15.0
+                except ValueError:
+                    step["degBuffer"] = 15.0
+            out.append(step)
+        return out
+
+    def _atmos_step_add(self, pname: str) -> None:
+        if not self._doc:
+            return
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        steps = g.setdefault(pname, [])
+        if not isinstance(steps, list):
+            steps = []
+            g[pname] = steps
+        steps.append({"op": "say", "role": "child_a", "text": ""})
+        self._loading = True
+        try:
+            self._fill_atmos_step_table(pname, steps)
+        finally:
+            self._loading = False
+        tbl = self._atmos_step_tables[pname]
+        tbl.selectRow(tbl.rowCount() - 1)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _atmos_step_del(self, pname: str) -> None:
+        if not self._doc:
+            return
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        tbl = self._atmos_step_tables[pname]
+        r = tbl.currentRow()
+        steps = g.get(pname)
+        if not isinstance(steps, list) or r < 0 or r >= len(steps):
+            return
+        steps.pop(r)
+        self._loading = True
+        try:
+            self._fill_atmos_step_table(pname, steps)
+        finally:
+            self._loading = False
+        self._mark_dirty(refresh_canvas=False)
+
+    def _atmos_step_move(self, pname: str, direction: int) -> None:
+        if not self._doc:
+            return
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        tbl = self._atmos_step_tables[pname]
+        r = tbl.currentRow()
+        steps = g.get(pname)
+        if not isinstance(steps, list) or r < 0 or r >= len(steps):
+            return
+        nr = r + direction
+        if nr < 0 or nr >= len(steps):
+            return
+        steps[r], steps[nr] = steps[nr], steps[r]
+        self._loading = True
+        try:
+            self._fill_atmos_step_table(pname, steps)
+        finally:
+            self._loading = False
+        tbl.selectRow(nr)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _on_atmos_step_item_changed(self, pname: str) -> None:
+        if self._loading or not self._doc:
+            return
+        g = self._cur_atmos_group()
+        if g is None:
+            return
+        g[pname] = self._read_atmos_step_table(pname)
+        self._mark_dirty(refresh_canvas=False)
+
     def flush_to_model(self) -> None:
         for iid, doc in self._model.sugar_wheel_instances.items():
             if not isinstance(doc, dict):
@@ -1386,3 +2047,15 @@ class SugarWheelEditor(QWidget):
                         raise ValueError(f"sugar_wheel[{iid}] sector[{sid}]: weight 须为数字（或省略）")
                     if not math.isfinite(wf) or wf < 0:
                         raise ValueError(f"sugar_wheel[{iid}] sector[{sid}]: weight 须为有限非负数")
+                for ak in ("actionsOnPointerDrag", "actionsOnSpinLanding"):
+                    av = sec.get(ak)
+                    if av is None:
+                        continue
+                    if not isinstance(av, list):
+                        raise ValueError(f"sugar_wheel[{iid}] sector[{sid}]: {ak} 须为数组（或省略）")
+                    for j, act in enumerate(av):
+                        if not isinstance(act, dict):
+                            raise ValueError(f"sugar_wheel[{iid}] sector[{sid}]: {ak}[{j}] 须为对象")
+                        t = act.get("type")
+                        if not str(t or "").strip():
+                            raise ValueError(f"sugar_wheel[{iid}] sector[{sid}]: {ak}[{j}].type 不能为空")

@@ -748,7 +748,7 @@ export interface ICutsceneActor extends IEmoteBubbleAnchor {
   cutsceneUpdate(dt: number): void;
 }
 
-/** 可选：`showEmote` / `showEmoteAndWait` 气泡相对默认锚点的额外像素偏移（局部坐标）。 */
+/** 可选：`showEmote` / `showEmoteAndWait` / `showSpeechBubble` / `showSpeechBubbleAndWait` 气泡相对默认锚点的额外像素偏移（局部坐标）。 */
 export type EmoteBubbleOffsetOpts = {
   anchorOffsetX?: number;
   anchorOffsetY?: number;
@@ -793,9 +793,9 @@ export interface ActionStep {
  * 如 fadeToBlack / showTitle / showDialogue / showImg / cameraMove 等。
  * `showSubtitle` 可选用 `subtitleBand`（movieTop|movieBottom）与 `subtitleAlign`（left|center|right）相对当前 movie bar，
  * 二者齐备时优先于 `position`；否则沿用 `position`（top/center/bottom 或 0–1 比例）。
- * 另可选用 `subtitleEmote`：`{ target, emote, duration?, anchorOffsetX?, anchorOffsetY? }`（target/emote/偏移解析同 showEmoteAndWait），
+ * 另可选用 `subtitleEmote`：`{ target, emote, duration?, anchorOffsetX?, anchorOffsetY? }`（target/emote/偏移解析同 showEmoteAndWait / showSpeechBubbleAndWait），
  * `target`+`emote` 均非空时在字幕展示期间显示头顶表情气泡；**气泡随字幕存在至玩家点击关闭字幕**（`duration` 仅作数据兼容，不参与结束时机）。
- * 单独 Action `showEmoteAndWait` 仍完全由 `duration` 控制消失与 await。
+ * 单独 Action `showEmoteAndWait` / `showSpeechBubbleAndWait` 仍完全由 `duration` 控制消失与 await。
  */
 export interface PresentStep {
   kind: 'present';
@@ -834,6 +834,8 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'cutsceneSpawnActor',
   'cutsceneRemoveActor',
   'showEmoteAndWait',
+  'showSpeechBubble',
+  'showSpeechBubbleAndWait',
   'playNpcAnimation',
   'setEntityEnabled',
   'persistNpcDisablePatrol',

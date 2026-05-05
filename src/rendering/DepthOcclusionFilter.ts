@@ -55,6 +55,8 @@ uniform float uTolerance;
 uniform vec2  uWorldContainerPos;
 uniform float uEntityFootWorldY; // 精灵脚部世界坐标 Y
 uniform float uDebug;          // 调试模式：1=输出调试颜色
+/** F2：遮挡像素 alpha 乘数 [0,1]。0=discard；1=完全不裁 alpha（调试用） */
+uniform float uOcclusionBlendFactor;
 
 // M矩阵参数（像素→伪3D，仅调试用）
 uniform float uM_ppu;
@@ -134,8 +136,14 @@ void main(void) {
     }
     // ========== 正常渲染 ==========
 
+    // uTexture 采样为 Pixi 预乘 alpha（与 finalColor=color 通路一致）。
+    // 仅改 a 会令合成仍按完整 rgb 参与预乘blend → 发亮/发白；须 rgb、a 同步乘系数。
     if (sceneDepth + uTolerance < spriteDepth) {
-        discard;
+        if (uOcclusionBlendFactor < 1e-5) {
+            discard;
+        }
+        finalColor = vec4(color.rgb * uOcclusionBlendFactor, color.a * uOcclusionBlendFactor);
+        return;
     }
 
     finalColor = color;
@@ -192,6 +200,7 @@ export class DepthOcclusionFilter extends Filter {
                     uWorldContainerPos: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
                     uEntityFootWorldY: { value: 0, type: 'f32' },
                     uDebug: { value: 0, type: 'f32' },
+                    uOcclusionBlendFactor: { value: 0, type: 'f32' },
                     // M矩阵（调试用）
                     uM_ppu: { value: cfg.M.ppu, type: 'f32' },
                     uM_cx: { value: cfg.M.cx, type: 'f32' },
@@ -301,5 +310,11 @@ export class DepthOcclusionFilter extends Filter {
 
     setCollisionTexture(tex: Texture): void {
         (this.resources as Record<string, unknown>)['uCollisionMap'] = tex.source;
+    }
+
+    /** 被遮挡时精灵 alpha 乘数；0=discard */
+    setOcclusionBlendFactor(v: number): void {
+        const u = this._du;
+        if (u) u['uOcclusionBlendFactor'] = Math.min(1, Math.max(0, v));
     }
 }

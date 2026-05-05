@@ -32,19 +32,83 @@
   "sectors": [
     {
       "id": "ox",
-      "label": "牛"
+      "label": "牛",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "tiger",
-      "label": "虎"
+      "label": "虎",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "rabbit",
-      "label": "兔"
+      "label": "兔",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "dragon",
       "label": "龙",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ],
       "weight": 0.35,
       "payload": {
         "tier": "jackpot"
@@ -52,45 +116,173 @@
     },
     {
       "id": "snake",
-      "label": "蛇"
+      "label": "蛇",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "horse",
-      "label": "马"
+      "label": "马",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "goat",
-      "label": "羊"
+      "label": "羊",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "monkey",
-      "label": "猴"
+      "label": "猴",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "dog",
-      "label": "犬"
+      "label": "犬",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "rooster",
-      "label": "鸡"
+      "label": "鸡",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "pig",
-      "label": "猪"
+      "label": "猪",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     },
     {
       "id": "rat",
-      "label": "鼠"
+      "label": "鼠",
+      "actionsOnPointerDrag": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnPointerDrag"
+          }
+        }
+      ],
+      "actionsOnSpinLanding": [
+        {
+          "type": "debugAlertActionParams",
+          "params": {
+            "title": "[测试] actionsOnSpinLanding"
+          }
+        }
+      ]
     }
   ],
-  "wheelCenterOffsetXPx": 12.470935960591191,
-  "wheelCenterOffsetYPx": 26.80000000000001,
-  "pointerOffsetXPx": -3.1999999999999886,
-  "pointerOffsetYPx": -10.199999999999989,
+  "wheelCenterOffsetXPx": 12.5,
+  "wheelCenterOffsetYPx": 26.8,
+  "pointerOffsetXPx": -3.2,
+  "pointerOffsetYPx": -10.2,
   "foregroundImage": "/assets/images/minigames/sugar_wheel/sugar_crowd_overlay.png",
   "foregroundFit": "cover",
   "pointerAnchorX": 0.5,
-  "speechDurationMs": 3000,
+  "speechDurationMs": 2999,
   "speechMaxVisible": 2,
   "speechAnchors": [
     {
@@ -135,7 +327,432 @@
       "tailDirection": "up"
     }
   ],
-  "chargeButtonWheelOffsetXPx": 388.33364295074693,
-  "chargeButtonWheelOffsetYPx": -43.730226729299886,
-  "chargeButtonDiameterPx": 52.0
+  "chargeButtonWheelOffsetXPx": 388.3,
+  "chargeButtonWheelOffsetYPx": -43.7,
+  "chargeButtonDiameterPx": 52.0,
+  "atmosphereGroups": [
+    {
+      "id": "bustling_01",
+      "label": "热闹起哄",
+      "weight": 3,
+      "vars": {
+        "开场欢呼": [
+          "转起来咯！",
+          "看看能中啥！",
+          "老板转盘转起来了！",
+          "哇——开始了开始了！",
+          "来咯来咯！"
+        ],
+        "旋转碎嘴": [
+          "转得好快！",
+          "哇，眼花了……",
+          "看不清看不清！",
+          "这也太快了吧！",
+          "盯着看头都晕了",
+          "呜——好想要龙啊",
+          "猴子猴子！",
+          "感觉要停了？",
+          "还在转呢还在转呢",
+          "老板这盘转得漂亮"
+        ],
+        "慢转紧张": [
+          "慢了慢了……",
+          "要停了！",
+          "别眨眼——",
+          "嘘……",
+          "快看快看！",
+          "哎哎哎！",
+          "紧张死了……"
+        ],
+        "押龙": [
+          "龙！",
+          "龙龙龙！",
+          "要龙——",
+          "是龙吗！"
+        ],
+        "停转收尾": [
+          "哦——！",
+          "出来了！",
+          "看到了看到了！",
+          "哈哈哈！",
+          "唉……"
+        ]
+      },
+      "start": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "开场欢呼"
+        },
+        {
+          "op": "wait",
+          "sec": 0.4
+        },
+        {
+          "op": "chance",
+          "p": 0.6,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_b",
+              "pool": "开场欢呼"
+            }
+          ]
+        }
+      ],
+      "spinning": [
+        {
+          "op": "say",
+          "role": "child_c",
+          "pool": "旋转碎嘴"
+        },
+        {
+          "op": "wait",
+          "sec": 1.8
+        },
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "text": "好好看着哦——"
+        },
+        {
+          "op": "wait",
+          "sec": 2.0
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_a",
+              "pool": "旋转碎嘴"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 1.5
+        },
+        {
+          "op": "chance",
+          "p": 0.3,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_d",
+              "pool": "旋转碎嘴"
+            }
+          ]
+        }
+      ],
+      "slowing": [
+        {
+          "op": "when_near_sector",
+          "sectorId": "dragon",
+          "degBuffer": 20,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_a",
+              "pool": "押龙"
+            },
+            {
+              "op": "wait",
+              "sec": 0.2
+            },
+            {
+              "op": "say",
+              "role": "child_b",
+              "pool": "押龙"
+            }
+          ],
+          "else": [
+            {
+              "op": "say",
+              "role": "child_d",
+              "pool": "慢转紧张"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 0.6
+        },
+        {
+          "op": "chance",
+          "p": 0.5,
+          "then": [
+            {
+              "op": "say",
+              "role": "stall_owner",
+              "text": "马上就知道了……"
+            }
+          ]
+        }
+      ],
+      "stop": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "停转收尾"
+        },
+        {
+          "op": "wait",
+          "sec": 0.3
+        },
+        {
+          "op": "chance",
+          "p": 0.5,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_c",
+              "pool": "停转收尾"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "quiet_02",
+      "label": "安静观望",
+      "weight": 1,
+      "vars": {
+        "低声开场": [
+          "嗯……转了",
+          "开始了"
+        ],
+        "偶尔碎语": [
+          "……",
+          "还在转",
+          "好久啊",
+          "转了好多圈了吧"
+        ],
+        "屏息": [
+          "……！",
+          "要停了？",
+          "嘘——"
+        ],
+        "结果反应": [
+          "哦",
+          "嗯……",
+          "就这个啊"
+        ]
+      },
+      "start": [
+        {
+          "op": "say",
+          "role": "child_b",
+          "pool": "低声开场"
+        }
+      ],
+      "spinning": [
+        {
+          "op": "wait",
+          "sec": 3.0
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_a",
+              "pool": "偶尔碎语"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 3.5
+        },
+        {
+          "op": "chance",
+          "p": 0.3,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_d",
+              "pool": "偶尔碎语"
+            }
+          ]
+        }
+      ],
+      "slowing": [
+        {
+          "op": "say",
+          "role": "child_c",
+          "pool": "屏息"
+        },
+        {
+          "op": "wait",
+          "sec": 0.8
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "stall_owner",
+              "text": "看好了——"
+            }
+          ]
+        }
+      ],
+      "stop": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "结果反应"
+        }
+      ]
+    },
+    {
+      "id": "owner_showoff_03",
+      "label": "摊主炫技",
+      "weight": 2,
+      "vars": {
+        "摊主开场": [
+          "好嘞！转盘走起！",
+          "看好了各位！",
+          "来来来看老手艺！"
+        ],
+        "摊主解说": [
+          "这一手力道刚好……",
+          "我这转盘用了二十年了",
+          "针还没歇呢",
+          "慢慢来，急不得"
+        ],
+        "小孩插嘴": [
+          "老板你偷偷停的吧！",
+          "老板你能不能让它停龙上！",
+          "你上次也是这么说的！",
+          "好厉害！",
+          "转得真好看",
+          "我也想转一下！"
+        ],
+        "摊主慢转": [
+          "要出来了哦——",
+          "别急别急",
+          "命中注定的那一格……"
+        ],
+        "收场": [
+          "好咯！",
+          "看见了吧？",
+          "就是这个！"
+        ]
+      },
+      "start": [
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "摊主开场"
+        },
+        {
+          "op": "wait",
+          "sec": 0.5
+        },
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "小孩插嘴"
+        }
+      ],
+      "spinning": [
+        {
+          "op": "wait",
+          "sec": 1.2
+        },
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "摊主解说"
+        },
+        {
+          "op": "wait",
+          "sec": 2.0
+        },
+        {
+          "op": "chance",
+          "p": 0.5,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_b",
+              "pool": "小孩插嘴"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 2.5
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "stall_owner",
+              "pool": "摊主解说"
+            }
+          ]
+        }
+      ],
+      "slowing": [
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "摊主慢转"
+        },
+        {
+          "op": "wait",
+          "sec": 0.5
+        },
+        {
+          "op": "when_near_sector",
+          "sectorId": "dragon",
+          "degBuffer": 18,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_c",
+              "text": "龙！是龙吗！"
+            }
+          ],
+          "else": [
+            {
+              "op": "chance",
+              "p": 0.5,
+              "then": [
+                {
+                  "op": "say",
+                  "role": "child_d",
+                  "text": "要停了要停了！"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "stop": [
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "收场"
+        },
+        {
+          "op": "wait",
+          "sec": 0.4
+        },
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "小孩插嘴"
+        }
+      ]
+    }
+  ]
 }

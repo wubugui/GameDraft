@@ -4,10 +4,15 @@ import type { EventBus } from '../core/EventBus';
 import type { InputManager } from '../core/InputManager';
 import { createDebugFlagSection, type DebugFlagSectionHandle } from './debugFlagSection';
 
-/** 可注册的 debug 区块内容：纯文本或带操作按钮 */
+/** 可注册的 debug 区块内容：纯文本或带操作按钮；可选附加 DOM（如滑条） */
 export type DebugSectionContent =
   | string
-  | { text: string; actions?: { label: string; fn: () => void }[] };
+  | {
+      text: string;
+      actions?: { label: string; fn: () => void }[];
+      /** 排在按钮行之后；勿在 input 回调里调用 refresh()，否则拖拽会中断 */
+      extra?: HTMLElement;
+    };
 
 /** 用于外部注册 debug 区块的 API */
 export interface IDebugPanelAPI {
@@ -360,6 +365,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
         const data = getter();
         const text = typeof data === 'string' ? data : data.text;
         const actions = typeof data === 'string' ? undefined : data.actions;
+        const extra = typeof data === 'string' ? undefined : data.extra;
 
         const sec = document.createElement('section');
         sec.className = 'debug-dock__section';
@@ -394,6 +400,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
           }
           sec.appendChild(row);
         }
+        if (extra) sec.appendChild(extra);
         scroll.appendChild(sec);
       } catch (e) {
         const err = document.createElement('p');

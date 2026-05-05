@@ -110,7 +110,8 @@ ACTION_TYPES = [
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
-    "showEmote", "playNpcAnimation", "setEntityEnabled", "openShop",
+    "debugAlertActionParams",
+    "showEmote", "showSpeechBubble", "playNpcAnimation", "setEntityEnabled", "openShop",
     "pickup", "switchScene", "changeScene", "showNotification", "stopNpcPatrol",
     "persistNpcDisablePatrol", "persistNpcEnablePatrol", "persistNpcEntityEnabled",
     "persistHotspotEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
@@ -126,7 +127,7 @@ ACTION_TYPES = [
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
-    "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait",
+    "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
 ]
 
 # 编辑器用：会改动存档/可持久化数据 vs 以运行时演出与瞬时状态为主（与实现细节若有出入以策划理解为准，见文档注释）。
@@ -157,7 +158,9 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "sugarWheelShowSpeech": "memory",
     "sugarWheelDismissSpeech": "memory",
     "sugarWheelDismissAllSpeech": "memory",
+    "debugAlertActionParams": "memory",
     "showEmote": "memory",
+    "showSpeechBubble": "memory",
     "playNpcAnimation": "memory",
     "setEntityEnabled": "memory",
     "openShop": "memory",
@@ -204,6 +207,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "cutsceneSpawnActor": "memory",
     "cutsceneRemoveActor": "memory",
     "showEmoteAndWait": "memory",
+    "showSpeechBubbleAndWait": "memory",
 }
 
 ACTION_SAVE_DOT_TOOLTIP = (
@@ -256,9 +260,17 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "sugarWheelShowSpeech": [("role", "str"), ("text", "str"), ("durationMs", "int")],
     "sugarWheelDismissSpeech": [("role", "str")],
     "sugarWheelDismissAllSpeech": [],
+    "debugAlertActionParams": [("title", "str")],
     "showEmote": [
         ("target", "str"),
         ("emote", "str"),
+        ("duration", "float"),
+        ("anchorOffsetX", "float"),
+        ("anchorOffsetY", "float"),
+    ],
+    "showSpeechBubble": [
+        ("target", "str"),
+        ("text", "str"),
         ("duration", "float"),
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
@@ -304,6 +316,13 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
     ],
+    "showSpeechBubbleAndWait": [
+        ("target", "str"),
+        ("text", "str"),
+        ("duration", "float"),
+        ("anchorOffsetX", "float"),
+        ("anchorOffsetY", "float"),
+    ],
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
@@ -311,7 +330,7 @@ _ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book", "bookEntry")
 
 _FACE_DIRECTIONS = ("left", "right", "up", "down")
 
-# showEmote / showEmoteAndWait：运行时仅为气泡 Text；编辑器侧提供常用占位 + 工程扫描去重。
+# showEmote / showEmoteAndWait / showSpeechBubble*：运行时仅为气泡 Text；编辑器侧对白类用 text 字段与快捷占位。
 _EMOTE_QUICK_PRESETS = ("?", "!", "!!", "...", "…")
 # 可选字幕旁表情：下拉「(无)」条目的内部取值（勿用作真实气泡文案）。
 _EMOTE_OPTION_NONE = "__subtitle_emote_none__"
@@ -2735,7 +2754,12 @@ class ActionRow(QWidget):
                 w.valueChanged.connect(self.changed)
             elif ptype == "float":
                 w = QDoubleSpinBox(self)
-                if act_type in ("showEmote", "showEmoteAndWait") and pname == "duration":
+                if act_type in (
+                    "showEmote",
+                    "showEmoteAndWait",
+                    "showSpeechBubble",
+                    "showSpeechBubbleAndWait",
+                ) and pname == "duration":
                     w.setRange(0, 9999999)
                     w.setDecimals(0)
                     w.setSingleStep(50)
@@ -2743,7 +2767,12 @@ class ActionRow(QWidget):
                         w.setValue(float(val) if val != "" else 1500)
                     except (TypeError, ValueError):
                         w.setValue(1500.0)
-                elif act_type in ("showEmote", "showEmoteAndWait") and pname in (
+                elif act_type in (
+                    "showEmote",
+                    "showEmoteAndWait",
+                    "showSpeechBubble",
+                    "showSpeechBubbleAndWait",
+                ) and pname in (
                     "anchorOffsetX",
                     "anchorOffsetY",
                 ):
@@ -2867,6 +2896,30 @@ class ActionRow(QWidget):
                     "选 NPC、热点、player 或过场 _cut_*；热点锚在展示贴图顶边，可用 anchorOffset 微调。",
                 )
             elif act_type == "showEmoteAndWait" and pname == "emote":
+                w = EmoteBubbleParamWidget(
+                    self,
+                    self._ctx_model,
+                    str(val) if val is not None else "",
+                    lambda: self.changed.emit(),
+                )
+            elif act_type == "showSpeechBubble" and pname == "target":
+                w = self._make_selector("emote_target", str(val) if val is not None else "")
+                w.setToolTip(
+                    "与 showEmote 相同：NPC、热点 id 或 player；对白气泡锚在展示图上沿。",
+                )
+            elif act_type == "showSpeechBubble" and pname == "text":
+                w = EmoteBubbleParamWidget(
+                    self,
+                    self._ctx_model,
+                    str(val) if val is not None else "",
+                    lambda: self.changed.emit(),
+                )
+            elif act_type == "showSpeechBubbleAndWait" and pname == "target":
+                w = self._make_selector("emote_target", str(val) if val is not None else "")
+                w.setToolTip(
+                    "与 showEmoteAndWait 相同：NPC、热点、player、过场 _cut_*。",
+                )
+            elif act_type == "showSpeechBubbleAndWait" and pname == "text":
                 w = EmoteBubbleParamWidget(
                     self,
                     self._ctx_model,

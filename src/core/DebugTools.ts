@@ -44,6 +44,10 @@ export interface DebugToolsDeps {
   getEntityPixelDensityMatchBlurScaleDebug: () => number | null;
   nudgeEntityPixelDensityMatchBlurScaleDebug: (delta: number) => void;
   clearEntityPixelDensityMatchBlurScaleDebug: () => void;
+  /** F2：被遮挡时精灵 alpha 乘数（0～1）；0 为 discard */
+  getDepthOcclusionBlendFactor: () => number;
+  setDepthOcclusionBlendFactor: (factor: number) => void;
+  depthOcclusionActive: () => boolean;
   /** ScenarioStateManager + DocumentRevealManager 只读快照（F2 工具页） */
   getNarrativeDebugSnapshot: () => Record<string, unknown>;
 }
@@ -307,6 +311,78 @@ export class DebugTools {
         },
       })),
     }));
+
+    debugPanelUI.addSection('深度精灵遮挡（调试）', () => {
+      const active = this.deps.depthOcclusionActive();
+      const factor = this.deps.getDepthOcclusionBlendFactor();
+      const pct = Math.round(Math.min(1, Math.max(0, factor)) * 100);
+
+      let extra: HTMLElement | undefined;
+      if (active) {
+        const wrap = document.createElement('div');
+        wrap.className = 'debug-dock__section-extra';
+
+        const hint = document.createElement('div');
+        hint.className = 'debug-dock__slider-hint';
+        hint.textContent =
+          '被遮挡像素：对预乘后的精灵色整体 × 系数（见 DepthOcclusionFilter 注释）。「0」=硬裁切；「0.5」时对不透明像素约一半精灵一半下层；「1」≈不因深度裁透明度。';
+
+        const row = document.createElement('div');
+        row.className = 'debug-dock__slider-row';
+
+        const range = document.createElement('input');
+        range.type = 'range';
+        range.min = '0';
+        range.max = '100';
+        range.step = '1';
+        range.value = String(pct);
+
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'debug-dock__slider-value';
+        valueSpan.textContent = factor.toFixed(2);
+
+        range.addEventListener('input', () => {
+          const t = Number(range.value) / 100;
+          this.deps.setDepthOcclusionBlendFactor(t);
+          valueSpan.textContent = t.toFixed(2);
+        });
+
+        row.appendChild(range);
+        row.appendChild(valueSpan);
+        wrap.appendChild(hint);
+        wrap.appendChild(row);
+        extra = wrap;
+      }
+
+      return {
+        text:
+          (active
+            ? `遮挡混合系数（当前）: ${factor.toFixed(2)}`
+            : '当前场景未加载 depthConfig 或深度纹理未就绪，无精灵深度遮挡。') +
+          '\n不影响碰撞与存档。',
+        actions: active
+          ? [
+              {
+                label: '系数归零（硬裁切）',
+                fn: () => {
+                  this.deps.setDepthOcclusionBlendFactor(0);
+                  debugPanelUI.log('深度遮挡混合系数 -> 0');
+                  debugPanelUI.refresh();
+                },
+              },
+              {
+                label: '设为 0.50',
+                fn: () => {
+                  this.deps.setDepthOcclusionBlendFactor(0.5);
+                  debugPanelUI.log('深度遮挡混合系数 -> 0.50');
+                  debugPanelUI.refresh();
+                },
+              },
+            ]
+          : [],
+        extra,
+      };
+    });
 
     debugPanelUI.addSection('Scene world 尺寸', () => {
       const sz = this.deps.getDebugSceneWorldSize();

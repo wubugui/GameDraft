@@ -1,3 +1,5 @@
+import type { ActionDef } from '../../data/types';
+
 export interface SugarWheelIndexEntry {
   id: string;
   label: string;
@@ -14,6 +16,10 @@ export interface SugarWheelSectorDef {
   weight?: number;
   /** 透传给 `minigame:sugarWheelResult` 的配置数据，由外部系统自行解释。 */
   payload?: Record<string, unknown>;
+  /** 玩家在 idle/result 阶段转盘上手势拖完指针松手后，对当前指针所指数格顺序执行（与其它编辑器 Action 相同筛选器）。 */
+  actionsOnPointerDrag?: ActionDef[];
+  /** 蓄力松手后转盘停稳并落在本格时顺序执行，再走结果横幅与 `minigame:sugarWheelResult`。 */
+  actionsOnSpinLanding?: ActionDef[];
 }
 
 export interface SugarWheelInstance {
@@ -134,6 +140,60 @@ export interface SugarWheelInstance {
   speechMaxVisible?: number;
 
   sectors: SugarWheelSectorDef[];
+
+  /** 旋转氛围脚本组；每次抽奖随机（加权）选一组，整次旋转沿用。 */
+  atmosphereGroups?: SugarWheelAtmosphereGroup[];
+}
+
+// ---------------------------------------------------------------------------
+// 旋转氛围脚本
+// ---------------------------------------------------------------------------
+
+/** 一组氛围脚本：策划配 N 组，开局随机选一组。 */
+export interface SugarWheelAtmosphereGroup {
+  id: string;
+  label?: string;
+  /** 随机选组权重，默认 1。 */
+  weight?: number;
+  /** 命名文案池，步骤内用 pool 名引用。 */
+  vars: Record<string, string[]>;
+  /** 四阶段脚本 */
+  start?: SugarWheelAtmosphereStep[];
+  spinning?: SugarWheelAtmosphereStep[];
+  slowing?: SugarWheelAtmosphereStep[];
+  stop?: SugarWheelAtmosphereStep[];
+}
+
+export type SugarWheelAtmospherePhaseName = 'start' | 'spinning' | 'slowing' | 'stop';
+
+/**
+ * 一步指令。`op` 决定行为，其余字段按 op 取值。
+ *
+ * - `say`  ：让 `role` 说话；文案来自 `pool`（vars 键名）随机抽或 `text` 直写。
+ * - `pick` ：从 `pool` 随机取一条写入临时槽位 `slot`（默认 `_line`），后续 `say` 可引用。
+ * - `wait` ：暂停 `sec` 秒再跑下一步。
+ * - `chance` ：以 `p`（0-1）概率执行 `then` 子步骤列表。
+ * - `when_near_sector`：当前指针角在 `sectorId` 扇区 ± `degBuffer` 度内时执行 `then`，否则 `else`。
+ */
+export interface SugarWheelAtmosphereStep {
+  op: 'say' | 'pick' | 'wait' | 'chance' | 'when_near_sector';
+  // say
+  role?: string;
+  text?: string;
+  pool?: string;
+  durationMs?: number;
+  // pick
+  slot?: string;
+  // wait
+  sec?: number;
+  // chance
+  p?: number;
+  // when_near_sector
+  sectorId?: string;
+  degBuffer?: number;
+  // branching
+  then?: SugarWheelAtmosphereStep[];
+  else?: SugarWheelAtmosphereStep[];
 }
 
 /** 糖画转盘小游戏中 `showSpeech` 的气泡屏幕锚点（比例坐标）。 */

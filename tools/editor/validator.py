@@ -1003,7 +1003,7 @@ def _append_action_param_ref_issues(
                 f"faceEntity direction {d!r} 非 left/right/up/down",
             ))
 
-    if t in ("showEmote", "showEmoteAndWait"):
+    if t in ("showEmote", "showEmoteAndWait", "showSpeechBubble", "showSpeechBubbleAndWait"):
         aid = str(p.get("target") or "").strip()
         if aid and not _emote_subject_ref_ok(
             model, scene_id, aid, temp_ids=temp, allow_player=True,
@@ -1561,15 +1561,17 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
 
 _CUTSCENE_ACTION_WHITELIST = frozenset([
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor",
-    "showEmoteAndWait", "playNpcAnimation", "setEntityEnabled",
-    "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "showEmoteAndWait", "showSpeechBubble", "showSpeechBubbleAndWait",
+    "playNpcAnimation", "setEntityEnabled",
     "persistNpcDisablePatrol", "persistNpcEnablePatrol",
+    "persistNpcEntityEnabled", "persistHotspotEnabled",
     "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "setEntityField", "setSceneEntityPosition",
     "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
     "startWaterMinigame", "startSugarWheelMinigame",
+    "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
 ])
 
 _CUTSCENE_STAGING_SAVE_ACTIONS = frozenset([

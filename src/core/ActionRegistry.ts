@@ -53,7 +53,7 @@ export interface ActionRegistryDeps {
   eventBus: EventBus;
   resolveActor: (id: string) => ICutsceneActor | null;
   /**
-   * showEmote：`target` 可为 NPC / `player` / 过场 `_cut_*` / **当前场景热点 id**；
+   * showEmote / showSpeechBubble：`target` 可为 NPC / `player` / 过场 `_cut_*` / **当前场景热点 id**；
    * 热点仅作气泡挂载点（无朝向/动画），锚点见 `Hotspot.getEmoteBubbleAnchorLocalY()`。
    */
   resolveEmoteTarget: (id: string) => IEmoteBubbleAnchor | null;
@@ -159,6 +159,13 @@ function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffset
     anchorOffsetX: Number.isFinite(ox) ? ox : 0,
     anchorOffsetY: Number.isFinite(oy) ? oy : 0,
   };
+}
+
+/** showSpeechBubble*：对白用 `text`；兼容沿用 `emote` 键以便从 showEmote 复制参数。 */
+function speechBubbleRawText(params: Record<string, unknown>): string {
+  const t = String(params.text ?? '').trim();
+  if (t) return t;
+  return String(params.emote ?? '').trim();
 }
 
 /** 写入 F2 调试面板日志（ deps 可选时 no-op）。 */
@@ -307,6 +314,19 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.sugarWheelMinigameManager.dismissAllSpeech();
   }, []);
 
+  /** 测试：`alert(JSON.stringify(params))`；运行时糖画可走场景侧合并上下文字段（见 SugarWheelMinigameScene）。 */
+  executor.register('debugAlertActionParams', (p) => {
+    const title = typeof p.title === 'string' && p.title.trim() !== '' ? `${p.title.trim()}\n\n` : '';
+    const body = `${title}${JSON.stringify(p, null, 2)}`;
+    const gt = typeof globalThis !== 'undefined' ? globalThis : undefined;
+    const a = gt && 'alert' in gt ? (gt.alert as unknown) : undefined;
+    if (typeof a === 'function') {
+      a.call(gt, body);
+    } else {
+      console.warn('debugAlertActionParams (no alert):', p);
+    }
+  }, []);
+
   executor.register('showEmote', (p) => {
     const target = String(p.target ?? '').trim();
     const emote = String(p.emote ?? '').trim();
@@ -342,6 +362,37 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     );
     dbg(d, `bubble.show 已返回`);
   }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
+
+  /** 与 showEmote 相同锚点与白底气泡；params.text 为对白（经 resolveDisplayText，支持 `[tag:…]`）。 */
+  executor.register('showSpeechBubble', (p) => {
+    const target = String(p.target ?? '').trim();
+    const raw = speechBubbleRawText(p);
+    const sceneId = d.sceneManager.currentSceneData?.id ?? '';
+    dbg(d, `[showSpeechBubble] scene=${sceneId || '(?)'} target=${JSON.stringify(target)} rawLen=${raw.length}`);
+    if (!target || !raw) {
+      console.warn('showSpeechBubble: 需要 target 与 text');
+      return;
+    }
+    const text = d.resolveDisplayText(raw).trim();
+    if (!text) {
+      console.warn('showSpeechBubble: 解析后文案为空');
+      return;
+    }
+    const subject = d.resolveEmoteTarget(target);
+    if (!subject) {
+      console.warn(`showSpeechBubble: 找不到 NPC / player / 过场实体 / 当前场景热点 "${target}"`);
+      return;
+    }
+    const durRaw = p.duration ?? 1500;
+    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const off = parseEmoteOffsetParams(p);
+    d.emoteBubbleManager.show(
+      subject,
+      text,
+      Number.isFinite(duration) && duration > 0 ? duration : 1500,
+      off,
+    );
+  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   /** `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。 */
   executor.register('playNpcAnimation', (p) => {
@@ -1014,6 +1065,41 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     );
     dbg(d, 'AndWait showAndWait 结束');
   }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
+
+  executor.register('showSpeechBubbleAndWait', async (p) => {
+    const target = String(p.target ?? '').trim();
+    const raw = speechBubbleRawText(p);
+    const durRaw = p.duration ?? 1500;
+    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const sceneId = d.sceneManager.currentSceneData?.id ?? '';
+    dbg(d, `[showSpeechBubbleAndWait] scene=${sceneId || '(?)'} target=${JSON.stringify(target)} rawLen=${raw.length}`);
+    if (!target || !raw) {
+      console.warn('showSpeechBubbleAndWait: 需要 target 与 text');
+      return;
+    }
+    const text = d.resolveDisplayText(raw).trim();
+    if (!text) {
+      console.warn('showSpeechBubbleAndWait: 解析后文案为空');
+      return;
+    }
+    const subject = d.resolveEmoteTarget(target);
+    if (!subject) {
+      console.warn(`showSpeechBubbleAndWait: 找不到 NPC / player / 过场实体 / 当前场景热点 "${target}"`);
+      return;
+    }
+    const off = parseEmoteOffsetParams(p);
+    dbg(
+      d,
+      `SpeechBubbleAndWait await durMs=${Number.isFinite(duration) && duration > 0 ? duration : 1500}`,
+    );
+    await d.emoteBubbleManager.showAndWait(
+      subject,
+      text,
+      Number.isFinite(duration) && duration > 0 ? duration : 1500,
+      off,
+    );
+    dbg(d, '[showSpeechBubbleAndWait] showAndWait 结束');
+  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   executor.registerDialogueSequential('revealDocument', async (p) => {
     await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));

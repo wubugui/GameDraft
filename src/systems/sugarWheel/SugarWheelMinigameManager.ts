@@ -1,5 +1,6 @@
 import type { AssetManager } from '../../core/AssetManager';
 import type { EventBus } from '../../core/EventBus';
+import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { InputManager } from '../../core/InputManager';
 import type { GameStateController } from '../../core/GameStateController';
 import type { Renderer } from '../../rendering/Renderer';
@@ -17,6 +18,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
   private inputManager: InputManager | null = null;
   private stateController: GameStateController | null = null;
   private resolveTextFn: ((s: string) => string) | null = null;
+  private actionExecutor: ActionExecutor | null = null;
 
   private index: SugarWheelIndexEntry[] = [];
   private instanceCache = new Map<string, SugarWheelInstance>();
@@ -37,11 +39,13 @@ export class SugarWheelMinigameManager implements IGameSystem {
     renderer: Renderer;
     inputManager: InputManager;
     stateController: GameStateController;
+    actionExecutor: ActionExecutor;
     resolveDisplayText: (s: string) => string;
   }): void {
     this.renderer = deps.renderer;
     this.inputManager = deps.inputManager;
     this.stateController = deps.stateController;
+    this.actionExecutor = deps.actionExecutor;
     this.resolveTextFn = deps.resolveDisplayText;
   }
 
@@ -97,7 +101,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
   }
 
   async start(id: string): Promise<void> {
-    if (!this.renderer || !this.inputManager || !this.stateController || !this.resolveTextFn) {
+    if (!this.renderer || !this.inputManager || !this.stateController || !this.resolveTextFn || !this.actionExecutor) {
       console.warn('SugarWheelMinigameManager: runtime not bound');
       this.resolveSession();
       return;
@@ -139,6 +143,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
     this.scene = new SugarWheelMinigameScene(
       this.renderer,
       this.assetManager,
+      this.actionExecutor,
       this.resolveTextFn,
       (result) => this.publishResult(result),
       () => this.teardownSession(),

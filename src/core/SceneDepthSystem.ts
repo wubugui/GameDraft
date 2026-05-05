@@ -18,6 +18,8 @@ export class SceneDepthSystem implements IGameSystem {
 
     private _depthTolerance = 0;
     private _floorOffset = 0;
+    /** F2 可改；默认半透明混合（非硬裁切），与地图预乘合成 */
+    private _occlusionBlendFactor = 0.28;
 
     private R00 = 0; private R01 = 0; private R02 = 0;
     private R20 = 0; private R21 = 0; private R22 = 0;
@@ -44,6 +46,14 @@ export class SceneDepthSystem implements IGameSystem {
     set floorOffset(v: number) {
         this._floorOffset = v;
         for (const f of this.filters) f.setFloorOffset(v);
+    }
+
+    /** 深度遮挡半透明混合系数（调试）：遮挡像素 alpha *= factor，0 为硬裁切 */
+    get occlusionBlendFactor(): number { return this._occlusionBlendFactor; }
+    set occlusionBlendFactor(v: number) {
+        const c = Math.min(1, Math.max(0, Number(v) || 0));
+        this._occlusionBlendFactor = c;
+        for (const f of this.filters) f.setOcclusionBlendFactor(c);
     }
 
     init(_ctx: GameContext): void {}
@@ -208,6 +218,7 @@ export class SceneDepthSystem implements IGameSystem {
             const f = DepthOcclusionFilter.createForEntity(this.depthTexture, this.config);
             f.setSceneSize(this.sceneW, this.sceneH);
             f.setWorldToPixel(this.worldToPixelX, this.worldToPixelY);
+            f.setOcclusionBlendFactor(this._occlusionBlendFactor);
             this.filters.push(f);
             depthLog(T, 'filter created, sceneSize (rendered):', this.sceneW, 'x', this.sceneH, 'total:', this.filters.length);
             return f;

@@ -1,7 +1,16 @@
 import type { AssetManager } from '../../core/AssetManager';
+import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { Renderer } from '../../rendering/Renderer';
+import type { ActionDef } from '../../data/types';
 import { UITheme } from '../../ui/UITheme';
-import type { SugarWheelInstance, SugarWheelResult, SugarWheelSpeechAnchor } from './types';
+import type {
+  SugarWheelAtmospherePhaseName,
+  SugarWheelInstance,
+  SugarWheelResult,
+  SugarWheelSectorDef,
+  SugarWheelSpeechAnchor,
+} from './types';
+import { SugarWheelAtmosphereScheduler, type SugarWheelAtmosphereHost } from './sugarWheelAtmosphere';
 import {
   TAU,
   advanceSugarWheelSpinStep,
@@ -36,6 +45,8 @@ const SPEECH_DEBUG_ROLE_ORDER = [
   'stall_owner',
 ] as const;
 
+const DEBUG_ALERT_ACTION_PARAMS = 'debugAlertActionParams';
+
 /**
  * 转盘指针：数据扇区仅占角、顺序由 JSON 决定（须与贴图顺时针一致）；松手后欧拉积分 θ、ω、α，线性阻力减速；
  * 停稳后用 θ mod 2π（rotation 扣 pointerArtOffset）解析扇区。棋盘 Sprite 锚点为贴图中心；指针 Sprite 的 position / scale / rotation 均以贴图锚点为原点。
@@ -44,6 +55,7 @@ export class SugarWheelMinigameScene {
   readonly root: Container;
   private readonly renderer: Renderer;
   private readonly assetManager: AssetManager;
+  private readonly actionExecutor: ActionExecutor;
   private readonly resolveText: (s: string) => string;
   private readonly onResult: (result: SugarWheelResult) => void;
   private readonly onClose: () => void;
@@ -115,18 +127,31 @@ export class SugarWheelMinigameScene {
   /** 判格角、Pixi 旋转等读数 */
   private geomDebugHud: Text;
 
+  private atmosphereScheduler: SugarWheelAtmosphereScheduler;
+  private lastAtmospherePhase: SugarWheelAtmospherePhaseName | null = null;
+
   constructor(
     renderer: Renderer,
     assetManager: AssetManager,
+    actionExecutor: ActionExecutor,
     resolveText: (s: string) => string,
     onResult: (result: SugarWheelResult) => void,
     onClose: () => void,
   ) {
     this.renderer = renderer;
     this.assetManager = assetManager;
+    this.actionExecutor = actionExecutor;
     this.resolveText = resolveText;
     this.onResult = onResult;
     this.onClose = onClose;
+
+    const atmosHost: SugarWheelAtmosphereHost = {
+      showSpeech: (role, text, dur) => this.showSpeech(role, text, dur),
+      getWheelGeomAngleMod: () => this.wheelGeomAngleMod(),
+      getSpinOmega: () => this.spinOmega,
+      getInstance: () => this.instance,
+    };
+    this.atmosphereScheduler = new SugarWheelAtmosphereScheduler(atmosHost);
 
     this.geomDebugGfx = new Graphics();
     this.geomDebugGfx.eventMode = 'none';
@@ -141,7 +166,7 @@ export class SugarWheelMinigameScene {
       fontWeight: 'bold' as const,
     };
     for (let i = 0; i < 12; i++) {
-      const t = new Text({ text: `${i * 30}°`, style: rimStyle });
+      const t = new Text({ text: this.resolveText(`${i * 30}°`), style: rimStyle });
       t.anchor.set(0.5, 0.5);
       t.eventMode = 'none';
       this.geomDebugRimContainer.addChild(t);
@@ -167,9 +192,9 @@ export class SugarWheelMinigameScene {
     this.wheelLayer.cursor = 'grab';
     this.wheelLayer.on('pointerdown', (ev: FederatedPointerEvent) => this.beginPointerDrag(ev));
     this.wheelLayer.on('pointermove', (ev: FederatedPointerEvent) => this.updatePointerDrag(ev));
-    this.wheelLayer.on('pointerup', (ev: FederatedPointerEvent) => this.endPointerDrag(ev));
-    this.wheelLayer.on('pointerupoutside', () => this.endPointerDrag());
-    this.wheelLayer.on('pointercancel', () => this.endPointerDrag());
+    this.wheelLayer.on('pointerup', (ev: FederatedPointerEvent) => this.endPointerDrag(ev, true));
+    this.wheelLayer.on('pointerupoutside', () => this.endPointerDrag(undefined, true));
+    this.wheelLayer.on('pointercancel', () => this.endPointerDrag(undefined, true));
     this.uiLayer = new Container();
     this.uiLayer.eventMode = 'static';
 
@@ -197,7 +222,7 @@ export class SugarWheelMinigameScene {
     this.resultBanner.addChild(this.resultBannerText);
 
     this.hintText = new Text({
-      text: '拖动指针选起点 · 按住蓄力钮蓄力 · Esc 关闭 · D 调试(几何+气泡测试)',
+      text: this.resolveText('拖动指针选起点 · 按住蓄力钮蓄力 · Esc 关闭 · D 调试(几何+气泡测试)'),
       style: {
         fontSize: 13,
         fill: UITheme.colors.subtle,
@@ -222,7 +247,7 @@ export class SugarWheelMinigameScene {
     this.confirmShade.on('pointertap', (ev: FederatedPointerEvent) => ev.stopPropagation());
     this.confirmPanel = new Graphics();
     this.confirmText = new Text({
-      text: '确定要关闭转盘吗？',
+      text: this.resolveText('确定要关闭转盘吗？'),
       style: {
         fontSize: 18,
         fill: UITheme.colors.body,
@@ -232,8 +257,8 @@ export class SugarWheelMinigameScene {
       },
     });
     this.confirmText.anchor.set(0.5, 0.5);
-    this.confirmYesButton = this.makeButton('关闭', () => this.acceptClose(), 132, 40);
-    this.confirmNoButton = this.makeButton('取消', () => this.dismissClose(), 132, 40);
+    this.confirmYesButton = this.makeButton(this.resolveText('关闭'), () => this.acceptClose(), 132, 40);
+    this.confirmNoButton = this.makeButton(this.resolveText('取消'), () => this.dismissClose(), 132, 40);
     this.confirmLayer.addChild(this.confirmShade);
     this.confirmLayer.addChild(this.confirmPanel);
     this.confirmLayer.addChild(this.confirmText);
@@ -245,7 +270,7 @@ export class SugarWheelMinigameScene {
     this.speechDebugLayer.eventMode = 'static';
     this.speechDebugBg = new Graphics();
     this.speechDebugTitle = new Text({
-      text: '调试 · 气泡测试 (再按 D 关闭)',
+      text: this.resolveText('调试 · 气泡测试 (再按 D 关闭)'),
       style: {
         fontSize: 13,
         fill: UITheme.colors.title,
@@ -322,6 +347,9 @@ export class SugarWheelMinigameScene {
       this.root.addChildAt(this.foregroundSprite, this.root.getChildIndex(this.uiLayer));
     }
 
+    this.atmosphereScheduler.selectGroup(instance);
+    this.lastAtmospherePhase = null;
+
     this.layout();
     this.rebuildSpeechDebugButtons();
     this.unsubResize?.();
@@ -379,7 +407,7 @@ export class SugarWheelMinigameScene {
     const c = new Container();
     const bg = new Graphics();
     const label = new Text({
-      text: '蓄',
+      text: this.resolveText('蓄'),
       style: {
         fontSize: 17,
         fill: UITheme.colors.buttonText,
@@ -438,7 +466,7 @@ export class SugarWheelMinigameScene {
     const c = new Container();
     const bg = new Graphics();
     const label = new Text({
-      text: '\u00d7',
+      text: this.resolveText('\u00d7'),
       style: {
         fontSize: 22,
         fill: UITheme.colors.buttonText,
@@ -536,7 +564,9 @@ export class SugarWheelMinigameScene {
     const rowStride = 34;
     let y = 0;
     for (const role of roles) {
-      const display = role.length > 24 ? `${role.slice(0, 22)}…` : role;
+      const resolvedRole = this.resolveText(role);
+      const display =
+        resolvedRole.length > 24 ? `${resolvedRole.slice(0, 22)}…` : resolvedRole;
       const btn = this.makeDebugSpeechTestButton(display, () => {
         this.showSpeech(role, `[调试] ${role}`);
       });
@@ -545,7 +575,7 @@ export class SugarWheelMinigameScene {
       this.speechDebugButtonArea.addChild(btn);
     }
     y += 4;
-    const clearBtn = this.makeDebugSpeechTestButton('清除全部气泡', () => this.dismissAllSpeech());
+    const clearBtn = this.makeDebugSpeechTestButton(this.resolveText('清除全部气泡'), () => this.dismissAllSpeech());
     clearBtn.y = y;
     this.speechDebugButtonArea.addChild(clearBtn);
   }
@@ -708,7 +738,7 @@ export class SugarWheelMinigameScene {
   }
 
   private startResultBannerAnim(label: string): void {
-    this.resultBannerText.text = `抽中了：${this.resolveText(label)}`;
+    this.resultBannerText.text = this.resolveText(`抽中了：${label}`);
     this.resultBanner.visible = true;
     this.resultBannerAnim = { phase: 'pop', t0: performance.now() };
     const sw = this.renderer.screenWidth;
@@ -783,7 +813,7 @@ export class SugarWheelMinigameScene {
   private beginCharge(): void {
     if (!this.instance?.sectors?.length || !this.pointerSprite) return;
     if (this.phase === 'spinning' || this.phase === 'charging') return;
-    this.endPointerDrag();
+    this.endPointerDrag(undefined, false);
     this.phase = 'charging';
     this.chargeElapsed = 0;
     this.clearResultBannerImmediate();
@@ -840,14 +870,16 @@ export class SugarWheelMinigameScene {
     this.phase = 'spinning';
     this.lastResult = null;
     this.clearResultBannerImmediate();
+    this.atmosphereScheduler.notifyPhase('start');
+    this.lastAtmospherePhase = 'start';
   }
 
   private finishSpin(): void {
-    if (!this.pointerSprite) return;
+    if (!this.pointerSprite || this.phase !== 'spinning') return;
     const sectors = this.instance.sectors;
     const geom = this.wheelGeomAngleMod();
     const index = this.sectorIndexFromWheelGeomAngle(geom);
-    const sector = sectors[index];
+    const sector = sectors[index]!;
     const result: SugarWheelResult = {
       instanceId: this.instance.id,
       instanceLabel: this.instance.label,
@@ -857,12 +889,27 @@ export class SugarWheelMinigameScene {
       sectorPayload: sector.payload,
     };
     this.phase = 'result';
-    this.lastResult = result;
     this.spinOmega = 0;
     this.spinAlpha = 0;
-    this.startResultBannerAnim(sector.label);
-    this.layout();
-    this.onResult(result);
+    this.atmosphereScheduler.notifyPhase('stop');
+    this.lastAtmospherePhase = 'stop';
+
+    const landingRaw = this.sectorActionList(sector.actionsOnSpinLanding);
+    const landing = this.withSugarWheelDebugProbe(landingRaw, 'actionsOnSpinLanding', index, sector, geom);
+    void (async () => {
+      if (landing.length > 0) {
+        try {
+          await this.actionExecutor.executeBatchAwait(landing);
+        } catch (e) {
+          console.warn('SugarWheelMinigameScene: actionsOnSpinLanding failed', e);
+        }
+      }
+      if (!this.pointerSprite || !this.instance) return;
+      this.lastResult = result;
+      this.startResultBannerAnim(sector.label);
+      this.layout();
+      this.onResult(result);
+    })();
   }
 
   abort(): void {
@@ -931,6 +978,16 @@ export class SugarWheelMinigameScene {
     } else {
       this.spinSettleAccum = 0;
     }
+
+    const atmosPhase = SugarWheelAtmosphereScheduler.resolveAtmospherePhase(
+      this.phase,
+      Math.abs(this.spinOmega),
+    );
+    if (atmosPhase && atmosPhase !== this.lastAtmospherePhase) {
+      this.atmosphereScheduler.notifyPhase(atmosPhase);
+      this.lastAtmospherePhase = atmosPhase;
+    }
+    this.atmosphereScheduler.tick(step);
 
     if (this.geomDebugVisible) this.refreshGeomDebugLayer();
   }
@@ -1049,7 +1106,7 @@ export class SugarWheelMinigameScene {
 
     const nameNode = showName
       ? new Text({
-          text: anchor.label ?? '',
+          text: this.resolveText(anchor.label ?? ''),
           style: {
             fontSize: fontName,
             fill: UITheme.colors.title,
@@ -1159,11 +1216,72 @@ export class SugarWheelMinigameScene {
     this.rotatePointerTowardEvent(ev);
   }
 
-  private endPointerDrag(ev?: FederatedPointerEvent): void {
+  private endPointerDrag(ev?: FederatedPointerEvent, runDragSectorActions?: boolean): void {
     if (!this.draggingPointer) return;
     ev?.stopPropagation();
     this.draggingPointer = false;
     this.wheelLayer.cursor = 'grab';
+    const fire = runDragSectorActions !== false;
+    if (fire) void this.afterPointerDragReleaseActions();
+  }
+
+  /** 仅在玩家从转盘松开指针（非切换到蓄力的内部收尾）时对当前扇区执行 `actionsOnPointerDrag`。 */
+  private async afterPointerDragReleaseActions(): Promise<void> {
+    if (!this.pointerSprite || !this.instance?.sectors?.length) return;
+    if (this.phase === 'spinning' || this.phase === 'charging') return;
+    const geom = this.wheelGeomAngleMod();
+    const index = this.sectorIndexFromWheelGeomAngle(geom);
+    const sector = this.instance.sectors[index];
+    if (!sector) return;
+    const actsRaw = this.sectorActionList(sector.actionsOnPointerDrag);
+    const acts = this.withSugarWheelDebugProbe(actsRaw, 'actionsOnPointerDrag', index, sector, geom);
+    if (acts.length === 0) return;
+    try {
+      await this.actionExecutor.executeBatchAwait(acts);
+    } catch (e) {
+      console.warn('SugarWheelMinigameScene: actionsOnPointerDrag failed', e);
+    }
+  }
+
+  /** JSON sectors 与其它数据中的 ActionDef[] 归一（缺 type 或非对象项丢弃）。 */
+  private sectorActionList(raw: unknown): ActionDef[] {
+    if (!Array.isArray(raw)) return [];
+    const out: ActionDef[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const o = item as Record<string, unknown>;
+      const t = o.type;
+      if (typeof t !== 'string' || !t.trim()) continue;
+      const p = o.params;
+      out.push({
+        type: t.trim(),
+        params:
+          p !== null && typeof p === 'object' && !Array.isArray(p) ? (p as Record<string, unknown>) : {},
+      });
+    }
+    return out;
+  }
+
+  /** 仅在 `debugAlertActionParams` 上合并转盘上下文，便于弹窗对齐 JSON 与同一次回调语义。探针字段覆盖同名 params。 */
+  private withSugarWheelDebugProbe(
+    actions: ActionDef[],
+    callbackKind: 'actionsOnPointerDrag' | 'actionsOnSpinLanding',
+    sectorIndex: number,
+    sector: SugarWheelSectorDef,
+    phiGeomRad: number,
+  ): ActionDef[] {
+    const probe: Record<string, unknown> = {
+      sugarWheelCallback: callbackKind,
+      sugarWheelInstanceId: this.instance.id,
+      sugarWheelInstanceLabel: this.instance.label ?? '',
+      sugarWheelSectorIndex: sectorIndex,
+      sugarWheelSectorId: sector.id,
+      sugarWheelSectorLabel: sector.label ?? '',
+      sugarWheelPhiGeomRad: phiGeomRad,
+    };
+    return actions.map((a) =>
+      a.type === DEBUG_ALERT_ACTION_PARAMS ? { ...a, params: { ...a.params, ...probe } } : a,
+    );
   }
 
   private rotatePointerTowardEvent(ev: FederatedPointerEvent): void {
@@ -1312,7 +1430,7 @@ export class SugarWheelMinigameScene {
       const deg = i * 30;
       const phi = (deg / 360) * TAU;
       const p = this.geomPointOnWheel(rLabel, phi);
-      t.text = `${deg}°`;
+      t.text = this.resolveText(`${deg}°`);
       t.position.set(p.x, p.y);
     }
 
@@ -1326,26 +1444,26 @@ export class SugarWheelMinigameScene {
       const art = this.pointerArtOffsetRad();
       const artDeg = (art * 180) / Math.PI;
       const sec = this.instance.sectors[curIdx];
-      const secLine =
-        curIdx >= 0 && sec
-          ? `#${curIdx} ${sec.id} · ${this.resolveText(sec.label)}`
-          : `(无指针)`;
+      const secLineRaw =
+        curIdx >= 0 && sec ? `#${curIdx} ${sec.id} · ${sec.label}` : '(无指针)';
       const uPhi = weightTerrainPotential(phi, this.instance);
       const tauPhi = weightDerivedBiasAccel(phi, this.instance);
       const dUdPhi = -tauPhi;
-      this.geomDebugHud.text =
+      this.geomDebugHud.text = this.resolveText(
         `判格几何角 φ (mod 2π): ${phiDeg.toFixed(2)}°  ·  ${phi.toFixed(4)} rad\n` +
-        `sprite.rotation: ${rotDeg.toFixed(2)}°  ·  ${rot.toFixed(4)} rad\n` +
-        `贴图校准 art: ${artDeg.toFixed(2)}°  (φ = θ − art)\n` +
-        `分格 left0: ${left0Deg.toFixed(2)}°  ·  step: ${stepDeg.toFixed(2)}°\n` +
-        `跑道势能 U(φ)=Σ(−ln w)·cos×scale · 青线向内=谷底 | U=${uPhi.toFixed(4)}  dU/dφ=${dUdPhi.toFixed(4)} ( −τ_bias )\n` +
-        `扇区: ${secLine}`;
+          `sprite.rotation: ${rotDeg.toFixed(2)}°  ·  ${rot.toFixed(4)} rad\n` +
+          `贴图校准 art: ${artDeg.toFixed(2)}°  (φ = θ − art)\n` +
+          `分格 left0: ${left0Deg.toFixed(2)}°  ·  step: ${stepDeg.toFixed(2)}°\n` +
+          `跑道势能 U(φ)=Σ(−ln w)·cos×scale · 青线向内=谷底 | U=${uPhi.toFixed(4)}  dU/dφ=${dUdPhi.toFixed(4)} ( −τ_bias )\n` +
+          `扇区: ${secLineRaw}`,
+      );
     } else {
       const uPhi0 = weightTerrainPotential(0, this.instance);
-      this.geomDebugHud.text =
+      this.geomDebugHud.text = this.resolveText(
         `分格 left0: ${left0Deg.toFixed(2)}°  ·  step: ${stepDeg.toFixed(2)}°\n` +
-        `(无指针)；势能样例 φ=0° 处 U=${uPhi0.toFixed(4)}\n` +
-        `青线周线：向内=势能更低（易滑向谷底）`;
+          `(无指针)；势能样例 φ=0° 处 U=${uPhi0.toFixed(4)}\n` +
+          `青线周线：向内=势能更低（易滑向谷底）`,
+      );
     }
     this.geomDebugHud.position.set(0, -R * 0.62);
   }

@@ -171,6 +171,38 @@
   margin-top: 0.45rem;
 }
 
+.debug-dock__section-extra {
+  margin-top: 0.55rem;
+}
+
+.debug-dock__slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.debug-dock__slider-row input[type='range'] {
+  flex: 1 1 8rem;
+  min-width: 9rem;
+  max-width: 100%;
+}
+
+.debug-dock__slider-value {
+  flex: 0 0 auto;
+  min-width: 2.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: #9dbdff;
+}
+
+.debug-dock__slider-hint {
+  flex: 1 1 100%;
+  font-size: 0.75rem;
+  color: #8899aa;
+  line-height: 1.35;
+}
+
 .debug-dock__btn {
   padding: 0.3rem 0.55rem;
   font-size: 0.75rem;
