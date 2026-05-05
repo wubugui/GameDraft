@@ -3,7 +3,7 @@
   "subsample": 4,
   "wireframe": false,
   "view": {
-    "show_grid": false,
+    "show_grid": true,
     "show_axes": false,
     "show_labels": false,
     "show_collision": true
@@ -12,7 +12,7 @@
     "stretch_factor": 3.0,
     "height_offset": 0.67,
     "collision_alpha": 0.3,
-    "brush_radius": 1.0
+    "brush_radius": 5.01
   },
   "billboard": {
     "enabled": false,

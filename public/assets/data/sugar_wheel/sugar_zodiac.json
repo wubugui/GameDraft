@@ -97,42 +97,45 @@
       "role": "child_a",
       "label": "小孩",
       "xRatio": 0.13252918287937743,
-      "yRatio": 0.6966536964980545,
+      "yRatio": 0.6032684824902725,
       "tailDirection": "down"
     },
     {
       "role": "child_b",
       "label": "小孩",
-      "xRatio": 0.34338521400778216,
-      "yRatio": 0.8452658884565497,
+      "xRatio": 0.3433852140077821,
+      "yRatio": 0.7363164721141373,
       "tailDirection": "down"
     },
     {
       "role": "child_c",
       "label": "小孩",
-      "xRatio": 0.5908171206225681,
-      "yRatio": 0.7874448767833983,
+      "xRatio": 0.5713618677042801,
+      "yRatio": 0.7355642023346304,
       "tailDirection": "down"
     },
     {
       "role": "child_d",
       "label": "小孩",
-      "xRatio": 0.8044357976653697,
-      "yRatio": 0.7051880674448767,
+      "xRatio": 0.7908171206225683,
+      "yRatio": 0.6299610894941632,
       "tailDirection": "down"
     },
     {
       "role": "protagonist",
-      "xRatio": 0.5,
-      "yRatio": 0.92,
+      "xRatio": 0.5038910505836575,
+      "yRatio": 0.6372503242542157,
       "tailDirection": "none"
     },
     {
       "role": "stall_owner",
       "label": "摊主",
-      "xRatio": 0.2336186770428015,
+      "xRatio": 0.5663035019455253,
       "yRatio": 0.0,
       "tailDirection": "up"
     }
-  ]
+  ],
+  "chargeButtonWheelOffsetXPx": 388.33364295074693,
+  "chargeButtonWheelOffsetYPx": -43.730226729299886,
+  "chargeButtonDiameterPx": 52.0
 }

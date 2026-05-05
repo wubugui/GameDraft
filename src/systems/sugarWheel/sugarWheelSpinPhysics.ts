@@ -5,6 +5,9 @@ export const TAU = Math.PI * 2;
 /** 与各格 weight 合成角向势能时的默认强度（rad/s²），与 `SugarWheelMinigameScene` 保持一致。 */
 export const DEFAULT_SPIN_WEIGHT_BIAS_STRENGTH_RAD_PER_S2 = 4.2;
 
+/** weight=0 时按这个下限折算高度，避免 -ln(0) 无限大。 */
+export const MIN_SPIN_TERRAIN_WEIGHT = 0.05;
+
 /** 默认干摩擦角加速度（rad/s²），与角速度反向，避免轻拨时只靠 k·ω 拖出长尾巴。≤0 可由实例关闭。 */
 export const DEFAULT_SPIN_DRY_FRICTION_ACCEL_RAD_PER_SEC2 = 0.34;
 
@@ -66,38 +69,51 @@ function sectorWeightOrDefault(sec: SugarWheelSectorDef | undefined): number {
   return 1;
 }
 
-/**
- * weight → 角向偏置 torque（体感：相对其它格更愿意把末段拉回高权扇区中心，不校准为表中概率）。
- * p_i=w_i/Σw，α_bias = −scale·Σ p_i·sin(φ−c_i)。
- */
-export function weightDerivedBiasAccel(phi: number, instance: SugarWheelInstance): number {
+export function spinWeightBiasScale(instance: SugarWheelInstance): number {
+  const cfg = instance.spinWeightBiasStrengthRadPerSec2;
+  return typeof cfg === 'number' && Number.isFinite(cfg) && cfg > 0
+    ? cfg
+    : DEFAULT_SPIN_WEIGHT_BIAS_STRENGTH_RAD_PER_S2;
+}
+
+/** 与 `{ sinSum, cosSum }`：α_bias = scale·sinSum（与势能关系：−dU/dφ = −scale·Σ h sin ≡ α_bias）；U = scale·cosSum。 */
+function weightTerrainHarmonicComponents(
+  phi: number,
+  instance: SugarWheelInstance,
+): { sinSum: number; cosSum: number } {
   const sectors = instance.sectors;
   const layout = sectorLayoutFromInstance(instance);
   const { n, step, left0 } = layout;
-  if (n <= 0) return 0;
+  if (n <= 0) return { sinSum: 0, cosSum: 0 };
 
-  let wSum = 0;
-  const ps: number[] = [];
+  let sinSum = 0;
+  let cosSum = 0;
   for (let i = 0; i < n; i++) {
-    const w = i < sectors.length ? sectorWeightOrDefault(sectors[i]) : 1;
-    ps.push(w);
-    wSum += w;
-  }
-  if (wSum <= 1e-14) return 0;
-
-  let s = 0;
-  for (let i = 0; i < n; i++) {
-    const p = ps[i] / wSum;
+    const rawWeight = i < sectors.length ? sectorWeightOrDefault(sectors[i]) : 1;
+    const terrainWeight = Math.max(MIN_SPIN_TERRAIN_WEIGHT, rawWeight);
+    const height = -Math.log(terrainWeight);
     const ci = left0 + (i + 0.5) * step;
-    s += p * Math.sin(phi - ci);
+    const d = phi - ci;
+    sinSum += height * Math.sin(d);
+    cosSum += height * Math.cos(d);
   }
+  return { sinSum, cosSum };
+}
 
-  const cfg = instance.spinWeightBiasStrengthRadPerSec2;
-  const scale =
-    typeof cfg === 'number' && Number.isFinite(cfg) && cfg > 0
-      ? cfg
-      : DEFAULT_SPIN_WEIGHT_BIAS_STRENGTH_RAD_PER_S2;
-  return -scale * s;
+/** 与各格合成角向标量势能 U(φ)=scale·Σ (−ln w_i)·cos(φ−c_i)；−dU/dφ 与 {@link weightDerivedBiasAccel} 一致。仅用于体感，不作概率刻度。 */
+export function weightTerrainPotential(phi: number, instance: SugarWheelInstance): number {
+  const scale = spinWeightBiasScale(instance);
+  return scale * weightTerrainHarmonicComponents(phi, instance).cosSum;
+}
+
+/**
+ * weight → 跑道高度场。height_i=-ln(weight_i)：1 为平地，>1 为低谷，<1 为高坡。
+ * 用 h(φ)=Σ height_i·cos(φ−c_i) 近似起伏跑道，α_bias=-dh/dφ=Σ height_i·sin(φ−c_i)·scale。
+ * 这只表达体感难易，不把 weight 校准为精确中奖率。
+ */
+export function weightDerivedBiasAccel(phi: number, instance: SugarWheelInstance): number {
+  const scale = spinWeightBiasScale(instance);
+  return scale * weightTerrainHarmonicComponents(phi, instance).sinSum;
 }
 
 export interface SpinStepInput {

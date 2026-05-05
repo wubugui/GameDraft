@@ -8,8 +8,8 @@ export interface SugarWheelSectorDef {
   id: string;
   label: string;
   /**
-   * 相对倾向：不写或无效时视为 1。只约束「和同盘其它格比起来谁更容易停到」——数值越大体感越容易中该格，
-   * 越小则相对越难中；不要求等于玩家看到的精确中奖率百分比。全部相同时不产生角偏置。
+   * 物理跑道高度倾向：不写或无效时视为 1。1 是基准平地，越大表示该格越低、越容易停留，
+   * 越小表示该格越高、越难停留；不等同精确中奖率。0 会按运行时下限折算为很高的坡，不保证绝对不命中。
    */
   weight?: number;
   /** 透传给 `minigame:sugarWheelResult` 的配置数据，由外部系统自行解释。 */
@@ -42,6 +42,14 @@ export interface SugarWheelInstance {
   /** 指针锚点在转盘层局部坐标内的位置（转盘中心为原点），默认 (0,0)。 */
   pointerOffsetXPx?: number;
   pointerOffsetYPx?: number;
+  /**
+   * 蓄力圆形按钮：**中心**相对「布局中转盘中心」(cx+wheelCenterOffsetX, cy+wheelCenterOffsetY) 的屏幕像素偏移。
+   * 未配置时与 `wheelGeomRadiusPx * 0.72` 同向，落在右下侧默认位。
+   */
+  chargeButtonWheelOffsetXPx?: number;
+  chargeButtonWheelOffsetYPx?: number;
+  /** 蓄力按钮直径（px），未配置时 52。 */
+  chargeButtonDiameterPx?: number;
   sectorAngleOffsetDeg?: number;
   /**
    * 分格起点相位：第 0 格左边界在角 `offset + phase·step`（弧度、顺时针，0 为正上）。
@@ -100,7 +108,7 @@ export interface SugarWheelInstance {
   spinWeightBiasCreepRefRadPerSec?: number;
 
   /**
-   * weight 势能整体强度（rad/s²）。未配置或 ≤0 时用内置常量；只放大/缩小「谁更容易停到」的差距，仍不校准为表格概率。
+   * weight 跑道高度场整体强度（rad/s²）。未配置或 ≤0 时用内置常量；只放大/缩小「低谷/高坡」的体感差距，仍不校准为表格概率。
    */
   spinWeightBiasStrengthRadPerSec2?: number;
 

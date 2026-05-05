@@ -12,6 +12,8 @@ import {
   normalizeAngle,
   sectorIndexFromWheelGeomAngle as sectorIndexFromLayout,
   sectorLayoutFromInstance,
+  weightDerivedBiasAccel,
+  weightTerrainPotential,
 } from './sugarWheelSpinPhysics';
 import {
   Container,
@@ -61,10 +63,12 @@ export class SugarWheelMinigameScene {
   private resultBannerBg: Graphics;
   private resultBannerText: Text;
   private resultBannerAnim: { phase: 'pop' | 'hold' | 'fade' | null; t0: number } | null = null;
-  private chargePercentLabel: Text;
   private hintText: Text;
   /** 浮动圆形蓄力钮（按住蓄力） */
   private chargeButton: Container;
+  private chargeButtonDisk: Graphics;
+  private chargeButtonGlyph: Text;
+  private chargeButtonHover = false;
   /** 右上角关闭 */
   private closeIconButton: Container;
 
@@ -192,21 +196,8 @@ export class SugarWheelMinigameScene {
     this.resultBanner.addChild(this.resultBannerBg);
     this.resultBanner.addChild(this.resultBannerText);
 
-    this.chargePercentLabel = new Text({
-      text: '',
-      style: {
-        fontSize: 16,
-        fill: UITheme.colors.gold,
-        fontFamily: UITheme.fonts.ui,
-        fontWeight: 'bold',
-      },
-    });
-    this.chargePercentLabel.anchor.set(0.5, 0.5);
-    this.chargePercentLabel.visible = false;
-    this.chargePercentLabel.eventMode = 'none';
-
     this.hintText = new Text({
-      text: '拖动指针选起点 · 右下角蓄力 · Esc 关闭 · D 调试(几何+气泡测试)',
+      text: '拖动指针选起点 · 按住蓄力钮蓄力 · Esc 关闭 · D 调试(几何+气泡测试)',
       style: {
         fontSize: 13,
         fill: UITheme.colors.subtle,
@@ -214,7 +205,10 @@ export class SugarWheelMinigameScene {
       },
     });
 
-    this.chargeButton = this.makeCircularChargeButton();
+    const ch = this.makeCircularChargeButton();
+    this.chargeButton = ch.container;
+    this.chargeButtonDisk = ch.disk;
+    this.chargeButtonGlyph = ch.glyph;
     this.closeIconButton = this.makeCloseIconButton();
 
     this.speechLayer = new Container();
@@ -269,7 +263,6 @@ export class SugarWheelMinigameScene {
     this.root.addChild(this.bg);
     this.root.addChild(this.wheelLayer);
     this.root.addChild(this.uiLayer);
-    this.uiLayer.addChild(this.chargePercentLabel);
     this.uiLayer.addChild(this.resultBanner);
     this.uiLayer.addChild(this.chargeButton);
     this.uiLayer.addChild(this.closeIconButton);
@@ -381,9 +374,8 @@ export class SugarWheelMinigameScene {
     return c;
   }
 
-  /** 右下角浮动圆形蓄力钮 */
-  private makeCircularChargeButton(): Container {
-    const diameter = 52;
+  /** 右下角浮动圆形蓄力钮；直径与样式由 `layout()` 按实例数据刷新。 */
+  private makeCircularChargeButton(): { container: Container; disk: Graphics; glyph: Text } {
     const c = new Container();
     const bg = new Graphics();
     const label = new Text({
@@ -410,20 +402,35 @@ export class SugarWheelMinigameScene {
     });
     c.on('pointerupoutside', () => this.releaseCharge());
     c.on('pointercancel', () => this.releaseCharge());
-    const paint = (hover: boolean) => {
-      bg.clear();
-      bg.circle(diameter / 2, diameter / 2, diameter / 2 - 1);
-      bg.fill({
-        color: hover ? UITheme.colors.borderActive : UITheme.colors.borderMid,
-        alpha: 0.88,
-      });
-      bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
-    };
-    paint(false);
-    label.position.set(diameter / 2, diameter / 2);
-    c.on('pointerover', () => paint(true));
-    c.on('pointerout', () => paint(false));
-    return c;
+    c.on('pointerover', () => {
+      this.chargeButtonHover = true;
+      this.paintChargeButtonDisk();
+    });
+    c.on('pointerout', () => {
+      this.chargeButtonHover = false;
+      this.paintChargeButtonDisk();
+    });
+    return { container: c, disk: bg, glyph: label };
+  }
+
+  private chargeButtonDiameter(): number {
+    const d = finiteOr(this.instance?.chargeButtonDiameterPx, 52);
+    return clamp(d, 28, 160);
+  }
+
+  private paintChargeButtonDisk(): void {
+    const d = this.chargeButtonDiameter();
+    const g = this.chargeButtonDisk;
+    g.clear();
+    g.circle(d / 2, d / 2, d / 2 - 1);
+    g.fill({
+      color: this.chargeButtonHover ? UITheme.colors.borderActive : UITheme.colors.borderMid,
+      alpha: 0.88,
+    });
+    g.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    const fs = clamp(Math.round(17 * (d / 52)), 12, 30);
+    this.chargeButtonGlyph.style.fontSize = fs;
+    this.chargeButtonGlyph.position.set(d / 2, d / 2);
   }
 
   private makeCloseIconButton(): Container {
@@ -648,16 +655,11 @@ export class SugarWheelMinigameScene {
     this.closeIconButton.position.set(sw - margin - 32, margin);
 
     const R = this.wheelGeomRadiusPx;
-    const btnHalf = 26;
-    this.chargeButton.position.set(
-      cx + wx + R * 0.72 - btnHalf,
-      cy + wy + R * 0.72 - btnHalf,
-    );
-
-    this.chargePercentLabel.position.set(cx + wx, cy + wy);
-    const p = this.currentPower();
-    this.chargePercentLabel.text = this.phase === 'charging' ? `${Math.round(p * 100)}%` : '';
-    this.chargePercentLabel.visible = this.phase === 'charging';
+    const ox = finiteOr(this.instance.chargeButtonWheelOffsetXPx, R * 0.72);
+    const oy = finiteOr(this.instance.chargeButtonWheelOffsetYPx, R * 0.72);
+    const cd = this.chargeButtonDiameter();
+    this.paintChargeButtonDisk();
+    this.chargeButton.position.set(cx + wx + ox - cd / 2, cy + wy + oy - cd / 2);
 
     this.hintText.x = 18;
     this.hintText.y = sh - this.hintText.height - 14;
@@ -1245,6 +1247,41 @@ export class SugarWheelMinigameScene {
       });
     }
 
+    /** 势能 U(φ) 的周向等高线轮廓：谷底 U 更小，径向更靠内（与 −dU/dφ 偏置扭矩一致）。 */
+    {
+      const inst = this.instance;
+      const samples = Math.min(576, Math.max(96, Math.ceil(R * 0.95)));
+      const us: number[] = new Array(samples);
+      let uMin = Infinity;
+      let uMax = -Infinity;
+      for (let j = 0; j < samples; j++) {
+        const phij = (j / samples) * TAU;
+        const u = weightTerrainPotential(phij, inst);
+        us[j] = u;
+        if (u < uMin) uMin = u;
+        if (u > uMax) uMax = u;
+      }
+      const span = uMax - uMin;
+      const denom = span > 1e-14 ? span : 1;
+      const rPotBase = R * 1.1;
+      const valleyDepth = R * 0.11;
+      for (let j = 0; j < samples; j++) {
+        const phij = (j / samples) * TAU;
+        const u = us[j]!;
+        const rj = Math.max(R * 0.72, rPotBase - (valleyDepth * (uMax - u)) / denom);
+        const pj = this.geomPointOnWheel(rj, phij);
+        if (j === 0) g.moveTo(pj.x, pj.y);
+        else g.lineTo(pj.x, pj.y);
+      }
+      {
+        const u0 = us[0]!;
+        const rClose = Math.max(R * 0.72, rPotBase - (valleyDepth * (uMax - u0)) / denom);
+        const pClose = this.geomPointOnWheel(rClose, 0);
+        g.lineTo(pClose.x, pClose.y);
+      }
+      g.stroke({ color: 0x66ffdd, alpha: 0.88, width: 2.75 });
+    }
+
     const curIdx =
       this.pointerSprite != null ? this.sectorIndexFromWheelGeomAngle(this.wheelGeomAngleMod()) : -1;
 
@@ -1293,16 +1330,22 @@ export class SugarWheelMinigameScene {
         curIdx >= 0 && sec
           ? `#${curIdx} ${sec.id} · ${this.resolveText(sec.label)}`
           : `(无指针)`;
+      const uPhi = weightTerrainPotential(phi, this.instance);
+      const tauPhi = weightDerivedBiasAccel(phi, this.instance);
+      const dUdPhi = -tauPhi;
       this.geomDebugHud.text =
         `判格几何角 φ (mod 2π): ${phiDeg.toFixed(2)}°  ·  ${phi.toFixed(4)} rad\n` +
         `sprite.rotation: ${rotDeg.toFixed(2)}°  ·  ${rot.toFixed(4)} rad\n` +
         `贴图校准 art: ${artDeg.toFixed(2)}°  (φ = θ − art)\n` +
         `分格 left0: ${left0Deg.toFixed(2)}°  ·  step: ${stepDeg.toFixed(2)}°\n` +
+        `跑道势能 U(φ)=Σ(−ln w)·cos×scale · 青线向内=谷底 | U=${uPhi.toFixed(4)}  dU/dφ=${dUdPhi.toFixed(4)} ( −τ_bias )\n` +
         `扇区: ${secLine}`;
     } else {
+      const uPhi0 = weightTerrainPotential(0, this.instance);
       this.geomDebugHud.text =
         `分格 left0: ${left0Deg.toFixed(2)}°  ·  step: ${stepDeg.toFixed(2)}°\n` +
-        `(无指针)`;
+        `(无指针)；势能样例 φ=0° 处 U=${uPhi0.toFixed(4)}\n` +
+        `青线周线：向内=势能更低（易滑向谷底）`;
     }
     this.geomDebugHud.position.set(0, -R * 0.62);
   }

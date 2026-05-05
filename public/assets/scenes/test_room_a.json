@@ -3,7 +3,7 @@
   "name": "街巷",
   "worldWidth": 4000.0,
   "camera": {
-    "zoom": 0.54,
+    "zoom": 0.87,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
@@ -23,16 +23,16 @@
       "y": 4465.2
     },
     "from_teahouse": {
-      "x": 1740.1,
-      "y": 1914.1
+      "x": 1839.0,
+      "y": 1791.0
     },
     "from_temple": {
       "x": 16250,
       "y": 2232.6
     },
     "from_bridge": {
-      "x": 3901.4,
-      "y": 1838.9
+      "x": 3774.9,
+      "y": 2124.6
     },
     "from_mountain_pass": {
       "x": 3810,
@@ -74,8 +74,8 @@
       "id": "exit_to_teahouse",
       "type": "transition",
       "label": "去茶馆",
-      "x": 1738.0,
-      "y": 1912.0,
+      "x": 1835.9,
+      "y": 1789.9,
       "interactionRange": 75.0,
       "data": {
         "targetScene": "teahouse",
@@ -98,9 +98,9 @@
       "id": "exit_to_bridge",
       "type": "transition",
       "label": "去桥",
-      "x": 3849.2,
-      "y": 1794.6,
-      "interactionRange": 875.0,
+      "x": 3771.6,
+      "y": 2125.2,
+      "interactionRange": 60.0,
       "data": {
         "targetScene": "bridge_underpass",
         "targetSpawnPoint": "from_street"
@@ -181,21 +181,132 @@
         "targetScene": "码头白天",
         "targetSpawnPoint": "spawn_1"
       }
+    },
+    {
+      "id": "new_hotspot_9",
+      "type": "inspect",
+      "label": "",
+      "x": 935.0,
+      "y": 1354.9,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/assets/images/illustrations/糖画摊_45度_生肖转盘.png",
+        "worldWidth": 205.9,
+        "worldHeight": 205.9
+      },
+      "collisionPolygon": [
+        {
+          "x": -47.0,
+          "y": 6.6
+        },
+        {
+          "x": -74.5,
+          "y": -37.3
+        },
+        {
+          "x": -93.8,
+          "y": -109.1
+        },
+        {
+          "x": -88.4,
+          "y": -153.6
+        },
+        {
+          "x": 22.2,
+          "y": -158.7
+        },
+        {
+          "x": 72.3,
+          "y": -154.2
+        },
+        {
+          "x": 97.8,
+          "y": -128.7
+        },
+        {
+          "x": 99.1,
+          "y": -106.2
+        },
+        {
+          "x": 95.3,
+          "y": -62.4
+        },
+        {
+          "x": 72.3,
+          "y": -15.3
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "new_hotspot_10",
+      "type": "inspect",
+      "label": "",
+      "x": 925.8,
+      "y": 1465.4,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/assets/images/illustrations/糖画围观人群_45度_背向.png",
+        "worldWidth": 391.3,
+        "worldHeight": 220.0,
+        "spriteSort": "front"
+      },
+      "collisionPolygon": [
+        {
+          "x": -139.2,
+          "y": -106.5
+        },
+        {
+          "x": -83.7,
+          "y": -88.9
+        },
+        {
+          "x": 33.4,
+          "y": -71.3
+        },
+        {
+          "x": 141.1,
+          "y": -101.0
+        },
+        {
+          "x": 156.6,
+          "y": -59.7
+        },
+        {
+          "x": 92.1,
+          "y": -28.3
+        },
+        {
+          "x": -20.8,
+          "y": -26.2
+        },
+        {
+          "x": -148.4,
+          "y": -62.7
+        }
+      ],
+      "collisionPolygonLocal": true
     }
   ],
   "npcs": [
     {
       "id": "npc_ringboy",
       "name": "滚铁环的小孩儿",
-      "x": 3568.1,
-      "y": 2087.8,
+      "x": 3524.0,
+      "y": 1997.8,
       "interactionRange": 100.0,
       "dialogueGraphId": "滚铁环小孩",
       "patrol": {
         "route": [
           {
-            "x": 3568.5,
-            "y": 2085.1
+            "x": 3596.7,
+            "y": 1989.8
           },
           {
             "x": 3555.8,
@@ -239,6 +350,15 @@
       },
       "animFile": "/assets/animation/boy_ring_anim/anim.json",
       "initialAnimState": "boy_run_ring"
+    },
+    {
+      "id": "new_npc_1",
+      "name": "New NPC",
+      "x": 718.3,
+      "y": 1344.5,
+      "interactionRange": 50.0,
+      "animFile": "/assets/animation/官差枪_anim/anim.json",
+      "initialAnimState": "官兵枪_走路"
     }
   ],
   "zones": [
@@ -246,8 +366,8 @@
       "id": "new_zone_0",
       "polygon": [
         {
-          "x": 2160.6,
-          "y": 2064.4
+          "x": 2074.1,
+          "y": 1972.6
         },
         {
           "x": 3516.3,
@@ -292,28 +412,28 @@
       "id": "new_zone_2",
       "polygon": [
         {
-          "x": 3073.6,
-          "y": 1772.4
+          "x": 3066.5,
+          "y": 1784.8
         },
         {
-          "x": 3282.9,
-          "y": 1591.0
+          "x": 3275.8,
+          "y": 1603.4
         },
         {
-          "x": 4036.1,
-          "y": 2034.1
+          "x": 4029.0,
+          "y": 2046.5
         },
         {
-          "x": 3913.6,
-          "y": 2322.3
+          "x": 3906.5,
+          "y": 2334.7
         },
         {
-          "x": 3703.6,
-          "y": 2184.8
+          "x": 3696.5,
+          "y": 2197.2
         },
         {
-          "x": 3493.6,
-          "y": 2047.4
+          "x": 3486.5,
+          "y": 2059.8
         }
       ],
       "zoneKind": "depth_floor",
@@ -331,13 +451,13 @@
       "R": [
         [
           0.0,
-          -0.6427876096865394,
-          -0.766044443118978
+          -0.7193398003386512,
+          -0.6946583704589973
         ],
         [
           0.0,
-          0.7660444431189781,
-          -0.6427876096865393
+          0.6946583704589973,
+          -0.7193398003386512
         ],
         [
           -1.0,
@@ -345,9 +465,9 @@
           -0.0
         ]
       ],
-      "ppu": 229.0,
-      "cx": 688.0,
-      "cy": 384.0
+      "ppu": 252.0,
+      "cx": 836.0,
+      "cy": 470.5
     },
     "depth_mapping": {
       "invert": true,
@@ -355,19 +475,20 @@
       "offset": -2.94
     },
     "shader": {
-      "depth_per_sy": 0.0036641905291584283,
-      "floor_depth_A": -0.0052041641598000446,
-      "floor_depth_B": 1.9983990373632174
+      "depth_per_sy": 0.004109247276946705,
+      "floor_depth_A": -0.003832098312726484,
+      "floor_depth_B": 1.8030022561378105
     },
-    "floor_offset": -0.1,
     "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
     "collision": {
-      "x_min": -2.418212061104043,
-      "z_min": -2.986899563318777,
-      "cell_size": 0.02995633187772926,
-      "grid_width": 192,
+      "x_min": -2.5119627716117807,
+      "z_min": -3.3015873015873014,
+      "cell_size": 0.033095238095238094,
+      "grid_width": 180,
       "grid_height": 201,
       "height_offset": 0.1
     }
-  }
+  },
+  "worldHeight": 2251.2
 }

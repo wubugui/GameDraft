@@ -2179,9 +2179,11 @@ class CollapsibleSection(QWidget):
         super().__init__(parent)
         self._plain_title = title
         self._expanded = start_open
+        # Vertical Maximum 会在 QScrollArea+可伸缩子部件中被迫压缩高度，导致底部表单项被裁切；
+        # Preferred 保留「按内容高度」布局，仍可由外层 addStretch 吸收多余空白。
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
         )
         self._header = QPushButton()
         self._header.setFlat(True)
@@ -2201,7 +2203,7 @@ class CollapsibleSection(QWidget):
         self._content = QWidget()
         self._content.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
         )
         self._body_layout = QVBoxLayout(self._content)
         self._body_layout.setContentsMargins(8, 2, 0, 8)
@@ -2266,6 +2268,11 @@ class ScenePropertyPanel(QScrollArea):
         self.setWidgetResizable(True)
         self.setMinimumWidth(320)
         self._stack = QStackedWidget()
+        # 垂直 Minimum：高度至少为当前页 sizeHint，避免滚动区内与 stretch 争抢时将整页压扁。
+        self._stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
         self.setWidget(self._stack)
 
         self._empty = QLabel("Select an entity or click scene background")
@@ -3955,7 +3962,6 @@ class ScenePropertyPanel(QScrollArea):
         )
         _npc_scene_hint.setWordWrap(True)
         outer.addWidget(_npc_scene_hint)
-        outer.addStretch(1)
         self._append_entity_delete_footer(outer)
         return w
 

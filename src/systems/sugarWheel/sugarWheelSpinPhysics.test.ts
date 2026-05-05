@@ -67,6 +67,17 @@ describe('sugarWheelSpinPhysics（体感：weight 越大越易中该格，不测
     }
   });
 
+  it('跑道高度：高 weight 是低谷会拉回中心，低 weight 是高坡会推离中心', () => {
+    const targetCenter = (3 + 0.5) * (TAU / 12);
+    const justAfterCenter = normalizeAngle(targetCenter + 0.05);
+
+    const lowW = makeTwelveWheel({ dragonWeight: 0.25 });
+    const highW = makeTwelveWheel({ dragonWeight: 2.5 });
+
+    expect(weightDerivedBiasAccel(justAfterCenter, highW)).toBeLessThan(0);
+    expect(weightDerivedBiasAccel(justAfterCenter, lowW)).toBeGreaterThan(0);
+  });
+
   // 体感契约：不保「小数 = 所写概率」，只保「同款起点下写大比写小更容易停进该格」（相对难易序）。
   it(
     '配对蒙特卡洛：同款初相+蓄力，目标格低 weight 命中率明显低于高 weight',

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsScene,
+    QGraphicsSceneWheelEvent,
     QGraphicsSimpleTextItem,
     QGraphicsView,
     QHBoxLayout,
@@ -71,6 +72,15 @@ def _num(raw: Any, fallback: float) -> float:
     except (TypeError, ValueError):
         return fallback
     return n if n == n and n not in (float("inf"), float("-inf")) else fallback
+
+
+def _preview_wheel_radius_px(doc: dict, scene_w: float, scene_h: float) -> float:
+    """与画布 refresh 中盘面半径算法一致（半轴长 R），供表单默认蓄力偏移预览。"""
+    max_pct = max(0.2, min(1.0, _num(doc.get("wheelMaxSizePercent"), 0.72)))
+    max_px = max(64.0, _num(doc.get("wheelMaxSizePx"), 660))
+    size = max(160.0, min(scene_w * max_pct, scene_h * 0.72, max_px))
+    size *= max(0.1, min(3.0, _num(doc.get("wheelScale"), 1)))
+    return size / 2
 
 
 # 与运行时 SugarWheelMinigameScene 默认锚点一致；JSON 无 speechAnchors 时画布仍显示可拖圆点。
@@ -169,11 +179,72 @@ class _SugarWheelSpeechAnchorItem(QGraphicsEllipseItem):
         return res
 
 
+class _SugarWheelChargeButtonItem(QGraphicsEllipseItem):
+    """可拖动的蓄力圆；Ctrl+滚轮调直径。"""
+
+    def __init__(self, canvas: "SugarWheelCanvas") -> None:
+        super().__init__()
+        self._canvas = canvas
+        self._d = 52.0
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setBrush(QBrush(QColor(88, 120, 188, 210)))
+        self.setPen(QPen(QColor(190, 220, 255), 2))
+        self._label = QGraphicsSimpleTextItem("蓄", self)
+        self._label.setBrush(QBrush(QColor(250, 245, 230)))
+        br = self._label.boundingRect()
+        self._label.setPos(-br.width() / 2, -br.height() / 2)
+        self._apply_rect()
+        self.setToolTip(
+            "蓄力按钮：拖动 = 圆心相对盘心的像素偏移（chargeButtonWheelOffsetX/Y）\n"
+            "Ctrl + 滚轮 = 直径（chargeButtonDiameterPx）"
+        )
+        self.setAcceptHoverEvents(True)
+
+    def _apply_rect(self) -> None:
+        h = self._d / 2
+        self.setRect(-h, -h, self._d, self._d)
+        sc = max(0.45, min(1.5, self._d / 52.0))
+        self._label.setScale(sc)
+
+    def diameter(self) -> float:
+        return self._d
+
+    def set_diameter(self, d: float, *, silent: bool = False) -> None:
+        d = max(28.0, min(160.0, float(d)))
+        self._d = d
+        self._apply_rect()
+        if not silent:
+            self._canvas._after_charge_adjust()
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:  # noqa: ANN401
+        res = super().itemChange(change, value)
+        if (
+            change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
+            and not self._canvas._move_silent
+        ):
+            self._canvas._after_charge_adjust()
+        return res
+
+    def wheelEvent(self, event: QGraphicsSceneWheelEvent) -> None:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            ad = event.angleDelta().y()
+            delta = 4.0 if ad > 0 else -4.0 if ad < 0 else 0.0
+            if delta != 0:
+                self.set_diameter(self._d + delta)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+
 class SugarWheelCanvas(QWidget):
     """QGraphicsView 预览：背景先画，转盘居中，指针按 anchorY 旋转锚点对齐中心。"""
 
     layout_offsets_changed = Signal(float, float, float, float)
     speech_anchor_changed = Signal(str, float, float)
+    charge_button_changed = Signal(float, float, float)
 
     def __init__(self, model: ProjectModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -193,13 +264,16 @@ class SugarWheelCanvas(QWidget):
         self._py = 0.0
         self._move_silent = False
         self._speech_anchor_items: dict[str, _SugarWheelSpeechAnchorItem] = {}
+        self._charge_item: _SugarWheelChargeButtonItem | None = None
+        self._charge_ox = 0.0
+        self._charge_oy = 0.0
 
         bar = QHBoxLayout()
         bar.addWidget(self._btn_fit)
         bar.addWidget(
             QLabel(
-                "预览：背景→转盘→指针→前景→气泡锚点(最上层)；"
-                "可拖动盘面/指针/彩色圆点；圆点对应 showSpeech(role)，与右侧 speechAnchors 表同步"
+                "预览：背景→转盘→指针→前景→蓄力圆(蓝)→气泡锚点；"
+                "可拖盘面/指针/蓄力圆/彩色圆点；蓄力圆 Ctrl+滚轮调直径"
             )
         )
         bar.addStretch()
@@ -328,30 +402,69 @@ class SugarWheelCanvas(QWidget):
             self._scene.addItem(ax)
             self._speech_anchor_items[rid] = ax
 
+        R = size / 2
+        self._charge_item = None
+        if self._wheel_item is not None:
+            if "chargeButtonWheelOffsetXPx" in doc:
+                ox = float(_num(doc.get("chargeButtonWheelOffsetXPx"), R * 0.72))
+            else:
+                ox = R * 0.72
+            if "chargeButtonWheelOffsetYPx" in doc:
+                oy = float(_num(doc.get("chargeButtonWheelOffsetYPx"), R * 0.72))
+            else:
+                oy = R * 0.72
+            if "chargeButtonDiameterPx" in doc:
+                cd = float(_num(doc.get("chargeButtonDiameterPx"), 52))
+            else:
+                cd = 52.0
+            cd = max(28.0, min(160.0, cd))
+            self._charge_ox = ox
+            self._charge_oy = oy
+            ch = _SugarWheelChargeButtonItem(self)
+            self._move_silent = True
+            try:
+                ch.set_diameter(cd, silent=True)
+                wpos = self._wheel_item.pos()
+                ch.setPos(wpos.x() + ox, wpos.y() + oy)
+            finally:
+                self._move_silent = False
+            ch.setZValue(95)
+            self._scene.addItem(ch)
+            self._charge_item = ch
+
         self._fit()
 
     def _after_move(self, role: str) -> None:
-        if (
-            self._move_silent
-            or self._layout_cx_cy is None
-            or self._wheel_item is None
-            or self._pointer_item is None
-        ):
+        if self._move_silent or self._layout_cx_cy is None or self._wheel_item is None:
             return
         cx, cy = self._layout_cx_cy
         wpos = self._wheel_item.pos()
         if role == "wheel":
             self._move_silent = True
             try:
-                self._pointer_item.setPos(wpos.x() + self._px, wpos.y() + self._py)
+                if self._pointer_item is not None:
+                    self._pointer_item.setPos(wpos.x() + self._px, wpos.y() + self._py)
+                if self._charge_item is not None:
+                    self._charge_item.setPos(wpos.x() + self._charge_ox, wpos.y() + self._charge_oy)
             finally:
                 self._move_silent = False
+        if self._pointer_item is None:
+            return
         ppos = self._pointer_item.pos()
         wx = wpos.x() - cx
         wy = wpos.y() - cy
         self._px = ppos.x() - wpos.x()
         self._py = ppos.y() - wpos.y()
         self.layout_offsets_changed.emit(wx, wy, self._px, self._py)
+
+    def _after_charge_adjust(self) -> None:
+        if self._move_silent or self._wheel_item is None or self._charge_item is None:
+            return
+        wpos = self._wheel_item.pos()
+        cpos = self._charge_item.pos()
+        self._charge_ox = float(cpos.x() - wpos.x())
+        self._charge_oy = float(cpos.y() - wpos.y())
+        self.charge_button_changed.emit(self._charge_ox, self._charge_oy, float(self._charge_item.diameter()))
 
     def _after_speech_anchor_move(self, role: str) -> None:
         item = self._speech_anchor_items.get(role)
@@ -399,6 +512,7 @@ class SugarWheelEditor(QWidget):
         super().__init__(parent)
         self._model = model
         self._loading = False
+        self._charge_json_explicit = False
         self._current_id: str | None = None
         self._doc: dict | None = None
 
@@ -426,6 +540,7 @@ class SugarWheelEditor(QWidget):
         self._canvas = SugarWheelCanvas(model)
         self._canvas.layout_offsets_changed.connect(self._on_canvas_layout_offsets)
         self._canvas.speech_anchor_changed.connect(self._on_canvas_speech_anchor)
+        self._canvas.charge_button_changed.connect(self._on_canvas_charge_button)
 
         right = QScrollArea()
         right.setWidgetResizable(True)
@@ -457,10 +572,18 @@ class SugarWheelEditor(QWidget):
         self._wheel_cy_off = self._double(-800, 800, 0, 1)
         self._ptr_ox = self._double(-800, 800, 0, 1)
         self._ptr_oy = self._double(-800, 800, 0, 1)
+        self._charge_btn_ox = self._double(-1200, 1200, 0, 1)
+        self._charge_btn_oy = self._double(-1200, 1200, 0, 1)
+        self._charge_btn_d = self._double(28, 160, 52, 0)
         self._wheel_cx_off.setToolTip("转盘层相对布局中心的水平偏移（px），可在画布拖动盘面。")
         self._wheel_cy_off.setToolTip("转盘层相对布局中心的竖直偏移（px），可在画布拖动盘面。")
         self._ptr_ox.setToolTip("指针在转盘局部坐标内相对盘心的水平偏移（px），可在画布拖动指针。")
         self._ptr_oy.setToolTip("指针在转盘局部坐标内相对盘心的竖直偏移（px），可在画布拖动指针。")
+        self._charge_btn_ox.setToolTip(
+            "蓄力圆中心相对盘心的水平偏移（px）。画布拖蓝色圆；JSON 未写时运行时用 0.72×半径。"
+        )
+        self._charge_btn_oy.setToolTip("蓄力圆中心相对盘心的竖直偏移（px）。")
+        self._charge_btn_d.setToolTip("蓄力圆直径（px）。预览画布上按住 Ctrl 再滚轮缩放。")
         ff_r.addRow("标题 label", self._label)
         ff_r.addRow("backgroundImage", self._bg)
         ff_r.addRow("backgroundFit", self._bg_fit)
@@ -478,6 +601,9 @@ class SugarWheelEditor(QWidget):
         ff_r.addRow("wheelCenterOffsetYPx", self._wheel_cy_off)
         ff_r.addRow("pointerOffsetXPx", self._ptr_ox)
         ff_r.addRow("pointerOffsetYPx", self._ptr_oy)
+        ff_r.addRow("chargeButtonWheelOffsetXPx", self._charge_btn_ox)
+        ff_r.addRow("chargeButtonWheelOffsetYPx", self._charge_btn_oy)
+        ff_r.addRow("chargeButtonDiameterPx", self._charge_btn_d)
         rv.addWidget(g_res)
 
         g_sec = QGroupBox("分格与指针校准")
@@ -594,9 +720,9 @@ class SugarWheelEditor(QWidget):
         _hdr = self._sector_table.horizontalHeaderItem(2)
         if _hdr is not None:
             _hdr.setToolTip(
-                "相对倾向（体感）：空=1；越大相对越容易停到这格，越小相对越难中。\n"
-                "不写满盘相同时不偏置。\n"
-                "不表示精确中奖百分比，只和同盘其它格的数值比大小即可。"
+                "跑道高度倾向：空=1，表示基准平地。\n"
+                "越大表示该格越低、更容易停留；越小表示该格越高、更难停留。\n"
+                "不是精确中奖百分比；0 只是很高的坡，不保证绝对不命中。"
             )
         _hdr0 = self._sector_table.horizontalHeaderItem(0)
         if _hdr0 is not None:
@@ -617,8 +743,8 @@ class SugarWheelEditor(QWidget):
         self._btn_del_sector = QPushButton("−格子")
         _sec_lbl = QLabel("格子 sectors（顺时针须与贴图一致；weight 悬停列表头可看说明）")
         _sec_lbl.setToolTip(
-            "每行对应盘面上一格。\n「weight」不设=1。\n"
-            "想体感上少中就写小一点，容易中就写大一点；不是要填「概率％」。"
+            "每行对应盘面上一格。\n「weight」不设=1，视为平地。\n"
+            "想体感上少中就写小一点（高坡），容易中就写大一点（低谷）；不是要填「概率％」。"
         )
         sb.addWidget(_sec_lbl)
         sb.addStretch()
@@ -701,6 +827,8 @@ class SugarWheelEditor(QWidget):
             self._speech_max,
         ):
             w.valueChanged.connect(self._on_config_changed)
+        for w in (self._charge_btn_ox, self._charge_btn_oy, self._charge_btn_d):
+            w.valueChanged.connect(self._on_charge_geometry_spin_changed)
         self._sector_table.itemChanged.connect(self._on_sector_item_changed)
         self._speech_table.itemChanged.connect(self._on_speech_item_changed)
         self._btn_add_sector.clicked.connect(self._add_sector)
@@ -766,6 +894,31 @@ class SugarWheelEditor(QWidget):
             self._loading = False
         self._mark_dirty(refresh_canvas=False)
 
+    def _on_canvas_charge_button(self, ox: float, oy: float, diam: float) -> None:
+        if not self._doc or self._loading:
+            return
+        self._charge_json_explicit = True
+        self._loading = True
+        try:
+            self._charge_btn_ox.setValue(float(ox))
+            self._charge_btn_oy.setValue(float(oy))
+            self._charge_btn_d.setValue(float(diam))
+            self._doc["chargeButtonWheelOffsetXPx"] = float(ox)
+            self._doc["chargeButtonWheelOffsetYPx"] = float(oy)
+            self._doc["chargeButtonDiameterPx"] = float(diam)
+        finally:
+            self._loading = False
+        self._mark_dirty(refresh_canvas=False)
+
+    def _on_charge_geometry_spin_changed(self, *_args: Any) -> None:
+        if self._loading or not self._doc:
+            return
+        self._charge_json_explicit = True
+        self._doc["chargeButtonWheelOffsetXPx"] = float(self._charge_btn_ox.value())
+        self._doc["chargeButtonWheelOffsetYPx"] = float(self._charge_btn_oy.value())
+        self._doc["chargeButtonDiameterPx"] = float(self._charge_btn_d.value())
+        self._mark_dirty()
+
     def _reload_list(self, select_id: str | None) -> None:
         self._list.blockSignals(True)
         self._list.clear()
@@ -795,6 +948,7 @@ class SugarWheelEditor(QWidget):
             self._label, self._bg, self._bg_fit, self._foreground, self._foreground_fit, self._wheel, self._pointer,
             self._pointer_anchor_x, self._pointer_anchor, self._pointer_scale, self._wheel_scale,
             self._wheel_pct, self._wheel_px, self._wheel_cx_off, self._wheel_cy_off, self._ptr_ox, self._ptr_oy,
+            self._charge_btn_ox, self._charge_btn_oy, self._charge_btn_d,
             self._angle, self._sector_phase,
             self._pointer_art_deg, self._direction,
             self._charge_ms, self._min_power, self._charge_curve,
@@ -846,6 +1000,22 @@ class SugarWheelEditor(QWidget):
             self._wheel_cy_off.setValue(_num(d.get("wheelCenterOffsetYPx"), 0))
             self._ptr_ox.setValue(_num(d.get("pointerOffsetXPx"), 0))
             self._ptr_oy.setValue(_num(d.get("pointerOffsetYPx"), 0))
+            rr = self._canvas._scene.sceneRect()
+            R = _preview_wheel_radius_px(d, float(rr.width()), float(rr.height()))
+            def_ox = R * 0.72
+            def_oy = R * 0.72
+            self._charge_json_explicit = any(
+                k in d
+                for k in ("chargeButtonWheelOffsetXPx", "chargeButtonWheelOffsetYPx", "chargeButtonDiameterPx")
+            )
+            if self._charge_json_explicit:
+                self._charge_btn_ox.setValue(_num(d.get("chargeButtonWheelOffsetXPx"), def_ox))
+                self._charge_btn_oy.setValue(_num(d.get("chargeButtonWheelOffsetYPx"), def_oy))
+                self._charge_btn_d.setValue(_num(d.get("chargeButtonDiameterPx"), 52))
+            else:
+                self._charge_btn_ox.setValue(def_ox)
+                self._charge_btn_oy.setValue(def_oy)
+                self._charge_btn_d.setValue(52)
             self._angle.setValue(_num(d.get("sectorAngleOffsetDeg"), 0))
             self._sector_phase.setValue(_num(d.get("sectorCenterPhase"), 0))
             self._pointer_art_deg.setValue(_num(d.get("pointerArtOffsetDeg"), 0))
@@ -1041,6 +1211,13 @@ class SugarWheelEditor(QWidget):
         self._doc["spinWeightBiasCreepRefRadPerSec"] = float(self._bias_creep.value())
         self._doc["speechDurationMs"] = int(round(self._speech_dur.value()))
         self._doc["speechMaxVisible"] = int(round(self._speech_max.value()))
+        if self._charge_json_explicit:
+            self._doc["chargeButtonWheelOffsetXPx"] = float(self._charge_btn_ox.value())
+            self._doc["chargeButtonWheelOffsetYPx"] = float(self._charge_btn_oy.value())
+            self._doc["chargeButtonDiameterPx"] = float(self._charge_btn_d.value())
+        else:
+            for k in ("chargeButtonWheelOffsetXPx", "chargeButtonWheelOffsetYPx", "chargeButtonDiameterPx"):
+                self._doc.pop(k, None)
         self._mark_dirty()
 
     def _on_sector_item_changed(self, item: QTableWidgetItem) -> None:
