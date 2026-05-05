@@ -2317,7 +2317,7 @@ export class Game {
       }
     }
 
-    this.renderer.sortEntityLayer();
+    this.renderer.sortEntityLayer(this.player.x, this.player.y);
     this.touchMobileControls?.update();
     this.inputManager.endFrame();
   }

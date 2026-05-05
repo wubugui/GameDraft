@@ -7,6 +7,8 @@ import {
   createPixelDensityBlurFilter,
   type TexelsPerWorld,
 } from '../rendering/EntityPixelDensityMatch';
+import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
+import { isValidZonePolygon } from '../utils/zoneGeometry';
 
 const TYPE_COLORS: Record<string, number> = {
   inspect: 0x44aaff,
@@ -47,7 +49,10 @@ export class Hotspot {
 
   /** 与 Renderer.sortEntityLayer 配合：仅在有展示图且配置了 spriteSort 时标记容器 */
   private _syncEntitySortBand(): void {
-    const c = this.container as Container & { entitySortBand?: 'back' | 'front' };
+    const c = this.container as Container & {
+      entitySortBand?: 'back' | 'front';
+      entityOcclusionPolygon?: ReadonlyArray<{ x: number; y: number }>;
+    };
     const di = this.def.displayImage;
     if (
       this.displaySprite &&
@@ -69,6 +74,13 @@ export class Hotspot {
       c.entitySortBand = 'front';
     } else {
       delete c.entitySortBand;
+    }
+
+    const worldPoly = hotspotCollisionPolygonToWorld(this.def);
+    if (worldPoly && isValidZonePolygon(worldPoly)) {
+      c.entityOcclusionPolygon = worldPoly;
+    } else {
+      delete c.entityOcclusionPolygon;
     }
   }
 

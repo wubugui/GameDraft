@@ -6,6 +6,7 @@ import type { InputManager } from '../core/InputManager';
 import type { Condition, ConditionExpr, IGameSystem, GameContext } from '../data/types';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
+import { hotspotOffersPlayerInteraction } from '../utils/hotspotInteraction';
 
 interface InteractableTarget {
   kind: 'hotspot' | 'npc';
@@ -89,6 +90,7 @@ export class InteractionSystem implements IGameSystem {
 
     for (const hotspot of this.hotspots) {
       if (!hotspot.active) continue;
+      if (!hotspotOffersPlayerInteraction(hotspot.def)) continue;
       if (hotspot.def.conditions && hotspot.def.conditions.length > 0) {
         if (!this.evalHotspotConditions(hotspot.def.conditions)) continue;
       }

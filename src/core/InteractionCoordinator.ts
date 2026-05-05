@@ -15,6 +15,7 @@ import type {
   EncounterTriggerData,
 } from '../data/types';
 import { GameState } from '../data/types';
+import { inspectDataHasInteractablePayload } from '../utils/hotspotInteraction';
 
 export interface InteractionDeps {
   stateController: GameStateController;
@@ -139,6 +140,10 @@ export class InteractionCoordinator {
   }
 
   private async handleInspect(hotspot: Hotspot, data: InspectData): Promise<void> {
+    if (!inspectDataHasInteractablePayload(data)) {
+      return;
+    }
+
     const graphId = 'graphId' in data && typeof data.graphId === 'string' ? data.graphId.trim() : '';
     if (graphId) {
       await this.handleInspectGraph(hotspot, data as InspectDataGraphMode, graphId);

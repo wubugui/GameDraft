@@ -1,5 +1,6 @@
 import { Application, Container, type Filter } from 'pixi.js';
 import { WorldFilterPipeline, loadFilter } from './filter';
+import { pointPolygonVerticalSide } from '../utils/zoneGeometry';
 
 /** Pixi 类型未包含 null，运行时必须赋 null 以断开 auto-resize */
 function setAppResizeTo(app: Application, target: Window | HTMLElement | null): void {
@@ -163,11 +164,29 @@ export class Renderer {
   /**
    * 实体前后次序：按子树根节点世界脚底 y（与 SpriteEntity anchor 底中、碰撞/深度脚点一致）。
    * 带展示图且 `spriteSort` 为 back/front 的热点容器会标 `entitySortBand`，此处写入 zIndex 后 sortChildren。
+   *
+   * 碰撞多边形遮挡：热点若携带 `entityOcclusionPolygon`（世界坐标），则用玩家脚点做竖直扫描线判定：
+   * - 玩家在多边形下方（near side）→ 热点排在玩家后面（back band）
+   * - 玩家在多边形上方（far side）或内部 → 热点排在玩家前面（front band）
+   * 该逻辑优先级高于静态 `entitySortBand`。
    */
-  sortEntityLayer(): void {
+  sortEntityLayer(playerFootX?: number, playerFootY?: number): void {
     const bandSize = 10_000_000;
+    const hasPlayer = playerFootX !== undefined && playerFootY !== undefined;
     for (const child of this.entityLayer.children) {
-      const band = (child as { entitySortBand?: 'back' | 'front' }).entitySortBand;
+      const ext = child as {
+        entitySortBand?: 'back' | 'front';
+        entityOcclusionPolygon?: ReadonlyArray<{ x: number; y: number }>;
+      };
+      let band = ext.entitySortBand;
+      if (hasPlayer && ext.entityOcclusionPolygon && ext.entityOcclusionPolygon.length >= 3) {
+        const side = pointPolygonVerticalSide(ext.entityOcclusionPolygon, playerFootX, playerFootY);
+        if (side === 'below') {
+          band = 'back';
+        } else if (side === 'above' || side === 'inside') {
+          band = 'front';
+        }
+      }
       let z = child.y;
       if (band === 'back') z = -bandSize + child.y;
       else if (band === 'front') z = bandSize + child.y;
