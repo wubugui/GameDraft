@@ -72,6 +72,8 @@ class ProjectModel(QObject):
 
         self.water_minigames_index: list[dict] = []
         self.water_minigames_instances: dict[str, dict] = {}
+        self.sugar_wheel_index: list[dict] = []
+        self.sugar_wheel_instances: dict[str, dict] = {}
 
         self._dirty: set[str] = set()
         self._dirty_scene_ids: set[str] = set()
@@ -180,6 +182,27 @@ class ProjectModel(QObject):
                     data["id"] = iid
                 self.water_minigames_instances[iid] = data
 
+        self.sugar_wheel_index = []
+        self.sugar_wheel_instances = {}
+        sw_dir = dp / "sugar_wheel"
+        sw_idx = sw_dir / "index.json"
+        if sw_idx.is_file():
+            raw_sw = self._load(sw_idx, [])
+            if isinstance(raw_sw, list):
+                self.sugar_wheel_index = [x for x in raw_sw if isinstance(x, dict)]
+            for row in self.sugar_wheel_index:
+                fid = row.get("file")
+                iid = str(row.get("id") or "").strip()
+                if not iid or not isinstance(fid, str) or not fid.endswith(".json"):
+                    continue
+                inst_path = sw_dir / fid
+                data = self._load(inst_path, {})
+                if not isinstance(data, dict):
+                    continue
+                if str(data.get("id") or "").strip() != iid:
+                    data["id"] = iid
+                self.sugar_wheel_instances[iid] = data
+
         self._dirty.clear()
         self._dirty_scene_ids.clear()
         self._dirty_scenes_all = False
@@ -216,10 +239,7 @@ class ProjectModel(QObject):
     @staticmethod
     def _load(path: Path, default: Any) -> Any:
         if path.exists():
-            try:
-                return read_json(path)
-            except Exception:
-                return default
+            return read_json(path)
         return default
 
     # ---- saving -----------------------------------------------------------
@@ -320,6 +340,20 @@ class ProjectModel(QObject):
                         continue
                     write_json(wm_dir / fid, inst)
                 maybe_stamp(clk, "water_minigames 已写入")
+            if "sugar_wheel" in dty:
+                sw_dir = dp / "sugar_wheel"
+                sw_dir.mkdir(parents=True, exist_ok=True)
+                write_json(sw_dir / "index.json", self.sugar_wheel_index)
+                for row in self.sugar_wheel_index:
+                    if not isinstance(row, dict):
+                        continue
+                    iid = str(row.get("id") or "").strip()
+                    fid = row.get("file")
+                    inst = self.sugar_wheel_instances.get(iid)
+                    if not inst or not isinstance(fid, str):
+                        continue
+                    write_json(sw_dir / fid, inst)
+                maybe_stamp(clk, "sugar_wheel 已写入")
             if "filter" in dty:
                 filters_dir = dp / "filters"
                 filters_dir.mkdir(parents=True, exist_ok=True)

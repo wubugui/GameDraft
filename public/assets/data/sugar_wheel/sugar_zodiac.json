@@ -1,0 +1,138 @@
+{
+  "id": "sugar_zodiac",
+  "label": "十二生肖转盘",
+  "backgroundImage": "/assets/images/minigames/sugar_wheel/sugar_stall_table_bg.png",
+  "backgroundFit": "cover",
+  "wheelImage": "/assets/images/minigames/sugar_wheel/sugar_zodiac_wheel_carved_dragon_monkey_fixed.png",
+  "pointerImage": "/assets/images/minigames/sugar_wheel/sugar_zodiac_pointer.png",
+  "pointerAnchorY": 0.9,
+  "pointerScale": 1.0,
+  "wheelScale": 1.0,
+  "wheelMaxSizePercent": 0.72,
+  "wheelMaxSizePx": 660,
+  "sectorAngleOffsetDeg": 0.0,
+  "sectorCenterPhase": 0.0,
+  "pointerArtOffsetDeg": 0.0,
+  "powerChargeCurve": 1.4,
+  "sectorDirection": "clockwise",
+  "powerChargeMs": 2600,
+  "minLaunchPower": 0.0,
+  "spinLinearDragPerSec": 0.12,
+  "spinDragLowSpeedThresholdRadPerSec": 2.2,
+  "spinDragLowSpeedBoostPerSec": 2.0,
+  "spinChargeMinVelocityRadPerSec": 0.0,
+  "spinChargeMaxVelocityRadPerSec": 10.5,
+  "spinChargeMinAccelRadPerSec2": 0.0,
+  "spinChargeMaxAccelRadPerSec2": 8.5,
+  "spinAccelHalfLifeSec": 0.42,
+  "spinStopSpeedRadPerSec": 0.06,
+  "spinStopSettleSec": 0.12,
+  "spinDryFrictionAccelRadPerSec2": 0.36,
+  "spinWeightBiasCreepRefRadPerSec": 1.15,
+  "sectors": [
+    {
+      "id": "ox",
+      "label": "牛"
+    },
+    {
+      "id": "tiger",
+      "label": "虎"
+    },
+    {
+      "id": "rabbit",
+      "label": "兔"
+    },
+    {
+      "id": "dragon",
+      "label": "龙",
+      "weight": 0.35,
+      "payload": {
+        "tier": "jackpot"
+      }
+    },
+    {
+      "id": "snake",
+      "label": "蛇"
+    },
+    {
+      "id": "horse",
+      "label": "马"
+    },
+    {
+      "id": "goat",
+      "label": "羊"
+    },
+    {
+      "id": "monkey",
+      "label": "猴"
+    },
+    {
+      "id": "dog",
+      "label": "犬"
+    },
+    {
+      "id": "rooster",
+      "label": "鸡"
+    },
+    {
+      "id": "pig",
+      "label": "猪"
+    },
+    {
+      "id": "rat",
+      "label": "鼠"
+    }
+  ],
+  "wheelCenterOffsetXPx": 12.470935960591191,
+  "wheelCenterOffsetYPx": 26.80000000000001,
+  "pointerOffsetXPx": -3.1999999999999886,
+  "pointerOffsetYPx": -10.199999999999989,
+  "foregroundImage": "/assets/images/minigames/sugar_wheel/sugar_crowd_overlay.png",
+  "foregroundFit": "cover",
+  "pointerAnchorX": 0.5,
+  "speechDurationMs": 3000,
+  "speechMaxVisible": 2,
+  "speechAnchors": [
+    {
+      "role": "child_a",
+      "label": "小孩",
+      "xRatio": 0.13252918287937743,
+      "yRatio": 0.6966536964980545,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_b",
+      "label": "小孩",
+      "xRatio": 0.34338521400778216,
+      "yRatio": 0.8452658884565497,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_c",
+      "label": "小孩",
+      "xRatio": 0.5908171206225681,
+      "yRatio": 0.7874448767833983,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_d",
+      "label": "小孩",
+      "xRatio": 0.8044357976653697,
+      "yRatio": 0.7051880674448767,
+      "tailDirection": "down"
+    },
+    {
+      "role": "protagonist",
+      "xRatio": 0.5,
+      "yRatio": 0.92,
+      "tailDirection": "none"
+    },
+    {
+      "role": "stall_owner",
+      "label": "摊主",
+      "xRatio": 0.2336186770428015,
+      "yRatio": 0.0,
+      "tailDirection": "up"
+    }
+  ]
+}

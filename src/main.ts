@@ -5,9 +5,10 @@ const urlParams = new URLSearchParams(window.location.search);
 const devMode = urlParams.get('mode') === 'dev';
 const playCutscene = urlParams.get('play_cutscene') ?? undefined;
 const waterPreview = urlParams.get('waterPreview') ?? undefined;
+const sugarWheelPreview = urlParams.get('sugarWheelPreview') ?? undefined;
 
 let game: Game | null = new Game();
-game.start({ devMode, playCutscene, waterPreview }).catch(console.error);
+game.start({ devMode, playCutscene, waterPreview, sugarWheelPreview }).catch(console.error);
 
 function destroyGame(): void {
   window.removeEventListener('beforeunload', onBeforeUnload);

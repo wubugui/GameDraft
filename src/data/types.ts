@@ -851,6 +851,10 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'playBgm',
   'stopBgm',
   'startWaterMinigame',
+  'startSugarWheelMinigame',
+  'sugarWheelShowSpeech',
+  'sugarWheelDismissSpeech',
+  'sugarWheelDismissAllSpeech',
 ]);
 
 // ============================================================

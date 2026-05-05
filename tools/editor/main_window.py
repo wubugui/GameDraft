@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import shutil
 import subprocess
 import sys
@@ -298,15 +299,55 @@ class MainWindow(QMainWindow):
         self.load_project(Path(path))
 
     def load_project(self, path: Path) -> None:
+        if not self._confirm_can_replace_project():
+            return
         assets = path / "public" / "assets"
         if not assets.is_dir():
             QMessageBox.critical(self, "Error",
                                  f"Invalid project: {assets} not found")
             return
-        self._model.load_project(path)
+        try:
+            self._model.load_project(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Open Project Error", str(e))
+            return
         self.setWindowTitle(f"GameDraft Editor - {path.name}")
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
+
+    def _confirm_pending_editor_changes(self) -> bool:
+        from .editors.timeline_editor import TimelineEditor
+        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+
+        for ed in self._editor_instances:
+            if isinstance(ed, TimelineEditor) and ed.has_pending_changes():
+                if ed.confirm_apply_or_discard(self) == "cancel":
+                    return False
+        for ed in self._editor_instances:
+            if isinstance(ed, DialogueGraphEditorTab) and not ed.confirm_close(self):
+                return False
+        return True
+
+    def _confirm_can_replace_project(self) -> bool:
+        if self._model.project_path is None:
+            return True
+        if not self._confirm_pending_editor_changes():
+            return False
+        if not self._model.is_dirty:
+            return True
+        r = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "You have unsaved changes. Save before opening another project?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            return self._save_all()
+        return True
 
     @staticmethod
     def _editor_package_parents() -> Path:
@@ -482,6 +523,7 @@ class MainWindow(QMainWindow):
         )
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         from .editors.water_minigame_editor import WaterMinigameEditor
+        from .editors.sugar_wheel_editor import SugarWheelEditor
 
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
@@ -490,6 +532,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
             (["数据编辑", "叙事编排"], "水域小游戏", WaterMinigameEditor),
+            (["数据编辑", "叙事编排"], "转盘小游戏", SugarWheelEditor),
             (["数据编辑", "叙事编排"], "Scenarios", ScenariosCatalogEditor),
             (["数据编辑", "叙事编排"], "Quest", QuestEditor),
             (["数据编辑", "规则与经济"], "Rule", RuleEditor),
@@ -526,7 +569,10 @@ class MainWindow(QMainWindow):
                     ed.play_requested.connect(self._on_cutscene_play_requested)
                 preview_sig = getattr(ed, "preview_requested", None)
                 if preview_sig is not None:
-                    preview_sig.connect(self._on_water_minigame_preview_requested)
+                    if isinstance(ed, SugarWheelEditor):
+                        preview_sig.connect(self._on_sugar_wheel_preview_requested)
+                    else:
+                        preview_sig.connect(self._on_water_minigame_preview_requested)
 
             self._stack.addWidget(widget)
             parent_item = self._ensure_nav_path(self._nav_tree, path)
@@ -565,31 +611,49 @@ class MainWindow(QMainWindow):
 
     # ---- save / dirty -----------------------------------------------------
 
-    def _save_all(self) -> None:
-        if self._model.project_path is None:
-            return
+    def _flush_editors_to_model(self) -> bool:
+        from .editors.timeline_editor import TimelineEditor
+
+        for inst in self._editor_instances:
+            if isinstance(inst, TimelineEditor) and inst.has_pending_changes():
+                if inst.confirm_apply_or_discard(self) == "cancel":
+                    return False
         from .editor_perf import PerfClock, maybe_stamp, perf_log_enabled
+
+        flush_clk = PerfClock(label="SaveAll.flush") if perf_log_enabled() else None
+        maybe_stamp(PerfClock(label="SaveAll.flush.begin"), "开始 flush 编辑器")
+        for inst in self._editor_instances:
+            flush = getattr(inst, "flush_to_model", None)
+            if callable(flush):
+                name = type(inst).__name__
+                t0 = time.perf_counter()
+                result = flush()
+                dt = time.perf_counter() - t0
+                maybe_stamp(flush_clk, f"{name} ok {dt*1000:.1f}ms")
+                if result is False:
+                    raise RuntimeError(f"{name} failed to flush pending edits")
+        return True
+
+    def _save_all(self) -> bool:
+        if self._model.project_path is None:
+            return True
+        from .editor_perf import PerfClock, maybe_stamp
 
         clk = PerfClock(label="MainWindow.SaveAll")
 
         try:
-            flush_clk = PerfClock(label="SaveAll.flush") if perf_log_enabled() else None
             maybe_stamp(clk, "开始 flush 编辑器")
-            for inst in self._editor_instances:
-                flush = getattr(inst, "flush_to_model", None)
-                if callable(flush):
-                    name = type(inst).__name__
-                    t0 = time.perf_counter()
-                    flush()
-                    dt = time.perf_counter() - t0
-                    maybe_stamp(flush_clk, f"{name} ok {dt*1000:.1f}ms")
+            if not self._flush_editors_to_model():
+                return False
             maybe_stamp(clk, "全部 flush 完成，调用 model.save_all")
             self._model.save_all()
             maybe_stamp(clk, "model.save_all 完成")
             self._status.showMessage("Saved.", 3000)
+            return True
         except Exception as e:
             print(f"[SaveAll] 失败: {e!r}", flush=True)
             QMessageBox.critical(self, "Save Error", str(e))
+            return False
 
     def _on_dirty(self, dirty: bool) -> None:
         title = self.windowTitle().rstrip(" *")
@@ -600,7 +664,8 @@ class MainWindow(QMainWindow):
     def _run_game(self, *, launch_params: str | None = None) -> None:
         if self._model.project_path is None:
             return
-        self._save_all()
+        if not self._save_all():
+            return
 
         proj = self._model.project_path
         pkg_json = proj / "package.json"
@@ -656,6 +721,15 @@ class MainWindow(QMainWindow):
         if not iid:
             return
         self._run_game(launch_params=f"mode=dev&waterPreview={quote(iid)}")
+
+    def _on_sugar_wheel_preview_requested(self, instance_id: str) -> None:
+        """编辑器「转盘小游戏」页一键预览：保存后以开发模式启动并直达指定实例。"""
+        from urllib.parse import quote
+
+        iid = (instance_id or "").strip()
+        if not iid:
+            return
+        self._run_game(launch_params=f"mode=dev&sugarWheelPreview={quote(iid)}")
 
     def _get_game_window_size(self) -> tuple[int, int]:
         cfg = self._model.game_config
@@ -804,12 +878,14 @@ class MainWindow(QMainWindow):
     def _on_cutscene_play_requested(self, cutscene_id: str) -> None:
         if not cutscene_id:
             return
-        self._save_all()
+        if not self._save_all():
+            return
         is_running = (self._game_proc is not None
                       and self._game_proc.state() != QProcess.ProcessState.NotRunning)
 
         if is_running and self._game_play_window is not None:
-            js = f'window.__gameDevAPI && window.__gameDevAPI.playCutscene("{cutscene_id}")'
+            cid_js = json.dumps(cutscene_id)
+            js = f'window.__gameDevAPI && window.__gameDevAPI.playCutscene({cid_js})'
             self._game_play_window.run_js(js)
             self._game_play_window.raise_()
             self._game_play_window.activateWindow()
@@ -868,7 +944,8 @@ class MainWindow(QMainWindow):
     def _build_game(self) -> None:
         if self._model.project_path is None:
             return
-        self._save_all()
+        if not self._save_all():
+            return
         result = subprocess.run(
             ["cmd", "/c", "npm run build"],
             cwd=str(self._model.project_path),
@@ -883,6 +960,12 @@ class MainWindow(QMainWindow):
 
     def _validate(self) -> None:
         if self._model.project_path is None:
+            return
+        try:
+            if not self._flush_editors_to_model():
+                return
+        except Exception as e:
+            QMessageBox.critical(self, "Validate", f"Cannot validate pending edits:\n{e}")
             return
         issues = validate(self._model)
         if not issues:
@@ -963,17 +1046,9 @@ class MainWindow(QMainWindow):
     # ---- close ------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        from .editors.timeline_editor import TimelineEditor
-        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
-        for ed in self._editor_instances:
-            if isinstance(ed, TimelineEditor) and ed.has_pending_changes():
-                if ed.confirm_apply_or_discard(self) == "cancel":
-                    event.ignore()
-                    return
-        for ed in self._editor_instances:
-            if isinstance(ed, DialogueGraphEditorTab) and not ed.confirm_close(self):
-                event.ignore()
-                return
+        if not self._confirm_pending_editor_changes():
+            event.ignore()
+            return
         if self._model.is_dirty:
             r = QMessageBox.question(
                 self, "Unsaved Changes",
@@ -983,7 +1058,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Cancel,
             )
             if r == QMessageBox.StandardButton.Save:
-                self._save_all()
+                if not self._save_all():
+                    event.ignore()
+                    return
             elif r == QMessageBox.StandardButton.Cancel:
                 event.ignore()
                 return

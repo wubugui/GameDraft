@@ -72,6 +72,7 @@ import { EventBridge } from './EventBridge';
 import { DebugTools } from './DebugTools';
 import { SceneDepthSystem } from './SceneDepthSystem';
 import { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
+import { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
@@ -106,6 +107,8 @@ export interface GameStartOptions {
   playCutscene?: string;
   /** 开发模式下直接进入指定水域小游戏实例（由编辑器预览 URL `waterPreview=` 传入） */
   waterPreview?: string;
+  /** 开发模式下直接进入指定转盘小游戏实例（URL `sugarWheelPreview=`） */
+  sugarWheelPreview?: string;
 }
 
 declare global {
@@ -184,6 +187,7 @@ export class Game {
   private debugTools!: DebugTools;
   private sceneDepthSystem: SceneDepthSystem;
   private waterMinigameManager: WaterMinigameManager;
+  private sugarWheelMinigameManager: SugarWheelMinigameManager;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: DepthOcclusionFilter | null = null;
 
@@ -271,6 +275,7 @@ export class Game {
     this.audioManager = new AudioManager(this.eventBus);
     this.dayManager = new DayManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.waterMinigameManager = new WaterMinigameManager();
+    this.sugarWheelMinigameManager = new SugarWheelMinigameManager();
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
@@ -291,6 +296,7 @@ export class Game {
       { name: 'audioManager', system: this.audioManager },
       { name: 'dayManager', system: this.dayManager },
       { name: 'waterMinigameManager', system: this.waterMinigameManager },
+      { name: 'sugarWheelMinigameManager', system: this.sugarWheelMinigameManager },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'zoneSystem', system: this.zoneSystem },
@@ -741,6 +747,7 @@ export class Game {
         this.tempSetHotspotDisplayFacingFromAction(sceneId, hotspotId, facing),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
       waterMinigameManager: this.waterMinigameManager,
+      sugarWheelMinigameManager: this.sugarWheelMinigameManager,
     });
 
     this.waterMinigameManager.bindRuntime({
@@ -752,6 +759,14 @@ export class Game {
       resolveDisplayText: (s) => this.resolveDisplayText(s),
     });
     await this.waterMinigameManager.loadIndex();
+
+    this.sugarWheelMinigameManager.bindRuntime({
+      renderer: this.renderer,
+      inputManager: this.inputManager,
+      stateController: this.stateController,
+      resolveDisplayText: (s) => this.resolveDisplayText(s),
+    });
+    await this.sugarWheelMinigameManager.loadIndex();
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
       stateController: this.stateController,
@@ -887,7 +902,7 @@ export class Game {
     await this.setupPlayer();
 
     if (this.isDevMode) {
-      await this.startDevMode(options.playCutscene, options.waterPreview);
+      await this.startDevMode(options.playCutscene, options.waterPreview, options.sugarWheelPreview);
     } else {
       if (this.gameConfig.initialQuest) {
         this.questManager.acceptQuest(this.gameConfig.initialQuest);
@@ -1528,7 +1543,11 @@ export class Game {
     });
   }
 
-  private async startDevMode(playCutscene?: string, waterPreview?: string): Promise<void> {
+  private async startDevMode(
+    playCutscene?: string,
+    waterPreview?: string,
+    sugarWheelPreview?: string,
+  ): Promise<void> {
     const DEV_SCENE = 'dev_room';
     await this.sceneManager.loadScene(DEV_SCENE);
 
@@ -1540,15 +1559,33 @@ export class Game {
         void this.devLoadScene(id);
       },
       reload: () => this.devReload(),
-      getMinigameEntries: () => this.waterMinigameManager.getInstanceList(),
-      launchMinigame: (id: string) => {
+      getMinigameEntries: () => [
+        ...this.waterMinigameManager.getInstanceList().map((e) => ({
+          ...e,
+          kind: 'water' as const,
+        })),
+        ...this.sugarWheelMinigameManager.getInstanceList().map((e) => ({
+          ...e,
+          kind: 'sugarWheel' as const,
+        })),
+      ],
+      launchMinigame: (entry) => {
         this.devModeUI?.close();
-        void this.waterMinigameManager.start(id);
+        if (entry.kind === 'sugarWheel') {
+          void this.sugarWheelMinigameManager.start(entry.id);
+        } else {
+          void this.waterMinigameManager.start(entry.id);
+        }
       },
     });
     this.devModeUI.open();
 
     this.waterMinigameManager.setOnSessionEnd(() => {
+      if (!this.isDevMode) return;
+      const sid = this.sceneManager.currentSceneData?.id;
+      if (sid === 'dev_room') this.devModeUI?.open();
+    });
+    this.sugarWheelMinigameManager.setOnSessionEnd(() => {
       if (!this.isDevMode) return;
       const sid = this.sceneManager.currentSceneData?.id;
       if (sid === 'dev_room') this.devModeUI?.open();
@@ -1571,6 +1608,14 @@ export class Game {
         this.devModeUI?.close();
         void this.waterMinigameManager.start(wp);
       }, playCutscene ? 900 : 450);
+    }
+
+    const swp = (sugarWheelPreview ?? '').trim();
+    if (swp) {
+      setTimeout(() => {
+        this.devModeUI?.close();
+        void this.sugarWheelMinigameManager.start(swp);
+      }, playCutscene || wp ? 900 : 450);
     }
   }
 
@@ -2197,6 +2242,7 @@ export class Game {
 
     if (this.stateController.currentState === GameState.Minigame) {
       this.waterMinigameManager.update(dt);
+      this.sugarWheelMinigameManager.update(dt);
     }
 
     this.emoteBubbleManager.update(dt);

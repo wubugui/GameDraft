@@ -28,6 +28,7 @@ import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import type { ScenarioStateManager } from './ScenarioStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
+import type { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
@@ -148,6 +149,7 @@ export interface ActionRegistryDeps {
   /** F2 调试面板「日志」(与 Console 并行，供 showEmote 等运行时诊断)。 */
   debugPanelLog?: (message: string) => void;
   waterMinigameManager: WaterMinigameManager;
+  sugarWheelMinigameManager: SugarWheelMinigameManager;
 }
 
 function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
@@ -270,6 +272,40 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     await d.waterMinigameManager.runUntilDone(id);
   }, ['id']);
+
+  executor.register('startSugarWheelMinigame', async (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      console.warn('startSugarWheelMinigame: 需要 params.id');
+      return;
+    }
+    await d.sugarWheelMinigameManager.runUntilDone(id);
+  }, ['id']);
+
+  executor.register('sugarWheelShowSpeech', (p) => {
+    const role = String(p.role ?? '').trim();
+    const text = String(p.text ?? '').trim();
+    if (!role || !text) {
+      console.warn('sugarWheelShowSpeech: 需要 role 与 text');
+      return;
+    }
+    const dm = p.durationMs;
+    const ms = typeof dm === 'number' && Number.isFinite(dm) ? dm : undefined;
+    d.sugarWheelMinigameManager.showSpeech(role, text, ms);
+  }, ['role', 'text']);
+
+  executor.register('sugarWheelDismissSpeech', (p) => {
+    const role = String(p.role ?? '').trim();
+    if (!role) {
+      console.warn('sugarWheelDismissSpeech: 需要 role');
+      return;
+    }
+    d.sugarWheelMinigameManager.dismissSpeech(role);
+  }, ['role']);
+
+  executor.register('sugarWheelDismissAllSpeech', () => {
+    d.sugarWheelMinigameManager.dismissAllSpeech();
+  }, []);
 
   executor.register('showEmote', (p) => {
     const target = String(p.target ?? '').trim();

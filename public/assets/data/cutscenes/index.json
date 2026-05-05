@@ -1301,13 +1301,6 @@
         "position": "center"
       },
       {
-        "kind": "action",
-        "type": "startWaterMinigame",
-        "params": {
-          "id": "dock_crate_tutorial"
-        }
-      },
-      {
         "kind": "present",
         "type": "showSubtitle",
         "text": "说时迟那时快，只听得\"噗通\"一声\n[tag:string:角色:关二狗]跳进了水里......",

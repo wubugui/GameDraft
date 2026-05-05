@@ -1,0 +1,1211 @@
+"""糖画转盘小游戏编辑器：实例 JSON + 画布预览（背景 / 轮盘 / 指针）。"""
+from __future__ import annotations
+
+import json
+import math
+import re
+from typing import Any
+
+from PySide6.QtCore import QPointF, Qt, QRectF, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QAbstractSpinBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGraphicsEllipseItem,
+    QGraphicsItem,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsSimpleTextItem,
+    QGraphicsView,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QGroupBox,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..project_model import ProjectModel
+from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
+
+
+_ID_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_\-]{0,63}$")
+_DEFAULT_BG = "/assets/images/minigames/sugar_wheel/sugar_stall_table_bg.png"
+_DEFAULT_FOREGROUND = "/assets/images/minigames/sugar_wheel/sugar_crowd_overlay.png"
+_DEFAULT_WHEEL = "/assets/images/minigames/sugar_wheel/sugar_zodiac_wheel_carved_dragon_monkey_fixed.png"
+_DEFAULT_POINTER = "/assets/images/minigames/sugar_wheel/sugar_zodiac_pointer.png"
+
+
+def _load_runtime_pixmap(model: ProjectModel | None, url: str) -> QPixmap | None:
+    u = (url or "").strip()
+    if not u:
+        return None
+    if u.startswith("assets/"):
+        u = "/" + u
+    elif not u.startswith("/"):
+        u = "/" + u.lstrip("/")
+    if not u.startswith("/assets/"):
+        return None
+    p = disk_path_for_runtime_url(model, u)
+    if p is None or not p.is_file():
+        return None
+    pm = QPixmap(str(p))
+    return pm if not pm.isNull() else None
+
+
+def _num(raw: Any, fallback: float) -> float:
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return n if n == n and n not in (float("inf"), float("-inf")) else fallback
+
+
+# 与运行时 SugarWheelMinigameScene 默认锚点一致；JSON 无 speechAnchors 时画布仍显示可拖圆点。
+_SPEECH_ANCHOR_PRESETS: list[dict[str, Any]] = [
+    {"role": "child_a", "label": "小孩", "xRatio": 0.08, "yRatio": 0.72, "tailDirection": "down"},
+    {"role": "child_b", "label": "小孩", "xRatio": 0.25, "yRatio": 0.70, "tailDirection": "down"},
+    {"role": "child_c", "label": "小孩", "xRatio": 0.62, "yRatio": 0.72, "tailDirection": "down"},
+    {"role": "child_d", "label": "小孩", "xRatio": 0.82, "yRatio": 0.70, "tailDirection": "down"},
+    {"role": "protagonist", "label": "", "xRatio": 0.50, "yRatio": 0.92, "tailDirection": "none"},
+    {"role": "stall_owner", "label": "摊主", "xRatio": 0.22, "yRatio": 0.12, "tailDirection": "up"},
+]
+
+
+def _merge_speech_anchors_for_canvas(doc: dict) -> list[dict[str, Any]]:
+    by_role: dict[str, dict[str, Any]] = {}
+    raw = doc.get("speechAnchors")
+    if isinstance(raw, list):
+        for a in raw:
+            if isinstance(a, dict) and str(a.get("role") or "").strip():
+                rid = str(a["role"]).strip()
+                by_role[rid] = dict(a)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for tmpl in _SPEECH_ANCHOR_PRESETS:
+        rid = str(tmpl["role"])
+        seen.add(rid)
+        merged = {**tmpl, **by_role.get(rid, {})}
+        merged["role"] = rid
+        out.append(merged)
+    for rid, a in by_role.items():
+        if rid not in seen:
+            out.append(dict(a))
+    return out
+
+
+class _SugarWheelMovablePixmap(QGraphicsPixmapItem):
+    """可拖动项；松开后由画布写回 wheel / pointer 偏移。"""
+
+    def __init__(self, canvas: SugarWheelCanvas, role: str) -> None:
+        super().__init__()
+        self._canvas = canvas
+        self._role = role
+        self.setFlags(
+            self.GraphicsItemFlag.ItemIsMovable
+            | self.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:  # noqa: ANN401
+        res = super().itemChange(change, value)
+        if (
+            change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
+            and not self._canvas._move_silent
+        ):
+            self._canvas._after_move(self._role)
+        return res
+
+
+class _SugarWheelSpeechAnchorItem(QGraphicsEllipseItem):
+    """可拖动的气泡锚点（屏上比例坐标）。"""
+
+    def __init__(self, canvas: SugarWheelCanvas, role: str, caption: str) -> None:
+        super().__init__(-13, -13, 26, 26)
+        self._canvas = canvas
+        self._role = role
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        is_prota = role == "protagonist"
+        is_owner = role == "stall_owner"
+        if is_prota:
+            col = QColor(255, 210, 120, 220)
+            pen = QColor(255, 230, 160)
+        elif is_owner:
+            col = QColor(130, 200, 255, 200)
+            pen = QColor(180, 230, 255)
+        else:
+            col = QColor(255, 180, 90, 210)
+            pen = QColor(255, 220, 150)
+        self.setBrush(QBrush(col))
+        self.setPen(QPen(pen, 2))
+        self.setToolTip(f"气泡锚点 role={role}\n拖动调整 xRatio/yRatio（与右侧表同步）")
+        lab = caption.strip() or role
+        txt = QGraphicsSimpleTextItem(lab, self)
+        txt.setBrush(QBrush(QColor(250, 245, 230)))
+        br = txt.boundingRect()
+        txt.setPos(-br.width() / 2, -br.height() - 4)
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:  # noqa: ANN401
+        res = super().itemChange(change, value)
+        if (
+            change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
+            and not self._canvas._move_silent
+        ):
+            self._canvas._after_speech_anchor_move(self._role)
+        return res
+
+
+class SugarWheelCanvas(QWidget):
+    """QGraphicsView 预览：背景先画，转盘居中，指针按 anchorY 旋转锚点对齐中心。"""
+
+    layout_offsets_changed = Signal(float, float, float, float)
+    speech_anchor_changed = Signal(str, float, float)
+
+    def __init__(self, model: ProjectModel, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._scene = QGraphicsScene(self)
+        self._view = QGraphicsView(self._scene, self)
+        self._view.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        self._view.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self._view.setMinimumSize(520, 420)
+        self._btn_fit = QPushButton("适应窗口")
+        self._btn_fit.clicked.connect(self._fit)
+
+        self._wheel_item: _SugarWheelMovablePixmap | None = None
+        self._pointer_item: _SugarWheelMovablePixmap | None = None
+        self._layout_cx_cy: tuple[float, float] | None = None
+        self._px = 0.0
+        self._py = 0.0
+        self._move_silent = False
+        self._speech_anchor_items: dict[str, _SugarWheelSpeechAnchorItem] = {}
+
+        bar = QHBoxLayout()
+        bar.addWidget(self._btn_fit)
+        bar.addWidget(
+            QLabel(
+                "预览：背景→转盘→指针→前景→气泡锚点(最上层)；"
+                "可拖动盘面/指针/彩色圆点；圆点对应 showSpeech(role)，与右侧 speechAnchors 表同步"
+            )
+        )
+        bar.addStretch()
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addLayout(bar)
+        root.addWidget(self._view, stretch=1)
+
+    def resizeEvent(self, event) -> None:  # noqa: ANN001
+        super().resizeEvent(event)
+        self._fit()
+
+    def refresh(self, doc: dict | None) -> None:
+        self._wheel_item = None
+        self._pointer_item = None
+        self._layout_cx_cy = None
+        self._speech_anchor_items = {}
+        self._scene.clear()
+        self._scene.setSceneRect(QRectF(0, 0, 960, 720))
+        self._scene.setBackgroundBrush(QBrush(QColor(5, 5, 9)))
+        if not isinstance(doc, dict):
+            self._draw_empty()
+            self._fit()
+            return
+
+        r = self._scene.sceneRect()
+        bg_pm = _load_runtime_pixmap(self._model, str(doc.get("backgroundImage") or ""))
+        if bg_pm is not None:
+            fit = str(doc.get("backgroundFit") or "cover")
+            scale = (
+                min(r.width() / max(1, bg_pm.width()), r.height() / max(1, bg_pm.height()))
+                if fit == "contain"
+                else max(r.width() / max(1, bg_pm.width()), r.height() / max(1, bg_pm.height()))
+            )
+            item = QGraphicsPixmapItem(bg_pm)
+            item.setScale(scale)
+            item.setPos((r.width() - bg_pm.width() * scale) / 2, (r.height() - bg_pm.height() * scale) / 2)
+            item.setZValue(0)
+            self._scene.addItem(item)
+        else:
+            self._draw_missing("backgroundImage", QRectF(0, 0, r.width(), r.height()), 0)
+
+        wheel_pm = _load_runtime_pixmap(self._model, str(doc.get("wheelImage") or ""))
+        pointer_pm = _load_runtime_pixmap(self._model, str(doc.get("pointerImage") or ""))
+        cx = r.width() / 2
+        cy = r.height() / 2
+        wx = _num(doc.get("wheelCenterOffsetXPx"), 0)
+        wy = _num(doc.get("wheelCenterOffsetYPx"), 0)
+        px_off = _num(doc.get("pointerOffsetXPx"), 0)
+        py_off = _num(doc.get("pointerOffsetYPx"), 0)
+        self._layout_cx_cy = (cx, cy)
+        self._px = px_off
+        self._py = py_off
+        max_pct = max(0.2, min(1.0, _num(doc.get("wheelMaxSizePercent"), 0.72)))
+        max_px = max(64.0, _num(doc.get("wheelMaxSizePx"), 660))
+        size = max(160.0, min(r.width() * max_pct, r.height() * 0.72, max_px))
+        size *= max(0.1, min(3.0, _num(doc.get("wheelScale"), 1)))
+
+        wheel_scale = 1.0
+        if wheel_pm is not None:
+            wheel_scale = size / max(1, wheel_pm.width(), wheel_pm.height())
+            item = _SugarWheelMovablePixmap(self, "wheel")
+            item.setPixmap(wheel_pm)
+            item.setOffset(-wheel_pm.width() / 2, -wheel_pm.height() / 2)
+            item.setScale(wheel_scale)
+            item.setPos(cx + wx, cy + wy)
+            item.setZValue(10)
+            item.setToolTip("拖动：盘面中心相对画布中心的偏移（wheelCenterOffsetX/Y）")
+            self._scene.addItem(item)
+            self._wheel_item = item
+        else:
+            self._draw_missing("wheelImage", QRectF(cx - size / 2, cy - size / 2, size, size), 10)
+
+        if pointer_pm is not None and self._wheel_item is not None:
+            anchor_x = max(0.0, min(1.0, _num(doc.get("pointerAnchorX"), 0.5)))
+            anchor_y = max(0.0, min(1.0, _num(doc.get("pointerAnchorY"), 0.9)))
+            p_scale = wheel_scale * max(0.1, min(3.0, _num(doc.get("pointerScale"), 1)))
+            ptr = _SugarWheelMovablePixmap(self, "pointer")
+            ptr.setPixmap(pointer_pm)
+            ptr.setOffset(-pointer_pm.width() * anchor_x, -pointer_pm.height() * anchor_y)
+            ptr.setScale(p_scale)
+            wpos = self._wheel_item.pos()
+            ptr.setPos(wpos.x() + px_off, wpos.y() + py_off)
+            ptr.setZValue(20)
+            ptr.setToolTip("拖动：指针相对盘心的像素偏移（pointerOffsetX/Y）")
+            self._scene.addItem(ptr)
+            self._pointer_item = ptr
+        elif pointer_pm is not None:
+            self._draw_missing("pointerImage", QRectF(cx - 20, cy - size / 2, 40, size), 20)
+
+        fg_pm = _load_runtime_pixmap(self._model, str(doc.get("foregroundImage") or ""))
+        if fg_pm is not None:
+            fit = str(doc.get("foregroundFit") or "cover")
+            scale = (
+                min(r.width() / max(1, fg_pm.width()), r.height() / max(1, fg_pm.height()))
+                if fit == "contain"
+                else max(r.width() / max(1, fg_pm.width()), r.height() / max(1, fg_pm.height()))
+            )
+            item = QGraphicsPixmapItem(fg_pm)
+            item.setScale(scale)
+            item.setPos((r.width() - fg_pm.width() * scale) / 2, (r.height() - fg_pm.height() * scale) / 2)
+            item.setZValue(30)
+            self._scene.addItem(item)
+
+        for entry in _merge_speech_anchors_for_canvas(doc):
+            rid = str(entry.get("role") or "").strip()
+            if not rid:
+                continue
+            raw_lab = entry.get("label")
+            if raw_lab is not None and str(raw_lab).strip():
+                cap = str(raw_lab).strip()
+            elif rid == "protagonist":
+                cap = "主角"
+            else:
+                cap = rid
+            xr = max(0.0, min(1.0, _num(entry.get("xRatio"), 0.5)))
+            yr = max(0.0, min(1.0, _num(entry.get("yRatio"), 0.5)))
+            ax = _SugarWheelSpeechAnchorItem(self, rid, cap)
+            self._move_silent = True
+            try:
+                ax.setPos(QPointF(xr * r.width(), yr * r.height()))
+            finally:
+                self._move_silent = False
+            ax.setZValue(100)
+            self._scene.addItem(ax)
+            self._speech_anchor_items[rid] = ax
+
+        self._fit()
+
+    def _after_move(self, role: str) -> None:
+        if (
+            self._move_silent
+            or self._layout_cx_cy is None
+            or self._wheel_item is None
+            or self._pointer_item is None
+        ):
+            return
+        cx, cy = self._layout_cx_cy
+        wpos = self._wheel_item.pos()
+        if role == "wheel":
+            self._move_silent = True
+            try:
+                self._pointer_item.setPos(wpos.x() + self._px, wpos.y() + self._py)
+            finally:
+                self._move_silent = False
+        ppos = self._pointer_item.pos()
+        wx = wpos.x() - cx
+        wy = wpos.y() - cy
+        self._px = ppos.x() - wpos.x()
+        self._py = ppos.y() - wpos.y()
+        self.layout_offsets_changed.emit(wx, wy, self._px, self._py)
+
+    def _after_speech_anchor_move(self, role: str) -> None:
+        item = self._speech_anchor_items.get(role)
+        if item is None or self._move_silent:
+            return
+        rr = self._scene.sceneRect()
+        w = max(1.0, rr.width())
+        h = max(1.0, rr.height())
+        pos = item.pos()
+        xr = max(0.0, min(1.0, pos.x() / w))
+        yr = max(0.0, min(1.0, pos.y() / h))
+        snap = QPointF(xr * w, yr * h)
+        if (snap - pos).manhattanLength() > 0.5:
+            self._move_silent = True
+            try:
+                item.setPos(snap)
+            finally:
+                self._move_silent = False
+        self.speech_anchor_changed.emit(role, xr, yr)
+
+    def _draw_empty(self) -> None:
+        self._scene.addText("没有选中转盘实例")
+
+    def _draw_missing(self, label: str, rect: QRectF, z: float) -> None:
+        self._scene.addRect(rect, QPen(QColor(220, 90, 80), 2, Qt.PenStyle.DashLine), QBrush(QColor(60, 20, 20, 80))).setZValue(z)
+        text = self._scene.addText(f"缺少 {label}")
+        text.setDefaultTextColor(QColor(240, 150, 120))
+        text.setPos(rect.left() + 8, rect.top() + 8)
+        text.setZValue(z + 1)
+
+    def _fit(self) -> None:
+        r = self._scene.sceneRect()
+        if r.width() <= 0 or r.height() <= 0:
+            return
+        self._view.resetTransform()
+        self._view.fitInView(r, Qt.AspectRatioMode.KeepAspectRatio)
+
+
+class SugarWheelEditor(QWidget):
+    """编辑 public/assets/data/sugar_wheel。"""
+
+    preview_requested = Signal(str)
+
+    def __init__(self, model: ProjectModel, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._loading = False
+        self._current_id: str | None = None
+        self._doc: dict | None = None
+
+        root = QHBoxLayout(self)
+        root.setContentsMargins(4, 4, 4, 4)
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setChildrenCollapsible(False)
+
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        self._list = QListWidget()
+        self._list.setMinimumWidth(220)
+        ll.addWidget(QLabel("转盘实例"))
+        ll.addWidget(self._list, stretch=1)
+        br = QHBoxLayout()
+        self._btn_add = QPushButton("新增")
+        self._btn_del = QPushButton("删除")
+        self._btn_preview = QPushButton("预览…")
+        br.addWidget(self._btn_add)
+        br.addWidget(self._btn_del)
+        br.addWidget(self._btn_preview)
+        ll.addLayout(br)
+
+        self._canvas = SugarWheelCanvas(model)
+        self._canvas.layout_offsets_changed.connect(self._on_canvas_layout_offsets)
+        self._canvas.speech_anchor_changed.connect(self._on_canvas_speech_anchor)
+
+        right = QScrollArea()
+        right.setWidgetResizable(True)
+        right.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        right.setMinimumWidth(320)
+        right_inner = QWidget()
+        rv = QVBoxLayout(right_inner)
+        rv.setContentsMargins(0, 0, 0, 0)
+
+        self._label = QLineEdit()
+
+        g_res = QGroupBox("外观与资源")
+        ff_r = QFormLayout(g_res)
+        self._bg = CutsceneImagePathRow(model, "", external_copy_subdir="sugar_wheel", path_edit_read_only=True)
+        self._bg_fit = QComboBox()
+        self._bg_fit.addItems(["cover", "contain"])
+        self._foreground = CutsceneImagePathRow(model, "", external_copy_subdir="sugar_wheel", path_edit_read_only=True)
+        self._foreground_fit = QComboBox()
+        self._foreground_fit.addItems(["cover", "contain"])
+        self._wheel = CutsceneImagePathRow(model, "", external_copy_subdir="sugar_wheel", path_edit_read_only=True)
+        self._pointer = CutsceneImagePathRow(model, "", external_copy_subdir="sugar_wheel", path_edit_read_only=True)
+        self._pointer_anchor_x = self._double(0, 1, 0.5, 3)
+        self._pointer_anchor = self._double(0, 1, 0.9, 3)
+        self._pointer_scale = self._double(0.1, 3, 1, 3)
+        self._wheel_scale = self._double(0.1, 3, 1, 3)
+        self._wheel_pct = self._double(0.2, 1, 0.72, 3)
+        self._wheel_px = self._double(64, 4096, 660, 0)
+        self._wheel_cx_off = self._double(-800, 800, 0, 1)
+        self._wheel_cy_off = self._double(-800, 800, 0, 1)
+        self._ptr_ox = self._double(-800, 800, 0, 1)
+        self._ptr_oy = self._double(-800, 800, 0, 1)
+        self._wheel_cx_off.setToolTip("转盘层相对布局中心的水平偏移（px），可在画布拖动盘面。")
+        self._wheel_cy_off.setToolTip("转盘层相对布局中心的竖直偏移（px），可在画布拖动盘面。")
+        self._ptr_ox.setToolTip("指针在转盘局部坐标内相对盘心的水平偏移（px），可在画布拖动指针。")
+        self._ptr_oy.setToolTip("指针在转盘局部坐标内相对盘心的竖直偏移（px），可在画布拖动指针。")
+        ff_r.addRow("标题 label", self._label)
+        ff_r.addRow("backgroundImage", self._bg)
+        ff_r.addRow("backgroundFit", self._bg_fit)
+        ff_r.addRow("foregroundImage", self._foreground)
+        ff_r.addRow("foregroundFit", self._foreground_fit)
+        ff_r.addRow("wheelImage", self._wheel)
+        ff_r.addRow("pointerImage", self._pointer)
+        ff_r.addRow("pointerAnchorX", self._pointer_anchor_x)
+        ff_r.addRow("pointerAnchorY", self._pointer_anchor)
+        ff_r.addRow("pointerScale", self._pointer_scale)
+        ff_r.addRow("wheelScale", self._wheel_scale)
+        ff_r.addRow("wheelMaxSizePercent", self._wheel_pct)
+        ff_r.addRow("wheelMaxSizePx", self._wheel_px)
+        ff_r.addRow("wheelCenterOffsetXPx", self._wheel_cx_off)
+        ff_r.addRow("wheelCenterOffsetYPx", self._wheel_cy_off)
+        ff_r.addRow("pointerOffsetXPx", self._ptr_ox)
+        ff_r.addRow("pointerOffsetYPx", self._ptr_oy)
+        rv.addWidget(g_res)
+
+        g_sec = QGroupBox("分格与指针校准")
+        ff_s = QFormLayout(g_sec)
+        self._angle = self._double(-360, 360, 0, 2)
+        self._sector_phase = self._double(-2, 2, 0, 3)
+        self._pointer_art_deg = self._double(-180, 180, 0, 2)
+        self._direction = QComboBox()
+        self._direction.addItems(["clockwise", "counterclockwise"])
+        self._angle.setToolTip("盘面整体旋转校准（度），顺时针为正。")
+        self._sector_phase.setToolTip("第 0 格左边界在 offset + phase·step；默认 0。")
+        self._pointer_art_deg.setToolTip("指针贴图相对数学正上的附加角（度）。")
+        ff_s.addRow("sectorAngleOffsetDeg", self._angle)
+        ff_s.addRow("sectorCenterPhase", self._sector_phase)
+        ff_s.addRow("pointerArtOffsetDeg", self._pointer_art_deg)
+        ff_s.addRow("sectorDirection", self._direction)
+        rv.addWidget(g_sec)
+
+        g_chg = QGroupBox("蓄力曲线")
+        ff_h = QFormLayout(g_chg)
+        self._charge_ms = self._double(100, 15000, 2600, 0)
+        self._min_power = self._double(0, 1, 0, 3)
+        self._charge_curve = self._double(1, 3, 1.4, 2)
+        self._charge_curve.setToolTip("1=线性；>1 时前段更细腻。")
+        ff_h.addRow("powerChargeMs", self._charge_ms)
+        ff_h.addRow("minLaunchPower", self._min_power)
+        ff_h.addRow("powerChargeCurve", self._charge_curve)
+        rv.addWidget(g_chg)
+
+        g_phy = QGroupBox("物理停针（运行时）")
+        ff_p = QFormLayout(g_phy)
+        self._drag = self._double(0.02, 8, 0.58, 3)
+        self._drag_low_thr = self._double(0, 20, 2.2, 3)
+        self._drag_low_boost = self._double(0, 15, 2.0, 3)
+        self._v_min = self._double(0, 80, 0, 3)
+        self._v_max = self._double(0, 80, 10.5, 3)
+        self._a_min = self._double(0, 200, 0, 3)
+        self._a_max = self._double(0, 200, 8.5, 3)
+        self._a_hl = self._double(0, 10, 0.42, 3)
+        self._stop_w = self._double(0.001, 2, 0.06, 3)
+        self._stop_settle = self._double(0, 2, 0.12, 3)
+        self._dry_fric = self._double(0, 4, 0.34, 3)
+        self._bias_creep = self._double(0, 6, 1.2, 2)
+        self._drag.setToolTip("阻力 k（1/s），ω ← ω + (α − k·ω)·Δt；高速段基准。")
+        self._drag_low_thr.setToolTip("|ω| 低于该值（rad/s）时阻力在 k 上渐增，0=关闭。")
+        self._drag_low_boost.setToolTip("停转附近最大额外 k（1/s）；与阈值内 smootherstep 混合，末段柔和。")
+        self._a_hl.setToolTip("松手后角加速度半衰期（秒）；≤0 表示当帧清零 α。")
+        self._stop_w.setToolTip("|ω| 低于该值视为可停转（rad/s）。")
+        self._stop_settle.setToolTip("|ω| 持续低于停转阈值达该时长后再出结果；略大一点末段更不「弹一下」。")
+        self._dry_fric.setToolTip(
+            "干摩擦角加速度（rad/s²），与转向相反；轻拨时单靠 k·ω 会衰得极慢，靠它收尾。\n"
+            "写 0 = 关闭。"
+        )
+        self._bias_creep.setToolTip(
+            "低于该角速度（rad/s）时按比例削弱 weight 势能扭矩，避免临界角速下被偏置「顶着」慢悠悠转。\n"
+            "写 0 = 不削弱偏置扭矩。"
+        )
+        ff_p.addRow("spinLinearDragPerSec", self._drag)
+        ff_p.addRow("spinDragLowSpeedThresholdRadPerSec", self._drag_low_thr)
+        ff_p.addRow("spinDragLowSpeedBoostPerSec", self._drag_low_boost)
+        ff_p.addRow("spinChargeMinVelocityRadPerSec", self._v_min)
+        ff_p.addRow("spinChargeMaxVelocityRadPerSec", self._v_max)
+        ff_p.addRow("spinChargeMinAccelRadPerSec2", self._a_min)
+        ff_p.addRow("spinChargeMaxAccelRadPerSec2", self._a_max)
+        ff_p.addRow("spinAccelHalfLifeSec", self._a_hl)
+        ff_p.addRow("spinStopSpeedRadPerSec", self._stop_w)
+        ff_p.addRow("spinStopSettleSec", self._stop_settle)
+        ff_p.addRow("spinDryFrictionAccelRadPerSec2", self._dry_fric)
+        ff_p.addRow("spinWeightBiasCreepRefRadPerSec", self._bias_creep)
+        rv.addWidget(g_phy)
+
+        g_sp = QGroupBox("对白气泡 showSpeech")
+        ff_sp = QFormLayout(g_sp)
+        self._speech_dur = self._double(500, 120000, 3000, 0)
+        self._speech_max = self._double(1, 6, 2, 0)
+        self._speech_dur.setToolTip("默认气泡停留毫秒（外部调用未传 durationMs 时）。")
+        self._speech_max.setToolTip("同屏最多气泡数；超出则移除最旧的。")
+        ff_sp.addRow("speechDurationMs", self._speech_dur)
+        ff_sp.addRow("speechMaxVisible", self._speech_max)
+        rv.addWidget(g_sp)
+
+        self._speech_table = QTableWidget(0, 5)
+        self._speech_table.setHorizontalHeaderLabels(["role", "label", "xRatio", "yRatio", "tailDirection"])
+        _sh = self._speech_table.horizontalHeaderItem(0)
+        if _sh is not None:
+            _sh.setToolTip("与 showSpeech(role) 一致，如 child_a、stall_owner、protagonist。")
+        _sh1 = self._speech_table.horizontalHeaderItem(1)
+        if _sh1 is not None:
+            _sh1.setToolTip("小孩/摊主旁显示的名称；主角可留空。")
+        _sh4 = self._speech_table.horizontalHeaderItem(4)
+        if _sh4 is not None:
+            _sh4.setToolTip("up / down / none")
+        self._speech_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._speech_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._speech_table.verticalHeader().setVisible(False)
+        self._speech_table.setMinimumHeight(140)
+        self._speech_table.horizontalHeader().setStretchLastSection(True)
+        sb_sp = QHBoxLayout()
+        self._btn_add_speech = QPushButton("+锚点")
+        self._btn_del_speech = QPushButton("−锚点")
+        sb_sp.addWidget(QLabel("speechAnchors"))
+        sb_sp.addStretch()
+        sb_sp.addWidget(self._btn_add_speech)
+        sb_sp.addWidget(self._btn_del_speech)
+        sw_sp = QWidget()
+        sw_spl = QVBoxLayout(sw_sp)
+        sw_spl.setContentsMargins(0, 0, 0, 0)
+        sw_spl.addLayout(sb_sp)
+        sw_spl.addWidget(self._speech_table)
+        rv.addWidget(sw_sp)
+
+        self._sector_table = QTableWidget(0, 4)
+        self._sector_table.setHorizontalHeaderLabels(["id", "label", "weight", "payload JSON"])
+        _hdr = self._sector_table.horizontalHeaderItem(2)
+        if _hdr is not None:
+            _hdr.setToolTip(
+                "相对倾向（体感）：空=1；越大相对越容易停到这格，越小相对越难中。\n"
+                "不写满盘相同时不偏置。\n"
+                "不表示精确中奖百分比，只和同盘其它格的数值比大小即可。"
+            )
+        _hdr0 = self._sector_table.horizontalHeaderItem(0)
+        if _hdr0 is not None:
+            _hdr0.setToolTip("扇区逻辑 id，透出到 minigame:sugarWheelResult。")
+        _hdr1 = self._sector_table.horizontalHeaderItem(1)
+        if _hdr1 is not None:
+            _hdr1.setToolTip("界面展示用语；可被游戏内文案系统解析。")
+        _hdr3 = self._sector_table.horizontalHeaderItem(3)
+        if _hdr3 is not None:
+            _hdr3.setToolTip("可选 JSON 对象字符串，附着在抽中结果上。")
+        self._sector_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._sector_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._sector_table.verticalHeader().setVisible(False)
+        self._sector_table.setMinimumHeight(220)
+        self._sector_table.horizontalHeader().setStretchLastSection(True)
+        sb = QHBoxLayout()
+        self._btn_add_sector = QPushButton("+格子")
+        self._btn_del_sector = QPushButton("−格子")
+        _sec_lbl = QLabel("格子 sectors（顺时针须与贴图一致；weight 悬停列表头可看说明）")
+        _sec_lbl.setToolTip(
+            "每行对应盘面上一格。\n「weight」不设=1。\n"
+            "想体感上少中就写小一点，容易中就写大一点；不是要填「概率％」。"
+        )
+        sb.addWidget(_sec_lbl)
+        sb.addStretch()
+        sb.addWidget(self._btn_add_sector)
+        sb.addWidget(self._btn_del_sector)
+        sw = QWidget()
+        swl = QVBoxLayout(sw)
+        swl.setContentsMargins(0, 0, 0, 0)
+        swl.addLayout(sb)
+        swl.addWidget(self._sector_table)
+        rv.addWidget(sw)
+
+        rv.addStretch()
+        right.setWidget(right_inner)
+
+        split.addWidget(left)
+        split.addWidget(self._canvas)
+        split.addWidget(right)
+        self._right_scroll = right
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 2)
+        split.setStretchFactor(2, 1)
+        root.addWidget(split)
+
+        self._list.currentRowChanged.connect(self._on_row_changed)
+        self._btn_add.clicked.connect(self._add_instance)
+        self._btn_del.clicked.connect(self._delete_instance)
+        self._btn_preview.clicked.connect(self._preview)
+        self._wire_fields()
+        self._model.data_changed.connect(self._on_model_data_changed)
+        self._reload_list(None)
+        if self._list.count() == 0:
+            self._set_enabled(False)
+
+    def _double(self, lo: float, hi: float, val: float, decimals: int) -> QDoubleSpinBox:
+        w = QDoubleSpinBox()
+        w.setRange(lo, hi)
+        w.setDecimals(decimals)
+        w.setValue(val)
+        w.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        return w
+
+    def _wire_fields(self) -> None:
+        self._label.textChanged.connect(self._on_label_changed)
+        for row in (self._bg, self._foreground, self._wheel, self._pointer):
+            row.changed.connect(self._on_images_changed)
+        self._bg_fit.currentTextChanged.connect(self._on_config_changed)
+        self._foreground_fit.currentTextChanged.connect(self._on_config_changed)
+        self._direction.currentTextChanged.connect(self._on_config_changed)
+        for w in (
+            self._pointer_anchor_x,
+            self._pointer_anchor,
+            self._pointer_scale,
+            self._wheel_scale,
+            self._wheel_pct,
+            self._wheel_px,
+            self._wheel_cx_off,
+            self._wheel_cy_off,
+            self._ptr_ox,
+            self._ptr_oy,
+            self._angle,
+            self._sector_phase,
+            self._pointer_art_deg,
+            self._charge_ms,
+            self._min_power,
+            self._charge_curve,
+            self._drag,
+            self._drag_low_thr,
+            self._drag_low_boost,
+            self._v_min,
+            self._v_max,
+            self._a_min,
+            self._a_max,
+            self._a_hl,
+            self._stop_w,
+            self._stop_settle,
+            self._dry_fric,
+            self._bias_creep,
+            self._speech_dur,
+            self._speech_max,
+        ):
+            w.valueChanged.connect(self._on_config_changed)
+        self._sector_table.itemChanged.connect(self._on_sector_item_changed)
+        self._speech_table.itemChanged.connect(self._on_speech_item_changed)
+        self._btn_add_sector.clicked.connect(self._add_sector)
+        self._btn_del_sector.clicked.connect(self._delete_sector)
+        self._btn_add_speech.clicked.connect(self._add_speech_row)
+        self._btn_del_speech.clicked.connect(self._delete_speech_row)
+
+    def _on_model_data_changed(self, dtype: str, _key: str) -> None:
+        if dtype == "sugar_wheel":
+            return
+
+    def _mark_dirty(self, *, refresh_canvas: bool = True) -> None:
+        if self._loading:
+            return
+        self._model.mark_dirty("sugar_wheel")
+        if refresh_canvas:
+            self._canvas.refresh(self._doc)
+
+    def _on_canvas_layout_offsets(self, wx: float, wy: float, px: float, py: float) -> None:
+        if not self._doc or self._loading:
+            return
+        self._loading = True
+        try:
+            self._wheel_cx_off.setValue(wx)
+            self._wheel_cy_off.setValue(wy)
+            self._ptr_ox.setValue(px)
+            self._ptr_oy.setValue(py)
+            self._doc["wheelCenterOffsetXPx"] = float(wx)
+            self._doc["wheelCenterOffsetYPx"] = float(wy)
+            self._doc["pointerOffsetXPx"] = float(px)
+            self._doc["pointerOffsetYPx"] = float(py)
+        finally:
+            self._loading = False
+        self._mark_dirty(refresh_canvas=False)
+
+    def _on_canvas_speech_anchor(self, role: str, xr: float, yr: float) -> None:
+        if not self._doc:
+            return
+        xr = max(0.0, min(1.0, float(xr)))
+        yr = max(0.0, min(1.0, float(yr)))
+        anchors = self._speech_rows()
+        found: dict | None = None
+        for a in anchors:
+            if str(a.get("role")) == role:
+                found = a
+                break
+        if found is None:
+            preset = next((p for p in _SPEECH_ANCHOR_PRESETS if str(p.get("role")) == role), None)
+            if preset:
+                na = dict(preset)
+                na["xRatio"] = xr
+                na["yRatio"] = yr
+                anchors.append(na)
+            else:
+                anchors.append({"role": role, "xRatio": xr, "yRatio": yr, "tailDirection": "none"})
+        else:
+            found["xRatio"] = xr
+            found["yRatio"] = yr
+        self._loading = True
+        try:
+            self._fill_speech_rows()
+        finally:
+            self._loading = False
+        self._mark_dirty(refresh_canvas=False)
+
+    def _reload_list(self, select_id: str | None) -> None:
+        self._list.blockSignals(True)
+        self._list.clear()
+        sel = 0
+        for i, row in enumerate(self._model.sugar_wheel_index if isinstance(self._model.sugar_wheel_index, list) else []):
+            if not isinstance(row, dict):
+                continue
+            iid = str(row.get("id") or "").strip()
+            if not iid:
+                continue
+            lab = str(row.get("label") or iid)
+            it = QListWidgetItem(f"{lab}  [{iid}]")
+            it.setData(Qt.ItemDataRole.UserRole, iid)
+            self._list.addItem(it)
+            if select_id and iid == select_id:
+                sel = self._list.count() - 1
+        self._list.blockSignals(False)
+        if self._list.count() > 0:
+            self._list.setCurrentRow(sel)
+        else:
+            self._current_id = None
+            self._doc = None
+            self._canvas.refresh(None)
+
+    def _set_enabled(self, on: bool) -> None:
+        for w in (
+            self._label, self._bg, self._bg_fit, self._foreground, self._foreground_fit, self._wheel, self._pointer,
+            self._pointer_anchor_x, self._pointer_anchor, self._pointer_scale, self._wheel_scale,
+            self._wheel_pct, self._wheel_px, self._wheel_cx_off, self._wheel_cy_off, self._ptr_ox, self._ptr_oy,
+            self._angle, self._sector_phase,
+            self._pointer_art_deg, self._direction,
+            self._charge_ms, self._min_power, self._charge_curve,
+            self._drag, self._drag_low_thr, self._drag_low_boost, self._v_min, self._v_max, self._a_min, self._a_max,
+            self._a_hl, self._stop_w, self._stop_settle, self._dry_fric, self._bias_creep,
+            self._speech_dur, self._speech_max,
+            self._sector_table, self._btn_add_sector, self._btn_del_sector,
+            self._speech_table, self._btn_add_speech, self._btn_del_speech,
+            self._btn_preview,
+        ):
+            w.setEnabled(on)
+        self._right_scroll.setEnabled(on)
+
+    def _on_row_changed(self, row: int) -> None:
+        if row < 0:
+            self._current_id = None
+            self._doc = None
+            self._canvas.refresh(None)
+            self._set_enabled(False)
+            return
+        it = self._list.item(row)
+        if it is None:
+            return
+        iid = str(it.data(Qt.ItemDataRole.UserRole) or "").strip()
+        self._current_id = iid
+        self._doc = self._model.sugar_wheel_instances.get(iid)
+        self._set_enabled(True)
+        self._fill_form()
+        self._canvas.refresh(self._doc)
+
+    def _fill_form(self) -> None:
+        self._loading = True
+        try:
+            d = self._doc or {}
+            self._label.setText(str(d.get("label") or ""))
+            self._bg.set_path(str(d.get("backgroundImage") or ""))
+            self._set_combo(self._bg_fit, str(d.get("backgroundFit") or "cover"))
+            self._foreground.set_path(str(d.get("foregroundImage") or ""))
+            self._set_combo(self._foreground_fit, str(d.get("foregroundFit") or "cover"))
+            self._wheel.set_path(str(d.get("wheelImage") or ""))
+            self._pointer.set_path(str(d.get("pointerImage") or ""))
+            self._pointer_anchor_x.setValue(_num(d.get("pointerAnchorX"), 0.5))
+            self._pointer_anchor.setValue(_num(d.get("pointerAnchorY"), 0.9))
+            self._pointer_scale.setValue(_num(d.get("pointerScale"), 1))
+            self._wheel_scale.setValue(_num(d.get("wheelScale"), 1))
+            self._wheel_pct.setValue(_num(d.get("wheelMaxSizePercent"), 0.72))
+            self._wheel_px.setValue(_num(d.get("wheelMaxSizePx"), 660))
+            self._wheel_cx_off.setValue(_num(d.get("wheelCenterOffsetXPx"), 0))
+            self._wheel_cy_off.setValue(_num(d.get("wheelCenterOffsetYPx"), 0))
+            self._ptr_ox.setValue(_num(d.get("pointerOffsetXPx"), 0))
+            self._ptr_oy.setValue(_num(d.get("pointerOffsetYPx"), 0))
+            self._angle.setValue(_num(d.get("sectorAngleOffsetDeg"), 0))
+            self._sector_phase.setValue(_num(d.get("sectorCenterPhase"), 0))
+            self._pointer_art_deg.setValue(_num(d.get("pointerArtOffsetDeg"), 0))
+            self._set_combo(self._direction, str(d.get("sectorDirection") or "clockwise"))
+            self._charge_ms.setValue(_num(d.get("powerChargeMs"), 2600))
+            self._min_power.setValue(_num(d.get("minLaunchPower"), 0))
+            self._charge_curve.setValue(_num(d.get("powerChargeCurve"), 1.4))
+            self._drag.setValue(_num(d.get("spinLinearDragPerSec"), 0.58))
+            self._drag_low_thr.setValue(_num(d.get("spinDragLowSpeedThresholdRadPerSec"), 0))
+            self._drag_low_boost.setValue(_num(d.get("spinDragLowSpeedBoostPerSec"), 0))
+            self._v_min.setValue(_num(d.get("spinChargeMinVelocityRadPerSec"), 0))
+            self._v_max.setValue(_num(d.get("spinChargeMaxVelocityRadPerSec"), 10.5))
+            self._a_min.setValue(_num(d.get("spinChargeMinAccelRadPerSec2"), 0))
+            self._a_max.setValue(_num(d.get("spinChargeMaxAccelRadPerSec2"), 8.5))
+            self._a_hl.setValue(_num(d.get("spinAccelHalfLifeSec"), 0.42))
+            self._stop_w.setValue(_num(d.get("spinStopSpeedRadPerSec"), 0.06))
+            self._stop_settle.setValue(_num(d.get("spinStopSettleSec"), 0.12))
+            self._dry_fric.setValue(_num(d.get("spinDryFrictionAccelRadPerSec2"), 0.34))
+            self._bias_creep.setValue(_num(d.get("spinWeightBiasCreepRefRadPerSec"), 1.2))
+            self._speech_dur.setValue(_num(d.get("speechDurationMs"), 3000))
+            self._speech_max.setValue(_num(d.get("speechMaxVisible"), 2))
+            self._fill_speech_rows()
+            self._fill_sectors()
+        finally:
+            self._loading = False
+
+    def _set_combo(self, cb: QComboBox, text: str) -> None:
+        idx = cb.findText(text)
+        cb.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _fill_sectors(self) -> None:
+        sectors = self._sectors()
+        self._sector_table.blockSignals(True)
+        self._sector_table.setRowCount(len(sectors))
+        for r, sec in enumerate(sectors):
+            values = [
+                str(sec.get("id") or ""),
+                str(sec.get("label") or ""),
+                str(sec.get("weight") if sec.get("weight") is not None else ""),
+                json.dumps(sec.get("payload", {}), ensure_ascii=False) if isinstance(sec.get("payload"), dict) else "",
+            ]
+            for c, val in enumerate(values):
+                self._sector_table.setItem(r, c, QTableWidgetItem(val))
+        self._sector_table.blockSignals(False)
+
+    def _sectors(self) -> list[dict]:
+        assert self._doc is not None
+        raw = self._doc.setdefault("sectors", [])
+        if not isinstance(raw, list):
+            raw = []
+            self._doc["sectors"] = raw
+        out = [x for x in raw if isinstance(x, dict)]
+        self._doc["sectors"] = out
+        return out
+
+    def _speech_rows(self) -> list[dict]:
+        assert self._doc is not None
+        raw = self._doc.setdefault("speechAnchors", [])
+        if not isinstance(raw, list):
+            raw = []
+            self._doc["speechAnchors"] = raw
+        out = [x for x in raw if isinstance(x, dict)]
+        self._doc["speechAnchors"] = out
+        return out
+
+    def _fill_speech_rows(self) -> None:
+        if not self._doc:
+            self._speech_table.blockSignals(True)
+            self._speech_table.setRowCount(0)
+            self._speech_table.blockSignals(False)
+            return
+        rows = self._speech_rows()
+        self._speech_table.blockSignals(True)
+        self._speech_table.setRowCount(len(rows))
+        for r, a in enumerate(rows):
+            xr, yr = a.get("xRatio"), a.get("yRatio")
+            vals = [
+                str(a.get("role") or ""),
+                str(a.get("label") if a.get("label") is not None else ""),
+                "" if xr is None else str(float(xr)),
+                "" if yr is None else str(float(yr)),
+                str(a.get("tailDirection") or "none"),
+            ]
+            for c, val in enumerate(vals):
+                self._speech_table.setItem(r, c, QTableWidgetItem(val))
+        self._speech_table.blockSignals(False)
+
+    def _on_speech_item_changed(self, _item: QTableWidgetItem) -> None:
+        if self._loading or not self._doc:
+            return
+        anchors = self._speech_rows()
+        for r in range(len(anchors)):
+            if r >= self._speech_table.rowCount():
+                break
+            a = anchors[r]
+            a["role"] = (self._speech_table.item(r, 0).text() if self._speech_table.item(r, 0) else "").strip()
+            lab = (self._speech_table.item(r, 1).text() if self._speech_table.item(r, 1) else "").strip()
+            if lab:
+                a["label"] = lab
+            else:
+                a.pop("label", None)
+            for key, col in (("xRatio", 2), ("yRatio", 3)):
+                txt = (self._speech_table.item(r, col).text() if self._speech_table.item(r, col) else "").strip()
+                if txt:
+                    try:
+                        a[key] = float(txt)
+                    except ValueError:
+                        pass
+                else:
+                    a.pop(key, None)
+            tail = (self._speech_table.item(r, 4).text() if self._speech_table.item(r, 4) else "").strip().lower()
+            if tail in ("up", "down", "none"):
+                a["tailDirection"] = tail
+            else:
+                a["tailDirection"] = "none"
+        self._mark_dirty()
+
+    def _add_speech_row(self) -> None:
+        if not self._doc:
+            return
+        anchors = self._speech_rows()
+        anchors.append({"role": f"role_{len(anchors) + 1}", "tailDirection": "none"})
+        self._mark_dirty()
+        self._fill_speech_rows()
+        self._speech_table.selectRow(len(anchors) - 1)
+
+    def _delete_speech_row(self) -> None:
+        if not self._doc:
+            return
+        r = self._speech_table.currentRow()
+        anchors = self._speech_rows()
+        if r < 0 or r >= len(anchors):
+            return
+        anchors.pop(r)
+        self._mark_dirty()
+        self._fill_speech_rows()
+
+    def _on_label_changed(self, text: str) -> None:
+        if self._loading or not self._doc or not self._current_id:
+            return
+        self._doc["label"] = text.strip()
+        for row in self._model.sugar_wheel_index:
+            if isinstance(row, dict) and str(row.get("id")) == self._current_id:
+                row["label"] = text.strip()
+                break
+        cur = self._list.currentItem()
+        if cur:
+            cur.setText(f"{text.strip()}  [{self._current_id}]")
+        self._mark_dirty()
+
+    def _on_images_changed(self) -> None:
+        if self._loading or not self._doc:
+            return
+        self._doc["backgroundImage"] = self._bg.path()
+        self._doc["foregroundImage"] = self._foreground.path()
+        self._doc["wheelImage"] = self._wheel.path()
+        self._doc["pointerImage"] = self._pointer.path()
+        self._mark_dirty()
+
+    def _on_config_changed(self, *_args: Any) -> None:
+        if self._loading or not self._doc:
+            return
+        self._doc["backgroundFit"] = self._bg_fit.currentText()
+        self._doc["foregroundFit"] = self._foreground_fit.currentText()
+        self._doc["pointerAnchorX"] = float(self._pointer_anchor_x.value())
+        self._doc["pointerAnchorY"] = float(self._pointer_anchor.value())
+        self._doc["pointerScale"] = float(self._pointer_scale.value())
+        self._doc["wheelScale"] = float(self._wheel_scale.value())
+        self._doc["wheelMaxSizePercent"] = float(self._wheel_pct.value())
+        self._doc["wheelMaxSizePx"] = int(round(self._wheel_px.value()))
+        self._doc["wheelCenterOffsetXPx"] = float(self._wheel_cx_off.value())
+        self._doc["wheelCenterOffsetYPx"] = float(self._wheel_cy_off.value())
+        self._doc["pointerOffsetXPx"] = float(self._ptr_ox.value())
+        self._doc["pointerOffsetYPx"] = float(self._ptr_oy.value())
+        self._doc["sectorAngleOffsetDeg"] = float(self._angle.value())
+        self._doc["sectorCenterPhase"] = float(self._sector_phase.value())
+        self._doc["pointerArtOffsetDeg"] = float(self._pointer_art_deg.value())
+        self._doc["sectorDirection"] = self._direction.currentText()
+        self._doc["powerChargeMs"] = int(round(self._charge_ms.value()))
+        self._doc["minLaunchPower"] = float(self._min_power.value())
+        self._doc["powerChargeCurve"] = float(self._charge_curve.value())
+        self._doc["spinLinearDragPerSec"] = float(self._drag.value())
+        self._doc["spinDragLowSpeedThresholdRadPerSec"] = float(self._drag_low_thr.value())
+        self._doc["spinDragLowSpeedBoostPerSec"] = float(self._drag_low_boost.value())
+        self._doc["spinChargeMinVelocityRadPerSec"] = float(self._v_min.value())
+        self._doc["spinChargeMaxVelocityRadPerSec"] = float(self._v_max.value())
+        self._doc["spinChargeMinAccelRadPerSec2"] = float(self._a_min.value())
+        self._doc["spinChargeMaxAccelRadPerSec2"] = float(self._a_max.value())
+        self._doc["spinAccelHalfLifeSec"] = float(self._a_hl.value())
+        self._doc["spinStopSpeedRadPerSec"] = float(self._stop_w.value())
+        self._doc["spinStopSettleSec"] = float(self._stop_settle.value())
+        self._doc["spinDryFrictionAccelRadPerSec2"] = float(self._dry_fric.value())
+        self._doc["spinWeightBiasCreepRefRadPerSec"] = float(self._bias_creep.value())
+        self._doc["speechDurationMs"] = int(round(self._speech_dur.value()))
+        self._doc["speechMaxVisible"] = int(round(self._speech_max.value()))
+        self._mark_dirty()
+
+    def _on_sector_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._loading or not self._doc:
+            return
+        sectors = self._sectors()
+        r = item.row()
+        if r < 0 or r >= len(sectors):
+            return
+        sec = sectors[r]
+        sec["id"] = (self._sector_table.item(r, 0).text() if self._sector_table.item(r, 0) else "").strip()
+        sec["label"] = (self._sector_table.item(r, 1).text() if self._sector_table.item(r, 1) else "").strip()
+        w_txt = (self._sector_table.item(r, 2).text() if self._sector_table.item(r, 2) else "").strip()
+        if w_txt:
+            try:
+                wval = float(w_txt)
+                if not math.isfinite(wval):
+                    raise ValueError()
+                sec["weight"] = max(0.0, wval)
+            except ValueError:
+                self._loading = True
+                try:
+                    tw_cell = self._sector_table.item(r, 2)
+                    if tw_cell is not None:
+                        old = sec.get("weight")
+                        tw_cell.setText("" if old is None else str(old))
+                finally:
+                    self._loading = False
+                return
+        else:
+            sec.pop("weight", None)
+        p_txt = (self._sector_table.item(r, 3).text() if self._sector_table.item(r, 3) else "").strip()
+        if p_txt:
+            try:
+                payload = json.loads(p_txt)
+                if isinstance(payload, dict):
+                    sec["payload"] = payload
+                else:
+                    sec["payload"] = {"value": payload}
+            except json.JSONDecodeError:
+                return
+        else:
+            sec.pop("payload", None)
+        self._mark_dirty()
+
+    def _add_sector(self) -> None:
+        if not self._doc:
+            return
+        sectors = self._sectors()
+        n = len(sectors) + 1
+        sectors.append({"id": f"sector_{n}", "label": f"格子{n}"})
+        self._mark_dirty()
+        self._fill_sectors()
+        self._sector_table.selectRow(len(sectors) - 1)
+
+    def _delete_sector(self) -> None:
+        if not self._doc:
+            return
+        r = self._sector_table.currentRow()
+        sectors = self._sectors()
+        if r < 0 or r >= len(sectors):
+            return
+        sectors.pop(r)
+        self._mark_dirty()
+        self._fill_sectors()
+
+    def _add_instance(self) -> None:
+        raw, ok = QInputDialog.getText(self, "新增转盘实例", "实例 id（将作为文件名 stem）：")
+        if not ok:
+            return
+        iid = raw.strip()
+        if not _ID_RE.match(iid):
+            QMessageBox.warning(self, "转盘小游戏", "id 格式不正确")
+            return
+        if iid in self._model.sugar_wheel_instances:
+            QMessageBox.warning(self, "转盘小游戏", "该 id 已存在")
+            return
+        fname = f"{iid}.json"
+        self._model.sugar_wheel_index.append({"id": iid, "label": "新转盘", "file": fname})
+        self._model.sugar_wheel_instances[iid] = {
+            "id": iid,
+            "label": "新转盘",
+            "backgroundImage": _DEFAULT_BG,
+            "backgroundFit": "cover",
+            "foregroundImage": _DEFAULT_FOREGROUND,
+            "foregroundFit": "cover",
+            "wheelImage": _DEFAULT_WHEEL,
+            "pointerImage": _DEFAULT_POINTER,
+            "pointerAnchorX": 0.5,
+            "pointerAnchorY": 0.9,
+            "pointerScale": 1,
+            "wheelScale": 1,
+            "wheelMaxSizePercent": 0.72,
+            "wheelMaxSizePx": 660,
+            "wheelCenterOffsetXPx": 0,
+            "wheelCenterOffsetYPx": 0,
+            "pointerOffsetXPx": 0,
+            "pointerOffsetYPx": 0,
+            "sectorAngleOffsetDeg": 0,
+            "sectorCenterPhase": 0,
+            "pointerArtOffsetDeg": 0,
+            "sectorDirection": "clockwise",
+            "powerChargeMs": 2600,
+            "minLaunchPower": 0,
+            "powerChargeCurve": 1.4,
+            "spinLinearDragPerSec": 0.52,
+            "spinDragLowSpeedThresholdRadPerSec": 2.2,
+            "spinDragLowSpeedBoostPerSec": 2.0,
+            "spinChargeMinVelocityRadPerSec": 0,
+            "spinChargeMaxVelocityRadPerSec": 10.5,
+            "spinChargeMinAccelRadPerSec2": 0,
+            "spinChargeMaxAccelRadPerSec2": 8.5,
+            "spinAccelHalfLifeSec": 0.42,
+            "spinStopSpeedRadPerSec": 0.06,
+            "spinStopSettleSec": 0.12,
+            "spinDryFrictionAccelRadPerSec2": 0.34,
+            "spinWeightBiasCreepRefRadPerSec": 1.2,
+            "sectors": [{"id": "sector_1", "label": "格子1"}],
+        }
+        self._model.mark_dirty("sugar_wheel")
+        self._reload_list(iid)
+
+    def _delete_instance(self) -> None:
+        if not self._current_id:
+            return
+        iid = self._current_id
+        if QMessageBox.question(self, "转盘小游戏", f"删除实例 {iid!r}？") != QMessageBox.StandardButton.Yes:
+            return
+        self._model.sugar_wheel_index = [
+            x for x in self._model.sugar_wheel_index
+            if not (isinstance(x, dict) and str(x.get("id")) == iid)
+        ]
+        self._model.sugar_wheel_instances.pop(iid, None)
+        self._model.mark_dirty("sugar_wheel")
+        self._reload_list(None)
+
+    def _preview(self) -> None:
+        if self._current_id:
+            self.preview_requested.emit(self._current_id)
+
+    def flush_to_model(self) -> None:
+        for iid, doc in self._model.sugar_wheel_instances.items():
+            if not isinstance(doc, dict):
+                raise ValueError(f"sugar_wheel[{iid}]: 根必须为对象")
+            for key in ("wheelImage", "pointerImage"):
+                if not str(doc.get(key) or "").strip():
+                    raise ValueError(f"sugar_wheel[{iid}]: {key} 不能为空")
+            sectors = doc.get("sectors")
+            if not isinstance(sectors, list) or not sectors:
+                raise ValueError(f"sugar_wheel[{iid}]: sectors 必须为非空数组")
+            seen: set[str] = set()
+            for sec in sectors:
+                if not isinstance(sec, dict):
+                    continue
+                sid = str(sec.get("id") or "").strip()
+                if not sid:
+                    raise ValueError(f"sugar_wheel[{iid}]: sector id 不能为空")
+                if sid in seen:
+                    raise ValueError(f"sugar_wheel[{iid}]: 重复 sector id {sid!r}")
+                seen.add(sid)
+                wt = sec.get("weight")
+                if wt is not None:
+                    try:
+                        wf = float(wt)
+                    except (TypeError, ValueError):
+                        raise ValueError(f"sugar_wheel[{iid}] sector[{sid}]: weight 须为数字（或省略）")
+                    if not math.isfinite(wf) or wf < 0:
+                        raise ValueError(f"sugar_wheel[{iid}] sector[{sid}]: weight 须为有限非负数")

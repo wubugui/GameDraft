@@ -12,9 +12,9 @@ export interface DevModeCallbacks {
   /** 进入指定场景（默认出生点） */
   loadScene(id: string): void;
   reload(): void;
-  /** Minigames 列表（同步自 water_minigames index） */
-  getMinigameEntries(): Array<{ id: string; label: string }>;
-  launchMinigame(id: string): void;
+  /** Minigames 列表 */
+  getMinigameEntries(): Array<{ id: string; label: string; kind: 'water' | 'sugarWheel' }>;
+  launchMinigame(entry: { id: string; label: string; kind: 'water' | 'sugarWheel' }): void;
 }
 
 const CATEGORY_WIDTH = 178;
@@ -243,9 +243,10 @@ export class DevModeUI {
       return;
     }
 
-    for (const { id, label } of entries) {
-      const row = this.makeListItem(label, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
-        this.callbacks.launchMinigame(id);
+    for (const entry of entries) {
+      const prefix = entry.kind === 'sugarWheel' ? '[转盘] ' : '[水域] ';
+      const row = this.makeListItem(`${prefix}${entry.label}`, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
+        this.callbacks.launchMinigame(entry);
       });
       this.contentContainer.addChild(row);
       cy += ITEM_HEIGHT + 2;

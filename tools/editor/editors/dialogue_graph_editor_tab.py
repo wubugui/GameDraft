@@ -52,9 +52,10 @@ class DialogueGraphEditorTab(QWidget):
         else:
             QMessageBox.information(self, "图对话", f"找不到图文件：{name}")
 
-    def flush_to_model(self) -> None:
+    def flush_to_model(self) -> bool:
         if self._panel is not None and self._panel.has_unsaved_changes():
-            self._panel.save()
+            return bool(self._panel.save())
+        return True
 
     def confirm_close(self, parent: QWidget) -> bool:
         if self._panel is None:

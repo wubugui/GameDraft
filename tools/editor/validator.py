@@ -1569,7 +1569,7 @@ _CUTSCENE_ACTION_WHITELIST = frozenset([
     "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing",
     "playSfx", "playBgm", "stopBgm",
-    "startWaterMinigame",
+    "startWaterMinigame", "startSugarWheelMinigame",
 ])
 
 _CUTSCENE_STAGING_SAVE_ACTIONS = frozenset([
@@ -1658,4 +1658,3 @@ def _validate_cutscene_steps(
                 "warning", "cutscene", cid,
                 f"step #{i+1} 未知 kind {kind!r}",
             ))
-
