@@ -19,6 +19,8 @@ import type {
   HotspotRuntimeOverride,
   ZoneDef,
   CutsceneBindableEntityDef,
+  HotspotDef,
+  NpcDef,
 } from '../data/types';
 import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
@@ -158,7 +160,6 @@ export class SceneManager implements IGameSystem {
   setActiveCutsceneBindingId(id: string | null): void {
     const t = id?.trim() || null;
     this.activeCutsceneBindingId = t;
-    this.refreshCutsceneBoundEntityVisibility();
   }
 
   getActiveCutsceneBindingId(): string | null {
@@ -384,6 +385,108 @@ export class SceneManager implements IGameSystem {
     this.setActiveCutsceneBindingId(null);
   }
 
+  async enterCutsceneInstancesForCurrent(cutsceneId: string): Promise<void> {
+    const scene = this.currentScene;
+    if (!scene) return;
+    const sceneId = scene.id;
+
+    const allDefs: { kind: 'hotspot'; def: HotspotDef }[] | { kind: 'npc'; def: NpcDef }[] = [];
+    if (scene.hotspots) {
+      for (const def of scene.hotspots) {
+        if (!isEntityBoundToCutscene(def, cutsceneId)) continue;
+        // destroy existing outer instance
+        const idx = this.currentHotspots.findIndex(h => h.def.id === def.id);
+        if (idx >= 0) {
+          const h = this.currentHotspots[idx];
+          this.renderer.entityLayer.removeChild(h.container);
+          h.destroy();
+          this.currentHotspots.splice(idx, 1);
+        }
+        // re-instantiate with cutscene context
+        const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'cutscene');
+        const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
+        this.currentHotspots.push(hotspot);
+      }
+    }
+    if (scene.npcs) {
+      for (const npcDef of scene.npcs) {
+        if (!isEntityBoundToCutscene(npcDef, cutsceneId)) continue;
+        // destroy existing outer instance
+        const idx = this.currentNpcs.findIndex(n => n.def.id === npcDef.id);
+        if (idx >= 0) {
+          const n = this.currentNpcs[idx];
+          const filters = n.container.filters;
+          if (filters && filters.length > 0) {
+            for (const f of filters) f.destroy();
+          }
+          n.container.filters = [];
+          this.renderer.entityLayer.removeChild(n.container);
+          n.destroy();
+          this.currentNpcs.splice(idx, 1);
+        }
+        // re-instantiate with cutscene context
+        const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'cutscene') as NpcRuntimeOverride | undefined;
+        const npc = await this.instantiateNpc(npcDef, snap);
+        this.currentNpcs.push(npc);
+      }
+    }
+    this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
+  }
+
+  async exitCutsceneInstancesForCurrent(cutsceneId: string): Promise<void> {
+    const scene = this.currentScene;
+    if (!scene) return;
+    const sceneId = scene.id;
+    const committedMemory = this.getCommittedMemory(sceneId);
+
+    if (scene.hotspots) {
+      for (const def of scene.hotspots) {
+        if (!isEntityBoundToCutscene(def, cutsceneId)) continue;
+        // destroy cutscene instance
+        const idx = this.currentHotspots.findIndex(h => h.def.id === def.id);
+        if (idx >= 0) {
+          const h = this.currentHotspots[idx];
+          this.renderer.entityLayer.removeChild(h.container);
+          h.destroy();
+          this.currentHotspots.splice(idx, 1);
+        }
+        // B-type (cutsceneOnly:false): rebuild outer instance
+        if (!isCutsceneOnlyEntity(def)) {
+          if (committedMemory?.pickedUpHotspots.includes(def.id)) continue;
+          const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'outer');
+          if (ovr?.enabled === false) continue;
+          const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
+          this.currentHotspots.push(hotspot);
+        }
+      }
+    }
+    if (scene.npcs) {
+      for (const npcDef of scene.npcs) {
+        if (!isEntityBoundToCutscene(npcDef, cutsceneId)) continue;
+        // destroy cutscene instance
+        const idx = this.currentNpcs.findIndex(n => n.def.id === npcDef.id);
+        if (idx >= 0) {
+          const n = this.currentNpcs[idx];
+          const filters = n.container.filters;
+          if (filters && filters.length > 0) {
+            for (const f of filters) f.destroy();
+          }
+          n.container.filters = [];
+          this.renderer.entityLayer.removeChild(n.container);
+          n.destroy();
+          this.currentNpcs.splice(idx, 1);
+        }
+        // B-type (cutsceneOnly:false): rebuild outer instance
+        if (!isCutsceneOnlyEntity(npcDef)) {
+          const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'outer') as NpcRuntimeOverride | undefined;
+          const npc = await this.instantiateNpc(npcDef, snap);
+          this.currentNpcs.push(npc);
+        }
+      }
+    }
+    this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
+  }
+
   isCutsceneStagingActive(): boolean {
     return this.cutsceneStaging !== null;
   }
@@ -444,6 +547,26 @@ export class SceneManager implements IGameSystem {
       : undefined;
     if (!committed && !staging) return undefined;
     return { ...(committed as object | undefined), ...(staging as object | undefined) } as NpcRuntimeOverride | HotspotRuntimeOverride;
+  }
+
+  private getRuntimeOverrideForContext(
+    sceneId: string,
+    kind: SceneEntityKind,
+    entityId: string,
+    _def: CutsceneBindableEntityDef,
+    context: 'outer' | 'cutscene',
+  ): NpcRuntimeOverride | HotspotRuntimeOverride | undefined {
+    const bucket = kind === 'npc' ? 'npcs' : 'hotspots';
+    if (context === 'outer') {
+      return this.getCommittedMemory(sceneId)?.entityOverrides?.[bucket]?.[entityId] as
+        NpcRuntimeOverride | HotspotRuntimeOverride | undefined;
+    }
+    // cutscene context: only staging memory
+    if (this.cutsceneStaging?.sceneId === sceneId) {
+      return this.cutsceneStaging.memory.entityOverrides?.[bucket]?.[entityId] as
+        NpcRuntimeOverride | HotspotRuntimeOverride | undefined;
+    }
+    return undefined;
   }
 
   /**
@@ -600,6 +723,46 @@ export class SceneManager implements IGameSystem {
     };
   }
 
+  private async instantiateHotspot(def: HotspotDef, overrides: HotspotRuntimeOverride | undefined): Promise<Hotspot> {
+    const defToUse = applyHotspotRuntimeOverride(def, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
+    const hotspot = new Hotspot(defToUse);
+    this.renderer.entityLayer.addChild(hotspot.container);
+    const di = defToUse.displayImage;
+    if (di?.image && di.worldWidth > 0 && di.worldHeight > 0) {
+      try {
+        const tex = await this.assetManager.loadTexture(di.image);
+        hotspot.setDisplayTexture(tex, di.worldWidth, di.worldHeight);
+      } catch (_e) {
+        console.warn(`SceneManager: hotspot "${def.id}" displayImage failed`, di.image);
+      }
+    }
+    return hotspot;
+  }
+
+  private async instantiateNpc(npcDef: NpcDef, overrides: NpcRuntimeOverride | undefined): Promise<Npc> {
+    const defToUse = applyNpcRuntimeOverride(npcDef, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
+    const npc = new Npc(defToUse);
+    if (defToUse.animFile) {
+      try {
+        const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
+        const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
+        const tex = await this.assetManager.loadTexture(sheetPath);
+        const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
+        npc.loadSprite(tex, animDef, defToUse.initialAnimState);
+      } catch (_e) {
+        // 加载失败时保留占位外观
+      }
+    }
+    if (overrides) {
+      const anim = (overrides as NpcRuntimeOverride).animState?.trim();
+      if (anim) {
+        npc.playAnimation(anim);
+      }
+    }
+    this.renderer.entityLayer.addChild(npc.container);
+    return npc;
+  }
+
   async loadScene(sceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }, fromSceneId?: string | null): Promise<void> {
     const sceneData = await this.assetManager.loadSceneData(sceneId);
     this.currentScene = sceneData;
@@ -651,60 +814,41 @@ export class SceneManager implements IGameSystem {
 
     if (sceneData.hotspots) {
       for (const def of sceneData.hotspots) {
-        const cutsceneOnly = isCutsceneOnlyEntity(def);
-        const boundToActive = isEntityBoundToCutscene(def, activeCutsceneId);
-        if (cutsceneOnly && !boundToActive) continue;
-        if (!cutsceneOnly && committedMemory?.pickedUpHotspots.includes(def.id)) continue;
-
-        const ovr = this.getEntityRuntimeOverrideForDef(sceneId, 'hotspot', def.id, def);
-        if (ovr?.enabled === false && !cutsceneOnly) continue;
-        const defToUse = applyHotspotRuntimeOverride(def, ovr as Record<string, SceneEntityRuntimeValue> | undefined);
-
-        const hotspot = new Hotspot(defToUse);
-        this.currentHotspots.push(hotspot);
-        this.renderer.entityLayer.addChild(hotspot.container);
-        const di = defToUse.displayImage;
-        if (di?.image && di.worldWidth > 0 && di.worldHeight > 0) {
-          try {
-            const tex = await this.assetManager.loadTexture(di.image);
-            hotspot.setDisplayTexture(tex, di.worldWidth, di.worldHeight);
-          } catch (_e) {
-            console.warn(`SceneManager: hotspot "${def.id}" displayImage failed`, di.image);
-          }
+        const boundToActive = activeCutsceneId && isEntityBoundToCutscene(def, activeCutsceneId);
+        if (boundToActive) {
+          // cutscene context: skip pickedUpHotspots filter, skip committed enabled filter
+          const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'cutscene');
+          const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
+          this.currentHotspots.push(hotspot);
+        } else {
+          // outer context
+          if (isCutsceneOnlyEntity(def)) continue;
+          if (committedMemory?.pickedUpHotspots.includes(def.id)) continue;
+          const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'outer');
+          if (ovr?.enabled === false) continue;
+          const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
+          this.currentHotspots.push(hotspot);
         }
       }
     }
 
     if (sceneData.npcs) {
       for (const npcDef of sceneData.npcs) {
-        const cutsceneOnly = isCutsceneOnlyEntity(npcDef);
-        const boundToActive = isEntityBoundToCutscene(npcDef, activeCutsceneId);
-        if (cutsceneOnly && !boundToActive) continue;
-        const snap = this.getEntityRuntimeOverrideForDef(sceneId, 'npc', npcDef.id, npcDef) as NpcRuntimeOverride | undefined;
-        const defToUse = applyNpcRuntimeOverride(npcDef, snap as Record<string, SceneEntityRuntimeValue> | undefined);
-        const npc = new Npc(defToUse);
-        if (defToUse.animFile) {
-          try {
-            const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
-            const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
-            const tex = await this.assetManager.loadTexture(sheetPath);
-            const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
-            npc.loadSprite(tex, animDef, defToUse.initialAnimState);
-          } catch (_e) {
-            // 加载失败时保留占位外观
-          }
+        const boundToActive = activeCutsceneId && isEntityBoundToCutscene(npcDef, activeCutsceneId);
+        if (boundToActive) {
+          // cutscene context
+          const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'cutscene') as NpcRuntimeOverride | undefined;
+          const npc = await this.instantiateNpc(npcDef, snap);
+          this.currentNpcs.push(npc);
+        } else {
+          // outer context
+          if (isCutsceneOnlyEntity(npcDef)) continue;
+          const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'outer') as NpcRuntimeOverride | undefined;
+          const npc = await this.instantiateNpc(npcDef, snap);
+          this.currentNpcs.push(npc);
         }
-        if (snap) {
-          const anim = snap.animState?.trim();
-          if (anim) {
-            npc.playAnimation(anim);
-          }
-        }
-        this.currentNpcs.push(npc);
-        this.renderer.entityLayer.addChild(npc.container);
       }
     }
-    this.refreshCutsceneBoundEntityVisibility();
     this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
 
     this.applyPlayerSpawnAndCamera(sceneData, spawnPointId, cameraPosition);
@@ -827,13 +971,6 @@ export class SceneManager implements IGameSystem {
     await p;
   }
 
-  async reloadCurrentSceneView(cameraPosition?: { x: number; y: number }): Promise<void> {
-    const sceneId = this.currentScene?.id;
-    if (!sceneId) return;
-    const fromSceneId = sceneId;
-    this.unloadScene();
-    await this.loadScene(sceneId, undefined, cameraPosition, fromSceneId);
-  }
 
   private saveCurrentSceneMemory(): void {
     if (!this.currentScene) return;

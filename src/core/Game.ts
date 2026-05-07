@@ -500,7 +500,6 @@ export class Game {
     this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider);
 
     this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera);
-    this.cutsceneRenderer.setZoomRestoreProvider(() => this.sceneManager.currentSceneData?.camera?.zoom ?? 1);
     this.cutsceneManager = new CutsceneManager(
       this.eventBus, this.flagStore, this.actionExecutor,
       this.cutsceneRenderer,
@@ -544,16 +543,7 @@ export class Game {
     this.cutsceneManager.setPlayerPositionGetter(() => ({ x: this.player.x, y: this.player.y }));
     this.cutsceneManager.setPlayerPositionSetter((x, y) => { this.player.x = x; this.player.y = y; });
     this.cutsceneManager.setCameraAccessor(this.camera);
-    this.cutsceneManager.setCutsceneSceneSessionHooks({
-      begin: async (cutsceneId, sceneId, position) => {
-        this.sceneManager.beginCutsceneStaging(cutsceneId, sceneId);
-        await this.sceneManager.reloadCurrentSceneView(position);
-      },
-      end: async (position) => {
-        this.sceneManager.endCutsceneStaging();
-        await this.sceneManager.reloadCurrentSceneView(position);
-      },
-    });
+    this.cutsceneManager.setSceneManager(this.sceneManager);
     this.cutsceneManager.setSpawnPointResolver((spawnKey: string) => {
       const scene = this.sceneManager.currentSceneData;
       if (!scene) return null;

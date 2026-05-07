@@ -21,6 +21,10 @@ export interface WaterMinigameInstance {
      */
     depth?: number;
   };
+  /** 可选岸边前景。水面只支持两条岸边；不配置则不显示。 */
+  shoreForeground?: {
+    banks: WaterShoreBankDef[];
+  };
   surface: {
     location: string;
     time: 'morning' | 'day' | 'night';
@@ -28,6 +32,20 @@ export interface WaterMinigameInstance {
   };
   bounds: { width: number; height: number };
   entities: WaterEntityDef[];
+}
+
+export interface WaterShoreBankDef {
+  /** `/assets/...` 或 `assets/...`，建议使用透明 PNG */
+  sprite: string;
+  /** 岸边贴在哪一侧；同一水域最多配置两条岸边 */
+  edge: 'top' | 'bottom' | 'left' | 'right';
+  /** 岸边厚度，单位为水域 bounds 像素；横岸为高，竖岸为宽 */
+  thickness?: number;
+  /** 沿垂直于岸边方向的偏移，单位为水域 bounds 像素；正值向水域内推 */
+  inset?: number;
+  /** 沿岸方向额外拉宽/拉高，单位为水域 bounds 像素，用于遮住边角 */
+  overhang?: number;
+  alpha?: number;
 }
 
 export interface WaterEntityDef {

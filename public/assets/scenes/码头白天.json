@@ -680,6 +680,16 @@
           }
         },
         {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "...",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
           "type": "fadingZoom",
           "params": {
             "zoom": 1.5,
@@ -775,7 +785,28 @@
             "lines": [
               {
                 "speaker": "[tag:player]",
-                "text": "狗日的水猴子，也没让老子遇到。遇到祝你个狗日的让老子发一笔横财。"
+                "text": "嘿呀! 个狗日的水猴子，也没让老子遇到。遇到抓你个狗日的让老子也发笔横财。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "?",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "{{player}}",
+                "text": "咦—— 这是你妈个啥子东西？"
               }
             ]
           }

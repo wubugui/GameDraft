@@ -12,6 +12,24 @@
     "time": "day",
     "weather": "clear"
   },
+  "shoreForeground": {
+    "banks": [
+      {
+        "sprite": "/assets/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "top",
+        "thickness": 92,
+        "inset": 16,
+        "overhang": 64
+      },
+      {
+        "sprite": "/assets/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "bottom",
+        "thickness": 118,
+        "inset": 10,
+        "overhang": 64
+      }
+    ]
+  },
   "bounds": {
     "width": 720,
     "height": 480

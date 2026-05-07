@@ -62,17 +62,9 @@ export class CutsceneRenderer {
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
   /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
   private cutsceneOpResolvers = new Set<() => void>();
-  /** 过场结束后恢复的缩放；默认 1。由 Game 设为当前场景的 camera.zoom。 */
-  private getRestoreZoom: (() => number) | null = null;
-
   constructor(renderer: Renderer, camera: Camera) {
     this.renderer = renderer;
     this.camera = camera;
-  }
-
-  /** 过场 cleanup 时把相机 zoom 设回该回调的返回值（通常为场景配置）。 */
-  setZoomRestoreProvider(fn: () => number): void {
-    this.getRestoreZoom = fn;
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -764,7 +756,5 @@ export class CutsceneRenderer {
       emote.destroy({ children: true });
     }
     this.activeEmotes.length = 0;
-    const zoom = this.getRestoreZoom?.() ?? 1;
-    this.camera.setZoom(zoom);
   }
 }

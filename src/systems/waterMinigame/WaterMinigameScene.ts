@@ -2,7 +2,7 @@ import type { AssetManager } from '../../core/AssetManager';
 import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { ActionDef } from '../../data/types';
 import type { Renderer } from '../../rendering/Renderer';
-import type { WaterMinigameInstance, WaterEntityDef } from './types';
+import type { WaterMinigameInstance, WaterEntityDef, WaterShoreBankDef } from './types';
 import { WaterEntity, loadEntityTexture, type WaterAmbient } from './WaterEntity';
 import { WaterPullPanel, type PullPanelResult } from './WaterPullPanel';
 import { WaterShaderFilter } from './WaterShaderFilter';
@@ -32,6 +32,7 @@ export class WaterMinigameScene {
   /** 海底 + 水下精灵同一坐标系；每帧两次离屏 render（颜色 RT / 参数 RT）共用该子树 */
   private underwaterRtRoot: Container;
   private surfaceLayer: Container;
+  private shoreLayer: Container;
   private uiLayer: Container;
   private bottomMrt: RenderTexture;
   /** 第二张 RT：R 深度 G 发光 B 物体标记（背景区域采样透明→仅用 suv.y） */
@@ -41,6 +42,7 @@ export class WaterMinigameScene {
   private bottomMrtSprite: Sprite;
   private waterFilter: WaterShaderFilter;
   private bg: Graphics;
+  private shoreSprites: Sprite[] = [];
   private entities: WaterEntity[] = [];
   private phase: Phase = 'search';
   private pullPanel: WaterPullPanel | null = null;
@@ -89,6 +91,8 @@ export class WaterMinigameScene {
     this.underwaterRtRoot.addChild(this.bottomLayer);
     this.underwaterRtRoot.addChild(this.waterLayer);
     this.surfaceLayer = new Container();
+    this.shoreLayer = new Container();
+    this.shoreLayer.eventMode = 'none';
     this.uiLayer = new Container();
     this.uiLayer.eventMode = 'static';
 
@@ -114,6 +118,7 @@ export class WaterMinigameScene {
     this.root.addChild(this.bottomMrtSprite);
     this.root.addChild(this.underwaterHitZone);
     this.root.addChild(this.surfaceLayer);
+    this.root.addChild(this.shoreLayer);
     this.root.addChild(this.uiLayer);
   }
 
@@ -137,6 +142,7 @@ export class WaterMinigameScene {
     }
 
     await this.setupBottomLayer();
+    await this.setupShoreLayer();
     this.waterLayer.removeChildren();
     this.surfaceLayer.removeChildren();
 
@@ -213,6 +219,34 @@ export class WaterMinigameScene {
     }
   }
 
+  private async setupShoreLayer(): Promise<void> {
+    for (const sp of this.shoreSprites) {
+      sp.destroy();
+    }
+    this.shoreSprites = [];
+    this.shoreLayer.removeChildren();
+
+    const banks = (this.instance.shoreForeground?.banks ?? []).slice(0, 2);
+    for (const bank of banks) {
+      const texPath = bank.sprite?.trim();
+      if (!texPath) continue;
+      try {
+        const tex = await this.assetManager.loadTexture(texPath.startsWith('/') ? texPath.slice(1) : texPath);
+        const sp = new Sprite(tex);
+        sp.eventMode = 'none';
+        sp.alpha = this.clamp01(bank.alpha ?? 1);
+        this.shoreLayer.addChild(sp);
+        this.shoreSprites.push(sp);
+      } catch (e) {
+        console.warn('WaterMinigameScene: failed to load shore foreground texture', texPath, e);
+      }
+    }
+  }
+
+  private clamp01(v: number): number {
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+  }
+
   private filterDefs(defs: WaterEntityDef[]): WaterEntityDef[] {
     if (!this.degraded) return defs;
     return defs.filter((d) => d.valueTier !== 'premium');
@@ -267,6 +301,10 @@ export class WaterMinigameScene {
     this.surfaceLayer.scale.set(scale);
     this.surfaceLayer.position.set(ox, oy);
 
+    this.shoreLayer.scale.set(scale);
+    this.shoreLayer.position.set(ox, oy);
+    this.layoutShoreBanks();
+
     this.uiLayer.position.set(0, 0);
 
     if (this.pullPanel) {
@@ -278,6 +316,48 @@ export class WaterMinigameScene {
 
     /* 拉扯阶段大块水底命中层会与右侧条带重叠并抢走指针；关闭交互以免提拉无任何响应 */
     this.underwaterHitZone.eventMode = this.phase === 'pull' ? 'none' : 'static';
+  }
+
+  private layoutShoreBanks(): void {
+    const banks = (this.instance.shoreForeground?.banks ?? []).slice(0, 2);
+    const bw = this.instance.bounds.width;
+    const bh = this.instance.bounds.height;
+    for (let i = 0; i < this.shoreSprites.length; i++) {
+      const sp = this.shoreSprites[i];
+      const bank = banks[i];
+      if (!bank) {
+        sp.visible = false;
+        continue;
+      }
+      this.layoutShoreBank(sp, bank, bw, bh);
+    }
+  }
+
+  private layoutShoreBank(sp: Sprite, bank: WaterShoreBankDef, bw: number, bh: number): void {
+    const edge = bank.edge;
+    const overhang = Number.isFinite(bank.overhang) ? Math.max(0, bank.overhang ?? 0) : 40;
+    const inset = Number.isFinite(bank.inset) ? bank.inset ?? 0 : 0;
+    const defaultThickness = edge === 'left' || edge === 'right'
+      ? Math.max(96, bw * 0.18)
+      : Math.max(96, bh * 0.22);
+    const thickness = Number.isFinite(bank.thickness) && (bank.thickness ?? 0) > 0
+      ? bank.thickness!
+      : defaultThickness;
+
+    if (edge === 'top' || edge === 'bottom') {
+      sp.width = bw + overhang * 2;
+      sp.height = thickness;
+      sp.x = -overhang;
+      sp.y = edge === 'top' ? inset : bh - inset;
+      sp.scale.y = Math.abs(sp.scale.y) * (edge === 'top' ? -1 : 1);
+      return;
+    }
+
+    sp.width = thickness;
+    sp.height = bh + overhang * 2;
+    sp.x = edge === 'left' ? inset : bw - inset;
+    sp.y = -overhang;
+    sp.scale.x = Math.abs(sp.scale.x) * (edge === 'left' ? -1 : 1);
   }
 
   private cursorWorld(screen: { x: number; y: number }): { x: number; y: number } {
@@ -505,6 +585,10 @@ export class WaterMinigameScene {
     this.unsubResize = null;
     this.clearPull();
     this.clearFeedback();
+    for (const sp of this.shoreSprites) {
+      sp.destroy();
+    }
+    this.shoreSprites = [];
     for (const e of this.entities) {
       e.sprite.removeAllListeners();
     }

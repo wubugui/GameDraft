@@ -50,9 +50,11 @@ export type SceneSwitcher = (params: ChangeSceneParams) => Promise<void>;
 /** 与 playScriptedDialogue 一致：解析 speaker 中的 {{player}} / {{npc}} 等 */
 export type ScriptedSpeakerResolver = (raw: string, scriptedNpcId?: string) => string;
 
-export interface CutsceneSceneSessionHooks {
-  begin: (cutsceneId: string, sceneId: string, position: { x: number; y: number }) => void | Promise<void>;
-  end: (position: { x: number; y: number }) => void | Promise<void>;
+export interface SceneManagerCutsceneAPI {
+  beginCutsceneStaging(cutsceneId: string, sceneId: string): void;
+  endCutsceneStaging(): void;
+  enterCutsceneInstancesForCurrent(cutsceneId: string): Promise<void>;
+  exitCutsceneInstancesForCurrent(cutsceneId: string): Promise<void>;
 }
 
 interface CutsceneSnapshot {
@@ -110,7 +112,7 @@ export class CutsceneManager implements IGameSystem {
   private colonSpeakerNarratorBaselineResolved: string | null = null;
   /** 与 Game.resolveDisplayText 同源；过场字幕在此解析后再交给 CutsceneRenderer（避免绕开统一解析链）。 */
   private displayTextResolver: ((s: string) => string) | null = null;
-  private sceneSessionHooks: CutsceneSceneSessionHooks | null = null;
+  private sceneManagerAPI: SceneManagerCutsceneAPI | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -202,8 +204,8 @@ export class CutsceneManager implements IGameSystem {
     this.colonSpeakerNarratorBaselineResolved = s;
   }
 
-  setCutsceneSceneSessionHooks(hooks: CutsceneSceneSessionHooks | null): void {
-    this.sceneSessionHooks = hooks;
+  setSceneManager(api: SceneManagerCutsceneAPI): void {
+    this.sceneManagerAPI = api;
   }
 
   getCutsceneIds(): string[] {
@@ -351,19 +353,23 @@ export class CutsceneManager implements IGameSystem {
       }
     }) ?? null;
 
-    let sceneSessionBegun = false;
+    let wasCrossScene = false;
     try {
       this.captureSnapshot();
-      const needsPositioning = !!def.targetScene || typeof def.targetX === 'number';
-      if (needsPositioning) {
-        await this.saveAndTransition(def);
+
+      const targetSceneId = (def.targetScene || '').trim();
+      const currentSceneId = this.sceneIdGetter?.()?.trim() ?? '';
+      const sid = targetSceneId || currentSceneId;
+
+      // Begin staging BEFORE switchScene so loadScene can pick up cutscene context
+      if (this.sceneManagerAPI && sid) {
+        this.sceneManagerAPI.beginCutsceneStaging(id, sid);
       }
 
-      const stagingSceneId = this.sceneIdGetter?.()?.trim() || '';
-      const stagingPos = this.playerPositionGetter?.() ?? { x: 0, y: 0 };
-      if (stagingSceneId && this.sceneSessionHooks) {
-        await this.sceneSessionHooks.begin(id, stagingSceneId, stagingPos);
-        sceneSessionBegun = true;
+      wasCrossScene = await this.saveAndTransitionReturningCrossScene(def);
+
+      if (!wasCrossScene && this.sceneManagerAPI) {
+        await this.sceneManagerAPI.enterCutsceneInstancesForCurrent(id);
       }
 
       if (!('steps' in def) || !Array.isArray((def as NewCutsceneDef).steps)) {
@@ -391,20 +397,20 @@ export class CutsceneManager implements IGameSystem {
       } catch {
         // 淡出失败时仍继续 cleanup，避免卡住过场结束
       }
-      if (sceneSessionBegun && this.sceneSessionHooks) {
-        const restorePos = this.snapshot
-          ? { x: this.snapshot.playerX, y: this.snapshot.playerY }
-          : (this.playerPositionGetter?.() ?? { x: 0, y: 0 });
-        try {
-          await this.sceneSessionHooks.end(restorePos);
+      try {
+        if (wasCrossScene) {
           if (!this.destroyed && def.restoreState !== false) {
             await this.restoreSnapshot();
-          } else if (def.restoreState === false) {
-            console.warn(`CutsceneManager: cutscene "${id}" has restoreState=false; staging was discarded but scene/player snapshot restore was skipped`);
           }
-        } catch (e) {
-          console.warn('CutsceneManager: restore cutscene scene session failed', e);
+          this.sceneManagerAPI?.endCutsceneStaging();
+        } else {
+          if (this.sceneManagerAPI) {
+            await this.sceneManagerAPI.exitCutsceneInstancesForCurrent(id);
+          }
+          this.sceneManagerAPI?.endCutsceneStaging();
         }
+      } catch (e) {
+        console.warn('CutsceneManager: restore cutscene scene session failed', e);
       }
       this.snapshot = null;
       this.cleanup();
@@ -436,15 +442,20 @@ export class CutsceneManager implements IGameSystem {
     }
   }
 
-  private async saveAndTransition(def: NewCutsceneDef): Promise<void> {
+  /**
+   * Returns true if cross-scene switch happened.
+   */
+  private async saveAndTransitionReturningCrossScene(def: NewCutsceneDef): Promise<boolean> {
     const currentSceneId = this.sceneIdGetter?.()?.trim() ?? '';
     const targetSceneId = typeof def.targetScene === 'string' ? def.targetScene.trim() : '';
+    let wasCrossScene = false;
 
     if (targetSceneId && targetSceneId !== currentSceneId && this.sceneSwitcher) {
       await this.sceneSwitcher({
         targetScene: targetSceneId,
         targetSpawnPoint: def.targetSpawnPoint,
       });
+      wasCrossScene = true;
     } else if (def.targetSpawnPoint) {
       const spawnPos = this.spawnPointResolver?.(def.targetSpawnPoint);
       if (spawnPos) {
@@ -457,6 +468,8 @@ export class CutsceneManager implements IGameSystem {
       this.playerPositionSetter?.(def.targetX, def.targetY);
       this.cameraAccessor?.snapTo(def.targetX, def.targetY);
     }
+
+    return wasCrossScene;
   }
 
   private captureSnapshot(): void {
@@ -474,8 +487,15 @@ export class CutsceneManager implements IGameSystem {
 
   private async restoreSnapshot(): Promise<void> {
     if (!this.snapshot) return;
-    const currentSceneId = this.sceneIdGetter?.() ?? '';
-    if (this.snapshot.sceneId && this.snapshot.sceneId !== currentSceneId && this.sceneSwitcher) {
+    const currentSceneId = this.sceneIdGetter?.()?.trim() ?? '';
+    if (this.snapshot.sceneId.trim() === currentSceneId) {
+      // same-scene: just restore player + camera position/zoom, no scene reload
+      this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
+      this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
+      this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+      return;
+    }
+    if (this.snapshot.sceneId && this.sceneSwitcher) {
       await this.sceneSwitcher({ targetScene: this.snapshot.sceneId });
     }
     this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);

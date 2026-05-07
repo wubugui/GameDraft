@@ -13,9 +13,13 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QLabel,
     QScrollArea, QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
     QDialog, QGroupBox, QToolButton, QSizePolicy, QMenu, QStyle,
+    QApplication,
 )
-from PySide6.QtCore import Qt, Signal, QEvent, QObject, QSignalBlocker, QTimer
-from PySide6.QtGui import QAction, QFont, QMouseEvent
+from PySide6.QtCore import (
+    Qt, Signal, QEvent, QObject, QSignalBlocker, QTimer, QPoint, QByteArray,
+    QMimeData,
+)
+from PySide6.QtGui import QAction, QFont, QMouseEvent, QDrag
 
 from ..project_model import ProjectModel
 from .. import theme as app_theme
@@ -31,6 +35,9 @@ from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
 from ..shared.rich_text_field import RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
+
+# Cutscene 步骤表头拖拽排序（TimelineEditor._dnd_cutscene_step_source 存 payload）
+_CUTSCENE_STEP_DRAG_MIME = "application/x-gamedraft-cutscene-step"
 
 if TYPE_CHECKING:
     pass
@@ -1161,6 +1168,8 @@ class StepOutlineFrame(QFrame):
         self._cutscene_id = (cutscene_id or "") or None
         self._step_snapshot = deepcopy(step)
         self._step: StepWidget | None = None
+        self._cutscene_header_drag_press_local: QPoint | None = None
+        self._cutscene_drag_occurred_this_press = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(self._indent_px, 2, 0, 2)
@@ -1264,6 +1273,10 @@ class StepOutlineFrame(QFrame):
 
         root.addWidget(self._header)
         self._header.installEventFilter(self)
+        self._header.setToolTip(
+            "拖动表头可调整顺序（仅限同级）；点击左侧摘要等区域可折叠/展开详情。",
+        )
+        self.setAcceptDrops(True)
 
         self._detail_wrap = QWidget()
         dl = QVBoxLayout(self._detail_wrap)
@@ -1396,13 +1409,95 @@ class StepOutlineFrame(QFrame):
         self.refresh_header()
         self.contentChanged.emit()
 
+    def _maybe_start_cutscene_header_drag(self, me: QMouseEvent) -> None:
+        if self._cutscene_header_drag_press_local is None:
+            return
+        if not (me.buttons() & Qt.MouseButton.LeftButton):
+            return
+        delta = me.position().toPoint() - self._cutscene_header_drag_press_local
+        if delta.manhattanLength() < QApplication.startDragDistance():
+            return
+        mime = QMimeData()
+        mime.setData(_CUTSCENE_STEP_DRAG_MIME, QByteArray(b"x"))
+        self._editor._dnd_cutscene_step_source = self
+        drag = QDrag(self._header)
+        drag.setMimeData(mime)
+        self._cutscene_drag_occurred_this_press = True
+        try:
+            drag.exec(Qt.DropAction.MoveAction)
+        finally:
+            self._editor._dnd_cutscene_step_source = None
+            self._cutscene_header_drag_press_local = None
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self._header and event.type() == QEvent.Type.MouseButtonRelease:
+        if watched is not self._header:
+            return super().eventFilter(watched, event)
+        et = event.type()
+        if et == QEvent.Type.MouseButtonPress:
             me = event
             if isinstance(me, QMouseEvent) and me.button() == Qt.MouseButton.LeftButton:
+                self._cutscene_drag_occurred_this_press = False
+                self._cutscene_header_drag_press_local = me.position().toPoint()
+            return False
+        if et == QEvent.Type.MouseMove:
+            me = event
+            if isinstance(me, QMouseEvent):
+                self._maybe_start_cutscene_header_drag(me)
+            return False
+        if et == QEvent.Type.MouseButtonRelease:
+            me = event
+            if isinstance(me, QMouseEvent) and me.button() == Qt.MouseButton.LeftButton:
+                skip_toggle = self._cutscene_drag_occurred_this_press
+                self._cutscene_header_drag_press_local = None
+                self._cutscene_drag_occurred_this_press = False
+                if skip_toggle:
+                    return True
                 self._toggle_collapse()
                 return True
+            return False
         return super().eventFilter(watched, event)
+
+    def dragEnterEvent(self, event) -> None:
+        src = self._editor._dnd_cutscene_step_source
+        md = event.mimeData()
+        if (
+            src is None
+            or md is None
+            or not md.hasFormat(_CUTSCENE_STEP_DRAG_MIME)
+            or src is self
+            or src._parallel_parent is not self._parallel_parent
+        ):
+            event.ignore()
+            return
+        event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        src = self._editor._dnd_cutscene_step_source
+        md = event.mimeData()
+        if (
+            src is None
+            or md is None
+            or not md.hasFormat(_CUTSCENE_STEP_DRAG_MIME)
+            or src is self
+            or src._parallel_parent is not self._parallel_parent
+        ):
+            event.ignore()
+            return
+        pos_y = event.position().y()
+        hh = self._header.height()
+        if pos_y < hh:
+            insert_before = pos_y < hh / 2
+        else:
+            insert_before = False
+        if self._editor._reorder_outline_relative_to_target(
+            src, self, insert_before=insert_before,
+        ):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def set_collapsed(self, collapsed: bool, *, refresh: bool = True) -> None:
         if not collapsed:
@@ -1434,13 +1529,7 @@ class StepOutlineFrame(QFrame):
         j = i + delta
         if j < 0 or j >= len(lst):
             return
-        lst[i], lst[j] = lst[j], lst[i]
-        for w in lst:
-            layout.removeWidget(w)
-        for w in lst:
-            layout.addWidget(w)
-        self._editor._refresh_outline_indices_and_zebra()
-        self._emit_dirty()
+        self._editor._reorder_outline_to_index(self, j)
 
     def _do_copy(self) -> None:
         lst, layout = self._get_owner_list_and_layout()
@@ -1548,6 +1637,7 @@ class TimelineEditor(QWidget):
         )
         self._overlay_selectors_fp_cache = ""
         self._overlay_selectors_fp_valid = False
+        self._dnd_cutscene_step_source: StepOutlineFrame | None = None
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1634,7 +1724,8 @@ class TimelineEditor(QWidget):
         hint_row = QHBoxLayout()
         hint = QLabel(
             "<b>步骤序列</b>（竖排 = 执行顺序；PRESENT / ACTION / PARALLEL 色条区分；"
-            "点击表头空白或摘要可折叠/展开详情；右侧「不定/~ms」与灰条为粗估，仅供参考；"
+            "可拖动表头调整顺序（仅限同级）；点击表头空白或摘要可折叠/展开详情；"
+            "右侧「不定/~ms」与灰条为粗估，仅供参考；"
             "「⋯」菜单：并行轨移出到外层、两项合并为并行、并入上/下一并行）"
         )
         hint.setWordWrap(True)
@@ -1691,6 +1782,63 @@ class TimelineEditor(QWidget):
     def on_editor_theme_changed(self, theme_id: str) -> None:
         self._theme_id = theme_id
         self._refresh_outline_indices_and_zebra()
+
+    def _reorder_outline_to_index(self, outline: StepOutlineFrame, new_index: int) -> bool:
+        lst, layout = outline._get_owner_list_and_layout()
+        if lst is None or layout is None:
+            return False
+        try:
+            old_i = lst.index(outline)
+        except ValueError:
+            return False
+        if new_index < 0 or new_index >= len(lst):
+            return False
+        if old_i == new_index:
+            return True
+        lst.pop(old_i)
+        if new_index > old_i:
+            new_index -= 1
+        lst.insert(new_index, outline)
+        for w in lst:
+            layout.removeWidget(w)
+        for w in lst:
+            layout.addWidget(w)
+        self._refresh_outline_indices_and_zebra()
+        outline._emit_dirty()
+        return True
+
+    def _reorder_outline_relative_to_target(
+        self,
+        source: StepOutlineFrame,
+        target: StepOutlineFrame,
+        *,
+        insert_before: bool,
+    ) -> bool:
+        if source is target:
+            return False
+        if source._parallel_parent is not target._parallel_parent:
+            return False
+        lst, layout = source._get_owner_list_and_layout()
+        t_lst, t_layout = target._get_owner_list_and_layout()
+        if lst is not t_lst or layout is None or t_layout is None or layout is not t_layout:
+            return False
+        try:
+            from_i = lst.index(source)
+            to_i = lst.index(target)
+        except ValueError:
+            return False
+        lst.pop(from_i)
+        if from_i < to_i:
+            to_i -= 1
+        insert_at = to_i if insert_before else (to_i + 1)
+        lst.insert(insert_at, source)
+        for w in lst:
+            layout.removeWidget(w)
+        for w in lst:
+            layout.addWidget(w)
+        self._refresh_outline_indices_and_zebra()
+        source._emit_dirty()
+        return True
 
     def _iter_all_step_outlines(self):
         def walk(ol: StepOutlineFrame):
