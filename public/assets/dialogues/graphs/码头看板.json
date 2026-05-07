@@ -75,6 +75,12 @@
           }
         },
         {
+          "type": "activateScenario",
+          "params": {
+            "scenarioId": "码头水鬼"
+          }
+        },
+        {
           "type": "setScenarioPhase",
           "params": {
             "scenarioId": "码头水鬼",

@@ -85,6 +85,9 @@ def validate_scenarios_list(
         sid = str(e.get("id", "")).strip()
         if not sid:
             return f"第 {i + 1} 条 scenario 的 id 不能为空"
+        mlc = e.get("manualLineLifecycle")
+        if mlc is not None and not isinstance(mlc, bool):
+            return f"{sid!r} 的 manualLineLifecycle 须为布尔或省略"
         if sid in seen:
             return f"scenario id 重复：{sid!r}"
         seen.add(sid)

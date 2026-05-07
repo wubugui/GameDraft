@@ -3,7 +3,7 @@
   "label": "野外河湾 · 清晨 · 晴",
   "spotId": "wild_river",
   "waterBottom": {
-    "texture": "/assets/images/illustrations/female_corpse_portrait.png",
+    "texture": "/assets/images/minigames/water/riverbed_wild_morning.png",
     "tint": "#244a3c",
     "depth": 0.48
   },
@@ -20,21 +20,18 @@
     {
       "id": "grass_1",
       "category": "grass",
-      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "sprite": "/assets/images/minigames/water/reed_clump_gen.png",
       "pos": {
         "x": 120,
         "y": 400
       },
       "depth": 0.12,
-      "hint": "[水草] 河湾边的芦苇根。",
-      "onPick": [],
-      "onPullSuccess": [],
-      "onPullFail": []
+      "hint": "[水草] 河湾边的芦苇根。"
     },
     {
       "id": "grass_2",
       "category": "grass",
-      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "sprite": "/assets/images/minigames/water/reed_clump_gen.png",
       "pos": {
         "x": 640,
         "y": 420
@@ -45,7 +42,7 @@
     {
       "id": "floater_leaf",
       "category": "floating",
-      "sprite": "/assets/images/illustrations/female_corpse_portrait.png",
+      "sprite": "/assets/images/minigames/water/floating_leaf_gen.png",
       "pos": {
         "x": 420,
         "y": 180
@@ -69,7 +66,7 @@
     {
       "id": "fish_a",
       "category": "swimming",
-      "sprite": "/assets/images/illustrations/洋人女性.png",
+      "sprite": "/assets/images/minigames/water/fish_silver_gen.png",
       "pos": {
         "x": 260,
         "y": 280
@@ -81,11 +78,11 @@
       },
       "valueTier": "premium",
       "pull": {
-        "zoneSize": 0.18,
-        "sliderSpeed": 1,
+        "zoneSize": 0.22,
+        "sliderSpeed": 0.78,
         "rhythm": "stable",
         "failurePolicy": "escape",
-        "timeLimitSec": 12
+        "timeLimitSec": 15
       },
       "cue": "晨光里的小鱼群",
       "onPullSuccess": [
@@ -101,7 +98,7 @@
     {
       "id": "fish_b",
       "category": "swimming",
-      "sprite": "/assets/images/illustrations/洋人女性.png",
+      "sprite": "/assets/images/minigames/water/fish_dark_gen.png",
       "pos": {
         "x": 540,
         "y": 320
@@ -118,11 +115,11 @@
       },
       "valueTier": "premium",
       "pull": {
-        "zoneSize": 0.14,
-        "sliderSpeed": 1.08,
+        "zoneSize": 0.18,
+        "sliderSpeed": 0.9,
         "rhythm": "burst",
         "failurePolicy": "escape",
-        "timeLimitSec": 11
+        "timeLimitSec": 14
       },
       "cue": "倏忽掠过的一道影子",
       "onPullSuccess": [
@@ -138,18 +135,18 @@
     {
       "id": "sunk_branch",
       "category": "sunken",
-      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "sprite": "/assets/images/minigames/water/submerged_box_corner_gen.png",
       "pos": {
         "x": 380,
         "y": 440
       },
       "depth": 0.75,
       "pull": {
-        "zoneSize": 0.15,
-        "sliderSpeed": 0.92,
+        "zoneSize": 0.16,
+        "sliderSpeed": 0.78,
         "rhythm": "heavy_sink",
         "failurePolicy": "snap",
-        "timeLimitSec": 13
+        "timeLimitSec": 17
       },
       "cue": "陷在泥里的硬物",
       "onPullSuccess": [

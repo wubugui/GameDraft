@@ -1440,10 +1440,11 @@ class NodeInspector(QWidget):
             expr_edit.setPlaceholderText(
                 '{"all":[...]} / {"scenario":"...","phase":"...","status":"done"} 等',
             )
-            expr_edit.setMinimumHeight(60)
+            expr_edit.setMinimumHeight(240)
+            expr_edit.setMaximumHeight(720)
             expr_edit.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
-                QSizePolicy.Policy.Minimum,
+                QSizePolicy.Policy.MinimumExpanding,
             )
             expr_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             expr_edit.textChanged.connect(self._emit_changed)

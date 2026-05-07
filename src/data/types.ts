@@ -31,6 +31,8 @@ import type { AssetManager } from '../core/AssetManager';
 export enum GameState {
   MainMenu = 'MainMenu',
   Exploring = 'Exploring',
+  /** 探索中下发的同步/异步指令链在执行中（不接收移动与场景交互），执行完或未占用则回到 Exploring */
+  ActionSequence = 'ActionSequence',
   Dialogue = 'Dialogue',
   Encounter = 'Encounter',
   Cutscene = 'Cutscene',
@@ -155,6 +157,10 @@ export interface HotspotDef {
   interactionRange: number;
   /** 组内 AND；可为 flag / quest / scenario 等 `ConditionExpr` 叶子或组合 */
   conditions?: ConditionExpr[];
+  /**
+   * 为 true 且配置了非空 conditions 时：条件不满足则热区不渲染、不参与交互（与过场绑定、sceneMemory.enabled 叠加：二者任一为 false 则仍不可见）。
+   */
+  conditionHidesEntity?: boolean;
   label?: string;
   autoTrigger?: boolean;
   data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData;
@@ -235,8 +241,18 @@ export type ScenarioConditionLeaf = {
   outcome?: string | number | boolean | null;
 };
 
+/** Scenario 整条线生命周期（与 manualLineLifecycle + activateScenario 一致，读存档 lineLifecycle） */
+export type ScenarioLineConditionLeaf = {
+  scenarioLine: string;
+  lineStatus: 'inactive' | 'active' | 'completed';
+};
+
 /** 图对话原子条件（无逻辑组合） */
-export type GraphConditionLeaf = Condition | QuestConditionLeaf | ScenarioConditionLeaf;
+export type GraphConditionLeaf =
+  | Condition
+  | QuestConditionLeaf
+  | ScenarioConditionLeaf
+  | ScenarioLineConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -355,6 +371,11 @@ export interface ScenarioCatalogPhaseEntry {
 /** scenarios.json 根（编辑器与 exposes 运行时） */
 export interface ScenarioCatalogEntry {
   id: string;
+  /**
+   * 为 true 时本条线在运行时须先执行 `activateScenario` 才可 `setScenarioPhase`；
+   * `completeScenario` 后禁止再改 phase。存档中单独持久化线状态。
+   */
+  manualLineLifecycle?: boolean;
   description?: string;
   /**
    * 进线门槛：开始本条 scenario 前应满足的 phase 完成条件。
@@ -406,6 +427,12 @@ export interface NpcDef {
    */
   dialogueStandAnimState?: string;
   interactionRange: number;
+  /** 组内 AND；可为 flag / quest / scenarioLine 等 `ConditionExpr`，与 HotspotDef.conditions 一致 */
+  conditions?: ConditionExpr[];
+  /**
+   * 为 true 且配置了非空 conditions 时：条件不满足则 NPC 不渲染、不参与交互（与过场绑定、sceneMemory.enabled 叠加）。
+   */
+  conditionHidesEntity?: boolean;
   /** 动画包清单路径，如 `/assets/animation/<包目录名>/anim.json`；图集由清单内 spritesheet 相对该目录解析 */
   animFile?: string;
   /** 进入场景时播放的状态名；缺省时优先 idle，否则取 states 中第一个 */
@@ -493,9 +520,16 @@ export interface HotspotRuntimeOverride {
   displayImage?: HotspotDisplayImage | null;
 }
 
+/** 普通 Zone 的可存档覆盖（depth_floor 不参与） */
+export interface ZoneRuntimeOverride {
+  enabled?: boolean;
+}
+
 export interface SceneEntityRuntimeOverrides {
   npcs: Record<string, NpcRuntimeOverride>;
   hotspots: Record<string, HotspotRuntimeOverride>;
+  /** standard zone：`enabled === false` 时不注册到 ZoneSystem；depth_floor 始终注册 */
+  zones: Record<string, ZoneRuntimeOverride>;
 }
 
 export interface SceneRuntimeState {
@@ -741,7 +775,17 @@ export interface ICutsceneActor extends IEmoteBubbleAnchor {
   readonly entityId: string;
   x: number;
   y: number;
-  moveTo(targetX: number, targetY: number, speed: number, moveAnimState?: string): Promise<void>;
+  /**
+   * moveAnimState 省略则移动段末不强制切 idle（见 Player/Npc 实现）。
+   * faceTowardMovement 为 true 时沿路径每帧根据运动方向更新朝向（含斜向）；默认 false 保持旧语义。
+   */
+  moveTo(
+    targetX: number,
+    targetY: number,
+    speed: number,
+    moveAnimState?: string,
+    faceTowardMovement?: boolean,
+  ): Promise<void>;
   playAnimation(name: string): void;
   setFacing(dx: number, dy: number): void;
   setVisible(visible: boolean): void;
@@ -842,6 +886,8 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set([
   'persistNpcEnablePatrol',
   'persistNpcEntityEnabled',
   'persistHotspotEnabled',
+  'setZoneEnabled',
+  'persistZoneEnabled',
   'persistNpcAt',
   'persistNpcAnimState',
   'persistPlayNpcAnimation',

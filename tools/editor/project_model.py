@@ -546,6 +546,23 @@ class ProjectModel(QObject):
             out.append((hid, str(label)[:40]))
         return out
 
+    def standard_zone_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """普通 Zone（排除 depth_floor）的 id，供 Action 下拉。"""
+        if not scene_id:
+            return []
+        sc = self.scenes.get(scene_id) or {}
+        out: list[tuple[str, str]] = []
+        for z in sc.get("zones") or []:
+            if not isinstance(z, dict):
+                continue
+            if str(z.get("zoneKind") or "standard").strip() == "depth_floor":
+                continue
+            zid = str(z.get("id", "") or "").strip()
+            if not zid:
+                continue
+            out.append((zid, zid))
+        return out
+
     def entity_ids_for_scene(self, scene_id: str | None, kind: str) -> list[tuple[str, str]]:
         if kind == "npc":
             return self.npc_ids_for_scene(scene_id)
@@ -637,6 +654,32 @@ class ProjectModel(QObject):
 
     def all_shop_ids(self) -> list[tuple[str, str]]:
         return [(s["id"], s.get("name", s["id"])) for s in self.shops]
+
+    def all_water_minigame_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：`water_minigames/index.json` 登记项。"""
+        out: list[tuple[str, str]] = []
+        for row in self.water_minigames_index:
+            if not isinstance(row, dict):
+                continue
+            iid = str(row.get("id") or "").strip()
+            if not iid:
+                continue
+            label = str(row.get("label") or "").strip()
+            out.append((iid, label or iid))
+        return out
+
+    def all_sugar_wheel_minigame_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：`sugar_wheel/index.json` 登记项。"""
+        out: list[tuple[str, str]] = []
+        for row in self.sugar_wheel_index:
+            if not isinstance(row, dict):
+                continue
+            iid = str(row.get("id") or "").strip()
+            if not iid:
+                continue
+            label = str(row.get("label") or "").strip()
+            out.append((iid, label or iid))
+        return out
 
     def all_filter_ids(self) -> list[str]:
         return list(self.filter_defs.keys())

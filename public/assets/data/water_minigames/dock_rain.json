@@ -3,7 +3,7 @@
   "label": "雾津码头 · 雨后 · 雾",
   "spotId": "dock_wharf",
   "waterBottom": {
-    "texture": "/assets/images/illustrations/堆积的箱子.png",
+    "texture": "/assets/images/minigames/water/riverbed_dock_murky.png",
     "tint": "#1d3440",
     "depth": 0.72
   },
@@ -20,21 +20,18 @@
     {
       "id": "murk_grass",
       "category": "grass",
-      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "sprite": "/assets/images/minigames/water/dead_reeds_gen.png",
       "pos": {
         "x": 200,
         "y": 420
       },
       "depth": 0.2,
-      "hint": "[水草] 铁锈味很重。",
-      "onPick": [],
-      "onPullSuccess": [],
-      "onPullFail": []
+      "hint": "[水草] 铁锈味很重。"
     },
     {
       "id": "wet_paper",
       "category": "floating",
-      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "sprite": "/assets/images/minigames/water/wet_paper_gen.png",
       "pos": {
         "x": 500,
         "y": 210
@@ -65,7 +62,7 @@
     {
       "id": "bubble_coin",
       "category": "floating",
-      "sprite": "/assets/images/illustrations/洋人女性.png",
+      "sprite": "/assets/images/minigames/water/bubble_coin_gen.png",
       "pos": {
         "x": 340,
         "y": 240
@@ -90,7 +87,7 @@
     {
       "id": "eel_like",
       "category": "swimming",
-      "sprite": "/assets/images/illustrations/ghost_bride_flashback.png",
+      "sprite": "/assets/images/minigames/water/water_monkey_shadow_gen.png",
       "pos": {
         "x": 620,
         "y": 360
@@ -102,11 +99,11 @@
       },
       "valueTier": "premium",
       "pull": {
-        "zoneSize": 0.12,
-        "sliderSpeed": 1.12,
+        "zoneSize": 0.17,
+        "sliderSpeed": 0.92,
         "rhythm": "spasm",
         "failurePolicy": "bite",
-        "timeLimitSec": 11
+        "timeLimitSec": 13
       },
       "cue": "雾里一闪的长条影子",
       "onPullFail": [
@@ -129,18 +126,18 @@
     {
       "id": "ledger_sink",
       "category": "sunken",
-      "sprite": "/assets/images/illustrations/堆积的箱子.png",
+      "sprite": "/assets/images/minigames/water/submerged_box_corner_gen.png",
       "pos": {
         "x": 410,
         "y": 460
       },
       "depth": 0.88,
       "pull": {
-        "zoneSize": 0.1,
-        "sliderSpeed": 0.98,
+        "zoneSize": 0.16,
+        "sliderSpeed": 0.78,
         "rhythm": "heavy_sink",
         "failurePolicy": "snap",
-        "timeLimitSec": 14
+        "timeLimitSec": 17
       },
       "cue": "半截浸烂的木板箱角",
       "onPullSuccess": [

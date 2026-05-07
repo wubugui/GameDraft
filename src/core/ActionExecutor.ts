@@ -1,31 +1,44 @@
 import type { ActionDef, ZoneActionContext } from '../data/types';
+import { GameState } from '../data/types';
 import type { EventBus } from './EventBus';
 import type { FlagStore, FlagValue } from './FlagStore';
+import type { GameStateController } from './GameStateController';
 
 /**
- * 批处理路径（executeBatch / executeBatchAwait）会顺序 await handler 返回的 Promise。
- * 对话 `executeForDialogue` 同样 await；失败时向上抛出以便中断 runActions。
+ * 所有 action 统一走 executeAwait：顺序 await handler 返回的 Promise。
+ * 无论调用来源（zone onEnter、图对话 runActions、热区 inspect、任务奖励等）语义一致。
  */
 export type ActionHandler = (
   params: Record<string, unknown>,
   zoneContext: ZoneActionContext | null,
 ) => void | Promise<void>;
 
-/** 仅当「非对话路径必须无效果、对话路径要等待」时使用（如 waitMs）；一般让 register 的 handler 返回 Promise即可。 */
-export type DialogueSequentialHandler = (params: Record<string, unknown>) => Promise<void>;
-
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
   private paramNamesMap: Map<string, string[]> = new Map();
-  private dialogueSequentialHandlers: Map<string, DialogueSequentialHandler> = new Map();
   private eventBus: EventBus;
   private flagStore: FlagStore;
+  private gameStateController: GameStateController | undefined;
   private zoneContextStack: ZoneActionContext[] = [];
   private resolveNotificationText: ((s: string) => string) | null = null;
+  /** destroy() 后置 true；ZoneSystem 等 Promise 链仍可能异步回调，需在入口短路避免误报 unknown */
+  private destroyed = false;
+  private warnedAfterDestroy = false;
 
-  constructor(eventBus: EventBus, flagStore: FlagStore) {
+  private static normalizeActionTypeKey(raw: unknown): string {
+    if (raw === null || raw === undefined) return '';
+    const s = typeof raw === 'string' ? raw : String(raw);
+    return s.replace(/^\uFEFF/, '').trim();
+  }
+
+  constructor(
+    eventBus: EventBus,
+    flagStore: FlagStore,
+    gameStateController?: GameStateController,
+  ) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
+    this.gameStateController = gameStateController;
     this.registerBuiltinHandlers();
   }
 
@@ -54,99 +67,68 @@ export class ActionExecutor {
     if (paramNames) this.paramNamesMap.set(type, paramNames);
   }
 
-  /**
-   * 对话专用顺序体（覆盖同名 `register` 在 executeForDialogue 中的行为）。
-   * 典型：`waitMs` 在热区必须为无操作，在对话才延时。
-   */
-  registerDialogueSequential(type: string, handler: DialogueSequentialHandler): void {
-    this.dialogueSequentialHandlers.set(type, handler);
-  }
-
   getParamNames(type: string): string[] | undefined {
-    return this.paramNamesMap.get(type);
+    const k = ActionExecutor.normalizeActionTypeKey(type);
+    return k === '' ? undefined : this.paramNamesMap.get(k);
   }
 
-  /** 是否已在 Registry / 内置中登记（对话标签合法性以该接口为准，而非仅 paramNames）。 */
   hasHandler(type: string): boolean {
-    return this.handlers.has(type);
+    const k = ActionExecutor.normalizeActionTypeKey(type);
+    return k !== '' && this.handlers.has(k);
   }
 
-  /** 当前是否在 zone batch 内（供 handler 读取，一般通过第二参数即可）。 */
   getZoneContext(): ZoneActionContext | null {
     if (this.zoneContextStack.length === 0) return null;
     return this.zoneContextStack[this.zoneContextStack.length - 1]!;
   }
 
   /**
-   * 单次触发、不保证顺序等待（如商店单次购买）。
-   * 若需与批内其它动作严格顺序，请用 `executeBatchAwait`。
+   * 单次触发、不保证顺序（如商店单次购买）。
+   * 若需与批内其它动作严格顺序，请用 executeBatchAwait。
    */
   execute(action: ActionDef): void {
+    if (this.destroyed) return;
     void this.executeAwait(action).catch((e) => {
-      console.warn(`ActionExecutor: async action "${action.type}" failed`, e);
+      const t = ActionExecutor.normalizeActionTypeKey(action.type);
+      console.warn(`ActionExecutor: async action "${t}" failed`, e);
     });
   }
 
-  /** 单条动作：await handler；供演出/切场景等需与下一条指令严格顺序的场景。 */
+  /** 单条动作：await handler 返回的 Promise。所有需要顺序执行的路径共用此入口。 */
   async executeAwait(action: ActionDef): Promise<void> {
-    const handler = this.handlers.get(action.type);
-    const zctx = this.getZoneContext();
-    if (!handler) {
-      console.warn(`ActionExecutor: unknown action type "${action.type}"`);
+    if (this.destroyed) {
+      if (!this.warnedAfterDestroy) {
+        this.warnedAfterDestroy = true;
+        console.warn(
+          'ActionExecutor: 实例已销毁，仍收到动作请求（已忽略）。常见于关预览/HMR/destroy 时 zone 动作链尚未结束。',
+        );
+      }
       return;
     }
-    await Promise.resolve(handler(action.params, zctx));
-  }
-
-  /**
-   * 图对话 runActions：与批处理同一套 handler；优先 `registerDialogueSequential`；
-   * 失败时抛出，由 GraphDialogueManager 结束对话并打日志。
-   */
-  async executeForDialogue(action: ActionDef): Promise<void> {
-    const seq = this.dialogueSequentialHandlers.get(action.type);
-    if (seq) {
-      await seq(action.params);
+    const typeKey = ActionExecutor.normalizeActionTypeKey(action.type);
+    if (!typeKey) {
+      console.warn('ActionExecutor: action.type 无效，已跳过', action);
       return;
     }
-    const handler = this.handlers.get(action.type);
-    if (!handler) {
-      console.warn(`ActionExecutor: unknown action type "${action.type}"`);
-      return;
-    }
-    const zctx = this.getZoneContext();
-    await Promise.resolve(handler(action.params, zctx));
-  }
-
-  /** @deprecated 请用 `executeBatchAwait`，以顺序等待异步 handler。 */
-  executeBatch(actions: ActionDef[]): void {
-    void this.executeBatchAwait(actions).catch((e) => {
-      console.warn('ActionExecutor: executeBatch failed', e);
+    await this.runWithExploreActionLock(async () => {
+      const handler = this.handlers.get(typeKey);
+      if (!handler) {
+        console.warn(`ActionExecutor: unknown action type "${typeKey}"`);
+        return;
+      }
+      const zctx = this.getZoneContext();
+      await Promise.resolve(handler(action.params, zctx));
     });
   }
 
-  /** 顺序执行每条动作并 await Promise，供任务奖励、延迟事件、区域、遭遇等批处理。 */
+  /** 顺序执行批量动作并 await 每一条。 */
   async executeBatchAwait(actions: ActionDef[]): Promise<void> {
     for (const action of actions) {
       await this.executeAwait(action);
     }
   }
 
-  /**
-   * 按顺序执行并 await handler（与 `executeBatchAwait` 单条语义一致，失败向上抛）。
-   */
-  async executeSequential(action: ActionDef): Promise<void> {
-    await this.executeAwait(action);
-  }
-
-  async executeBatchSequential(actions: ActionDef[]): Promise<void> {
-    for (const action of actions) {
-      await this.executeAwait(action);
-    }
-  }
-
-  /**
-   * ZoneSystem 专用：执行期间 handler 第二参数为非空 zone 上下文（enableRuleOffers 等使用）。
-   */
+  /** ZoneSystem 专用：执行期间 handler 第二参数为非空 zone 上下文。 */
   async executeBatchInZoneContext(actions: ActionDef[], context: ZoneActionContext): Promise<void> {
     this.zoneContextStack.push(context);
     try {
@@ -157,9 +139,30 @@ export class ActionExecutor {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.handlers.clear();
     this.paramNamesMap.clear();
-    this.dialogueSequentialHandlers.clear();
     this.zoneContextStack = [];
+  }
+
+  /**
+   * 仅在当前为 Exploring 时切入 ActionSequence（对话/遭遇/演出等不参与，避免与子状态抢占）。
+   * 若在动作内部切到 Dialogue 等后再回到 Exploring，下一条 executeAwait 会再次加锁。
+   */
+  private async runWithExploreActionLock<T>(work: () => Promise<T>): Promise<T> {
+    const sc = this.gameStateController;
+    if (!sc) return work();
+    let appliedExploreLock = false;
+    if (sc.currentState === GameState.Exploring) {
+      sc.setState(GameState.ActionSequence);
+      appliedExploreLock = true;
+    }
+    try {
+      return await work();
+    } finally {
+      if (appliedExploreLock && sc.currentState === GameState.ActionSequence) {
+        sc.setState(GameState.Exploring);
+      }
+    }
   }
 }

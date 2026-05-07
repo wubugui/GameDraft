@@ -185,6 +185,12 @@
             "phase": "真相揭示",
             "status": "done"
           }
+        },
+        {
+          "type": "completeScenario",
+          "params": {
+            "scenarioId": "码头水鬼"
+          }
         }
       ],
       "next": "n_8"

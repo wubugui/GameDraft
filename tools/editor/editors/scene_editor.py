@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGroupBox, QFormLayout, QLineEdit, QDoubleSpinBox,
     QSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QScrollArea,
     QStackedWidget, QTextEdit, QToolBar, QMenu, QGraphicsTextItem,
+    QGraphicsLineItem,
     QToolButton, QMessageBox, QDialog, QDialogButtonBox, QAbstractItemView,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
     QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
@@ -31,7 +32,7 @@ from PySide6.QtGui import (
     QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
     QShortcut, QKeySequence, QPainterPath,
 )
-from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, Signal, QTimer, QElapsedTimer
+from PySide6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, Signal, QTimer, QElapsedTimer, QLineF
 
 from ..project_model import ProjectModel
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
@@ -1870,6 +1871,27 @@ class TargetSpawnPickerDialog(QDialog):
 
 _MARKER_CAM_PICK = QColor(255, 70, 90, 210)
 _MARKER_CAM_EDGE = QPen(QColor(255, 210, 220), 0)
+_MARKER_WAY_FILL = QColor(80, 160, 255, 220)
+_MARKER_DEST_FILL = _MARKER_CAM_PICK
+_ROUTE_EDGE_PEN = QPen(QColor(255, 200, 120), 0)
+
+
+def normalize_move_entity_waypoints(raw: object) -> list[tuple[float, float]]:
+    """解析 moveEntityTo.params.waypoints（世界坐标途经点序列）。"""
+    out: list[tuple[float, float]] = []
+    if not isinstance(raw, list):
+        return out
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        try:
+            x = float(it.get("x"))
+            y = float(it.get("y"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(x) and math.isfinite(y):
+            out.append((x, y))
+    return out
 
 
 class _WorldPointPickView(QGraphicsView):
@@ -1953,6 +1975,11 @@ class _WorldPointPickView(QGraphicsView):
         self.resetTransform()
         self.fitInView(sr, Qt.AspectRatioMode.KeepAspectRatio)
 
+    def _handle_left_pick_world(self, wx: float, wy: float) -> None:
+        """子类可覆写以实现折线多点；默认单点选中（镜头/单点选址）。"""
+        self.set_marker_world(wx, wy)
+        self.picked.emit(wx, wy)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.MiddleButton:
             self._middle_panning = True
@@ -1967,8 +1994,7 @@ class _WorldPointPickView(QGraphicsView):
             ry = float(max(r.top(), min(r.bottom(), sp.y())))
             rx = round(rx, 2)
             ry = round(ry, 2)
-            self.set_marker_world(rx, ry)
-            self.picked.emit(rx, ry)
+            self._handle_left_pick_world(rx, ry)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -2159,6 +2185,211 @@ class SceneEntityPositionPickerDialog(QDialog):
 
     def picked_xy(self) -> tuple[float, float]:
         return self._px, self._py
+class MoveEntityPathPickView(_WorldPointPickView):
+    """同一场景画布：〇 途经点模式左键追加折线顶点；〇 终点模式左键设定最终 x/y。"""
+
+    MODE_VERTEX = "vertex"
+    MODE_DEST = "dest"
+    routeChanged = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._pick_mode = self.MODE_VERTEX
+        self._vertices: list[tuple[float, float]] = []
+        self._dest_xy: tuple[float, float] = (400.0, 300.0)
+        self._route_items: list[QGraphicsItem] = []
+
+    def set_pick_mode(self, mode: str) -> None:
+        self._pick_mode = mode if mode in (self.MODE_VERTEX, self.MODE_DEST) else self.MODE_VERTEX
+
+    def vertices(self) -> list[tuple[float, float]]:
+        return list(self._vertices)
+
+    def set_vertices(self, verts: list[tuple[float, float]]) -> None:
+        self._vertices = list(verts)
+
+    def destination(self) -> tuple[float, float]:
+        return float(self._dest_xy[0]), float(self._dest_xy[1])
+
+    def set_destination(self, dx: float, dy: float) -> None:
+        self._dest_xy = (float(dx), float(dy))
+
+    def setup_from_scene_json(
+        self,
+        model: ProjectModel,
+        scene_id: str,
+    ) -> tuple[float, float]:
+        ww, wh = super().setup_from_scene_json(model, scene_id)
+        if self._marker is not None and self._marker.scene() is self._gfx:
+            self._gfx.removeItem(self._marker)
+        self._marker = None
+        dx, dy = self._dest_xy
+        self._dest_xy = (
+            float(max(0.0, min(self._world_w, dx))),
+            float(max(0.0, min(self._world_h, dy))),
+        )
+        nv: list[tuple[float, float]] = []
+        for vx, vy in self._vertices:
+            nv.append((
+                float(max(0.0, min(self._world_w, vx))),
+                float(max(0.0, min(self._world_h, vy))),
+            ))
+        self._vertices = nv
+        self._redraw_route()
+        return ww, wh
+
+    def pop_last_vertex(self) -> bool:
+        if not self._vertices:
+            return False
+        self._vertices.pop()
+        self._redraw_route()
+        return True
+
+    def clear_vertices(self) -> None:
+        self._vertices.clear()
+        self._redraw_route()
+
+    def _redraw_route(self) -> None:
+        for it in self._route_items:
+            try:
+                if it.scene() is self._gfx:
+                    self._gfx.removeItem(it)
+            except RuntimeError:
+                pass
+        self._route_items.clear()
+
+        rr_v = max(self.marker_radius_world() * 0.75, 3.5)
+        rr_d = max(self.marker_radius_world() * 1.05, 5.0)
+
+        pts: list[tuple[float, float]] = list(self._vertices) + [self._dest_xy]
+        for i in range(len(pts) - 1):
+            ax, ay = pts[i]
+            bx, by = pts[i + 1]
+            li = QGraphicsLineItem(QLineF(QPointF(ax, ay), QPointF(bx, by)))
+            li.setPen(_ROUTE_EDGE_PEN)
+            li.setZValue(30.0)
+            self._gfx.addItem(li)
+            self._route_items.append(li)
+
+        pen_v = QPen(QColor(200, 235, 255), 0)
+        for vx, vy in self._vertices:
+            el = QGraphicsEllipseItem(vx - rr_v, vy - rr_v, rr_v * 2, rr_v * 2)
+            el.setBrush(QBrush(_MARKER_WAY_FILL))
+            el.setPen(pen_v)
+            el.setZValue(40.0)
+            self._gfx.addItem(el)
+            self._route_items.append(el)
+
+        fx, fy = self._dest_xy
+        dest_item = QGraphicsEllipseItem(fx - rr_d, fy - rr_d, rr_d * 2, rr_d * 2)
+        dest_item.setBrush(QBrush(_MARKER_DEST_FILL))
+        dest_item.setPen(_MARKER_CAM_EDGE)
+        dest_item.setZValue(48.0)
+        self._gfx.addItem(dest_item)
+        self._route_items.append(dest_item)
+        self.routeChanged.emit()
+
+    def _handle_left_pick_world(self, wx: float, wy: float) -> None:
+        rx = float(max(0.0, min(self._world_w, wx)))
+        ry = float(max(0.0, min(self._world_h, wy)))
+        if self._pick_mode == self.MODE_VERTEX:
+            self._vertices.append((rx, ry))
+        else:
+            self._dest_xy = (rx, ry)
+        self._redraw_route()
+
+
+class MoveEntityToMapPickerDialog(QDialog):
+    """moveEntityTo：必选终点（红）在世界地图上；途经点可选（蓝折线）；仅在此对话框写入坐标。"""
+
+    def __init__(
+        self,
+        model: ProjectModel,
+        scene_id: str,
+        dest_x: float,
+        dest_y: float,
+        waypoints_xy: list[tuple[float, float]] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._scene_id = scene_id
+        sc0 = model.scenes.get(scene_id, {})
+        title_nm = sc0.get("name", scene_id)
+        self.setWindowTitle(f"移动目标路径 — {scene_id}（{title_nm}）")
+        self.resize(980, 620)
+
+        root = QVBoxLayout(self)
+        root.addWidget(QLabel(
+            "左键在地图上点击：在「途经点」模式下逐个追加折线顶点；切换到「终点」模式后单击设定最终到达位置。\n"
+            "中键平移画布，滚轮缩放。终点为必填；未设置途经点时游戏中沿直线移动到终点。"
+        ))
+
+        toolbar = QHBoxLayout()
+        self._rb_vertex = QRadioButton("途经点模式")
+        self._rb_dest = QRadioButton("终点模式")
+        self._rb_vertex.setChecked(True)
+        grp = QButtonGroup(self)
+        grp.addButton(self._rb_vertex)
+        grp.addButton(self._rb_dest)
+        toolbar.addWidget(self._rb_vertex)
+        toolbar.addWidget(self._rb_dest)
+        btn_undo = QPushButton("撤销上一途经点")
+        btn_undo.clicked.connect(self._on_undo_vertex)
+        btn_clear = QPushButton("清空途经点")
+        btn_clear.clicked.connect(self._on_clear_vertices)
+        toolbar.addWidget(btn_undo)
+        toolbar.addWidget(btn_clear)
+        toolbar.addStretch(1)
+        root.addLayout(toolbar)
+
+        self._lbl = QLabel("", self)
+        self._lbl.setStyleSheet("font-family: Consolas; font-size:12px;")
+        root.addWidget(self._lbl)
+
+        self._view = MoveEntityPathPickView(self)
+        self._view.routeChanged.connect(self._sync_label)
+        self._view.set_vertices(list(waypoints_xy or []))
+        self._view.set_destination(dest_x, dest_y)
+        self._view.setup_from_scene_json(model, scene_id)
+
+        root.addWidget(self._view, 1)
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        )
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+        root.addWidget(bbox)
+
+        self._rb_vertex.toggled.connect(lambda _on: self._sync_mode_radio())
+        self._rb_dest.toggled.connect(lambda _on: self._sync_mode_radio())
+        self._sync_mode_radio()
+        QTimer.singleShot(0, self._view.fit_scene)
+        self._sync_label()
+
+    def _sync_mode_radio(self) -> None:
+        self._view.set_pick_mode(
+            MoveEntityPathPickView.MODE_VERTEX if self._rb_vertex.isChecked()
+            else MoveEntityPathPickView.MODE_DEST,
+        )
+
+    def _on_undo_vertex(self) -> None:
+        if self._view.pop_last_vertex():
+            pass  # routeChanged emits
+
+    def _on_clear_vertices(self) -> None:
+        self._view.clear_vertices()
+
+    def _sync_label(self) -> None:
+        dx, dy = self._view.destination()
+        n = len(self._view.vertices())
+        self._lbl.setText(f"途经点个数: {n}   终点: x={dx:.2f}  y={dy:.2f}")
+
+    def result_waypoints_objects(self) -> list[dict[str, float]]:
+        return [{"x": round(float(vx), 2), "y": round(float(vy), 2)} for vx, vy in self._view.vertices()]
+
+    def result_destination(self) -> tuple[float, float]:
+        return self._view.destination()
 
 
 # ---------------------------------------------------------------------------
@@ -2796,6 +3027,13 @@ class ScenePropertyPanel(QScrollArea):
         cond_g = self._section("触发条件 conditions", start_open=True)
         cond_inner = QWidget()
         cond_l = QVBoxLayout(cond_inner)
+        self._hs_cond_hide_entity = QCheckBox("条件不满足时隐藏实体")
+        self._hs_cond_hide_entity.setToolTip(
+            "需在下方配置非空 conditions；"
+            "勾选后条件失败时热点不渲染且不可碰撞（仍受 sceneMemory / 过场基底显隐约束）。",
+        )
+        self._hs_cond_hide_entity.stateChanged.connect(lambda _s: self.changed.emit())
+        cond_l.addWidget(self._hs_cond_hide_entity)
         self._hs_cond = ConditionEditor("Conditions")
         cond_l.addWidget(self._hs_cond)
         cond_g.add_body(cond_inner)
@@ -3396,6 +3634,9 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
         self._hs_cond.set_data(hs.get("conditions", []))
+        self._hs_cond_hide_entity.blockSignals(True)
+        self._hs_cond_hide_entity.setChecked(hs.get("conditionHidesEntity", False) is True)
+        self._hs_cond_hide_entity.blockSignals(False)
 
         di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
         pimg = str(di.get("image", "") or "")
@@ -3719,6 +3960,10 @@ class ScenePropertyPanel(QScrollArea):
             hs["conditions"] = conds
         elif "conditions" in hs:
             del hs["conditions"]
+        if self._hs_cond_hide_entity.isChecked():
+            hs["conditionHidesEntity"] = True
+        elif "conditionHidesEntity" in hs:
+            del hs["conditionHidesEntity"]
 
         path = self._hs_disp_row.path().strip()
         ww = float(self._hs_disp_ww.value())
@@ -3851,6 +4096,21 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("cutsceneIds", npc_multi_row)
         base_g.add_body(base_inner)
         outer.addWidget(base_g)
+
+        npc_cond_g = self._section("触发条件 conditions", start_open=False)
+        npc_cond_g.set_header_tool_tip("默认折叠；与热点相同，控制是否可交互；可选「条件不满足时隐藏」。")
+        npc_cond_inner = QWidget()
+        npc_cond_l = QVBoxLayout(npc_cond_inner)
+        self._npc_cond_hide_entity = QCheckBox("条件不满足时隐藏实体")
+        self._npc_cond_hide_entity.setToolTip(
+            "需配置非空 conditions；勾选后条件失败时 NPC 不可见（仍受 sceneMemory / 过场基底显隐约束）。",
+        )
+        self._npc_cond_hide_entity.stateChanged.connect(lambda _s: self.changed.emit())
+        npc_cond_l.addWidget(self._npc_cond_hide_entity)
+        self._npc_cond = ConditionEditor("Conditions")
+        npc_cond_l.addWidget(self._npc_cond)
+        npc_cond_g.add_body(npc_cond_inner)
+        outer.addWidget(npc_cond_g)
 
         ncc_g = self._section("行走阻挡碰撞多边形", start_open=False)
         ncc_g.set_header_tool_tip(
@@ -4368,6 +4628,11 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_cutscene_ids_label.setText(
             self._format_cutscene_ids_label(self._npc_cutscene_ids_pending),
         )
+        self._npc_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
+        self._npc_cond.set_data(npc.get("conditions", []))
+        self._npc_cond_hide_entity.blockSignals(True)
+        self._npc_cond_hide_entity.setChecked(npc.get("conditionHidesEntity", False) is True)
+        self._npc_cond_hide_entity.blockSignals(False)
         self._npc_facing.blockSignals(True)
         try:
             cur_f = str(npc.get("initialFacing", "") or "").strip().lower()
@@ -4448,6 +4713,15 @@ class ScenePropertyPanel(QScrollArea):
                 npc["cutsceneOnly"] = False
         else:
             npc.pop("cutsceneOnly", None)
+        n_conds = self._npc_cond.to_list()
+        if n_conds:
+            npc["conditions"] = n_conds
+        elif "conditions" in npc:
+            del npc["conditions"]
+        if self._npc_cond_hide_entity.isChecked():
+            npc["conditionHidesEntity"] = True
+        elif "conditionHidesEntity" in npc:
+            del npc["conditionHidesEntity"]
         anim = self._npc_anim.current_id().strip()
         if anim:
             npc["animFile"] = anim

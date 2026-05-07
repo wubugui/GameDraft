@@ -43,7 +43,31 @@
         "码头_脚帮帮众看板对话",
         "码头看板",
         "码头看板官差"
-      ]
+      ],
+      "manualLineLifecycle": true
+    },
+    {
+      "id": "外国人捞箱子",
+      "phases": {
+        "查看水猴子": {
+          "status": "pending"
+        },
+        "主角下水捞箱子": {
+          "status": "pending"
+        },
+        "箱子捞起来": {
+          "status": "pending"
+        },
+        "初识洋人": {
+          "status": "pending"
+        }
+      },
+      "description": "外国人捞箱子",
+      "exposeAfterPhase": "初识洋人",
+      "dialogueGraphIds": [
+        "码头_看热闹的路人"
+      ],
+      "manualLineLifecycle": true
     }
   ]
 }

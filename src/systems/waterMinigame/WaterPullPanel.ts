@@ -195,16 +195,16 @@ export class WaterPullPanel extends Container {
     const base = Math.max(0.2, this.params.sliderSpeed);
     const held = this.liftHeld();
 
-    // marker 的 0 在顶部、1 在底部。松手向顶部漂；按住必须能把黄条从顶部拉回。
-    let accel = (held ? 1.35 : -0.7) * base;
-    if (this.params.rhythm === 'heavy_sink') accel = (held ? 1.7 : -1.0) * base;
+    // marker 的 0 在顶部、1 在底部。按住下拉，松手让水下目标往上拽。
+    let accel = (held ? 1.12 : -0.62) * base;
+    if (this.params.rhythm === 'heavy_sink') accel = (held ? 1.38 : -0.9) * base;
     else if (this.params.rhythm === 'burst') accel *= this.burstTelegraph > 0.8 ? 1.25 : 1.0;
     else if (this.params.rhythm === 'spasm') accel *= 1 + this.spasmKick * 0.25;
 
     this.markerVel += accel * dt * 2.4;
     this.markerVel *= Math.exp(-dt * (held ? 2.1 : 2.8));
 
-    const maxVel = (this.params.rhythm === 'heavy_sink' ? 0.95 : 1.15) * base;
+    const maxVel = (this.params.rhythm === 'heavy_sink' ? 0.78 : 0.95) * base;
     this.markerVel = Math.max(-maxVel, Math.min(maxVel, this.markerVel));
     this.marker += this.markerVel * dt * 1.1;
     if (this.marker < 0.02) {
@@ -231,20 +231,23 @@ export class WaterPullPanel extends Container {
 
     const overlap = this.inZone();
     if (overlap) {
-      let rate = 0.3;
-      if (this.params.rhythm === 'heavy_sink') rate = 0.16;
-      if (this.params.rhythm === 'burst') rate = 0.34;
-      if (this.params.rhythm === 'spasm') rate = 0.24;
+      let rate = 0.34;
+      if (this.params.rhythm === 'heavy_sink') rate = 0.22;
+      if (this.params.rhythm === 'burst') rate = 0.36;
+      if (this.params.rhythm === 'spasm') rate = 0.28;
       this.progress = Math.min(1, this.progress + rate * step);
     } else {
-      let drain = 0.09;
-      if (this.params.rhythm === 'heavy_sink') drain = this.liftHeld() ? 0.26 : 0.18;
-      else if (this.params.rhythm === 'spasm') drain = 0.14 + this.spasmKick * 0.1;
-      else if (this.params.rhythm === 'burst') drain = 0.12 + this.burstTelegraph * 0.08;
+      let drain = 0.07;
+      if (this.params.rhythm === 'heavy_sink') drain = this.liftHeld() ? 0.18 : 0.13;
+      else if (this.params.rhythm === 'spasm') drain = 0.11 + this.spasmKick * 0.08;
+      else if (this.params.rhythm === 'burst') drain = 0.09 + this.burstTelegraph * 0.06;
       this.progress = Math.max(0, this.progress - drain * step);
     }
 
     const rem = Math.max(0, this.limit - this.elapsed);
+    const controlHint = this.marker < this.greenCenter
+      ? '按住鼠标或空格'
+      : '松开一下';
     const rhythmHint =
       this.params.rhythm === 'burst' && this.burstTelegraph > 0.01
         ? '（前摇）'
@@ -252,7 +255,7 @@ export class WaterPullPanel extends Container {
           ? '（猛拽）'
           : overlap
             ? '（在区内）'
-            : '（按住鼠标或空格拉回黄条）';
+            : `（${controlHint}）`;
     this.hint.text = this.params.resolveText(
       `[水边拉扯] 剩余 ${rem.toFixed(1)}s  ${rhythmHint}`,
     );

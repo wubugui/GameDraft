@@ -16,7 +16,13 @@ export class Player implements ICutsceneActor {
   private inputManager: InputManager;
   private depthCollision: ((worldX: number, worldY: number) => boolean) | null = null;
 
-  private moveTarget: { x: number; y: number; speed: number; resolve: () => void } | null = null;
+  private moveTarget: {
+    x: number; y: number; speed: number; resolve: () => void;
+    /** 仅在动作系统主动请求了位移动画时在到达段末切回 idle，避免 scripting 不写动画时也改写当前帧 */
+    playIdleOnArrive: boolean;
+    /** true：段内每帧按剩余位移方向更新 sprite 朝向（斜向行走） */
+    faceTowardMovement: boolean;
+  } | null = null;
 
   private collisionsEnabled = true;
   private walkSpeed = DEFAULT_PLAYER_WALK_SPEED;
@@ -75,15 +81,37 @@ export class Player implements ICutsceneActor {
     this.sprite.container.visible = visible;
   }
 
-  moveTo(targetX: number, targetY: number, speed: number, _moveAnimState?: string): Promise<void> {
+  moveTo(
+    targetX: number,
+    targetY: number,
+    speed: number,
+    moveAnimState?: string,
+    faceTowardMovement?: boolean,
+  ): Promise<void> {
     if (this.moveTarget) {
       this.moveTarget.resolve();
     }
     return new Promise<void>(resolve => {
-      this.moveTarget = { x: targetX, y: targetY, speed, resolve };
+      const anim = typeof moveAnimState === 'string' ? moveAnimState.trim() : '';
+      const toward = faceTowardMovement === true;
+      this.moveTarget = {
+        x: targetX,
+        y: targetY,
+        speed,
+        resolve,
+        playIdleOnArrive: Boolean(anim),
+        faceTowardMovement: toward,
+      };
       const dx = targetX - this.sprite.x;
-      this.sprite.setDirection(dx, 0);
-      this.sprite.playAnimation(ANIM_WALK);
+      const dy = targetY - this.sprite.y;
+      if (toward) {
+        this.setFacing(dx, dy);
+      } else {
+        this.sprite.setDirection(dx, 0);
+      }
+      if (anim) {
+        this.sprite.playAnimation(anim);
+      }
     });
   }
 
@@ -102,13 +130,18 @@ export class Player implements ICutsceneActor {
       if (dist <= step) {
         this.sprite.x = t.x;
         this.sprite.y = t.y;
-        this.sprite.playAnimation(ANIM_IDLE);
+        if (t.playIdleOnArrive) {
+          this.sprite.playAnimation(ANIM_IDLE);
+        }
         const resolve = t.resolve;
         this.moveTarget = null;
         resolve();
       } else {
         const nx = dx / dist;
         const ny = dy / dist;
+        if (t.faceTowardMovement) {
+          this.setFacing(dx, dy);
+        }
         this.sprite.x += nx * step;
         this.sprite.y += ny * step;
       }
@@ -117,6 +150,10 @@ export class Player implements ICutsceneActor {
   }
 
   update(dt: number): void {
+    if (this.moveTarget) {
+      this.cutsceneUpdate(dt);
+      return;
+    }
     const dir = this.inputManager.getMovementDirection();
     const isMoving = dir.x !== 0 || dir.y !== 0;
     const isRunning = this.inputManager.isRunning();

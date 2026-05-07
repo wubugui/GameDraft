@@ -16,7 +16,14 @@ export class Npc implements ICutsceneActor {
 
   private _x: number;
   private _y: number;
-  private moveTarget: { x: number; y: number; speed: number; resolve: () => void } | null = null;
+  private moveTarget: {
+    x: number;
+    y: number;
+    speed: number;
+    resolve: () => void;
+    /** false：仅在段起点 setFacing 一次（巡逻/旧演出）；true：段内每帧随运动方向更新左右镜像 */
+    faceTowardMovement: boolean;
+  } | null = null;
   /** loadSprite 时解析的静止状态，用于巡逻/演出移动结束后恢复，不硬编码 idle */
   private restAnimState: string | null = null;
   /** 对话期间暂停巡逻循环中的下一次 moveTo */
@@ -223,12 +230,19 @@ export class Npc implements ICutsceneActor {
     return true;
   }
 
-  moveTo(targetX: number, targetY: number, speed: number, moveAnimState?: string): Promise<void> {
+  moveTo(
+    targetX: number,
+    targetY: number,
+    speed: number,
+    moveAnimState?: string,
+    faceTowardMovement?: boolean,
+  ): Promise<void> {
     if (this.moveTarget) {
       this.moveTarget.resolve();
     }
     return new Promise<void>(resolve => {
-      this.moveTarget = { x: targetX, y: targetY, speed, resolve };
+      const toward = faceTowardMovement === true;
+      this.moveTarget = { x: targetX, y: targetY, speed, resolve, faceTowardMovement: toward };
       this.setFacing(targetX - this._x, targetY - this._y);
       const anim = moveAnimState?.trim();
       if (anim) {
@@ -257,6 +271,9 @@ export class Npc implements ICutsceneActor {
       } else {
         const nx = dx / dist;
         const ny = dy / dist;
+        if (t.faceTowardMovement) {
+          this.setFacing(dx, dy);
+        }
         this.x += nx * step;
         this.y += ny * step;
       }

@@ -289,6 +289,12 @@
             "phase": "官差已套近乎",
             "status": "pending"
           }
+        },
+        {
+          "type": "completeScenario",
+          "params": {
+            "scenarioId": "码头水鬼"
+          }
         }
       ],
       "next": "e4"

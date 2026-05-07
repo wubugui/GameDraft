@@ -17,6 +17,7 @@ import type {
   SceneEntityRuntimeValue,
   NpcRuntimeOverride,
   HotspotRuntimeOverride,
+  ZoneDef,
   CutsceneBindableEntityDef,
 } from '../data/types';
 import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
@@ -59,6 +60,9 @@ export class SceneManager implements IGameSystem {
   private sceneContainerBg: Container | null = null;
   private sceneMemory: Map<string, SceneMemory> = new Map();
   private cutsceneStaging: CutsceneStaging | null = null;
+
+  /** 当前游戏会话内禁用的 standard zone id（按 sceneId 分桶，不写档）；depth_floor 不可在此关闭 */
+  private zoneSessionDisabled: Map<string, Set<string>> = new Map();
 
   private fadeOverlay: Graphics | null = null;
   private isSwitching: boolean = false;
@@ -189,12 +193,148 @@ export class SceneManager implements IGameSystem {
     }
   }
 
+  /**
+   * InteractionSystem 中与过场绑定、sceneMemory.enabled 一致的基础显隐（不含触发条件图层）。
+   */
+  getHotspotBaseEnabledForInteraction(hotspot: Hotspot): boolean {
+    const active = this.activeCutsceneBindingId?.trim() || null;
+    const sceneId = this.currentScene?.id ?? '';
+    if (isCutsceneOnlyEntity(hotspot.def)) {
+      return isEntityBoundToCutscene(hotspot.def, active);
+    }
+    const snap = sceneId
+      ? this.getEntityRuntimeOverrideForDef(sceneId, 'hotspot', hotspot.def.id, hotspot.def)
+      : undefined;
+    if (typeof snap?.enabled === 'boolean') return snap.enabled;
+    return true;
+  }
+
+  /** 与 {@link getHotspotBaseEnabledForInteraction} 对偶，用于 NPC container.visible 基底。 */
+  getNpcBaseVisibleForInteraction(npc: Npc): boolean {
+    const active = this.activeCutsceneBindingId?.trim() || null;
+    const sceneId = this.currentScene?.id ?? '';
+    if (isCutsceneOnlyEntity(npc.def)) {
+      return isEntityBoundToCutscene(npc.def, active);
+    }
+    const snap = sceneId
+      ? this.getEntityRuntimeOverrideForDef(sceneId, 'npc', npc.def.id, npc.def)
+      : undefined;
+    if (snap && typeof snap.enabled === 'boolean') return snap.enabled;
+    return true;
+  }
+
+  /** 供 Action：会话级开关 standard zone（不写档）。`enabled === false` 时从 ZoneSystem Unregister 该 id。 */
+  setZoneEnabledSession(sceneId: string, zoneId: string, enabled: boolean): void {
+    const sid = sceneId.trim();
+    const zid = zoneId.trim();
+    if (!sid || !zid) {
+      console.warn('setZoneEnabledSession: sceneId 与 zoneId 不能为空');
+      return;
+    }
+    if (this.resolveZoneKind(sid, zid) === 'depth_floor') {
+      console.warn(`setZoneEnabledSession: zone "${zid}" 为 depth_floor，忽略`);
+      return;
+    }
+    if (enabled) {
+      const s = this.zoneSessionDisabled.get(sid);
+      s?.delete(zid);
+      if (s && s.size === 0) this.zoneSessionDisabled.delete(sid);
+    } else {
+      let bucket = this.zoneSessionDisabled.get(sid);
+      if (!bucket) {
+        bucket = new Set();
+        this.zoneSessionDisabled.set(sid, bucket);
+      }
+      bucket.add(zid);
+    }
+    this.refreshZonesAfterRuntimeChange(sid);
+  }
+
+  /**
+   * 供 Action：将 standard zone 的启用状态写入 sceneMemory（随存档）。
+   * `enabled === true` 时移除该 zone 的存档覆盖；`false` 时写入 enabled false。
+   */
+  mergePersistentZoneEnabled(sceneId: string, zoneId: string, enabled: boolean): void {
+    const sid = sceneId.trim();
+    const zid = zoneId.trim();
+    if (!sid || !zid) {
+      console.warn('mergePersistentZoneEnabled: sceneId 与 zoneId 不能为空');
+      return;
+    }
+    if (this.resolveZoneKind(sid, zid) === 'depth_floor') {
+      console.warn(`mergePersistentZoneEnabled: zone "${zid}" 为 depth_floor，忽略`);
+      return;
+    }
+    const mem = this.getWritableMemory(sid);
+    if (!mem) {
+      console.warn(`mergePersistentZoneEnabled: 无法写入 sceneMemory (${sid})`);
+      return;
+    }
+    if (!mem.entityOverrides.zones) mem.entityOverrides.zones = {};
+    if (enabled) {
+      delete mem.entityOverrides.zones[zid];
+    } else {
+      mem.entityOverrides.zones[zid] = { enabled: false };
+    }
+    this.refreshZonesAfterRuntimeChange(sid);
+  }
+
+  private resolveZoneKind(sceneId: string, zoneId: string): 'standard' | 'depth_floor' | undefined {
+    const z = this.findZoneDefInScene(sceneId, zoneId);
+    if (!z) return undefined;
+    return z.zoneKind === 'depth_floor' ? 'depth_floor' : 'standard';
+  }
+
+  private findZoneDefInScene(sceneId: string, zoneId: string): ZoneDef | undefined {
+    const sid = sceneId.trim();
+    const zid = zoneId.trim();
+    if (!sid || !zid) return undefined;
+    const sc = this.currentScene?.id === sid ? this.currentScene : null;
+    return sc?.zones?.find((z) => z.id.trim() === zid);
+  }
+
+  private getMergedZoneOverride(sceneId: string, zoneId: string): { enabled?: boolean } | undefined {
+    const sid = sceneId.trim();
+    const zid = zoneId.trim();
+    const committed = this.getCommittedMemory(sid)?.entityOverrides?.zones?.[zid];
+    const staging =
+      this.cutsceneStaging?.sceneId === sid
+        ? this.cutsceneStaging.memory.entityOverrides?.zones?.[zid]
+        : undefined;
+    if (!committed && !staging) return undefined;
+    return { ...(committed as object | undefined), ...(staging as object | undefined) } as {
+      enabled?: boolean;
+    };
+  }
+
+  private computeEffectiveZones(sceneId: string, raw: ZoneDef[] | undefined): ZoneDef[] {
+    const list = raw ?? [];
+    return list.filter((z) => this.shouldRegisterZoneWithZoneSystem(sceneId, z));
+  }
+
+  private shouldRegisterZoneWithZoneSystem(sceneId: string, z: ZoneDef): boolean {
+    if (z.zoneKind === 'depth_floor') return true;
+    const sid = sceneId.trim();
+    const zid = z.id.trim();
+    if (!zid) return false;
+    if (this.zoneSessionDisabled.get(sid)?.has(zid)) return false;
+    const snap = this.getMergedZoneOverride(sid, zid);
+    if (snap?.enabled === false) return false;
+    return true;
+  }
+
+  private refreshZonesAfterRuntimeChange(sceneId: string): void {
+    const sid = sceneId.trim();
+    if (!this.zoneSetter || this.currentScene?.id !== sid) return;
+    this.zoneSetter(this.computeEffectiveZones(sid, this.currentScene.zones));
+  }
+
   get switching(): boolean {
     return this.isSwitching;
   }
 
   private emptyEntityOverrides(): SceneEntityRuntimeOverrides {
-    return { npcs: {}, hotspots: {} };
+    return { npcs: {}, hotspots: {}, zones: {} };
   }
 
   private createEmptyMemory(): SceneMemory {
@@ -209,6 +349,7 @@ export class SceneManager implements IGameSystem {
     if (!mem.entityOverrides) mem.entityOverrides = this.emptyEntityOverrides();
     if (!mem.entityOverrides.npcs) mem.entityOverrides.npcs = {};
     if (!mem.entityOverrides.hotspots) mem.entityOverrides.hotspots = {};
+    if (!mem.entityOverrides.zones) mem.entityOverrides.zones = {};
     if (!mem.inspectedHotspots) mem.inspectedHotspots = [];
     if (!mem.pickedUpHotspots) mem.pickedUpHotspots = [];
     return mem;
@@ -566,17 +707,10 @@ export class SceneManager implements IGameSystem {
     this.refreshCutsceneBoundEntityVisibility();
     this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
 
-    let spawn: Position = sceneData.spawnPoint;
-    if (spawnPointId && sceneData.spawnPoints?.[spawnPointId]) {
-      spawn = sceneData.spawnPoints[spawnPointId];
-    }
-    const posX = cameraPosition?.x ?? spawn.x;
-    const posY = cameraPosition?.y ?? spawn.y;
-    this.playerPositionSetter?.(posX, posY);
-    this.cameraSetter?.(sceneData.worldWidth, sceneData.worldHeight, posX, posY, sceneData.camera, sceneData.worldScale);
+    this.applyPlayerSpawnAndCamera(sceneData, spawnPointId, cameraPosition);
 
     this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds);
-    this.zoneSetter?.(sceneData.zones ?? []);
+    this.zoneSetter?.(this.computeEffectiveZones(sceneId, sceneData.zones));
 
     if (this.depthLoader) {
       await this.depthLoader(sceneId, sceneData, worldToPixelX, worldToPixelY);
@@ -594,6 +728,23 @@ export class SceneManager implements IGameSystem {
 
     this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fromSceneId ?? null, sceneName: sceneData.name });
     this.eventBus.emit('scene:ready');
+  }
+
+  /** 对 **已加载** 的 sceneData 应用 spawn / spawnPoints / cameraPosition（语义与 loadScene 末尾一致） */
+  private applyPlayerSpawnAndCamera(
+    sceneData: SceneData,
+    spawnPointId?: string,
+    cameraPosition?: { x: number; y: number },
+  ): void {
+    let spawn: Position = sceneData.spawnPoint;
+    const spKey = spawnPointId?.trim();
+    if (spKey && sceneData.spawnPoints?.[spKey]) {
+      spawn = sceneData.spawnPoints[spKey];
+    }
+    const posX = cameraPosition?.x ?? spawn.x;
+    const posY = cameraPosition?.y ?? spawn.y;
+    this.playerPositionSetter?.(posX, posY);
+    this.cameraSetter?.(sceneData.worldWidth, sceneData.worldHeight, posX, posY, sceneData.camera, sceneData.worldScale);
   }
 
   unloadScene(): void {
@@ -630,6 +781,29 @@ export class SceneManager implements IGameSystem {
 
   async switchScene(targetSceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }): Promise<void> {
     const job = async (): Promise<void> => {
+      const tid = targetSceneId.trim();
+      if (!tid) {
+        console.warn('SceneManager: switchScene 无效：targetScene 为空');
+        return;
+      }
+
+      const curId = this.currentScene?.id?.trim() ?? '';
+      if (curId === tid) {
+        const wantSpawnOverride = !!(spawnPointId?.trim());
+        const wantCamOverride = cameraPosition != null && (
+          cameraPosition.x !== undefined || cameraPosition.y !== undefined
+        );
+        if (!wantSpawnOverride && !wantCamOverride) {
+          return;
+        }
+        if (!this.currentScene) return;
+        if (!this.cutsceneStaging) {
+          this.saveCurrentSceneMemory();
+        }
+        this.applyPlayerSpawnAndCamera(this.currentScene, spawnPointId, cameraPosition);
+        return;
+      }
+
       this.isSwitching = true;
       try {
         this.saveCurrentSceneMemory();
@@ -638,7 +812,7 @@ export class SceneManager implements IGameSystem {
 
         const fromSceneId = this.currentScene?.id ?? null;
         this.unloadScene();
-        await this.loadScene(targetSceneId, spawnPointId, cameraPosition, fromSceneId);
+        await this.loadScene(tid, spawnPointId, cameraPosition, fromSceneId);
 
         await this.fadeIn(300);
       } finally {
@@ -796,7 +970,12 @@ export class SceneManager implements IGameSystem {
   }): void {
     this.sceneMemory.clear();
     for (const [sceneId, mem] of Object.entries(data.memory)) {
-      const entityOverrides = mem.entityOverrides ?? this.emptyEntityOverrides();
+      const base = mem.entityOverrides ?? this.emptyEntityOverrides();
+      const entityOverrides: SceneEntityRuntimeOverrides = {
+        npcs: { ...base.npcs },
+        hotspots: { ...base.hotspots },
+        zones: { ...(base.zones ?? {}) },
+      };
       if (mem.npcSnapshots) {
         entityOverrides.npcs = { ...entityOverrides.npcs, ...mem.npcSnapshots };
       }
@@ -819,6 +998,7 @@ export class SceneManager implements IGameSystem {
   destroy(): void {
     cancelAnimationFrame(this.animRafId);
     this.animRafId = 0;
+    this.zoneSessionDisabled.clear();
     this.eventBus.off('hotspot:pickup:done', this.onHotspotPickup);
     this.eventBus.off('hotspot:inspected', this.onHotspotInspected);
     this.unloadScene();

@@ -105,7 +105,7 @@ from .scripted_lines_editor import ScriptedLinesEditor
 from .runtime_field_schema import entity_kind_choices, field_meta
 
 ACTION_TYPES = [
-    "setFlag", "setScenarioPhase", "startScenario", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame",
@@ -114,7 +114,7 @@ ACTION_TYPES = [
     "showEmote", "showSpeechBubble", "playNpcAnimation", "setEntityEnabled", "openShop",
     "pickup", "switchScene", "changeScene", "showNotification", "stopNpcPatrol",
     "persistNpcDisablePatrol", "persistNpcEnablePatrol", "persistNpcEntityEnabled",
-    "persistHotspotEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
+    "persistHotspotEnabled", "setZoneEnabled", "persistZoneEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "shopPurchase", "inventoryDiscard",
     "setPlayerAvatar", "resetPlayerAvatar",
     "setSceneDepthFloorOffset", "resetSceneDepthFloorOffset",
@@ -136,6 +136,8 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "setFlag": "save",
     "setScenarioPhase": "save",
     "startScenario": "save",
+    "activateScenario": "save",
+    "completeScenario": "save",
     "appendFlag": "save",
     "giveItem": "save",
     "removeItem": "save",
@@ -173,6 +175,8 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "persistNpcEnablePatrol": "save",
     "persistNpcEntityEnabled": "save",
     "persistHotspotEnabled": "save",
+    "setZoneEnabled": "memory",
+    "persistZoneEnabled": "save",
     "persistNpcAt": "save",
     "persistNpcAnimState": "save",
     "persistPlayNpcAnimation": "save",
@@ -305,7 +309,15 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "hideOverlayImage": [("id", "str")],
     "waitClickContinue": [("text", "str")],
     "waitMs": [("durationMs", "int")],
-    "moveEntityTo": [("target", "str"), ("x", "float"), ("y", "float"), ("speed", "float")],
+    "moveEntityTo": [
+        ("target", "str"),
+        ("sceneId", "str"),
+        ("x", "float"),
+        ("y", "float"),
+        ("speed", "float"),
+        ("moveAnimState", "str"),
+        ("faceTowardMovement", "bool"),
+    ],
     "faceEntity": [("target", "str"), ("direction", "str"), ("faceTarget", "str")],
     "cutsceneSpawnActor": [("id", "str"), ("name", "str"), ("x", "float"), ("y", "float")],
     "cutsceneRemoveActor": [("id", "str")],
@@ -503,7 +515,9 @@ class FilterableTypeCombo(QComboBox):
     """
     可编辑下拉：每项为 (展示名, 取值)。筛选同时对展示名、取值做匹配（非前缀限定）：
     - 子串：查询串在字符串任意位置出现（不区分大小写）
-    - 模糊：查询串每个字符在字符串中按先后顺序出现即可    """
+    - 模糊：查询串每个字符在字符串中按先后顺序出现即可
+    含「未选/留空」占位时须 (展示文案, "")，禁止 ("", 展示文案)，否则 committed_type 会落成展示串而非空。
+    """
 
     typeCommitted = Signal(str)
 
@@ -1518,7 +1532,7 @@ class ActionRow(QWidget):
                 if m
                 else []
             )
-            rows: list[tuple[str, str]] = [("", "（选 state）")]
+            rows: list[tuple[str, str]] = [("（选 state）", "")]
             rows.extend((s, s) for s in states)
             cur = st_w.committed_type().strip()
             if _refresh_calls == 1 and not cur and init_st:
@@ -1553,7 +1567,7 @@ class ActionRow(QWidget):
                 if m
                 else []
             )
-            rows: list[tuple[str, str]] = [("", "（选 state）")]
+            rows: list[tuple[str, str]] = [("（选 state）", "")]
             rows.extend((s, s) for s in states)
             cur = st_w.committed_type().strip()
             if _refresh_calls == 1 and not cur and init_st:
@@ -1568,6 +1582,191 @@ class ActionRow(QWidget):
                 st_w.set_committed_type("")
 
         tgt_w.value_changed.connect(refresh_state)
+        refresh_state()
+
+    def _rebuild_move_entity_to_params(self, params: dict) -> None:
+        from ..editors.scene_editor import MoveEntityToMapPickerDialog, normalize_move_entity_waypoints
+
+        self._params_frame.setVisible(True)
+        while self._params_layout.rowCount() > 0:
+            self._params_layout.removeRow(0)
+        self._param_widgets.clear()
+
+        m = self._ctx_model
+        tip = QLabel(
+            "在「地图 sceneId」上用弹窗必选终点坐标；可选用途经点勾勒出世界坐标下的折线路径。\n"
+            "x/y 只读禁止手输；速度与 moveAnimState 在此编辑。sceneId 仅存档供编辑器复现地图。"
+        )
+        tip.setWordWrap(True)
+        self._params_layout.addRow(tip)
+
+        tgt_w = self._make_selector("actor", str(params.get("target", "") or ""))
+        self._param_widgets["target"] = tgt_w
+        self._params_layout.addRow("target", tgt_w)
+
+        scene_rows = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+
+        def _default_map_sid() -> str:
+            ms = str(params.get("sceneId") or "").strip()
+            if ms:
+                return ms
+            if self._ctx_scene_id:
+                return str(self._ctx_scene_id).strip()
+            cid = self._ctx_cutscene_id
+            if m and cid:
+                for cv in m.cutscenes or []:
+                    if isinstance(cv, dict) and str(cv.get("id", "")).strip() == str(cid).strip():
+                        return str(cv.get("targetScene") or "").strip()
+            return ""
+
+        sid0 = _default_map_sid()
+        map_scene_combo = FilterableTypeCombo(scene_rows, self, select_only=True)
+        vals = {v for _d, v in scene_rows if v}
+        if sid0 and sid0 in vals:
+            map_scene_combo.set_committed_type(sid0)
+        elif scene_rows and scene_rows[0][1]:
+            map_scene_combo.set_committed_type(scene_rows[0][1])
+        map_scene_combo.setToolTip("选点弹窗使用该场景的背景与尺寸。")
+        map_scene_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+        self._param_widgets["sceneId"] = map_scene_combo
+        self._params_layout.addRow("地图 sceneId（仅编辑）", map_scene_combo)
+
+        try:
+            ix = float(params.get("x"))
+            iy = float(params.get("y"))
+        except (TypeError, ValueError):
+            ix, iy = 0.0, 0.0
+        if not (math.isfinite(ix) and math.isfinite(iy)):
+            ix, iy = 0.0, 0.0
+
+        sx_v = QDoubleSpinBox(self)
+        sx_v.setRange(-1e9, 1e9)
+        sx_v.setDecimals(2)
+        sx_v.setReadOnly(True)
+        sx_v.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        sx_v.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sx_v.setValue(ix)
+        sy_v = QDoubleSpinBox(self)
+        sy_v.setRange(-1e9, 1e9)
+        sy_v.setDecimals(2)
+        sy_v.setReadOnly(True)
+        sy_v.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        sy_v.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sy_v.setValue(iy)
+        self._param_widgets["x"] = sx_v
+        self._param_widgets["y"] = sy_v
+        self._params_layout.addRow("终点 x", sx_v)
+        self._params_layout.addRow("终点 y", sy_v)
+
+        wps_store: list[list[tuple[float, float]]] = [normalize_move_entity_waypoints(params.get("waypoints"))]
+        wp_lbl = QLabel(f"途经点: {len(wps_store[0])} 个", self)
+
+        pick_btn = QPushButton("地图选终点与路径…", self)
+
+        def _open_move_pick() -> None:
+            sid = map_scene_combo.committed_type().strip()
+            if not m:
+                QMessageBox.warning(self, "选点", "未加载工程。")
+                return
+            if not sid or sid not in m.scenes:
+                QMessageBox.information(self, "选点", "请选择有效的地图场景 sceneId。")
+                return
+            dlg = MoveEntityToMapPickerDialog(
+                m,
+                sid,
+                float(sx_v.value()),
+                float(sy_v.value()),
+                list(wps_store[0]),
+                self,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            px, py = dlg.result_destination()
+            sx_v.setValue(float(px))
+            sy_v.setValue(float(py))
+            wobjs = dlg.result_waypoints_objects()
+            wps_store[0] = [(round(float(o["x"]), 2), round(float(o["y"]), 2)) for o in wobjs]
+            wp_lbl.setText(f"途经点: {len(wps_store[0])} 个")
+            self.changed.emit()
+
+        pick_btn.clicked.connect(_open_move_pick)
+
+        row_pick = QWidget(self)
+        rlx = QHBoxLayout(row_pick)
+        rlx.setContentsMargins(0, 0, 0, 0)
+        rlx.addWidget(pick_btn)
+        rlx.addWidget(wp_lbl, 1)
+        self._params_layout.addRow("", row_pick)
+        self._move_entity_waypoints_store = wps_store
+
+        try:
+            sp_v = float(params.get("speed", 80))
+        except (TypeError, ValueError):
+            sp_v = 80.0
+        if not math.isfinite(sp_v) or sp_v <= 0:
+            sp_v = 80.0
+        speed_sb = QDoubleSpinBox(self)
+        speed_sb.setRange(1, 9999)
+        speed_sb.setDecimals(2)
+        speed_sb.setValue(sp_v)
+        speed_sb.valueChanged.connect(lambda _v: self.changed.emit())
+        self._param_widgets["speed"] = speed_sb
+        self._params_layout.addRow("speed", speed_sb)
+
+        ma_init = str(params.get("moveAnimState", "") or "").strip()
+        st_combo = FilterableTypeCombo([("（不播放移动动画）", "")], self, select_only=True)
+        if ma_init:
+            st_combo.set_committed_type(ma_init)
+        st_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+        self._param_widgets["moveAnimState"] = st_combo
+        self._params_layout.addRow("moveAnimState", st_combo)
+
+        face_cb = QCheckBox("自动调节朝向（沿路运动方向更新朝向）", self)
+        face_raw = params.get("faceTowardMovement")
+        face_cb.setChecked(face_raw is True or str(face_raw).strip().lower() in ("true", "1", "yes"))
+        face_cb.toggled.connect(lambda _c: self.changed.emit())
+        self._param_widgets["faceTowardMovement"] = face_cb
+        self._params_layout.addRow("朝向", face_cb)
+
+        self._sync_foldable_visibility()
+        self._connect_move_entity_animation_pickers(initial_state=ma_init)
+
+    def _connect_move_entity_animation_pickers(self, *, initial_state: str) -> None:
+        tgt_w = self._param_widgets.get("target")
+        st_w = self._param_widgets.get("moveAnimState")
+        sc_w = self._param_widgets.get("sceneId")
+        if (
+            not isinstance(tgt_w, IdRefSelector)
+            or not isinstance(st_w, FilterableTypeCombo)
+            or not isinstance(sc_w, FilterableTypeCombo)
+        ):
+            return
+        init_st = (initial_state or "").strip()
+        calls = [0]
+
+        def refresh_state(_: str = "") -> None:
+            calls[0] += 1
+            aid = tgt_w.current_id().strip()
+            sid = sc_w.committed_type().strip()
+            mm = self._ctx_model
+            states = mm.animation_state_names_for_actor(sid, aid) if mm and sid else []
+            rows: list[tuple[str, str]] = [("（不播放移动动画）", "")]
+            rows.extend((s, s) for s in states)
+            cur = st_w.committed_type().strip()
+            if calls[0] == 1 and not cur and init_st:
+                cur = init_st
+            st_w.set_entries(rows)
+            allowed = {""} | set(states)
+            if cur in allowed:
+                st_w.set_committed_type(cur)
+            elif cur:
+                st_w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                st_w.set_committed_type(cur)
+            else:
+                st_w.set_committed_type("")
+
+        tgt_w.value_changed.connect(refresh_state)
+        sc_w.typeCommitted.connect(lambda _t: refresh_state())
         refresh_state()
 
     def _build_overlay_id_combo(self, value: str) -> FilterableTypeCombo:
@@ -1589,10 +1788,13 @@ class ActionRow(QWidget):
         kind: str,
         val: str,
     ) -> IdRefSelector:
-        """下拉选 id；actor / emote_target / npc_only 仅允许点选并合并数据孤儿 id。"""
+        """下拉选 id；若干 kind 禁止手输未知值，并从数据追加「孤儿」行。"""
         m = self._ctx_model
         committed = str(val if val is not None else "").strip()
-        strict_pick = kind in ("actor", "emote_target", "npc_only")
+        strict_pick = kind in (
+            "actor", "emote_target", "npc_only",
+            "water_minigame", "sugar_wheel_minigame",
+        )
 
         pairs: list[tuple[str, str]] = []
         if kind == "scene":
@@ -1626,6 +1828,10 @@ class ActionRow(QWidget):
             pairs = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
         elif kind == "npc_only":
             pairs = m.npc_actor_items_for_scene(self._ctx_scene_id) if m else []
+        elif kind == "water_minigame":
+            pairs = m.all_water_minigame_ids() if m else []
+        elif kind == "sugar_wheel_minigame":
+            pairs = m.all_sugar_wheel_minigame_ids() if m else []
         else:
             pairs = []
 
@@ -1644,6 +1850,8 @@ class ActionRow(QWidget):
             "actor": "仅下拉选择；无场景上下文时列表可能不全，请先设置过场 targetScene。",
             "emote_target": "仅下拉选择；列表为当前场景 NPC + 热点 + player。",
             "npc_only": "仅下拉选择；列表为当前场景 NPC。",
+            "water_minigame": "仅下拉选择；列表来自 water_minigames/index.json。",
+            "sugar_wheel_minigame": "仅下拉选择；列表来自 sugar_wheel/index.json。",
         }.get(kind)
         if tip:
             w.setToolTip(tip)
@@ -1665,6 +1873,10 @@ class ActionRow(QWidget):
         act_type = self.type_combo.committed_type()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params = self._data.get("params", {})
+
+        if act_type == "moveEntityTo":
+            self._rebuild_move_entity_to_params(params)
+            return
 
         if act_type == "setEntityField":
             self._params_frame.setVisible(True)
@@ -2232,6 +2444,10 @@ class ActionRow(QWidget):
             self._sync_foldable_visibility()
             return
 
+        if act_type in ("setZoneEnabled", "persistZoneEnabled"):
+            self._rebuild_zone_enable_params(params, persist=(act_type == "persistZoneEnabled"))
+            return
+
         if act_type == "showOverlayImage":
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
@@ -2362,18 +2578,36 @@ class ActionRow(QWidget):
             self._sync_foldable_visibility()
             return
 
-        if act_type == "startScenario":
+        if act_type in ("startScenario", "activateScenario", "completeScenario"):
             self._params_frame.setVisible(True)
             while self._params_layout.rowCount() > 0:
                 self._params_layout.removeRow(0)
             self._param_widgets.clear()
-            tip = QLabel(
-                "仅校验 scenarios.json 中本条线的进线 requires；不写入 phase。"
-                "未满足时与首次 setScenarioPhase 相同：抛出 ScenarioLineEntryRequiresError。"
-                "可放在图入口的 runActions 最前。",
-                self,
-            )
-            tip.setToolTip("与 setScenarioPhase 的进线检查一致，用于显式表达剧情起点。")
+            if act_type == "startScenario":
+                tip = QLabel(
+                    "仅校验 scenarios.json 中本条线的进线 requires；不写入 phase。"
+                    "未满足时与首次 setScenarioPhase 相同：抛出 ScenarioLineEntryRequiresError。"
+                    "可放在图入口的 runActions 最前。",
+                    self,
+                )
+                tip.setToolTip("与 setScenarioPhase 的进线检查一致，用于显式表达剧情起点。")
+            elif act_type == "activateScenario":
+                tip = QLabel(
+                    "若该 scenario 在 scenarios.json 中勾选了整条线手动生命周期："
+                    "校验进线 requires 并将线标记为「进行」，之后方可 setScenarioPhase；"
+                    "未勾选时本条 Action 在运行时为 no-op。",
+                    self,
+                )
+                tip.setToolTip(
+                    "与 startScenario 一样会校验 catalog.requires；另行写入线生命周期状态并进档。",
+                )
+            else:
+                tip = QLabel(
+                    "将整条线标记为「已完成」，之后禁止对该 scenario 再 setScenarioPhase；"
+                    "仅对勾选手动生命周期的 scenario 生效，否则运行时 no-op。",
+                    self,
+                )
+                tip.setToolTip("通常放在该 narrative 线段收尾剧情之后。")
             tip.setWordWrap(True)
             self._params_layout.addRow(tip)
             m = self._ctx_model
@@ -2656,7 +2890,7 @@ class ActionRow(QWidget):
 
             man_entries = m.anim_asset_path_choices() if m else []
             man_rows: list[tuple[str, str]] = [
-                ("", "（留空：仅用 bundleId）"),
+                ("（留空：仅用 bundleId）", ""),
             ] + list(man_entries)
             man_combo = FilterableTypeCombo(man_rows, self, select_only=True)
             if am:
@@ -2667,7 +2901,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow("animManifest", man_combo)
 
             def _state_items_for_bundle(stem: str) -> list[tuple[str, str]]:
-                rows: list[tuple[str, str]] = [("", "（留空=逻辑名）")]
+                rows: list[tuple[str, str]] = [("（留空=逻辑名）", "")]
                 if not m or not stem:
                     return rows
                 names = m.animation_state_names_for_manifest(f"/assets/animation/{stem}/anim.json")
@@ -2836,6 +3070,12 @@ class ActionRow(QWidget):
                 w = self._make_selector("audio_sfx", str(val) if val is not None else "")
             elif act_type == "startCutscene" and pname == "id":
                 w = self._make_selector("cutscene", str(val) if val is not None else "")
+            elif act_type == "startWaterMinigame" and pname == "id":
+                w = self._make_selector("water_minigame", str(val) if val is not None else "")
+            elif act_type == "startSugarWheelMinigame" and pname == "id":
+                w = self._make_selector(
+                    "sugar_wheel_minigame", str(val) if val is not None else "",
+                )
             elif act_type == "openShop" and pname == "shopId":
                 w = self._make_selector("shop", str(val) if val is not None else "")
             elif act_type == "shopPurchase" and pname == "itemId":
@@ -2929,7 +3169,7 @@ class ActionRow(QWidget):
             elif act_type == "playNpcAnimation" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "playNpcAnimation" and pname == "state":
-                w = FilterableTypeCombo([("", "（选 state）")], self, select_only=True)
+                w = FilterableTypeCombo([("（选 state）", "")], self, select_only=True)
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "setEntityEnabled" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
@@ -2940,16 +3180,14 @@ class ActionRow(QWidget):
             ) and pname == "target":
                 w = self._make_selector("npc_only", str(val) if val is not None else "")
             elif act_type in ("persistNpcAnimState", "persistPlayNpcAnimation") and pname == "state":
-                w = FilterableTypeCombo([("", "（选 state）")], self, select_only=True)
+                w = FilterableTypeCombo([("（选 state）", "")], self, select_only=True)
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "hideOverlayImage" and pname == "id":
                 w = self._build_overlay_id_combo(str(val) if val is not None else "")
-            elif act_type == "moveEntityTo" and pname == "target":
-                w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "faceEntity" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "faceEntity" and pname == "direction":
-                dir_rows = [("", "（用 faceTarget）")] + [(d, d) for d in _FACE_DIRECTIONS]
+                dir_rows = [("（用 faceTarget）", "")] + [(d, d) for d in _FACE_DIRECTIONS]
                 curd = str(val) if val is not None else ""
                 w = FilterableTypeCombo(dir_rows, self, select_only=True)
                 if curd in _FACE_DIRECTIONS:
@@ -3073,6 +3311,82 @@ class ActionRow(QWidget):
             "type": "tempSetHotspotDisplayFacing",
             "params": {"sceneId": sid, "hotspotId": hid, "facing": fv},
         }
+
+    def _rebuild_zone_enable_params(self, params: dict, *, persist: bool) -> None:
+        self._params_frame.setVisible(True)
+        while self._params_layout.rowCount() > 0:
+            self._params_layout.removeRow(0)
+        self._param_widgets.clear()
+        tip_txt = (
+            "写入 standard Zone 的启用状态到 sceneMemory（随存档）；"
+            "禁用后该区不进入 ZoneSystem；depth_floor 不受影响且不可被本动作关闭。"
+            if persist
+            else
+            "仅当前游戏进程内开关 standard Zone（不写档）；读档或重启后按存档与 JSON 恢复；"
+            "depth_floor 不受影响。"
+        )
+        tip = QLabel(tip_txt, self)
+        tip.setWordWrap(True)
+        self._params_layout.addRow(tip)
+        m = self._ctx_model
+        scene_entries = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+        scene_combo = FilterableTypeCombo(scene_entries, self, select_only=True)
+        cur_scene = str(params.get("sceneId") or self._ctx_scene_id or "").strip()
+        if cur_scene:
+            scene_combo.set_committed_type(cur_scene)
+        elif scene_entries and scene_entries[0][1]:
+            scene_combo.set_committed_type(scene_entries[0][1])
+        self._param_widgets["sceneId"] = scene_combo
+        self._params_layout.addRow("sceneId", scene_combo)
+        zn_raw = m.standard_zone_ids_for_scene(scene_combo.committed_type()) if m else []
+        zn_rows = [(f"{zid}（zone）", zid) for zid, _ in zn_raw]
+        if not zn_rows:
+            zn_rows = [("（当前场景无普通 Zone）", "")]
+        id_combo = FilterableTypeCombo(zn_rows, self, select_only=True)
+        cur_z = str(params.get("zoneId", "") or "").strip()
+        if cur_z:
+            id_combo.set_committed_type(cur_z)
+        elif zn_rows and zn_rows[0][1]:
+            id_combo.set_committed_type(zn_rows[0][1])
+
+        def _refill_zones_ze(_t: str = "") -> None:
+            raw_rows = m.standard_zone_ids_for_scene(scene_combo.committed_type()) if m else []
+            rows = [(f"{zid}（zone）", zid) for zid, _ in raw_rows]
+            if not rows:
+                rows = [("（当前场景无普通 Zone）", "")]
+            cur = id_combo.committed_type()
+            id_combo.set_entries(rows)
+            values = {v for _d, v in rows}
+            id_combo.set_committed_type(cur if cur in values else rows[0][1])
+            self.changed.emit()
+
+        scene_combo.typeCommitted.connect(_refill_zones_ze)
+        id_combo.typeCommitted.connect(lambda _v: self.changed.emit())
+        self._param_widgets["zoneId"] = id_combo
+        self._params_layout.addRow("zoneId", id_combo)
+        en_cb = QCheckBox("enabled（参与 ZoneSystem 进出与回调）", self)
+        en_raw = params.get("enabled", True)
+        if isinstance(en_raw, bool):
+            en_cb.setChecked(en_raw)
+        elif isinstance(en_raw, (int, float)):
+            en_cb.setChecked(en_raw != 0)
+        else:
+            sv = str(en_raw).strip().lower()
+            en_cb.setChecked(sv not in ("false", "0", ""))
+        en_cb.stateChanged.connect(lambda _s: self.changed.emit())
+        self._param_widgets["enabled"] = en_cb
+        self._params_layout.addRow("enabled", en_cb)
+        self._sync_foldable_visibility()
+
+    def _to_dict_zone_enabled(self, *, persist: bool) -> dict:
+        scene_w = self._param_widgets.get("sceneId")
+        id_w = self._param_widgets.get("zoneId")
+        en_w = self._param_widgets.get("enabled")
+        sid = scene_w.committed_type().strip() if isinstance(scene_w, FilterableTypeCombo) else ""
+        zid = id_w.committed_type().strip() if isinstance(id_w, FilterableTypeCombo) else ""
+        en = bool(en_w.isChecked()) if isinstance(en_w, QCheckBox) else True
+        typ = "persistZoneEnabled" if persist else "setZoneEnabled"
+        return {"type": typ, "params": {"sceneId": sid, "zoneId": zid, "enabled": en}}
 
     def _to_dict_persist_hotspot_enabled(self) -> dict:
         scene_w = self._param_widgets.get("sceneId")
@@ -3281,6 +3595,41 @@ class ActionRow(QWidget):
         did = w.committed_type() if isinstance(w, FilterableTypeCombo) else ""
         return {"type": "revealDocument", "params": {"documentId": did}}
 
+    def _to_dict_move_entity_to(self) -> dict:
+        tgt_w = self._param_widgets.get("target")
+        sc_w = self._param_widgets.get("sceneId")
+        sx_v = self._param_widgets.get("x")
+        sy_v = self._param_widgets.get("y")
+        sp_sb = self._param_widgets.get("speed")
+        st_w = self._param_widgets.get("moveAnimState")
+        tgt = tgt_w.current_id().strip() if isinstance(tgt_w, IdRefSelector) else ""
+        sid = sc_w.committed_type().strip() if isinstance(sc_w, FilterableTypeCombo) else ""
+        xv = float(sx_v.value()) if isinstance(sx_v, QDoubleSpinBox) else 0.0
+        yv = float(sy_v.value()) if isinstance(sy_v, QDoubleSpinBox) else 0.0
+        spd = float(sp_sb.value()) if isinstance(sp_sb, QDoubleSpinBox) else 80.0
+        if not math.isfinite(spd) or spd <= 0:
+            spd = 80.0
+        spd_final = round(min(spd, 9999.0), 2)
+        ma = st_w.committed_type().strip() if isinstance(st_w, FilterableTypeCombo) else ""
+        wp_src = getattr(self, "_move_entity_waypoints_store", None)
+        wp_tuples = list(wp_src[0]) if isinstance(wp_src, list) and wp_src else []
+        out_wp = [{"x": round(float(px), 2), "y": round(float(py), 2)} for px, py in wp_tuples]
+        prm: dict = {
+            "target": tgt,
+            "sceneId": sid,
+            "x": round(xv, 2),
+            "y": round(yv, 2),
+            "speed": spd_final,
+        }
+        if ma:
+            prm["moveAnimState"] = ma
+        if out_wp:
+            prm["waypoints"] = out_wp
+        face_w = self._param_widgets.get("faceTowardMovement")
+        if isinstance(face_w, QCheckBox) and face_w.isChecked():
+            prm["faceTowardMovement"] = True
+        return {"type": "moveEntityTo", "params": prm}
+
     def _to_dict_set_scene_entity_position(self) -> dict:
         sc_w = self._param_widgets.get("sceneId")
         k_w = self._param_widgets.get("entityKind")
@@ -3317,6 +3666,10 @@ class ActionRow(QWidget):
             return self._to_dict_temp_set_hotspot_display_facing()
         if act_type == "persistHotspotEnabled":
             return self._to_dict_persist_hotspot_enabled()
+        if act_type == "setZoneEnabled":
+            return self._to_dict_zone_enabled(persist=False)
+        if act_type == "persistZoneEnabled":
+            return self._to_dict_zone_enabled(persist=True)
         if act_type == "showOverlayImage":
             return self._to_dict_show_overlay_image()
         if act_type == "blendOverlayImage":
@@ -3329,12 +3682,14 @@ class ActionRow(QWidget):
             return self._to_dict_set_player_avatar()
         if act_type == "setScenarioPhase":
             return self._to_dict_set_scenario_phase()
-        if act_type == "startScenario":
+        if act_type in ("startScenario", "activateScenario", "completeScenario"):
             sid_w = self._param_widgets.get("scenarioId")
             sid0 = sid_w.committed_type() if isinstance(sid_w, FilterableTypeCombo) else ""
-            return {"type": "startScenario", "params": {"scenarioId": sid0}}
+            return {"type": act_type, "params": {"scenarioId": sid0}}
         if act_type == "revealDocument":
             return self._to_dict_reveal_document()
+        if act_type == "moveEntityTo":
+            return self._to_dict_move_entity_to()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params: dict = {}
         for pname, ptype in schema:

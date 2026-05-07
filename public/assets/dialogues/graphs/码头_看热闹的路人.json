@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "码头_看热闹的路人",
+  "entry": "n_start",
+  "meta": {
+    "title": "new_dialogue",
+    "scenarioId": "外国人捞箱子"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "",
+      "text": ""
+    }
+  }
+}

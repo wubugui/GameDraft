@@ -25,6 +25,9 @@ export class InteractionSystem implements IGameSystem {
   private inputManager: InputManager;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
   private playerPosGetter: (() => { x: number; y: number }) | null = null;
+  /** 与 SceneManager.refreshCutsceneBoundEntityVisibility 一致的基础显隐，不含触发条件图层 */
+  private hotspotBaseEnabled: ((h: Hotspot) => boolean) | null = null;
+  private npcBaseVisible: ((n: Npc) => boolean) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, inputManager: InputManager) {
     this.eventBus = eventBus;
@@ -33,14 +36,27 @@ export class InteractionSystem implements IGameSystem {
   }
 
   init(_ctx: GameContext): void {}
-  serialize(): object { return {}; }
+  serialize(): object {
+    return {};
+  }
   deserialize(_data: object): void {}
 
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
     this.conditionCtxFactory = factory;
   }
 
-  private evalHotspotConditions(conds: ConditionExpr[] | undefined): boolean {
+  /**
+   * 由 Game 注入，与过场/sceneMemory 基底一致；未注入时条件隐藏仍生效，基底按 true。
+   */
+  setEntityBaseVisibilityReaders(
+    hotspotBase: ((h: Hotspot) => boolean) | null,
+    npcBase: ((n: Npc) => boolean) | null,
+  ): void {
+    this.hotspotBaseEnabled = hotspotBase;
+    this.npcBaseVisible = npcBase;
+  }
+
+  private evalConditionsList(conds: ConditionExpr[] | undefined): boolean {
     if (!conds?.length) return true;
     const ctx = this.conditionCtxFactory?.();
     if (ctx) return evaluateConditionExprList(conds, ctx);
@@ -80,6 +96,30 @@ export class InteractionSystem implements IGameSystem {
     }
   }
 
+  private applyHotspotVisibilityAndBase(hotspot: Hotspot): void {
+    const conds = hotspot.def.conditions;
+    const condOk = this.evalConditionsList(conds);
+    const base = this.hotspotBaseEnabled?.(hotspot) ?? true;
+    const hideWhenFail = hotspot.def.conditionHidesEntity === true && !!conds?.length;
+    if (hideWhenFail) {
+      hotspot.setEnabled(base && condOk);
+    } else {
+      hotspot.setEnabled(base);
+    }
+  }
+
+  private applyNpcVisibilityAndBase(npc: Npc): void {
+    const conds = npc.def.conditions;
+    const condOk = this.evalConditionsList(conds);
+    const base = this.npcBaseVisible?.(npc) ?? true;
+    const hideWhenFail = npc.def.conditionHidesEntity === true && !!conds?.length;
+    if (hideWhenFail) {
+      npc.setVisible(base && condOk);
+    } else {
+      npc.setVisible(base);
+    }
+  }
+
   update(_dt: number): void {
     if (!this.playerPosGetter) return;
     if (this.hotspots.length === 0 && this.npcs.length === 0) return;
@@ -89,10 +129,11 @@ export class InteractionSystem implements IGameSystem {
     let closestDist = Infinity;
 
     for (const hotspot of this.hotspots) {
+      this.applyHotspotVisibilityAndBase(hotspot);
       if (!hotspot.active) continue;
       if (!hotspotOffersPlayerInteraction(hotspot.def)) continue;
       if (hotspot.def.conditions && hotspot.def.conditions.length > 0) {
-        if (!this.evalHotspotConditions(hotspot.def.conditions)) continue;
+        if (!this.evalConditionsList(hotspot.def.conditions)) continue;
       }
 
       const dx = pos.x - hotspot.centerX;
@@ -106,7 +147,11 @@ export class InteractionSystem implements IGameSystem {
     }
 
     for (const npc of this.npcs) {
+      this.applyNpcVisibilityAndBase(npc);
       if (!npc.container.visible) continue;
+      if (npc.def.conditions && npc.def.conditions.length > 0) {
+        if (!this.evalConditionsList(npc.def.conditions)) continue;
+      }
       const dx = pos.x - npc.x;
       const dy = pos.y - npc.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -174,5 +219,7 @@ export class InteractionSystem implements IGameSystem {
     this.nearestTarget = null;
     this.autoTriggeredHotspot = null;
     this.playerPosGetter = null;
+    this.hotspotBaseEnabled = null;
+    this.npcBaseVisible = null;
   }
 }

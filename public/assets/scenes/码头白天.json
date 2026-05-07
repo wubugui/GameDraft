@@ -93,10 +93,10 @@
     },
     {
       "id": "npc_脚帮告示",
-      "name": "脚帮",
+      "name": "认得几个字的脚帮",
       "x": 1080.1,
       "y": 1242.1,
-      "interactionRange": 60.0,
+      "interactionRange": 63.0,
       "animFile": "/assets/animation/npc_lifu_anim/anim.json",
       "initialAnimState": "lifu_stand",
       "dialogueGraphId": "码头_脚帮帮众看板对话",
@@ -223,7 +223,14 @@
       "cutsceneIds": [
         "洋人第一次出场"
       ],
-      "cutsceneOnly": false
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
     },
     {
       "id": "new_hotspot_3",
@@ -312,7 +319,14 @@
       "cutsceneIds": [
         "洋人第一次出场"
       ],
-      "cutsceneOnly": false
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
     },
     {
       "id": "new_hotspot_6",
@@ -432,7 +446,14 @@
         "洋人第一次出场",
         "cutscene_10"
       ],
-      "cutsceneOnly": false
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
     },
     {
       "id": "new_hotspot_9",
@@ -467,7 +488,14 @@
       "cutsceneIds": [
         "洋人第一次出场"
       ],
-      "cutsceneOnly": false
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
     },
     {
       "id": "new_hotspot_10",
@@ -510,6 +538,24 @@
       "cutsceneIds": [
         "洋人第一次出场"
       ]
+    },
+    {
+      "id": "new_hotspot_13",
+      "type": "inspect",
+      "label": "",
+      "x": 1885.8,
+      "y": 1176.4,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
     }
   ],
   "zones": [
@@ -557,6 +603,14 @@
           "y": 1253.9
         },
         {
+          "x": 1573.2,
+          "y": 1222.6
+        },
+        {
+          "x": 1507.4,
+          "y": 1191.3
+        },
+        {
           "x": 1375.8,
           "y": 1128.8
         },
@@ -590,6 +644,169 @@
       ],
       "zoneKind": "depth_floor",
       "floorOffsetBoost": -0.2
+    },
+    {
+      "id": "new_zone_2",
+      "polygon": [
+        {
+          "x": 429.4,
+          "y": 1365.7
+        },
+        {
+          "x": 510.9,
+          "y": 1339.3
+        },
+        {
+          "x": 648.5,
+          "y": 1561.5
+        },
+        {
+          "x": 555.2,
+          "y": 1618.6
+        }
+      ],
+      "conditions": [
+        {
+          "scenarioLine": "码头水鬼",
+          "lineStatus": "completed"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "player",
+            "state": "hero_stand"
+          }
+        },
+        {
+          "type": "fadingZoom",
+          "params": {
+            "zoom": 1.5,
+            "durationMs": 2000
+          }
+        },
+        {
+          "type": "moveEntityTo",
+          "params": {
+            "target": "player",
+            "sceneId": "码头白天",
+            "x": 822.4,
+            "y": 1421.54,
+            "speed": 80.0,
+            "moveAnimState": "hero_walk",
+            "faceTowardMovement": true
+          }
+        },
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "player",
+            "direction": "left",
+            "faceTarget": ""
+          }
+        },
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "player",
+            "direction": "right",
+            "faceTarget": ""
+          }
+        },
+        {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "?",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "[tag:player]看了一眼黑黢黢的江水。"
+              },
+              {
+                "speaker": "{{player}}",
+                "text": "妈卖批，这哪儿看着像是有水鬼的样子嘛？"
+              }
+            ]
+          }
+        },
+        {
+          "type": "moveEntityTo",
+          "params": {
+            "target": "player",
+            "sceneId": "码头白天",
+            "x": 487.66,
+            "y": 1612.79,
+            "speed": 160.0,
+            "moveAnimState": "hero_walk",
+            "faceTowardMovement": true
+          }
+        },
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "player",
+            "direction": "right",
+            "faceTarget": ""
+          }
+        },
+        {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "？？",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "[tag:player]",
+                "text": "狗日的水猴子，也没让老子遇到。遇到祝你个狗日的让老子发一笔横财。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "activateScenario",
+          "params": {
+            "scenarioId": "外国人捞箱子"
+          }
+        },
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "洋人第一次出场"
+          }
+        },
+        {
+          "type": "startWaterMinigame",
+          "params": {
+            "id": "dock_crate_tutorial"
+          }
+        },
+        {
+          "type": "persistZoneEnabled",
+          "params": {
+            "sceneId": "码头白天",
+            "zoneId": "new_zone_2",
+            "enabled": false
+          }
+        }
+      ]
     }
   ],
   "spawnPoints": {
@@ -602,8 +819,8 @@
       "y": 282.0
     },
     "spawn_2": {
-      "x": 1791.0,
-      "y": 1087.9
+      "x": 488.2,
+      "y": 1610.0
     }
   }
 }

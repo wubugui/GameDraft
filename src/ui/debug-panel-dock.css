@@ -424,3 +424,65 @@
   padding: 0.15rem 0.4rem;
   font-size: 0.68rem;
 }
+
+/* F2 叙事调试：scenario 列表 */
+.debug-dock__scenario-list-hint {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  color: #7a8498;
+}
+
+.debug-dock__scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: min(52vh, 28rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+.debug-dock__scenario-list-empty {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #889;
+}
+
+.debug-dock__scenario-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.4rem 0.35rem;
+  border-radius: 4px;
+  background: #161a24;
+  border: 1px solid #2a3448;
+}
+
+.debug-dock__scenario-meta {
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+.debug-dock__scenario-id {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: #9bd;
+  word-break: break-all;
+}
+
+.debug-dock__scenario-sub {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: #9aa8b8;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.debug-dock__scenario-btns {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}

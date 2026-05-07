@@ -30,6 +30,18 @@ export class ScenarioLineEntryRequiresError extends Error {
   }
 }
 
+export type ScenarioLineLifecycleState = 'inactive' | 'active' | 'completed';
+
+/** 启用了 manualLineLifecycle 时，在错误阶段改 phase / activate / complete（如未激活、已完成后又改 phase）。 */
+export class ScenarioLineLifecycleError extends Error {
+  readonly scenarioId: string;
+  constructor(scenarioId: string, detail: string) {
+    super(`Scenario 线生命周期（${scenarioId}）：${detail}`);
+    this.name = 'ScenarioLineLifecycleError';
+    this.scenarioId = scenarioId.trim();
+  }
+}
+
 /**
  * 按 scenarioId 分桶的叙事局部状态；不参与 FlagStore。
  * 持久化经 IGameSystem.serialize 进入存档。
@@ -37,6 +49,9 @@ export class ScenarioLineEntryRequiresError extends Error {
 export class ScenarioStateManager implements IGameSystem {
   /** scenarioId -> phaseKey -> 状态 */
   private byScenario: Map<string, Map<string, ScenarioPhasePersisted>> = new Map();
+  /** 仅对 catalog.manualLineLifecycle===true 的线；缺省视为 inactive */
+  private lineLifecycleByScenario: Map<string, ScenarioLineLifecycleState> = new Map();
+  private manualLifecycleScenarioIds: ReadonlySet<string> = new Set();
   private flagStore: FlagStore | null = null;
   private catalog: ScenarioCatalogEntry[] = [];
   private eventBus: EventBus | null = null;
@@ -50,6 +65,26 @@ export class ScenarioStateManager implements IGameSystem {
     this.flagStore = flagStore;
     this.catalog = catalog?.scenarios && Array.isArray(catalog.scenarios) ? catalog.scenarios : [];
     this.eventBus = eventBus ?? null;
+    const mids = new Set<string>();
+    for (const e of this.catalog) {
+      const id = String(e.id ?? '').trim();
+      if (id && e.manualLineLifecycle === true) {
+        mids.add(id);
+      }
+    }
+    this.manualLifecycleScenarioIds = mids;
+  }
+
+  /** 调试：scenarios.json 中线 id（与 catalog 顺序一致） */
+  getCatalogScenarioIds(): string[] {
+    return this.catalog
+      .map((e) => String(e.id ?? '').trim())
+      .filter((id) => id.length > 0);
+  }
+
+  /** 是否启用 manualLineLifecycle（仅限此类线可被 activateScenario / completeScenario 驱动） */
+  hasManualLineLifecycle(scenarioId: string): boolean {
+    return this.usesManualLineLifecycle(scenarioId.trim());
   }
 
   init(_ctx: GameContext): void {}
@@ -67,6 +102,19 @@ export class ScenarioStateManager implements IGameSystem {
 
   destroy(): void {
     this.byScenario.clear();
+    this.lineLifecycleByScenario.clear();
+  }
+
+  /**
+   * **仅调试**：清空本 scenario 在运行时中的 phase 存档桶，并移除 manual 线的生命周期记录
+   * （表现为线状态 `inactive`、无 phase 存档）。不撤销已由 `exposes` 写入 FlagStore 的全局 flag；
+   * 需要时请用 F2 Flag 页或其它工具处理。
+   */
+  resetScenarioProgressForDebug(scenarioId: string): void {
+    const sid = scenarioId.trim();
+    if (!sid) return;
+    this.lineLifecycleByScenario.delete(sid);
+    this.byScenario.delete(sid);
   }
 
   /**
@@ -90,6 +138,62 @@ export class ScenarioStateManager implements IGameSystem {
     const logMsg = `[ScenarioStateManager] 进线 requires 未满足: scenario ${JSON.stringify(scenarioId)} requires=${JSON.stringify(raw)}`;
     console.error(logMsg);
     throw new ScenarioLineEntryRequiresError(scenarioId, raw);
+  }
+
+  private usesManualLineLifecycle(scenarioId: string): boolean {
+    return this.manualLifecycleScenarioIds.has(scenarioId.trim());
+  }
+
+  /**
+   * 整条 narrative 线在 manualLineLifecycle 下的生命周期状态；无存档或未开开关时为 inactive。
+   * 供求值器 scenarioLine 条件叶子使用。
+   */
+  getLineLifecycleState(scenarioId: string): ScenarioLineLifecycleState {
+    const sid = scenarioId.trim();
+    return this.lineLifecycleByScenario.get(sid) ?? 'inactive';
+  }
+
+  private notifyScenarioLifecycleError(text: string): void {
+    console.error(`[ScenarioStateManager] ${text}`);
+    this.eventBus?.emit('notification:show', { text, type: 'error' });
+  }
+
+  private throwLifecycle(sid: string, detail: string): never {
+    this.notifyScenarioLifecycleError(detail);
+    throw new ScenarioLineLifecycleError(sid, detail);
+  }
+
+  /**
+   * 对开启了 `manualLineLifecycle` 的 scenario：校验进线 requires 并将线标为可改 phase。
+   * 未开此开关的 scenario 为 no-op。
+   */
+  activateScenarioLine(scenarioId: string): void {
+    const sid = scenarioId.trim();
+    if (!sid || !this.usesManualLineLifecycle(sid)) return;
+    const cur = this.getLineLifecycleState(sid);
+    if (cur === 'active') return;
+    if (cur === 'completed') {
+      this.throwLifecycle(sid, '该 narrative 线已标记完成，不能再次 activateScenario');
+    }
+    this.assertScenarioLineEntryMetOrThrow(sid);
+    this.lineLifecycleByScenario.set(sid, 'active');
+  }
+
+  /**
+   * 将线标记为已完成，之后禁止 setScenarioPhase。仅 manualLineLifecycle scenario 生效。
+   */
+  completeScenarioLine(scenarioId: string): void {
+    const sid = scenarioId.trim();
+    if (!sid || !this.usesManualLineLifecycle(sid)) return;
+    const cur = this.getLineLifecycleState(sid);
+    if (cur !== 'active') {
+      const detail =
+        cur === 'completed'
+          ? '该线已为完成状态，不能重复 completeScenario'
+          : '须先 activateScenario（线处于进行中）后才能 completeScenario';
+      this.throwLifecycle(sid, detail);
+    }
+    this.lineLifecycleByScenario.set(sid, 'completed');
   }
 
   /**
@@ -163,7 +267,18 @@ export class ScenarioStateManager implements IGameSystem {
     }
 
     const entry = this.catalog.find((c) => c.id === sid);
-    this.assertScenarioLineEntryMetOrThrow(sid);
+    if (this.usesManualLineLifecycle(sid)) {
+      const lc = this.getLineLifecycleState(sid);
+      if (lc !== 'active') {
+        const detail =
+          lc === 'completed'
+            ? '该线已完成，禁止再修改 phase（须检查 completeScenario 时机）'
+            : '须先 activateScenario 激活该线后才能 setScenarioPhase';
+        this.throwLifecycle(sid, detail);
+      }
+    } else {
+      this.assertScenarioLineEntryMetOrThrow(sid);
+    }
 
     const rawReq = entry?.phases?.[ph]?.requires;
     const advancing = st0 === 'done' || st0 === 'active';
@@ -306,26 +421,50 @@ export class ScenarioStateManager implements IGameSystem {
         out[sid]![ph] = { ...val };
       }
     }
-    return { scenarios: out };
+    const lineLifecycle: Record<string, ScenarioLineLifecycleState> = {};
+    for (const [sid, st] of this.lineLifecycleByScenario) {
+      if (st !== 'inactive') {
+        lineLifecycle[sid] = st;
+      }
+    }
+    return {
+      scenarios: out,
+      ...(Object.keys(lineLifecycle).length > 0 ? { lineLifecycle } : {}),
+    };
   }
 
   deserialize(data: object): void {
     this.byScenario.clear();
-    const raw = data as { scenarios?: Record<string, Record<string, ScenarioPhasePersisted>> };
+    this.lineLifecycleByScenario.clear();
+    const raw = data as {
+      scenarios?: Record<string, Record<string, ScenarioPhasePersisted>>;
+      lineLifecycle?: Record<string, string>;
+    };
     const sc = raw?.scenarios;
-    if (!sc || typeof sc !== 'object') return;
-    for (const [sid, phases] of Object.entries(sc)) {
-      if (!phases || typeof phases !== 'object') continue;
-      const m = new Map<string, ScenarioPhasePersisted>();
-      for (const [ph, val] of Object.entries(phases)) {
-        if (val && typeof val === 'object' && typeof val.status === 'string') {
-          m.set(ph, {
-            status: val.status,
-            outcome: val.outcome,
-          });
+    if (sc && typeof sc === 'object') {
+      for (const [sid, phases] of Object.entries(sc)) {
+        if (!phases || typeof phases !== 'object') continue;
+        const m = new Map<string, ScenarioPhasePersisted>();
+        for (const [ph, val] of Object.entries(phases)) {
+          if (val && typeof val === 'object' && typeof val.status === 'string') {
+            m.set(ph, {
+              status: val.status,
+              outcome: val.outcome,
+            });
+          }
+        }
+        if (m.size > 0) this.byScenario.set(sid, m);
+      }
+    }
+    const lc = raw?.lineLifecycle;
+    if (lc && typeof lc === 'object') {
+      for (const [sid, st] of Object.entries(lc)) {
+        const s = String(sid).trim();
+        if (!s) continue;
+        if (st === 'active' || st === 'completed') {
+          this.lineLifecycleByScenario.set(s, st);
         }
       }
-      if (m.size > 0) this.byScenario.set(sid, m);
     }
   }
 }

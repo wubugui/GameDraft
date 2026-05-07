@@ -1,4 +1,4 @@
-"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario）。"""
+"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine）。"""
 from __future__ import annotations
 
 import json
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QLabel,
     QScrollArea,
+    QSizePolicy,
 )
 
 from .flag_key_field import FlagKeyPickField
@@ -23,7 +24,10 @@ from .flag_value_edit import FlagValueEdit
 # 与 narrative_data_editors /运行时一致
 _SCENARIO_STATUSES = ("pending", "active", "done", "locked")
 _QUEST_STATUSES = ("Inactive", "Active", "Completed")
+_SCENARIO_LINE_STATUSES = ("inactive", "active", "completed")
 _MAX_DEPTH = 32
+_CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT = 560
+_CONDITION_EXPR_TREE_SCROLL_MAX_HEIGHT = 2400
 
 
 def _is_flag_atom(d: dict[str, Any]) -> bool:
@@ -61,6 +65,7 @@ class ConditionExprNodeEditor(QWidget):
             ("Flag 条件", "flag"),
             ("任务状态", "quest"),
             ("Scenario 阶段", "scenario"),
+            ("Scenario 线（生命周期）", "scenarioLine"),
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
@@ -80,6 +85,7 @@ class ConditionExprNodeEditor(QWidget):
         self._flag_wrap: QWidget | None = None
         self._quest_wrap: QWidget | None = None
         self._sc_wrap: QWidget | None = None
+        self._sl_wrap: QWidget | None = None
         self._not_wrap: QWidget | None = None
 
         self._flag_field: FlagKeyPickField | None = None
@@ -91,6 +97,8 @@ class ConditionExprNodeEditor(QWidget):
         self._sc_ph: QComboBox | None = None
         self._sc_st: QComboBox | None = None
         self._sc_out: QLineEdit | None = None
+        self._sl_id: QComboBox | None = None
+        self._sl_st: QComboBox | None = None
 
         self._remove_callback: Callable[[ConditionExprNodeEditor], None] | None = None
 
@@ -127,6 +135,7 @@ class ConditionExprNodeEditor(QWidget):
         self._flag_wrap = None
         self._quest_wrap = None
         self._sc_wrap = None
+        self._sl_wrap = None
         self._not_wrap = None
         self._child_editors.clear()
         self._not_child = None
@@ -139,6 +148,8 @@ class ConditionExprNodeEditor(QWidget):
         self._sc_ph = None
         self._sc_st = None
         self._sc_out = None
+        self._sl_id = None
+        self._sl_st = None
 
     def _rebuild_body(self, kind: str) -> None:
         self._clear_body()
@@ -227,6 +238,21 @@ class ConditionExprNodeEditor(QWidget):
             self._sc_wrap = sw
             self._body.addWidget(sw)
             self._fill_scenario_combos()
+        elif kind == "scenarioLine":
+            lw = QWidget()
+            lf = QFormLayout(lw)
+            self._sl_id = QComboBox()
+            self._sl_id.setEditable(False)
+            self._sl_id.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._sl_st = QComboBox()
+            for s in _SCENARIO_LINE_STATUSES:
+                self._sl_st.addItem(s, s)
+            self._sl_st.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            lf.addRow("scenarioLine", self._sl_id)
+            lf.addRow("lineStatus", self._sl_st)
+            self._sl_wrap = lw
+            self._body.addWidget(lw)
+            self._fill_scenario_line_combo()
 
     def _fill_scenario_combos(self) -> None:
         if not self._sc_id or not self._sc_ph:
@@ -259,9 +285,31 @@ class ConditionExprNodeEditor(QWidget):
                 self._sc_ph.addItem(ph, ph)
         self._sc_ph.blockSignals(False)
 
+    def _fill_scenario_line_combo(self) -> None:
+        if not self._sl_id:
+            return
+        m = self._model()
+        cur = self._sl_id.currentData()
+        cur = cur.strip() if isinstance(cur, str) else ""
+        self._sl_id.blockSignals(True)
+        self._sl_id.clear()
+        self._sl_id.addItem("（选择）", "")
+        if m:
+            for sid in m.scenario_ids_ordered():
+                self._sl_id.addItem(sid, sid)
+        self._sl_id.blockSignals(False)
+        if cur:
+            idx = self._sl_id.findData(cur)
+            if idx >= 0:
+                self._sl_id.blockSignals(True)
+                self._sl_id.setCurrentIndex(idx)
+                self._sl_id.blockSignals(False)
+
     def refresh_scenario_dropdowns(self) -> None:
         if self._sc_id:
             self._fill_scenario_combos()
+        if self._sl_id:
+            self._fill_scenario_line_combo()
         for c in self._child_editors:
             c.refresh_scenario_dropdowns()
         if self._not_child:
@@ -302,6 +350,8 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(3)
         elif isinstance(data.get("quest"), str) and str(data.get("quest", "")).strip():
             self._kind.setCurrentIndex(4)
+        elif isinstance(data.get("scenarioLine"), str) and str(data.get("scenarioLine", "")).strip():
+            self._kind.setCurrentIndex(6)
         elif isinstance(data.get("scenario"), str) and str(data.get("scenario", "")).strip():
             self._kind.setCurrentIndex(5)
         else:
@@ -335,6 +385,17 @@ class ConditionExprNodeEditor(QWidget):
             if iqs < 0:
                 iqs = self._q_st.findText(qs)
             self._q_st.setCurrentIndex(iqs if iqs >= 0 else 2)
+        elif k == "scenarioLine" and self._sl_id and self._sl_st:
+            self._fill_scenario_line_combo()
+            slid = str(data.get("scenarioLine", "")).strip()
+            idx = self._sl_id.findData(slid)
+            self._sl_id.setCurrentIndex(idx if idx >= 0 else 0)
+            lst = str(data.get("lineStatus", "inactive")).strip()
+            i2 = self._sl_st.findData(lst)
+            if i2 < 0:
+                self._sl_st.addItem(f"（数据）{lst}", lst)
+                i2 = self._sl_st.count() - 1
+            self._sl_st.setCurrentIndex(i2)
         elif k == "scenario" and self._sc_id and self._sc_ph and self._sc_st and self._sc_out:
             self._fill_scenario_combos()
             sc = str(data.get("scenario", "")).strip()
@@ -402,6 +463,14 @@ class ConditionExprNodeEditor(QWidget):
                 return {}
             qs = self._q_st.currentData()
             return {"quest": qid, "questStatus": str(qs) if qs is not None else "Completed"}
+        if k == "scenarioLine" and self._sl_id and self._sl_st:
+            slid = self._sl_id.currentData()
+            slid = slid.strip() if isinstance(slid, str) else ""
+            st_d = self._sl_st.currentData()
+            st = str(st_d) if st_d is not None else self._sl_st.currentText()
+            if not slid:
+                return {}
+            return {"scenarioLine": slid, "lineStatus": st}
         if k == "scenario" and self._sc_id and self._sc_ph and self._sc_st and self._sc_out:
             sid = self._sc_id.currentData()
             sid = sid.strip() if isinstance(sid, str) else ""
@@ -440,10 +509,19 @@ class ConditionExprTreeRootWidget(QWidget):
         self._model_getter = model_getter
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMaximumHeight(420)
+        scroll.setMinimumHeight(_CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT)
+        scroll.setMaximumHeight(_CONDITION_EXPR_TREE_SCROLL_MAX_HEIGHT)
+        scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         host = QWidget(scroll)
         hl = QVBoxLayout(host)
         self._root = ConditionExprNodeEditor(0, model_getter, host)
@@ -452,10 +530,10 @@ class ConditionExprTreeRootWidget(QWidget):
         hl.addWidget(self._root)
         hl.addStretch()
         scroll.setWidget(host)
-        lay.addWidget(scroll)
+        lay.addWidget(scroll, stretch=1)
         tip = QLabel(
             "与运行时 evaluateConditionExpr 一致；嵌套最深32 层。"
-            "根节点可为任意类型；留空 flag / scenario / quest 必填项则导出时省略该分支逻辑（见 get_expr）。",
+            "根节点可为任意类型；留空 flag / scenario / scenarioLine / quest 必填项则导出时省略该分支逻辑（见 get_expr）。",
             self,
         )
         tip.setWordWrap(True)
@@ -478,5 +556,7 @@ class ConditionExprTreeRootWidget(QWidget):
         if _is_flag_atom(d) and not str(d.get("flag", "")).strip():
             return None
         if isinstance(d.get("scenario"), str) and not str(d.get("scenario", "")).strip():
+            return None
+        if isinstance(d.get("scenarioLine"), str) and not str(d.get("scenarioLine", "")).strip():
             return None
         return d

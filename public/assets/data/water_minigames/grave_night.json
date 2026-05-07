@@ -3,7 +3,7 @@
   "label": "义冢浅滩 · 夜里 · 雾",
   "spotId": "grave_shoal",
   "waterBottom": {
-    "texture": "/assets/images/illustrations/ghost_bride_flashback.png",
+    "texture": "/assets/images/minigames/water/riverbed_grave_night.png",
     "tint": "#111827",
     "depth": 0.82
   },
@@ -20,45 +20,18 @@
     {
       "id": "still_grass",
       "category": "grass",
-      "sprite": "/assets/images/illustrations/female_corpse_portrait.png",
+      "sprite": "/assets/images/minigames/water/dead_reeds_gen.png",
       "pos": {
         "x": 360,
         "y": 400
       },
       "depth": 0.18,
-      "hint": "[水草] 黑得像一缕头发。",
-      "onPick": [
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "",
-            "value": true
-          }
-        }
-      ],
-      "onPullSuccess": [
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "",
-            "value": true
-          }
-        }
-      ],
-      "onPullFail": [
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "",
-            "value": true
-          }
-        }
-      ]
+      "hint": "[水草] 黑得像一缕头发。"
     },
     {
       "id": "corpse_bubble",
       "category": "floating",
-      "sprite": "/assets/images/illustrations/ghost_bride_flashback.png",
+      "sprite": "/assets/images/minigames/water/bubble_coin_gen.png",
       "pos": {
         "x": 520,
         "y": 220
@@ -83,14 +56,12 @@
             "type": "warning"
           }
         }
-      ],
-      "onPullSuccess": [],
-      "onPullFail": []
+      ]
     },
     {
       "id": "monkey_shadow",
       "category": "swimming",
-      "sprite": "/assets/images/illustrations/ghost_bride_flashback.png",
+      "sprite": "/assets/images/minigames/water/water_monkey_shadow_gen.png",
       "pos": {
         "x": 280,
         "y": 300
@@ -102,11 +73,11 @@
       },
       "valueTier": "premium",
       "pull": {
-        "zoneSize": 0.13,
-        "sliderSpeed": 1.18,
+        "zoneSize": 0.17,
+        "sliderSpeed": 0.92,
         "rhythm": "spasm",
         "failurePolicy": "bite",
-        "timeLimitSec": 12
+        "timeLimitSec": 13
       },
       "cue": "贴着水底飞快窜动的影子",
       "onPullSuccess": [
@@ -140,24 +111,23 @@
             "type": "warning"
           }
         }
-      ],
-      "onPick": []
+      ]
     },
     {
       "id": "old_coin",
       "category": "sunken",
-      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "sprite": "/assets/images/minigames/water/metal_glint_gen.png",
       "pos": {
         "x": 580,
         "y": 440
       },
       "depth": 0.7,
       "pull": {
-        "zoneSize": 0.17,
-        "sliderSpeed": 1,
+        "zoneSize": 0.22,
+        "sliderSpeed": 0.78,
         "rhythm": "stable",
         "failurePolicy": "escape",
-        "timeLimitSec": 11
+        "timeLimitSec": 15
       },
       "cue": "埋在淤里的金属反光",
       "onPullSuccess": [
@@ -168,9 +138,7 @@
             "count": 4
           }
         }
-      ],
-      "onPick": [],
-      "onPullFail": []
+      ]
     }
   ]
 }

@@ -66,7 +66,16 @@ export class WaterEntity {
     this.sprite = new Sprite(texture);
     this.sprite.anchor.set(0.5, 0.5);
     const base = Math.max(texture.width, texture.height);
-    const target = def.category === 'grass' ? 56 : def.category === 'floating' ? 48 : 44;
+    const isShadow = /shadow|monkey/i.test(def.sprite);
+    const target = isShadow
+      ? 68
+      : def.category === 'grass'
+        ? 70
+        : def.category === 'sunken'
+          ? 62
+          : def.category === 'floating'
+            ? 46
+            : 52;
     const sc = base > 0 ? target / base : 1;
     this.sprite.scale.set(sc);
 
@@ -96,13 +105,13 @@ export class WaterEntity {
   hitRadius(): number {
     switch (this.def.category) {
       case 'grass':
-        return 36;
+        return 42;
       case 'swimming':
-        return 30;
+        return /shadow|monkey/i.test(this.def.sprite) ? 42 : 34;
       case 'sunken':
-        return 28;
+        return 38;
       default:
-        return 28;
+        return 30;
     }
   }
 

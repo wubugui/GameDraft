@@ -284,7 +284,11 @@ class RichTextLineEdit(QWidget):
         m = dlg.marker()
         if not m:
             return
-        self._edit.insert(m)
+        self.insert(m)
+
+    def insert(self, text: str) -> None:
+        """在光标处插入（供「插入 {{player}}」等菜单与其它控件复用）。"""
+        self._edit.insert(text)
         self._hint_timer.stop()
         self._flush_hint()
 

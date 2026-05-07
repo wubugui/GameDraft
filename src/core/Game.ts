@@ -69,7 +69,7 @@ import { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
-import { DebugTools } from './DebugTools';
+import { DebugTools, type ScenarioDebugPanelRow } from './DebugTools';
 import { SceneDepthSystem } from './SceneDepthSystem';
 import { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
@@ -242,7 +242,7 @@ export class Game {
     this.inputManager = new InputManager();
     this.assetManager = new AssetManager();
     this.stateController = new GameStateController(this.inputManager);
-    this.actionExecutor = new ActionExecutor(this.eventBus, this.flagStore);
+    this.actionExecutor = new ActionExecutor(this.eventBus, this.flagStore, this.stateController);
     this.ruleOfferRegistry = new RuleOfferRegistry();
     this.renderer = new Renderer();
     this.camera = new Camera(this.renderer.worldContainer);
@@ -340,6 +340,21 @@ export class Game {
   /** 统一解析 JSON / strings 模板中的 [tag:…]（供 Action、UI、档案等共用） */
   resolveDisplayText(raw: string | undefined): string {
     return resolveText(raw, this.buildResolveContext());
+  }
+
+  /**
+   * `playScriptedDialogue` 专用：`[tag:npc:@context]` 在无图对白上下文时使用 `params.scriptedNpcId`，
+   * 若在图对话 `runActions` 内则仍优先当前图的 npcId。
+   */
+  resolveDisplayTextForPlayScripted(raw: string | undefined, scriptedNpcId?: string): string {
+    const base = this.buildResolveContext();
+    const graphNpc = base.contextNpcId?.trim();
+    const scripted = scriptedNpcId?.trim();
+    const ctx: ResolveContext = {
+      ...base,
+      contextNpcId: graphNpc || scripted || undefined,
+    };
+    return resolveText(raw ?? '', ctx);
   }
 
   /**
@@ -620,6 +635,10 @@ export class Game {
     this.questManager.setConditionEvalContextFactory(mkCondCtx);
     this.zoneSystem.setConditionEvalContextFactory(mkCondCtx);
     this.interactionSystem.setConditionEvalContextFactory(mkCondCtx);
+    this.interactionSystem.setEntityBaseVisibilityReaders(
+      (h) => this.sceneManager.getHotspotBaseEnabledForInteraction(h),
+      (n) => this.sceneManager.getNpcBaseVisibleForInteraction(n),
+    );
     this.encounterManager.setConditionEvalContextFactory(mkCondCtx);
     this.mapUI.setConditionEvalContextFactory(mkCondCtx);
     this.archiveManager.setConditionEvalContextFactory(mkCondCtx);
@@ -669,7 +688,7 @@ export class Game {
       fadingRestoreSceneCameraZoom: (durationMs) => {
         const z = this.sceneManager.currentSceneData?.camera?.zoom;
         const target = z !== undefined && Number.isFinite(z) && z > 0 ? z : 1;
-        this.cutsceneManager.fadingCameraZoom(target, durationMs);
+        return this.cutsceneManager.fadingCameraZoom(target, durationMs);
       },
       stopNpcPatrol: (npcId) => {
         this.stopNpcPatrol(npcId);
@@ -746,6 +765,8 @@ export class Game {
       tempSetHotspotDisplayFacing: (sceneId, hotspotId, facing) =>
         this.tempSetHotspotDisplayFacingFromAction(sceneId, hotspotId, facing),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
+      resolveDisplayTextForPlayScripted: (raw, sid) =>
+        this.resolveDisplayTextForPlayScripted(raw, sid),
       waterMinigameManager: this.waterMinigameManager,
       sugarWheelMinigameManager: this.sugarWheelMinigameManager,
     });
@@ -783,24 +804,22 @@ export class Game {
         this.player.playAnimation(ANIM_IDLE);
       },
       fadingDialogueCameraZoom: (targetZoom, durationMs) => {
-        this.cutsceneManager.fadingCameraZoom(targetZoom, durationMs);
+        return this.cutsceneManager.fadingCameraZoom(targetZoom, durationMs);
       },
       fadingRestoreSceneCameraZoom: (durationMs) => {
         const z = this.sceneManager.currentSceneData?.camera?.zoom;
         const target = z !== undefined && Number.isFinite(z) && z > 0 ? z : 1;
-        this.cutsceneManager.fadingCameraZoom(target, durationMs);
+        return this.cutsceneManager.fadingCameraZoom(target, durationMs);
       },
     });
     this.interactionCoordinator.init();
 
     this.listenEvent('archive:firstView', (p: { actions: ActionDef[] }) => {
       void (async () => {
-        for (const a of p.actions) {
-          try {
-            await this.actionExecutor.executeAwait(a);
-          } catch (e) {
-            console.warn('Game: archive:firstView action failed', a.type, e);
-          }
+        try {
+          await this.actionExecutor.executeBatchAwait(p.actions);
+        } catch (e) {
+          console.warn('Game: archive:firstView actions failed', e);
         }
       })();
     });
@@ -811,7 +830,6 @@ export class Game {
       encounterManager: this.encounterManager,
       stateController: this.stateController,
       actionExecutor: this.actionExecutor,
-      sceneManager: this.sceneManager,
       mapUI: this.mapUI,
       menuUI: this.menuUI,
       inspectBox: this.inspectBox,
@@ -873,6 +891,37 @@ export class Game {
         scenarioState: this.scenarioStateManager.serialize(),
         documentReveals: this.documentRevealManager.debugSnapshot(),
       }),
+      getScenarioDebugPanelRows: (): ScenarioDebugPanelRow[] => this.listScenarioDebugPanelRows(),
+      scenarioDebugActivate: (scenarioId) => {
+        const id = scenarioId.trim();
+        if (!id) return;
+        try {
+          this.scenarioStateManager.activateScenarioLine(id);
+          this.debugPanelUI.log(`[scenario] activateScenarioLine("${id}") 已调用`);
+        } catch (e) {
+          console.warn('[scenario] activateScenarioLine failed', e);
+          this.debugPanelUI.log(`[scenario] 激活失败: ${id} — ${String(e)}`);
+        }
+      },
+      scenarioDebugComplete: (scenarioId) => {
+        const id = scenarioId.trim();
+        if (!id) return;
+        try {
+          this.scenarioStateManager.completeScenarioLine(id);
+          this.debugPanelUI.log(`[scenario] completeScenarioLine("${id}") 已调用`);
+        } catch (e) {
+          console.warn('[scenario] completeScenarioLine failed', e);
+          this.debugPanelUI.log(`[scenario] 完成失败: ${id} — ${String(e)}`);
+        }
+      },
+      scenarioDebugResetIncomplete: (scenarioId) => {
+        const id = scenarioId.trim();
+        if (!id) return;
+        this.scenarioStateManager.resetScenarioProgressForDebug(id);
+        this.debugPanelUI.log(
+          `[scenario] resetScenarioProgressForDebug("${id}")：线已视为未完成（已清 phase 桶与 manual 生命周期；exposes 写入的 flag 未回滚）`,
+        );
+      },
       getDepthOcclusionBlendFactor: () => this.sceneDepthSystem.occlusionBlendFactor,
       setDepthOcclusionBlendFactor: (factor) => {
         this.sceneDepthSystem.occlusionBlendFactor = factor;
@@ -2090,6 +2139,39 @@ export class Game {
     this.syncEntityPixelDensityMatch();
   }
 
+  /** F2 叙事调试：逐条 scenario（与 catalog 顺序一致） */
+  private listScenarioDebugPanelRows(): ScenarioDebugPanelRow[] {
+    const m = this.scenarioStateManager;
+    const ids = m.getCatalogScenarioIds();
+    const ser = m.serialize() as {
+      scenarios?: Record<string, Record<string, { status: string; outcome?: unknown }>>;
+      lineLifecycle?: Record<string, string>;
+    };
+    if (ids.length === 0) {
+      return [];
+    }
+    const out: ScenarioDebugPanelRow[] = [];
+    for (const sid of ids) {
+      const life = m.getLineLifecycleState(sid);
+      const manual = m.hasManualLineLifecycle(sid);
+      const phases = ser.scenarios?.[sid];
+      let phaseBrief = '(无 phase 存档桶)';
+      if (phases && Object.keys(phases).length > 0) {
+        const entries = Object.entries(phases);
+        const slice = entries.slice(0, 14);
+        phaseBrief = slice.map(([k, v]) => `${k}=${v.status}`).join('; ');
+        if (entries.length > 14) phaseBrief += ` …(+${entries.length - 14})`;
+      }
+      out.push({
+        id: sid,
+        lifecycle: life,
+        manual,
+        phaseBrief,
+      });
+    }
+    return out;
+  }
+
   private async reloadScene(sceneId: string): Promise<void> {
     this.sceneManager.unloadScene();
     await this.sceneManager.loadScene(sceneId);
@@ -2236,7 +2318,7 @@ export class Game {
 
     if (this.stateController.currentState === GameState.Dialogue) {
       this.dialogueUI.update(dt);
-      this.player.sprite.update(dt);
+      this.player.cutsceneUpdate(dt);
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);
       }
@@ -2244,11 +2326,36 @@ export class Game {
 
     if (this.stateController.currentState === GameState.Encounter) {
       this.encounterUI.update(dt);
+      this.player.cutsceneUpdate(dt);
+      for (const npc of this.sceneManager.getCurrentNpcs()) {
+        npc.cutsceneUpdate(dt);
+      }
     }
 
     if (this.stateController.currentState === GameState.Minigame) {
       this.waterMinigameManager.update(dt);
       this.sugarWheelMinigameManager.update(dt);
+      this.player.cutsceneUpdate(dt);
+      for (const npc of this.sceneManager.getCurrentNpcs()) {
+        npc.cutsceneUpdate(dt);
+      }
+    }
+
+    if (this.stateController.currentState === GameState.UIOverlay) {
+      this.player.cutsceneUpdate(dt);
+      for (const npc of this.sceneManager.getCurrentNpcs()) {
+        npc.cutsceneUpdate(dt);
+      }
+    }
+
+    if (this.stateController.currentState === GameState.ActionSequence) {
+      this.player.cutsceneUpdate(dt);
+      for (const npc of this.sceneManager.getCurrentNpcs()) {
+        npc.cutsceneUpdate(dt);
+      }
+      // 探索触发的动作链（zone / 热区等）会短暂进入此状态；镜头仍需以玩家为锚点，
+      // 否则 fadingZoom 与 moveEntityTo 等组合下会出现「缩放中心漂移、走动不跟镜」。
+      this.camera.follow(this.player.x, this.player.y);
     }
 
     this.emoteBubbleManager.update(dt);

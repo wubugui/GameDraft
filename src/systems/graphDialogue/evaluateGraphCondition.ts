@@ -1,4 +1,4 @@
-import type { Condition } from '../../data/types';
+import type { Condition, ScenarioLineConditionLeaf } from '../../data/types';
 import type { ConditionExpr } from '../../data/types';
 import type { QuestManager } from '../QuestManager';
 import type { FlagStore } from '../../core/FlagStore';
@@ -13,6 +13,7 @@ export type ConditionTrace =
   | { kind: 'flag'; result: boolean; label: string }
   | { kind: 'quest'; result: boolean; label: string }
   | { kind: 'scenario'; result: boolean; label: string }
+  | { kind: 'scenarioLine'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -40,8 +41,28 @@ function isQuestLeaf(x: ConditionExpr): boolean {
 }
 
 function isScenarioLeaf(x: ConditionExpr): x is { scenario: string; phase: string; status: string } {
-  const m = x as { scenario?: unknown; phase?: unknown; status?: unknown };
+  const m = x as { scenario?: unknown; phase?: unknown; status?: unknown; scenarioLine?: unknown };
+  if (typeof m.scenarioLine === 'string') return false;
   return typeof m.scenario === 'string' && typeof m.phase === 'string' && typeof m.status === 'string';
+}
+
+const SCENARIO_LINE_STATUSES = new Set<ScenarioLineConditionLeaf['lineStatus']>([
+  'inactive',
+  'active',
+  'completed',
+]);
+
+function isScenarioLineLeaf(x: ConditionExpr): x is ScenarioLineConditionLeaf {
+  const m = x as { scenarioLine?: unknown; lineStatus?: unknown; flag?: unknown; quest?: unknown };
+  if (
+    typeof m.scenarioLine !== 'string' ||
+    typeof m.lineStatus !== 'string' ||
+    typeof m.flag === 'string' ||
+    m.quest !== undefined
+  ) {
+    return false;
+  }
+  return SCENARIO_LINE_STATUSES.has(m.lineStatus as ScenarioLineConditionLeaf['lineStatus']);
 }
 
 function isAllNode(x: ConditionExpr): x is { all: ConditionExpr[] } {
@@ -89,6 +110,12 @@ export function evaluateConditionExpr(
       return got === expr.outcome;
     }
     return true;
+  }
+
+  if (isScenarioLineLeaf(expr)) {
+    const want = expr.lineStatus;
+    const sid = expr.scenarioLine.trim();
+    return sid ? ctx.scenarioState.getLineLifecycleState(sid) === want : false;
   }
 
   if (isQuestLeaf(expr)) {
@@ -172,6 +199,15 @@ export function evaluateConditionExprWithTrace(
       return { result: oOk, trace: { kind: 'scenario', result: oOk, label } };
     }
     return { result: true, trace: { kind: 'scenario', result: true, label } };
+  }
+
+  if (isScenarioLineLeaf(expr)) {
+    const want = expr.lineStatus;
+    const sid = expr.scenarioLine.trim();
+    const got = sid ? ctx.scenarioState.getLineLifecycleState(sid) : 'inactive';
+    const ok = Boolean(sid) && got === want;
+    const label = `scenarioLine「${expr.scenarioLine}」期望=${want}实际=${got}`;
+    return { result: ok, trace: { kind: 'scenarioLine', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

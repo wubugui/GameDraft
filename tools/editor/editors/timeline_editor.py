@@ -44,6 +44,7 @@ CUTSCENE_ACTION_WHITELIST = [
     "playNpcAnimation", "setEntityEnabled",
     "persistNpcDisablePatrol", "persistNpcEnablePatrol",
     "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "setZoneEnabled", "persistZoneEnabled",
     "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "setEntityField", "setSceneEntityPosition",
     "setHotspotDisplayImage",

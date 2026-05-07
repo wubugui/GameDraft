@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QStackedWidget,
     QSpinBox,
+    QCheckBox,
 )
 
 from ..project_model import ProjectModel
@@ -323,7 +324,8 @@ class ScenariosCatalogEditor(QWidget):
             "scenarioId、exposes 的 flag 须从清单选择；requires 叶子为 phase 名（语义为该 phase 已为 done）。"
             "与/或可用表单多选；含非或嵌套请用 JSON 模式。"
             "phase 名称与 description 可手写。status 仅四种枚举。Apply 写入内存；保存工程写入 data/scenarios.json。"
-            "图对话 setScenarioPhase、scenario 条件须与本页一致。",
+            "图对话 setScenarioPhase、scenario 条件须与本页一致。"
+            "若勾选整条线手动生命周期，须在游戏中用 activateScenario / completeScenario 包住 phase 推进。"
         )
         tip.setWordWrap(True)
         root.addWidget(tip)
@@ -355,17 +357,33 @@ class ScenariosCatalogEditor(QWidget):
         _idl = QHBoxLayout(self._f_id_row)
         _idl.setContentsMargins(0, 0, 0, 0)
         self._f_id_sel = IdRefSelector(
-            self._f_id_row, allow_empty=True, editable=False,
+            self._f_id_row, allow_empty=True, editable=True,
         )
         self._f_id_sel.setToolTip(
-            "须与图内 setScenarioPhase.scenarioId、条件里的 scenario 一致；从下拉选择或生成唯一 id。",
+            "须与图内 setScenarioPhase.scenarioId、条件里的 scenario 一致；"
+            "可从下拉选常见 id，也可在框内直接输入自定义 id；"
+            "空 id 或与另一条重复时，Apply/保存工程会校验失败。",
         )
         self._f_id_sel.value_changed.connect(self._on_detail_edited)
+        self._f_id_sel.editTextChanged.connect(self._on_detail_edited)
+        _id_le = self._f_id_sel.lineEdit()
+        if _id_le is not None:
+            _id_le.setPlaceholderText("手输或从下拉选择…")
         self._f_id_new = QPushButton("生成唯一 id")
-        self._f_id_new.setToolTip("分配未占用的 scenarioId（仍可在下拉里改选其它空闲 id）")
+        self._f_id_new.setToolTip(
+            "分配未占用的 scenarioId；生成后仍可在左侧框内改为任意自定义 id。",
+        )
         self._f_id_new.clicked.connect(self._on_gen_scenario_id)
         _idl.addWidget(self._f_id_sel, stretch=1)
         _idl.addWidget(self._f_id_new)
+        self._f_manual_line = QCheckBox(
+            "整条线手动激活 / 完成（activateScenario … completeScenario）",
+        )
+        self._f_manual_line.setToolTip(
+            "勾选后：须先在同一存档内执行 activateScenario（校验进线 requires）才能 setScenarioPhase，"
+            "completeScenario 之后禁止再改 phase；可由任意图或任务等在运行时先后触发，编辑器不做跨图静态顺序校验。",
+        )
+        self._f_manual_line.stateChanged.connect(self._on_detail_edited)
         self._f_desc = QLineEdit()
         self._f_desc.setPlaceholderText("描述（可选，仅说明文案可手写）")
         self._f_requires_edit = ScenarioRequiresExprEdit.for_scenario_entry(
@@ -385,6 +403,7 @@ class ScenariosCatalogEditor(QWidget):
         self._f_desc.textChanged.connect(self._on_detail_edited)
         self._f_expose_after.currentIndexChanged.connect(self._on_detail_edited)
         form.addRow("id", self._f_id_row)
+        form.addRow("manualLineLifecycle", self._f_manual_line)
         form.addRow("description", self._f_desc)
         form.addRow("scenario 进线 requires", self._f_requires_edit)
         form.addRow("exposeAfterPhase", self._f_expose_after)
@@ -757,6 +776,9 @@ class ScenariosCatalogEditor(QWidget):
             self._f_id_sel.set_items(self._scenario_id_choice_tuples(row))
             self._f_id_sel.set_current(str(d.get("id", "")).strip())
             self._f_id_sel.blockSignals(False)
+            self._f_manual_line.blockSignals(True)
+            self._f_manual_line.setChecked(d.get("manualLineLifecycle") is True)
+            self._f_manual_line.blockSignals(False)
             self._f_desc.setText(str(d.get("description", "")))
             self._f_requires_edit.set_requires_value(d.get("requires"))
 
@@ -783,6 +805,9 @@ class ScenariosCatalogEditor(QWidget):
         self._f_id_sel.blockSignals(True)
         self._f_id_sel.set_items([])
         self._f_id_sel.blockSignals(False)
+        self._f_manual_line.blockSignals(True)
+        self._f_manual_line.setChecked(False)
+        self._f_manual_line.blockSignals(False)
         self._f_desc.clear()
         self._f_requires_edit.set_requires_value(None)
         self._f_expose_after.clear()
@@ -895,6 +920,10 @@ class ScenariosCatalogEditor(QWidget):
 
         sid = self._f_id_sel.current_id().strip()
         d["id"] = sid
+        if self._f_manual_line.isChecked():
+            d["manualLineLifecycle"] = True
+        elif "manualLineLifecycle" in d:
+            del d["manualLineLifecycle"]
         desc = self._f_desc.text().strip()
         if desc:
             d["description"] = desc
@@ -1233,7 +1262,8 @@ class DocumentRevealsEditor(QWidget):
         w3l = QVBoxLayout(w3)
         self._dr_cond_json = QPlainTextEdit()
         self._dr_cond_json.setPlaceholderText('例如 {"all":[...]} 或任意 ConditionExpr JSON')
-        self._dr_cond_json.setMaximumHeight(140)
+        self._dr_cond_json.setMinimumHeight(220)
+        self._dr_cond_json.setMaximumHeight(520)
         self._dr_cond_json.textChanged.connect(self._dr_on_edit)
         w3l.addWidget(self._dr_cond_json)
 

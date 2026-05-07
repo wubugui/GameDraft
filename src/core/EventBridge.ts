@@ -4,7 +4,6 @@ import type { GameStateController } from './GameStateController';
 import type { DialogueManager } from '../systems/DialogueManager';
 import type { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import type { EncounterManager } from '../systems/EncounterManager';
-import type { SceneManager } from '../systems/SceneManager';
 import type { ActionDef } from '../data/types';
 import { GameState } from '../data/types';
 
@@ -14,7 +13,6 @@ export interface EventBridgeDeps {
   encounterManager: EncounterManager;
   stateController: GameStateController;
   actionExecutor: ActionExecutor;
-  sceneManager: SceneManager;
   mapUI: { setCurrentScene(sceneId: string): void };
   menuUI: { close(): void; openMainMenu(): void };
   inspectBox: { show(text: string): Promise<void> };
@@ -32,7 +30,7 @@ export class EventBridge {
 
   init(): void {
     const { dialogueManager, graphDialogueManager, encounterManager, stateController,
-            actionExecutor, sceneManager, mapUI, menuUI, inspectBox } = this.deps;
+            actionExecutor, mapUI, menuUI, inspectBox } = this.deps;
 
     // runActions 内嵌 `playScriptedDialogue` 时图对话与 DialogueManager 同时 active；
     // 点击继续必须推进 DialogueManager，否则脚本台词永远卡在第一句。
@@ -82,13 +80,13 @@ export class EventBridge {
     this.listen('shop:closed', () => stateController.setState(GameState.Exploring));
 
     this.listen('map:travel', async (p: { sceneId: string }) => {
-      stateController.setState(GameState.Cutscene);
       try {
-        await sceneManager.switchScene(p.sceneId);
-        stateController.setState(GameState.Exploring);
+        await actionExecutor.executeAwait({
+          type: 'switchScene',
+          params: { targetScene: p.sceneId },
+        });
       } catch (e) {
-        console.warn('EventBridge: map:travel switchScene failed', e);
-        stateController.setState(GameState.Exploring);
+        console.warn('EventBridge: map:travel switchScene action failed', e);
       }
     });
 

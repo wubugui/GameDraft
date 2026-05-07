@@ -16,9 +16,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 
 from .id_ref_selector import IdRefSelector
+from .rich_text_field import RichTextLineEdit
 
 _SPEAKER_INSERTS = (
     ("{{player}}", "玩家显示名"),
@@ -62,18 +64,40 @@ def build_speaker_line_with_inserts(
     *,
     initial_speaker: str,
     on_change: Callable[[], None],
-) -> tuple[QHBoxLayout, QLineEdit]:
-    """返回一行：speaker QLineEdit +「插入…」菜单。"""
-    hdr = QHBoxLayout()
-    hdr.addWidget(QLabel("speaker"), stretch=0)
-    sp = QLineEdit(parent)
-    sp.setPlaceholderText("留空=旁白；可插入 {{player}} / {{npc}}")
-    sp.setText(initial_speaker)
-    sp.textChanged.connect(lambda _t: on_change())
+    rich_refs: bool = False,
+) -> tuple[QHBoxLayout, QLineEdit | RichTextLineEdit]:
+    """返回一行：speaker（QLineEdit 或 RichTextLineEdit）+「插入占位…」菜单。
 
-    def insert_tok(tok: str) -> None:
-        sp.insert(tok)
-        on_change()
+    rich_refs=True 且 model 非空时使用 RichTextLineEdit，可与正文一致插入 [tag:…]。
+    """
+    hdr = QHBoxLayout()
+    hdr.setAlignment(Qt.AlignmentFlag.AlignTop)
+    hdr.addWidget(QLabel("speaker"), stretch=0)
+
+    use_rich = bool(rich_refs and model)
+
+    if use_rich:
+        sp = RichTextLineEdit(model, parent)
+        sp.setPlaceholderText(
+            "留空=旁白；点「引用」插入 [tag:…]；或右侧菜单插入 {{player}}/{{npc}}",
+        )
+        sp.setText(initial_speaker)
+
+        def insert_tok(tok: str) -> None:
+            sp.insert(tok)
+            on_change()
+
+        sp.textChanged.connect(lambda _t: on_change())
+    else:
+        sp_plain = QLineEdit(parent)
+        sp_plain.setPlaceholderText("留空=旁白；可插入 {{player}} / {{npc}}")
+        sp_plain.setText(initial_speaker)
+        sp_plain.textChanged.connect(lambda _t: on_change())
+        sp = sp_plain
+
+        def insert_tok(tok: str) -> None:
+            sp_plain.insert(tok)
+            on_change()
 
     def pick_npc() -> None:
         dlg = NpcIdPickDialog(model, scene_id, parent)
@@ -118,8 +142,11 @@ class CutsceneShowDialogueFields(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
-        tip = QLabel("speaker 支持 {{player}} / {{npc}} / {{npc:id}}", self)
-        tip.setToolTip("与 playScriptedDialogue 一致；{{npc}} 使用下方 scriptedNpcId 或图对话 npcId。")
+        tip = QLabel("speaker：工程内可走「引用」插入 [tag:…]；或 {{player}}/{{npc}}", self)
+        tip.setToolTip(
+            "与 playScriptedDialogue 一致；{{npc}} 使用下方 scriptedNpcId 或图对话 npcId；"
+            "有工程时单行「引用」与 resolveText 一致。",
+        )
         form.addRow(tip)
         self._snpc = IdRefSelector(self, allow_empty=True)
         self._snpc.setMinimumWidth(160)
@@ -128,7 +155,12 @@ class CutsceneShowDialogueFields(QWidget):
         self._snpc.value_changed.connect(lambda _v: on_change())
         form.addRow("scriptedNpcId（{{npc}} 默认）", self._snpc)
         sh, self._speaker = build_speaker_line_with_inserts(
-            self, model, scene_id, initial_speaker=str(speaker or ""), on_change=on_change,
+            self,
+            model,
+            scene_id,
+            initial_speaker=str(speaker or ""),
+            on_change=on_change,
+            rich_refs=bool(model),
         )
         form.addRow(sh)
         self._text = QTextEdit(self)

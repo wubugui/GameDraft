@@ -7,8 +7,8 @@
  * 且 `tools/editor/validator.py` 会对数据中的未知 type 报错。
  * 主编辑器中 Action 的 type 下拉为「仅选清单」模式，与 ACTION_TYPES 一致，不可手写未登记 type。
  *
- * 图对话节点 `runActions` 与热区共用本文件中的 `register` handler；若 handler 返回 Promise，
- * 对话里会顺序 await。仅当热区必须无效果而对话要等待时，再使用 `registerDialogueSequential`（如 waitMs）。
+ * 所有调用方（zone onEnter、图对话 runActions、热区 inspect、任务奖励等）共用同一条解算链路：
+ * `ActionExecutor.executeAwait`，顺序 await handler 返回的 Promise。
  */
 import type { ActionExecutor } from './ActionExecutor';
 import type { RuleOfferRegistry } from './RuleOfferRegistry';
@@ -73,7 +73,7 @@ export interface ActionRegistryDeps {
   /** 恢复为当前场景数据中的 camera.zoom（无配置则 1） */
   restoreSceneCameraZoom: () => void;
   /** 渐变拉远/还原到当前场景 JSON 中的 camera.zoom（durationMs 毫秒） */
-  fadingRestoreSceneCameraZoom: (durationMs: number) => void;
+  fadingRestoreSceneCameraZoom: (durationMs: number) => Promise<void>;
   /** 停止指定 NPC 的巡逻协程（打断位移 + 失效该次巡逻 token） */
   stopNpcPatrol: (npcId: string) => void;
   /** 在当前场景为该 NPC 重新启动巡逻（会先 stop再跑，避免重复协程） */
@@ -111,6 +111,10 @@ export interface ActionRegistryDeps {
   waitClickContinue: (hintOverride?: string) => Promise<void>;
   /** 统一解析 JSON 字符串中的 [tag:…] */
   resolveDisplayText: (raw: string) => string;
+  /**
+   * `playScriptedDialogue`：`[tag:npc:@context]` 在无图对白时用 scriptedNpcId 补全上下文。
+   */
+  resolveDisplayTextForPlayScripted: (raw: string | undefined, scriptedNpcId?: string) => string;
   scenarioStateManager: ScenarioStateManager;
   documentRevealManager: DocumentRevealManager;
   /** 在 CutsceneManager 临时表中 spawn 一个临时实体并挂载到显示层 */
@@ -159,6 +163,31 @@ function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffset
     anchorOffsetX: Number.isFinite(ox) ? ox : 0,
     anchorOffsetY: Number.isFinite(oy) ? oy : 0,
   };
+}
+
+/** moveEntityTo.params.waypoints：世界坐标折线途经点（终点由 x/y 给出，须单独 append）。 */
+function parseMoveEntityWaypointList(raw: unknown): Array<{ x: number; y: number }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ x: number; y: number }> = [];
+  for (const it of raw) {
+    if (!it || typeof it !== 'object') continue;
+    const o = it as Record<string, unknown>;
+    const xv = typeof o.x === 'number' ? o.x : Number(o.x);
+    const yv = typeof o.y === 'number' ? o.y : Number(o.y);
+    if (Number.isFinite(xv) && Number.isFinite(yv)) {
+      out.push({ x: xv, y: yv });
+    }
+  }
+  return out;
+}
+
+/** moveEntityTo.params.faceTowardMovement：true 时沿路持续更新朝向；缺省/假为旧行为。 */
+function parseFaceTowardMovementParam(raw: unknown): boolean {
+  if (raw === true) return true;
+  if (raw === false || raw === undefined || raw === null) return false;
+  if (typeof raw === 'number') return raw !== 0;
+  const s = String(raw).trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes';
 }
 
 /** showSpeechBubble*：对白用 `text`；兼容沿用 `emote` 键以便从 showEmote 复制参数。 */
@@ -212,6 +241,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const scenarioId = String(p.scenarioId ?? '').trim();
     if (!scenarioId) return;
     d.scenarioStateManager.assertScenarioLineEntryForAction(scenarioId);
+  }, ['scenarioId']);
+
+  executor.register('activateScenario', (p) => {
+    const scenarioId = String(p.scenarioId ?? '').trim();
+    if (!scenarioId) return;
+    d.scenarioStateManager.activateScenarioLine(scenarioId);
+  }, ['scenarioId']);
+
+  executor.register('completeScenario', (p) => {
+    const scenarioId = String(p.scenarioId ?? '').trim();
+    if (!scenarioId) return;
+    d.scenarioStateManager.completeScenarioLine(scenarioId);
   }, ['scenarioId']);
 
   executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
@@ -563,7 +604,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.restoreSceneCameraZoom();
   }, []);
 
-  executor.register('fadingZoom', (p) => {
+  executor.register('fadingZoom', async (p) => {
     const zoom = typeof p.zoom === 'number' ? p.zoom : Number(p.zoom);
     const durRaw = p.durationMs ?? p.duration ?? 600;
     const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
@@ -572,14 +613,14 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
-    d.cutsceneManager.fadingCameraZoom(zoom, ms);
+    await d.cutsceneManager.fadingCameraZoom(zoom, ms);
   }, ['zoom', 'durationMs']);
 
-  executor.register('fadingRestoreSceneCameraZoom', (p) => {
+  executor.register('fadingRestoreSceneCameraZoom', async (p) => {
     const durRaw = p.durationMs ?? p.duration ?? 600;
     const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
-    d.fadingRestoreSceneCameraZoom(ms);
+    await d.fadingRestoreSceneCameraZoom(ms);
   }, ['durationMs']);
 
   executor.register('stopNpcPatrol', (p) => {
@@ -681,6 +722,48 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         console.warn('ActionRegistry: persistHotspotEnabled failed', e);
       });
   }, ['sceneId', 'hotspotId', 'enabled']);
+
+  const parseZoneEnabledParam = (raw: unknown): boolean | null => {
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw !== 0;
+    const s = String(raw).trim().toLowerCase();
+    if (s === 'true' || s === '1') return true;
+    if (s === 'false' || s === '0') return false;
+    return null;
+  };
+
+  /** 当前会话内启用/禁用 standard zone（不写档）；false 时该 zone 不进入 ZoneSystem */
+  executor.register('setZoneEnabled', (p) => {
+    const sceneId = String(p.sceneId ?? '').trim();
+    const zoneId = String(p.zoneId ?? '').trim();
+    if (!sceneId || !zoneId) {
+      console.warn('setZoneEnabled: 需要 sceneId、zoneId');
+      return;
+    }
+    const enabled = parseZoneEnabledParam(p.enabled);
+    if (enabled === null) {
+      console.warn('setZoneEnabled: missing or invalid enabled');
+      return;
+    }
+    d.sceneManager.setZoneEnabledSession(sceneId, zoneId, enabled);
+  }, ['sceneId', 'zoneId', 'enabled']);
+
+  /** 将 standard zone 启用状态写入 sceneMemory 并刷新 ZoneSystem；depth_floor 无效果 */
+  executor.register('persistZoneEnabled', (p) => {
+    const sceneId = String(p.sceneId ?? '').trim();
+    const zoneId = String(p.zoneId ?? '').trim();
+    if (!sceneId || !zoneId) {
+      console.warn('persistZoneEnabled: 需要 sceneId、zoneId');
+      return;
+    }
+    const enabled = parseZoneEnabledParam(p.enabled);
+    if (enabled === null) {
+      console.warn('persistZoneEnabled: missing or invalid enabled');
+      return;
+    }
+    d.sceneManager.mergePersistentZoneEnabled(sceneId, zoneId, enabled);
+  }, ['sceneId', 'zoneId', 'enabled']);
 
   /**
    * 将场景内 NPC 或 Hotspot 的 **存档** x/y 写入 sceneMemory，并在当前已加载该场景时立即应用。
@@ -913,7 +996,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const scriptedNpcId = String(p.scriptedNpcId ?? '').trim();
     const narrKey = d.stringsProvider.get('dialogue', 'narratorLabel');
     const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
-    const narratorBaselineResolved = d.resolveDisplayText(narratorFallback);
+    const narratorBaselineResolved = d.resolveDisplayTextForPlayScripted(narratorFallback, scriptedNpcId);
     const lines: DialogueLine[] = [];
     for (const item of raw) {
       if (!item || typeof item !== 'object') continue;
@@ -922,8 +1005,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       const speakerResolved = speakerRaw ? d.resolveScriptedSpeaker(speakerRaw, scriptedNpcId) : '';
       const text = String(o.text ?? '').trim();
       if (!text) continue;
-      const speakerResolvedDisplay = d.resolveDisplayText(speakerResolved || narratorFallback);
-      const textResolvedDisplay = d.resolveDisplayText(text);
+      const speakerResolvedDisplay = d.resolveDisplayTextForPlayScripted(
+        speakerResolved || narratorFallback,
+        scriptedNpcId,
+      );
+      const textResolvedDisplay = d.resolveDisplayTextForPlayScripted(text, scriptedNpcId);
       const { speaker: lineSpeaker, text: lineText } = applyDialogueColonSpeakerFromResolvedText(
         speakerResolvedDisplay,
         textResolvedDisplay,
@@ -942,15 +1028,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     return d.playScriptedDialogue(lines);
   }, ['lines']);
 
-  /** 热区/任务等非对话路径无延时效果；图对话 runActions 中走 registerDialogueSequential。 */
-  executor.register('waitMs', () => {}, ['durationMs']);
-
-  executor.registerDialogueSequential('waitMs', async (p) => {
+  executor.register('waitMs', async (p) => {
     const durRaw = p.durationMs ?? 600;
     const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
     if (ms > 0) await new Promise<void>(resolve => setTimeout(resolve, ms));
-  });
+  }, ['durationMs']);
 
   // ----------------------------------------------------------------
   // Cutscene 白名单 Action（无副作用，可出现在 A 类表演中）
@@ -962,6 +1045,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const y = typeof p.y === 'number' ? p.y : Number(p.y);
     const speedRaw = p.speed;
     const speed = typeof speedRaw === 'number' ? speedRaw : (speedRaw !== undefined ? Number(speedRaw) : 80);
+    const spd = Number.isFinite(speed) && speed > 0 ? speed : 80;
+    const segments = [...parseMoveEntityWaypointList(p.waypoints), { x, y }];
+    const moveAnimRaw = p.moveAnimState;
+    const moveAnim =
+      typeof moveAnimRaw === 'string' && moveAnimRaw.trim() ? moveAnimRaw.trim() : undefined;
+    const faceTowardMovement = parseFaceTowardMovementParam(p.faceTowardMovement);
     if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
       console.warn('moveEntityTo: 需要 target、有限数值 x/y');
       return;
@@ -971,8 +1060,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn(`moveEntityTo: 找不到实体 "${target}"`);
       return;
     }
-    await actor.moveTo(x, y, Number.isFinite(speed) && speed > 0 ? speed : 80);
-  }, ['target', 'x', 'y', 'speed']);
+    for (const pt of segments) {
+      await actor.moveTo(pt.x, pt.y, spd, moveAnim, faceTowardMovement);
+    }
+    // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
+  }, ['target', 'x', 'y', 'speed', 'waypoints', 'moveAnimState', 'faceTowardMovement']);
 
   executor.register('faceEntity', (p) => {
     const target = String(p.target ?? '').trim();
@@ -1101,7 +1193,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     dbg(d, '[showSpeechBubbleAndWait] showAndWait 结束');
   }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
-  executor.registerDialogueSequential('revealDocument', async (p) => {
+  executor.register('revealDocument', async (p) => {
     await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));
-  });
+  }, ['documentId']);
 }

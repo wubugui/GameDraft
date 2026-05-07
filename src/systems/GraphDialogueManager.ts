@@ -54,7 +54,7 @@ export interface NarrativeSwitchDebug {
  * 部分 Action（如 waitClickContinue）在 JS 中只能异步完成，**并非**多段剧情并行。
  *
  * **防乱**：凡 `advance` / `chooseOption` / `startDialogueGraph` 一律经 `runExclusive` 排队，同一时刻最多
- * 一条执行链；`drainUntilBlocking` 内 `while` 顺序前进，仅在 `await executeForDialogue` / `await loadJson` 处让出线程。
+ * 一条执行链；`drainUntilBlocking` 内 `while` 顺序前进，仅在 `await executeAwait` / `await loadJson` 处让出线程。
  */
 export class GraphDialogueManager implements IGameSystem {
   private eventBus: EventBus;
@@ -479,7 +479,7 @@ export class GraphDialogueManager implements IGameSystem {
         this.eventBus.emit('dialogue:hidePanel', {});
         try {
           for (const a of node.actions) {
-            await this.actionExecutor.executeForDialogue(a as ActionDef);
+            await this.actionExecutor.executeAwait(a as ActionDef);
           }
         } catch (e) {
           console.warn('GraphDialogueManager: runActions 执行失败，结束对话', e);

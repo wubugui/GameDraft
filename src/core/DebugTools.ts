@@ -12,6 +12,15 @@ import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisua
 const DEBUG_CAMERA_ZOOM_MIN = 0.05;
 const DEBUG_CAMERA_ZOOM_MAX = 4;
 
+/** F2 叙事调试：scenario 列表行（每条一张操作卡） */
+export interface ScenarioDebugPanelRow {
+  id: string;
+  /** inactive | active | completed */
+  lifecycle: string;
+  manual: boolean;
+  phaseBrief: string;
+}
+
 export interface DebugToolsDeps {
   renderer: Renderer;
   camera: Camera;
@@ -50,6 +59,12 @@ export interface DebugToolsDeps {
   depthOcclusionActive: () => boolean;
   /** ScenarioStateManager + DocumentRevealManager 只读快照（F2 工具页） */
   getNarrativeDebugSnapshot: () => Record<string, unknown>;
+  /** Scenario 列表（与 catalog 顺序一致，供 F2 逐项操作） */
+  getScenarioDebugPanelRows: () => ScenarioDebugPanelRow[];
+  scenarioDebugActivate: (scenarioId: string) => void;
+  scenarioDebugComplete: (scenarioId: string) => void;
+  /** 清掉该 scenario 的 phase 存档与 manual 线生命周期（调试用；不撤 exposes 写出的 flag） */
+  scenarioDebugResetIncomplete: (scenarioId: string) => void;
 }
 
 export class DebugTools {
@@ -217,23 +232,142 @@ export class DebugTools {
     canvas.addEventListener('pointerdown', this.positionDebugPointerHandler);
   }
 
+  private buildScenarioDebugListExtra(rows: ScenarioDebugPanelRow[]): HTMLElement {
+    const { debugPanelUI, scenarioDebugActivate, scenarioDebugComplete, scenarioDebugResetIncomplete } = this.deps;
+    const outer = document.createElement('div');
+    outer.className = 'debug-dock__section-extra';
+
+    const hint = document.createElement('p');
+    hint.className = 'debug-dock__scenario-list-hint';
+    hint.textContent =
+      '操作后会刷新本列表。「未完成」会清空该线的 phase 存档与 manual 生命周期（不自动回滚 exposes 写入的 flag）。';
+    outer.appendChild(hint);
+
+    const list = document.createElement('div');
+    list.className = 'debug-dock__scenario-list';
+
+    if (rows.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'debug-dock__scenario-list-empty';
+      empty.textContent = '（无条目）';
+      list.appendChild(empty);
+      outer.appendChild(list);
+      return outer;
+    }
+
+    for (const row of rows) {
+      const card = document.createElement('div');
+      card.className = 'debug-dock__scenario-card';
+
+      const meta = document.createElement('div');
+      meta.className = 'debug-dock__scenario-meta';
+      const title = document.createElement('div');
+      title.className = 'debug-dock__scenario-id';
+      title.textContent = row.id;
+      const subLc = document.createElement('div');
+      subLc.className = 'debug-dock__scenario-sub';
+      subLc.textContent =
+        `线状态: ${row.lifecycle}` +
+        (row.manual ? ' · manualLineLifecycle' : ' · 非 manual（无 activate/complete 入口）');
+      const subPh = document.createElement('div');
+      subPh.className = 'debug-dock__scenario-sub';
+      subPh.textContent = `phase: ${row.phaseBrief}`;
+      meta.appendChild(title);
+      meta.appendChild(subLc);
+      meta.appendChild(subPh);
+
+      const btnCol = document.createElement('div');
+      btnCol.className = 'debug-dock__scenario-btns';
+
+      const canActivate = row.manual && row.lifecycle !== 'completed';
+      const act = document.createElement('button');
+      act.type = 'button';
+      act.className = 'debug-dock__btn debug-dock__btn--sm';
+      act.textContent = '激活';
+      act.disabled = !canActivate;
+      if (!row.manual) {
+        act.title = '非 manualLineLifecycle，无 activateScenario 入口';
+      } else if (row.lifecycle === 'completed') {
+        act.title = '线已完成，不能再激活';
+      } else if (row.lifecycle === 'active') {
+        act.title = '已为 active（再点无副作用）';
+      }
+      act.addEventListener('click', () => {
+        scenarioDebugActivate(row.id);
+        debugPanelUI.refresh();
+      });
+
+      const canComplete = row.manual && row.lifecycle === 'active';
+      const cmp = document.createElement('button');
+      cmp.type = 'button';
+      cmp.className = 'debug-dock__btn debug-dock__btn--sm';
+      cmp.textContent = '完成';
+      cmp.disabled = !canComplete;
+      if (!row.manual) {
+        cmp.title = '非 manualLineLifecycle';
+      } else if (row.lifecycle !== 'active') {
+        cmp.title = '须先将线激活为 active 后才能 complete';
+      }
+      cmp.addEventListener('click', () => {
+        scenarioDebugComplete(row.id);
+        debugPanelUI.refresh();
+      });
+
+      const rst = document.createElement('button');
+      rst.type = 'button';
+      rst.className = 'debug-dock__btn debug-dock__btn--sm';
+      rst.textContent = '未完成';
+      rst.title =
+        '清空该 scenario 的 phase 存档与 manual 线生命周期（可再次进线/激活）。不撤销 exposes 已写入的全局 flag。';
+      rst.addEventListener('click', () => {
+        scenarioDebugResetIncomplete(row.id);
+        debugPanelUI.refresh();
+      });
+
+      btnCol.appendChild(act);
+      btnCol.appendChild(cmp);
+      btnCol.appendChild(rst);
+
+      card.appendChild(meta);
+      card.appendChild(btnCol);
+      list.appendChild(card);
+    }
+
+    outer.appendChild(list);
+    return outer;
+  }
+
   private setupDebugPanelSections(): void {
     const { debugPanelUI, player, inventoryManager, renderer } = this.deps;
 
     debugPanelUI.addSection(NARRATIVE_DEBUG_SECTION_ID, () => {
-      let text: string;
+      let narrativeBlock: string;
       try {
         const snap = this.deps.getNarrativeDebugSnapshot();
         const ne = snap.narrativeEval as { summaryText?: string } | undefined;
-        text =
+        narrativeBlock =
           ne && typeof ne.summaryText === 'string' && ne.summaryText.trim()
             ? ne.summaryText.trim()
             : '';
       } catch {
-        text = '（快照序列化失败）';
+        narrativeBlock = '（快照序列化失败）';
       }
+      if (!narrativeBlock.trim()) narrativeBlock = '（暂无叙事解算摘要）';
+
+      let rows: ScenarioDebugPanelRow[] = [];
+      try {
+        rows = this.deps.getScenarioDebugPanelRows();
+      } catch {
+        rows = [];
+      }
+
+      const n = rows.length;
       return {
-        text: text.trim() ? text : '（暂无数据）',
+        text:
+          `${narrativeBlock}\n\n--- Scenario（catalog）---\n` +
+          (n === 0
+            ? '（暂无 catalog 条目）'
+            : `共 ${n} 条线（顺序同 scenarios.json）。下方逐条可点「激活 / 完成」。\n仅 manualLineLifecycle=true 的线可点；「完成」需线状态为 active。`),
         actions: [
           {
             label: '刷新',
@@ -242,6 +376,7 @@ export class DebugTools {
             },
           },
         ],
+        extra: this.buildScenarioDebugListExtra(rows),
       };
     });
 

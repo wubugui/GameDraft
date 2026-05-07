@@ -17,6 +17,8 @@ const CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST: ReadonlySet<string> = new Set([
   'appendFlag',
   'setScenarioPhase',
   'startScenario',
+  'activateScenario',
+  'completeScenario',
   'giveItem',
   'removeItem',
   'giveCurrency',
@@ -224,9 +226,9 @@ export class CutsceneManager implements IGameSystem {
   /**
    * 渐变改变相机 zoom（与演出 camera_zoom 同源，供 Action fadingZoom 等使用）。
    */
-  fadingCameraZoom(targetZoom: number, durationMs: number): void {
+  fadingCameraZoom(targetZoom: number, durationMs: number): Promise<void> {
     const d = Math.max(0, durationMs);
-    void this.cutsceneRenderer.cameraZoom(targetZoom, d <= 0 ? 1 : d).catch((e) => {
+    return this.cutsceneRenderer.cameraZoom(targetZoom, d <= 0 ? 1 : d).catch((e) => {
       console.warn('CutsceneManager: fadingCameraZoom failed', e);
     });
   }
@@ -435,11 +437,12 @@ export class CutsceneManager implements IGameSystem {
   }
 
   private async saveAndTransition(def: NewCutsceneDef): Promise<void> {
-    const currentSceneId = this.sceneIdGetter?.() ?? '';
+    const currentSceneId = this.sceneIdGetter?.()?.trim() ?? '';
+    const targetSceneId = typeof def.targetScene === 'string' ? def.targetScene.trim() : '';
 
-    if (def.targetScene && def.targetScene !== currentSceneId && this.sceneSwitcher) {
+    if (targetSceneId && targetSceneId !== currentSceneId && this.sceneSwitcher) {
       await this.sceneSwitcher({
-        targetScene: def.targetScene,
+        targetScene: targetSceneId,
         targetSpawnPoint: def.targetSpawnPoint,
       });
     } else if (def.targetSpawnPoint) {

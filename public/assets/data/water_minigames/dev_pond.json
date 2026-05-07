@@ -3,7 +3,7 @@
   "label": "Dev 占位池塘",
   "spotId": "dev_pond",
   "waterBottom": {
-    "texture": "/assets/images/illustrations/iron_box_closeup.png",
+    "texture": "/assets/images/minigames/water/riverbed_murky.png",
     "tint": "#18324a",
     "depth": 0.55
   },
@@ -20,7 +20,7 @@
     {
       "id": "weed_a",
       "category": "grass",
-      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "sprite": "/assets/images/minigames/water/reed_clump_gen.png",
       "pos": {
         "x": 122,
         "y": 71
@@ -34,7 +34,7 @@
     {
       "id": "junk_float",
       "category": "floating",
-      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "sprite": "/assets/images/minigames/water/wet_paper_gen.png",
       "pos": {
         "x": 372,
         "y": 71
@@ -60,25 +60,23 @@
             "type": "info"
           }
         }
-      ],
-      "onPullSuccess": [],
-      "onPullFail": []
+      ]
     },
     {
       "id": "crate_heavy",
       "category": "sunken",
-      "sprite": "/assets/images/illustrations/堆积的箱子.png",
+      "sprite": "/assets/images/minigames/water/sunken_crate_gen.png",
       "pos": {
         "x": 288,
         "y": 58
       },
       "depth": 0.82,
       "pull": {
-        "zoneSize": 0.11,
-        "sliderSpeed": 0.95,
+        "zoneSize": 0.18,
+        "sliderSpeed": 0.75,
         "rhythm": "heavy_sink",
         "failurePolicy": "snap",
-        "timeLimitSec": 14
+        "timeLimitSec": 18
       },
       "cue": "沉甸甸的箱子角",
       "onPullSuccess": [
@@ -105,13 +103,12 @@
             "type": "warning"
           }
         }
-      ],
-      "onPick": []
+      ]
     },
     {
       "id": "minnow",
       "category": "swimming",
-      "sprite": "/assets/images/illustrations/洋人女性.png",
+      "sprite": "/assets/images/minigames/water/fish_silver_gen.png",
       "pos": {
         "x": 202,
         "y": 64
@@ -134,11 +131,11 @@
       },
       "valueTier": "premium",
       "pull": {
-        "zoneSize": 0.16,
-        "sliderSpeed": 1,
+        "zoneSize": 0.24,
+        "sliderSpeed": 0.72,
         "rhythm": "stable",
         "failurePolicy": "escape",
-        "timeLimitSec": 11
+        "timeLimitSec": 16
       },
       "cue": "一闪即逝的小鱼",
       "onPullSuccess": [
@@ -149,14 +146,12 @@
             "count": 1
           }
         }
-      ],
-      "onPick": [],
-      "onPullFail": []
+      ]
     },
     {
       "id": "spasm_fish",
       "category": "swimming",
-      "sprite": "/assets/images/illustrations/ghost_bride_flashback.png",
+      "sprite": "/assets/images/minigames/water/water_monkey_shadow_gen.png",
       "pos": {
         "x": 560,
         "y": 340
@@ -168,11 +163,11 @@
       },
       "valueTier": "premium",
       "pull": {
-        "zoneSize": 0.13,
-        "sliderSpeed": 1.05,
+        "zoneSize": 0.17,
+        "sliderSpeed": 0.92,
         "rhythm": "spasm",
         "failurePolicy": "bite",
-        "timeLimitSec": 12
+        "timeLimitSec": 13
       },
       "cue": "挣得非常厉害的影子",
       "onPullFail": [

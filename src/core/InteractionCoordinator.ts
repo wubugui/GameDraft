@@ -83,7 +83,7 @@ export class InteractionCoordinator {
         await this.handleTransition(def.data as TransitionData);
         break;
       case 'encounter':
-        this.handleEncounterTrigger(hotspot, def.data as EncounterTriggerData);
+        await this.handleEncounterTrigger(hotspot, def.data as EncounterTriggerData);
         break;
     }
   }
@@ -157,7 +157,7 @@ export class InteractionCoordinator {
     eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
     if (data.actions) {
       try {
-        await actionExecutor.executeBatchSequential(data.actions);
+        await actionExecutor.executeBatchAwait(data.actions);
       } catch (e) {
         console.warn('InteractionCoordinator: inspect actions failed', e);
       }
@@ -186,7 +186,7 @@ export class InteractionCoordinator {
       void (async () => {
         if (data.actions?.length) {
           try {
-            await actionExecutor.executeBatchSequential(data.actions);
+            await actionExecutor.executeBatchAwait(data.actions);
           } catch (e) {
             console.warn('InteractionCoordinator: inspect graph actions failed', e);
           }
@@ -233,9 +233,19 @@ export class InteractionCoordinator {
     eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
   }
 
-  private handleEncounterTrigger(hotspot: Hotspot, data: EncounterTriggerData): void {
-    this.deps.actionExecutor.execute({ type: 'startEncounter', params: { id: data.encounterId } });
-    this.deps.eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
+  private async handleEncounterTrigger(
+    _hotspot: Hotspot,
+    data: EncounterTriggerData,
+  ): Promise<void> {
+    try {
+      await this.deps.actionExecutor.executeAwait({
+        type: 'startEncounter',
+        params: { id: data.encounterId },
+      });
+    } catch (e) {
+      console.warn('InteractionCoordinator: startEncounter failed', e);
+    }
+    this.deps.eventBus.emit('hotspot:pickup:done', { hotspotId: _hotspot.def.id });
   }
 
   private async handleTransition(data: TransitionData): Promise<void> {

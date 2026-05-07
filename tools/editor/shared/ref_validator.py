@@ -42,6 +42,76 @@ def scan_refs(text: str | None, where: str, model: ProjectModel) -> list[str]:
     return errs
 
 
+def walk_action_defs_embedded_refs(
+    actions: Any,
+    ctx_base: str,
+    model: ProjectModel,
+    errs: list[str],
+) -> None:
+    """遍历嵌套 Action 列表（含 enableRuleOffers / addDelayedEvent），校验 playScriptedDialogue.lines[].text 内 [tag:…]。"""
+    if not isinstance(actions, list):
+        return
+    for ai, act in enumerate(actions):
+        if not isinstance(act, dict):
+            continue
+        t = act.get("type")
+        p = act.get("params") if isinstance(act.get("params"), dict) else {}
+        prefix = f"{ctx_base}[{ai}]"
+        if t == "playScriptedDialogue":
+            for li, ln in enumerate(p.get("lines") or []):
+                if isinstance(ln, dict):
+                    errs.extend(
+                        scan_refs(ln.get("speaker"), f"{prefix}.lines[{li}].speaker", model),
+                    )
+                    errs.extend(
+                        scan_refs(ln.get("text"), f"{prefix}.lines[{li}].text", model),
+                    )
+        elif t == "enableRuleOffers":
+            for si, slot in enumerate(p.get("slots") or []):
+                if isinstance(slot, dict):
+                    walk_action_defs_embedded_refs(
+                        slot.get("resultActions"),
+                        f"{prefix}.slots[{si}].resultActions",
+                        model,
+                        errs,
+                    )
+        elif t == "addDelayedEvent":
+            walk_action_defs_embedded_refs(
+                p.get("actions"),
+                f"{prefix}.actions",
+                model,
+                errs,
+            )
+
+
+def _walk_cutscene_steps_play_scripted_embedded_refs(
+    steps: Any,
+    ctx_prefix: str,
+    model: ProjectModel,
+    errs: list[str],
+) -> None:
+    if not isinstance(steps, list):
+        return
+    for si, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        kind = step.get("kind")
+        if kind == "action":
+            p = step.get("params")
+            act = {
+                "type": step.get("type"),
+                "params": p if isinstance(p, dict) else {},
+            }
+            walk_action_defs_embedded_refs([act], f"{ctx_prefix}[{si}]", model, errs)
+        elif kind == "parallel":
+            _walk_cutscene_steps_play_scripted_embedded_refs(
+                step.get("tracks"),
+                f"{ctx_prefix}[{si}].tracks",
+                model,
+                errs,
+            )
+
+
 def _walk_dialogue_graphs(model: ProjectModel, errs: list[str]) -> None:
     gd = model.dialogues_path / "graphs"
     if not gd.is_dir():
@@ -79,6 +149,13 @@ def _walk_dialogue_graphs(model: ProjectModel, errs: list[str]) -> None:
                             f"{ctx}.options[{oi}].disabledClickHint",
                             model,
                         ))
+            elif ntype == "runActions":
+                walk_action_defs_embedded_refs(
+                    node.get("actions"),
+                    f"{ctx}.actions",
+                    model,
+                    errs,
+                )
 
 
 def _walk_books(model: ProjectModel, errs: list[str]) -> None:
@@ -93,6 +170,9 @@ def _walk_books(model: ProjectModel, errs: list[str]) -> None:
             pfx = f"books[{bid}].pages[{pi}]"
             errs.extend(scan_refs(page.get("title"), f"{pfx}.title", model))
             errs.extend(scan_refs(page.get("content"), f"{pfx}.content", model))
+            walk_action_defs_embedded_refs(
+                page.get("firstViewActions"), f"{pfx}.firstViewActions", model, errs,
+            )
             for ei, ent in enumerate(page.get("entries") or []):
                 if not isinstance(ent, dict):
                     continue
@@ -100,6 +180,9 @@ def _walk_books(model: ProjectModel, errs: list[str]) -> None:
                 errs.extend(scan_refs(ent.get("title"), f"{ep}.title", model))
                 errs.extend(scan_refs(ent.get("content"), f"{ep}.content", model))
                 errs.extend(scan_refs(ent.get("annotation"), f"{ep}.annotation", model))
+                walk_action_defs_embedded_refs(
+                    ent.get("firstViewActions"), f"{ep}.firstViewActions", model, errs,
+                )
 
 
 def _walk_water_minigames_embedded_refs(model: ProjectModel, errs: list[str]) -> None:
@@ -137,6 +220,10 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
         qid = q.get("id", i)
         errs.extend(scan_refs(q.get("title"), f"quests[{qid}].title", model))
         errs.extend(scan_refs(q.get("description"), f"quests[{qid}].description", model))
+        walk_action_defs_embedded_refs(
+            q.get("acceptActions"), f"quests[{qid}].acceptActions", model, errs,
+        )
+        walk_action_defs_embedded_refs(q.get("rewards"), f"quests[{qid}].rewards", model, errs)
     rules = model.rules_data.get("rules", []) if isinstance(model.rules_data, dict) else []
     for i, r in enumerate(rules):
         if not isinstance(r, dict):
@@ -171,6 +258,13 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
             if isinstance(opt, dict):
                 errs.extend(scan_refs(opt.get("text"), f"encounters[{eid}].options[{oi}].text", model))
                 errs.extend(scan_refs(opt.get("resultText"), f"encounters[{eid}].options[{oi}].resultText", model))
+                walk_action_defs_embedded_refs(
+                    opt.get("resultActions"),
+                    f"encounters[{eid}].options[{oi}].resultActions",
+                    model,
+                    errs,
+                )
+        walk_action_defs_embedded_refs(e.get("rewards"), f"encounters[{eid}].rewards", model, errs)
     scenarios = model.scenarios_catalog.get("scenarios") or [] if isinstance(model.scenarios_catalog, dict) else []
     for i, s in enumerate(scenarios):
         if not isinstance(s, dict):
@@ -196,6 +290,9 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
         for ki, kn in enumerate(ch.get("knownInfo") or []):
             if isinstance(kn, dict):
                 errs.extend(scan_refs(kn.get("text"), f"characters[{cid}].knownInfo[{ki}].text", model))
+        walk_action_defs_embedded_refs(
+            ch.get("firstViewActions"), f"characters[{cid}].firstViewActions", model, errs,
+        )
     lore = model.archive_lore
     lore_entries: list[dict[str, Any]] = []
     if isinstance(lore, list):
@@ -207,6 +304,7 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
         errs.extend(scan_refs(e.get("title"), f"lore[{lid}].title", model))
         errs.extend(scan_refs(e.get("content"), f"lore[{lid}].content", model))
         errs.extend(scan_refs(e.get("source"), f"lore[{lid}].source", model))
+        walk_action_defs_embedded_refs(e.get("firstViewActions"), f"lore[{lid}].firstViewActions", model, errs)
     for i, d in enumerate(model.archive_documents):
         if not isinstance(d, dict):
             continue
@@ -214,6 +312,7 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
         errs.extend(scan_refs(d.get("name"), f"documents[{did}].name", model))
         errs.extend(scan_refs(d.get("content"), f"documents[{did}].content", model))
         errs.extend(scan_refs(d.get("annotation"), f"documents[{did}].annotation", model))
+        walk_action_defs_embedded_refs(d.get("firstViewActions"), f"documents[{did}].firstViewActions", model, errs)
     _walk_books(model, errs)
     if isinstance(model.strings, dict):
         for cat, sub in model.strings.items():
@@ -229,6 +328,10 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
             if not isinstance(step, dict):
                 continue
             errs.extend(scan_refs(step.get("text"), f"cutscenes[{cid}].steps[{si}].text", model))
+            errs.extend(scan_refs(step.get("speaker"), f"cutscenes[{cid}].steps[{si}].speaker", model))
+        _walk_cutscene_steps_play_scripted_embedded_refs(
+            cut.get("steps"), f"cutscenes[{cid}].steps", model, errs,
+        )
     for sid, sc in model.scenes.items():
         if not isinstance(sc, dict):
             continue
@@ -240,6 +343,24 @@ def validate_all_embedded_refs(model: ProjectModel) -> list[str]:
             data = hs.get("data") or {}
             if isinstance(data, dict) and hs.get("type") == "inspect":
                 errs.extend(scan_refs(data.get("text"), f"scenes[{sid}].hotspots[{hid}].data.text", model))
+            if isinstance(data, dict):
+                walk_action_defs_embedded_refs(
+                    data.get("actions"),
+                    f"scenes[{sid}].hotspots[{hid}].data.actions",
+                    model,
+                    errs,
+                )
+        for zi, zone in enumerate(sc.get("zones") or []):
+            if not isinstance(zone, dict):
+                continue
+            zid = zone.get("id", zi)
+            for ev in ("onEnter", "onStay", "onExit"):
+                walk_action_defs_embedded_refs(
+                    zone.get(ev),
+                    f"scenes[{sid}].zones[{zid}].{ev}",
+                    model,
+                    errs,
+                )
         for ni, npc in enumerate(sc.get("npcs") or []):
             if isinstance(npc, dict):
                 errs.extend(scan_refs(npc.get("name"), f"scenes[{sid}].npcs[{ni}].name", model))

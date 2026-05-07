@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QComboBox, QLabel, QFrame, QPlainTextEdit,
+    QComboBox, QLabel, QFrame, QPlainTextEdit, QSizePolicy,
 )
 from PySide6.QtCore import Signal
 
@@ -116,6 +116,7 @@ class ConditionEditor(QWidget):
         hint: str | None = None,
     ):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
         self._rows: list[ConditionRow] = []
         self._ctx_model: ProjectModel | None = None
         self._ctx_scene_id: str | None = None
@@ -159,7 +160,7 @@ class ConditionEditor(QWidget):
         self._tree_root = ConditionExprTreeRootWidget(model_getter=self._get_model)
         self._tree_root.changed.connect(self.changed.emit)
         root.addWidget(QLabel("<b>表达式树（与上行 flag 条件组内 AND）</b>"))
-        root.addWidget(self._tree_root)
+        root.addWidget(self._tree_root, stretch=1)
 
         ej = QLabel("专家：附加 ConditionExpr（JSON，可选；与树二选一导出时优先树）")
         ej.setToolTip(
@@ -171,7 +172,8 @@ class ConditionEditor(QWidget):
         self._extra_json.setPlaceholderText(
             "例如 {\"scenario\":\"码头水鬼\",\"phase\":\"看板初读\",\"status\":\"done\"}",
         )
-        self._extra_json.setMaximumHeight(96)
+        self._extra_json.setMinimumHeight(180)
+        self._extra_json.setMaximumHeight(380)
         self._extra_json.textChanged.connect(self.changed.emit)
         root.addWidget(self._extra_json)
 

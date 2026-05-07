@@ -14,6 +14,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QFontMetrics
 
 from .cutscene_dialogue_speaker_row import build_speaker_line_with_inserts
+from .rich_text_field import RichTextTextEdit
 
 
 class ScriptedLinesEditor(QWidget):
@@ -37,8 +38,8 @@ class ScriptedLinesEditor(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         lab = QLabel("lines（至少一行）")
         lab.setToolTip(
-            "说话人可手填或点「插入」写入 {{player}} / {{npc}} / {{npc:id}}；"
-            "运行时解析为显示名。",
+            "说话人：有工程时可点单行「引用」插入 [tag:…]，或菜单插入 {{player}} / {{npc}} / {{npc:id}}；"
+            "正文点「插入引用」；运行时均在台词展示前经 resolveText。",
         )
         root.addWidget(lab)
         self._list_layout = QVBoxLayout()
@@ -100,6 +101,7 @@ class ScriptedLinesEditor(QWidget):
             self._scene_id,
             initial_speaker=str(data.get("speaker", "") or ""),
             on_change=self.changed.emit,
+            rich_refs=bool(self._model),
         )
         up = QPushButton("\u2191")
         up.setFixedWidth(24)
@@ -114,15 +116,25 @@ class ScriptedLinesEditor(QWidget):
         hdr.addWidget(dn)
         hdr.addWidget(rm)
         bl.addLayout(hdr)
-        bl.addWidget(QLabel("text"))
-        tx = QTextEdit()
-        fm = QFontMetrics(tx.font())
-        lh = max(1, int(fm.lineSpacing()))
-        tx.setFixedHeight(max(24, lh + 14))
-        tx.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        tx.setPlainText(str(data.get("text", "") or ""))
-        tx.textChanged.connect(self.changed.emit)
-        bl.addWidget(tx)
+        bl.addWidget(QLabel("text（可插入项目引用 [tag:…]）"))
+        m = self._model
+        if m:
+            tx_wrap = RichTextTextEdit(m)
+            tx = tx_wrap.core_text_edit()
+            tx.setPlainText(str(data.get("text", "") or ""))
+            tx_wrap.textChanged.connect(self.changed.emit)
+        else:
+            tx_wrap = QTextEdit()
+            fm = QFontMetrics(tx_wrap.font())
+            lh = max(1, int(fm.lineSpacing()))
+            tx_wrap.setFixedHeight(max(24, lh + 14))
+            tx_wrap.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            tx_wrap.setPlainText(str(data.get("text", "") or ""))
+            tx_wrap.textChanged.connect(self.changed.emit)
+            tx = tx_wrap
+        tx.setMinimumHeight(72)
+        tx.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+        bl.addWidget(tx_wrap)
         rec = {"box": box, "speaker": sp, "text": tx, "btn_up": up, "btn_down": dn}
         rm.clicked.connect(lambda: self._remove_row(rec))
         up.clicked.connect(lambda: self._move_row(rec, -1))
@@ -131,14 +143,21 @@ class ScriptedLinesEditor(QWidget):
         self._list_layout.addWidget(box)
         self._refresh_reorder_buttons()
 
+    def set_model(self, model) -> None:
+        """载入工程后替换 model（仅影响后续新增行；既有行保持原控件）。"""
+        self._model = model
+
     def to_list(self) -> list[dict]:
         out: list[dict] = []
         for r in self._rows:
-            t = r["text"].toPlainText()
+            te = r["text"]
+            t = te.toPlainText() if hasattr(te, "toPlainText") else ""
             if not t:
                 continue
+            spw = r["speaker"]
+            sp_txt = spw.text().strip() if hasattr(spw, "text") else ""
             out.append({
-                "speaker": r["speaker"].text().strip(),
+                "speaker": sp_txt,
                 "text": t,
             })
         return out

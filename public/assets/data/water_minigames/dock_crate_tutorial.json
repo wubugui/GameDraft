@@ -3,9 +3,9 @@
   "label": "码头捞箱教学",
   "spotId": "dock_wharf",
   "waterBottom": {
-    "texture": "/assets/images/illustrations/堆积的箱子.png",
+    "texture": "/assets/images/minigames/water/riverbed_dock_murky.png",
     "tint": "#1b2f42",
-    "depth": 10.58
+    "depth": 1.15
   },
   "surface": {
     "location": "dock",
@@ -20,21 +20,18 @@
     {
       "id": "dead_grass",
       "category": "grass",
-      "sprite": "/assets/images/illustrations/告示-抓水猴子.png",
+      "sprite": "/assets/images/minigames/water/dead_reeds_gen.png",
       "pos": {
         "x": 160,
         "y": 360
       },
       "depth": 0.14,
-      "hint": "[水草] 水下安静得吓人。",
-      "onPick": [],
-      "onPullSuccess": [],
-      "onPullFail": []
+      "hint": "[水草] 水下安静得吓人。"
     },
     {
       "id": "crate_target",
       "category": "sunken",
-      "sprite": "/assets/images/illustrations/堆积的箱子.png",
+      "sprite": "/assets/images/minigames/water/sunken_crate_gen.png",
       "pos": {
         "x": 420,
         "y": 380
@@ -43,11 +40,11 @@
       "valueTier": "premium",
       "consumeOnSuccess": true,
       "pull": {
-        "zoneSize": 0.1,
-        "sliderSpeed": 0.92,
+        "zoneSize": 0.19,
+        "sliderSpeed": 0.72,
         "rhythm": "heavy_sink",
         "failurePolicy": "snap",
-        "timeLimitSec": 15
+        "timeLimitSec": 20
       },
       "cue": "洋人落水那只箱子的一角",
       "onPullSuccess": [
@@ -93,7 +90,7 @@
     {
       "id": "monkey_distraction",
       "category": "swimming",
-      "sprite": "/assets/images/illustrations/ghost_bride_flashback.png",
+      "sprite": "/assets/images/minigames/water/water_monkey_shadow_gen.png",
       "pos": {
         "x": 560,
         "y": 280
@@ -105,11 +102,11 @@
       },
       "valueTier": "premium",
       "pull": {
-        "zoneSize": 0.14,
-        "sliderSpeed": 1.05,
+        "zoneSize": 0.2,
+        "sliderSpeed": 0.82,
         "rhythm": "spasm",
         "failurePolicy": "bite",
-        "timeLimitSec": 11
+        "timeLimitSec": 15
       },
       "cue": "像是水猴子拖过的涟漪",
       "onPullFail": [
@@ -132,7 +129,7 @@
     {
       "id": "surface_glitter",
       "category": "floating",
-      "sprite": "/assets/images/illustrations/iron_box_closeup.png",
+      "sprite": "/assets/images/minigames/water/metal_glint_gen.png",
       "pos": {
         "x": 320,
         "y": 190

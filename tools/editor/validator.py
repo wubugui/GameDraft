@@ -35,6 +35,24 @@ def _entity_cutscene_bindings(ent: dict) -> list[str]:
     return out
 
 
+def _normalize_move_entity_waypoints_validator(raw: object) -> list[tuple[float, float]]:
+    """与 editors.scene_editor.normalize_move_entity_waypoints 等价（校验器不宜 import Qt）。"""
+    pts: list[tuple[float, float]] = []
+    if not isinstance(raw, list):
+        return pts
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        try:
+            fx = float(it.get("x"))
+            fy = float(it.get("y"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(fx) and math.isfinite(fy):
+            pts.append((fx, fy))
+    return pts
+
+
 def validate(model: ProjectModel) -> list[Issue]:
     issues: list[Issue] = []
     from .shared.ref_validator import validate_all_embedded_refs
@@ -614,9 +632,20 @@ def _walk_conditions(
     model: ProjectModel, issues: list[Issue], conds: list, data_type: str,
     item_id: str, scene_id: str | None,
 ) -> None:
+    scen = _scenario_definitions(model)
+    quest_ids = {str(q.get("id", "")) for q in model.quests if q.get("id")}
     for cond in conds or []:
-        if isinstance(cond, dict) and cond.get("flag"):
-            _flag_issue(model, issues, str(cond["flag"]), data_type, item_id, scene_id)
+        if isinstance(cond, dict):
+            if cond.get("flag") is not None and not any(
+                k in cond for k in ("all", "any", "not", "scenario", "quest", "scenarioLine")
+            ):
+                fk = cond.get("flag")
+                _flag_issue(model, issues, str(fk), data_type, item_id, scene_id)
+            else:
+                _scan_condition_expr(
+                    model, issues, cond, scen, quest_ids, data_type, item_id, 0,
+                    scene_id_flag=scene_id,
+                )
 
 
 def _scenario_definitions(model: ProjectModel) -> dict[str, dict]:
@@ -897,6 +926,50 @@ def _append_action_param_ref_issues(
                     "persistHotspotEnabled 的 enabled 字符串须为 true/false/1/0",
                 ))
 
+    if t in ("setZoneEnabled", "persistZoneEnabled"):
+        sid_z = str(p.get("sceneId") or "").strip()
+        zid_z = str(p.get("zoneId") or "").strip()
+        if not sid_z:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{t} 缺少 sceneId",
+            ))
+        elif sid_z not in set(model.all_scene_ids()):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{t} sceneId {sid_z!r} 不在场景列表中",
+            ))
+        if zid_z and sid_z:
+            known = {x[0] for x in model.standard_zone_ids_for_scene(sid_z)}
+            if known and zid_z not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} zoneId {zid_z!r} 不在场景 {sid_z!r} 的普通 Zone 列表中（不含 depth_floor）",
+                ))
+        if not zid_z:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{t} 缺少 zoneId",
+            ))
+        en_z = p.get("enabled")
+        if en_z is None:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{t} 缺少 enabled",
+            ))
+        elif not isinstance(en_z, (bool, int, float, str)):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{t} 的 enabled 须为布尔或可解析为布尔",
+            ))
+        elif isinstance(en_z, str):
+            el = en_z.strip().lower()
+            if el and el not in ("true", "false", "1", "0"):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{t} 的 enabled 字符串须为 true/false/1/0",
+                ))
+
     if t == "setEntityField":
         sid = str(p.get("sceneId") or "").strip()
         kind = str(p.get("entityKind") or "").strip()
@@ -1003,6 +1076,24 @@ def _append_action_param_ref_issues(
                 f"faceEntity direction {d!r} 非 left/right/up/down",
             ))
 
+    if t == "startWaterMinigame":
+        mid = str(p.get("id") or "").strip()
+        wm_ids = {x[0] for x in model.all_water_minigame_ids()}
+        if mid and wm_ids and mid not in wm_ids:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"startWaterMinigame id {mid!r} 不在 water_minigames/index.json 登记中",
+            ))
+
+    if t == "startSugarWheelMinigame":
+        sid = str(p.get("id") or "").strip()
+        sw_ids = {x[0] for x in model.all_sugar_wheel_minigame_ids()}
+        if sid and sw_ids and sid not in sw_ids:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"startSugarWheelMinigame id {sid!r} 不在 sugar_wheel/index.json 登记中",
+            ))
+
     if t in ("showEmote", "showEmoteAndWait", "showSpeechBubble", "showSpeechBubbleAndWait"):
         aid = str(p.get("target") or "").strip()
         if aid and not _emote_subject_ref_ok(
@@ -1040,6 +1131,88 @@ def _append_action_param_ref_issues(
                     issues.append(Issue(
                         "warning", data_type, item_id,
                         f"playNpcAnimation state {st!r} 不在目标 {tgt!r} 的 anim.json states 中",
+                    ))
+
+        if t == "moveEntityTo":
+            sid_mp = str(p.get("sceneId") or "").strip()
+            scenes_set = set(model.all_scene_ids())
+            if sid_mp and scenes_set and sid_mp not in scenes_set:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"moveEntityTo sceneId {sid_mp!r} 不在场景列表中（仅编辑器复现地图，可不写）",
+                ))
+            for key in ("x", "y"):
+                rv = p.get(key)
+                try:
+                    fv = float(rv)
+                except (TypeError, ValueError):
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"moveEntityTo 的 {key} 须为数值",
+                    ))
+                    continue
+                if not math.isfinite(fv):
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"moveEntityTo 的 {key} 须为有限数",
+                    ))
+            wp_raw = p.get("waypoints")
+            if wp_raw is None:
+                pass
+            elif not isinstance(wp_raw, list):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "moveEntityTo waypoints 须为省略或坐标对象数组 [{x,y}, …]",
+                ))
+            else:
+                for i, it in enumerate(wp_raw):
+                    if not isinstance(it, dict):
+                        issues.append(Issue(
+                            "error", data_type, item_id,
+                            f"moveEntityTo waypoints[{i}] 须为包含 x/y 的对象",
+                        ))
+                        continue
+                    try:
+                        wx = float(it.get("x"))
+                        wy = float(it.get("y"))
+                    except (TypeError, ValueError):
+                        issues.append(Issue(
+                            "error", data_type, item_id,
+                            f"moveEntityTo waypoints[{i}] x/y 须为数值",
+                        ))
+                        continue
+                    if not math.isfinite(wx) or not math.isfinite(wy):
+                        issues.append(Issue(
+                            "error", data_type, item_id,
+                            f"moveEntityTo waypoints[{i}] x/y 须为有限数",
+                        ))
+                if wp_raw and not _normalize_move_entity_waypoints_validator(wp_raw):
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        "moveEntityTo waypoints 非空但未解析出任何合法坐标（折线将被忽略）",
+                    ))
+            tgt_m = str(p.get("target") or "").strip()
+            st_m = str(p.get("moveAnimState") or "").strip()
+            sid_eff = sid_mp or (scene_id or "")
+            fv_raw = p.get("faceTowardMovement")
+            if fv_raw is not None and fv_raw not in (True, False):
+                if not (
+                    isinstance(fv_raw, (int, float)) and fv_raw in (0, 1)
+                    or (
+                        isinstance(fv_raw, str)
+                        and str(fv_raw).strip().lower() in ("true", "false", "0", "1", "yes", "no", "")
+                    )
+                ):
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        "moveEntityTo faceTowardMovement 建议使用 JSON 布尔 true/false；其它类型运行时可能不按预期解析",
+                    ))
+            if tgt_m and st_m and sid_eff:
+                known_m = set(model.animation_state_names_for_actor(sid_eff, tgt_m))
+                if known_m and st_m not in known_m:
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"moveEntityTo moveAnimState {st_m!r} 不在目标 {tgt_m!r} 的动画包 states 中",
                     ))
 
     if t in ("stopNpcPatrol", "persistNpcDisablePatrol", "persistNpcEnablePatrol"):
@@ -1181,8 +1354,10 @@ def _scan_condition_expr(
     data_type: str,
     item_id: str,
     depth: int,
+    *,
+    scene_id_flag: str | None = None,
 ) -> None:
-    """switch.condition / 文档揭示等：结构 + flag / scenario / quest 引用粗校验。"""
+    """switch.condition / 文档揭示等：结构 + flag / scenario / quest / scenarioLine 引用粗校验。"""
     if depth > 32:
         issues.append(Issue(
             "error", data_type, item_id,
@@ -1200,6 +1375,7 @@ def _scan_condition_expr(
         for e in ch:
             _scan_condition_expr(
                 model, issues, e, scen, quest_ids, data_type, item_id, depth + 1,
+                scene_id_flag=scene_id_flag,
             )
         return
     if "any" in expr:
@@ -1210,15 +1386,37 @@ def _scan_condition_expr(
         for e in ch:
             _scan_condition_expr(
                 model, issues, e, scen, quest_ids, data_type, item_id, depth + 1,
+                scene_id_flag=scene_id_flag,
             )
         return
     if "not" in expr:
         _scan_condition_expr(
             model, issues, expr.get("not"), scen, quest_ids, data_type, item_id, depth + 1,
+            scene_id_flag=scene_id_flag,
         )
         return
+    if isinstance(expr.get("scenarioLine"), str):
+        slid = str(expr["scenarioLine"]).strip()
+        lst = str(expr.get("lineStatus", "")).strip()
+        allowed = {"inactive", "active", "completed"}
+        if not slid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "scenarioLine 条件 scenarioLine 不能为空",
+            ))
+        elif slid not in scen:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"scenarioLine {slid!r} 不在 scenarios.json",
+            ))
+        if lst not in allowed:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"scenarioLine lineStatus {lst!r} 须为 inactive|active|completed",
+            ))
+        return
     if expr.get("flag") is not None:
-        _flag_issue(model, issues, str(expr["flag"]), data_type, item_id, None)
+        _flag_issue(model, issues, str(expr["flag"]), data_type, item_id, scene_id_flag)
         return
     if isinstance(expr.get("quest"), str):
         qid = str(expr["quest"]).strip()
@@ -1424,6 +1622,32 @@ def _walk_action_defs(
                     "error", data_type, item_id,
                     f"startScenario scenarioId {sid!r} 不在 scenarios.json",
                 ))
+        elif t == "activateScenario":
+            scen = _scenario_definitions(model)
+            sid = str(p.get("scenarioId") or "").strip()
+            if not sid:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "activateScenario 缺少 scenarioId",
+                ))
+            elif sid not in scen:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"activateScenario scenarioId {sid!r} 不在 scenarios.json",
+                ))
+        elif t == "completeScenario":
+            scen = _scenario_definitions(model)
+            sid = str(p.get("scenarioId") or "").strip()
+            if not sid:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "completeScenario 缺少 scenarioId",
+                ))
+            elif sid not in scen:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"completeScenario scenarioId {sid!r} 不在 scenarios.json",
+                ))
         elif t == "revealDocument":
             doc_id = str(p.get("documentId") or "").strip()
             if not doc_id:
@@ -1468,6 +1692,9 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             _walk_conditions(model, issues, hs.get("conditions"), "scene", hid, sid)
             data = hs.get("data") or {}
             _walk_action_defs(model, issues, data.get("actions"), "scene", hid, sid)
+        for npc in sc.get("npcs", []) or []:
+            nid = str(npc.get("id", ""))
+            _walk_conditions(model, issues, npc.get("conditions"), "scene", nid, sid)
         for zone in sc.get("zones", []) or []:
             zid = str(zone.get("id", ""))
             _walk_conditions(model, issues, zone.get("conditions"), "scene", zid, sid)
@@ -1565,6 +1792,7 @@ _CUTSCENE_ACTION_WHITELIST = frozenset([
     "playNpcAnimation", "setEntityEnabled",
     "persistNpcDisablePatrol", "persistNpcEnablePatrol",
     "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "setZoneEnabled", "persistZoneEnabled",
     "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "setEntityField", "setSceneEntityPosition",
     "setHotspotDisplayImage",
@@ -1576,6 +1804,7 @@ _CUTSCENE_ACTION_WHITELIST = frozenset([
 
 _CUTSCENE_STAGING_SAVE_ACTIONS = frozenset([
     "persistNpcEntityEnabled", "persistHotspotEnabled",
+    "persistZoneEnabled",
     "persistNpcDisablePatrol", "persistNpcEnablePatrol",
     "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "setEntityField", "setSceneEntityPosition", "setHotspotDisplayImage",
