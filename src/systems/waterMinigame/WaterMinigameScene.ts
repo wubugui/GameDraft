@@ -11,6 +11,7 @@ import {
   Container,
   FederatedPointerEvent,
   Graphics,
+  Rectangle,
   RenderTexture,
   Sprite,
   Text,
@@ -47,6 +48,8 @@ export class WaterMinigameScene {
   private phase: Phase = 'search';
   private pullPanel: WaterPullPanel | null = null;
   private feedback: Text | null = null;
+  /** 右上角退出控件（点击或 Esc 均走 abort） */
+  private exitChrome: Container | null = null;
   private time = 0;
   private readonly searchHorizonSec = 25;
   private unsubResize: (() => void) | null = null;
@@ -130,6 +133,7 @@ export class WaterMinigameScene {
     this.entities = [];
     this.clearPull();
     this.clearFeedback();
+    this.clearExitUi();
 
     this.waterFilter.applySurface(instance.surface.time, instance.surface.weather);
     {
@@ -165,6 +169,7 @@ export class WaterMinigameScene {
       this.entities.push(we);
     }
 
+    this.buildExitUi();
     this.layout();
     this.unsubResize?.();
     this.unsubResize = this.renderer.subscribeAfterResize(() => this.layout());
@@ -314,6 +319,11 @@ export class WaterMinigameScene {
       this.feedback.position.set(24, sh - 72);
     }
 
+    if (this.exitChrome) {
+      const m = 12;
+      this.exitChrome.position.set(sw - this.exitChrome.width - m, m);
+    }
+
     /* 拉扯阶段大块水底命中层会与右侧条带重叠并抢走指针；关闭交互以免提拉无任何响应 */
     this.underwaterHitZone.eventMode = this.phase === 'pull' ? 'none' : 'static';
   }
@@ -431,6 +441,49 @@ export class WaterMinigameScene {
       this.feedback.destroy();
       this.feedback = null;
     }
+  }
+
+  private clearExitUi(): void {
+    if (this.exitChrome) {
+      this.exitChrome.destroy();
+      this.exitChrome = null;
+    }
+  }
+
+  private buildExitUi(): void {
+    this.clearExitUi();
+    const padX = 14;
+    const padY = 10;
+    const gap = 5;
+    const title = new Text({
+      text: this.resolveText('[tag:string:waterMinigame:exit]'),
+      style: { fontSize: 15, fill: 0xf1f5f9, fontFamily: 'sans-serif' },
+    });
+    const sub = new Text({
+      text: this.resolveText('[tag:string:waterMinigame:exitEscHint]'),
+      style: { fontSize: 11, fill: 0x94a3b8, fontFamily: 'sans-serif' },
+    });
+    const innerW = Math.max(title.width, sub.width);
+    const w = innerW + padX * 2;
+    const h = padY * 2 + title.height + gap + sub.height;
+    const bg = new Graphics();
+    bg.roundRect(0, 0, w, h, 8);
+    bg.fill({ color: 0x1e293b, alpha: 0.94 });
+    bg.stroke({ color: 0x64748b, width: 1 });
+    title.position.set(padX, padY);
+    sub.position.set(padX, padY + title.height + gap);
+    const wrap = new Container();
+    wrap.eventMode = 'static';
+    wrap.cursor = 'pointer';
+    wrap.hitArea = new Rectangle(0, 0, w, h);
+    wrap.addChild(bg);
+    wrap.addChild(title);
+    wrap.addChild(sub);
+    wrap.on('pointertap', () => {
+      this.abort();
+    });
+    this.exitChrome = wrap;
+    this.uiLayer.addChild(wrap);
   }
 
   private clearPull(): void {
@@ -585,6 +638,7 @@ export class WaterMinigameScene {
     this.unsubResize = null;
     this.clearPull();
     this.clearFeedback();
+    this.clearExitUi();
     for (const sp of this.shoreSprites) {
       sp.destroy();
     }

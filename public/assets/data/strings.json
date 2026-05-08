@@ -170,6 +170,8 @@
     "关二狗": "关二狗"
   },
   "waterMinigame": {
+    "exit": "退出",
+    "exitEscHint": "Esc 也可退出",
     "devPullOk": "沉沉一提——绳子那头真有分量（Dev）。",
     "dockCrateSuccess": "箱子角浮出水面，铜钱叮当——暂且算是捞出点名堂。",
     "dockCrateFail": "绳子发涩，箱子往深处滑走了……再找机会。",
