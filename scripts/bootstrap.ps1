@@ -13,6 +13,24 @@ $script:SetxMaxCombinedChars = 900
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Python = Join-Path $Root ".tools\Python311\python.exe"
 
+function Test-GameDraftExceptionChain {
+  param(
+    [Parameter(Mandatory = $true)]
+    $ErrorRecord,
+    [Parameter(Mandatory = $true)]
+    [string]$MessageWildcard
+  )
+
+  $ex = $ErrorRecord.Exception
+  while ($null -ne $ex) {
+    if ($ex.Message -like $MessageWildcard) {
+      return $true
+    }
+    $ex = $ex.InnerException
+  }
+  return $false
+}
+
 function Invoke-RepoScript {
   param(
     [Parameter(Mandatory = $true)]
@@ -68,7 +86,7 @@ function Ensure-LocalPython {
       return
     }
     catch {
-      if ($_.Exception.Message -like "*GameDraftBootstrapHttpDownloadError*") {
+      if (Test-GameDraftExceptionChain $_ "*GameDraftBootstrapHttpDownloadError*") {
         $ossZipAttempt++
         if ($ossZipAttempt -ge $script:MaxOssCredentialRetries) {
           throw ('Exceeded ' + $script:MaxOssCredentialRetries + ' attempts to download portable Python after OSS issues. Fix RAM policy, base URL, or place python311-dvc-win-x64.zip under resources\vendor_archives\.')
@@ -200,7 +218,7 @@ function Ensure-Dependencies {
       break
     }
     catch {
-      if ($_.Exception.Message -eq "GameDraftOssCredentialError" -or $_.Exception.Message -like "GameDraftOssCredentialError*") {
+      if (Test-GameDraftExceptionChain $_ "*GameDraftOssCredentialError*") {
         $ossAttempt++
         if ($ossAttempt -ge $script:MaxOssCredentialRetries) {
           throw ('Exceeded ' + $script:MaxOssCredentialRetries + ' OSS credential retries during dependency install. Fix RAM keys or policy, then run bootstrap again.')
@@ -243,7 +261,7 @@ function Pull-DvcTarget {
       return
     }
     catch {
-      if ($_.Exception.Message -eq "GameDraftOssCredentialError" -or $_.Exception.Message -like "GameDraftOssCredentialError*") {
+      if (Test-GameDraftExceptionChain $_ "*GameDraftOssCredentialError*") {
         $ossAttempt++
         if ($ossAttempt -ge $script:MaxOssCredentialRetries) {
           throw ('Exceeded ' + $script:MaxOssCredentialRetries + ' OSS credential retries while pulling ' + $Target + '. Fix RAM keys or policy, then run bootstrap again.')
