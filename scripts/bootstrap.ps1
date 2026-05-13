@@ -19,6 +19,19 @@ function Invoke-RepoScript {
   & (Join-Path $PSScriptRoot $Name) @Arguments
 }
 
+function Write-OssCredentialPassingDiagnostics {
+  $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
+  $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
+  $ukid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User")
+  $uks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User")
+  Write-Host ("Diagnostic (values are never printed): process OSS_ACCESS_KEY_ID {0}; OSS_ACCESS_KEY_SECRET {1}. User-profile ID {2}; Secret {3}." -f @(
+      $(if ($kid) { "set, length $($kid.Length)" } else { "not set" }),
+      $(if ($ks) { "set, length $($ks.Length)" } else { "not set" }),
+      $(if ($ukid) { "set" } else { "not set" }),
+      $(if ($uks) { "set" } else { "not set" })
+    ))
+}
+
 function ConvertFrom-SecureStringPlainText {
   param([Parameter(Mandatory = $true)][securestring]$Value)
 
@@ -42,29 +55,43 @@ function Ensure-LocalPython {
 }
 
 function Ensure-OssCredentials {
-  $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
-  if (-not $KeyId) {
-    $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User")
-    if ($KeyId) {
-      [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
+  param([switch]$ForceReenter)
+
+  if ($ForceReenter) {
+    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $null, "Process")
+    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $null, "Process")
+    Write-Host "OSS refused access or the AccessKey is invalid. Enter OSS credentials again."
+  }
+  else {
+    $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
+    if (-not $KeyId) {
+      $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User")
+      if ($KeyId) {
+        [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
+      }
+    }
+
+    $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
+    if (-not $KeySecret) {
+      $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User")
+      if ($KeySecret) {
+        [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "Process")
+      }
     }
   }
 
+  $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
   $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
-  if (-not $KeySecret) {
-    $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User")
-    if ($KeySecret) {
-      [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "Process")
-    }
-  }
 
   if ($KeyId -and $KeySecret) {
     Write-Host "OSS credentials: ready"
     return
   }
 
-  Write-Host "OSS credentials are missing. Portable artifacts and dependency sync use OSS; enter values for this session."
   if (-not $KeyId) {
+    if (-not $ForceReenter) {
+      Write-Host "OSS credentials are missing. Portable artifacts and dependency sync use OSS; enter values for this session."
+    }
     $KeyId = Read-Host "OSS_ACCESS_KEY_ID"
   }
   if (-not $KeySecret) {
@@ -112,7 +139,21 @@ function Ensure-Dependencies {
   }
 
   Write-Host "Third-party dependencies: missing or incomplete, installing..."
-  Invoke-RepoScript "install-deps.ps1"
+  while ($true) {
+    try {
+      Invoke-RepoScript "install-deps.ps1"
+      break
+    }
+    catch {
+      if ($_.Exception.Message -eq "GameDraftOssCredentialError" -or $_.Exception.Message -like "GameDraftOssCredentialError*") {
+        Write-Host "OSS access was denied or the AccessKey is invalid (sync-dvc-cache exit 2). Check stderr above for the OSS exception."
+        Write-OssCredentialPassingDiagnostics
+        Ensure-OssCredentials -ForceReenter
+        continue
+      }
+      throw
+    }
+  }
 }
 
 function Pull-DvcTarget {
@@ -121,9 +162,35 @@ function Pull-DvcTarget {
     [string]$Target
   )
 
-  Invoke-WithoutProxy {
-    & $Python (Join-Path $PSScriptRoot "sync-dvc-cache.py") pull $Target
-    & $Python -m dvc checkout $Target
+  while ($true) {
+    try {
+      $script:__pullSyncExit = 0
+      Invoke-WithoutProxy {
+        & $Python (Join-Path $PSScriptRoot "sync-dvc-cache.py") pull $Target
+        $script:__pullSyncExit = $LASTEXITCODE
+        if ($script:__pullSyncExit -ne 0) {
+          return
+        }
+        & $Python -m dvc checkout $Target
+        $script:__pullSyncExit = $LASTEXITCODE
+      }
+      if ($script:__pullSyncExit -eq 2) {
+        throw "GameDraftOssCredentialError"
+      }
+      if ($script:__pullSyncExit -ne 0) {
+        throw "GameDraftPullFailed:sync_or_checkout:$($script:__pullSyncExit)"
+      }
+      return
+    }
+    catch {
+      if ($_.Exception.Message -eq "GameDraftOssCredentialError" -or $_.Exception.Message -like "GameDraftOssCredentialError*") {
+        Write-Host "OSS access was denied or the AccessKey is invalid while pulling $Target (sync-dvc-cache exit 2). Check stderr above."
+        Write-OssCredentialPassingDiagnostics
+        Ensure-OssCredentials -ForceReenter
+        continue
+      }
+      throw
+    }
   }
 }
 

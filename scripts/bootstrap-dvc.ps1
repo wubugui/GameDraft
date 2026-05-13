@@ -40,7 +40,21 @@ if (-not (Test-Path $Archive)) {
   $Url = $BaseUrl.TrimEnd("/") + "/" + $ArchiveName
 
   Write-Host "Downloading DVC portable runtime from $Url"
-  Invoke-WithoutProxy { Invoke-WebRequest -Uri $Url -OutFile $Archive }
+  try {
+    Invoke-WithoutProxy { Invoke-WebRequest -Uri $Url -OutFile $Archive }
+  }
+  catch {
+    $reason = $_.Exception.Message
+    Write-Host "Portable runtime download failed: $reason"
+    Write-Host "This step uses anonymous HTTP GET only (no OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET). If you see 403/401, check the bootstrap base URL, bucket anonymous read policy, or network; it is not RAM key signing for this ZIP."
+    $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
+    $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
+    Write-Host ("Later install-deps / DVC will need RAM keys on this process: OSS_ACCESS_KEY_ID {0}; OSS_ACCESS_KEY_SECRET {1}." -f @(
+        $(if ($kid) { "set ($($kid.Length) chars)" } else { "not set" }),
+        $(if ($ks) { "set ($($ks.Length) chars)" } else { "not set" })
+      ))
+    throw "GameDraftBootstrapHttpDownloadError"
+  }
 }
 
 Write-Host "Extracting $ArchiveName"
