@@ -28,7 +28,7 @@ function Write-OssCredentialPassingDiagnostics {
   $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
   $ukid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User")
   $uks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User")
-  Write-Host ("Diagnostic (values are never printed): process OSS_ACCESS_KEY_ID {0}; OSS_ACCESS_KEY_SECRET {1}. User-profile ID {2}; Secret {3}." -f @(
+  Write-Host ('Diagnostic — values not printed — process OSS_ACCESS_KEY_ID {0}; OSS_ACCESS_KEY_SECRET {1}. User-profile ID {2}; Secret {3}.' -f @(
       $(if ($kid) { "set, length $($kid.Length)" } else { "not set" }),
       $(if ($ks) { "set, length $($ks.Length)" } else { "not set" }),
       $(if ($ukid) { "set" } else { "not set" }),
