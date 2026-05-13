@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "no-proxy.ps1")
+. (Join-Path $PSScriptRoot "oss-hydrate-env.ps1")
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Python = Join-Path $Root ".tools\Python311\python.exe"
@@ -63,21 +64,7 @@ function Ensure-OssCredentials {
     Write-Host "OSS refused access or the AccessKey is invalid. Enter OSS credentials again."
   }
   else {
-    $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
-    if (-not $KeyId) {
-      $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User")
-      if ($KeyId) {
-        [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
-      }
-    }
-
-    $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
-    if (-not $KeySecret) {
-      $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User")
-      if ($KeySecret) {
-        [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "Process")
-      }
-    }
+    Sync-OssEnvUserToProcess
   }
 
   $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
