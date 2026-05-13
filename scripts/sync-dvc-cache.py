@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -29,6 +30,33 @@ DEFAULT_DVCFILES = [
 
 def cache_path(root: Path, oid: str) -> Path:
     return root / ".dvc" / "cache" / "files" / "md5" / oid[:2] / oid[2:]
+
+
+def expected_md5(oid: str) -> str:
+    return oid[:-4] if oid.endswith(".dir") else oid
+
+
+def file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def cache_object_is_valid(root: Path, oid: str) -> bool:
+    path = cache_path(root, oid)
+    return path.is_file() and file_md5(path) == expected_md5(oid)
+
+
+def ensure_valid_cache_object(root: Path, oid: str) -> None:
+    path = cache_path(root, oid)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    actual = file_md5(path)
+    expected = expected_md5(oid)
+    if actual != expected:
+        raise ValueError(f"corrupt DVC cache object {oid}: expected md5 {expected}, got {actual}")
 
 
 def object_key(prefix: str, oid: str) -> str:
@@ -92,8 +120,7 @@ def remote_has_object(bucket: oss2.Bucket, key: str, size: int) -> bool:
 
 def upload_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool:
     path = cache_path(root, oid)
-    if not path.is_file():
-        raise FileNotFoundError(path)
+    ensure_valid_cache_object(root, oid)
     key = object_key(prefix, oid)
     size = path.stat().st_size
     if remote_has_object(bucket, key, size):
@@ -112,7 +139,9 @@ def upload_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool:
 def download_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool:
     path = cache_path(root, oid)
     if path.is_file():
-        return False
+        if cache_object_is_valid(root, oid):
+            return False
+        path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
     oss2.resumable_download(
         bucket,
@@ -122,6 +151,7 @@ def download_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool
         part_size=PART_SIZE,
         num_threads=THREADS,
     )
+    ensure_valid_cache_object(root, oid)
     return True
 
 
