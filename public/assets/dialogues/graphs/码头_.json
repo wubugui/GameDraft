@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "码头_",
+  "entry": "n_start",
+  "meta": {
+    "title": "new_dialogue"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "",
+      "text": ""
+    }
+  }
+}

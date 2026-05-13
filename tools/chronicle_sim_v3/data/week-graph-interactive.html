@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>week 图 交互式展开</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --bord: #30363d;
+      --text: #e6edf3;
+      --dim: #8b949e;
+      --acc: #58a6ff;
+      --llm: #a371f7;
+      --io: #3fb950;
+      --flow: #d29922;
+      --algo: #79c0ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+    .top {
+      position: sticky; top: 0; z-index: 100;
+      background: linear-gradient(180deg, #0d1117f2, #0d1117cc);
+      border-bottom: 1px solid var(--bord);
+      padding: 12px 16px;
+    }
+    .top h1 { margin: 0; font-size: 1.15rem; }
+    .top p { margin: 6px 0 0; color: var(--dim); font-size: 0.88rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+    .toolbar button {
+      background: #21262d; border: 1px solid var(--bord); color: var(--text);
+      padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+    }
+    .toolbar button:hover { border-color: var(--acc); }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.8rem; color: var(--dim); }
+    .lg span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+    .c-llm { background: var(--llm); }
+    .c-io { background: var(--io); }
+    .c-flow { background: var(--flow); }
+    .c-algo { background: var(--algo); }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; padding-bottom: 80px; }
+    .phase { margin-bottom: 22px; }
+    .ph-title {
+      font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--dim); margin: 0 0 8px; font-weight: 600;
+    }
+    .row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+    .node {
+      background: var(--card); border: 1px solid var(--bord); border-radius: 8px;
+      padding: 8px 10px; min-width: 100px; max-width: 100%; cursor: help;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .node:hover, .subgraph.open > .sub-head { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
+    .node .nid { font-weight: 600; color: #f0f6fc; font-size: 0.9rem; }
+    .node .knd { font-size: 0.75rem; color: var(--dim); font-family: ui-monospace, Consolas, monospace; margin-top: 2px; }
+    .node.ty-llm { border-left: 3px solid var(--llm); }
+    .node.ty-io { border-left: 3px solid var(--io); }
+    .node.ty-flow { border-left: 3px solid var(--flow); }
+    .node.ty-algo { border-left: 3px solid var(--algo); }
+    .node.ty-flow { border-left: 3px solid var(--flow); }
+    .subgraph {
+      background: #0d1117; border: 1px dashed var(--bord); border-radius: 10px; padding: 8px; flex: 1 1 280px;
+    }
+    .subgraph .sub-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer;
+      user-select: none; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--bord);
+      background: #161b22;
+    }
+    .subgraph .sub-head h3 { margin: 0; font-size: 0.95rem; }
+    .subgraph .sub-meta { font-size: 0.75rem; color: var(--dim); }
+    .subgraph .sub-body { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #21262d; }
+    .subgraph.open .sub-body { display: block; }
+    .subgraph .chev { color: var(--dim); font-size: 0.8rem; }
+    .root-card {
+      border: 1px solid var(--bord); border-radius: 10px; padding: 12px 14px; margin-bottom: 20px; background: #0d1117;
+    }
+    .root-card h2 { margin: 0 0 6px; font-size: 1.1rem; }
+    .root-card .desc { color: var(--dim); font-size: 0.9rem; line-height: 1.5; }
+    .note { color: #8b949e; font-size: 0.82rem; margin-top: 10px; padding: 8px; background: #161b22; border-radius: 6px; border: 1px solid #21262d; }
+    #tip {
+      position: fixed; z-index: 2000; max-width: min(420px, 90vw);
+      background: #21262d; border: 1px solid var(--bord); border-radius: 10px; padding: 10px 12px;
+      box-shadow: 0 8px 32px #000a; pointer-events: none; display: none;
+    }
+    #tip h4 { margin: 0 0 6px; font-size: 0.95rem; color: #f0f6fc; }
+    #tip .kind { font-size: 0.75rem; color: var(--acc); font-family: ui-monospace, Consolas, monospace; margin-bottom: 8px; }
+    #tip p { margin: 0; font-size: 0.86rem; line-height: 1.55; color: #c9d1d9; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h1>week.yaml 全展开 · 可折叠子图 · Hover 人话说明</h1>
+    <p>源：<code>tools/chronicle_sim_v3/data/graphs/week.yaml</code> 及 <code>subgraphs/*.yaml</code>。紫色=调 LLM，绿=读/写盘，黄=流程控制，蓝=纯数据/算子。点击子图标题可展开/折叠内部节点。</p>
+    <div class="toolbar">
+      <button type="button" id="btn-expand">全部展开子图</button>
+      <button type="button" id="btn-collapse">全部折叠子图</button>
+    </div>
+    <div class="legend" style="margin-top:8px">
+      <span class="lg"><i class="c-llm"></i>LLM</span>
+      <span class="lg"><i class="c-io"></i>读/写</span>
+      <span class="lg"><i class="c-flow"></i>flow</span>
+      <span class="lg"><i class="c-algo"></i>算子/算法</span>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="root-card" data-help="root.week">
+      <h2>图 week · 标准单周</h2>
+      <p class="desc">一次 Cook 跑完「本游戏周」的整条管线：从世界与 NPC 列表出发，S/A 逐人跑 mental loop，B/C 走群体一笔；编导提出剧情草案，GM 定稿成正式事件；在关系网里模拟传言；再给每个存活的角色更新信念、沉淀社交态；最后做故事聚类与周总结。图输出 <code>summary</code> 与 <code>intents_count</code>。</p>
+    </div>
+    <p class="note">说明：真实引擎里多节点会并行/按依赖重排，本页为<strong>人读友好</strong>的线性分区；<code>read.config.pacing</code> 在 YAML 里写死 <code>preset: default</code>，与图入参 <code>pacing_preset</code> 未接线（若你将来改 YAML 可对齐行为）。</p>
+
+    <div class="phase">
+      <div class="ph-title">1 · 世界与角色切片</div>
+      <div class="row">
+        <div class="node ty-io" data-help="week.bible"><div class="nid">bible</div><div class="knd">read.world.bible_text</div></div>
+        <div class="node ty-io" data-help="week.agents"><div class="nid">agents</div><div class="knd">read.world.agents</div></div>
+        <div class="node ty-algo" data-help="week.alive"><div class="nid">alive</div><div class="knd">npc.filter_active</div></div>
+        <div class="node ty-algo" data-help="week.by_tier"><div class="nid">by_tier</div><div class="knd">npc.partition_by_tier</div></div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">2 · 节奏倍率</div>
+      <div class="row">
+        <div class="node ty-io" data-help="week.pacing"><div class="nid">pacing</div><div class="knd">read.config.pacing</div></div>
+        <div class="node ty-algo" data-help="week.pacing_mult"><div class="nid">pacing_mult</div><div class="knd">pacing.multiplier</div></div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">3 · 四条意图路（S/A 与 B/C 不同形态）</div>
+      <div class="row" style="align-items:flex-start">
+        <div class="subgraph open" data-sub>
+          <div class="sub-head" tabindex="0">
+            <div>
+              <h3>intent_s</h3>
+              <div class="sub-meta">flow.fanout_per_agent → single_agent_intent（tier S）</div>
+            </div>
+            <span class="chev">点击折叠/展开</span>
+          </div>
+          <div class="sub-body" data-help="sg.intent_fanout">
+            <p style="color:var(--dim);font-size:0.82rem;margin:0 0 8px">对列表里每个 NPC 复制执行同一套子图，循环变量 <code>item</code> 为当前角色；<code>collected</code> 汇总子图 result。</p>
+            <div class="row" style="margin-bottom:8px">
+              <div class="subgraph open" data-sub style="flex:1 1 100%">
+                <div class="sub-head"><div><h3>single_agent_intent</h3><div class="sub-meta">id: single_agent_intent</div></div><span class="chev">▼</span></div>
+                <div class="sub-body">
+                  <p class="note" data-help="sg.single_agent_intent" style="margin-top:0">单卡一周：先拼文档再「感知→打算→做→想开了」，多段落盘。当前图里 <code>visible_events_json / heard_rumors_json / location_json</code> 仍为空占位。</p>
+                  <div class="row" style="margin-bottom:8px">
+                    <div class="subgraph open" data-sub style="flex:1 1 100%">
+                      <div class="sub-head"><div><h3>ctx</h3><div class="sub-meta">flow.subgraph → npc_context_compose</div></div><span class="chev">▼</span></div>
+                      <div class="sub-body">
+                        <div class="row">
+                          <div class="node ty-io" data-help="nc.bible"><div class="nid">bible</div><div class="knd">read.world.bible_text</div></div>
+                          <div class="node ty-algo" data-help="nc.personality_key"><div class="nid">personality_key</div><div class="knd">text.format</div></div>
+                          <div class="node ty-io" data-help="nc.personality"><div class="nid">personality</div><div class="knd">read.schema.key</div></div>
+                          <div class="node ty-io" data-help="nc.beliefs"><div class="nid">beliefs</div><div class="knd">read.chronicle.beliefs</div></div>
+                        </div>
+                        <div class="row" style="margin-top:6px">
+                          <div class="node ty-algo" data-help="nc.short_memory_key"><div class="nid">short_memory_key</div><div class="knd">text.format</div></div>
+                          <div class="node ty-io" data-help="nc.short_memory"><div class="nid">short_memory</div><div class="knd">read.schema.key</div></div>
+                          <div class="node ty-algo" data-help="nc.long_memory_key"><div class="nid">long_memory_key</div><div class="knd">text.format</div></div>
+                          <div class="node ty-io" data-help="nc.long_memory"><div class="nid">long_memory</div><div class="knd">read.schema.key</div></div>
+                        </div>
+                        <div class="row" style="margin-top:6px">
+                          <div class="node ty-algo" data-help="nc.reflection_key"><div class="nid">reflection_key</div><div class="knd">text.format</div></div>
+                          <div class="node ty-io" data-help="nc.reflection"><div class="nid">reflection</div><div class="knd">read.schema.key</div></div>
+                          <div class="node ty-algo" data-help="nc.perception_key"><div class="nid">perception_key</div><div class="knd">text.format</div></div>
+                          <div class="node ty-io" data-help="nc.perception_read"><div class="nid">perception</div><div class="knd">read.schema.key</div></div>
+                          <div class="node ty-io" data-help="nc.agent_profile"><div class="nid">agent_profile</div><div class="knd">read.world.agent</div></div>
+                        </div>
+                        <div class="row" style="margin-top:6px">
+                          <div class="node ty-algo" data-help="nc.composed" style="flex:1 1 200px"><div class="nid">composed</div><div class="knd">npc.context_compose</div></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="ph-title" style="margin:10px 0 6px">键位预计算（仅算路径）</div>
+                  <div class="row">
+                    <div class="node ty-algo" data-help="sai.perception_key"><div class="nid">perception_key</div><div class="knd">text.format</div></div>
+                    <div class="node ty-algo" data-help="sai.action_key"><div class="nid">action_key</div><div class="knd">text.format</div></div>
+                    <div class="node ty-algo" data-help="sai.reflection_key"><div class="nid">reflection_key</div><div class="knd">text.format</div></div>
+                    <div class="node ty-algo" data-help="sai.short_memory_key"><div class="nid">short_memory_key</div><div class="knd">text.format</div></div>
+                    <div class="node ty-algo" data-help="sai.long_memory_key"><div class="nid">long_memory_key</div><div class="knd">text.format</div></div>
+                    <div class="node ty-algo" data-help="sai.intent_key"><div class="nid">intent_key</div><div class="knd">text.format</div></div>
+                  </div>
+                  <div class="ph-title" style="margin:12px 0 6px">心智链</div>
+                  <div class="row">
+                    <div class="node ty-llm" data-help="sai.perceive"><div class="nid">perceive</div><div class="knd">agent.cline · npc_perception</div></div>
+                    <div class="node ty-io" data-help="sai.write_perception"><div class="nid">write_perception</div><div class="knd">write.schema.json</div></div>
+                    <div class="node ty-llm" data-help="sai.plan"><div class="nid">plan</div><div class="knd">agent.cline · tier 规格</div></div>
+                    <div class="node ty-io" data-help="sai.write_intent"><div class="nid">write_intent</div><div class="knd">write.schema.json</div></div>
+                  </div>
+                  <div class="row" style="margin-top:6px">
+                    <div class="node ty-llm" data-help="sai.act"><div class="nid">act</div><div class="knd">agent.cline · npc_action</div></div>
+                    <div class="node ty-io" data-help="sai.write_action"><div class="nid">write_action</div><div class="knd">write.schema.json</div></div>
+                    <div class="node ty-llm" data-help="sai.reflect"><div class="nid">reflect</div><div class="knd">agent.cline · npc_reflection</div></div>
+                    <div class="node ty-io" data-help="sai.write_reflection"><div class="nid">write_reflection</div><div class="knd">write.schema.json</div></div>
+                  </div>
+                  <div class="row" style="margin-top:6px">
+                    <div class="node ty-io" data-help="sai.write_short_memory"><div class="nid">write_short_memory</div><div class="knd">write.schema.json</div></div>
+                    <div class="node ty-io" data-help="sai.write_long_memory"><div class="nid">write_long_memory</div><div class="knd">write.schema.json</div></div>
+                    <div class="node ty-io" data-help="sai.write_intent_outcome"><div class="nid">write_intent_outcome</div><div class="knd">write.chronicle.intent_outcome</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subgraph" data-sub>
+          <div class="sub-head">
+            <div>
+              <h3>intent_a</h3>
+              <div class="sub-meta">flow.fanout_per_agent → single_agent_intent（tier A）</div>
+            </div>
+            <span class="chev">点击展开</span>
+          </div>
+          <div class="sub-body">
+            <p style="color:var(--dim);font-size:0.85rem">与 intent_s 结构相同，仅 <code>agent_spec</code> 换为 <code>data/agent_specs/tier_a_npc.toml</code>，<code>collected</code> 接入 <code>all_intents</code>。</p>
+            <p class="note" data-help="week.intent_a">A 级角色仍是一人一个完整 SAI 子图，只是 prompt 与输出契约按 A 档配置。</p>
+          </div>
+        </div>
+
+        <div class="subgraph" data-sub>
+          <div class="sub-head">
+            <div>
+              <h3>intent_b / intent_c</h3>
+              <div class="sub-meta">flow.subgraph → group_tier_intents</div>
+            </div>
+            <span class="chev">点击展开</span>
+          </div>
+          <div class="sub-body" data-help="sg.group_tier_intents">
+            <p style="color:var(--dim);font-size:0.85rem;margin-top:0">B 与 C 两路各引用同一子图，<code>inputs.tier</code> 与 <code>inputs.agents</code> 不同。</p>
+            <div class="row">
+              <div class="node ty-algo" data-help="gti.group_state_key"><div class="nid">group_state_key</div><div class="knd">text.format</div></div>
+              <div class="node ty-algo" data-help="gti.agents_json"><div class="nid">agents_json</div><div class="knd">json.encode</div></div>
+              <div class="node ty-io" data-help="gti.world_bible"><div class="nid">world_bible</div><div class="knd">read.world.bible_text</div></div>
+              <div class="node ty-llm" data-help="gti.group_call"><div class="nid">group_call</div><div class="knd">agent.cline · group_intent_pack</div></div>
+            </div>
+            <div class="row" style="margin-top:6px">
+              <div class="node ty-algo" data-help="gti.intents_only"><div class="nid">intents_only</div><div class="knd">json.path · intents</div></div>
+              <div class="node ty-io" data-help="gti.write_group_state"><div class="nid">write_group_state</div><div class="knd">write.schema.json</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">4 · 合并意图并喂给编导</div>
+      <div class="row">
+        <div class="node ty-algo" data-help="week.all_intents"><div class="nid">all_intents</div><div class="knd">list.concat</div></div>
+        <div class="node ty-algo" data-help="week.intents_text"><div class="nid">intents_text</div><div class="knd">json.encode</div></div>
+        <div class="node ty-io" data-help="week.event_types"><div class="nid">event_types</div><div class="knd">read.config.event_types</div></div>
+        <div class="node ty-algo" data-help="week.event_types_text"><div class="nid">event_types_text</div><div class="knd">eventtype.format_for_prompt</div></div>
+        <div class="node ty-llm" data-help="week.director"><div class="nid">director</div><div class="knd">agent.cline · director</div></div>
+        <div class="node ty-algo" data-help="week.drafts_text"><div class="nid">drafts_text</div><div class="knd">json.encode</div></div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">5 · GM 定稿与事件对象</div>
+      <div class="row">
+        <div class="node ty-llm" data-help="week.gm"><div class="nid">gm</div><div class="knd">agent.cline · gm</div></div>
+        <div class="node ty-algo" data-help="week.gm_events"><div class="nid">gm_events</div><div class="knd">json.path · events</div></div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">6 · 传谣、落盘、文本化</div>
+      <div class="row">
+        <div class="node ty-io" data-help="week.edges"><div class="nid">edges</div><div class="knd">read.world.edges</div></div>
+        <div class="node ty-io" data-help="week.rumor_sim"><div class="nid">rumor_sim</div><div class="knd">read.config.rumor_sim</div></div>
+        <div class="node ty-algo" data-help="week.rumors_generated"><div class="nid">rumors_generated</div><div class="knd">rumor.bfs_engine</div></div>
+        <div class="node ty-io" data-help="week.write_rumors"><div class="nid">write_rumors</div><div class="knd">write.chronicle.rumors</div></div>
+        <div class="node ty-algo" data-help="week.gm_events_text"><div class="nid">gm_events_text</div><div class="knd">json.encode</div></div>
+        <div class="node ty-algo" data-help="week.rumors_generated_text"><div class="nid">rumors_generated_text</div><div class="knd">json.encode</div></div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">7 · 每角色信念（S/A/B/C 四路 fanout）</div>
+      <div class="row" style="align-items:flex-start">
+        <div class="subgraph open" data-sub>
+          <div class="sub-head"><div><h3>belief_* 内部</h3><div class="sub-meta">single_agent_belief_update</div></div><span class="chev">▼</span></div>
+          <div class="sub-body">
+            <p class="note" data-help="sg.belief" style="margin-top:0">对 fanout 中每个 <code>item</code> 跑一次：不调用大模型，用规则从事件+谣言里抽取/合并/衰信念条，写入 <code>chronicle.belief:week,agent</code>。</p>
+            <div class="row">
+              <div class="node ty-algo" data-help="sab.event_beliefs"><div class="nid">event_beliefs</div><div class="knd">belief.from_events</div></div>
+              <div class="node ty-algo" data-help="sab.rumor_beliefs"><div class="nid">rumor_beliefs</div><div class="knd">belief.from_rumors</div></div>
+              <div class="node ty-algo" data-help="sab.merged"><div class="nid">merged</div><div class="knd">belief.merge_truncate</div></div>
+              <div class="node ty-algo" data-help="sab.decayed"><div class="nid">decayed</div><div class="knd">belief.decay</div></div>
+              <div class="node ty-io" data-help="sab.write_beliefs"><div class="nid">write_beliefs</div><div class="knd">write.chronicle.belief</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="node ty-flow" data-help="week.belief_s" style="align-self:center"><div class="nid">belief_s</div><div class="knd">flow.fanout… belief</div></div>
+        <div class="node ty-flow" data-help="week.belief_a" style="align-self:center"><div class="nid">belief_a</div><div class="knd">flow.fanout… belief</div></div>
+        <div class="node ty-flow" data-help="week.belief_b" style="align-self:center"><div class="nid">belief_b</div><div class="knd">flow.fanout… belief</div></div>
+        <div class="node ty-flow" data-help="week.belief_c" style="align-self:center"><div class="nid">belief_c</div><div class="knd">flow.fanout… belief</div></div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">8 · 社会态与写盘</div>
+      <div class="row">
+        <div class="node ty-llm" data-help="week.social_state"><div class="nid">social_state</div><div class="knd">agent.cline · social_state</div></div>
+        <div class="node ty-algo" data-help="week.social_state_key"><div class="nid">social_state_key</div><div class="knd">text.format</div></div>
+        <div class="node ty-io" data-help="week.write_social_state"><div class="nid">write_social_state</div><div class="knd">write.schema.json</div></div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="ph-title">9 · 周末子图与图输出</div>
+      <div class="row" style="align-items:flex-start">
+        <div class="subgraph open" data-sub style="flex:1 1 100%">
+          <div class="sub-head"><div><h3>week_end</h3><div class="sub-meta">id: week_end</div></div><span class="chev">▼</span></div>
+          <div class="sub-body" data-help="sg.week_end">
+            <div class="row" style="margin-bottom:8px">
+              <div class="node ty-algo" data-help="we.events"><div class="nid">events</div><div class="knd">json.path</div></div>
+              <div class="node ty-algo" data-help="we.rumors"><div class="nid">rumors</div><div class="knd">json.path</div></div>
+              <div class="node ty-algo" data-help="we.social_state_in"><div class="nid">social_state</div><div class="knd">json.path 来自父图输入</div></div>
+              <div class="node ty-algo" data-help="we.social_state_key_we"><div class="nid">social_state_key</div><div class="knd">text.format 与读路径对齐</div></div>
+            </div>
+            <div class="row" style="margin-bottom:6px">
+              <div class="node ty-algo" data-help="we.events_text"><div class="nid">events_text</div><div class="knd">json.encode</div></div>
+              <div class="node ty-algo" data-help="we.rumors_text"><div class="nid">rumors_text</div><div class="knd">json.encode</div></div>
+              <div class="node ty-algo" data-help="we.social_state_text"><div class="nid">social_state_text</div><div class="knd">json.encode</div></div>
+            </div>
+            <div class="row" style="margin-bottom:6px">
+              <div class="node ty-algo" data-help="we.story_clusters_key"><div class="nid">story_clusters_key</div><div class="knd">text.format</div></div>
+              <div class="node ty-llm" data-help="we.story_clusterer"><div class="nid">story_clusterer</div><div class="knd">agent.cline</div></div>
+              <div class="node ty-io" data-help="we.write_story_clusters"><div class="nid">write_story_clusters</div><div class="knd">write.schema.json</div></div>
+            </div>
+            <div class="row">
+              <div class="node ty-llm" data-help="we.summarize"><div class="nid">summarize</div><div class="knd">agent.cline · week_summarizer</div></div>
+              <div class="node ty-io" data-help="we.write_summary"><div class="nid">write_summary</div><div class="knd">write.chronicle.summary</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="node ty-algo" data-help="week.intents_n" style="align-self:center;min-width:140px"><div class="nid">intents_n</div><div class="knd">count</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tip" role="tooltip" aria-hidden="true"></div>
+
+  <script>
+(function() {
+  var HELP = {
+    "root.week": { kind: "graph week", t: "标准单周", d: "把「这一周」从读世界、每人怎么想、导演怎么编、上帝怎么定，到谣言怎么传、人怎么信、台面上什么气氛，以及周末故事簇+周记，全跑完。" },
+    "week.bible": { kind: "read.world.bible_text", t: "世界圣经", d: "从 Run 里拉一段拼好的大文本，概括地点/势力/规矩等。后面的编导、NPC、社会态都靠它统一世界观，避免各说各话。" },
+    "week.agents": { kind: "read.world.agents", t: "全角色表", d: "列出世界里的 NPC 卡列表（或索引），下面才能过滤「还活着谁」、按等级分组。" },
+    "week.alive": { kind: "npc.filter_active", t: "只留活人", d: "按 life_status 之类字段去掉已退场/死亡，避免死人还在跑周循环。" },
+    "week.by_tier": { kind: "npc.partition_by_tier", t: "SABCD 分桶", d: "把仍存活角色按 S/A/B/C 分四份。后面 S/A 用重 CPU 的「单人一周心智」。B/C 用一次群体 LLM 省成本。" },
+    "week.pacing": { kind: "read.config.pacing", t: "读节奏配置", d: "读 data 里节奏（本 YAML 里 preset=default 写死，没有接到图入参 pacing_preset；将来若接线可让周与周之间节奏不同）。" },
+    "week.pacing_mult": { kind: "pacing.multiplier", t: "本周节奏倍率", d: "用「第几周 + 窗」算一个倍率。导演拿到它就知道这周故事该松还是紧。实现上是标量，供提示词/权重侧使用。" },
+    "sg.intent_fanout": { kind: "flow.fanout_per_agent", t: "对每人展开子图", d: "把列表中每个角色当作 item 执行 body 子图。每个实例的结果收进 collected，主图用 list.concat 拼起来。" },
+    "sg.single_agent_intent": { kind: "single_agent_intent", t: "单 NPC 一周末位机", d: "像 RPG 一回合：先拼好「你是谁、你记得啥」，再「看见啥→要干啥→真干了啥→想明白了啥」，中间每步写进 chronicle 不同键，好让下周还能读。" },
+    "nc.bible": { kind: "read.world.bible_text", t: "圣经", d: "同主图，给该 NPC 做世界观锚点。" },
+    "nc.personality_key": { kind: "text.format", t: "拼性格键", d: "按规则拼出 `world.agent_personality:agent_id=…` 这种逻辑 key 字符串，不是内容本身。" },
+    "nc.personality": { kind: "read.schema.key", t: "读性格 JSON", d: "用上面 key 从 Run 里取出性格侧栏，供下面合并文本或 JSON 入模。" },
+    "nc.beliefs": { kind: "read.chronicle.beliefs", t: "读「我认为啥是真的」", d: "到本周为止、该角上一版的信念表（本 pipeline 在 ctx 时信念尚未含本周新事件/谣言的完整更新，与 DAG 时序有关；缺则空）。" },
+    "nc.short_memory_key": { kind: "text.format", t: "短记键", d: "chronicle.short_memory:week+agent 的路径变量。" },
+    "nc.short_memory": { kind: "read.schema.key", t: "读短记", d: "本周边角流水账 JSON，没写过就是空。用于下一跳 prompt。" },
+    "nc.long_memory_key": { kind: "text.format", t: "长记键", d: "chronicle.long_memory 的路径。" },
+    "nc.long_memory": { kind: "read.schema.key", t: "读长记", d: "跨周沉淀的记忆摘要。" },
+    "nc.reflection_key": { kind: "text.format", t: "反思键", d: "上周或本周反思切片路径。" },
+    "nc.reflection": { kind: "read.schema.key", t: "读上周反思", d: "同一步推理链上的反思存根。" },
+    "nc.perception_key": { kind: "text.format", t: "感知键", d: "chronicle.perception 的 path。" },
+    "nc.perception_read": { kind: "read.schema.key", t: "读已存感知", d: "若存在则是上一轮写的感知。首次循环可能空。" },
+    "nc.agent_profile": { kind: "read.world.agent", t: "单卡", d: "该 ID 的档案 JSON，姓名立场关系等。" },
+    "nc.composed": { kind: "npc.context_compose", t: "拼一大段人话+结构化出口", d: "把多段按小标题接成给模型读的「长说明书」文本，同时多路 JSON 原样从 out 里带给下游。format=headed 表示有标题行。" },
+    "sai.perception_key": { kind: "text.format", t: "写感知用 key", d: "给下面 write 用，和 nc 的读 key 对应同一套命名。" },
+    "sai.action_key": { kind: "text.format", t: "写行动用 key", d: "chronicle.executed_action:…" },
+    "sai.reflection_key": { kind: "text.format", t: "写反思用 key", d: "chronicle.reflection:…" },
+    "sai.short_memory_key": { kind: "text.format", t: "写短记用 key", d: "本周短记将覆盖/写入。" },
+    "sai.long_memory_key": { kind: "text.format", t: "写长记用 key", d: "与反思与行动一起更新长期摘要。" },
+    "sai.intent_key": { kind: "text.format", t: "写意图用 key", d: "chronicle.intent:week+id" },
+    "sai.perceive": { kind: "agent.cline", t: "感知", d: "让模型扮演「我此刻看见/脑补到啥」。图里对可见事件/谣言/位置给的是空数组/空对象，所以当前版本 NPC 的「外头发生了啥」还没真正喂进来，这是后续接线点。" },
+    "sai.write_perception": { kind: "write.schema.json", t: "落盘感知", d: "上一步 LLM 输出 JSON 存到上面对应 key。" },
+    "sai.plan": { kind: "agent.cline", t: "意图/计划", d: "在 S 或 A 的 spec 下决定本周「要推动啥」。是 fanout 里对导演最重要的上游产物之一。" },
+    "sai.write_intent": { kind: "write.schema.json", t: "落盘意图", d: "把计划 JSON 存 chronicle.intent 键。" },
+    "sai.act": { kind: "agent.cline", t: "执行行动", d: "在感知+计划约束下，编「我实际干了啥」。" },
+    "sai.write_action": { kind: "write.schema.json", t: "落盘行动", d: "与 executed_action 键对齐。" },
+    "sai.reflect": { kind: "agent.cline", t: "反思", d: "对计划与结果做心路历程，为下周记忆用。" },
+    "sai.write_reflection": { kind: "write.schema.json", t: "落盘反思", d: "" },
+    "sai.write_short_memory": { kind: "write.schema.json", t: "本周短记打包", d: "把感/想/行/反四段打一包 JSON，下轮 ctx 可再读。" },
+    "sai.write_long_memory": { kind: "write.schema.json", t: "长记增量", d: "强调反思与最后行动/意图的摘要，跨周用。" },
+    "sai.write_intent_outcome": { kind: "write.chronicle.intent_outcome", t: "结果汇总槽位", d: "用专用 schema 写「意图+行动+反思」的 intent_outcome 类切片，方便下游/报表。" },
+    "week.intent_a": { kind: "fanout+SAI", t: "A 档", d: "与 S 同结构，只换 A 的 agent 规格。收集的列表与 S 拼在一起。" },
+    "sg.group_tier_intents": { kind: "group_tier_intents", t: "群体一笔", d: "B 或 C 整组人名 JSON + 圣经，一次 LLM 出多条「简化意图」；比逐人便宜。仍写回 group_state 方便审计。" },
+    "gti.group_state_key": { kind: "text.format", t: "群体状态 key", d: "chronicle.group_state:week,tier" },
+    "gti.agents_json": { kind: "json.encode", t: "名单 stringify", d: "把这一 tier 的 agent 对象列表字符串化，塞进群体 prompt。" },
+    "gti.world_bible": { kind: "read.world.bible_text", t: "再读圣经", d: "给群体调用单独拉一遍，和主图 bible 同数据源。" },
+    "gti.group_call": { kind: "agent.cline", t: "群体 LLM", d: "一次生成多人意图的 JSON。输出里应含 intents 数组，后面 json.path 单独抽出。" },
+    "gti.intents_only": { kind: "json.path", t: "只取 intents", d: "从完整输出里扒 intents 给主图 list.concat；完整 JSON 可另外落盘。" },
+    "gti.write_group_state": { kind: "write.schema.json", t: "写群体原档", d: "整包输出写 group_state 键，策划可追溯模型当时生成了啥。" },
+    "week.all_intents": { kind: "list.concat", t: "四路合一", d: "S、A 的 fanout 列表，加上 B、C 子图里抽出来的 intents 列表，拼成一根大 list。" },
+    "week.intents_text": { kind: "json.encode", t: "意图大字符串", d: "导演提示词要一段人眼可读/模型可扫的「众人打算」长文。" },
+    "week.event_types": { kind: "read.config.event_types", t: "读事件型录", d: "从 data 取事件类型库，含条件/冷却/基础权重等元数据。" },
+    "week.event_types_text": { kind: "eventtype.format_for_prompt", t: "型录排版", d: "转成给导演看的条列说明，比原始 YAML 好读。" },
+    "week.director": { kind: "agent.cline", t: "编导", d: "像剧组编剧：在圣经+众人意图+事件菜单+（标量）节奏下，**起草**要发生的大纲/草案事件，输出 JSON。还不等于最终世界定稿，下一步 GM 来裁。" },
+    "week.drafts_text": { kind: "json.encode", t: "草案 stringify", d: "把编导 JSON 再编码给 GM 当输入。" },
+    "week.gm": { kind: "agent.cline", t: "GM/裁定", d: "像桌游主持人：在圣经约束下，把编剧草案**拍板**成可执行事件列表。输出中取出 events 是后面谣言与信念的真理源。" },
+    "week.gm_events": { kind: "json.path", t: "只要 events 数组", d: "从 GM 整包 JSON 里取 events 字段。后面引擎只认这一数组做传播和陈述。" },
+    "week.edges": { kind: "read.world.edges", t: "社交边", d: "无向/有权关系网，给谣言 BFS 用：话从谁传向谁、边权与衰减等。" },
+    "week.rumor_sim": { kind: "read.config.rumor_sim", t: "传谣参数", d: "BFS 每步通过率、每跳衰减、随机种子策略等。默认读 preset=default。" },
+    "week.rumors_generated": { kind: "rumor.bfs_engine", t: "传谣模拟", d: "纯图算法+随机数：在边上扩散，**不是**大模型。产出「谁听到啥版本、第几手」等结构，给信念节点消费。" },
+    "week.write_rumors": { kind: "write.chronicle.rumors", t: "写本周谣", d: "把上一步算出的谣言结构持久化，键按 schema 的 chronicle.rumors:week" },
+    "week.gm_events_text": { kind: "json.encode", t: "事件 JSON 文本", d: "只为了让后续 LLM 在提示里能读「本周官方定稿长啥样」。" },
+    "week.rumors_generated_text": { kind: "json.encode", t: "谣言 JSON 文本", d: "同上，让社会态/周总结**看到**传谣长什么样。" },
+    "week.belief_s": { kind: "flow.fanout_per_agent", t: "S 档信念", d: "对 S 里每个 item 跑 belief 子图，输入同一套 gm_events 与谣言结果。" },
+    "week.belief_a": { kind: "flow.fanout_per_agent", t: "A 档信念", d: "同上，A 列表。" },
+    "week.belief_b": { kind: "flow.fanout_per_agent", t: "B 档信念", d: "B 里每个 item 也跑，尽管意图来自群体包；信念仍按人写。" },
+    "week.belief_c": { kind: "flow.fanout_per_agent", t: "C 档信念", d: "同上。" },
+    "sg.belief": { kind: "single_agent_belief_update", t: "信念子图", d: "从正式事件+谣言中抽「我信什么」，合并、截断 24 条、乘衰减因子、低于阈删，**不需要**语言模型。" },
+    "sab.event_beliefs": { kind: "belief.from_events", t: "从事件生信念", d: "用规则把与此 agent 相关的事件提几条「确信」或命题。" },
+    "sab.rumor_beliefs": { kind: "belief.from_rumors", t: "从谣写生信念", d: "按听谣 hops 等，把道听途说也变成带置信度条目。" },
+    "sab.merged": { kind: "belief.merge_truncate", t: "合并+截断", d: "两路列表合并，同 key 取强，只保留前 24 条防爆炸。" },
+    "sab.decayed": { kind: "belief.decay", t: "衰减", d: "每条 conf 乘 0.96，低于 0.1 丢弃，模拟记忆淡化。" },
+    "sab.write_beliefs": { kind: "write.chronicle.belief", t: "写信念条", d: "用 schema 写 chronicle.belief:week,agent" },
+    "week.social_state": { kind: "agent.cline", t: "社会态沉淀", d: "大模型综合意图草案、定稿、谣言、圣经，生成「台面上/群体层面」的 JSON，例如舆论张力、组织站队。输入里 social_state_text 故意空，等于让模型从零写。" },
+    "week.social_state_key": { kind: "text.format", t: "社会态 key", d: "chronicle.social_state:week" },
+    "week.write_social_state": { kind: "write.schema.json", t: "写社会态", d: "通用写键，把 JSON 落盘。" },
+    "sg.week_end": { kind: "week_end", t: "周末", d: "故事聚类+周记两条：一边把事件/谣/态打出 cluster，一边用自然语言写 `summary` 供图 result。" },
+    "we.events": { kind: "json.path", t: "解包事件", d: "从父图传入的 events_json 上取根，规范成内部用对象。" },
+    "we.rumors": { kind: "json.path", t: "解包谣", d: "同上，谣言列表。" },
+    "we.social_state_in": { kind: "json.path", t: "解包社会态", d: "父图刚写的 social_state JSON 再解一次。" },
+    "we.social_state_key_we": { kind: "text.format", t: "社会态 key 字符串", d: "在子图里再算一遍 `chronicle.social_state:week=` 键名；与子图里 json.path 读入的是同一类路径，仅 YAML 中未再接到其他节点，属于可保留的对齐/占位。" },
+    "we.events_text": { kind: "json.encode", t: "事件 stringify", d: "给两个 LLM 用。" },
+    "we.rumors_text": { kind: "json.encode", t: "谣言 stringify", d: "" },
+    "we.social_state_text": { kind: "json.encode", t: "社会态 stringify", d: "" },
+    "we.story_clusters_key": { kind: "text.format", t: "故事簇 key", d: "chronicle.story_clusters:week" },
+    "we.story_clusterer": { kind: "agent.cline", t: "故事线聚类", d: "把杂乱的本周素材聚成可追踪的故事簇 JSON，并写入 listed 结构（依实现）。" },
+    "we.write_story_clusters": { kind: "write.schema.json", t: "写故事簇", d: "聚类结果落盘。range 多周可再聚合 listing。" },
+    "we.summarize": { kind: "agent.cline", t: "周记员", d: "纯文本，写一段「给人类看的」本周编年式摘要。作为父图 result 的 summary。" },
+    "we.write_summary": { kind: "write.chronicle.summary", t: "写周总结到 chronicle", d: "专用写节点，按 schema 的 summary:week" },
+    "week.intents_n": { kind: "count", t: "意图条数", d: "数 all_intents 有多少条，作为图级输出的 intents_count。" }
+  };
+
+  var tip = document.getElementById("tip");
+  var showTimer = null;
+  var hideTimer = null;
+
+  function showTip(html, x, y) {
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    tip.setAttribute("aria-hidden", "false");
+    var margin = 12;
+    var w = tip.offsetWidth;
+    var h = tip.offsetHeight;
+    var left = x + 14;
+    var top = y + 14;
+    if (left + w > window.innerWidth - margin) left = x - w - 14;
+    if (top + h > window.innerHeight - margin) top = y - h - 14;
+    if (left < margin) left = margin;
+    if (top < margin) top = margin;
+    tip.style.left = left + "px";
+    tip.style.top = top + "px";
+  }
+
+  function hideTip() {
+    tip.style.display = "none";
+    tip.setAttribute("aria-hidden", "true");
+  }
+
+  function elHtml(key) {
+    var h = HELP[key];
+    if (!h) return "<h4>（无说明）</h4><p>键：" + (key || "") + "</p>";
+    return "<h4>" + (h.t || key) + "</h4><div class=\"kind\">" + (h.kind || "") + "</div><p>" + (h.d || "") + "</p>";
+  }
+
+  document.querySelectorAll("[data-help]").forEach(function(el) {
+    el.addEventListener("mouseenter", function(ev) {
+      var key = el.getAttribute("data-help");
+      if (showTimer) clearTimeout(showTimer);
+      showTimer = setTimeout(function() {
+        showTip(elHtml(key), ev.clientX, ev.clientY);
+      }, 80);
+    });
+    el.addEventListener("mousemove", function(ev) {
+      if (tip.style.display === "block") {
+        var margin = 12;
+        var w = tip.offsetWidth;
+        var h = tip.offsetHeight;
+        var left = ev.clientX + 14;
+        var top = ev.clientY + 14;
+        if (left + w > window.innerWidth - margin) left = ev.clientX - w - 14;
+        if (top + h > window.innerHeight - margin) top = ev.clientY - h - 14;
+        if (left < margin) left = margin;
+        if (top < margin) top = margin;
+        tip.style.left = left + "px";
+        tip.style.top = top + "px";
+      }
+    });
+    el.addEventListener("mouseleave", function() {
+      if (showTimer) { clearTimeout(showTimer); showTimer = null; }
+      hideTimer = setTimeout(hideTip, 120);
+    });
+  });
+
+  function toggleSub(sub, open) {
+    if (open === true) sub.classList.add("open");
+    else if (open === false) sub.classList.remove("open");
+    else sub.classList.toggle("open");
+  }
+
+  document.querySelectorAll(".subgraph > .sub-head").forEach(function(hd) {
+    hd.addEventListener("click", function() {
+      toggleSub(hd.parentElement);
+    });
+    hd.addEventListener("keydown", function(e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSub(hd.parentElement); }
+    });
+  });
+
+  document.getElementById("btn-expand").addEventListener("click", function() {
+    document.querySelectorAll("[data-sub]").forEach(function(s) { s.classList.add("open"); });
+  });
+  document.getElementById("btn-collapse").addEventListener("click", function() {
+    document.querySelectorAll("[data-sub]").forEach(function(s) { s.classList.remove("open"); });
+  });
+})();
+  </script>
+</body>
+</html>

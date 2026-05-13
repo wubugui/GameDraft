@@ -1,0 +1,67 @@
+# 仅忽略名为 .ts 的文件夹
+**/.ts/
+.ts/
+
+# Dependencies and package manager
+node_modules/
+.tools/
+.cache/
+config/bootstrap-oss.json
+
+# Build and cache
+dist/
+build/
+coverage/
+.vite/
+*.log
+*.tmp
+*.temp
+*.cache
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Cursor 项目级配置需托管，勿忽略 .cursor/
+
+# Python (tools)
+__pycache__/
+*.pyc
+.Python
+venv/
+.venv/
+
+# Env and secrets
+.env
+.env.local
+.env.*.local
+
+# 编年史模拟器：本地 LLM 密钥（由 private_llm_defaults.example.json 复制改名）
+tools/chronicle_sim/data/private_llm_defaults.json
+tools/chronicle_sim_v2/data/private_llm_defaults.json
+
+# 编年史模拟器：本地运行产物（快照/数据库等可能含 llm_config 与 api_key）
+tools/chronicle_sim/runs/
+tools/chronicle_sim_v2/runs/
+tools/chronicle_sim_v3/runs/
+
+# 编年史 v3：根级 runs/ 真实测试数据（含 api_key 文件 / cline session / 子任务历史）
+runs/
+
+# 编年史 v3：cook 调试时的根级时间线落盘
+_tl.json
+*.tl.json
+
+# 对话编译产物（源文件为 .ink）
+public/assets/dialogues/*.ink.json
+
+# Temp / read zip folder
+_read_zip/
+
+# 根目录 tmp：默认忽略，仅托管 chronicle 变异概率示意图
+tmp/*
+!tmp/chronicle_sim_mutation_probability/
+!tmp/chronicle_sim_mutation_probability/**
+
+# 宣传视频模板（克隆项目）
+oss-video-skill/

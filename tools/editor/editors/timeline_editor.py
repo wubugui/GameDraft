@@ -1,0 +1,2529 @@
+"""过场（Cutscene）步骤序列编辑器 — `steps` schema（present / action / parallel）。
+
+数据为自上而下顺序执行 + parallel fork-join，非 NLE 多轨时间轴。
+"""
+from __future__ import annotations
+
+import json
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any
+
+from PySide6.QtWidgets import (
+    QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
+    QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QLabel,
+    QScrollArea, QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
+    QDialog, QGroupBox, QToolButton, QSizePolicy, QMenu, QStyle,
+    QApplication,
+)
+from PySide6.QtCore import (
+    Qt, Signal, QEvent, QObject, QSignalBlocker, QTimer, QPoint, QByteArray,
+    QMimeData,
+)
+from PySide6.QtGui import QAction, QFont, QMouseEvent, QDrag
+
+from ..project_model import ProjectModel
+from .. import theme as app_theme
+from ..shared.id_ref_selector import IdRefSelector
+from ..shared.image_path_picker import CutsceneImagePathRow
+from ..shared.action_editor import (
+    ActionRow,
+    EmoteBubbleParamWidget,
+    FilterableTypeCombo,
+    _id_ref_rows_with_orphan,
+)
+from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
+from ..shared.rich_text_field import RichTextTextEdit
+from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
+from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
+
+# Cutscene 步骤表头拖拽排序（TimelineEditor._dnd_cutscene_step_source 存 payload）
+_CUTSCENE_STEP_DRAG_MIME = "application/x-gamedraft-cutscene-step"
+
+if TYPE_CHECKING:
+    pass
+
+from ..shared.cutscene_action_allowlist_io import load_cutscene_action_allowlist_ordered
+
+# ---------------------------------------------------------------
+# Cutscene Action whitelist：与 src/data/cutscene_action_allowlist.json（及运行时 Set）同源
+# ---------------------------------------------------------------
+CUTSCENE_ACTION_WHITELIST = list(load_cutscene_action_allowlist_ordered())
+
+# ---------------------------------------------------------------
+# Present step types and their parameter schemas
+# ---------------------------------------------------------------
+PRESENT_TYPES = [
+    "fadeToBlack", "fadeIn", "flashWhite", "waitTime", "waitClick",
+    "showTitle", "showDialogue", "showImg", "hideImg",
+    "showMovieBar", "hideMovieBar", "showSubtitle",
+    "cameraMove", "cameraZoom", "showCharacter",
+]
+
+_PRESENT_PARAMS: dict[str, list[tuple[str, str]]] = {
+    "fadeToBlack": [("duration", "float")],
+    "fadeIn": [("duration", "float")],
+    "flashWhite": [("duration", "float")],
+    "waitTime": [("duration", "float")],
+    "waitClick": [],
+    "showTitle": [("text", "text"), ("duration", "float")],
+    "showDialogue": [],
+    "showImg": [("id", "str"), ("image", "image")],
+    "hideImg": [("id", "str")],
+    "showMovieBar": [("heightPercent", "float")],
+    "hideMovieBar": [],
+    "showSubtitle": [("text", "text"), ("position", "str")],
+    "cameraMove": [("x", "float"), ("y", "float"), ("duration", "float")],
+    "cameraZoom": [("scale", "float"), ("duration", "float")],
+    "showCharacter": [("visible", "bool")],
+}
+
+_MS_KEYS = frozenset({"duration"})
+
+
+def _cutscene_subtitle_emote_target_rows(
+    model: ProjectModel | None,
+    scene_id: str,
+    committed: str,
+    cutscene_id: str | None = None,
+) -> list[tuple[str, str]]:
+    """与 ActionEditor emote_target 一致：绑定场景 NPC + 热点 + player + 本过场 _cut_ 演员。"""
+    pairs: list[tuple[str, str]] = []
+    sid = (scene_id or "").strip()
+    if model and sid:
+        pairs.extend(model.npc_ids_for_scene(sid))
+        pairs.extend(model.hotspot_ids_for_scene(sid))
+    pairs.append(("player", "player"))
+    cid = (cutscene_id or "").strip()
+    if model and cid:
+        seen = {p[0] for p in pairs}
+        for tid in model.cutscene_temp_actor_ids_in_cutscene(cid):
+            if tid not in seen:
+                seen.add(tid)
+                pairs.append((tid, tid))
+    return _id_ref_rows_with_orphan(pairs, (committed or "").strip())
+
+
+class _CollapsibleSection(QWidget):
+    """折叠区块（默认折叠），与 encounter_editor 同款。"""
+
+    def __init__(self, title: str, inner: QWidget, parent: QWidget | None = None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        self._toggle = QToolButton()
+        self._toggle.setText(title)
+        self._toggle.setCheckable(True)
+        self._toggle.setChecked(False)
+        self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._toggle.toggled.connect(self._on_toggled)
+        lay.addWidget(self._toggle)
+        self._inner = inner
+        lay.addWidget(self._inner)
+        self._inner.setVisible(False)
+
+    def _on_toggled(self, expanded: bool) -> None:
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self._inner.setVisible(expanded)
+
+    def expand_if(self, on: bool) -> None:
+        self._toggle.blockSignals(True)
+        self._toggle.setChecked(on)
+        self._toggle.blockSignals(False)
+        self._inner.setVisible(on)
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+
+
+# 与 CutsceneManager.executePresent 默认一致（毫秒）
+_GANTT_MAX_MS = 8000
+_GANTT_BAR_PX = 56
+
+def _float_ms(step: dict, key: str, default: float) -> int:
+    v = step.get(key)
+    if v is None or v == "":
+        return int(default)
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _parallel_track_fold_label(tr: dict) -> str:
+    """并行块折叠摘要中单轨标签：字幕步优先显示正文。"""
+    k = str(tr.get("kind", "?"))
+    t = str(tr.get("type", "?"))
+    if k == "present" and t == "showSubtitle":
+        tx = str(tr.get("text") or "").replace("\n", " ").strip()
+        if tx:
+            return tx[:36] + "…" if len(tx) > 36 else tx
+        return "showSubtitle"
+    return f"{k}:{t}"
+
+
+def parallel_tracks_summary(tracks: list) -> str:
+    types: list[str] = []
+    for tr in tracks:
+        if isinstance(tr, dict):
+            types.append(_parallel_track_fold_label(tr))
+    s = " | ".join(types[:6])
+    if len(types) > 6:
+        s += "…"
+    if not tracks:
+        return "并行 (0 轨)"
+    return f"并行 ({len(tracks)} 轨) · {s}"
+
+
+def step_summary_line(d: dict) -> str:
+    kind = str(d.get("kind", "present"))
+    if kind == "action":
+        t = str(d.get("type", ""))
+        p = d.get("params") or {}
+        ps = json.dumps(p, ensure_ascii=False) if p else ""
+        if len(ps) > 48:
+            ps = ps[:45] + "…"
+        return f"{t}  {ps}" if ps else t
+    if kind == "parallel":
+        return parallel_tracks_summary(d.get("tracks") or [])
+    if kind == "present":
+        t = str(d.get("type", ""))
+        if t == "showDialogue":
+            tx = str(d.get("text", "")).replace("\n", " ")
+            return f"showDialogue: {tx[:40]}…" if len(tx) > 40 else f"showDialogue: {tx}"
+        if t == "showTitle":
+            tx = str(d.get("text", ""))
+            return f"showTitle: {tx[:24]}…" if len(tx) > 24 else f"showTitle: {tx}"
+        if t in ("waitTime", "fadeToBlack", "fadeIn", "flashWhite", "cameraMove", "cameraZoom"):
+            return f"{t}  {_float_ms(d, 'duration', 0)}ms"
+        if t == "showImg":
+            return f"showImg  {d.get('id', '')}"
+        if t == "showSubtitle":
+            b = str(d.get("subtitleBand", "") or "").strip()
+            a = str(d.get("subtitleAlign", "") or "").strip()
+            se = d.get("subtitleEmote")
+            em_suf = ""
+            if isinstance(se, dict):
+                tg = str(se.get("target") or "").strip()
+                em = str(se.get("emote") or "").strip()
+                if tg and em:
+                    em_suf = f" · {em}@{tg}"
+            geo = ""
+            if b in ("movieTop", "movieBottom") and a in ("left", "center", "right"):
+                geo = f" · {b}/{a}"
+            tx = str(d.get("text") or "").replace("\n", " ").strip()
+            if len(tx) > 56:
+                tx = tx[:53] + "…"
+            # 折叠摘要优先正文；版式/表情挂件排在后面（与对白行一致的思路）
+            if tx:
+                return f"showSubtitle: {tx}{geo}{em_suf}"
+            if geo:
+                return f"showSubtitle{geo}{em_suf}"
+            return f"showSubtitle{em_suf}" if em_suf else "showSubtitle"
+        return t
+    return kind
+
+
+def estimate_step_duration_ms(step: dict) -> int | None:
+    """与 CutsceneManager.executePresent 对齐的粗估；None = 不定。"""
+    kind = str(step.get("kind", "present"))
+    if kind == "action":
+        return None
+    if kind == "parallel":
+        ts = step.get("tracks") or []
+        if not ts:
+            return 0
+        parts: list[int | None] = []
+        for s in ts:
+            if isinstance(s, dict):
+                parts.append(estimate_step_duration_ms(s))
+            else:
+                parts.append(0)
+        if any(p is None for p in parts):
+            return None
+        return max(p for p in parts) if parts else 0
+    if kind != "present":
+        return None
+    t = str(step.get("type", ""))
+    if t in ("waitClick", "showDialogue", "showSubtitle"):
+        return None
+    if t == "showImg":
+        return None
+    if t in ("hideImg", "hideMovieBar", "showMovieBar", "showCharacter"):
+        return 0
+    if t == "fadeToBlack":
+        return _float_ms(step, "duration", 1000)
+    if t == "fadeIn":
+        return _float_ms(step, "duration", 1000)
+    if t == "flashWhite":
+        return _float_ms(step, "duration", 200)
+    if t == "waitTime":
+        return _float_ms(step, "duration", 1000)
+    if t == "showTitle":
+        return _float_ms(step, "duration", 2000)
+    if t == "cameraMove":
+        return _float_ms(step, "duration", 1000)
+    if t == "cameraZoom":
+        return _float_ms(step, "duration", 500)
+    return None
+
+
+def format_duration_hint(ms: int | None) -> str:
+    if ms is None:
+        return "不定"
+    if ms == 0:
+        return "—"
+    return f"~{ms}ms"
+
+
+def gantt_style_for_ms(ms: int | None, theme_id: str) -> str:
+    dark = app_theme.is_dark_theme(theme_id)
+    dash = "#868e96" if dark else "#6c757d"
+    zero_bg = "#495057" if dark else "#dee2e6"
+    fill = "#868e96" if dark else "#6c757d"
+    if ms is None:
+        return (
+            f"background: transparent; border: 1px dashed {dash}; "
+            "min-height: 10px; max-height: 10px; border-radius: 2px;"
+        )
+    if ms <= 0:
+        return (
+            f"background: {zero_bg}; min-height: 10px; max-height: 10px; "
+            "border-radius: 2px; min-width: 4px; max-width: 4px;"
+        )
+    w = max(4, min(_GANTT_BAR_PX, int(_GANTT_BAR_PX * min(ms, _GANTT_MAX_MS) / _GANTT_MAX_MS)))
+    return (
+        f"background: {fill}; min-height: 10px; max-height: 10px; "
+        f"border-radius: 2px; min-width: {w}px; max-width: {w}px;"
+    )
+
+
+# ===============================================================
+# StepWidget — 单步表单（无顶栏按钮；由 StepOutlineFrame 提供大纲行）
+# ===============================================================
+
+class StepWidget(QFrame):
+    """编辑一个 CutsceneStep。"""
+
+    contentChanged = Signal()
+
+    def __init__(
+        self,
+        step: dict,
+        model: ProjectModel | None = None,
+        editor: "TimelineEditor | None" = None,
+        parent: QWidget | None = None,
+        *,
+        parallel_parent: StepWidget | None = None,
+        cutscene_id: str | None = None,
+    ):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self._model = model
+        self._editor = editor
+        self._parallel_parent = parallel_parent
+        self._cutscene_id = (cutscene_id or "") or None
+        self._outline_frame: StepOutlineFrame | None = None
+        self._child_outlines: list[StepOutlineFrame] = []
+        self._widgets: dict[str, QWidget] = {}
+        self._action_row: ActionRow | None = None
+        self._parallel_layout: QVBoxLayout | None = None
+        self._parallel_group: QGroupBox | None = None
+        # 构造期各控件程序化赋值会触发 valueChanged/typeCommitted；勿标为「未 Apply」
+        self._report_editor_dirty: bool = False
+
+        kind = str(step.get("kind", "present"))
+        self._step_data = deepcopy(step)
+        self._original_data = deepcopy(step)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+
+        # kind selector
+        top = QHBoxLayout()
+        self._kind_combo = QComboBox()
+        self._kind_combo.addItem("present", "present")
+        self._kind_combo.addItem("action", "action")
+        self._kind_combo.addItem("parallel", "parallel")
+        for i in range(self._kind_combo.count()):
+            if self._kind_combo.itemData(i) == kind:
+                self._kind_combo.setCurrentIndex(i)
+                break
+        self._kind_combo.currentIndexChanged.connect(self._on_kind_changed)
+        top.addWidget(QLabel("kind:"))
+        top.addWidget(self._kind_combo, stretch=1)
+        lay.addLayout(top)
+
+        self._body = QVBoxLayout()
+        lay.addLayout(self._body)
+
+        self._rebuild(kind)
+        self._report_editor_dirty = True
+
+    def _on_parallel_child_changed(self) -> None:
+        of = self._outline_frame
+        if of is not None:
+            of.refresh_header()
+
+    def _find_owning_outlines_and_layout(self):
+        if self._parallel_parent is not None:
+            return self._parallel_parent._child_outlines, self._parallel_parent._parallel_layout
+        if self._editor is not None:
+            return self._editor._step_outlines, self._editor._steps_layout
+        return None, None
+
+    def _emit_dirty(self) -> None:
+        self.contentChanged.emit()
+        if self._report_editor_dirty and (
+            self._editor is not None and hasattr(self._editor, "mark_pending_changes")
+        ):
+            self._editor.mark_pending_changes()
+        if self._parallel_parent is not None:
+            self._parallel_parent._on_parallel_child_changed()
+
+    def _on_kind_changed(self) -> None:
+        new_kind = self._kind_combo.currentData()
+        self._step_data = {"kind": new_kind}
+        if new_kind == "present":
+            self._step_data["type"] = "waitClick"
+        elif new_kind == "action":
+            self._step_data["type"] = CUTSCENE_ACTION_WHITELIST[0]
+            self._step_data["params"] = {}
+        elif new_kind == "parallel":
+            self._step_data["tracks"] = []
+        self._rebuild(new_kind)
+        self._emit_dirty()
+        if self._outline_frame:
+            self._outline_frame.refresh_header()
+
+    def _clear_body(self) -> None:
+        for ol in self._child_outlines:
+            ol.deleteLater()
+        self._child_outlines.clear()
+        self._widgets.clear()
+        self._action_row = None
+        self._parallel_layout = None
+        self._parallel_group = None
+        while self._body.count() > 0:
+            item = self._body.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            sub = item.layout()
+            if sub:
+                while sub.count() > 0:
+                    si = sub.takeAt(0)
+                    sw = si.widget()
+                    if sw:
+                        sw.deleteLater()
+
+    def _rebuild(self, kind: str) -> None:
+        self._clear_body()
+        if kind == "present":
+            self._build_present()
+        elif kind == "action":
+            self._build_action()
+        elif kind == "parallel":
+            self._build_parallel()
+
+    def _build_present(self) -> None:
+        form = QFormLayout()
+        self._type_combo = FilterableTypeCombo(
+            [(t, t) for t in PRESENT_TYPES],
+            orphan_label=lambda v: f"[unknown] {v}",
+            select_only=True,
+        )
+        cur_type = str(self._step_data.get("type", "waitClick"))
+        self._type_combo.set_committed_type(cur_type)
+        self._type_combo.typeCommitted.connect(self._on_present_type_changed)
+        form.addRow("type", self._type_combo)
+
+        self._present_params_layout = QFormLayout()
+        form_w = QWidget()
+        form_w.setLayout(form)
+        self._body.addWidget(form_w)
+        params_w = QWidget()
+        params_w.setLayout(self._present_params_layout)
+        self._body.addWidget(params_w)
+
+        self._rebuild_present_params(cur_type)
+
+    def _on_present_type_changed(self) -> None:
+        new_type = self._type_combo.committed_type()
+        self._step_data = {"kind": "present", "type": new_type}
+        self._rebuild_present_params(new_type)
+        self._emit_dirty()
+        if self._outline_frame:
+            self._outline_frame.refresh_header()
+
+    def _rebuild_present_params(self, ptype: str) -> None:
+        while self._present_params_layout.rowCount() > 0:
+            self._present_params_layout.removeRow(0)
+        self._widgets.clear()
+
+        if ptype == "showDialogue":
+            cur_sid = str(self._step_data.get("scriptedNpcId", "") or "")
+            wdg = CutsceneShowDialogueFields(
+                self._model,
+                None,
+                str(self._step_data.get("speaker", "") or ""),
+                str(self._step_data.get("text", "") or ""),
+                cur_sid,
+                self,
+                on_change=self._emit_dirty,
+            )
+            self._widgets["__showDialogue__"] = wdg
+            self._present_params_layout.addRow(wdg)
+            return
+
+        if ptype == "cameraMove":
+            self._build_camera_move_present_params()
+            return
+
+        if ptype == "showSubtitle":
+            self._build_show_subtitle_present_params()
+            return
+
+        if ptype == "showImg":
+            self._build_show_img_present_params()
+            return
+
+        if ptype == "hideImg":
+            self._build_hide_img_present_params()
+            return
+
+        schema = _PRESENT_PARAMS.get(ptype, [])
+        for pname, pt in schema:
+            val = self._step_data.get(pname, "")
+            label = f"{pname} (ms)" if pt == "float" and pname in _MS_KEYS else pname
+            if pt == "float":
+                w = QDoubleSpinBox()
+                w.setRange(-99999, 99999)
+                w.setDecimals(2)
+                w.setValue(float(val) if val != "" else 0)
+                w.valueChanged.connect(self._emit_dirty)
+            elif pt == "bool":
+                w = QCheckBox()
+                w.setChecked(bool(val) if val != "" else True)
+                w.toggled.connect(self._emit_dirty)
+            elif pt == "text":
+                w = QTextEdit(str(val))
+                w.setMaximumHeight(50)
+                w.textChanged.connect(self._emit_dirty)
+            elif pt == "image":
+                w = CutsceneImagePathRow(self._model, str(val) if val else "", self)
+                w.setMinimumWidth(360)
+                w._edit.textChanged.connect(self._emit_dirty)
+            else:
+                w = QLineEdit(str(val) if val else "")
+                w.textChanged.connect(self._emit_dirty)
+            self._widgets[pname] = w
+            self._present_params_layout.addRow(label, w)
+
+    def _build_camera_move_present_params(self) -> None:
+        """cameraMove：x/y 可手输，也可用绑定场景地图点选。"""
+        val_x = self._step_data.get("x", "")
+        val_y = self._step_data.get("y", "")
+        val_dur = self._step_data.get("duration", "")
+        sx = QDoubleSpinBox()
+        sx.setRange(-99999, 99999)
+        sx.setDecimals(2)
+        sx.setValue(float(val_x) if val_x != "" else 0.0)
+        sx.valueChanged.connect(self._emit_dirty)
+        sy = QDoubleSpinBox()
+        sy.setRange(-99999, 99999)
+        sy.setDecimals(2)
+        sy.setValue(float(val_y) if val_y != "" else 0.0)
+        sy.valueChanged.connect(self._emit_dirty)
+        sd = QDoubleSpinBox()
+        sd.setRange(0, 999999)
+        sd.setDecimals(2)
+        sd.setValue(float(val_dur) if val_dur != "" else 1000.0)
+        sd.valueChanged.connect(self._emit_dirty)
+
+        row = QWidget()
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.addWidget(QLabel("x"))
+        hl.addWidget(sx, 1)
+        hl.addWidget(QLabel("y"))
+        hl.addWidget(sy, 1)
+        pick = QPushButton("地图选点…")
+        pick.setToolTip(
+            "在过场顶部「targetScene」绑定的场景背景上点击，写入 x / y 世界坐标。"
+        )
+        pick.clicked.connect(self._on_pick_camera_move_point)
+        hl.addWidget(pick)
+        self._widgets["x"] = sx
+        self._widgets["y"] = sy
+        self._widgets["duration"] = sd
+        self._present_params_layout.addRow("目标位置（世界坐标）", row)
+        self._present_params_layout.addRow("duration (ms)", sd)
+
+    def _on_pick_camera_move_point(self) -> None:
+        ed = self._editor
+        model = self._model
+        if ed is None or model is None:
+            QMessageBox.warning(self, "选点", "未绑定编辑器或工程模型。")
+            return
+        sid = ""
+        if hasattr(ed, "cutscene_binding_target_scene"):
+            sid = ed.cutscene_binding_target_scene()
+        sid = str(sid or "").strip()
+        if not sid:
+            QMessageBox.information(
+                self,
+                "过场",
+                "请先在过场表单中设置「targetScene」，再在地图上选取镜头目标点。",
+            )
+            return
+        if sid not in model.scenes:
+            QMessageBox.warning(
+                self,
+                "选点",
+                f"场景「{sid}」未载入工程，无法打开预览。请检查 ID 或过场绑定。",
+            )
+            return
+        wx_w = self._widgets.get("x")
+        wy_w = self._widgets.get("y")
+        if not isinstance(wx_w, QDoubleSpinBox) or not isinstance(wy_w, QDoubleSpinBox):
+            return
+        dlg = CutsceneCameraPointPickerDialog(
+            model, sid, float(wx_w.value()), float(wy_w.value()), self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            px, py = dlg.picked_xy()
+            wx_w.setValue(float(px))
+            wy_w.setValue(float(py))
+            self._emit_dirty()
+
+    def refresh_subtitle_emote_target_items(self) -> None:
+        """过场 targetScene 变更时刷新 showSubtitle 表情锚点下拉候选项。"""
+        if self._kind_combo.currentData() != "present":
+            return
+        if self._type_combo.committed_type() != "showSubtitle":
+            return
+        sel = self._widgets.get("_subtitle_emote_target")
+        if not isinstance(sel, IdRefSelector):
+            return
+        ed = self._editor
+        sid = ""
+        if ed is not None and hasattr(ed, "cutscene_binding_target_scene"):
+            sid = ed.cutscene_binding_target_scene()
+        cur = sel.current_id().strip()
+        rows = _cutscene_subtitle_emote_target_rows(
+            self._model, sid, cur, cutscene_id=self._cutscene_id)
+        sel.blockSignals(True)
+        try:
+            sel.set_items(rows)
+            sel.set_current(cur)
+        finally:
+            sel.blockSignals(False)
+
+    def _subtitle_on_present_mode_changed(self) -> None:
+        combo = self._widgets.get("_subtitle_mode")
+        spin = self._widgets.get("_subtitle_frac")
+        if isinstance(combo, FilterableTypeCombo) and isinstance(spin, QDoubleSpinBox):
+            spin.setVisible(combo.committed_type().strip() == "__num__")
+        self._emit_dirty()
+
+    def _subtitle_on_layout_mode_changed(self) -> None:
+        lm = self._widgets.get("_subtitle_layout_mode")
+        classic = self._widgets.get("_subtitle_classic_wrap")
+        movie = self._widgets.get("_subtitle_movie_wrap")
+        if isinstance(lm, FilterableTypeCombo):
+            is_classic = lm.committed_type().strip() == "__classic__"
+            if isinstance(classic, QWidget):
+                classic.setVisible(is_classic)
+            if isinstance(movie, QWidget):
+                movie.setVisible(not is_classic)
+        self._subtitle_on_present_mode_changed()
+
+    def _show_subtitle_merge_emote_optional(self, d: dict) -> None:
+        """target+emote 均非空时写入 subtitleEmote，与 CutsceneManager.parseSubtitleEmoteSpec 对齐。"""
+        tgt_w = self._widgets.get("_subtitle_emote_target")
+        emo_w = self._widgets.get("_subtitle_emote_emote")
+        tt = ""
+        if isinstance(tgt_w, IdRefSelector):
+            tt = tgt_w.current_id().strip()
+        elif isinstance(tgt_w, QLineEdit):
+            tt = tgt_w.text().strip()
+        ee = ""
+        if isinstance(emo_w, EmoteBubbleParamWidget):
+            ee = emo_w.emote_text().strip()
+        elif isinstance(emo_w, QLineEdit):
+            ee = emo_w.text().strip()
+        if not tt or not ee:
+            return
+        dur_w = self._widgets.get("_subtitle_emote_duration")
+        dur = 1500.0
+        if isinstance(dur_w, QDoubleSpinBox):
+            dur = max(1.0, float(dur_w.value()))
+        ox_w = self._widgets.get("_subtitle_emote_ox")
+        oy_w = self._widgets.get("_subtitle_emote_oy")
+        ox, oy = 0.0, 0.0
+        if isinstance(ox_w, QDoubleSpinBox):
+            ox = float(ox_w.value())
+        if isinstance(oy_w, QDoubleSpinBox):
+            oy = float(oy_w.value())
+        d["subtitleEmote"] = {
+            "target": tt,
+            "emote": ee,
+            "duration": dur,
+            "anchorOffsetX": ox,
+            "anchorOffsetY": oy,
+        }
+
+    def _build_show_subtitle_present_params(self) -> None:
+        raw_txt = self._step_data.get("text", "")
+        raw_pos = self._step_data.get("position", "bottom")
+        rb = str(self._step_data.get("subtitleBand", "") or "").strip()
+        ra = str(self._step_data.get("subtitleAlign", "") or "").strip()
+        use_movie = rb in ("movieTop", "movieBottom") and ra in ("left", "center", "right")
+
+        if self._model is not None:
+            tw = RichTextTextEdit(self._model, self)
+            tw.setPlainText(str(raw_txt))
+            tw.textChanged.connect(self._emit_dirty)
+            tw.setPlaceholderText(
+                "字幕文案；请用右侧「插入引用」添加 [tag:…]，勿手打。"
+            )
+            tw.core_text_edit().setMinimumHeight(72)
+            tw.setMaximumHeight(152)
+        else:
+            tw = QTextEdit(str(raw_txt))
+            tw.setMinimumHeight(64)
+            tw.setMaximumHeight(120)
+            tw.textChanged.connect(self._emit_dirty)
+            tw.setPlaceholderText("载入工程后可使用完整引用插入能力。")
+
+        layout_mode_rows = [
+            ("经典 position（top/center/bottom 或比例）", "__classic__"),
+            ("相对黑边（上/下区 × 左/中/右）", "__movie__"),
+        ]
+        layout_combo = FilterableTypeCombo(layout_mode_rows, self, select_only=True)
+        layout_combo.set_committed_type("__classic__" if not use_movie else "__movie__")
+        layout_combo.typeCommitted.connect(self._subtitle_on_layout_mode_changed)
+
+        mode_rows = [
+            ("顶部 · top", "top"),
+            ("居中 · center", "center"),
+            ("底部 · bottom", "bottom"),
+            ("纵向 0–1 比例 …", "__num__"),
+        ]
+        cw = FilterableTypeCombo(mode_rows, self, select_only=True)
+
+        frac = QDoubleSpinBox(self)
+        frac.setRange(0.0, 1.0)
+        frac.setDecimals(4)
+        frac.setSingleStep(0.05)
+        frac.setToolTip(
+            "与运行时 CutsceneRenderer 一致：0–1 映射到屏上纵向位置。"
+        )
+
+        rp = raw_pos
+        if isinstance(rp, bool):
+            cw.set_committed_type("bottom")
+            frac.setValue(0.5)
+        elif isinstance(rp, (int, float)):
+            cw.set_committed_type("__num__")
+            fv = float(rp)
+            frac.setValue(max(0.0, min(1.0, fv)))
+        else:
+            s = str(rp).strip().lower()
+            if s in ("top", "center", "bottom"):
+                cw.set_committed_type(s)
+                frac.setValue(0.5)
+            else:
+                try:
+                    fv = float(s)
+                    cw.set_committed_type("__num__")
+                    frac.setValue(max(0.0, min(1.0, fv)))
+                except (TypeError, ValueError):
+                    cw.set_committed_type("bottom")
+                    frac.setValue(0.5)
+
+        frac.valueChanged.connect(self._emit_dirty)
+        cw.typeCommitted.connect(self._subtitle_on_present_mode_changed)
+
+        classic_row = QWidget(self)
+        classic_lay = QHBoxLayout(classic_row)
+        classic_lay.setContentsMargins(0, 0, 0, 0)
+        classic_lay.addWidget(cw, 1)
+        classic_lay.addWidget(frac)
+        classic_row.setToolTip("预设三档或屏幕纵向数值；与运行时 showSubtitle(position) 对齐。")
+
+        classic_wrap = QWidget(self)
+        classic_wrap_l = QVBoxLayout(classic_wrap)
+        classic_wrap_l.setContentsMargins(0, 0, 0, 0)
+        classic_wrap_l.addWidget(classic_row)
+
+        band_rows = [
+            ("上黑边区 · movieTop", "movieTop"),
+            ("下黑边区 · movieBottom", "movieBottom"),
+        ]
+        band_c = FilterableTypeCombo(band_rows, self, select_only=True)
+        if rb == "movieBottom":
+            band_c.set_committed_type("movieBottom")
+        else:
+            band_c.set_committed_type("movieTop")
+
+        align_rows = [
+            ("居左 · left", "left"),
+            ("居中 · center", "center"),
+            ("居右 · right", "right"),
+        ]
+        align_c = FilterableTypeCombo(align_rows, self, select_only=True)
+        if ra == "left":
+            align_c.set_committed_type("left")
+        elif ra == "right":
+            align_c.set_committed_type("right")
+        else:
+            align_c.set_committed_type("center")
+
+        band_c.typeCommitted.connect(self._emit_dirty)
+        align_c.typeCommitted.connect(self._emit_dirty)
+
+        movie_row = QWidget(self)
+        movie_lay = QHBoxLayout(movie_row)
+        movie_lay.setContentsMargins(0, 0, 0, 0)
+        movie_lay.addWidget(QLabel("条带"))
+        movie_lay.addWidget(band_c, 1)
+        movie_lay.addWidget(QLabel("水平"))
+        movie_lay.addWidget(align_c, 1)
+        movie_row.setToolTip(
+            "须先在同过场中 showMovieBar；仅写入 subtitleBand + subtitleAlign，不写 position。"
+        )
+
+        movie_wrap = QWidget(self)
+        movie_wrap_l = QVBoxLayout(movie_wrap)
+        movie_wrap_l.setContentsMargins(0, 0, 0, 0)
+        movie_wrap_l.addWidget(movie_row)
+
+        se_raw = self._step_data.get("subtitleEmote")
+        se_t, se_e, se_d, se_ox, se_oy = "", "", 1500.0, 0.0, 0.0
+        if isinstance(se_raw, dict):
+            se_t = str(se_raw.get("target") or "").strip()
+            se_e = str(se_raw.get("emote") or "").strip()
+            try:
+                se_d = float(se_raw.get("duration", 1500))
+            except (TypeError, ValueError):
+                se_d = 1500.0
+            if not (se_d > 0 and se_d == se_d):
+                se_d = 1500.0
+            try:
+                se_ox = float(se_raw.get("anchorOffsetX", 0))
+            except (TypeError, ValueError):
+                se_ox = 0.0
+            try:
+                se_oy = float(se_raw.get("anchorOffsetY", 0))
+            except (TypeError, ValueError):
+                se_oy = 0.0
+
+        emote_body = QWidget(self)
+        emote_form = QFormLayout(emote_body)
+        emote_form.setContentsMargins(8, 4, 8, 4)
+        ed_sc = self._editor
+        bind_sid = ""
+        if ed_sc is not None and hasattr(ed_sc, "cutscene_binding_target_scene"):
+            bind_sid = ed_sc.cutscene_binding_target_scene()
+        emote_tgt = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
+        emote_tgt.setMinimumWidth(220)
+        emote_tgt.set_items(_cutscene_subtitle_emote_target_rows(
+            self._model,
+            bind_sid,
+            se_t,
+            cutscene_id=self._cutscene_id,
+        ))
+        emote_tgt.set_current(se_t)
+        emote_tgt.value_changed.connect(self._emit_dirty)
+        emote_tgt.setToolTip(
+            "仅下拉选择；候选项为本过场「targetScene」中 NPC、热点、player，"
+            "及本过场步骤树中已用的 _cut_ 临时演员（与 showEmoteAndWait 一致）。"
+        )
+        emote_txt = EmoteBubbleParamWidget(
+            self,
+            self._model,
+            se_e,
+            self._emit_dirty,
+            include_empty_choice=True,
+        )
+        emote_txt.setMinimumWidth(360)
+        emote_dur = QDoubleSpinBox()
+        emote_dur.setRange(1.0, 999999.0)
+        emote_dur.setDecimals(0)
+        emote_dur.setValue(max(1.0, se_d))
+        emote_dur.setToolTip("毫秒，与 showEmoteAndWait 一致；字幕仍为点击关闭。")
+        emote_dur.valueChanged.connect(self._emit_dirty)
+        emote_ox = QDoubleSpinBox()
+        emote_ox.setRange(-9999.0, 9999.0)
+        emote_ox.setDecimals(1)
+        emote_ox.setValue(se_ox)
+        emote_ox.valueChanged.connect(self._emit_dirty)
+        emote_oy = QDoubleSpinBox()
+        emote_oy.setRange(-9999.0, 9999.0)
+        emote_oy.setDecimals(1)
+        emote_oy.setValue(se_oy)
+        emote_oy.valueChanged.connect(self._emit_dirty)
+        emote_form.addRow("target", emote_tgt)
+        emote_form.addRow("emote", emote_txt)
+        emote_form.addRow("duration (ms)", emote_dur)
+        emote_form.addRow("anchorOffsetX", emote_ox)
+        emote_form.addRow("anchorOffsetY", emote_oy)
+
+        emote_section = _CollapsibleSection("字幕旁表情（可选）", emote_body, self)
+        emote_section.setToolTip(
+            "目标仅能从绑定场景实体下拉；气泡文案用下拉与「插入」快捷键，也可用「其他…」。"
+            "选定目标且气泡非「(无)」时写入 subtitleEmote。"
+        )
+        if se_t and se_e:
+            emote_section.expand_if(True)
+
+        self._widgets["text"] = tw
+        self._widgets["_subtitle_layout_mode"] = layout_combo
+        self._widgets["_subtitle_mode"] = cw
+        self._widgets["_subtitle_frac"] = frac
+        self._widgets["_subtitle_classic_wrap"] = classic_wrap
+        self._widgets["_subtitle_movie_band"] = band_c
+        self._widgets["_subtitle_movie_align"] = align_c
+        self._widgets["_subtitle_movie_wrap"] = movie_wrap
+        self._widgets["_subtitle_emote_target"] = emote_tgt
+        self._widgets["_subtitle_emote_emote"] = emote_txt
+        self._widgets["_subtitle_emote_duration"] = emote_dur
+        self._widgets["_subtitle_emote_ox"] = emote_ox
+        self._widgets["_subtitle_emote_oy"] = emote_oy
+
+        self._present_params_layout.addRow("text", tw)
+        self._present_params_layout.addRow("布局模式", layout_combo)
+        self._present_params_layout.addRow("", classic_wrap)
+        self._present_params_layout.addRow("", movie_wrap)
+        self._present_params_layout.addRow("", emote_section)
+        self._subtitle_on_layout_mode_changed()
+
+    def _build_show_img_present_params(self) -> None:
+        pool_s: set[str] = set()
+        pool_h: set[str] = set()
+        ed = self._editor
+        if ed is not None and hasattr(ed, "_outline_overlay_show_and_hide_sets"):
+            pool_s, pool_h = ed._outline_overlay_show_and_hide_sets()
+
+        uni = sorted(pool_s | pool_h, key=lambda x: (x.lower(), x))
+        committed = str(self._step_data.get("id", "") or "").strip()
+        orphan = (f"{committed} · 仅此数据引用") if committed else "未命名"
+        sel = IdRefSelector(self, allow_empty=True, editable=True)
+        sel.setMinimumWidth(220)
+        if ed is not None and hasattr(ed, "_merged_overlay_rows"):
+            rows_u = ed._merged_overlay_rows(uni, committed, orphan)
+        else:
+            rows_u = [(x, x) for x in uni]
+            if committed and committed not in {x[0] for x in rows_u}:
+                rows_u.append((committed, orphan))
+        if not rows_u:
+            rows_u = [("img", "img")]
+        sel.set_items(rows_u)
+        sel.set_current(committed)
+        sel.value_changed.connect(self._emit_dirty)
+        sel.setToolTip(
+            "与 hideImg 配对；下拉为步骤树中出现的 id（可再行内输入）。"
+        )
+
+        img = CutsceneImagePathRow(self._model, str(self._step_data.get("image") or ""), self)
+        img.setMinimumWidth(320)
+        img._edit.textChanged.connect(self._emit_dirty)
+
+        self._widgets["id"] = sel
+        self._widgets["image"] = img
+        self._present_params_layout.addRow("id", sel)
+        self._present_params_layout.addRow("image", img)
+
+    def _build_hide_img_present_params(self) -> None:
+        pool_s: set[str] = set()
+        ed = self._editor
+        if ed is not None and hasattr(ed, "_outline_overlay_show_and_hide_sets"):
+            pool_s, _ = ed._outline_overlay_show_and_hide_sets()
+
+        uni_show = sorted(pool_s, key=lambda x: (x.lower(), x))
+        committed = str(self._step_data.get("id", "") or "").strip()
+        orphan = (f"{committed} · 先于 showImg") if committed else "未命名"
+        sel = IdRefSelector(self, allow_empty=True, editable=True)
+        sel.setMinimumWidth(220)
+        if ed is not None and hasattr(ed, "_merged_overlay_rows"):
+            rows_u = ed._merged_overlay_rows(uni_show, committed, orphan)
+        else:
+            rows_u = [(x, x) for x in uni_show]
+            if committed and committed not in {x[0] for x in rows_u}:
+                rows_u.append((committed, orphan))
+        if not rows_u:
+            rows_u = [("main", "main")]
+        sel.set_items(rows_u)
+        sel.set_current(committed)
+        sel.value_changed.connect(self._emit_dirty)
+        sel.setToolTip("选需隐藏的叠图 id（候选项为本步骤树内 showImg id）")
+
+        self._widgets["id"] = sel
+        self._present_params_layout.addRow("id", sel)
+
+    def _ctx_scene_for_cutscene_actions(self) -> str | None:
+        ed = self._editor
+        if ed is None or not hasattr(ed, "cutscene_binding_target_scene"):
+            return None
+        s = ed.cutscene_binding_target_scene().strip()
+        return s if s else None
+
+    def _build_action(self) -> None:
+        ad = {
+            "type": str(self._step_data.get("type", CUTSCENE_ACTION_WHITELIST[0])),
+            "params": dict(self._step_data.get("params") or {}),
+        }
+        self._action_row = ActionRow(
+            ad,
+            model=self._model,
+            scene_id=self._ctx_scene_for_cutscene_actions(),
+            show_delete_button=False,
+            show_reorder_buttons=False,
+            parent=self,
+            cutscene_id=self._cutscene_id,
+        )
+        wl_set = set(CUTSCENE_ACTION_WHITELIST)
+        self._action_row.type_combo.set_items(
+            [(t, t) for t in CUTSCENE_ACTION_WHITELIST],
+            orphan_label=lambda v: f"{v} · 过场白名单外",
+        )
+        ct = ad["type"]
+        if ct in wl_set:
+            self._action_row.type_combo.set_committed_type(ct)
+        self._action_row.changed.connect(self._emit_dirty)
+        self._body.addWidget(self._action_row)
+
+    def _build_parallel(self) -> None:
+        group = QGroupBox("并行轨（fork-join，齐后继续）")
+        group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        self._parallel_group = group
+        self._parallel_layout = QVBoxLayout(group)
+        self._parallel_layout.setSpacing(4)
+        tracks = self._step_data.get("tracks", []) or []
+        for i, t in enumerate(tracks):
+            ol = StepOutlineFrame(
+                t, self._model, self._editor, group,
+                indent_px=16,
+                parallel_parent=self,
+                zebra_alt=(i % 2 == 1),
+                cutscene_id=self._cutscene_id,
+            )
+            self._child_outlines.append(ol)
+            ol.contentChanged.connect(self._on_parallel_child_changed)
+            self._parallel_layout.addWidget(ol)
+        add_btn = QPushButton("+ Track")
+        add_btn.clicked.connect(self._add_parallel_track)
+        self._parallel_layout.addWidget(add_btn)
+        self._body.addWidget(group)
+
+    def _add_parallel_track(self) -> None:
+        if self._parallel_layout is None:
+            return
+        data = {"kind": "present", "type": "waitTime", "duration": 1000}
+        ol = StepOutlineFrame(
+            data, self._model, self._editor,
+            self._parallel_group,
+            indent_px=16,
+            parallel_parent=self,
+            zebra_alt=(len(self._child_outlines) % 2 == 1),
+            cutscene_id=self._cutscene_id,
+        )
+        self._child_outlines.append(ol)
+        ol.contentChanged.connect(self._on_parallel_child_changed)
+        self._parallel_layout.insertWidget(self._parallel_layout.count() - 1, ol)
+        self._emit_dirty()
+        if self._outline_frame:
+            self._outline_frame.refresh_header()
+
+    def to_dict(self) -> dict:
+        kind = self._kind_combo.currentData()
+
+        if kind == "action" and self._action_row is not None:
+            ad = self._action_row.to_dict()
+            return {"kind": "action", "type": ad["type"], "params": ad.get("params", {})}
+
+        if kind == "present":
+            ptype = self._type_combo.committed_type()
+            schema = _PRESENT_PARAMS.get(ptype, [])
+            if not schema and ptype not in PRESENT_TYPES:
+                base = deepcopy(self._original_data) if self._original_data.get("kind") == "present" else {}
+                base["kind"] = "present"
+                base["type"] = ptype
+                return base
+            d: dict = {"kind": "present", "type": ptype}
+            if ptype == "showDialogue":
+                wdg = self._widgets.get("__showDialogue__")
+                if isinstance(wdg, CutsceneShowDialogueFields):
+                    d.update(wdg.to_step_dict())
+                return d
+            if ptype == "showSubtitle":
+                wt = self._widgets.get("text")
+                lm = self._widgets.get("_subtitle_layout_mode")
+                txt = (
+                    wt.toPlainText().strip("\ufeff") if hasattr(wt, "toPlainText") else ""
+                )
+                if isinstance(lm, FilterableTypeCombo) and lm.committed_type().strip() == "__movie__":
+                    band_w = self._widgets.get("_subtitle_movie_band")
+                    align_w = self._widgets.get("_subtitle_movie_align")
+                    sb = "movieTop"
+                    sa = "center"
+                    if isinstance(band_w, FilterableTypeCombo):
+                        sb = band_w.committed_type().strip() or "movieTop"
+                        if sb not in ("movieTop", "movieBottom"):
+                            sb = "movieTop"
+                    if isinstance(align_w, FilterableTypeCombo):
+                        sa = align_w.committed_type().strip() or "center"
+                        if sa not in ("left", "center", "right"):
+                            sa = "center"
+                    d.update({
+                        "kind": "present",
+                        "type": "showSubtitle",
+                        "text": txt,
+                        "subtitleBand": sb,
+                        "subtitleAlign": sa,
+                    })
+                    self._show_subtitle_merge_emote_optional(d)
+                    return d
+                cw = self._widgets.get("_subtitle_mode")
+                frac = self._widgets.get("_subtitle_frac")
+                po: Any = "bottom"
+                if isinstance(cw, FilterableTypeCombo):
+                    pv = cw.committed_type().strip()
+                    if pv == "__num__" and isinstance(frac, QDoubleSpinBox):
+                        po = float(frac.value())
+                    else:
+                        po = pv
+                d.update({"kind": "present", "type": "showSubtitle", "text": txt, "position": po})
+                self._show_subtitle_merge_emote_optional(d)
+                return d
+            for pname, pt in schema:
+                w = self._widgets.get(pname)
+                if w is None:
+                    continue
+                if pt == "float":
+                    d[pname] = w.value()
+                elif pt == "bool":
+                    d[pname] = w.isChecked()
+                elif pt == "text":
+                    d[pname] = w.toPlainText()
+                elif pt == "image" and isinstance(w, CutsceneImagePathRow):
+                    d[pname] = w.path()
+                elif isinstance(w, IdRefSelector):
+                    d[pname] = w.current_id().strip()
+                else:
+                    d[pname] = w.text() if hasattr(w, "text") else str(w)
+            return d
+
+        if kind == "parallel":
+            return {
+                "kind": "parallel",
+                "tracks": [ol.to_dict() for ol in self._child_outlines],
+            }
+
+        return {"kind": kind}
+
+
+# ===============================================================
+# StepOutlineFrame — 大纲行 + 可折叠详情
+# ===============================================================
+
+class StepOutlineFrame(QFrame):
+    """竖排大纲中的一行：色条、摘要、估算时长/甘特、折叠详情。"""
+
+    contentChanged = Signal()
+
+    def __init__(
+        self,
+        step: dict,
+        model: ProjectModel | None,
+        editor: "TimelineEditor",
+        parent: QWidget | None = None,
+        *,
+        indent_px: int = 0,
+        parallel_parent: StepWidget | None = None,
+        zebra_alt: bool = False,
+        cutscene_id: str | None = None,
+    ):
+        super().__init__(parent)
+        self._model = model
+        self._editor = editor
+        self._parallel_parent = parallel_parent
+        self._indent_px = indent_px
+        self._zebra_alt = zebra_alt
+        self._collapsed = True
+        self._cutscene_id = (cutscene_id or "") or None
+        self._step_snapshot = deepcopy(step)
+        self._step: StepWidget | None = None
+        self._cutscene_header_drag_press_local: QPoint | None = None
+        self._cutscene_drag_occurred_this_press = False
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(self._indent_px, 2, 0, 2)
+        root.setSpacing(0)
+
+        self._header = QFrame()
+        self._header.setObjectName("cutsceneStepHeader")
+        hl = QHBoxLayout(self._header)
+        hl.setContentsMargins(4, 4, 4, 4)
+        hl.setSpacing(6)
+
+        self._strip = QLabel()
+        self._strip.setFixedWidth(6)
+        hl.addWidget(self._strip)
+
+        self._idx_lbl = QLabel("—")
+        self._idx_lbl.setFixedWidth(28)
+        self._idx_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        fmono = QFont("Consolas")
+        fmono.setStyleHint(QFont.StyleHint.Monospace)
+        self._idx_lbl.setFont(fmono)
+        hl.addWidget(self._idx_lbl)
+
+        self._badge = QLabel()
+        self._badge.setMargin(4)
+        bf = self._badge.font()
+        bf.setBold(True)
+        self._badge.setFont(bf)
+        hl.addWidget(self._badge)
+
+        self._summary = QLabel()
+        self._summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._summary.setWordWrap(True)
+        hl.addWidget(self._summary, stretch=1)
+
+        self._dur_lbl = QLabel("")
+        self._dur_lbl.setFixedWidth(56)
+        self._dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._dur_lbl.setToolTip("估算耗时（仅供参考）")
+        hl.addWidget(self._dur_lbl)
+
+        self._gantt = QLabel()
+        self._gantt.setFixedSize(_GANTT_BAR_PX + 8, 14)
+        self._gantt.setScaledContents(False)
+        self._gantt.setToolTip("相对时长（只读，仅供参考）")
+        hl.addWidget(self._gantt)
+
+        self._btn_up = outline_row_tool_button(
+            self._header, "上移",
+            std=QStyle.StandardPixmap.SP_ArrowUp,
+            fixed_width=28,
+            fixed_height=26,
+        )
+        self._btn_down = outline_row_tool_button(
+            self._header, "下移",
+            std=QStyle.StandardPixmap.SP_ArrowDown,
+            fixed_width=28,
+            fixed_height=26,
+        )
+        self._btn_copy = outline_row_tool_button(
+            self._header, "复制本步",
+            theme_names=("edit-copy", "edit-duplicate"),
+            std=QStyle.StandardPixmap.SP_FileDialogContentsView,
+            fallback_text="C",
+        )
+        self._btn_del = outline_row_tool_button(
+            self._header, "删除",
+            theme_names=("edit-delete", "user-trash"),
+            std=delete_standard_pixmap(),
+            fallback_text="删",
+        )
+        hl.addWidget(self._btn_up)
+        hl.addWidget(self._btn_down)
+        hl.addWidget(self._btn_copy)
+        hl.addWidget(self._btn_del)
+
+        self._menu_btn = outline_row_tool_button(
+            self._header, "并行移入/移出等",
+            theme_names=("view-more-symbolic", "open-menu"),
+            std=QStyle.StandardPixmap.SP_ToolBarHorizontalExtensionButton,
+            fixed_width=28,
+            fixed_height=26,
+        )
+        self._menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._step_menu = QMenu(self._menu_btn)
+        self._menu_btn.setMenu(self._step_menu)
+        self._step_menu.aboutToShow.connect(self._populate_step_menu)
+        hl.addWidget(self._menu_btn)
+
+        self._expand = QToolButton(self._header)
+        self._expand.setArrowType(Qt.ArrowType.RightArrow)
+        self._expand.setToolTip("折叠/展开详情")
+        self._expand.setAutoRaise(True)
+        self._expand.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._expand.setFixedSize(28, 26)
+        self._expand.clicked.connect(self._toggle_collapse)
+        hl.addWidget(self._expand)
+
+        for w in (self._strip, self._idx_lbl, self._badge, self._summary, self._dur_lbl, self._gantt):
+            w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        root.addWidget(self._header)
+        self._header.installEventFilter(self)
+        self._header.setToolTip(
+            "拖动表头可调整顺序（仅限同级）；点击左侧摘要等区域可折叠/展开详情。",
+        )
+        self.setAcceptDrops(True)
+
+        self._detail_wrap = QWidget()
+        dl = QVBoxLayout(self._detail_wrap)
+        dl.setContentsMargins(8, 4, 4, 4)
+        root.addWidget(self._detail_wrap)
+
+        self._btn_up.clicked.connect(lambda: self._do_move(-1))
+        self._btn_down.clicked.connect(lambda: self._do_move(1))
+        self._btn_copy.clicked.connect(self._do_copy)
+        self._btn_del.clicked.connect(self._do_delete)
+
+        self._detail_wrap.setVisible(False)
+        self.refresh_header()
+
+    def _header_dict(self) -> dict:
+        if self._step is not None:
+            return self._step.to_dict()
+        return deepcopy(self._step_snapshot)
+
+    def ensure_step_detail(self) -> None:
+        self._ensure_detail_built()
+
+    def _ensure_detail_built(self) -> None:
+        if self._step is not None:
+            return
+        self._step = StepWidget(
+            self._step_snapshot, self._model, self._editor, self._detail_wrap,
+            parallel_parent=self._parallel_parent,
+            cutscene_id=self._cutscene_id,
+        )
+        self._step._outline_frame = self
+        lay = self._detail_wrap.layout()
+        if isinstance(lay, QVBoxLayout):
+            lay.addWidget(self._step)
+        self._step.contentChanged.connect(self._on_step_content_changed)
+
+    def step_kind(self) -> str:
+        if self._step is not None:
+            return str(self._step._kind_combo.currentData())
+        return str(self._step_snapshot.get("kind", "present"))
+
+    def to_dict(self) -> dict:
+        if self._step is not None:
+            return self._step.to_dict()
+        return deepcopy(self._step_snapshot)
+
+    def set_row_index(self, idx: int) -> None:
+        self._idx_lbl.setText(str(idx))
+
+    def set_zebra_alt(self, alt: bool) -> None:
+        self._zebra_alt = alt
+        self._refresh_header_surface()
+
+    def _editor_theme_id(self) -> str:
+        tid = getattr(self._editor, "_theme_id", None)
+        if tid in app_theme.ALL_THEME_IDS:
+            return str(tid)
+        return app_theme.current_theme_id()
+
+    def _refresh_header_surface(self) -> None:
+        tid = self._editor_theme_id()
+        kind = str(self._header_dict().get("kind", "present"))
+        if app_theme.is_dark_theme(tid):
+            border = "#454b54"
+            if kind == "action":
+                even, odd = "#273040", "#2f3848"
+            elif kind == "parallel":
+                even, odd = "#302838", "#3a3242"
+            else:
+                even, odd = "#2b2f36", "#343a42"
+        else:
+            border = "#dee2e6"
+            if kind == "action":
+                even, odd = "#eef5ff", "#e3edfd"
+            elif kind == "parallel":
+                even, odd = "#f3edfb", "#ebe3f5"
+            else:
+                even, odd = "#ffffff", "#f1f3f5"
+        bg = odd if self._zebra_alt else even
+        self._header.setStyleSheet(
+            f"QFrame#cutsceneStepHeader {{ background-color: {bg}; border-bottom: 1px solid {border}; }}"
+        )
+
+    def _kind_palette(self, kind: str, theme_id: str) -> tuple[str, str, str]:
+        """strip, badge_bg, badge_fg"""
+        if app_theme.is_dark_theme(theme_id):
+            if kind == "action":
+                return "#4dabf7", "#1864ab", "#ffffff"
+            if kind == "parallel":
+                return "#9775fa", "#5f3dc4", "#ffffff"
+            return "#51cf66", "#2f9e44", "#ffffff"
+        if kind == "action":
+            return "#0d6efd", "#cfe2ff", "#084298"
+        if kind == "parallel":
+            return "#6f42c1", "#e2d9f3", "#432874"
+        return "#198754", "#d1e7dd", "#0f5132"
+
+    def refresh_header(self) -> None:
+        tid = self._editor_theme_id()
+        d = self._header_dict()
+        kind = str(d.get("kind", "present"))
+        self._refresh_header_surface()
+        sp, bb, bf = self._kind_palette(kind, tid)
+        self._strip.setStyleSheet(f"background-color: {sp}; border-radius: 2px;")
+        labels = {"present": "PRESENT", "action": "ACTION", "parallel": "PARALLEL"}
+        self._badge.setText(labels.get(kind, kind.upper()))
+        self._badge.setStyleSheet(
+            f"background-color: {bb}; color: {bf}; border-radius: 4px; padding: 2px 6px;"
+        )
+        primary = "#dcdcdc" if app_theme.is_dark_theme(tid) else "#1a1a1a"
+        muted = "#a0a0a0" if app_theme.is_dark_theme(tid) else "#666666"
+        self._idx_lbl.setStyleSheet(f"color: {muted};")
+        self._summary.setStyleSheet(f"color: {primary};")
+        self._dur_lbl.setStyleSheet(f"color: {muted};")
+        if kind == "parallel":
+            if self._step is not None:
+                tracks = [ol.to_dict() for ol in self._step._child_outlines]
+                summ = parallel_tracks_summary(tracks)
+            else:
+                summ = parallel_tracks_summary(d.get("tracks") or [])
+        else:
+            summ = step_summary_line(d)
+        self._summary.setText(summ)
+
+        est = estimate_step_duration_ms(d)
+        self._dur_lbl.setText(format_duration_hint(est))
+        self._gantt.setStyleSheet(gantt_style_for_ms(est, tid))
+
+    def _on_step_content_changed(self) -> None:
+        self.refresh_header()
+        self.contentChanged.emit()
+
+    def _maybe_start_cutscene_header_drag(self, me: QMouseEvent) -> None:
+        if self._cutscene_header_drag_press_local is None:
+            return
+        if not (me.buttons() & Qt.MouseButton.LeftButton):
+            return
+        delta = me.position().toPoint() - self._cutscene_header_drag_press_local
+        if delta.manhattanLength() < QApplication.startDragDistance():
+            return
+        mime = QMimeData()
+        mime.setData(_CUTSCENE_STEP_DRAG_MIME, QByteArray(b"x"))
+        self._editor._dnd_cutscene_step_source = self
+        drag = QDrag(self._header)
+        drag.setMimeData(mime)
+        self._cutscene_drag_occurred_this_press = True
+        try:
+            drag.exec(Qt.DropAction.MoveAction)
+        finally:
+            self._editor._dnd_cutscene_step_source = None
+            self._cutscene_header_drag_press_local = None
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is not self._header:
+            return super().eventFilter(watched, event)
+        et = event.type()
+        if et == QEvent.Type.MouseButtonPress:
+            me = event
+            if isinstance(me, QMouseEvent) and me.button() == Qt.MouseButton.LeftButton:
+                self._cutscene_drag_occurred_this_press = False
+                self._cutscene_header_drag_press_local = me.position().toPoint()
+            return False
+        if et == QEvent.Type.MouseMove:
+            me = event
+            if isinstance(me, QMouseEvent):
+                self._maybe_start_cutscene_header_drag(me)
+            return False
+        if et == QEvent.Type.MouseButtonRelease:
+            me = event
+            if isinstance(me, QMouseEvent) and me.button() == Qt.MouseButton.LeftButton:
+                skip_toggle = self._cutscene_drag_occurred_this_press
+                self._cutscene_header_drag_press_local = None
+                self._cutscene_drag_occurred_this_press = False
+                if skip_toggle:
+                    return True
+                self._toggle_collapse()
+                return True
+            return False
+        return super().eventFilter(watched, event)
+
+    def dragEnterEvent(self, event) -> None:
+        src = self._editor._dnd_cutscene_step_source
+        md = event.mimeData()
+        if (
+            src is None
+            or md is None
+            or not md.hasFormat(_CUTSCENE_STEP_DRAG_MIME)
+            or src is self
+            or src._parallel_parent is not self._parallel_parent
+        ):
+            event.ignore()
+            return
+        event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        src = self._editor._dnd_cutscene_step_source
+        md = event.mimeData()
+        if (
+            src is None
+            or md is None
+            or not md.hasFormat(_CUTSCENE_STEP_DRAG_MIME)
+            or src is self
+            or src._parallel_parent is not self._parallel_parent
+        ):
+            event.ignore()
+            return
+        pos_y = event.position().y()
+        hh = self._header.height()
+        if pos_y < hh:
+            insert_before = pos_y < hh / 2
+        else:
+            insert_before = False
+        if self._editor._reorder_outline_relative_to_target(
+            src, self, insert_before=insert_before,
+        ):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def set_collapsed(self, collapsed: bool, *, refresh: bool = True) -> None:
+        if not collapsed:
+            self._ensure_detail_built()
+        self._collapsed = collapsed
+        self._detail_wrap.setVisible(not collapsed)
+        self._expand.setArrowType(
+            Qt.ArrowType.RightArrow if collapsed else Qt.ArrowType.DownArrow
+        )
+        if refresh:
+            self.refresh_header()
+
+    def _toggle_collapse(self) -> None:
+        self.set_collapsed(not self._collapsed)
+
+    def _get_owner_list_and_layout(self):
+        if self._parallel_parent is not None:
+            return self._parallel_parent._child_outlines, self._parallel_parent._parallel_layout
+        return self._editor._step_outlines, self._editor._steps_layout
+
+    def _do_move(self, delta: int) -> None:
+        lst, layout = self._get_owner_list_and_layout()
+        if lst is None or layout is None:
+            return
+        try:
+            i = lst.index(self)
+        except ValueError:
+            return
+        j = i + delta
+        if j < 0 or j >= len(lst):
+            return
+        self._editor._reorder_outline_to_index(self, j)
+
+    def _do_copy(self) -> None:
+        lst, layout = self._get_owner_list_and_layout()
+        if lst is None or layout is None:
+            return
+        try:
+            i = lst.index(self)
+        except ValueError:
+            return
+        data = deepcopy(self.to_dict())
+        parent_host: QWidget = (
+            self._parallel_parent._parallel_group
+            if self._parallel_parent is not None and self._parallel_parent._parallel_group is not None
+            else self._editor._steps_container
+        )
+        new_ol = StepOutlineFrame(
+            data, self._model, self._editor,
+            parent_host,
+            indent_px=self._indent_px,
+            parallel_parent=self._parallel_parent,
+            zebra_alt=(len(lst) % 2 == 1),
+            cutscene_id=self._cutscene_id,
+        )
+        new_ol.contentChanged.connect(self._editor._on_any_outline_changed)
+        lst.insert(i + 1, new_ol)
+        for w in lst:
+            layout.removeWidget(w)
+        for w in lst:
+            layout.addWidget(w)
+        self._editor._refresh_outline_indices_and_zebra()
+        self._emit_dirty()
+
+    def _do_delete(self) -> None:
+        lst, layout = self._get_owner_list_and_layout()
+        if lst is None or layout is None:
+            return
+        try:
+            lst.remove(self)
+        except ValueError:
+            return
+        layout.removeWidget(self)
+        self.deleteLater()
+        self._editor._refresh_outline_indices_and_zebra()
+        self._emit_dirty()
+
+    def _emit_dirty(self) -> None:
+        self._editor.mark_pending_changes()
+        self.contentChanged.emit()
+
+    def _populate_step_menu(self) -> None:
+        ed = self._editor
+        m = self._step_menu
+        m.clear()
+
+        a_lift = QAction("从并行移出到外层（插在该并行块之后）", self)
+        a_lift.setEnabled(self._parallel_parent is not None)
+        a_lift.triggered.connect(lambda: ed.lift_parallel_track_out(self))
+        m.addAction(a_lift)
+
+        m.addSeparator()
+
+        a_adj = QAction("与下一项合并为并行（两项 fork-join）", self)
+        a_adj.setEnabled(ed.can_merge_adjacent_into_parallel(self))
+        a_adj.triggered.connect(lambda: ed.merge_adjacent_into_parallel(self))
+        m.addAction(a_adj)
+
+        a_prev = QAction("并入上一并行（作为最后一轨）", self)
+        a_prev.setEnabled(ed.can_merge_into_prev_parallel(self))
+        a_prev.triggered.connect(lambda: ed.merge_into_prev_parallel(self))
+        m.addAction(a_prev)
+
+        a_next = QAction("并入下一并行（作为第一轨）", self)
+        a_next.setEnabled(ed.can_merge_into_next_parallel(self))
+        a_next.triggered.connect(lambda: ed.merge_into_next_parallel(self))
+        m.addAction(a_next)
+
+
+# ===============================================================
+# TimelineEditor — 主 Tab
+# ===============================================================
+
+class TimelineEditor(QWidget):
+    play_requested = Signal(str)
+
+    def __init__(self, model: ProjectModel, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._model = model
+        self._current_idx: int = -1
+        self._pending_changes = False
+        self._loading_ui = False
+        self._step_outlines: list[StepOutlineFrame] = []
+        self._theme_id: str = app_theme.current_theme_id()
+        self._pending_scene_refresh_need_propagate: bool = False
+        self._scene_model_refresh_pending_while_hidden: bool = False
+        self._scene_data_changed_debounce = QTimer(self)
+        self._scene_data_changed_debounce.setSingleShot(True)
+        self._scene_data_changed_debounce.timeout.connect(
+            self._run_debounced_scene_model_refresh,
+        )
+        self._overlay_id_selectors_debounce = QTimer(self)
+        self._overlay_id_selectors_debounce.setSingleShot(True)
+        self._overlay_id_selectors_debounce.setInterval(48)
+        self._overlay_id_selectors_debounce.timeout.connect(
+            self._refresh_all_present_overlay_id_selectors,
+        )
+        self._overlay_selectors_fp_cache = ""
+        self._overlay_selectors_fp_valid = False
+        self._dnd_cutscene_step_source: StepOutlineFrame | None = None
+
+        root = QHBoxLayout(self)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ 过场")
+        btn_add.clicked.connect(self._add)
+        btn_del = QPushButton("Delete")
+        btn_del.clicked.connect(self._delete)
+        btn_row.addWidget(btn_add)
+        btn_row.addWidget(btn_del)
+        ll.addLayout(btn_row)
+        self._list = QListWidget()
+        self._list.currentRowChanged.connect(self._on_select)
+        ll.addWidget(self._list)
+
+        right = QWidget()
+        rl = QVBoxLayout(right)
+
+        top_row = QHBoxLayout()
+        f = QFormLayout()
+        self._c_id = QLineEdit()
+        f.addRow("id", self._c_id)
+        top_row.addLayout(f, stretch=1)
+        self._play_btn = QPushButton("Play")
+        self._play_btn.setToolTip("在游戏预览中播放该过场")
+        self._play_btn.clicked.connect(self._on_play)
+        top_row.addWidget(self._play_btn)
+        rl.addLayout(top_row)
+
+        bind_form = QFormLayout()
+        self._target_scene = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
+        self._target_scene.setMinimumWidth(240)
+        self._target_scene.setToolTip(
+            "从项目已加载场景列表选择；若 JSON 中已有但工程未载入的场景，会显示为「未在项目场景表中」。"
+        )
+        self._refresh_target_scene_combo_items("")
+        bind_form.addRow("targetScene", self._target_scene)
+
+        self._spawn_key = ""
+        self._spawn_loading = False
+        spawn_row = QWidget()
+        spawn_lay = QHBoxLayout(spawn_row)
+        spawn_lay.setContentsMargins(0, 0, 0, 0)
+        self._spawn_display = QLineEdit()
+        self._spawn_display.setReadOnly(True)
+        self._spawn_display.setPlaceholderText("点击右侧按钮在场景预览中选择...")
+        spawn_lay.addWidget(self._spawn_display, 1)
+        self._spawn_pick_btn = QPushButton("选择出生点...")
+        self._spawn_pick_btn.clicked.connect(self._open_spawn_picker)
+        spawn_lay.addWidget(self._spawn_pick_btn)
+        bind_form.addRow("targetSpawnPoint", spawn_row)
+        self._target_scene.value_changed.connect(self._on_target_scene_changed)
+
+        pos_row = QHBoxLayout()
+        self._pos_chk = QCheckBox("targetX/Y")
+        self._target_x = QDoubleSpinBox()
+        self._target_x.setRange(-99999, 99999)
+        self._target_x.setDecimals(1)
+        self._target_y = QDoubleSpinBox()
+        self._target_y.setRange(-99999, 99999)
+        self._target_y.setDecimals(1)
+        self._target_x.setEnabled(False)
+        self._target_y.setEnabled(False)
+        self._pos_chk.toggled.connect(self._target_x.setEnabled)
+        self._pos_chk.toggled.connect(self._target_y.setEnabled)
+        pos_row.addWidget(self._pos_chk)
+        pos_row.addWidget(QLabel("X:"))
+        pos_row.addWidget(self._target_x)
+        pos_row.addWidget(QLabel("Y:"))
+        pos_row.addWidget(self._target_y)
+        bind_form.addRow(pos_row)
+
+        self._restore_chk = QCheckBox("restoreState")
+        self._restore_chk.setChecked(True)
+        self._restore_chk.setToolTip("过场结束后是否恢复进入前的场景与玩家位置")
+        bind_form.addRow(self._restore_chk)
+
+        rl.addLayout(bind_form)
+
+        hint_row = QHBoxLayout()
+        hint = QLabel(
+            "<b>步骤序列</b>（竖排 = 执行顺序；PRESENT / ACTION / PARALLEL 色条区分；"
+            "可拖动表头调整顺序（仅限同级）；点击表头空白或摘要可折叠/展开详情；"
+            "右侧「不定/~ms」与灰条为粗估，仅供参考；"
+            "「⋯」菜单：并行轨移出到外层、两项合并为并行、并入上/下一并行）"
+        )
+        hint.setWordWrap(True)
+        hint_row.addWidget(hint, stretch=1)
+        btn_collapse_all = QPushButton("全部折叠")
+        btn_collapse_all.setToolTip("折叠本过场所有步骤（含并行子轨）")
+        btn_collapse_all.clicked.connect(lambda: self._set_all_step_collapsed(True))
+        btn_expand_all = QPushButton("全部展开")
+        btn_expand_all.setToolTip("展开本过场所有步骤（含并行子轨）")
+        btn_expand_all.clicked.connect(lambda: self._set_all_step_collapsed(False))
+        hint_row.addWidget(btn_collapse_all)
+        hint_row.addWidget(btn_expand_all)
+        rl.addLayout(hint_row)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        self._steps_container = QWidget()
+        self._steps_layout = QVBoxLayout(self._steps_container)
+        self._steps_layout.setSpacing(2)
+        scroll.setWidget(self._steps_container)
+        rl.addWidget(scroll, stretch=1)
+
+        step_btns = QHBoxLayout()
+        add_present = QPushButton("+ Present")
+        add_present.clicked.connect(lambda: self._add_step("present"))
+        add_action = QPushButton("+ Action")
+        add_action.clicked.connect(lambda: self._add_step("action"))
+        add_parallel = QPushButton("+ Parallel")
+        add_parallel.clicked.connect(lambda: self._add_step("parallel"))
+        step_btns.addWidget(add_present)
+        step_btns.addWidget(add_action)
+        step_btns.addWidget(add_parallel)
+        rl.addLayout(step_btns)
+
+        apply_btn = QPushButton("Apply")
+        apply_btn.clicked.connect(self._apply)
+        rl.addWidget(apply_btn)
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setSizes([220, 700])
+        root.addWidget(splitter)
+
+        self._refresh()
+        self._model.data_changed.connect(self._on_model_data_changed)
+
+        self._c_id.textChanged.connect(self.mark_pending_changes)
+        self._target_scene.value_changed.connect(self.mark_pending_changes)
+        self._pos_chk.toggled.connect(self.mark_pending_changes)
+        self._target_x.valueChanged.connect(self.mark_pending_changes)
+        self._target_y.valueChanged.connect(self.mark_pending_changes)
+        self._restore_chk.toggled.connect(self.mark_pending_changes)
+
+    def on_editor_theme_changed(self, theme_id: str) -> None:
+        self._theme_id = theme_id
+        self._refresh_outline_indices_and_zebra()
+
+    def _reorder_outline_to_index(self, outline: StepOutlineFrame, new_index: int) -> bool:
+        lst, layout = outline._get_owner_list_and_layout()
+        if lst is None or layout is None:
+            return False
+        try:
+            old_i = lst.index(outline)
+        except ValueError:
+            return False
+        if new_index < 0 or new_index >= len(lst):
+            return False
+        if old_i == new_index:
+            return True
+        lst.pop(old_i)
+        if new_index > old_i:
+            new_index -= 1
+        lst.insert(new_index, outline)
+        for w in lst:
+            layout.removeWidget(w)
+        for w in lst:
+            layout.addWidget(w)
+        self._refresh_outline_indices_and_zebra()
+        outline._emit_dirty()
+        return True
+
+    def _reorder_outline_relative_to_target(
+        self,
+        source: StepOutlineFrame,
+        target: StepOutlineFrame,
+        *,
+        insert_before: bool,
+    ) -> bool:
+        if source is target:
+            return False
+        if source._parallel_parent is not target._parallel_parent:
+            return False
+        lst, layout = source._get_owner_list_and_layout()
+        t_lst, t_layout = target._get_owner_list_and_layout()
+        if lst is not t_lst or layout is None or t_layout is None or layout is not t_layout:
+            return False
+        try:
+            from_i = lst.index(source)
+            to_i = lst.index(target)
+        except ValueError:
+            return False
+        lst.pop(from_i)
+        if from_i < to_i:
+            to_i -= 1
+        insert_at = to_i if insert_before else (to_i + 1)
+        lst.insert(insert_at, source)
+        for w in lst:
+            layout.removeWidget(w)
+        for w in lst:
+            layout.addWidget(w)
+        self._refresh_outline_indices_and_zebra()
+        source._emit_dirty()
+        return True
+
+    def _iter_all_step_outlines(self):
+        def walk(ol: StepOutlineFrame):
+            yield ol
+            if ol._step is None:
+                return
+            if ol._step._kind_combo.currentData() == "parallel":
+                for c in ol._step._child_outlines:
+                    yield from walk(c)
+
+        for top in self._step_outlines:
+            yield from walk(top)
+
+    def _set_all_step_collapsed(self, collapsed: bool) -> None:
+        if collapsed:
+            for ol in self._iter_all_step_outlines():
+                ol.set_collapsed(True, refresh=False)
+            return
+        # 展开全部：parallel 子轨在父级 StepWidget 构建后才进入迭代，需多轮直到无仍折叠的结点
+        while True:
+            batch = list(self._iter_all_step_outlines())
+            pending = [ol for ol in batch if ol._collapsed]
+            if not pending:
+                break
+            for ol in pending:
+                ol.set_collapsed(False, refresh=False)
+
+    def _on_any_outline_changed(self) -> None:
+        self._refresh_outline_indices_and_zebra()
+        self._overlay_id_selectors_debounce.start()
+
+    def _refresh_outline_indices_and_zebra(self) -> None:
+        for i, ol in enumerate(self._step_outlines):
+            ol.set_row_index(i + 1)
+            ol.set_zebra_alt(i % 2 == 1)
+            ol.refresh_header()
+        self._refresh_parallel_track_zebra()
+
+    def _refresh_parallel_track_zebra(self) -> None:
+        for top in self._step_outlines:
+            if top._step is None:
+                continue
+            self._zebra_descendant_tracks(top._step)
+
+    def _zebra_descendant_tracks(self, sw: StepWidget) -> None:
+        if sw._kind_combo.currentData() != "parallel":
+            return
+        for i, ol in enumerate(sw._child_outlines):
+            ol.set_zebra_alt(i % 2 == 1)
+            ol.refresh_header()
+            if ol._step is None:
+                continue
+            self._zebra_descendant_tracks(ol._step)
+
+    def _on_model_data_changed(self, data_type: str, item_id: str) -> None:
+        if data_type != "scene":
+            return
+        if self._loading_ui:
+            return
+        if self._current_idx < 0:
+            return
+        tid = self._target_scene.current_id().strip()
+        changed_sid = (item_id or "").strip()
+        # 仅当变更的是本过场 targetScene（或未携带具体场景 id）时，才刷新各 Action 绑定的 NPC 等上下文；
+        # 否则保存其它场景时也会 walk 整棵步骤树，过场复杂时极慢。
+        propagate = (not changed_sid) or (changed_sid == tid)
+        self._pending_scene_refresh_need_propagate |= propagate
+        # Save All 等会在同一调用栈里连续 mark_dirty 多次；合并为一次刷新，避免 O(步骤数)×N。
+        self._scene_data_changed_debounce.start(0)
+
+    def _run_debounced_scene_model_refresh(self) -> None:
+        if self._loading_ui or self._current_idx < 0:
+            self._pending_scene_refresh_need_propagate = False
+            self._scene_model_refresh_pending_while_hidden = False
+            return
+        if not self.isVisible():
+            # 避免在其它 Tab（如场景）Apply 时对本页整棵步骤树做 NPC/Action 上下文传播。
+            self._scene_model_refresh_pending_while_hidden = True
+            return
+        self._scene_model_refresh_pending_while_hidden = False
+        tid = self._target_scene.current_id().strip()
+        need = self._pending_scene_refresh_need_propagate
+        self._pending_scene_refresh_need_propagate = False
+        self._refresh_target_scene_combo_items(tid, propagate_context=need)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._scene_model_refresh_pending_while_hidden:
+            self._scene_model_refresh_pending_while_hidden = False
+            QTimer.singleShot(0, self._run_debounced_scene_model_refresh)
+
+    def mark_pending_changes(self, *args) -> None:
+        if self._loading_ui:
+            return
+        self._pending_changes = True
+
+    def _scene_dropdown_rows(self, orphan_if_missing: str) -> list[tuple[str, str]]:
+        """(id, 展示名)：含场景 name；孤儿 targetScene 保留一项以免无法表示未入库引用。"""
+        rows: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for sid in sorted(self._model.all_scene_ids()):
+            seen.add(sid)
+            sc = self._model.scenes.get(sid) or {}
+            label = sc.get("name") or sid
+            rows.append((sid, str(label)))
+        o = (orphan_if_missing or "").strip()
+        if o and o not in seen:
+            rows.append((o, f"{o} · 未在项目场景表中"))
+        return rows
+
+    def _refresh_target_scene_combo_items(
+        self, committed: str, *, propagate_context: bool = True,
+    ) -> None:
+        committed = (committed or "").strip()
+        with QSignalBlocker(self._target_scene):
+            self._target_scene.set_items(self._scene_dropdown_rows(committed))
+            self._target_scene.set_current(committed)
+        if propagate_context:
+            self._propagate_cutscene_scene_to_action_rows()
+
+    def has_pending_changes(self) -> bool:
+        return self._pending_changes
+
+    def confirm_apply_or_discard(self, parent: QWidget) -> str:
+        if not self._pending_changes or self._current_idx < 0:
+            return "proceed"
+        r = QMessageBox.question(
+            parent,
+            "过场",
+            "当前过场有未 Apply 的修改，如何处理？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return "cancel"
+        if r == QMessageBox.StandardButton.Save:
+            if not self._apply():
+                return "cancel"
+        else:
+            self._pending_changes = False
+        return "proceed"
+
+    def _refresh(self) -> None:
+        self._list.clear()
+        for c in self._model.cutscenes:
+            self._list.addItem(c.get("id", "?"))
+
+    def _on_target_scene_changed(self, sid: str) -> None:
+        if self._spawn_loading:
+            return
+        if not sid:
+            self._spawn_key = ""
+            self._refresh_spawn_display()
+            self._propagate_cutscene_scene_to_action_rows()
+            return
+        sc = self._model.scenes.get(sid)
+        if sc and self._spawn_key:
+            if self._spawn_key not in (sc.get("spawnPoints") or {}):
+                self._spawn_key = ""
+        self._refresh_spawn_display()
+        self._propagate_cutscene_scene_to_action_rows()
+
+    def _refresh_spawn_display(self) -> None:
+        sid = self._target_scene.current_id()
+        if not sid:
+            self._spawn_display.setText("")
+            self._spawn_pick_btn.setEnabled(False)
+            return
+        self._spawn_pick_btn.setEnabled(True)
+        if not self._spawn_key:
+            self._spawn_display.setText("默认 (spawnPoint)")
+        else:
+            self._spawn_display.setText(self._spawn_key)
+
+    def _open_spawn_picker(self) -> None:
+        sid = self._target_scene.current_id()
+        if not sid:
+            QMessageBox.information(self, "过场", "请先选择目标场景。")
+            return
+        dlg = TargetSpawnPickerDialog(self._model, sid, self._spawn_key, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._spawn_key = dlg.selected_spawn_key()
+            self._refresh_spawn_display()
+            self.mark_pending_changes()
+
+    def _on_select(self, row: int) -> None:
+        old = self._current_idx
+        if old >= 0 and row >= 0 and old != row and self._pending_changes:
+            r = QMessageBox.question(
+                self, "过场",
+                "当前过场有未 Apply 的修改，切换前如何处理？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if r == QMessageBox.StandardButton.Cancel:
+                self._list.blockSignals(True)
+                self._list.setCurrentRow(old)
+                self._list.blockSignals(False)
+                return
+            if r == QMessageBox.StandardButton.Save:
+                if not self._apply():
+                    self._list.blockSignals(True)
+                    self._list.setCurrentRow(old)
+                    self._list.blockSignals(False)
+                    return
+            else:
+                self._pending_changes = False
+
+        if row < 0 or row >= len(self._model.cutscenes):
+            return
+        self._loading_ui = True
+        try:
+            self._current_idx = row
+            cs = self._model.cutscenes[row]
+            self._c_id.setText(cs.get("id", ""))
+            self._spawn_loading = True
+            try:
+                self._spawn_key = (cs.get("targetSpawnPoint") or "").strip()
+                committed = str(cs.get("targetScene") or "").strip()
+                self._refresh_target_scene_combo_items(committed)
+            finally:
+                self._spawn_loading = False
+            self._refresh_spawn_display()
+            has_pos = "targetX" in cs and "targetY" in cs
+            self._pos_chk.setChecked(has_pos)
+            self._target_x.setValue(float(cs.get("targetX", 0)))
+            self._target_y.setValue(float(cs.get("targetY", 0)))
+            self._restore_chk.setChecked(cs.get("restoreState", True))
+            self._rebuild_steps(cs.get("steps", []))
+            self._pending_changes = False
+        finally:
+            self._loading_ui = False
+
+    def _rebuild_steps(self, steps: list[dict]) -> None:
+        self._overlay_selectors_fp_valid = False
+        for ol in self._step_outlines:
+            self._steps_layout.removeWidget(ol)
+            ol.deleteLater()
+        self._step_outlines.clear()
+        cid = self._current_cutscene_id()
+        for i, step in enumerate(steps):
+            ol = StepOutlineFrame(
+                step, self._model, self, self._steps_container,
+                indent_px=0,
+                parallel_parent=None,
+                zebra_alt=(i % 2 == 1),
+                cutscene_id=cid,
+            )
+            ol.contentChanged.connect(self._on_any_outline_changed)
+            self._step_outlines.append(ol)
+            self._steps_layout.addWidget(ol)
+        self._refresh_outline_indices_and_zebra()
+
+    def _current_cutscene_id(self) -> str | None:
+        if 0 <= self._current_idx < len(self._model.cutscenes):
+            cid = str(self._model.cutscenes[self._current_idx].get("id", "")).strip()
+            return cid or None
+        return None
+
+    def cutscene_binding_target_scene(self) -> str:
+        """当前过场绑定的场景 ID。
+
+        载入 UI 中与磁盘对齐；绑定表单可操作且未载入时一律以控件为准（含未 Apply 修改），
+        以便 action 的 NPC 列表与表单一致。
+        """
+        if (
+            self._current_idx < 0
+            or self._current_idx >= len(self._model.cutscenes)
+        ):
+            return ""
+        if getattr(self, "_loading_ui", False):
+            return str(
+                self._model.cutscenes[self._current_idx].get("targetScene") or "",
+            ).strip()
+        ts = getattr(self, "_target_scene", None)
+        if ts is not None:
+            return ts.current_id().strip()
+        return str(
+            self._model.cutscenes[self._current_idx].get("targetScene") or "",
+        ).strip()
+
+    def _outline_overlay_show_and_hide_sets(self) -> tuple[set[str], set[str]]:
+        """基于当前编辑器内步骤快照（含未 Apply），收集 showImg / hideImg 的 overlay id。"""
+        show_ids: set[str] = set()
+        hide_ids: set[str] = set()
+        for ol in self._step_outlines:
+            self._walk_collect_overlay_ids(ol.to_dict(), show_ids, hide_ids)
+        return show_ids, hide_ids
+
+    @staticmethod
+    def _walk_collect_overlay_ids(step: dict, show_ids: set[str], hide_ids: set[str]) -> None:
+        if not isinstance(step, dict):
+            return
+        k = str(step.get("kind", ""))
+        if k == "present":
+            t = str(step.get("type", ""))
+            oid = str(step.get("id") or "").strip()
+            if oid:
+                if t == "showImg":
+                    show_ids.add(oid)
+                elif t == "hideImg":
+                    hide_ids.add(oid)
+            return
+        if k == "parallel":
+            for tr in step.get("tracks") or []:
+                TimelineEditor._walk_collect_overlay_ids(tr, show_ids, hide_ids)
+
+    def _merged_overlay_rows(
+        self, pool_sorted: list[str], committed: str, orphan_hint: str,
+    ) -> list[tuple[str, str]]:
+        seen: set[str] = set()
+        rows: list[tuple[str, str]] = []
+        for i in pool_sorted:
+            if i and i not in seen:
+                seen.add(i)
+                rows.append((i, i))
+        c = committed.strip()
+        if c and c not in seen:
+            rows.append((c, orphan_hint))
+        return rows
+
+    def _propagate_cutscene_scene_to_action_rows(self) -> None:
+        """绑定 targetScene 变更后刷新各 action 的 NPC/target 下拉候选项。"""
+        if getattr(self, "_loading_ui", False):
+            return
+        sid_raw = self.cutscene_binding_target_scene()
+        sid_n = sid_raw if sid_raw else None
+        cid = self._current_cutscene_id()
+        for ol in self._iter_all_step_outlines():
+            sw = getattr(ol, "_step", None)
+            if sw is None:
+                continue
+            ar = getattr(sw, "_action_row", None)
+            if isinstance(ar, ActionRow):
+                ar.set_project_context(self._model, sid_n, cutscene_id=cid)
+            sw.refresh_subtitle_emote_target_items()
+
+    def _refresh_all_present_overlay_id_selectors(self) -> None:
+        """步骤树变化后刷新 showImg / hideImg 的 id 下拉候选项。"""
+        if getattr(self, "_loading_ui", False):
+            return
+        show_set, hide_set = self._outline_overlay_show_and_hide_sets()
+        fp = "|".join(
+            (
+                "+:" + ":".join(sorted(show_set, key=lambda x: (x.lower(), x))),
+                "-:" + ":".join(sorted(hide_set, key=lambda x: (x.lower(), x))),
+            ),
+        )
+        if self._overlay_selectors_fp_valid and fp == self._overlay_selectors_fp_cache:
+            return
+        show_sorted = sorted(show_set, key=lambda x: (x.lower(), x))
+        union_sorted = sorted(
+            show_set | hide_set, key=lambda x: (x.lower(), x),
+        )
+        for ol in self._iter_all_step_outlines():
+            sw = ol._step
+            if sw is None:
+                continue
+            if sw._kind_combo.currentData() != "present":
+                continue
+            ptype = sw._type_combo.committed_type()
+            if ptype not in ("showImg", "hideImg"):
+                continue
+            sel = sw._widgets.get("id")
+            if not isinstance(sel, IdRefSelector):
+                continue
+            cur = sel.current_id().strip()
+            if ptype == "showImg":
+                hint = (
+                    (f"{cur} · 仅本条数据引用")
+                    if cur else "(空 id)"
+                )
+                rows = self._merged_overlay_rows(union_sorted, cur, hint)
+            else:
+                hint = (
+                    (f"{cur} · hide 先于 showImg 或缺同名 showImg")
+                    if cur else "(空 id)"
+                )
+                rows = self._merged_overlay_rows(show_sorted, cur, hint)
+            sel.blockSignals(True)
+            try:
+                sel.set_items(rows)
+                sel.set_current(cur)
+            finally:
+                sel.blockSignals(False)
+        self._overlay_selectors_fp_cache = fp
+        self._overlay_selectors_fp_valid = True
+
+    def _add_step(self, kind: str) -> None:
+        if kind == "present":
+            data = {"kind": "present", "type": "waitClick"}
+        elif kind == "action":
+            data = {"kind": "action", "type": CUTSCENE_ACTION_WHITELIST[0], "params": {}}
+        elif kind == "parallel":
+            data = {"kind": "parallel", "tracks": []}
+        else:
+            data = {"kind": kind}
+        ol = StepOutlineFrame(
+            data, self._model, self, self._steps_container,
+            indent_px=0,
+            parallel_parent=None,
+            zebra_alt=(len(self._step_outlines) % 2 == 1),
+            cutscene_id=self._current_cutscene_id(),
+        )
+        ol.contentChanged.connect(self._on_any_outline_changed)
+        self._step_outlines.append(ol)
+        self._steps_layout.addWidget(ol)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def _apply(self) -> bool:
+        from ..editor_perf import PerfClock, maybe_stamp, perf_log_enabled
+
+        _ap_clk = PerfClock(label="TimelineEditor._apply") if perf_log_enabled() else None
+
+        if self._current_idx < 0:
+            return False
+        steps = [ol.to_dict() for ol in self._step_outlines]
+
+        cs = self._model.cutscenes[self._current_idx]
+        cs["id"] = self._c_id.text().strip()
+
+        scene = self._target_scene.current_id()
+        if scene:
+            cs["targetScene"] = scene
+        else:
+            cs.pop("targetScene", None)
+
+        spawn = self._spawn_key.strip()
+        if spawn:
+            cs["targetSpawnPoint"] = spawn
+        else:
+            cs.pop("targetSpawnPoint", None)
+
+        if self._pos_chk.isChecked():
+            cs["targetX"] = self._target_x.value()
+            cs["targetY"] = self._target_y.value()
+        else:
+            cs.pop("targetX", None)
+            cs.pop("targetY", None)
+
+        if not self._restore_chk.isChecked():
+            cs["restoreState"] = False
+        else:
+            cs.pop("restoreState", None)
+
+        cs["steps"] = steps
+        cs.pop("commands", None)
+        self._model.mark_dirty("cutscene")
+        self._pending_changes = False
+        nid = self._c_id.text().strip()
+        label = nid or cs.get("id") or "?"
+        if 0 <= self._current_idx < self._list.count():
+            self._list.blockSignals(True)
+            try:
+                it = self._list.item(self._current_idx)
+                if it is not None:
+                    it.setText(str(label))
+            finally:
+                self._list.blockSignals(False)
+        maybe_stamp(_ap_clk, f"done steps={len(steps)} idx={self._current_idx}")
+        return True
+
+    def _add(self) -> None:
+        self._model.cutscenes.append({
+            "id": f"cutscene_{len(self._model.cutscenes)}",
+            "steps": [],
+        })
+        self._model.mark_dirty("cutscene")
+        self._pending_changes = False
+        self._refresh()
+
+    def _on_play(self) -> None:
+        cid = self._c_id.text().strip()
+        if cid:
+            self.play_requested.emit(cid)
+
+    # ----- 并行结构：移出 / 并入（供 StepOutlineFrame 菜单调用） -----
+
+    def outline_list_and_layout(self, ol: StepOutlineFrame) -> tuple[list[Any], Any]:
+        """包含 ol 所在大纲行的列表与纵向 layout（顶层 steps 或某一 parallel 的子轨）。"""
+        if ol._parallel_parent is None:
+            return self._step_outlines, self._steps_layout
+        pw = ol._parallel_parent
+        return pw._child_outlines, pw._parallel_layout
+
+    def lift_parallel_track_out(self, child_ol: StepOutlineFrame) -> None:
+        """将并行中的一轨移到外层，插在该 parallel 步骤之后（同级）；若并行因此为空则删掉该 parallel。"""
+        pw = child_ol._parallel_parent
+        if pw is None or pw._outline_frame is None or pw._parallel_layout is None:
+            return
+        par_ol = pw._outline_frame
+        lst, layout = self.outline_list_and_layout(par_ol)
+        try:
+            idx_par = lst.index(par_ol)
+        except ValueError:
+            return
+        try:
+            idx_ch = pw._child_outlines.index(child_ol)
+        except ValueError:
+            return
+        data = deepcopy(child_ol.to_dict())
+        pw._child_outlines.pop(idx_ch)
+        pw._parallel_layout.removeWidget(child_ol)
+        child_ol.deleteLater()
+
+        host = par_ol.parentWidget()
+        if host is None:
+            host = self._steps_container
+        cid = self._current_cutscene_id()
+        new_ol = StepOutlineFrame(
+            data, self._model, self, host,
+            indent_px=par_ol._indent_px,
+            parallel_parent=par_ol._parallel_parent,
+            zebra_alt=False,
+            cutscene_id=cid,
+        )
+        new_ol.contentChanged.connect(self._on_any_outline_changed)
+        lst.insert(idx_par + 1, new_ol)
+        self._relayout_outline_list(lst, layout)
+
+        if not pw._child_outlines:
+            lst2, layout2 = self.outline_list_and_layout(par_ol)
+            try:
+                lst2.remove(par_ol)
+            except ValueError:
+                pass
+            if layout2 is not None:
+                layout2.removeWidget(par_ol)
+            par_ol.deleteLater()
+            if layout2 is not None:
+                self._relayout_outline_list(lst2, layout2)
+
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def _relayout_outline_list(self, lst: list[Any], layout: Any) -> None:
+        for w in lst:
+            layout.removeWidget(w)
+        for w in lst:
+            layout.addWidget(w)
+
+    def can_merge_adjacent_into_parallel(self, ol: StepOutlineFrame) -> bool:
+        if ol.step_kind() == "parallel":
+            return False
+        lst, _ = self.outline_list_and_layout(ol)
+        try:
+            i = lst.index(ol)
+        except ValueError:
+            return False
+        if i + 1 >= len(lst):
+            return False
+        return lst[i + 1].step_kind() != "parallel"
+
+    def merge_adjacent_into_parallel(self, ol: StepOutlineFrame) -> None:
+        """当前项与下一项（须均为 present/action）合并为一个 parallel（两轨）。"""
+        if not self.can_merge_adjacent_into_parallel(ol):
+            return
+        lst, layout = self.outline_list_and_layout(ol)
+        i = lst.index(ol)
+        ol_next = lst[i + 1]
+        d1 = deepcopy(ol.to_dict())
+        d2 = deepcopy(ol_next.to_dict())
+        pdata = {"kind": "parallel", "tracks": [d1, d2]}
+        host = ol.parentWidget() or self._steps_container
+        indent = ol._indent_px
+        pp = ol._parallel_parent
+        cid = self._current_cutscene_id()
+
+        lst.pop(i + 1)
+        lst.pop(i)
+        layout.removeWidget(ol_next)
+        layout.removeWidget(ol)
+        ol_next.deleteLater()
+        ol.deleteLater()
+
+        new_par = StepOutlineFrame(
+            pdata, self._model, self, host,
+            indent_px=indent,
+            parallel_parent=pp,
+            zebra_alt=False,
+            cutscene_id=cid,
+        )
+        new_par.contentChanged.connect(self._on_any_outline_changed)
+        lst.insert(i, new_par)
+        self._relayout_outline_list(lst, layout)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def can_merge_into_prev_parallel(self, ol: StepOutlineFrame) -> bool:
+        if ol.step_kind() == "parallel":
+            return False
+        lst, _ = self.outline_list_and_layout(ol)
+        try:
+            i = lst.index(ol)
+        except ValueError:
+            return False
+        if i == 0:
+            return False
+        return lst[i - 1].step_kind() == "parallel"
+
+    def merge_into_prev_parallel(self, ol: StepOutlineFrame) -> None:
+        if not self.can_merge_into_prev_parallel(ol):
+            return
+        lst, layout = self.outline_list_and_layout(ol)
+        i = lst.index(ol)
+        prev_ol = lst[i - 1]
+        data = deepcopy(ol.to_dict())
+        lst.pop(i)
+        layout.removeWidget(ol)
+        ol.deleteLater()
+
+        prev_ol.ensure_step_detail()
+        par_sw = prev_ol._step
+        if par_sw is None:
+            return
+        self._append_track_to_parallel(par_sw, data)
+        prev_ol.refresh_header()
+        self._relayout_outline_list(lst, layout)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def can_merge_into_next_parallel(self, ol: StepOutlineFrame) -> bool:
+        if ol.step_kind() == "parallel":
+            return False
+        lst, _ = self.outline_list_and_layout(ol)
+        try:
+            i = lst.index(ol)
+        except ValueError:
+            return False
+        if i + 1 >= len(lst):
+            return False
+        return lst[i + 1].step_kind() == "parallel"
+
+    def merge_into_next_parallel(self, ol: StepOutlineFrame) -> None:
+        if not self.can_merge_into_next_parallel(ol):
+            return
+        lst, layout = self.outline_list_and_layout(ol)
+        i = lst.index(ol)
+        next_ol = lst[i + 1]
+        data = deepcopy(ol.to_dict())
+        lst.pop(i)
+        layout.removeWidget(ol)
+        ol.deleteLater()
+
+        next_ol.ensure_step_detail()
+        par_sw = next_ol._step
+        if par_sw is None:
+            return
+        self._prepend_track_to_parallel(par_sw, data)
+        next_ol.refresh_header()
+        self._relayout_outline_list(lst, layout)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+
+    def _append_track_to_parallel(self, par_sw: StepWidget, data: dict) -> StepOutlineFrame:
+        assert par_sw._parallel_layout is not None and par_sw._parallel_group is not None
+        cid = self._current_cutscene_id()
+        ol = StepOutlineFrame(
+            deepcopy(data), self._model, self,
+            par_sw._parallel_group,
+            indent_px=16,
+            parallel_parent=par_sw,
+            zebra_alt=(len(par_sw._child_outlines) % 2 == 1),
+            cutscene_id=cid,
+        )
+        ol.contentChanged.connect(self._on_any_outline_changed)
+        par_sw._child_outlines.append(ol)
+        par_sw._parallel_layout.insertWidget(par_sw._parallel_layout.count() - 1, ol)
+        par_sw._on_parallel_child_changed()
+        return ol
+
+    def _prepend_track_to_parallel(self, par_sw: StepWidget, data: dict) -> StepOutlineFrame:
+        assert par_sw._parallel_layout is not None and par_sw._parallel_group is not None
+        cid = self._current_cutscene_id()
+        ol = StepOutlineFrame(
+            deepcopy(data), self._model, self,
+            par_sw._parallel_group,
+            indent_px=16,
+            parallel_parent=par_sw,
+            zebra_alt=False,
+            cutscene_id=cid,
+        )
+        ol.contentChanged.connect(self._on_any_outline_changed)
+        par_sw._child_outlines.insert(0, ol)
+        par_sw._parallel_layout.insertWidget(0, ol)
+        par_sw._on_parallel_child_changed()
+        return ol
+
+    def _delete(self) -> None:
+        if self._current_idx >= 0:
+            self._model.cutscenes.pop(self._current_idx)
+            self._current_idx = -1
+            self._model.mark_dirty("cutscene")
+            self._pending_changes = False
+            self._refresh()

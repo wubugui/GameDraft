@@ -1,0 +1,5 @@
+schema: chronicle_sim_v3/pacing@1
+
+# 默认节奏：全程平稳。preset 可覆盖。
+multiplier: 1.0
+windows: []

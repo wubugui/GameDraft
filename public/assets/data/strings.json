@@ -1,0 +1,187 @@
+{
+  "notifications": {
+    "ruleAcquired": "规矩本新增：{name}",
+    "fragmentAcquired": "获得规矩碎片",
+    "fragmentSynthesized": "碎片合成：{name}",
+    "archiveUpdated": "档案更新",
+    "inventoryFull": "包袱满了！",
+    "questAccepted": "新任务：{title}",
+    "questCompleted": "任务完成：{title}",
+    "currencyInsufficient": "铜钱不足!",
+    "shopPurchased": "购买了 {name}"
+  },
+  "menu": {
+    "gameTitle": "七日惊魂",
+    "gameSubtitle": "",
+    "newGame": "新游戏",
+    "continueGame": "继续游戏",
+    "settings": "设置",
+    "returnToMain": "返回主菜单",
+    "saveSlot": "存档到槽位 {slot}",
+    "loadSlot": "读取槽位 {slot}",
+    "pause": "暂停",
+    "resume": "继续",
+    "save": "存档",
+    "load": "读档",
+    "back": "[返回]",
+    "slotEmpty": "槽位 {slot}: (空)",
+    "slotInfo": "槽位 {slot}: {scene}  第{day}天  {date}  {minutes}分钟",
+    "unknownScene": "未知",
+    "bgm": "背景音乐",
+    "sfx": "音效",
+    "ambient": "环境音"
+  },
+  "encounter": {
+    "unknownRule": "未知规矩",
+    "fragmentInsufficient": "碎片不足 {collected}/{total}",
+    "layerInsufficient": "规矩要义不足（需要：{layers}）",
+    "itemInsufficient": "道具不足",
+    "ruleTag": "[规矩]",
+    "specialTag": "[特殊]"
+  },
+  "bookshelf": {
+    "title": "书架",
+    "closeHint": "按 B 关闭",
+    "rules": "规矩本",
+    "characters": "人物簿",
+    "lore": "见闻录",
+    "documents": "杂书匣"
+  },
+  "characterBook": {
+    "title": "人物簿",
+    "back": "[返回书架]",
+    "empty": "(暂无人物记录)",
+    "impression": "印象:",
+    "knownIntel": "已知情报:"
+  },
+  "loreBook": {
+    "title": "见闻录",
+    "back": "[返回书架]",
+    "empty": "(暂无见闻)",
+    "source": "-- 来源:"
+  },
+  "documentBox": {
+    "title": "杂书匣",
+    "back": "[返回书架]",
+    "empty": "(暂无文件)",
+    "note": "[注]"
+  },
+  "bookReader": {
+    "back": "[返回书架]",
+    "pageMissing": "此页缺失",
+    "pageHint": "左侧目录切换章节与轶闻",
+    "tocTitle": "目录",
+    "chapterFallback": "第 {n} 页",
+    "entryLocked": "此轶闻尚未解锁",
+    "backToChapter": "返回本章正文",
+    "untitledEntry": "（轶闻）",
+    "entryFromChapter": "出自：{chapter}",
+    "annotationHeading": "按语"
+  },
+  "hud": {
+    "coins": "铜钱:",
+    "ruleUseHint": "[F] 使用规矩",
+    "current": "当前："
+  },
+  "inspectBox": {
+    "closeHint": "[ 点击或按任意键关闭 ]"
+  },
+  "inventory": {
+    "title": "包袱",
+    "coins": "铜钱:",
+    "keyItem": "[关键]",
+    "noDesc": "(无描述)",
+    "discard": "丢弃",
+    "closeHint": "按 I 关闭"
+  },
+  "map": {
+    "title": "[tag:string:place:wujin]城区图",
+    "closeHint": "按 M 关闭",
+    "noData": "(地图数据暂未配置)",
+    "locked": "???"
+  },
+  "pickup": {
+    "acquired": "获得了 {name} x{count}"
+  },
+  "quest": {
+    "title": "任务",
+    "mainline": "-- 主线 --",
+    "sideline": "-- 支线 ({count}) --",
+    "completed": "-- 已完成 ({count}) --",
+    "done": "[Done]",
+    "empty": "(暂无)",
+    "closeHint": "按 Tab 关闭"
+  },
+  "rulesPanel": {
+    "title": "规矩本",
+    "mastered": "== 已掌握 ==",
+    "collecting": "== 搜集中 ==",
+    "layerXiang": "象",
+    "layerLi": "理",
+    "layerShu": "术",
+    "source": "来源:",
+    "fragments": "碎片:",
+    "empty": "(尚未习得任何规矩)",
+    "closeHint": "按 R 关闭",
+    "unknown": "未知规矩",
+    "hidden": "???"
+  },
+  "ruleUse": {
+    "title": "使用规矩",
+    "closeHint": "按 Esc 关闭",
+    "unknown": "未知规矩"
+  },
+  "shop": {
+    "coins": "铜钱:",
+    "unit": "文",
+    "buy": "[购买]",
+    "insufficient": "[不足]",
+    "leave": "[离开]"
+  },
+  "dialogueLog": {
+    "title": "对话记录",
+    "empty": "(暂无对话记录)",
+    "closeHint": "按 L 关闭"
+  },
+  "dialogue": {
+    "ruleTag": "[规]",
+    "defaultProtagonistName": "你",
+    "narratorLabel": "",
+    "choiceNeedRule": "规矩本里尚未收录「{name}」，无法使用该说法。",
+    "choiceFlagLocked": "条件未满足，无法选择该选项。",
+    "choiceNeedCoins": "铜钱不足，至少需要 {amount} 文。"
+  },
+  "actions": {
+    "clickToContinue": "点击继续"
+  },
+  "gameTags": {
+    "flagTrue": "是",
+    "flagFalse": "否",
+    "flagUnset": "—",
+    "unknownItem": "（道具：{id}）"
+  },
+  "place": {
+    "wujin": "雾津县",
+    "wujin_long": "雾津，地处西南山区盆地。时值军阀割据，外面没个太平日子，城里也好不到哪里去。"
+  },
+  "角色": {
+    "埃德加": "埃德加",
+    "克拉拉": "克拉拉",
+    "关二狗": "关二狗"
+  },
+  "waterMinigame": {
+    "exit": "退出",
+    "exitEscHint": "Esc 也可退出",
+    "devPullOk": "沉沉一提——绳子那头真有分量（Dev）。",
+    "dockCrateSuccess": "箱子角浮出水面，铜钱叮当——暂且算是捞出点名堂。",
+    "dockCrateFail": "绳子发涩，箱子往深处滑走了……再找机会。",
+    "dockMonkeyBite": "脚踝猛地一紧：水面下的东西拽了你一把！",
+    "dockRipple": "波纹晃得人眼花——底下太深。"
+  },
+  "npc名字": {
+    "卖糖画的商贩的名字": "许糖匠"
+  },
+  "价格": {
+    "抽糖画价格": 5
+  }
+}

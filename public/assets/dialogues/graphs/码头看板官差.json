@@ -1,0 +1,423 @@
+{
+  "schemaVersion": 1,
+  "id": "码头看板官差",
+  "entry": "n_4",
+  "meta": {
+    "title": "码头看板官差",
+    "scenarioId": "码头水鬼"
+  },
+  "nodes": {
+    "n_sleep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "e1",
+      "text": "正在打瞌睡，不理你......"
+    },
+    "e1": {
+      "type": "end"
+    },
+    "n_branch_notice": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_1",
+          "conditions": [
+            {
+              "scenario": "码头水鬼",
+              "phase": "看板初读",
+              "status": "done"
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_no_1"
+    },
+    "n_no_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "n_no_2",
+      "text": "一个穿的破破烂烂的官差，正在打瞌睡......"
+    },
+    "n_no_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "e2",
+      "text": "莫去惹他。"
+    },
+    "e2": {
+      "type": "end"
+    },
+    "n_main_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "pay",
+          "text": "掏摸几文，看能不能打点",
+          "next": "n_pay_menu"
+        },
+        {
+          "id": "leave",
+          "text": "走开",
+          "next": "n_walk_1"
+        },
+        {
+          "id": "intel",
+          "text": "搬几句听来的夜间忌讳诈他一诈",
+          "next": "n_intel_1",
+          "requireFlag": "rule_rule_no_go_night_acquired",
+          "ruleHintId": "rule_no_go_night"
+        }
+      ]
+    },
+    "n_walk_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "懒得跟他歪缠。",
+      "next": "e3"
+    },
+    "e3": {
+      "type": "end"
+    },
+    "n_pay_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "c2",
+          "text": "给两文",
+          "next": "n_pay2_seq",
+          "costCoins": 2
+        },
+        {
+          "id": "c6",
+          "text": "给六文",
+          "next": "n_pay6_1",
+          "costCoins": 6
+        },
+        {
+          "id": "c12",
+          "text": "给十二文",
+          "next": "n_pay12_1",
+          "costCoins": 12
+        },
+        {
+          "id": "cancel",
+          "text": "算了",
+          "next": "n_pay_cancel"
+        }
+      ]
+    },
+    "n_pay2_seq": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeCurrency",
+          "params": {
+            "amount": 2
+          }
+        }
+      ],
+      "next": "n_2"
+    },
+    "e_too": {
+      "type": "end"
+    },
+    "n_pay6_1": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeCurrency",
+          "params": {
+            "amount": 6
+          }
+        }
+      ],
+      "next": "n_pay6_l1"
+    },
+    "n_pay6_l1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "行吧，算你识相。",
+      "next": "n_pay6_l2"
+    },
+    "n_pay6_l2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "那水下东西，码头上都叫水猴子，专找落单的下手。结伙过岸，别落单，比啥都强。",
+      "next": "n_done_run"
+    },
+    "n_pay12_1": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeCurrency",
+          "params": {
+            "amount": 12
+          }
+        }
+      ],
+      "next": "n_pay12_l1"
+    },
+    "n_pay12_l1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_pay12_l2",
+      "text": "哟，懂事。"
+    },
+    "n_pay12_l2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "告示底下还有行小字：水猴子爱拣落单的。人多绑在一块走，它不好下手——这话我只多告诉你一遍。",
+      "next": "n_done_run"
+    },
+    "n_pay_cancel": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "e5",
+      "text": "老子才不当这冤大头。"
+    },
+    "e5": {
+      "type": "end"
+    },
+    "n_intel_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_intel_2",
+      "text": "官爷，我可是听说过的——夜里有些地方去不得，冲撞了比下水还麻烦。您在这码头上当差，总该懂这里头的分寸吧？"
+    },
+    "n_intel_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_intel_3",
+      "text": "……哼。少跟老子扯这些有的没的。"
+    },
+    "n_intel_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "你要真想知道，告示底下还有一行小字：水猴子专拣落单的拖下去。结伴过岸，互相看紧点，一般没事。",
+      "next": "n_done_run"
+    },
+    "n_done_run": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "revealDocument",
+          "params": {
+            "documentId": "告示-水猴子-官差线"
+          }
+        },
+        {
+          "type": "waitClickContinue",
+          "params": {
+            "text": ""
+          }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "blend"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "真相揭示（官差）",
+            "status": "done"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "真相揭示",
+            "status": "done"
+          }
+        }
+      ],
+      "next": "n_done_line"
+    },
+    "n_done_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_done_flag",
+      "text": "这片啥时候闹起了水猴子？头几天我还下水洗了澡......"
+    },
+    "n_done_flag": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "询问官差",
+            "status": "done",
+            "outcome": "scolded"
+          }
+        },
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "官差已套近乎",
+            "status": "pending"
+          }
+        },
+        {
+          "type": "completeScenario",
+          "params": {
+            "scenarioId": "码头水鬼"
+          }
+        },
+        {
+          "type": "updateQuest",
+          "params": {
+            "id": "支线-抓水猴子-查看水边情况"
+          }
+        }
+      ],
+      "next": "e4"
+    },
+    "e4": {
+      "type": "end"
+    },
+    "n_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_3",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "官爷......"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "zzz..."
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "官爷！！"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "干什么！死叫花！"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "嘿嘿。这告示上都写的啥啊？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "不准下水！"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "为啥？"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "爬爬爬！个龟儿死叫花。下水找死，要死你死远点。"
+        }
+      ],
+      "text": "官爷......"
+    },
+    "n_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "e_too",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……"
+        }
+      ],
+      "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
+    },
+    "n_3": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setScenarioPhase",
+          "params": {
+            "scenarioId": "码头水鬼",
+            "phase": "官差已套近乎",
+            "status": "done"
+          }
+        }
+      ],
+      "next": "n_main_choice"
+    },
+    "n_4": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_sleep",
+          "conditions": [
+            {
+              "flag": "码头水鬼真相已揭示",
+              "op": "==",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_branch_notice"
+    }
+  },
+  "preconditions": []
+}

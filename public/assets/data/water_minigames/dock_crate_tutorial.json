@@ -1,0 +1,175 @@
+{
+  "id": "dock_crate_tutorial",
+  "label": "码头捞箱教学",
+  "spotId": "dock_wharf",
+  "waterBottom": {
+    "texture": "/resources/runtime/images/minigames/water/riverbed_dock_murky.png",
+    "tint": "#1b2f42",
+    "depth": 1.15
+  },
+  "surface": {
+    "location": "dock",
+    "time": "day",
+    "weather": "clear"
+  },
+  "shoreForeground": {
+    "banks": [
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "top",
+        "thickness": 92,
+        "inset": 16,
+        "overhang": 64
+      },
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "bottom",
+        "thickness": 118,
+        "inset": 10,
+        "overhang": 64
+      }
+    ]
+  },
+  "bounds": {
+    "width": 720,
+    "height": 480
+  },
+  "entities": [
+    {
+      "id": "dead_grass",
+      "category": "grass",
+      "sprite": "/resources/runtime/images/minigames/water/dead_reeds_gen.png",
+      "pos": {
+        "x": 160,
+        "y": 360
+      },
+      "depth": 0.14,
+      "hint": "[水草] 水下安静得吓人。",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "crate_target",
+      "category": "sunken",
+      "sprite": "/resources/runtime/images/minigames/water/sunken_crate_gen.png",
+      "pos": {
+        "x": 420,
+        "y": 380
+      },
+      "depth": 0.85,
+      "valueTier": "premium",
+      "consumeOnSuccess": true,
+      "pull": {
+        "zoneSize": 0.19,
+        "sliderSpeed": 0.72,
+        "rhythm": "heavy_sink",
+        "failurePolicy": "snap",
+        "timeLimitSec": 20
+      },
+      "cue": "洋人落水那只箱子的一角",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 10
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "foreigner_crate_event_done",
+            "value": true
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "捞箱_完成",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockCrateSuccess]",
+            "type": "info"
+          }
+        }
+      ],
+      "onPullFail": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockCrateFail]",
+            "type": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "id": "monkey_distraction",
+      "category": "swimming",
+      "sprite": "/resources/runtime/images/minigames/water/water_monkey_shadow_gen.png",
+      "pos": {
+        "x": 560,
+        "y": 280
+      },
+      "depth": 0.48,
+      "motion": {
+        "path": "patrol",
+        "speed": 0.55
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.2,
+        "sliderSpeed": 0.82,
+        "rhythm": "spasm",
+        "failurePolicy": "bite",
+        "timeLimitSec": 15
+      },
+      "cue": "像是水猴子拖过的涟漪",
+      "onPullFail": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "水边拉扯咬伤",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockMonkeyBite]",
+            "type": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "id": "surface_glitter",
+      "category": "floating",
+      "sprite": "/resources/runtime/images/minigames/water/metal_glint_gen.png",
+      "pos": {
+        "x": 320,
+        "y": 190
+      },
+      "depth": 0.03,
+      "motion": {
+        "path": "drift",
+        "speed": 0.05
+      },
+      "cue": "晃眼的波纹",
+      "onPick": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:waterMinigame:dockRipple]",
+            "type": "info"
+          }
+        }
+      ]
+    }
+  ]
+}

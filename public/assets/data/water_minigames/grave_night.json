@@ -1,0 +1,147 @@
+{
+  "id": "grave_night",
+  "label": "义冢浅滩 · 夜里 · 雾",
+  "spotId": "grave_shoal",
+  "waterBottom": {
+    "texture": "/resources/runtime/images/minigames/water/riverbed_grave_night.png",
+    "tint": "#111827",
+    "depth": 0.82
+  },
+  "surface": {
+    "location": "grave",
+    "time": "night",
+    "weather": "fog"
+  },
+  "bounds": {
+    "width": 760,
+    "height": 520
+  },
+  "entities": [
+    {
+      "id": "still_grass",
+      "category": "grass",
+      "sprite": "/resources/runtime/images/minigames/water/dead_reeds_gen.png",
+      "pos": {
+        "x": 360,
+        "y": 400
+      },
+      "depth": 0.18,
+      "hint": "[水草] 黑得像一缕头发。",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "corpse_bubble",
+      "category": "floating",
+      "sprite": "/resources/runtime/images/minigames/water/bubble_coin_gen.png",
+      "pos": {
+        "x": 520,
+        "y": 220
+      },
+      "depth": 0.08,
+      "motion": {
+        "path": "drift",
+        "speed": 0.03
+      },
+      "glow": {
+        "enabled": true,
+        "color": "#8899aa",
+        "daylightHint": 0.5
+      },
+      "valueTier": "premium",
+      "cue": "缓慢上浮的气泡",
+      "onPick": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "气泡触指即碎，腥涩。",
+            "type": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "id": "monkey_shadow",
+      "category": "swimming",
+      "sprite": "/resources/runtime/images/minigames/water/water_monkey_shadow_gen.png",
+      "pos": {
+        "x": 280,
+        "y": 300
+      },
+      "depth": 0.62,
+      "motion": {
+        "path": "flee",
+        "speed": 0.5
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.17,
+        "sliderSpeed": 0.92,
+        "rhythm": "spasm",
+        "failurePolicy": "bite",
+        "timeLimitSec": 13
+      },
+      "cue": "贴着水底飞快窜动的影子",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "nuomi",
+            "count": 2
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "你攥住了湿滑的一把——也不知道攥住了什么。",
+            "type": "info"
+          }
+        }
+      ],
+      "onPullFail": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "水边拉扯咬伤",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "脚踝一阵剧痛。",
+            "type": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "id": "old_coin",
+      "category": "sunken",
+      "sprite": "/resources/runtime/images/minigames/water/metal_glint_gen.png",
+      "pos": {
+        "x": 580,
+        "y": 440
+      },
+      "depth": 0.7,
+      "pull": {
+        "zoneSize": 0.22,
+        "sliderSpeed": 0.78,
+        "rhythm": "stable",
+        "failurePolicy": "escape",
+        "timeLimitSec": 15
+      },
+      "cue": "埋在淤里的金属反光",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 4
+          }
+        }
+      ]
+    }
+  ]
+}

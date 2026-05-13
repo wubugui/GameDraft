@@ -1,0 +1,654 @@
+{
+  "id": "sugar_chongqing_folk",
+  "label": "重庆糖关刀转盘",
+  "backgroundImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_stall_table_bg.png",
+  "backgroundFit": "cover",
+  "wheelImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_chongqing_folk_wheel_equal.png",
+  "pointerImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_zodiac_pointer.png",
+  "pointerAnchorY": 0.9,
+  "pointerScale": 1,
+  "wheelScale": 1,
+  "wheelMaxSizePercent": 0.72,
+  "wheelMaxSizePx": 660,
+  "sectorAngleOffsetDeg": 0,
+  "sectorCenterPhase": 0,
+  "pointerArtOffsetDeg": 0,
+  "powerChargeCurve": 1.4,
+  "sectorDirection": "clockwise",
+  "powerChargeMs": 2600,
+  "minLaunchPower": 0,
+  "spinLinearDragPerSec": 0.12,
+  "spinDragLowSpeedThresholdRadPerSec": 2.2,
+  "spinDragLowSpeedBoostPerSec": 2,
+  "spinChargeMinVelocityRadPerSec": 0,
+  "spinChargeMaxVelocityRadPerSec": 10.5,
+  "spinChargeMinAccelRadPerSec2": 0,
+  "spinChargeMaxAccelRadPerSec2": 8.5,
+  "spinAccelHalfLifeSec": 0.42,
+  "spinStopSpeedRadPerSec": 0.06,
+  "spinStopSettleSec": 0.12,
+  "spinDryFrictionAccelRadPerSec2": 0.36,
+  "spinWeightBiasCreepRefRadPerSec": 1.15,
+  "sectors": [
+    {
+      "id": "dragon",
+      "label": "龙",
+      "payload": {
+        "tier": "grand",
+        "motif": "dragon"
+      },
+      "weight": 0.45
+    },
+    {
+      "id": "carp",
+      "label": "鱼",
+      "payload": {
+        "tier": "large",
+        "motif": "carp"
+      },
+      "weight": 0.75
+    },
+    {
+      "id": "monkey",
+      "label": "猴",
+      "payload": {
+        "tier": "small",
+        "motif": "monkey"
+      }
+    },
+    {
+      "id": "rabbit",
+      "label": "兔",
+      "payload": {
+        "tier": "small",
+        "motif": "rabbit"
+      }
+    },
+    {
+      "id": "rooster",
+      "label": "鸡",
+      "payload": {
+        "tier": "small",
+        "motif": "rooster"
+      }
+    },
+    {
+      "id": "flower_basket",
+      "label": "花篮",
+      "payload": {
+        "tier": "large",
+        "motif": "flower_basket"
+      },
+      "weight": 0.7
+    },
+    {
+      "id": "guandao",
+      "label": "关刀",
+      "payload": {
+        "tier": "grand",
+        "motif": "guandao"
+      },
+      "weight": 0.65
+    },
+    {
+      "id": "gourd",
+      "label": "葫芦",
+      "payload": {
+        "tier": "medium",
+        "motif": "gourd"
+      }
+    },
+    {
+      "id": "yuanbao",
+      "label": "元宝",
+      "payload": {
+        "tier": "large",
+        "motif": "yuanbao"
+      },
+      "weight": 0.8
+    },
+    {
+      "id": "butterfly",
+      "label": "蝴蝶",
+      "payload": {
+        "tier": "medium",
+        "motif": "butterfly"
+      }
+    },
+    {
+      "id": "horse",
+      "label": "马",
+      "payload": {
+        "tier": "medium",
+        "motif": "horse"
+      }
+    },
+    {
+      "id": "bird",
+      "label": "鸟",
+      "payload": {
+        "tier": "small",
+        "motif": "bird"
+      }
+    }
+  ],
+  "wheelCenterOffsetXPx": 12.5,
+  "wheelCenterOffsetYPx": 26.8,
+  "pointerOffsetXPx": -3.2,
+  "pointerOffsetYPx": -10.2,
+  "foregroundImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_crowd_overlay.png",
+  "foregroundFit": "cover",
+  "pointerAnchorX": 0.5,
+  "speechDurationMs": 2999,
+  "speechMaxVisible": 4,
+  "speechAnchors": [
+    {
+      "role": "child_a",
+      "label": "小孩",
+      "xRatio": 0.13252918287937743,
+      "yRatio": 0.6032684824902725,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_b",
+      "label": "小孩",
+      "xRatio": 0.3433852140077821,
+      "yRatio": 0.7363164721141373,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_c",
+      "label": "小孩",
+      "xRatio": 0.5713618677042801,
+      "yRatio": 0.7355642023346304,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_d",
+      "label": "小孩",
+      "xRatio": 0.7908171206225683,
+      "yRatio": 0.6299610894941632,
+      "tailDirection": "down"
+    },
+    {
+      "role": "protagonist",
+      "xRatio": 0.0772581269876102,
+      "yRatio": 0.3123456790123457,
+      "tailDirection": "none"
+    },
+    {
+      "role": "stall_owner",
+      "label": "摊主",
+      "xRatio": 0.5663035019455253,
+      "yRatio": 0,
+      "tailDirection": "up"
+    }
+  ],
+  "chargeButtonWheelOffsetXPx": 388.3,
+  "chargeButtonWheelOffsetYPx": -43.7,
+  "chargeButtonDiameterPx": 52,
+  "atmosphereGroups": [
+    {
+      "id": "bustling_01",
+      "label": "热闹起哄",
+      "weight": 3,
+      "vars": {
+        "开场欢呼": [
+          "转起来咯！",
+          "看看能中啥！",
+          "老板转盘转起来了！",
+          "哇——开始了开始了！",
+          "来咯来咯！"
+        ],
+        "旋转碎嘴": [
+          "转得好快！",
+          "哇，眼花了……",
+          "看不清看不清！",
+          "这也太快了吧！",
+          "盯着看头都晕了",
+          "呜——好想要龙啊",
+          "猴子猴子！",
+          "感觉要停了？",
+          "还在转呢还在转呢",
+          "老板儿，你这盘子是歪的哦"
+        ],
+        "慢转紧张": [
+          "慢了慢了……",
+          "要停了！",
+          "别眨眼——",
+          "嘘……",
+          "快看快看！",
+          "哎哎哎！",
+          "紧张死了……",
+          "老板儿，你这盘子是歪的哦"
+        ],
+        "押龙": [
+          "龙！",
+          "龙龙龙！",
+          "要龙——",
+          "是龙吗！",
+          "老板儿，你这盘子是歪的哦"
+        ],
+        "停转收尾": [
+          "哦——！",
+          "出来了！",
+          "看到了看到了！",
+          "哈哈哈！",
+          "唉……"
+        ]
+      },
+      "start": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "开场欢呼"
+        },
+        {
+          "op": "wait",
+          "sec": 0.4
+        },
+        {
+          "op": "chance",
+          "p": 0.6,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_b",
+              "pool": "开场欢呼"
+            }
+          ]
+        }
+      ],
+      "spinning": [
+        {
+          "op": "say",
+          "role": "child_c",
+          "pool": "旋转碎嘴"
+        },
+        {
+          "op": "wait",
+          "sec": 1.8
+        },
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "text": "好好看着哦——"
+        },
+        {
+          "op": "wait",
+          "sec": 2
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_a",
+              "pool": "旋转碎嘴"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 1.5
+        },
+        {
+          "op": "chance",
+          "p": 0.3,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_d",
+              "pool": "旋转碎嘴"
+            }
+          ]
+        }
+      ],
+      "slowing": [
+        {
+          "op": "when_near_sector",
+          "sectorId": "dragon",
+          "degBuffer": 20,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_a",
+              "pool": "押龙"
+            },
+            {
+              "op": "wait",
+              "sec": 0.2
+            },
+            {
+              "op": "say",
+              "role": "child_b",
+              "pool": "押龙"
+            }
+          ],
+          "else": [
+            {
+              "op": "say",
+              "role": "child_d",
+              "pool": "慢转紧张"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 0.6
+        },
+        {
+          "op": "chance",
+          "p": 0.5,
+          "then": [
+            {
+              "op": "say",
+              "role": "stall_owner",
+              "text": "马上就知道了……"
+            }
+          ]
+        }
+      ],
+      "stop": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "停转收尾"
+        },
+        {
+          "op": "wait",
+          "sec": 0.3
+        },
+        {
+          "op": "chance",
+          "p": 0.5,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_c",
+              "pool": "停转收尾"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "quiet_02",
+      "label": "安静观望",
+      "weight": 1,
+      "vars": {
+        "低声开场": [
+          "嗯……转了",
+          "开始了"
+        ],
+        "偶尔碎语": [
+          "……",
+          "还在转",
+          "好久啊",
+          "转了好多圈了吧"
+        ],
+        "屏息": [
+          "……！",
+          "要停了？",
+          "嘘——"
+        ],
+        "结果反应": [
+          "哦",
+          "嗯……",
+          "就这个啊"
+        ]
+      },
+      "start": [
+        {
+          "op": "say",
+          "role": "child_b",
+          "pool": "低声开场"
+        }
+      ],
+      "spinning": [
+        {
+          "op": "wait",
+          "sec": 3
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_a",
+              "pool": "偶尔碎语"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 3.5
+        },
+        {
+          "op": "chance",
+          "p": 0.3,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_d",
+              "pool": "偶尔碎语"
+            }
+          ]
+        }
+      ],
+      "slowing": [
+        {
+          "op": "say",
+          "role": "child_c",
+          "pool": "屏息"
+        },
+        {
+          "op": "wait",
+          "sec": 0.8
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "stall_owner",
+              "text": "看好了——"
+            }
+          ]
+        }
+      ],
+      "stop": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "结果反应"
+        }
+      ]
+    },
+    {
+      "id": "owner_showoff_03",
+      "label": "摊主炫技",
+      "weight": 2,
+      "vars": {
+        "摊主开场": [
+          "好嘞！转盘走起！",
+          "看好了各位！",
+          "来来来看老手艺！"
+        ],
+        "摊主解说": [
+          "这一手力道刚好……",
+          "我这转盘用了二十年了",
+          "针还没歇呢",
+          "慢慢来，急不得"
+        ],
+        "小孩插嘴": [
+          "老板你偷偷停的吧！",
+          "老板你能不能让它停龙上！",
+          "你上次也是这么说的！",
+          "老板儿，怎么没得头回那个花篮了讷？",
+          "转得真好看",
+          "我也想转一下！"
+        ],
+        "摊主慢转": [
+          "要出来了哦——",
+          "别急别急",
+          "命中注定的那一格……"
+        ],
+        "收场": [
+          "好咯！",
+          "看见了吧？",
+          "就是这个！"
+        ]
+      },
+      "start": [
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "摊主开场"
+        },
+        {
+          "op": "wait",
+          "sec": 0.5
+        },
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "小孩插嘴"
+        }
+      ],
+      "spinning": [
+        {
+          "op": "wait",
+          "sec": 1.2
+        },
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "摊主解说"
+        },
+        {
+          "op": "wait",
+          "sec": 2
+        },
+        {
+          "op": "chance",
+          "p": 0.5,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_b",
+              "pool": "小孩插嘴"
+            }
+          ]
+        },
+        {
+          "op": "wait",
+          "sec": 2.5
+        },
+        {
+          "op": "chance",
+          "p": 0.4,
+          "then": [
+            {
+              "op": "say",
+              "role": "stall_owner",
+              "pool": "摊主解说"
+            }
+          ]
+        }
+      ],
+      "slowing": [
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "摊主慢转"
+        },
+        {
+          "op": "wait",
+          "sec": 0.5
+        },
+        {
+          "op": "when_near_sector",
+          "sectorId": "dragon",
+          "degBuffer": 18,
+          "then": [
+            {
+              "op": "say",
+              "role": "child_c",
+              "text": "龙！是龙吗！"
+            }
+          ],
+          "else": [
+            {
+              "op": "chance",
+              "p": 0.5,
+              "then": [
+                {
+                  "op": "say",
+                  "role": "child_d",
+                  "text": "要停了要停了！"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "stop": [
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "pool": "收场"
+        },
+        {
+          "op": "wait",
+          "sec": 0.4
+        },
+        {
+          "op": "say",
+          "role": "child_a",
+          "pool": "小孩插嘴"
+        }
+      ]
+    }
+  ],
+  "beforeChargeCondition": {
+    "flag": "coins",
+    "op": ">=",
+    "value": "[tag:string:价格:抽糖画价格]"
+  },
+  "beforeChargePassActions": [
+    {
+      "type": "removeCurrency",
+      "params": {
+        "amount": "[tag:string:价格:抽糖画价格]"
+      }
+    }
+  ],
+  "beforeChargeFailActions": [
+    {
+      "type": "playScriptedDialogue",
+      "params": {
+        "lines": [
+          {
+            "speaker": "[tag:string:npc名字:卖糖画的商贩的名字]",
+            "text": "莫闹，先拿钱来。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "playScriptedDialogue",
+      "params": {
+        "lines": [
+          {
+            "speaker": "{{player}}",
+            "text": "嘻嘻嘻"
+          }
+        ]
+      }
+    }
+  ]
+}

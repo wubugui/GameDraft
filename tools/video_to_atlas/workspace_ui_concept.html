@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>帧与动画数据管理工作区 — UI 理解稿（线框）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #1a1d23;
+      color: #e8eaed;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+    h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 8px; }
+    .note {
+      background: #252830;
+      border: 1px solid #3d4450;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 20px;
+      color: #b8bcc4;
+    }
+    .note strong { color: #e8eaed; }
+    .workspace {
+      border: 2px solid #4a5568;
+      border-radius: 8px;
+      background: #22262e;
+      min-height: 720px;
+      display: flex;
+      flex-direction: column;
+    }
+    .menubar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #2d3340;
+      border-bottom: 1px solid #4a5568;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-block;
+      padding: 4px 10px;
+      background: #3d4a5c;
+      border: 1px solid #5a6a80;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #e8eaed;
+    }
+    .main-scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    section.block {
+      border: 1px dashed #5c6573;
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #282c34;
+    }
+    section.block h2 {
+      margin: 0 0 10px;
+      font-size: 0.95rem;
+      color: #9ab;
+      font-weight: 600;
+      border-bottom: 1px solid #3d4450;
+      padding-bottom: 6px;
+    }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
+    .cell {
+      border: 1px solid #4a5568;
+      background: #1e2228;
+      border-radius: 4px;
+      padding: 8px;
+      min-height: 60px;
+    }
+    .cell h3 { margin: 0 0 6px; font-size: 11px; color: #8a9; text-transform: uppercase; letter-spacing: 0.04em; }
+    .thumb-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+      gap: 6px;
+      min-height: 120px;
+    }
+    .thumb {
+      aspect-ratio: 1;
+      background: #333842;
+      border: 1px solid #555;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #888;
+    }
+    .thumb.hl-first { outline: 2px solid #4ade80; }
+    .thumb.hl-last { outline: 2px solid #60a5fa; }
+    .modal {
+      margin-top: 24px;
+      border: 2px solid #7c3aed;
+      border-radius: 8px;
+      background: #1f1a2e;
+      padding: 12px;
+    }
+    .modal h2 { margin: 0 0 10px; color: #c4b5fd; font-size: 1rem; }
+    .legend { font-size: 11px; color: #889; margin-top: 16px; }
+    .legend ul { margin: 6px 0 0; padding-left: 18px; }
+    table.export { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+    table.export th, table.export td { border: 1px solid #444; padding: 6px 8px; text-align: left; }
+    table.export th { background: #333842; color: #aab; }
+    .video-group {
+      border: 1px solid #4a5568;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      overflow: hidden;
+      background: #1e2228;
+    }
+    .video-group-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: #2d3340;
+      border-bottom: 1px solid #4a5568;
+      font-size: 12px;
+    }
+    .video-group-head .tag { color: #8ab4ff; font-weight: 600; }
+    .video-group-body { padding: 8px 10px 10px; }
+    .tree-hint { font-size: 11px; color: #6b7280; margin-left: 4px; }
+    .video-group.is-active {
+      border-color: #6d8cff;
+      box-shadow: 0 0 0 1px rgba(109, 140, 255, 0.35);
+    }
+    .video-group.is-active .video-group-head {
+      background: #323a52;
+    }
+    .pill-active {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #3d4a7a;
+      color: #b4c6ff;
+      font-weight: 600;
+    }
+    .id-rule {
+      font-size: 11px;
+      color: #9aa;
+      background: #252a33;
+      border: 1px solid #3d4450;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-top: 8px;
+    }
+    .id-rule code { color: #9cdcfe; }
+  </style>
+</head>
+<body>
+
+  <h1>我所理解的产品形态：单工作区 + 持久化 + 导入弹窗</h1>
+  <div class="note">
+    <strong>与当前代码的差异摘要：</strong>
+    当前 <code>gui.py</code> 为左右分栏（左侧纵向表单含视频/色键/帧库/动画/导出，右侧 <code>QVideoWidget</code>）。
+     按你的描述，主界面应<strong>不再以左右分栏组织</strong>，而是<strong>帧库与动画、导出工作台</strong>为主的单一滚动工作区；<strong>所有工程数据持久化</strong>（帧像素、帧元数据、动画序列及其<strong>序列侧</strong>属性、导出列表的「仅导出用」配置等，具体 schema 实现时再定）。
+    <strong>素材库结构：</strong>工作区内<strong>登记视频源</strong>，每视频一条节点，其下为<strong>子帧库</strong>。帧像素<strong>不对翻转/缩放</strong>；删帧、追加抽帧等在各子库内进行。
+    <strong>激活子库（接旧工作流）：</strong>任意时刻有且仅有一个<strong>被激活的视频子帧库</strong>（在树/列表中选中该视频即激活）。第 1～2 节的快捷键选首尾、蒙版对照、范围预览、智能匹配，以及「从首尾范围新建/扩展动画」等<strong>凡依赖「当前帧库」的操作，一律以激活子库为基准</strong>；未激活时禁用或提示先选视频。其它视频的帧仍存在工程中，但不在此编辑上下文中参与。
+    <strong>帧标识（id 机制）：</strong>改造后动画序列<strong>不得</strong>仅用「在某视频下的0..n序号」持久化引用帧。每一帧在写入工程时分配<strong>全局唯一且稳定</strong>的 <code>frame_id</code>（建议 UUID/十六进制串，与现有 <code>FrameItem.id</code> 思路一致）。<strong>增：</strong>新抽帧得到新 id。<strong>删：</strong>从子库移除该 id，工程中所有仍引用该 id 的动画槽位变为悬空，需 UI 提示并允许清理或替换（具体策略实现时定）。<strong>改：</strong>不就地改像素则 id 不变；若业务上「替换素材」可视为删旧加新并更新引用。界面上的「本地索引」仅便于在<strong>当前激活子库</strong>内浏览，排序变化不改变其它帧 id；动画列表里展示的是 <code>frame_id</code>（可附所属视频名与本地序号作注释）。
+    <strong>数据边界：</strong>动画序列存的是<strong><code>frame_id</code> 的有序列表</strong>（加每槽位水平翻转标记等），<strong>序列不提供缩放</strong>；编辑序列<strong>不得改写任一子帧库像素</strong>。<strong>分辨率缩放仅属于导出工作台</strong>。
+    <strong>视频加载、预览、区间、色键、抽帧</strong>归入<strong>「导入工具」独立窗口</strong>；确认导入时在工作区<strong>创建或选中视频节点</strong>，抽得的帧写入<strong>该节点下子帧库</strong>。<strong>不提供</strong>从已导出图集/meta 再导入：工程内动画已持久化，需要调整时在工程里改序列并重新导出即可。
+  </div>
+
+  <div class="workspace">
+    <div class="menubar">
+      <span class="btn">工作区 · 新建</span>
+      <span class="btn">打开…</span>
+      <span class="btn">保存</span>
+      <span class="btn">另存为…</span>
+      <span style="flex:1"></span>
+      <span class="btn" style="border-color:#7c3aed;background:#3b2f5c">从视频导入…（弹窗）</span>
+      <span class="btn">关于快捷键</span>
+    </div>
+
+    <div class="main-scroll">
+
+      <!-- 1核心：按视频分组的素材库 -->
+      <section class="block">
+        <h2>1. 素材库（置顶）：视频源 + 每视频子帧库</h2>
+        <p style="margin:0 0 8px;color:#aab;font-size:12px;">
+          工作区持久化<strong>所有视频条目</strong>及其子帧库。点击某一视频即<strong>激活</strong>该子库（高亮）；<strong>仅激活子库</strong>参与下方「选首尾、删范围、对照、范围预览、智能匹配、从范围建动画」等流程，与改造前「单一帧库」用法对齐。非激活视频的帧仍可被动画通过 <code>frame_id</code> 引用（跨视频编排时在序列编辑器中挑选）。
+        </p>
+        <div class="id-rule">
+          <strong>帧 id：</strong>每帧持久化 <code>frame_id</code>；UI 在激活子库内显示 <strong>本地序号</strong>（0..n−1，随删帧重排显示）仅供人类阅读。<strong>动画序列只存 id 列表</strong>，不存「激活库里的序号」。
+        </div>
+        <div class="row" style="margin-bottom:8px;">
+          <span class="btn">刷新</span>
+          <span class="btn">删除当前视频条目…</span>
+          <span class="btn">当前子库：按本地索引删除范围</span>
+          <span style="color:#889;font-size:12px;align-self:center;">快捷键（仅<strong>激活</strong>子库）：Ctrl+左键 首帧 · Alt+左键 尾帧</span>
+        </div>
+
+        <div class="video-group is-active">
+          <div class="video-group-head">
+            <span class="pill-active">当前激活</span>
+            <span class="tag">视频 A</span>
+            <span>跑.mp4</span>
+            <span class="tree-hint">时长 · 路径 · 子库24 帧</span>
+            <span style="flex:1"></span>
+            <span class="btn" style="font-size:11px;padding:2px 8px;">在此视频上继续导入…</span>
+          </div>
+          <div class="video-group-body">
+            <h3 style="margin:0 0 6px;font-size:11px;color:#8a9;">激活子库：缩略图（显示本地序号；内部绑定 <code>frame_id</code>）</h3>
+            <div class="thumb-grid">
+              <div class="thumb">#0<br><span style="font-size:8px;opacity:.7">a1b2…</span></div><div class="thumb">#1</div><div class="thumb hl-first">#2 首</div>
+              <div class="thumb">#3</div><div class="thumb">#4</div><div class="thumb hl-last">#5 尾</div>
+              <div class="thumb">#6</div><div class="thumb">…</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="video-group">
+          <div class="video-group-head">
+            <span class="tag">视频 B</span>
+            <span>跳.mp4</span>
+            <span class="tree-hint">子库 18 帧</span>
+          </div>
+          <div class="video-group-body">
+            <div class="thumb-grid" style="min-height:72px;">
+              <div class="thumb">#0</div><div class="thumb">#1</div><div class="thumb">…</div>
+            </div>
+          </div>
+        </div>
+
+        <p style="margin:8px 0 0;font-size:11px;color:#889;">
+          右键某一帧：<strong>设为首帧</strong> · <strong>设为尾帧</strong> · <strong>删除帧</strong> · <strong>查看帧…</strong>（独立窗口：<strong>仅视图</strong>缩放与平移，不改像素）
+        </p>
+        <div class="row" style="margin-top:10px;">
+          <div class="cell" style="flex:1;min-width:200px;">
+            <h3>激活子库：首尾本地索引（与快捷键联动；落盘到动画时转为 <code>frame_id</code> 区间）</h3>
+            首索引 [ spin ]　尾索引 [ spin ]　状态：有效范围 / 无效提示
+          </div>
+        </div>
+      </section>
+
+      <!-- 2 对照 + 范围预览播放 -->
+      <section class="block">
+        <h2>2. 首尾帧工作区（对照 + 实时范围预览）</h2>
+        <p style="margin:0 0 8px;color:#889;font-size:12px;">作用域：<strong>当前激活的视频子库</strong>（与第 1 节激活项一致）。</p>
+        <div class="row">
+          <div class="cell" style="flex:1;min-width:280px;">
+            <h3>首尾蒙版对照（与现有一致）</h3>
+            选首帧 → 更新对照 mask；选尾帧 → 更新对照帧。混合权重等控件。
+            <div style="height:140px;background:#111;margin-top:8px;display:flex;align-items:center;justify-content:center;color:#555;">洋葱混合预览</div>
+          </div>
+          <div class="cell" style="flex:1;min-width:280px;">
+            <h3>范围循环预览（新增）</h3>
+            按当前首～尾<strong>本地序号</strong>解析为 <code>frame_id</code> 后连续播放；速度 [滑块 / spin ]；播放/暂停。
+            <div style="height:140px;background:#111;margin-top:8px;display:flex;align-items:center;justify-content:center;color:#555;">动画式预览（非导出，仅编辑辅助）</div>
+          </div>
+        </div>
+        <div class="cell" style="margin-top:10px;">
+          <h3>智能首尾匹配（小工具）</h3>
+          在「用户已框定的搜索范围」（<strong>激活子库</strong>内本地索引 a～b）内自动搜索一对候选首/尾帧（结果以 <code>frame_id</code> 写入首尾状态）。
+          <div class="row" style="margin-top:8px;">
+            <div class="cell" style="flex:1;">
+搜索结果展示：首/尾缩略图 + 本地序号 + <code>frame_id</code> 摘要
+            </div>
+            <span class="btn">一键填入当前首尾帧</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3 动画序列库 -->
+      <section class="block">
+        <h2>3. 动画序列数据库</h2>
+        <p style="margin:0 0 8px;color:#889;font-size:12px;">
+          每条序列：名称、帧率、循环等；<strong>有序保存 <code>frame_id</code> 列表</strong>（可跨视频；编辑时从工程帧表中解析像素）。「用激活子库首尾范围新建」= 将该范围内每个本地序号解析为 id 后<strong>追加/生成</strong>列表。序列仅可做<strong>水平翻转</strong>（整段或按槽位）、槽位排序、增删引用 id 等，<strong>不修改</strong>子库像素。<strong>无序列级缩放；</strong>导出分辨率只在导出台设置。
+        </p>
+        <div class="row">
+          <div class="cell" style="flex:1;min-width:240px;">
+            <h3>序列列表</h3>
+            <div style="min-height:100px;background:#111;padding:8px;color:#666;">walk / run / …</div>
+            <span class="btn" style="margin-top:6px;">用<strong>激活子库</strong>首尾范围新建序列（写入 id 列表）</span>
+          </div>
+          <div class="cell" style="flex:2;min-width:320px;">
+            <h3>当前序列：帧序列表（可拖拽排序）</h3>
+            <div style="min-height:100px;background:#111;padding:8px;color:#666;">有序 <code>frame_id</code> 列表（UI 可旁注视频名·本地序号）</div>
+            <div class="row" style="margin-top:6px;">
+              <span class="btn">增删移动</span>
+              <span class="btn">序列：全槽位水平翻转（仅序列，不动帧库）</span>
+            </div>
+          </div>
+        </div>
+        <p style="margin:8px 0 0;font-size:11px;color:#889;">
+          右键某条动画：<strong>删除</strong> · <strong>预览</strong> · <strong>修改序列/属性…</strong>
+        </p>
+      </section>
+
+      <!-- 4 导出工作台 -->
+      <section class="block">
+        <h2>4. 导出工作台</h2>
+        <div class="row" style="margin-bottom:8px;">
+          <div class="cell" style="flex:1;">
+            <h3>可选动画源（多选）</h3>
+            <div style="min-height:72px;background:#111;padding:8px;color:#666;">勾选 1..N 个序列 → 添加到导出列表</div>
+          </div>
+          <span class="btn" style="align-self:center;">添加到导出列表</span>
+        </div>
+        <h3 style="font-size:12px;color:#9ab;margin:0 0 6px;">导出列表（每项配置仅影响本次导出，不写回动画序列本身；<strong>分辨率缩放</strong>只在此处配置）</h3>
+        <table class="export">
+          <thead>
+            <tr>
+              <th>导出</th>
+              <th>动画</th>
+              <th>分辨率缩放</th>
+              <th>单元格边距</th>
+              <th>spritesheet 布局</th>
+              <th>世界尺寸</th>
+              <th>…</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>[x]</td>
+              <td>walk</td>
+              <td>100%</td>
+              <td>2</td>
+              <td>自动行列</td>
+              <td>w×h</td>
+              <td>…</td>
+            </tr>
+            <tr>
+              <td>[x]</td>
+              <td>run</td>
+              <td>50%</td>
+              <td>1</td>
+              <td>…</td>
+              <td>…</td>
+              <td>…</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="row" style="margin-top:10px;">
+          <span class="btn">选择导出目录…</span>
+          <span class="btn">分别导出（每项生成独立文件集）</span>
+          <span class="btn">合并导出（多序列进一张 atlas / 多 state）</span>
+        </div>
+      </section>
+
+      <p style="color:#6b7280;font-size:11px;margin:0;">主窗口底部：状态栏（保存路径、未保存标记、上次操作等）</p>
+    </div>
+  </div>
+
+  <!-- 导入工具：独立窗口 -->
+  <div class="modal">
+    <h2>独立窗口：导入工具（视频 + 色键 + 抽帧）</h2>
+    <p style="color:#aab;margin:0 0 10px;font-size:12px;">
+      从主窗口菜单打开。流程建议：<strong>打开视频</strong>（若无则在工作区<strong>新建视频源条目</strong>）→ <strong>预览与播放区间</strong> → <strong>色键（在抽帧前处理）</strong> → <strong>抽取</strong>得到清晰后的原始帧，<strong>写入该视频节点下的子帧库</strong>（可多次打开同一视频条目继续追加）→ 关闭返回主工作区；主界面素材树中可见该视频及其帧。
+    </p>
+    <div class="row">
+      <div class="cell" style="flex:1;min-width:200px;">
+        <h3>视频与区间</h3>
+打开文件、时间轴、循环条、播放控制 <div style="height:100px;background:#000;margin-top:6px;color:#444;display:flex;align-items:center;justify-content:center;">QVideoWidget 区域</div>
+      </div>
+      <div class="cell" style="flex:1;min-width:200px;">
+        <h3>色键（先于抽帧）</h3>
+        取色、容差、预览（棋盘底）
+        <div style="height:100px;background:#111;margin-top:6px;color:#555;display:flex;align-items:center;justify-content:center;">抠像预览</div>
+      </div>
+    </div>
+    <div class="cell" style="margin-top:10px;">
+      <h3>抽取</h3>
+      将当前区间/步进帧 <strong>追加</strong>到<strong>当前目标视频</strong>的子帧库（持久化后出现在该视频分组下）。确认 / 取消。
+    </div>
+  </div>
+
+  <div class="legend">
+    <strong>需求对齐确认（我理解的重点）</strong>
+    <ul>
+      <li>产品定位：<strong>帧 + 动画数据管理</strong>，主界面是工作区而非「半边视频编辑器」。</li>
+      <li><strong>持久化</strong>：工作区文件（或目录）承载<strong>视频源列表</strong>、各视频<strong>子帧库</strong>像素与元数据、动画序列与导出列表配置；打开软件即加载。</li>
+      <li><strong>素材库与激活</strong>：多视频多子库；<strong>选中即激活</strong>，后续「帧库向」操作全部以<strong>激活子库</strong>为基准，承接原单库工作流。</li>
+      <li><strong>frame_id</strong>：每帧稳定全局 id；动画序列<strong>只引用 id</strong>，不用子库本地序号持久化；增删帧时维护 id 与悬空引用策略。</li>
+      <li><strong>子库内容</strong>：仅存该视频抽得的原始素材；<strong>无</strong>子库内翻转与缩放。</li>
+      <li><strong>首尾工作区</strong>：保留蒙版对照；<strong>旁侧增加</strong>基于首尾的范围循环预览与调速。</li>
+      <li><strong>智能匹配</strong>：在限定范围内搜首/尾候选，预览结果，一键应用。</li>
+      <li><strong>动画库</strong>：<code>frame_id</code> 有序列表；可跨视频；从激活子库取范围时做「序号→id」转换；序列侧仅<strong>水平翻转</strong>（<strong>无缩放</strong>），<strong>不回写子库像素</strong>。</li>
+      <li><strong>导出</strong>：多选入列表；<strong>每行独立导出参数</strong>为导出专用（含<strong>分辨率缩放</strong>、边距、spritesheet、世界尺寸等），不改变动画序列里已保存的序列数据。</li>
+      <li><strong>视频路径</strong>：整体迁入<strong>导入弹窗</strong>，色键属于导入流程内步骤。</li>
+      <li><strong>无图集回灌</strong>：不实现从导出物 meta/PNG 再导入；动画序列随工作区持久化，修改后<strong>重新导出</strong>即可。</li>
+    </ul>
+    若某条与你想的不一致（例如智能匹配算法的输入范围或序列翻转标记的粒度），可再收窄一版线框。
+  </div>
+
+</body>
+</html>

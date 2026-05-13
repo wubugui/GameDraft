@@ -1,0 +1,488 @@
+/* 调试侧栏：DOM 层，与 Canvas 并列于 #app-shell */
+
+#app-shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#game-mount {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+#debug-dock {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  max-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: #0d0d14;
+  color: #ccd;
+  border-left: 1px solid #334466;
+  font-family: system-ui, 'Segoe UI', sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  transition: flex-basis 0.18s ease, min-width 0.18s ease, width 0.18s ease,
+    opacity 0.15s ease;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#debug-dock.is-open {
+  flex: 0 0 clamp(17.5rem, 32vw, 27.5rem);
+  width: clamp(17.5rem, 32vw, 27.5rem);
+  min-width: clamp(17.5rem, 32vw, 27.5rem);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.debug-dock__header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #2a3344;
+  background: #12121a;
+}
+
+.debug-dock__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #8ac;
+}
+
+.debug-dock__hint {
+  font-size: 0.7rem;
+  color: #667;
+}
+
+.debug-dock__close {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  background: #2a3040;
+  border: 1px solid #445566;
+  color: #abc;
+  border-radius: 4px;
+}
+
+.debug-dock__close:hover {
+  background: #354055;
+}
+
+.debug-dock__tabs {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0.35rem 0.5rem 0;
+  background: #12121a;
+  border-bottom: 1px solid #2a3344;
+}
+
+.debug-dock__tab {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 4px 4px 0 0;
+  color: #8899aa;
+}
+
+.debug-dock__tab:hover {
+  color: #bcd;
+  background: #1e2430;
+}
+
+.debug-dock__tab.is-active {
+  color: #e8f0ff;
+  background: #1a2230;
+  font-weight: 600;
+}
+
+.debug-dock__panels {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.debug-dock__panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.debug-dock__panel.is-active {
+  display: flex;
+}
+
+.debug-dock__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.65rem 0.75rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.debug-dock__section {
+  margin-bottom: 0.85rem;
+}
+
+.debug-dock__section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8899cc;
+  margin: 0 0 0.35rem;
+}
+
+.debug-dock__pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, 'Cascadia Mono', monospace;
+  font-size: 0.8rem;
+  color: #c5d0e0;
+}
+
+.debug-dock__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.debug-dock__section-extra {
+  margin-top: 0.55rem;
+}
+
+.debug-dock__slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.debug-dock__slider-row input[type='range'] {
+  flex: 1 1 8rem;
+  min-width: 9rem;
+  max-width: 100%;
+}
+
+.debug-dock__slider-value {
+  flex: 0 0 auto;
+  min-width: 2.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: #9dbdff;
+}
+
+.debug-dock__slider-hint {
+  flex: 1 1 100%;
+  font-size: 0.75rem;
+  color: #8899aa;
+  line-height: 1.35;
+}
+
+.debug-dock__btn {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  background: #2a3148;
+  border: 1px solid #455670;
+  color: #cde;
+  border-radius: 4px;
+}
+
+.debug-dock__btn:hover {
+  background: #364058;
+}
+
+.debug-dock__btn--danger {
+  background: #3a2028;
+  border-color: #664444;
+  color: #daa;
+}
+
+.debug-dock__err {
+  color: #f88;
+  font-size: 0.8rem;
+}
+
+.debug-dock__log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 0.5rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: #8ab;
+  background: #0a0a10;
+  border: 1px solid #2a3344;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.debug-dock__log-tools {
+  flex: 0 0 auto;
+  padding: 0.35rem 0 0;
+}
+
+.debug-dock__tools-column {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.debug-dock__flag-section {
+  flex: 0 1 auto;
+  max-height: min(52vh, 22rem);
+  overflow: auto;
+  padding-right: 0.15rem;
+  border-bottom: 1px solid #2a3344;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.45rem;
+}
+
+/* Flag 独占「Flag」标签页时不再限制高度，便于一览列表 */
+#flags-panel .debug-dock__flag-section {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.debug-flag__subhead {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #8ab;
+  margin: 0 0 0.25rem;
+}
+
+.debug-flag__label {
+  display: block;
+  font-size: 0.72rem;
+  color: #9aa;
+  margin: 0.35rem 0 0.15rem;
+}
+
+.debug-flag__search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 4px;
+  margin-bottom: 0.35rem;
+}
+
+.debug-flag__select {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  background: #0f1218;
+  border: 1px solid #3a4a60;
+  color: #cde;
+  border-radius: 4px;
+  margin-bottom: 0.45rem;
+}
+
+.debug-flag__editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.debug-flag__cur {
+  font-size: 0.75rem;
+  color: #aab;
+  word-break: break-all;
+}
+
+.debug-flag__cur-key {
+  color: #9cf;
+  font-weight: 600;
+}
+
+.debug-flag__cur-val {
+  color: #bd8;
+}
+
+.debug-flag__btn-row,
+.debug-flag__num-row,
+.debug-flag__str-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.debug-flag__num,
+.debug-flag__str {
+  flex: 1 1 6rem;
+  min-width: 0;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.78rem;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 4px;
+}
+
+.debug-flag__fav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.25rem;
+}
+
+.debug-flag__fav-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.35rem;
+  background: #121620;
+  border-radius: 4px;
+  border: 1px solid #2a3344;
+}
+
+.debug-flag__fav-name {
+  flex: 1 1 40%;
+  min-width: 0;
+  cursor: pointer;
+  color: #9cf;
+  text-decoration: underline dotted;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-flag__fav-val {
+  color: #8a9;
+  font-family: ui-monospace, monospace;
+}
+
+.debug-flag__fav-num {
+  width: 4.5rem;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.72rem;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 3px;
+}
+
+.debug-flag__fav-str {
+  flex: 1 1 5rem;
+  min-width: 0;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.72rem;
+  background: #141820;
+  border: 1px solid #3a4a60;
+  color: #dde;
+  border-radius: 3px;
+}
+
+.debug-flag__hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #678;
+}
+
+.debug-dock__btn--sm {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.68rem;
+}
+
+/* F2 叙事调试：scenario 列表 */
+.debug-dock__scenario-list-hint {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  color: #7a8498;
+}
+
+.debug-dock__scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: min(52vh, 28rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+.debug-dock__scenario-list-empty {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #889;
+}
+
+.debug-dock__scenario-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.4rem 0.35rem;
+  border-radius: 4px;
+  background: #161a24;
+  border: 1px solid #2a3448;
+}
+
+.debug-dock__scenario-meta {
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+.debug-dock__scenario-id {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: #9bd;
+  word-break: break-all;
+}
+
+.debug-dock__scenario-sub {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: #9aa8b8;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.debug-dock__scenario-btns {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}

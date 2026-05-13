@@ -1,0 +1,146 @@
+{
+  "name": "河边",
+  "camera": {
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
+  },
+  "id": "河边",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 605.2,
+    "y": 415.8
+  },
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.5877852522924731,
+          -0.8090169943749475
+        ],
+        [
+          0.0,
+          0.8090169943749475,
+          -0.5877852522924731
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 155.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 5.27,
+      "offset": -3.8
+    },
+    "shader": {
+      "depth_per_sy": 0.004687371148421683,
+      "floor_depth_A": -0.00887988335787854,
+      "floor_depth_B": 3.409875209425359
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -2.5716508442080275,
+      "z_min": -4.412903225806452,
+      "cell_size": 0.044258064516129035,
+      "grid_width": 161,
+      "grid_height": 201,
+      "height_offset": 0.05
+    }
+  },
+  "zones": [
+    {
+      "id": "new_zone_0",
+      "polygon": [
+        {
+          "x": -5.1,
+          "y": 135.2
+        },
+        {
+          "x": -7.3,
+          "y": -94.1
+        },
+        {
+          "x": 353.3,
+          "y": 196.8
+        },
+        {
+          "x": 581.6,
+          "y": 272.1
+        },
+        {
+          "x": 1432.2,
+          "y": 666.5
+        },
+        {
+          "x": 1345.2,
+          "y": 948.9
+        }
+      ],
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": 0.6
+    },
+    {
+      "id": "new_zone_1",
+      "polygon": [
+        {
+          "x": 3.0,
+          "y": 669.8
+        },
+        {
+          "x": 493.1,
+          "y": 461.7
+        },
+        {
+          "x": 593.3,
+          "y": 510.1
+        },
+        {
+          "x": -0.0,
+          "y": 946.0
+        }
+      ],
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": 0.1
+    }
+  ],
+  "spawnPoints": {
+    "从山路": {
+      "x": 136.6,
+      "y": 724.5
+    }
+  },
+  "hotspots": [
+    {
+      "id": "T到山路",
+      "type": "transition",
+      "label": "到山路",
+      "x": 116.5,
+      "y": 747.1,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "mountain_pass",
+        "targetSpawnPoint": "spawn_0"
+      }
+    }
+  ],
+  "ambientSounds": [
+    "夜晚蛐蛐叫"
+  ]
+}

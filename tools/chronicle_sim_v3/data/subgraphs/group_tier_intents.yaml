@@ -1,0 +1,63 @@
+schema: chronicle_sim_v3/graph@1
+id: group_tier_intents
+title: B/C 群体意图包
+description: |
+  对一整组低权重 NPC 生成一批简化周意图，并写入群体周状态。
+
+inputs:
+  tier:
+    type: Str
+    required: true
+  week:
+    type: Week
+    required: true
+
+spec:
+  nodes:
+    group_state_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+          tier: ${inputs.tier}
+      params:
+        pattern: "chronicle.group_state:week={week},tier={tier}"
+    agents_json:
+      kind: json.encode
+      in:
+        value: ${inputs.agents}
+      params:
+        indent: 2
+    world_bible:
+      kind: read.world.bible_text
+    group_call:
+      kind: agent.cline
+      in:
+        vars:
+          tier: ${inputs.tier}
+          week: ${inputs.week}
+          group_agents_json: ${nodes.agents_json.out}
+          context_text: ${nodes.world_bible.out}
+      params:
+        agent_spec: data/agent_specs/group_intent_pack.toml
+        llm:
+          role: npc_group
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    intents_only:
+      kind: json.path
+      in:
+        value: ${nodes.group_call.parsed}
+      params:
+        path: intents
+    write_group_state:
+      kind: write.schema.json
+      in:
+        key: ${nodes.group_state_key.out}
+        payload: ${nodes.group_call.parsed}
+  result:
+    intents: ${nodes.intents_only.out}
+    group_state: ${nodes.group_call.parsed}
+    key: ${nodes.write_group_state.key}

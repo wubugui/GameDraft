@@ -1,0 +1,14 @@
+{
+  "id": "dev_room",
+  "name": "Dev Room",
+  "worldWidth": 1024,
+  "worldHeight": 768,
+  "backgrounds": [],
+  "spawnPoint": {
+    "x": 512,
+    "y": 384
+  },
+  "spawnPoints": {},
+  "hotspots": [],
+  "npcs": []
+}

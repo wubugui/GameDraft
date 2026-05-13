@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "街巷_打更人李老三",
+  "entry": "n_start",
+  "meta": {
+    "title": "new_dialogue"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "",
+      "text": "莫闹，睡瞌睡。"
+    }
+  }
+}

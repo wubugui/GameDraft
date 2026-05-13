@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>week 有向图 · 子图可折叠/双击展开</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #0d1117; color: #e6edf3; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    header { flex: 0 0 auto; padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; }
+    header h1 { margin: 0; font-size: 1.05rem; }
+    header p { margin: 6px 0 0; font-size: 0.82rem; color: #8b949e; line-height: 1.4; }
+    .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+    .bar button { background: #21262d; border: 1px solid #30363d; color: #e6edf3; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
+    .bar button:hover:not(:disabled) { border-color: #58a6ff; }
+    .bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .leg { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.75rem; color: #8b949e; }
+    .leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; }
+    .c-io { background: #238636; }
+    .c-llm { background: #8957e5; }
+    .c-algo { background: #1f6feb; }
+    .c-flow { background: #d29922; }
+    .c-in { background: #6e7681; }
+    .c-com { background: #e3643c; }
+    .main { flex: 1; display: flex; min-height: 0; }
+    #view { flex: 1; min-width: 0; background: #0d1117; }
+    #side { width: 320px; max-width: 40vw; flex: 0 0 320px; border-left: 1px solid #30363d; background: #111620; padding: 10px; overflow: auto; font-size: 0.84rem; line-height: 1.5; }
+    #side h3 { margin: 0 0 6px; font-size: 0.88rem; color: #58a6ff; }
+    #side .k { color: #79c0ff; font-size: 0.72rem; font-family: ui-monospace, Consolas, monospace; margin-bottom: 6px; word-break: break-all; }
+    #side p { margin: 0; color: #c9d1d9; }
+    #side .placeholder { color: #6e7681; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>graph week · 子图折叠为单节点 · 双击橙色「子图」展开内部</h1>
+    <p>默认折叠子图。橙色 = 可展开块。B 档与 C 档的 <code>group_tier_intents</code> 在图中为<strong>两条独立子图</strong>（各一块橙色折叠、各一套内部节点，与 <code>data/subgraphs/group_tier_intents.yaml</code> 一一对应，不混成一块）。<strong>双击</strong>橙色块展开；<strong>Shift+双击</strong>子图内节点可收回，或用「折叠 GTI (B) / (C)」按钮。悬停节点看右侧说明。</p>
+    <div class="bar">
+      <button type="button" id="fit">适应窗口</button>
+      <button type="button" id="phyOn">开物理</button>
+      <button type="button" id="phyOff">关物理</button>
+      <span style="width:8px"></span>
+      <button type="button" id="fold_sai" disabled>折叠 SAI+NC</button>
+      <button type="button" id="fold_gti_b" disabled>折叠 GTI (B 档)</button>
+      <button type="button" id="fold_gti_c" disabled>折叠 GTI (C 档)</button>
+      <button type="button" id="fold_bel" disabled>折叠 信念子图</button>
+      <button type="button" id="fold_wend" disabled>折叠 周末子图</button>
+    </div>
+    <div class="leg" style="margin-top:6px">
+      <span><i class="c-com"></i>折叠子图(双击展开)</span>
+      <span><i class="c-io"></i>读/写</span>
+      <span><i class="c-llm"></i>LLM</span>
+      <span><i class="c-algo"></i>算子/算法</span>
+      <span><i class="c-flow"></i>flow</span>
+    </div>
+  </header>
+  <div class="main">
+    <div id="view"></div>
+    <aside id="side">
+      <h3 id="sideTitle">悬停节点查看说明</h3>
+      <div class="k" id="sideKind"></div>
+      <p id="sideBody" class="placeholder">鼠标移到有向图节点上；橙色折叠子图可<strong>双击</strong>展开内部有向网。</p>
+    </aside>
+  </div>
+  <script>
+(function() {
+  var T = {
+    in_week: { k: "inputs.week(虚拟节点)", t: "Cook 的图入参：第几周。供 pacing 倍率、传谣、写键等用。" },
+    w_bible: { k: "read.world.bible_text", t: "从 Run 拼出的世界圣经长文。编导/GM/NPC/社会态都会引用。" },
+    w_agents: { k: "read.world.agents", t: "世界里的 NPC 列表/索引。后面过滤存活、分层都从这里来。" },
+    w_alive: { k: "npc.filter_active", t: "只保留仍活跃可参与周循环的角色。" },
+    w_by: { k: "npc.partition_by_tier", t: "S/A/B/C 分四堆。S/A 走 fanout+SAI；B、C 各 `flow.subgraph` 调一次 `group_tier_intents`（两路独立、非合并）。" },
+    w_pacing: { k: "read.config.pacing", t: "读节奏主数据；YAML 里写死 default preset，pacing_preset 入参未接线。" },
+    w_pmul: { k: "pacing.multiplier", t: "本周边节奏倍率标量，给 director 的提示。" },
+    w_in_s: { k: "flow.fanout (S) → SAI 子", t: "对 S 档每 NPC 跑 single_agent_intent。折叠时经 COLL_sai 进 all_intents。" },
+    w_in_a: { k: "flow.fanout (A) → SAI 子", t: "同 S，仅 toml 换 tier_a。折叠时经同一块 COLL_sai 代表（两路都汇入 all_intents）。" },
+    w_in_b: { k: "flow.subgraph intent_b", t: "对应 week.yaml 的 `intent_b`：`ref: group_tier_intents`，`inputs: tier B, week, agents: by_tier.B`。与 C 是「两次」独立子图，不可合并。" },
+    w_in_c: { k: "flow.subgraph intent_c", t: "对应 `intent_c`：同上，`tier: C`，`agents: by_tier.C`。内部拓扑与 B 的同名节点一一对应，但是另一次 cook 实例。" },
+    w_all: { k: "list.concat", t: "四路意图条拼成 all_intents。" },
+    w_jtx: { k: "json.encode", t: "给编导用的 intents 大字符串。" },
+    w_in_n: { k: "count", t: "intents 条数 → 图输出 intents_count。" },
+    w_ety: { k: "read.config.event_types", t: "读事件型录源数据。" },
+    w_etx: { k: "eventtype.format_for_prompt", t: "给导演看的事件型录人话条列。" },
+    w_dir: { k: "agent.cline director", t: "编剧：在圣经+意图+节奏+型录上起草草案 JSON。" },
+    w_dft: { k: "json.encode", t: "草案 stringify 给 GM。" },
+    w_gm: { k: "agent.cline gm", t: "裁定：在圣经下把草案定稿，产出可执行的 events。" },
+    w_gev: { k: "json.path events", t: "从 GM 输出取 events 数组，是后序谣言/信念/周末的真理源。" },
+    w_edges: { k: "read.world.edges", t: "关系网，供传谣 BFS。" },
+    w_rsimp: { k: "read.config.rumor_sim", t: "传谣 BFS 超参。" },
+    w_rum: { k: "rumor.bfs_engine", t: "纯图算法+随机，无 LLM。" },
+    w_wru: { k: "write.chronicle.rumors", t: "写本周谣。" },
+    w_getx: { k: "json.encode 事件", t: "定稿 events 的字符串，喂社会态等。" },
+    w_rutx: { k: "json.encode 谣言", t: "谣言结果 stringify。" },
+    w_bls: { k: "fanout belief (S)", t: "S 每角色一个 belief 子图实体的入口（图中信念链表意合并）。" },
+    w_bla: { k: "fanout belief (A)", t: "同上 A。" },
+    w_blb: { k: "fanout belief (B)", t: "同上 B。" },
+    w_blc: { k: "fanout belief (C)", t: "同上 C。" },
+    w_ss: { k: "agent.cline social_state", t: "从意图草案+定稿+谣文生成社会态 JSON。" },
+    w_wss: { k: "write schema 社会态", t: "落盘 chronicle.social_state:week=…" },
+    COLL_sai: { k: "子图(折叠) single_agent_intent + npc_context", t: "展开后见：先 npc_context 拼上下文，再「感知→意图→行动→反思」链。S/A 两路 fanout 共用同一条展开示意（同构多实例）。<strong>双击本节点展开</strong>。" },
+    COLL_gti_b: { k: "子图(折叠) group_tier_intents · B 实例", t: "与 `data/subgraphs/group_tier_intents.yaml` 同形一次运行，`inputs.tier=B`。双击展开，见内部 `group_state_key / agents_json / world_bible / group_call / intents / write`。" },
+    COLL_gti_c: { k: "子图(折叠) group_tier_intents · C 实例", t: "同一 YAML 的第二次实例，`inputs.tier=C`，名单为 `by_tier.C`。与 B 的节点不共享。双击展开。" },
+    COLL_bel: { k: "子图(折叠) single_agent_belief_update", t: "每角色从事件+谣言用规则生信念，不调用 LLM。S/A/B/C 四路 fanout 在图中用一条表意链+侧挂说明。双击展开。" },
+    COLL_wend: { k: "子图(折叠) week_end", t: "事件/谣/社会态三路线文本，进 story_clusterer 与周记；最后写 story_clusters 与 summary。双击展开。" },
+    nc_b: { k: "read.world.bible_text", t: "单 NPC 上下文中的圣经，与全图圣经同源数据。" },
+    nc_p: { k: "read 档案/多 key", t: "子图里先拼 key 再 read.schema / beliefs / memory / perception 等，图中合为一站。" },
+    nc_comp: { k: "npc.context_compose", t: "把多段合成为 headed 人话+各 JSON 出口，供多步 LLM 使用。" },
+    sa_p: { k: "agent.cline 感知", t: "生成本周感知。YAML 中可见事件/听谣/位置仍空占位。" },
+    sa_pl: { k: "agent.cline 意图", t: "tier 对应 toml 计划本周要做什么。" },
+    sa_ac: { k: "agent.cline 行动", t: "在感+意上编实际执行。" },
+    sa_rf: { k: "agent.cline 反思", t: "对行动与意进行回顾。" },
+    gti_b_key: { k: "text.format (B) → group_state_key", t: "拼 `chronicle.group_state:week=,tier=B` 的写键字符串。" },
+    gti_b_aj: { k: "json.encode (B) agents", t: "把 `inputs.agents`（B 档列表）stringify 给 `group_call`。" },
+    gti_b_wb: { k: "read.world.bible_text (B)", t: "子图内再读世界圣经，与全图 `bible` 同源。" },
+    gti_b_gc: { k: "agent.cline (B) group_intent_pack", t: "群体 LLM，输出 JSON（含可解析的 `intents` 等）。" },
+    gti_b_int: { k: "json.path (B) intents", t: "从 `group_call.parsed` 取 `intents` 数组，给 `list.concat` 的 `intent_b.out.intents`。" },
+    gti_b_wg: { k: "write.schema.json (B) group_state", t: "key=group_state_key，payload=group_call 全包。对应 YAML 节点 `write_group_state`。" },
+    gti_c_key: { k: "text.format (C) → group_state_key", t: "同上，`tier=C`。" },
+    gti_c_aj: { k: "json.encode (C) agents", t: "C 档 `inputs.agents`。" },
+    gti_c_wb: { k: "read.world.bible_text (C)", t: "C 子图内再拉圣经。" },
+    gti_c_gc: { k: "agent.cline (C) group_intent_pack", t: "C 档另一次 group LLM 调用，与 B 的调用不共享。" },
+    gti_c_int: { k: "json.path (C) intents", t: "供 `intent_c.out.intents`。" },
+    gti_c_wg: { k: "write.schema.json (C) group_state", t: "写 `chronicle.group_state:…,tier=C`。" },
+    sb_ev: { k: "belief.from_events", t: "从定稿 events 中抽与该 agent 相关命题+置信度。" },
+    sb_ru: { k: "belief.from_rumors", t: "从传谣结果按人抽听说信念。" },
+    sb_mg: { k: "belief.merge_truncate", t: "两路合并、去弱、截断 top 24。" },
+    sb_dc: { k: "belief.decay", t: "逐条乘衰减、去阈下。" },
+    sb_wr: { k: "write.chronicle.belief", t: "写本周 belief 键。" },
+    we_evt: { k: "json 事件成文", t: "子图里 path+encode 后给 LLM 读。" },
+    we_rut: { k: "json 谣成文", t: "同上，谣言线。" },
+    we_sst: { k: "json 社态成文", t: "来自父图 social_state 的 parsed，不是 write 落盘结果。" },
+    we_scl: { k: "agent.cline story_clusterer", t: "聚成故事簇 JSON。" },
+    bel_note: { k: "示意(非引擎节点)", t: "子图对 S/A/B/C 各跑一遍，此处仅标注「多路同构」。" },
+    we_wsc: { k: "write 故事簇", t: "写 chronicle.story_clusters:week=…" },
+    we_sum: { k: "agent.cline week_summarizer", t: "写自然语言周记。" },
+    we_wsu: { k: "write.chronicle.summary", t: "周总结落盘，父图 result.summary 来源。" }
+  };
+
+  var state = { sai: false, gti_b: false, gti_c: false, bel: false, wend: false };
+  var keyShift = false;
+  document.addEventListener("keydown", function (ev) { keyShift = ev.shiftKey; });
+  document.addEventListener("keyup", function (ev) { keyShift = ev.shiftKey; });
+
+  function n(id, label, group, ex) {
+    var o = { id: id, label: label, group: group };
+    if (ex) for (var k in ex) o[k] = ex[k];
+    return o;
+  }
+
+  function e(a, b, ex) {
+    var o = { from: a, to: b, arrows: "to" };
+    if (ex) for (var k in ex) o[k] = ex[k];
+    return o;
+  }
+
+  function buildNodes() {
+    var L = [ n("in_week", "inputs.week", "in") ];
+    L.push(
+      n("w_bible", "bible", "io"), n("w_agents", "agents", "io"), n("w_alive", "alive", "algo"), n("w_by", "by_tier", "algo"),
+      n("w_pacing", "pacing", "io"), n("w_pmul", "pacing_mult", "algo"),
+      n("w_in_s", "intent_S\nfanout", "flow"), n("w_in_a", "intent_A\nfanout", "flow"),
+      n("w_in_b", "intent_B", "flow"), n("w_in_c", "intent_C", "flow"),
+      n("w_all", "all_intents", "algo"), n("w_jtx", "intents_text", "algo"), n("w_in_n", "intents_n", "algo"),
+      n("w_ety", "event_types", "io"), n("w_etx", "event→文本", "algo"),
+      n("w_dir", "director", "llm"), n("w_dft", "drafts_text", "algo"), n("w_gm", "gm", "llm"),
+      n("w_gev", "gm_events", "algo"), n("w_edges", "edges", "io"), n("w_rsimp", "rumor_sim", "io"), n("w_rum", "rumor BFS", "algo"), n("w_wru", "write.rumors", "io"),
+      n("w_getx", "events JSON", "algo"), n("w_rutx", "rumors JSON", "algo"),
+      n("w_bls", "belief_S", "flow"), n("w_bla", "belief_A", "flow"), n("w_blb", "belief_B", "flow"), n("w_blc", "belief_C", "flow"),
+      n("w_ss", "social_state", "llm"), n("w_wss", "write social", "io")
+    );
+    if (state.sai) {
+      L.push(n("nc_b", "NC: bible", "io"), n("nc_p", "NC: reads", "io"), n("nc_comp", "NC: compose", "algo"), n("sa_p", "SA: 感知", "llm"), n("sa_pl", "SA: 意图", "llm"), n("sa_ac", "SA: 行动", "llm"), n("sa_rf", "SA: 反思", "llm"));
+    } else {
+      L.push(n("COLL_sai", "SAI+npc_context\n(双击展开)", "composite", { font: { multi: "md" } }));
+    }
+    if (state.gti_b) {
+      L.push(
+        n("gti_b_key", "B: group_state_key", "algo"), n("gti_b_aj", "B: agents.json", "algo"), n("gti_b_wb", "B: bible", "io"), n("gti_b_gc", "B: group_call", "llm"), n("gti_b_int", "B: intents", "algo"), n("gti_b_wg", "B: write group", "io")
+      );
+    } else {
+      L.push(n("COLL_gti_b", "GTI tier=B\ngroup_tier_intents\n(双击展开)", "composite", { font: { multi: "md" } }));
+    }
+    if (state.gti_c) {
+      L.push(
+        n("gti_c_key", "C: group_state_key", "algo"), n("gti_c_aj", "C: agents.json", "algo"), n("gti_c_wb", "C: bible", "io"), n("gti_c_gc", "C: group_call", "llm"), n("gti_c_int", "C: intents", "algo"), n("gti_c_wg", "C: write group", "io")
+      );
+    } else {
+      L.push(n("COLL_gti_c", "GTI tier=C\ngroup_tier_intents\n(双击展开)", "composite", { font: { multi: "md" } }));
+    }
+    if (state.bel) {
+      L.push(n("sb_ev", "bel: 从事件", "algo"), n("sb_ru", "bel: 从谣", "algo"), n("sb_mg", "bel: 合并", "algo"), n("sb_dc", "bel: 衰减", "algo"), n("sb_wr", "bel: 落盘", "io"), n("bel_note", "S/A/B/C\n(同构×4)", "flow"));
+    } else {
+      L.push(n("COLL_bel", "belief 更新\n(双击展开)", "composite", { font: { multi: "md" } }));
+    }
+    if (state.wend) {
+      L.push(
+        n("we_evt", "WE: 事件文", "algo"), n("we_rut", "WE: 谣文", "algo"), n("we_sst", "WE: 社态文", "algo"),
+        n("we_scl", "WE: 聚类", "llm"), n("we_wsc", "WE: 写簇", "io"), n("we_sum", "WE: 周记", "llm"), n("we_wsu", "WE: 写summary", "io")
+      );
+    } else {
+      L.push(
+        n("COLL_wend", "week_end\n(双击展开)", "composite", { font: { multi: "md" } }),
+        n("we_wsu", "write.chronicle.summary", "io")
+      );
+    }
+    return L;
+  }
+
+  function buildEdges() {
+    var E = [];
+    E.push(e("w_agents", "w_alive"), e("w_alive", "w_by"), e("w_pacing", "w_pmul"), e("in_week", "w_pmul"));
+    if (state.sai) {
+      E.push(e("w_in_s", "nc_b"), e("w_in_a", "nc_b"), e("nc_b", "nc_p", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("nc_p", "nc_comp"), e("nc_b", "nc_comp", { dashes: true, color: { color: "#8b949e" } }));
+      E.push(e("nc_comp", "sa_p"), e("sa_p", "sa_pl"), e("nc_comp", "sa_pl", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("sa_p", "sa_pl", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("sa_pl", "sa_ac"), e("sa_p", "sa_ac", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("sa_ac", "sa_rf"), e("sa_pl", "sa_rf", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("sa_pl", "w_all", { color: { color: "#3fb950" } }));
+    } else {
+      E.push(e("w_in_s", "COLL_sai"), e("w_in_a", "COLL_sai"), e("COLL_sai", "w_all", { color: { color: "#3fb950" } }));
+    }
+    if (state.gti_b) {
+      E.push(e("w_in_b", "gti_b_key"), e("w_in_b", "gti_b_aj"), e("w_bible", "gti_b_wb", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("gti_b_aj", "gti_b_gc"), e("gti_b_wb", "gti_b_gc"), e("gti_b_gc", "gti_b_int"), e("gti_b_key", "gti_b_wg"), e("gti_b_gc", "gti_b_wg"), e("gti_b_int", "w_all", { color: { color: "#3fb950" } }));
+    } else {
+      E.push(e("w_in_b", "COLL_gti_b"), e("COLL_gti_b", "w_all", { color: { color: "#3fb950" } }));
+    }
+    if (state.gti_c) {
+      E.push(e("w_in_c", "gti_c_key"), e("w_in_c", "gti_c_aj"), e("w_bible", "gti_c_wb", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("gti_c_aj", "gti_c_gc"), e("gti_c_wb", "gti_c_gc"), e("gti_c_gc", "gti_c_int"), e("gti_c_key", "gti_c_wg"), e("gti_c_gc", "gti_c_wg"), e("gti_c_int", "w_all", { color: { color: "#3fb950" } }));
+    } else {
+      E.push(e("w_in_c", "COLL_gti_c"), e("COLL_gti_c", "w_all", { color: { color: "#3fb950" } }));
+    }
+    if (state.bel) {
+      E.push(e("w_bls", "sb_ev"), e("w_bla", "sb_ev", { dashes: true, color: { color: "#6e7681" } }), e("w_blb", "sb_ev", { dashes: true, color: { color: "#6e7681" } }), e("w_blc", "sb_ev", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("w_gev", "sb_ev"), e("w_rum", "sb_ru"), e("w_bls", "bel_note", { dashes: true, color: { color: "#6e7681" } }));
+      E.push(e("sb_ev", "sb_mg"), e("sb_ru", "sb_mg"), e("sb_mg", "sb_dc"), e("sb_dc", "sb_wr"));
+    } else {
+      E.push(e("w_bls", "COLL_bel"), e("w_bla", "COLL_bel"), e("w_blb", "COLL_bel"), e("w_blc", "COLL_bel"), e("w_gev", "COLL_bel"), e("w_rum", "COLL_bel"));
+    }
+    if (state.wend) {
+      E.push(e("w_gev", "we_evt"), e("w_rum", "we_rut"), e("w_ss", "we_sst"), e("we_evt", "we_scl"), e("we_rut", "we_scl"), e("we_sst", "we_scl"), e("we_scl", "we_wsc"), e("we_evt", "we_sum"), e("we_rut", "we_sum"), e("we_sst", "we_sum"), e("we_sum", "we_wsu"));
+    } else {
+      E.push(e("w_gev", "COLL_wend"), e("w_rum", "COLL_wend"), e("w_ss", "COLL_wend"), e("COLL_wend", "we_wsu", { color: { color: "#3fb950" } }));
+    }
+    E.push(
+      e("w_all", "w_jtx"), e("w_all", "w_in_n"), e("w_ety", "w_etx"), e("w_bible", "w_dir"), e("w_pmul", "w_dir"), e("w_jtx", "w_dir"), e("w_etx", "w_dir"), e("w_dir", "w_dft"), e("w_dft", "w_gm"), e("w_bible", "w_gm"), e("w_gm", "w_gev"), e("w_gev", "w_rum"), e("w_edges", "w_rum"), e("w_rsimp", "w_rum"), e("in_week", "w_rum"), e("w_rum", "w_wru"), e("w_gev", "w_getx"), e("w_rum", "w_rutx"), e("w_bible", "w_ss"), e("w_jtx", "w_ss"), e("w_dft", "w_ss"), e("w_getx", "w_ss"), e("w_rutx", "w_ss"), e("w_ss", "w_wss")
+    );
+    return E;
+  }
+
+  var groupColors = {
+    in:  { background: "#6e7681", border: "#8b949e" },
+    io:  { background: "#238636", border: "#2ea043" },
+    llm: { background: "#8957e5", border: "#a371f7" },
+    algo:{ background: "#1f6feb", border: "#388bfd" },
+    flow:{ background: "#d29922", border: "#e3b341" },
+    composite: { background: "#e3643c", border: "#f0883e", font: { color: "#fff" } }
+  };
+
+  var nodes = new vis.DataSet();
+  var edges = new vis.DataSet();
+  var network;
+
+  function rebuild() {
+    nodes.clear();
+    edges.clear();
+    nodes.add(buildNodes());
+    edges.add(buildEdges());
+    if (network) {
+      network.setData({ nodes: nodes, edges: edges });
+    }
+    updateFoldButtons();
+    setTimeout(function() { if (network) { network.fit({ animation: { duration: 200 } }); } network.setOptions({ physics: { enabled: true } }); setTimeout(function() { if (network) { network.setOptions({ physics: { enabled: false } }); } }, 800); });
+  }
+
+  function updateFoldButtons() {
+    function set(id, on) { var b = document.getElementById(id); if (b) b.disabled = !on; }
+    set("fold_sai", state.sai);
+    set("fold_gti_b", state.gti_b);
+    set("fold_gti_c", state.gti_c);
+    set("fold_bel", state.bel);
+    set("fold_wend", state.wend);
+  }
+
+  function showHelp(id) {
+    var h = T[id];
+    var row = nodes.get(id);
+    var lab = row && row.label ? String(row.label).replace(/\n/g, " / ") : id;
+    document.getElementById("sideTitle").textContent = lab;
+    document.getElementById("sideKind").textContent = h ? h.k : ("id: " + id);
+    document.getElementById("sideBody").textContent = h ? h.t : "暂无说明。";
+    document.getElementById("sideBody").className = h ? "" : "placeholder";
+  }
+
+  var container = document.getElementById("view");
+  var options = {
+    nodes: { shape: "box", margin: 10, font: { color: "#e6edf3", size: 12 }, borderWidth: 1, shadow: true, chosen: { node: function(v) { v.borderWidth = 2; } } },
+    edges: { width: 1, color: { color: "#6e7681" }, smooth: { type: "continuous" } },
+    physics: { enabled: true, solver: "forceAtlas2Based", forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 110, springConstant: 0.05, avoidOverlap: 0.2 } },
+    interaction: { hover: true, multiselect: false, dragNodes: true, dragView: true, zoomView: true, navigationButtons: true },
+    groups: { in: { color: groupColors.in }, io: { color: groupColors.io }, llm: { color: groupColors.llm }, algo: { color: groupColors.algo }, flow: { color: groupColors.flow }, composite: { color: groupColors.composite } }
+  };
+  network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+  rebuild();
+
+  network.on("hoverNode", function (p) { showHelp(p.node); });
+  network.on("blurNode", function () {
+    document.getElementById("sideTitle").textContent = "悬停节点查看说明";
+    document.getElementById("sideKind").textContent = "";
+    document.getElementById("sideBody").className = "placeholder";
+    document.getElementById("sideBody").textContent = "子图为橙色。双击子图可展开/折叠成内部节点；悬停可读本页下方说明表。";
+  });
+  function foldFromInner(id, ev) {
+    if (!(ev && ev.shiftKey) && !keyShift) return false;
+    if (id === "nc_b" || id === "nc_p" || id === "nc_comp" || id === "sa_p" || id === "sa_pl" || id === "sa_ac" || id === "sa_rf") { state.sai = false; return true; }
+    if (id === "gti_b_key" || id === "gti_b_aj" || id === "gti_b_wb" || id === "gti_b_gc" || id === "gti_b_int" || id === "gti_b_wg") { state.gti_b = false; return true; }
+    if (id === "gti_c_key" || id === "gti_c_aj" || id === "gti_c_wb" || id === "gti_c_gc" || id === "gti_c_int" || id === "gti_c_wg") { state.gti_c = false; return true; }
+    if (id === "sb_ev" || id === "sb_ru" || id === "sb_mg" || id === "sb_dc" || id === "sb_wr" || id === "bel_note") { state.bel = false; return true; }
+    if (id === "we_evt" || id === "we_rut" || id === "we_sst" || id === "we_scl" || id === "we_wsc" || id === "we_sum" || id === "we_wsu") { state.wend = false; return true; }
+    return false;
+  }
+  network.on("doubleClick", function (p) {
+    if (!p.nodes || !p.nodes[0]) return;
+    var id = p.nodes[0];
+    var ev = p.event;
+    if (foldFromInner(id, ev)) { rebuild(); return; }
+    if (id === "COLL_sai") { state.sai = true; rebuild(); return; }
+    if (id === "COLL_gti_b") { state.gti_b = true; rebuild(); return; }
+    if (id === "COLL_gti_c") { state.gti_c = true; rebuild(); return; }
+    if (id === "COLL_bel") { state.bel = true; rebuild(); return; }
+    if (id === "COLL_wend") { state.wend = true; rebuild(); return; }
+  });
+
+  document.getElementById("fit").addEventListener("click", function () { network.fit({ animation: { duration: 200 } }); });
+  document.getElementById("phyOn").addEventListener("click", function () { network.setOptions({ physics: { enabled: true } }); });
+  document.getElementById("phyOff").addEventListener("click", function () { network.setOptions({ physics: { enabled: false } }); });
+  document.getElementById("fold_sai").addEventListener("click", function () { state.sai = false; rebuild(); });
+  document.getElementById("fold_gti_b").addEventListener("click", function () { state.gti_b = false; rebuild(); });
+  document.getElementById("fold_gti_c").addEventListener("click", function () { state.gti_c = false; rebuild(); });
+  document.getElementById("fold_bel").addEventListener("click", function () { state.bel = false; rebuild(); });
+  document.getElementById("fold_wend").addEventListener("click", function () { state.wend = false; rebuild(); });
+})();
+  </script>
+</body>
+</html>

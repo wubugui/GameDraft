@@ -1,0 +1,6 @@
+outs:
+- md5: 9cd3f2296108883df6fcb22b9ab5a80d.dir
+  size: 707812109
+  nfiles: 4
+  hash: md5
+  path: vendor_archives

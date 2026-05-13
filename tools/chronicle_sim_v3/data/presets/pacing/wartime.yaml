@@ -1,0 +1,8 @@
+schema: chronicle_sim_v3/pacing_preset@1
+preset: wartime
+
+# 战时节奏：第 4-12 周冲突明显
+multiplier: 1.0
+windows:
+  - {from: 4, to: 8, multiplier: 1.5}
+  - {from: 9, to: 12, multiplier: 2.0}

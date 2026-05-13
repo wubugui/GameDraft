@@ -1,0 +1,1 @@
+"""Copy Manager widgets package."""

@@ -1,0 +1,8 @@
+schema: chronicle_sim_v3/rumor_sim_preset@1
+preset: aggressive
+
+# 谣言传播更猛：跳数更多 / 衰减更慢 / 通过率更高
+max_hops: 5
+decay_per_hop: 0.8
+p_pass: 0.9
+seed_base: rumor_aggressive

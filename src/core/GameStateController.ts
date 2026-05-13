@@ -1,0 +1,197 @@
+import { GameState } from '../data/types';
+import type { EventBus } from './EventBus';
+import type { InputManager } from './InputManager';
+
+export interface ToggleablePanel {
+  readonly isOpen: boolean;
+  open(): void;
+  close(): void;
+}
+
+export interface RegisterPanelOptions {
+  /** 允许在非 Exploring 状态下打开（如对话、遭遇、演出中） */
+  alwaysOpenable?: boolean;
+  /** 额外快捷键（除 shortcutKey 外） */
+  additionalKeys?: string[];
+  /**
+   * 为 true（默认）时打开面板会进入 UIOverlay，关闭时恢复先前状态。
+   * 为 false 时（如 DOM 侧栏调试面板）不改变 GameState，不阻挡探索/操作。
+   */
+  overlaysGameState?: boolean;
+}
+
+interface PanelEntry {
+  panel: ToggleablePanel;
+  shortcutKey?: string;
+  alwaysOpenable?: boolean;
+  additionalKeys?: string[];
+  overlaysGameState: boolean;
+}
+
+export class GameStateController {
+  private _currentState: GameState = GameState.Exploring;
+  private _previousState: GameState = GameState.Exploring;
+  /** 进入 UIOverlay 前压栈，关闭覆盖层面板时按 LIFO 恢复（支持多层覆盖 UI） */
+  private overlayReturnStack: GameState[] = [];
+  private panels = new Map<string, PanelEntry>();
+  private escapeFallback: (() => void) | null = null;
+  private unsubKeyDown: (() => void) | null = null;
+
+  constructor(inputManager: InputManager, private readonly eventBus?: EventBus) {
+    this.unsubKeyDown = inputManager.subscribeKeyDown((e) => {
+      this.handleKeyDown(e);
+    });
+  }
+
+  get currentState(): GameState { return this._currentState; }
+  get previousState(): GameState { return this._previousState; }
+
+  setState(newState: GameState): void {
+    this._previousState = this._currentState;
+    this._currentState = newState;
+  }
+
+  restorePreviousState(): void {
+    const s = this.overlayReturnStack.pop();
+    this._currentState = s !== undefined ? s : this._previousState;
+  }
+
+  registerPanel(
+    name: string,
+    panel: ToggleablePanel,
+    shortcutKey?: string,
+    options?: RegisterPanelOptions,
+  ): void {
+    this.panels.set(name, {
+      panel,
+      shortcutKey,
+      alwaysOpenable: options?.alwaysOpenable,
+      additionalKeys: options?.additionalKeys,
+      overlaysGameState: options?.overlaysGameState !== false,
+    });
+  }
+
+  setEscapeFallback(fn: () => void): void {
+    this.escapeFallback = fn;
+  }
+
+  /**
+   * 与按下 Escape 相同分支（供手机触屏 HUD 使用，不经过键盘事件）。
+   * 与 `handleKeyDown` 里 `e.code === 'Escape'` 行为一致。
+   */
+  triggerEscapeFromTouch(): void {
+    this.handleEscape();
+  }
+
+  /** 关闭所有已打开的面板，用于销毁前清理 */
+  closeAllPanels(): void {
+    for (const [, entry] of this.panels) {
+      if (entry.panel.isOpen) {
+        entry.panel.close();
+      }
+    }
+  }
+
+  togglePanel(name: string): void {
+    const entry = this.panels.get(name);
+    if (!entry) return;
+
+    if (entry.panel.isOpen) {
+      entry.panel.close();
+      this.eventBus?.emit('ui:panelClose', { name });
+      if (entry.overlaysGameState) {
+        const restored = this.overlayReturnStack.pop();
+        this._currentState = restored ?? GameState.Exploring;
+      }
+      return;
+    }
+
+    const canOpen = entry.alwaysOpenable || this._currentState === GameState.Exploring;
+    if (!canOpen) return;
+    if (entry.overlaysGameState) {
+      this.overlayReturnStack.push(this._currentState);
+      this._currentState = GameState.UIOverlay;
+    }
+    entry.panel.open();
+    if (entry.panel.isOpen) {
+      this.eventBus?.emit('ui:panelOpen', { name });
+    }
+
+    if (!entry.panel.isOpen && entry.overlaysGameState) {
+      const restored = this.overlayReturnStack.pop();
+      this._currentState = restored ?? GameState.Exploring;
+    }
+  }
+
+  private handleKeyDown(e: KeyboardEvent): void {
+    // 避免按住键时首拍打开、重复 keydown 立即再关（如 F2 调试侧栏）
+    if (e.repeat) return;
+
+    const debugEntry = this.panels.get('debug');
+    if (debugEntry?.panel.isOpen) {
+      if (e.code === 'F2') {
+        e.preventDefault();
+        this.togglePanel('debug');
+        return;
+      }
+      if (e.code === 'Escape') {
+        this.handleEscape();
+        return;
+      }
+      return;
+    }
+
+    for (const [name, entry] of this.panels) {
+      const matches =
+        (entry.shortcutKey && e.code === entry.shortcutKey) ||
+        (entry.additionalKeys && entry.additionalKeys.includes(e.code));
+      if (matches) {
+        e.preventDefault();
+        this.togglePanel(name);
+        return;
+      }
+    }
+
+    if (e.code === 'Escape') {
+      this.handleEscape();
+    }
+  }
+
+  private handleEscape(): void {
+    if (this._currentState === GameState.UIOverlay) {
+      for (const [, entry] of Array.from(this.panels.entries()).reverse()) {
+        if (entry.panel.isOpen && entry.overlaysGameState) {
+          entry.panel.close();
+          this.eventBus?.emit('ui:panelClose');
+          const restored = this.overlayReturnStack.pop();
+          this._currentState = restored ?? GameState.Exploring;
+          return;
+        }
+      }
+    }
+    for (const [, entry] of Array.from(this.panels.entries()).reverse()) {
+      if (entry.panel.isOpen && !entry.overlaysGameState) {
+        entry.panel.close();
+        this.eventBus?.emit('ui:panelClose');
+        return;
+      }
+    }
+    if (this._currentState === GameState.Exploring && this.escapeFallback) {
+      this.escapeFallback();
+    }
+  }
+
+  destroy(): void {
+    this.closeAllPanels();
+    for (const [, entry] of this.panels) {
+      const p = entry.panel as ToggleablePanel & { destroy?: () => void };
+      if (typeof p.destroy === 'function') {
+        p.destroy();
+      }
+    }
+    this.panels.clear();
+    this.overlayReturnStack = [];
+    this.unsubKeyDown?.();
+    this.unsubKeyDown = null;
+  }
+}

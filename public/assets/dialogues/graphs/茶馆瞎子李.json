@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "id": "茶馆瞎子李",
+  "entry": "root",
+  "meta": { "title": "茶馆·瞎子李" },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        { "conditions": [{ "flag": "got_iron_box", "value": true }], "next": "after_box_1" },
+        { "conditions": [{ "flag": "heard_teahouse_story", "value": true }], "next": "first_1" }
+      ],
+      "defaultNext": "too_early"
+    },
+    "too_early": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "老张那段还没摆完呢。你小子耳朵都没竖起来，就先往我这儿凑，能学成个什么？",
+      "next": "end1"
+    },
+    "first_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "茶就免了，有事说事。",
+      "next": "first_flags"
+    },
+    "first_flags": {
+      "type": "runActions",
+      "actions": [
+        { "type": "setFlag", "params": { "key": "met_blind_li", "value": true } },
+        { "type": "addArchiveEntry", "params": { "bookType": "character", "entryId": "blind_li" } }
+      ],
+      "next": "first_choice"
+    },
+    "first_choice": {
+      "type": "choice",
+      "options": [
+        { "id": "learn", "text": "李先生，我想拜你为师，学算命", "next": "learn_1" },
+        { "id": "help", "text": "没事，我就来扶你坐坐", "next": "help_1" }
+      ]
+    },
+    "learn_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "学算命？",
+      "next": "learn_2"
+    },
+    "learn_2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "你是想拯救苍生于水火，还是看中这碗饭好吃？",
+      "next": "motive_ch"
+    },
+    "motive_ch": {
+      "type": "choice",
+      "options": [
+        { "id": "honest", "text": "自然是想学门吃饭的手艺", "next": "honest_open" },
+        { "id": "false", "text": "救人于危难，济世于乱时", "next": "false_1" }
+      ]
+    },
+    "false_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "放屁。你关二狗要真有这份心，城里早给你立长生牌位了。",
+      "next": "false_2"
+    },
+    "false_2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "直说吧，你就是觉得这门手艺不费本钱，嘴皮子一翻就能混口饭。",
+      "next": "honest_open"
+    },
+    "honest_open": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "李先生明鉴。我就是想混口比跑腿更体面的饭吃。",
+      "next": "honest_2"
+    },
+    "honest_2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "这还像句人话。",
+      "next": "honest_3"
+    },
+    "honest_3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "命不是谁都能算的。光靠嘴皮子，那叫坑蒙拐骗，不叫本事。",
+      "next": "honest_4"
+    },
+    "honest_4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "你要真想跟我学，先看看你有没有这个命。",
+      "next": "honest_give"
+    },
+    "honest_give": {
+      "type": "runActions",
+      "actions": [
+        { "type": "giveItem", "params": { "id": "iron_box", "count": 1 } },
+        { "type": "setFlag", "params": { "key": "got_iron_box", "value": true } },
+        { "type": "setFlag", "params": { "key": "box_taboo_active", "value": true } },
+        { "type": "showNotification", "params": { "text": "获得关键道具：铁盒子", "type": "info" } }
+      ],
+      "next": "honest_5"
+    },
+    "honest_5": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "这个盒子你拿着，七天之内不许打开。若七天之后它还是好好的，就在最后一晚带着它去渝都卫水库桥下找我。",
+      "next": "warn_ch"
+    },
+    "warn_ch": {
+      "type": "choice",
+      "options": [
+        { "id": "w1", "text": "这差事就这么简单？", "next": "ask_warn" },
+        { "id": "w2", "text": "为什么不能打开", "next": "ask_warn_b" }
+      ]
+    },
+    "ask_warn": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "简单不简单，要看你手贱不手贱。",
+      "next": "ask_warn_b"
+    },
+    "ask_warn_b": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "你开开试试，出了大事我可不管。",
+      "next": "ask_warn_c"
+    },
+    "ask_warn_c": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "……",
+      "next": "ask_warn_d"
+    },
+    "ask_warn_d": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "记住了，七天，莫开。到时候桥下见我。",
+      "next": "end1"
+    },
+    "help_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "人扶到了，嘴里的话还没落地。你有求于我，脸上都写着呢。",
+      "next": "end1"
+    },
+    "after_box_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "盒子还在吧？",
+      "next": "after_ch"
+    },
+    "after_ch": {
+      "type": "choice",
+      "options": [
+        { "id": "a1", "text": "在。你这玩意儿到底装了什么", "next": "after_a1" },
+        { "id": "a2", "text": "我记着呢，七天不能开", "next": "after_a2" }
+      ]
+    },
+    "after_a1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "你若忍得住，七天后自然知道。忍不住，现在就能坏事。",
+      "next": "end1"
+    },
+    "after_a2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "text": "记着就好。别跟自己的命开玩笑。",
+      "next": "end1"
+    },
+    "end1": { "type": "end" }
+  }
+}

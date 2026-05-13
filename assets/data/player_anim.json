@@ -1,0 +1,15 @@
+{
+  "spritesheet": "/resources/runtime/images/characters/player_hero.png",
+  "cols": 5,
+  "rows": 2,
+  "worldFrameWidth": 32,
+  "worldFrameHeight": 48,
+  "frameWidth": 32,
+  "frameHeight": 48,
+  "scale": 1,
+  "states": {
+    "idle": { "frames": [0, 1], "frameRate": 2, "loop": true },
+    "walk": { "frames": [2, 3, 4, 5], "frameRate": 8, "loop": true },
+    "run": { "frames": [6, 7, 8, 9], "frameRate": 12, "loop": true }
+  }
+}

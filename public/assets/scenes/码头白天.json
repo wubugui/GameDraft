@@ -1,0 +1,861 @@
+{
+  "id": "码头白天",
+  "name": "码头白天",
+  "worldWidth": 3000.0,
+  "worldHeight": 1674.42,
+  "camera": {
+    "zoom": 0.7,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "busy_market_ambient",
+    "海边"
+  ],
+  "spawnPoint": {
+    "x": 1387.0,
+    "y": 969.0
+  },
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.5877852522924731,
+          -0.8090169943749475
+        ],
+        [
+          0.0,
+          0.8090169943749475,
+          -0.5877852522924731
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 229.0,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.69,
+      "offset": -2.45
+    },
+    "shader": {
+      "depth_per_sy": 0.003172674794783235,
+      "floor_depth_A": -0.006010401399437439,
+      "floor_depth_B": 2.3079941373839765
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -2.812764214930006,
+      "z_min": -2.986899563318777,
+      "cell_size": 0.02995633187772926,
+      "grid_width": 191,
+      "grid_height": 201,
+      "height_offset": 0.05
+    }
+  },
+  "filterId": "identity",
+  "npcs": [
+    {
+      "id": "new_npc_0",
+      "name": "New NPC",
+      "x": 1689.0,
+      "y": 837.8,
+      "interactionRange": 50.0,
+      "animFile": "/resources/runtime/animation/npc_yangren_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "collisionPolygon": [
+        {
+          "x": -20.0,
+          "y": -15.0
+        },
+        {
+          "x": 20.0,
+          "y": -15.0
+        },
+        {
+          "x": 0.0,
+          "y": 20.0
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "npc_脚帮告示",
+      "name": "认得几个字的脚帮",
+      "x": 1080.1,
+      "y": 1242.1,
+      "interactionRange": 63.0,
+      "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
+      "initialAnimState": "lifu_stand",
+      "dialogueGraphId": "码头_脚帮帮众看板对话",
+      "collisionPolygon": [
+        {
+          "x": -25.8,
+          "y": -17.7
+        },
+        {
+          "x": 15.3,
+          "y": -19.5
+        },
+        {
+          "x": -4.9,
+          "y": 1.7
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "new_npc_4",
+      "name": "打瞌睡的官差",
+      "x": 1261.9,
+      "y": 1164.4,
+      "interactionRange": 60.0,
+      "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
+      "initialAnimState": "guanchai_sleep",
+      "initialFacing": "left",
+      "dialogueGraphId": "码头看板官差",
+      "collisionPolygon": [
+        {
+          "x": -20.3,
+          "y": -10.3
+        },
+        {
+          "x": 20.3,
+          "y": -7.5
+        },
+        {
+          "x": 0.9,
+          "y": 23.1
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "new_npc_3",
+      "name": "New NPC",
+      "x": 1268.9,
+      "y": 1524.3,
+      "interactionRange": 50.0,
+      "animFile": "/resources/runtime/animation/箱子_anim/anim.json",
+      "initialAnimState": "箱子漂浮",
+      "initialFacing": "left",
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ]
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hotspot_码头告示板",
+      "type": "inspect",
+      "label": "码头告示板",
+      "x": 1174.5,
+      "y": 1197.2,
+      "interactionRange": 60.0,
+      "data": {
+        "graphId": "码头看板"
+      }
+    },
+    {
+      "id": "new_hotspot_人群",
+      "type": "inspect",
+      "label": "",
+      "x": 1725.6,
+      "y": 1230.3,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/码头人群1.png",
+        "worldWidth": 400.0,
+        "worldHeight": 400.0,
+        "facing": "left",
+        "spriteSort": "back"
+      },
+      "collisionPolygon": [
+        {
+          "x": -188.5,
+          "y": -223.7
+        },
+        {
+          "x": -103.9,
+          "y": -261.6
+        },
+        {
+          "x": 54.1,
+          "y": -262.4
+        },
+        {
+          "x": 194.5,
+          "y": -124.3
+        },
+        {
+          "x": 101.8,
+          "y": -63.9
+        },
+        {
+          "x": 43.2,
+          "y": -145.5
+        },
+        {
+          "x": -53.6,
+          "y": -178.7
+        },
+        {
+          "x": -144.0,
+          "y": -164.8
+        }
+      ],
+      "collisionPolygonLocal": true,
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ],
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "new_hotspot_3",
+      "type": "inspect",
+      "label": "",
+      "x": 1471.1,
+      "y": 1417.8,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      }
+    },
+    {
+      "id": "new_hotspot_4",
+      "type": "inspect",
+      "label": "洋人女性",
+      "x": 1614.4,
+      "y": 839.6,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/洋人女性.png",
+        "worldWidth": 90.0,
+        "worldHeight": 161.2
+      },
+      "collisionPolygon": [
+        {
+          "x": -20.0,
+          "y": -15.0
+        },
+        {
+          "x": 20.0,
+          "y": -15.0
+        },
+        {
+          "x": 0.0,
+          "y": 20.0
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "new_hotspot_箱子堆",
+      "type": "inspect",
+      "label": "",
+      "x": 1976.8,
+      "y": 1289.5,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/堆积的箱子.png",
+        "worldWidth": 250.0,
+        "worldHeight": 250.0
+      },
+      "collisionPolygon": [
+        {
+          "x": -109.5,
+          "y": -144.6
+        },
+        {
+          "x": 101.6,
+          "y": -132.0
+        },
+        {
+          "x": 124.0,
+          "y": -86.1
+        },
+        {
+          "x": 42.8,
+          "y": -36.9
+        },
+        {
+          "x": -98.1,
+          "y": -74.7
+        },
+        {
+          "x": -112.3,
+          "y": -110.0
+        }
+      ],
+      "collisionPolygonLocal": true,
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ],
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "new_hotspot_6",
+      "type": "inspect",
+      "label": "搬箱子的力工",
+      "x": 1727.9,
+      "y": 1229.2,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/搬运工.png",
+        "worldWidth": 100.0,
+        "worldHeight": 179.2,
+        "facing": "left",
+        "spriteSort": "front"
+      },
+      "collisionPolygon": [
+        {
+          "x": -40.0,
+          "y": -30.0
+        },
+        {
+          "x": 40.0,
+          "y": -30.0
+        },
+        {
+          "x": 0.0,
+          "y": 29.4
+        }
+      ],
+      "collisionPolygonLocal": true,
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ]
+    },
+    {
+      "id": "T码头到街巷",
+      "type": "transition",
+      "label": "到街巷",
+      "x": 2666.6,
+      "y": 216.1,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "test_room_a",
+        "targetSpawnPoint": "spawn_1"
+      }
+    },
+    {
+      "id": "T到街巷2",
+      "type": "transition",
+      "label": "到街巷",
+      "x": 44.3,
+      "y": 597.7,
+      "interactionRange": 50.0,
+      "data": {
+        "targetScene": "test_room_a"
+      }
+    },
+    {
+      "id": "new_hotspot_8",
+      "type": "inspect",
+      "label": "埃德加",
+      "x": 1551.7,
+      "y": 1175.4,
+      "interactionRange": 50.0,
+      "data": {
+        "text": "",
+        "actions": [
+          {
+            "type": "setHotspotDisplayImage",
+            "params": {
+              "sceneId": "码头白天",
+              "hotspotId": "new_hotspot_8",
+              "image": "/resources/runtime/images/illustrations/埃德加/拿钱大喊.png",
+              "worldHeight": 184.0,
+              "facing": "right"
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "{{player}}",
+                  "text": "ssssssssssssssssssss"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/埃德加/侧视站姿.png",
+        "worldWidth": 56.1,
+        "worldHeight": 184.3,
+        "facing": "left",
+        "spriteSort": "front"
+      },
+      "collisionPolygon": [
+        {
+          "x": -24.0,
+          "y": -19.3
+        },
+        {
+          "x": 23.1,
+          "y": -19.3
+        },
+        {
+          "x": 3.7,
+          "y": 1.1
+        }
+      ],
+      "collisionPolygonLocal": true,
+      "cutsceneIds": [
+        "洋人第一次出场",
+        "cutscene_10"
+      ],
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "new_hotspot_9",
+      "type": "inspect",
+      "label": "克拉拉",
+      "x": 1734.2,
+      "y": 1142.5,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/克拉拉/侧视站姿.png",
+        "worldWidth": 87.5,
+        "worldHeight": 159.5
+      },
+      "collisionPolygon": [
+        {
+          "x": -27.0,
+          "y": -15.8
+        },
+        {
+          "x": 18.4,
+          "y": -17.0
+        },
+        {
+          "x": 4.3,
+          "y": 4.8
+        }
+      ],
+      "collisionPolygonLocal": true,
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ],
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "new_hotspot_10",
+      "type": "inspect",
+      "label": "人群_妇人",
+      "x": 1812.8,
+      "y": 980.0,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ]
+    },
+    {
+      "id": "new_hotspot_11",
+      "type": "inspect",
+      "label": "人群-1",
+      "x": 1607.8,
+      "y": 923.1,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ]
+    },
+    {
+      "id": "new_hotspot_12",
+      "type": "inspect",
+      "label": "人群2",
+      "x": 1721.0,
+      "y": 881.2,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ]
+    },
+    {
+      "id": "new_hotspot_13",
+      "type": "inspect",
+      "label": "",
+      "x": 1885.8,
+      "y": 1176.4,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      },
+      "conditions": [
+        {
+          "scenarioLine": "外国人捞箱子",
+          "lineStatus": "active"
+        }
+      ],
+      "conditionHidesEntity": true
+    }
+  ],
+  "zones": [
+    {
+      "id": "new_zone_0",
+      "polygon": [
+        {
+          "x": 1819.7,
+          "y": 855.8
+        },
+        {
+          "x": 2336.7,
+          "y": 1076.0
+        },
+        {
+          "x": 1900.5,
+          "y": 1380.8
+        },
+        {
+          "x": 1773.0,
+          "y": 1309.6
+        },
+        {
+          "x": 1741.2,
+          "y": 1291.8
+        },
+        {
+          "x": 1723.6,
+          "y": 1283.7
+        },
+        {
+          "x": 1716.5,
+          "y": 1278.9
+        },
+        {
+          "x": 1709.3,
+          "y": 1274.0
+        },
+        {
+          "x": 1679.0,
+          "y": 1271.7
+        },
+        {
+          "x": 1639.0,
+          "y": 1253.9
+        },
+        {
+          "x": 1573.2,
+          "y": 1222.6
+        },
+        {
+          "x": 1507.4,
+          "y": 1191.3
+        },
+        {
+          "x": 1375.8,
+          "y": 1128.8
+        },
+        {
+          "x": 1605.1,
+          "y": 975.9
+        }
+      ],
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": -0.2
+    },
+    {
+      "id": "new_zone_1",
+      "polygon": [
+        {
+          "x": 1823.4,
+          "y": 609.1
+        },
+        {
+          "x": 2674.8,
+          "y": 156.7
+        },
+        {
+          "x": 2955.0,
+          "y": 207.4
+        },
+        {
+          "x": 2009.1,
+          "y": 745.1
+        }
+      ],
+      "zoneKind": "depth_floor",
+      "floorOffsetBoost": -0.2
+    },
+    {
+      "id": "new_zone_2",
+      "polygon": [
+        {
+          "x": 429.4,
+          "y": 1365.7
+        },
+        {
+          "x": 510.9,
+          "y": 1339.3
+        },
+        {
+          "x": 648.5,
+          "y": 1561.5
+        },
+        {
+          "x": 555.2,
+          "y": 1618.6
+        }
+      ],
+      "conditions": [
+        {
+          "scenarioLine": "码头水鬼",
+          "lineStatus": "completed"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "player",
+            "state": "hero_stand"
+          }
+        },
+        {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "...",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
+          "type": "fadingZoom",
+          "params": {
+            "zoom": 1.5,
+            "durationMs": 2000
+          }
+        },
+        {
+          "type": "moveEntityTo",
+          "params": {
+            "target": "player",
+            "sceneId": "码头白天",
+            "x": 822.4,
+            "y": 1421.54,
+            "speed": 80.0,
+            "moveAnimState": "hero_walk",
+            "faceTowardMovement": true
+          }
+        },
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "player",
+            "direction": "left",
+            "faceTarget": ""
+          }
+        },
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "player",
+            "direction": "right",
+            "faceTarget": ""
+          }
+        },
+        {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "?",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "[tag:player]看了一眼黑黢黢的江水。"
+              },
+              {
+                "speaker": "{{player}}",
+                "text": "妈卖批，这哪儿看着像是有水鬼的样子嘛？"
+              }
+            ]
+          }
+        },
+        {
+          "type": "moveEntityTo",
+          "params": {
+            "target": "player",
+            "sceneId": "码头白天",
+            "x": 487.66,
+            "y": 1612.79,
+            "speed": 160.0,
+            "moveAnimState": "hero_walk",
+            "faceTowardMovement": true
+          }
+        },
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "player",
+            "direction": "right",
+            "faceTarget": ""
+          }
+        },
+        {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "？？",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "[tag:player]",
+                "text": "嘿呀! 个狗日的水猴子，也没让老子遇到。遇到抓你个狗日的让老子也发笔横财。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "showEmoteAndWait",
+          "params": {
+            "target": "player",
+            "emote": "?",
+            "duration": 1500.0,
+            "anchorOffsetX": 0.0,
+            "anchorOffsetY": 0.0
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "{{player}}",
+                "text": "咦—— 这是你妈个啥子东西？"
+              }
+            ]
+          }
+        },
+        {
+          "type": "activateScenario",
+          "params": {
+            "scenarioId": "外国人捞箱子"
+          }
+        },
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "洋人第一次出场"
+          }
+        },
+        {
+          "type": "startWaterMinigame",
+          "params": {
+            "id": "dock_crate_tutorial"
+          }
+        },
+        {
+          "type": "persistZoneEnabled",
+          "params": {
+            "sceneId": "码头白天",
+            "zoneId": "new_zone_2",
+            "enabled": false
+          }
+        }
+      ]
+    }
+  ],
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 63.3,
+      "y": 607.6
+    },
+    "spawn_1": {
+      "x": 2659.7,
+      "y": 282.0
+    },
+    "spawn_2": {
+      "x": 488.2,
+      "y": 1610.0
+    }
+  }
+}

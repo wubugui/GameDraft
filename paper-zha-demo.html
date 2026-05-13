@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>扎纸骨架形态检测 Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #efe3c7;
+      --ink: #2d251f;
+      --muted: #776758;
+      --line: #b99d74;
+      --bamboo: #7a4d24;
+      --bamboo-2: #ad7c3f;
+      --red: #9d3028;
+      --green: #336b3c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 20% 10%, rgba(255,255,255,.55), transparent 34rem),
+        linear-gradient(135deg, #d8c39a, #f3e7ca 38%, #d2b782);
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 32px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: flex-end;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    .hint {
+      margin: 6px 0 0;
+      color: #5d4e42;
+      font-size: 14px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 260px minmax(420px, 1fr) 330px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: rgba(255, 248, 231, .82);
+      border: 1px solid rgba(94, 66, 34, .28);
+      border-radius: 8px;
+      box-shadow: 0 18px 42px rgba(76, 48, 20, .14);
+      padding: 14px;
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 17px;
+    }
+
+    .order-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+    }
+
+    .order-btn,
+    .tool-btn {
+      width: 100%;
+      padding: 10px 11px;
+      border: 1px solid rgba(67, 43, 24, .32);
+      border-radius: 7px;
+      background: #f8edd3;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .order-btn:hover,
+    .tool-btn:hover {
+      background: #fff5df;
+    }
+
+    .order-btn.active {
+      background: #ecd19e;
+      border-color: #8d642f;
+      box-shadow: inset 0 0 0 1px rgba(141, 100, 47, .35);
+    }
+
+    .order-title {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+
+    .order-meta {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .tools {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .tool-btn {
+      text-align: center;
+      padding: 9px 8px;
+    }
+
+    .workbench {
+      padding: 16px;
+      background:
+        linear-gradient(rgba(80, 44, 15, .05), rgba(80, 44, 15, .02)),
+        var(--paper);
+    }
+
+    .grid-wrap {
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(255, 251, 239, .62);
+      border: 1px solid rgba(91, 61, 28, .22);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(9, 42px);
+      grid-template-rows: repeat(9, 42px);
+      gap: 4px;
+      touch-action: manipulation;
+      user-select: none;
+    }
+
+    .cell {
+      position: relative;
+      width: 42px;
+      height: 42px;
+      border: 1px solid rgba(102, 75, 44, .25);
+      border-radius: 5px;
+      background: rgba(253, 245, 223, .76);
+      cursor: pointer;
+    }
+
+    .cell:hover {
+      outline: 2px solid rgba(126, 84, 36, .25);
+    }
+
+    .cell.on {
+      background:
+        linear-gradient(90deg, transparent 0 34%, rgba(54, 34, 18, .16) 34% 66%, transparent 66%),
+        linear-gradient(180deg, #b88443, #6d421f);
+      border-color: #583417;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+
+    .cell.on::after {
+      content: "";
+      position: absolute;
+      left: 5px;
+      right: 5px;
+      top: 19px;
+      height: 3px;
+      background: rgba(63, 37, 17, .32);
+      border-radius: 99px;
+    }
+
+    .readout {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .stat {
+      padding: 9px;
+      border-radius: 7px;
+      background: rgba(255,255,255,.38);
+      border: 1px solid rgba(91, 61, 28, .18);
+      min-height: 58px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 18px;
+      margin-bottom: 3px;
+    }
+
+    .stat span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .result {
+      display: grid;
+      gap: 10px;
+    }
+
+    .big-result {
+      padding: 12px;
+      border-radius: 8px;
+      background: #fff3d8;
+      border: 1px solid rgba(91, 61, 28, .22);
+    }
+
+    .big-result .kind {
+      font-size: 26px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .big-result .comment {
+      line-height: 1.55;
+      color: #4b3e33;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 54px 1fr 42px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+
+    .bar {
+      height: 12px;
+      background: rgba(89, 62, 36, .14);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar > i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #7d9c5d, #d1a246);
+      border-radius: inherit;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .tag {
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: rgba(116, 82, 45, .13);
+      color: #5c4633;
+      font-size: 12px;
+    }
+
+    .verdict {
+      padding: 11px;
+      border-radius: 8px;
+      border: 1px solid rgba(91, 61, 28, .22);
+      background: #f8ecd1;
+      line-height: 1.55;
+    }
+
+    .verdict.good { border-color: rgba(35, 105, 56, .45); background: #edf5df; }
+    .verdict.warn { border-color: rgba(139, 96, 26, .45); background: #fff1d1; }
+    .verdict.bad { border-color: rgba(151, 48, 37, .45); background: #f8ded8; }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(9, 34px); grid-template-rows: repeat(9, 34px); }
+      .cell { width: 34px; height: 34px; }
+      header { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>扎纸骨架形态检测 Demo</h1>
+        <p class="hint">点格子放竹篾。系统会判断它更像纸人、童子、纸马、纸屋还是纸钱箱，并给当前订单打分。</p>
+      </div>
+    </header>
+
+    <section class="layout">
+      <aside class="panel">
+        <h2>订单</h2>
+        <div class="order-list" id="orders"></div>
+        <div class="tools">
+          <button class="tool-btn" id="clearBtn">清空</button>
+          <button class="tool-btn" id="sampleBtn">示例</button>
+        </div>
+      </aside>
+
+      <section class="panel workbench">
+        <h2>竹篾格</h2>
+        <div class="grid-wrap">
+          <div class="grid" id="grid"></div>
+        </div>
+        <div class="readout">
+          <div class="stat"><strong id="cellCount">0</strong><span>竹篾格数</span></div>
+          <div class="stat"><strong id="connectRatio">0%</strong><span>最大连通比例</span></div>
+          <div class="stat"><strong id="aspect">-</strong><span>外轮廓宽高比</span></div>
+        </div>
+      </section>
+
+      <aside class="panel result">
+        <h2>检测结果</h2>
+        <div class="big-result">
+          <div class="kind" id="bestKind">不像东西</div>
+          <div class="comment" id="comment">先点几个格子，扎个骨架看看。</div>
+          <div class="tags" id="tags"></div>
+        </div>
+        <div id="bars"></div>
+        <div class="verdict" id="verdict">当前订单：引路童子。</div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const W = 9;
+    const H = 9;
+    const gridEl = document.getElementById('grid');
+    const ordersEl = document.getElementById('orders');
+    const barsEl = document.getElementById('bars');
+    const tagsEl = document.getElementById('tags');
+    const state = {
+      cells: Array.from({ length: H }, () => Array(W).fill(false)),
+      orderId: 'child',
+    };
+
+    const labels = {
+      child: '童子',
+      human: '纸人',
+      horse: '纸马',
+      house: '纸屋',
+      box: '纸钱箱',
+      unknown: '不像东西',
+      ambiguous: '说不清',
+    };
+
+    const orders = [
+      { id: 'child', title: '引路童子', target: 'child', desc: '要矮些，头要明，手脚齐；不求壮。' },
+      { id: 'human', title: '替身纸人', target: 'human', desc: '要有人样，有头身手脚；扎歪了不吉利。' },
+      { id: 'horse', title: '纸马', target: 'horse', desc: '横身、头颈、三条腿以上；像人就犯忌。' },
+      { id: 'house', title: '纸屋', target: 'house', desc: '要屋顶、墙身、门口；不能长脚。' },
+      { id: 'box', title: '纸钱箱', target: 'box', desc: '方正，像箱，有封口；不要头脚。' },
+    ];
+
+    const samples = {
+      child: [
+        '...###...',
+        '...###...',
+        '....#....',
+        '...###...',
+        '..#.#.#..',
+        '....#....',
+        '...#.#...',
+        '.........',
+        '.........',
+      ],
+      human: [
+        '....#....',
+        '...###...',
+        '....#....',
+        '..#####..',
+        '....#....',
+        '....#....',
+        '...#.#...',
+        '...#.#...',
+        '..#...#..',
+      ],
+      horse: [
+        '.........',
+        '.##......',
+        '..##.####',
+        '...######',
+        '...######',
+        '...#.#.#.',
+        '...#.#.#.',
+        '.........',
+        '.........',
+      ],
+      house: [
+        '....#....',
+        '...###...',
+        '..#####..',
+        '.#######.',
+        '.#.....#.',
+        '.#..#..#.',
+        '.#..#..#.',
+        '.#######.',
+        '.........',
+      ],
+      box: [
+        '.........',
+        '..#####..',
+        '..#...#..',
+        '..#####..',
+        '..#...#..',
+        '..#...#..',
+        '..#####..',
+        '.........',
+        '.........',
+      ],
+    };
+
+    function rect(x1, y1, x2, y2) {
+      const cells = [];
+      for (let y = y1; y <= y2; y++) {
+        for (let x = x1; x <= x2; x++) cells.push([x, y]);
+      }
+      return cells;
+    }
+
+    const R = {
+      human: {
+        head: rect(3,0,5,1),
+        torso: rect(3,2,5,5),
+        leftArm: rect(1,2,2,5),
+        rightArm: rect(6,2,7,5),
+        leftLeg: rect(2,6,4,8),
+        rightLeg: rect(5,6,7,8),
+      },
+      child: {
+        head: rect(3,0,5,2),
+        torso: rect(3,3,5,5),
+        leftArm: rect(1,3,2,5),
+        rightArm: rect(6,3,7,5),
+        legs: rect(3,6,5,7),
+      },
+      horse: {
+        head: rect(0,1,2,3),
+        neck: rect(2,1,3,4),
+        body: rect(3,2,7,5),
+        tail: rect(7,1,8,3),
+        legs: [rect(3,5,3,8), rect(4,5,4,8), rect(6,5,6,8), rect(7,5,7,8)],
+      },
+      house: {
+        roof: rect(2,0,6,2),
+        body: rect(1,3,7,7),
+        door: rect(4,5,5,8),
+        leftWall: rect(1,3,2,7),
+        rightWall: rect(6,3,7,7),
+      },
+      box: {
+        top: rect(2,1,6,2),
+        body: rect(2,2,6,6),
+        seal: rect(3,3,5,4),
+        bottom: rect(2,6,6,7),
+      }
+    };
+
+    function countCells(g) {
+      let n = 0;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (g[y][x]) n++;
+      return n;
+    }
+
+    function countIn(g, cells) {
+      return cells.reduce((n, [x,y]) => n + (g[y]?.[x] ? 1 : 0), 0);
+    }
+
+    function hasAny(g, cells) {
+      return countIn(g, cells) > 0;
+    }
+
+    function bbox(g) {
+      let minX = W, minY = H, maxX = -1, maxY = -1;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (!g[y][x]) continue;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+      if (maxX < 0) return null;
+      return { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 };
+    }
+
+    function largestConnected(g) {
+      const seen = Array.from({ length: H }, () => Array(W).fill(false));
+      let best = 0;
+      for (let sy = 0; sy < H; sy++) {
+        for (let sx = 0; sx < W; sx++) {
+          if (!g[sy][sx] || seen[sy][sx]) continue;
+          let size = 0;
+          const q = [[sx, sy]];
+          seen[sy][sx] = true;
+          while (q.length) {
+            const [x,y] = q.shift();
+            size++;
+            for (const [nx, ny] of [[x+1,y], [x-1,y], [x,y+1], [x,y-1]]) {
+              if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+              if (!g[ny][nx] || seen[ny][nx]) continue;
+              seen[ny][nx] = true;
+              q.push([nx, ny]);
+            }
+          }
+          best = Math.max(best, size);
+        }
+      }
+      return best;
+    }
+
+    function features(g) {
+      const count = countCells(g);
+      const box = bbox(g);
+      const connected = count ? largestConnected(g) / count : 0;
+      return {
+        count,
+        bbox: box,
+        width: box?.width ?? 0,
+        height: box?.height ?? 0,
+        aspect: box ? box.width / box.height : 0,
+        connectedRatio: connected,
+      };
+    }
+
+    function clamp(n) {
+      return Math.max(0, Math.min(100, Math.round(n)));
+    }
+
+    function baseScore(f, tags) {
+      let score = 0;
+      if (f.count >= 8) score += 8; else tags.push('竹篾太少');
+      if (f.count <= 26) score += 5; else tags.push('扎得太满');
+      if (f.connectedRatio >= 0.78) score += 12; else tags.push('骨架散了');
+      return score;
+    }
+
+    function detectHuman(g) {
+      const f = features(g);
+      const tags = [];
+      let score = baseScore(f, tags);
+      if (f.aspect > 0 && f.aspect <= 1.05 && f.height >= 6) score += 15; else tags.push('不像站人');
+      if (hasAny(g, R.human.head)) score += 14; else tags.push('缺头');
+      if (countIn(g, R.human.torso) >= 3) score += 16; else tags.push('缺身');
+      if (hasAny(g, R.human.leftArm)) score += 9; else tags.push('缺左手');
+      if (hasAny(g, R.human.rightArm)) score += 9; else tags.push('缺右手');
+      if (hasAny(g, R.human.leftLeg)) score += 9; else tags.push('缺左脚');
+      if (hasAny(g, R.human.rightLeg)) score += 9; else tags.push('缺右脚');
+      if (f.aspect > 1.18) { score -= 18; tags.push('太横'); }
+      return { kind: 'human', score: clamp(score), tags };
+    }
+
+    function detectChild(g) {
+      const f = features(g);
+      const tags = [];
+      let score = baseScore(f, tags);
+      if (f.aspect > 0 && f.aspect <= 1.12 && f.height >= 5 && f.height <= 8) score += 13; else tags.push('童子比例不对');
+      if (countIn(g, R.child.head) >= 2) score += 17; else tags.push('头不明');
+      if (countIn(g, R.child.torso) >= 2) score += 15; else tags.push('身子弱');
+      if (hasAny(g, R.child.leftArm)) score += 9; else tags.push('缺左手');
+      if (hasAny(g, R.child.rightArm)) score += 9; else tags.push('缺右手');
+      if (countIn(g, R.child.legs) >= 2) score += 13; else tags.push('脚不稳');
+      if (f.height > 8 || f.aspect > 1.2) { score -= 12; tags.push('不像童子'); }
+      return { kind: 'child', score: clamp(score), tags };
+    }
+
+    function detectHorse(g) {
+      const f = features(g);
+      const tags = [];
+      let score = baseScore(f, tags);
+      if (f.aspect >= 1.18 && f.width >= 6) score += 18; else tags.push('不够横');
+      if (countIn(g, R.horse.body) >= 5) score += 20; else tags.push('缺马身');
+      if (hasAny(g, R.horse.head)) score += 12; else tags.push('缺马头');
+      if (hasAny(g, R.horse.neck)) score += 8; else tags.push('缺颈');
+      const legs = R.horse.legs.filter(r => hasAny(g, r)).length;
+      score += Math.min(legs, 4) * 8;
+      if (legs < 3) tags.push('腿太少');
+      if (hasAny(g, R.horse.tail)) score += 5;
+      if (f.aspect < 1.0 && f.height >= 6) { score -= 20; tags.push('像人不像马'); }
+      return { kind: 'horse', score: clamp(score), tags };
+    }
+
+    function detectHouse(g) {
+      const f = features(g);
+      const tags = [];
+      let score = baseScore(f, tags);
+      if (f.width >= 5 && f.height >= 5) score += 10; else tags.push('不成屋架');
+      if (countIn(g, R.house.roof) >= 3) score += 18; else tags.push('缺屋顶');
+      if (countIn(g, R.house.body) >= 7) score += 22; else tags.push('缺屋身');
+      if (hasAny(g, R.house.leftWall)) score += 8;
+      if (hasAny(g, R.house.rightWall)) score += 8;
+      if (hasAny(g, R.house.door)) score += 10; else tags.push('缺门');
+      if (countIn(g, rect(2,7,3,8)) && countIn(g, rect(5,7,6,8)) && countIn(g, rect(3,3,5,5)) < 2) {
+        score -= 12;
+        tags.push('长脚了');
+      }
+      return { kind: 'house', score: clamp(score), tags };
+    }
+
+    function detectBox(g) {
+      const f = features(g);
+      const tags = [];
+      let score = baseScore(f, tags);
+      if (f.aspect >= 0.75 && f.aspect <= 1.5 && f.width >= 4 && f.height >= 4) score += 15; else tags.push('不方正');
+      if (countIn(g, R.box.top) >= 3) score += 14; else tags.push('缺箱口');
+      if (countIn(g, R.box.body) >= 8) score += 22; else tags.push('箱身不实');
+      if (countIn(g, R.box.bottom) >= 3) score += 12; else tags.push('缺箱底');
+      if (hasAny(g, R.box.seal)) score += 8; else tags.push('没封口');
+      if (hasAny(g, R.human.head) && (hasAny(g, R.human.leftLeg) || hasAny(g, R.human.rightLeg))) {
+        score -= 14;
+        tags.push('像活物');
+      }
+      return { kind: 'box', score: clamp(score), tags };
+    }
+
+    function classify(g) {
+      const results = [detectChild(g), detectHuman(g), detectHorse(g), detectHouse(g), detectBox(g)]
+        .sort((a,b) => b.score - a.score);
+      const best = results[0];
+      const second = results[1];
+      if (best.score < 45) return { best: { kind: 'unknown', score: best.score, tags: best.tags }, results };
+      if (best.score - second.score < 6 && best.score >= 55) {
+        return { best: { kind: 'ambiguous', score: best.score, tags: ['像' + labels[best.kind], '也像' + labels[second.kind]] }, results };
+      }
+      return { best, results };
+    }
+
+    function verdict(order, best, results) {
+      const target = order.target;
+      const targetScore = results.find(r => r.kind === target)?.score ?? 0;
+      const bestLabel = labels[best.kind];
+      if (targetScore >= 72 && (best.kind === target || best.kind === 'ambiguous')) {
+        return { level: 'good', text: `订单要${labels[target]}，当前${labels[target]}分 ${targetScore}。能交活，师傅点头：骨相扎出来了。` };
+      }
+      if (targetScore >= 58) {
+        return { level: 'warn', text: `订单要${labels[target]}，当前${labels[target]}分 ${targetScore}。勉强能交，但要扣钱：看得出意思，骨架还不够稳。` };
+      }
+      if (best.kind !== 'unknown') {
+        return { level: 'bad', text: `订单要${labels[target]}，但现在最像${bestLabel}。师傅皱眉：这活儿交出去要挨骂。` };
+      }
+      return { level: 'bad', text: `订单要${labels[target]}，但现在不像个成形纸扎。` };
+    }
+
+    function commentFor(best) {
+      if (best.kind === 'unknown') return '看不出是人是马，像一把散竹篾。';
+      if (best.kind === 'ambiguous') return '骨相有点含混，师傅得眯眼看半天。';
+      if (best.kind === 'horse' && best.tags.includes('像人不像马')) return '它有马身的意思，但站得太像个人，犯扎纸里的怪相。';
+      return `当前最像${labels[best.kind]}，分数 ${best.score}。`;
+    }
+
+    function renderGrid() {
+      gridEl.innerHTML = '';
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const cell = document.createElement('button');
+          cell.className = 'cell' + (state.cells[y][x] ? ' on' : '');
+          cell.type = 'button';
+          cell.setAttribute('aria-label', `${x},${y}`);
+          cell.addEventListener('click', () => {
+            state.cells[y][x] = !state.cells[y][x];
+            update();
+          });
+          gridEl.appendChild(cell);
+        }
+      }
+    }
+
+    function renderOrders() {
+      ordersEl.innerHTML = '';
+      for (const order of orders) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'order-btn' + (order.id === state.orderId ? ' active' : '');
+        btn.innerHTML = `<span class="order-title">${order.title}</span><span class="order-meta">${order.desc}</span>`;
+        btn.addEventListener('click', () => {
+          state.orderId = order.id;
+          renderOrders();
+          update();
+        });
+        ordersEl.appendChild(btn);
+      }
+    }
+
+    function setSample() {
+      const order = orders.find(o => o.id === state.orderId);
+      const rows = samples[order.target];
+      state.cells = rows.map(row => [...row].map(ch => ch === '#'));
+      update();
+    }
+
+    function clearGrid() {
+      state.cells = Array.from({ length: H }, () => Array(W).fill(false));
+      update();
+    }
+
+    function update() {
+      renderGrid();
+      const f = features(state.cells);
+      const { best, results } = classify(state.cells);
+      const order = orders.find(o => o.id === state.orderId);
+      document.getElementById('cellCount').textContent = f.count;
+      document.getElementById('connectRatio').textContent = `${Math.round(f.connectedRatio * 100)}%`;
+      document.getElementById('aspect').textContent = f.bbox ? f.aspect.toFixed(2) : '-';
+      document.getElementById('bestKind').textContent = labels[best.kind];
+      document.getElementById('comment').textContent = commentFor(best);
+      tagsEl.innerHTML = '';
+      for (const tag of best.tags.slice(0, 7)) {
+        const el = document.createElement('span');
+        el.className = 'tag';
+        el.textContent = tag;
+        tagsEl.appendChild(el);
+      }
+      barsEl.innerHTML = '';
+      for (const r of results) {
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML = `<span>${labels[r.kind]}</span><div class="bar"><i style="width:${r.score}%"></i></div><b>${r.score}</b>`;
+        barsEl.appendChild(row);
+      }
+      const v = verdict(order, best, results);
+      const verdictEl = document.getElementById('verdict');
+      verdictEl.className = `verdict ${v.level}`;
+      verdictEl.textContent = v.text;
+    }
+
+    document.getElementById('clearBtn').addEventListener('click', clearGrid);
+    document.getElementById('sampleBtn').addEventListener('click', setSample);
+    renderOrders();
+    setSample();
+  </script>
+</body>
+</html>

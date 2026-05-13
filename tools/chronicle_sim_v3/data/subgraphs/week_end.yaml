@@ -1,0 +1,119 @@
+schema: chronicle_sim_v3/graph@1
+id: week_end
+title: 周末更新
+description: |
+  周末执行：读本周 events / rumors → 调 week_summarizer → 写周总结。
+  P3 简化版：只生成 summary 文本。
+  完整版（信念注入 / state / chroma 索引）在 P5 扩展。
+
+inputs:
+  week:
+    type: Week
+    required: true
+  events_json:
+    type: Json
+    required: false
+  rumors_json:
+    type: Json
+    required: false
+  social_state_json:
+    type: Json
+    required: false
+
+spec:
+  nodes:
+    events:
+      kind: json.path
+      in:
+        value: ${inputs.events_json}
+      params:
+        path: ""
+    rumors:
+      kind: json.path
+      in:
+        value: ${inputs.rumors_json}
+      params:
+        path: ""
+    social_state_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+      params:
+        pattern: "chronicle.social_state:week={week}"
+    social_state:
+      kind: json.path
+      in:
+        value: ${inputs.social_state_json}
+      params:
+        path: ""
+    events_text:
+      kind: json.encode
+      in:
+        value: ${nodes.events.out}
+      params:
+        indent: 2
+    rumors_text:
+      kind: json.encode
+      in:
+        value: ${nodes.rumors.out}
+      params:
+        indent: 2
+    social_state_text:
+      kind: json.encode
+      in:
+        value: ${nodes.social_state.out}
+      params:
+        indent: 2
+    story_clusters_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+      params:
+        pattern: "chronicle.story_clusters:week={week}"
+    story_clusterer:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          events_text: ${nodes.events_text.out}
+          rumors_text: ${nodes.rumors_text.out}
+          social_state_text: ${nodes.social_state_text.out}
+      params:
+        agent_spec: data/agent_specs/story_clusterer.toml
+        llm:
+          role: story_clusterer
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    write_story_clusters:
+      kind: write.schema.json
+      in:
+        key: ${nodes.story_clusters_key.out}
+        payload: ${nodes.story_clusterer.parsed}
+    summarize:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          events_text: ${nodes.events_text.out}
+          rumors_text: ${nodes.rumors_text.out}
+          social_state_text: ${nodes.social_state_text.out}
+      params:
+        agent_spec: data/agent_specs/week_summarizer.toml
+        llm:
+          role: week_summarizer
+          model: smart
+          output:
+            kind: text
+    write_summary:
+      kind: write.chronicle.summary
+      in:
+        week: ${inputs.week}
+        text: ${nodes.summarize.text}
+  result:
+    summary: ${nodes.summarize.text}
+    written_key: ${nodes.write_summary.key}
+    story_clusters_key: ${nodes.write_story_clusters.key}

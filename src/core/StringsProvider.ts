@@ -1,0 +1,45 @@
+import type { AssetManager } from './AssetManager';
+
+/** strings.json 叶子值：展示层统一当字符串参与插值与 resolveText */
+export type StringTableLeaf = string | number | boolean;
+type StringCategory = Record<string, StringTableLeaf>;
+
+export class StringsProvider {
+  private data: Record<string, StringCategory> = {};
+  /** 在模板插值之后对整条字符串做引用解析（由 Game 注入） */
+  private resolveDisplay: ((s: string) => string) | null = null;
+
+  async load(assetManager: AssetManager): Promise<void> {
+    try {
+      this.data = await assetManager.loadJson<Record<string, StringCategory>>('/assets/data/strings.json');
+    } catch {
+      console.warn('StringsProvider: strings.json not found, using fallback strings');
+    }
+  }
+
+  /** 设置/清除展示层引用解析；须在首帧前由 Game 注入 */
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  /** 仅读 strings.json 原文，不解析 [tag:…]；数/布尔特化为字符串供模板与 tag 展开 */
+  getRaw(category: string, key: string): string {
+    const v = this.data[category]?.[key];
+    if (v === undefined || v === null) return key;
+    if (typeof v === 'string') return v;
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+    return String(v);
+  }
+
+  get(category: string, key: string, vars?: Record<string, string | number>): string {
+    let template = this.getRaw(category, key);
+    if (vars) {
+      template = template.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? `{${k}}`));
+    }
+    if (this.resolveDisplay) {
+      return this.resolveDisplay(template);
+    }
+    return template;
+  }
+}

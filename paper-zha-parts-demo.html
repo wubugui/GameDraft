@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>扎纸部件拼装 Demo</title>
+  <style>
+    :root {
+      --ink: #2c241d;
+      --muted: #725f50;
+      --paper: #ead8b3;
+      --panel: rgba(255, 248, 231, .88);
+      --slot: rgba(93, 66, 38, .18);
+      --slot-ok: rgba(68, 132, 74, .25);
+      --slot-bad: rgba(166, 65, 52, .22);
+      --part: #f7e6c4;
+      --part-line: #80552b;
+      --good: #3f7a4c;
+      --warn: #a06923;
+      --bad: #a13c32;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 18% 8%, rgba(255,255,255,.52), transparent 30rem),
+        linear-gradient(135deg, #c5a874, #eeddbb 44%, #c39b62);
+    }
+
+    main {
+      width: min(1240px, calc(100vw - 28px));
+      margin: 0 auto;
+      padding: 22px 0 30px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    .sub {
+      margin: 6px 0 16px;
+      color: #5f5043;
+      font-size: 14px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 250px minmax(560px, 1fr) 330px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(85, 57, 28, .25);
+      border-radius: 8px;
+      box-shadow: 0 18px 42px rgba(68, 40, 14, .14);
+      padding: 14px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 17px;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+    }
+
+    .order-btn,
+    .small-btn,
+    .choice {
+      border: 1px solid rgba(75, 50, 25, .28);
+      border-radius: 7px;
+      background: #f8ecd0;
+      cursor: pointer;
+    }
+
+    .order-btn {
+      display: block;
+      width: 100%;
+      padding: 10px 11px;
+      margin-bottom: 8px;
+      text-align: left;
+    }
+
+    .order-btn:hover,
+    .small-btn:hover,
+    .choice:hover {
+      background: #fff4dc;
+    }
+
+    .order-btn.active,
+    .choice.active {
+      background: #e6c88f;
+      border-color: #86602d;
+      box-shadow: inset 0 0 0 1px rgba(134, 96, 45, .32);
+      font-weight: 800;
+    }
+
+    .order-title {
+      display: block;
+      font-weight: 800;
+      margin-bottom: 3px;
+    }
+
+    .order-desc {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .small-btn {
+      padding: 9px;
+    }
+
+    .workbench {
+      background:
+        linear-gradient(rgba(83, 47, 18, .05), rgba(83, 47, 18, .02)),
+        var(--paper);
+    }
+
+    .bench-layout {
+      display: grid;
+      grid-template-columns: minmax(380px, 1fr) 190px;
+      gap: 12px;
+    }
+
+    .stage {
+      position: relative;
+      height: 560px;
+      border-radius: 8px;
+      border: 1px solid rgba(84, 55, 28, .22);
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 35%, rgba(255,255,255,.42), transparent 18rem),
+        #ead8b2;
+    }
+
+    .ghost-line {
+      position: absolute;
+      border: 2px dashed rgba(84, 58, 33, .25);
+      pointer-events: none;
+      transform-origin: left center;
+    }
+
+    .slot {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      border: 2px dashed rgba(83, 57, 31, .38);
+      background: var(--slot);
+      color: rgba(55, 38, 22, .72);
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 800;
+      text-align: center;
+      transition: background .12s, border-color .12s, transform .12s;
+    }
+
+    .slot.filled {
+      border-style: solid;
+      background: var(--slot-ok);
+    }
+
+    .slot.bad {
+      border-style: solid;
+      background: var(--slot-bad);
+      border-color: rgba(155, 58, 48, .75);
+    }
+
+    .slot.drop-hover {
+      transform: scale(1.04);
+      border-color: #7b542b;
+      background: rgba(245, 210, 139, .34);
+    }
+
+    .placed-part,
+    .part {
+      display: grid;
+      place-items: center;
+      text-align: center;
+      border: 2px solid var(--part-line);
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.26), rgba(117, 76, 31, .08)),
+        var(--part);
+      color: #38291e;
+      box-shadow: 0 6px 12px rgba(65, 38, 14, .16);
+      user-select: none;
+      touch-action: none;
+    }
+
+    .placed-part {
+      width: 86%;
+      height: 78%;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.15;
+    }
+
+    .placed-part.wrong {
+      border-color: var(--bad);
+      background: #f1cabf;
+    }
+
+    .parts {
+      min-height: 560px;
+      border-radius: 8px;
+      border: 1px solid rgba(84, 55, 28, .22);
+      background: rgba(255,255,255,.28);
+      padding: 10px;
+    }
+
+    .parts h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .part-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .part {
+      min-height: 48px;
+      border-radius: 8px;
+      padding: 7px;
+      cursor: grab;
+      font-size: 14px;
+    }
+
+    .part:active {
+      cursor: grabbing;
+    }
+
+    .part.used {
+      opacity: .38;
+      cursor: not-allowed;
+    }
+
+    .choice-group {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(84, 55, 28, .18);
+    }
+
+    .choices {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .choice {
+      padding: 9px 7px;
+    }
+
+    .result {
+      display: grid;
+      gap: 10px;
+    }
+
+    .score-card {
+      padding: 12px;
+      border-radius: 8px;
+      background: #fff2d4;
+      border: 1px solid rgba(84, 55, 28, .2);
+    }
+
+    .score-card .big {
+      font-size: 38px;
+      line-height: 1;
+      font-weight: 900;
+      margin-bottom: 6px;
+    }
+
+    .score-card .name {
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .comment {
+      line-height: 1.55;
+      color: #4b3d31;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 72px 1fr 42px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+
+    .bar {
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(89, 62, 36, .14);
+      overflow: hidden;
+    }
+
+    .bar i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6f9753, #d6a548);
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag {
+      display: inline-flex;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(111, 78, 42, .14);
+      color: #584634;
+      font-size: 12px;
+    }
+
+    .verdict {
+      padding: 11px;
+      border-radius: 8px;
+      border: 1px solid rgba(84, 55, 28, .2);
+      background: #f8ecd1;
+      line-height: 1.55;
+    }
+
+    .verdict.good { background: #edf4df; border-color: rgba(53, 117, 64, .45); }
+    .verdict.warn { background: #fff1ce; border-color: rgba(160, 105, 35, .45); }
+    .verdict.bad { background: #f8ded8; border-color: rgba(161, 60, 50, .45); }
+
+    @media (max-width: 1050px) {
+      .layout { grid-template-columns: 1fr; }
+      .bench-layout { grid-template-columns: 1fr; }
+      .parts { min-height: 0; }
+      .part-list { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>扎纸部件拼装 Demo</h1>
+    <p class="sub">拖部件到纸活槽位上。系统检测缺件、错件、错位、纸色和收尾禁忌，并输出这单纸活的分数。</p>
+
+    <section class="layout">
+      <aside class="panel">
+        <h2>纸活订单</h2>
+        <div id="orders"></div>
+        <div class="actions">
+          <button class="small-btn" id="clearBtn">拆掉重扎</button>
+          <button class="small-btn" id="sampleBtn">师傅样子</button>
+        </div>
+      </aside>
+
+      <section class="panel workbench">
+        <h2 id="workTitle">引路童子</h2>
+        <div class="bench-layout">
+          <div class="stage" id="stage"></div>
+          <div class="parts">
+            <h3>部件篮</h3>
+            <div class="part-list" id="partList"></div>
+          </div>
+        </div>
+
+        <div class="choice-group">
+          <h2>糊纸色</h2>
+          <div class="choices" id="paperChoices"></div>
+        </div>
+
+        <div class="choice-group">
+          <h2 id="finishTitle">收尾</h2>
+          <div class="choices" id="finishChoices"></div>
+        </div>
+      </section>
+
+      <aside class="panel result">
+        <h2>交活结果</h2>
+        <div class="score-card">
+          <div class="big" id="score">0</div>
+          <div class="name" id="resultName">引路童子</div>
+          <div class="comment" id="comment"></div>
+        </div>
+        <div id="bars"></div>
+        <div class="tags" id="tags"></div>
+        <div class="verdict" id="verdict"></div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const paperOptions = [
+      { id: 'white', label: '白纸' },
+      { id: 'yellow', label: '黄纸' },
+      { id: 'blue', label: '青纸' },
+      { id: 'red', label: '红纸' },
+    ];
+
+    const partLabels = {
+      child_head_round: '圆童子头',
+      child_head_tall: '高额童子头',
+      child_head_smile: '笑童子头',
+      child_body_short: '短童子身',
+      child_body_long: '长纸身',
+      arm_pair_down: '垂手',
+      arm_pair_open: '张手',
+      arm_pair_bound: '缚手',
+      short_legs: '短脚',
+      no_feet: '无脚底',
+      human_head_plain: '纸人头',
+      human_head_tilt: '歪头',
+      human_body_plain: '纸人身',
+      human_body_hunched: '佝偻身',
+      long_legs: '长脚',
+      bound_legs: '并脚',
+      horse_head: '马头',
+      horse_head_humanlike: '人脸马头',
+      horse_body: '马身',
+      horse_body_thin: '瘦马身',
+      horse_legs: '马腿',
+      horse_legs_three: '三条腿',
+      horse_tail: '马尾',
+      saddle: '马鞍',
+      empty_saddle_part: '空鞍',
+      roof: '屋顶',
+      crooked_roof: '歪屋顶',
+      wall: '墙身',
+      door: '门',
+      sealed_door_part: '封死门',
+      base: '底座',
+      box_lid: '箱盖',
+      box_body: '箱身',
+      seal_strip: '封条',
+      broken_seal: '断封条',
+      extra_hand: '多一只手',
+      eye_patch: '眼片',
+      red_cloth: '红布条',
+    };
+
+    const orders = {
+      child: {
+        id: 'child',
+        title: '引路童子',
+        desc: '青衣。头、身、手、短脚齐。不点眼。',
+        correctPaper: 'blue',
+        finishQuestion: '眼睛怎么处理？',
+        finishOptions: [
+          { id: 'no_eye', label: '不点眼', ok: true },
+          { id: 'black_eye', label: '点黑眼', taboo: '纸人开眼' },
+          { id: 'red_eye', label: '点红眼', taboo: '红眼童子' },
+        ],
+        slots: {
+          head: { label: '头', x: 258, y: 42, w: 92, h: 74, accepts: ['child_head_round','child_head_tall','child_head_smile','human_head_plain'] },
+          body: { label: '身', x: 248, y: 126, w: 112, h: 145, accepts: ['child_body_short','child_body_long','human_body_plain'] },
+          arms: { label: '手', x: 176, y: 150, w: 256, h: 72, accepts: ['arm_pair_down','arm_pair_open','arm_pair_bound'] },
+          legs: { label: '脚', x: 268, y: 282, w: 84, h: 96, accepts: ['short_legs','no_feet','long_legs'] },
+          charm: { label: '挂件', x: 378, y: 275, w: 76, h: 58, accepts: ['red_cloth','eye_patch','seal_strip'], optional: true },
+        },
+        parts: ['child_head_round','child_head_tall','child_head_smile','child_body_short','child_body_long','arm_pair_down','arm_pair_open','arm_pair_bound','short_legs','no_feet','human_head_plain','extra_hand','eye_patch','red_cloth'],
+        requiredSlots: ['head','body','arms','legs'],
+        partScores: {
+          child_head_round: 18, child_head_tall: 14, child_head_smile: 8, human_head_plain: 4,
+          child_body_short: 18, child_body_long: 10, human_body_plain: 8,
+          arm_pair_down: 16, arm_pair_open: 12, arm_pair_bound: -10,
+          short_legs: 16, no_feet: -8, long_legs: 6,
+          red_cloth: -8, eye_patch: -12, seal_strip: 3,
+        },
+        tabooParts: { extra_hand: '多手童子', eye_patch: '未收尾先开眼', arm_pair_bound: '缚手童子', no_feet: '童子无脚', child_head_smile: '笑得过头' },
+      },
+      human: {
+        id: 'human',
+        title: '替身纸人',
+        desc: '白纸。头身手脚齐，不能写大名。',
+        correctPaper: 'white',
+        finishQuestion: '名帖怎么写？',
+        finishOptions: [
+          { id: 'nickname', label: '写乳名', ok: true },
+          { id: 'full_name', label: '写大名', taboo: '活人真名' },
+          { id: 'blank', label: '空名帖', warn: '无主替身' },
+        ],
+        slots: {
+          head: { label: '头', x: 258, y: 36, w: 92, h: 78, accepts: ['human_head_plain','human_head_tilt','child_head_round'] },
+          body: { label: '身', x: 240, y: 122, w: 128, h: 178, accepts: ['human_body_plain','human_body_hunched','child_body_long'] },
+          arms: { label: '手', x: 158, y: 155, w: 292, h: 78, accepts: ['arm_pair_down','arm_pair_open','arm_pair_bound','extra_hand'] },
+          legs: { label: '脚', x: 246, y: 312, w: 120, h: 130, accepts: ['long_legs','bound_legs','short_legs','no_feet'] },
+          charm: { label: '挂件', x: 405, y: 260, w: 76, h: 58, accepts: ['eye_patch','red_cloth','seal_strip'], optional: true },
+        },
+        parts: ['human_head_plain','human_head_tilt','child_head_round','human_body_plain','human_body_hunched','arm_pair_down','arm_pair_open','arm_pair_bound','extra_hand','long_legs','bound_legs','short_legs','no_feet','eye_patch','red_cloth'],
+        requiredSlots: ['head','body','arms','legs'],
+        partScores: {
+          human_head_plain: 18, human_head_tilt: 10, child_head_round: 8,
+          human_body_plain: 18, human_body_hunched: 12, child_body_long: 8,
+          arm_pair_down: 16, arm_pair_open: 12, arm_pair_bound: -8, extra_hand: -14,
+          long_legs: 16, bound_legs: -8, short_legs: 8, no_feet: -12,
+          eye_patch: -12, red_cloth: -6, seal_strip: 2,
+        },
+        tabooParts: { extra_hand: '多手纸人', eye_patch: '未收尾先开眼', human_head_tilt: '歪头看人', arm_pair_bound: '缚手', bound_legs: '并脚', no_feet: '无脚替身' },
+      },
+      horse: {
+        id: 'horse',
+        title: '纸马',
+        desc: '白马。马头、马身、马腿、马尾、马鞍齐。',
+        correctPaper: 'white',
+        finishQuestion: '马鞍怎么处理？',
+        finishOptions: [
+          { id: 'route_charm', label: '贴路符', ok: true },
+          { id: 'empty_saddle', label: '空鞍', warn: '空鞍送远路' },
+          { id: 'living_name', label: '写活人名', taboo: '活人骑纸马' },
+        ],
+        slots: {
+          head: { label: '马头', x: 92, y: 120, w: 112, h: 96, accepts: ['horse_head','horse_head_humanlike','human_head_plain'] },
+          body: { label: '马身', x: 220, y: 130, w: 235, h: 120, accepts: ['horse_body','horse_body_thin','human_body_plain'] },
+          legs: { label: '马腿', x: 246, y: 260, w: 180, h: 150, accepts: ['horse_legs','horse_legs_three','long_legs'] },
+          tail: { label: '尾', x: 472, y: 132, w: 76, h: 98, accepts: ['horse_tail','red_cloth'] },
+          saddle: { label: '鞍', x: 292, y: 72, w: 112, h: 66, accepts: ['saddle','empty_saddle_part','seal_strip'] },
+        },
+        parts: ['horse_head','horse_head_humanlike','horse_body','horse_body_thin','horse_legs','horse_legs_three','horse_tail','saddle','empty_saddle_part','human_head_plain','human_body_plain','long_legs','red_cloth','seal_strip'],
+        requiredSlots: ['head','body','legs','tail','saddle'],
+        partScores: {
+          horse_head: 16, horse_head_humanlike: -12, human_head_plain: -16,
+          horse_body: 16, horse_body_thin: 11, human_body_plain: -12,
+          horse_legs: 16, horse_legs_three: 9, long_legs: -12,
+          horse_tail: 10, red_cloth: -7,
+          saddle: 12, empty_saddle_part: 4, seal_strip: 4,
+        },
+        tabooParts: { horse_head_humanlike: '马生人脸', human_head_plain: '马生人头', human_body_plain: '人身纸马', long_legs: '人脚纸马', red_cloth: '红缰压魂', empty_saddle_part: '空鞍送远路' },
+      },
+      house: {
+        id: 'house',
+        title: '纸屋',
+        desc: '黄纸。屋顶、墙身、门、底座齐，门不能封死。',
+        correctPaper: 'yellow',
+        finishQuestion: '门怎么留？',
+        finishOptions: [
+          { id: 'leave_door', label: '留门缝', ok: true },
+          { id: 'seal_door', label: '封死门', taboo: '亡人不得出' },
+          { id: 'wide_open', label: '门大开', warn: '门冲阴风' },
+        ],
+        slots: {
+          roof: { label: '屋顶', x: 188, y: 52, w: 240, h: 95, accepts: ['roof','crooked_roof','box_lid'] },
+          wall: { label: '墙身', x: 202, y: 160, w: 216, h: 190, accepts: ['wall','box_body'] },
+          door: { label: '门', x: 268, y: 250, w: 84, h: 120, accepts: ['door','sealed_door_part','seal_strip'] },
+          base: { label: '底', x: 178, y: 368, w: 260, h: 62, accepts: ['base','box_lid'] },
+          charm: { label: '挂件', x: 438, y: 252, w: 78, h: 58, accepts: ['red_cloth','extra_hand','eye_patch'], optional: true },
+        },
+        parts: ['roof','crooked_roof','wall','door','sealed_door_part','base','box_lid','box_body','seal_strip','red_cloth','extra_hand','eye_patch'],
+        requiredSlots: ['roof','wall','door','base'],
+        partScores: {
+          roof: 18, crooked_roof: 9, box_lid: 6,
+          wall: 18, box_body: 8,
+          door: 16, sealed_door_part: -10, seal_strip: 4,
+          base: 14,
+          red_cloth: -8, extra_hand: -12, eye_patch: -14,
+        },
+        tabooParts: { red_cloth: '红屋冲丧', extra_hand: '屋里伸手', eye_patch: '屋上开眼', crooked_roof: '歪屋压门', sealed_door_part: '门封死' },
+      },
+      box: {
+        id: 'box',
+        title: '纸钱箱',
+        desc: '黄纸。箱身、箱盖、封条齐。',
+        correctPaper: 'yellow',
+        finishQuestion: '箱口怎么处理？',
+        finishOptions: [
+          { id: 'seal', label: '封口', ok: true },
+          { id: 'open', label: '敞口', warn: '散财' },
+          { id: 'living_name', label: '写活人名', taboo: '活人收用' },
+        ],
+        slots: {
+          lid: { label: '箱盖', x: 212, y: 100, w: 205, h: 78, accepts: ['box_lid','roof'] },
+          body: { label: '箱身', x: 200, y: 190, w: 230, h: 170, accepts: ['box_body','wall'] },
+          seal: { label: '封条', x: 282, y: 170, w: 70, h: 210, accepts: ['seal_strip','broken_seal','red_cloth'] },
+        },
+        parts: ['box_lid','box_body','seal_strip','broken_seal','roof','wall','door','red_cloth','eye_patch'],
+        requiredSlots: ['lid','body','seal'],
+        partScores: {
+          box_lid: 22, roof: 8,
+          box_body: 24, wall: 8,
+          seal_strip: 18, broken_seal: -8, red_cloth: -6,
+          door: -10, eye_patch: -16,
+        },
+        tabooParts: { eye_patch: '箱上开眼', broken_seal: '断封条', door: '箱上开门', red_cloth: '红封压财' },
+      },
+    };
+
+    const state = {
+      orderId: 'child',
+      placed: {},
+      paper: 'blue',
+      finish: 'no_eye',
+    };
+
+    function getOrder() {
+      return orders[state.orderId];
+    }
+
+    function resetForOrder(id) {
+      const order = orders[id];
+      state.orderId = id;
+      state.placed = {};
+      state.paper = order.correctPaper;
+      state.finish = order.finishOptions[0].id;
+    }
+
+    function scoreOrder() {
+      const order = getOrder();
+      let correct = 0;
+      let wrong = 0;
+      let missing = 0;
+      let assemblyPoints = 0;
+      let maxAssemblyPoints = 0;
+      const tags = [];
+      for (const slotId of order.requiredSlots) {
+        const slot = order.slots[slotId];
+        const part = state.placed[slotId];
+        const slotMax = Math.max(...slot.accepts.map(p => Math.max(0, order.partScores?.[p] ?? 0)), 1);
+        maxAssemblyPoints += slotMax;
+        if (!part) {
+          missing++;
+          tags.push(`缺${slot.label}`);
+        } else if (slot.accepts.includes(part)) {
+          const pts = order.partScores?.[part] ?? slotMax;
+          assemblyPoints += Math.max(0, pts);
+          if (pts >= slotMax * 0.8) correct++;
+          else {
+            wrong++;
+            tags.push(`${slot.label}不稳：${partLabels[part]}`);
+          }
+        } else {
+          wrong++;
+          tags.push(`${slot.label}放了${partLabels[part]}`);
+        }
+      }
+
+      for (const [slotId, part] of Object.entries(state.placed)) {
+        if (order.tabooParts[part]) tags.push(order.tabooParts[part]);
+        if (order.slots[slotId]?.optional && order.slots[slotId].accepts.includes(part)) {
+          assemblyPoints += Math.max(0, order.partScores?.[part] ?? 3);
+          maxAssemblyPoints += 6;
+        }
+      }
+
+      const finish = order.finishOptions.find(o => o.id === state.finish);
+      if (state.paper !== order.correctPaper) tags.push('纸色不对');
+      if (finish?.warn) tags.push(finish.warn);
+      if (finish?.taboo) tags.push(finish.taboo);
+      if (!tags.length) tags.push('部件干净');
+
+      const assemblyScore = maxAssemblyPoints ? Math.round((assemblyPoints / maxAssemblyPoints) * 70) : 0;
+      const wrongPenalty = wrong * 8;
+      const missingPenalty = missing * 8;
+      const tabooPenalty = Object.values(state.placed).filter(p => order.tabooParts[p]).length * 14;
+      const paperScore = state.paper === order.correctPaper ? 10 : -8;
+      let finishScore = 20;
+      if (finish?.warn) finishScore = 8;
+      if (finish?.taboo) finishScore = -18;
+      const score = Math.max(0, Math.min(100, assemblyScore + paperScore + finishScore - wrongPenalty - missingPenalty - tabooPenalty));
+      let level = 'bad';
+      if (score >= 82) level = 'good';
+      else if (score >= 60) level = 'warn';
+      return {
+        score, level, correct, wrong, missing, tags,
+        parts: { assembly: assemblyScore, paper: Math.max(0, paperScore), finish: Math.max(0, finishScore), penalty: wrongPenalty + missingPenalty + tabooPenalty + Math.max(0, -paperScore) + Math.max(0, -finishScore) }
+      };
+    }
+
+    function renderOrders() {
+      const wrap = document.getElementById('orders');
+      wrap.innerHTML = '';
+      for (const order of Object.values(orders)) {
+        const btn = document.createElement('button');
+        btn.className = 'order-btn' + (order.id === state.orderId ? ' active' : '');
+        btn.type = 'button';
+        btn.innerHTML = `<span class="order-title">${order.title}</span><span class="order-desc">${order.desc}</span>`;
+        btn.addEventListener('click', () => {
+          resetForOrder(order.id);
+          render();
+        });
+        wrap.appendChild(btn);
+      }
+    }
+
+    function renderStage() {
+      const order = getOrder();
+      const stage = document.getElementById('stage');
+      stage.innerHTML = '';
+      for (const [slotId, slot] of Object.entries(order.slots)) {
+        const el = document.createElement('div');
+        const part = state.placed[slotId];
+        const ok = part && slot.accepts.includes(part);
+        el.className = 'slot' + (part ? ' filled' : '') + (part && !ok ? ' bad' : '');
+        el.style.left = `${slot.x}px`;
+        el.style.top = `${slot.y}px`;
+        el.style.width = `${slot.w}px`;
+        el.style.height = `${slot.h}px`;
+        el.dataset.slot = slotId;
+        el.textContent = part ? '' : slot.label;
+        el.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          el.classList.add('drop-hover');
+        });
+        el.addEventListener('dragleave', () => el.classList.remove('drop-hover'));
+        el.addEventListener('drop', (e) => {
+          e.preventDefault();
+          el.classList.remove('drop-hover');
+          const partId = e.dataTransfer.getData('text/plain');
+          placePart(slotId, partId);
+        });
+        if (part) {
+          const placed = document.createElement('div');
+          const partScore = order.partScores?.[part] ?? 0;
+          placed.className = 'placed-part' + (ok && partScore >= 0 ? '' : ' wrong');
+          placed.textContent = partLabels[part];
+          placed.title = '点击取下';
+          placed.addEventListener('click', () => {
+            delete state.placed[slotId];
+            render();
+          });
+          el.appendChild(placed);
+        }
+        stage.appendChild(el);
+      }
+    }
+
+    function isPartUsed(partId) {
+      return Object.values(state.placed).includes(partId);
+    }
+
+    function placePart(slotId, partId) {
+      for (const [sid, pid] of Object.entries(state.placed)) {
+        if (pid === partId) delete state.placed[sid];
+      }
+      state.placed[slotId] = partId;
+      render();
+    }
+
+    function renderParts() {
+      const order = getOrder();
+      const wrap = document.getElementById('partList');
+      wrap.innerHTML = '';
+      for (const partId of order.parts) {
+        const el = document.createElement('div');
+        el.className = 'part' + (isPartUsed(partId) ? ' used' : '');
+        el.textContent = partLabels[partId];
+        el.draggable = !isPartUsed(partId);
+        el.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', partId);
+        });
+        wrap.appendChild(el);
+      }
+    }
+
+    function renderChoices() {
+      const order = getOrder();
+      const paperWrap = document.getElementById('paperChoices');
+      paperWrap.innerHTML = '';
+      for (const p of paperOptions) {
+        const btn = document.createElement('button');
+        btn.className = 'choice' + (state.paper === p.id ? ' active' : '');
+        btn.type = 'button';
+        btn.textContent = p.label;
+        btn.addEventListener('click', () => {
+          state.paper = p.id;
+          render();
+        });
+        paperWrap.appendChild(btn);
+      }
+
+      document.getElementById('finishTitle').textContent = order.finishQuestion;
+      const finishWrap = document.getElementById('finishChoices');
+      finishWrap.innerHTML = '';
+      for (const f of order.finishOptions) {
+        const btn = document.createElement('button');
+        btn.className = 'choice' + (state.finish === f.id ? ' active' : '');
+        btn.type = 'button';
+        btn.textContent = f.label;
+        btn.addEventListener('click', () => {
+          state.finish = f.id;
+          render();
+        });
+        finishWrap.appendChild(btn);
+      }
+    }
+
+    function renderResult() {
+      const order = getOrder();
+      const s = scoreOrder();
+      document.getElementById('score').textContent = s.score;
+      document.getElementById('resultName').textContent = order.title;
+      let comment = `${order.title}还没成形。`;
+      if (s.level === 'good') comment = `${order.title}能交活。部件齐，纸色和收尾也合规。`;
+      if (s.level === 'warn') comment = `${order.title}勉强能交。样子有了，但会被扣钱或落骂。`;
+      if (s.level === 'bad') comment = `${order.title}现在不能交。缺件、错件或犯忌太明显。`;
+      document.getElementById('comment').textContent = comment;
+
+      const bars = [
+        ['拼装', s.parts.assembly, 70],
+        ['纸色', s.parts.paper, 10],
+        ['收尾', s.parts.finish, 20],
+        ['扣分', s.parts.penalty, 60],
+      ];
+      const barsEl = document.getElementById('bars');
+      barsEl.innerHTML = '';
+      for (const [name, val, max] of bars) {
+        const pct = Math.min(100, Math.round((val / max) * 100));
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<span>${name}</span><div class="bar"><i style="width:${pct}%"></i></div><b>${val}</b>`;
+        barsEl.appendChild(row);
+      }
+
+      const tagsEl = document.getElementById('tags');
+      tagsEl.innerHTML = '';
+      for (const tag of s.tags) {
+        const span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = tag;
+        tagsEl.appendChild(span);
+      }
+
+      const verdict = document.getElementById('verdict');
+      verdict.className = `verdict ${s.level}`;
+      if (s.level === 'good') verdict.textContent = `交活：给满钱。输出：${order.title}，${s.score} 分。`;
+      else if (s.level === 'warn') verdict.textContent = `交活：少给钱。输出：${order.title}，${s.score} 分。`;
+      else verdict.textContent = `退活：重扎。输出：${order.title}，${s.score} 分。`;
+    }
+
+    function loadSample() {
+      const order = getOrder();
+      state.placed = {};
+      for (const [slotId, slot] of Object.entries(order.slots)) {
+        state.placed[slotId] = slot.accepts[0];
+      }
+      state.paper = order.correctPaper;
+      state.finish = order.finishOptions.find(o => o.ok)?.id ?? order.finishOptions[0].id;
+      render();
+    }
+
+    function render() {
+      const order = getOrder();
+      document.getElementById('workTitle').textContent = order.title;
+      renderOrders();
+      renderStage();
+      renderParts();
+      renderChoices();
+      renderResult();
+    }
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      state.placed = {};
+      render();
+    });
+    document.getElementById('sampleBtn').addEventListener('click', loadSample);
+    render();
+  </script>
+</body>
+</html>

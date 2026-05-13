@@ -1,0 +1,12 @@
+[
+  {
+    "id": "sugar_zodiac",
+    "label": "十二生肖转盘",
+    "file": "sugar_zodiac.json"
+  },
+  {
+    "id": "sugar_chongqing_folk",
+    "label": "重庆糖关刀转盘",
+    "file": "sugar_chongqing_folk.json"
+  }
+]

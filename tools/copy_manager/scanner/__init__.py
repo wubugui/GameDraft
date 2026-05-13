@@ -1,0 +1,1 @@
+"""Copy Manager scanners package."""

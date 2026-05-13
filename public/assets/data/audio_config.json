@@ -1,0 +1,225 @@
+{
+  "bgm": {},
+  "ambient": {
+    "teahouse_roomtone": {
+      "src": "/resources/runtime/audio/teahouse_roomtone.wav"
+    },
+    "night_alley_wind": {
+      "src": "/resources/runtime/audio/night_alley_wind.wav"
+    },
+    "temple_rumble": {
+      "src": "/resources/runtime/audio/temple_rumble.wav"
+    },
+    "busy_market_ambient": {
+      "src": "/resources/runtime/audio/busy_market_ambient.ogg"
+    },
+    "海边": {
+      "src": "/resources/runtime/audio/BGS/29822_1076_635.mp3"
+    },
+    "野外鸟叫": {
+      "src": "/resources/runtime/audio/BGS/30116_1076_638.mp3"
+    },
+    "阴风": {
+      "src": "/resources/runtime/audio/BGS/SWDRSLGDIR_0025_wind01.wav"
+    },
+    "夜晚蛐蛐叫": {
+      "src": "/resources/runtime/audio/BGS/SWDRSLGDIR_0061_night2.wav"
+    },
+    "人声闹市": {
+      "src": "/resources/runtime/audio/ancient_market_base.mp3"
+    },
+    "中文人声闹市": {
+      "src": "/resources/runtime/audio/chinese_crowd_voices.mp3"
+    }
+  },
+  "sfx": {
+    "story_intro": {
+      "src": "/resources/runtime/audio/story_intro.wav"
+    },
+    "iron_box_chime": {
+      "src": "/resources/runtime/audio/iron_box_chime.wav"
+    },
+    "reveal_sting": {
+      "src": "/resources/runtime/audio/reveal_sting.wav"
+    },
+    "ui_dialogue_advance": {
+      "src": "/resources/runtime/audio/ui_dialogue_advance.wav"
+    },
+    "ui_quest_update": {
+      "src": "/resources/runtime/audio/ui_quest_update.wav"
+    },
+    "ui_quest_complete": {
+      "src": "/resources/runtime/audio/ui_quest_complete.wav"
+    },
+    "ui_hover": {
+      "src": "/resources/runtime/audio/ui_hover.wav"
+    },
+    "ui_confirm": {
+      "src": "/resources/runtime/audio/ui_confirm.wav"
+    },
+    "ui_cancel": {
+      "src": "/resources/runtime/audio/ui_cancel.wav"
+    },
+    "ui_panel_open": {
+      "src": "/resources/runtime/audio/ui_panel_open.wav"
+    },
+    "ui_panel_close": {
+      "src": "/resources/runtime/audio/ui_panel_close.wav"
+    },
+    "ui_notification": {
+      "src": "/resources/runtime/audio/ui_notification.wav"
+    },
+    "item_pickup": {
+      "src": "/resources/runtime/audio/item_pickup.wav"
+    },
+    "coin_gain": {
+      "src": "/resources/runtime/audio/coin_gain.wav"
+    },
+    "coin_spend": {
+      "src": "/resources/runtime/audio/coin_spend.wav"
+    },
+    "inventory_full": {
+      "src": "/resources/runtime/audio/inventory_full.wav"
+    },
+    "rule_fragment_gain": {
+      "src": "/resources/runtime/audio/rule_fragment_gain.wav"
+    },
+    "rule_acquired": {
+      "src": "/resources/runtime/audio/rule_acquired.wav"
+    },
+    "archive_update": {
+      "src": "/resources/runtime/audio/archive_update.wav"
+    },
+    "hotspot_interact": {
+      "src": "/resources/runtime/audio/hotspot_interact.wav"
+    },
+    "scene_transition": {
+      "src": "/resources/runtime/audio/scene_transition.wav"
+    },
+    "ui_warning": {
+      "src": "/resources/runtime/audio/ui_warning.wav"
+    },
+    "dialogue_start": {
+      "src": "/resources/runtime/audio/dialogue_start.wav"
+    },
+    "dialogue_end": {
+      "src": "/resources/runtime/audio/dialogue_end.wav"
+    },
+    "item_consume": {
+      "src": "/resources/runtime/audio/item_consume.wav"
+    },
+    "rule_layer_gain": {
+      "src": "/resources/runtime/audio/rule_layer_gain.wav"
+    },
+    "rule_use_apply": {
+      "src": "/resources/runtime/audio/rule_use_apply.wav"
+    },
+    "zone_rule_available": {
+      "src": "/resources/runtime/audio/zone_rule_available.wav"
+    },
+    "zone_rule_unavailable": {
+      "src": "/resources/runtime/audio/zone_rule_unavailable.wav"
+    },
+    "encounter_start": {
+      "src": "/resources/runtime/audio/encounter_start.wav"
+    },
+    "encounter_choice": {
+      "src": "/resources/runtime/audio/encounter_choice.wav"
+    },
+    "encounter_result": {
+      "src": "/resources/runtime/audio/encounter_result.wav"
+    },
+    "cutscene_start": {
+      "src": "/resources/runtime/audio/cutscene_start.wav"
+    },
+    "cutscene_end": {
+      "src": "/resources/runtime/audio/cutscene_end.wav"
+    },
+    "day_start": {
+      "src": "/resources/runtime/audio/day_start.wav"
+    },
+    "day_end": {
+      "src": "/resources/runtime/audio/day_end.wav"
+    },
+    "shop_open": {
+      "src": "/resources/runtime/audio/shop_open.wav"
+    },
+    "shop_close": {
+      "src": "/resources/runtime/audio/shop_close.wav"
+    },
+    "map_travel": {
+      "src": "/resources/runtime/audio/map_travel.wav"
+    },
+    "minigame_result": {
+      "src": "/resources/runtime/audio/minigame_result.wav"
+    },
+    "document_reveal": {
+      "src": "/resources/runtime/audio/document_reveal.wav"
+    },
+    "sugar_wheel_pointer_pickup": {
+      "src": "/resources/runtime/audio/sugar_wheel_pointer_pickup.wav"
+    },
+    "sugar_wheel_pointer_set": {
+      "src": "/resources/runtime/audio/sugar_wheel_pointer_set.wav"
+    },
+    "sugar_wheel_charge_start": {
+      "src": "/resources/runtime/audio/sugar_wheel_charge_start.wav"
+    },
+    "sugar_wheel_launch": {
+      "src": "/resources/runtime/audio/sugar_wheel_launch.wav"
+    },
+    "sugar_wheel_tick_fast": {
+      "src": "/resources/runtime/audio/sugar_wheel_tick_fast.wav"
+    },
+    "sugar_wheel_tick_slow": {
+      "src": "/resources/runtime/audio/sugar_wheel_tick_slow.wav"
+    },
+    "sugar_wheel_stop": {
+      "src": "/resources/runtime/audio/sugar_wheel_stop.wav"
+    },
+    "sugar_wheel_prize_chime": {
+      "src": "/resources/runtime/audio/sugar_wheel_prize_chime.wav"
+    }
+  },
+  "systemSfx": {
+    "questAccepted": "ui_quest_update",
+    "questCompleted": "ui_quest_complete",
+    "dialogueStart": "dialogue_start",
+    "dialogueEnd": "dialogue_end",
+    "dialogueAdvance": "ui_dialogue_advance",
+    "dialogueChoice": "ui_confirm",
+    "uiHover": "ui_hover",
+    "uiConfirm": "ui_confirm",
+    "uiCancel": "ui_cancel",
+    "uiPanelOpen": "ui_panel_open",
+    "uiPanelClose": "ui_panel_close",
+    "uiNotification": "ui_notification",
+    "uiWarning": "ui_warning",
+    "hotspotInteract": "hotspot_interact",
+    "sceneTransition": "scene_transition",
+    "mapTravel": "map_travel",
+    "itemAcquired": "item_pickup",
+    "itemConsumed": "item_consume",
+    "inventoryFull": "inventory_full",
+    "coinGain": "coin_gain",
+    "coinSpend": "coin_spend",
+    "ruleFragment": "rule_fragment_gain",
+    "ruleLayer": "rule_layer_gain",
+    "ruleAcquired": "rule_acquired",
+    "ruleUseApply": "rule_use_apply",
+    "zoneRuleAvailable": "zone_rule_available",
+    "zoneRuleUnavailable": "zone_rule_unavailable",
+    "archiveUpdated": "archive_update",
+    "encounterStart": "encounter_start",
+    "encounterChoice": "encounter_choice",
+    "encounterResult": "encounter_result",
+    "cutsceneStart": "cutscene_start",
+    "cutsceneEnd": "cutscene_end",
+    "dayStart": "day_start",
+    "dayEnd": "day_end",
+    "shopOpen": "shop_open",
+    "shopClose": "shop_close",
+    "minigameResult": "minigame_result",
+    "documentReveal": "document_reveal"
+  }
+}

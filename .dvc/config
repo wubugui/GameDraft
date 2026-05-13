@@ -1,0 +1,6 @@
+[core]
+    analytics = false
+    remote = aliyun_oss
+['remote "aliyun_oss"']
+    url = oss://gamedraft-assets/gamedraft/dvc
+    oss_endpoint = https://oss-cn-shanghai.aliyuncs.com

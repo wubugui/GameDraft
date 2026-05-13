@@ -1,0 +1,39 @@
+schema: chronicle_sim_v3/providers@1
+
+# API 提供商账号（凭据 + endpoint）。
+#
+# 安全约束：
+# - 永不写字面 api_key:；只接受 api_key_ref: env:VAR | file:path
+# - file:path 相对 <run>/config/
+# - stub / ollama 可省略 api_key_ref；其它必填
+#
+# 这是 v3 三层架构的最底层；llm.yaml 的 models / agents.yaml 的 agents
+# 都通过 provider_id 引用本文件中的条目。
+providers:
+  # === DashScope 通义系列 ===
+  dashscope_main:
+    kind: dashscope_compat
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_ref: env:DASHSCOPE_API_KEY
+    extra:
+      thinking: false
+
+  dashscope_coding:
+    kind: dashscope_compat
+    base_url: https://coding.dashscope.aliyuncs.com/v1
+    api_key_ref: env:DASHSCOPE_API_KEY
+
+  # === Moonshot / Kimi ===
+  moonshot_main:
+    kind: openai_compat
+    base_url: https://api.moonshot.cn/v1
+    api_key_ref: file:secrets/moonshot.key
+
+  # === 本地 ollama ===
+  ollama_local:
+    kind: ollama
+    base_url: http://127.0.0.1:11434
+
+  # === 本地占位（单测用） ===
+  stub_local:
+    kind: stub

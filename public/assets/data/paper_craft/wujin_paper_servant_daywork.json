@@ -1,0 +1,61 @@
+{
+  "id": "wujin_paper_servant_daywork",
+  "label": "雾津纸扎铺：糊纸人日工",
+  "orders": [
+    {
+      "id": "paper_servant_plain",
+      "title": "糊一个随葬纸人",
+      "description": "城里白事铺子的日工活。要像人，但不能太像活人；该齐整的地方齐整，该避的忌讳避开。",
+      "targetHint": "纸人要站得直，手脚齐，别点眼，别封口太死。",
+      "correctPaper": "white",
+      "successScore": 76,
+      "warnScore": 50,
+      "paperOptions": [
+        { "id": "white", "label": "白纸", "tint": "#f3ead7", "score": 12 },
+        { "id": "yellow", "label": "黄表", "tint": "#d5a33d", "score": 2, "tags": ["纸色偏香火"] },
+        { "id": "blue", "label": "青纸", "tint": "#749bb0", "score": -8, "tags": ["纸色不合"] },
+        { "id": "red", "label": "红纸", "tint": "#a9372c", "score": -18, "tags": ["红白相冲"] }
+      ],
+      "finishQuestion": "收尾",
+      "finishOptions": [
+        { "id": "paste_plain", "label": "糨糊收口", "score": 10 },
+        { "id": "tie_loose", "label": "麻线虚扎", "score": 6, "tags": ["骨架可见"] },
+        { "id": "seal_mouth", "label": "封口", "score": -6, "tags": ["封口犯忌"] },
+        { "id": "paint_eye", "label": "点眼", "score": -22, "tags": ["点眼犯忌"] }
+      ],
+      "slots": [
+        { "id": "head", "label": "头脸", "x": 226, "y": 82, "width": 108, "height": 82, "accepts": ["head_plain", "head_tilted", "head_smile"] },
+        { "id": "body", "label": "身架", "x": 205, "y": 166, "width": 150, "height": 126, "accepts": ["body_straight", "body_hunched", "body_long"] },
+        { "id": "arms", "label": "双臂", "x": 110, "y": 182, "width": 340, "height": 74, "accepts": ["arms_down", "arms_open", "arms_bound"] },
+        { "id": "legs", "label": "腿脚", "x": 214, "y": 294, "width": 132, "height": 86, "accepts": ["legs_plain", "legs_bound", "legs_stump"] },
+        { "id": "charm", "label": "挂件", "x": 388, "y": 92, "width": 112, "height": 82, "optional": true, "accepts": ["paper_charm", "red_strip", "extra_hand"] }
+      ],
+      "parts": [
+        { "id": "head_plain", "label": "空白脸", "score": 16 },
+        { "id": "head_tilted", "label": "歪头脸", "score": 6, "tags": ["歪头看人"] },
+        { "id": "head_smile", "label": "笑脸", "score": -10, "tags": ["笑脸犯忌"] },
+        { "id": "body_straight", "label": "直身架", "score": 16 },
+        { "id": "body_hunched", "label": "驼身架", "score": 5, "tags": ["身架不正"] },
+        { "id": "body_long", "label": "长身架", "score": 11, "tags": ["比例偏瘦"] },
+        { "id": "arms_down", "label": "垂手", "score": 13 },
+        { "id": "arms_open", "label": "张手", "score": 2, "tags": ["张手招人"] },
+        { "id": "arms_bound", "label": "缚手", "score": 8, "tags": ["缚手"] },
+        { "id": "legs_plain", "label": "直腿", "score": 13 },
+        { "id": "legs_bound", "label": "并腿", "score": 8, "tags": ["并腿"] },
+        { "id": "legs_stump", "label": "无脚", "score": -8, "tags": ["脚不落地"] },
+        { "id": "paper_charm", "label": "纸符", "score": 5, "tags": ["压纸符"] },
+        { "id": "red_strip", "label": "红布条", "score": -12, "tags": ["红白相冲"] },
+        { "id": "extra_hand", "label": "多一只手", "score": -20, "tags": ["多手犯形"] }
+      ],
+      "onSuccessActions": [
+        { "type": "debugAlertActionParams", "params": { "msg": "纸扎活计交得像样。" } }
+      ],
+      "onWarnActions": [
+        { "type": "debugAlertActionParams", "params": { "msg": "纸扎活计勉强能交，但师傅皱了眉。" } }
+      ],
+      "onBadActions": [
+        { "type": "debugAlertActionParams", "params": { "msg": "这活犯忌太重，纸扎铺不收。" } }
+      ]
+    }
+  ]
+}

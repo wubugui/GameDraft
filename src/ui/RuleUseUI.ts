@@ -1,0 +1,203 @@
+import { Container, Graphics, Text } from 'pixi.js';
+import { UITheme, fadeIn } from './UITheme';
+import type { Renderer } from '../rendering/Renderer';
+import type { EventBus } from '../core/EventBus';
+import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { StringsProvider } from '../core/StringsProvider';
+
+interface ResolvedRuleSlot {
+  slot: ZoneRuleSlot;
+  ruleName: string;
+  enabled: boolean;
+  progressText?: string;
+}
+
+export class RuleUseUI {
+  private renderer: Renderer;
+  private eventBus: EventBus;
+  private zoneData: IZoneDataProvider;
+  private rulesData: IRulesDataProvider;
+  private strings: StringsProvider;
+
+  private container: Container | null = null;
+  private _isOpen: boolean = false;
+  private resolveDisplay: ((s: string) => string) | null = null;
+
+  constructor(
+    renderer: Renderer,
+    eventBus: EventBus,
+    zoneData: IZoneDataProvider,
+    rulesData: IRulesDataProvider,
+    strings: StringsProvider,
+  ) {
+    this.renderer = renderer;
+    this.eventBus = eventBus;
+    this.zoneData = zoneData;
+    this.rulesData = rulesData;
+    this.strings = strings;
+  }
+
+  setResolveDisplay(fn: ((s: string) => string) | null): void {
+    this.resolveDisplay = fn;
+  }
+
+  private r(s: string): string {
+    return this.resolveDisplay ? this.resolveDisplay(s) : s;
+  }
+
+  get isOpen(): boolean { return this._isOpen; }
+
+  open(): void {
+    if (this._isOpen) return;
+    const slots = this.resolveSlots();
+    if (slots.length === 0) return;
+
+    this._isOpen = true;
+    this.build(slots);
+  }
+
+  close(): void {
+    if (!this._isOpen) return;
+    this._isOpen = false;
+    this.destroyUI();
+  }
+
+  private resolveSlots(): ResolvedRuleSlot[] {
+    const rawSlots = this.zoneData.getCurrentRuleSlots();
+    const result: ResolvedRuleSlot[] = [];
+
+    for (const slot of rawSlots) {
+      const ruleDef = this.rulesData.getRuleDef(slot.ruleId);
+      if (!ruleDef) continue;
+
+      const req = slot.requiredLayers;
+      const layersOk =
+        !req?.length
+          ? this.rulesData.hasRule(slot.ruleId)
+          : req.every((L: RuleLayerKey) => this.rulesData.hasLayer(slot.ruleId, L));
+
+      if (layersOk) {
+        result.push({ slot, ruleName: this.r(ruleDef.name), enabled: true });
+      } else if (this.rulesData.isDiscovered(slot.ruleId)) {
+        const progress = this.rulesData.getFragmentProgress(slot.ruleId);
+        const displayName = this.r(ruleDef.incompleteName ?? this.strings.get('ruleUse', 'unknown'));
+        const depth = this.rulesData.getRuleDepth(slot.ruleId);
+        const progressText = req?.length
+          ? `${depth.unlocked}/${depth.total}`
+          : `${progress.collected}/${progress.total}`;
+        result.push({
+          slot,
+          ruleName: displayName,
+          enabled: false,
+          progressText,
+        });
+      }
+    }
+    return result;
+  }
+
+  private build(slots: ResolvedRuleSlot[]): void {
+    this.destroyUI();
+
+    const sw = this.renderer.screenWidth;
+    const sh = this.renderer.screenHeight;
+    const panelW = 400;
+    const rowH = 38;
+    const padY = 12;
+    const titleH = 36;
+    const panelH = titleH + padY + slots.length * rowH + padY;
+    const px = (sw - panelW) / 2;
+    const py = (sh - panelH) / 2;
+
+    this.container = new Container();
+
+    const overlay = new Graphics();
+    overlay.rect(0, 0, sw, sh);
+    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlay });
+    this.container.addChild(overlay);
+
+    const bg = new Graphics();
+    bg.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
+    bg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.panelBg });
+    bg.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
+    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    this.container.addChild(bg);
+
+    const title = new Text({
+      text: this.strings.get('ruleUse', 'title'),
+      style: { fontSize: 16, fill: UITheme.colors.title, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 360 },
+    });
+    title.x = px + (panelW - title.width) / 2;
+    title.y = py + 10;
+    this.container.addChild(title);
+
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      const ry = py + titleH + padY + i * rowH;
+
+      const rowBg = new Graphics();
+      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
+      rowBg.fill({ color: s.enabled ? UITheme.colors.rowBgDark : UITheme.colors.rowBgInactive, alpha: UITheme.alpha.rowHover });
+      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
+      rowBg.stroke({ color: s.enabled ? UITheme.colors.borderActive : UITheme.colors.borderSubtle, width: 1 });
+      this.container.addChild(rowBg);
+
+      let label = `${i + 1}. ${s.ruleName}`;
+      if (s.progressText) label += ` (${s.progressText})`;
+
+      const text = new Text({
+        text: label,
+        style: { fontSize: 14, fill: s.enabled ? UITheme.colors.body : UITheme.colors.disabled, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 360 },
+      });
+      text.x = px + 24;
+      text.y = ry + 8;
+      this.container.addChild(text);
+
+      if (s.enabled) {
+        const hoverBg = new Graphics();
+        hoverBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
+        hoverBg.fill({ color: UITheme.colors.rowHover, alpha: UITheme.alpha.rowHover });
+        hoverBg.visible = false;
+        this.container.addChildAt(hoverBg, this.container.children.indexOf(rowBg));
+
+        rowBg.eventMode = 'static';
+        rowBg.cursor = 'pointer';
+        rowBg.on('pointerover', () => { hoverBg.visible = true; rowBg.visible = false; });
+        rowBg.on('pointerout', () => { hoverBg.visible = false; rowBg.visible = true; });
+        rowBg.on('pointerdown', () => { this.selectSlot(s); });
+      }
+    }
+
+    const hint = new Text({
+      text: this.strings.get('ruleUse', 'closeHint'),
+      style: { fontSize: 11, fill: UITheme.colors.hintLight, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 360 },
+    });
+    hint.x = px + (panelW - hint.width) / 2;
+    hint.y = py + panelH - 18;
+    this.container.addChild(hint);
+
+    this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
+  }
+
+  private selectSlot(slot: ResolvedRuleSlot): void {
+    this.close();
+    this.eventBus.emit('ruleUse:apply', {
+      ruleId: slot.slot.ruleId,
+      actions: slot.slot.resultActions,
+      resultText: slot.slot.resultText,
+    });
+  }
+
+  private destroyUI(): void {
+    if (this.container) {
+      if (this.container.parent) this.container.parent.removeChild(this.container);
+      this.container.destroy({ children: true });
+      this.container = null;
+    }
+  }
+
+  destroy(): void {
+    this.destroyUI();
+  }
+}

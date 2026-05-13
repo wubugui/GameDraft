@@ -1,0 +1,272 @@
+schema: chronicle_sim_v3/graph@1
+id: week
+title: 标准周流水线（v3）
+description: |
+  完整一周流程：
+    读 agents → 过滤活跃 → 按 tier 分组
+      → S/A 分别 fanout 单 NPC 闭环（感知/意图/行动/反思）
+      → 编导草稿（director）
+      → GM 裁定（gm）
+      → 写入 events → 谣言传播 → 社会状态沉积
+      → week_end 子图（写 summary 等）
+
+inputs:
+  week:
+    type: Week
+    required: true
+  pacing_preset:
+    type: Str
+    required: false
+    default: default
+
+outputs:
+  summary:
+    type: Str
+  intents_count:
+    type: Int
+
+spec:
+  nodes:
+    bible:
+      kind: read.world.bible_text
+    agents:
+      kind: read.world.agents
+    alive:
+      kind: npc.filter_active
+      in:
+        agents: ${nodes.agents.out}
+    by_tier:
+      kind: npc.partition_by_tier
+      in:
+        agents: ${nodes.alive.out}
+    pacing:
+      kind: read.config.pacing
+      params:
+        preset: default
+    pacing_mult:
+      kind: pacing.multiplier
+      in:
+        week: ${inputs.week}
+        pacing: ${nodes.pacing.out}
+    intent_s:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.S}
+      params:
+        body: ${subgraph:single_agent_intent}
+        body_inputs:
+          tier: "S"
+          agent_spec: data/agent_specs/tier_s_npc.toml
+          week: ${inputs.week}
+    intent_a:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.A}
+      params:
+        body: ${subgraph:single_agent_intent}
+        body_inputs:
+          tier: "A"
+          agent_spec: data/agent_specs/tier_a_npc.toml
+          week: ${inputs.week}
+    intent_b:
+      kind: flow.subgraph
+      params:
+        ref: ${subgraph:group_tier_intents}
+        inputs:
+          tier: "B"
+          week: ${inputs.week}
+          agents: ${nodes.by_tier.B}
+    intent_c:
+      kind: flow.subgraph
+      params:
+        ref: ${subgraph:group_tier_intents}
+        inputs:
+          tier: "C"
+          week: ${inputs.week}
+          agents: ${nodes.by_tier.C}
+    all_intents:
+      kind: list.concat
+      in:
+        lists:
+          - ${nodes.intent_s.collected}
+          - ${nodes.intent_a.collected}
+          - ${nodes.intent_b.out.intents}
+          - ${nodes.intent_c.out.intents}
+    intents_text:
+      kind: json.encode
+      in:
+        value: ${nodes.all_intents.out}
+      params:
+        indent: 2
+    event_types:
+      kind: read.config.event_types
+    event_types_text:
+      kind: eventtype.format_for_prompt
+      in:
+        types: ${nodes.event_types.out}
+    director:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          pacing_mult: ${nodes.pacing_mult.out}
+          world_bible_text: ${nodes.bible.out}
+          intents_json: ${nodes.intents_text.out}
+          event_types_text: ${nodes.event_types_text.out}
+          event_selection_notes: ""
+      params:
+        agent_spec: data/agent_specs/director.toml
+        llm:
+          role: director
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    drafts_text:
+      kind: json.encode
+      in:
+        value: ${nodes.director.parsed}
+      params:
+        indent: 2
+    gm:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          world_bible_text: ${nodes.bible.out}
+          drafts_json: ${nodes.drafts_text.out}
+      params:
+        agent_spec: data/agent_specs/gm.toml
+        llm:
+          role: gm
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    gm_events:
+      kind: json.path
+      in:
+        value: ${nodes.gm.parsed}
+      params:
+        path: events
+    edges:
+      kind: read.world.edges
+    rumor_sim:
+      kind: read.config.rumor_sim
+      params:
+        preset: default
+    rumors_generated:
+      kind: rumor.bfs_engine
+      in:
+        events: ${nodes.gm_events.out}
+        edges: ${nodes.edges.out}
+        params: ${nodes.rumor_sim.out}
+        week: ${inputs.week}
+    gm_events_text:
+      kind: json.encode
+      in:
+        value: ${nodes.gm_events.out}
+      params:
+        indent: 2
+    rumors_generated_text:
+      kind: json.encode
+      in:
+        value: ${nodes.rumors_generated.rumors}
+      params:
+        indent: 2
+    write_rumors:
+      kind: write.chronicle.rumors
+      in:
+        week: ${inputs.week}
+        rumors: ${nodes.rumors_generated.rumors}
+    belief_s:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.S}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+    belief_a:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.A}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+    belief_b:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.B}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+    belief_c:
+      kind: flow.fanout_per_agent
+      in:
+        over: ${nodes.by_tier.C}
+      params:
+        body: ${subgraph:single_agent_belief_update}
+        body_inputs:
+          week: ${inputs.week}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+    social_state:
+      kind: agent.cline
+      in:
+        vars:
+          week: ${inputs.week}
+          world_bible_text: ${nodes.bible.out}
+          intents_text: ${nodes.intents_text.out}
+          drafts_json: ${nodes.drafts_text.out}
+          events_text: ${nodes.gm_events_text.out}
+          rumors_text: ${nodes.rumors_generated_text.out}
+          social_state_text: ""
+      params:
+        agent_spec: data/agent_specs/social_state_settler.toml
+        llm:
+          role: social_state
+          model: smart
+          output:
+            kind: json_object
+            artifact_filename: agent_output.json
+    social_state_key:
+      kind: text.format
+      in:
+        vars:
+          week: ${inputs.week}
+      params:
+        pattern: "chronicle.social_state:week={week}"
+    write_social_state:
+      kind: write.schema.json
+      in:
+        key: ${nodes.social_state_key.out}
+        payload: ${nodes.social_state.parsed}
+    week_end:
+      kind: flow.subgraph
+      params:
+        ref: ${subgraph:week_end}
+        inputs:
+          week: ${inputs.week}
+          events_json: ${nodes.gm_events.out}
+          rumors_json: ${nodes.rumors_generated.rumors}
+          social_state_json: ${nodes.social_state.parsed}
+          events: ${nodes.gm_events.out}
+          rumors: ${nodes.rumors_generated.rumors}
+          social_state: ${nodes.social_state.parsed}
+    intents_n:
+      kind: count
+      in:
+        list: ${nodes.all_intents.out}
+
+  result:
+    summary: ${nodes.week_end.out.summary}
+    intents_count: ${nodes.intents_n.out}

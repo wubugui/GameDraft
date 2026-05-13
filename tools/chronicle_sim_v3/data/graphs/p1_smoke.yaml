@@ -1,0 +1,40 @@
+schema: chronicle_sim_v3/graph@1
+id: p1_smoke
+title: P1 smoke 端到端
+description: |
+  最小验证图：读 agents → 过滤活跃 → 按 tier 分组 → 调 agent.cline (offline stub)
+  用一段输入 vars，输出文本。
+inputs:
+  week:
+    type: Week
+    required: true
+spec:
+  nodes:
+    agents:
+      kind: read.world.agents
+    alive:
+      kind: npc.filter_active
+      in:
+        agents: ${nodes.agents.out}
+    by_tier:
+      kind: npc.partition_by_tier
+      in:
+        agents: ${nodes.alive.out}
+    s_count:
+      kind: count
+      in:
+        list: ${nodes.by_tier.S}
+    summary:
+      kind: agent.run
+      in:
+        vars:
+          __system: 你是 P1 smoke 测试助手
+          __user: ${nodes.s_count.out}
+      params:
+        agent: simple_chat_offline
+        spec: _inline
+        role: smoke
+        output: { kind: text }
+  result:
+    text: ${nodes.summary.text}
+    s_count: ${nodes.s_count.out}

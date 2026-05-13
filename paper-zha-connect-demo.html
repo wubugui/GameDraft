@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>扎纸连骨 Demo</title>
+  <style>
+    :root {
+      --ink: #2b241d;
+      --muted: #776557;
+      --paper: #efe2c4;
+      --panel: rgba(255, 248, 231, .86);
+      --line: #80511f;
+      --ghost: rgba(120, 89, 56, .22);
+      --ok: #3f7a4c;
+      --warn: #a06923;
+      --bad: #a13c32;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 20% 10%, rgba(255,255,255,.5), transparent 30rem),
+        linear-gradient(135deg, #c8aa78, #f0dfbb 42%, #c4a06a);
+    }
+
+    main {
+      width: min(1200px, calc(100vw - 28px));
+      margin: 0 auto;
+      padding: 22px 0 30px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    .sub {
+      margin: 6px 0 16px;
+      color: #5f5043;
+      font-size: 14px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 270px minmax(480px, 1fr) 330px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(85, 57, 28, .25);
+      border-radius: 8px;
+      box-shadow: 0 18px 42px rgba(68, 40, 14, .14);
+      padding: 14px;
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 17px;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+    }
+
+    .order-btn {
+      width: 100%;
+      display: block;
+      border: 1px solid rgba(75, 50, 25, .28);
+      background: #f8ecd0;
+      border-radius: 7px;
+      padding: 10px 11px;
+      margin-bottom: 8px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .order-btn:hover { background: #fff4dc; }
+    .order-btn.active {
+      background: #e6c88f;
+      border-color: #86602d;
+      box-shadow: inset 0 0 0 1px rgba(134, 96, 45, .32);
+    }
+
+    .order-title {
+      display: block;
+      font-weight: 800;
+      margin-bottom: 3px;
+    }
+
+    .order-desc {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .small-btn {
+      border: 1px solid rgba(75, 50, 25, .28);
+      border-radius: 7px;
+      background: #f8ecd0;
+      padding: 9px;
+      cursor: pointer;
+    }
+
+    .small-btn:hover { background: #fff4dc; }
+
+    .workbench {
+      background:
+        linear-gradient(rgba(83, 47, 18, .05), rgba(83, 47, 18, .02)),
+        var(--paper);
+    }
+
+    .svg-wrap {
+      border-radius: 8px;
+      background:
+        linear-gradient(0deg, rgba(255,255,255,.36), rgba(255,255,255,.12)),
+        #ead8b2;
+      border: 1px solid rgba(84, 55, 28, .22);
+      overflow: hidden;
+    }
+
+    svg {
+      width: 100%;
+      height: 560px;
+      display: block;
+      user-select: none;
+      touch-action: manipulation;
+    }
+
+    .hint-edge {
+      stroke: var(--ghost);
+      stroke-width: 5;
+      stroke-linecap: round;
+      stroke-dasharray: 6 10;
+      pointer-events: none;
+    }
+
+    .player-edge {
+      stroke: var(--line);
+      stroke-width: 8;
+      stroke-linecap: round;
+      filter: drop-shadow(0 2px 0 rgba(49, 28, 11, .25));
+      cursor: pointer;
+    }
+
+    .player-edge.optional { stroke: #9e6a2f; }
+    .player-edge.taboo { stroke: var(--bad); }
+    .node {
+      cursor: pointer;
+    }
+
+    .node circle {
+      fill: #f8ead0;
+      stroke: #6a4422;
+      stroke-width: 3;
+    }
+
+    .node.selected circle {
+      fill: #f0c66f;
+      stroke-width: 5;
+    }
+
+    .node text {
+      font-size: 14px;
+      font-weight: 700;
+      fill: #3a2d22;
+      text-anchor: middle;
+      dominant-baseline: central;
+      pointer-events: none;
+    }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .stat {
+      min-height: 58px;
+      padding: 9px;
+      background: rgba(255,255,255,.38);
+      border: 1px solid rgba(84, 55, 28, .18);
+      border-radius: 7px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 20px;
+      margin-bottom: 2px;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .choice-group {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(84, 55, 28, .18);
+    }
+
+    .choices {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .choice {
+      border: 1px solid rgba(75, 50, 25, .28);
+      border-radius: 7px;
+      background: #f8ecd0;
+      padding: 9px 7px;
+      cursor: pointer;
+    }
+
+    .choice.active {
+      background: #e6c88f;
+      border-color: #86602d;
+      font-weight: 800;
+    }
+
+    .result {
+      display: grid;
+      gap: 10px;
+    }
+
+    .score-card {
+      background: #fff2d4;
+      border: 1px solid rgba(84, 55, 28, .2);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .score-card .big {
+      font-size: 38px;
+      line-height: 1;
+      font-weight: 900;
+      margin-bottom: 6px;
+    }
+
+    .score-card .name {
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .comment {
+      line-height: 1.55;
+      color: #4b3d31;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 72px 1fr 42px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+
+    .bar {
+      height: 12px;
+      background: rgba(89, 62, 36, .14);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6f9753, #d6a548);
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag {
+      display: inline-flex;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(111, 78, 42, .14);
+      color: #584634;
+      font-size: 12px;
+    }
+
+    .verdict {
+      padding: 11px;
+      border-radius: 8px;
+      border: 1px solid rgba(84, 55, 28, .2);
+      background: #f8ecd1;
+      line-height: 1.55;
+    }
+
+    .verdict.good { background: #edf4df; border-color: rgba(53, 117, 64, .45); }
+    .verdict.warn { background: #fff1ce; border-color: rgba(160, 105, 35, .45); }
+    .verdict.bad { background: #f8ded8; border-color: rgba(161, 60, 50, .45); }
+
+    @media (max-width: 1000px) {
+      .layout { grid-template-columns: 1fr; }
+      svg { height: 480px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>扎纸连骨 Demo</h1>
+    <p class="sub">点两个骨点连竹篾。结果由订单决定，系统只算必要骨、可选骨、禁忌骨、纸色和收尾选择，不再猜玩家画的是啥。</p>
+
+    <section class="layout">
+      <aside class="panel">
+        <h2>纸活订单</h2>
+        <div id="orders"></div>
+        <div class="actions">
+          <button class="small-btn" id="clearBtn">拆掉重扎</button>
+          <button class="small-btn" id="sampleBtn">师傅样子</button>
+        </div>
+      </aside>
+
+      <section class="panel workbench">
+        <h2 id="workTitle">引路童子</h2>
+        <div class="svg-wrap">
+          <svg id="svg" viewBox="0 0 720 560" aria-label="扎纸连骨工作台"></svg>
+        </div>
+
+        <div class="status-strip">
+          <div class="stat"><strong id="neededStat">0/0</strong><span>必要骨</span></div>
+          <div class="stat"><strong id="optionalStat">0</strong><span>可选骨</span></div>
+          <div class="stat"><strong id="tabooStat">0</strong><span>禁忌骨</span></div>
+        </div>
+
+        <div class="choice-group">
+          <h2>糊纸色</h2>
+          <div class="choices" id="paperChoices"></div>
+        </div>
+
+        <div class="choice-group">
+          <h2 id="finishTitle">收尾</h2>
+          <div class="choices" id="finishChoices"></div>
+        </div>
+      </section>
+
+      <aside class="panel result">
+        <h2>交活结果</h2>
+        <div class="score-card">
+          <div class="big" id="score">0</div>
+          <div class="name" id="resultName">引路童子</div>
+          <div class="comment" id="comment"></div>
+        </div>
+        <div id="bars"></div>
+        <div class="tags" id="tags"></div>
+        <div class="verdict" id="verdict"></div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const paperOptions = [
+      { id: 'white', label: '白纸' },
+      { id: 'yellow', label: '黄纸' },
+      { id: 'blue', label: '青纸' },
+      { id: 'red', label: '红纸' },
+    ];
+
+    const orders = {
+      child: {
+        id: 'child',
+        title: '引路童子',
+        desc: '青衣，身短，手脚齐。不点眼。',
+        correctPaper: 'blue',
+        finishQuestion: '眼睛怎么处理？',
+        finishOptions: [
+          { id: 'no_eye', label: '不点眼', ok: true },
+          { id: 'black_eye', label: '点黑眼', taboo: '纸人开眼' },
+          { id: 'red_eye', label: '点红眼', taboo: '红眼童子' },
+        ],
+        nodes: {
+          head: [360, 78, '头'],
+          neck: [360, 145, '颈'],
+          chest: [360, 220, '身'],
+          lShoulder: [300, 178, '左肩'],
+          rShoulder: [420, 178, '右肩'],
+          lHand: [260, 265, '左手'],
+          rHand: [460, 265, '右手'],
+          waist: [360, 300, '腰'],
+          lFoot: [315, 420, '左脚'],
+          rFoot: [405, 420, '右脚'],
+        },
+        required: [
+          ['head','neck'], ['neck','chest'], ['lShoulder','rShoulder'],
+          ['lShoulder','lHand'], ['rShoulder','rHand'], ['chest','waist'],
+          ['waist','lFoot'], ['waist','rFoot'],
+        ],
+        optional: [['head','lShoulder'], ['head','rShoulder']],
+        taboo: [
+          { edge: ['lHand','rHand'], label: '缚手' },
+          { edge: ['lFoot','rFoot'], label: '并脚' },
+          { edge: ['head','waist'], label: '短命骨' },
+        ],
+      },
+      human: {
+        id: 'human',
+        title: '替身纸人',
+        desc: '白纸，有头身手脚。不能写大名，不能乱点眼。',
+        correctPaper: 'white',
+        finishQuestion: '名帖怎么写？',
+        finishOptions: [
+          { id: 'nickname', label: '写乳名', ok: true },
+          { id: 'full_name', label: '写大名', taboo: '活人真名' },
+          { id: 'blank', label: '空名帖', warn: '无主替身' },
+        ],
+        nodes: {
+          head: [360, 70, '头'],
+          neck: [360, 135, '颈'],
+          lShoulder: [285, 170, '左肩'],
+          rShoulder: [435, 170, '右肩'],
+          lHand: [235, 300, '左手'],
+          rHand: [485, 300, '右手'],
+          chest: [360, 230, '胸'],
+          waist: [360, 330, '腰'],
+          lFoot: [300, 470, '左脚'],
+          rFoot: [420, 470, '右脚'],
+        },
+        required: [
+          ['head','neck'], ['neck','chest'], ['chest','waist'],
+          ['lShoulder','rShoulder'], ['lShoulder','lHand'], ['rShoulder','rHand'],
+          ['waist','lFoot'], ['waist','rFoot'],
+        ],
+        optional: [['lShoulder','waist'], ['rShoulder','waist']],
+        taboo: [
+          { edge: ['lHand','rHand'], label: '缚手' },
+          { edge: ['head','lHand'], label: '歪头牵手' },
+          { edge: ['lFoot','rFoot'], label: '并脚' },
+        ],
+      },
+      horse: {
+        id: 'horse',
+        title: '纸马',
+        desc: '白马红缰，横身，头颈、腹骨、腿脚要稳。',
+        correctPaper: 'white',
+        finishQuestion: '马鞍怎么处理？',
+        finishOptions: [
+          { id: 'route_charm', label: '贴路符', ok: true },
+          { id: 'empty_saddle', label: '空鞍', warn: '空鞍送远路' },
+          { id: 'living_name', label: '写活人名', taboo: '活人骑纸马' },
+        ],
+        nodes: {
+          head: [155, 180, '头'],
+          neck: [245, 205, '颈'],
+          back1: [330, 170, '背前'],
+          back2: [500, 170, '背后'],
+          belly1: [330, 285, '腹前'],
+          belly2: [500, 285, '腹后'],
+          frontHoof: [310, 430, '前蹄'],
+          rearHoof: [510, 430, '后蹄'],
+          tail: [585, 205, '尾'],
+        },
+        required: [
+          ['head','neck'], ['neck','back1'], ['back1','back2'],
+          ['back1','belly1'], ['back2','belly2'], ['belly1','belly2'],
+          ['belly1','frontHoof'], ['belly2','rearHoof'],
+        ],
+        optional: [['back2','tail'], ['neck','belly1']],
+        taboo: [
+          { edge: ['head','frontHoof'], label: '头连脚' },
+          { edge: ['head','tail'], label: '头尾相接' },
+          { edge: ['back1','rearHoof'], label: '拖后脚' },
+        ],
+      },
+      house: {
+        id: 'house',
+        title: '纸屋',
+        desc: '黄纸屋，屋脊、墙身、门口要齐。门不能封死。',
+        correctPaper: 'yellow',
+        finishQuestion: '门怎么留？',
+        finishOptions: [
+          { id: 'leave_door', label: '留门缝', ok: true },
+          { id: 'seal_door', label: '封死门', taboo: '亡人不得出' },
+          { id: 'wide_open', label: '门大开', warn: '门冲阴风' },
+        ],
+        nodes: {
+          ridge: [360, 70, '脊'],
+          lEave: [220, 175, '左檐'],
+          rEave: [500, 175, '右檐'],
+          lWall: [245, 360, '左墙'],
+          rWall: [475, 360, '右墙'],
+          doorTop: [360, 310, '门顶'],
+          threshold: [360, 455, '门槛'],
+        },
+        required: [
+          ['ridge','lEave'], ['ridge','rEave'], ['lEave','lWall'],
+          ['rEave','rWall'], ['lWall','threshold'], ['rWall','threshold'],
+          ['doorTop','threshold'],
+        ],
+        optional: [['lWall','rWall'], ['ridge','doorTop']],
+        taboo: [
+          { edge: ['ridge','threshold'], label: '门冲天' },
+          { edge: ['lEave','rWall'], label: '斜梁压门' },
+        ],
+      },
+      box: {
+        id: 'box',
+        title: '纸钱箱',
+        desc: '黄纸箱，方正，有箱口、箱底、封条。',
+        correctPaper: 'yellow',
+        finishQuestion: '箱口怎么处理？',
+        finishOptions: [
+          { id: 'seal', label: '封口', ok: true },
+          { id: 'open', label: '敞口', warn: '散财' },
+          { id: 'living_name', label: '写活人名', taboo: '活人收用' },
+        ],
+        nodes: {
+          tl: [240, 140, '左上'],
+          tr: [480, 140, '右上'],
+          ml: [240, 280, '左中'],
+          mr: [480, 280, '右中'],
+          bl: [240, 420, '左下'],
+          br: [480, 420, '右下'],
+          seal: [360, 280, '封'],
+        },
+        required: [
+          ['tl','tr'], ['tl','ml'], ['tr','mr'], ['ml','mr'],
+          ['ml','bl'], ['mr','br'], ['bl','br'],
+        ],
+        optional: [['tl','seal'], ['tr','seal'], ['seal','bl'], ['seal','br']],
+        taboo: [
+          { edge: ['tl','br'], label: '斜穿箱' },
+          { edge: ['tr','bl'], label: '破财叉' },
+        ],
+      },
+    };
+
+    const state = {
+      orderId: 'child',
+      edges: new Set(),
+      selected: null,
+      paper: 'blue',
+      finish: 'no_eye',
+    };
+
+    const svg = document.getElementById('svg');
+
+    function key(a, b) {
+      return [a, b].sort().join('|');
+    }
+
+    function edgeList(list) {
+      return list.map(([a,b]) => key(a,b));
+    }
+
+    function tabooMap(order) {
+      return new Map(order.taboo.map(t => [key(...t.edge), t.label]));
+    }
+
+    function getOrder() {
+      return orders[state.orderId];
+    }
+
+    function scoreOrder() {
+      const order = getOrder();
+      const required = edgeList(order.required);
+      const optional = edgeList(order.optional);
+      const taboo = tabooMap(order);
+      const requiredHit = required.filter(e => state.edges.has(e)).length;
+      const optionalHit = optional.filter(e => state.edges.has(e)).length;
+      const tabooHit = [...state.edges].filter(e => taboo.has(e));
+      const known = new Set([...required, ...optional, ...taboo.keys()]);
+      const stray = [...state.edges].filter(e => !known.has(e));
+      const finish = order.finishOptions.find(o => o.id === state.finish);
+
+      const boneScore = Math.round((requiredHit / required.length) * 70);
+      const optionalScore = Math.min(10, optionalHit * 5);
+      const paperScore = state.paper === order.correctPaper ? 10 : -8;
+      let finishScore = 10;
+      if (finish?.warn) finishScore = 0;
+      if (finish?.taboo) finishScore = -16;
+      const tabooPenalty = tabooHit.length * 18;
+      const strayPenalty = stray.length * 5;
+      const score = Math.max(0, Math.min(100, boneScore + optionalScore + paperScore + finishScore - tabooPenalty - strayPenalty));
+
+      const tags = [];
+      if (requiredHit < required.length) tags.push(`少必要骨 ${required.length - requiredHit} 根`);
+      if (optionalHit > 0) tags.push(`细骨 +${optionalHit}`);
+      if (state.paper !== order.correctPaper) tags.push(`纸色不对`);
+      for (const e of tabooHit) tags.push(taboo.get(e));
+      if (stray.length) tags.push(`乱骨 ${stray.length} 根`);
+      if (finish?.warn) tags.push(finish.warn);
+      if (finish?.taboo) tags.push(finish.taboo);
+      if (!tags.length) tags.push('骨相干净');
+
+      let level = 'bad';
+      if (score >= 82) level = 'good';
+      else if (score >= 60) level = 'warn';
+
+      return {
+        score, level, requiredHit, requiredTotal: required.length,
+        optionalHit, tabooHit, stray, tags,
+        parts: {
+          bone: boneScore,
+          optional: optionalScore,
+          paper: paperScore,
+          finish: finishScore,
+          taboo: -tabooPenalty,
+          stray: -strayPenalty,
+        }
+      };
+    }
+
+    function clearSvg() {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+    }
+
+    function makeSvg(tag, attrs = {}) {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return el;
+    }
+
+    function drawEdge(a, b, className, clickable = false) {
+      const order = getOrder();
+      const [x1, y1] = order.nodes[a];
+      const [x2, y2] = order.nodes[b];
+      const line = makeSvg('line', { x1, y1, x2, y2, class: className });
+      if (clickable) {
+        line.addEventListener('click', () => {
+          state.edges.delete(key(a,b));
+          render();
+        });
+      }
+      svg.appendChild(line);
+    }
+
+    function drawNode(id) {
+      const order = getOrder();
+      const [x, y, label] = order.nodes[id];
+      const g = makeSvg('g', { class: 'node' + (state.selected === id ? ' selected' : '') });
+      g.appendChild(makeSvg('circle', { cx: x, cy: y, r: 22 }));
+      const text = makeSvg('text', { x, y });
+      text.textContent = label;
+      g.appendChild(text);
+      g.addEventListener('click', () => clickNode(id));
+      svg.appendChild(g);
+    }
+
+    function clickNode(id) {
+      if (!state.selected) {
+        state.selected = id;
+        render();
+        return;
+      }
+      if (state.selected === id) {
+        state.selected = null;
+        render();
+        return;
+      }
+      const e = key(state.selected, id);
+      if (state.edges.has(e)) state.edges.delete(e);
+      else state.edges.add(e);
+      state.selected = null;
+      render();
+    }
+
+    function renderSvg() {
+      clearSvg();
+      const order = getOrder();
+      for (const [a,b] of order.required) drawEdge(a,b,'hint-edge');
+      const taboo = tabooMap(order);
+      const optional = new Set(edgeList(order.optional));
+      for (const e of state.edges) {
+        const [a,b] = e.split('|');
+        let cls = 'player-edge';
+        if (taboo.has(e)) cls += ' taboo';
+        else if (optional.has(e)) cls += ' optional';
+        drawEdge(a,b,cls,true);
+      }
+      for (const id of Object.keys(order.nodes)) drawNode(id);
+    }
+
+    function renderOrders() {
+      const wrap = document.getElementById('orders');
+      wrap.innerHTML = '';
+      for (const order of Object.values(orders)) {
+        const btn = document.createElement('button');
+        btn.className = 'order-btn' + (order.id === state.orderId ? ' active' : '');
+        btn.type = 'button';
+        btn.innerHTML = `<span class="order-title">${order.title}</span><span class="order-desc">${order.desc}</span>`;
+        btn.addEventListener('click', () => {
+          state.orderId = order.id;
+          state.edges.clear();
+          state.selected = null;
+          state.paper = order.correctPaper;
+          state.finish = order.finishOptions[0].id;
+          render();
+        });
+        wrap.appendChild(btn);
+      }
+    }
+
+    function renderChoices() {
+      const order = getOrder();
+      const paperWrap = document.getElementById('paperChoices');
+      paperWrap.innerHTML = '';
+      for (const p of paperOptions) {
+        const btn = document.createElement('button');
+        btn.className = 'choice' + (state.paper === p.id ? ' active' : '');
+        btn.type = 'button';
+        btn.textContent = p.label;
+        btn.addEventListener('click', () => {
+          state.paper = p.id;
+          render();
+        });
+        paperWrap.appendChild(btn);
+      }
+      document.getElementById('finishTitle').textContent = order.finishQuestion;
+      const finishWrap = document.getElementById('finishChoices');
+      finishWrap.innerHTML = '';
+      for (const f of order.finishOptions) {
+        const btn = document.createElement('button');
+        btn.className = 'choice' + (state.finish === f.id ? ' active' : '');
+        btn.type = 'button';
+        btn.textContent = f.label;
+        btn.addEventListener('click', () => {
+          state.finish = f.id;
+          render();
+        });
+        finishWrap.appendChild(btn);
+      }
+    }
+
+    function renderResult() {
+      const order = getOrder();
+      const s = scoreOrder();
+      document.getElementById('neededStat').textContent = `${s.requiredHit}/${s.requiredTotal}`;
+      document.getElementById('optionalStat').textContent = s.optionalHit;
+      document.getElementById('tabooStat').textContent = s.tabooHit.length;
+      document.getElementById('score').textContent = s.score;
+      document.getElementById('resultName').textContent = order.title;
+
+      let comment = '还没成形。';
+      if (s.level === 'good') comment = `${order.title}能交活。骨相稳，纸色也对，师傅看了会点头。`;
+      if (s.level === 'warn') comment = `${order.title}勉强能交。能看出样子，但会被扣钱或落几句骂。`;
+      if (s.level === 'bad') comment = `${order.title}现在不能交。不是少骨，就是犯了忌。`;
+      document.getElementById('comment').textContent = comment;
+
+      const bars = [
+        ['必要骨', Math.max(0, s.parts.bone), 70],
+        ['可选骨', Math.max(0, s.parts.optional), 10],
+        ['纸色', s.parts.paper > 0 ? 10 : 0, 10],
+        ['收尾', s.parts.finish > 0 ? 10 : 0, 10],
+      ];
+      const barsEl = document.getElementById('bars');
+      barsEl.innerHTML = '';
+      for (const [name, val, max] of bars) {
+        const pct = Math.round((val / max) * 100);
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `<span>${name}</span><div class="bar"><i style="width:${pct}%"></i></div><b>${val}</b>`;
+        barsEl.appendChild(row);
+      }
+
+      const tagsEl = document.getElementById('tags');
+      tagsEl.innerHTML = '';
+      for (const tag of s.tags) {
+        const el = document.createElement('span');
+        el.className = 'tag';
+        el.textContent = tag;
+        tagsEl.appendChild(el);
+      }
+
+      const verdict = document.getElementById('verdict');
+      verdict.className = `verdict ${s.level}`;
+      if (s.level === 'good') verdict.textContent = `交活：给满钱。输出：${order.title}，${s.score} 分。`;
+      else if (s.level === 'warn') verdict.textContent = `交活：少给钱。输出：${order.title}，${s.score} 分。`;
+      else verdict.textContent = `退活：重扎。输出：${order.title}，${s.score} 分。`;
+    }
+
+    function loadSample() {
+      const order = getOrder();
+      state.edges = new Set(edgeList([...order.required, ...order.optional.slice(0, 1)]));
+      state.paper = order.correctPaper;
+      state.finish = order.finishOptions.find(o => o.ok)?.id ?? order.finishOptions[0].id;
+      state.selected = null;
+      render();
+    }
+
+    function render() {
+      const order = getOrder();
+      document.getElementById('workTitle').textContent = order.title;
+      renderOrders();
+      renderChoices();
+      renderSvg();
+      renderResult();
+    }
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      state.edges.clear();
+      state.selected = null;
+      render();
+    });
+    document.getElementById('sampleBtn').addEventListener('click', loadSample);
+    render();
+  </script>
+</body>
+</html>

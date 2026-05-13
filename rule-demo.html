@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>规矩系统 · 象理术迭代演示</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Noto Serif SC', serif;
+    background: #1a1814;
+    color: #d4c9a8;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+  }
+
+  h1 {
+    font-size: 24px;
+    color: #e8dcc0;
+    margin-bottom: 8px;
+    letter-spacing: 4px;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: #8a7e6b;
+    margin-bottom: 36px;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr 320px;
+    gap: 32px;
+    max-width: 1200px;
+    width: 100%;
+  }
+
+  @media (max-width: 1000px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: #221f19;
+    border: 1px solid #3a3529;
+    border-radius: 8px;
+    padding: 24px;
+  }
+
+  .panel-title {
+    font-size: 16px;
+    color: #e8dcc0;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #3a3529;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-title .icon { font-size: 18px; }
+
+  /* ===== 中间：遭遇场景 ===== */
+  .encounter-area {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .scene-text {
+    background: #1e1c16;
+    border-left: 3px solid #5a4f3a;
+    padding: 16px 20px;
+    font-size: 15px;
+    line-height: 1.8;
+    color: #c8bfa4;
+  }
+
+  .scene-text .phenomenon {
+    color: #e8dcc0;
+    font-weight: 600;
+  }
+
+  .options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .option-btn {
+    background: #2a2620;
+    border: 1px solid #3a3529;
+    border-radius: 6px;
+    padding: 12px 16px;
+    color: #d4c9a8;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .option-btn:hover:not(.locked) {
+    background: #332e25;
+    border-color: #6a5f45;
+  }
+
+  .option-btn.locked {
+    opacity: 0.4;
+    cursor: not-allowed;
+    justify-content: center;
+  }
+
+  .option-btn .layer-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: #3a3529;
+    color: #8a7e6b;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .option-btn .layer-tag.xiang { background: #2d3a2a; color: #7a9e6a; }
+  .option-btn .layer-tag.li { background: #2d343a; color: #6a8e9e; }
+  .option-btn .layer-tag.shu { background: #3a2d2d; color: #9e7a6a; }
+
+  .option-btn .option-text { flex: 1; }
+
+  .result-box {
+    background: #1e1c16;
+    border: 1px solid #3a3529;
+    border-radius: 6px;
+    padding: 16px 20px;
+    font-size: 14px;
+    line-height: 1.8;
+    min-height: 60px;
+    color: #c8bfa4;
+  }
+
+  .result-box.success { border-color: #4a6a3a; color: #a8c88a; }
+  .result-box.partial { border-color: #6a5a3a; color: #c8a86a; }
+  .result-box.fail { border-color: #6a3a3a; color: #c88a8a; }
+
+  /* ===== 左侧：规矩册 ===== */
+  .rule-book {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .rule-card {
+    background: #2a2620;
+    border: 1px solid #3a3529;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .rule-card-header {
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #e8dcc0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .rule-card-header .category {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: #3a3529;
+    color: #8a7e6b;
+  }
+
+  .rule-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .rule-layer {
+    padding: 8px 14px 8px 28px;
+    font-size: 13px;
+    line-height: 1.6;
+    border-top: 1px solid #2a2620;
+    transition: all 0.3s;
+  }
+
+  .rule-layer.unlocked {
+    background: #22201a;
+    color: #c8bfa4;
+  }
+
+  .rule-layer.locked {
+    background: #1e1c16;
+    color: #4a4538;
+    font-style: italic;
+  }
+
+  .rule-layer .layer-label {
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 6px;
+    font-style: normal;
+  }
+
+  .rule-layer .layer-label.xiang { color: #7a9e6a; }
+  .rule-layer .layer-label.li { color: #6a8e9e; }
+  .rule-layer .layer-label.shu { color: #9e7a6a; }
+
+  /* ===== 右侧：碎片收集 ===== */
+  .fragment-pool {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .frag-btn {
+    background: #2a2620;
+    border: 1px solid #3a3529;
+    border-radius: 6px;
+    padding: 12px 14px;
+    color: #d4c9a8;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s;
+    line-height: 1.5;
+  }
+
+  .frag-btn:hover {
+    background: #332e25;
+    border-color: #6a5f45;
+  }
+
+  .frag-btn.used {
+    opacity: 0.3;
+    cursor: not-allowed;
+    text-decoration: line-through;
+  }
+
+  .frag-btn .frag-source {
+    font-size: 11px;
+    color: #6a5f45;
+    margin-top: 4px;
+  }
+
+  .frag-btn .frag-layer {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    float: right;
+  }
+
+  .frag-btn .frag-layer.xiang { background: #2d3a2a; color: #7a9e6a; }
+  .frag-btn .frag-layer.li { background: #2d343a; color: #6a8e9e; }
+  .frag-btn .frag-layer.shu { background: #3a2d2d; color: #9e7a6a; }
+
+  .divider {
+    height: 1px;
+    background: #3a3529;
+    margin: 12px 0;
+  }
+
+  .reset-btn {
+    background: transparent;
+    border: 1px solid #3a3529;
+    border-radius: 6px;
+    padding: 8px 16px;
+    color: #6a5f45;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: auto;
+  }
+
+  .reset-btn:hover {
+    border-color: #6a5f45;
+    color: #d4c9a8;
+  }
+
+  .hint {
+    font-size: 12px;
+    color: #5a4f3a;
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+
+  .depth-indicator {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-left: 8px;
+  }
+
+  .depth-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3a3529;
+  }
+
+  .depth-dot.active.xiang { background: #7a9e6a; }
+  .depth-dot.active.li { background: #6a8e9e; }
+  .depth-dot.active.shu { background: #9e7a6a; }
+
+  .empty-state {
+    text-align: center;
+    padding: 20px;
+    color: #4a4538;
+    font-size: 13px;
+  }
+
+  /* scenario selector */
+  .scenario-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .scenario-tab {
+    background: #2a2620;
+    border: 1px solid #3a3529;
+    border-radius: 6px;
+    padding: 8px 16px;
+    color: #8a7e6b;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .scenario-tab:hover { border-color: #6a5f45; }
+  .scenario-tab.active {
+    background: #332e25;
+    border-color: #6a5f45;
+    color: #e8dcc0;
+  }
+
+  .synth-flash {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(26,24,20,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    animation: fadeIn 0.3s;
+  }
+
+  .synth-flash .content {
+    background: #221f19;
+    border: 1px solid #5a4f3a;
+    border-radius: 8px;
+    padding: 32px 40px;
+    text-align: center;
+    animation: scaleIn 0.3s;
+  }
+
+  .synth-flash .content h2 {
+    font-size: 20px;
+    color: #e8dcc0;
+    margin-bottom: 8px;
+  }
+
+  .synth-flash .content p {
+    font-size: 14px;
+    color: #8a7e6b;
+    line-height: 1.8;
+  }
+
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes scaleIn { from { transform: scale(0.9); } to { transform: scale(1); } }
+</style>
+</head>
+<body>
+
+<h1>规矩册 · 象理术</h1>
+<p class="subtitle">从右侧收集碎片，观察左侧遭遇场景的变化</p>
+
+<div class="layout">
+  <!-- 左侧：规矩册 -->
+  <div>
+    <div class="panel">
+      <div class="panel-title"><span class="icon">📖</span> 规矩册</div>
+      <div class="rule-book" id="ruleBook">
+        <div class="empty-state">尚未获得任何规矩</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 中间：遭遇场景 -->
+  <div class="panel encounter-area">
+    <div class="panel-title"><span class="icon">⚡</span> 遭遇</div>
+
+    <div class="scenario-tabs" id="scenarioTabs"></div>
+
+    <div id="encounterContent"></div>
+    <div class="result-box" id="resultBox">选择一个选项……</div>
+  </div>
+
+  <!-- 右侧：碎片池 -->
+  <div>
+    <div class="panel">
+      <div class="panel-title"><span class="icon">🧩</span> 碎片来源</div>
+      <p class="hint">点击碎片，将其收入规矩册</p>
+      <div class="fragment-pool" id="fragmentPool"></div>
+      <button class="reset-btn" onclick="resetAll()">重置</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== 数据定义 =====
+
+const RULES = {
+  "ghost_singer": {
+    id: "ghost_singer",
+    name: "唱戏白影",
+    category: "taboo",
+    layers: {
+      xiang: { label: "象", text: "城隍庙后山三更天有白影飘来飘去，还会唱戏。" },
+      li: { label: "理", text: "早年间柳家戏班子的人，横死含冤，怨气不散化为厉鬼。非害人，在找人。" },
+      shu: { label: "术", text: "此物为厉鬼，非力可驱。知其来历后答其所问，或可自保。" }
+    }
+  },
+  "zombie_fire": {
+    id: "zombie_fire",
+    name: "白毛僵尸",
+    category: "ward",
+    layers: {
+      xiang: { label: "象", text: "浑身长白毛的尸体会动，刀枪不入。" },
+      li: { label: "理", text: "魄锁于体不散，化为白僵。阴气聚于肉身，故铜皮铁骨。" },
+      shu: { label: "术", text: "怕火，桃木点燃最佳，寻常松脂火把也管用。糯米可阻其行。" }
+    }
+  },
+  "water_ghost": {
+    id: "water_ghost",
+    name: "水边异象",
+    category: "taboo",
+    layers: {
+      xiang: { label: "象", text: "水边白影，水面白沫聚而不散。" },
+      li: { label: "理", text: "溺魂者，横死于水，怨气不散。青苔黑的是溺魂，青苔白的是水鬼。" },
+      shu: { label: "术", text: "溺魂重怨，非力可敌。岸边撒盐可暂阻其近身。" }
+    }
+  }
+};
+
+const FRAGMENTS = [
+  // --- 唱戏白影 ---
+  { id: "f1", ruleId: "ghost_singer", layer: "xiang",
+    text: "王大爷说：城隍庙后山半夜三更，总有个白影子飘来飘去，嘴里唱着戏。",
+    source: "王大爷闲聊" },
+  { id: "f2", ruleId: "ghost_singer", layer: "xiang",
+    text: "张叨叨说书：有人去看了，回来就疯了，嘴里嘟囔着'好一似食尽鸟投林'。",
+    source: "茶馆说书" },
+  { id: "f3", ruleId: "ghost_singer", layer: "li",
+    text: "说书人说：早年间有个柳家戏班子，后来不知怎么就散了，戏班里的人死得不明不白。",
+    source: "茶馆传闻" },
+  { id: "f4", ruleId: "ghost_singer", layer: "li",
+    text: "茶馆小二说：那个见了白影的书生回来讲——'她不是在害人，她是在找人。'",
+    source: "茶馆小二" },
+  { id: "f5", ruleId: "ghost_singer", layer: "shu",
+    text: "瞎子李提过一句：这种含冤的戏魂，你若能答她所问，便不会伤你。答不上，也别慌跑——跑也没用。",
+    source: "瞎子李点拨" },
+
+  // --- 白毛僵尸 ---
+  { id: "f6", ruleId: "zombie_fire", layer: "xiang",
+    text: "老道士说：见过赶尸的走过夜路，队伍里有个浑身长白毛的，走得慢但力气大得很。",
+    source: "老道士口述" },
+  { id: "f7", ruleId: "zombie_fire", layer: "li",
+    text: "赶尸匠手札：遇白毛，魄锁于体，化为白僵，刀枪不入。",
+    source: "赶尸匠手札" },
+  { id: "f8", ruleId: "zombie_fire", layer: "shu",
+    text: "赶尸匠手札：速点桃木，火光所及，其不敢进。寻常松脂火把也管用。糯米撒之可阻。",
+    source: "赶尸匠手札" },
+
+  // --- 水边异象 ---
+  { id: "f9", ruleId: "water_ghost", layer: "xiang",
+    text: "码头上的人说：水里翻白沫，岸边的青苔不知什么时候全黑了。",
+    source: "码头围观" },
+  { id: "f10", ruleId: "water_ghost", layer: "li",
+    text: "瞎子李说：水边见白影，青苔黑者是溺魂，青苔白者是水鬼。溺魂是横死含冤的。",
+    source: "瞎子李点拨" },
+  { id: "f11", ruleId: "water_ghost", layer: "shu",
+    text: "老渔夫说：遇上这东西，岸边撒把盐，它能退开几步。但也只是几步。",
+    source: "码头老渔夫" },
+];
+
+const SCENARIOS = [
+  {
+    id: "ghost_night",
+    title: "后山夜行",
+    narrative: `你为了躲巡夜的更夫，绕道走了城隍庙后山的小路。已是三更时分，月色惨白。<span class="phenomenon">忽然听见前方传来唱戏声，婉转凄凉。雾气中一个白色身影正在原地轻轻摇摆，背对着你。</span>`,
+    resultTexts: {
+      best: "你想起瞎子李的话——她不是在害人，是在找人。你没有跑，也没有上前。你低声说：'柳家的班主在等你。'白影停住了。唱声渐渐止息。雾散了些，你再看时，什么都没有了。",
+      good: "你想起茶馆小二的说法——她是在找人。你试探着问了一句：'你在等谁？'白影的唱声顿了一顿，然后更凄厉地响起来。你赶紧转身走了。至少它没追上来。",
+      weak: "你觉得不对劲，蹲下来装作系鞋带，屏住呼吸。白影飘了一阵，唱了几句没听清的词，散去了。你后背全是冷汗。",
+      default: "你拔腿就跑，跑得上气不接下气。那唱声在身后时远时近，直到你跑到大路上才消失。人没事，但你总记得那个背影。"
+    }
+  },
+  {
+    id: "zombie_mountain",
+    title: "义冢异变",
+    narrative: `你在义冢附近捡拾柴火时，发现一处坟包的土被翻开了。<span class="phenomenon">一具浑身长满白毛的尸体正从土里往外爬，动作僵硬但有力。它还没有发现你。</span>`,
+    resultTexts: {
+      best: "你想起赶尸匠手札的记载——白僵怕火。你迅速点着手边的松脂，火光一亮，那白毛尸体果然缩了回去，发出低沉的嘶吼。你趁机倒退着离开义冢，手里的火一直没熄。",
+      good: "你想起这东西叫白僵，怕火。但你手里没有火把，只有一块干柴。你拼命摩擦生火，弄出一点火星——那白毛尸体迟疑了一下。你趁机跑了。火虽然没真正点起来，但至少它犹豫了那一下。",
+      weak: "你知道这东西刀枪不入，但你也不知道它怕什么。你只能拼命跑。它没追上来，也许是因为你跑得快，也许是它本来就走不快。你不知道。",
+      default: "你吓得腿软，摔了一跤。白毛尸体朝你的方向歪了歪头，但似乎对你没兴趣，慢慢往义冢外走了。你连滚带爬地逃了。"
+    }
+  },
+  {
+    id: "water_dock",
+    title: "码头水异",
+    narrative: `你到码头替人捎脚赚钱。<span class="phenomenon">水面翻着白沫，聚而不散。你注意到岸边的青苔不知什么时候全黑了，像被什么东西浸过。</span>一个泡得发白的手从水里搭上了码头边的木桩。`,
+    resultTexts: {
+      best: "你想起瞎子李的判断——青苔黑是溺魂。你想起老渔夫说的盐。你把兜里那包粗盐撒在码头边沿，那只手缩了回去。水面上的白沫慢慢散了。你不敢久留，快步离开了。",
+      good: "你想起瞎子李说这是溺魂，横死含冤的东西。你不知道怎么对付它，但你不敢下水了。你绕着码头边缘走，离水远远的。那只手在木桩上搭了一会儿，缩了回去。",
+      weak: "你觉得不对劲，但不知道哪里不对。你不敢碰那水，也不敢靠太近。那只手搭在木桩上好一阵才缩回去。你匆匆干完活就走了。",
+      default: "你没注意到青苔的异常，只当是水泡的东西。那只手搭上木桩时你吓了一跳，一脚踢开了它。水里传来一声低沉的咕噜声，像叹气，像呜咽。你没敢回头看。"
+    }
+  }
+];
+
+// ===== 状态 =====
+
+let acquiredFragments = new Set();
+let ruleLayers = {};   // { ruleId: Set<'xiang'|'li'|'shu'> }
+let currentScenario = 0;
+
+function init() {
+  // init rule layer tracking
+  for (const r of Object.keys(RULES)) {
+    ruleLayers[r] = new Set();
+  }
+  renderScenarioTabs();
+  renderScenario();
+  renderFragments();
+  renderRuleBook();
+}
+
+function acquireFragment(fragId) {
+  if (acquiredFragments.has(fragId)) return;
+  acquiredFragments.add(fragId);
+  const frag = FRAGMENTS.find(f => f.id === fragId);
+  ruleLayers[frag.ruleId].add(frag.layer);
+
+  // check synthesis (all 3 layers)
+  const rule = RULES[frag.ruleId];
+  const layers = ruleLayers[frag.ruleId];
+  if (layers.has('xiang') && layers.has('li') && layers.has('shu')) {
+    showSynthFlash(rule);
+  }
+
+  renderAll();
+}
+
+function showSynthFlash(rule) {
+  const el = document.createElement('div');
+  el.className = 'synth-flash';
+  el.innerHTML = `
+    <div class="content">
+      <h2>规矩已成</h2>
+      <p>「${rule.name}」——象理术俱全，你已看透了这东西的底细。</p>
+    </div>
+  `;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2000);
+}
+
+function getRuleDepth(ruleId) {
+  const layers = ruleLayers[ruleId];
+  if (!layers) return 0;
+  let depth = 0;
+  if (layers.has('xiang')) depth = 1;
+  if (layers.has('li')) depth = 2;
+  if (layers.has('shu')) depth = 3;
+  return depth;
+}
+
+// ===== 渲染 =====
+
+function renderAll() {
+  renderRuleBook();
+  renderFragments();
+  renderScenario();
+}
+
+function renderScenarioTabs() {
+  const container = document.getElementById('scenarioTabs');
+  container.innerHTML = SCENARIOS.map((s, i) =>
+    `<button class="scenario-tab ${i === currentScenario ? 'active' : ''}" onclick="switchScenario(${i})">${s.title}</button>`
+  ).join('');
+}
+
+function switchScenario(i) {
+  currentScenario = i;
+  document.getElementById('resultBox').textContent = '选择一个选项……';
+  document.getElementById('resultBox').className = 'result-box';
+  renderScenarioTabs();
+  renderScenario();
+}
+
+function renderScenario() {
+  const s = SCENARIOS[currentScenario];
+  const depth = getRuleDepthForScenario(s.id);
+  const content = document.getElementById('encounterContent');
+
+  const options = getOptionsForScenario(s.id, depth);
+
+  content.innerHTML = `
+    <div class="scene-text">${s.narrative}</div>
+    <div class="options-list">
+      ${options.map((opt, i) => `
+        <button class="option-btn ${opt.locked ? 'locked' : ''}"
+                ${!opt.locked ? `onclick="chooseOption(${i}, '${opt.resultKey}')"` : ''}>
+          <span class="option-text">${opt.displayText}</span>
+          <span class="layer-tag ${opt.locked ? '' : opt.layerClass}">${opt.locked ? '' : opt.layerLabel}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function getRuleDepthForScenario(scenarioId) {
+  // map scenario to its relevant rules and find max depth
+  const ruleMap = {
+    'ghost_night': 'ghost_singer',
+    'zombie_mountain': 'zombie_fire',
+    'water_dock': 'water_ghost'
+  };
+  const ruleId = ruleMap[scenarioId];
+  if (!ruleId) return 0;
+  return getRuleDepth(ruleId);
+}
+
+function getOptionsForScenario(scenarioId, depth) {
+  const optionSets = {
+    'ghost_night': [
+      { depth: 3, text: '低声说出你知道的——关于柳家戏班和她所找之人', layer: '术', layerClass: 'shu', resultKey: 'best', lockedText: '用你知道的更深的法子对付它……' },
+      { depth: 2, text: '试探着问她："你在等谁？"', layer: '理', layerClass: 'li', resultKey: 'good', lockedText: '试着问它些什么……' },
+      { depth: 1, text: '蹲下屏息，等它自己散去', layer: '象', layerClass: 'xiang', resultKey: 'weak', lockedText: '装作没看见……' },
+      { depth: 0, text: '拔腿就跑', layer: '', layerClass: '', resultKey: 'default' },
+    ],
+    'zombie_mountain': [
+      { depth: 3, text: '点燃松脂火把，以火逼退', layer: '术', layerClass: 'shu', resultKey: 'best', lockedText: '用你知道的法子对付它……' },
+      { depth: 2, text: '拼命摩擦干柴制造火星，趁它迟疑时逃跑', layer: '理', layerClass: 'li', resultKey: 'good', lockedText: '试着制造火光吓它一下……' },
+      { depth: 1, text: '它刀枪不入，只能跑', layer: '象', layerClass: 'xiang', resultKey: 'weak', lockedText: '赶紧跑……' },
+      { depth: 0, text: '吓得摔倒，听天由命', layer: '', layerClass: '', resultKey: 'default' },
+    ],
+    'water_dock': [
+      { depth: 3, text: '在码头边沿撒盐，逼它退回去', layer: '术', layerClass: 'shu', resultKey: 'best', lockedText: '用你知道的法子驱它……' },
+      { depth: 2, text: '不敢下水，绕着码头远离水边走', layer: '理', layerClass: 'li', resultKey: 'good', lockedText: '离水远远的……' },
+      { depth: 1, text: '觉得不对劲，不敢碰水', layer: '象', layerClass: 'xiang', resultKey: 'weak', lockedText: '觉得不对劲，先退开……' },
+      { depth: 0, text: '一脚踢开那只手，匆匆离开', layer: '', layerClass: '', resultKey: 'default' },
+    ],
+  };
+
+  const opts = (optionSets[scenarioId] || []).map(opt => {
+    const unlocked = depth >= opt.depth || opt.depth === 0;
+    return {
+      ...opt,
+      locked: !unlocked,
+      displayText: unlocked ? opt.text : '未获取',
+      layerLabel: opt.layer ? `知${opt.layer}` : '无知'
+    };
+  });
+
+  return opts;
+}
+
+function chooseOption(index, resultKey) {
+  const s = SCENARIOS[currentScenario];
+  const resultBox = document.getElementById('resultBox');
+  resultBox.textContent = s.resultTexts[resultKey];
+
+  if (resultKey === 'best') {
+    resultBox.className = 'result-box success';
+  } else if (resultKey === 'good') {
+    resultBox.className = 'result-box partial';
+  } else if (resultKey === 'weak') {
+    resultBox.className = 'result-box partial';
+  } else {
+    resultBox.className = 'result-box fail';
+  }
+}
+
+function renderRuleBook() {
+  const container = document.getElementById('ruleBook');
+  const ruleEntries = Object.values(RULES);
+
+  const activeRules = ruleEntries.filter(r => ruleLayers[r.id]?.size > 0);
+  if (activeRules.length === 0) {
+    container.innerHTML = '<div class="empty-state">尚未获得任何规矩</div>';
+    return;
+  }
+
+  container.innerHTML = activeRules.map(rule => {
+    const layers = ruleLayers[rule.id];
+    const depth = layers.size;
+    const catNames = { ward: '避祸', taboo: '禁忌', jargon: '行话', streetwise: '江湖' };
+
+    return `
+      <div class="rule-card">
+        <div class="rule-card-header">
+          <span>${rule.name}
+            <span class="depth-indicator">
+              ${['xiang','li','shu'].map(l => `<span class="depth-dot ${layers.has(l) ? 'active ' + l : ''}"></span>`).join('')}
+            </span>
+          </span>
+          <span class="category">${catNames[rule.category] ?? rule.category}</span>
+        </div>
+        <div class="rule-layers">
+          ${renderLayer(rule, 'xiang', layers)}
+          ${renderLayer(rule, 'li', layers)}
+          ${renderLayer(rule, 'shu', layers)}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderLayer(rule, layerName, layers) {
+  const unlocked = layers.has(layerName);
+  const layer = rule.layers[layerName];
+  const labels = { xiang: '象', li: '理', shu: '术' };
+  return `
+    <div class="rule-layer ${unlocked ? 'unlocked' : 'locked'}">
+      <span class="layer-label ${layerName}">${labels[layerName]}</span>
+      ${unlocked ? layer.text : '尚未知晓……'}
+    </div>
+  `;
+}
+
+function renderFragments() {
+  const container = document.getElementById('fragmentPool');
+  container.innerHTML = FRAGMENTS.map(frag => {
+    const used = acquiredFragments.has(frag.id);
+    const layerNames = { xiang: '象', li: '理', shu: '术' };
+    return `
+      <button class="frag-btn ${used ? 'used' : ''}" onclick="${used ? '' : `acquireFragment('${frag.id}')`}">
+        <span class="frag-layer ${frag.layer}">${layerNames[frag.layer]}</span>
+        ${frag.text}
+        <div class="frag-source">—— ${frag.source}</div>
+      </button>
+    `;
+  }).join('');
+}
+
+function resetAll() {
+  acquiredFragments.clear();
+  for (const r of Object.keys(RULES)) {
+    ruleLayers[r] = new Set();
+  }
+  currentScenario = 0;
+  document.getElementById('resultBox').textContent = '选择一个选项……';
+  document.getElementById('resultBox').className = 'result-box';
+  renderAll();
+  renderScenarioTabs();
+}
+
+init();
+</script>
+</body>
+</html>

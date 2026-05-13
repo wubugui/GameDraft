@@ -1,0 +1,112 @@
+#touch-mobile-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  display: none;
+}
+
+#touch-mobile-controls.is-explore,
+#touch-mobile-controls.is-overlay {
+  display: block;
+}
+
+#touch-mobile-controls.is-explore .touch-mc-overlay-only,
+#touch-mobile-controls.is-overlay .touch-mc-explore-only {
+  display: none !important;
+}
+
+.touch-mc-dpad,
+.touch-mc-actions,
+.touch-mc-menu,
+.touch-mc-overlay-bar {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 置顶：避免矮横屏下与 bottom 区域叠加导致菜单条挤出视口 */
+.touch-mc-menu {
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  top: max(8px, env(safe-area-inset-top, 0px));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: 6px;
+  max-height: min(40vh, 200px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.touch-mc-dpad {
+  left: max(10px, env(safe-area-inset-left, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.touch-mc-actions {
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.touch-mc-overlay-bar {
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
+}
+
+.touch-mc-row {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+}
+
+.touch-mc-btn {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(24, 28, 36, 0.78);
+  color: rgba(230, 235, 245, 0.95);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.touch-mc-btn:active {
+  background: rgba(48, 56, 72, 0.9);
+}
+
+.touch-mc-btn.touch-mc-wide {
+  min-width: 88px;
+}
+
+.touch-mc-btn.touch-mc-menu-tight {
+  min-width: 44px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.touch-mc-spacer {
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+}

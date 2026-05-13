@@ -1,0 +1,10 @@
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "no-proxy.ps1")
+$Root = Resolve-Path (Join-Path $PSScriptRoot "..")
+& (Join-Path $PSScriptRoot "bootstrap-dvc.ps1")
+$Python = Join-Path $Root ".tools\Python311\python.exe"
+Invoke-WithoutProxy {
+  & $Python (Join-Path $PSScriptRoot "sync-dvc-cache.py") pull "resources/editor_projects.dvc"
+  & $Python -m dvc checkout "resources/editor_projects.dvc"
+}
+Write-Host "Editor project resources are ready."

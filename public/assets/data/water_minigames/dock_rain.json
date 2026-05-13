@@ -1,0 +1,157 @@
+{
+  "id": "dock_rain",
+  "label": "雾津码头 · 雨后 · 雾",
+  "spotId": "dock_wharf",
+  "waterBottom": {
+    "texture": "/resources/runtime/images/minigames/water/riverbed_dock_murky.png",
+    "tint": "#1d3440",
+    "depth": 0.72
+  },
+  "surface": {
+    "location": "dock",
+    "time": "day",
+    "weather": "fog"
+  },
+  "bounds": {
+    "width": 780,
+    "height": 540
+  },
+  "entities": [
+    {
+      "id": "murk_grass",
+      "category": "grass",
+      "sprite": "/resources/runtime/images/minigames/water/dead_reeds_gen.png",
+      "pos": {
+        "x": 200,
+        "y": 420
+      },
+      "depth": 0.2,
+      "hint": "[水草] 铁锈味很重。",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "wet_paper",
+      "category": "floating",
+      "sprite": "/resources/runtime/images/minigames/water/wet_paper_gen.png",
+      "pos": {
+        "x": 500,
+        "y": 210
+      },
+      "depth": 0.04,
+      "motion": {
+        "path": "drift",
+        "speed": 0.07
+      },
+      "cue": "湿透的纸片",
+      "onPick": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 2
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "墨迹晕开，看不清字迹。",
+            "type": "info"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bubble_coin",
+      "category": "floating",
+      "sprite": "/resources/runtime/images/minigames/water/bubble_coin_gen.png",
+      "pos": {
+        "x": 340,
+        "y": 240
+      },
+      "depth": 0.06,
+      "motion": {
+        "path": "drift",
+        "speed": 0.04
+      },
+      "valueTier": "premium",
+      "cue": "一串气泡托着的铜钱影",
+      "onPick": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "copper_coins",
+            "count": 5
+          }
+        }
+      ]
+    },
+    {
+      "id": "eel_like",
+      "category": "swimming",
+      "sprite": "/resources/runtime/images/minigames/water/water_monkey_shadow_gen.png",
+      "pos": {
+        "x": 620,
+        "y": 360
+      },
+      "depth": 0.52,
+      "motion": {
+        "path": "approach",
+        "speed": 0.28
+      },
+      "valueTier": "premium",
+      "pull": {
+        "zoneSize": 0.17,
+        "sliderSpeed": 0.92,
+        "rhythm": "spasm",
+        "failurePolicy": "bite",
+        "timeLimitSec": 13
+      },
+      "cue": "雾里一闪的长条影子",
+      "onPullFail": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "水边拉扯咬伤",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "指尖一阵发麻。",
+            "type": "warning"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ledger_sink",
+      "category": "sunken",
+      "sprite": "/resources/runtime/images/minigames/water/submerged_box_corner_gen.png",
+      "pos": {
+        "x": 410,
+        "y": 460
+      },
+      "depth": 0.88,
+      "pull": {
+        "zoneSize": 0.16,
+        "sliderSpeed": 0.78,
+        "rhythm": "heavy_sink",
+        "failurePolicy": "snap",
+        "timeLimitSec": 17
+      },
+      "cue": "半截浸烂的木板箱角",
+      "onPullSuccess": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "shaojiu",
+            "count": 1
+          }
+        }
+      ]
+    }
+  ]
+}

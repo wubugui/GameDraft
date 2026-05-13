@@ -1,0 +1,4 @@
+# 图对话编辑器流程画布（OdenGraphQt / PySide6）
+OdenGraphQt>=0.7.4
+PySide6>=6.5.0
+qtpy>=2.3.1

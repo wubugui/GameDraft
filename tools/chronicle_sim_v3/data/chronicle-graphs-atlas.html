@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ChronicleSim v3 出厂图可视化</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222c;
+      --text: #e6edf3;
+      --muted: #8b9bab;
+      --accent: #58a6ff;
+      --border: #30363d;
+      --ok: #3fb950;
+      --warn: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.6;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px 80px; }
+    h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 8px; }
+    .sub { color: var(--muted); font-size: 0.95rem; margin-bottom: 24px; }
+    nav {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(15, 20, 25, 0.95);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      margin: 0 -20px 24px; padding: 12px 20px;
+    }
+    nav a {
+      color: var(--accent); text-decoration: none; margin-right: 12px; font-size: 0.9rem;
+    }
+    nav a:hover { text-decoration: underline; }
+    section {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px 22px; margin-bottom: 28px;
+    }
+    section h2 { margin: 0 0 12px; font-size: 1.15rem; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    section h3 { font-size: 1rem; color: var(--muted); margin: 18px 0 8px; font-weight: 600; }
+    .file { font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; color: var(--ok); }
+    p.meta { color: var(--muted); font-size: 0.9rem; margin: 0 0 14px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 10px 0 16px; font-size: 0.88rem; }
+    .lg { display: inline-flex; align-items: center; gap: 6px; }
+    .sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); }
+    .sw-llm { background: #6e40c9; }
+    .sw-algo { background: #1f6feb; }
+    .sw-io { background: #238636; }
+    .sw-flow { background: #a371f7; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 8px 0; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+    th { background: #21262d; }
+    .mermaid { background: #0d1117; border-radius: 6px; padding: 12px; overflow-x: auto; }
+    ul.compact { margin: 0; padding-left: 1.2em; }
+    ul.compact li { margin: 4px 0; }
+    code { background: #21262d; padding: 1px 6px; border-radius: 4px; font-size: 0.86em; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>ChronicleSim v3 出厂图可视化</h1>
+    <p class="sub">源目录：<code>tools/chronicle_sim_v3/data/</code> 下共 <strong>26</strong> 个 <code>*.yaml</code>：其中 <strong>11</strong> 个为「Cook 图/子图」，<strong>15</strong> 个为根配置、预设与 <code>csim run init</code> 模板。本页依赖 CDN 的 Mermaid 渲染流程图；内网无 CDN 时请本地托管 mermaid 后改 <code>script</code> 源。</p>
+
+    <nav>
+      <a href="#overview">总览</a>
+      <a href="#all-yaml">全量26</a>
+      <a href="#non-graph">非图15</a>
+      <a href="#g-p1">p1_smoke</a>
+      <a href="#g-seed">seed_from_ideas</a>
+      <a href="#g-probe">probe</a>
+      <a href="#g-range">range</a>
+      <a href="#g-week">week</a>
+      <a href="#sg-npc">npc_context</a>
+      <a href="#sg-sai">single_agent_intent</a>
+      <a href="#sg-gti">group_tier</a>
+      <a href="#sg-belief">single_agent_belief</a>
+      <a href="#sg-we">week_end</a>
+      <a href="#sg-wir">write_intent</a>
+      <a href="#refs">引用关系</a>
+    </nav>
+
+    <div class="legend">
+      <span class="lg"><span class="sw sw-llm"></span> LLM（agent.cline / agent.run）</span>
+      <span class="lg"><span class="sw sw-algo"></span> 数据/图算法节点</span>
+      <span class="lg"><span class="sw sw-io"></span> 读盘/写盘</span>
+      <span class="lg"><span class="sw sw-flow"></span> 流程控制（foreach / subgraph）</span>
+    </div>
+
+    <section id="overview">
+      <h2>总览（Cook 图 11 个）</h2>
+      <p class="meta">五张顶层 <code>graphs/*.yaml</code> + 六张 <code>subgraphs/*.yaml</code>。主模拟是 <code>week</code> 与 <code>range</code>；<code>probe</code> 为问答；<code>p1_smoke</code> 烟囱；<code>seed_from_ideas</code> 冷启动。根目录下其它 yaml、<code>presets/</code>、<code>templates/</code> 见下方「<a href="#all-yaml">全量 26 文件</a>」。</p>
+      <table>
+        <thead>
+          <tr><th>类型</th><th>id</th><th>文件</th><th>作用</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>graph</td><td>p1_smoke</td><td>graphs/p1_smoke.yaml</td><td>读 agents 分层，offline stub 冒烟</td></tr>
+          <tr><td>graph</td><td>seed_from_ideas</td><td>graphs/seed_from_ideas.yaml</td><td>ideas 列表 编 initializer 种子 JSON，拆 setting/pillars/anchors/edges</td></tr>
+          <tr><td>graph</td><td>week</td><td>graphs/week.yaml</td><td>单周完整：意图 fanout、编导 GM、谣言、信念、社会态、周末总结</td></tr>
+          <tr><td>graph</td><td>range</td><td>graphs/range.yaml</td><td>多周循环跑 week，再 storyline 聚合写 chronicle.storylines</td></tr>
+          <tr><td>graph</td><td>probe</td><td>graphs/probe.yaml</td><td>bible+周列表+chroma 检索 问答</td></tr>
+          <tr><td>subgraph</td><td>npc_context_compose</td><td>subgraphs/npc_context_compose.yaml</td><td>单 NPC 上下文头拼盘</td></tr>
+          <tr><td>subgraph</td><td>single_agent_intent</td><td>subgraphs/single_agent_intent.yaml</td><td>感知 意图 行动 反思 多段写 chronicle</td></tr>
+          <tr><td>subgraph</td><td>group_tier_intents</td><td>subgraphs/group_tier_intents.yaml</td><td>B/C 群体意图 一次 LLM</td></tr>
+          <tr><td>subgraph</td><td>single_agent_belief_update</td><td>subgraphs/single_agent_belief_update.yaml</td><td>事件+谣言 信念 合并 衰减 写盘</td></tr>
+          <tr><td>subgraph</td><td>week_end</td><td>subgraphs/week_end.yaml</td><td>故事簇 + 周总结</td></tr>
+          <tr><td>subgraph</td><td>write_intent_result</td><td>subgraphs/write_intent_result.yaml</td><td>写单条 intent 辅助子图</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="all-yaml">
+      <h2>全量 <code>data</code> 下所有 YAML（26）</h2>
+      <p class="meta">按相对路径排序。最后一列标「图」= Cook 可加载的 <code>chronicle_sim_v3/graph@1</code> 资源；标「非图」= 被节点读入或被 CLI 拷贝的纯配置。</p>
+      <table>
+        <thead>
+          <tr><th>#</th><th>相对路径</th><th>说明</th><th>图/非图</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td><code>context_schema.yaml</code></td><td>逻辑 key 与落盘形态（json/listing/text）、KeyMap 规则</td><td>非图</td></tr>
+          <tr><td>2</td><td><code>event_types.yaml</code></td><td>事件类型库，供 <code>read.config.event_types</code> 与 <code>eventtype.*</code> 节点</td><td>非图</td></tr>
+          <tr><td>3</td><td><code>pacing.yaml</code></td><td>节奏主数据：窗口与默认倍率，可与预设叠加</td><td>非图</td></tr>
+          <tr><td>4</td><td><code>rumor_sim.yaml</code></td><td>传谣 BFS 引擎默认超参，供 <code>read.config.rumor_sim</code></td><td>非图</td></tr>
+          <tr><td>5</td><td><code>style_fingerprints.yaml</code></td><td>风格指纹条（<code>style_rewriter</code> 等按 id 取条目的素材库）</td><td>非图</td></tr>
+          <tr><td>6</td><td><code>graphs/p1_smoke.yaml</code></td><td>P1 烟囱</td><td>图</td></tr>
+          <tr><td>7</td><td><code>graphs/probe.yaml</code></td><td>编年史探针</td><td>图</td></tr>
+          <tr><td>8</td><td><code>graphs/range.yaml</code></td><td>多周 <code>foreach</code> + 长线 storyline</td><td>图</td></tr>
+          <tr><td>9</td><td><code>graphs/seed_from_ideas.yaml</code></td><td>从 ideas 产种子 JSON 草稿</td><td>图</td></tr>
+          <tr><td>10</td><td><code>graphs/week.yaml</code></td><td>标准单周</td><td>图</td></tr>
+          <tr><td>11</td><td><code>presets/pacing/default.yaml</code></td><td>pacing 预设 <code>default</code></td><td>非图</td></tr>
+          <tr><td>12</td><td><code>presets/pacing/steady.yaml</code></td><td>平稳：全程 <code>multiplier: 0.9</code></td><td>非图</td></tr>
+          <tr><td>13</td><td><code>presets/pacing/wartime.yaml</code></td><td>战时：第 4-12 周加窗倍率（如 4-8 周 1.5、9-12 周 2.0）</td><td>非图</td></tr>
+          <tr><td>14</td><td><code>presets/rumor_sim/default.yaml</code></td><td>传谣参数预设 <code>default</code></td><td>非图</td></tr>
+          <tr><td>15</td><td><code>presets/rumor_sim/conservative.yaml</code></td><td>传谣更保守的衰减/门限</td><td>非图</td></tr>
+          <tr><td>16</td><td><code>presets/rumor_sim/aggressive.yaml</code></td><td>传谣更激进</td><td>非图</td></tr>
+          <tr><td>17</td><td><code>subgraphs/group_tier_intents.yaml</code></td><td>B/C 群意图子图</td><td>图</td></tr>
+          <tr><td>18</td><td><code>subgraphs/npc_context_compose.yaml</code></td><td>单 NPC 上下文拼装</td><td>图</td></tr>
+          <tr><td>19</td><td><code>subgraphs/single_agent_belief_update.yaml</code></td><td>单角色信念</td><td>图</td></tr>
+          <tr><td>20</td><td><code>subgraphs/single_agent_intent.yaml</code></td><td>单 NPC 周闭环</td><td>图</td></tr>
+          <tr><td>21</td><td><code>subgraphs/week_end.yaml</code></td><td>周末 story_cluster + 总结</td><td>图</td></tr>
+          <tr><td>22</td><td><code>subgraphs/write_intent_result.yaml</code></td><td>写单条 intent 辅助</td><td>图</td></tr>
+          <tr><td>23</td><td><code>templates/agents.example.yaml</code></td><td><code>csim run init</code> 时拷贝到 Run 的 agents 配置模板</td><td>非图</td></tr>
+          <tr><td>24</td><td><code>templates/cook.example.yaml</code></td><td>引擎 Cook：缓存、并发、<code>strict_types</code> 等</td><td>非图</td></tr>
+          <tr><td>25</td><td><code>templates/llm.example.yaml</code></td><td>LLM 路由/模型槽位等模板</td><td>非图</td></tr>
+          <tr><td>26</td><td><code>templates/providers.example.yaml</code></td><td>Provider 端点与凭据引用模板</td><td>非图</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="non-graph">
+      <h2>非图 YAML 说明（15 个）</h2>
+      <p class="meta">这些文件<strong>没有</strong> <code>schema: chronicle_sim_v3/graph@1</code> 的「计算图」语义，不会在 <code>csim cook run</code> 里当主图解析；与模拟的关系是「被图内节点读」或「初始化 Run 目录」。</p>
+      <h3>根目录（5）</h3>
+      <ul class="compact">
+        <li><code>context_schema.yaml</code>：全工具链的 key 命名空间与路径规则，改它等于改「世界如何落盘」的契约，需与 <code>engine/keymap</code>、读节点对齐。</li>
+        <li><code>event_types.yaml</code>：事件类型定义（条件、cooldown、权重、周期等），<code>week</code> 里 director/GM 侧提示文本来自 <code>eventtype.format_for_prompt</code>。</li>
+        <li><code>pacing.yaml</code>：全局面板；图里 <code>read.config.pacing</code> 可带 <code>preset</code> 参数，或读默认文件。</li>
+        <li><code>rumor_sim.yaml</code>：<code>rumor.bfs_engine</code> 的默认 <code>params</code> 来源，也可用 <code>read.config.rumor_sim</code> 选预设。</li>
+        <li><code>style_fingerprints.yaml</code>：叙事/文风指纹，供需「按条改写」的节点或后续工具引用。</li>
+      </ul>
+      <h3>预设 <code>presets/</code>（6）</h3>
+      <p class="meta"><code>pacing/</code> 与 <code>rumor_sim/</code> 各三套；图 YAML 里 <code>params: preset: default</code> 等即指向此目录下的文件（具体解析以引擎与节点实现为准）。</p>
+      <h3>模板 <code>templates/*.example.yaml</code>（4）</h3>
+      <p class="meta">供 <code>csim run init</code> 生成用户 Run 下的 <code>config/providers.yaml</code>、<code>llm.yaml</code>、<code>agents.yaml</code>、<code>cook.yaml</code> 的初始内容，不属于模拟 DAG。</p>
+    </section>
+
+    <section id="g-p1">
+      <h2><span class="file">graphs/p1_smoke.yaml</span>  id: p1_smoke</h2>
+      <p class="meta">输入 <code>week</code>（本图内未在节点中消费，仅声明）。结果：<code>text</code>、<code>s_count</code>。</p>
+      <pre class="mermaid">flowchart LR
+    A[read.world.agents] --> B[npc.filter_active]
+    B --> C[npc.partition_by_tier]
+    C --> D[count 列表=by_tier.S]
+    D --> E[agent.run simple_chat_offline 输出 text]
+  </pre>
+    </section>
+
+    <section id="g-seed">
+      <h2><span class="file">graphs/seed_from_ideas.yaml</span>  id: seed_from_ideas</h2>
+      <p class="meta">读 ideas 列表，<code>initializer</code> 产出大 JSON，再拆 <code>setting/pillars/anchors/edges</code> 四段。注释中说明 write.world 落盘可在上层补。</p>
+      <pre class="mermaid">flowchart TB
+    I[read.ideas.list] --> J[json.encode  ideas_blob]
+    J --> L[agent.cline  initializer  json_object  seed_draft]
+    L --> S[json.path 根]
+    S --> s1[json.path setting]
+    S --> s2[json.path pillars]
+    S --> s3[json.path anchors]
+    S --> s4[json.path edges]
+    classDef llm fill:#6e40c9,color:#fff
+    class L llm
+  </pre>
+    </section>
+
+    <section id="g-probe">
+      <h2><span class="file">graphs/probe.yaml</span>  id: probe</h2>
+      <p class="meta">需事先 chroma.rebuild_world。输入 <code>question</code>。输出 <code>answer</code> 与 <code>chroma_hits</code>。</p>
+      <pre class="mermaid">flowchart TB
+    B[read.world.bible_text] --> T[text.concat  段落标题拼接]
+    W[read.chronicle.weeks] --> WJ[json.encode 周列表]
+    WJ --> T
+    Q[chroma.search  n=5  collection=world] --> HJ[json.encode 命中]
+    HJ --> T
+    T --> A[agent.cline  probe  输出 text]
+    classDef llm fill:#6e40c9,color:#fff
+    class A llm
+  </pre>
+    </section>
+
+    <section id="g-range">
+      <h2><span class="file">graphs/range.yaml</span>  id: range</h2>
+      <p class="meta">输入 <code>from_week</code>、<code>to_week</code>、可选 <code>pacing_preset</code>。先 <code>math.range [from, to+1)</code>，再 <code>flow.foreach</code> 对每周执行 <code>subgraph:week</code>。跑完后读 listing <code>chronicle.story_clusters_all</code>，经 <code>storyline_aggregator</code> 写入 <code>chronicle.storylines:from_week=,to_week=</code>。</p>
+      <pre class="mermaid">flowchart TB
+    R[math.range] --> F[flow.foreach  body=week]
+    F --> C[json.encode  weeks_done]
+    L[read.schema.listing  story_clusters_all] --> J[json.encode]
+    C --> SA[agent.cline  storyline_aggregator  json]
+    J --> SA
+    SA --> K[text.format  storylines key]
+    K --> W[write.schema.json]
+    classDef flow fill:#a371f7,color:#111
+    classDef llm fill:#6e40c9,color:#fff
+    class F flow
+    class SA llm
+  </pre>
+    </section>
+
+    <section id="g-week">
+      <h2><span class="file">graphs/week.yaml</span>  id: week  标准单周</h2>
+      <p class="meta">拆成多段，便于跟 DAG 调度的先后关系。虚线仅表示本页分段，非引擎里边的真实依赖组。</p>
+
+      <h3>1 世界读取与分层 节奏倍率</h3>
+      <pre class="mermaid">flowchart LR
+    bible[read.world.bible_text]
+    ag[read.world.agents] --> al[npc.filter_active]
+    al --> by[npc.partition_by_tier  S A B C]
+    p[read.config.pacing  preset=default] --> pm[pacing.multiplier  week+inputs]
+  </pre>
+
+      <h3>2 意图子图  四条分支合并</h3>
+      <pre class="mermaid">flowchart TB
+    S[fanout single_agent_intent  tier S  spec tier_s] --> C[list.concat  all_intents]
+    A1[fanout single_agent_intent  tier A  spec tier_a] --> C
+    B1[subgraph group_tier_intents  B] -->|out.intents| C
+    C1[subgraph group_tier_intents  C] -->|out.intents| C
+    C --> J[json.encode  intents_text]
+  </pre>
+
+      <h3>3 编导 与 裁定事件</h3>
+      <pre class="mermaid">flowchart LR
+    E[read.config.event_types] --> F[eventtype.format_for_prompt]
+    J[intents_text] --> D[agent.cline  director  json]
+    bible[world_bible] --> D
+    F --> D
+    pm[pacing_mult] --> D
+    D --> D2[json.encode  drafts_text]
+    D2 --> G[agent.cline  gm  json]
+    bible --> G
+    G --> EV[json.path  events  gm_events]
+    classDef llm fill:#6e40c9,color:#fff
+    class D,G llm
+  </pre>
+
+      <h3>4 谣言传播  写周谣言</h3>
+      <pre class="mermaid">flowchart LR
+    EV[gm_events] --> R[rumor.bfs_engine]
+    ed[read.world.edges] --> R
+    rs[read.config.rumor_sim  default] --> R
+    wk[inputs.week] --> R
+    R --> W[write.chronicle.rumors]
+  </pre>
+
+      <h3>5 信念  全 tier 每角色</h3>
+      <pre class="mermaid">flowchart TB
+    EV[gm_events] --> F[fanout single_agent_belief  S A B C]
+    RU[rumors] --> F
+    F -->|每个 item| B2[belief 合并 衰减 写 belief]
+  </pre>
+
+      <h3>6 社会态  周末子图  结果</h3>
+      <pre class="mermaid">flowchart TB
+    J[intents_text] --> SS[agent.cline  social_state_settler  json]
+    DT[drafts] --> SS
+    ET[events_text] --> SS
+    RT[rumors_text] --> SS
+    bible --> SS
+    SS --> WSS[write.schema.json  social_state key]
+    EV --> WE[subgraph week_end  events+rumors+social_state]
+    RU2[rumors] --> WE
+    SS --> WE
+    WE -->|summary| OUT[图结果 summary]
+    N[count all_intents] -->|intents_count| OUT2[图结果]
+  </pre>
+      <p class="meta">图声明输出：<code>summary</code> 来自 <code>week_end.out.summary</code>；<code>intents_count</code> 为 <code>all_intents</code> 长度。</p>
+    </section>
+
+    <section id="sg-npc">
+      <h2><span class="file">subgraphs/npc_context_compose.yaml</span>  id: npc_context_compose</h2>
+      <p class="meta">多路读 → <code>npc.context_compose</code> <code>format=headed</code>。输出 <code>context_text</code> 及若干 JSON 便于下游透传。</p>
+      <pre class="mermaid">flowchart TB
+    bible[read.world.bible_text] --> comp[npc.context_compose  headed]
+    pkey[text.format  personality] --> pload[read.schema.key  personality]
+    pload --> comp
+    bel[read.chronicle.beliefs] --> comp
+    sm[read.schema.key  short_memory] --> comp
+    lm[read.schema.key  long_memory] --> comp
+    rfk[read.schema.key  reflection] --> comp
+    pck[read.schema.key  perception] --> comp
+    prof[read.world.agent] --> comp
+  </pre>
+    </section>
+
+    <section id="sg-sai">
+      <h2><span class="file">subgraphs/single_agent_intent.yaml</span>  id: single_agent_intent</h2>
+      <p class="meta">fanout 的 <code>item</code> 为单 NPC。先 <code>npc_context_compose</code>。随后 perceive → plan → act → reflect，每步写盘；<code>write.chronicle.intent_outcome</code> 汇总。当前 YAML 中 <code>visible_events_json / heard_rumors_json / location_json</code> 为空列表或空对象。</p>
+      <pre class="mermaid">flowchart TB
+    CTX[subgraph  npc_context_compose] --> P[agent.cline  npc_perception  write perception]
+    P --> PL[agent.cline  plan  使用 tier 对应 agent_spec  write intent]
+    PL --> AC[agent.cline  npc_action  write action]
+    AC --> RF[agent.cline  npc_reflection  write reflection]
+    RF --> SM[写 short long memory  schema json]
+    RF --> O[write.chronicle.intent_outcome]
+    classDef llm fill:#6e40c9,color:#fff
+    class P,PL,AC,RF llm
+  </pre>
+    </section>
+
+    <section id="sg-gti">
+      <h2><span class="file">subgraphs/group_tier_intents.yaml</span>  id: group_tier_intents</h2>
+      <p class="meta">整组 B 或 C 的 agents 进一次 <code>group_intent_pack</code>。写 <code>chronicle.group_state:week=,tier=</code>。结果 <code>intents</code> 供 week 的 <code>list.concat</code> 使用。</p>
+      <pre class="mermaid">flowchart LR
+    IN[inputs.agents  json] --> G[agent.cline  group_intent_pack]
+    WB[read.world.bible_text] --> G
+    G --> I[json.path  intents]
+    G --> W[write.schema.json  group_state]
+  </pre>
+    </section>
+
+    <section id="sg-belief">
+      <h2><span class="file">subgraphs/single_agent_belief_update.yaml</span>  id: single_agent_belief_update</h2>
+      <p class="meta">对 fanout 的 <code>item</code> 每个 agent：<code>belief.from_events</code> 与 <code>belief.from_rumors</code> 合并、截断 24 条、衰减 0.96、阈 0.1，再 <code>write.chronicle.belief</code>。</p>
+      <pre class="mermaid">flowchart LR
+    E[belief.from_events] --> M[belief.merge_truncate  top 24]
+    R[belief.from_rumors] --> M
+    M --> D[belief.decay 0.96 0.1]
+    D --> W[write.chronicle.belief]
+  </pre>
+    </section>
+
+    <section id="sg-we">
+      <h2><span class="file">subgraphs/week_end.yaml</span>  id: week_end</h2>
+      <p class="meta">并行两个 LLM：<code>story_clusterer</code> 写 <code>chronicle.story_clusters:week=</code>；<code>week_summarizer</code> 写 <code>chronicle.summary</code>。</p>
+      <pre class="mermaid">flowchart TB
+    jev[json  events rumors social_state  转 text] --> SC[agent.cline  story_clusterer  json  write]
+    jev --> SU[agent.cline  week_summarizer  text  write.chronicle.summary]
+    classDef llm fill:#6e40c9,color:#fff
+    class SC,SU llm
+  </pre>
+    </section>
+
+    <section id="sg-wir">
+      <h2><span class="file">subgraphs/write_intent_result.yaml</span>  id: write_intent_result</h2>
+      <p class="meta">从 foreach 项取 <code>item.intent.agent_id</code> 与 intent 正文，写 <code>chronicle.intent:week=,id=</code>。本出厂图中未被 week 主图引用，可作辅助或历史。</p>
+      <pre class="mermaid">flowchart LR
+    K[text.format  key] --> W[write.schema.json  payload  item.intent]
+  </pre>
+    </section>
+
+    <section id="refs">
+      <h2>顶层图对子图的引用</h2>
+      <p class="meta">Mermaid 关系图。箭头表示「图内以 subgraph 或 flow 子图形式调用」。</p>
+      <pre class="mermaid">flowchart TB
+    week[graph week]
+    range[graph range]
+    week --> s1[subgraph  single_agent_intent]
+    week --> s2[subgraph  group_tier_intents  B C]
+    week --> s3[subgraph  week_end]
+    s1 --> s0[subgraph  npc_context_compose]
+    range --> week
+  </pre>
+      <ul class="compact">
+        <li><code>range</code> 仅 <code>foreach</code> 内嵌 <code>week</code>，不直接引用其它子图。</li>
+        <li><code>probe / p1_smoke / seed_from_ideas</code> 不引用上表子图。</li>
+        <li><code>write_intent_result</code> 当前无顶层图引用，保留为 foreach 写 intent 的模板子图。</li>
+      </ul>
+    </section>
+  </div>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "dark",
+      securityLevel: "loose",
+      flowchart: { htmlLabels: true, curve: "basis", padding: 8 }
+    });
+  </script>
+</body>
+</html>

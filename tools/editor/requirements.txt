@@ -1,0 +1,5 @@
+# 主编辑器 + 内嵌对话图（与 tools/dialogue_graph_editor/requirements.txt 一致）
+# 使用 Python 3.11：OdenGraphQt 0.7.4 依赖 stdlib distutils，CPython 3.12+ 已移除
+PySide6>=6.5.0
+OdenGraphQt>=0.7.4
+qtpy>=2.3.1

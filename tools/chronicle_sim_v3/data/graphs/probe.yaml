@@ -1,0 +1,64 @@
+schema: chronicle_sim_v3/graph@1
+id: probe
+title: 编年史探针
+description: |
+  对用户问题在 world / chronicle 中找证据并答复。
+  P3 实装：world bible + 已知周列表 + chroma 检索（需先 chroma.rebuild_world）。
+  flow.while + BFS 重试在 P5 才补；本图为单轮检索 + 答复。
+
+inputs:
+  question:
+    type: Str
+    required: true
+
+spec:
+  nodes:
+    bible:
+      kind: read.world.bible_text
+    weeks_list:
+      kind: read.chronicle.weeks
+    weeks_text:
+      kind: json.encode
+      in:
+        value: ${nodes.weeks_list.out}
+    chroma_hits:
+      kind: chroma.search
+      in:
+        query: ${inputs.question}
+      params:
+        collection: world
+        n_results: 5
+    hits_text:
+      kind: json.encode
+      in:
+        value: ${nodes.chroma_hits.out}
+      params:
+        indent: 2
+    context:
+      kind: text.concat
+      in:
+        parts:
+          - "## 世界圣经\n"
+          - ${nodes.bible.out}
+          - "\n\n## 已知周\n"
+          - ${nodes.weeks_text.out}
+          - "\n\n## 检索命中\n"
+          - ${nodes.hits_text.out}
+      params:
+        sep: ""
+    answer:
+      kind: agent.cline
+      in:
+        vars:
+          question: ${inputs.question}
+          context_text: ${nodes.context.out}
+      params:
+        agent_spec: data/agent_specs/probe.toml
+        llm:
+          role: probe
+          model: smart
+          output:
+            kind: text
+  result:
+    answer: ${nodes.answer.text}
+    chroma_hits: ${nodes.chroma_hits.out}
