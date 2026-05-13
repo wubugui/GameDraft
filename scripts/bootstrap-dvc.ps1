@@ -46,14 +46,26 @@ if (-not (Test-Path $Archive)) {
   catch {
     $reason = $_.Exception.Message
     Write-Host "Portable runtime download failed: $reason"
-    Write-Host "This step uses anonymous HTTP GET only (no OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET). If you see 403/401, check the bootstrap base URL, bucket anonymous read policy, or network; it is not RAM key signing for this ZIP."
+    Write-Host ""
+    Write-Host "[This step] Anonymous HTTP GET to the ZIP URL. OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET are NOT sent and do NOT sign this request."
+    Write-Host "[403/401 meaning] The server refused unauthenticated read: wrong URL, object missing, bucket policy blocking public read, CDN/WAF, or network/proxy — not 'wrong RAM secret' for this download."
+    Write-Host ""
     $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
     $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
-    Write-Host ("Later install-deps / DVC will need RAM keys on this process: OSS_ACCESS_KEY_ID {0}; OSS_ACCESS_KEY_SECRET {1}." -f @(
-        $(if ($kid) { "set ($($kid.Length) chars)" } else { "not set" }),
-        $(if ($ks) { "set ($($ks.Length) chars)" } else { "not set" })
-      ))
-    throw "GameDraftBootstrapHttpDownloadError"
+    $idLen = if ($kid) { $kid.Length } else { 0 }
+    $secLen = if ($ks) { $ks.Length } else { 0 }
+    Write-Host "[Later steps only] install-deps / sync-dvc-cache will read RAM keys from this process. Current process (values never printed):"
+    Write-Host ("  OSS_ACCESS_KEY_ID: {0}" -f $(if ($idLen -gt 0) { "set, length $idLen (typical Aliyun AccessKeyId is often 16+ chars, e.g. LTAI...)" } else { "not set" }))
+    Write-Host ("  OSS_ACCESS_KEY_SECRET: {0}" -f $(if ($secLen -gt 0) { "set, length $secLen (typical secret is 30 chars or longer)" } else { "not set" }))
+    if ($idLen -gt 0 -and $idLen -lt 12) {
+      Write-Host "  Note: ID length looks like a placeholder; it still does NOT cause this ZIP 403. Fix anonymous access to the URL or place the zip under resources\vendor_archives\$ArchiveName offline."
+    }
+    Write-Host ""
+    Write-Host "[本步骤] 使用匿名 HTTP 下载 ZIP，不会携带 RAM 密钥，也不会用密钥签名；本步骤的 403 不是“Secret 填错”。"
+    Write-Host "[后面步骤] 安装依赖与 DVC 拉缓存才会用到 OSS_ACCESS_KEY_*；上面“长度”只说明变量是否已写入当前进程，不解释本次 403。"
+    Write-Host "[可选] 将 $ArchiveName 放到仓库 resources\vendor_archives\ 下可跳过本下载。"
+    Write-Host ""
+    throw "GameDraftBootstrapHttpDownloadError: anonymous GET failed (see messages above; not RAM key signing for this ZIP)."
   }
 }
 
