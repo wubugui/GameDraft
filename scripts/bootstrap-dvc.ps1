@@ -9,6 +9,96 @@ $ToolsDir = Join-Path $Root ".tools"
 $PythonDir = Join-Path $ToolsDir "Python311"
 $PythonExe = Join-Path $PythonDir "python.exe"
 
+function Hydrate-OssKeysFromUserToProcess {
+  $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
+  if (-not $kid) {
+    $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User")
+    if ($kid) {
+      [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $kid, "Process")
+    }
+  }
+  $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
+  if (-not $ks) {
+    $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User")
+    if ($ks) {
+      [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $ks, "Process")
+    }
+  }
+}
+
+function Get-OssVirtualHostBucketAndObjectKey {
+  param([Parameter(Mandatory = $true)][Uri]$Uri)
+
+  $hostName = $Uri.Host
+  $m = [regex]::Match($hostName, '^(?<bucket>[^.]+)\.(?<suffix>oss-.+\.aliyuncs\.com)$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if (-not $m.Success) {
+    return $null
+  }
+  $bucket = $m.Groups["bucket"].Value
+  $path = $Uri.AbsolutePath.TrimStart("/")
+  if (-not $path) {
+    throw "OSS URL has no object path: $Uri"
+  }
+  $objectKey = [Uri]::UnescapeDataString($path)
+  return @{ Bucket = $bucket; ObjectKey = $objectKey }
+}
+
+function Get-OssPathStyleBucketAndObjectKey {
+  param([Parameter(Mandatory = $true)][Uri]$Uri)
+
+  $hostName = $Uri.Host
+  if ($hostName -notmatch '^oss-.+\.aliyuncs\.com$') {
+    return $null
+  }
+  $segments = @($Uri.AbsolutePath.Trim("/").Split([char[]]'/', [StringSplitOptions]::RemoveEmptyEntries))
+  if ($segments.Count -lt 2) {
+    return $null
+  }
+  $bucket = $segments[0]
+  $objectKey = ($segments[1..($segments.Count - 1)] -join "/")
+  $objectKey = [Uri]::UnescapeDataString($objectKey)
+  return @{ Bucket = $bucket; ObjectKey = $objectKey }
+}
+
+function Invoke-OssSignedObjectGet {
+  param(
+    [Parameter(Mandatory = $true)][string]$UriString,
+    [Parameter(Mandatory = $true)][string]$OutFile,
+    [Parameter(Mandatory = $true)][string]$AccessKeyId,
+    [Parameter(Mandatory = $true)][string]$AccessKeySecret
+  )
+
+  $uri = [Uri]$UriString
+  $parsed = Get-OssVirtualHostBucketAndObjectKey -Uri $uri
+  if (-not $parsed) {
+    $parsed = Get-OssPathStyleBucketAndObjectKey -Uri $uri
+  }
+  if (-not $parsed) {
+    throw "Cannot derive bucket/object key for OSS signing from URL: $UriString (expected virtual host https://bucket.oss-cn-xxx.aliyuncs.com/key or path-style https://oss-cn-xxx.aliyuncs.com/bucket/key)."
+  }
+
+  $bucket = $parsed.Bucket
+  $objectKey = $parsed.ObjectKey
+  $canonicalResource = "/$bucket/$objectKey"
+  $dateGmt = (Get-Date).ToUniversalTime().ToString("ddd, dd MMM yyyy HH:mm:ss \G\M\T", [Globalization.CultureInfo]::InvariantCulture)
+  $stringToSign = "GET`n`n`n$dateGmt`n$canonicalResource"
+
+  $hmac = New-Object System.Security.Cryptography.HMACSHA1
+  try {
+    $hmac.Key = [Text.Encoding]::UTF8.GetBytes($AccessKeySecret)
+    $sig = [Convert]::ToBase64String($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($stringToSign)))
+  }
+  finally {
+    $hmac.Dispose()
+  }
+
+  $auth = "OSS ${AccessKeyId}:$sig"
+  Invoke-WebRequest -Uri $UriString -OutFile $OutFile -Headers @{
+    "Date"            = $dateGmt
+    "Authorization"   = $auth
+  }
+}
+
 if (Test-Path $PythonExe) {
   & $PythonExe -m dvc --version
   exit $LASTEXITCODE
@@ -39,33 +129,39 @@ if (-not (Test-Path $Archive)) {
   $Archive = Join-Path $CacheDir $ArchiveName
   $Url = $BaseUrl.TrimEnd("/") + "/" + $ArchiveName
 
-  Write-Host "Downloading DVC portable runtime from $Url"
-  try {
-    Invoke-WithoutProxy { Invoke-WebRequest -Uri $Url -OutFile $Archive }
-  }
-  catch {
-    $reason = $_.Exception.Message
-    Write-Host "Portable runtime download failed: $reason"
-    Write-Host ""
-    Write-Host "[This step] Anonymous HTTP GET to the ZIP URL. OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET are NOT sent and do NOT sign this request."
-    Write-Host "[403/401 meaning] The server refused unauthenticated read: wrong URL, object missing, bucket policy blocking public read, CDN/WAF, or network/proxy — not 'wrong RAM secret' for this download."
-    Write-Host ""
-    $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
-    $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
-    $idLen = if ($kid) { $kid.Length } else { 0 }
-    $secLen = if ($ks) { $ks.Length } else { 0 }
-    Write-Host "[Later steps only] install-deps / sync-dvc-cache will read RAM keys from this process. Current process (values never printed):"
-    Write-Host ("  OSS_ACCESS_KEY_ID: {0}" -f $(if ($idLen -gt 0) { "set, length $idLen (typical Aliyun AccessKeyId is often 16+ chars, e.g. LTAI...)" } else { "not set" }))
-    Write-Host ("  OSS_ACCESS_KEY_SECRET: {0}" -f $(if ($secLen -gt 0) { "set, length $secLen (typical secret is 30 chars or longer)" } else { "not set" }))
-    if ($idLen -gt 0 -and $idLen -lt 12) {
-      Write-Host "  Note: ID length looks like a placeholder; it still does NOT cause this ZIP 403. Fix anonymous access to the URL or place the zip under resources\vendor_archives\$ArchiveName offline."
+  Hydrate-OssKeysFromUserToProcess
+  $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
+  $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
+  $usedSigned = $false
+
+  if ($kid -and $ks) {
+    $usedSigned = $true
+    Write-Host "Downloading DVC portable runtime (OSS RAM signed GET) from $Url"
+    try {
+      Invoke-WithoutProxy { Invoke-OssSignedObjectGet -UriString $Url -OutFile $Archive -AccessKeyId $kid -AccessKeySecret $ks }
     }
-    Write-Host ""
-    Write-Host "[本步骤] 使用匿名 HTTP 下载 ZIP，不会携带 RAM 密钥，也不会用密钥签名；本步骤的 403 不是“Secret 填错”。"
-    Write-Host "[后面步骤] 安装依赖与 DVC 拉缓存才会用到 OSS_ACCESS_KEY_*；上面“长度”只说明变量是否已写入当前进程，不解释本次 403。"
-    Write-Host "[可选] 将 $ArchiveName 放到仓库 resources\vendor_archives\ 下可跳过本下载。"
-    Write-Host ""
-    throw "GameDraftBootstrapHttpDownloadError: anonymous GET failed (see messages above; not RAM key signing for this ZIP)."
+    catch {
+      $reason = $_.Exception.Message
+      Write-Host "Portable runtime download failed (signed OSS): $reason"
+      Write-Host "This request used OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET (HMAC-SHA1 Authorization). 403/SignatureDoesNotMatch usually means wrong keys, wrong clock (GMT), missing oss:GetObject on this object, or URL/bucket mismatch."
+      Write-Host ("Process env (values not printed): OSS_ACCESS_KEY_ID length {0}; OSS_ACCESS_KEY_SECRET length {1}." -f $kid.Length, $ks.Length)
+      Write-Host "[中文] 本步已带 RAM 签名访问对象；若仍失败请核对 AccessKey、RAM 是否对该 Bucket 前缀有读权限、本机 UTC 时间是否正确。"
+      throw "GameDraftBootstrapHttpDownloadError: signed OSS GET failed (check RAM policy and keys)."
+    }
+  }
+  else {
+    Write-Host "Downloading DVC portable runtime (anonymous HTTP GET) from $Url"
+    Write-Host "No OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET in this process: private buckets will return 403; set keys first (GameDraft bootstrap menu already asks before this step)."
+    try {
+      Invoke-WithoutProxy { Invoke-WebRequest -Uri $Url -OutFile $Archive }
+    }
+    catch {
+      $reason = $_.Exception.Message
+      Write-Host "Portable runtime download failed (anonymous): $reason"
+      Write-Host "Private OSS buckets disallow anonymous reads. Run bootstrap.ps1 so credentials are collected first, or set OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET on this process."
+      Write-Host "[中文] 当前为匿名下载；若 Bucket 禁止匿名读，请先在引导里填写 RAM 密钥（或导出环境变量）后再执行本脚本。"
+      throw "GameDraftBootstrapHttpDownloadError: anonymous GET failed (private bucket needs RAM keys on this process)."
+    }
   }
 }
 
