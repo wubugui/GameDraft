@@ -18,10 +18,13 @@ cd GameDraft
 1. Initialize game
 2. Initialize editor
 3. Clean local environment
+4. Re-configure OSS RAM credentials only
 0. Exit
 ```
 
-如果没有 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET`，引导脚本会提示输入并保存到当前 Windows 用户环境变量。Secret 输入不会回显。
+命令行也可直接执行：`powershell -File scripts\bootstrap.ps1 -Action oss` 仅重配 RAM（等同菜单 4）。
+
+如果没有 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET`，引导脚本会提示输入并保存到当前 Windows 用户环境变量（优先 `setx`，过长或失败时改用用户级注册表写入）。Secret 输入不会回显。因 RAM 错误导致的 OSS 失败会提示重输，**同一阶段最多重试 5 次**，超过后需修正策略或密钥再重新运行引导。
 
 项目禁止依赖全局 Python。所有 Python 工具都使用仓库内的：
 
