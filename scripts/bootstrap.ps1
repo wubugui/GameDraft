@@ -60,10 +60,10 @@ function Ensure-LocalPython {
     try {
       Invoke-RepoScript "bootstrap-dvc.ps1"
       if ($LASTEXITCODE -ne 0) {
-        throw "bootstrap-dvc.ps1 exited with code $LASTEXITCODE (portable Python or DVC check failed)."
+        throw ('bootstrap-dvc.ps1 exited with code ' + $LASTEXITCODE + '; portable Python or DVC self-check failed.')
       }
       if (-not (Test-Path $Python)) {
-        throw "bootstrap-dvc.ps1 finished but $Python is still missing."
+        throw ('bootstrap-dvc.ps1 finished but portable Python is still missing at: ' + $Python)
       }
       return
     }
@@ -71,9 +71,9 @@ function Ensure-LocalPython {
       if ($_.Exception.Message -like "*GameDraftBootstrapHttpDownloadError*") {
         $ossZipAttempt++
         if ($ossZipAttempt -ge $script:MaxOssCredentialRetries) {
-          throw "Exceeded $($script:MaxOssCredentialRetries) attempts to download portable Python after OSS issues. Fix RAM policy, base URL, or place python311-dvc-win-x64.zip under resources\vendor_archives\."
+          throw ('Exceeded ' + $script:MaxOssCredentialRetries + ' attempts to download portable Python after OSS issues. Fix RAM policy, base URL, or place python311-dvc-win-x64.zip under resources\vendor_archives\.')
         }
-        Write-Host "Portable runtime download failed (signed or anonymous OSS GET). For a private bucket, wrong RAM keys or missing oss:GetObject on the ZIP path often causes this; re-enter credentials."
+        Write-Host 'Portable runtime download failed after signed or anonymous OSS GET. For a private bucket, wrong RAM keys or missing oss:GetObject on the ZIP path often causes this; re-enter credentials.'
         Write-OssCredentialPassingDiagnostics
         Ensure-OssCredentials -ForceReenter
         continue
@@ -133,7 +133,7 @@ function Ensure-OssCredentials {
       Write-Host "Credentials are long for reliable setx; persisting with User environment API instead."
       [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "User")
       [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "User")
-      Write-Host "OSS credentials: saved to user environment (User scope; open a new terminal to pick up changes outside this script)."
+      Write-Host 'OSS credentials: saved to user environment — User scope; open a new terminal to pick up changes outside this script.'
     }
     else {
       $null = & setx OSS_ACCESS_KEY_ID "$KeyId"
@@ -141,18 +141,18 @@ function Ensure-OssCredentials {
       $null = & setx OSS_ACCESS_KEY_SECRET "$KeySecret"
       $sxSec = $LASTEXITCODE
       if ($sxId -eq 0 -and $sxSec -eq 0) {
-        Write-Host "OSS credentials: saved with setx (user environment; open a new terminal to pick up changes outside this script)."
+        Write-Host 'OSS credentials: saved with setx — user environment; open a new terminal to pick up changes outside this script.'
       }
       else {
-        Write-Host "setx failed (exit codes $sxId / $sxSec); persisting with User environment API instead."
+        Write-Host ('setx failed; exit codes ' + $sxId + ' / ' + $sxSec + '. Persisting with User environment API instead.')
         [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "User")
         [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "User")
-        Write-Host "OSS credentials: saved to user environment (User scope; open a new terminal to pick up changes outside this script)."
+        Write-Host 'OSS credentials: saved to user environment — User scope; open a new terminal to pick up changes outside this script.'
       }
     }
   }
   else {
-    Write-Host "OSS credentials: process only (this session; not written to user profile)."
+    Write-Host "OSS credentials: process only — this session only; not written to user profile."
   }
 
   [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
@@ -203,9 +203,9 @@ function Ensure-Dependencies {
       if ($_.Exception.Message -eq "GameDraftOssCredentialError" -or $_.Exception.Message -like "GameDraftOssCredentialError*") {
         $ossAttempt++
         if ($ossAttempt -ge $script:MaxOssCredentialRetries) {
-          throw "Exceeded $($script:MaxOssCredentialRetries) OSS credential retries during dependency install. Fix RAM keys or policy, then run bootstrap again."
+          throw ('Exceeded ' + $script:MaxOssCredentialRetries + ' OSS credential retries during dependency install. Fix RAM keys or policy, then run bootstrap again.')
         }
-        Write-Host "OSS access was denied or the AccessKey is invalid (sync-dvc-cache exit 2). Check stderr above for the OSS exception."
+        Write-Host 'OSS access was denied or the AccessKey is invalid; sync-dvc-cache exited with code 2. See stderr above for the OSS exception.'
         Write-OssCredentialPassingDiagnostics
         Ensure-OssCredentials -ForceReenter
         continue
@@ -246,9 +246,9 @@ function Pull-DvcTarget {
       if ($_.Exception.Message -eq "GameDraftOssCredentialError" -or $_.Exception.Message -like "GameDraftOssCredentialError*") {
         $ossAttempt++
         if ($ossAttempt -ge $script:MaxOssCredentialRetries) {
-          throw "Exceeded $($script:MaxOssCredentialRetries) OSS credential retries while pulling $Target. Fix RAM keys or policy, then run bootstrap again."
+          throw ('Exceeded ' + $script:MaxOssCredentialRetries + ' OSS credential retries while pulling ' + $Target + '. Fix RAM keys or policy, then run bootstrap again.')
         }
-        Write-Host "OSS access was denied or the AccessKey is invalid while pulling $Target (sync-dvc-cache exit 2). Check stderr above."
+        Write-Host ('OSS access was denied or the AccessKey is invalid while pulling ' + $Target + '; sync-dvc-cache exited with code 2. See stderr above.')
         Write-OssCredentialPassingDiagnostics
         Ensure-OssCredentials -ForceReenter
         continue
@@ -261,9 +261,9 @@ function Pull-DvcTarget {
 function Initialize-OssCredentialsOnly {
   Write-Host ""
   Write-Host "Re-configure OSS RAM credentials: clearing process-scoped keys, then enter ID and Secret again."
-  Write-Host "User-profile keys are not removed; choose persist (Y) to overwrite them with the new pair."
+  Write-Host "User-profile keys are not removed; choose persist Y to overwrite them with the new pair."
   Ensure-OssCredentials -ForceReenter
-  Write-Host "OSS reconfiguration finished (this session process is updated)."
+  Write-Host "OSS reconfiguration finished; this session process is updated."
 }
 
 function Initialize-Game {

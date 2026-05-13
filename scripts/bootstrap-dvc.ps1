@@ -58,7 +58,7 @@ function Invoke-OssSignedObjectGet {
     $parsed = Get-OssPathStyleBucketAndObjectKey -Uri $uri
   }
   if (-not $parsed) {
-    throw "Cannot derive bucket/object key for OSS signing from URL: $UriString (expected virtual host https://bucket.oss-cn-xxx.aliyuncs.com/key or path-style https://oss-cn-xxx.aliyuncs.com/bucket/key)."
+    throw ('Cannot derive bucket/object key for OSS signing from URL: ' + $UriString + '. Use virtual host style bucket.oss-cn-xxx.aliyuncs.com/object-key or path-style oss-cn-xxx.aliyuncs.com/bucket/object-key.')
   }
 
   $bucket = $parsed.Bucket
@@ -118,31 +118,31 @@ if (-not (Test-Path $Archive)) {
   $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
 
   if ($kid -and $ks) {
-    Write-Host "Downloading DVC portable runtime (OSS RAM signed GET) from $Url"
+    Write-Host ('Downloading DVC portable runtime — OSS RAM signed GET — from ' + $Url)
     try {
       Invoke-WithoutProxy { Invoke-OssSignedObjectGet -UriString $Url -OutFile $Archive -AccessKeyId $kid -AccessKeySecret $ks }
     }
     catch {
       $reason = $_.Exception.Message
-      Write-Host "Portable runtime download failed (signed OSS): $reason"
-      Write-Host "This request used OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET (HMAC-SHA1 Authorization). 403/SignatureDoesNotMatch usually means wrong keys, wrong clock (GMT), missing oss:GetObject on this object, or URL/bucket mismatch."
-      Write-Host ("Process env (values not printed): OSS_ACCESS_KEY_ID length {0}; OSS_ACCESS_KEY_SECRET length {1}." -f $kid.Length, $ks.Length)
+      Write-Host ('Portable runtime download failed (signed OSS): ' + $reason)
+      Write-Host 'This request used RAM signing (HMAC-SHA1). 403 or SignatureDoesNotMatch usually means wrong keys, wrong UTC clock, missing oss:GetObject on this object, or URL or bucket mismatch.'
+      Write-Host ('Process env — values not printed — OSS_ACCESS_KEY_ID length {0}; OSS_ACCESS_KEY_SECRET length {1}.' -f $kid.Length, $ks.Length)
       Write-Host "[中文] 本步已带 RAM 签名访问对象；若仍失败请核对 AccessKey、RAM 是否对该 Bucket 前缀有读权限、本机 UTC 时间是否正确。"
-      throw "GameDraftBootstrapHttpDownloadError: signed OSS GET failed (check RAM policy and keys)."
+      throw 'GameDraftBootstrapHttpDownloadError: signed OSS GET failed; verify RAM keys, policy, clock, and object path.'
     }
   }
   else {
-    Write-Host "Downloading DVC portable runtime (anonymous HTTP GET) from $Url"
-    Write-Host "No OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET in this process: private buckets will return 403; set keys first (GameDraft bootstrap menu already asks before this step)."
+    Write-Host ('Downloading DVC portable runtime — anonymous HTTP GET — from ' + $Url)
+    Write-Host 'No OSS_ACCESS_KEY_ID or OSS_ACCESS_KEY_SECRET in this process: private buckets return 403 on anonymous GET. Use bootstrap menu 1 or 2 first so RAM keys are set.'
     try {
       Invoke-WithoutProxy { Invoke-WebRequest -Uri $Url -OutFile $Archive }
     }
     catch {
       $reason = $_.Exception.Message
-      Write-Host "Portable runtime download failed (anonymous): $reason"
+      Write-Host ('Portable runtime download failed (anonymous): ' + $reason)
       Write-Host "Private OSS buckets disallow anonymous reads. Run bootstrap.ps1 so credentials are collected first, or set OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET on this process."
       Write-Host "[中文] 当前为匿名下载；若 Bucket 禁止匿名读，请先在引导里填写 RAM 密钥（或导出环境变量）后再执行本脚本。"
-      throw "GameDraftBootstrapHttpDownloadError: anonymous GET failed (private bucket needs RAM keys on this process)."
+      throw 'GameDraftBootstrapHttpDownloadError: anonymous GET failed; private bucket needs RAM keys in this process.'
     }
   }
 }

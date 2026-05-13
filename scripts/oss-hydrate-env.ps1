@@ -23,6 +23,6 @@ function Assert-OssCredentialsInProcess {
   $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
   $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
   if (-not $kid -or -not $ks) {
-    throw "OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must both be set (user or process environment). Run scripts/bootstrap.ps1 options 1 or 2 first, or set them in this shell before using OSS-backed scripts."
+    throw 'OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must both be set in user or process environment. Run scripts\bootstrap.ps1 options 1 or 2 first, or export them in this shell before using OSS-backed scripts.'
   }
 }
