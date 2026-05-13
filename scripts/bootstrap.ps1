@@ -51,8 +51,28 @@ function Ensure-LocalPython {
     return
   }
 
-  Write-Host "Local Python runtime: missing, downloading bootstrap runtime..."
-  Invoke-RepoScript "bootstrap-dvc.ps1"
+  while ($true) {
+    Write-Host "Local Python runtime: missing, downloading bootstrap runtime..."
+    try {
+      Invoke-RepoScript "bootstrap-dvc.ps1"
+      if ($LASTEXITCODE -ne 0) {
+        throw "bootstrap-dvc.ps1 exited with code $LASTEXITCODE (portable Python or DVC check failed)."
+      }
+      if (-not (Test-Path $Python)) {
+        throw "bootstrap-dvc.ps1 finished but $Python is still missing."
+      }
+      return
+    }
+    catch {
+      if ($_.Exception.Message -like "*GameDraftBootstrapHttpDownloadError*") {
+        Write-Host "Portable runtime download failed (signed or anonymous OSS GET). For a private bucket, wrong RAM keys or missing oss:GetObject on the ZIP path often causes this; re-enter credentials."
+        Write-OssCredentialPassingDiagnostics
+        Ensure-OssCredentials -ForceReenter
+        continue
+      }
+      throw
+    }
+  }
 }
 
 function Ensure-OssCredentials {
@@ -84,6 +104,16 @@ function Ensure-OssCredentials {
   if (-not $KeySecret) {
     $SecretSecure = Read-Host "OSS_ACCESS_KEY_SECRET" -AsSecureString
     $KeySecret = ConvertFrom-SecureStringPlainText $SecretSecure
+  }
+
+  if ($null -ne $KeyId) {
+    $KeyId = $KeyId.Trim()
+  }
+  if ($null -ne $KeySecret) {
+    $KeySecret = $KeySecret.Trim()
+  }
+  if ([string]::IsNullOrWhiteSpace($KeyId) -or [string]::IsNullOrWhiteSpace($KeySecret)) {
+    throw "OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must be non-empty after input."
   }
 
   $PersistAnswer = Read-Host "Save OSS credentials to your Windows user environment for future sessions? [y/N]"
