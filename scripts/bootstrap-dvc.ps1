@@ -15,9 +15,15 @@ if (Test-Path $PythonExe) {
 }
 
 $ConfigPath = Join-Path $Root "config\bootstrap-oss.json"
-if (-not $BaseUrl -and (Test-Path $ConfigPath)) {
-  $Config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-  $BaseUrl = [string]$Config.baseUrl
+$ExampleConfigPath = Join-Path $Root "config\bootstrap-oss.example.json"
+if (-not $BaseUrl) {
+  foreach ($path in @($ConfigPath, $ExampleConfigPath)) {
+    if (Test-Path $path) {
+      $Config = Get-Content $path -Raw | ConvertFrom-Json
+      $BaseUrl = [string]$Config.baseUrl
+      if ($BaseUrl) { break }
+    }
+  }
 }
 
 New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
@@ -28,7 +34,7 @@ $ArchiveName = "python311-dvc-win-x64.zip"
 $Archive = Join-Path $Root "resources\vendor_archives\$ArchiveName"
 if (-not (Test-Path $Archive)) {
   if (-not $BaseUrl) {
-    throw "Missing bootstrap OSS URL. Copy config/bootstrap-oss.example.json to config/bootstrap-oss.json or set GAMEDRAFT_BOOTSTRAP_BASE_URL."
+    throw "Missing bootstrap OSS URL. Ensure config/bootstrap-oss.example.json exists with baseUrl, copy it to config/bootstrap-oss.json for overrides, or set GAMEDRAFT_BOOTSTRAP_BASE_URL."
   }
   $Archive = Join-Path $CacheDir $ArchiveName
   $Url = $BaseUrl.TrimEnd("/") + "/" + $ArchiveName
