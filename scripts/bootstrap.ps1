@@ -63,20 +63,35 @@ function Ensure-OssCredentials {
     return
   }
 
-  Write-Host "OSS credentials are missing. They will be saved to your Windows user environment."
+  Write-Host "OSS credentials are missing. Portable artifacts and dependency sync use OSS; enter values for this session."
   if (-not $KeyId) {
     $KeyId = Read-Host "OSS_ACCESS_KEY_ID"
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "User")
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
   }
   if (-not $KeySecret) {
     $SecretSecure = Read-Host "OSS_ACCESS_KEY_SECRET" -AsSecureString
     $KeySecret = ConvertFrom-SecureStringPlainText $SecretSecure
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "User")
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "Process")
   }
 
-  Write-Host "OSS credentials: saved"
+  $PersistAnswer = Read-Host "Save OSS credentials to your Windows user environment for future sessions? [y/N]"
+  $Persist = $PersistAnswer -match "^\s*[Yy]"
+
+  if ($Persist) {
+    $null = & setx OSS_ACCESS_KEY_ID "$KeyId"
+    if ($LASTEXITCODE -ne 0) {
+      throw "setx OSS_ACCESS_KEY_ID failed with exit $LASTEXITCODE"
+    }
+    $null = & setx OSS_ACCESS_KEY_SECRET "$KeySecret"
+    if ($LASTEXITCODE -ne 0) {
+      throw "setx OSS_ACCESS_KEY_SECRET failed with exit $LASTEXITCODE"
+    }
+    Write-Host "OSS credentials: saved with setx (user environment; open a new terminal to pick up changes outside this script)."
+  }
+  else {
+    Write-Host "OSS credentials: process only (this session; not written to user profile)."
+  }
+
+  [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
+  [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "Process")
 }
 
 function Test-DependenciesReady {
@@ -115,8 +130,8 @@ function Pull-DvcTarget {
 function Initialize-Game {
   Push-Location $Root
   try {
-    Ensure-LocalPython
     Ensure-OssCredentials
+    Ensure-LocalPython
     Ensure-Dependencies
     Write-Host "Runtime resources: syncing..."
     Pull-DvcTarget "public/resources/runtime.dvc"
@@ -130,8 +145,8 @@ function Initialize-Game {
 function Initialize-Editor {
   Push-Location $Root
   try {
-    Ensure-LocalPython
     Ensure-OssCredentials
+    Ensure-LocalPython
     Ensure-Dependencies
     Write-Host "Runtime resources: syncing..."
     Pull-DvcTarget "public/resources/runtime.dvc"
