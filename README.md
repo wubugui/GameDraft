@@ -1,10 +1,4 @@
-# gamedraft
-
-2D 叙事向 Web 游戏客户端（Vite + TypeScript + Pixi.js）。
-
 ## 快速开始
-
-新机器只需要先安装 Git，然后拉取仓库：
 
 ```powershell
 git clone <repo-url>
@@ -12,21 +6,7 @@ cd GameDraft
 .\bootstrap.cmd
 ```
 
-`bootstrap.cmd` 是可重复执行的引导脚本，只负责准备环境：
-
-```text
-1. Initialize game
-2. Initialize editor
-3. Clean local environment
-4. Re-configure OSS RAM credentials only
-0. Exit
-```
-
-命令行也可直接执行：`powershell -File scripts\bootstrap.ps1 -Action oss` 仅重配 RAM（等同菜单 4）。
-
-如果没有 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET`，引导脚本会提示输入并保存到当前 Windows 用户环境变量（优先 `setx`，过长或失败时改用用户级注册表写入）。Secret 输入不会回显。因 RAM 错误导致的 OSS 失败会提示重输，**同一阶段最多重试 5 次**，超过后需修正策略或密钥再重新运行引导。
-
-项目禁止依赖全局 Python。所有 Python 工具都使用仓库内的：
+项目内 Python 工具都使用仓库内的：
 
 ```text
 .\.tools\Python311\python.exe
@@ -51,8 +31,6 @@ public/resources/runtime/
 resources/editor_projects/
 resources/vendor_archives/
 ```
-
-`.ts` 目录是 TagSpaces/临时缩略图数据，不进入版本控制。
 
 ## 日常开发
 
@@ -87,38 +65,8 @@ git status
 .\push-all.cmd
 ```
 
-## 运行与构建
-
-启动游戏开发服务器：
-
-```powershell
-.\start-game.cmd
-```
-
-启动主编辑器：
-
-```powershell
-.\start-main-editor.cmd
-```
-
-构建游戏：
-
-```powershell
-.\.tools\node-portable\node-v22.14.0-win-x64\npm.cmd run build
-```
-
-## 文档
-
-| 文档 | 说明 |
-|------|------|
-| [Cutscene / Action / Timeline 迭代计划](docs/plan-cutscene-action-timeline.md) | Action、Timeline 路线与验收清单 |
-| [数据与工具说明](docs/data-and-tools-manual.md) | 资源与工具链说明 |
-| [渲染相关](docs/rendering-architecture.md) | 渲染架构笔记 |
 
 ## 创作声明
 
 本项目涉及的地方民俗、志怪传闻与禁忌仪式，均为创作需要进行的架空编撰，并非对现实仪式、真实人物或具体事件的复刻与指涉。
-
-民俗习惯是人类祖先在乱世、贫困、疾病、死亡与未知面前形成的生活经验、心理秩序和民间智慧。本项目希望以尊重的态度呈现这些经验，而不是猎奇、戏弄或宣扬迷信。
-
 项目不会刻意复刻真实祭文、咒语或现实亡者信息；涉及禁忌与仪式的设计会尽量保持边界感与敬畏感。
