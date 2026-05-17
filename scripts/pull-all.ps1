@@ -13,7 +13,7 @@ try {
   & (Join-Path $PSScriptRoot "bootstrap-dvc.ps1")
   Assert-OssCredentialsInProcess
   $Python = Join-Path $Root ".tools\Python311\python.exe"
-  Invoke-WithoutProxy {
+  Invoke-OssWithoutProxy {
     & $Python (Join-Path $PSScriptRoot "sync-dvc-cache.py") pull "public/resources/runtime.dvc"
     & $Python -m dvc checkout "public/resources/runtime.dvc"
     if ($Editor) {

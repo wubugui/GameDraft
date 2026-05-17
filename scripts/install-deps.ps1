@@ -4,6 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "no-proxy.ps1")
+Initialize-BootstrapProcessWithoutProxy
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 & (Join-Path $PSScriptRoot "bootstrap-dvc.ps1")
 $Python = Join-Path $Root ".tools\Python311\python.exe"
@@ -23,7 +24,7 @@ function Invoke-Checked {
 }
 
 if (-not $SkipDvcPull) {
-  Invoke-WithoutProxy {
+  Invoke-OssWithoutProxy {
     & $Python (Join-Path $PSScriptRoot "sync-dvc-cache.py") pull "resources/vendor_archives.dvc"
     & $Python -m dvc checkout "resources/vendor_archives.dvc"
   }

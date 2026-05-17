@@ -15,6 +15,6 @@ $Key = $Prefix.TrimEnd("/") + "/" + $ArchiveName
 
 Assert-OssCredentialsInProcess
 
-Invoke-WithoutProxy {
+Invoke-OssWithoutProxy {
   & $Python (Join-Path $PSScriptRoot "upload-bootstrap.py") --bucket $Bucket --endpoint $Endpoint --file $Archive --key $Key
 }

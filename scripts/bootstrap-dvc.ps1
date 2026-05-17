@@ -77,9 +77,9 @@ function Invoke-OssSignedObjectGet {
   }
 
   $auth = "OSS ${AccessKeyId}:$sig"
-  Invoke-WebRequest -Uri $UriString -OutFile $OutFile -Headers @{
-    "Date"            = $dateGmt
-    "Authorization"   = $auth
+  Invoke-WebRequestDirect -Uri $UriString -OutFile $OutFile -Headers @{
+    "Date"          = $dateGmt
+    "Authorization" = $auth
   }
 }
 
@@ -120,7 +120,7 @@ if (-not (Test-Path $Archive)) {
   if ($kid -and $ks) {
     Write-Host ('Downloading DVC portable runtime — OSS RAM signed GET — from ' + $Url)
     try {
-      Invoke-WithoutProxy { Invoke-OssSignedObjectGet -UriString $Url -OutFile $Archive -AccessKeyId $kid -AccessKeySecret $ks }
+      Invoke-OssWithoutProxy { Invoke-OssSignedObjectGet -UriString $Url -OutFile $Archive -AccessKeyId $kid -AccessKeySecret $ks }
     }
     catch {
       $reason = $_.Exception.Message
@@ -135,7 +135,7 @@ if (-not (Test-Path $Archive)) {
     Write-Host ('Downloading DVC portable runtime — anonymous HTTP GET — from ' + $Url)
     Write-Host 'No OSS_ACCESS_KEY_ID or OSS_ACCESS_KEY_SECRET in this process: private buckets return 403 on anonymous GET. Use bootstrap menu 1 or 2 first so RAM keys are set.'
     try {
-      Invoke-WithoutProxy { Invoke-WebRequest -Uri $Url -OutFile $Archive }
+      Invoke-OssWithoutProxy { Invoke-WebRequestDirect -Uri $Url -OutFile $Archive }
     }
     catch {
       $reason = $_.Exception.Message

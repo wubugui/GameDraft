@@ -19,7 +19,7 @@ $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Pro
 
 Push-Location $Root
 try {
-  Invoke-WithoutProxy {
+  Invoke-OssWithoutProxy {
     & $Python -m dvc remote modify aliyun_oss url "oss://$Bucket/$Prefix"
     & $Python -m dvc remote modify aliyun_oss oss_endpoint $Endpoint
     & $Python -m dvc remote modify --local aliyun_oss oss_key_id $KeyId

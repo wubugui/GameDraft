@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "no-proxy.ps1")
+Initialize-BootstrapProcessWithoutProxy
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Python = Join-Path $Root ".tools\Python311\python.exe"
@@ -106,7 +107,7 @@ function Pull-DvcTarget {
     [string]$Target
   )
 
-  Invoke-WithoutProxy {
+  Invoke-OssWithoutProxy {
     & $Python (Join-Path $PSScriptRoot "sync-dvc-cache.py") pull $Target
     & $Python -m dvc checkout $Target
   }
@@ -115,8 +116,8 @@ function Pull-DvcTarget {
 function Initialize-Game {
   Push-Location $Root
   try {
-    Ensure-LocalPython
     Ensure-OssCredentials
+    Ensure-LocalPython
     Ensure-Dependencies
     Write-Host "Runtime resources: syncing..."
     Pull-DvcTarget "public/resources/runtime.dvc"
@@ -130,8 +131,8 @@ function Initialize-Game {
 function Initialize-Editor {
   Push-Location $Root
   try {
-    Ensure-LocalPython
     Ensure-OssCredentials
+    Ensure-LocalPython
     Ensure-Dependencies
     Write-Host "Runtime resources: syncing..."
     Pull-DvcTarget "public/resources/runtime.dvc"
