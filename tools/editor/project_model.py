@@ -69,6 +69,7 @@ class ProjectModel(QObject):
         self.flag_registry: dict = {}
         self.overlay_images: dict[str, str] = {}
         self.scenarios_catalog: dict = {}
+        self.narrative_graphs: dict = {}
         self.document_reveals: list = []
 
         self.water_minigames_index: list[dict] = []
@@ -182,6 +183,8 @@ class ProjectModel(QObject):
         self.overlay_images = self._load(dp / "overlay_images.json", {})
         raw_sc = self._load(dp / "scenarios.json", {})
         self.scenarios_catalog = raw_sc if isinstance(raw_sc, dict) else {}
+        raw_ng = self._load(dp / "narrative_graphs.json", {"schemaVersion": 2, "compositions": []})
+        self.narrative_graphs = raw_ng if isinstance(raw_ng, dict) else {"schemaVersion": 2, "compositions": []}
         raw_dr = self._load(dp / "document_reveals.json", [])
         self.document_reveals = raw_dr if isinstance(raw_dr, list) else []
 
@@ -369,6 +372,8 @@ class ProjectModel(QObject):
                 write_json(dp / "overlay_images.json", self.overlay_images)
             if "scenarios" in dty:
                 write_json(dp / "scenarios.json", self.scenarios_catalog)
+            if "narrative_graphs" in dty:
+                write_json(dp / "narrative_graphs.json", self.narrative_graphs)
             if "document_reveals" in dty:
                 write_json(dp / "document_reveals.json", self.document_reveals)
             if "water_minigames" in dty:
@@ -783,6 +788,77 @@ class ProjectModel(QObject):
                 sid = e.get("id")
                 if sid is not None and str(sid).strip():
                     out.append(str(sid).strip())
+        return out
+
+    def narrative_graph_ids_ordered(self) -> list[str]:
+        """Runtime graph ids compiled from narrative compositions.
+
+        Kept for older callers that need graph choices; the editor itself uses
+        compositions as its top-level authoring unit.
+        """
+        if not isinstance(self.narrative_graphs, dict):
+            return []
+        out: list[str] = []
+        comps = self.narrative_graphs.get("compositions")
+        if isinstance(comps, list):
+            for comp in comps:
+                if not isinstance(comp, dict):
+                    continue
+                main = comp.get("mainGraph")
+                if isinstance(main, dict):
+                    gid = str(main.get("id", "")).strip()
+                    if gid:
+                        out.append(gid)
+                elements = comp.get("elements")
+                if not isinstance(elements, list):
+                    continue
+                for el in elements:
+                    if not isinstance(el, dict):
+                        continue
+                    if el.get("kind") not in ("wrapperGraph", "scenarioSubgraph"):
+                        continue
+                    graph = el.get("graph")
+                    if isinstance(graph, dict):
+                        gid = str(graph.get("id", "")).strip()
+                        if gid:
+                            out.append(gid)
+            return out
+        raw = self.narrative_graphs.get("graphs")
+        if isinstance(raw, list):
+            return [
+                str(g.get("id", "")).strip()
+                for g in raw
+                if isinstance(g, dict) and str(g.get("id", "")).strip()
+            ]
+        return []
+
+    def narrative_composition_ids_ordered(self) -> list[str]:
+        if not isinstance(self.narrative_graphs, dict):
+            return []
+        raw = self.narrative_graphs.get("compositions")
+        if not isinstance(raw, list):
+            return []
+        return [
+            str(c.get("id", "")).strip()
+            for c in raw
+            if isinstance(c, dict) and str(c.get("id", "")).strip()
+        ]
+
+    def all_scene_entity_ids(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for sid, scene in sorted(self.scenes.items()):
+            if not isinstance(scene, dict):
+                continue
+            for kind, label in (("npcs", "npc"), ("hotspots", "hotspot"), ("zones", "zone")):
+                arr = scene.get(kind)
+                if not isinstance(arr, list):
+                    continue
+                for e in arr:
+                    if not isinstance(e, dict):
+                        continue
+                    eid = str(e.get("id", "")).strip()
+                    if eid:
+                        out.append((eid, f"{label}:{eid} @ {sid}"))
         return out
 
     def phases_for_scenario(self, scenario_id: str) -> list[str]:

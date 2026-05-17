@@ -91,6 +91,14 @@
           }
         },
         {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "minigame",
+            "sourceId": "dock_crate_tutorial",
+            "signal": "pull_success"
+          }
+        },
+        {
           "type": "showNotification",
           "params": {
             "text": "[tag:string:waterMinigame:dockCrateSuccess]",

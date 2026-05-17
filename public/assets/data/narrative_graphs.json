@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 2,
+  "compositions": [
+    {
+      "id": "dock_water_monkey_ring_flow",
+      "label": "码头水鬼 / 水猴子到铁环流程",
+      "description": "码头看板、水边触发、捞箱、滚铁环小孩与归还铁环任务的叙事编排画布。",
+      "mainGraph": {
+        "id": "flow_dock_water_monkey",
+        "ownerType": "flow",
+        "ownerId": "码头水鬼",
+        "initialState": "initial",
+        "projectFlags": true,
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "未开始",
+            "meta": { "editor": { "x": 80, "y": 160 } }
+          },
+          "board_read": {
+            "id": "board_read",
+            "label": "看板初读",
+            "meta": { "editor": { "x": 330, "y": 160 } }
+          },
+          "waterside_available": {
+            "id": "waterside_available",
+            "label": "水边可触发",
+            "meta": { "editor": { "x": 590, "y": 160 } }
+          },
+          "crate_minigame_done": {
+            "id": "crate_minigame_done",
+            "label": "箱子捞起",
+            "meta": { "editor": { "x": 870, "y": 160 } }
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_board_read",
+            "from": "initial",
+            "to": "board_read",
+            "signal": "external:dialogue:dock_board:board_read_done"
+          },
+          {
+            "id": "t_waterside_available",
+            "from": "board_read",
+            "to": "waterside_available",
+            "signal": "external:zone:waterside:entered"
+          },
+          {
+            "id": "t_crate_done",
+            "from": "waterside_available",
+            "to": "crate_minigame_done",
+            "signal": "external:minigame:dock_crate_tutorial:pull_success"
+          }
+        ]
+      },
+      "elements": [
+        {
+          "id": "dialogue_dock_board",
+          "kind": "dialogueBlackbox",
+          "label": "码头看板",
+          "refId": "码头看板",
+          "x": 80,
+          "y": 20,
+          "meta": {
+            "emits": ["external:dialogue:dock_board:board_read_done"]
+          }
+        },
+        {
+          "id": "zone_waterside",
+          "kind": "zoneBlackbox",
+          "label": "水边触发区",
+          "refId": "码头白天:new_zone_2",
+          "x": 410,
+          "y": 20,
+          "meta": {
+            "emits": ["external:zone:waterside:entered"]
+          }
+        },
+        {
+          "id": "minigame_crate",
+          "kind": "minigameBlackbox",
+          "label": "捞箱小游戏",
+          "refId": "dock_crate_tutorial",
+          "x": 720,
+          "y": 20,
+          "meta": {
+            "emits": ["external:minigame:dock_crate_tutorial:pull_success"]
+          }
+        },
+        {
+          "id": "wrapper_npc_ringboy",
+          "kind": "wrapperGraph",
+          "label": "滚铁环小孩 Wrapper",
+          "ownerType": "npc",
+          "ownerId": "npc_ringboy",
+          "x": 870,
+          "y": 360,
+          "graph": {
+            "id": "npc_ringboy",
+            "ownerType": "npc",
+            "ownerId": "npc_ringboy",
+            "initialState": "before_event",
+            "projectFlags": true,
+            "states": {
+              "before_event": {
+                "id": "before_event",
+                "label": "事件前",
+                "meta": { "editor": { "x": 0, "y": 0 } }
+              },
+              "after_event": {
+                "id": "after_event",
+                "label": "水猴子事件后",
+                "meta": { "editor": { "x": 220, "y": 0 } },
+                "onEnterActions": [
+                  {
+                    "type": "persistNpcAnimState",
+                    "params": {
+                      "target": "npc_ringboy",
+                      "state": "boy_stand_ring"
+                    }
+                  },
+                  {
+                    "type": "persistNpcDisablePatrol",
+                    "params": {
+                      "npcId": "npc_ringboy"
+                    }
+                  }
+                ]
+              },
+              "ring_taken": {
+                "id": "ring_taken",
+                "label": "玩家已拿到铁环",
+                "meta": { "editor": { "x": 470, "y": 0 } }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_ringboy_after_event",
+                "from": "before_event",
+                "to": "after_event",
+                "signal": "stateEntered:flow_dock_water_monkey:crate_minigame_done"
+              },
+              {
+                "id": "t_ring_taken",
+                "from": "after_event",
+                "to": "ring_taken",
+                "signal": "external:dialogue:rolling_ring_boy:ring_taken"
+              }
+            ]
+          }
+        },
+        {
+          "id": "dialogue_ringboy",
+          "kind": "dialogueBlackbox",
+          "label": "滚铁环小孩对话",
+          "refId": "滚铁环小孩",
+          "x": 1210,
+          "y": 20,
+          "meta": {
+            "reads": ["npc_ringboy"],
+            "emits": ["external:dialogue:rolling_ring_boy:ring_taken"]
+          }
+        },
+        {
+          "id": "wrapper_quest_return_ring",
+          "kind": "wrapperGraph",
+          "label": "归还铁环 Quest Wrapper",
+          "ownerType": "quest",
+          "ownerId": "支线-归还小孩铁环-归还铁环",
+          "x": 1280,
+          "y": 360,
+          "graph": {
+            "id": "quest_return_ring",
+            "ownerType": "quest",
+            "ownerId": "支线-归还小孩铁环-归还铁环",
+            "initialState": "inactive",
+            "projectFlags": true,
+            "states": {
+              "inactive": {
+                "id": "inactive",
+                "label": "未激活",
+                "meta": { "editor": { "x": 0, "y": 0 } }
+              },
+              "active": {
+                "id": "active",
+                "label": "已激活",
+                "meta": { "editor": { "x": 230, "y": 0 } },
+                "onEnterActions": [
+                  {
+                    "type": "updateQuest",
+                    "params": {
+                      "id": "支线-归还小孩铁环-归还铁环"
+                    }
+                  }
+                ]
+              },
+              "completed": {
+                "id": "completed",
+                "label": "已完成",
+                "meta": { "editor": { "x": 470, "y": 0 } }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_activate_return_ring",
+                "from": "inactive",
+                "to": "active",
+                "signal": "stateEntered:npc_ringboy:ring_taken"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

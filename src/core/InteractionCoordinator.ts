@@ -26,6 +26,7 @@ export interface InteractionDeps {
   inspectBox: { show(text: string): Promise<void>; readonly isOpen: boolean; close(): void };
   eventBus: EventBus;
   getPlayerWorldPos: () => { x: number; y: number };
+  getCameraZoom: () => number;
   /** 与 NPC 对话开始前：玩家切站立并朝向该 NPC（世界向量，不改动画数据） */
   preparePlayerForNpcDialogue: (npc: Npc) => void;
   /** 与 Action `fadingZoom` 同源：NPC 对话开场拉近 */
@@ -91,7 +92,15 @@ export class InteractionCoordinator {
   }
 
   private async handleNpc(npc: Npc): Promise<void> {
-    const { stateController, dialogueManager, graphDialogueManager, eventBus, getPlayerWorldPos } = this.deps;
+    const {
+      stateController,
+      sceneManager,
+      dialogueManager,
+      graphDialogueManager,
+      eventBus,
+      getPlayerWorldPos,
+      getCameraZoom,
+    } = this.deps;
     if (stateController.currentState !== GameState.Exploring) return;
     if (dialogueManager.isActive || graphDialogueManager.isActive) return;
 
@@ -103,8 +112,15 @@ export class InteractionCoordinator {
     npc.pausePatrolAndFaceForDialogue(pos.x, pos.y);
 
     const rawZ = npc.def.dialogueCameraZoom;
-    const targetZoom =
+    const sceneZ = sceneManager.currentSceneData?.camera?.zoom;
+    /** 场景 JSON 基线 zoom；缺省按 1。与「未配 dialogueCameraZoom 时候选为 1」一起做下限，避免仅广角场景时无法向 1 拉近。 */
+    const sceneBaseline =
+      sceneZ !== undefined && Number.isFinite(sceneZ) && sceneZ > 0 ? sceneZ : 1;
+    /** 未配置 NPC 时仍为 1（经典对话画幅），勿改为 sceneBaseline，否则 scene.zoom<1 时开场无任何拉近。 */
+    const candidate =
       rawZ !== undefined && Number.isFinite(rawZ) && rawZ > 0 ? rawZ : 1;
+    const currentZoom = getCameraZoom();
+    const targetZoom = Math.max(currentZoom, candidate, sceneBaseline);
 
     let dialogueCleanupDone = false;
     const cleanupDialogueZoomAndNpc = () => {
@@ -120,7 +136,9 @@ export class InteractionCoordinator {
     };
     eventBus.on('dialogue:end', onDialogueEnd);
 
-    this.deps.fadingDialogueCameraZoom(targetZoom, NPC_DIALOGUE_CAMERA_ZOOM_MS);
+    if (targetZoom !== currentZoom) {
+      this.deps.fadingDialogueCameraZoom(targetZoom, NPC_DIALOGUE_CAMERA_ZOOM_MS);
+    }
 
     stateController.setState(GameState.Dialogue);
     try {

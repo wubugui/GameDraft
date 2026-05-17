@@ -255,12 +255,19 @@ export type ScenarioLineConditionLeaf = {
   lineStatus: 'inactive' | 'active' | 'completed';
 };
 
+/** NarrativeStateManager activeState leaf. */
+export type NarrativeStateConditionLeaf = {
+  narrative: string;
+  state: string;
+};
+
 /** 图对话原子条件（无逻辑组合） */
 export type GraphConditionLeaf =
   | Condition
   | QuestConditionLeaf
   | ScenarioConditionLeaf
-  | ScenarioLineConditionLeaf;
+  | ScenarioLineConditionLeaf
+  | NarrativeStateConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -426,7 +433,8 @@ export interface NpcDef {
   /** 覆盖图 JSON 的 `entry`；缺省用图内 `entry` */
   dialogueGraphEntry?: string;
   /**
-   * 进入该 NPC 对话时镜头渐变缩放到该值（与场景 `camera.zoom` 同语义）；缺省为 1.0。
+   * 进入该 NPC 对话时镜头渐变缩放到该值（与场景 `camera.zoom` 同语义；zoom 越大越“近”）。
+   * 未配置时候选为 1；实际目标为 max(当前相机 zoom, 候选值, 场景 camera.zoom 基线)，避免广角开场拉不近、也不宜把已很近的场景再拉远。
    * 对话结束（含异常中断）时由系统渐变恢复为当前场景配置的 zoom。
    */
   dialogueCameraZoom?: number;

@@ -211,7 +211,7 @@ class MainWindow(QWidget):
                 except Exception as e:
                     self.lbl_status.setText(f"无法加载指定工作区（{p}）：{e}")
         if not loaded:
-            if not self._try_restore_last_workspace():
+            if not self._try_restore_last_workspace() and not self._try_open_default_workspace():
                 self._refresh_all()
 
     def _workspace_settings(self) -> QSettings:
@@ -247,6 +247,24 @@ class MainWindow(QWidget):
         self._export_panel.set_workspace(self._ws)
         self._refresh_all()
         self.lbl_status.setText(f"已自动打开上次工作区：{p}")
+        return True
+
+    def _try_open_default_workspace(self) -> bool:
+        p = Path(self._workspace_default_dir())
+        if not p.is_dir() or not (p / "project.json").is_file():
+            return False
+        try:
+            self._ws = Workspace.load_workspace(p)
+        except Exception as e:
+            self.lbl_status.setText(f"无法加载默认工作区（{p}）：{e}")
+            return False
+        self._head_idx = -1
+        self._tail_idx = -1
+        self._active_clip_id = None
+        self._export_panel.set_workspace(self._ws)
+        self._refresh_all()
+        self._remember_workspace_path(p)
+        self.lbl_status.setText(f"已自动打开默认工作区：{p}")
         return True
 
     # -----------------------------------------------------------------------

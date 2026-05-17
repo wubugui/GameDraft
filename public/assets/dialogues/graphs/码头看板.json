@@ -87,6 +87,14 @@
             "phase": "看板初读",
             "status": "done"
           }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "dock_board",
+            "signal": "board_read_done"
+          }
         }
       ],
       "next": "e_end"

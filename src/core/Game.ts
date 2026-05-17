@@ -66,6 +66,7 @@ import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
 import { ScenarioStateManager } from './ScenarioStateManager';
+import { NarrativeStateManager } from './NarrativeStateManager';
 import { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
@@ -124,6 +125,9 @@ declare global {
       isReady(): boolean;
       /** 重新打开 Dev Mode 面板（从场景列表跳转后不会自动再开） */
       openDevPanel(): void;
+      getNarrativeDebugSnapshot(): Record<string, unknown>;
+      emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
+      setNarrativeState(graphId: string, stateId: string): Promise<void>;
     };
   }
 }
@@ -143,6 +147,7 @@ export class Game {
   private dialogueManager: DialogueManager;
   private graphDialogueManager: GraphDialogueManager;
   private scenarioStateManager: ScenarioStateManager;
+  private narrativeStateManager: NarrativeStateManager;
   private documentRevealManager: DocumentRevealManager;
   private questManager: QuestManager;
   private rulesManager: RulesManager;
@@ -261,6 +266,7 @@ export class Game {
     this.dialogueManager = new DialogueManager(this.eventBus);
     this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.scenarioStateManager = new ScenarioStateManager();
+    this.narrativeStateManager = new NarrativeStateManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.graphDialogueManager = new GraphDialogueManager(
       this.eventBus,
       this.flagStore,
@@ -300,6 +306,7 @@ export class Game {
       { name: 'rulesManager', system: this.rulesManager },
       { name: 'questManager', system: this.questManager },
       { name: 'scenarioStateManager', system: this.scenarioStateManager },
+      { name: 'narrativeStateManager', system: this.narrativeStateManager },
       { name: 'documentRevealManager', system: this.documentRevealManager },
       { name: 'encounterManager', system: this.encounterManager },
       { name: 'audioManager', system: this.audioManager },
@@ -627,11 +634,13 @@ export class Game {
     } catch {
       this.scenarioStateManager.configureRuntime(this.flagStore, null, this.eventBus);
     }
+    await this.narrativeStateManager.loadFromAsset(this.assetManager);
 
     const mkCondCtx = (): ConditionEvalContext => ({
       flagStore: this.flagStore,
       questManager: this.questManager,
       scenarioState: this.scenarioStateManager,
+      narrativeState: this.narrativeStateManager,
       resolveConditionLiteral: (raw) => this.resolveDisplayText(raw),
     });
     this.flagStore.setConditionEvalContextFactory(mkCondCtx);
@@ -646,6 +655,7 @@ export class Game {
     this.mapUI.setConditionEvalContextFactory(mkCondCtx);
     this.archiveManager.setConditionEvalContextFactory(mkCondCtx);
     this.inventoryManager.setConditionEvalContextFactory(mkCondCtx);
+    this.narrativeStateManager.setConditionEvalContextFactory(mkCondCtx);
 
     registerActionHandlers(this.actionExecutor, {
       resolveScriptedSpeaker: (raw, scriptedNpcId) =>
@@ -747,6 +757,7 @@ export class Game {
         return waitClickContinueWithHint(this.renderer, this.inputManager, label);
       },
       scenarioStateManager: this.scenarioStateManager,
+      narrativeStateManager: this.narrativeStateManager,
       documentRevealManager: this.documentRevealManager,
       spawnCutsceneActor: (id, name, x, y) => {
         this.cutsceneManager.spawnTempActor(id, name, x, y);
@@ -801,6 +812,7 @@ export class Game {
           flagStore: this.flagStore,
           questManager: this.questManager,
           scenarioState: this.scenarioStateManager,
+          narrativeState: this.narrativeStateManager,
           resolveConditionLiteral: (raw) => this.resolveDisplayText(raw),
         };
         return evaluateConditionExpr(expr, ctx);
@@ -826,6 +838,7 @@ export class Game {
       inspectBox: this.inspectBox,
       eventBus: this.eventBus,
       getPlayerWorldPos: () => ({ x: this.player.x, y: this.player.y }),
+      getCameraZoom: () => this.camera.getZoom(),
       preparePlayerForNpcDialogue: (npc) => {
         this.player.setFacing(npc.x - this.player.x, npc.y - this.player.y);
         this.player.playAnimation(ANIM_IDLE);
@@ -915,6 +928,7 @@ export class Game {
       getNarrativeDebugSnapshot: () => ({
         /** 人类可读的解算路径 + 结构化字段 */
         narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
+        narrativeState: this.narrativeStateManager.debugSnapshot(),
         scenarioState: this.scenarioStateManager.serialize(),
         documentReveals: this.documentRevealManager.debugSnapshot(),
       }),
@@ -1697,6 +1711,19 @@ export class Game {
       reload: () => this.devReload(),
       isReady: () => true,
       openDevPanel: () => this.devModeUI?.open(),
+      getNarrativeDebugSnapshot: () => ({
+        narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
+        narrativeState: this.narrativeStateManager.debugSnapshot(),
+        scenarioState: this.scenarioStateManager.serialize(),
+        documentReveals: this.documentRevealManager.debugSnapshot(),
+      }),
+      emitNarrativeSignal: (signal) => this.narrativeStateManager.emitNarrativeSignal({
+        sourceType: String(signal?.sourceType ?? '').trim() as any,
+        sourceId: String(signal?.sourceId ?? '').trim(),
+        signal: String(signal?.signal ?? '').trim(),
+      }),
+      setNarrativeState: (graphId, stateId) =>
+        this.narrativeStateManager.setNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
     };
 
     if (playCutscene) {
@@ -2440,6 +2467,7 @@ export class Game {
             flagStore: this.flagStore,
             questManager: this.questManager,
             scenarioState: this.scenarioStateManager,
+            narrativeState: this.narrativeStateManager,
           },
         );
         this.sceneDepthSystem.updateEntityDepthOcclusion(
@@ -2462,6 +2490,7 @@ export class Game {
                 flagStore: this.flagStore,
                 questManager: this.questManager,
                 scenarioState: this.scenarioStateManager,
+                narrativeState: this.narrativeStateManager,
               });
               this.sceneDepthSystem.updateEntityDepthOcclusion(
                 f as unknown as DepthOcclusionFilter,
@@ -2481,6 +2510,7 @@ export class Game {
           flagStore: this.flagStore,
           questManager: this.questManager,
           scenarioState: this.scenarioStateManager,
+          narrativeState: this.narrativeStateManager,
         });
         this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
       }

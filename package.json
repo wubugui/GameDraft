@@ -4,15 +4,23 @@
   "description": "",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && npm run build:narrative-editor",
+    "build:narrative-editor": "vite build --config tools/narrative_editor_web/vite.config.ts",
+    "dev:narrative-editor": "vite --config tools/narrative_editor_web/vite.config.ts",
     "preview": "vite preview",
     "filter-tool": ".\\.tools\\Python311\\python.exe -m tools.filter_tool",
     "test": "vitest run"
   },
   "type": "module",
   "dependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@xyflow/react": "^12.10.2",
     "howler": "^2.2.4",
-    "pixi.js": "^8.17.0"
+    "pixi.js": "^8.17.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
     "@types/howler": "^2.2.12",

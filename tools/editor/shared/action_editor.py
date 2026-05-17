@@ -108,7 +108,7 @@ from .runtime_field_schema import entity_kind_choices, field_meta
 
 ACTION_TYPES = [
     "runActions", "chooseAction", "randomBranch",
-    "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
@@ -145,6 +145,8 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "startScenario": "save",
     "activateScenario": "save",
     "completeScenario": "save",
+    "emitNarrativeSignal": "save",
+    "setNarrativeState": "save",
     "appendFlag": "save",
     "giveItem": "save",
     "removeItem": "save",
@@ -255,6 +257,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "chooseAction": [("prompt", "str"), ("allowCancel", "bool")],
     "randomBranch": [],
     "setFlag": [("key", "str"), ("value", "flag_val")],
+    "emitNarrativeSignal": [("sourceType", "str"), ("sourceId", "str"), ("signal", "str")],
+    "setNarrativeState": [("graphId", "str"), ("stateId", "str")],
     "appendFlag": [("key", "str"), ("text", "str")],
     "giveItem": [("id", "str"), ("count", "int")],
     "removeItem": [("id", "str"), ("count", "int")],

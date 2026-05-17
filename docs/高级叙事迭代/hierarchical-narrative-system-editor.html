@@ -1,0 +1,2039 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>层次叙事状态机 · 交互式设计文档</title>
+<style>
+:root {
+  --sidebar-w: 292px;
+  --bg: #eef2f5;
+  --surface: #ffffff;
+  --surface-2: #f7f9fb;
+  --surface-3: #edf3f5;
+  --ink: #172027;
+  --muted: #60717c;
+  --line: #cbd7df;
+  --line-strong: #93a8b4;
+  --blue: #246b9f;
+  --blue-soft: #e4f1f8;
+  --green: #24705a;
+  --green-soft: #e1f3ec;
+  --amber: #a5661f;
+  --amber-soft: #f8ebd7;
+  --red: #a6403e;
+  --red-soft: #f8e4e4;
+  --violet: #6957a8;
+  --violet-soft: #ebe8f7;
+  --shadow: 0 16px 40px rgba(19, 34, 45, .12);
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body.sidebar-collapsed {
+  --sidebar-w: 0px;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,0) 320px),
+    var(--bg);
+}
+
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+
+.app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, var(--sidebar-w)) minmax(0, 1fr);
+  transition: grid-template-columns 0.28s ease;
+}
+
+.sidebar-cell {
+  min-width: 0;
+  /* 展开时保持 visible，避免打断侧栏 position: sticky */
+  overflow-x: visible;
+}
+
+body.sidebar-collapsed .sidebar-cell {
+  overflow-x: hidden;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  width: 292px;
+  max-width: 100%;
+  min-width: 0;
+  height: 100vh;
+  padding: 18px;
+  background: #172027;
+  color: #f7fbfd;
+  overflow: auto;
+}
+
+.sidebar-toggle {
+  position: fixed;
+  top: 50%;
+  left: var(--sidebar-w);
+  z-index: 1000;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+  background: #1a2832;
+  color: #eaf2f5;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  transition: left 0.28s ease, background 0.15s ease;
+  box-shadow: 4px 0 14px rgba(0, 0, 0, 0.18);
+}
+
+.sidebar-toggle:hover {
+  background: #243848;
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 2px solid #5aa3d6;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app,
+  .sidebar-cell,
+  .sidebar-toggle {
+    transition: none;
+  }
+}
+
+.brand {
+  padding: 8px 4px 18px;
+  border-bottom: 1px solid rgba(255,255,255,.14);
+}
+
+.brand h1 {
+  margin: 0 0 10px;
+  font-size: 23px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.brand p {
+  margin: 0;
+  color: #b6c4cb;
+  line-height: 1.65;
+  font-size: 13px;
+}
+
+.nav-group {
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+
+.nav-title {
+  margin: 0 0 8px;
+  color: #8fa4af;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.nav-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  margin: 4px 0;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #eaf2f5;
+  text-align: left;
+}
+
+.nav-button:hover,
+.nav-button.active {
+  border-color: rgba(255,255,255,.22);
+  background: rgba(255,255,255,.09);
+}
+
+.nav-icon {
+  width: 18px;
+  height: 18px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  position: relative;
+}
+
+.nav-icon.flow::after,
+.nav-icon.runtime::after,
+.nav-icon.editor::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-top: 2px solid currentColor;
+}
+
+.main {
+  min-width: 0;
+  padding: 26px;
+}
+
+.hero {
+  max-width: 1380px;
+  margin: 0 auto 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, .7fr);
+  gap: 18px;
+}
+
+.hero-card,
+.panel,
+.section {
+  background: rgba(255,255,255,.94);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.hero-card { padding: 24px; }
+.hero h2 {
+  margin: 0 0 12px;
+  font-size: clamp(30px, 4vw, 50px);
+  line-height: 1.07;
+  letter-spacing: 0;
+}
+
+.lead {
+  color: #44545e;
+  font-size: 17px;
+  line-height: 1.75;
+  margin: 0;
+}
+
+.summary {
+  padding: 18px;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: 116px 1fr;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.summary-row:last-child { border-bottom: 0; }
+.summary-label {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.content {
+  max-width: 1380px;
+  margin: 0 auto;
+}
+
+.section {
+  margin: 18px 0;
+  padding: 22px;
+}
+
+.section h2 {
+  margin: 0 0 14px;
+  font-size: 27px;
+  letter-spacing: 0;
+}
+
+.section h3 {
+  margin: 20px 0 9px;
+  font-size: 18px;
+}
+
+p, li {
+  color: #34444d;
+  line-height: 1.75;
+}
+
+.quote {
+  margin: 14px 0;
+  padding: 14px 16px;
+  border-left: 4px solid var(--blue);
+  background: var(--blue-soft);
+  border-radius: var(--radius);
+  color: #20333f;
+  font-weight: 800;
+  line-height: 1.75;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.card {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.card h3,
+.card h4 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.card p { margin: 0; }
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: #33444e;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tag.blue { background: var(--blue-soft); color: #1d587f; border-color: #b9d8e9; }
+.tag.green { background: var(--green-soft); color: #1c604c; border-color: #b2dfcf; }
+.tag.amber { background: var(--amber-soft); color: #855017; border-color: #e5c697; }
+.tag.red { background: var(--red-soft); color: #883131; border-color: #e6b6b6; }
+.tag.violet { background: var(--violet-soft); color: #564690; border-color: #ccc4ed; }
+
+.code {
+  margin: 12px 0 0;
+  padding: 13px;
+  border-radius: var(--radius);
+  background: #14212a;
+  color: #e8f0f4;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.58;
+  overflow: auto;
+  white-space: pre;
+}
+
+.diagram {
+  margin: 14px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfdfe;
+  overflow: auto;
+}
+
+.diagram svg {
+  display: block;
+  min-width: 860px;
+}
+
+.box {
+  fill: #ffffff;
+  stroke: #91a8b5;
+  stroke-width: 1.4;
+  rx: 8;
+}
+
+.box.blue { fill: #e8f3fa; stroke: #5f99bd; }
+.box.green { fill: #e6f5ee; stroke: #61a78f; }
+.box.amber { fill: #fbefd9; stroke: #cb9550; }
+.box.violet { fill: #eeebfb; stroke: #8875c5; }
+.box.red { fill: #fbe8e8; stroke: #d37472; }
+
+.diagram text {
+  font-size: 13px;
+  fill: #1e2b33;
+}
+
+.diagram .title {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.arrow-line {
+  stroke: #486270;
+  stroke-width: 1.8;
+  fill: none;
+  marker-end: url(#arrow);
+}
+
+.arrow-line.dashed {
+  stroke-dasharray: 6 5;
+}
+
+.edge-label {
+  fill: #40545f;
+  font-size: 12px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.table th,
+.table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+.table th {
+  background: #e8eef2;
+  color: #26353d;
+}
+
+.table tr:last-child td { border-bottom: 0; }
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 10px 0 14px;
+}
+
+.pill-button,
+.small-button,
+.toolbar button {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #fff;
+  color: #21313a;
+  padding: 8px 10px;
+  font-weight: 800;
+}
+
+.pill-button.active,
+.small-button.active,
+.toolbar button.active {
+  background: #1e5f8b;
+  border-color: #1e5f8b;
+  color: #fff;
+}
+
+.editor-shell {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f5f8fa;
+  overflow: hidden;
+}
+
+.editor-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #e6edf1;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 28px;
+  background: var(--line-strong);
+}
+
+.editor-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr) 330px;
+  min-height: 680px;
+}
+
+.editor-column {
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  background: #ffffff;
+  overflow: auto;
+}
+
+.editor-column:last-child { border-right: 0; border-left: 1px solid var(--line); }
+
+.editor-pane {
+  padding: 13px;
+}
+
+.editor-pane h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.list-button {
+  width: 100%;
+  display: grid;
+  gap: 3px;
+  margin: 7px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: #1c2b33;
+  text-align: left;
+}
+
+.list-button.active {
+  border-color: #1e5f8b;
+  background: var(--blue-soft);
+}
+
+.list-button strong { font-size: 14px; }
+.list-button span { color: var(--muted); font-size: 12px; }
+
+.editor-canvas {
+  position: relative;
+  min-height: 680px;
+  background:
+    linear-gradient(rgba(38, 72, 94, .06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(38, 72, 94, .06) 1px, transparent 1px),
+    #fbfdfe;
+  background-size: 24px 24px;
+  overflow: auto;
+}
+
+.canvas-inner {
+  position: relative;
+  width: 1020px;
+  height: 760px;
+}
+
+.canvas-svg {
+  position: absolute;
+  inset: 0;
+  width: 1020px;
+  height: 760px;
+  pointer-events: none;
+}
+
+.canvas-node {
+  position: absolute;
+  width: 184px;
+  min-height: 84px;
+  padding: 11px;
+  border: 2px solid #88a0ad;
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(31,48,61,.1);
+  user-select: none;
+  touch-action: none;
+}
+
+.canvas-node.active {
+  border-color: #1e5f8b;
+  box-shadow: 0 0 0 4px rgba(30,95,139,.14), 0 10px 24px rgba(31,48,61,.14);
+}
+
+.canvas-node.runtime-active {
+  background: #e6f5ee;
+  border-color: #24705a;
+}
+
+.canvas-node.subgraph {
+  background: #eef7fb;
+  border-color: #5f99bd;
+}
+
+.canvas-node.wrapper {
+  background: #f8ebd7;
+  border-color: #cb9550;
+}
+
+.canvas-node.blackbox {
+  background: #eeebfb;
+  border-color: #8875c5;
+}
+
+.canvas-node.binding {
+  background: #f7f9fb;
+  border-color: #93a8b4;
+  border-style: dashed;
+}
+
+.canvas-node.command {
+  background: #e6f5ee;
+  border-color: #61a78f;
+}
+
+.canvas-node.state {
+  background: #ffffff;
+  border-color: #88a0ad;
+}
+
+.node-kind {
+  display: inline-flex;
+  margin-bottom: 7px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e9eef2;
+  color: #40535e;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.canvas-node strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.canvas-node p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #63737c;
+}
+
+.canvas-node .binding-text {
+  display: block;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(91,111,124,.25);
+  color: #4d626d;
+  font-size: 11px;
+}
+
+.inspector-title {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.inspector-title strong {
+  font-size: 18px;
+}
+
+.inspector-title span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.property-list {
+  display: grid;
+  gap: 9px;
+}
+
+.property {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: #fff;
+}
+
+.property label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  margin-bottom: 4px;
+}
+
+.property div {
+  line-height: 1.55;
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 9px;
+}
+
+.field label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.field input,
+.field textarea,
+.field select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 9px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.field textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+.connect-banner {
+  margin: 8px 0 0;
+  padding: 9px 10px;
+  border: 1px solid #d0a35f;
+  background: var(--amber-soft);
+  border-radius: var(--radius);
+  color: #744714;
+  font-weight: 800;
+  font-size: 13px;
+  display: none;
+}
+
+.connect-banner.active {
+  display: block;
+}
+
+.timeline {
+  display: grid;
+  gap: 9px;
+  max-height: 250px;
+  overflow: auto;
+}
+
+.log {
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  background: #fff;
+  border: 1px solid var(--line);
+  color: #2a3941;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.log strong {
+  color: #1c5f8b;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #4e626d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.line-sample {
+  width: 28px;
+  height: 0;
+  border-top: 3px solid #4f6b78;
+}
+
+.line-sample.trigger { border-top-color: #a5661f; }
+.line-sample.read { border-top-color: #6957a8; border-top-style: dashed; }
+.line-sample.effect { border-top-color: #24705a; border-top-style: dotted; }
+
+.flow-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.flow-step {
+  position: relative;
+  min-height: 130px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.flow-step::after {
+  content: "";
+  position: absolute;
+  top: 44px;
+  right: -10px;
+  width: 18px;
+  height: 2px;
+  background: #6d8794;
+}
+
+.flow-step:last-child::after { display: none; }
+
+.flow-step b {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.flow-step span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.checklist {
+  display: grid;
+  gap: 8px;
+}
+
+.check-item {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 9px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.progress {
+  height: 12px;
+  border-radius: 999px;
+  background: #dfe8ed;
+  overflow: hidden;
+  margin: 14px 0 6px;
+}
+
+.progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #24705a, #246b9f);
+  transition: width .2s ease;
+}
+
+@media (max-width: 1120px) {
+  .app { grid-template-columns: 1fr; }
+  /* 窄屏下侧栏在文档流顶部，仍可收起整块导航 */
+  .sidebar-cell {
+    max-width: none;
+    width: 100%;
+    overflow-x: visible;
+    transition: max-height 0.28s ease, max-width 0.28s ease;
+  }
+  body:not(.sidebar-collapsed) .sidebar-cell {
+    max-width: 100%;
+    max-height: 1200px;
+  }
+  body.sidebar-collapsed .sidebar-cell {
+    max-height: 0;
+    overflow: hidden;
+    max-width: 100%;
+  }
+  .sidebar {
+    position: relative;
+    height: auto;
+    width: 100%;
+    max-height: none;
+  }
+  .sidebar-toggle {
+    top: auto;
+    bottom: 16px;
+    transform: none;
+    left: var(--sidebar-w);
+  }
+  body:not(.sidebar-collapsed) .sidebar-toggle {
+    left: calc(100% - 34px);
+  }
+  body.sidebar-collapsed .sidebar-toggle {
+    left: 0;
+  }
+  .nav-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .nav-title { grid-column: 1 / -1; }
+  .hero,
+  .grid,
+  .grid.two,
+  .grid.four,
+  .editor-layout,
+  .flow-steps {
+    grid-template-columns: 1fr;
+  }
+  .editor-column,
+  .editor-column:last-child {
+    border: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .canvas-inner { width: 1020px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar-cell">
+  <aside class="sidebar" id="docSidebar">
+    <div class="brand">
+      <h1>层次叙事状态机</h1>
+      <p>严格按当前 md 设计整理的交互式设计文档与编辑器雏形。</p>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">设计文档</div>
+      <button class="nav-button active" data-target="definition"><span class="nav-icon"></span><span>系统定义</span></button>
+      <button class="nav-button" data-target="runtime"><span class="nav-icon runtime"></span><span>运行时流程</span></button>
+      <button class="nav-button" data-target="model"><span class="nav-icon"></span><span>核心数据模型</span></button>
+      <button class="nav-button" data-target="projection"><span class="nav-icon flow"></span><span>编辑器投影视图</span></button>
+      <button class="nav-button" data-target="integration"><span class="nav-icon"></span><span>实体与子系统接入</span></button>
+      <button class="nav-button" data-target="example"><span class="nav-icon flow"></span><span>水猴子到铁环样板</span></button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">交互原型</div>
+      <button class="nav-button" data-target="editor"><span class="nav-icon editor"></span><span>编辑器工作台</span></button>
+      <button class="nav-button" data-target="workflow"><span class="nav-icon"></span><span>作者操作流程</span></button>
+      <button class="nav-button" data-target="mvp"><span class="nav-icon"></span><span>MVP 检查表</span></button>
+    </div>
+  </aside>
+  </div>
+
+  <main class="main">
+    <div class="hero">
+      <div class="hero-card">
+        <h2>把散落的叙事逻辑，收束为可编辑、可查询、可运行的状态图。</h2>
+        <p class="lead">运行时核心管理 Graph、State、Transition、Signal、生命周期 Action、状态查询和存档。编辑器在此基础上自动推导 TriggerEdge 与 ReadEdge，让作者能看见实体、对话、任务、场景和叙事状态之间的关系。</p>
+      </div>
+      <div class="summary">
+        <div class="summary-row"><div class="summary-label">运行时</div><div>NarrativeStateManager 串行处理 signal、trigger、setState。</div></div>
+        <div class="summary-row"><div class="summary-label">编辑器</div><div>投影关系边，不把可视化概念强塞进底层实现。</div></div>
+        <div class="summary-row"><div class="summary-label">实体</div><div>有状态实体暴露状态；无状态实体由 Narrative Wrapper Graph 包裹。</div></div>
+        <div class="summary-row"><div class="summary-label">验证目标</div><div>码头看板 → 水猴子 → 捞箱子 → 小孩铁环 → 归还铁环。</div></div>
+      </div>
+    </div>
+
+    <div class="content">
+      <section class="section" id="definition">
+        <h2>1. 系统定义</h2>
+        <p>层次叙事系统是一套多层叙事状态机运行时。它把 Flow、NPC、Hotspot、Zone、Quest、Scenario 等叙事对象组织为状态子图。每个子图记录当前叙事状态，Transition 描述状态迁移关系，Signal 推动迁移发生，生命周期 Action 把状态变化投影到现有运行时系统。</p>
+        <div class="quote">叙事状态机负责管理叙事状态、状态迁移、状态生命周期 Action、跨子图因果、状态镜像和存档；编辑器负责把触发、读取、效果等关系投影成可视化边。</div>
+        <div class="grid four">
+          <div class="card"><h3>Graph</h3><p>叙事对象的状态子图，例如 Flow、NPC、Quest、Scenario。</p><div class="tag-row"><span class="tag blue">可存档</span><span class="tag">有 activeState</span></div></div>
+          <div class="card"><h3>State</h3><p>某个叙事对象当前所处的叙事状态，并携带进入/退出 Action。</p><div class="tag-row"><span class="tag green">onEnter</span><span class="tag green">onExit</span></div></div>
+          <div class="card"><h3>Transition</h3><p>状态迁移规则，包含 from、to、signal、conditions、priority。</p><div class="tag-row"><span class="tag amber">迁移边</span><span class="tag">可选中</span></div></div>
+          <div class="card"><h3>Signal</h3><p>外部系统发出的叙事信号，描述来源，不描述目标状态。</p><div class="tag-row"><span class="tag violet">Dialogue</span><span class="tag violet">Zone</span><span class="tag violet">Minigame</span></div></div>
+        </div>
+        <h3>第一阶段运行时核心</h3>
+        <div class="code">NarrativeGraph
+NarrativeStateNode
+NarrativeTransition
+NarrativeTrigger
+NarrativeSignal
+LifecycleAction
+NarrativeStateManager
+NarrativeStateMirror</div>
+      </section>
+
+      <section class="section" id="runtime">
+        <h2>2. 总体架构与运行流程</h2>
+        <p>状态机运行在现有系统上方。现有系统发出 signal 或 setState；状态机根据当前 activeState、signal 和 conditions 匹配 Transition；状态生命周期 Action 继续复用现有 ActionExecutor；旧系统通过状态镜像或查询 API 读取叙事状态。</p>
+
+        <div class="diagram" aria-label="总体架构图">
+          <svg viewBox="0 0 1060 420" role="img">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#486270"></path></marker>
+            </defs>
+            <rect class="box blue" x="410" y="42" width="240" height="86"></rect>
+            <text class="title" x="530" y="76" text-anchor="middle">NarrativeStateManager</text>
+            <text x="530" y="101" text-anchor="middle">queue / transition / mirror</text>
+
+            <rect class="box" x="70" y="38" width="210" height="56"></rect>
+            <text class="title" x="175" y="72" text-anchor="middle">DialogueGraph</text>
+            <rect class="box" x="70" y="112" width="210" height="56"></rect>
+            <text class="title" x="175" y="146" text-anchor="middle">Zone / Minigame</text>
+            <rect class="box" x="70" y="186" width="210" height="56"></rect>
+            <text class="title" x="175" y="220" text-anchor="middle">Quest / Cutscene / Debug</text>
+
+            <path class="arrow-line" d="M280 66 C330 66 350 72 410 82"></path>
+            <path class="arrow-line" d="M280 140 C330 140 350 118 410 102"></path>
+            <path class="arrow-line" d="M280 214 C340 214 358 132 410 118"></path>
+            <text class="edge-label" x="318" y="48">signal / setState</text>
+
+            <rect class="box green" x="760" y="42" width="220" height="72"></rect>
+            <text class="title" x="870" y="74" text-anchor="middle">Runtime State</text>
+            <text x="870" y="98" text-anchor="middle">activeState / serialize</text>
+            <path class="arrow-line" d="M650 82 L760 82"></path>
+
+            <rect class="box amber" x="410" y="190" width="240" height="72"></rect>
+            <text class="title" x="530" y="222" text-anchor="middle">ActionExecutor</text>
+            <text x="530" y="246" text-anchor="middle">onExit / onEnter</text>
+            <path class="arrow-line" d="M530 128 L530 190"></path>
+
+            <rect class="box" x="760" y="168" width="220" height="56"></rect>
+            <text class="title" x="870" y="202" text-anchor="middle">Scene / Inventory / Archive</text>
+            <path class="arrow-line" d="M650 226 L760 198"></path>
+
+            <rect class="box violet" x="760" y="260" width="220" height="72"></rect>
+            <text class="title" x="870" y="292" text-anchor="middle">FlagStore / Query API</text>
+            <text x="870" y="316" text-anchor="middle">narrative.*.active</text>
+            <path class="arrow-line" d="M650 112 C730 132 716 270 760 294"></path>
+
+            <rect class="box red" x="410" y="318" width="240" height="58"></rect>
+            <text class="title" x="530" y="352" text-anchor="middle">Editor Projection</text>
+            <path class="arrow-line dashed" d="M530 318 L530 262"></path>
+            <text class="edge-label" x="562" y="300">TriggerEdge / ReadEdge</text>
+          </svg>
+        </div>
+
+        <h3>emitNarrativeSignal 流程</h3>
+        <div class="flow-steps">
+          <div class="flow-step"><span>1</span><b>外部来源</b><p>Dialogue、Zone、Minigame、Action 发出 signal。</p></div>
+          <div class="flow-step"><span>2</span><b>进入队列</b><p>所有 signal / trigger / setState 串行排队。</p></div>
+          <div class="flow-step"><span>3</span><b>匹配迁移</b><p>检查 activeState、Transition.signal、conditions、priority。</p></div>
+          <div class="flow-step"><span>4</span><b>执行生命周期</b><p>old.onExit → activeState = to → new.onEnter。</p></div>
+          <div class="flow-step"><span>5</span><b>镜像与传播</b><p>更新 narrative.*.active，并派发 stateEntered。</p></div>
+        </div>
+
+        <h3>运行时规则</h3>
+        <div class="grid two">
+          <div class="card"><h3>队列规则</h3><p>所有 signal / trigger / setState 请求进入同一个队列。队列串行处理，避免多个来源交错改写状态。</p></div>
+          <div class="card"><h3>迁移规则</h3><p>一次 signal / trigger 处理中，每个 Graph 最多迁移一次。候选 Transition 按 priority 排序，priority 相同按声明顺序。</p></div>
+          <div class="card"><h3>级联规则</h3><p>状态迁移产生 stateEntered / stateExited trigger，可继续推动其他 Graph。级联传播设置最大步数。</p></div>
+          <div class="card"><h3>Action 失败</h3><p>生命周期 Action 失败记录为运行时错误，状态迁移结果保持成立，队列继续处理。</p></div>
+        </div>
+      </section>
+
+      <section class="section" id="model">
+        <h2>3. 核心数据模型</h2>
+        <p>底层实现保持简单：Graph 持有 State 和 Transition；Transition 自己携带 signal、条件和优先级；Signal 可以由 DialogueGraph、Zone、Minigame、Action、stateEntered 等来源产生。</p>
+        <div class="grid two">
+          <div class="card">
+            <h3>NarrativeGraph</h3>
+            <div class="code">type NarrativeGraph = {
+  id: string;
+  ownerType: 'flow' | 'npc' | 'hotspot' | 'zone' |
+    'quest' | 'scenario' | 'system';
+  ownerId?: string;
+  initialState: string;
+  states: Record&lt;string, NarrativeStateNode&gt;;
+  transitions: NarrativeTransition[];
+};</div>
+          </div>
+          <div class="card">
+            <h3>NarrativeStateNode</h3>
+            <div class="code">type NarrativeStateNode = {
+  id: string;
+  label?: string;
+  description?: string;
+  onEnterActions?: ActionDef[];
+  onExitActions?: ActionDef[];
+  meta?: Record&lt;string, unknown&gt;;
+};</div>
+          </div>
+          <div class="card">
+            <h3>NarrativeTransition</h3>
+            <div class="code">type NarrativeTransition = {
+  id: string;
+  from: string;
+  to: string;
+  signal?: string;
+  conditions?: ConditionExpr[];
+  priority?: number;
+};</div>
+          </div>
+          <div class="card">
+            <h3>NarrativeSignal</h3>
+            <div class="code">type NarrativeSignal = {
+  sourceType: 'dialogue' | 'zone' | 'minigame' |
+    'cutscene' | 'quest' | 'action' | 'entity' |
+    'state' | 'system';
+  sourceId: string;
+  signal: string;
+};</div>
+          </div>
+        </div>
+
+        <h3>Transition 匹配规则</h3>
+        <table class="table">
+          <tr><th>顺序</th><th>规则</th></tr>
+          <tr><td>1</td><td>只检查当前 Graph 的 activeState 等于 from 的 Transition。</td></tr>
+          <tr><td>2</td><td>输入 signal 与 Transition.signal 匹配，且 conditions 满足时，Transition 成为候选。</td></tr>
+          <tr><td>3</td><td>候选按 priority 降序排列；未配置 priority 时按 0 处理。</td></tr>
+          <tr><td>4</td><td>priority 相同则按 transitions 数组中的声明顺序排列。</td></tr>
+          <tr><td>5</td><td>每个 Graph 对一次 signal 只执行第一条候选 Transition。</td></tr>
+        </table>
+
+        <h3>状态镜像</h3>
+        <p>NarrativeState 与普通 Flag 同时存在。Narrative state 是叙事状态机子系统自己的序列化数据；mirror flag 是对外读取入口。</p>
+        <div class="code">narrative.&lt;graphId&gt;.&lt;stateId&gt;.active
+
+narrative.npc_ringboy.after_event.active = true
+narrative.flow_dock_water_monkey.crate_minigame_done.active = true</div>
+      </section>
+
+      <section class="section" id="projection">
+        <h2>4. 编辑器投影视图</h2>
+        <p>投影边主要是给作者看关系。它可以来自 Transition.signal、DialogueBridge signals、Zone signal、Action signal、conditions、脚本读取点、生命周期 Action 等。运行时可以不存这些边，只要能从配置中生成关系视图即可。</p>
+        <div class="diagram" aria-label="投影边数据图">
+          <svg viewBox="0 0 1040 440" role="img">
+            <defs>
+              <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#486270"></path></marker>
+            </defs>
+            <rect class="box violet" x="70" y="58" width="220" height="62"></rect>
+            <text class="title" x="180" y="92" text-anchor="middle">DialogueGraph 黑盒</text>
+            <rect class="box amber" x="410" y="46" width="220" height="80"></rect>
+            <text class="title" x="520" y="78" text-anchor="middle">Transition</text>
+            <text x="520" y="102" text-anchor="middle">from / to / signal / conditions</text>
+            <rect class="box green" x="760" y="58" width="220" height="62"></rect>
+            <text class="title" x="870" y="92" text-anchor="middle">State B active</text>
+            <path class="arrow-line" marker-end="url(#arrow2)" d="M290 88 L410 88"></path>
+            <text class="edge-label" x="350" y="70" text-anchor="middle">TriggerEdge</text>
+            <path class="arrow-line" marker-end="url(#arrow2)" d="M630 88 L760 88"></path>
+
+            <rect class="box blue" x="410" y="200" width="220" height="62"></rect>
+            <text class="title" x="520" y="234" text-anchor="middle">NarrativeState</text>
+            <path class="arrow-line dashed" marker-end="url(#arrow2)" d="M410 230 C290 230 290 120 290 102"></path>
+            <text class="edge-label" x="308" y="180">ReadEdge</text>
+
+            <rect class="box" x="410" y="324" width="220" height="62"></rect>
+            <text class="title" x="520" y="358" text-anchor="middle">onEnterActions</text>
+            <text x="520" y="382" text-anchor="middle">作为节点属性查看</text>
+          </svg>
+        </div>
+        <div class="grid">
+          <div class="card"><h3>触发边 TriggerEdge</h3><p>画出哪个 signal 会尝试触发哪条迁移边。目标是 Transition，不是 State。</p><div class="tag-row"><span class="tag amber">Signal source</span><span class="tag amber">Transition</span></div></div>
+          <div class="card"><h3>读取边 ReadEdge</h3><p>画出 DialogueGraph、实体逻辑、Zone 等黑盒读取哪些叙事状态。</p><div class="tag-row"><span class="tag violet">getActiveState</span><span class="tag violet">mirror flag</span></div></div>
+          <div class="card"><h3>Action 回调</h3><p>生命周期 Action 是状态节点属性，不作为顶层关系边编辑。点开状态即可查看它调用了哪些系统。</p><div class="tag-row"><span class="tag green">onEnter</span><span class="tag green">onExit</span></div></div>
+        </div>
+      </section>
+
+      <section class="section" id="integration">
+        <h2>5. 实体与子系统接入</h2>
+        <div class="grid two">
+          <div class="card">
+            <h3>有状态实体：暴露实体状态</h3>
+            <p>复杂 NPC、特殊 Hotspot、AI 或有内部状态机的实体，可以直接把自己的状态暴露给叙事层。实体逻辑也可以根据自身结果 emit signal 或 setState。</p>
+            <div class="code">选择有状态实体
+声明该实体暴露哪些状态
+映射到 NarrativeGraph / State
+在 Transition / Condition 中引用
+实体逻辑 emit signal 或 setState</div>
+          </div>
+          <div class="card">
+            <h3>无状态实体：创建叙事包裹对象</h3>
+            <p>普通场景 NPC、Hotspot、Zone 可以由 Narrative Wrapper Graph 包裹。包裹对象持有 activeState，并通过 onEnter/onExit Action 操作被绑定的实体。</p>
+            <div class="code">选择无状态实体
+创建 Narrative Wrapper Graph
+绑定全局唯一实体 id
+定义 State 和 Transition
+配置 onEnterActions / onExitActions</div>
+          </div>
+        </div>
+
+        <h3>Quest / Scenario / DialogueGraph</h3>
+        <table class="table">
+          <tr><th>子系统</th><th>接入方式</th><th>设计要点</th></tr>
+          <tr><td>Scenario</td><td>直接接入叙事层</td><td>Scenario 本身接近轻量子图。line 可映射为 Graph，phase 可映射为 State 或输入状态。</td></tr>
+          <tr><td>Quest</td><td>Quest Wrapper Graph</td><td>Quest 当前更像 Action 驱动 + 自条件驱动系统。用 wrapper 管理它在大叙事中的位置。</td></tr>
+          <tr><td>DialogueGraph</td><td>可执行黑盒</td><td>内部 currentNode / waitingChoice 归 DialogueGraphManager；叙事层只接收明确 narrative signal，并允许 DialogueGraph 读取叙事状态做分支。</td></tr>
+        </table>
+      </section>
+
+      <section class="section" id="example">
+        <h2>6. 水猴子到铁环样板流程</h2>
+        <p>这条链适合作为第一阶段验证目标，因为它跨越 Hotspot、DialogueGraph、Scenario、Zone、Cutscene、Minigame、Flag、NPC、Quest。</p>
+        <div class="flow-steps">
+          <div class="flow-step"><span>Hotspot</span><b>码头看板已读</b><p>DialogueGraph(码头看板).board_read_done → t_board_read。</p></div>
+          <div class="flow-step"><span>Scenario</span><b>码头水鬼推进</b><p>激活水边区域与后续事件。</p></div>
+          <div class="flow-step"><span>Zone</span><b>水边事件触发</b><p>启动洋人出场和捞箱子小游戏。</p></div>
+          <div class="flow-step"><span>Minigame</span><b>捞箱子完成</b><p>pull_success → flow.crate_minigame_done。</p></div>
+          <div class="flow-step"><span>NPC / Quest</span><b>小孩事件后</b><p>stateEntered(flow.crate_done) → npc_ringboy.after_event。</p></div>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <h3>迁移边和触发边</h3>
+            <div class="code">Transition:
+t_board_read:
+  flow.initial -> flow.board_read
+
+t_crate_done:
+  flow.waterside_available -> flow.crate_minigame_done
+
+t_ringboy_after_event:
+  npc_ringboy.before_event -> npc_ringboy.after_event
+
+t_ring_taken:
+  npc_ringboy.after_event -> npc_ringboy.ring_taken
+
+Editor TriggerEdge:
+DialogueGraph(码头看板).board_read_done -> t_board_read
+Minigame(dock_crate_tutorial).pull_success -> t_crate_done
+stateEntered(flow.crate_minigame_done) -> t_ringboy_after_event
+DialogueGraph(滚铁环小孩).ring_taken_ask -> t_ring_taken</div>
+          </div>
+          <div class="card">
+            <h3>NPC after_event 生命周期</h3>
+            <div class="code">{
+  graphId: "npc_ringboy",
+  state: {
+    id: "after_event",
+    onEnterActions: [
+      persistNpcAnimState(target: "npc_ringboy", state: "boy_stand_ring"),
+      persistNpcDisablePatrol(npcId: "npc_ringboy")
+    ]
+  }
+}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="editor">
+        <h2>7. 编辑器工作台雏形</h2>
+        <p>这个原型把 md 里的编辑器方向具体化为一张大的叙事编排画布。作者在同一张画布上添加 Flow、Scenario 子图、NPC Wrapper Graph、Quest Wrapper Graph，以及 DialogueGraph、Zone、Minigame 这类黑盒。NPC、Hotspot 等实体实例通过 wrapper 子图绑定进画布；实体细节可以从右侧属性面板导航过去编辑。</p>
+        <div class="editor-shell">
+          <div class="editor-topbar">
+            <div class="toolbar">
+              <button class="active layer-toggle" data-layer="transition">迁移边</button>
+              <button class="active layer-toggle" data-layer="trigger">推导触发</button>
+              <button class="active layer-toggle" data-layer="read">推导读取</button>
+              <span class="toolbar-separator"></span>
+              <button class="connect-mode" data-connect="transition">连接迁移</button>
+            </div>
+            <div class="toolbar">
+              <button class="signal-button" data-signal="dock.board.read">emit dock.board.read</button>
+              <button class="signal-button" data-signal="scenario.water_monkey.board_done">emit scenario done</button>
+              <button class="signal-button" data-signal="dock.crate.success">emit dock.crate.success</button>
+              <button class="signal-button" data-signal="ringboy.ring.taken.ask">emit ring_taken_ask</button>
+            </div>
+          </div>
+          <div class="editor-layout">
+            <div class="editor-column">
+              <div class="editor-pane">
+                <h3>当前主 Graph</h3>
+                <div class="property">
+                  <label>Flow NarrativeGraph</label>
+                  <div>水猴子到铁环</div>
+                </div>
+                <h3>接入对象</h3>
+                <div id="objectList"></div>
+                <h3>添加到画布</h3>
+                <div class="property-list">
+                  <button class="small-button active add-object" type="button" data-add="state">+ State</button>
+                  <button class="small-button add-object" type="button" data-add="wrapper">+ Wrapper Graph</button>
+                  <button class="small-button add-object" type="button" data-add="scenario">+ Scenario Subgraph</button>
+                  <button class="small-button add-object" type="button" data-add="dialogue">+ Dialogue 黑盒</button>
+                  <button class="small-button add-object" type="button" data-add="blackbox">+ Runtime 黑盒</button>
+                </div>
+                <div class="connect-banner" id="connectBanner"></div>
+                <h3>当前 activeState</h3>
+                <div class="code" id="activeStateView"></div>
+              </div>
+            </div>
+            <div class="editor-canvas">
+              <div class="canvas-inner" id="canvasInner">
+                <svg class="canvas-svg" id="canvasSvg" viewBox="0 0 1020 760" aria-label="状态图画布"></svg>
+                <div id="canvasNodes"></div>
+              </div>
+            </div>
+            <div class="editor-column">
+              <div class="editor-pane">
+                <div class="inspector-title"><strong id="inspectTitle">未选择</strong><span id="inspectKind">选择子图、黑盒、绑定实体或 signal 查看详情</span></div>
+                <div class="property-list" id="inspectProps"></div>
+                <h3>运行时日志</h3>
+                <div class="timeline" id="runtimeLog"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="line-sample"></span>迁移边</span>
+          <span class="legend-item"><span class="line-sample trigger"></span>推导触发关系</span>
+          <span class="legend-item"><span class="line-sample read"></span>推导读取关系</span>
+        </div>
+      </section>
+
+      <section class="section" id="workflow">
+        <h2>8. 编辑器如何操作、如何响应</h2>
+        <table class="table">
+          <tr><th>作者操作</th><th>编辑器响应</th><th>运行时含义</th></tr>
+          <tr><td>在大画布添加 Wrapper Graph</td><td>生成一个可展开的叙事子图节点，并要求绑定全局唯一实体 id。</td><td>NPC、Hotspot、Quest 等通过 wrapper activeState 接入叙事层。</td></tr>
+          <tr><td>在大画布添加 Scenario</td><td>显示为 Scenario 子图节点，可展开查看 line / phase 映射状态。</td><td>Scenario 状态直接暴露到 NarrativeStateManager。</td></tr>
+          <tr><td>在大画布添加 DialogueGraph</td><td>显示为黑盒节点，右侧显示它读取哪些状态、会发出哪些 narrative signal。</td><td>DialogueGraph 内部执行状态归 DialogueGraphManager；叙事层只接收 signal。</td></tr>
+          <tr><td>连接两个主 Graph 状态</td><td>生成 Transition，右侧编辑 from、to、signal、conditions、priority。</td><td>运行时根据 activeState、signal、conditions 匹配迁移。</td></tr>
+          <tr><td>开启推导触发图层</td><td>根据 Action、DialogueBridge signal、Transition.signal、stateEntered 等配置显示触发来源。</td><td>这是自动分析结果，作者不手工连接这类边。</td></tr>
+          <tr><td>开启推导读取图层</td><td>根据 getActiveState / isStateActive / 条件配置 / 脚本读取点显示读取关系。</td><td>这是自动分析结果，作者不手工连接这类边。</td></tr>
+          <tr><td>点击“导航到绑定实体”</td><td>右侧显示目标实体 id、场景、类型，并给出跳转入口。</td><td>叙事编排在本编辑器完成；实体细节可以导航到关联编辑器。</td></tr>
+          <tr><td>模拟 emit signal</td><td>更新 activeState、日志和高亮节点；可能级联触发其他 Graph。</td><td>等价于运行时队列处理一次 signal。</td></tr>
+        </table>
+      </section>
+
+      <section class="section" id="mvp">
+        <h2>9. 最小可行版本检查表</h2>
+        <div class="checklist" id="checklist">
+          <label class="check-item"><input type="checkbox"><span>registerGraph / getActiveState / setActiveState / serialize / deserialize。</span></label>
+          <label class="check-item"><input type="checkbox"><span>emitSignal 与 trigger 队列，串行处理，带 loop guard。</span></label>
+          <label class="check-item"><input type="checkbox"><span>Transition 匹配：activeState、signal、conditions、priority、声明顺序。</span></label>
+          <label class="check-item"><input type="checkbox"><span>onEnterActions / onExitActions 使用 ActionExecutor 顺序 await 执行。</span></label>
+          <label class="check-item"><input type="checkbox"><span>状态镜像：维护 narrative.&lt;graphId&gt;.&lt;stateId&gt;.active。</span></label>
+          <label class="check-item"><input type="checkbox"><span>编辑器状态图：Graph 列表、State 列表、Transition 图和属性面板。</span></label>
+          <label class="check-item"><input type="checkbox"><span>编辑器关系预览：自动推导 TriggerEdge、ReadEdge 图层。</span></label>
+          <label class="check-item"><input type="checkbox"><span>跑通水猴子到铁环样板流程。</span></label>
+        </div>
+        <div class="progress"><span id="progressBar"></span></div>
+        <p id="progressText">完成度：0 / 8</p>
+      </section>
+    </div>
+  </main>
+</div>
+<button type="button" class="sidebar-toggle" id="sidebarToggle" aria-controls="docSidebar" aria-expanded="true" aria-label="收起导航" title="收起导航">‹</button>
+
+<script>
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+(function initSidebarCollapse() {
+  const sidebarToggle = $("#sidebarToggle");
+  if (!sidebarToggle) return;
+
+  function syncSidebarToggleUi() {
+    const collapsed = document.body.classList.contains("sidebar-collapsed");
+    sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+    sidebarToggle.setAttribute("aria-label", collapsed ? "展开导航栏" : "收起导航栏");
+    sidebarToggle.title = collapsed ? "展开导航栏" : "收起导航栏";
+    sidebarToggle.textContent = collapsed ? "›" : "‹";
+  }
+
+  sidebarToggle.addEventListener("click", () => {
+    document.body.classList.toggle("sidebar-collapsed");
+    syncSidebarToggleUi();
+  });
+
+  syncSidebarToggleUi();
+})();
+
+$$(".nav-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    $$(".nav-button").forEach((item) => item.classList.remove("active"));
+    button.classList.add("active");
+    const target = $("#" + button.dataset.target);
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+});
+
+const mainGraph = {
+  id: "flow_dock_water_monkey",
+  label: "Flow：水猴子到铁环",
+  activeState: "initial",
+  desc: "当前打开的大画布就是这个主 Graph。主 Graph 本身不作为节点出现；它的状态节点直接展开在画布上。",
+  code: "id: flow_dock_water_monkey\nownerType: flow\nactiveState: initial\n\nstates:\n- initial\n- board_read\n- waterside_available\n- crate_minigame_done\n- ring_taken",
+  states: {
+    initial: {
+      id: "initial",
+      label: "初始",
+      kind: "state",
+      type: "Main Graph State",
+      x: 60,
+      y: 95,
+      desc: "码头水猴子链条尚未开始。",
+      code: "state: initial"
+    },
+    board_read: {
+      id: "board_read",
+      label: "看板已读",
+      kind: "state",
+      type: "Main Graph State",
+      x: 275,
+      y: 95,
+      desc: "玩家读过码头看板，主 Graph 进入第一个已确认状态。",
+      code: "state: board_read\nonEnterActions:\n- activateScenario(码头水鬼)\n- setScenarioPhase(看板初读, done)"
+    },
+    waterside_available: {
+      id: "waterside_available",
+      label: "水边可触发",
+      kind: "state",
+      type: "Main Graph State",
+      x: 490,
+      y: 95,
+      desc: "水边 Zone 可以被启用并触发后续事件。",
+      code: "state: waterside_available\nonEnterActions:\n- persistZoneEnabled(new_zone_2, true)"
+    },
+    crate_minigame_done: {
+      id: "crate_minigame_done",
+      label: "捞箱子完成",
+      kind: "state",
+      type: "Main Graph State",
+      x: 705,
+      y: 95,
+      desc: "捞箱子小游戏成功，世界事件成立。",
+      code: "state: crate_minigame_done\nonEnterActions:\n- setFlag(foreigner_crate_event_done, true)\n- emit stateEntered(flow.crate_minigame_done)"
+    },
+    ring_taken: {
+      id: "ring_taken",
+      label: "铁环已获得",
+      kind: "state",
+      type: "Main Graph State",
+      x: 705,
+      y: 250,
+      desc: "玩家已从小孩处获得铁环，主流程进入归还铁环阶段。",
+      code: "state: ring_taken\ntriggeredBy:\n- stateEntered(npc_ringboy.ring_taken)"
+    }
+  },
+  transitions: [
+    { id: "t_board_read", from: "initial", to: "board_read", signal: "dock.board.read", priority: 0, conditions: "none" },
+    { id: "t_waterside", from: "board_read", to: "waterside_available", signal: "scenario.water_monkey.board_done", priority: 0, conditions: "Scenario 码头水鬼 active" },
+    { id: "t_crate_done", from: "waterside_available", to: "crate_minigame_done", signal: "dock.crate.success", priority: 0, conditions: "none" },
+    { id: "t_ring_taken_flow", from: "crate_minigame_done", to: "ring_taken", signal: "stateEntered(npc_ringboy.ring_taken)", priority: 0, conditions: "none" }
+  ]
+};
+
+const canvasObjects = {
+  scenario: {
+    label: "Scenario 子图：码头水鬼",
+    kind: "subgraph",
+    type: "Scenario Subgraph",
+    x: 270,
+    y: 250,
+    activeState: "inactive",
+    desc: "Scenario 本身接近轻量子图，直接作为子图接入画布。line / phase 可以暴露成叙事状态输入输出。",
+    states: ["inactive", "board_intro_done", "waterside_ready"],
+    transitions: ["t_scenario_board_done: inactive -> board_intro_done"],
+    code: "sourceSystem: ScenarioStateManager\nscenarioId: 码头水鬼\nexpose:\n- phase.看板初读.done\n- phase.水边可触发.active"
+  },
+  ringboyWrapper: {
+    label: "Wrapper Graph：滚铁环小孩",
+    kind: "wrapper",
+    type: "NPC Wrapper Graph",
+    x: 420,
+    y: 405,
+    activeState: "before_event",
+    binding: "entity:npc_ringboy",
+    desc: "NPC 实例不直接放进叙事画布。画布上放的是 wrapper 子图，wrapper 绑定全局唯一 NPC 实例，并通过生命周期 Action 操作该实体。",
+    states: ["before_event", "after_event", "ring_taken"],
+    transitions: [
+      "t_ringboy_after_event: before_event -> after_event",
+      "t_ring_taken: after_event -> ring_taken"
+    ],
+    code: "ownerType: npc\nownerId: entity:npc_ringboy\nbinding:\n  sceneEntityId: npc_ringboy\n\nonEnter(after_event):\n- persistNpcAnimState(boy_stand_ring)\n- persistNpcDisablePatrol(npc_ringboy)"
+  },
+  questWrapper: {
+    label: "Wrapper Graph：归还铁环 Quest",
+    kind: "wrapper",
+    type: "Quest Wrapper Graph",
+    x: 690,
+    y: 405,
+    activeState: "inactive",
+    binding: "quest:支线-归还小孩铁环-归还铁环",
+    desc: "Quest 和 NPC 类似，需要先建立 wrapper 子图，再绑定具体 quest。wrapper 负责它在大叙事中的 active/completed 位置。",
+    states: ["inactive", "active", "completed"],
+    transitions: ["t_activate_return_ring: inactive -> active"],
+    code: "ownerType: quest\nownerId: quest:支线-归还小孩铁环-归还铁环\n\nonEnter(active):\n- updateQuest(支线-归还小孩铁环-归还铁环)"
+  },
+  boardDialogue: {
+    label: "DialogueGraph 黑盒：码头看板",
+    kind: "blackbox",
+    type: "DialogueGraph BlackBox",
+    x: 60,
+    y: 250,
+    desc: "DialogueGraph 是可执行黑盒。它会被 Hotspot 或 NPC 使用，内部节点和等待选择不进入叙事层，只在明确叙事点 emit signal。",
+    reads: ["narrative.flow.initial.active"],
+    signals: ["dock.board.read"],
+    code: "dialogueGraphId: 码头看板\nsignals:\n- dock.board.read\n\nbindingContext:\n- hotspot: 码头告示板"
+  },
+  ringboyDialogue: {
+    label: "DialogueGraph 黑盒：滚铁环小孩",
+    kind: "blackbox",
+    type: "DialogueGraph BlackBox",
+    x: 690,
+    y: 565,
+    desc: "这个对话黑盒通常和 npc_ringboy wrapper 一起出现。它读取 wrapper activeState 选择入口，并在要铁环/抢铁环时发出 narrative signal。",
+    reads: ["npc_ringboy.after_event", "npc_ringboy.ring_taken"],
+    signals: ["ringboy.ring.taken.ask", "ringboy.ring.taken.snatch"],
+    code: "dialogueGraphId: 滚铁环小孩\nreads:\n- getActiveState(npc_ringboy)\n\nsignals:\n- ringboy.ring.taken.ask\n- ringboy.ring.taken.snatch"
+  },
+  waterZone: {
+    label: "Zone 黑盒：水边区域",
+    kind: "blackbox",
+    type: "ZoneSystem BlackBox",
+    x: 490,
+    y: 250,
+    desc: "Zone 是运行时黑盒。画布上显示它什么时候可触发、触发后发出什么 signal，以及哪些状态 Action 会启用/禁用它。",
+    signals: ["zone.waterside.entered"],
+    code: "zoneId: new_zone_2\ntrigger:\n- onEnter -> zone.waterside.entered\n\ncontrolledBy:\n- flow.waterside_available.onEnter"
+  },
+  crateMinigame: {
+    label: "Minigame 黑盒：捞箱子",
+    kind: "blackbox",
+    type: "Minigame BlackBox",
+    x: 705,
+    y: 250,
+    desc: "小游戏逻辑是黑盒。成功时发出 dock.crate.success，叙事状态机接收 signal 后迁移主流程状态。",
+    signals: ["dock.crate.success"],
+    code: "minigameId: dock_crate_tutorial\nsignals:\n- onPullSuccess -> dock.crate.success"
+  },
+  npcEntity: {
+    label: "绑定实体：npc_ringboy",
+    kind: "binding",
+    type: "Scene Entity",
+    x: 160,
+    y: 520,
+    desc: "这是被 wrapper 绑定的真实场景 NPC 实例。它不直接参与叙事状态迁移，但可以从 wrapper 属性面板导航到实体编辑器。",
+    code: "entityId: npc_ringboy\nscene: 码头白天\nentityType: npc\n\n由 Wrapper Graph: 滚铁环小孩 控制叙事状态覆盖。"
+  }
+};
+
+const compositionEdges = [
+  { from: "boardDialogue", to: "state:initial", layer: "trigger", label: "dock.board.read -> t_board_read" },
+  { from: "crateMinigame", to: "state:waterside_available", layer: "trigger", label: "dock.crate.success -> t_crate_done" },
+  { from: "state:crate_minigame_done", to: "ringboyWrapper", layer: "trigger", label: "stateEntered(crate_done)" },
+  { from: "ringboyWrapper", to: "ringboyDialogue", layer: "read", label: "dialogue reads npc wrapper state" },
+  { from: "ringboyDialogue", to: "ringboyWrapper", layer: "trigger", label: "ring_taken_ask" },
+  { from: "ringboyWrapper", to: "state:ring_taken", layer: "trigger", label: "stateEntered(ring_taken)" },
+  { from: "state:ring_taken", to: "questWrapper", layer: "trigger", label: "activate quest wrapper" }
+];
+
+let selected = { type: "canvas", id: mainGraph.id };
+const layers = { transition: true, trigger: true, read: true };
+const logItems = [];
+const counters = { state: 0, wrapper: 0, scenario: 0, dialogue: 0, blackbox: 0, edge: 0 };
+let connectMode = null;
+let connectSource = null;
+let dragState = null;
+
+function renderEditor() {
+  renderObjectList();
+  renderActiveState();
+  renderCanvas();
+  renderInspector();
+  renderLog();
+  renderConnectBanner();
+}
+
+function renderObjectList() {
+  const list = $("#objectList");
+  const order = ["scenario", "ringboyWrapper", "questWrapper", "boardDialogue", "ringboyDialogue", "waterZone", "crateMinigame", "npcEntity"];
+  const extra = Object.keys(canvasObjects).filter((id) => !order.includes(id));
+  list.innerHTML = order.concat(extra).map((id) => {
+    const item = canvasObjects[id];
+    return `
+      <button class="list-button ${selected.id === id ? "active" : ""}" data-object="${id}">
+        <strong>${item.label}</strong>
+        <span>${item.type}${item.activeState ? " · active: " + item.activeState : ""}</span>
+      </button>
+    `;
+  }).join("");
+  $$(".list-button", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      selected = { type: "object", id: button.dataset.object };
+      renderEditor();
+    });
+  });
+}
+
+function renderActiveState() {
+  const childStates = Object.entries(canvasObjects)
+    .filter(([, item]) => item.activeState)
+    .map(([id, item]) => `${id}: ${item.activeState}`)
+    .join("\n");
+  $("#activeStateView").textContent = `${mainGraph.id}: ${mainGraph.activeState}\n${childStates}`;
+}
+
+function objectByRef(ref) {
+  if (ref.startsWith("state:")) return mainGraph.states[ref.slice(6)];
+  return canvasObjects[ref];
+}
+
+function selectedRef() {
+  if (selected.type === "state") return `state:${selected.id}`;
+  if (selected.type === "object") return selected.id;
+  return null;
+}
+
+function labelForRef(ref) {
+  const item = objectByRef(ref);
+  return item ? item.label : ref;
+}
+
+function centerOf(item) {
+  return { x: item.x + 92, y: item.y + 46 };
+}
+
+function drawCompositionEdge(svg, edge) {
+  if (!layers[edge.layer]) return;
+  const from = objectByRef(edge.from);
+  const to = objectByRef(edge.to);
+  if (!from || !to) return;
+  const a = centerOf(from);
+  const b = centerOf(to);
+  const color = edge.layer === "trigger" ? "#a5661f" : edge.layer === "read" ? "#6957a8" : "#657985";
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  const midX = (a.x + b.x) / 2;
+  path.setAttribute("d", `M ${a.x} ${a.y} C ${midX} ${a.y}, ${midX} ${b.y}, ${b.x} ${b.y}`);
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", color);
+  path.setAttribute("stroke-width", "2.3");
+  if (edge.layer === "read") path.setAttribute("stroke-dasharray", "7 5");
+  path.setAttribute("marker-end", "url(#canvasArrow)");
+  svg.appendChild(path);
+
+  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  text.textContent = edge.label;
+  text.setAttribute("x", String(midX));
+  text.setAttribute("y", String((a.y + b.y) / 2 - 8));
+  text.setAttribute("text-anchor", "middle");
+  text.setAttribute("fill", color);
+  text.setAttribute("font-size", "12");
+  svg.appendChild(text);
+}
+
+function renderCanvas() {
+  renderEdges();
+  const stateNodes = Object.entries(mainGraph.states).map(([id, item]) => `
+    <button class="canvas-node ${item.kind} ${selected.type === "state" && selected.id === id ? "active" : ""} ${mainGraph.activeState === id ? "runtime-active" : ""}"
+      style="left:${item.x}px;top:${item.y}px" data-state="${id}">
+      <span class="node-kind">${item.type}</span>
+      <strong>${item.label}</strong>
+      <p>mainGraph.${id}</p>
+    </button>
+  `).join("");
+  const objectNodes = Object.entries(canvasObjects).map(([id, item]) => `
+    <button class="canvas-node ${item.kind} ${selected.id === id ? "active" : ""} ${item.activeState && item.activeState !== "inactive" ? "runtime-active" : ""}"
+      style="left:${item.x}px;top:${item.y}px" data-object="${id}">
+      <span class="node-kind">${item.type}</span>
+      <strong>${item.label}</strong>
+      <p>${item.activeState ? "activeState: " + item.activeState : item.signals ? "signals: " + item.signals.length : item.type}</p>
+      ${item.binding ? `<span class="binding-text">绑定：${item.binding}</span>` : ""}
+    </button>
+  `).join("");
+  $("#canvasNodes").innerHTML = stateNodes + objectNodes;
+  $$("[data-state]").forEach((node) => {
+    node.addEventListener("click", () => {
+      handleNodeClick({ type: "state", id: node.dataset.state });
+    });
+    node.addEventListener("pointerdown", (event) => startDrag(event, { type: "state", id: node.dataset.state }));
+  });
+  $$(".canvas-node").forEach((node) => {
+    if (!node.dataset.object) return;
+    node.addEventListener("click", () => {
+      handleNodeClick({ type: "object", id: node.dataset.object });
+    });
+    node.addEventListener("pointerdown", (event) => startDrag(event, { type: "object", id: node.dataset.object }));
+  });
+}
+
+function renderEdges() {
+  const svg = $("#canvasSvg");
+  svg.innerHTML = `
+    <defs>
+      <marker id="canvasArrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+        <path d="M0,0 L8,3 L0,6 Z" fill="#486270"></path>
+      </marker>
+    </defs>`;
+  if (layers.transition) {
+    mainGraph.transitions.forEach((transition) => {
+      drawCompositionEdge(svg, { from: `state:${transition.from}`, to: `state:${transition.to}`, layer: "transition", label: transition.id });
+    });
+  }
+  compositionEdges.forEach((edge) => drawCompositionEdge(svg, edge));
+}
+
+function getEditableItem(refLike = selected) {
+  if (refLike.type === "state") return mainGraph.states[refLike.id];
+  if (refLike.type === "object") return canvasObjects[refLike.id];
+  return mainGraph;
+}
+
+function handleNodeClick(nextSelection) {
+  if (dragState && dragState.moved) return;
+  if (connectMode) {
+    const ref = nextSelection.type === "state" ? `state:${nextSelection.id}` : nextSelection.id;
+    if (!connectSource) {
+      connectSource = ref;
+      selected = nextSelection;
+      renderEditor();
+      return;
+    }
+    if (connectSource !== ref) {
+      createEdge(connectSource, ref, connectMode);
+      connectSource = null;
+      connectMode = null;
+      $$(".connect-mode").forEach((button) => button.classList.remove("active"));
+      selected = nextSelection;
+      renderEditor();
+      return;
+    }
+  }
+  selected = nextSelection;
+  renderEditor();
+}
+
+function startDrag(event, refLike) {
+  if (event.button !== 0) return;
+  const item = getEditableItem(refLike);
+  if (!item || typeof item.x !== "number") return;
+  dragState = {
+    refLike,
+    el: event.currentTarget,
+    startX: event.clientX,
+    startY: event.clientY,
+    itemX: item.x,
+    itemY: item.y,
+    moved: false
+  };
+  event.currentTarget.setPointerCapture(event.pointerId);
+  event.currentTarget.addEventListener("pointermove", onDragMove);
+  event.currentTarget.addEventListener("pointerup", onDragEnd, { once: true });
+}
+
+function onDragMove(event) {
+  if (!dragState) return;
+  const item = getEditableItem(dragState.refLike);
+  const dx = event.clientX - dragState.startX;
+  const dy = event.clientY - dragState.startY;
+  if (Math.abs(dx) + Math.abs(dy) > 4) dragState.moved = true;
+  item.x = Math.max(20, Math.min(800, dragState.itemX + dx));
+  item.y = Math.max(20, Math.min(620, dragState.itemY + dy));
+  dragState.el.style.left = `${item.x}px`;
+  dragState.el.style.top = `${item.y}px`;
+  renderEdges();
+}
+
+function onDragEnd(event) {
+  event.currentTarget.removeEventListener("pointermove", onDragMove);
+  renderCanvas();
+  setTimeout(() => { dragState = null; }, 0);
+}
+
+function createEdge(from, to, layer) {
+  if (layer !== "transition") return;
+  if (!from.startsWith("state:") || !to.startsWith("state:")) {
+    logItems.push(`<strong>transition edge ignored</strong><br>迁移边只能连接主 Graph 的两个 State。触发/读取关系由配置自动推导。`);
+    return;
+  }
+  const edge = {
+    from,
+    to,
+    layer,
+    label: defaultEdgeLabel(from, to, layer)
+  };
+  compositionEdges.push(edge);
+  const transition = {
+    id: `t_user_${++counters.edge}`,
+    from: from.slice(6),
+    to: to.slice(6),
+    signal: `user.signal.${counters.edge}`,
+    priority: 0,
+    conditions: "none"
+  };
+  mainGraph.transitions.push(transition);
+  edge.label = transition.id;
+  logItems.push(`<strong>create ${layer} edge</strong><br>${labelForRef(from)} -> ${labelForRef(to)}`);
+}
+
+function defaultEdgeLabel(from, to, layer) {
+  if (layer === "transition") return `transition_${counters.edge + 1}`;
+  return "derived relation";
+}
+
+function renderInspector() {
+  if (selected.type === "canvas") {
+    $("#inspectTitle").textContent = mainGraph.label;
+    $("#inspectKind").textContent = "当前打开的主 Graph / 画布上下文";
+    $("#inspectProps").innerHTML = [
+      ["画布名称", `<input data-edit="label" value="${escapeAttr(mainGraph.label)}">`],
+      ["说明", `<textarea data-edit="desc">${escapeHtml(mainGraph.desc)}</textarea>`],
+      ["activeState", mainGraph.activeState],
+      ["主流程状态", Object.keys(mainGraph.states).join(", ")],
+      ["主流程迁移", mainGraph.transitions.map((transition) => `${transition.id}: ${transition.from} -> ${transition.to}`).join("<br>")],
+      ["配置摘要", `<textarea data-edit="code">${escapeHtml(mainGraph.code)}</textarea>`]
+    ].map(([label, value]) => `<div class="property"><label>${label}</label><div>${value}</div></div>`).join("");
+    bindInspectorInputs(mainGraph);
+    return;
+  }
+  if (selected.type === "state") {
+    const state = mainGraph.states[selected.id];
+    $("#inspectTitle").textContent = state.label;
+    $("#inspectKind").textContent = "主 Graph 状态节点";
+    $("#inspectProps").innerHTML = [
+      ["名称", `<input data-edit="label" value="${escapeAttr(state.label)}">`],
+      ["说明", `<textarea data-edit="desc">${escapeHtml(state.desc)}</textarea>`],
+      ["所属画布", mainGraph.label],
+      ["active", `${String(mainGraph.activeState === state.id)}<br><button class="small-button" type="button" data-set-active="${state.id}">设为 activeState</button>`],
+      ["配置摘要", `<textarea data-edit="code">${escapeHtml(state.code || "")}</textarea>`],
+      ["操作", `<button class="small-button" type="button" data-delete-selected="state:${state.id}">删除状态</button>`]
+    ].map(([label, value]) => `<div class="property"><label>${label}</label><div>${value}</div></div>`).join("");
+    bindInspectorInputs(state);
+    $$("[data-set-active]").forEach((button) => {
+      button.addEventListener("click", () => {
+        mainGraph.activeState = button.dataset.setActive;
+        logItems.push(`<strong>set activeState</strong><br>${mainGraph.id}: ${mainGraph.activeState}`);
+        renderEditor();
+      });
+    });
+    bindDeleteButtons();
+    return;
+  }
+  const item = canvasObjects[selected.id] || canvasObjects.scenario;
+  const props = [
+    ["名称", `<input data-edit="label" value="${escapeAttr(item.label)}">`],
+    ["类型", item.type],
+    ["说明", `<textarea data-edit="desc">${escapeHtml(item.desc)}</textarea>`],
+  ];
+  if (item.activeState) props.push(["activeState", item.activeState]);
+  if (item.states) props.push(["内部状态", item.states.join(", ")]);
+  if (item.transitions) props.push(["内部迁移", item.transitions.join("<br>")]);
+  if (item.binding) props.push(["绑定目标", `<input data-edit="binding" value="${escapeAttr(item.binding)}"><br><button class="small-button" type="button" data-nav-entity="${escapeAttr(item.binding)}">导航到绑定实体</button>`]);
+  if (item.reads) props.push(["读取关系", item.reads.join("<br>")]);
+  if (item.signals) props.push(["输出 signal", item.signals.join("<br>")]);
+  props.push(["配置摘要", `<textarea data-edit="code">${escapeHtml(item.code || "")}</textarea>`]);
+  props.push(["操作", `<button class="small-button" type="button" data-delete-selected="${selected.id}">删除对象</button>`]);
+  $("#inspectTitle").textContent = item.label;
+  $("#inspectKind").textContent = item.type;
+  $("#inspectProps").innerHTML = props.map(([label, value]) => `
+    <div class="property"><label>${label}</label><div>${value}</div></div>
+  `).join("");
+  bindInspectorInputs(item);
+  $$("[data-nav-entity]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.navEntity;
+      logItems.push(`<strong>navigate</strong><br>打开关联对象：${target}<br>这里应跳转到 Scene Entity / Quest / Scenario 的原始编辑器。`);
+      renderLog();
+    });
+  });
+  bindDeleteButtons();
+}
+
+function renderLog() {
+  $("#runtimeLog").innerHTML = logItems.length
+    ? logItems.slice(-10).reverse().map((item) => `<div class="log">${item}</div>`).join("")
+    : `<div class="log">尚未模拟 signal。点击顶部 emit 按钮查看状态变化。</div>`;
+}
+
+function bindInspectorInputs(target) {
+  $$("[data-edit]").forEach((field) => {
+    field.addEventListener("input", () => {
+      target[field.dataset.edit] = field.value;
+      if (field.dataset.edit === "label") {
+        $("#inspectTitle").textContent = field.value;
+      }
+      renderObjectList();
+      renderCanvas();
+    });
+  });
+}
+
+function emitSignal(signal) {
+  const affected = [];
+  if (signal === "dock.board.read" && mainGraph.activeState === "initial") {
+    mainGraph.activeState = "board_read";
+    canvasObjects.scenario.activeState = "board_intro_done";
+    affected.push("main graph: initial -> board_read via t_board_read");
+    affected.push("scenario: inactive -> board_intro_done via activateScenario");
+  } else if (signal === "scenario.water_monkey.board_done" && mainGraph.activeState === "board_read") {
+    mainGraph.activeState = "waterside_available";
+    canvasObjects.waterZone.activeState = "enabled";
+    affected.push("main graph: board_read -> waterside_available via t_waterside");
+    affected.push("zone: new_zone_2 enabled by flow.waterside_available");
+  } else if (signal === "dock.crate.success" && mainGraph.activeState === "waterside_available") {
+    mainGraph.activeState = "crate_minigame_done";
+    canvasObjects.ringboyWrapper.activeState = "after_event";
+    affected.push("main graph: waterside_available -> crate_minigame_done via t_crate_done");
+    affected.push("npc wrapper: before_event -> after_event via stateEntered(flow.crate_minigame_done)");
+  } else if (signal === "ringboy.ring.taken.ask" && canvasObjects.ringboyWrapper.activeState === "after_event") {
+    canvasObjects.ringboyWrapper.activeState = "ring_taken";
+    mainGraph.activeState = "ring_taken";
+    canvasObjects.questWrapper.activeState = "active";
+    affected.push("npc wrapper: after_event -> ring_taken via t_ring_taken");
+    affected.push("main graph: crate_minigame_done -> ring_taken via stateEntered(npc_ringboy.ring_taken)");
+    affected.push("quest wrapper: inactive -> active via stateEntered(npc_ringboy.ring_taken)");
+  }
+  const result = affected.length ? affected.join("<br>") : "没有匹配当前 activeState 的 Transition。";
+  logItems.push(`<strong>${signal}</strong><br>${result}`);
+  renderEditor();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll('"', "&quot;");
+}
+
+function addCanvasItem(kind) {
+  const x = 120 + (Object.keys(canvasObjects).length % 4) * 190;
+  const y = 520 + Math.floor(Object.keys(canvasObjects).length / 4) * 105;
+  if (kind === "state") {
+    const id = `state_user_${++counters.state}`;
+    mainGraph.states[id] = {
+      id,
+      label: `新状态 ${counters.state}`,
+      kind: "state",
+      type: "Main Graph State",
+      x,
+      y: Math.min(y, 620),
+      desc: "新建主 Graph 状态。可以拖动位置、修改名称，并通过连接迁移创建 Transition。",
+      code: `state: ${id}`
+    };
+    selected = { type: "state", id };
+    logItems.push(`<strong>create state</strong><br>${id}`);
+  } else {
+    const id = `${kind}_user_${++counters[kind]}`;
+    const preset = createObjectPreset(kind, id, x, Math.min(y, 620));
+    canvasObjects[id] = preset;
+    selected = { type: "object", id };
+    logItems.push(`<strong>create ${kind}</strong><br>${preset.label}`);
+  }
+  renderEditor();
+}
+
+function createObjectPreset(kind, id, x, y) {
+  const presets = {
+    wrapper: {
+      label: `Wrapper Graph ${counters.wrapper}`,
+      kind: "wrapper",
+      type: "Narrative Wrapper Graph",
+      activeState: "initial",
+      binding: "entity:unbound",
+      desc: "新建 wrapper 子图。用于把 NPC、Hotspot、Quest 等对象接入叙事画布。",
+      states: ["initial"],
+      transitions: [],
+      code: "ownerType: npc | hotspot | quest\nownerId: entity:unbound"
+    },
+    scenario: {
+      label: `Scenario 子图 ${counters.scenario}`,
+      kind: "subgraph",
+      type: "Scenario Subgraph",
+      activeState: "inactive",
+      desc: "新建 Scenario 子图。把 Scenario line / phase 暴露为叙事状态。",
+      states: ["inactive"],
+      transitions: [],
+      code: "sourceSystem: ScenarioStateManager\nscenarioId: todo"
+    },
+    dialogue: {
+      label: `DialogueGraph 黑盒 ${counters.dialogue}`,
+      kind: "blackbox",
+      type: "DialogueGraph BlackBox",
+      desc: "新建 DialogueGraph 黑盒。它可以读取叙事状态，并在明确叙事点发出 narrative signal。",
+      reads: [],
+      signals: ["todo.signal"],
+      code: "dialogueGraphId: todo\nsignals:\n- todo.signal"
+    },
+    blackbox: {
+      label: `Runtime 黑盒 ${counters.blackbox}`,
+      kind: "blackbox",
+      type: "Runtime BlackBox",
+      desc: "新建运行时黑盒。可表示 Zone、Minigame、Cutscene 或其他系统。",
+      signals: ["todo.signal"],
+      code: "system: todo\nsignals:\n- todo.signal"
+    }
+  };
+  return { ...presets[kind], x, y };
+}
+
+function setConnectMode(mode) {
+  if (mode !== "transition") return;
+  connectMode = connectMode === mode ? null : mode;
+  connectSource = null;
+  $$(".connect-mode").forEach((button) => button.classList.toggle("active", button.dataset.connect === connectMode));
+  renderConnectBanner();
+}
+
+function renderConnectBanner() {
+  const banner = $("#connectBanner");
+  if (!banner) return;
+  if (!connectMode) {
+    banner.classList.remove("active");
+    banner.textContent = "";
+    return;
+  }
+  banner.classList.add("active");
+  banner.textContent = connectSource
+    ? `连接模式：${connectMode}。起点是「${labelForRef(connectSource)}」，请选择终点。`
+    : `连接迁移模式：请先点击一个主 Graph State，再点击另一个主 Graph State。触发/读取关系由配置自动推导。`;
+}
+
+function bindDeleteButtons() {
+  $$("[data-delete-selected]").forEach((button) => {
+    button.addEventListener("click", () => deleteCanvasItem(button.dataset.deleteSelected));
+  });
+}
+
+function deleteCanvasItem(ref) {
+  if (ref.startsWith("state:")) {
+    const stateId = ref.slice(6);
+    if (Object.keys(mainGraph.states).length <= 1) return;
+    delete mainGraph.states[stateId];
+    mainGraph.transitions = mainGraph.transitions.filter((transition) => transition.from !== stateId && transition.to !== stateId);
+    compositionEdges.splice(0, compositionEdges.length, ...compositionEdges.filter((edge) => edge.from !== ref && edge.to !== ref));
+    if (mainGraph.activeState === stateId) mainGraph.activeState = Object.keys(mainGraph.states)[0];
+    selected = { type: "canvas", id: mainGraph.id };
+    logItems.push(`<strong>delete state</strong><br>${stateId}`);
+  } else {
+    delete canvasObjects[ref];
+    compositionEdges.splice(0, compositionEdges.length, ...compositionEdges.filter((edge) => edge.from !== ref && edge.to !== ref));
+    selected = { type: "canvas", id: mainGraph.id };
+    logItems.push(`<strong>delete object</strong><br>${ref}`);
+  }
+  renderEditor();
+}
+
+$$(".layer-toggle").forEach((button) => {
+  button.addEventListener("click", () => {
+    const layer = button.dataset.layer;
+    layers[layer] = !layers[layer];
+    button.classList.toggle("active", layers[layer]);
+    renderEditor();
+  });
+});
+
+$$(".connect-mode").forEach((button) => {
+  button.addEventListener("click", () => setConnectMode(button.dataset.connect));
+});
+
+$$(".add-object").forEach((button) => {
+  button.addEventListener("click", () => addCanvasItem(button.dataset.add));
+});
+
+$$(".signal-button").forEach((button) => {
+  button.addEventListener("click", () => emitSignal(button.dataset.signal));
+});
+
+const checkboxes = $$("#checklist input");
+function updateProgress() {
+  const done = checkboxes.filter((item) => item.checked).length;
+  $("#progressBar").style.width = `${done / checkboxes.length * 100}%`;
+  $("#progressText").textContent = `完成度：${done} / ${checkboxes.length}`;
+}
+checkboxes.forEach((box) => box.addEventListener("change", updateProgress));
+
+renderEditor();
+updateProgress();
+</script>
+</body>
+</html>

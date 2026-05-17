@@ -822,6 +822,14 @@
           }
         },
         {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "waterside",
+            "signal": "entered"
+          }
+        },
+        {
           "type": "startCutscene",
           "params": {
             "id": "洋人第一次出场"

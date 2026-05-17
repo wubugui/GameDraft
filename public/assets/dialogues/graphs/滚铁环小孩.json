@@ -248,6 +248,14 @@
           }
         },
         {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "rolling_ring_boy",
+            "signal": "ring_taken"
+          }
+        },
+        {
           "type": "updateQuest",
           "params": {
             "id": "支线-归还小孩铁环-归还铁环"
@@ -321,6 +329,14 @@
           "params": {
             "key": "铁环小孩_已经获得铁环",
             "value": true
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "rolling_ring_boy",
+            "signal": "ring_taken"
           }
         },
         {

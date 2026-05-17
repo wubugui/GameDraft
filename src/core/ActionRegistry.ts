@@ -26,6 +26,7 @@ import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import type { ScenarioStateManager } from './ScenarioStateManager';
+import type { NarrativeStateManager } from './NarrativeStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import type { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
@@ -150,6 +151,7 @@ export interface ActionRegistryDeps {
    */
   resolveDisplayTextForPlayScripted: (raw: string | undefined, scriptedNpcId?: string) => string;
   scenarioStateManager: ScenarioStateManager;
+  narrativeStateManager: NarrativeStateManager;
   documentRevealManager: DocumentRevealManager;
   /** 在 CutsceneManager 临时表中 spawn 一个临时实体并挂载到显示层 */
   spawnCutsceneActor: (id: string, name: string, x: number, y: number) => void;
@@ -354,6 +356,31 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (!scenarioId) return;
     d.scenarioStateManager.completeScenarioLine(scenarioId);
   }, ['scenarioId']);
+
+  executor.register('emitNarrativeSignal', (p) => {
+    const sourceType = String(p.sourceType ?? '').trim();
+    const sourceId = String(p.sourceId ?? '').trim();
+    const signal = String(p.signal ?? '').trim();
+    if (!sourceType || !sourceId || !signal) {
+      console.warn('emitNarrativeSignal: missing sourceType/sourceId/signal', p);
+      return;
+    }
+    return d.narrativeStateManager.emitNarrativeSignal({
+      sourceType: sourceType as any,
+      sourceId,
+      signal,
+    });
+  }, ['sourceType', 'sourceId', 'signal']);
+
+  executor.register('setNarrativeState', (p) => {
+    const graphId = String(p.graphId ?? '').trim();
+    const stateId = String(p.stateId ?? '').trim();
+    if (!graphId || !stateId) {
+      console.warn('setNarrativeState: missing graphId/stateId', p);
+      return;
+    }
+    return d.narrativeStateManager.setNarrativeState(graphId, stateId);
+  }, ['graphId', 'stateId']);
 
   executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
   executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);

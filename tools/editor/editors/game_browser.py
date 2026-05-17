@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import html
 
-from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer, QEventLoop
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -174,6 +174,25 @@ class GamePlayWindow(QWidget):
     def run_js(self, code: str) -> None:
         if self._view:
             self._view.page().runJavaScript(code)
+
+    def run_js_result(self, code: str, timeout_ms: int = 1500) -> object | None:
+        if not self._view:
+            return None
+        result: dict[str, object | None] = {"value": None}
+        done = {"value": False}
+        loop = QEventLoop()
+
+        def finish(value: object | None = None) -> None:
+            if done["value"]:
+                return
+            done["value"] = True
+            result["value"] = value
+            loop.quit()
+
+        self._view.page().runJavaScript(code, finish)
+        QTimer.singleShot(timeout_ms, finish)
+        loop.exec()
+        return result["value"]
 
     def closeEvent(self, event) -> None:
         # WebEngine 关窗口默认不触发 pagehide/beforeunload，必须先停 Howler 再关视图

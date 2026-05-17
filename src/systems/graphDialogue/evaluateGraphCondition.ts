@@ -14,6 +14,7 @@ export type ConditionTrace =
   | { kind: 'quest'; result: boolean; label: string }
   | { kind: 'scenario'; result: boolean; label: string }
   | { kind: 'scenarioLine'; result: boolean; label: string }
+  | { kind: 'narrative'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -29,6 +30,10 @@ export interface ConditionEvalContext {
   flagStore: FlagStore;
   questManager: QuestManager;
   scenarioState: ScenarioStateManager;
+  narrativeState?: {
+    getActiveState(graphId: string): string | undefined;
+    isStateActive(graphId: string, stateId: string): boolean;
+  };
   /**
    * Flag 条件叶子中 `value` 为 string 时，比较前调用（与 resolveDisplayText 一致，支持 [tag:…]）。
    * 未注入则按字面量字符串与当前 Flag 值比较。
@@ -68,6 +73,17 @@ function isScenarioLineLeaf(x: ConditionExpr): x is ScenarioLineConditionLeaf {
     return false;
   }
   return SCENARIO_LINE_STATUSES.has(m.lineStatus as ScenarioLineConditionLeaf['lineStatus']);
+}
+
+function isNarrativeStateLeaf(x: ConditionExpr): x is { narrative: string; state: string } {
+  const m = x as { narrative?: unknown; state?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown };
+  return (
+    typeof m.narrative === 'string' &&
+    typeof m.state === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined
+  );
 }
 
 function isAllNode(x: ConditionExpr): x is { all: ConditionExpr[] } {
@@ -127,6 +143,12 @@ export function evaluateConditionExpr(
     const want = expr.lineStatus;
     const sid = expr.scenarioLine.trim();
     return sid ? ctx.scenarioState.getLineLifecycleState(sid) === want : false;
+  }
+
+  if (isNarrativeStateLeaf(expr)) {
+    const graphId = expr.narrative.trim();
+    const stateId = expr.state.trim();
+    return Boolean(graphId && stateId && ctx.narrativeState?.isStateActive(graphId, stateId));
   }
 
   if (isQuestLeaf(expr)) {
@@ -220,6 +242,15 @@ export function evaluateConditionExprWithTrace(
     const ok = Boolean(sid) && got === want;
     const label = `scenarioLine「${expr.scenarioLine}」期望=${want}实际=${got}`;
     return { result: ok, trace: { kind: 'scenarioLine', result: ok, label } };
+  }
+
+  if (isNarrativeStateLeaf(expr)) {
+    const graphId = expr.narrative.trim();
+    const stateId = expr.state.trim();
+    const got = graphId ? ctx.narrativeState?.getActiveState(graphId) : undefined;
+    const ok = Boolean(graphId && stateId && got === stateId);
+    const label = `narrative「${expr.narrative}」期望=${stateId || '—'}实际=${got ?? '—'}`;
+    return { result: ok, trace: { kind: 'narrative', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

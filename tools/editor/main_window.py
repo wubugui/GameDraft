@@ -425,7 +425,16 @@ class MainWindow(QMainWindow):
         self._launch_external_tool("tools.copy_manager", [], "Copy Manager")
 
     def _launch_video_to_atlas_external(self) -> None:
-        self._launch_external_tool("tools.video_to_atlas", [], "Video to Atlas")
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        from .shared.project_paths import (
+            DIR_KIND_EDITOR_ANIMATION_PROJECT,
+            ProjectPaths,
+        )
+        ws = ProjectPaths(root.resolve()).default_dir(DIR_KIND_EDITOR_ANIMATION_PROJECT)
+        args = [str(ws.resolve())] if (ws / "project.json").is_file() else []
+        self._launch_external_tool("tools.video_to_atlas", args, "Video to Atlas", root=root)
 
     def _clear_editor_stack(self) -> None:
         while self._stack.count():
@@ -521,6 +530,7 @@ class MainWindow(QMainWindow):
             ScenariosCatalogEditor,
             DocumentRevealsEditor,
         )
+        from .editors.narrative_state_editor import NarrativeStateEditor
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         from .editors.water_minigame_editor import WaterMinigameEditor
         from .editors.sugar_wheel_editor import SugarWheelEditor
@@ -531,6 +541,7 @@ class MainWindow(QMainWindow):
             (["物理世界"], "Map", MapEditor),
             (["数据编辑", "叙事编排"], "过场", TimelineEditor),
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
+            (["数据编辑", "叙事编排"], "叙事状态机", NarrativeStateEditor),
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
             (["数据编辑", "叙事编排"], "水域小游戏", WaterMinigameEditor),
             (["数据编辑", "叙事编排"], "转盘小游戏", SugarWheelEditor),

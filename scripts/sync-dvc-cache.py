@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
-import re
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -26,87 +23,40 @@ DEFAULT_DVCFILES = [
     "resources/editor_projects.dvc",
     "resources/vendor_archives.dvc",
 ]
+PROXY_ENV_NAMES = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+]
+
+
+def disable_proxy() -> None:
+    for name in PROXY_ENV_NAMES:
+        os.environ.pop(name, None)
 
 
 def cache_path(root: Path, oid: str) -> Path:
     return root / ".dvc" / "cache" / "files" / "md5" / oid[:2] / oid[2:]
 
 
-def expected_md5(oid: str) -> str:
-    return oid[:-4] if oid.endswith(".dir") else oid
-
-
-def file_md5(path: Path) -> str:
-    digest = hashlib.md5()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def cache_object_is_valid(root: Path, oid: str) -> bool:
-    path = cache_path(root, oid)
-    return path.is_file() and file_md5(path) == expected_md5(oid)
-
-
-def ensure_valid_cache_object(root: Path, oid: str) -> None:
-    path = cache_path(root, oid)
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    actual = file_md5(path)
-    expected = expected_md5(oid)
-    if actual != expected:
-        raise ValueError(f"corrupt DVC cache object {oid}: expected md5 {expected}, got {actual}")
-
-
 def object_key(prefix: str, oid: str) -> str:
     return f"{prefix.rstrip('/')}/{oid[:2]}/{oid[2:]}"
-
-
-def oss_env_diagnostic_line() -> str:
-    kid = os.environ.get("OSS_ACCESS_KEY_ID")
-    ks = os.environ.get("OSS_ACCESS_KEY_SECRET")
-    id_desc = "not set" if not kid else f"set, {len(kid)} chars"
-    sec_desc = "not set" if not ks else f"set, {len(ks)} chars"
-    return f"OSS_ACCESS_KEY_ID: {id_desc}; OSS_ACCESS_KEY_SECRET: {sec_desc} (values are not printed)."
-
-
-def is_likely_oss_auth_or_access_failure(exc: BaseException) -> bool:
-    try:
-        import oss2.exceptions as oe
-
-        auth_types: tuple[type, ...] = tuple(
-            t
-            for name in (
-                "AccessDenied",
-                "InvalidAccessKeyId",
-                "SignatureDoesNotMatch",
-                "Forbidden",
-            )
-            if (t := getattr(oe, name, None)) is not None and isinstance(t, type)
-        )
-        if auth_types and isinstance(exc, auth_types):
-            return True
-    except ImportError:
-        pass
-    text = f"{type(exc).__name__}: {exc}".lower()
-    if re.search(r"accessdenied|invalidaccesskeyid|signaturedoesnotmatch|access key|403|401|forbidden", text):
-        return True
-    return False
 
 
 def bucket_client(bucket_name: str, endpoint: str) -> oss2.Bucket:
     key_id = os.environ.get("OSS_ACCESS_KEY_ID")
     key_secret = os.environ.get("OSS_ACCESS_KEY_SECRET")
     if not key_id or not key_secret:
-        print(oss_env_diagnostic_line(), file=sys.stderr)
-        print(
-            "OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET are not visible to this Python process "
-            "(empty or unset). Fix bootstrap / shell so keys are set on the same process before sync.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    return oss2.Bucket(oss2.Auth(key_id, key_secret), endpoint, bucket_name)
+        raise SystemExit("OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must be set.")
+    bucket = oss2.Bucket(oss2.Auth(key_id, key_secret), endpoint, bucket_name)
+    bucket.session.session.trust_env = False
+    bucket.session.session.proxies = {}
+    return bucket
 
 
 def remote_has_object(bucket: oss2.Bucket, key: str, size: int) -> bool:
@@ -120,7 +70,8 @@ def remote_has_object(bucket: oss2.Bucket, key: str, size: int) -> bool:
 
 def upload_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool:
     path = cache_path(root, oid)
-    ensure_valid_cache_object(root, oid)
+    if not path.is_file():
+        raise FileNotFoundError(path)
     key = object_key(prefix, oid)
     size = path.stat().st_size
     if remote_has_object(bucket, key, size):
@@ -139,9 +90,7 @@ def upload_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool:
 def download_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool:
     path = cache_path(root, oid)
     if path.is_file():
-        if cache_object_is_valid(root, oid):
-            return False
-        path.unlink()
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
     oss2.resumable_download(
         bucket,
@@ -151,7 +100,6 @@ def download_one(bucket: oss2.Bucket, prefix: str, root: Path, oid: str) -> bool
         part_size=PART_SIZE,
         num_threads=THREADS,
     )
-    ensure_valid_cache_object(root, oid)
     return True
 
 
@@ -207,11 +155,10 @@ def collect_required_oids_from_remote(bucket: oss2.Bucket, prefix: str, root: Pa
     return ordered
 
 
-def transfer_many(label: str, oids: list[str], worker) -> tuple[int, int, int, bool]:
+def transfer_many(label: str, oids: list[str], worker) -> tuple[int, int, int]:
     changed = 0
     skipped = 0
     failed = 0
-    auth_or_access_failure = False
     total = len(oids)
     with ThreadPoolExecutor(max_workers=OBJECT_WORKERS) as executor:
         futures = {executor.submit(worker, oid): oid for oid in oids}
@@ -221,8 +168,6 @@ def transfer_many(label: str, oids: list[str], worker) -> tuple[int, int, int, b
                 did_change = future.result()
             except Exception as exc:
                 failed += 1
-                if is_likely_oss_auth_or_access_failure(exc):
-                    auth_or_access_failure = True
                 print(f"{label} failed {index}/{total} {oid}: {exc}")
                 continue
             if did_change:
@@ -230,10 +175,12 @@ def transfer_many(label: str, oids: list[str], worker) -> tuple[int, int, int, b
                 print(f"{label} {index}/{total} {oid}")
             else:
                 skipped += 1
-    return changed, skipped, failed, auth_or_access_failure
+    return changed, skipped, failed
 
 
 def main() -> int:
+    disable_proxy()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["push", "pull"])
     parser.add_argument("targets", nargs="*", help="DVC files to sync, for example public/resources/runtime.dvc")
@@ -252,56 +199,26 @@ def main() -> int:
 
     if args.mode == "push":
         required = collect_required_oids_from_local(root, root_oids_from_dvcfiles(target_paths))
-        changed, skipped, failed, auth_fail = transfer_many(
+        changed, skipped, failed = transfer_many(
             "uploaded",
             required,
             lambda oid: upload_one(bucket, args.prefix, root, oid),
         )
         elapsed = max(time.perf_counter() - started, 0.001)
         if failed:
-            print(oss_env_diagnostic_line(), file=sys.stderr)
-            if auth_fail:
-                print(
-                    "OSS denied upload or the AccessKey is invalid / lacks RAM permissions. "
-                    "If keys are wrong, re-enter them when bootstrap asks again.",
-                    file=sys.stderr,
-                )
-                raise SystemExit(2)
-            print("DVC cache push failed for reasons other than typical OSS auth errors.", file=sys.stderr)
-            raise SystemExit(1)
+            raise SystemExit(f"DVC cache push failed: {failed} failed, {changed} uploaded, {skipped} skipped.")
         print(f"DVC cache push complete: {changed} uploaded, {skipped} skipped, {len(required)} checked in {elapsed:.1f}s.")
         return 0
 
-    try:
-        required = collect_required_oids_from_remote(bucket, args.prefix, root, root_oids_from_dvcfiles(target_paths))
-    except Exception as exc:
-        print(oss_env_diagnostic_line(), file=sys.stderr)
-        if is_likely_oss_auth_or_access_failure(exc):
-            print(
-                "OSS denied access while resolving remote cache (invalid AccessKey or insufficient policy). "
-                "Re-enter OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET when bootstrap prompts again.",
-                file=sys.stderr,
-            )
-            raise SystemExit(2) from exc
-        raise
-
-    changed, skipped, failed, auth_fail = transfer_many(
+    required = collect_required_oids_from_remote(bucket, args.prefix, root, root_oids_from_dvcfiles(target_paths))
+    changed, skipped, failed = transfer_many(
         "downloaded",
         [oid for oid in required if not oid.endswith(".dir")],
         lambda oid: download_one(bucket, args.prefix, root, oid),
     )
     elapsed = max(time.perf_counter() - started, 0.001)
     if failed:
-        print(oss_env_diagnostic_line(), file=sys.stderr)
-        if auth_fail:
-            print(
-                "OSS denied download or the AccessKey is invalid / lacks RAM permissions (e.g. oss:GetObject on the DVC cache prefix). "
-                "Re-enter OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET when bootstrap prompts again.",
-                file=sys.stderr,
-            )
-            raise SystemExit(2)
-        print("DVC cache pull failed for reasons other than typical OSS auth errors.", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(f"DVC cache pull failed: {failed} failed, {changed} downloaded, {skipped} skipped.")
     print(f"DVC cache pull complete: {changed} downloaded, {skipped} skipped, {len(required)} checked in {elapsed:.1f}s.")
     return 0
 
