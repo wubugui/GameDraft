@@ -14,15 +14,44 @@ function Test-GameDraftProxyRelatedEnvName {
   return $false
 }
 
-function Mask-GameDraftProxyEnvironmentProcess {
+function Get-GameDraftProxyEnvironmentSnapshot {
+  $snapshot = @{}
   foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
     $name = [string]$entry.Key
     if (-not (Test-GameDraftProxyRelatedEnvName $name)) {
       continue
     }
-    # Empty Process-scoped value masks User/Machine proxy vars for child processes (pip/dvc/npm/git).
-    [Environment]::SetEnvironmentVariable($name, '', 'Process')
+    $snapshot[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
   }
+  return $snapshot
+}
+
+function Clear-GameDraftProxyEnvironmentProcess {
+  $names = @()
+  foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
+    $name = [string]$entry.Key
+    if (Test-GameDraftProxyRelatedEnvName $name) {
+      $names += $name
+    }
+  }
+
+  foreach ($name in $names) {
+    [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+  }
+}
+
+function Set-GameDraftProxyEnvironmentProcess {
+  param([hashtable]$Snapshot = @{})
+
+  Clear-GameDraftProxyEnvironmentProcess
+
+  foreach ($key in @($Snapshot.Keys)) {
+    [Environment]::SetEnvironmentVariable([string]$key, [string]$Snapshot[$key], 'Process')
+  }
+}
+
+function Mask-GameDraftProxyEnvironmentProcess {
+  Clear-GameDraftProxyEnvironmentProcess
 
   # urllib/requests/git/curl honour NO_PROXY; * avoids hostname wildcard quirks for OSS endpoints.
   [Environment]::SetEnvironmentVariable('NO_PROXY', '*', 'Process')
@@ -35,9 +64,8 @@ function Initialize-BootstrapProcessWithoutProxy {
 
 function Invoke-OssWithoutProxy {
   <#
-  Aliyun OSS phases only: temporarily mask proxy-related process env so DVC/sync-dvc-cache/oss2
-  traffic does not use HTTP(S) proxy; restores env after the block.
-  Keep git clone/push outside this wrapper so Git keeps the user's proxy settings.
+  Aliyun OSS phases only: set proxy-related process env to direct mode for DVC/sync-dvc-cache/oss2.
+  The caller should explicitly set the next phase's process env before running Git or other tools.
   #>
   param(
     [Parameter(Mandatory = $true)]
@@ -53,24 +81,14 @@ function Invoke-WithoutProxy {
     [scriptblock]$ScriptBlock
   )
 
-  $previous = @{}
-  foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
-    $name = [string]$entry.Key
-    if (-not (Test-GameDraftProxyRelatedEnvName $name)) {
-      continue
-    }
-    $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
-  }
-
+  $previous = Get-GameDraftProxyEnvironmentSnapshot
   Mask-GameDraftProxyEnvironmentProcess
 
   try {
     & $ScriptBlock
   }
   finally {
-    foreach ($key in @($previous.Keys)) {
-      [Environment]::SetEnvironmentVariable($key, $previous[$key], 'Process')
-    }
+    Set-GameDraftProxyEnvironmentProcess -Snapshot $previous
   }
 }
 
