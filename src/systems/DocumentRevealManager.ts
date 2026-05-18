@@ -40,6 +40,7 @@ export class DocumentRevealManager implements IGameSystem {
   private revealing = new Set<string>();
   private blend: BlendFn | null = null;
   private resolveConditionLiteral: ((raw: string) => string) | null = null;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   constructor(
     assetManager: AssetManager,
@@ -63,6 +64,10 @@ export class DocumentRevealManager implements IGameSystem {
   /** 与 UI 展示一致：Flag 条件 string 型 value 比较前解析 [tag:…]（须与 wireTextResolve 同步） */
   setResolveConditionLiteral(fn: ((raw: string) => string) | null): void {
     this.resolveConditionLiteral = fn;
+  }
+
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
   }
 
   async loadDefinitions(): Promise<void> {
@@ -92,6 +97,8 @@ export class DocumentRevealManager implements IGameSystem {
   }
 
   private ctx(): ConditionEvalContext {
+    const injected = this.conditionCtxFactory?.();
+    if (injected) return injected;
     const base: ConditionEvalContext = {
       flagStore: this.flagStore,
       questManager: this.questManager,

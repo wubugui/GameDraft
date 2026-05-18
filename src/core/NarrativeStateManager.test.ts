@@ -30,6 +30,13 @@ describe('NarrativeStateManager', () => {
       sourceId: 'dock_board',
       signal: 'board_read_done',
     })).toBe('external:dialogue:dock_board:board_read_done');
+    expect(NarrativeStateManager.externalKey({
+      sourceType: 'dialogue',
+      sourceId: 'scene:entity',
+      signal: 'done:again',
+    })).toBe('external:dialogue:scene%3Aentity:done%3Aagain');
+    expect(NarrativeStateManager.normalizeTriggerKey('external:dialogue:scene%3Aentity:done%3Aagain'))
+      .toBe('external:dialogue:scene%3Aentity:done%3Aagain');
   });
 
   it('matches transitions by active state, trigger key, priority, and conditions', async () => {
@@ -75,11 +82,42 @@ describe('NarrativeStateManager', () => {
         transitions: [{ id: 'after', from: 'before', to: 'after', signal: 'stateEntered:flow:done' }],
       },
     ]);
-    narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'done' });
-    await flush();
-    await flush();
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'done' });
     expect(narrative.getActiveState('flow')).toBe('done');
     expect(narrative.getActiveState('npc')).toBe('after');
+  });
+
+  it('allows lifecycle actions to await queued narrative state commands', async () => {
+    const { actionExecutor, flagStore, narrative } = makeRuntime();
+    actionExecutor.register('setAuxAndRecord', async () => {
+      await narrative.setNarrativeState('aux', 'on');
+      flagStore.set('aux.afterAwait', narrative.getActiveState('aux') ?? '');
+    }, []);
+    narrative.registerGraphs([
+      {
+        id: 'flow',
+        ownerType: 'flow',
+        initialState: 'a',
+        states: {
+          a: { id: 'a' },
+          b: { id: 'b', onEnterActions: [{ type: 'setAuxAndRecord', params: {} }] },
+        },
+        transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'external:system:test:go' }],
+      },
+      {
+        id: 'aux',
+        ownerType: 'flow',
+        initialState: 'off',
+        states: { off: { id: 'off' }, on: { id: 'on' } },
+        transitions: [],
+      },
+    ]);
+
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+
+    expect(narrative.getActiveState('flow')).toBe('b');
+    expect(narrative.getActiveState('aux')).toBe('on');
+    expect(flagStore.get('aux.afterAwait')).toBe('on');
   });
 
   it('keeps the transition result when lifecycle actions fail', async () => {
@@ -196,6 +234,92 @@ describe('NarrativeStateManager', () => {
     await flush();
     expect(narrative.getActiveState('scenario')).toBe('exit');
     expect(narrative.getActiveState('flow')).toBe('done');
+  });
+
+  it('rejects runtime scenario boundary violations', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([
+      {
+        id: 'flow',
+        ownerType: 'flow',
+        initialState: 'ready',
+        states: { ready: { id: 'ready' } },
+        transitions: [
+          {
+            id: 'bad_enter',
+            from: 'ready',
+            to: { graphId: 'scenario', stateId: 'middle' },
+            signal: 'external:system:test:enter',
+          },
+        ],
+      },
+      {
+        id: 'scenario',
+        ownerType: 'scenario',
+        ownerId: 'local_scene',
+        initialState: 'inactive',
+        entryState: 'entry',
+        exitStates: ['exit'],
+        states: {
+          inactive: { id: 'inactive' },
+          entry: { id: 'entry' },
+          middle: { id: 'middle' },
+          exit: { id: 'exit' },
+        },
+        transitions: [],
+      },
+    ]);
+
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'enter' });
+    expect(narrative.getActiveState('scenario')).toBe('inactive');
+    await narrative.setNarrativeState('scenario', 'middle');
+    expect(narrative.getActiveState('scenario')).toBe('inactive');
+    const snapshot = narrative.debugSnapshot();
+    expect(JSON.stringify(snapshot)).toContain('scenario.boundary');
+  });
+
+  it('rejects duplicate graph ids during registration', () => {
+    const { narrative } = makeRuntime();
+    const graph = {
+      id: 'dup',
+      ownerType: 'flow' as const,
+      initialState: 'a',
+      states: { a: { id: 'a' } },
+      transitions: [],
+    };
+    expect(() => narrative.registerGraphs([graph, { ...graph }])).toThrow(/duplicate graph id/);
+  });
+
+  it('lets nested state commands await their actual application', async () => {
+    const { actionExecutor, narrative } = makeRuntime();
+    let observed = '';
+    actionExecutor.register('queueSetC', async () => {
+      await narrative.setNarrativeState('g', 'c');
+      observed = narrative.getActiveState('g') ?? '';
+    }, []);
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: {
+        a: { id: 'a' },
+        b: { id: 'b', onEnterActions: [{ type: 'queueSetC', params: {} }] },
+        c: { id: 'c' },
+      },
+      transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'external:system:test:go' }],
+    }]);
+
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+    expect(observed).toBe('c');
+    expect(narrative.getActiveState('g')).toBe('c');
+  });
+
+  it('throws on narrative graph load failure in dev/test mode', async () => {
+    const { narrative } = makeRuntime();
+    await expect(narrative.loadFromAsset({
+      loadJson: async () => { throw new Error('bad asset'); },
+    } as any)).rejects.toThrow('bad asset');
+    expect(JSON.stringify(narrative.debugSnapshot())).toContain('narrative.load.failed');
   });
 
   it('loads the real dock water monkey chain data', async () => {

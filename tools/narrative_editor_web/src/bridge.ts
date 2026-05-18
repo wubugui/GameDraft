@@ -9,6 +9,8 @@ import type {
 } from './types';
 import { emptyCatalog, validateNarrativeData } from './editorModel';
 
+const DRAFT_STORAGE_KEY = 'narrative-editor-draft';
+
 type QtBridge = {
   getData: (cb: (payload: string) => void) => void;
   saveData: (payload: string, cb?: (result: string) => void) => void;
@@ -29,6 +31,12 @@ declare global {
       transport: unknown,
       cb: (channel: { objects: { narrativeBridge?: QtBridge } }) => void,
     ) => void;
+    __narrativeEditor?: {
+      getCurrentDataJson: () => string;
+      getCurrentDataHash: () => string;
+      isDirty: () => boolean;
+      markSaved: () => void;
+    };
   }
 }
 
@@ -51,24 +59,40 @@ function waitForBridge(): Promise<QtBridge | null> {
 const emptyData: NarrativeGraphsFileDef = { schemaVersion: 2, compositions: [] };
 
 export async function loadNarrativeData(): Promise<NarrativeGraphsFileDef> {
+  return (await loadNarrativeDataWithSource()).data;
+}
+
+export async function loadNarrativeDataWithSource(): Promise<{ data: NarrativeGraphsFileDef; source: string }> {
   const bridge = await waitForBridge();
   if (!bridge) {
+    const draft = localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (draft) {
+      try {
+        return { data: JSON.parse(draft) as NarrativeGraphsFileDef, source: 'local draft' };
+      } catch {
+        localStorage.removeItem(DRAFT_STORAGE_KEY);
+      }
+    }
     try {
       const res = await fetch('/assets/data/narrative_graphs.json');
-      return (await res.json()) as NarrativeGraphsFileDef;
+      return { data: (await res.json()) as NarrativeGraphsFileDef, source: 'runtime file' };
     } catch {
-      return emptyData;
+      return { data: emptyData, source: 'empty fallback' };
     }
   }
   return new Promise((resolve) => {
     bridge.getData((payload) => {
       try {
-        resolve(JSON.parse(payload) as NarrativeGraphsFileDef);
+        resolve({ data: JSON.parse(payload) as NarrativeGraphsFileDef, source: 'ProjectModel' });
       } catch {
-        resolve(emptyData);
+        resolve({ data: emptyData, source: 'empty fallback' });
       }
     });
   });
+}
+
+export function clearLocalNarrativeDraft(): void {
+  localStorage.removeItem(DRAFT_STORAGE_KEY);
 }
 
 export async function saveNarrativeData(data: NarrativeGraphsFileDef): Promise<string> {
@@ -78,7 +102,7 @@ export async function saveNarrativeData(data: NarrativeGraphsFileDef): Promise<s
   const errorCount = issues.filter((issue) => issue.severity === 'error').length;
   if (errorCount > 0) return `save blocked: ${errorCount} validation error(s)`;
   if (!bridge) {
-    localStorage.setItem('narrative-editor-draft', payload);
+    localStorage.setItem(DRAFT_STORAGE_KEY, payload);
     return 'saved locally';
   }
   return new Promise((resolve) => {
@@ -88,16 +112,18 @@ export async function saveNarrativeData(data: NarrativeGraphsFileDef): Promise<s
 
 export async function loadProjection(data: NarrativeGraphsFileDef): Promise<ProjectionResult> {
   const bridge = await waitForBridge();
-  const fallback: ProjectionResult = { triggerEdges: [], readEdges: [], stateCommandEdges: [] };
+  const fallback: ProjectionResult = { schemaVersion: 1, triggerEdges: [], readEdges: [], stateCommandEdges: [], warnings: [] };
   if (!bridge) return fallback;
   return new Promise((resolve) => {
     bridge.getProjection(JSON.stringify(data), (payload) => {
       try {
         const parsed = JSON.parse(payload) as ProjectionResult;
         resolve({
+          schemaVersion: parsed.schemaVersion ?? 1,
           triggerEdges: parsed.triggerEdges ?? [],
           readEdges: parsed.readEdges ?? [],
           stateCommandEdges: parsed.stateCommandEdges ?? [],
+          warnings: parsed.warnings ?? [],
         });
       } catch {
         resolve(fallback);

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from PySide6.QtWidgets import QMessageBox
 
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 from tools.editor.editors.narrative_state_editor import (
+    NarrativeStateEditor,
     NarrativeEditorBridge,
     derive_projection,
     validate_narrative_graphs,
@@ -78,6 +82,60 @@ class TestNarrativeStateEditor(unittest.TestCase):
             self.assertIn("saved", result)
             self.assertTrue(m.is_dirty)
             self.assertEqual(m.narrative_composition_ids_ordered(), ["comp"])
+
+    def test_bridge_save_rejects_invalid_narrative_graphs(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            bridge = NarrativeEditorBridge(m)
+            before = m.narrative_graphs
+            result = bridge.saveData(json.dumps({
+                "schemaVersion": 2,
+                "compositions": [
+                    {
+                        "id": "comp",
+                        "mainGraph": {
+                            "id": "flow",
+                            "ownerType": "flow",
+                            "initialState": "initial",
+                            "states": {"initial": {"id": "initial"}},
+                            "transitions": [{"id": "draft", "from": "initial", "to": "missing", "signal": ""}],
+                        },
+                        "elements": [],
+                    }
+                ],
+            }))
+            self.assertIn("save blocked", result)
+            self.assertEqual(m.narrative_graphs, before)
+            self.assertFalse(m.is_dirty)
+
+    def test_save_all_rejects_invalid_narrative_graphs(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            m.narrative_graphs = {
+                "schemaVersion": 2,
+                "compositions": [
+                    {
+                        "id": "comp",
+                        "mainGraph": {
+                            "id": "flow",
+                            "ownerType": "flow",
+                            "initialState": "initial",
+                            "states": {"initial": {"id": "initial"}},
+                            "transitions": [{"id": "draft", "from": "initial", "to": "missing", "signal": ""}],
+                        },
+                        "elements": [],
+                    }
+                ],
+            }
+            m.mark_dirty("narrative_graphs")
+            with self.assertRaises(ValueError):
+                m.save_all()
 
     def test_projection_derives_real_trigger_edges_from_actions(self) -> None:
         with TemporaryDirectory() as td:
@@ -150,6 +208,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 ],
             }
             projection = derive_projection(m.narrative_graphs, m)
+            self.assertEqual(projection["schemaVersion"], 1)
             self.assertTrue(any(
                 e["source"] == "element:dialogue_d"
                 and e["target"] == "transition-anchor:flow:t"
@@ -159,6 +218,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 and "flow.t" in e["detail"]
                 for e in projection["triggerEdges"]
             ))
+            self.assertIn("warnings", projection)
 
     def test_projection_derives_state_command_edges_from_actions(self) -> None:
         with TemporaryDirectory() as td:
@@ -224,6 +284,54 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 for e in projection["stateCommandEdges"]
             ))
 
+    def test_projection_visitor_emits_fan_in_warnings_and_explicit_commands(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            m.water_minigames_instances["mg"] = {
+                "actions": [
+                    {
+                        "type": "emitNarrativeSignal",
+                        "params": {"sourceType": "minigame", "sourceId": "mg", "signal": "won"},
+                    }
+                ]
+            }
+            m.narrative_graphs = {
+                "schemaVersion": 2,
+                "compositions": [
+                    {
+                        "id": "comp",
+                        "mainGraph": {
+                            "id": "flow",
+                            "ownerType": "flow",
+                            "initialState": "a",
+                            "states": {"a": {"id": "a"}, "b": {"id": "b"}},
+                            "transitions": [
+                                {"id": "t", "from": "a", "to": "b", "signal": "external:minigame:mg:won"},
+                            ],
+                        },
+                        "elements": [
+                            {"id": "mg_a", "kind": "minigameBlackbox", "refId": "mg", "meta": {"commands": ["flow.b"]}},
+                            {"id": "mg_b", "kind": "minigameBlackbox", "refId": "mg"},
+                        ],
+                    },
+                ],
+            }
+            projection = derive_projection(m.narrative_graphs, m)
+            fan_in_sources = {
+                e["source"]
+                for e in projection["triggerEdges"]
+                if e["target"] == "transition-anchor:flow:t"
+            }
+            self.assertEqual(fan_in_sources, {"element:mg_a", "element:mg_b"})
+            self.assertTrue(any(w["code"] == "projection.source.ambiguous" for w in projection["warnings"]))
+            self.assertTrue(any(
+                e["source"] == "element:mg_a" and e["target"] == "state:b"
+                for e in projection["stateCommandEdges"]
+            ))
+
     def test_validate_blocks_missing_transition_target_and_signal(self) -> None:
         issues = validate_narrative_graphs({
             "schemaVersion": 2,
@@ -244,6 +352,33 @@ class TestNarrativeStateEditor(unittest.TestCase):
         codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
         self.assertIn("transition.to.missing", codes)
         self.assertIn("transition.signal.empty", codes)
+
+    def test_validate_blocks_anchor_delimiters_and_bad_actions(self) -> None:
+        issues = validate_narrative_graphs({
+            "schemaVersion": 2,
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow:bad",
+                        "ownerType": "flow",
+                        "initialState": "a",
+                        "states": {
+                            "a": {
+                                "id": "a",
+                                "onExitActions": [{"type": "setNarrativeState", "params": {"graphId": "flow:bad"}}],
+                            },
+                        },
+                        "transitions": [{"id": "t:bad", "from": "a", "to": "a", "signal": "external:system:test:go"}],
+                    },
+                    "elements": [],
+                },
+            ],
+        })
+        error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
+        self.assertIn("graph.id.delimiter", error_codes)
+        self.assertIn("transition.id.delimiter", error_codes)
+        self.assertIn("action.param.missing", error_codes)
 
     def test_validate_blocks_external_edge_to_scenario_internal_state(self) -> None:
         issues = validate_narrative_graphs({
@@ -304,6 +439,29 @@ class TestNarrativeStateEditor(unittest.TestCase):
             result = json.loads(bridge.getRuntimeSnapshot())
             self.assertFalse(result["ok"])
             self.assertIn("Game window", result["reason"])
+
+    def test_confirm_close_dirty_save_flushes_model(self) -> None:
+        class FakeEditor:
+            def __init__(self) -> None:
+                self._view = object()
+                self.flushed = False
+
+            def _run_editor_js_result(self, code: str, timeout_ms: int = 5000):  # noqa: ANN001
+                if "isDirty" in code:
+                    return True
+                return True
+
+            def flush_to_model(self) -> bool:
+                self.flushed = True
+                return True
+
+        fake = FakeEditor()
+        with patch(
+            "tools.editor.editors.narrative_state_editor.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Save,
+        ):
+            self.assertTrue(NarrativeStateEditor.confirm_close(fake, None))  # type: ignore[arg-type]
+        self.assertTrue(fake.flushed)
 
 
 if __name__ == "__main__":

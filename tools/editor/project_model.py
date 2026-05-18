@@ -373,6 +373,16 @@ class ProjectModel(QObject):
             if "scenarios" in dty:
                 write_json(dp / "scenarios.json", self.scenarios_catalog)
             if "narrative_graphs" in dty:
+                from .editors.narrative_state_editor import (
+                    _normalize_file as _normalize_narrative_graphs,
+                    _validation_errors_for_save as _narrative_validation_errors_for_save,
+                )
+                normalized_narrative = _normalize_narrative_graphs(self.narrative_graphs)
+                narrative_errors = _narrative_validation_errors_for_save(normalized_narrative, self)
+                if narrative_errors:
+                    preview = "; ".join(str(e.get("message") or e.get("code")) for e in narrative_errors[:4])
+                    raise ValueError(f"narrative_graphs validation failed: {len(narrative_errors)} error(s). {preview}")
+                self.narrative_graphs = normalized_narrative
                 write_json(dp / "narrative_graphs.json", self.narrative_graphs)
             if "document_reveals" in dty:
                 write_json(dp / "document_reveals.json", self.document_reveals)

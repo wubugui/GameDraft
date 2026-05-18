@@ -68,6 +68,7 @@ export class GraphDialogueManager implements IGameSystem {
   private scenarioState: ScenarioStateManager;
   private strings: StringsProvider | null = null;
   private resolveDisplay: ((s: string) => string) | null = null;
+  private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
   private graph: DialogueGraphFile | null = null;
   /** 加载时使用的 graphId（文件名），与 JSON 内 `id` 可能不一致时仍以路径为准 */
@@ -126,6 +127,10 @@ export class GraphDialogueManager implements IGameSystem {
     this.scenarioState = scenarioState;
   }
 
+  setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
+    this.conditionCtxFactory = factory;
+  }
+
   /** F2 叙事调试：最近一次 preconditions / switch 的解算路径与当前图节点 */
   getNarrativeEvalDebug(): {
     active: boolean;
@@ -177,6 +182,8 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   private conditionCtx(): ConditionEvalContext {
+    const injected = this.conditionCtxFactory?.();
+    if (injected) return injected;
     return {
       flagStore: this.flagStore,
       questManager: this.questManager,

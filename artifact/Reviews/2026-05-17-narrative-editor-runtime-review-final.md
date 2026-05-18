@@ -1,8 +1,4 @@
-# 2026-05-17 Narrative Editor & Runtime Review（最终合并版）
-
-## 合并说明
-
-本报告由当日两份独立审查（`2026-05-17-narrative-editor-runtime-review.md`、`2026-05-17-narrative-editor-runtime-review1.md`）合并而成。所有结论已经通过只读子代理对照仓库当前代码逐条复核，标注结论的成立度（成立 / 部分成立 / 不成立）。重叠条目合并表述，互补条目按系统层次重新组织。
+# 2026-05-17 Narrative Editor & Runtime Review
 
 ## 审查范围
 
@@ -22,7 +18,7 @@
 
 ## 高优先级问题
 
-### H1. 运行时：图对话 / 文档揭示无法读取 narrative 条件【成立】
+### H1. 运行时：图对话 / 文档揭示无法读取 narrative 条件
 
 `evaluateGraphCondition.ts` 的 narrative 叶子依赖 `ctx.narrativeState?.isStateActive(...)` / `ctx.narrativeState?.getActiveState(...)`（约 148-151、247-251 行），而：
 
@@ -42,7 +38,7 @@
 
 ---
 
-### H2. 运行时：跨图 transition 不退出源 state【成立】
+### H2. 运行时：跨图 transition 不退出源 state
 
 `NarrativeStateManager.applyTransition()`（约 406-407 行）在 `to.graphId !== from.graphId` 时**只对目标图调用 `enterState`**，源图 `activeStates` 不更新，源 state 的 `onExitActions` 与 `stateExited` 生命周期不触发。
 
@@ -59,7 +55,7 @@
 
 ---
 
-### H3. 运行时：`setNarrativeState` / `applyStateCommand` 绕过 scenario 边界【成立】
+### H3. 运行时：`setNarrativeState` / `applyStateCommand` 绕过 scenario 边界
 
 `NarrativeStateManager.setNarrativeState()`（约 238-242 行）只是 `enqueue({ kind: 'setState' })`；`applyStateCommand()`（约 376-383 行）在校验图和 state 存在后直接调 `enterState`，**没有 entry/exit/boundary 检查**。
 
@@ -94,7 +90,7 @@
 
 ---
 
-### H5. 运行时：drain 期间入队的 trigger 返回错误的已完成 Promise【成立】
+### H5. 运行时：drain 期间入队的 trigger 返回错误的已完成 Promise
 
 `NarrativeStateManager.enqueue()` 在 `draining` 为真时执行 `this.queue.push(trigger); return Promise.resolve();`（约 303-307 行）。
 
@@ -110,7 +106,7 @@
 
 ---
 
-### H6. 运行时：初始状态 `onEnterActions` 不执行，也不发 `stateEntered`【成立】
+### H6. 运行时：初始状态 `onEnterActions` 不执行，也不发 `stateEntered`
 
 `registerGraphs()`（约 174-188 行）只做 `activeStates.set(graph.id, graph.initialState)` 和 flag 投影，**没有调用 `enterState`、没有触发 `stateEntered`、也没有跑 `onEnterActions`**。
 
@@ -127,7 +123,7 @@
 
 ---
 
-### H7. 运行时：重复 graph id 静默覆盖【成立】
+### H7. 运行时：重复 graph id 静默覆盖
 
 `registerGraphs()` 内 `this.graphs.set(graph.id, graph)`（约 184 行），无重复检测，后者覆盖前者无任何告警。
 
@@ -138,7 +134,7 @@
 
 修复建议：
 
-- runtime 侧遇重复 id 必须抛错（或至少结构化告警 + 拒绝注册第二份）。
+- runtime 侧遇重复 id 必须抛错。
 - 编辑器侧 normalize 阶段扫描全工程 graph id 唯一性。
 
 ---
@@ -161,7 +157,7 @@
 
 ---
 
-### H9. 运行时：信号 key 用冒号拼接，sourceId 含冒号会解析错【成立】
+### H9. 运行时：信号 key 用冒号拼接，sourceId 含冒号会解析错
 
 `NarrativeStateManager.externalKey` 生成 `external:${sourceType}:${sourceId}:${signal}`（约 145-146 行），`editorModel.ts` 的 `parseExternalSignalKey` 用 `key.split(':')` 解析，`sourceId` 取 `parts[2]`，`signal` 用 `parts.slice(3).join(':')`（约 351-356 行）。
 
@@ -172,12 +168,12 @@
 
 修复建议：
 
-- 信号 key 改为结构化对象（不要在传输层依赖字符串拼接），或对各字段强制 URL-safe 编码。
+- 信号 key 改为结构化对象（不要在传输层依赖字符串拼接）。
 - 编辑器与 runtime 共用同一份 key 编解码工具。
 
 ---
 
-### H10. 工具链：主编辑器 Save All 链路断裂【成立】
+### H10. 工具链：主编辑器 Save All 链路断裂
 
 - `tools/editor/editors/narrative_state_editor.py:269` 的 `flush_to_model()` 直接 `return True`。
 - 同文件 `confirm_close()` 也直接 `return True`。
@@ -198,7 +194,7 @@
 
 ---
 
-### H11. 工具链：PySide bridge `saveData` 不在边界做校验【成立】
+### H11. 工具链：PySide bridge `saveData` 不在边界做校验
 
 `tools/editor/editors/narrative_state_editor.py:83-93` 的 `saveData` 只做 `json.loads` 与「根对象为 dict」检查，随后 `_normalize_file` 直接写入 `narrative_graphs` 并 `mark_dirty`。校验函数 `validate_narrative_graphs` 被放在独立的 `validateData` slot（约 108-121 行），与 `saveData` 完全分离。
 
@@ -214,7 +210,7 @@
 
 ---
 
-### H12. 工具链：TS / Python / runtime 三份校验，无单一入口【成立】
+### H12. 工具链：TS / Python / runtime 三份校验，无单一入口
 
 当前实测：
 
@@ -239,11 +235,11 @@
 
 - 抽出 schema / validator 单一来源。可选：以 JSON Schema 或单一 TS 定义为权威，自动生成 Python 校验代码。
 - Action 与 ConditionExpr 的校验必须引用 `ActionRegistry`，未注册 action、缺必需参数、quest/scenario 缺字段全部提升为 error。
-- bridge `saveData`、Web 保存、主编辑器 Save All 三个入口**共用**这一套规则。
+- bridge `saveData`、Web 保存、主编辑器 Save All 三个入口**共用**这一套规则!
 
 ---
 
-### H13. 编辑器结构：Graph 重命名不同步引用【成立】
+### H13. 编辑器结构：Graph 重命名不同步引用
 
 `tools/narrative_editor_web/src/NarrativeEditorApp.tsx:872-873` GraphInspector 直接 `g.id = value`。对比 StateInspector 在 909-916 行通过 `renameStateInGraph` 触发 `updateTransitionEndpointRefs` / `updateLifecycleSignalRefs` 等批量同步（见 `editorModel.ts` 约 261-265 行）。
 
@@ -259,7 +255,7 @@
 
 ---
 
-### H14. 编辑器结构：高级 JSON Apply 不强制 validate + 引用同步【部分成立】
+### H14. 编辑器结构：高级 JSON Apply 不强制 validate + 引用同步
 
 `tools/narrative_editor_web/src/NarrativeEditorApp.tsx:490-557` 的 `applySelectedJson` 在 rename 场景下会调用 `renameStateInGraph` / `renameTransition` / `renameElement`，并且外层 `updateData` 末尾会跑 `refreshProjectionAndValidation`（约 171-174 行）、`normalizeFile`（约 177-181 行）。
 
@@ -280,7 +276,7 @@
 
 ## 中优先级问题
 
-### M1. Web 模拟器条件求值不完整【部分成立】
+### M1. Web 模拟器条件求值不完整
 
 `tools/narrative_editor_web/src/editorModel.ts:419-433` 的 `evalCondition`：
 
@@ -300,7 +296,7 @@
 
 ---
 
-### M2. Web 校验过浅，错误被降级为 warning【成立】
+### M2. Web 校验过浅，错误被降级为 warning
 
 `validateActions` / `validateConditions` 都是形状级检查，且大量问题用 `severity: warning`，而保存阻断只看 `error`（`NarrativeEditorApp.tsx` 559-567）。
 
@@ -311,7 +307,7 @@
 
 ---
 
-### M3. 新建 transition 默认 `external:system:TODO:signal`【成立】
+### M3. 新建 transition 默认 `external:system:TODO:signal`
 
 `editorModel.ts:171` 默认值 `'external:system:TODO:signal'`，`validateGraph` 在 529 行只拦截 `!t.signal?.trim()`，导致 TODO 占位信号可合法保存。
 
@@ -322,7 +318,7 @@
 
 ---
 
-### M4. 无 bridge 时 Web 编辑器 localStorage 只写不读【成立】
+### M4. 无 bridge 时 Web 编辑器 localStorage 只写不读
 
 `tools/narrative_editor_web/src/bridge.ts`：
 
@@ -341,7 +337,7 @@
 
 ---
 
-### M5. `derive_projection()` 数据源偏窄【成立】
+### M5. `derive_projection()` 数据源偏窄
 
 `tools/editor/editors/narrative_state_editor.py` 的 `derive_projection`、`_iter_action_signal_sources`、`_iter_state_command_sources`、`_iter_condition_sources`（约 292-346、819-868 行）只扫 dialogue graph、scene/zone、water minigames、quest。
 
@@ -358,33 +354,47 @@
 
 ---
 
-### M6. 外部接线靠启发式推导【成立】
+### M6. 外部接线编译器：数据源覆盖不全且匹配规则未完全显式化【设计意图修正】
 
-`_source_node_for_action`（约 910-924 行）依赖 `meta.emits` / `refId` / kind 的启发式匹配；`_source_node_for_condition`（约 958-967 行）按 dialogueBlackbox/refId、quest owner 配对。
+> 设计意图复核：外部接线**不是手写的 authoring contract**，而是从全工程数据（action / condition）**严格编译**出的投影。`_transition_targets` 给出目标图（main_graph + 各 element subgraph 的所有 `transition.signal` 与 state），编译器把全工程的 `emitNarrativeSignal` / `setNarrativeState` / narrative condition 严格匹配到目标图上。本身不是「猜线」，而是「编译」。原报告把它定性为「启发式 / 应该降级」是不对的。
+
+但当前编译器实现仍有两个真实缺口：
+
+1. **数据源覆盖不全**（与 M5 同源）：`_iter_action_signal_sources` / `_iter_state_command_sources` / `_iter_condition_sources` 只扫描 dialogue graph、scene/zone、water minigames、quest。而 `project_model.py` 实际还在加载 `sugar_wheel` / `paper_craft` / `document_reveals` / `archive/*` / `cutscene` 等数据源，全部没有进入编译。结果是编译产物**漏边**——作者看不到「这个状态实际被 sugar wheel 写过 / 被 archive 读过」。
+2. **fallback 反推规则不够稳定**：`_source_node_for_action` 优先用 element 的 `meta.emits`（显式声明，最佳），未命中时按 `kind + refId` 反推 element。这一回退路径在「同一 dialogue / minigame / zone 被多个 element 引用」时只返回第一个匹配项，会丢边；在 `refId` 命名空间约定变更时也容易失效。`_source_node_for_condition` 同样依赖 `refId` / `ownerId` 字符串匹配。
 
 影响：
 
-- 推导关系不来自显式 authoring contract，难以解释、难以做去重 / 错误定位。
-- 主画布把它当成与真实状态同级的核心结构，会强化作者对「图」语义的错觉。
+- 编译产物不完整 + 不可解释，作者会误以为某状态没人写 / 没人读，实际运行时有引用。
+- 同一 ref 被多元素引用的场景下，画布上的来源节点和真实来源不一致。
 
 修复建议：
 
-- 把外部接线降级为「选中真实节点 / transition 后的关联视图」，不再当主画布一等公民。
-- 长期方向：让 action / condition 在数据层显式承载 source 引用，而不是从字段反推。
+- 把数据源扫描收敛到统一的 asset visitor（与 M5 共用）：每种数据源（含 sugar_wheel / paper_craft / document_reveals / archive / cutscene）注册一次 visitor，编译器自动遍历所有 `ActionDef` 与 `ConditionExpr`，不再硬编码分支。
+- 把 `meta.emits` 从「优化提示」升级为「编译契约」：要求每个能 emit 叙事信号的 element 必须显式声明 emits / commands / reads；缺失时编译器报 warning（而不是悄悄 fallback）。
+- 反推规则按「精确 ref → 唯一 element」对待：多 element 同 ref 的情况要么在编辑器层禁止，要么编译器输出多对一的明确连线并标注「fan-in」语义。
 
 ---
 
-### M7. 外部接线节点 ID 是字符串拼接【成立】
+### M7. 外部接线编译产物的 anchor id 稳定性【设计意图修正】
 
-`_graph_node_index`（约 740-755 行）生成 `state:{sid}` / `subgraph:{elementId}:state:{sid}`；`_transition_anchor`（约 993-994 行）生成 `transition-anchor:{graphId}:{transitionId}`。
+> 设计意图复核：`state:{sid}` / `subgraph:{elementId}:state:{sid}` / `transition-anchor:{graphId}:{transitionId}` 这些 id 是**编译产物的稳定命名**，不是 UI 字符串拼接。编译器一等公民可以是字符串 id，关键不在「形式」，而在「稳定可重现 + 不与其他 key 命名空间冲突」。原报告把它定性为「字符串拼接，应改结构化 endpoint」是表层化的批评。
+
+但当前命名仍有两个真实风险点：
+
+1. **与 H9 共享同一类风险**：anchor 用 `:` 作为分隔符，而 `graphId` / `transitionId` / `elementId` / `sid` 在 schema 上都没有禁止冒号；含冒号的 id 会让 anchor 解析回原结构时出现歧义。
+2. **编译产物没有版本号 / schema 标签**：anchor id 跨编译器版本是否保持稳定，目前由约定维持，没有契约。后续如果调整命名（例如把 `subgraph:` 改为 `composition:`），下游缓存、选择持久化、测试快照都会同时失效。
 
 影响：
 
-- 选择 / 定位 / 去重 / 解释链路全部依赖字符串拼接，含特殊字符的 id（H9）会进一步破坏。
+- 编译产物作为「主画布一等数据」存在，但稳定性靠口头约定。
+- 与 H9 叠加时，含特殊字符的 id 会把整条链路打穿。
 
 修复建议：
 
-- 引入结构化 endpoint 类型（dataclass / TypedDict / Pydantic 模型），UI 层只在显示时落字符串。
+- 把 anchor 编解码集中到一个模块（例如 `narrative_projection_anchor.py`），所有读写 / 解析走同一入口；测试覆盖含特殊字符的 id。
+- 在 schema 校验时禁止 `id` 字段使用分隔符字符（`:`、`|` 等），或者改用 URL-safe 的分隔符 / 编码。
+- 给编译产物加上 `schemaVersion`，下游消费者按版本协商。
 
 ## 中低优先级问题
 
@@ -481,9 +491,8 @@ npm run build
 15. Web 模拟器复用 runtime 求值（M1）。
 16. 默认 TODO signal 替换（M3）。
 17. 加载草稿读取与显示（M4）。
-18. 投影统一为 asset visitor（M5）。
-19. 外部接线降级为解释层 + 结构化 endpoint（M6、M7）。
-20. 清理死代码 / 状态隔离 / React Flow 单数据源（L1、L2、L3）。
+18. **外部接线编译器治理**：数据源统一为 asset visitor（M5 + M6），`meta.emits` 升级为显式编译契约，anchor 编解码集中入口 + 禁分隔符字符 + 加 schemaVersion（M7）。
+19. 清理死代码 / 状态隔离 / React Flow 单数据源（L1、L2、L3）。
 
 ## 最终判断
 
@@ -493,4 +502,6 @@ npm run build
 - editor 的结构化模型、高级 JSON 编辑、Python bridge 校验不是同一个权威路径。
 - 校验规则 TS / Python / runtime 各一份，已经在错误码层面开始漂移。
 
-下一步优先不是继续加 UI，而是收敛这三件事：**运行时强约束 → 单一校验 / normalize 入口 → 外部接线降级为解释层**。测试也应围绕这三点补，而不是只验证「能 build」。
+外部接线（projection）的定位需要单独澄清：它是**编译产物**，从全工程的 action / condition 严格编译出投影，有明确的目标图，本身是一等公民。当前问题不是「应该降级」，而是**编译器**自身：数据源覆盖不全、`meta.emits` 不是强制契约、anchor 命名空间与分隔符未做强约束。
+
+下一步优先不是继续加 UI，而是收敛三件事：**runtime 强约束 → 单一校验 / normalize 入口 → 外部接线编译器（数据源、契约、anchor 稳定性）治理**。测试也应围绕这三点补，而不是只验证「能 build」。

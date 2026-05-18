@@ -8,7 +8,6 @@ import {
   MiniMap,
   Position,
   ReactFlow,
-  addEdge,
   applyEdgeChanges,
   applyNodeChanges,
   getBezierPath,
@@ -20,19 +19,22 @@ import {
   type OnNodesChange,
 } from '@xyflow/react';
 import {
+  clearLocalNarrativeDraft,
   emitRuntimeSignal,
   editActionsNative,
   getRuntimeSnapshot,
   loadAuthoringCatalog,
-  loadNarrativeData,
+  loadNarrativeDataWithSource,
   loadProjection,
   navigateTo,
   saveNarrativeData,
   setRuntimeNarrativeState,
   validateNarrativeDataRemote,
 } from './bridge';
+import { parseTransitionAnchorId, transitionAnchorId } from './anchorCodec';
 import {
   collectKnownSignals,
+  blockingValidationErrors,
   compileGraphs,
   createComposition,
   createElement,
@@ -51,6 +53,7 @@ import {
   normalizeFile,
   parseEndpointInput,
   parseExternalSignalKey,
+  renameGraph,
   renameElement,
   renameStateInGraph,
   renameTransition,
@@ -109,9 +112,18 @@ const elementKinds: ElementKind[] = [
 
 const wrapperOwnerTypes = ['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'system'];
 
+function stableHash(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 export function NarrativeEditorApp() {
   const [data, setData] = useState<NarrativeGraphsFileDef>(defaultFile);
-  const [projection, setProjection] = useState<ProjectionResult>({ triggerEdges: [], readEdges: [], stateCommandEdges: [] });
+  const [projection, setProjection] = useState<ProjectionResult>({ schemaVersion: 1, triggerEdges: [], readEdges: [], stateCommandEdges: [], warnings: [] });
   const [catalog, setCatalog] = useState<AuthoringCatalogDef>(emptyCatalog);
   const [validationIssues, setValidationIssues] = useState<ValidationIssueDef[]>([]);
   const [compositionId, setCompositionId] = useState('');
@@ -131,8 +143,14 @@ export function NarrativeEditorApp() {
   const [signalKey, setSignalKey] = useState('');
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeDebugSnapshotDef>({ ok: false, reason: 'Runtime not queried yet' });
+  const [dirty, setDirty] = useState(false);
+  const [savedDataHash, setSavedDataHash] = useState('');
+  const [dataSource, setDataSource] = useState('');
 
   const compositions = data.compositions ?? [];
+  const currentDataJson = useMemo(() => JSON.stringify(normalizeFile(data)), [data]);
+  const currentDataHash = useMemo(() => stableHash(currentDataJson), [currentDataJson]);
+  const editorDirty = dirty || (savedDataHash !== '' && currentDataHash !== savedDataHash);
   const composition = useMemo(() => getComposition(data, compositionId), [data, compositionId]);
   const graph = useMemo(() => getEditableGraph(composition, graphRef), [composition, graphRef]);
   const activeStates = useMemo(() => extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? {}, [runtimeSnapshot, simulation]);
@@ -143,16 +161,36 @@ export function NarrativeEditorApp() {
   );
 
   useEffect(() => {
-    void loadNarrativeData().then(async (loaded) => {
-      const next = normalizeFile(loaded);
+    void loadNarrativeDataWithSource().then(async (loaded) => {
+      const next = normalizeFile(loaded.data);
       setData(next);
       setCompositionId(next.compositions?.[0]?.id ?? '');
       setSignalKey(collectKnownSignals(next)[0] ?? '');
       setCatalog(await loadAuthoringCatalog());
       setValidationIssues(await validateNarrativeDataRemote(next));
-      setStatus('Loaded');
+      setDataSource(loaded.source);
+      setSavedDataHash(stableHash(JSON.stringify(next)));
+      setDirty(false);
+      setStatus(`Loaded from ${loaded.source}`);
     });
   }, []);
+
+  useEffect(() => {
+    window.__narrativeEditor = {
+      getCurrentDataJson: () => currentDataJson,
+      getCurrentDataHash: () => currentDataHash,
+      isDirty: () => editorDirty,
+      markSaved: () => {
+        setSavedDataHash(currentDataHash);
+        setDirty(false);
+      },
+    };
+    return () => {
+      if (window.__narrativeEditor?.getCurrentDataHash() === currentDataHash) {
+        delete window.__narrativeEditor;
+      }
+    };
+  }, [currentDataHash, currentDataJson, editorDirty]);
 
   useEffect(() => {
     void refreshProjectionAndValidation(data);
@@ -178,6 +216,7 @@ export function NarrativeEditorApp() {
     setData((old) => {
       const next = normalizeFile(old);
       updater(next);
+      setDirty(true);
       void refreshProjectionAndValidation(next);
       return next;
     });
@@ -360,14 +399,6 @@ export function NarrativeEditorApp() {
     });
     if (created) {
       const edgeId = source.elementId ? inlineSubgraphTransitionId(source.elementId, created.id) : `transition:${created.id}`;
-      setEdges((eds) => addEdge({
-        ...conn,
-        id: edgeId,
-        type: 'transition',
-        label: created!.signal,
-        data: { edgeKind: 'transition', label: created!.signal, detail: created!.id },
-        markerEnd: { type: MarkerType.ArrowClosed },
-      }, eds));
       setSelectedId(edgeId);
       setSelectedJson(JSON.stringify(created, null, 2));
       setStatus(`Created transition ${created.id}`);
@@ -504,68 +535,46 @@ export function NarrativeEditorApp() {
       return;
     }
     try {
-      updateData((next) => {
-        const comp = getComposition(next, composition?.id ?? compositionId);
-        const g = getEditableGraph(comp, graphRef);
-        if (!comp || !g) return;
-        const inline = parseInlineSubgraphId(selectedId);
-        if (inline?.kind === 'state') {
-          const el = comp.elements?.find((item) => item.id === inline.elementId);
-          if (!el?.graph) return;
-          const nextState = parsed as NarrativeStateNodeDef;
-          const newId = renameStateInGraph(next, el.graph, inline.objectId, String(nextState.id || inline.objectId));
-          el.graph.states[newId] = { ...nextState, id: newId };
-          setSelectedId(inlineSubgraphStateId(inline.elementId, newId));
-        } else if (inline?.kind === 'transition') {
-          const el = comp.elements?.find((item) => item.id === inline.elementId);
-          if (!el?.graph) return;
-          const idx = el.graph.transitions.findIndex((t) => t.id === inline.objectId);
-          if (idx >= 0) {
-            const transition = parsed as NarrativeTransitionDef;
-            const newId = renameTransition(el.graph, inline.objectId, String(transition.id || inline.objectId));
-            el.graph.transitions[el.graph.transitions.findIndex((t) => t.id === newId)] = { ...transition, id: newId };
-            setSelectedId(inlineSubgraphTransitionId(inline.elementId, newId));
-          }
-        } else if (selectedId.startsWith('state:')) {
-          const oldId = selectedId.slice('state:'.length);
-          const nextState = parsed as NarrativeStateNodeDef;
-          const newId = renameStateInGraph(next, g, oldId, String(nextState.id || oldId));
-          g.states[newId] = { ...nextState, id: newId };
-          setSelectedId(`state:${newId}`);
-        } else if (selectedId.startsWith('transition:')) {
-          const oldId = selectedId.slice('transition:'.length);
-          const idx = g.transitions.findIndex((t) => t.id === oldId);
-          if (idx >= 0) {
-            const transition = parsed as NarrativeTransitionDef;
-            const newId = renameTransition(g, oldId, String(transition.id || oldId));
-            g.transitions[g.transitions.findIndex((t) => t.id === newId)] = { ...transition, id: newId };
-            setSelectedId(`transition:${newId}`);
-          }
-        } else if (selectedId.startsWith('element:') && graphRef === 'main') {
-          const oldId = selectedId.slice('element:'.length);
-          const nextElement = parsed as CompositionElementDef;
-          const newId = renameElement(comp, oldId, String(nextElement.id || oldId));
-          const idx = (comp.elements ?? []).findIndex((e) => e.id === newId);
-          if (idx >= 0) comp.elements![idx] = { ...nextElement, id: newId };
-          setSelectedId(`element:${newId}`);
-        }
-      });
+      const candidate = normalizeFile(data);
+      const nextSelectedId = applySelectedObjectJson(candidate, composition?.id ?? compositionId, graphRef, selectedId, parsed as Record<string, unknown>);
+      if (!nextSelectedId) {
+        setStatus('Selected object no longer exists');
+        return;
+      }
+      const normalized = normalizeFile(candidate);
+      const issues = await validateNarrativeDataRemote(normalized);
+      setValidationIssues(issues);
+      const errors = blockingValidationErrors(issues);
+      if (errors.length) {
+        setStatus(`JSON Apply blocked: ${errors.length} validation error(s)`);
+        return;
+      }
+      setData(normalized);
+      setDirty(true);
+      void refreshProjectionAndValidation(normalized);
+      setSelectedId(nextSelectedId);
+      setSelectedJson(JSON.stringify(getObjectForSelection(normalized, composition?.id ?? compositionId, graphRef, nextSelectedId), null, 2));
       setStatus('Applied JSON');
     } catch (e) {
       setStatus(String(e));
     }
-  }, [composition?.id, compositionId, graphRef, selectedId, selectedJson, updateData]);
+  }, [composition?.id, compositionId, data, graphRef, refreshProjectionAndValidation, selectedId, selectedJson]);
 
   const save = useCallback(async () => {
     const normalized = normalizeFile(data);
     const issues = await validateNarrativeDataRemote(normalized);
     setValidationIssues(issues);
-    const errors = issues.filter((issue) => issue.severity === 'error');
+    const errors = blockingValidationErrors(issues);
     if (errors.length) {
       setStatus(`Save blocked: ${errors.length} validation error(s)`);
       return;
     }
-    setStatus(await saveNarrativeData(normalized));
+    const result = await saveNarrativeData(normalized);
+    if (!/^save blocked:/i.test(result) && !/^invalid /i.test(result)) {
+      setSavedDataHash(stableHash(JSON.stringify(normalized)));
+      setDirty(false);
+    }
+    setStatus(result);
   }, [data]);
 
   const runLocalSimulation = useCallback(() => {
@@ -619,6 +628,8 @@ export function NarrativeEditorApp() {
                 setCompositionId(comp.id);
                 setGraphRef('main');
                 setSelectedId('');
+                setSelectedJson('');
+                setExpandedElementIds([]);
               }}
             >
               <span>{comp.label || comp.id}</span>
@@ -630,7 +641,12 @@ export function NarrativeEditorApp() {
         {composition && (
           <>
             <div className="section-title">Graph Navigation</div>
-            <button className={graphRef === 'main' ? 'composition active' : 'composition'} onClick={() => setGraphRef('main')}>
+            <button className={graphRef === 'main' ? 'composition active' : 'composition'} onClick={() => {
+              setGraphRef('main');
+              setSelectedId('');
+              setSelectedJson('');
+              setExpandedElementIds([]);
+            }}>
               <span>Main Graph</span>
               <small>{composition.mainGraph.id}</small>
             </button>
@@ -638,7 +654,12 @@ export function NarrativeEditorApp() {
               <button
                 key={el.id}
                 className={graphRef === `element:${el.id}` ? 'composition active' : 'composition'}
-                onClick={() => setGraphRef(`element:${el.id}`)}
+                onClick={() => {
+                  setGraphRef(`element:${el.id}`);
+                  setSelectedId('');
+                  setSelectedJson('');
+                  setExpandedElementIds([]);
+                }}
               >
                 <span>{el.label || el.id}</span>
                 <small>{el.graph?.id}</small>
@@ -684,6 +705,7 @@ export function NarrativeEditorApp() {
             <label className="toggle"><input type="checkbox" checked={showMiniMap} onChange={(e) => setShowMiniMap(e.target.checked)} /> MiniMap</label>
             <button onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>Delete</button>
             <button onClick={() => refreshProjectionAndValidation(data)}>Refresh</button>
+            <button type="button" onClick={() => { clearLocalNarrativeDraft(); setDataSource(dataSource ? `${dataSource} / draft cleared` : 'draft cleared'); setStatus('Local draft cleared'); }}>Clear Draft</button>
             <button className="primary" onClick={save}>Save</button>
           </div>
         </header>
@@ -710,7 +732,8 @@ export function NarrativeEditorApp() {
           </ReactFlow>
         </section>
         <footer className="status">
-          <span>{status}</span>
+          <span>{editorDirty ? `${status} *` : status}</span>
+          <span>{dataSource || 'source unknown'}</span>
           <span>{runtimeSnapshot.ok ? 'Runtime connected' : runtimeSnapshot.reason}</span>
         </footer>
       </main>
@@ -865,11 +888,23 @@ function GraphInspector(props: {
   graph: NarrativeGraphDef;
   graphRef: GraphRef;
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
+  setStatus?: (status: string) => void;
 }) {
   const { graph, updateCurrentGraph } = props;
   return (
     <div className="form-grid">
-      <TextField label="graph id" value={graph.id} onChange={(value) => updateCurrentGraph((g) => { g.id = value; })} />
+      <TextField
+        label="graph id"
+        value={graph.id}
+        commitOnBlur
+        onChange={(value) => updateCurrentGraph((g, next) => {
+          try {
+            renameGraph(next, g, value);
+          } catch (e) {
+            props.setStatus?.(String(e));
+          }
+        })}
+      />
       <TextField label="ownerType" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
       <TextField label="ownerId" value={graph.ownerId ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
       <SelectField label="initialState" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
@@ -960,6 +995,9 @@ function TransitionInspector(props: {
   const { graph, transition, updateCurrentGraph } = props;
   const endpointChoices = allEndpointChoices(props.data);
   const graphIds = compileGraphs(props.data).map((item) => item.graph.id);
+  const fromEndpoint = resolveEndpoint(transition.from, graph.id);
+  const toEndpoint = resolveEndpoint(transition.to, graph.id);
+  const remoteEnter = fromEndpoint.graphId !== toEndpoint.graphId;
   return (
     <div className="form-grid">
       <TextField
@@ -987,7 +1025,11 @@ function TransitionInspector(props: {
         datalistValues={endpointChoices}
         onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).to = parseEndpointInput(value, g.id, graphIds); })}
       />
-      <div className="property-line">Endpoint 可写本图 stateId，或跨图 graphId.stateId。跨图 transition 必须存放在 from 所属图里。</div>
+      <div className="property-line">
+        {remoteEnter
+          ? 'remote-enter: cross-graph transition enters the target graph only; the source graph keeps its current state.'
+          : 'Endpoint may be a local stateId or cross-graph graphId.stateId. Cross-graph transitions must live on the from graph.'}
+      </div>
       <TextField label="signal" value={transition.signal} datalistId="knownSignals" onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = value; })} />
       <NumberField label="priority" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).priority = value; })} />
       <JsonValueField label="conditions" value={transition.conditions ?? []} onApply={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).conditions = Array.isArray(value) ? value : []; })} />
@@ -1419,7 +1461,8 @@ function visibleProjectionEdgesForComposition(
 function projectionEndpointLabel(endpoint: string): string {
   if (endpoint.startsWith('graph:')) return endpoint.slice('graph:'.length);
   if (endpoint.startsWith('state:')) return endpoint.slice('state:'.length);
-  if (endpoint.startsWith('transition-anchor:')) return endpoint.replace(/^transition-anchor:/, '').replace(/:/g, '.');
+  const transitionAnchor = parseTransitionAnchorId(endpoint);
+  if (transitionAnchor) return `${transitionAnchor.graphId}.${transitionAnchor.transitionId}`;
   if (endpoint.startsWith('element:')) return endpoint.slice('element:'.length);
   return endpoint.replace(/^projection-anchor:/, '').replace(/^external:/, '');
 }
@@ -1437,6 +1480,99 @@ function getNodeObject(comp: NarrativeCompositionDef | undefined, graph: Narrati
   if (nodeId.startsWith('state:')) return graph.states[nodeId.slice('state:'.length)];
   if (nodeId.startsWith('element:')) return getElementByNodeId(comp, nodeId);
   return graph;
+}
+
+function getObjectForSelection(
+  data: NarrativeGraphsFileDef,
+  compositionId: string,
+  graphRef: GraphRef,
+  selectedId: string,
+): unknown {
+  const comp = getComposition(data, compositionId);
+  const graph = getEditableGraph(comp, graphRef);
+  return getNodeObject(comp, graph, selectedId);
+}
+
+function applySelectedObjectJson(
+  data: NarrativeGraphsFileDef,
+  compositionId: string,
+  graphRef: GraphRef,
+  selectedId: string,
+  parsed: Record<string, unknown>,
+): string | null {
+  const comp = getComposition(data, compositionId);
+  const g = getEditableGraph(comp, graphRef);
+  if (!comp || !g) return null;
+  const inline = parseInlineSubgraphId(selectedId);
+  if (inline?.kind === 'state') {
+    const el = comp.elements?.find((item) => item.id === inline.elementId);
+    if (!el?.graph) return null;
+    const nextState = parsed as unknown as NarrativeStateNodeDef;
+    const newId = renameStateInGraph(data, el.graph, inline.objectId, String(nextState.id || inline.objectId));
+    el.graph.states[newId] = { ...nextState, id: newId };
+    return inlineSubgraphStateId(inline.elementId, newId);
+  }
+  if (inline?.kind === 'transition') {
+    const el = comp.elements?.find((item) => item.id === inline.elementId);
+    if (!el?.graph || !el.graph.transitions.some((t) => t.id === inline.objectId)) return null;
+    const transition = parsed as unknown as NarrativeTransitionDef;
+    const newId = renameTransition(el.graph, inline.objectId, String(transition.id || inline.objectId));
+    const idx = el.graph.transitions.findIndex((t) => t.id === newId);
+    if (idx >= 0) el.graph.transitions[idx] = { ...transition, id: newId };
+    return inlineSubgraphTransitionId(inline.elementId, newId);
+  }
+  if (selectedId.startsWith('state:')) {
+    const oldId = selectedId.slice('state:'.length);
+    if (!g.states[oldId]) return null;
+    const nextState = parsed as unknown as NarrativeStateNodeDef;
+    const newId = renameStateInGraph(data, g, oldId, String(nextState.id || oldId));
+    g.states[newId] = { ...nextState, id: newId };
+    return `state:${newId}`;
+  }
+  if (selectedId.startsWith('transition:')) {
+    const oldId = selectedId.slice('transition:'.length);
+    if (!g.transitions.some((t) => t.id === oldId)) return null;
+    const transition = parsed as unknown as NarrativeTransitionDef;
+    const newId = renameTransition(g, oldId, String(transition.id || oldId));
+    const idx = g.transitions.findIndex((t) => t.id === newId);
+    if (idx >= 0) g.transitions[idx] = { ...transition, id: newId };
+    return `transition:${newId}`;
+  }
+  if (selectedId.startsWith('element:') && graphRef === 'main') {
+    const oldId = selectedId.slice('element:'.length);
+    const elements = comp.elements ?? [];
+    const oldElement = elements.find((e) => e.id === oldId);
+    if (!oldElement) return null;
+    const nextElement = parsed as unknown as CompositionElementDef;
+    const oldGraphId = oldElement.graph?.id;
+    const desiredGraphId = nextElement.graph?.id;
+    const newId = renameElement(comp, oldId, String(nextElement.id || oldId));
+    const idx = elements.findIndex((e) => e.id === newId);
+    if (idx < 0) return null;
+    const replacement: CompositionElementDef = { ...nextElement, id: newId };
+    if (oldGraphId && desiredGraphId && replacement.graph && desiredGraphId !== oldGraphId) {
+      replacement.graph = { ...replacement.graph, id: oldGraphId };
+    }
+    elements[idx] = replacement;
+    if (oldGraphId && desiredGraphId && replacement.graph && desiredGraphId !== oldGraphId) {
+      renameGraph(data, replacement.graph, desiredGraphId);
+    }
+    return `element:${newId}`;
+  }
+  if (selectedId.startsWith('graph:') || selectedId.startsWith('transition-anchor:')) {
+    const desiredGraphId = String((parsed as Partial<NarrativeGraphDef>).id || g.id);
+    const replacement: NarrativeGraphDef = { ...(parsed as unknown as NarrativeGraphDef), id: g.id };
+    if (graphRef === 'main') {
+      comp.mainGraph = replacement;
+    } else {
+      const element = getElementByGraphRef(comp, graphRef);
+      if (!element) return null;
+      element.graph = replacement;
+    }
+    if (desiredGraphId !== g.id) renameGraph(data, replacement, desiredGraphId);
+    return `graph:${replacement.id}`;
+  }
+  return null;
 }
 
 function getSelectedSummary(comp: NarrativeCompositionDef | undefined, graph: NarrativeGraphDef | undefined, graphRef: GraphRef, selectedId: string) {
@@ -1496,10 +1632,6 @@ function inlineSubgraphBase(element: CompositionElementDef): { x: number; y: num
     x: Number(element.x ?? 0) + 24,
     y: Number(element.y ?? 0) + 150,
   };
-}
-
-function transitionAnchorId(graphId: string, transitionId: string): string {
-  return `transition-anchor:${graphId}:${transitionId}`;
 }
 
 function nodeIdForEndpoint(
@@ -1850,56 +1982,6 @@ function ActionListField({
     </div>
   );
 
-  const actionTypes = catalog.actionTypes.length ? catalog.actionTypes : ['setFlag', 'emitNarrativeSignal', 'setNarrativeState'];
-  const updateAt = (index: number, action: ActionDef) => {
-    const next = actions.slice();
-    next[index] = action;
-    onChange(next);
-  };
-  const move = (index: number, delta: number) => {
-    const nextIndex = index + delta;
-    if (nextIndex < 0 || nextIndex >= actions.length) return;
-    const next = actions.slice();
-    [next[index], next[nextIndex]] = [next[nextIndex]!, next[index]!];
-    onChange(next);
-  };
-  return (
-    <div className="action-editor">
-      <div className="action-editor-title"><b>{label}</b></div>
-      <div className="action-row-list">
-        {actions.map((action, index) => (
-          <details className="action-row" key={`${index}-${action.type}`} defaultOpen={actions.length <= 1}>
-            <summary>
-              <select
-                value={action.type || actionTypes[0]}
-                onChange={(event) => {
-                  const type = event.target.value;
-                  updateAt(index, { type, params: defaultParamsForAction(type, catalog) });
-                }}
-              >
-                {actionTypes.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-              <span className={`save-dot ${catalog.actionPersistence[action.type] === 'save' ? 'save' : 'memory'}`} title={catalog.actionPersistence[action.type] === 'save' ? '修改或影响持久化数据' : '运行时演出或瞬时状态'} />
-              <button type="button" title="上移" disabled={index === 0} onClick={(event) => { event.preventDefault(); move(index, -1); }}>↑</button>
-              <button type="button" title="下移" disabled={index === actions.length - 1} onClick={(event) => { event.preventDefault(); move(index, 1); }}>↓</button>
-              <button type="button" title="删除" onClick={(event) => { event.preventDefault(); onChange(actions.filter((_a, i) => i !== index)); }}>−</button>
-            </summary>
-            <ActionParamsEditor
-              action={action}
-              catalog={catalog}
-              knownSignals={knownSignals}
-              onChange={(nextAction) => updateAt(index, nextAction)}
-            />
-          </details>
-        ))}
-      </div>
-      <button type="button" onClick={() => onChange([...actions, { type: 'setFlag', params: defaultParamsForAction('setFlag', catalog) }])}>
-        + {label}
-      </button>
-    </div>
-  );
 }
 
 function formatActionParamValue(value: unknown): string {
@@ -1910,133 +1992,6 @@ function formatActionParamValue(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function ActionParamsEditor({
-  action,
-  catalog,
-  knownSignals,
-  onChange,
-}: {
-  action: ActionDef;
-  catalog: AuthoringCatalogDef;
-  knownSignals: string[];
-  onChange: (action: ActionDef) => void;
-}) {
-  const schema = catalog.actionParamSchemas[action.type] ?? [];
-  if (schema.length === 0) {
-    return <div className="action-empty-params">该 Action 没有可配置参数。</div>;
-  }
-  const params = action.params ?? {};
-  return (
-    <div className="action-params">
-      {schema.map(([name, kind]) => (
-        <ActionParamField
-          key={name}
-          actionType={action.type}
-          name={name}
-          kind={kind}
-          value={params[name]}
-          catalog={catalog}
-          knownSignals={knownSignals}
-          onChange={(value) => {
-            onChange({ ...action, params: { ...params, [name]: value } });
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ActionParamField({
-  actionType,
-  name,
-  kind,
-  value,
-  catalog,
-  knownSignals,
-  onChange,
-}: {
-  actionType: string;
-  name: string;
-  kind: string;
-  value: unknown;
-  catalog: AuthoringCatalogDef;
-  knownSignals: string[];
-  onChange: (value: unknown) => void;
-}) {
-  const choices = paramChoices(actionType, name, catalog, knownSignals);
-  if (kind === 'bool') {
-    return (
-      <label className="action-param bool">
-        <span>{name}</span>
-        <input type="checkbox" checked={value === true} onChange={(event) => onChange(event.target.checked)} />
-      </label>
-    );
-  }
-  if (kind === 'int' || kind === 'float') {
-    return (
-      <label className="action-param">
-        <span>{name}</span>
-        <input
-          type="number"
-          step={kind === 'int' ? 1 : 'any'}
-          value={typeof value === 'number' ? value : 0}
-          onChange={(event) => {
-            const raw = Number(event.target.value);
-            onChange(kind === 'int' ? Math.trunc(raw || 0) : raw || 0);
-          }}
-        />
-      </label>
-    );
-  }
-  const listId = choices.length ? `${actionType}_${name}_choices`.replace(/\W/g, '_') : undefined;
-  return (
-    <label className="action-param">
-      <span>{name}</span>
-      <input
-        list={listId}
-        value={typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''}
-        onChange={(event) => onChange(coerceParamValue(event.target.value, kind))}
-      />
-      {listId && <datalist id={listId}>{choices.map((item) => <option key={item} value={item} />)}</datalist>}
-    </label>
-  );
-}
-
-function defaultParamsForAction(type: string, catalog: AuthoringCatalogDef): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [name, kind] of catalog.actionParamSchemas[type] ?? []) {
-    if (kind === 'bool') out[name] = false;
-    else if (kind === 'int' || kind === 'float') out[name] = 0;
-    else out[name] = '';
-  }
-  return out;
-}
-
-function coerceParamValue(value: string, kind: string): unknown {
-  if (kind === 'flag_val') {
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    const num = Number(value);
-    if (value.trim() !== '' && Number.isFinite(num)) return num;
-  }
-  return value;
-}
-
-function paramChoices(actionType: string, name: string, catalog: AuthoringCatalogDef, knownSignals: string[]): string[] {
-  if (name === 'sourceType') return ['dialogue', 'zone', 'minigame', 'cutscene', 'quest', 'action', 'entity', 'state', 'system'];
-  if (name === 'graphId') return catalog.graphIds;
-  if (name === 'signal') return knownSignals.map((sig) => sig.split(':').slice(3).join(':')).filter(Boolean);
-  if (name === 'sourceId' && actionType === 'emitNarrativeSignal') return [...catalog.dialogueGraphIds, ...catalog.zoneRefs, ...catalog.minigameIds, ...catalog.cutsceneIds, ...catalog.questIds, ...catalog.sceneEntityRefs];
-  if (name === 'id') {
-    if (actionType === 'startCutscene') return catalog.cutsceneIds;
-    if (actionType === 'startWaterMinigame' || actionType === 'startSugarWheelMinigame' || actionType === 'startPaperCraftMinigame') return catalog.minigameIds;
-    if (actionType === 'updateQuest') return catalog.questIds;
-    if (actionType === 'startDialogueGraph') return catalog.dialogueGraphIds;
-  }
-  if (name === 'target' || name === 'npcId' || name === 'entityId') return catalog.sceneEntityRefs;
-  return [];
 }
 
 function JsonValueField({ label, value, onApply }: { label: string; value: unknown; onApply: (value: unknown) => void }) {

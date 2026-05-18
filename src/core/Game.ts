@@ -655,6 +655,8 @@ export class Game {
     this.mapUI.setConditionEvalContextFactory(mkCondCtx);
     this.archiveManager.setConditionEvalContextFactory(mkCondCtx);
     this.inventoryManager.setConditionEvalContextFactory(mkCondCtx);
+    this.graphDialogueManager.setConditionEvalContextFactory(mkCondCtx);
+    this.documentRevealManager.setConditionEvalContextFactory(mkCondCtx);
     this.narrativeStateManager.setConditionEvalContextFactory(mkCondCtx);
 
     registerActionHandlers(this.actionExecutor, {

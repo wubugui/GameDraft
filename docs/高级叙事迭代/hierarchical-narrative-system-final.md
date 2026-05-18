@@ -252,6 +252,12 @@ t_crate_done_to_ringboy:
   stateEntered(flow_dock_water_monkey.crate_minigame_done) -> t_crate_done_to_ringboy
 ```
 
+### Remote-Enter Cross-Graph Semantics
+
+A cross-graph `NarrativeTransition` is a **remote-enter** edge. When `to.graphId !== from.graphId`, runtime enters the target graph state but does not exit or mutate the source graph state. The target graph still runs the old target state's `onExitActions`, then the new target state's `onEnterActions`, and emits lifecycle triggers for the target graph. The source graph remains active at its previous state.
+
+Scenario graphs add a boundary rule on top of remote-enter: external entry can only target `entryState`, and external exit from a scenario can only originate from one of `exitStates`.
+
 ## 4.4 NarrativeTrigger
 
 `NarrativeTrigger` 是运行时迁移输入。

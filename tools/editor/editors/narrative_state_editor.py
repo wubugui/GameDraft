@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QUrl, Slot
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QEventLoop, QObject, QTimer, QUrl, Slot
+from PySide6.QtWidgets import QLabel, QMessageBox, QVBoxLayout, QWidget
 
 try:
     from PySide6.QtWebChannel import QWebChannel
@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - depends on local Qt install
     QWebEngineView = None  # type: ignore[assignment,misc]
 
 from ..project_model import ProjectModel
+from .narrative_anchor_codec import transition_anchor_id
 
 
 EMPTY_NARRATIVE_GRAPHS = {"schemaVersion": 2, "compositions": []}
@@ -69,6 +70,94 @@ def _walk_narrative_conditions(obj: Any) -> list[tuple[str, str]]:
     return out
 
 
+def _asset_record(kind: str, ref_id: str, detail: str, root: Any) -> dict[str, Any]:
+    return {"kind": kind, "refId": ref_id, "detail": detail, "root": root}
+
+
+def _visit_narrative_assets(model: ProjectModel) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+
+    def add(kind: str, ref_id: object, detail: str, root: Any) -> None:
+        assets.append(_asset_record(kind, str(ref_id or "").strip(), detail, root))
+
+    for gid in model.all_dialogue_graph_ids():
+        path = model.dialogues_path / "graphs" / f"{gid}.json"
+        try:
+            add("dialogue", gid, f"dialogue:{gid}", json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    for sid, scene in model.scenes.items():
+        if not isinstance(scene, dict):
+            continue
+        add("scene", sid, f"scene:{sid}", scene.get("onEnter", []))
+        for zone in scene.get("zones", []) or []:
+            if not isinstance(zone, dict):
+                continue
+            zid = str(zone.get("id", "")).strip()
+            for ev in ("onEnter", "onStay", "onExit"):
+                add("zone", zid, f"zone:{sid}:{zid}:{ev}", zone.get(ev, []))
+    for iid, inst in model.water_minigames_instances.items():
+        add("minigame", iid, f"minigame:{iid}", inst)
+    for iid, inst in model.sugar_wheel_instances.items():
+        add("minigame", iid, f"minigame:{iid}", inst)
+    for iid, inst in model.paper_craft_instances.items():
+        add("minigame", iid, f"minigame:{iid}", inst)
+    for quest in model.quests:
+        if isinstance(quest, dict):
+            qid = str(quest.get("id", "")).strip()
+            add("quest", qid, f"quest:{qid}", quest)
+    for doc in model.document_reveals:
+        if isinstance(doc, dict):
+            did = str(doc.get("id", "") or doc.get("documentId", "")).strip()
+            add("document", did, f"document:{did}", doc)
+    for archive_kind, root in (
+        ("archiveCharacter", model.archive_characters),
+        ("archiveLore", model.archive_lore),
+        ("archiveBook", model.archive_books),
+        ("archiveDocument", model.archive_documents),
+    ):
+        add(archive_kind, "", archive_kind, root)
+    for cutscene in model.cutscenes:
+        if isinstance(cutscene, dict):
+            cid = str(cutscene.get("id", "")).strip()
+            add("cutscene", cid, f"cutscene:{cid}", cutscene)
+    return assets
+
+
+def _asset_emit_sources(assets: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for asset in assets:
+        _collect_emit_actions(out, asset["detail"], asset["kind"], asset["refId"], asset.get("root"))
+    return out
+
+
+def _asset_state_command_sources(assets: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for asset in assets:
+        _collect_state_command_actions(out, asset["detail"], asset["kind"], asset["refId"], asset.get("root"))
+    return out
+
+
+def _asset_condition_sources(assets: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for asset in assets:
+        for graph_id, state_id in _walk_narrative_conditions(asset.get("root")):
+            out.append({
+                "graphId": graph_id,
+                "stateId": state_id,
+                "kind": asset["kind"],
+                "refId": asset["refId"],
+                "detail": asset["detail"],
+            })
+    return out
+
+
+def _validation_errors_for_save(data: dict[str, Any], model: ProjectModel) -> list[dict[str, Any]]:
+    issues = validate_narrative_graphs(data)
+    issues.extend(validate_external_state_command_targets(data, model))
+    return [issue for issue in issues if issue.get("severity") == "error"]
+
+
 class NarrativeEditorBridge(QObject):
     """Bridge object exposed to the React Flow editor through QWebChannel."""
 
@@ -88,7 +177,11 @@ class NarrativeEditorBridge(QObject):
             return f"invalid json: {exc}"
         if not isinstance(parsed, dict):
             return "invalid narrative data: root must be an object"
-        self._model.narrative_graphs = _normalize_file(parsed)
+        normalized = _normalize_file(parsed)
+        errors = _validation_errors_for_save(normalized, self._model)
+        if errors:
+            return f"save blocked: {len(errors)} validation error(s)"
+        self._model.narrative_graphs = normalized
         self._model.mark_dirty("narrative_graphs")
         return "saved to ProjectModel"
 
@@ -267,9 +360,63 @@ class NarrativeStateEditor(QWidget):
         self._load_web_editor()
 
     def flush_to_model(self) -> bool:
+        if self._view is None:
+            return True
+        payload = self._run_editor_js_result(
+            "window.__narrativeEditor && window.__narrativeEditor.getCurrentDataJson"
+            " ? window.__narrativeEditor.getCurrentDataJson() : null",
+        )
+        if not isinstance(payload, str) or not payload.strip():
+            return True
+        try:
+            parsed = json.loads(payload)
+        except Exception as exc:
+            QMessageBox.warning(self, "Narrative Save", f"Narrative editor returned invalid JSON: {exc}")
+            return False
+        normalized = _normalize_file(parsed)
+        errors = _validation_errors_for_save(normalized, self._model)
+        if errors:
+            preview = "\n".join(str(e.get("message") or e.get("code")) for e in errors[:6])
+            QMessageBox.warning(
+                self,
+                "Narrative Save Blocked",
+                f"Narrative graphs contain {len(errors)} validation error(s).\n{preview}",
+            )
+            return False
+        if normalized != _normalize_file(self._model.narrative_graphs):
+            self._model.narrative_graphs = normalized
+            self._model.mark_dirty("narrative_graphs")
+        self._run_editor_js_result(
+            "window.__narrativeEditor && window.__narrativeEditor.markSaved"
+            " ? (window.__narrativeEditor.markSaved(), true) : false",
+        )
         return True
 
-    def confirm_close(self, _parent: QWidget) -> bool:
+    def confirm_close(self, parent: QWidget) -> bool:
+        if self._view is None:
+            return True
+        dirty = self._run_editor_js_result(
+            "window.__narrativeEditor && window.__narrativeEditor.isDirty"
+            " ? window.__narrativeEditor.isDirty() : false",
+        )
+        if dirty is not True:
+            return True
+        result = QMessageBox.question(
+            parent,
+            "Unsaved Narrative Changes",
+            "Save narrative graph changes before closing this editor?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Cancel:
+            return False
+        if result == QMessageBox.StandardButton.Save:
+            return self.flush_to_model()
+        self._run_editor_js_result(
+            "window.__narrativeEditor && window.__narrativeEditor.markSaved"
+            " ? (window.__narrativeEditor.markSaved(), true) : false",
+        )
         return True
 
     def reload_from_model(self) -> None:
@@ -288,12 +435,36 @@ class NarrativeStateEditor(QWidget):
         )
         self._view.setHtml(_placeholder_html(message))
 
+    def _run_editor_js_result(self, code: str, timeout_ms: int = 5000) -> Any:
+        if self._view is None:
+            return None
+        loop = QEventLoop()
+        box: dict[str, Any] = {"done": False, "value": None}
 
-def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, list[dict[str, Any]]]:
+        def finish(value: Any = None) -> None:
+            if box["done"]:
+                return
+            box["done"] = True
+            box["value"] = value
+            loop.quit()
+
+        self._view.page().runJavaScript(code, finish)
+        QTimer.singleShot(timeout_ms, lambda: finish(None))
+        loop.exec()
+        return box["value"]
+
+
+def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, Any]:
     trigger_edges: list[dict[str, Any]] = []
     read_edges: list[dict[str, Any]] = []
     state_command_edges: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    warning_seen: set[tuple[str, str, str]] = set()
     seen: set[tuple[str, str, str, str]] = set()
+    assets = _visit_narrative_assets(model)
+    emit_sources = _asset_emit_sources(assets)
+    command_sources = _asset_state_command_sources(assets)
+    condition_sources = _asset_condition_sources(assets)
 
     for comp in data.get("compositions", []) or []:
         if not isinstance(comp, dict):
@@ -314,19 +485,26 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, li
                 source = graph_node.get(graph_id)
                 if source:
                     _add_edge(read_edges, seen, "read", source, source_node, graph_id, f"{element.get('id')} reads {graph_id}", comp_id, graph_id)
+            for command in _string_list(meta.get("commands")):
+                graph_id, state_id = _parse_state_command_ref(command)
+                target_node = graph_node.get(f"{graph_id}.{state_id}") or graph_node.get(graph_id)
+                if target_node:
+                    label = f"{graph_id}.{state_id}" if state_id else graph_id
+                    _add_edge(state_command_edges, seen, "stateCommand", source_node, target_node, label, f"{element.get('id')} commands {label}", comp_id, graph_id)
+                else:
+                    _add_projection_warning(warnings, warning_seen, "projection.command.dangling", f"{element.get('id')}: meta.commands points to unknown narrative state {command}", comp_id, str(element.get("id", "")))
 
-        for source in _iter_action_signal_sources(model):
+        for source in emit_sources:
             sig = source["signal"]
-            source_node = _source_node_for_action(source, elements)
-            if not source_node:
-                continue
-            for target in signal_targets.get(sig, []):
-                _add_edge(trigger_edges, seen, "trigger", source_node, target["node"], sig, source["detail"], comp_id, target.get("graphId", ""), target.get("transitionId", ""))
+            for source_node in _source_nodes_for_action(source, elements, warnings, warning_seen, comp_id):
+                for target in signal_targets.get(sig, []):
+                    _add_edge(trigger_edges, seen, "trigger", source_node, target["node"], sig, source["detail"], comp_id, target.get("graphId", ""), target.get("transitionId", ""))
 
-        for source in _iter_state_command_sources(model):
-            source_node = _source_node_for_action(source, elements)
+        for source in command_sources:
             target_node = graph_node.get(f'{source["graphId"]}.{source["stateId"]}') or graph_node.get(source["graphId"])
-            if source_node and target_node:
+            for source_node in _source_nodes_for_action(source, elements, warnings, warning_seen, comp_id):
+                if not target_node:
+                    continue
                 label = f'{source["graphId"]}.{source["stateId"]}'
                 _add_edge(state_command_edges, seen, "stateCommand", source_node, target_node, label, source["detail"], comp_id, source["graphId"])
 
@@ -336,10 +514,11 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, li
                 for target in targets:
                     _add_edge(trigger_edges, seen, "trigger", lifecycle["node"], target["node"], sig, lifecycle["detail"], comp_id, target.get("graphId", ""), target.get("transitionId", ""))
 
-        for condition in _iter_condition_sources(model):
+        for condition in condition_sources:
             source = graph_node.get(condition["graphId"])
-            target = _source_node_for_condition(condition, elements)
-            if source and target:
+            if not source:
+                continue
+            for target in _source_nodes_for_condition(condition, elements, warnings, warning_seen, comp_id):
                 label = condition["graphId"]
                 if condition["stateId"]:
                     label = f'{label}.{condition["stateId"]}'
@@ -352,7 +531,13 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, li
                     label = f"{graph_id}.{state_id}" if state_id else graph_id
                     _add_edge(read_edges, seen, "read", source, target["node"], label, target["detail"], comp_id, graph_id, target.get("transitionId", ""))
 
-    return {"triggerEdges": trigger_edges, "readEdges": read_edges, "stateCommandEdges": state_command_edges}
+    return {
+        "schemaVersion": 1,
+        "triggerEdges": trigger_edges,
+        "readEdges": read_edges,
+        "stateCommandEdges": state_command_edges,
+        "warnings": warnings,
+    }
 
 
 def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
@@ -441,6 +626,7 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
             eid = str(el.get("id", "")).strip()
             if not eid:
                 _issue(issues, "error", "element.id.empty", f"{cid}: element id 不能为空", f"compositions[{ci}].elements[{ei}].id")
+            _check_id_delimiter(issues, eid, "element.id.delimiter", f"compositions[{ci}].elements[{ei}].id", eid)
             kind = str(el.get("kind", "")).strip()
             if kind == "wrapperGraph" and not str(el.get("ownerId", "")).strip():
                 _issue(issues, "warning", "wrapper.unbound", f"{eid}: wrapper 尚未绑定 ownerId", f"compositions[{ci}].elements[{ei}]", eid)
@@ -457,12 +643,18 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
                 else:
                     _issue(issues, "error", "element.graph.missing", f"{eid}: 子图缺少 graph", f"compositions[{ci}].elements[{ei}].graph", eid)
             meta = el.get("meta") if isinstance(el.get("meta"), dict) else {}
-            for key in ("emits", "reads"):
+            for key in ("emits", "reads", "commands"):
                 if key in meta and not isinstance(meta.get(key), list):
                     _issue(issues, "warning", f"element.meta.{key}", f"{eid}: meta.{key} 应为字符串数组", f"compositions[{ci}].elements[{ei}].meta.{key}", eid)
             for graph_id in _string_list(meta.get("reads")):
                 if graph_id not in graph_index:
                     _issue(issues, "warning", "projection.read.dangling", f"{eid}: reads 指向未知叙事图 {graph_id}", f"compositions[{ci}].elements[{ei}].meta.reads", eid)
+            for command in _string_list(meta.get("commands")):
+                graph_id, state_id = _parse_state_command_ref(command)
+                graph = graph_index.get(graph_id)
+                states = graph.get("states") if isinstance(graph, dict) and isinstance(graph.get("states"), dict) else {}
+                if not graph or (state_id and state_id not in states):
+                    _issue(issues, "warning", "projection.command.dangling", f"{eid}: commands points to unknown narrative state {command}", f"compositions[{ci}].elements[{ei}].meta.commands", eid)
     _validate_state_command_targets(data, graph_index, issues)
     return issues
 
@@ -470,19 +662,19 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
 def validate_external_state_command_targets(data: dict[str, Any], model: ProjectModel) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     graph_index = _build_graph_index(data)
-    for source in _iter_state_command_sources(model):
+    for source in _asset_state_command_sources(_visit_narrative_assets(model)):
         graph_id = str(source.get("graphId", "")).strip()
         state_id = str(source.get("stateId", "")).strip()
         graph = graph_index.get(graph_id, {})
         states = graph.get("states") if isinstance(graph.get("states"), dict) else {}
         detail = str(source.get("detail", "")).strip()
         if state_id not in states:
-            _issue(issues, "warning", "stateCommand.target.missing", f"{detail}: setNarrativeState 目标不存在 {graph_id}.{state_id}", detail)
+            _issue(issues, "error", "stateCommand.target.missing", f"{detail}: setNarrativeState target does not exist: {graph_id}.{state_id}", detail)
             continue
         kind = str(graph.get("__elementKind", "")).strip()
         exits = [str(x).strip() for x in (graph.get("exitStates") if isinstance(graph.get("exitStates"), list) else [])]
         if (kind == "scenarioSubgraph" or str(graph.get("ownerType", "")).strip() == "scenario") and state_id != str(graph.get("entryState", "")).strip() and state_id not in exits:
-            _issue(issues, "warning", "stateCommand.scenario.internal", f"{detail}: setNarrativeState 指向 scenario 内部状态 {graph_id}.{state_id}", detail)
+            _issue(issues, "error", "stateCommand.scenario.internal", f"{detail}: setNarrativeState targets an internal scenario state: {graph_id}.{state_id}", detail)
     return issues
 
 
@@ -496,6 +688,7 @@ def _validate_graph(
 ) -> None:
     gid = str(graph.get("id", "")).strip()
     _check_unique(issues, graph_ids, gid, "graph", f"{path}.id")
+    _check_id_delimiter(issues, gid, "graph.id.delimiter", f"{path}.id", gid)
     states = graph.get("states")
     if not isinstance(states, dict):
         _issue(issues, "error", "states.shape", f"{gid}: states 须为对象", f"{path}.states", gid)
@@ -513,6 +706,7 @@ def _validate_graph(
         elif any(str(x).strip() not in states for x in exits):
             _issue(issues, "error", "scenario.exitState.invalid", f"{gid}: scenario exitStates 中存在不存在的 state", f"{path}.exitStates", gid)
     for sid, state in states.items():
+        _check_id_delimiter(issues, str(sid), "state.id.delimiter", f"{path}.states.{sid}", str(sid))
         if not isinstance(state, dict):
             _issue(issues, "error", "state.shape", f"{gid}.{sid}: state 须为对象", f"{path}.states.{sid}", str(sid))
             continue
@@ -520,7 +714,9 @@ def _validate_graph(
         if not declared:
             _issue(issues, "error", "state.id.empty", f"{gid}.{sid}: state.id 不能为空", f"{path}.states.{sid}.id", str(sid))
         elif declared != str(sid):
-            _issue(issues, "warning", "state.id.keyMismatch", f"{gid}.{sid}: state.id 与键名不一致", f"{path}.states.{sid}.id", str(sid))
+            _issue(issues, "warning", "state.id.key.mismatch", f"{gid}.{sid}: state.id differs from record key", f"{path}.states.{sid}.id", str(sid))
+        if str(sid) == initial and isinstance(state.get("onEnterActions"), list) and state.get("onEnterActions"):
+            _issue(issues, "error", "initialState.onEnterActions.unsupported", f"{gid}.{sid}: initialState onEnterActions do not run on load", f"{path}.states.{sid}.onEnterActions", str(sid))
         _validate_actions(state.get("onEnterActions"), f"{path}.states.{sid}.onEnterActions", issues, f"{gid}.{sid}")
         _validate_actions(state.get("onExitActions"), f"{path}.states.{sid}.onExitActions", issues, f"{gid}.{sid}")
     transitions = graph.get("transitions")
@@ -535,6 +731,7 @@ def _validate_graph(
             continue
         tid = str(transition.get("id", "")).strip()
         _check_unique(issues, transition_ids, tid, "transition", f"{tpath}.id", tid)
+        _check_id_delimiter(issues, tid, "transition.id.delimiter", f"{tpath}.id", tid)
         from_ep = _resolve_endpoint(transition.get("from"), gid)
         to_ep = _resolve_endpoint(transition.get("to"), gid)
         from_graph = graph_index.get(from_ep["graphId"], {})
@@ -548,6 +745,7 @@ def _validate_graph(
         if from_ep["graphId"] != gid:
             _issue(issues, "error", "transition.owner.mismatch", f"{gid}.{tid}: transition 必须存放在 from 所属图 {from_ep['graphId']}", tpath, tid)
         _validate_cross_graph_boundary(graph_index, gid, tid, from_ep, to_ep, tpath, issues)
+        _validate_lifecycle_signal_scope(gid, tid, str(transition.get("signal", "")).strip(), tpath, issues)
         if not str(transition.get("signal", "")).strip():
             _issue(issues, "error", "transition.signal.empty", f"{gid}.{tid}: signal 不能为空", f"{tpath}.signal", tid)
         _validate_conditions(transition.get("conditions"), f"{tpath}.conditions", issues, f"{gid}.{tid}")
@@ -613,6 +811,29 @@ def _validate_cross_graph_boundary(
         _issue(issues, "error", "scenario.boundary.exit", f"{owner_graph_id}.{transition_id}: scenario 只能从 exitStates 连到外部", f"{path}.from", transition_id)
 
 
+def _validate_lifecycle_signal_scope(owner_graph_id: str, transition_id: str, signal: str, path: str, issues: list[dict[str, Any]]) -> None:
+    lifecycle = _parse_lifecycle_signal(signal)
+    if lifecycle and lifecycle[0] == owner_graph_id:
+        _issue(
+            issues,
+            "error",
+            "lifecycle.sameGraph.unsupported",
+            f"{owner_graph_id}.{transition_id}: lifecycle signals are cross-graph notifications; use onEnterActions/onExitActions locally",
+            f"{path}.signal",
+            transition_id,
+        )
+
+
+def _parse_lifecycle_signal(signal: str) -> tuple[str, str] | None:
+    for prefix in ("stateEntered:", "stateExited:"):
+        if signal.startswith(prefix):
+            rest = signal[len(prefix):]
+            graph_id, sep, state_id = rest.partition(":")
+            if sep and graph_id and state_id:
+                return graph_id, state_id
+    return None
+
+
 def _validate_state_command_targets(data: dict[str, Any], graph_index: dict[str, dict[str, Any]], issues: list[dict[str, Any]]) -> None:
     for comp in data.get("compositions", []) or []:
         if not isinstance(comp, dict):
@@ -642,12 +863,12 @@ def _validate_state_command_targets(data: dict[str, Any], graph_index: dict[str,
                         target_graph = graph_index.get(target_gid, {})
                         target_states = target_graph.get("states") if isinstance(target_graph.get("states"), dict) else {}
                         if target_sid not in target_states:
-                            _issue(issues, "warning", "stateCommand.target.missing", f"{gid}.{sid}: setNarrativeState 目标不存在 {target_gid}.{target_sid}", f"{gid}.{sid}.{list_name}[{idx}]", gid)
+                            _issue(issues, "error", "stateCommand.target.missing", f"{gid}.{sid}: setNarrativeState target does not exist: {target_gid}.{target_sid}", f"{gid}.{sid}.{list_name}[{idx}]", gid)
                             continue
                         target_kind = str(target_graph.get("__elementKind", "")).strip()
                         exits = [str(x).strip() for x in (target_graph.get("exitStates") if isinstance(target_graph.get("exitStates"), list) else [])]
                         if (target_kind == "scenarioSubgraph" or str(target_graph.get("ownerType", "")).strip() == "scenario") and target_sid != str(target_graph.get("entryState", "")).strip() and target_sid not in exits:
-                            _issue(issues, "warning", "stateCommand.scenario.internal", f"{gid}.{sid}: setNarrativeState 指向 scenario 内部状态 {target_gid}.{target_sid}", f"{gid}.{sid}.{list_name}[{idx}]", gid)
+                            _issue(issues, "error", "stateCommand.scenario.internal", f"{gid}.{sid}: setNarrativeState targets an internal scenario state: {target_gid}.{target_sid}", f"{gid}.{sid}.{list_name}[{idx}]", gid)
 
 
 def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:
@@ -684,6 +905,94 @@ def _is_condition_shape(expr: Any) -> bool:
     return any(isinstance(expr.get(k), str) for k in ("narrative", "flag", "quest", "scenario", "scenarioLine"))
 
 
+def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:  # type: ignore[no-redef]
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        _issue(issues, "error", "actions.shape", f"{owner}: actions must be an array", path, owner)
+        return
+    for i, action in enumerate(raw):
+        if not isinstance(action, dict) or not str(action.get("type", "")).strip():
+            _issue(issues, "error", "action.shape", f"{owner}: action {i + 1} is missing type", f"{path}[{i}]", owner)
+            continue
+        _validate_action_def(action, f"{path}[{i}]", issues, owner)
+
+
+def _validate_action_def(action: dict[str, Any], path: str, issues: list[dict[str, Any]], owner: str) -> None:
+    try:
+        from ..shared.action_editor import ACTION_TYPES, _PARAM_SCHEMAS
+        allowed = {str(x) for x in ACTION_TYPES}
+        schemas = {str(k): [(str(n), str(t)) for n, t in v] for k, v in _PARAM_SCHEMAS.items()}
+    except Exception:
+        allowed = {"emitNarrativeSignal", "setNarrativeState"}
+        schemas = {
+            "emitNarrativeSignal": [("sourceType", "str"), ("sourceId", "str"), ("signal", "str")],
+            "setNarrativeState": [("graphId", "str"), ("stateId", "str")],
+        }
+    action_type = str(action.get("type", "")).strip()
+    if action_type not in allowed:
+        _issue(issues, "error", "action.type.unknown", f"{owner}: unknown action type {action_type}", f"{path}.type", owner)
+        return
+    params = action.get("params") if isinstance(action.get("params"), dict) else {}
+    for name, _kind in schemas.get(action_type, []):
+        value = params.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            _issue(issues, "error", "action.param.missing", f"{owner}: {action_type} missing params.{name}", f"{path}.params.{name}", owner)
+    if action_type in ("runActions", "addDelayedEvent") and "actions" in params:
+        _validate_actions(params.get("actions"), f"{path}.params.actions", issues, owner)
+    elif action_type == "chooseAction":
+        options = params.get("options")
+        if options is not None and not isinstance(options, list):
+            _issue(issues, "error", "action.container.shape", f"{owner}: chooseAction params.options must be an array", f"{path}.params.options", owner)
+        for idx, option in enumerate(options if isinstance(options, list) else []):
+            if isinstance(option, dict) and "actions" in option:
+                _validate_actions(option.get("actions"), f"{path}.params.options[{idx}].actions", issues, owner)
+    elif action_type == "randomBranch":
+        for key in ("aboveActions", "belowActions"):
+            if key in params:
+                _validate_actions(params.get(key), f"{path}.params.{key}", issues, owner)
+    elif action_type == "enableRuleOffers":
+        slots = params.get("slots")
+        if slots is not None and not isinstance(slots, list):
+            _issue(issues, "error", "action.container.shape", f"{owner}: enableRuleOffers params.slots must be an array", f"{path}.params.slots", owner)
+        for idx, slot in enumerate(slots if isinstance(slots, list) else []):
+            if isinstance(slot, dict) and "resultActions" in slot:
+                _validate_actions(slot.get("resultActions"), f"{path}.params.slots[{idx}].resultActions", issues, owner)
+
+
+def _validate_conditions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:  # type: ignore[no-redef]
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        _issue(issues, "error", "conditions.shape", f"{owner}: conditions must be an array", path, owner)
+        return
+    for i, expr in enumerate(raw):
+        if not _is_condition_shape(expr):
+            _issue(issues, "error", "condition.shape", f"{owner}: condition {i + 1} has an unknown shape", f"{path}[{i}]", owner)
+
+
+def _is_condition_shape(expr: Any) -> bool:  # type: ignore[no-redef]
+    if not isinstance(expr, dict):
+        return False
+    if isinstance(expr.get("all"), list):
+        return all(_is_condition_shape(x) for x in expr["all"])
+    if isinstance(expr.get("any"), list):
+        return all(_is_condition_shape(x) for x in expr["any"])
+    if "not" in expr:
+        return _is_condition_shape(expr["not"])
+    if isinstance(expr.get("narrative"), str):
+        return isinstance(expr.get("state"), str) and bool(str(expr.get("state")).strip())
+    if isinstance(expr.get("flag"), str):
+        return True
+    if isinstance(expr.get("quest"), str):
+        return isinstance(expr.get("questStatus"), str) or isinstance(expr.get("status"), str)
+    if isinstance(expr.get("scenario"), str):
+        return isinstance(expr.get("phase"), str) and isinstance(expr.get("status"), str)
+    if isinstance(expr.get("scenarioLine"), str):
+        return isinstance(expr.get("lineStatus"), str)
+    return False
+
+
 def _check_unique(
     issues: list[dict[str, Any]],
     seen: set[str],
@@ -698,6 +1007,11 @@ def _check_unique(
     if value in seen:
         _issue(issues, "error", f"{label}.duplicate", f"{label} id 重复：{value}", path, item_id or value)
     seen.add(value)
+
+
+def _check_id_delimiter(issues: list[dict[str, Any]], value: str, code: str, path: str, item_id: str | None = None) -> None:
+    if ":" in value or "|" in value:
+        _issue(issues, "error", code, f"{value}: id cannot contain ':' or '|'", path, item_id or value)
 
 
 def _issue(
@@ -816,56 +1130,43 @@ def _add_edge(
     bucket.append(edge)
 
 
+def _add_projection_warning(
+    warnings: list[dict[str, Any]],
+    seen: set[tuple[str, str, str]],
+    code: str,
+    message: str,
+    composition_id: str = "",
+    detail: str = "",
+) -> None:
+    key = (code, composition_id, message)
+    if key in seen:
+        return
+    seen.add(key)
+    warning = {"severity": "warning", "code": code, "message": message}
+    if composition_id:
+        warning["compositionId"] = composition_id
+    if detail:
+        warning["detail"] = detail
+    warnings.append(warning)
+
+
+def _parse_state_command_ref(raw: str) -> tuple[str, str]:
+    value = str(raw or "").strip()
+    if "." in value:
+        graph_id, state_id = value.split(".", 1)
+        return graph_id.strip(), state_id.strip()
+    if ":" in value:
+        graph_id, state_id = value.split(":", 1)
+        return graph_id.strip(), state_id.strip()
+    return value, ""
+
+
 def _iter_action_signal_sources(model: ProjectModel) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
-    for gid in model.all_dialogue_graph_ids():
-        path = model.dialogues_path / "graphs" / f"{gid}.json"
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        _collect_emit_actions(out, f"dialogue:{gid}", "dialogue", gid, data)
-    for sid, scene in model.scenes.items():
-        for zone in scene.get("zones", []) or []:
-            if not isinstance(zone, dict):
-                continue
-            zid = str(zone.get("id", "")).strip()
-            for ev in ("onEnter", "onStay", "onExit"):
-                _collect_emit_actions(out, f"zone:{sid}:{zid}:{ev}", "zone", zid, zone.get(ev, []))
-        _collect_emit_actions(out, f"scene:{sid}", "scene", sid, scene.get("onEnter", []))
-    for iid, inst in model.water_minigames_instances.items():
-        _collect_emit_actions(out, f"minigame:{iid}", "minigame", iid, inst)
-    for quest in model.quests:
-        if isinstance(quest, dict):
-            qid = str(quest.get("id", "")).strip()
-            _collect_emit_actions(out, f"quest:{qid}", "quest", qid, quest)
-    return out
+    return _asset_emit_sources(_visit_narrative_assets(model))
 
 
 def _iter_state_command_sources(model: ProjectModel) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
-    for gid in model.all_dialogue_graph_ids():
-        path = model.dialogues_path / "graphs" / f"{gid}.json"
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        _collect_state_command_actions(out, f"dialogue:{gid}", "dialogue", gid, data)
-    for sid, scene in model.scenes.items():
-        for zone in scene.get("zones", []) or []:
-            if not isinstance(zone, dict):
-                continue
-            zid = str(zone.get("id", "")).strip()
-            for ev in ("onEnter", "onStay", "onExit"):
-                _collect_state_command_actions(out, f"zone:{sid}:{zid}:{ev}", "zone", zid, zone.get(ev, []))
-        _collect_state_command_actions(out, f"scene:{sid}", "scene", sid, scene.get("onEnter", []))
-    for iid, inst in model.water_minigames_instances.items():
-        _collect_state_command_actions(out, f"minigame:{iid}", "minigame", iid, inst)
-    for quest in model.quests:
-        if isinstance(quest, dict):
-            qid = str(quest.get("id", "")).strip()
-            _collect_state_command_actions(out, f"quest:{qid}", "quest", qid, quest)
-    return out
+    return _asset_state_command_sources(_visit_narrative_assets(model))
 
 
 def _collect_emit_actions(out: list[dict[str, str]], detail: str, kind: str, ref_id: str, obj: Any) -> None:
@@ -904,25 +1205,86 @@ def _collect_state_command_actions(out: list[dict[str, str]], detail: str, kind:
         })
 
 
-def _source_node_for_action(source: dict[str, str], elements: list[dict[str, Any]]) -> str:
+def _source_nodes_for_action(
+    source: dict[str, str],
+    elements: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+    warning_seen: set[tuple[str, str, str]] | None = None,
+    composition_id: str = "",
+) -> list[str]:
+    explicit: list[str] = []
     signal = source.get("signal", "")
     if signal:
         for e in elements:
             meta = e.get("meta") if isinstance(e.get("meta"), dict) else {}
             if signal in _string_list(meta.get("emits")):
-                return f"element:{e.get('id')}"
+                explicit.append(f"element:{e.get('id')}")
+    if explicit:
+        return _dedupe_source_nodes(explicit, source, warnings, warning_seen, composition_id, explicit=True)
+    out: list[str] = []
     kind = source.get("kind")
     ref_id = source.get("refId")
     for e in elements:
-        ek = str(e.get("kind", ""))
-        er = str(e.get("refId", "")).strip()
-        if kind == "dialogue" and ek == "dialogueBlackbox" and er == ref_id:
-            return f"element:{e.get('id')}"
-        if kind == "minigame" and ek == "minigameBlackbox" and er == ref_id:
-            return f"element:{e.get('id')}"
-        if kind == "zone" and ek == "zoneBlackbox" and (er.endswith(f":{ref_id}") or er == ref_id):
-            return f"element:{e.get('id')}"
-    return ""
+        if _element_matches_asset_ref(e, str(kind or ""), str(ref_id or "")):
+            out.append(f"element:{e.get('id')}")
+    return _dedupe_source_nodes(out, source, warnings, warning_seen, composition_id, explicit=False)
+
+
+def _element_matches_asset_ref(element: dict[str, Any], kind: str, ref_id: str) -> bool:
+    ek = str(element.get("kind", ""))
+    er = str(element.get("refId", "")).strip()
+    owner_type = str(element.get("ownerType", "")).strip()
+    owner_id = str(element.get("ownerId", "")).strip()
+    if kind == "dialogue" and ek == "dialogueBlackbox" and er == ref_id:
+        return True
+    if kind == "minigame" and ek == "minigameBlackbox" and er == ref_id:
+        return True
+    if kind == "cutscene" and ek == "cutsceneBlackbox" and er == ref_id:
+        return True
+    if kind == "zone" and ek == "zoneBlackbox" and (er.endswith(f":{ref_id}") or er == ref_id):
+        return True
+    if kind == "quest" and owner_type == "quest" and (owner_id == ref_id or er == ref_id):
+        return True
+    if kind == "document" and owner_type in ("document", "archiveDocument") and (owner_id == ref_id or er == ref_id):
+        return True
+    if kind.startswith("archive") and (owner_type == kind or ek == kind) and (not ref_id or owner_id == ref_id or er == ref_id):
+        return True
+    return False
+
+
+def _dedupe_source_nodes(
+    nodes: list[str],
+    source: dict[str, str],
+    warnings: list[dict[str, Any]] | None,
+    warning_seen: set[tuple[str, str, str]] | None,
+    composition_id: str,
+    explicit: bool,
+) -> list[str]:
+    out = list(dict.fromkeys(x for x in nodes if x))
+    if out and warnings is not None and warning_seen is not None and not explicit:
+        _add_projection_warning(
+            warnings,
+            warning_seen,
+            "projection.fallback.source",
+            f"{source.get('detail', '')}: using asset ref fallback; declare meta.emits/meta.commands/meta.reads for stable projection wiring",
+            composition_id,
+            source.get("detail", ""),
+        )
+    if len(out) > 1 and warnings is not None and warning_seen is not None:
+        _add_projection_warning(
+            warnings,
+            warning_seen,
+            "projection.source.ambiguous",
+            f"{source.get('detail', '')}: asset ref matched {len(out)} elements; emitted fan-in edges",
+            composition_id,
+            source.get("detail", ""),
+        )
+    return out
+
+
+def _source_node_for_action(source: dict[str, str], elements: list[dict[str, Any]]) -> str:
+    nodes = _source_nodes_for_action(source, elements)
+    return nodes[0] if nodes else ""
 
 
 def _lifecycle_source(signal: str, graph_node: dict[str, str]) -> dict[str, str] | None:
@@ -936,35 +1298,30 @@ def _lifecycle_source(signal: str, graph_node: dict[str, str]) -> dict[str, str]
     return None
 
 
-def _iter_condition_sources(model: ProjectModel) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
-    for gid in model.all_dialogue_graph_ids():
-        path = model.dialogues_path / "graphs" / f"{gid}.json"
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        for graph_id, state_id in _walk_narrative_conditions(data):
-            out.append({"graphId": graph_id, "stateId": state_id, "kind": "dialogue", "refId": gid, "detail": f"dialogue:{gid}"})
-    for quest in model.quests:
-        if not isinstance(quest, dict):
-            continue
-        qid = str(quest.get("id", "")).strip()
-        for graph_id, state_id in _walk_narrative_conditions(quest):
-            out.append({"graphId": graph_id, "stateId": state_id, "kind": "quest", "refId": qid, "detail": f"quest:{qid}"})
-    return out
-
-
-def _source_node_for_condition(condition: dict[str, str], elements: list[dict[str, Any]]) -> str:
+def _source_nodes_for_condition(
+    condition: dict[str, str],
+    elements: list[dict[str, Any]],
+    warnings: list[dict[str, Any]] | None = None,
+    warning_seen: set[tuple[str, str, str]] | None = None,
+    composition_id: str = "",
+) -> list[str]:
+    out: list[str] = []
     kind = condition.get("kind")
     ref_id = condition.get("refId")
     for e in elements:
-        ek = str(e.get("kind", ""))
-        if kind == "dialogue" and ek == "dialogueBlackbox" and str(e.get("refId", "")).strip() == ref_id:
-            return f"element:{e.get('id')}"
-        if kind == "quest" and e.get("ownerType") == "quest" and str(e.get("ownerId", "")).strip() == ref_id:
-            return f"element:{e.get('id')}"
-    return ""
+        if _element_matches_asset_ref(e, str(kind or ""), str(ref_id or "")):
+            node = f"element:{e.get('id')}"
+            out.append(node)
+    return _dedupe_source_nodes(out, condition, warnings, warning_seen, composition_id, explicit=False)
+
+
+def _iter_condition_sources(model: ProjectModel) -> list[dict[str, str]]:
+    return _asset_condition_sources(_visit_narrative_assets(model))
+
+
+def _source_node_for_condition(condition: dict[str, str], elements: list[dict[str, Any]]) -> str:
+    nodes = _source_nodes_for_condition(condition, elements)
+    return nodes[0] if nodes else ""
 
 
 def _all_transition_condition_targets(main_graph: dict[str, Any], elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -991,7 +1348,7 @@ def _all_transition_condition_targets(main_graph: dict[str, Any], elements: list
 
 
 def _transition_anchor(graph_id: str, transition_id: str) -> str:
-    return f"transition-anchor:{graph_id}:{transition_id}"
+    return transition_anchor_id(graph_id, transition_id)
 
 
 def _string_list(value: Any) -> list[str]:

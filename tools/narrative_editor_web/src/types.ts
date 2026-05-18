@@ -16,6 +16,7 @@ export interface ActionDef {
 export interface ElementMetaDef {
   emits?: string[];
   reads?: string[];
+  commands?: string[];
   [key: string]: unknown;
 }
 
@@ -96,9 +97,19 @@ export interface ProjectionEdgeDef {
 }
 
 export interface ProjectionResult {
+  schemaVersion?: number;
   triggerEdges: ProjectionEdgeDef[];
   readEdges: ProjectionEdgeDef[];
   stateCommandEdges?: ProjectionEdgeDef[];
+  warnings?: ProjectionWarningDef[];
+}
+
+export interface ProjectionWarningDef {
+  severity: 'warning';
+  code: string;
+  message: string;
+  compositionId?: string;
+  detail?: string;
 }
 
 export interface ValidationIssueDef {

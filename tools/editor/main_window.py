@@ -317,14 +317,16 @@ class MainWindow(QMainWindow):
 
     def _confirm_pending_editor_changes(self) -> bool:
         from .editors.timeline_editor import TimelineEditor
-        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
 
         for ed in self._editor_instances:
             if isinstance(ed, TimelineEditor) and ed.has_pending_changes():
                 if ed.confirm_apply_or_discard(self) == "cancel":
                     return False
         for ed in self._editor_instances:
-            if isinstance(ed, DialogueGraphEditorTab) and not ed.confirm_close(self):
+            if isinstance(ed, TimelineEditor):
+                continue
+            confirm = getattr(ed, "confirm_close", None)
+            if callable(confirm) and not confirm(self):
                 return False
         return True
 
