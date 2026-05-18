@@ -1,4 +1,4 @@
-function Test-GameDraftProxyRelatedEnvName {
+﻿function Test-GameDraftProxyRelatedEnvName {
   param([Parameter(Mandatory = $true)][string]$Name)
 
   $lu = $Name.ToLowerInvariant()
@@ -16,19 +16,75 @@ function Test-GameDraftProxyRelatedEnvName {
 
 function Get-GameDraftProxyEnvironmentSnapshot {
   $snapshot = @{}
-  foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
+  foreach ($entry in [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process).GetEnumerator()) {
     $name = [string]$entry.Key
     if (-not (Test-GameDraftProxyRelatedEnvName $name)) {
       continue
     }
-    $snapshot[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    $snapshot[$name] = [Environment]::GetEnvironmentVariable($name, [EnvironmentVariableTarget]::Process)
   }
   return $snapshot
 }
 
+function Get-GameDraftGitProxyUrl {
+  param([string]$ProxyUrl = '')
+  $u = $ProxyUrl.Trim()
+  if ([string]::IsNullOrWhiteSpace($u)) {
+    $u = [Environment]::GetEnvironmentVariable('GAMEDRAFT_GIT_PROXY', 'Process')
+  }
+  if ([string]::IsNullOrWhiteSpace($u)) {
+    $u = [Environment]::GetEnvironmentVariable('GAMEDRAFT_GIT_PROXY', 'User')
+  }
+  if ([string]::IsNullOrWhiteSpace($u)) {
+    try {
+      $u = [Environment]::GetEnvironmentVariable('GAMEDRAFT_GIT_PROXY', 'Machine')
+    }
+    catch {
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($u)) {
+    # Default local Git proxy (e.g. clash/v2ray mixed port); override with -GitProxy or GAMEDRAFT_GIT_PROXY.
+    $u = 'http://127.0.0.1:7078'
+  }
+  return $u
+}
+
+function Invoke-GameDraftGitWithTemporaryProxy {
+  param(
+    [string]$ProxyUrl = '',
+    [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
+    [string[]]$GitArgs
+  )
+  if ($null -eq $GitArgs -or $GitArgs.Count -eq 0) {
+    throw ("Need at least one git argument.")
+  }
+  $u = Get-GameDraftGitProxyUrl -ProxyUrl $ProxyUrl
+  $httpCfg = "http.proxy=$u"
+  $httpsCfg = "https.proxy=$u"
+  # Mask sets NO_PROXY=*; omit NO_PROXY for this git invocation so -c http.proxy applies.
+  $prevNo = [Environment]::GetEnvironmentVariable("NO_PROXY", "Process")
+  $prevNol = [Environment]::GetEnvironmentVariable("no_proxy", "Process")
+  try {
+    [Environment]::SetEnvironmentVariable("NO_PROXY", $null, "Process")
+    [Environment]::SetEnvironmentVariable("no_proxy", $null, "Process")
+    & git -c $httpCfg -c $httpsCfg @GitArgs
+  }
+  finally {
+    [Environment]::SetEnvironmentVariable("NO_PROXY", $prevNo, "Process")
+    [Environment]::SetEnvironmentVariable("no_proxy", $prevNol, "Process")
+  }
+}
+
+function Set-GameDraftTemporaryGitProxy {
+  param([string]$ProxyUrl = '')
+  $u = Get-GameDraftGitProxyUrl -ProxyUrl $ProxyUrl
+  [Environment]::SetEnvironmentVariable('HTTP_PROXY', $u, 'Process')
+  [Environment]::SetEnvironmentVariable('HTTPS_PROXY', $u, 'Process')
+}
+
 function Clear-GameDraftProxyEnvironmentProcess {
   $names = @()
-  foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
+  foreach ($entry in [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process).GetEnumerator()) {
     $name = [string]$entry.Key
     if (Test-GameDraftProxyRelatedEnvName $name) {
       $names += $name
@@ -64,8 +120,9 @@ function Initialize-BootstrapProcessWithoutProxy {
 
 function Invoke-OssWithoutProxy {
   <#
-  Aliyun OSS phases only: set proxy-related process env to direct mode for DVC/sync-dvc-cache/oss2.
-  The caller should explicitly set the next phase's process env before running Git or other tools.
+  Aliyun OSS phases only: mask proxy-related process env for DVC/sync-dvc-cache/oss2.
+  Orchestrator scripts (push-all / pull-all) should call Mask-GameDraftProxyEnvironmentProcess once at entry so the finally block of Invoke-WithoutProxy does not restore inherited HTTP(S)_PROXY mid-run.
+  Git remotes: use Invoke-GameDraftGitWithTemporaryProxy (-GitProxy or GAMEDRAFT_GIT_PROXY) so only that git process sees http.proxy/https.proxy (-c), not the whole PowerShell process.
   #>
   param(
     [Parameter(Mandatory = $true)]
@@ -94,7 +151,7 @@ function Invoke-WithoutProxy {
 
 function Invoke-WebRequestDirect {
   <#
-  GET with HttpClient UseProxy=false — ignores HTTP(S)_PROXY env and Windows IE/system proxy.
+  GET with HttpClient UseProxy=false - ignores HTTP(S)_PROXY env and Windows IE/system proxy.
   Use for OSS bootstrap downloads; Invoke-WebRequest still respects default WebProxy by default.
   #>
   param(

@@ -1,6 +1,7 @@
 param(
   [switch]$Editor,
-  [switch]$Vendor
+  [switch]$Vendor,
+  [string]$GitProxy = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,7 +10,9 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $Root
 try {
-  git pull
+  Mask-GameDraftProxyEnvironmentProcess
+  Invoke-GameDraftGitWithTemporaryProxy -ProxyUrl $GitProxy pull
+
   & (Join-Path $PSScriptRoot "bootstrap-dvc.ps1")
   Assert-OssCredentialsInProcess
   $Python = Join-Path $Root ".tools\Python311\python.exe"
