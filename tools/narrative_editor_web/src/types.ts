@@ -29,12 +29,7 @@ export interface NarrativeStateNodeDef {
   meta?: Record<string, unknown>;
 }
 
-export interface NarrativeEndpointObjectDef {
-  graphId: string;
-  stateId: string;
-}
-
-export type NarrativeEndpointDef = string | NarrativeEndpointObjectDef;
+export type NarrativeEndpointDef = string;
 
 export interface NarrativeTransitionDef {
   id: string;

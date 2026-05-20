@@ -336,6 +336,24 @@ export type DialogueGraphNodeDef =
       }[];
       defaultNext: string;
     }
+  | {
+      type: 'ownerState';
+      cases: {
+        state: string;
+        next: string;
+      }[];
+      defaultNext: string;
+      missingWrapperNext?: string;
+    }
+  | {
+      type: 'contextState';
+      graphId: string;
+      cases: {
+        state: string;
+        next: string;
+      }[];
+      defaultNext: string;
+    }
   | { type: 'end' };
 
 /** 图对话资源根结构（JSON 文件） */

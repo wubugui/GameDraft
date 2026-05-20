@@ -95,6 +95,11 @@ export function clearLocalNarrativeDraft(): void {
   localStorage.removeItem(DRAFT_STORAGE_KEY);
 }
 
+/** 重新加载叙事编辑器页面（Qt 嵌入与纯 Web 均可用） */
+export function reloadNarrativeEditorPage(): void {
+  window.location.reload();
+}
+
 export async function saveNarrativeData(data: NarrativeGraphsFileDef): Promise<string> {
   const bridge = await waitForBridge();
   const payload = JSON.stringify(data);

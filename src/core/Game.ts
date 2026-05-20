@@ -719,19 +719,24 @@ export class Game {
       },
       blendOverlayImage: (id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs) =>
         this.cutsceneManager.blendOverlayImage(id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs),
-      startDialogueGraph: async (graphId, entry, npcId) => {
+      startDialogueGraph: async (graphId, entry, npcId, ownerType, ownerId) => {
         this.stateController.setState(GameState.Dialogue);
         try {
           let npcName = '';
-          if (npcId?.trim()) {
-            const npc = this.sceneManager.getNpcById(npcId.trim());
+          const npcIdTrim = npcId?.trim() || '';
+          if (npcIdTrim) {
+            const npc = this.sceneManager.getNpcById(npcIdTrim);
             if (npc) npcName = npc.def.name;
           }
+          const ownerTypeTrim = ownerType?.trim() || (npcIdTrim ? 'npc' : '');
+          const ownerIdTrim = ownerId?.trim() || npcIdTrim || '';
           await this.graphDialogueManager.startDialogueGraph({
             graphId,
             entry,
             npcName,
-            npcId: npcId?.trim() || undefined,
+            npcId: npcIdTrim || undefined,
+            ownerType: ownerTypeTrim || undefined,
+            ownerId: ownerIdTrim || undefined,
           });
           if (!this.graphDialogueManager.isActive) {
             this.stateController.setState(GameState.Exploring);
@@ -1304,7 +1309,7 @@ export class Game {
     if (!patrol?.route || patrol.route.length === 0) return;
     this.stopNpcPatrol(id);
     const moveAnim =
-      npc.def.id === 'npc_ringboy' && this.flagStore.get('ringboy_patrol_walk_anim') === true
+      npc.def.id === 'npc_ringboy' && this.narrativeStateManager.isOwnerStateActive('npc', 'npc_ringboy', 'before_event')
         ? 'boy_walk'
         : patrol.moveAnimState;
     this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, moveAnim);
@@ -1346,7 +1351,7 @@ export class Game {
         }
         if (patrolStoppedByAction()) break;
         const moveAnim =
-          npc.def.id === 'npc_ringboy' && this.flagStore.get('ringboy_patrol_walk_anim') === true
+          npc.def.id === 'npc_ringboy' && this.narrativeStateManager.isOwnerStateActive('npc', 'npc_ringboy', 'before_event')
             ? 'boy_walk'
             : moveAnimState;
         await npc.moveTo(route[i].x, route[i].y, speed, moveAnim);

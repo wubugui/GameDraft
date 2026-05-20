@@ -44,12 +44,7 @@ export interface NarrativeStateNode {
   meta?: Record<string, unknown>;
 }
 
-export interface NarrativeEndpointObject {
-  graphId: string;
-  stateId: string;
-}
-
-export type NarrativeEndpoint = string | NarrativeEndpointObject;
+export type NarrativeEndpoint = string;
 
 export interface NarrativeTransition {
   id: string;
@@ -109,8 +104,6 @@ export interface NarrativeComposition {
 
 type QueuedTrigger =
   | { kind: 'external'; key: NarrativeTriggerKey; source?: NarrativeSignal }
-  | { kind: 'stateEntered'; graphId: string; stateId: string; key: NarrativeTriggerKey }
-  | { kind: 'stateExited'; graphId: string; stateId: string; key: NarrativeTriggerKey }
   | { kind: 'setState'; graphId: string; stateId: string };
 
 interface QueuedItem {
@@ -165,10 +158,17 @@ export class NarrativeStateManager implements IGameSystem {
     return `external:${this.encodeKeyPart(signal.sourceType)}:${this.encodeKeyPart(signal.sourceId)}:${this.encodeKeyPart(signal.signal)}`;
   }
 
-  static stateEnteredKey(graphId: string, stateId: string): NarrativeTriggerKey {
-    return `stateEntered:${this.encodeKeyPart(graphId)}:${this.encodeKeyPart(stateId)}`;
+  /** Cross-graph broadcast when a graph enters a state (re-emit safe via emitNarrativeSignal). */
+  static graphStateEnteredKey(graphId: string, stateId: string): NarrativeTriggerKey {
+    return this.externalKey({ sourceType: 'state', sourceId: graphId, signal: stateId });
   }
 
+  /** @deprecated Legacy lifecycle key; normalized to {@link graphStateEnteredKey}. */
+  static stateEnteredKey(graphId: string, stateId: string): NarrativeTriggerKey {
+    return this.graphStateEnteredKey(graphId, stateId);
+  }
+
+  /** @deprecated Legacy lifecycle key; no longer emitted by runtime. */
   static stateExitedKey(graphId: string, stateId: string): NarrativeTriggerKey {
     return `stateExited:${this.encodeKeyPart(graphId)}:${this.encodeKeyPart(stateId)}`;
   }
@@ -178,10 +178,8 @@ export class NarrativeStateManager implements IGameSystem {
     const external = this.parseExternalKey(raw);
     if (external) return this.externalKey(external);
     const lifecycle = this.parseLifecycleKey(raw);
-    if (lifecycle) {
-      return lifecycle.kind === 'stateEntered'
-        ? this.stateEnteredKey(lifecycle.graphId, lifecycle.stateId)
-        : this.stateExitedKey(lifecycle.graphId, lifecycle.stateId);
+    if (lifecycle?.kind === 'stateEntered') {
+      return this.graphStateEnteredKey(lifecycle.graphId, lifecycle.stateId);
     }
     return raw;
   }
@@ -270,8 +268,13 @@ export class NarrativeStateManager implements IGameSystem {
       this.graphs.set(graph.id, graph);
       this.activeStates.set(graph.id, graph.initialState);
       this.indexGraphOwner(graph);
-      this.projectActiveFlags(graph.id, graph.initialState);
+      if (graph.projectFlags) {
+        const message = `NarrativeStateManager: graph.projectFlags is deprecated and ignored on ${graph.id}`;
+        this.recordIssue({ severity: 'warning', code: 'projectFlags.deprecated', message, graphId: graph.id });
+        console.warn(message);
+      }
     }
+    this.recordDuplicateOwnerBindings();
   }
 
   getActiveState(graphId: string): string | undefined {
@@ -309,6 +312,21 @@ export class NarrativeStateManager implements IGameSystem {
     );
   }
 
+  getPrimaryGraphByOwner(ownerType: string, ownerId: string): NarrativeGraph | undefined {
+    const graphIds = this.getGraphIdsByOwner(ownerType, ownerId);
+    if (graphIds.length !== 1) return undefined;
+    return this.graphs.get(graphIds[0]!);
+  }
+
+  getPrimaryActiveStateByOwner(ownerType: string, ownerId: string): string | undefined {
+    const graph = this.getPrimaryGraphByOwner(ownerType, ownerId);
+    return graph ? this.activeStates.get(graph.id) : undefined;
+  }
+
+  isOwnerStateActive(ownerType: string, ownerId: string, stateId: string): boolean {
+    return this.getPrimaryActiveStateByOwner(ownerType, ownerId) === stateId;
+  }
+
   emitNarrativeSignal(signal: NarrativeSignal): Promise<void> {
     const clean = this.normalizeSignal(signal);
     if (!clean) return Promise.resolve();
@@ -325,6 +343,9 @@ export class NarrativeStateManager implements IGameSystem {
     const gid = String(graphId ?? '').trim();
     const sid = String(stateId ?? '').trim();
     if (!gid || !sid) return Promise.resolve();
+    const message = `NarrativeStateManager: setNarrativeState bypasses transitions and should only be used for debug/repair: ${gid}.${sid}`;
+    this.recordIssue({ severity: 'warning', code: 'stateCommand.debugOnly', message, graphId: gid, stateId: sid });
+    console.warn(message);
     return this.enqueue({ kind: 'setState', graphId: gid, stateId: sid });
   }
 
@@ -340,7 +361,6 @@ export class NarrativeStateManager implements IGameSystem {
       const stateId = String(stateRaw ?? '').trim();
       if (!graph || !stateId || !graph.states[stateId]) continue;
       this.activeStates.set(graphId, stateId);
-      this.projectActiveFlags(graphId, stateId);
     }
   }
 
@@ -374,6 +394,15 @@ export class NarrativeStateManager implements IGameSystem {
     const ids = this.ownerIndex.get(key) ?? [];
     if (!ids.includes(graph.id)) ids.push(graph.id);
     this.ownerIndex.set(key, ids);
+  }
+
+  private recordDuplicateOwnerBindings(): void {
+    for (const [key, graphIds] of this.ownerIndex.entries()) {
+      if (graphIds.length <= 1) continue;
+      const message = `NarrativeStateManager: duplicate wrapper owner binding ${key} -> ${graphIds.join(', ')}`;
+      this.recordIssue({ severity: 'error', code: 'owner.wrapper.duplicate', message });
+      console.warn(message);
+    }
   }
 
   private normalizeSignal(signal: NarrativeSignal): NarrativeSignal | null {
@@ -482,10 +511,12 @@ export class NarrativeStateManager implements IGameSystem {
       const active = this.activeStates.get(graphId) ?? graph.initialState;
       const candidates = graph.transitions
         .filter((t) => {
-          const from = this.resolveEndpoint(t.from, graph.id);
-          return from.graphId === graphId &&
-            from.stateId === active &&
-            NarrativeStateManager.triggerKeysEqual(t.signal, triggerKey) &&
+          if (!NarrativeStateManager.triggerKeysEqual(t.signal, triggerKey)) return false;
+          if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
+            this.recordUnsupportedEndpoint(graphId, t.id);
+            return false;
+          }
+          return t.from === active &&
             this.conditionsMet(t.conditions);
         })
         .map((t, index) => ({ t, index }))
@@ -535,39 +566,25 @@ export class NarrativeStateManager implements IGameSystem {
     transition: NarrativeTransition,
     triggerKey: NarrativeTriggerKey,
   ): Promise<void> {
-    const from = this.resolveEndpoint(transition.from, graph.id);
-    const to = this.resolveEndpoint(transition.to, graph.id);
-    if (from.graphId !== graph.id) {
-      const message = `NarrativeStateManager: transition ${graph.id}.${transition.id} is stored on ${graph.id} but starts from ${from.graphId}`;
-      this.recordIssue({ severity: 'error', code: 'transition.owner.mismatch', message, graphId: graph.id, transitionId: transition.id });
+    if (!this.isLocalEndpoint(transition.from) || !this.isLocalEndpoint(transition.to)) {
+      this.recordUnsupportedEndpoint(graph.id, transition.id);
+      return;
+    }
+    const fromStateId = transition.from;
+    const toStateId = transition.to;
+    if (!graph.states[fromStateId]) {
+      const message = `NarrativeStateManager: transition source missing ${graph.id}.${fromStateId}`;
+      this.recordIssue({ severity: 'warning', code: 'transition.from.missing', message, graphId: graph.id, stateId: fromStateId, transitionId: transition.id });
       console.warn(message);
       return;
     }
-    const targetGraph = this.graphs.get(to.graphId);
-    if (!targetGraph?.states[to.stateId]) {
-      const message = `NarrativeStateManager: transition target missing ${to.graphId}.${to.stateId}`;
-      this.recordIssue({ severity: 'warning', code: 'transition.target.missing', message, graphId: to.graphId, stateId: to.stateId, transitionId: transition.id });
+    if (!graph.states[toStateId]) {
+      const message = `NarrativeStateManager: transition target missing ${graph.id}.${toStateId}`;
+      this.recordIssue({ severity: 'warning', code: 'transition.target.missing', message, graphId: graph.id, stateId: toStateId, transitionId: transition.id });
       console.warn(message);
       return;
     }
-    if (to.graphId === from.graphId) {
-      await this.enterState(graph, from.stateId, to.stateId, triggerKey, transition.id);
-      return;
-    }
-    if (!this.canLeaveGraphRemotely(graph, from.stateId)) {
-      const message = `NarrativeStateManager: cross-graph transition violates scenario exit boundary ${graph.id}.${transition.id}`;
-      this.recordIssue({ severity: 'error', code: 'scenario.boundary.exit', message, graphId: graph.id, stateId: from.stateId, transitionId: transition.id });
-      console.warn(message);
-      return;
-    }
-    if (!this.canRemoteEnterState(targetGraph, to.stateId)) {
-      const message = `NarrativeStateManager: cross-graph transition violates scenario entry boundary ${targetGraph.id}.${to.stateId}`;
-      this.recordIssue({ severity: 'error', code: 'scenario.boundary.entry', message, graphId: targetGraph.id, stateId: to.stateId, transitionId: transition.id });
-      console.warn(message);
-      return;
-    }
-    const previousTargetState = this.activeStates.get(targetGraph.id) ?? targetGraph.initialState;
-    await this.enterState(targetGraph, previousTargetState, to.stateId, triggerKey, transition.id);
+    await this.enterState(graph, fromStateId, toStateId, triggerKey, transition.id);
   }
 
   private async enterState(
@@ -579,10 +596,8 @@ export class NarrativeStateManager implements IGameSystem {
   ): Promise<void> {
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
-    this.enqueueLifecycle('stateExited', graph.id, fromStateId);
     await this.runActions(fromState?.onExitActions, `${graph.id}.${fromStateId}.onExit`);
     this.activeStates.set(graph.id, toStateId);
-    this.projectActiveFlags(graph.id, toStateId);
     this.recentTransitions.push({ graphId: graph.id, transitionId, from: fromStateId, to: toStateId, triggerKey });
     if (this.recentTransitions.length > 50) this.recentTransitions.splice(0, this.recentTransitions.length - 50);
     this.eventBus.emit('narrative:stateChanged', {
@@ -593,25 +608,28 @@ export class NarrativeStateManager implements IGameSystem {
       transitionId,
     });
     await this.runActions(toState?.onEnterActions, `${graph.id}.${toStateId}.onEnter`);
-    this.enqueueLifecycle('stateEntered', graph.id, toStateId);
+    this.enqueueGraphStateEntered(graph.id, toStateId);
   }
 
-  private enqueueLifecycle(kind: 'stateEntered' | 'stateExited', graphId: string, stateId: string): void {
-    const key =
-      kind === 'stateEntered'
-        ? NarrativeStateManager.stateEnteredKey(graphId, stateId)
-        : NarrativeStateManager.stateExitedKey(graphId, stateId);
-    this.queue.push({ trigger: { kind, graphId, stateId, key }, resolve: () => {}, reject: () => {} });
-  }
-
-  private resolveEndpoint(endpoint: NarrativeEndpoint, ownerGraphId: string): { graphId: string; stateId: string } {
-    if (typeof endpoint === 'string') {
-      return { graphId: ownerGraphId, stateId: endpoint };
+  /** Queue a re-emit-safe cross-graph broadcast; processed after the current queue item (no await). */
+  private enqueueGraphStateEntered(graphId: string, stateId: string): void {
+    if (this.destroyed) return;
+    const source: NarrativeSignal = { sourceType: 'state', sourceId: graphId, signal: stateId };
+    const key = NarrativeStateManager.externalKey(source);
+    this.queue.push({ trigger: { kind: 'external', key, source }, resolve: () => {}, reject: () => {} });
+    if (this.draining && this.runningActionsDepth > 0) {
+      void this.drainNestedQueue();
     }
-    return {
-      graphId: String(endpoint?.graphId ?? '').trim(),
-      stateId: String(endpoint?.stateId ?? '').trim(),
-    };
+  }
+
+  private isLocalEndpoint(endpoint: unknown): endpoint is string {
+    return typeof endpoint === 'string' && endpoint.trim().length > 0;
+  }
+
+  private recordUnsupportedEndpoint(graphId: string, transitionId: string): void {
+    const message = `NarrativeStateManager: transition ${graphId}.${transitionId} uses unsupported cross-graph endpoint data`;
+    this.recordIssue({ severity: 'error', code: 'transition.crossGraphEndpoint.unsupported', message, graphId, transitionId });
+    console.warn(message);
   }
 
   private async runActions(actions: ActionDef[] | undefined, label: string): Promise<void> {
@@ -623,14 +641,6 @@ export class NarrativeStateManager implements IGameSystem {
       console.warn(`NarrativeStateManager: lifecycle actions failed at ${label}`, e);
     } finally {
       this.runningActionsDepth = Math.max(0, this.runningActionsDepth - 1);
-    }
-  }
-
-  private projectActiveFlags(graphId: string, activeState: string): void {
-    const graph = this.graphs.get(graphId);
-    if (!graph?.projectFlags) return;
-    for (const stateId of Object.keys(graph.states)) {
-      this.flagStore.set(`narrative.${graphId}.${stateId}.active`, stateId === activeState);
     }
   }
 

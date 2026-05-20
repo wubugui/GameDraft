@@ -77,6 +77,8 @@ export class GraphDialogueManager implements IGameSystem {
   private active = false;
   private npcName: string = '';
   private npcId: string = '';
+  private ownerType: string = '';
+  private ownerId: string = '';
   /** 串行化 advance / chooseOption / start，避免异步 drain 期间丢弃重复点击或重入 */
   private opChain: Promise<void> = Promise.resolve();
 
@@ -96,6 +98,8 @@ export class GraphDialogueManager implements IGameSystem {
     entry?: string;
     npcName: string;
     npcId?: string;
+    ownerType?: string;
+    ownerId?: string;
     /** true 时加载图后优先使用 `meta.title` 作为对话显示名（Inspect 看板等） */
     preferGraphMetaTitle?: boolean;
   }> = [];
@@ -255,6 +259,8 @@ export class GraphDialogueManager implements IGameSystem {
     this.currentNodeId = '';
     this.npcName = '';
     this.npcId = '';
+    this.ownerType = '';
+    this.ownerId = '';
     this.choicePhase = null;
     this.lastPreconditionDebug = null;
     this.lastSwitchDebug = null;
@@ -285,6 +291,8 @@ export class GraphDialogueManager implements IGameSystem {
     entry?: string;
     npcName: string;
     npcId?: string;
+    ownerType?: string;
+    ownerId?: string;
     preferGraphMetaTitle?: boolean;
   }): Promise<void> {
     const gid = params.graphId?.trim();
@@ -296,6 +304,8 @@ export class GraphDialogueManager implements IGameSystem {
         entry: params.entry?.trim() || undefined,
         npcName: params.npcName,
         npcId: params.npcId?.trim() || undefined,
+        ownerType: params.ownerType?.trim() || undefined,
+        ownerId: params.ownerId?.trim() || params.npcId?.trim() || undefined,
         preferGraphMetaTitle: params.preferGraphMetaTitle === true,
       });
       return Promise.resolve();
@@ -349,6 +359,8 @@ export class GraphDialogueManager implements IGameSystem {
       const useMeta = params.preferGraphMetaTitle === true && metaTitle.length > 0;
       this.npcName = useMeta ? metaTitle : params.npcName;
       this.npcId = params.npcId?.trim() ?? '';
+      this.ownerType = params.ownerType?.trim() || (this.npcId ? 'npc' : '');
+      this.ownerId = params.ownerId?.trim() || this.npcId;
       this.currentNodeId = (params.entry?.trim() && raw.nodes[params.entry.trim()])
         ? params.entry.trim()
         : raw.entry;
@@ -443,6 +455,8 @@ export class GraphDialogueManager implements IGameSystem {
     this.currentNodeId = '';
     this.npcName = '';
     this.npcId = '';
+    this.ownerType = '';
+    this.ownerId = '';
     this.choicePhase = null;
     this.lastPreconditionDebug = null;
     this.lastSwitchDebug = null;
@@ -479,6 +493,18 @@ export class GraphDialogueManager implements IGameSystem {
 
       if (node.type === 'switch') {
         this.currentNodeId = this.evalSwitch(node);
+        this.pushNarrativeRouteStep(this.currentNodeId);
+        continue;
+      }
+
+      if (node.type === 'ownerState') {
+        this.currentNodeId = this.evalOwnerState(node);
+        this.pushNarrativeRouteStep(this.currentNodeId);
+        continue;
+      }
+
+      if (node.type === 'contextState') {
+        this.currentNodeId = this.evalContextState(node);
         this.pushNarrativeRouteStep(this.currentNodeId);
         continue;
       }
@@ -683,6 +709,38 @@ export class GraphDialogueManager implements IGameSystem {
       casesTried,
     };
     return chosen;
+  }
+
+  private evalOwnerState(node: Extract<DialogueGraphNodeDef, { type: 'ownerState' }>): string {
+    const fallback = node.missingWrapperNext?.trim() || node.defaultNext;
+    const ownerType = this.ownerType.trim();
+    const ownerId = this.ownerId.trim();
+    if (!ownerType || !ownerId) {
+      console.warn(`GraphDialogueManager: ownerState ${this.currentNodeId} has no dialogue owner context`);
+      return fallback;
+    }
+    const active = this.conditionCtx().narrativeState?.getPrimaryActiveStateByOwner?.(ownerType, ownerId);
+    if (!active) {
+      console.warn(`GraphDialogueManager: ownerState ${this.currentNodeId} cannot resolve wrapper for ${ownerType}:${ownerId}`);
+      return fallback;
+    }
+    const hit = node.cases.find((c) => c.state === active);
+    return hit?.next || node.defaultNext;
+  }
+
+  private evalContextState(node: Extract<DialogueGraphNodeDef, { type: 'contextState' }>): string {
+    const graphId = node.graphId?.trim();
+    if (!graphId) {
+      console.warn(`GraphDialogueManager: contextState ${this.currentNodeId} missing graphId`);
+      return node.defaultNext;
+    }
+    const active = this.conditionCtx().narrativeState?.getActiveState?.(graphId);
+    if (!active) {
+      console.warn(`GraphDialogueManager: contextState ${this.currentNodeId} cannot read active state for ${graphId}`);
+      return node.defaultNext;
+    }
+    const hit = node.cases.find((c) => c.state === active);
+    return hit?.next || node.defaultNext;
   }
 
   private lineBeatsFor(

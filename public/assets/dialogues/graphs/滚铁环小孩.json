@@ -5,27 +5,34 @@
   "meta": {},
   "nodes": {
     "root": {
-      "type": "switch",
+      "type": "ownerState",
       "cases": [
         {
-          "next": "has_ring_1",
-          "conditions": [
-            {
-              "flag": "铁环小孩_已经获得铁环",
-              "op": "==",
-              "value": true
-            }
-          ]
+          "state": "before_event",
+          "next": "before_evt_1"
+        },
+        {
+          "state": "after_event",
+          "next": "after_evt_choice"
+        },
+        {
+          "state": "ring_taken",
+          "next": "has_ring_1"
+        },
+        {
+          "state": "ring_returned",
+          "next": "returned_line"
         }
       ],
-      "defaultNext": "anim_branch"
+      "defaultNext": "anim_branch",
+      "missingWrapperNext": "anim_branch"
     },
     "has_ring_1": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "next": "end1",
+      "next": "return_ring_actions",
       "lines": [
         {
           "speaker": {
@@ -49,6 +56,27 @@
       ],
       "text": "列死麻批娃儿才混哦~好，还给你还给你。"
     },
+    "return_ring_actions": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "iron_hoop",
+            "count": 1
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "rolling_ring_boy",
+            "signal": "ring_returned"
+          }
+        }
+      ],
+      "next": "end1"
+    },
     "end1": {
       "type": "end"
     },
@@ -63,22 +91,15 @@
           }
         }
       ],
-      "next": "sw_event"
+      "next": "before_evt_1"
     },
-    "sw_event": {
-      "type": "switch",
-      "cases": [
-        {
-          "conditions": [
-            {
-              "flag": "foreigner_crate_event_done",
-              "value": false
-            }
-          ],
-          "next": "before_evt_1"
-        }
-      ],
-      "defaultNext": "after_evt_choice"
+    "returned_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end1",
+      "text": "谢谢你帮我把铁环找回来！"
     },
     "before_evt_1": {
       "type": "line",

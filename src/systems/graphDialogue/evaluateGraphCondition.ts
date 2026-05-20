@@ -33,6 +33,9 @@ export interface ConditionEvalContext {
   narrativeState?: {
     getActiveState(graphId: string): string | undefined;
     isStateActive(graphId: string, stateId: string): boolean;
+    getPrimaryGraphByOwner?(ownerType: string, ownerId: string): { id: string } | undefined;
+    getPrimaryActiveStateByOwner?(ownerType: string, ownerId: string): string | undefined;
+    isOwnerStateActive?(ownerType: string, ownerId: string, stateId: string): boolean;
   };
   /**
    * Flag 条件叶子中 `value` 为 string 时，比较前调用（与 resolveDisplayText 一致，支持 [tag:…]）。

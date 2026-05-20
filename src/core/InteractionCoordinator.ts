@@ -147,6 +147,8 @@ export class InteractionCoordinator {
         entry: npc.def.dialogueGraphEntry?.trim() || undefined,
         npcName: npc.def.name,
         npcId: npc.def.id,
+        ownerType: 'npc',
+        ownerId: npc.def.id,
       });
       if (!graphDialogueManager.isActive) {
         cleanupDialogueZoomAndNpc();
@@ -227,6 +229,8 @@ export class InteractionCoordinator {
         graphId,
         entry: data.entry?.trim() || undefined,
         npcName: '旁白',
+        ownerType: 'hotspot',
+        ownerId: hotspot.def.id,
         preferGraphMetaTitle: true,
       });
       if (!graphDialogueManager.isActive) {

@@ -1,37 +1,80 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
-  BaseEdge,
   Controls,
-  Handle,
-  MarkerType,
   MiniMap,
-  Position,
   ReactFlow,
+  ReactFlowProvider,
   applyEdgeChanges,
   applyNodeChanges,
-  getBezierPath,
+  useReactFlow,
   type Connection,
-  type EdgeProps,
-  type NodeProps,
   type OnConnect,
   type OnEdgesChange,
   type OnNodesChange,
 } from '@xyflow/react';
+import { buildCanvasEdges, buildCanvasNodes, stateEndpointFromNodeId } from './canvas/buildCanvasModel';
+import { flowEdgeTypes } from './canvas/flowEdges';
+import { flowNodeTypes } from './canvas/flowNodes';
+import { applyCanvasSelection } from './canvas/canvasSelection';
+import { NarrativeCanvasActionsProvider } from './canvas/canvasActionsContext';
+import {
+  expandParentsForPositionChanges,
+  findTransitionByAnchorId,
+  resizeSubgraphParents,
+  SUBGRAPH_CHILD_ORIGIN,
+} from './canvas/subgraphGroupLayout';
+import {
+  shouldSnapTransitionAnchors,
+  snapTransitionAnchorsToEdges,
+} from './canvas/transitionAnchorLayout';
+import { parseTransitionAnchorId } from './anchorCodec';
+import {
+  inlineSubgraphStateId,
+  inlineSubgraphTransitionId,
+  parseInlineSubgraphId,
+  prefixInlineSelection,
+  projectionEndpointLabel,
+} from './canvas/canvasIds';
+import { AddMenuDropdown, type AddMenuItem } from './components/AddMenuDropdown';
+import { SettingsMenu } from './components/SettingsMenu';
+import { ToolbarPopover } from './components/ToolbarPopover';
+import { ConditionBuilder } from './components/ConditionBuilder';
+import { SignalChipsField } from './components/SignalChipsField';
+import {
+  elementSubtitle,
+  extractActiveStates,
+  findGraphById,
+  findProjectionEdge,
+  isSelectionDeletable,
+  navigationForElement,
+  ownerChoicesFor,
+  ownerChoicesForGraph,
+  removeTransitionsReferencingState,
+  transitionIn,
+  updateElement,
+} from './editor/appHelpers';
+import { canvasModeLabel, kindLabel } from './editor/labels';
+import { useDeferredWorkspace } from './hooks/useDeferredWorkspace';
+import { useEditorHistory } from './hooks/useEditorHistory';
+import { useEditorPreferences } from './hooks/useEditorPreferences';
+import { usePanelResize } from './hooks/usePanelResize';
+import { loadPanelLayout, savePanelLayout } from './utils/layoutStorage';
+import { stableHash } from './utils/stableHash';
+import type { CanvasMode, InspectorTab, IssueFilter } from './types/canvas';
 import {
   clearLocalNarrativeDraft,
+  reloadNarrativeEditorPage,
   emitRuntimeSignal,
   editActionsNative,
   getRuntimeSnapshot,
   loadAuthoringCatalog,
   loadNarrativeDataWithSource,
-  loadProjection,
   navigateTo,
   saveNarrativeData,
   setRuntimeNarrativeState,
   validateNarrativeDataRemote,
 } from './bridge';
-import { parseTransitionAnchorId, transitionAnchorId } from './anchorCodec';
 import {
   collectKnownSignals,
   blockingValidationErrors,
@@ -41,7 +84,6 @@ import {
   createState,
   createTransition,
   defaultFile,
-  endpointInputValue,
   endpointLabel,
   emptyCatalog,
   getComposition,
@@ -51,7 +93,6 @@ import {
   graphLabel,
   isSubgraphElement,
   normalizeFile,
-  parseEndpointInput,
   parseExternalSignalKey,
   renameGraph,
   renameElement,
@@ -61,6 +102,7 @@ import {
   simulateSignalImpact,
   stateEditorPosition,
   resolveEndpoint,
+  focusValidationIssue,
   type GraphRef,
   type SimulationResult,
 } from './editorModel';
@@ -83,24 +125,6 @@ import type {
   ValidationIssueDef,
 } from './types';
 
-const nodeTypes = {
-  state: StateNode,
-  graphAnchor: AnchorNode,
-  projectionAnchor: AnchorNode,
-  transitionAnchor: TransitionAnchorNode,
-  wrapperGraph: ElementNode,
-  scenarioSubgraph: ElementNode,
-  dialogueBlackbox: ElementNode,
-  zoneBlackbox: ElementNode,
-  minigameBlackbox: ElementNode,
-  cutsceneBlackbox: ElementNode,
-};
-
-const edgeTypes = {
-  transition: StyledEdge,
-  projection: StyledEdge,
-};
-
 const elementKinds: ElementKind[] = [
   'wrapperGraph',
   'scenarioSubgraph',
@@ -112,40 +136,56 @@ const elementKinds: ElementKind[] = [
 
 const wrapperOwnerTypes = ['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'system'];
 
-function stableHash(value: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
+export function NarrativeEditorApp() {
+  return (
+    <ReactFlowProvider>
+      <NarrativeEditorInner />
+    </ReactFlowProvider>
+  );
 }
 
-export function NarrativeEditorApp() {
-  const [data, setData] = useState<NarrativeGraphsFileDef>(defaultFile);
-  const [projection, setProjection] = useState<ProjectionResult>({ schemaVersion: 1, triggerEdges: [], readEdges: [], stateCommandEdges: [], warnings: [] });
+function NarrativeEditorInner() {
+  const [data, setDataInternal] = useState<NarrativeGraphsFileDef>(defaultFile);
+  const workspace = useDeferredWorkspace();
+  const { projection, validationIssues, remoteSyncing, scheduleRemoteSync, flushRemoteSync, applyLocalValidation } = workspace;
   const [catalog, setCatalog] = useState<AuthoringCatalogDef>(emptyCatalog);
-  const [validationIssues, setValidationIssues] = useState<ValidationIssueDef[]>([]);
   const [compositionId, setCompositionId] = useState('');
   const [graphRef, setGraphRef] = useState<GraphRef>('main');
   const [nodes, setNodes] = useState<CanvasNode[]>([]);
   const [edges, setEdges] = useState<CanvasEdge[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [selectedJson, setSelectedJson] = useState('');
-  const [showTrigger, setShowTrigger] = useState(true);
-  const [showRead, setShowRead] = useState(true);
-  const [showCommand, setShowCommand] = useState(true);
-  const [showMiniMap, setShowMiniMap] = useState(true);
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>('edit');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('properties');
+  const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
+  const [showTrigger, setShowTrigger] = useState(false);
+  const [showRead, setShowRead] = useState(false);
+  const [showCommand, setShowCommand] = useState(false);
+  const { preferences, setPreferences, resetPreferences } = useEditorPreferences();
+  const [showMiniMap, setShowMiniMap] = useState(false);
   const [expandedElementIds, setExpandedElementIds] = useState<string[]>([]);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [status, setStatus] = useState('Ready');
+  const [panelLayout, setPanelLayout] = useState(loadPanelLayout);
+  const [status, setStatus] = useState('就绪');
+  const [fitViewRev, setFitViewRev] = useState(0);
+  const [fitTargetNodeIds, setFitTargetNodeIds] = useState<string[]>([]);
+  const { startLeft, startRight } = usePanelResize({ setLayout: setPanelLayout, leftCollapsed, rightCollapsed });
   const [signalKey, setSignalKey] = useState('');
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeDebugSnapshotDef>({ ok: false, reason: 'Runtime not queried yet' });
   const [dirty, setDirty] = useState(false);
   const [savedDataHash, setSavedDataHash] = useState('');
   const [dataSource, setDataSource] = useState('');
+
+  const { wrapUpdater, undo, redo, resetHistory } = useEditorHistory(data, setDataInternal, (next) => {
+    scheduleRemoteSync(next);
+  });
+
+  const updateData = useCallback((updater: (next: NarrativeGraphsFileDef) => void) => {
+    wrapUpdater(updater);
+    setDirty(true);
+  }, [wrapUpdater]);
 
   const compositions = data.compositions ?? [];
   const currentDataJson = useMemo(() => JSON.stringify(normalizeFile(data)), [data]);
@@ -163,15 +203,16 @@ export function NarrativeEditorApp() {
   useEffect(() => {
     void loadNarrativeDataWithSource().then(async (loaded) => {
       const next = normalizeFile(loaded.data);
-      setData(next);
+      setDataInternal(next);
       setCompositionId(next.compositions?.[0]?.id ?? '');
       setSignalKey(collectKnownSignals(next)[0] ?? '');
       setCatalog(await loadAuthoringCatalog());
-      setValidationIssues(await validateNarrativeDataRemote(next));
+      await flushRemoteSync(next);
       setDataSource(loaded.source);
       setSavedDataHash(stableHash(JSON.stringify(next)));
       setDirty(false);
-      setStatus(`Loaded from ${loaded.source}`);
+      resetHistory();
+      setStatus(`已加载：${loaded.source}`);
     });
   }, []);
 
@@ -184,6 +225,7 @@ export function NarrativeEditorApp() {
         setSavedDataHash(currentDataHash);
         setDirty(false);
       },
+      refresh: () => { void refreshProjectionAndValidation(data); },
     };
     return () => {
       if (window.__narrativeEditor?.getCurrentDataHash() === currentDataHash) {
@@ -193,34 +235,69 @@ export function NarrativeEditorApp() {
   }, [currentDataHash, currentDataJson, editorDirty]);
 
   useEffect(() => {
-    void refreshProjectionAndValidation(data);
+    void flushRemoteSync(data);
   }, [compositionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!composition || !graph) {
+    if (canvasMode === 'debug') setInspectorTab('debug');
+  }, [canvasMode]);
+
+  const canvasStructureInput = useMemo(() => {
+    if (!composition || !graph) return null;
+    return {
+      comp: composition,
+      graph,
+      graphRef,
+      activeStates,
+      projection,
+      canvasMode,
+      showTrigger,
+      showRead,
+      showCommand,
+      expandedElementIds,
+    };
+  }, [composition, graph, graphRef, activeStates, projection, canvasMode, showTrigger, showRead, showCommand, expandedElementIds]);
+
+  const canvasStructureKey = useMemo(
+    () => (canvasStructureInput ? JSON.stringify(canvasStructureInput) : ''),
+    [canvasStructureInput],
+  );
+
+  useEffect(() => {
+    if (!canvasStructureInput) {
       setNodes([]);
       setEdges([]);
       return;
     }
-    setNodes(toNodes(composition, graph, graphRef, activeStates, projection, showTrigger, showRead, showCommand, expandedElementIds, selectedId));
-    setEdges(toEdges(composition, graph, graphRef, projection, showTrigger, showRead, showCommand, expandedElementIds, selectedId));
-  }, [composition, graph, graphRef, projection, showTrigger, showRead, showCommand, expandedElementIds, selectedId, activeStates]);
+    const builtEdges = buildCanvasEdges(canvasStructureInput);
+    let builtNodes = buildCanvasNodes(canvasStructureInput);
+    builtNodes = resizeSubgraphParents(builtNodes);
+    setNodes(builtNodes);
+    setEdges(builtEdges);
+
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        setNodes((current) => {
+          const snapped = snapTransitionAnchorsToEdges(current, builtEdges);
+          return resizeSubgraphParents(snapped ?? current);
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      if (raf2) window.cancelAnimationFrame(raf2);
+    };
+  }, [canvasStructureKey]); // eslint-disable-line react-hooks/exhaustive-deps -- key encodes canvasStructureInput
+
+  const { nodes: displayNodes, edges: displayEdges } = useMemo(
+    () => applyCanvasSelection(nodes, edges, selectedId),
+    [nodes, edges, selectedId],
+  );
 
   const refreshProjectionAndValidation = useCallback(async (nextData = data) => {
-    const normalized = normalizeFile(nextData);
-    setProjection(await loadProjection(normalized));
-    setValidationIssues(await validateNarrativeDataRemote(normalized));
-  }, [data]);
-
-  const updateData = useCallback((updater: (next: NarrativeGraphsFileDef) => void) => {
-    setData((old) => {
-      const next = normalizeFile(old);
-      updater(next);
-      setDirty(true);
-      void refreshProjectionAndValidation(next);
-      return next;
-    });
-  }, [refreshProjectionAndValidation]);
+    await flushRemoteSync(normalizeFile(nextData));
+  }, [data, flushRemoteSync]);
 
   const updateCurrentGraph = useCallback((updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => {
     updateData((next) => {
@@ -235,6 +312,14 @@ export function NarrativeEditorApp() {
       ids.includes(elementId) ? ids.filter((id) => id !== elementId) : [...ids, elementId]
     ));
   }, []);
+
+  const canvasActions = useMemo(() => ({
+    toggleSubgraphElement: (elementId: string) => {
+      const el = composition?.elements?.find((item) => item.id === elementId);
+      if (!el || !isSubgraphElement(el)) return;
+      toggleExpandedElement(elementId);
+    },
+  }), [composition, toggleExpandedElement]);
 
   const removeModelObjects = useCallback((ids: string[]) => {
     const targets = ids.filter((id) => isSelectionDeletable(id, graphRef));
@@ -346,8 +431,23 @@ export function NarrativeEditorApp() {
   const onNodesChange: OnNodesChange<CanvasNode> = useCallback((changes) => {
     const removedNodeIds = changes.filter((c) => c.type === 'remove').map((c) => c.id);
     if (removedNodeIds.length) removeModelObjects(removedNodeIds);
-    setNodes((nds) => applyNodeChanges(changes, nds));
-  }, [removeModelObjects]);
+    const snapAnchors = shouldSnapTransitionAnchors(changes);
+    setNodes((nds) => {
+      let next = expandParentsForPositionChanges(nds, changes);
+      next = applyNodeChanges(changes, next);
+      const needsResize = changes.some((change) => {
+        if (change.type !== 'position' && change.type !== 'dimensions') return false;
+        if (change.id.startsWith('element:')) return true;
+        return change.id.startsWith('subgraph:');
+      });
+      if (needsResize) next = resizeSubgraphParents(next);
+      if (snapAnchors) {
+        const snapped = snapTransitionAnchorsToEdges(next, edges);
+        if (snapped) next = snapped;
+      }
+      return next;
+    });
+  }, [removeModelObjects, edges]);
 
   const onEdgesChange: OnEdgesChange<CanvasEdge> = useCallback((changes) => {
     const removedEdgeIds = changes.filter((c) => c.type === 'remove').map((c) => c.id);
@@ -381,9 +481,8 @@ export function NarrativeEditorApp() {
       setStatus('Only state nodes can create transitions');
       return;
     }
-    const decision = canConnectStateEndpoints(composition, source, target);
-    if (!decision.ok) {
-      setStatus(decision.reason);
+    if (source.graphId !== target.graphId) {
+      setStatus('Cross-graph relationships must be expressed through external signals (e.g. external:state:<graph>:<state>), not cross-graph transitions.');
       return;
     }
     let created: NarrativeTransitionDef | null = null;
@@ -391,11 +490,7 @@ export function NarrativeEditorApp() {
       const comp = getComposition(next, composition.id);
       const sourceGraph = findGraphById(comp, source.graphId);
       if (!sourceGraph) return;
-      const fromEndpoint: NarrativeEndpointDef = source.stateId;
-      const toEndpoint: NarrativeEndpointDef = source.graphId === target.graphId
-        ? target.stateId
-        : { graphId: target.graphId, stateId: target.stateId };
-      created = createTransition(sourceGraph, fromEndpoint, toEndpoint);
+      created = createTransition(sourceGraph, source.stateId, target.stateId);
     });
     if (created) {
       const edgeId = source.elementId ? inlineSubgraphTransitionId(source.elementId, created.id) : `transition:${created.id}`;
@@ -413,8 +508,11 @@ export function NarrativeEditorApp() {
         const element = comp?.elements?.find((el) => el.id === inline.elementId);
         const state = element?.graph?.states[inline.objectId];
         if (!element || !state) return;
-        const base = inlineSubgraphBase(element);
-        setStateEditorPosition(state, node.position.x - base.x, node.position.y - base.y);
+        setStateEditorPosition(
+          state,
+          node.position.x - SUBGRAPH_CHILD_ORIGIN.x,
+          node.position.y - SUBGRAPH_CHILD_ORIGIN.y,
+        );
       });
       return;
     }
@@ -437,6 +535,25 @@ export function NarrativeEditorApp() {
   }, [composition?.id, compositionId, graphRef, updateCurrentGraph, updateData]);
 
   const selectNode = useCallback((_event: unknown, node: CanvasNode) => {
+    if (node.id.startsWith('transition-anchor:') && composition) {
+      const parsed = parseTransitionAnchorId(node.id);
+      if (parsed) {
+        if (graph && parsed.graphId === graph.id) {
+          const transition = graph.transitions.find((t) => t.id === parsed.transitionId);
+          if (transition) {
+            setSelectedId(`transition:${parsed.transitionId}`);
+            setSelectedJson(JSON.stringify(transition, null, 2));
+            return;
+          }
+        }
+        const found = findTransitionByAnchorId(composition, node.id);
+        if (found) {
+          setSelectedId(inlineSubgraphTransitionId(found.element.id, found.transition.id));
+          setSelectedJson(JSON.stringify(found.transition, null, 2));
+          return;
+        }
+      }
+    }
     setSelectedId(node.id);
     setSelectedJson(JSON.stringify(getNodeObject(composition, graph, node.id), null, 2));
   }, [composition, graph]);
@@ -542,16 +659,16 @@ export function NarrativeEditorApp() {
         return;
       }
       const normalized = normalizeFile(candidate);
+      applyLocalValidation(normalized);
+      await flushRemoteSync(normalized);
       const issues = await validateNarrativeDataRemote(normalized);
-      setValidationIssues(issues);
       const errors = blockingValidationErrors(issues);
       if (errors.length) {
-        setStatus(`JSON Apply blocked: ${errors.length} validation error(s)`);
+        setStatus(`JSON 应用被拦截：${errors.length} 个错误`);
         return;
       }
-      setData(normalized);
+      setDataInternal(normalized);
       setDirty(true);
-      void refreshProjectionAndValidation(normalized);
       setSelectedId(nextSelectedId);
       setSelectedJson(JSON.stringify(getObjectForSelection(normalized, composition?.id ?? compositionId, graphRef, nextSelectedId), null, 2));
       setStatus('Applied JSON');
@@ -562,11 +679,11 @@ export function NarrativeEditorApp() {
 
   const save = useCallback(async () => {
     const normalized = normalizeFile(data);
+    await flushRemoteSync(normalized);
     const issues = await validateNarrativeDataRemote(normalized);
-    setValidationIssues(issues);
     const errors = blockingValidationErrors(issues);
     if (errors.length) {
-      setStatus(`Save blocked: ${errors.length} validation error(s)`);
+      setStatus(`保存被拦截：${errors.length} 个校验错误`);
       return;
     }
     const result = await saveNarrativeData(normalized);
@@ -575,7 +692,7 @@ export function NarrativeEditorApp() {
       setDirty(false);
     }
     setStatus(result);
-  }, [data]);
+  }, [data, flushRemoteSync]);
 
   const runLocalSimulation = useCallback(() => {
     const key = signalKey.trim();
@@ -609,16 +726,151 @@ export function NarrativeEditorApp() {
 
   const errorCount = validationIssues.filter((issue) => issue.severity === 'error').length;
   const warningCount = validationIssues.filter((issue) => issue.severity === 'warning').length;
+  const filteredIssues = useMemo(() => validationIssues.filter((issue) => {
+    if (issueFilter === 'error') return issue.severity === 'error';
+    if (issueFilter === 'warning') return issue.severity === 'warning';
+    if (issueFilter === 'composition' && composition) {
+      return issue.itemId === composition.id || Boolean(issue.path?.includes(composition.id));
+    }
+    return true;
+  }), [validationIssues, issueFilter, composition]);
+
+  const statesByGraph = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const { graph: g } of compileGraphs(data)) out[g.id] = Object.keys(g.states ?? {});
+    return out;
+  }, [data]);
+
+  const changeCanvasMode = useCallback((mode: CanvasMode) => {
+    setCanvasMode(mode);
+    if (mode === 'wiring' || mode === 'debug') {
+      setShowTrigger(true);
+      setShowRead(true);
+      setShowCommand(true);
+      if (preferences.defaultShowMiniMap) setShowMiniMap(true);
+    }
+    if (mode === 'debug') setInspectorTab('debug');
+  }, [preferences.defaultShowMiniMap]);
+
+  useEffect(() => {
+    if ((canvasMode === 'wiring' || canvasMode === 'debug') && preferences.defaultShowMiniMap) {
+      setShowMiniMap(true);
+    }
+  }, [canvasMode, preferences.defaultShowMiniMap]);
+
+  const focusIssue = useCallback((issue: ValidationIssueDef) => {
+    const result = focusValidationIssue(issue, data, {
+      compositionId,
+      setCompositionId,
+      setGraphRef,
+      setExpandedElementIds,
+      setSelectedId,
+    });
+    if (!result?.nodeIds.length) return;
+    const nodeId = result.nodeIds[0];
+    const comp = getComposition(data, result.compositionId ?? compositionId);
+    const ref = result.graphRef ?? graphRef;
+    const g = getEditableGraph(comp, ref);
+    const obj = getNodeObject(comp, g, nodeId);
+    if (obj) setSelectedJson(JSON.stringify(obj, null, 2));
+    setFitTargetNodeIds(result.nodeIds);
+    setFitViewRev((v) => v + 1);
+  }, [compositionId, data, graphRef]);
+
+  const breadcrumbs = useMemo(() => {
+    if (!composition) return [] as { label: string; onClick?: () => void }[];
+    const crumbs: { label: string; onClick?: () => void }[] = [
+      {
+        label: composition.label || composition.id,
+        onClick: () => {
+          setGraphRef('main');
+          setSelectedId('');
+          setSelectedJson('');
+        },
+      },
+      {
+        label: graphRef === 'main' ? `主图 ${composition.mainGraph.id}` : graphLabel(composition, graphRef),
+        onClick: graphRef !== 'main' ? () => {
+          setGraphRef('main');
+          setSelectedId('');
+          setSelectedJson('');
+        } : undefined,
+      },
+    ];
+    if (graphRef === 'main') {
+      for (const eid of expandedElementIds) {
+        const el = composition.elements?.find((item) => item.id === eid);
+        if (el) {
+          crumbs.push({
+            label: `${el.label || el.id}（内联）`,
+            onClick: () => toggleExpandedElement(eid),
+          });
+        }
+      }
+    }
+    return crumbs;
+  }, [composition, expandedElementIds, graphRef, toggleExpandedElement]);
+
+  const addMenuItems = useMemo((): AddMenuItem[] => {
+    const items: AddMenuItem[] = [
+      { id: 'state', label: '状态', disabled: !graph, onSelect: addState },
+    ];
+    if (graphRef === 'main') {
+      for (const kind of elementKinds) {
+        items.push({
+          id: kind,
+          label: kindLabel(kind),
+          onSelect: () => addElementAction(kind),
+        });
+      }
+    }
+    return items;
+  }, [addElementAction, addState, graph, graphRef]);
+
+  const shellStyle = {
+    gridTemplateColumns: `${leftCollapsed ? 0 : panelLayout.leftWidth}px minmax(480px, 1fr) ${rightCollapsed ? 0 : panelLayout.rightWidth}px`,
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+        setFitTargetNodeIds([]);
+        setFitViewRev((v) => v + 1);
+      }
+      if (e.key === 'F5') {
+        e.preventDefault();
+        reloadNarrativeEditorPage();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void save();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [redo, save, undo]);
 
   return (
-    <div className={`app-shell ${leftCollapsed ? 'left-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}`}>
+    <NarrativeCanvasActionsProvider value={canvasActions}>
+    <div
+      className={`app-shell ${leftCollapsed ? 'left-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}${preferences.reduceMotion ? ' reduce-motion' : ''}`}
+      style={shellStyle}
+    >
       <aside className="sidebar">
         <div className="pane-head">
           <div className="brand">叙事状态机</div>
           <button type="button" onClick={() => setLeftCollapsed(true)}>收起</button>
         </div>
-        <button className="primary" onClick={addCompositionAction}>New Composition</button>
-        <div className="section-title">Compositions</div>
+        <button className="primary" onClick={addCompositionAction}>新建编排</button>
+        <div className="section-title">编排列表</div>
         <div className="composition-list">
           {compositions.map((comp) => (
             <button
@@ -629,7 +881,6 @@ export function NarrativeEditorApp() {
                 setGraphRef('main');
                 setSelectedId('');
                 setSelectedJson('');
-                setExpandedElementIds([]);
               }}
             >
               <span>{comp.label || comp.id}</span>
@@ -640,162 +891,360 @@ export function NarrativeEditorApp() {
 
         {composition && (
           <>
-            <div className="section-title">Graph Navigation</div>
-            <button className={graphRef === 'main' ? 'composition active' : 'composition'} onClick={() => {
+            <div className="section-title">子图导航</div>
+            <button type="button" className={graphRef === 'main' ? 'composition active' : 'composition'} onClick={() => {
               setGraphRef('main');
               setSelectedId('');
               setSelectedJson('');
-              setExpandedElementIds([]);
             }}>
-              <span>Main Graph</span>
+              <span>主图</span>
               <small>{composition.mainGraph.id}</small>
             </button>
             {(composition.elements ?? []).filter((el) => isSubgraphElement(el)).map((el) => (
               <button
                 key={el.id}
+                type="button"
                 className={graphRef === `element:${el.id}` ? 'composition active' : 'composition'}
                 onClick={() => {
                   setGraphRef(`element:${el.id}`);
                   setSelectedId('');
                   setSelectedJson('');
-                  setExpandedElementIds([]);
                 }}
               >
                 <span>{el.label || el.id}</span>
-                <small>{el.graph?.id}</small>
+                <small>{el.graph?.id} · 独占</small>
               </button>
             ))}
           </>
         )}
 
-        <div className="section-title">Validation</div>
-        <div className={errorCount ? 'validation-pill error' : warningCount ? 'validation-pill warn' : 'validation-pill ok'}>
-          {errorCount} errors / {warningCount} warnings
+        <div className="section-title">校验</div>
+        <button
+          type="button"
+          className={errorCount ? 'validation-pill error' : warningCount ? 'validation-pill warn' : 'validation-pill ok'}
+        >
+          {errorCount} 错误 / {warningCount} 警告{remoteSyncing ? ' · 同步中…' : ''}
+        </button>
+        <div className="issue-filters">
+          {(['all', 'error', 'warning', 'composition'] as IssueFilter[]).map((f) => (
+            <button key={f} type="button" className={issueFilter === f ? 'active' : ''} onClick={() => setIssueFilter(f)}>
+              {f === 'all' ? '全部' : f === 'error' ? '错误' : f === 'warning' ? '警告' : '当前编排'}
+            </button>
+          ))}
         </div>
-        <div className="issue-list">
-          {validationIssues.slice(0, 8).map((issue, index) => (
-            <button key={`${issue.code}-${index}`} className={`issue ${issue.severity}`} title={issue.path}>
-              <b>{issue.severity}</b>
+        <div className="issue-list issue-list-full">
+          {filteredIssues.map((issue, index) => (
+            <button key={`${issue.code}-${issue.path}-${index}`} type="button" className={`issue ${issue.severity}`} title={issue.path} onClick={() => focusIssue(issue)}>
+              <b>{issue.severity === 'error' ? '错' : '警'}</b>
               <span>{issue.message}</span>
             </button>
           ))}
         </div>
+        <div className="panel-resizer" onMouseDown={startLeft} aria-hidden />
       </aside>
 
       <main className="workspace">
-        <header className="toolbar">
-          <div>
-            <strong>{composition?.label || 'No Composition'}</strong>
-            <span className="muted"> / {graphLabel(composition, graphRef)}</span>
-          </div>
-          <div className="toolbar-actions">
-            <button type="button" onClick={() => setLeftCollapsed((v) => !v)}>
-              {leftCollapsed ? '展开导航' : '收起导航'}
+        <header className="workspace-topbar">
+          <div className="topbar-cluster topbar-actions">
+            <div className="mode-switch mode-switch-compact">
+              {(['edit', 'wiring', 'debug'] as CanvasMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`toolbar-btn ${canvasMode === mode ? 'active' : ''}`}
+                  onClick={() => changeCanvasMode(mode)}
+                >
+                  {canvasModeLabel[mode]}
+                </button>
+              ))}
+            </div>
+            <span className="topbar-sep" aria-hidden />
+            <button type="button" className="toolbar-btn primary" onClick={() => void save()} title="Ctrl+S">保存</button>
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={() => void refreshProjectionAndValidation(data)}
+              title="重新计算 trigger/read 投影与校验，不重新加载页面"
+            >
+              刷新投影
             </button>
-            <button type="button" onClick={() => setRightCollapsed((v) => !v)}>
-              {rightCollapsed ? '展开属性' : '收起属性'}
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={reloadNarrativeEditorPage}
+              title="重新加载 Web 画布（F5）。改完前端 build:narrative-editor 后使用"
+            >
+              重载页面
             </button>
-            <button onClick={addState} disabled={!graph}>State</button>
-            {graphRef === 'main' && elementKinds.map((kind) => (
-              <button key={kind} onClick={() => addElementAction(kind)}>{kindLabel(kind)}</button>
-            ))}
-            <label className="toggle"><input type="checkbox" checked={showTrigger} onChange={(e) => setShowTrigger(e.target.checked)} /> 外部触发 ({projection.triggerEdges.length})</label>
-            <label className="toggle"><input type="checkbox" checked={showRead} onChange={(e) => setShowRead(e.target.checked)} /> 外部读取 ({projection.readEdges.length})</label>
-            <label className="toggle"><input type="checkbox" checked={showCommand} onChange={(e) => setShowCommand(e.target.checked)} /> 强制设状态 ({projection.stateCommandEdges?.length ?? 0})</label>
-            <label className="toggle"><input type="checkbox" checked={showMiniMap} onChange={(e) => setShowMiniMap(e.target.checked)} /> MiniMap</label>
-            <button onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>Delete</button>
-            <button onClick={() => refreshProjectionAndValidation(data)}>Refresh</button>
-            <button type="button" onClick={() => { clearLocalNarrativeDraft(); setDataSource(dataSource ? `${dataSource} / draft cleared` : 'draft cleared'); setStatus('Local draft cleared'); }}>Clear Draft</button>
-            <button className="primary" onClick={save}>Save</button>
+            <button type="button" className="toolbar-btn" onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>删除</button>
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={() => { setFitTargetNodeIds([]); setFitViewRev((v) => v + 1); }}
+              title="适应画布 (F)"
+            >
+              适应
+            </button>
+            <AddMenuDropdown items={addMenuItems} />
+            <span className="topbar-sep" aria-hidden />
+            <button type="button" className="toolbar-btn" onClick={() => setLeftCollapsed((v) => !v)} title={leftCollapsed ? '展开左侧导航' : '收起左侧导航'}>
+              {leftCollapsed ? '导航+' : '导航−'}
+            </button>
+            <button type="button" className="toolbar-btn" onClick={() => setRightCollapsed((v) => !v)} title={rightCollapsed ? '展开右侧属性' : '收起右侧属性'}>
+              {rightCollapsed ? '属性+' : '属性−'}
+            </button>
+            {(canvasMode === 'wiring' || canvasMode === 'debug') && (
+              <ToolbarPopover label="图层" panelClassName="layers-popover-panel">
+                <label className="toggle compact-toggle">
+                  <input type="checkbox" checked={showTrigger} onChange={(e) => setShowTrigger(e.target.checked)} />
+                  外部触发 ({projection.triggerEdges.length})
+                </label>
+                <label className="toggle compact-toggle">
+                  <input type="checkbox" checked={showRead} onChange={(e) => setShowRead(e.target.checked)} />
+                  外部读取 ({projection.readEdges.length})
+                </label>
+                <label className="toggle compact-toggle">
+                  <input type="checkbox" checked={showCommand} onChange={(e) => setShowCommand(e.target.checked)} />
+                  强制设状态 ({projection.stateCommandEdges?.length ?? 0})
+                </label>
+                <label className="toggle compact-toggle">
+                  <input type="checkbox" checked={showMiniMap} onChange={(e) => setShowMiniMap(e.target.checked)} />
+                  小地图
+                </label>
+              </ToolbarPopover>
+            )}
+            <SettingsMenu
+              preferences={preferences}
+              onChange={setPreferences}
+              onReset={resetPreferences}
+            />
           </div>
+          <nav className="topbar-cluster topbar-path" aria-label="画布路径">
+            {graphRef !== 'main' && (
+              <span className="topbar-tag" title="独占编辑子图；主画布可双击子图元素展开或收起">独占</span>
+            )}
+            <div className="topbar-path-scroll">
+              {breadcrumbs.map((crumb, index) => (
+                <span key={`${crumb.label}-${index}`} className="breadcrumb-item">
+                  {index > 0 && <span className="breadcrumb-sep">›</span>}
+                  {crumb.onClick ? <button type="button" className="topbar-path-btn" onClick={crumb.onClick}>{crumb.label}</button> : <span className="topbar-path-text">{crumb.label}</span>}
+                </span>
+              ))}
+            </div>
+            {graphRef !== 'main' && (
+              <button
+                type="button"
+                className="toolbar-btn topbar-path-back"
+                onClick={() => { setGraphRef('main'); setSelectedId(''); setSelectedJson(''); }}
+              >
+                主画布
+              </button>
+            )}
+          </nav>
         </header>
 
         <section className="canvas">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
+          <NarrativeFlowCanvas
+            nodes={displayNodes}
+            edges={displayEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={selectNode}
             onEdgeClick={selectEdge}
             onNodeDragStop={onNodeDragStop}
-            fitView
-            fitViewOptions={{ padding: 0.2 }}
-            deleteKeyCode={['Backspace', 'Delete']}
-          >
-            <Background />
-            {showMiniMap && <MiniMap pannable zoomable className="narrative-minimap" />}
-            <Controls />
-          </ReactFlow>
+            onNodeDoubleClick={(_event, node) => {
+              if (!node.id.startsWith('element:')) return;
+              const eid = node.id.slice('element:'.length);
+              canvasActions.toggleSubgraphElement(eid);
+            }}
+            showMiniMap={showMiniMap}
+            canvasShowGrid={preferences.canvasShowGrid}
+            reduceMotion={preferences.reduceMotion}
+            fitViewRev={fitViewRev}
+            fitTargetNodeIds={fitTargetNodeIds}
+            compositionId={compositionId}
+            graphRef={graphRef}
+          />
         </section>
         <footer className="status">
           <span>{editorDirty ? `${status} *` : status}</span>
-          <span>{dataSource || 'source unknown'}</span>
-          <span>{runtimeSnapshot.ok ? 'Runtime connected' : runtimeSnapshot.reason}</span>
+          <span>{dataSource || '来源未知'}</span>
+          <span>{runtimeSnapshot.ok ? '运行时已连接' : runtimeSnapshot.reason}</span>
         </footer>
       </main>
 
       <aside className="inspector">
         <div className="pane-head">
-          <div className="section-title">Inspector</div>
+          <div className="inspector-tabs">
+            {(['properties', 'transitions', 'debug', 'advanced'] as InspectorTab[]).map((tab) => (
+              <button key={tab} type="button" className={inspectorTab === tab ? 'active' : ''} onClick={() => setInspectorTab(tab)}>
+                {tab === 'properties' ? '属性' : tab === 'transitions' ? '迁移' : tab === 'debug' ? '调试' : '高级'}
+              </button>
+            ))}
+          </div>
           <button type="button" onClick={() => setRightCollapsed(true)}>收起</button>
         </div>
         <div className="summary">
           <strong>{selectedObject.title}</strong>
           <span>{selectedObject.subtitle}</span>
         </div>
-        <StructuredInspector
-          data={data}
-          composition={composition}
-          graph={graph}
-          graphRef={graphRef}
-          selectedId={selectedId}
-          catalog={catalog}
-          knownSignals={knownSignals}
-          updateData={updateData}
-          updateCurrentGraph={updateCurrentGraph}
-          setSelectedId={setSelectedId}
-          setSelectedJson={setSelectedJson}
-          setGraphRef={setGraphRef}
-          setStatus={setStatus}
-          setRuntimeSnapshot={setRuntimeSnapshot}
-          expandedElementIds={expandedElementIds}
-          toggleExpandedElement={toggleExpandedElement}
-          deleteSelected={deleteSelected}
-          projection={projection}
-        />
-        <div className="inspector-actions">
-          <button onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>Delete</button>
-          <button onClick={() => selectedObject.navigate && navigateTo(selectedObject.navigate.kind, selectedObject.navigate.id)} disabled={!selectedObject.navigate}>
-            Navigate
-          </button>
-        </div>
-
-        <div className="section-title">Signal Impact / Runtime</div>
-        <div className="field">
-          <label>triggerKey</label>
-          <input list="knownSignals" value={signalKey} onChange={(e) => setSignalKey(e.target.value)} />
-          <datalist id="knownSignals">{knownSignals.map((sig) => <option key={sig} value={sig} />)}</datalist>
-        </div>
-        <div className="inspector-actions">
-          <button onClick={runLocalSimulation}>Simulate</button>
-          <button onClick={pullRuntimeSnapshot}>Pull Runtime</button>
-          <button onClick={emitRuntime}>Emit Runtime</button>
-        </div>
-        <PreviewPanel simulation={simulation} runtimeSnapshot={runtimeSnapshot} />
-
-        <details className="advanced-json">
-          <summary>Advanced JSON</summary>
-          <textarea value={selectedJson} onChange={(e) => setSelectedJson(e.target.value)} readOnly={selectedId.startsWith('projection:')} />
-          <div className="inspector-actions">
-            <button onClick={applySelectedJson} disabled={!selectedId || selectedId.startsWith('projection:')}>Apply JSON</button>
+        {inspectorTab === 'properties' && (
+          <>
+            <StructuredInspector
+              data={data}
+              composition={composition}
+              graph={graph}
+              graphRef={graphRef}
+              selectedId={selectedId}
+              catalog={catalog}
+              knownSignals={knownSignals}
+              updateData={updateData}
+              updateCurrentGraph={updateCurrentGraph}
+              setSelectedId={setSelectedId}
+              setSelectedJson={setSelectedJson}
+              setGraphRef={setGraphRef}
+              setStatus={setStatus}
+              setRuntimeSnapshot={setRuntimeSnapshot}
+              expandedElementIds={expandedElementIds}
+              toggleExpandedElement={toggleExpandedElement}
+              deleteSelected={deleteSelected}
+              projection={projection}
+            />
+            <div className="inspector-actions">
+              <button type="button" onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>删除</button>
+              <button type="button" onClick={() => selectedObject.navigate && navigateTo(selectedObject.navigate.kind, selectedObject.navigate.id)} disabled={!selectedObject.navigate}>
+                跳转资源
+              </button>
+            </div>
+          </>
+        )}
+        {inspectorTab === 'transitions' && graph && (
+          <div className="transition-table">
+            {(graph.transitions ?? []).map((tr) => (
+              <button
+                key={tr.id}
+                type="button"
+                className={`transition-row${selectedId === `transition:${tr.id}` ? ' active' : ''}`}
+                onClick={() => {
+                  setSelectedId(`transition:${tr.id}`);
+                  setSelectedJson(JSON.stringify(tr, null, 2));
+                  setFitTargetNodeIds([`transition:${tr.id}`, `state:${tr.from}`]);
+                  setFitViewRev((v) => v + 1);
+                }}
+              >
+                <span>{String(tr.from)} → {String(tr.to)}</span>
+                <small>{tr.signal || '(无 signal)'}</small>
+              </button>
+            ))}
           </div>
-        </details>
+        )}
+        {inspectorTab === 'debug' && (
+          <>
+            <div className="field">
+              <label>triggerKey</label>
+              <input list="knownSignals" value={signalKey} onChange={(e) => setSignalKey(e.target.value)} />
+              <datalist id="knownSignals">{knownSignals.map((sig) => <option key={sig} value={sig} />)}</datalist>
+            </div>
+            <div className="inspector-actions">
+              <button type="button" onClick={runLocalSimulation}>本地模拟</button>
+              <button type="button" onClick={pullRuntimeSnapshot}>拉取运行时</button>
+              <button type="button" className="danger" onClick={emitRuntime}>发送运行时信号</button>
+            </div>
+            <PreviewPanel simulation={simulation} runtimeSnapshot={runtimeSnapshot} />
+            {graph && selectedId.startsWith('state:') && (
+              <div className="inspector-actions">
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={async () => {
+                    const stateId = selectedId.slice('state:'.length);
+                    const result = await setRuntimeNarrativeState(graph.id, stateId);
+                    setRuntimeSnapshot(result);
+                    setStatus(result.ok ? `运行时已设为 ${graph.id}.${stateId}` : `运行时不可用：${result.reason}`);
+                  }}
+                >
+                  强制设置运行时状态
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {inspectorTab === 'advanced' && (
+          <details className="advanced-json" open>
+            <summary>选中对象 JSON</summary>
+            <textarea className="advanced-json-area" value={selectedJson} onChange={(e) => setSelectedJson(e.target.value)} readOnly={selectedId.startsWith('projection:')} />
+            <div className="inspector-actions">
+              <button type="button" onClick={applySelectedJson} disabled={!selectedId || selectedId.startsWith('projection:')}>应用 JSON</button>
+            </div>
+          </details>
+        )}
+        <div className="panel-resizer panel-resizer-right" onMouseDown={startRight} aria-hidden />
       </aside>
     </div>
+    </NarrativeCanvasActionsProvider>
+  );
+}
+
+function NarrativeFlowCanvas(props: {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  onNodesChange: OnNodesChange<CanvasNode>;
+  onEdgesChange: OnEdgesChange<CanvasEdge>;
+  onConnect: OnConnect;
+  onNodeClick: (event: unknown, node: CanvasNode) => void;
+  onEdgeClick: (event: unknown, edge: CanvasEdge) => void;
+  onNodeDragStop: (event: unknown, node: CanvasNode) => void;
+  onNodeDoubleClick: (event: unknown, node: CanvasNode) => void;
+  showMiniMap: boolean;
+  canvasShowGrid: boolean;
+  reduceMotion: boolean;
+  fitViewRev: number;
+  fitTargetNodeIds: string[];
+  compositionId: string;
+  graphRef: GraphRef;
+}) {
+  const { fitView } = useReactFlow();
+  const lastFit = useRef('');
+
+  useEffect(() => {
+    const key = `${props.compositionId}|${props.graphRef}|${props.fitViewRev}|${props.fitTargetNodeIds.join(',')}`;
+    if (lastFit.current === key && props.fitViewRev === 0) return;
+    lastFit.current = key;
+    const duration = props.reduceMotion ? 0 : 220;
+    const t = window.setTimeout(() => {
+      if (props.fitTargetNodeIds.length) {
+        void fitView({ nodes: props.fitTargetNodeIds.map((id) => ({ id })), padding: 0.4, duration });
+      } else {
+        void fitView({ padding: 0.2, duration: props.reduceMotion ? 0 : 200 });
+      }
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [props.compositionId, props.graphRef, props.fitViewRev, props.fitTargetNodeIds, props.reduceMotion, fitView]);
+
+  return (
+    <ReactFlow
+      nodes={props.nodes}
+      edges={props.edges}
+      nodeTypes={flowNodeTypes}
+      edgeTypes={flowEdgeTypes}
+      onNodesChange={props.onNodesChange}
+      onEdgesChange={props.onEdgesChange}
+      onConnect={props.onConnect}
+      onNodeClick={props.onNodeClick}
+      onEdgeClick={props.onEdgeClick}
+      onNodeDragStop={props.onNodeDragStop}
+      onNodeDoubleClick={props.onNodeDoubleClick}
+      elevateNodesOnSelect
+      selectionOnDrag
+      panOnDrag={[1, 2]}
+      multiSelectionKeyCode="Shift"
+      deleteKeyCode={['Backspace', 'Delete']}
+    >
+      {props.canvasShowGrid ? <Background gap={18} size={1} /> : null}
+      {props.showMiniMap && <MiniMap pannable zoomable className="narrative-minimap" />}
+      <Controls />
+    </ReactFlow>
   );
 }
 
@@ -820,9 +1269,59 @@ function StructuredInspector(props: {
   projection: ProjectionResult;
 }) {
   const { composition, graph, graphRef, selectedId } = props;
-  if (!composition || !graph) return <p className="muted">No composition selected.</p>;
+  const statesByGraph = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const { graph: g } of compileGraphs(props.data)) out[g.id] = Object.keys(g.states ?? {});
+    return out;
+  }, [props.data]);
+  if (!composition || !graph) return <p className="muted">未选择编排。</p>;
   if (!selectedId) return <GraphInspector {...props} graph={graph} />;
-  if (selectedId.startsWith('graph:') || selectedId.startsWith('projection-anchor:') || selectedId.startsWith('transition-anchor:')) {
+  if (selectedId.startsWith('graph:') || selectedId.startsWith('projection-anchor:')) {
+    return <GraphInspector {...props} graph={graph} />;
+  }
+  if (selectedId.startsWith('transition-anchor:')) {
+    const parsed = parseTransitionAnchorId(selectedId);
+    if (parsed) {
+      if (parsed.graphId === graph.id) {
+        const transition = graph.transitions.find((t) => t.id === parsed.transitionId);
+        if (transition) {
+          return (
+            <TransitionInspector
+              {...props}
+              transition={transition}
+              graph={graph}
+              graphIds={Object.keys(statesByGraph)}
+              statesByGraph={statesByGraph}
+              knownSignals={props.knownSignals}
+            />
+          );
+        }
+      }
+      const element = composition.elements?.find((el) => el.graph?.id === parsed.graphId);
+      const subgraph = element?.graph;
+      const transition = subgraph?.transitions.find((t) => t.id === parsed.transitionId);
+      if (element && subgraph && transition) {
+        const updateInlineGraph = (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => {
+          props.updateData((next) => {
+            const comp = getComposition(next, composition.id);
+            const el = comp?.elements?.find((item) => item.id === element.id);
+            if (el?.graph) updater(el.graph, next);
+          });
+        };
+        return (
+          <TransitionInspector
+            {...props}
+            graph={subgraph}
+            transition={transition}
+            graphIds={Object.keys(statesByGraph)}
+            statesByGraph={statesByGraph}
+            knownSignals={props.knownSignals}
+            updateCurrentGraph={updateInlineGraph}
+            setSelectedId={(id) => props.setSelectedId(prefixInlineSelection(element.id, id))}
+          />
+        );
+      }
+    }
     return <GraphInspector {...props} graph={graph} />;
   }
   const inline = parseInlineSubgraphId(selectedId);
@@ -856,6 +1355,9 @@ function StructuredInspector(props: {
         {...props}
         graph={subgraph}
         transition={transition}
+        graphIds={Object.keys(statesByGraph)}
+        statesByGraph={statesByGraph}
+        knownSignals={props.knownSignals}
         updateCurrentGraph={updateInlineGraph}
         setSelectedId={(id) => props.setSelectedId(prefixInlineSelection(inline.elementId, id))}
       />
@@ -869,11 +1371,20 @@ function StructuredInspector(props: {
   if (selectedId.startsWith('transition:')) {
     const transitionId = selectedId.slice('transition:'.length);
     const transition = graph.transitions.find((t) => t.id === transitionId);
-    return transition ? <TransitionInspector {...props} transition={transition} graph={graph} /> : <p className="muted">Missing transition.</p>;
+      return transition ? (
+        <TransitionInspector
+          {...props}
+          transition={transition}
+          graph={graph}
+          graphIds={Object.keys(statesByGraph)}
+          statesByGraph={statesByGraph}
+          knownSignals={props.knownSignals}
+        />
+      ) : <p className="muted">Missing transition.</p>;
   }
   if (selectedId.startsWith('element:') && graphRef === 'main') {
     const element = getElementByNodeId(composition, selectedId);
-    return element ? <ElementInspector {...props} element={element} /> : <p className="muted">Missing element.</p>;
+    return element ? <ElementInspector {...props} element={element} knownSignals={props.knownSignals} /> : <p className="muted">Missing element.</p>;
   }
   if (selectedId.startsWith('projection:')) {
     const edge = findProjectionEdge(props.projection, selectedId.replace('projection:', ''));
@@ -887,10 +1398,12 @@ function GraphInspector(props: {
   composition?: NarrativeCompositionDef;
   graph: NarrativeGraphDef;
   graphRef: GraphRef;
+  catalog: AuthoringCatalogDef;
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
   setStatus?: (status: string) => void;
 }) {
-  const { graph, updateCurrentGraph } = props;
+  const { graph, updateCurrentGraph, catalog } = props;
+  const ownerChoices = ownerChoicesForGraph(graph, catalog);
   return (
     <div className="form-grid">
       <TextField
@@ -906,7 +1419,7 @@ function GraphInspector(props: {
         })}
       />
       <TextField label="ownerType" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
-      <TextField label="ownerId" value={graph.ownerId ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
+      <TextField label="ownerId" value={graph.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
       <SelectField label="initialState" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
       {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
         <>
@@ -915,7 +1428,9 @@ function GraphInspector(props: {
           <div className="property-line">Scenario 只有 entryState / exitStates 可以和外部图直接连线；内部状态只在展开后编辑。</div>
         </>
       )}
-      <label className="toggle"><input type="checkbox" checked={graph.projectFlags === true} onChange={(e) => updateCurrentGraph((g) => { g.projectFlags = e.target.checked; })} /> projectFlags</label>
+      {graph.projectFlags === true && (
+        <div className="property-line danger">projectFlags is deprecated; new graphs should use explicit narrative state reads.</div>
+      )}
       <div className="property-line">{Object.keys(graph.states).length} states / {graph.transitions.length} transitions</div>
     </div>
   );
@@ -970,13 +1485,6 @@ function StateInspector(props: {
         knownSignals={props.knownSignals}
         onChange={(actions) => updateCurrentGraph((g) => { g.states[stateId].onExitActions = actions; })}
       />
-      <div className="inspector-actions">
-        <button onClick={async () => {
-          const result = await setRuntimeNarrativeState(graph.id, stateId);
-          props.setRuntimeSnapshot(result);
-          props.setStatus(result.ok ? `Runtime set ${graph.id}.${stateId}` : `Runtime unavailable: ${result.reason}`);
-        }}>Runtime setState</button>
-      </div>
     </div>
   );
 }
@@ -987,17 +1495,16 @@ function TransitionInspector(props: {
   graph: NarrativeGraphDef;
   transition: NarrativeTransitionDef;
   knownSignals: string[];
+  graphIds: string[];
+  statesByGraph: Record<string, string[]>;
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
   setSelectedId: (id: string) => void;
   setStatus: (status: string) => void;
   deleteSelected: () => void;
 }) {
-  const { graph, transition, updateCurrentGraph } = props;
-  const endpointChoices = allEndpointChoices(props.data);
-  const graphIds = compileGraphs(props.data).map((item) => item.graph.id);
-  const fromEndpoint = resolveEndpoint(transition.from, graph.id);
-  const toEndpoint = resolveEndpoint(transition.to, graph.id);
-  const remoteEnter = fromEndpoint.graphId !== toEndpoint.graphId;
+  const { graph, transition, updateCurrentGraph, knownSignals } = props;
+  const stateChoices = Object.keys(graph.states);
+  const legacyEndpoint = typeof transition.from !== 'string' || typeof transition.to !== 'string';
   return (
     <div className="form-grid">
       <TextField
@@ -1013,26 +1520,31 @@ function TransitionInspector(props: {
           }
         })}
       />
-      <TextField
+      <SelectField
         label="from"
-        value={endpointInputValue(transition.from, graph.id)}
-        datalistValues={endpointChoices}
-        onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).from = parseEndpointInput(value, g.id, graphIds); })}
+        value={typeof transition.from === 'string' ? transition.from : ''}
+        values={stateChoices}
+        onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).from = value; })}
       />
-      <TextField
+      <SelectField
         label="to"
-        value={endpointInputValue(transition.to, graph.id)}
-        datalistValues={endpointChoices}
-        onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).to = parseEndpointInput(value, g.id, graphIds); })}
+        value={typeof transition.to === 'string' ? transition.to : ''}
+        values={stateChoices}
+        onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).to = value; })}
       />
       <div className="property-line">
-        {remoteEnter
-          ? 'remote-enter: cross-graph transition enters the target graph only; the source graph keeps its current state.'
-          : 'Endpoint may be a local stateId or cross-graph graphId.stateId. Cross-graph transitions must live on the from graph.'}
+        {legacyEndpoint
+          ? 'Unsupported legacy cross-graph endpoint. Choose local states; express graph-to-graph effects with external:state or emitNarrativeSignal.'
+          : 'Transitions only move between states inside this graph.'}
       </div>
-      <TextField label="signal" value={transition.signal} datalistId="knownSignals" onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = value; })} />
+      <TextField label="signal" value={transition.signal} datalistId="knownSignals" datalistValues={props.knownSignals} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = value; })} />
       <NumberField label="priority" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).priority = value; })} />
-      <JsonValueField label="conditions" value={transition.conditions ?? []} onApply={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).conditions = Array.isArray(value) ? value : []; })} />
+      <ConditionBuilder
+        value={transition.conditions ?? []}
+        graphIds={props.graphIds}
+        statesByGraph={props.statesByGraph}
+        onApply={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).conditions = Array.isArray(value) ? value : value ? [value] : []; })}
+      />
       <div className="inspector-actions">
         <button type="button" onClick={props.deleteSelected}>断开迁移边</button>
       </div>
@@ -1044,6 +1556,7 @@ function ElementInspector(props: {
   composition?: NarrativeCompositionDef;
   element: CompositionElementDef;
   catalog: AuthoringCatalogDef;
+  knownSignals: string[];
   updateData: (updater: (next: NarrativeGraphsFileDef) => void) => void;
   setSelectedId: (id: string) => void;
   setGraphRef: (ref: GraphRef) => void;
@@ -1081,7 +1594,7 @@ function ElementInspector(props: {
             el.ownerId = value;
             if (el.graph) el.graph.ownerId = value;
           })} />
-          <div className="property-line">绑定后运行时可通过 ownerType/ownerId 将该 wrapper 图归属到对应实体。</div>
+          <div className="property-line">绑定后 DialogueGraph 的 OwnerStateNode 才能读取该 wrapper 的 activeState；ContextStateNode 应读取 flow/scenario 图，不能选 npc wrapper。</div>
         </>
       ) : element.kind === 'scenarioSubgraph' ? (
         <>
@@ -1110,12 +1623,22 @@ function ElementInspector(props: {
           })} />
         </>
       )}
-      <StringListField label="emits" value={element.meta?.emits ?? []} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })} />
-      <StringListField label="reads" value={element.meta?.reads ?? []} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })} />
+      <SignalChipsField
+        label="emits"
+        value={element.meta?.emits ?? []}
+        options={props.knownSignals}
+        onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })}
+      />
+      <SignalChipsField
+        label="reads"
+        value={element.meta?.reads ?? []}
+        options={props.knownSignals}
+        onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })}
+      />
       {isSubgraph && (
         <div className="inspector-actions">
           <button type="button" onClick={() => props.toggleExpandedElement(element.id)}>{expanded ? '在主画布收起子图' : '在主画布展开子图'}</button>
-          <button type="button" onClick={() => props.setGraphRef(`element:${element.id}`)}>Open Subgraph</button>
+          <button type="button" className="secondary" onClick={() => props.setGraphRef(`element:${element.id}`)}>独占打开子图</button>
         </div>
       )}
     </div>
@@ -1167,305 +1690,6 @@ function PreviewPanel({ simulation, runtimeSnapshot }: { simulation: SimulationR
   );
 }
 
-function StateNode({ data, selected }: NodeProps<CanvasNode>) {
-  return (
-    <div className={`node state-node ${data.boundary ? `boundary-${data.boundary}` : ''} ${selected ? 'selected' : ''} ${data.active ? 'runtime-active' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-      <div className="node-title">{data.label}</div>
-      <div className="node-subtitle">{data.subtitle}</div>
-      {data.boundary && <div className="node-detail">{data.boundary === 'entryExit' ? 'Scenario entry / exit' : `Scenario ${data.boundary}`}</div>}
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-
-function ElementNode({ data, selected }: NodeProps<CanvasNode>) {
-  return (
-    <div className={`node element-node ${data.kind} ${selected ? 'selected' : ''} ${data.active ? 'runtime-active' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-      <div className="node-title">{data.label}</div>
-      <div className="node-subtitle">{data.subtitle}</div>
-      {data.detail && <div className="node-detail">{data.detail}</div>}
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-
-function AnchorNode({ data, selected }: NodeProps<CanvasNode>) {
-  return (
-    <div className={`node anchor-node ${data.kind} ${selected ? 'selected' : ''} ${data.active ? 'runtime-active' : ''}`}>
-      <Handle type="target" position={Position.Left} />
-      <div className="node-title">{data.label}</div>
-      <div className="node-subtitle">{data.subtitle}</div>
-      {data.detail && <div className="node-detail">{data.detail}</div>}
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-
-function TransitionAnchorNode({ data, selected }: NodeProps<CanvasNode>) {
-  return (
-    <div
-      className={`transition-anchor ${selected ? 'selected' : ''}`}
-      title={data.detail || 'Transition trigger point'}
-    >
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-
-function StyledEdge(props: EdgeProps<CanvasEdge>) {
-  const [path, labelX, labelY] = getBezierPath(props);
-  const kind = props.data?.edgeKind ?? 'transition';
-  const selected = props.selected === true;
-  const showLabel = kind === 'transition';
-  return (
-    <>
-      <BaseEdge
-        path={path}
-        markerEnd={props.markerEnd}
-        style={{
-          stroke: edgeColor(kind),
-          strokeWidth: selected ? 4 : kind === 'transition' ? 2.4 : 2.2,
-          strokeDasharray: kind === 'transition' ? undefined : kind === 'stateCommand' ? '2 5' : '6 5',
-          filter: selected ? `drop-shadow(0 0 5px ${edgeColor(kind)})` : undefined,
-        }}
-      />
-      {showLabel && props.label && (
-        <foreignObject width={220} height={44} x={labelX - 110} y={labelY - 22} className="edge-label-wrap">
-          <div className={`edge-label ${kind}`}>{String(props.label)}</div>
-        </foreignObject>
-      )}
-    </>
-  );
-}
-
-function toNodes(
-  comp: NarrativeCompositionDef,
-  graph: NarrativeGraphDef,
-  graphRef: GraphRef,
-  activeStates: Record<string, string>,
-  projection: ProjectionResult,
-  showTrigger: boolean,
-  showRead: boolean,
-  showCommand: boolean,
-  expandedElementIds: string[],
-  selectedId: string,
-): CanvasNode[] {
-  const states: CanvasNode[] = Object.entries(graph.states ?? {}).map(([sid, state], index) => ({
-    id: `state:${sid}`,
-    type: 'state',
-    position: stateEditorPosition(state, index),
-    zIndex: 20,
-    deletable: true,
-    selected: selectedId === `state:${sid}`,
-    data: {
-      label: state.label || sid,
-      subtitle: `State / ${sid}`,
-      kind: 'state' as const,
-      boundary: scenarioBoundaryKind(graph, sid),
-      active: activeStates[graph.id] === sid,
-    },
-  }));
-  if (graphRef !== 'main') return states;
-  const graphAnchor: CanvasNode = {
-    id: `graph:${graph.id}`,
-    type: 'graphAnchor',
-    position: { x: -260, y: -80 },
-    zIndex: 20,
-    draggable: false,
-    deletable: false,
-    selected: selectedId === `graph:${graph.id}`,
-    data: {
-      label: graph.label || graph.id,
-      subtitle: 'Main Graph',
-      kind: 'graphAnchor',
-      detail: graph.id,
-      active: Boolean(activeStates[graph.id]),
-    },
-  };
-  const elements: CanvasNode[] = (comp.elements ?? []).map((el, index) => ({
-    id: `element:${el.id}`,
-    type: el.kind,
-    position: { x: Number(el.x ?? 120 + index * 220), y: Number(el.y ?? 40) },
-    zIndex: 20,
-    deletable: true,
-    selected: selectedId === `element:${el.id}`,
-    data: {
-      label: el.label || el.id,
-      subtitle: elementSubtitle(el),
-      kind: el.kind,
-      detail: el.refId || el.ownerId || el.graph?.id || '',
-      active: Boolean(el.graph && activeStates[el.graph.id] && activeStates[el.graph.id] !== el.graph.initialState),
-    },
-  }));
-  const inlineNodes: CanvasNode[] = [];
-  for (const el of comp.elements ?? []) {
-    if (!expandedElementIds.includes(el.id) || !isSubgraphElement(el) || !el.graph) continue;
-    const base = inlineSubgraphBase(el);
-    for (const [sid, state] of Object.entries(el.graph.states ?? {})) {
-      const pos = stateEditorPosition(state, inlineNodes.length);
-      const boundary = scenarioBoundaryKind(el.graph, sid);
-      inlineNodes.push({
-        id: inlineSubgraphStateId(el.id, sid),
-        type: 'state',
-        position: { x: base.x + pos.x, y: base.y + pos.y },
-        zIndex: 20,
-        deletable: true,
-        selected: selectedId === inlineSubgraphStateId(el.id, sid),
-        data: {
-          label: state.label || sid,
-          subtitle: `${el.label || el.id} / ${sid}`,
-          kind: 'state' as const,
-          boundary,
-          detail: el.graph.id,
-          active: activeStates[el.graph.id] === sid,
-        },
-      });
-    }
-  }
-  const transitionAnchors = buildTransitionAnchorNodes(comp, graph, expandedElementIds, selectedId);
-  const baseNodes = [graphAnchor, ...states, ...elements, ...inlineNodes, ...transitionAnchors];
-  const knownIds = new Set(baseNodes.map((node) => node.id));
-  const anchors: CanvasNode[] = [];
-  const visibleExternalEdges = visibleProjectionEdgesForComposition(comp, projection, showTrigger, showRead, showCommand);
-  for (const edge of visibleExternalEdges) {
-    for (const endpoint of [edge.source, edge.target]) {
-      if (!endpoint || knownIds.has(endpoint)) continue;
-      knownIds.add(endpoint);
-      const index = anchors.length;
-      anchors.push({
-        id: endpoint,
-        type: endpoint.startsWith('transition-anchor:') ? 'transitionAnchor' : 'projectionAnchor',
-        position: { x: 760 + (index % 2) * 210, y: 120 + Math.floor(index / 2) * 96 },
-        draggable: false,
-        deletable: false,
-        selected: selectedId === endpoint,
-        data: {
-          label: projectionEndpointLabel(endpoint),
-          subtitle: 'Projection Endpoint',
-          kind: 'projectionAnchor',
-          detail: endpoint,
-        },
-      });
-    }
-  }
-  return [...baseNodes, ...anchors];
-}
-
-function toEdges(
-  comp: NarrativeCompositionDef,
-  graph: NarrativeGraphDef,
-  graphRef: GraphRef,
-  projection: ProjectionResult,
-  showTrigger: boolean,
-  showRead: boolean,
-  showCommand: boolean,
-  expandedElementIds: string[],
-  selectedId: string,
-): CanvasEdge[] {
-  const transitionEdges: CanvasEdge[] = (graph.transitions ?? []).map((t) => ({
-    id: `transition:${t.id}`,
-    source: nodeIdForEndpoint(t.from, graph.id, comp, expandedElementIds),
-    target: nodeIdForEndpoint(t.to, graph.id, comp, expandedElementIds),
-    type: 'transition',
-    label: t.signal,
-    selected: selectedId === `transition:${t.id}`,
-    markerEnd: { type: MarkerType.ArrowClosed },
-    data: { edgeKind: 'transition', label: t.signal, detail: `${graph.id}.${t.id}` },
-  }));
-  if (graphRef !== 'main') return transitionEdges;
-  const inlineTransitionEdges: CanvasEdge[] = [];
-  for (const el of comp.elements ?? []) {
-    if (!expandedElementIds.includes(el.id) || !isSubgraphElement(el) || !el.graph) continue;
-    for (const t of el.graph.transitions ?? []) {
-      inlineTransitionEdges.push({
-        id: inlineSubgraphTransitionId(el.id, t.id),
-        source: nodeIdForEndpoint(t.from, el.graph.id, comp, expandedElementIds),
-        target: nodeIdForEndpoint(t.to, el.graph.id, comp, expandedElementIds),
-        type: 'transition',
-        label: t.signal,
-        selected: selectedId === inlineSubgraphTransitionId(el.id, t.id),
-        markerEnd: { type: MarkerType.ArrowClosed },
-        data: { edgeKind: 'transition', label: t.signal, detail: `${el.graph.id}.${t.id}` },
-      });
-    }
-  }
-  const projectionEdges = visibleProjectionEdgesForComposition(comp, projection, showTrigger, showRead, showCommand).map((edge) => ({
-    ...toProjectionEdge(edge, edge.kind),
-    selected: selectedId === `projection:${edge.id}`,
-  }));
-  return [...transitionEdges, ...inlineTransitionEdges, ...projectionEdges.filter((edge) => edge.source && edge.target)];
-}
-
-function toProjectionEdge(edge: ProjectionEdgeDef, kind: 'trigger' | 'read' | 'stateCommand'): CanvasEdge {
-  const color = edgeColor(kind);
-  return {
-    id: `projection:${edge.id}`,
-    source: edge.source,
-    target: edge.target,
-    type: 'projection',
-    label: edge.label,
-    selectable: true,
-    deletable: false,
-    interactionWidth: 8,
-    zIndex: 0,
-    markerEnd: { type: MarkerType.ArrowClosed, color },
-    data: { edgeKind: kind, label: edge.label, detail: edge.detail ?? edge.id },
-  };
-}
-
-function visibleProjectionEdges(
-  projection: ProjectionResult,
-  showTrigger: boolean,
-  showRead: boolean,
-  showCommand: boolean,
-): ProjectionEdgeDef[] {
-  return [
-    ...(showTrigger ? projection.triggerEdges : []),
-    ...(showRead ? projection.readEdges : []),
-    ...(showCommand ? projection.stateCommandEdges ?? [] : []),
-  ];
-}
-
-function visibleProjectionEdgesForComposition(
-  comp: NarrativeCompositionDef,
-  projection: ProjectionResult,
-  showTrigger: boolean,
-  showRead: boolean,
-  showCommand: boolean,
-): ProjectionEdgeDef[] {
-  const scoped = visibleProjectionEdges(projection, showTrigger, showRead, showCommand)
-    .filter((edge) => edge.compositionId === comp.id);
-  if (scoped.length > 0) return scoped;
-
-  const elementNodeIds = new Set((comp.elements ?? []).map((el) => `element:${el.id}`));
-  const transitionAnchorIds = new Set<string>();
-  for (const graph of [
-    comp.mainGraph,
-    ...(comp.elements ?? []).map((el) => el.graph).filter((graph): graph is NarrativeGraphDef => Boolean(graph)),
-  ]) {
-    for (const transition of graph.transitions ?? []) {
-      transitionAnchorIds.add(transitionAnchorId(graph.id, transition.id));
-    }
-  }
-  return visibleProjectionEdges(projection, showTrigger, showRead, showCommand).filter((edge) => {
-    if (edge.compositionId && edge.compositionId !== comp.id) return false;
-    if (elementNodeIds.has(edge.source) || elementNodeIds.has(edge.target)) return true;
-    if (transitionAnchorIds.has(edge.source) || transitionAnchorIds.has(edge.target)) return true;
-    return false;
-  });
-}
-
-function projectionEndpointLabel(endpoint: string): string {
-  if (endpoint.startsWith('graph:')) return endpoint.slice('graph:'.length);
-  if (endpoint.startsWith('state:')) return endpoint.slice('state:'.length);
-  const transitionAnchor = parseTransitionAnchorId(endpoint);
-  if (transitionAnchor) return `${transitionAnchor.graphId}.${transitionAnchor.transitionId}`;
-  if (endpoint.startsWith('element:')) return endpoint.slice('element:'.length);
-  return endpoint.replace(/^projection-anchor:/, '').replace(/^external:/, '');
-}
 
 function getNodeObject(comp: NarrativeCompositionDef | undefined, graph: NarrativeGraphDef | undefined, nodeId: string) {
   if (!comp || !graph) return null;
@@ -1476,7 +1700,16 @@ function getNodeObject(comp: NarrativeCompositionDef | undefined, graph: Narrati
   if (inline?.kind === 'transition') {
     return comp.elements?.find((el) => el.id === inline.elementId)?.graph?.transitions.find((t) => t.id === inline.objectId) ?? null;
   }
-  if (nodeId.startsWith('graph:') || nodeId.startsWith('projection-anchor:') || nodeId.startsWith('transition-anchor:')) return graph;
+  if (nodeId.startsWith('transition-anchor:')) {
+    const parsed = parseTransitionAnchorId(nodeId);
+    if (parsed?.graphId === graph.id) {
+      return graph.transitions.find((t) => t.id === parsed.transitionId) ?? graph;
+    }
+    const found = findTransitionByAnchorId(comp, nodeId);
+    if (found) return found.transition;
+    return graph;
+  }
+  if (nodeId.startsWith('graph:') || nodeId.startsWith('projection-anchor:')) return graph;
   if (nodeId.startsWith('state:')) return graph.states[nodeId.slice('state:'.length)];
   if (nodeId.startsWith('element:')) return getElementByNodeId(comp, nodeId);
   return graph;
@@ -1598,257 +1831,6 @@ function getSelectedSummary(comp: NarrativeCompositionDef | undefined, graph: Na
   return { title: selectedId, subtitle: 'Readonly projection edge', navigate: null };
 }
 
-function isSelectionDeletable(selectedId: string, graphRef: GraphRef): boolean {
-  return (
-    parseInlineSubgraphId(selectedId) !== null
-    || selectedId.startsWith('state:')
-    || selectedId.startsWith('transition:')
-    || (graphRef === 'main' && selectedId.startsWith('element:'))
-  );
-}
-
-function inlineSubgraphStateId(elementId: string, stateId: string): string {
-  return `subgraph:${elementId}:state:${stateId}`;
-}
-
-function inlineSubgraphTransitionId(elementId: string, transitionId: string): string {
-  return `subgraph:${elementId}:transition:${transitionId}`;
-}
-
-function parseInlineSubgraphId(id: string): null | { elementId: string; kind: 'state' | 'transition'; objectId: string } {
-  const match = /^subgraph:([^:]+):(state|transition):(.+)$/.exec(id);
-  if (!match) return null;
-  return { elementId: match[1], kind: match[2] as 'state' | 'transition', objectId: match[3] };
-}
-
-function prefixInlineSelection(elementId: string, id: string): string {
-  if (id.startsWith('state:')) return inlineSubgraphStateId(elementId, id.slice('state:'.length));
-  if (id.startsWith('transition:')) return inlineSubgraphTransitionId(elementId, id.slice('transition:'.length));
-  return id;
-}
-
-function inlineSubgraphBase(element: CompositionElementDef): { x: number; y: number } {
-  return {
-    x: Number(element.x ?? 0) + 24,
-    y: Number(element.y ?? 0) + 150,
-  };
-}
-
-function nodeIdForEndpoint(
-  endpoint: NarrativeEndpointDef,
-  ownerGraphId: string,
-  comp: NarrativeCompositionDef,
-  expandedElementIds: string[],
-): string {
-  const resolved = resolveEndpoint(endpoint, ownerGraphId);
-  if (resolved.graphId === comp.mainGraph.id) return `state:${resolved.stateId}`;
-  const element = comp.elements?.find((el) => el.graph?.id === resolved.graphId);
-  if (!element) return `projection-anchor:${resolved.graphId}.${resolved.stateId}`;
-  if (expandedElementIds.includes(element.id)) return inlineSubgraphStateId(element.id, resolved.stateId);
-  return `element:${element.id}`;
-}
-
-function buildTransitionAnchorNodes(
-  comp: NarrativeCompositionDef,
-  mainGraph: NarrativeGraphDef,
-  expandedElementIds: string[],
-  selectedId: string,
-): CanvasNode[] {
-  const out: CanvasNode[] = [];
-  const addGraphAnchors = (graph: NarrativeGraphDef, element?: CompositionElementDef) => {
-    const graphBase = element ? inlineSubgraphBase(element) : { x: 0, y: 0 };
-    for (const [index, transition] of (graph.transitions ?? []).entries()) {
-      const from = resolveEndpoint(transition.from, graph.id);
-      const to = resolveEndpoint(transition.to, graph.id);
-      const fromPos = from.graphId === graph.id ? stateEditorPosition(graph.states[from.stateId] ?? { id: from.stateId }, index) : null;
-      const toPos = to.graphId === graph.id ? stateEditorPosition(graph.states[to.stateId] ?? { id: to.stateId }, index) : null;
-      const x = graphBase.x + (fromPos && toPos ? (fromPos.x + toPos.x) / 2 : 160 + index * 36);
-      const y = graphBase.y + (fromPos && toPos ? (fromPos.y + toPos.y) / 2 - 54 : 72 + index * 42);
-      out.push({
-        id: transitionAnchorId(graph.id, transition.id),
-        type: 'transitionAnchor',
-        position: { x, y },
-        draggable: false,
-        deletable: false,
-        selectable: true,
-        selected: selectedId === transitionAnchorId(graph.id, transition.id),
-        data: {
-          label: '',
-          subtitle: 'Trigger point',
-          kind: 'transitionAnchor',
-          detail: transition.signal,
-        },
-      });
-    }
-  };
-  addGraphAnchors(mainGraph);
-  for (const element of comp.elements ?? []) {
-    if (expandedElementIds.includes(element.id) && isSubgraphElement(element) && element.graph) {
-      addGraphAnchors(element.graph, element);
-    }
-  }
-  return out;
-}
-
-function stateEndpointFromNodeId(
-  nodeId: string,
-  comp: NarrativeCompositionDef,
-  mainGraph: NarrativeGraphDef,
-): null | { graphId: string; stateId: string; elementId?: string; elementKind?: ElementKind } {
-  if (nodeId.startsWith('state:')) {
-    return { graphId: mainGraph.id, stateId: nodeId.slice('state:'.length) };
-  }
-  const inline = parseInlineSubgraphId(nodeId);
-  if (inline?.kind !== 'state') return null;
-  const element = comp.elements?.find((el) => el.id === inline.elementId);
-  if (!element?.graph) return null;
-  return { graphId: element.graph.id, stateId: inline.objectId, elementId: element.id, elementKind: element.kind };
-}
-
-function canConnectStateEndpoints(
-  comp: NarrativeCompositionDef,
-  source: { graphId: string; stateId: string; elementKind?: ElementKind },
-  target: { graphId: string; stateId: string; elementKind?: ElementKind },
-): { ok: true } | { ok: false; reason: string } {
-  if (source.graphId === target.graphId) return { ok: true };
-  const sourceGraph = findGraphById(comp, source.graphId);
-  const targetGraph = findGraphById(comp, target.graphId);
-  const sourceKind = graphElementKind(comp, source.graphId);
-  const targetKind = graphElementKind(comp, target.graphId);
-  if (sourceKind === 'wrapperGraph' || targetKind === 'wrapperGraph') {
-    return { ok: false, reason: 'Wrapper graph 不能和外部 state 直接连线，请通过 owner/signal/action 接入。' };
-  }
-  if ((targetKind === 'scenarioSubgraph' || targetGraph?.ownerType === 'scenario') && target.stateId !== targetGraph?.entryState) {
-    return { ok: false, reason: '外部只能连接到 scenario 的 entryState。' };
-  }
-  if ((sourceKind === 'scenarioSubgraph' || sourceGraph?.ownerType === 'scenario') && !(sourceGraph?.exitStates ?? []).includes(source.stateId)) {
-    return { ok: false, reason: 'scenario 只能从 exitStates 连接到外部。' };
-  }
-  return { ok: true };
-}
-
-function findGraphById(comp: NarrativeCompositionDef | undefined, graphId: string): NarrativeGraphDef | undefined {
-  if (!comp) return undefined;
-  if (comp.mainGraph.id === graphId) return comp.mainGraph;
-  return comp.elements?.find((el) => el.graph?.id === graphId)?.graph;
-}
-
-function graphElementKind(comp: NarrativeCompositionDef, graphId: string): ElementKind | undefined {
-  return comp.elements?.find((el) => el.graph?.id === graphId)?.kind;
-}
-
-function removeTransitionsReferencingState(comp: NarrativeCompositionDef, targetGraphId: string, stateId: string): void {
-  const graphs = [
-    comp.mainGraph,
-    ...(comp.elements ?? []).map((el) => el.graph).filter((graph): graph is NarrativeGraphDef => Boolean(graph)),
-  ];
-  for (const graph of graphs) {
-    graph.transitions = (graph.transitions ?? []).filter((transition) => {
-      const from = resolveEndpoint(transition.from, graph.id);
-      const to = resolveEndpoint(transition.to, graph.id);
-      return !(from.graphId === targetGraphId && from.stateId === stateId) &&
-        !(to.graphId === targetGraphId && to.stateId === stateId);
-    });
-  }
-}
-
-function scenarioBoundaryKind(graph: NarrativeGraphDef, stateId: string): 'entry' | 'exit' | 'entryExit' | undefined {
-  if (graph.ownerType !== 'scenario' && !graph.entryState && !graph.exitStates?.length) return undefined;
-  const isEntry = graph.entryState === stateId;
-  const isExit = (graph.exitStates ?? []).includes(stateId);
-  if (isEntry && isExit) return 'entryExit';
-  if (isEntry) return 'entry';
-  if (isExit) return 'exit';
-  return undefined;
-}
-
-function navigationForElement(el?: CompositionElementDef) {
-  if (!el) return null;
-  if (el.kind === 'dialogueBlackbox' && el.refId) return { kind: 'dialogue', id: el.refId };
-  if (el.kind === 'scenarioSubgraph' && (el.refId || el.ownerId)) return { kind: 'scenario', id: el.refId || el.ownerId! };
-  if (el.kind === 'zoneBlackbox' && el.refId) return { kind: 'sceneEntity', id: el.refId };
-  if (el.kind === 'minigameBlackbox' && el.refId) return { kind: 'minigame', id: el.refId };
-  if (el.kind === 'cutsceneBlackbox' && el.refId) return { kind: 'cutscene', id: el.refId };
-  if (el.kind === 'wrapperGraph' && el.ownerType === 'quest' && el.ownerId) return { kind: 'quest', id: el.ownerId };
-  if (el.kind === 'wrapperGraph' && el.ownerId) return { kind: 'sceneEntity', id: el.ownerId };
-  return null;
-}
-
-function elementSubtitle(el?: CompositionElementDef) {
-  if (!el) return '';
-  if (el.kind === 'wrapperGraph') return `Wrapper / ${el.ownerType || 'entity'}`;
-  if (el.kind === 'scenarioSubgraph') return 'Scenario subgraph';
-  return el.kind.replace('Blackbox', ' blackbox');
-}
-
-function updateElement(
-  updateData: (updater: (next: NarrativeGraphsFileDef) => void) => void,
-  composition: NarrativeCompositionDef | undefined,
-  elementId: string,
-  updater: (element: CompositionElementDef) => void,
-) {
-  updateData((next) => {
-    const comp = getComposition(next, composition?.id ?? '');
-    const element = comp?.elements?.find((el) => el.id === elementId);
-    if (element) updater(element);
-  });
-}
-
-function transitionIn(graph: NarrativeGraphDef, transitionId: string): NarrativeTransitionDef {
-  const transition = graph.transitions.find((t) => t.id === transitionId);
-  if (!transition) throw new Error(`Transition not found: ${transitionId}`);
-  return transition;
-}
-
-function findProjectionEdge(projection: ProjectionResult, edgeId: string): ProjectionEdgeDef | undefined {
-  return [...projection.triggerEdges, ...projection.readEdges, ...(projection.stateCommandEdges ?? [])].find((edge) => edge.id === edgeId);
-}
-
-function extractActiveStates(runtimeSnapshot: RuntimeDebugSnapshotDef): Record<string, string> | null {
-  if (!runtimeSnapshot.ok || !runtimeSnapshot.snapshot || typeof runtimeSnapshot.snapshot !== 'object') return null;
-  const snap = runtimeSnapshot.snapshot as { narrativeState?: { activeStates?: Record<string, string> } };
-  return snap.narrativeState?.activeStates ?? null;
-}
-
-function ownerChoicesFor(element: CompositionElementDef, catalog: AuthoringCatalogDef): string[] {
-  if (element.kind === 'dialogueBlackbox') return catalog.dialogueGraphIds;
-  if (element.kind === 'scenarioSubgraph') return catalog.scenarioIds;
-  if (element.kind === 'zoneBlackbox') return catalog.zoneRefs;
-  if (element.kind === 'minigameBlackbox') return catalog.minigameIds;
-  if (element.kind === 'cutsceneBlackbox') return catalog.cutsceneIds;
-  if (element.ownerType === 'quest') return catalog.questIds;
-  if (element.ownerType === 'dialogue') return catalog.dialogueGraphIds;
-  if (element.ownerType === 'minigame') return catalog.minigameIds;
-  if (element.ownerType === 'cutscene') return catalog.cutsceneIds;
-  if (element.ownerType === 'zone') return catalog.zoneRefs;
-  if (element.ownerType === 'scenario') return catalog.scenarioIds;
-  return catalog.sceneEntityRefs;
-}
-
-function allEndpointChoices(data: NarrativeGraphsFileDef): string[] {
-  const out: string[] = [];
-  for (const { graph } of compileGraphs(data)) {
-    for (const stateId of Object.keys(graph.states ?? {})) out.push(`${graph.id}.${stateId}`);
-  }
-  return out.sort((a, b) => a.localeCompare(b));
-}
-
-function kindLabel(kind: ElementKind): string {
-  if (kind === 'wrapperGraph') return 'Wrapper';
-  if (kind === 'scenarioSubgraph') return 'Scenario';
-  if (kind === 'dialogueBlackbox') return 'Dialogue';
-  if (kind === 'zoneBlackbox') return 'Zone';
-  if (kind === 'minigameBlackbox') return 'Minigame';
-  return 'Cutscene';
-}
-
-function edgeColor(kind: string): string {
-  if (kind === 'transition') return '#d9a441';
-  if (kind === 'trigger') return '#45a8e5';
-  if (kind === 'read') return '#79b65d';
-  return '#d782d9';
-}
-
 function actionArray(value: unknown): ActionDef[] {
   return Array.isArray(value) ? value as ActionDef[] : [];
 }
@@ -1966,10 +1948,11 @@ function ActionListField({
             .map(([key, value]) => `${key}: ${formatActionParamValue(value)}`)
             .join(' | ');
           const persistence = catalog.actionPersistence[action.type] === 'save' ? 'save' : 'memory';
+          const unsafeStateCommand = action.type === 'setNarrativeState';
           return (
-            <div className="action-summary-row" key={`${index}-${action.type}`}>
+            <div className={`action-summary-row${unsafeStateCommand ? ' danger' : ''}`} key={`${index}-${action.type}`}>
               <span className={`save-dot ${persistence}`} title={persistence === 'save' ? '会修改持久化数据' : '运行时或演出 Action'} />
-              <b>{index + 1}. {action.type || '(空 Action)'}</b>
+              <b>{index + 1}. {action.type || '(空 Action)'}{unsafeStateCommand ? ' — 强制设状态：绕过状态机因果链' : ''}</b>
               <span>{summary || '无参数'}</span>
             </div>
           );

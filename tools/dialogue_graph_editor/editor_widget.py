@@ -453,6 +453,7 @@ class DialogueGraphEditorWidget(QWidget):
             project_root=self._project,
             project_model_getter=self._get_project_model_for_inspector,
             node_types_getter=self._node_types_for_picker,
+            dialogue_graph_id_getter=lambda: str(self._data.get("id", "") or "").strip(),
         )
         self._inspector.set_change_callback(self._on_inspector_changed)
         self._inspector.set_editor_group_callbacks(
@@ -667,8 +668,16 @@ class DialogueGraphEditorWidget(QWidget):
             )
             menu.addAction(act_nf)
             menu.addSeparator()
-            for nt in ("line", "runActions", "choice", "switch", "end"):
-                act = QAction(f"在此处添加 {nt}", self)
+            for nt, label in (
+                ("line", "line"),
+                ("runActions", "runActions"),
+                ("choice", "choice"),
+                ("switch", "switch"),
+                ("ownerState", "ownerState（所属实体状态）"),
+                ("contextState", "contextState（上下文状态）"),
+                ("end", "end"),
+            ):
+                act = QAction(f"在此处添加 {label}", self)
                 act.triggered.connect(
                     lambda checked=False, t=nt, sx=scene_x, sy=scene_y: self._spawn_node_at_canvas(
                         t, sx, sy
@@ -705,7 +714,42 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
         self._rebuild_flow_scene()
 
+    def _validate_current_graph(self) -> tuple[list[str], list[str]]:
+        return validate_graph_tiered(
+            self._data,
+            project_root=self._project,
+            project_model=self._get_project_model_for_inspector(),
+        )
+
+    def _owner_state_wrapper_available(self) -> tuple[bool, str]:
+        model = self._get_project_model_for_inspector()
+        if model is None:
+            return False, "无法加载项目模型，不能创建 OwnerStateNode"
+        dialogue_id = str(self._data.get("id", "") or "").strip()
+        if not dialogue_id:
+            return False, "当前对话图缺少 id，不能创建 OwnerStateNode"
+        from tools.editor.shared.narrative_catalog import resolve_owner_wrapper_states
+
+        info = resolve_owner_wrapper_states(self._project, model, dialogue_id)
+        wrappers = info.get("wrappers") or []
+        if not wrappers:
+            return False, str(info.get("message") or "未找到所属实体 wrapper")
+        return True, str(info.get("message") or "")
+
+    def _guard_owner_state_node_creation(self) -> bool:
+        ok, msg = self._owner_state_wrapper_available()
+        if ok:
+            return True
+        QMessageBox.warning(
+            self,
+            "无法创建 OwnerStateNode",
+            f"{msg}\n\n请先在叙事编辑器为引用该对话图的 NPC/Hotspot 绑定 wrapperGraph。",
+        )
+        return False
+
     def _spawn_node_at_canvas(self, node_type: str, scene_x: float, scene_y: float) -> None:
+        if node_type == "ownerState" and not self._guard_owner_state_node_creation():
+            return
         nodes = self._model.nodes
         nid = suggest_next_id(nodes)
         self._model.add_node(nid, default_node(node_type, {k: v for k, v in nodes.items() if k != nid}))
@@ -969,7 +1013,7 @@ class DialogueGraphEditorWidget(QWidget):
         except ValueError as e:
             QMessageBox.critical(self, "重命名图", str(e))
             return
-        errors, warnings = validate_graph_tiered(self._data)
+        errors, warnings = self._validate_current_graph()
         if errors:
             QMessageBox.critical(
                 self,
@@ -1071,7 +1115,7 @@ class DialogueGraphEditorWidget(QWidget):
         except ValueError as e:
             QMessageBox.critical(self, "校验", str(e))
             return
-        err, warn = validate_graph_tiered(self._data)
+        err, warn = self._validate_current_graph()
         if not err and not warn:
             QMessageBox.information(self, "校验", "未发现明显问题。")
             return
@@ -2195,8 +2239,16 @@ class DialogueGraphEditorWidget(QWidget):
         fl = QFormLayout()
         id_edit = QLineEdit(suggest_next_id(nodes))
         type_cb = QComboBox()
-        for t in ("line", "runActions", "choice", "switch", "end"):
-            type_cb.addItem(t)
+        for t, label in (
+            ("line", "line"),
+            ("runActions", "runActions"),
+            ("choice", "choice"),
+            ("switch", "switch"),
+            ("ownerState", "ownerState（所属实体状态）"),
+            ("contextState", "contextState（上下文状态）"),
+            ("end", "end"),
+        ):
+            type_cb.addItem(label, t)
         fl.addRow("节点 id", id_edit)
         fl.addRow("类型", type_cb)
         lay.addLayout(fl)
@@ -2217,7 +2269,11 @@ class DialogueGraphEditorWidget(QWidget):
         if nid in nodes:
             QMessageBox.warning(self, "重复", f"已存在节点 {nid!r}")
             return
-        t = type_cb.currentText()
+        t = type_cb.currentData()
+        if not isinstance(t, str) or not t:
+            t = type_cb.currentText()
+        if t == "ownerState" and not self._guard_owner_state_node_creation():
+            return
         self._model.add_node(nid, default_node(t, {k: v for k, v in nodes.items() if k != nid}))
         self._emit_title()
         self._populate_node_list()
@@ -2410,7 +2466,7 @@ class DialogueGraphEditorWidget(QWidget):
             QMessageBox.critical(self, "保存失败", str(e))
             return False
 
-        errors, warnings = validate_graph_tiered(self._data)
+        errors, warnings = self._validate_current_graph()
         if errors:
             etxt = "\n".join(errors[:50])
             if len(errors) > 50:

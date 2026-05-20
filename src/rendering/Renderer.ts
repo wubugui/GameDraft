@@ -64,13 +64,15 @@ export class Renderer {
 
     if (mount) {
       this.mountObserver = new ResizeObserver(() => {
-        if (this.initialized && !this.tornDown) {
-          if (this.viewportWidth > 0 && this.viewportHeight > 0) {
-            return;
+        requestAnimationFrame(() => {
+          if (this.initialized && !this.tornDown) {
+            if (this.viewportWidth > 0 && this.viewportHeight > 0) {
+              return;
+            }
+            this.app.resize();
+            this.notifyAfterResize();
           }
-          this.app.resize();
-          this.notifyAfterResize();
-        }
+        });
       });
       this.mountObserver.observe(mount);
     }

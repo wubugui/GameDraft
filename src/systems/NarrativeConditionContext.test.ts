@@ -12,6 +12,8 @@ function baseContext(active = true): { eventBus: EventBus; flagStore: FlagStore;
   const narrativeState = {
     getActiveState: (graphId: string) => (graphId === 'flow' && active ? 'ready' : 'other'),
     isStateActive: (graphId: string, stateId: string) => graphId === 'flow' && stateId === 'ready' && active,
+    getPrimaryActiveStateByOwner: (ownerType: string, ownerId: string) =>
+      ownerType === 'npc' && ownerId === 'npc_ringboy' && active ? 'after_event' : undefined,
   };
   return {
     eventBus,
@@ -112,6 +114,110 @@ describe('narrative condition context injection', () => {
     switched.eventBus.on('dialogue:line', (payload) => { lineText = payload?.text ?? ''; });
     await switched.manager.startDialogueGraph({ graphId: 'switch', npcName: 'NPC' });
     expect(lineText).toBe('hit');
+  });
+
+  it('lets ownerState nodes branch by the current owner wrapper state', async () => {
+    const ownerGraph = {
+      id: 'owner',
+      entry: 'owner_state',
+      nodes: {
+        owner_state: {
+          type: 'ownerState',
+          cases: [{ state: 'after_event', next: 'hit' }],
+          defaultNext: 'fallback',
+          missingWrapperNext: 'missing',
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'fallback', next: 'end' },
+        missing: { type: 'line', speaker: { kind: 'npc' }, text: 'missing', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const hit = graphDialogue(true, ownerGraph);
+    let hitText = '';
+    hit.eventBus.on('dialogue:line', (payload) => { hitText = payload?.text ?? ''; });
+    await hit.manager.startDialogueGraph({ graphId: 'owner', npcName: 'NPC', npcId: 'npc_ringboy' });
+    expect(hitText).toBe('hit');
+
+    const missing = graphDialogue(false, ownerGraph);
+    let missingText = '';
+    missing.eventBus.on('dialogue:line', (payload) => { missingText = payload?.text ?? ''; });
+    await missing.manager.startDialogueGraph({ graphId: 'owner', npcName: 'NPC', npcId: 'npc_ringboy' });
+    expect(missingText).toBe('missing');
+  });
+
+  it('routes ownerState to defaultNext when wrapper state does not match any case', async () => {
+    const ownerGraph = {
+      id: 'owner_default',
+      entry: 'owner_state',
+      nodes: {
+        owner_state: {
+          type: 'ownerState',
+          cases: [{ state: 'ring_taken', next: 'taken' }],
+          defaultNext: 'fallback',
+        },
+        taken: { type: 'line', speaker: { kind: 'npc' }, text: 'taken', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'fallback', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const runtime = graphDialogue(true, ownerGraph);
+    let lineText = '';
+    runtime.eventBus.on('dialogue:line', (payload) => { lineText = payload?.text ?? ''; });
+    await runtime.manager.startDialogueGraph({ graphId: 'owner_default', npcName: 'NPC', npcId: 'npc_ringboy' });
+    expect(lineText).toBe('fallback');
+  });
+
+  it('routes ownerState to missingWrapperNext when dialogue owner context is missing', async () => {
+    const ownerGraph = {
+      id: 'owner_missing_ctx',
+      entry: 'owner_state',
+      nodes: {
+        owner_state: {
+          type: 'ownerState',
+          cases: [{ state: 'after_event', next: 'hit' }],
+          defaultNext: 'fallback',
+          missingWrapperNext: 'missing',
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'fallback', next: 'end' },
+        missing: { type: 'line', speaker: { kind: 'npc' }, text: 'missing', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const runtime = graphDialogue(true, ownerGraph);
+    let lineText = '';
+    runtime.eventBus.on('dialogue:line', (payload) => { lineText = payload?.text ?? ''; });
+    await runtime.manager.startDialogueGraph({ graphId: 'owner_missing_ctx', npcName: 'NPC' });
+    expect(lineText).toBe('missing');
+  });
+
+  it('lets contextState nodes branch by explicit flow graph state', async () => {
+    const contextGraph = {
+      id: 'ctx',
+      entry: 'ctx_state',
+      nodes: {
+        ctx_state: {
+          type: 'contextState',
+          graphId: 'flow',
+          cases: [{ state: 'ready', next: 'hit' }],
+          defaultNext: 'fallback',
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'flow-hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'flow-miss', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const hit = graphDialogue(true, contextGraph);
+    let text = '';
+    hit.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
+    await hit.manager.startDialogueGraph({ graphId: 'ctx', npcName: 'NPC' });
+    expect(text).toBe('flow-hit');
+
+    const miss = graphDialogue(false, contextGraph);
+    miss.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
+    await miss.manager.startDialogueGraph({ graphId: 'ctx', npcName: 'NPC' });
+    expect(text).toBe('flow-miss');
   });
 
   it('lets document reveal conditions read narrative state', async () => {

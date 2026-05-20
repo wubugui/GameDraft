@@ -883,7 +883,12 @@ class _ActionTypeListRow(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 3, 6, 3)
         lay.setSpacing(8)
-        name = QLabel(text, self)
+        display_text = text
+        if value == "setNarrativeState":
+            display_text = f"{text}  [危险：绕过 Transition，仅调试/修复]"
+        name = QLabel(display_text, self)
+        if value == "setNarrativeState":
+            name.setStyleSheet("color: #c62828; font-weight: 600;")
         name.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         lay.addWidget(name, 1)
@@ -2117,6 +2122,12 @@ class ActionRow(QWidget):
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params = self._data.get("params", {})
 
+        if act_type == "setNarrativeState":
+            warn = QLabel("危险：绕过 Transition/conditions，仅用于调试或修复。", self)
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color: #c62828; font-weight: 600;")
+            self._params_layout.addRow(warn)
+
         if act_type == "moveEntityTo":
             self._rebuild_move_entity_to_params(params)
             return
@@ -2990,7 +3001,8 @@ class ActionRow(QWidget):
             self._param_widgets.clear()
             tip = QLabel("对话图入口", self)
             tip.setToolTip(
-                "graphId 对应 dialogues/graphs 下 .json；entry 选节点 id；npcId 可选，用于说话人显示名。",
+                "graphId 对应 dialogues/graphs 下 .json；entry 选节点 id；npcId 用于说话人显示名。"
+                "ownerType/ownerId 供 OwnerStateNode 解析实体 wrapper（仅 npcId 时默认 ownerType=npc）。",
             )
             self._params_layout.addRow(tip)
             m = self._ctx_model
@@ -3047,6 +3059,18 @@ class ActionRow(QWidget):
             )
             self._param_widgets["npcId"] = nid
             self._params_layout.addRow("npcId（可选）", nid)
+
+            owner_type = QLineEdit(str(params.get("ownerType", "") or ""), self)
+            owner_type.setPlaceholderText("npc / hotspot / zone …")
+            owner_type.textChanged.connect(self.changed)
+            self._param_widgets["ownerType"] = owner_type
+            self._params_layout.addRow("ownerType（可选）", owner_type)
+
+            owner_id = QLineEdit(str(params.get("ownerId", "") or ""), self)
+            owner_id.setPlaceholderText("实体 id；缺省同 npcId")
+            owner_id.textChanged.connect(self.changed)
+            self._param_widgets["ownerId"] = owner_id
+            self._params_layout.addRow("ownerId（可选）", owner_id)
             self._sync_foldable_visibility()
             return
 
@@ -3931,6 +3955,16 @@ class ActionRow(QWidget):
         nid = nid_w.current_id().strip() if isinstance(nid_w, IdRefSelector) else ""
         if nid:
             prm["npcId"] = nid
+        ot_w = self._param_widgets.get("ownerType")
+        oi_w = self._param_widgets.get("ownerId")
+        if isinstance(ot_w, QLineEdit):
+            ot = ot_w.text().strip()
+            if ot:
+                prm["ownerType"] = ot
+        if isinstance(oi_w, QLineEdit):
+            oi = oi_w.text().strip()
+            if oi:
+                prm["ownerId"] = oi
         return {"type": "startDialogueGraph", "params": prm}
 
     def _to_dict_play_scripted_dialogue(self) -> dict:

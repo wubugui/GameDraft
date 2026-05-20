@@ -1,3 +1,5 @@
+import { transitionAnchorId } from './anchorCodec';
+import { inlineSubgraphTransitionId } from './canvas/canvasIds';
 import type {
   ActionDef,
   AuthoringCatalogDef,
@@ -99,8 +101,8 @@ function normalizeGraph(graph: NarrativeGraphDef): void {
     state.meta ??= {};
   }
   for (const transition of graph.transitions) {
-    transition.from = normalizeEndpoint(transition.from);
-    transition.to = normalizeEndpoint(transition.to);
+    if (typeof transition.from === 'string') transition.from = transition.from.trim();
+    if (typeof transition.to === 'string') transition.to = transition.to.trim();
     transition.signal = String(transition.signal ?? '').trim();
   }
 }
@@ -169,7 +171,7 @@ export function createState(graph: NarrativeGraphDef): string {
   return id;
 }
 
-export function createTransition(graph: NarrativeGraphDef, from: NarrativeEndpointDef, to: NarrativeEndpointDef): NarrativeTransitionDef {
+export function createTransition(graph: NarrativeGraphDef, from: string, to: string): NarrativeTransitionDef {
   const id = uniqueId('t', graph.transitions.map((t) => t.id));
   const transition = { id, from, to, signal: '', priority: 0 };
   graph.transitions.push(transition);
@@ -264,7 +266,7 @@ export function renameStateInGraph(data: NarrativeGraphsFileDef, graph: Narrativ
   if (graph.entryState === oldId) graph.entryState = newId;
   graph.exitStates = graph.exitStates?.map((sid) => sid === oldId ? newId : sid);
   updateTransitionEndpointRefs(data, graph.id, oldId, newId);
-  updateLifecycleSignalRefs(data, graph.id, oldId, newId);
+  updateGraphStateSignalRefs(data, graph.id, oldId, newId);
   return newId;
 }
 
@@ -301,14 +303,15 @@ export function renameTransition(graph: NarrativeGraphDef, oldId: string, newIdR
   return newId;
 }
 
-function updateLifecycleSignalRefs(data: NarrativeGraphsFileDef, graphId: string, oldState: string, newState: string): void {
+function updateGraphStateSignalRefs(data: NarrativeGraphsFileDef, graphId: string, oldState: string, newState: string): void {
   const replacements = new Map([
-    [`stateEntered:${graphId}:${oldState}`, `stateEntered:${graphId}:${newState}`],
-    [`stateExited:${graphId}:${oldState}`, `stateExited:${graphId}:${newState}`],
+    [graphStateEnteredKey(graphId, oldState), graphStateEnteredKey(graphId, newState)],
+    [`stateEntered:${graphId}:${oldState}`, graphStateEnteredKey(graphId, newState)],
+    [`stateEntered:${encodeKeyPart(graphId)}:${encodeKeyPart(oldState)}`, graphStateEnteredKey(graphId, newState)],
   ]);
   for (const { graph } of compileGraphs(data)) {
     for (const transition of graph.transitions ?? []) {
-      const next = replacements.get(transition.signal);
+      const next = replacements.get(transition.signal) ?? replacements.get(normalizeTriggerKey(transition.signal));
       if (next) transition.signal = next;
     }
   }
@@ -329,7 +332,7 @@ function updateGraphIdRefs(data: NarrativeGraphsFileDef, oldGraphId: string, new
     for (const transition of graph.transitions ?? []) {
       transition.from = replaceEndpointGraph(transition.from, oldGraphId, newGraphId);
       transition.to = replaceEndpointGraph(transition.to, oldGraphId, newGraphId);
-      transition.signal = replaceLifecycleSignalGraph(transition.signal, oldGraphId, newGraphId);
+      transition.signal = replaceGraphStateSignalGraph(transition.signal, oldGraphId, newGraphId);
       visitUnknown(transition.conditions, (obj) => replaceNarrativeConditionGraph(obj, oldGraphId, newGraphId));
     }
     for (const state of Object.values(graph.states ?? {})) {
@@ -346,12 +349,16 @@ function updateGraphIdRefs(data: NarrativeGraphsFileDef, oldGraphId: string, new
   }
 }
 
-function replaceLifecycleSignalGraph(signal: string, oldGraphId: string, newGraphId: string): string {
+function replaceGraphStateSignalGraph(signal: string, oldGraphId: string, newGraphId: string): string {
+  const external = parseExternalSignalKey(signal);
+  if (external?.sourceType === 'state' && external.sourceId === oldGraphId) {
+    return graphStateEnteredKey(newGraphId, external.signal);
+  }
   const lifecycle = parseLifecycleSignalKey(signal);
-  if (!lifecycle || lifecycle.graphId !== oldGraphId) return signal;
-  return lifecycle.kind === 'stateEntered'
-    ? stateEnteredKey(newGraphId, lifecycle.stateId)
-    : stateExitedKey(newGraphId, lifecycle.stateId);
+  if (lifecycle?.kind === 'stateEntered' && lifecycle.graphId === oldGraphId) {
+    return graphStateEnteredKey(newGraphId, lifecycle.stateId);
+  }
+  return signal;
 }
 
 function replaceNarrativeConditionGraph(obj: Record<string, unknown>, oldGraphId: string, newGraphId: string): void {
@@ -431,26 +438,22 @@ function decodeKeyPart(raw: string): string {
   }
 }
 
+export function graphStateEnteredKey(graphId: string, stateId: string): string {
+  return `external:state:${encodeKeyPart(graphId)}:${encodeKeyPart(stateId)}`;
+}
+
 function normalizeTriggerKey(key: string): string {
   const raw = String(key ?? '').trim();
   if (raw.startsWith('external:')) return signalRequestToKey(parseExternalSignalKey(raw));
   const lifecycle = parseLifecycleSignalKey(raw);
-  if (!lifecycle) return raw;
-  return lifecycle.kind === 'stateEntered'
-    ? stateEnteredKey(lifecycle.graphId, lifecycle.stateId)
-    : stateExitedKey(lifecycle.graphId, lifecycle.stateId);
+  if (lifecycle?.kind === 'stateEntered') {
+    return graphStateEnteredKey(lifecycle.graphId, lifecycle.stateId);
+  }
+  return raw;
 }
 
 function triggerKeysEqual(a: string, b: string): boolean {
   return normalizeTriggerKey(a) === normalizeTriggerKey(b);
-}
-
-function stateEnteredKey(graphId: string, stateId: string): string {
-  return `stateEntered:${encodeKeyPart(graphId)}:${encodeKeyPart(stateId)}`;
-}
-
-function stateExitedKey(graphId: string, stateId: string): string {
-  return `stateExited:${encodeKeyPart(graphId)}:${encodeKeyPart(stateId)}`;
 }
 
 function parseLifecycleSignalKey(key: string): null | { kind: 'stateEntered' | 'stateExited'; graphId: string; stateId: string } {
@@ -484,9 +487,8 @@ export function simulateSignalImpact(dataRaw: NarrativeGraphsFileDef, triggerKey
       const selected = (graph.transitions ?? [])
         .map((transition, index) => ({ transition, index }))
         .filter(({ transition }) => {
-          const from = resolveEndpoint(transition.from, graph.id);
-          return from.graphId === graph.id &&
-            from.stateId === active &&
+          if (typeof transition.from !== 'string' || typeof transition.to !== 'string') return false;
+          return transition.from === active &&
             triggerKeysEqual(transition.signal, key) &&
             conditionsMet(transition.conditions, activeStates);
         })
@@ -497,22 +499,20 @@ export function simulateSignalImpact(dataRaw: NarrativeGraphsFileDef, triggerKey
           return a.index - b.index;
         })[0]?.transition;
       if (!selected) continue;
-      const from = resolveEndpoint(selected.from, graph.id);
-      const to = resolveEndpoint(selected.to, graph.id);
-      const targetGraph = graphMap.get(to.graphId);
-      if (!targetGraph?.states[to.stateId]) continue;
-      const previousTargetState = activeStates[to.graphId] ?? targetGraph.initialState;
-      activeStates[to.graphId] = to.stateId;
+      const from = selected.from;
+      const to = selected.to;
+      if (!graphMap.get(graph.id)?.states[to]) continue;
+      const previousState = activeStates[graph.id] ?? graph.initialState;
+      activeStates[graph.id] = to;
       recentTransitions.push({
-        graphId: to.graphId,
+        graphId: graph.id,
         transitionId: selected.id,
-        from: endpointLabel(from),
-        to: endpointLabel(to),
+        from,
+        to,
         triggerKey: key,
       });
-      log.push(`${to.graphId}: ${previousTargetState} -> ${to.stateId} via ${graph.id}.${selected.id}`);
-      queue.push(`stateExited:${to.graphId}:${previousTargetState}`);
-      queue.push(`stateEntered:${to.graphId}:${to.stateId}`);
+      log.push(`${graph.id}: ${previousState} -> ${to} via ${graph.id}.${selected.id}`);
+      queue.push(graphStateEnteredKey(graph.id, to));
       migrated += 1;
     }
     if (migrated === 0) log.push(`no transition matched ${key}`);
@@ -552,7 +552,7 @@ export function validateNarrativeData(dataRaw: NarrativeGraphsFileDef | unknown)
       if (!el.id?.trim()) addIssue(issues, 'error', 'element.id.empty', `${path}: element id is required`, path);
       validateIdDelimiter(el.id, `${path}.id`, 'element.id.delimiter', issues, el.id);
       if (el.kind === 'wrapperGraph') {
-        if (!el.ownerId?.trim()) addIssue(issues, 'warning', 'wrapper.unbound', `${el.id}: wrapper has no ownerId binding`, path, el.id);
+        if (!el.ownerId?.trim()) addIssue(issues, 'error', 'wrapper.unbound', `${el.id}: wrapper has no ownerId binding`, path, el.id);
         if (el.ownerType && !validWrapperOwnerTypes.has(el.ownerType)) {
           addIssue(issues, 'warning', 'wrapper.ownerType.unsupported', `${el.id}: wrapper ownerType is not runtime-backed: ${el.ownerType}`, `${path}.ownerType`, el.id);
         }
@@ -587,6 +587,7 @@ export function validateNarrativeData(dataRaw: NarrativeGraphsFileDef | unknown)
       }
     }
   }
+  validateOwnerBindings(data, issues);
   validateStateCommandTargets(data, graphIndex, issues);
   return issues;
 }
@@ -607,6 +608,9 @@ function validateGraph(
   validateIdDelimiter(graph.id, `${path}.id`, 'graph.id.delimiter', issues, graph.id);
   if (!graph.initialState || !graph.states?.[graph.initialState]) {
     addIssue(issues, 'error', 'graph.initialState.invalid', `${graph.id}: initialState does not exist`, `${path}.initialState`, graph.id);
+  }
+  if (graph.projectFlags === true) {
+    addIssue(issues, 'error', 'projectFlags.deprecated', `${graph.id}: projectFlags is deprecated; use narrative state reads instead of projected flags`, `${path}.projectFlags`, graph.id);
   }
   if (elementKind === 'scenarioSubgraph' || graph.ownerType === 'scenario') {
     if (!graph.entryState || !graph.states?.[graph.entryState]) {
@@ -638,17 +642,22 @@ function validateGraph(
     const tPath = `${path}.transitions[${idx}]`;
     addDuplicateIssue(issues, transitionIds, t.id, `${tPath}.id`, 'transition id', graph.id);
     validateIdDelimiter(t.id, `${tPath}.id`, 'transition.id.delimiter', issues, t.id);
+    if (typeof t.from !== 'string' || typeof t.to !== 'string') {
+      addIssue(
+        issues,
+        'error',
+        'transition.crossGraphEndpoint.unsupported',
+        `${graph.id}.${t.id}: transition endpoints must be state ids in the same graph`,
+        tPath,
+        t.id,
+      );
+      continue;
+    }
     const from = resolveEndpoint(t.from, graph.id);
     const to = resolveEndpoint(t.to, graph.id);
-    const fromGraph = graphIndex.graphs.get(from.graphId);
-    const toGraph = graphIndex.graphs.get(to.graphId);
-    if (!fromGraph?.states?.[from.stateId]) addIssue(issues, 'error', 'transition.from.missing', `${graph.id}.${t.id}: from state is missing`, `${tPath}.from`, t.id);
-    if (!toGraph?.states?.[to.stateId]) addIssue(issues, 'error', 'transition.to.missing', `${graph.id}.${t.id}: to state is missing`, `${tPath}.to`, t.id);
-    if (from.graphId !== graph.id) {
-      addIssue(issues, 'error', 'transition.owner.mismatch', `${graph.id}.${t.id}: transition must be stored on its from graph (${from.graphId})`, tPath, t.id);
-    }
-    validateCrossGraphBoundary(graphIndex, graph.id, t, from, to, tPath, issues);
-    validateLifecycleSignalScope(graph.id, t, tPath, issues);
+    if (!graph.states?.[from.stateId]) addIssue(issues, 'error', 'transition.from.missing', `${graph.id}.${t.id}: from state is missing`, `${tPath}.from`, t.id);
+    if (!graph.states?.[to.stateId]) addIssue(issues, 'error', 'transition.to.missing', `${graph.id}.${t.id}: to state is missing`, `${tPath}.to`, t.id);
+    validateTransitionSignal(graph.id, t, tPath, issues);
     if (!t.signal?.trim()) addIssue(issues, 'error', 'transition.signal.empty', `${graph.id}.${t.id}: signal is required`, `${tPath}.signal`, t.id);
     validateConditions(t.conditions, `${tPath}.conditions`, issues, `${graph.id}.${t.id}`);
   }
@@ -707,14 +716,26 @@ function validateCrossGraphBoundary(
   }
 }
 
-function validateLifecycleSignalScope(ownerGraphId: string, transition: NarrativeTransitionDef, path: string, issues: ValidationIssueDef[]): void {
+function validateTransitionSignal(ownerGraphId: string, transition: NarrativeTransitionDef, path: string, issues: ValidationIssueDef[]): void {
   const lifecycle = parseLifecycleSignalKey(transition.signal);
-  if (lifecycle?.graphId === ownerGraphId) {
+  if (lifecycle) {
     addIssue(
       issues,
       'error',
-      'lifecycle.sameGraph.unsupported',
-      `${ownerGraphId}.${transition.id}: lifecycle signals are cross-graph notifications; use onEnterActions/onExitActions for local hooks`,
+      'transition.signal.lifecycleDeprecated',
+      `${ownerGraphId}.${transition.id}: stateEntered/stateExited signals are removed; use ${graphStateEnteredKey(lifecycle.graphId, lifecycle.stateId)} (auto-emitted on state enter) or emitNarrativeSignal in onEnterActions`,
+      `${path}.signal`,
+      transition.id,
+    );
+    return;
+  }
+  const external = parseExternalSignalKey(transition.signal);
+  if (external?.sourceType === 'state' && external.sourceId === ownerGraphId) {
+    addIssue(
+      issues,
+      'warning',
+      'transition.signal.sameGraphStateBroadcast',
+      `${ownerGraphId}.${transition.id}: same-graph external:state is usually unnecessary; prefer a direct transition or onEnterActions`,
       `${path}.signal`,
       transition.id,
     );
@@ -727,6 +748,14 @@ function validateStateCommandTargets(data: NarrativeGraphsFileDef, graphIndex: G
       for (const [listName, actions] of Object.entries({ onEnterActions: state.onEnterActions, onExitActions: state.onExitActions })) {
         for (const [idx, action] of (actions ?? []).entries()) {
           if (action?.type !== 'setNarrativeState') continue;
+          addIssue(
+            issues,
+            'error',
+            'stateCommand.unsafeInContent',
+            `${graph.id}.${sid}: setNarrativeState bypasses transition conditions and should only be used for debug/repair`,
+            `${graph.id}.${sid}.${listName}[${idx}]`,
+            `${graph.id}.${sid}`,
+          );
           const params = action.params ?? {};
           const graphId = String(params.graphId ?? '').trim();
           const stateId = String(params.stateId ?? '').trim();
@@ -742,6 +771,30 @@ function validateStateCommandTargets(data: NarrativeGraphsFileDef, graphIndex: G
         }
       }
     }
+  }
+}
+
+function validateOwnerBindings(data: NarrativeGraphsFileDef, issues: ValidationIssueDef[]): void {
+  const byOwner = new Map<string, string[]>();
+  for (const { graph } of compileGraphs(data)) {
+    const ownerType = String(graph.ownerType ?? '').trim();
+    const ownerId = String(graph.ownerId ?? '').trim();
+    if (!ownerType || !ownerId) continue;
+    const key = `${ownerType}:${ownerId}`;
+    const graphIds = byOwner.get(key) ?? [];
+    graphIds.push(graph.id);
+    byOwner.set(key, graphIds);
+  }
+  for (const [key, graphIds] of byOwner.entries()) {
+    if (graphIds.length <= 1) continue;
+    addIssue(
+      issues,
+      'error',
+      'owner.wrapper.duplicate',
+      `${key}: multiple wrapper graphs share the same owner binding (${graphIds.join(', ')})`,
+      undefined,
+      key,
+    );
   }
 }
 
@@ -953,40 +1006,14 @@ function validateIdDelimiter(value: string | undefined, path: string, code: stri
   }
 }
 
-export function normalizeEndpoint(endpoint: NarrativeEndpointDef | unknown): NarrativeEndpointDef {
-  if (endpoint && typeof endpoint === 'object' && !Array.isArray(endpoint)) {
-    const raw = endpoint as Record<string, unknown>;
-    const graphId = String(raw.graphId ?? '').trim();
-    const stateId = String(raw.stateId ?? '').trim();
-    if (graphId && stateId) return { graphId, stateId };
-  }
-  return String(endpoint ?? '').trim();
+export function resolveEndpoint(endpoint: unknown, ownerGraphId: string): ResolvedEndpoint {
+  if (typeof endpoint === 'string') return { graphId: ownerGraphId, stateId: endpoint.trim() };
+  return { graphId: ownerGraphId, stateId: '' };
 }
 
-export function resolveEndpoint(endpoint: NarrativeEndpointDef, ownerGraphId: string): ResolvedEndpoint {
-  if (typeof endpoint === 'string') return { graphId: ownerGraphId, stateId: endpoint };
-  return { graphId: String(endpoint.graphId ?? '').trim(), stateId: String(endpoint.stateId ?? '').trim() };
-}
-
-export function endpointLabel(endpoint: NarrativeEndpointDef | ResolvedEndpoint, ownerGraphId?: string): string {
-  const resolved = 'stateId' in endpoint && 'graphId' in endpoint && typeof endpoint !== 'string'
-    ? endpoint as ResolvedEndpoint
-    : resolveEndpoint(endpoint as NarrativeEndpointDef, ownerGraphId ?? '');
-  return `${resolved.graphId}.${resolved.stateId}`;
-}
-
-export function endpointInputValue(endpoint: NarrativeEndpointDef, ownerGraphId: string): string {
+export function endpointLabel(endpoint: unknown, ownerGraphId: string): string {
   const resolved = resolveEndpoint(endpoint, ownerGraphId);
-  return resolved.graphId === ownerGraphId ? resolved.stateId : endpointLabel(resolved);
-}
-
-export function parseEndpointInput(value: string, ownerGraphId: string, graphIds: string[]): NarrativeEndpointDef {
-  const raw = String(value ?? '').trim();
-  const match = /^([^.\s]+)\.(.+)$/.exec(raw);
-  if (match && graphIds.includes(match[1])) {
-    return match[1] === ownerGraphId ? match[2] : { graphId: match[1], stateId: match[2] };
-  }
-  return raw;
+  return `${resolved.graphId}.${resolved.stateId}`;
 }
 
 function replaceEndpointState(
@@ -996,16 +1023,14 @@ function replaceEndpointState(
   oldState: string,
   newState: string,
 ): NarrativeEndpointDef {
+  if (typeof endpoint !== 'string') return endpoint;
   const resolved = resolveEndpoint(endpoint, ownerGraphId);
   if (resolved.graphId !== targetGraphId || resolved.stateId !== oldState) return endpoint;
-  if (typeof endpoint === 'string') return newState;
-  return { ...endpoint, stateId: newState };
+  return newState;
 }
 
 function replaceEndpointGraph(endpoint: NarrativeEndpointDef, oldGraphId: string, newGraphId: string): NarrativeEndpointDef {
-  if (typeof endpoint === 'string') return endpoint;
-  if (endpoint.graphId !== oldGraphId) return endpoint;
-  return { ...endpoint, graphId: newGraphId };
+  return endpoint;
 }
 
 function visitUnknown(value: unknown, fn: (obj: Record<string, unknown>) => void): void {
@@ -1047,4 +1072,117 @@ export function uniqueId(prefix: string, existing: string[]): string {
 
 function cleanId(value: string): string {
   return value.trim().replace(/\s+/g, '_');
+}
+
+export function mergeValidationIssues(local: ValidationIssueDef[], remote: ValidationIssueDef[]): ValidationIssueDef[] {
+  const seen = new Set<string>();
+  const out: ValidationIssueDef[] = [];
+  for (const issue of [...local, ...remote]) {
+    const key = `${issue.severity}|${issue.code}|${issue.path ?? ''}|${issue.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(issue);
+  }
+  return out;
+}
+
+export type FocusIssueContext = {
+  compositionId: string;
+  setCompositionId: (id: string) => void;
+  setGraphRef: (ref: GraphRef) => void;
+  setExpandedElementIds: (fn: (ids: string[]) => string[]) => void;
+  setSelectedId: (id: string) => void;
+};
+
+export type FocusIssueResult = {
+  nodeIds: string[];
+  graphRef?: GraphRef;
+  compositionId?: string;
+};
+
+export function focusValidationIssue(issue: ValidationIssueDef, data: NarrativeGraphsFileDef, ctx: FocusIssueContext): FocusIssueResult | null {
+  const itemId = issue.itemId?.trim() ?? '';
+  const path = issue.path?.trim() ?? '';
+  const compositions = data.compositions ?? [];
+
+  for (const comp of compositions) {
+    if (itemId && comp.id === itemId) {
+      ctx.setCompositionId(comp.id);
+      ctx.setGraphRef('main');
+      return { compositionId: comp.id, nodeIds: [`graph:${comp.mainGraph.id}`] };
+    }
+    if (comp.mainGraph.id === itemId) {
+      ctx.setCompositionId(comp.id);
+      ctx.setGraphRef('main');
+      return { compositionId: comp.id, nodeIds: [`graph:${comp.mainGraph.id}`] };
+    }
+    for (const el of comp.elements ?? []) {
+      if (el.id === itemId) {
+        ctx.setCompositionId(comp.id);
+        ctx.setGraphRef('main');
+        return { compositionId: comp.id, nodeIds: [`element:${el.id}`] };
+      }
+      if (el.graph?.id === itemId) {
+        ctx.setCompositionId(comp.id);
+        if (el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph') {
+          ctx.setExpandedElementIds((ids) => (ids.includes(el.id) ? ids : [...ids, el.id]));
+        }
+        ctx.setGraphRef('main');
+        return { compositionId: comp.id, nodeIds: [`element:${el.id}`] };
+      }
+    }
+    for (const [ti, t] of (comp.mainGraph.transitions ?? []).entries()) {
+      if (t.id === itemId) {
+        ctx.setCompositionId(comp.id);
+        ctx.setGraphRef('main');
+        return { compositionId: comp.id, nodeIds: [`transition:${t.id}`, `state:${t.from}`] };
+      }
+      if (path.includes(`transitions[${ti}]`)) {
+        ctx.setCompositionId(comp.id);
+        ctx.setGraphRef('main');
+        return { compositionId: comp.id, nodeIds: [`transition:${t.id}`] };
+      }
+    }
+    for (const el of comp.elements ?? []) {
+      if (!el.graph) continue;
+      for (const [ti, t] of (el.graph.transitions ?? []).entries()) {
+        if (t.id === itemId) {
+          ctx.setCompositionId(comp.id);
+          ctx.setGraphRef('main');
+          if (el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph') {
+            ctx.setExpandedElementIds((ids) => (ids.includes(el.id) ? ids : [...ids, el.id]));
+          }
+          return {
+            compositionId: comp.id,
+            nodeIds: [transitionAnchorId(el.graph.id, t.id), inlineSubgraphTransitionId(el.id, t.id)],
+          };
+        }
+      }
+    }
+    for (const sid of Object.keys(comp.mainGraph.states ?? {})) {
+      if (sid === itemId || path.includes(`.states.${sid}`)) {
+        ctx.setCompositionId(comp.id);
+        ctx.setGraphRef('main');
+        ctx.setSelectedId(`state:${sid}`);
+        return { compositionId: comp.id, nodeIds: [`state:${sid}`] };
+      }
+    }
+  }
+
+  const elMatch = /elements\[(\d+)\]/.exec(path);
+  if (elMatch) {
+    const compIndex = /compositions\[(\d+)\]/.exec(path);
+    const comp = compositions[Number(compIndex?.[1] ?? 0)];
+    const el = comp?.elements?.[Number(elMatch[1])];
+    if (comp && el) {
+      ctx.setCompositionId(comp.id);
+      ctx.setGraphRef('main');
+      if (el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph') {
+        ctx.setExpandedElementIds((ids) => (ids.includes(el.id) ? ids : [...ids, el.id]));
+      }
+      return { compositionId: comp.id, nodeIds: [`element:${el.id}`] };
+    }
+  }
+
+  return null;
 }

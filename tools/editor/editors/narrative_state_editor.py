@@ -7,24 +7,43 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEventLoop, QObject, QTimer, QUrl, Slot
+from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, QUrl, Slot
+from PySide6.QtGui import QContextMenuEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QLabel, QMessageBox, QVBoxLayout, QWidget
 
 try:
     from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineWidgets import QWebEngineView
+
+    from ..web_engine_page import QuietWebEnginePage
+
+    class _NarrativeWebView(QWebEngineView):
+        """Suppress Chromium / Qt WebEngine right-click menus on the narrative canvas."""
+
+        def __init__(self, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.setPage(QuietWebEnginePage(self))
+
+        def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+            event.accept()
+
 except ImportError:  # pragma: no cover - depends on local Qt install
     QWebChannel = None  # type: ignore[assignment,misc]
     QWebEngineView = None  # type: ignore[assignment,misc]
+    _NarrativeWebView = None  # type: ignore[assignment,misc]
 
 from ..project_model import ProjectModel
 from .narrative_anchor_codec import transition_anchor_id
 
 
 EMPTY_NARRATIVE_GRAPHS = {"schemaVersion": 2, "compositions": []}
+
+# Point QWebEngine at a Vite dev server for HMR, e.g. http://127.0.0.1:5174/
+NARRATIVE_EDITOR_DEV_URL_ENV = "GAMEDRAFT_NARRATIVE_EDITOR_URL"
 
 
 def _clone(value: Any) -> Any:
@@ -149,6 +168,45 @@ def _asset_condition_sources(assets: list[dict[str, Any]]) -> list[dict[str, str
                 "refId": asset["refId"],
                 "detail": asset["detail"],
             })
+    return out
+
+
+def _asset_owner_state_sources(assets: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for asset in assets:
+        if asset.get("kind") != "dialogue":
+            continue
+        root = asset.get("root")
+        nodes = root.get("nodes") if isinstance(root, dict) else {}
+        if not isinstance(nodes, dict):
+            continue
+        for node_id, node in nodes.items():
+            if isinstance(node, dict) and node.get("type") == "ownerState":
+                out.append({
+                    "dialogueGraphId": str(asset.get("refId", "")).strip(),
+                    "nodeId": str(node_id).strip(),
+                    "detail": f'{asset.get("detail", "")}:{node_id}',
+                })
+    return out
+
+
+def _asset_context_state_sources(assets: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for asset in assets:
+        if asset.get("kind") != "dialogue":
+            continue
+        root = asset.get("root")
+        nodes = root.get("nodes") if isinstance(root, dict) else {}
+        if not isinstance(nodes, dict):
+            continue
+        for node_id, node in nodes.items():
+            if isinstance(node, dict) and node.get("type") == "contextState":
+                out.append({
+                    "dialogueGraphId": str(asset.get("refId", "")).strip(),
+                    "nodeId": str(node_id).strip(),
+                    "graphId": str(node.get("graphId", "")).strip(),
+                    "detail": f'{asset.get("detail", "")}:{node_id}',
+                })
     return out
 
 
@@ -352,11 +410,40 @@ class NarrativeStateEditor(QWidget):
             root.addWidget(msg)
             return
 
-        self._view = QWebEngineView(self)
+        no_menu = Qt.ContextMenuPolicy.NoContextMenu
+        self.setContextMenuPolicy(no_menu)
+
+        self._view = _NarrativeWebView(self)
+        self._view.setContextMenuPolicy(no_menu)
         self._channel = QWebChannel(self._view.page())
         self._channel.registerObject("narrativeBridge", self._bridge)
         self._view.page().setWebChannel(self._channel)
         root.addWidget(self._view, 1)
+        self._load_web_editor()
+
+        save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        save_shortcut.activated.connect(self._toolbar_save)
+        reload_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F5), self)
+        reload_shortcut.activated.connect(self._toolbar_reload_page)
+
+    def _toolbar_save(self) -> None:
+        self.flush_to_model()
+
+    def _toolbar_refresh(self) -> None:
+        if self._view is None:
+            return
+        self._run_editor_js_result(
+            "window.__narrativeEditor && window.__narrativeEditor.refresh"
+            " ? (window.__narrativeEditor.refresh(), true) : false",
+        )
+
+    def _toolbar_reload_page(self) -> None:
+        if self._view is None:
+            return
+        url = _web_editor_load_url()
+        if url is not None:
+            self._view.load(url)
+            return
         self._load_web_editor()
 
     def flush_to_model(self) -> bool:
@@ -425,13 +512,13 @@ class NarrativeStateEditor(QWidget):
 
     def _load_web_editor(self) -> None:
         assert self._view is not None
-        index = _web_editor_index()
-        if index.is_file():
-            self._view.load(QUrl.fromLocalFile(str(index)))
+        url = _web_editor_load_url()
+        if url is not None:
+            self._view.load(url)
             return
         message = (
             "Narrative Web Editor is not built yet. "
-            "Run `npm run build:narrative-editor` and reopen this tab."
+            "Run `npm run build:narrative-editor`, then press F5 in this tab (no editor restart needed)."
         )
         self._view.setHtml(_placeholder_html(message))
 
@@ -465,6 +552,9 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, An
     emit_sources = _asset_emit_sources(assets)
     command_sources = _asset_state_command_sources(assets)
     condition_sources = _asset_condition_sources(assets)
+    owner_state_sources = _asset_owner_state_sources(assets)
+    context_state_sources = _asset_context_state_sources(assets)
+    dialogue_owner_refs = _dialogue_owner_refs(model)
 
     for comp in data.get("compositions", []) or []:
         if not isinstance(comp, dict):
@@ -490,7 +580,7 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, An
                 target_node = graph_node.get(f"{graph_id}.{state_id}") or graph_node.get(graph_id)
                 if target_node:
                     label = f"{graph_id}.{state_id}" if state_id else graph_id
-                    _add_edge(state_command_edges, seen, "stateCommand", source_node, target_node, label, f"{element.get('id')} commands {label}", comp_id, graph_id)
+                    _add_edge(state_command_edges, seen, "stateCommand", source_node, target_node, label, f"{element.get('id')} 强制设状态：绕过状态机因果链 {label}", comp_id, graph_id)
                 else:
                     _add_projection_warning(warnings, warning_seen, "projection.command.dangling", f"{element.get('id')}: meta.commands points to unknown narrative state {command}", comp_id, str(element.get("id", "")))
 
@@ -506,7 +596,7 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, An
                 if not target_node:
                     continue
                 label = f'{source["graphId"]}.{source["stateId"]}'
-                _add_edge(state_command_edges, seen, "stateCommand", source_node, target_node, label, source["detail"], comp_id, source["graphId"])
+                _add_edge(state_command_edges, seen, "stateCommand", source_node, target_node, label, f'强制设状态：绕过状态机因果链 {source["detail"]}', comp_id, source["graphId"])
 
         for sig, targets in signal_targets.items():
             lifecycle = _lifecycle_source(sig, graph_node)
@@ -530,6 +620,76 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, An
                 if source:
                     label = f"{graph_id}.{state_id}" if state_id else graph_id
                     _add_edge(read_edges, seen, "read", source, target["node"], label, target["detail"], comp_id, graph_id, target.get("transitionId", ""))
+
+        for owner_state in owner_state_sources:
+            dialogue_id = owner_state["dialogueGraphId"]
+            target_elements = [
+                element for element in elements
+                if str(element.get("kind", "")).strip() == "dialogueBlackbox"
+                and str(element.get("refId", "")).strip() == dialogue_id
+            ]
+            if not target_elements:
+                continue
+            owner_refs = dialogue_owner_refs.get(dialogue_id, [])
+            wrapper_matches = _owner_state_wrapper_matches(elements, owner_refs)
+            if not wrapper_matches:
+                _add_projection_warning(
+                    warnings,
+                    warning_seen,
+                    "projection.ownerState.unresolved",
+                    f"{owner_state['detail']}: OwnerStateNode cannot resolve a unique owner wrapper; bind the dialogue to an entity wrapper or keep meta.reads explicit",
+                    comp_id,
+                    owner_state["detail"],
+                )
+                continue
+            if len(wrapper_matches) > 1:
+                _add_projection_warning(
+                    warnings,
+                    warning_seen,
+                    "projection.ownerState.multiple",
+                    f"{owner_state['detail']}: OwnerStateNode matched {len(wrapper_matches)} possible wrappers; projection shows all read edges",
+                    comp_id,
+                    owner_state["detail"],
+                )
+            for target_element in target_elements:
+                target_node = f"element:{target_element.get('id')}"
+                for match in wrapper_matches:
+                    source = graph_node.get(match["graphId"])
+                    if not source:
+                        continue
+                    label = f'{match["graphId"]}.activeState'
+                    detail = (
+                        f'{owner_state["detail"]} OwnerStateNode reads '
+                        f'{match["ownerType"]}:{match["ownerId"]} wrapper {match["graphId"]}'
+                    )
+                    _add_edge(read_edges, seen, "read", source, target_node, label, detail, comp_id, match["graphId"])
+
+        for context_state in context_state_sources:
+            dialogue_id = context_state["dialogueGraphId"]
+            graph_id = context_state["graphId"]
+            target_elements = [
+                element for element in elements
+                if str(element.get("kind", "")).strip() == "dialogueBlackbox"
+                and str(element.get("refId", "")).strip() == dialogue_id
+            ]
+            if not target_elements or not graph_id:
+                continue
+            source = graph_node.get(graph_id)
+            if not source:
+                _add_projection_warning(
+                    warnings,
+                    warning_seen,
+                    "projection.contextState.unresolved",
+                    f"{context_state['detail']}: ContextStateNode graphId {graph_id} not found in composition",
+                    comp_id,
+                    context_state["detail"],
+                )
+                continue
+            for target_element in target_elements:
+                target_node = f"element:{target_element.get('id')}"
+                label = f"{graph_id}.activeState"
+                detail = f'{context_state["detail"]} ContextStateNode reads {graph_id}'
+                _add_edge(read_edges, seen, "read", source, target_node, label, detail, comp_id, graph_id)
 
     return {
         "schemaVersion": 1,
@@ -629,7 +789,7 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
             _check_id_delimiter(issues, eid, "element.id.delimiter", f"compositions[{ci}].elements[{ei}].id", eid)
             kind = str(el.get("kind", "")).strip()
             if kind == "wrapperGraph" and not str(el.get("ownerId", "")).strip():
-                _issue(issues, "warning", "wrapper.unbound", f"{eid}: wrapper 尚未绑定 ownerId", f"compositions[{ci}].elements[{ei}]", eid)
+                _issue(issues, "error", "wrapper.unbound", f"{eid}: wrapper 尚未绑定 ownerId", f"compositions[{ci}].elements[{ei}]", eid)
             if kind == "wrapperGraph" and str(el.get("ownerType", "")).strip() not in _VALID_WRAPPER_OWNER_TYPES:
                 _issue(issues, "warning", "wrapper.ownerType.unsupported", f"{eid}: wrapper ownerType 不受运行时 owner 索引支持", f"compositions[{ci}].elements[{ei}].ownerType", eid)
             if kind == "scenarioSubgraph" and not (str(el.get("refId", "")).strip() or str(el.get("ownerId", "")).strip()):
@@ -655,6 +815,7 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
                 states = graph.get("states") if isinstance(graph, dict) and isinstance(graph.get("states"), dict) else {}
                 if not graph or (state_id and state_id not in states):
                     _issue(issues, "warning", "projection.command.dangling", f"{eid}: commands points to unknown narrative state {command}", f"compositions[{ci}].elements[{ei}].meta.commands", eid)
+    _validate_owner_bindings(data, issues)
     _validate_state_command_targets(data, graph_index, issues)
     return issues
 
@@ -668,6 +829,7 @@ def validate_external_state_command_targets(data: dict[str, Any], model: Project
         graph = graph_index.get(graph_id, {})
         states = graph.get("states") if isinstance(graph.get("states"), dict) else {}
         detail = str(source.get("detail", "")).strip()
+        _issue(issues, "error", "stateCommand.unsafeInContent", f"{detail}: setNarrativeState 会绕过 transition/conditions，仅用于调试或修复", detail)
         if state_id not in states:
             _issue(issues, "error", "stateCommand.target.missing", f"{detail}: setNarrativeState target does not exist: {graph_id}.{state_id}", detail)
             continue
@@ -696,6 +858,8 @@ def _validate_graph(
     initial = str(graph.get("initialState", "")).strip()
     if not initial or initial not in states:
         _issue(issues, "error", "initialState.invalid", f"{gid}: initialState 不存在", f"{path}.initialState", gid)
+    if graph.get("projectFlags") is True:
+        _issue(issues, "error", "projectFlags.deprecated", f"{gid}: projectFlags 已废弃；请使用显式叙事状态读取", f"{path}.projectFlags", gid)
     if element_kind == "scenarioSubgraph" or str(graph.get("ownerType", "")).strip() == "scenario":
         entry = str(graph.get("entryState", "")).strip()
         exits = graph.get("exitStates")
@@ -732,19 +896,15 @@ def _validate_graph(
         tid = str(transition.get("id", "")).strip()
         _check_unique(issues, transition_ids, tid, "transition", f"{tpath}.id", tid)
         _check_id_delimiter(issues, tid, "transition.id.delimiter", f"{tpath}.id", tid)
+        if isinstance(transition.get("from"), dict) or isinstance(transition.get("to"), dict):
+            _issue(issues, "error", "transition.crossGraphEndpoint.unsupported", f"{gid}.{tid}: transition.from/to 必须是本图 stateId，跨图关系请使用 signal/lifecycle trigger", tpath, tid)
+            continue
         from_ep = _resolve_endpoint(transition.get("from"), gid)
         to_ep = _resolve_endpoint(transition.get("to"), gid)
-        from_graph = graph_index.get(from_ep["graphId"], {})
-        to_graph = graph_index.get(to_ep["graphId"], {})
-        from_states = from_graph.get("states") if isinstance(from_graph.get("states"), dict) else {}
-        to_states = to_graph.get("states") if isinstance(to_graph.get("states"), dict) else {}
-        if from_ep["stateId"] not in from_states:
+        if from_ep["stateId"] not in states:
             _issue(issues, "error", "transition.from.missing", f"{gid}.{tid}: from state 不存在", f"{tpath}.from", tid)
-        if to_ep["stateId"] not in to_states:
+        if to_ep["stateId"] not in states:
             _issue(issues, "error", "transition.to.missing", f"{gid}.{tid}: to state 不存在", f"{tpath}.to", tid)
-        if from_ep["graphId"] != gid:
-            _issue(issues, "error", "transition.owner.mismatch", f"{gid}.{tid}: transition 必须存放在 from 所属图 {from_ep['graphId']}", tpath, tid)
-        _validate_cross_graph_boundary(graph_index, gid, tid, from_ep, to_ep, tpath, issues)
         _validate_lifecycle_signal_scope(gid, tid, str(transition.get("signal", "")).strip(), tpath, issues)
         if not str(transition.get("signal", "")).strip():
             _issue(issues, "error", "transition.signal.empty", f"{gid}.{tid}: signal 不能为空", f"{tpath}.signal", tid)
@@ -857,6 +1017,7 @@ def _validate_state_command_targets(data: dict[str, Any], graph_index: dict[str,
                     for idx, action in enumerate(actions):
                         if not isinstance(action, dict) or action.get("type") != "setNarrativeState":
                             continue
+                        _issue(issues, "error", "stateCommand.unsafeInContent", f"{gid}.{sid}: setNarrativeState 会绕过 transition/conditions，仅用于调试或修复", f"{gid}.{sid}.{list_name}[{idx}]", gid)
                         params = action.get("params") if isinstance(action.get("params"), dict) else {}
                         target_gid = str(params.get("graphId", "")).strip()
                         target_sid = str(params.get("stateId", "")).strip()
@@ -869,6 +1030,28 @@ def _validate_state_command_targets(data: dict[str, Any], graph_index: dict[str,
                         exits = [str(x).strip() for x in (target_graph.get("exitStates") if isinstance(target_graph.get("exitStates"), list) else [])]
                         if (target_kind == "scenarioSubgraph" or str(target_graph.get("ownerType", "")).strip() == "scenario") and target_sid != str(target_graph.get("entryState", "")).strip() and target_sid not in exits:
                             _issue(issues, "error", "stateCommand.scenario.internal", f"{gid}.{sid}: setNarrativeState targets an internal scenario state: {target_gid}.{target_sid}", f"{gid}.{sid}.{list_name}[{idx}]", gid)
+
+
+def _validate_owner_bindings(data: dict[str, Any], issues: list[dict[str, Any]]) -> None:
+    by_owner: dict[str, list[str]] = {}
+    for comp in data.get("compositions", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        graphs: list[dict[str, Any]] = []
+        if isinstance(comp.get("mainGraph"), dict):
+            graphs.append(comp["mainGraph"])
+        for el in comp.get("elements", []) or []:
+            if isinstance(el, dict) and isinstance(el.get("graph"), dict):
+                graphs.append(el["graph"])
+        for graph in graphs:
+            owner_type = str(graph.get("ownerType", "")).strip()
+            owner_id = str(graph.get("ownerId", "")).strip()
+            gid = str(graph.get("id", "")).strip()
+            if owner_type and owner_id and gid:
+                by_owner.setdefault(f"{owner_type}:{owner_id}", []).append(gid)
+    for key, graph_ids in by_owner.items():
+        if len(graph_ids) > 1:
+            _issue(issues, "error", "owner.wrapper.duplicate", f"{key}: 多个 wrapper graph 绑定同一 owner ({', '.join(graph_ids)})", item_id=key)
 
 
 def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:
@@ -1039,6 +1222,16 @@ def _find_main_window(obj: QObject) -> QObject | None:
 
 def _web_editor_index() -> Path:
     return Path(__file__).resolve().parents[2] / "narrative_editor_web" / "dist" / "index.html"
+
+
+def _web_editor_load_url() -> QUrl | None:
+    dev_url = os.environ.get(NARRATIVE_EDITOR_DEV_URL_ENV, "").strip()
+    if dev_url:
+        return QUrl(dev_url)
+    index = _web_editor_index()
+    if index.is_file():
+        return QUrl.fromLocalFile(str(index))
+    return None
 
 
 def _placeholder_html(message: str) -> str:
@@ -1250,6 +1443,81 @@ def _element_matches_asset_ref(element: dict[str, Any], kind: str, ref_id: str) 
     if kind.startswith("archive") and (owner_type == kind or ek == kind) and (not ref_id or owner_id == ref_id or er == ref_id):
         return True
     return False
+
+
+def _dialogue_owner_refs(model: ProjectModel) -> dict[str, list[dict[str, str]]]:
+    out: dict[str, list[dict[str, str]]] = {}
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def add(dialogue_id: str, owner_type: str, owner_id: str, detail: str) -> None:
+        dialogue_id = str(dialogue_id or "").strip()
+        owner_type = str(owner_type or "").strip()
+        owner_id = str(owner_id or "").strip()
+        if not dialogue_id or not owner_type or not owner_id:
+            return
+        key = (dialogue_id, owner_type, owner_id, detail)
+        if key in seen:
+            return
+        seen.add(key)
+        out.setdefault(dialogue_id, []).append({
+            "ownerType": owner_type,
+            "ownerId": owner_id,
+            "detail": detail,
+        })
+
+    for scene_id, scene in model.scenes.items():
+        if not isinstance(scene, dict):
+            continue
+        for npc in scene.get("npcs", []) or []:
+            if not isinstance(npc, dict):
+                continue
+            dialogue_id = str(npc.get("dialogueGraphId", "")).strip()
+            npc_id = str(npc.get("id", "")).strip()
+            if dialogue_id and npc_id:
+                add(dialogue_id, "npc", npc_id, f"npc:{scene_id}:{npc_id}")
+                add(dialogue_id, "npc", f"{scene_id}:{npc_id}", f"npc:{scene_id}:{npc_id}")
+        for hotspot in scene.get("hotspots", []) or []:
+            if not isinstance(hotspot, dict):
+                continue
+            data = hotspot.get("data") if isinstance(hotspot.get("data"), dict) else {}
+            dialogue_id = str(data.get("graphId", "")).strip()
+            hotspot_id = str(hotspot.get("id", "")).strip()
+            if dialogue_id and hotspot_id:
+                add(dialogue_id, "hotspot", hotspot_id, f"hotspot:{scene_id}:{hotspot_id}")
+                add(dialogue_id, "hotspot", f"{scene_id}:{hotspot_id}", f"hotspot:{scene_id}:{hotspot_id}")
+    return out
+
+
+def _owner_state_wrapper_matches(
+    elements: list[dict[str, Any]],
+    owner_refs: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for element in elements:
+        if str(element.get("kind", "")).strip() != "wrapperGraph":
+            continue
+        graph = element.get("graph") if isinstance(element.get("graph"), dict) else {}
+        graph_id = str(graph.get("id", "")).strip()
+        if not graph_id:
+            continue
+        owner_type = str(element.get("ownerType") or graph.get("ownerType") or "").strip()
+        owner_id = str(element.get("ownerId") or graph.get("ownerId") or "").strip()
+        if not owner_type or not owner_id:
+            continue
+        for ref in owner_refs:
+            if owner_type != ref.get("ownerType") or owner_id != ref.get("ownerId"):
+                continue
+            key = (graph_id, owner_type, owner_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "graphId": graph_id,
+                "ownerType": owner_type,
+                "ownerId": owner_id,
+            })
+    return out
 
 
 def _dedupe_source_nodes(

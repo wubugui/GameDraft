@@ -133,7 +133,13 @@ export interface ActionRegistryDeps {
     delayMs: number,
   ) => Promise<void>;
   /** 图对话（参数 graphId 对应 `graphs/<graphId>.json`） */
-  startDialogueGraph: (graphId: string, entry?: string, npcId?: string) => Promise<void>;
+  startDialogueGraph: (
+    graphId: string,
+    entry?: string,
+    npcId?: string,
+    ownerType?: string,
+    ownerId?: string,
+  ) => Promise<void>;
   /** 按序播放预置台词（至 dialogue:end） */
   playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
   /** 显示「点击继续」类提示并阻塞直至任意键或鼠标 */
@@ -1128,8 +1134,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const entry = entryRaw !== undefined && entryRaw !== null ? String(entryRaw).trim() : '';
     const npcIdRaw = p.npcId;
     const npcId = npcIdRaw !== undefined && npcIdRaw !== null ? String(npcIdRaw).trim() : '';
-    return d.startDialogueGraph(graphId, entry || undefined, npcId || undefined);
-  }, ['graphId', 'entry', 'npcId']);
+    const ownerTypeRaw = p.ownerType;
+    const ownerType = ownerTypeRaw !== undefined && ownerTypeRaw !== null ? String(ownerTypeRaw).trim() : '';
+    const ownerIdRaw = p.ownerId;
+    const ownerId = ownerIdRaw !== undefined && ownerIdRaw !== null ? String(ownerIdRaw).trim() : '';
+    return d.startDialogueGraph(
+      graphId,
+      entry || undefined,
+      npcId || undefined,
+      ownerType || undefined,
+      ownerId || undefined,
+    );
+  }, ['graphId', 'entry', 'npcId', 'ownerType', 'ownerId']);
 
   executor.register('waitClickContinue', (p) => {
     const raw = p.text;

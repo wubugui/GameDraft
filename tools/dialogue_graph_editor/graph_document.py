@@ -11,7 +11,12 @@ from tools.editor.shared.project_paths import ProjectPaths
 
 from .graph_mutations import (
     OUT_CHOICE,
+    OUT_CONTEXT_STATE_CASE,
+    OUT_CONTEXT_STATE_DEFAULT,
     OUT_NEXT,
+    OUT_OWNER_STATE_CASE,
+    OUT_OWNER_STATE_DEFAULT,
+    OUT_OWNER_STATE_MISSING,
     OUT_SWITCH_CASE,
     OUT_SWITCH_DEFAULT,
 )
@@ -90,6 +95,33 @@ def extract_flow_edges(nodes: dict[str, Any]) -> list[tuple[str, str, str]]:
             dn = str(raw.get("defaultNext", "") or "")
             if dn:
                 edges.append((nid, dn, "else"))
+        elif t == "ownerState":
+            for i, c in enumerate(raw.get("cases") or []):
+                if not isinstance(c, dict):
+                    continue
+                nxt = str(c.get("next", "") or "")
+                state = str(c.get("state", "") or "").strip()
+                label = state or f"state{i}"
+                if nxt:
+                    edges.append((nid, nxt, label))
+            dn = str(raw.get("defaultNext", "") or "")
+            if dn:
+                edges.append((nid, dn, "default"))
+            mn = str(raw.get("missingWrapperNext", "") or "")
+            if mn:
+                edges.append((nid, mn, "noWrapper"))
+        elif t == "contextState":
+            for i, c in enumerate(raw.get("cases") or []):
+                if not isinstance(c, dict):
+                    continue
+                nxt = str(c.get("next", "") or "")
+                state = str(c.get("state", "") or "").strip()
+                label = state or f"state{i}"
+                if nxt:
+                    edges.append((nid, nxt, label))
+            dn = str(raw.get("defaultNext", "") or "")
+            if dn:
+                edges.append((nid, dn, "default"))
     return edges
 
 
@@ -127,6 +159,33 @@ def extract_flow_edges_detailed(
             dn = str(raw.get("defaultNext", "") or "")
             if dn:
                 edges.append((nid, dn, "else", OUT_SWITCH_DEFAULT, -1))
+        elif t == "ownerState":
+            for i, c in enumerate(raw.get("cases") or []):
+                if not isinstance(c, dict):
+                    continue
+                nxt = str(c.get("next", "") or "")
+                state = str(c.get("state", "") or "").strip()
+                label = state or f"state{i}"
+                if nxt:
+                    edges.append((nid, nxt, label, OUT_OWNER_STATE_CASE, i))
+            dn = str(raw.get("defaultNext", "") or "")
+            if dn:
+                edges.append((nid, dn, "default", OUT_OWNER_STATE_DEFAULT, -1))
+            mn = str(raw.get("missingWrapperNext", "") or "")
+            if mn:
+                edges.append((nid, mn, "noWrapper", OUT_OWNER_STATE_MISSING, -2))
+        elif t == "contextState":
+            for i, c in enumerate(raw.get("cases") or []):
+                if not isinstance(c, dict):
+                    continue
+                nxt = str(c.get("next", "") or "")
+                state = str(c.get("state", "") or "").strip()
+                label = state or f"state{i}"
+                if nxt:
+                    edges.append((nid, nxt, label, OUT_CONTEXT_STATE_CASE, i))
+            dn = str(raw.get("defaultNext", "") or "")
+            if dn:
+                edges.append((nid, dn, "default", OUT_CONTEXT_STATE_DEFAULT, -1))
     return edges
 
 
@@ -242,7 +301,86 @@ def _validate_line_beats(nid: str, raw: dict[str, Any], errors: list[str]) -> No
             errors.append(f"节点 {nid} lines[{i}] 缺少 speaker 对象")
 
 
-def validate_graph_tiered(data: dict[str, Any]) -> tuple[list[str], list[str]]:
+def _validate_action_list_for_state_commands(actions: Any, node_id: str, label: str, errors: list[str]) -> None:
+    if not isinstance(actions, list):
+        return
+    for idx, action in enumerate(actions):
+        if isinstance(action, dict) and str(action.get("type", "")).strip() == "setNarrativeState":
+            errors.append(
+                f"节点 {node_id} {label}[{idx}]: setNarrativeState 会绕过 transition/conditions，仅用于调试或修复"
+            )
+
+
+def _validate_owner_context_state_nodes(
+    data: dict[str, Any],
+    nodes: dict[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    *,
+    project_root: Path | None = None,
+    project_model: Any | None = None,
+) -> None:
+    dialogue_id = str(data.get("id", "") or "").strip()
+    wrapper_info: dict[str, Any] | None = None
+    if project_root is not None and project_model is not None and dialogue_id:
+        try:
+            from tools.editor.shared.narrative_catalog import resolve_owner_wrapper_states
+
+            wrapper_info = resolve_owner_wrapper_states(project_root, project_model, dialogue_id)
+        except Exception:
+            wrapper_info = None
+
+    for nid, raw in nodes.items():
+        if not isinstance(raw, dict):
+            continue
+        t = raw.get("type")
+        if t == "runActions":
+            _validate_action_list_for_state_commands(raw.get("actions"), nid, "actions", errors)
+        elif t == "ownerState":
+            if wrapper_info is None:
+                warnings.append(f"节点 {nid}: 无法静态确定所属实体 wrapper（缺少项目上下文）")
+                continue
+            wrappers = wrapper_info.get("wrappers") or []
+            if not wrappers:
+                msg = str(wrapper_info.get("message", "") or "未找到所属实体 wrapper")
+                warnings.append(f"节点 {nid}: 无法静态确定所属实体 wrapper（{msg}）")
+                continue
+            if wrapper_info.get("ambiguous"):
+                warnings.append(f"节点 {nid}: 多个 NPC/Hotspot 引用该对话图，ownerState 的 state 需手工确认")
+                continue
+            known = {str(s).strip() for s in (wrapper_info.get("stateIds") or []) if str(s).strip()}
+            for i, case in enumerate(raw.get("cases") or []):
+                if not isinstance(case, dict):
+                    continue
+                sid = str(case.get("state", "") or "").strip()
+                if sid and sid not in known:
+                    graph_id = str((wrappers[0] or {}).get("graphId", "?"))
+                    errors.append(f"节点 {nid} ownerState case {i}: state {sid!r} 不存在于 wrapper {graph_id}")
+        elif t == "contextState":
+            gid = str(raw.get("graphId", "") or "").strip()
+            if project_root is None:
+                if gid:
+                    warnings.append(f"节点 {nid}: 无法校验 contextState graphId（缺少项目上下文）")
+                continue
+            from tools.editor.shared.narrative_catalog import graph_states, is_context_graph_allowed
+
+            if gid and not is_context_graph_allowed(project_root, gid):
+                errors.append(f"节点 {nid}: contextState graphId {gid!r} 不允许读取（不能选择 npc/hotspot wrapper）")
+            known = {str(s).strip() for s in graph_states(project_root, gid) if str(s).strip()}
+            for i, case in enumerate(raw.get("cases") or []):
+                if not isinstance(case, dict):
+                    continue
+                sid = str(case.get("state", "") or "").strip()
+                if sid and known and sid not in known:
+                    errors.append(f"节点 {nid} contextState case {i}: state {sid!r} 不存在于图 {gid}")
+
+
+def validate_graph_tiered(
+    data: dict[str, Any],
+    *,
+    project_root: Path | None = None,
+    project_model: Any | None = None,
+) -> tuple[list[str], list[str]]:
     """(errors, warnings)：编辑器保存时两者都会提示；errors 更严重，warnings 可确认后仍保存。"""
     errors: list[str] = []
     warnings: list[str] = []
@@ -267,7 +405,7 @@ def validate_graph_tiered(data: dict[str, Any]) -> tuple[list[str], list[str]]:
             errors.append(f"节点 {nid!r} 不是对象")
             continue
         t = raw.get("type")
-        if t not in ("line", "runActions", "choice", "switch", "end"):
+        if t not in ("line", "runActions", "choice", "switch", "ownerState", "contextState", "end"):
             errors.append(f"节点 {nid!r} 未知 type: {t!r}")
 
         if t == "line":
@@ -314,8 +452,53 @@ def validate_graph_tiered(data: dict[str, Any]) -> tuple[list[str], list[str]]:
             dn = raw.get("defaultNext", "")
             if dn and dn not in nodes:
                 errors.append(f"节点 {nid}: defaultNext 指向不存在: {dn!r}")
+        elif t == "ownerState":
+            cases = raw.get("cases") or []
+            if not str(raw.get("defaultNext", "") or "").strip():
+                errors.append(f"节点 {nid}: ownerState 必须设置 defaultNext")
+            for i, c in enumerate(cases):
+                if not isinstance(c, dict):
+                    errors.append(f"节点 {nid} ownerState case {i} 不是对象")
+                    continue
+                if not str(c.get("state", "") or "").strip():
+                    warnings.append(f"节点 {nid}: ownerState case {i} 的 state 为空")
+                cn = str(c.get("next", "") or "")
+                if cn and cn not in nodes:
+                    errors.append(f"节点 {nid} ownerState case {i} next 指向不存在: {cn!r}")
+            dn = str(raw.get("defaultNext", "") or "")
+            if dn and dn not in nodes:
+                errors.append(f"节点 {nid}: ownerState defaultNext 指向不存在: {dn!r}")
+            mn = str(raw.get("missingWrapperNext", "") or "")
+            if mn and mn not in nodes:
+                errors.append(f"节点 {nid}: ownerState missingWrapperNext 指向不存在: {mn!r}")
+        elif t == "contextState":
+            if not str(raw.get("graphId", "") or "").strip():
+                errors.append(f"节点 {nid}: contextState 必须设置 graphId")
+            if not str(raw.get("defaultNext", "") or "").strip():
+                errors.append(f"节点 {nid}: contextState 必须设置 defaultNext")
+            for i, c in enumerate(raw.get("cases") or []):
+                if not isinstance(c, dict):
+                    errors.append(f"节点 {nid} contextState case {i} 不是对象")
+                    continue
+                if not str(c.get("state", "") or "").strip():
+                    warnings.append(f"节点 {nid}: contextState case {i} 的 state 为空")
+                cn = str(c.get("next", "") or "")
+                if cn and cn not in nodes:
+                    errors.append(f"节点 {nid} contextState case {i} next 指向不存在: {cn!r}")
+            dn = str(raw.get("defaultNext", "") or "")
+            if dn and dn not in nodes:
+                errors.append(f"节点 {nid}: contextState defaultNext 指向不存在: {dn!r}")
         elif t == "end":
             pass
+
+    _validate_owner_context_state_nodes(
+        data,
+        nodes,
+        errors,
+        warnings,
+        project_root=project_root,
+        project_model=project_model,
+    )
 
     if ent in nodes:
         reachable = nodes_reachable_from_entry(nodes, ent)
@@ -339,8 +522,13 @@ def validate_graph_tiered(data: dict[str, Any]) -> tuple[list[str], list[str]]:
     return (errors, warnings)
 
 
-def validate_graph(data: dict[str, Any]) -> list[str]:
-    e, w = validate_graph_tiered(data)
+def validate_graph(
+    data: dict[str, Any],
+    *,
+    project_root: Path | None = None,
+    project_model: Any | None = None,
+) -> list[str]:
+    e, w = validate_graph_tiered(data, project_root=project_root, project_model=project_model)
     return e + w
 
 
@@ -454,6 +642,23 @@ def node_summary(nid: str, raw: Any, max_text: int = 30) -> str:
         hint = _switch_case_hint(cases[0]) if n and isinstance(cases[0], dict) else ""
         suffix = "..." if n > 1 else ""
         return f"{n}分支: {hint}{suffix}" if hint else f"{n}分支"
+    if t == "ownerState":
+        cases = raw.get("cases") or []
+        if not isinstance(cases, list):
+            cases = []
+        states = [str(c.get("state", "") or "").strip() for c in cases if isinstance(c, dict)]
+        states = [s for s in states if s]
+        if states:
+            preview = ", ".join(states[:3])
+            if len(states) > 3:
+                preview += "..."
+            return f"实体状态→{preview}"
+        return "实体状态分支"
+    if t == "contextState":
+        gid = str(raw.get("graphId", "") or "").strip()
+        cases = raw.get("cases") or []
+        n = len(cases) if isinstance(cases, list) else 0
+        return f"上下文 {gid or '?'} ({n}分支)"
     if t == "end":
         return "结束"
     return ""
@@ -553,6 +758,20 @@ def default_node(node_type: str, nodes: dict[str, Any]) -> dict[str, Any]:
     if node_type == "switch":
         return {
             "type": "switch",
+            "cases": [],
+            "defaultNext": "",
+        }
+    if node_type == "ownerState":
+        return {
+            "type": "ownerState",
+            "cases": [],
+            "defaultNext": "",
+            "missingWrapperNext": "",
+        }
+    if node_type == "contextState":
+        return {
+            "type": "contextState",
+            "graphId": "",
             "cases": [],
             "defaultNext": "",
         }

@@ -8,7 +8,12 @@ from OdenGraphQt import BaseNode
 from .graph_document import node_summary
 from .graph_mutations import (
     OUT_CHOICE,
+    OUT_CONTEXT_STATE_CASE,
+    OUT_CONTEXT_STATE_DEFAULT,
     OUT_NEXT,
+    OUT_OWNER_STATE_CASE,
+    OUT_OWNER_STATE_DEFAULT,
+    OUT_OWNER_STATE_MISSING,
     OUT_SWITCH_CASE,
     OUT_SWITCH_DEFAULT,
 )
@@ -27,6 +32,21 @@ def pn_switch_case(i: int) -> str:
 PN_SWITCH_DEFAULT = "p_sd"
 
 
+def pn_owner_state_case(i: int) -> str:
+    return f"p_o{i}"
+
+
+PN_OWNER_STATE_DEFAULT = "p_od"
+PN_OWNER_STATE_MISSING = "p_om"
+
+
+def pn_context_state_case(i: int) -> str:
+    return f"p_x{i}"
+
+
+PN_CONTEXT_STATE_DEFAULT = "p_xd"
+
+
 def parse_dialogue_out_port(name: str) -> tuple[str, int] | None:
     if name == PN_NEXT:
         return OUT_NEXT, 0
@@ -36,6 +56,16 @@ def parse_dialogue_out_port(name: str) -> tuple[str, int] | None:
         return OUT_SWITCH_CASE, int(name[3:])
     if name == PN_SWITCH_DEFAULT:
         return OUT_SWITCH_DEFAULT, -1
+    if name.startswith("p_o") and len(name) > 2 and name[2:].isdigit():
+        return OUT_OWNER_STATE_CASE, int(name[2:])
+    if name == PN_OWNER_STATE_DEFAULT:
+        return OUT_OWNER_STATE_DEFAULT, -1
+    if name == PN_OWNER_STATE_MISSING:
+        return OUT_OWNER_STATE_MISSING, -2
+    if name.startswith("p_x") and len(name) > 2 and name[2:].isdigit():
+        return OUT_CONTEXT_STATE_CASE, int(name[2:])
+    if name == PN_CONTEXT_STATE_DEFAULT:
+        return OUT_CONTEXT_STATE_DEFAULT, -1
     return None
 
 
@@ -47,6 +77,8 @@ def _dialogue_type_label_zh(t: object) -> str:
         "runActions": "动作",
         "choice": "选项",
         "switch": "分支",
+        "ownerState": "所属实体状态",
+        "contextState": "上下文状态",
         "end": "结束",
     }.get(t, f"其它({t})")
 
@@ -57,6 +89,8 @@ _TYPE_BODY_RGBA: dict[str, tuple[int, int, int, int]] = {
     "runActions": (118, 78, 40, 255),
     "choice": (128, 76, 52, 255),
     "switch": (88, 62, 118, 255),
+    "ownerState": (42, 110, 98, 255),
+    "contextState": (62, 92, 128, 255),
     "end": (86, 48, 58, 255),
 }
 _TYPE_BORDER_RGBA: dict[str, tuple[int, int, int, int]] = {
@@ -64,6 +98,8 @@ _TYPE_BORDER_RGBA: dict[str, tuple[int, int, int, int]] = {
     "runActions": (200, 145, 75, 255),
     "choice": (215, 135, 95, 255),
     "switch": (165, 125, 205, 255),
+    "ownerState": (95, 185, 155, 255),
+    "contextState": (120, 160, 210, 255),
     "end": (175, 95, 110, 255),
 }
 _DEFAULT_BODY_RGBA = (52, 52, 58, 255)
@@ -136,6 +172,55 @@ class DialogueFlowNode(BaseNode):
                 color=(120, 120, 140),
             )
             self._set_output_port_caption(PN_SWITCH_DEFAULT, "else")
+        elif t == "ownerState":
+            cases = raw.get("cases") or []
+            for i in range(len(cases)):
+                self.add_output(
+                    pn_owner_state_case(i),
+                    multi_output=False,
+                    display_name=True,
+                    color=(80, 175, 140),
+                )
+            for i, c in enumerate(cases):
+                if not isinstance(c, dict):
+                    c = {}
+                state = str(c.get("state") or "").strip()
+                self._set_output_port_caption(pn_owner_state_case(i), state or f"state{i}")
+            self.add_output(
+                PN_OWNER_STATE_DEFAULT,
+                multi_output=False,
+                display_name=True,
+                color=(70, 140, 120),
+            )
+            self._set_output_port_caption(PN_OWNER_STATE_DEFAULT, "default")
+            self.add_output(
+                PN_OWNER_STATE_MISSING,
+                multi_output=False,
+                display_name=True,
+                color=(90, 120, 110),
+            )
+            self._set_output_port_caption(PN_OWNER_STATE_MISSING, "noWrapper")
+        elif t == "contextState":
+            cases = raw.get("cases") or []
+            for i in range(len(cases)):
+                self.add_output(
+                    pn_context_state_case(i),
+                    multi_output=False,
+                    display_name=True,
+                    color=(110, 150, 200),
+                )
+            for i, c in enumerate(cases):
+                if not isinstance(c, dict):
+                    c = {}
+                state = str(c.get("state") or "").strip()
+                self._set_output_port_caption(pn_context_state_case(i), state or f"state{i}")
+            self.add_output(
+                PN_CONTEXT_STATE_DEFAULT,
+                multi_output=False,
+                display_name=True,
+                color=(90, 120, 170),
+            )
+            self._set_output_port_caption(PN_CONTEXT_STATE_DEFAULT, "default")
         elif t == "end":
             pass
         else:

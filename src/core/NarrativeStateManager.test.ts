@@ -64,7 +64,7 @@ describe('NarrativeStateManager', () => {
     expect(narrative.getActiveState('g')).toBe('c');
   });
 
-  it('runs each graph at most once per trigger and cascades stateEntered triggers', async () => {
+  it('runs each graph at most once per trigger and cascades graph-state broadcasts', async () => {
     const { narrative } = makeRuntime();
     narrative.registerGraphs([
       {
@@ -79,12 +79,17 @@ describe('NarrativeStateManager', () => {
         ownerType: 'npc',
         initialState: 'before',
         states: { before: { id: 'before' }, after: { id: 'after' } },
-        transitions: [{ id: 'after', from: 'before', to: 'after', signal: 'stateEntered:flow:done' }],
+        transitions: [{ id: 'after', from: 'before', to: 'after', signal: 'external:state:flow:done' }],
       },
     ]);
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'done' });
     expect(narrative.getActiveState('flow')).toBe('done');
     expect(narrative.getActiveState('npc')).toBe('after');
+  });
+
+  it('normalizes legacy stateEntered keys to graph-state broadcasts', () => {
+    expect(NarrativeStateManager.normalizeTriggerKey('stateEntered:flow:done'))
+      .toBe(NarrativeStateManager.graphStateEnteredKey('flow', 'done'));
   });
 
   it('allows lifecycle actions to await queued narrative state commands', async () => {
@@ -142,7 +147,7 @@ describe('NarrativeStateManager', () => {
     spy.mockRestore();
   });
 
-  it('serializes, deserializes, and projects active flags', async () => {
+  it('ignores deprecated projectFlags at runtime', async () => {
     const { flagStore, narrative } = makeRuntime();
     narrative.registerGraphs([{
       id: 'g',
@@ -154,19 +159,8 @@ describe('NarrativeStateManager', () => {
     }]);
     narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
     await flush();
-    expect(flagStore.get('narrative.g.b.active')).toBe(true);
-    const saved = narrative.serialize();
-
-    const next = makeRuntime().narrative;
-    next.registerGraphs([{
-      id: 'g',
-      ownerType: 'flow',
-      initialState: 'a',
-      states: { a: { id: 'a' }, b: { id: 'b' } },
-      transitions: [],
-    }]);
-    next.deserialize(saved);
-    expect(next.getActiveState('g')).toBe('b');
+    expect(flagStore.get('narrative.g.b.active')).toBeUndefined();
+    expect(narrative.getActiveState('g')).toBe('b');
   });
 
   it('indexes graphs by owner binding for entity systems', async () => {
@@ -181,13 +175,16 @@ describe('NarrativeStateManager', () => {
     }]);
     expect(narrative.getGraphIdsByOwner('npc', 'npc_ringboy')).toEqual(['npc_ringboy']);
     expect(narrative.getGraphsByOwner('npc', 'npc_ringboy')[0]?.id).toBe('npc_ringboy');
+    expect(narrative.getPrimaryGraphByOwner('npc', 'npc_ringboy')?.id).toBe('npc_ringboy');
 
     narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
     await flush();
     expect(narrative.getActiveStatesByOwner('npc', 'npc_ringboy')).toEqual({ npc_ringboy: 'after_event' });
+    expect(narrative.getPrimaryActiveStateByOwner('npc', 'npc_ringboy')).toBe('after_event');
+    expect(narrative.isOwnerStateActive('npc', 'npc_ringboy', 'after_event')).toBe(true);
   });
 
-  it('supports cross-graph transitions into scenario boundary states', async () => {
+  it('rejects legacy cross-graph transition endpoints at runtime', async () => {
     const { narrative } = makeRuntime();
     narrative.registerGraphs([
       {
@@ -201,7 +198,7 @@ describe('NarrativeStateManager', () => {
             from: 'ready',
             to: { graphId: 'scenario', stateId: 'entry' },
             signal: 'external:system:test:enter',
-          },
+          } as any,
         ],
       },
       {
@@ -218,7 +215,7 @@ describe('NarrativeStateManager', () => {
             from: 'exit',
             to: { graphId: 'flow', stateId: 'done' },
             signal: 'external:system:test:leave',
-          },
+          } as any,
         ],
       },
     ]);
@@ -226,14 +223,15 @@ describe('NarrativeStateManager', () => {
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'enter' });
     await flush();
     expect(narrative.getActiveState('flow')).toBe('ready');
-    expect(narrative.getActiveState('scenario')).toBe('entry');
+    expect(narrative.getActiveState('scenario')).toBe('inactive');
 
     await narrative.setNarrativeState('scenario', 'exit');
     await flush();
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'leave' });
     await flush();
     expect(narrative.getActiveState('scenario')).toBe('exit');
-    expect(narrative.getActiveState('flow')).toBe('done');
+    expect(narrative.getActiveState('flow')).toBe('ready');
+    expect(JSON.stringify(narrative.debugSnapshot())).toContain('transition.crossGraphEndpoint.unsupported');
   });
 
   it('rejects runtime scenario boundary violations', async () => {
@@ -250,7 +248,7 @@ describe('NarrativeStateManager', () => {
             from: 'ready',
             to: { graphId: 'scenario', stateId: 'middle' },
             signal: 'external:system:test:enter',
-          },
+          } as any,
         ],
       },
       {
@@ -275,7 +273,7 @@ describe('NarrativeStateManager', () => {
     await narrative.setNarrativeState('scenario', 'middle');
     expect(narrative.getActiveState('scenario')).toBe('inactive');
     const snapshot = narrative.debugSnapshot();
-    expect(JSON.stringify(snapshot)).toContain('scenario.boundary');
+    expect(JSON.stringify(snapshot)).toContain('transition.crossGraphEndpoint.unsupported');
   });
 
   it('rejects duplicate graph ids during registration', () => {
@@ -345,5 +343,139 @@ describe('NarrativeStateManager', () => {
     expect(narrative.getActiveState('flow_dock_water_monkey')).toBe('crate_minigame_done');
     expect(narrative.getActiveState('npc_ringboy')).toBe('ring_taken');
     expect(narrative.getActiveState('quest_return_ring')).toBe('active');
+  });
+
+  it('serializes and deserializes activeStates', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' } },
+      transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'external:system:test:go' }],
+    }]);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('b');
+    expect(narrative.serialize()).toEqual({ activeStates: { g: 'b' } });
+
+    narrative.deserialize({ activeStates: { g: 'a' } });
+    expect(narrative.getActiveState('g')).toBe('a');
+
+    narrative.deserialize({ activeStates: { g: 'missing', other: 'x' } });
+    expect(narrative.getActiveState('g')).toBe('a');
+  });
+
+  it('restores activeStates on a fresh manager via deserialize', async () => {
+    const graph = {
+      id: 'g',
+      ownerType: 'flow' as const,
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' } },
+      transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'external:system:test:go' }],
+    };
+    const first = makeRuntime();
+    first.narrative.registerGraphs([graph]);
+    await first.narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+    await flush();
+    const payload = first.narrative.serialize();
+
+    const second = makeRuntime();
+    second.narrative.registerGraphs([graph]);
+    expect(second.narrative.getActiveState('g')).toBe('a');
+    second.narrative.deserialize(payload);
+    expect(second.narrative.getActiveState('g')).toBe('b');
+  });
+
+  it('does not migrate when trigger signal does not match any transition', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' } },
+      transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'external:system:test:expected' }],
+    }]);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'wrong' });
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('a');
+  });
+
+  it('does not migrate when every transition.from mismatches active state', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 'only_b', from: 'b', to: 'c', signal: 'external:system:test:go' },
+        { id: 'only_c', from: 'c', to: 'b', signal: 'external:system:test:go' },
+      ],
+    }]);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('a');
+  });
+
+  it('does not migrate when active state does not match transition.from', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 'wrong_from', from: 'b', to: 'c', signal: 'external:system:test:go' },
+        { id: 'right_from', from: 'a', to: 'b', signal: 'external:system:test:go' },
+      ],
+    }]);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('b');
+  });
+
+  it('runs onExit before onEnter during a transition', async () => {
+    const { actionExecutor, narrative } = makeRuntime();
+    const order: string[] = [];
+    actionExecutor.register('markExit', async () => { order.push('exit'); }, []);
+    actionExecutor.register('markEnter', async () => { order.push('enter'); }, []);
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: {
+        a: { id: 'a', onExitActions: [{ type: 'markExit', params: {} }] },
+        b: { id: 'b', onEnterActions: [{ type: 'markEnter', params: {} }] },
+      },
+      transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'external:system:test:go' }],
+    }]);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+    await flush();
+    expect(order).toEqual(['exit', 'enter']);
+  });
+
+  it('records duplicate owner bindings as errors', () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([
+      {
+        id: 'w1',
+        ownerType: 'npc',
+        ownerId: 'npc_a',
+        initialState: 's',
+        states: { s: { id: 's' } },
+        transitions: [],
+      },
+      {
+        id: 'w2',
+        ownerType: 'npc',
+        ownerId: 'npc_a',
+        initialState: 's',
+        states: { s: { id: 's' } },
+        transitions: [],
+      },
+    ]);
+    const issues = (narrative.debugSnapshot().recentIssues ?? []) as Array<{ code?: string; severity?: string }>;
+    expect(issues.some((issue) => issue.code === 'owner.wrapper.duplicate' && issue.severity === 'error')).toBe(true);
   });
 });

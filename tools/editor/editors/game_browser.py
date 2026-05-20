@@ -25,8 +25,11 @@ def _safe_placeholder(message: str) -> str:
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
+
+    from ..web_engine_page import QuietWebEnginePage
 except ImportError:  # pragma: no cover
     QWebEngineView = None  # type: ignore[assignment,misc]
+    QuietWebEnginePage = None  # type: ignore[assignment,misc]
 
 
 class GameBrowserTab(QWidget):
@@ -90,6 +93,8 @@ class GameBrowserTab(QWidget):
 
         if self._has_webengine:
             self._view = QWebEngineView(self)
+            if QuietWebEnginePage is not None:
+                self._view.setPage(QuietWebEnginePage(self._view))
             root.addWidget(self._view, stretch=1)
             self.show_message(
                 "Press Run (F5) to start the dev server and load the game here.",
@@ -156,6 +161,8 @@ class GamePlayWindow(QWidget):
 
         if QWebEngineView is not None:
             self._view = QWebEngineView(self)
+            if QuietWebEnginePage is not None:
+                self._view.setPage(QuietWebEnginePage(self._view))
             lay.addWidget(self._view)
         else:
             self._view = None

@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
-    QMainWindow, QStatusBar, QToolBar, QFileDialog,
-    QMessageBox, QTextEdit, QDialog, QVBoxLayout, QLabel,
+    QMainWindow, QStatusBar, QFileDialog,
+    QMessageBox, QTextEdit, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QSizePolicy, QWidget, QStyle, QSplitter, QTreeWidget,
-    QTreeWidgetItem, QStackedWidget,
+    QTreeWidgetItem, QStackedWidget, QToolButton,
 )
 from PySide6.QtGui import QAction, QKeySequence, QActionGroup
-from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer
 from PySide6.QtWidgets import QApplication
 
 from . import theme
@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
         self._nav_tree.currentItemChanged.connect(self._on_nav_tree_current_changed)
 
         self._build_menus()
-        self._build_toolbar()
+        self._build_menu_bar_corner()
         self._status = QStatusBar()
         self.setStatusBar(self._status)
 
@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self._act(file_menu, "Exit", self.close, QKeySequence("Alt+F4"))
 
         edit_menu = mb.addMenu("Edit")
+        self._act(edit_menu, "Save", self._save_current_editor, QKeySequence.StandardKey.Save)
         self._undo_action = self._act(edit_menu, "Undo", lambda: self._model.undo_stack.undo(),
                                        QKeySequence.StandardKey.Undo)
         self._redo_action = self._act(edit_menu, "Redo", lambda: self._model.undo_stack.redo(),
@@ -238,49 +239,58 @@ class MainWindow(QMainWindow):
             if callable(fn):
                 fn(tid)
 
-    def _build_toolbar(self) -> None:
-        tb = QToolBar("Main")
-        tb.setMovable(False)
-        tb.setIconSize(QSize(24, 24))
-        self.addToolBar(tb)
-        tb.addAction("Save All", self._save_all)
-        tb.addSeparator()
-        tb.addAction("Validate", self._validate)
+    def _build_menu_bar_corner(self) -> None:
+        """Save/Validate/运行控制并入菜单栏右侧，避免单独工具栏占垂直空间。"""
+        corner = QWidget()
+        corner.setObjectName("menuBarCorner")
+        layout = QHBoxLayout(corner)
+        layout.setContentsMargins(8, 0, 4, 0)
+        layout.setSpacing(6)
 
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        tb.addWidget(spacer)
+        def text_btn(label: str, tip: str, slot) -> QToolButton:
+            btn = QToolButton(corner)
+            btn.setText(label)
+            btn.setToolTip(tip)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            btn.setAutoRaise(True)
+            btn.clicked.connect(slot)
+            layout.addWidget(btn)
+            return btn
+
+        text_btn("Save All", "全部保存 (Ctrl+Shift+S)", self._save_all)
+        text_btn("Validate", "校验工程数据", self._validate)
+
+        layout.addSpacing(8)
 
         st = self.style()
-        act_run = QAction(
+
+        def icon_btn(icon, tip: str, slot) -> QToolButton:
+            btn = QToolButton(corner)
+            btn.setIcon(icon)
+            btn.setToolTip(tip)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            btn.setAutoRaise(True)
+            btn.clicked.connect(slot)
+            layout.addWidget(btn)
+            return btn
+
+        icon_btn(
             st.standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
-            "",
-            self,
+            "运行游戏 (F5)",
+            self._run_game,
         )
-        act_run.setToolTip("运行游戏 (F5)")
-        act_run.setShortcut(QKeySequence("F5"))
-        act_run.triggered.connect(self._run_game)
-        tb.addAction(act_run)
-
-        act_run_dev = QAction(
+        icon_btn(
             st.standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
-            "",
-            self,
+            "运行游戏 — 开发模式 (Ctrl+F5)",
+            self._run_game_dev,
         )
-        act_run_dev.setToolTip("运行游戏 — 开发模式 (Ctrl+F5)")
-        act_run_dev.setShortcut(QKeySequence("Ctrl+F5"))
-        act_run_dev.triggered.connect(self._run_game_dev)
-        tb.addAction(act_run_dev)
-
-        act_stop = QAction(
+        icon_btn(
             st.standardIcon(QStyle.StandardPixmap.SP_MediaStop),
-            "",
-            self,
+            "停止游戏 (Shift+F5)",
+            self._stop_game,
         )
-        act_stop.setToolTip("停止游戏 (Shift+F5)")
-        act_stop.setShortcut(QKeySequence("Shift+F5"))
-        act_stop.triggered.connect(self._stop_game)
-        tb.addAction(act_stop)
+
+        self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
 
     @staticmethod
     def _act(menu, text, slot, shortcut=None) -> QAction:
@@ -627,6 +637,18 @@ class MainWindow(QMainWindow):
         self._splitter.setSizes([nav_w, right])
 
     # ---- save / dirty -----------------------------------------------------
+
+    def _save_current_editor(self) -> None:
+        idx = self._stack.currentIndex()
+        if 0 <= idx < len(self._editor_instances):
+            inst = self._editor_instances[idx]
+            from .editors.narrative_state_editor import NarrativeStateEditor
+
+            if isinstance(inst, NarrativeStateEditor):
+                if inst.flush_to_model():
+                    self._status.showMessage("叙事状态图已写入工程模型。", 3000)
+                return
+        self._save_all()
 
     def _flush_editors_to_model(self) -> bool:
         from .editors.timeline_editor import TimelineEditor

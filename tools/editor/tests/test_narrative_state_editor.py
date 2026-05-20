@@ -215,6 +215,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 and e["compositionId"] == "comp"
                 and e["graphId"] == "flow"
                 and e["transitionId"] == "t"
+                and e.get("label") == "external:dialogue:dock_board:board_read_done"
                 and "flow.t" in e["detail"]
                 for e in projection["triggerEdges"]
             ))
@@ -284,6 +285,162 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 for e in projection["stateCommandEdges"]
             ))
 
+    def test_projection_derives_owner_state_read_edges(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            graphs_dir = root / "public" / "assets" / "dialogues" / "graphs"
+            graphs_dir.mkdir(parents=True, exist_ok=True)
+            (graphs_dir / "ringboy.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "id": "ringboy",
+                        "entry": "root",
+                        "nodes": {
+                            "root": {
+                                "type": "ownerState",
+                                "cases": [{"state": "before", "next": "line"}],
+                                "defaultNext": "line",
+                            },
+                            "line": {
+                                "type": "line",
+                                "speaker": {"kind": "npc"},
+                                "text": "hi",
+                                "next": "end",
+                            },
+                            "end": {"type": "end"},
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            m = ProjectModel()
+            m.load_project(root)
+            m.scenes = {
+                "scene": {
+                    "npcs": [
+                        {
+                            "id": "npc_ringboy",
+                            "dialogueGraphId": "ringboy",
+                        }
+                    ]
+                }
+            }
+            m.narrative_graphs = {
+                "schemaVersion": 2,
+                "compositions": [
+                    {
+                        "id": "comp",
+                        "mainGraph": {
+                            "id": "flow",
+                            "ownerType": "flow",
+                            "initialState": "a",
+                            "states": {"a": {"id": "a"}},
+                            "transitions": [],
+                        },
+                        "elements": [
+                            {
+                                "id": "wrapper_npc",
+                                "kind": "wrapperGraph",
+                                "ownerType": "npc",
+                                "ownerId": "npc_ringboy",
+                                "graph": {
+                                    "id": "npc_ringboy",
+                                    "ownerType": "npc",
+                                    "ownerId": "npc_ringboy",
+                                    "initialState": "before",
+                                    "states": {"before": {"id": "before"}},
+                                    "transitions": [],
+                                },
+                            },
+                            {
+                                "id": "dialogue_ringboy",
+                                "kind": "dialogueBlackbox",
+                                "refId": "ringboy",
+                            },
+                        ],
+                    }
+                ],
+            }
+            projection = derive_projection(m.narrative_graphs, m)
+            self.assertTrue(any(
+                e["source"] == "element:wrapper_npc"
+                and e["target"] == "element:dialogue_ringboy"
+                and e["kind"] == "read"
+                and e["graphId"] == "npc_ringboy"
+                and e.get("label") == "npc_ringboy.activeState"
+                for e in projection["readEdges"]
+            ))
+
+    def test_projection_derives_context_state_read_edges(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            graphs_dir = root / "public" / "assets" / "dialogues" / "graphs"
+            graphs_dir.mkdir(parents=True, exist_ok=True)
+            (graphs_dir / "ctx_dialogue.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "id": "ctx_dialogue",
+                        "entry": "root",
+                        "nodes": {
+                            "root": {
+                                "type": "contextState",
+                                "graphId": "flow",
+                                "cases": [{"state": "a", "next": "line"}],
+                                "defaultNext": "line",
+                            },
+                            "line": {
+                                "type": "line",
+                                "speaker": {"kind": "npc"},
+                                "text": "hi",
+                                "next": "end",
+                            },
+                            "end": {"type": "end"},
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            m = ProjectModel()
+            m.load_project(root)
+            m.narrative_graphs = {
+                "schemaVersion": 2,
+                "compositions": [
+                    {
+                        "id": "comp",
+                        "mainGraph": {
+                            "id": "flow",
+                            "ownerType": "flow",
+                            "initialState": "a",
+                            "states": {"a": {"id": "a"}},
+                            "transitions": [],
+                        },
+                        "elements": [
+                            {
+                                "id": "dialogue_ctx",
+                                "kind": "dialogueBlackbox",
+                                "refId": "ctx_dialogue",
+                            },
+                        ],
+                    }
+                ],
+            }
+            projection = derive_projection(m.narrative_graphs, m)
+            self.assertTrue(any(
+                e["source"] == "graph:flow"
+                and e["target"] == "element:dialogue_ctx"
+                and e["kind"] == "read"
+                and e["graphId"] == "flow"
+                for e in projection["readEdges"]
+            ))
+
     def test_projection_visitor_emits_fan_in_warnings_and_explicit_commands(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
@@ -331,6 +488,97 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 e["source"] == "element:mg_a" and e["target"] == "state:b"
                 for e in projection["stateCommandEdges"]
             ))
+
+    def test_validate_reports_unbound_wrapper_and_duplicate_owner_as_errors(self) -> None:
+        issues = validate_narrative_graphs({
+            "schemaVersion": 2,
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow",
+                        "ownerType": "flow",
+                        "initialState": "a",
+                        "states": {"a": {"id": "a"}},
+                        "transitions": [],
+                    },
+                    "elements": [
+                        {
+                            "id": "wrapper_a",
+                            "kind": "wrapperGraph",
+                            "ownerType": "npc",
+                            "ownerId": "",
+                            "graph": {
+                                "id": "npc_a",
+                                "ownerType": "npc",
+                                "ownerId": "",
+                                "initialState": "idle",
+                                "states": {"idle": {"id": "idle"}},
+                                "transitions": [],
+                            },
+                        },
+                        {
+                            "id": "wrapper_b",
+                            "kind": "wrapperGraph",
+                            "ownerType": "npc",
+                            "ownerId": "npc_ringboy",
+                            "graph": {
+                                "id": "npc_b",
+                                "ownerType": "npc",
+                                "ownerId": "npc_ringboy",
+                                "initialState": "idle",
+                                "states": {"idle": {"id": "idle"}},
+                                "transitions": [],
+                            },
+                        },
+                        {
+                            "id": "wrapper_c",
+                            "kind": "wrapperGraph",
+                            "ownerType": "npc",
+                            "ownerId": "npc_ringboy",
+                            "graph": {
+                                "id": "npc_c",
+                                "ownerType": "npc",
+                                "ownerId": "npc_ringboy",
+                                "initialState": "idle",
+                                "states": {"idle": {"id": "idle"}},
+                                "transitions": [],
+                            },
+                        },
+                    ],
+                },
+            ],
+        })
+        error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
+        self.assertIn("wrapper.unbound", error_codes)
+        self.assertIn("owner.wrapper.duplicate", error_codes)
+
+    def test_validate_reports_set_narrative_state_in_graph_actions_as_error(self) -> None:
+        issues = validate_narrative_graphs({
+            "schemaVersion": 2,
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow",
+                        "ownerType": "flow",
+                        "initialState": "a",
+                        "states": {
+                            "a": {
+                                "id": "a",
+                                "onEnterActions": [
+                                    {"type": "setNarrativeState", "params": {"graphId": "flow", "stateId": "a"}},
+                                ],
+                            },
+                        },
+                        "transitions": [],
+                    },
+                    "elements": [],
+                },
+            ],
+        })
+        error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
+        self.assertIn("stateCommand.unsafeInContent", error_codes)
 
     def test_validate_blocks_missing_transition_target_and_signal(self) -> None:
         issues = validate_narrative_graphs({
@@ -427,7 +675,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
             ],
         })
         codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
-        self.assertIn("scenario.boundary.entry", codes)
+        self.assertIn("transition.crossGraphEndpoint.unsupported", codes)
 
     def test_runtime_snapshot_reports_missing_game_window(self) -> None:
         with TemporaryDirectory() as td:

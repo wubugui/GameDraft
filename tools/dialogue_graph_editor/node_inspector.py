@@ -130,6 +130,7 @@ class NodeInspector(QWidget):
         project_root: Path,
         project_model_getter: Optional[Callable[[], Any]] = None,
         node_types_getter: Optional[Callable[[], dict[str, str]]] = None,
+        dialogue_graph_id_getter: Optional[Callable[[], str]] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -137,6 +138,7 @@ class NodeInspector(QWidget):
         self._project_root = project_root
         self._project_model_getter = project_model_getter
         self._node_types_getter = node_types_getter
+        self._dialogue_graph_id_getter = dialogue_graph_id_getter
         self._node_id = ""
         self._suppress_change_emit = False
         self._topology_refs: dict[str, Any] = {}
@@ -233,6 +235,10 @@ class NodeInspector(QWidget):
                 self._build_choice(data)
             elif t == "switch":
                 self._build_switch(data)
+            elif t == "ownerState":
+                self._build_owner_state(data)
+            elif t == "contextState":
+                self._build_context_state(data)
             elif t == "end":
                 self._body_layout.addWidget(QLabel("结束节点，无额外字段。", self._body))
                 self._getter = lambda: {"type": "end"}
@@ -300,6 +306,26 @@ class NodeInspector(QWidget):
                 dn = refs.get("default_next")
                 if isinstance(dn, QLineEdit):
                     dn.setText(str(node_data.get("defaultNext", "")))
+            elif t in ("ownerState", "contextState"):
+                cases = node_data.get("cases") or []
+                rows = refs.get("case_rows") or []
+                for i, row in enumerate(rows):
+                    if i < len(cases) and isinstance(cases[i], dict):
+                        nx = row.get("next_edit")
+                        if isinstance(nx, QLineEdit):
+                            nx.setText(str(cases[i].get("next", "")))
+                        st = row.get("state_edit")
+                        if isinstance(st, QComboBox):
+                            st.setCurrentText(str(cases[i].get("state", "")))
+                dn = refs.get("default_next")
+                if isinstance(dn, QLineEdit):
+                    dn.setText(str(node_data.get("defaultNext", "")))
+                mn = refs.get("missing_next")
+                if isinstance(mn, QLineEdit):
+                    mn.setText(str(node_data.get("missingWrapperNext", "")))
+                gid = refs.get("graph_id_edit")
+                if isinstance(gid, QComboBox):
+                    gid.setCurrentText(str(node_data.get("graphId", "")))
         finally:
             self._suppress_change_emit = False
 
@@ -2157,6 +2183,258 @@ class NodeInspector(QWidget):
                     conds = [r["serialize"]() for r in cb["cond_rows"]]
                     cs.append({"next": next_s, "conditions": conds})
             return {"type": "switch", "cases": cs, "defaultNext": dn.text().strip()}
+
+        self._getter = getter
+
+    def _owner_wrapper_state_options(self) -> dict[str, Any]:
+        from tools.editor.shared.narrative_catalog import resolve_owner_wrapper_states
+
+        dialogue_id = ""
+        if self._dialogue_graph_id_getter:
+            dialogue_id = str(self._dialogue_graph_id_getter() or "").strip()
+        model = self._project_model_getter() if self._project_model_getter else None
+        if not dialogue_id or model is None:
+            return {"stateIds": [], "ambiguous": False, "message": "无法解析对话图 id 或工程模型"}
+        return resolve_owner_wrapper_states(self._project_root, model, dialogue_id)
+
+    def _make_state_branch_rows(
+        self,
+        data: dict[str, Any],
+        *,
+        state_options: list[str],
+        include_missing: bool,
+    ) -> tuple[list[dict[str, Any]], QLineEdit, QLineEdit | None, Callable[[], dict[str, Any]]]:
+        """构建 ownerState/contextState 的 cases UI，返回 (case_rows, default_next, missing_next, getter_factory)。"""
+        cases_wrap = QWidget(self._body)
+        cases_outer = QVBoxLayout(cases_wrap)
+        cases_outer.setContentsMargins(0, 0, 0, 0)
+        case_rows: list[dict[str, Any]] = []
+
+        def rebuild_cases_layout() -> None:
+            while cases_outer.count():
+                it = cases_outer.takeAt(0)
+                if it.widget():
+                    it.widget().deleteLater()
+
+        def make_case_block(case: dict[str, Any] | None) -> dict[str, Any]:
+            outer = QWidget(cases_wrap)
+            lay = QVBoxLayout(outer)
+            row = QHBoxLayout()
+            state_cb = QComboBox(outer)
+            state_cb.setEditable(True)
+            state_cb.addItem("")
+            for sid in state_options:
+                if sid and state_cb.findText(sid) < 0:
+                    state_cb.addItem(sid)
+            state_cb.setCurrentText(str((case or {}).get("state", "") or ""))
+            row.addWidget(QLabel("state", outer))
+            row.addWidget(state_cb, 1)
+            nx = QLineEdit(str((case or {}).get("next", "")), outer)
+            btn = QPushButton("next…", outer)
+            btn.clicked.connect(lambda _c=False, le=nx: self._pick_target(le))
+            row.addWidget(nx, 1)
+            row.addWidget(btn)
+            lay.addLayout(row)
+            btn_del = QPushButton("删除分支", outer)
+            lay.addWidget(btn_del)
+
+            def do_del() -> None:
+                if len(case_rows) <= 1:
+                    QMessageBox.information(self, "分支", "至少保留一个 state 分支。")
+                    return
+                case_rows.remove(rec)
+                outer.deleteLater()
+                rebuild_cases_layout()
+                for c in case_rows:
+                    cases_outer.addWidget(c["outer"])
+                self._emit_changed()
+
+            btn_del.clicked.connect(do_del)
+            rec = {"outer": outer, "state_edit": state_cb, "next_edit": nx}
+            state_cb.currentTextChanged.connect(lambda _t: self._emit_changed())
+            nx.textChanged.connect(lambda _t: self._emit_changed())
+            return rec
+
+        cases_raw = data.get("cases")
+        if not isinstance(cases_raw, list):
+            cases_raw = []
+        if cases_raw:
+            for c in cases_raw:
+                if isinstance(c, dict):
+                    case_rows.append(make_case_block(c))
+        else:
+            case_rows.append(make_case_block({"state": "", "next": ""}))
+        for c in case_rows:
+            cases_outer.addWidget(c["outer"])
+        btn_add = QPushButton("添加 state 分支", cases_wrap)
+        btn_add.clicked.connect(lambda: (
+            case_rows.append(make_case_block({"state": "", "next": ""})),
+            rebuild_cases_layout(),
+            [cases_outer.addWidget(c["outer"]) for c in case_rows],
+            self._emit_changed(),
+        ))
+        cases_outer.addWidget(btn_add)
+        self._body_layout.addWidget(cases_wrap)
+
+        dn = QLineEdit(str(data.get("defaultNext", "") or ""), self._body)
+        row_dn = QHBoxLayout()
+        row_dn.addWidget(QLabel("defaultNext", self._body))
+        row_dn.addWidget(dn, 1)
+        btn_dn = QPushButton("选择…", self._body)
+        btn_dn.clicked.connect(lambda: self._pick_target(dn))
+        row_dn.addWidget(btn_dn)
+        self._body_layout.addLayout(row_dn)
+
+        missing_next: QLineEdit | None = None
+        if include_missing:
+            missing_next = QLineEdit(str(data.get("missingWrapperNext", "") or ""), self._body)
+            row_mn = QHBoxLayout()
+            row_mn.addWidget(QLabel("missingWrapperNext", self._body))
+            row_mn.addWidget(missing_next, 1)
+            btn_mn = QPushButton("选择…", self._body)
+            btn_mn.clicked.connect(lambda: self._pick_target(missing_next))
+            row_mn.addWidget(btn_mn)
+            self._body_layout.addLayout(row_mn)
+            missing_next.textChanged.connect(lambda _t: self._emit_changed())
+        dn.textChanged.connect(lambda _t: self._emit_changed())
+
+        def build_getter(node_type: str, graph_id: str = "") -> Callable[[], dict[str, Any]]:
+            def getter() -> dict[str, Any]:
+                cs = []
+                for cb in case_rows:
+                    st = cb["state_edit"].currentText().strip()
+                    nx_v = cb["next_edit"].text().strip()
+                    if st or nx_v:
+                        cs.append({"state": st, "next": nx_v})
+                out: dict[str, Any] = {
+                    "type": node_type,
+                    "cases": cs,
+                    "defaultNext": dn.text().strip(),
+                }
+                if include_missing and missing_next is not None:
+                    out["missingWrapperNext"] = missing_next.text().strip()
+                if graph_id:
+                    out["graphId"] = graph_id
+                return out
+
+            return getter
+
+        return case_rows, dn, missing_next, build_getter
+
+    def _build_owner_state(self, data: dict[str, Any]) -> None:
+        info = self._owner_wrapper_state_options()
+        hint = QLabel(
+            "数据源：当前对话所属实体的 wrapper 状态（运行时 ownerType/ownerId）。\n"
+            f"{info.get('message', '')}",
+            self._body,
+        )
+        hint.setWordWrap(True)
+        self._body_layout.addWidget(hint)
+        if info.get("ambiguous"):
+            warn = QLabel("警告：多个 NPC/Hotspot 共用本对话图，state 列表为并集，运行时按当前交互实体解析。", self._body)
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color: #b45309;")
+            self._body_layout.addWidget(warn)
+
+        state_ids = [str(x) for x in (info.get("stateIds") or [])]
+        btn_refresh = QPushButton("刷新 wrapper 状态列表", self._body)
+        self._body_layout.addWidget(btn_refresh)
+
+        case_rows, dn, missing_next, build_getter = self._make_state_branch_rows(
+            data,
+            state_options=state_ids,
+            include_missing=True,
+        )
+
+        def refresh_states() -> None:
+            refreshed = self._owner_wrapper_state_options()
+            ids = [str(x) for x in (refreshed.get("stateIds") or [])]
+            for row in case_rows:
+                cb = row.get("state_edit")
+                if not isinstance(cb, QComboBox):
+                    continue
+                cur = cb.currentText()
+                cb.clear()
+                cb.addItem("")
+                for sid in ids:
+                    cb.addItem(sid)
+                cb.setCurrentText(cur)
+
+        btn_refresh.clicked.connect(refresh_states)
+        self._topology_refs = {
+            "type": "ownerState",
+            "case_rows": case_rows,
+            "default_next": dn,
+            "missing_next": missing_next,
+        }
+        self._getter = build_getter("ownerState")
+
+    def _build_context_state(self, data: dict[str, Any]) -> None:
+        from tools.editor.shared.narrative_catalog import (
+            graph_states,
+            is_context_graph_allowed,
+            list_context_readable_graphs,
+        )
+
+        hint = QLabel(
+            "读取显式声明的上层 flow/scenario 叙事图状态（不可选择 npc/hotspot wrapper）。",
+            self._body,
+        )
+        hint.setWordWrap(True)
+        self._body_layout.addWidget(hint)
+
+        graphs = list_context_readable_graphs(self._project_root)
+        gid_cb = QComboBox(self._body)
+        gid_cb.setEditable(True)
+        gid_cb.addItem("")
+        for g in graphs:
+            gid_cb.addItem(str(g.get("graphId", "")), g.get("label", ""))
+        gid_cb.setCurrentText(str(data.get("graphId", "") or ""))
+        row_gid = QHBoxLayout()
+        row_gid.addWidget(QLabel("graphId", self._body))
+        row_gid.addWidget(gid_cb, 1)
+        self._body_layout.addLayout(row_gid)
+
+        state_options = graph_states(self._project_root, gid_cb.currentText().strip())
+
+        case_rows, dn, _missing, build_getter = self._make_state_branch_rows(
+            data,
+            state_options=state_options,
+            include_missing=False,
+        )
+
+        def on_graph_changed(_t: str = "") -> None:
+            gid = gid_cb.currentText().strip()
+            ids = graph_states(self._project_root, gid)
+            for row in case_rows:
+                cb = row.get("state_edit")
+                if not isinstance(cb, QComboBox):
+                    continue
+                cur = cb.currentText()
+                cb.clear()
+                cb.addItem("")
+                for sid in ids:
+                    cb.addItem(sid)
+                cb.setCurrentText(cur)
+            if gid and not is_context_graph_allowed(self._project_root, gid):
+                hint.setStyleSheet("color: #c62828;")
+            else:
+                hint.setStyleSheet("")
+            self._emit_changed()
+
+        gid_cb.currentTextChanged.connect(on_graph_changed)
+
+        self._topology_refs = {
+            "type": "contextState",
+            "case_rows": case_rows,
+            "default_next": dn,
+            "graph_id_edit": gid_cb,
+        }
+
+        def getter() -> dict[str, Any]:
+            gid = gid_cb.currentText().strip()
+            base = build_getter("contextState", gid)()
+            return base
 
         self._getter = getter
 
