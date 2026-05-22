@@ -19,7 +19,8 @@
                 "x": 24,
                 "y": 24
               }
-            }
+            },
+            "broadcastOnEnter": false
           },
           "board_read": {
             "id": "board_read",

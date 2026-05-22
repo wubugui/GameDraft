@@ -63,6 +63,14 @@ export interface NarrativeTransition {
   from: NarrativeEndpoint;
   to: NarrativeEndpoint;
   signal: NarrativeTriggerKey;
+  /**
+   * How this transition is triggered:
+   * - 'signal' (default): requires a matching signal + optional conditions
+   * - 'reactive': auto-fires when conditions (passed through as-is) are met, no signal needed
+   * - 'reactiveAll': auto-fires when ALL flat conditions met (auto-wrapped in {all})
+   * - 'reactiveAny': auto-fires when ANY flat condition met (auto-wrapped in {any})
+   */
+  trigger?: 'signal' | 'reactive' | 'reactiveAll' | 'reactiveAny';
   conditions?: ConditionExpr[];
   priority?: number;
 }
@@ -116,7 +124,8 @@ export interface NarrativeComposition {
 
 type QueuedTrigger =
   | { kind: 'external'; key: NarrativeTriggerKey; source?: NarrativeSignal }
-  | { kind: 'setState'; graphId: string; stateId: string };
+  | { kind: 'setState'; graphId: string; stateId: string }
+  | { kind: 'reactive'; graphId: string; transitionId: string };
 
 interface QueuedItem {
   trigger: QueuedTrigger;
@@ -250,6 +259,11 @@ export class NarrativeStateManager implements IGameSystem {
       }
     }
     this.recordDuplicateOwnerBindings();
+    // Evaluate reactive transitions on initial states
+    this.evaluateReactiveTriggers();
+    if (this.queue.length > 0 && !this.draining) {
+      void this.drainQueue();
+    }
   }
 
   getActiveState(graphId: string): string | undefined {
@@ -458,6 +472,11 @@ export class NarrativeStateManager implements IGameSystem {
         await this.processQueueItem(item);
         if (this.queue.length === 0) {
           this.resolveCompletedQueueItems();
+          // After the queue is drained, evaluate reactive transitions.
+          // If any fire, they push back to the queue, so the loop continues.
+          if (!this.destroyed) {
+            this.evaluateReactiveTriggers();
+          }
         }
       }
     } catch (e) {
@@ -481,6 +500,8 @@ export class NarrativeStateManager implements IGameSystem {
     try {
       if (trigger.kind === 'setState') {
         await this.applyStateCommand(trigger.graphId, trigger.stateId);
+      } else if (trigger.kind === 'reactive') {
+        await this.processReactiveTrigger(trigger.graphId, trigger.transitionId);
       } else {
         await this.processTrigger(NarrativeStateManager.normalizeTriggerKey(trigger.key));
       }
@@ -529,6 +550,72 @@ export class NarrativeStateManager implements IGameSystem {
       return false;
     }
     return evaluateConditionExprList(conditions, ctx);
+  }
+
+  /**
+   * Evaluate all reactive transitions across all graphs.
+   * Called after any state change to check if reactive conditions are now met.
+   * Pushes matching transitions directly into the queue for processing.
+   */
+  private evaluateReactiveTriggers(): void {
+    for (const [graphId, graph] of this.graphs) {
+      const active = this.activeStates.get(graphId) ?? graph.initialState;
+      const candidates = graph.transitions
+        .filter((t) => {
+          if (!t.trigger || t.trigger === 'signal') return false;
+          if (t.from !== active) return false;
+          if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
+            this.recordUnsupportedEndpoint(graphId, t.id);
+            return false;
+          }
+          return this.evaluateReactiveConditions(t);
+        })
+        .map((t, index) => ({ t, index }))
+        .sort((a, b) => {
+          const pa = a.t.priority ?? 0;
+          const pb = b.t.priority ?? 0;
+          if (pa !== pb) return pb - pa;
+          return a.index - b.index;
+        });
+      const selected = candidates[0]?.t;
+      if (!selected) continue;
+      this.queue.push({
+        trigger: { kind: 'reactive', graphId, transitionId: selected.id },
+        resolve: () => {},
+        reject: () => {},
+      });
+    }
+  }
+
+  /**
+   * Evaluate conditions based on trigger mode:
+   * - 'reactive':    pass-through, supports complex nested condition trees
+   * - 'reactiveAll': auto-wrap flat list in {all: conditions}
+   * - 'reactiveAny': auto-wrap flat list in {any: conditions}
+   */
+  private evaluateReactiveConditions(t: NarrativeTransition): boolean {
+    if (!t.conditions?.length) return false;
+    if (t.trigger === 'reactive') {
+      return this.conditionsMet(t.conditions);
+    }
+    if (t.trigger === 'reactiveAll') {
+      return this.conditionsMet([{ all: t.conditions }]);
+    }
+    if (t.trigger === 'reactiveAny') {
+      return this.conditionsMet([{ any: t.conditions }]);
+    }
+    return false;
+  }
+
+  /** Process a queued reactive trigger by double-checking conditions and applying the transition. */
+  private async processReactiveTrigger(graphId: string, transitionId: string): Promise<void> {
+    const graph = this.graphs.get(graphId);
+    const transition = graph?.transitions.find(t => t.id === transitionId);
+    if (graph && transition?.trigger) {
+      if (this.evaluateReactiveConditions(transition)) {
+        await this.applyTransition(graph, transition, '__reactive__');
+      }
+    }
   }
 
   private async applyStateCommand(graphId: string, stateId: string): Promise<void> {

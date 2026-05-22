@@ -170,8 +170,33 @@ def _normalize_file(value: Any) -> dict[str, Any]:
     comps = out.get("compositions")
     if not isinstance(comps, list):
         out["compositions"] = []
+    _normalize_reactive_triggers(out)
     _apply_derived_broadcast_auto_mark(out)
     return out
+
+
+def _iter_narrative_graphs(data: dict[str, Any]):
+    """Yield every NarrativeGraph dict reachable from the file root."""
+    for comp in data.get("compositions", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        main = comp.get("mainGraph")
+        if isinstance(main, dict):
+            yield main
+        for el in comp.get("elements", []) or []:
+            if isinstance(el, dict) and isinstance(el.get("graph"), dict):
+                yield el["graph"]
+
+
+def _normalize_reactive_triggers(data: dict[str, Any]) -> None:
+    """Clear trigger values that are not one of the valid reactive modes."""
+    for graph in _iter_narrative_graphs(data):
+        for transition in graph.get("transitions", []) or []:
+            if not isinstance(transition, dict):
+                continue
+            trigger = transition.get("trigger")
+            if trigger not in ("reactive", "reactiveAll", "reactiveAny"):
+                transition.pop("trigger", None)
 
 
 def _walk_actions(obj: Any) -> list[dict[str, Any]]:
@@ -1182,6 +1207,7 @@ def _validate_graph(
         elif sig == DEFAULT_DRAFT_SIGNAL:
             _issue(issues, "warning", "transition.signal.draft", f"{gid}.{tid}: transition still uses draft signal {DEFAULT_DRAFT_SIGNAL}", f"{tpath}.signal", f"{gid}.{tid}", _with_field(transition_target, "signal"))
         _validate_lifecycle_signal_scope(gid, tid, sig, tpath, issues, _with_field(transition_target, "signal"))
+        _validate_reactive_trigger(transition, tpath, issues, _with_field(transition_target, "trigger"))
         _validate_conditions(transition.get("conditions"), f"{tpath}.conditions", issues, f"{gid}.{tid}", graph_index, _with_field(transition_target, "conditions"))
 
 
@@ -1350,6 +1376,40 @@ def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: 
     for i, action in enumerate(raw):
         if not isinstance(action, dict) or not str(action.get("type", "")).strip():
             _issue(issues, "warning", "action.shape", f"{owner}: action {i + 1} 缺少 type", f"{path}[{i}]", owner)
+
+
+_VALID_REACTIVE_TRIGGERS = frozenset({"signal", "reactive", "reactiveAll", "reactiveAny"})
+
+
+def _validate_reactive_trigger(
+    transition: dict[str, Any],
+    path: str,
+    issues: list[dict[str, Any]],
+    target: dict[str, Any] | None = None,
+) -> None:
+    trigger = str(transition.get("trigger", "signal")).strip()
+    if trigger not in _VALID_REACTIVE_TRIGGERS:
+        _issue(
+            issues, "error", "transition.trigger.invalid",
+            f"{transition.get('id', '?')}: trigger must be signal/reactive/reactiveAll/reactiveAny, got '{trigger}'",
+            f"{path}.trigger", transition.get("id"), target,
+        )
+        return
+    if trigger in ("reactive", "reactiveAll", "reactiveAny"):
+        conditions = transition.get("conditions")
+        if not isinstance(conditions, list) or not conditions:
+            _issue(
+                issues, "error", "transition.reactive.noConditions",
+                f"{transition.get('id', '?')}: reactive transition (trigger={trigger}) requires at least one condition",
+                f"{path}.conditions", transition.get("id"), target,
+            )
+        sig = str(transition.get("signal", "")).strip()
+        if sig and sig != DEFAULT_DRAFT_SIGNAL:
+            _issue(
+                issues, "warning", "transition.reactive.signalIgnored",
+                f"{transition.get('id', '?')}: reactive transition ignores signal field; signal '{sig}' will never be used",
+                f"{path}.signal", transition.get("id"), target,
+            )
 
 
 def _validate_conditions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:

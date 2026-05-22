@@ -57,17 +57,28 @@ export function buildGraphStateNodes(input: GraphLayerInput): CanvasNode[] {
 
 export function buildGraphTransitionEdges(input: GraphLayerInput): CanvasEdge[] {
   const { graph, scope, endpointCtx } = input;
-  return (graph.transitions ?? []).map((t) => ({
-    id: scope.transitionEdgeId(t.id),
-    source: resolveCanvasEndpoint(t.from, graph.id, endpointCtx),
-    target: resolveCanvasEndpoint(t.to, graph.id, endpointCtx),
-    type: 'transition',
-    label: t.signal,
-    interactionWidth: 24,
-    zIndex: 25,
-    markerEnd: { type: MarkerType.ArrowClosed },
-    data: { edgeKind: 'transition', label: t.signal, detail: `${graph.id}.${t.id}` },
-  }));
+  return (graph.transitions ?? []).map((t) => {
+    const base: CanvasEdge = {
+      id: scope.transitionEdgeId(t.id),
+      source: resolveCanvasEndpoint(t.from, graph.id, endpointCtx),
+      target: resolveCanvasEndpoint(t.to, graph.id, endpointCtx),
+      type: 'transition',
+      label: t.signal,
+      interactionWidth: 24,
+      zIndex: 25,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      data: { edgeKind: 'transition', label: t.signal, detail: `${graph.id}.${t.id}` },
+    };
+    // Style reactive transitions distinctly
+    if (t.trigger === 'reactive') {
+      base.style = { stroke: '#9333ea', strokeDasharray: '6 3' };
+    } else if (t.trigger === 'reactiveAll') {
+      base.style = { stroke: '#16a34a', strokeDasharray: '6 3' };
+    } else if (t.trigger === 'reactiveAny') {
+      base.style = { stroke: '#ea580c', strokeDasharray: '6 3' };
+    }
+    return base;
+  });
 }
 
 export function buildGraphTransitionAnchorNodes(

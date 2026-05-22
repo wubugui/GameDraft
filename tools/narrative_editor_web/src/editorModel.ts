@@ -154,6 +154,11 @@ function normalizeGraph(graph: NarrativeGraphDef): void {
     if (typeof transition.to === 'string') transition.to = transition.to.trim();
     const sig = String(transition.signal ?? '').trim();
     transition.signal = sig || DEFAULT_DRAFT_SIGNAL;
+    // Normalize trigger: only keep valid reactive values, default to undefined (= 'signal')
+    const trigger = transition.trigger;
+    if (trigger !== 'reactive' && trigger !== 'reactiveAll' && trigger !== 'reactiveAny') {
+      transition.trigger = undefined;
+    }
   }
 }
 
@@ -236,9 +241,10 @@ export function createState(graph: NarrativeGraphDef): string {
   return id;
 }
 
-export function createTransition(graph: NarrativeGraphDef, from: string, to: string): NarrativeTransitionDef {
+export function createTransition(graph: NarrativeGraphDef, from: string, to: string, trigger?: 'signal' | 'reactive' | 'reactiveAll' | 'reactiveAny'): NarrativeTransitionDef {
   const id = uniqueId('t', graph.transitions.map((t) => t.id));
-  const transition = { id, from, to, signal: DEFAULT_DRAFT_SIGNAL, priority: 0 };
+  const transition: NarrativeTransitionDef = { id, from, to, signal: DEFAULT_DRAFT_SIGNAL, priority: 0 };
+  if (trigger && trigger !== 'signal') transition.trigger = trigger;
   graph.transitions.push(transition);
   return transition;
 }
@@ -586,8 +592,64 @@ export function simulateSignalImpact(dataRaw: NarrativeGraphsFileDef, triggerKey
       migrated += 1;
     }
     if (migrated === 0) log.push(`no transition matched ${key}`);
+
+    // Evaluate reactive transitions after each signal step
+    let reactiveFired = true;
+    while (reactiveFired) {
+      reactiveFired = false;
+      for (const graph of graphs) {
+        const active = activeStates[graph.id] ?? graph.initialState;
+        const candidates = (graph.transitions ?? [])
+          .filter((t) => {
+            if (!t.trigger || t.trigger === 'signal') return false;
+            if (typeof t.from !== 'string' || typeof t.to !== 'string') return false;
+            return t.from === active && simulateReactiveConditionsMet(t, activeStates);
+          })
+          .map((t, index) => ({ t, index }))
+          .sort((a, b) => {
+            const pa = a.t.priority ?? 0;
+            const pb = b.t.priority ?? 0;
+            if (pa !== pb) return pb - pa;
+            return a.index - b.index;
+          });
+        const selected = candidates[0]?.t;
+        if (!selected) continue;
+        const from = selected.from as string;
+        const to = selected.to as string;
+        if (!graphMap.get(graph.id)?.states[to]) continue;
+        const previousState = activeStates[graph.id] ?? graph.initialState;
+        activeStates[graph.id] = to;
+        recentTransitions.push({
+          graphId: graph.id,
+          transitionId: selected.id,
+          from,
+          to,
+          triggerKey: '__reactive__',
+        });
+        log.push(`${graph.id}: ${previousState} -> ${to} via ${graph.id}.${selected.id} [reactive:${selected.trigger}]`);
+        if (graphMap.get(graph.id)?.states[to]?.broadcastOnEnter === true) {
+          queue.push(stateEnteredSignalKey(graph.id, to));
+        }
+        reactiveFired = true;
+        migrated += 1;
+      }
+    }
   }
   return { activeStates, recentTransitions, log, queued: queue, loopGuardTripped };
+}
+
+function simulateReactiveConditionsMet(t: NarrativeTransitionDef, activeStates: Record<string, string>): boolean {
+  if (!t.conditions?.length) return false;
+  if (t.trigger === 'reactive') {
+    return conditionsMet(t.conditions, activeStates);
+  }
+  if (t.trigger === 'reactiveAll') {
+    return conditionsMet([{ all: t.conditions }], activeStates);
+  }
+  if (t.trigger === 'reactiveAny') {
+    return conditionsMet([{ any: t.conditions }], activeStates);
+  }
+  return false;
 }
 
 function conditionsMet(conditions: unknown[] | undefined, activeStates: Record<string, string>): boolean {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Background,
   Controls,
@@ -214,6 +214,24 @@ function NarrativeEditorInner() {
     () => getSelectedSummary(composition, graph, graphRef, selectedId),
     [composition, graph, graphRef, selectedId],
   );
+  const transitionsForInspector = useMemo(() => {
+    if (!graph) return [];
+    const all = graph.transitions ?? [];
+    if (!selectedId) return all;
+    if (selectedId.startsWith('state:')) {
+      const sid = selectedId.slice('state:'.length);
+      return all.filter((tr) => String(tr.from) === sid || String(tr.to) === sid);
+    }
+    if (selectedId.startsWith('transition:')) {
+      const tid = selectedId.slice('transition:'.length);
+      return all.filter((tr) => tr.id === tid);
+    }
+    if (selectedId.startsWith('transition-anchor:')) {
+      const parsed = parseTransitionAnchorId(selectedId);
+      if (parsed?.graphId === graph.id) return all.filter((tr) => tr.id === parsed.transitionId);
+    }
+    return all;
+  }, [graph, selectedId]);
 
   const refreshProjectionAndValidation = useCallback(async (nextData = data) => {
     await flushRemoteSync(normalizeFile(nextData));
@@ -1179,7 +1197,7 @@ function NarrativeEditorInner() {
           <div className="inspector-tabs">
             {(['properties', 'transitions', 'debug', 'advanced'] as InspectorTab[]).map((tab) => (
               <button key={tab} type="button" className={inspectorTab === tab ? 'active' : ''} onClick={() => setInspectorTab(tab)}>
-                {tab === 'properties' ? '属性' : tab === 'transitions' ? '迁移' : tab === 'debug' ? '调试' : '高级'}
+                {tab === 'properties' ? '属性' : tab === 'transitions' ? '关联迁移' : tab === 'debug' ? '调试' : '高级'}
               </button>
             ))}
           </div>
@@ -1221,7 +1239,7 @@ function NarrativeEditorInner() {
         )}
         {inspectorTab === 'transitions' && graph && (
           <div className="transition-table">
-            {(graph.transitions ?? []).map((tr) => (
+            {transitionsForInspector.map((tr) => (
               <button
                 key={tr.id}
                 type="button"
@@ -1240,6 +1258,9 @@ function NarrativeEditorInner() {
                 <small>{tr.signal === DEFAULT_DRAFT_SIGNAL ? '(草稿)' : (tr.signal || '(草稿)')}</small>
               </button>
             ))}
+            {transitionsForInspector.length === 0 && (
+              <div className="muted">当前选中对象没有关联迁移</div>
+            )}
           </div>
         )}
         {inspectorTab === 'debug' && (
@@ -1501,6 +1522,41 @@ function StructuredInspector(props: {
   return <GraphInspector {...props} graph={graph} />;
 }
 
+function AdvancedInspectorSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="advanced-inspector">
+      <summary>{title}</summary>
+      <div className="advanced-inspector-body">{children}</div>
+    </details>
+  );
+}
+
+function PropertySummary({
+  title,
+  rows,
+}: {
+  title?: string;
+  rows: Array<[string, string] | null | undefined>;
+}) {
+  const visibleRows = rows.filter((row): row is [string, string] => Boolean(row));
+  if (!title && visibleRows.length === 0) return null;
+  return (
+    <div className="property-summary">
+      {title && <b>{title}</b>}
+      {visibleRows.length > 0 && (
+        <div className="property-summary-grid">
+          {visibleRows.map(([label, value]) => (
+            <div className="property-summary-row" key={label}>
+              <span>{label}</span>
+              <strong>{value || '—'}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GraphInspector(props: {
   data: NarrativeGraphsFileDef;
   composition?: NarrativeCompositionDef;
@@ -1517,45 +1573,46 @@ function GraphInspector(props: {
   return (
     <div className="form-grid">
       {parentElement && (
-        <>
-          <div className="property-line">父元素：{parentElement.label || parentElement.id}（{elementSubtitle(parentElement)}）</div>
-          {(parentElement.ownerType || parentElement.ownerId) && (
-            <div className="property-line">绑定：{parentElement.ownerType || 'entity'} / {parentElement.ownerId || '—'}</div>
-          )}
-          {(parentMeta?.emits?.length ?? 0) > 0 && (
-            <div className="property-line">emits：{(parentMeta?.emits ?? []).join(', ')}</div>
-          )}
-          {(parentMeta?.reads?.length ?? 0) > 0 && (
-            <div className="property-line">reads：{(parentMeta?.reads ?? []).join(', ')}</div>
-          )}
-        </>
+        <PropertySummary
+          title={parentElement.label || parentElement.id}
+          rows={[
+            ['类型', elementSubtitle(parentElement)],
+            parentElement.ownerType || parentElement.ownerId ? ['绑定', `${parentElement.ownerType || 'entity'} / ${parentElement.ownerId || '—'}`] : null,
+            (parentMeta?.emits?.length ?? 0) > 0 ? ['发出', (parentMeta?.emits ?? []).join(', ')] : null,
+            (parentMeta?.reads?.length ?? 0) > 0 ? ['读取', (parentMeta?.reads ?? []).join(', ')] : null,
+          ]}
+        />
       )}
-      <TextField
-        label="graph id"
-        value={graph.id}
-        commitOnBlur
-        onChange={(value) => updateCurrentGraph((g, next) => {
-          try {
-            renameGraph(next, g, value);
-          } catch (e) {
-            props.setStatus?.(String(e));
-          }
-        })}
-      />
-      <TextField label="ownerType" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
-      <TextField label="ownerId" value={graph.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
-      <SelectField label="initialState" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
+      <SelectField label="初始状态" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
       {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
         <>
-          <SelectField label="scenario entryState" value={graph.entryState ?? ''} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.entryState = value; })} />
-          <StringListField label="scenario exitStates" value={graph.exitStates ?? []} onChange={(value) => updateCurrentGraph((g) => { g.exitStates = value; })} />
-          <div className="property-line">Scenario 只有 entryState / exitStates 可以和外部图直接连线；内部状态只在展开后编辑。</div>
+          <SelectField label="入口状态" value={graph.entryState ?? ''} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.entryState = value; })} />
+          <StringListField label="出口状态" value={graph.exitStates ?? []} onChange={(value) => updateCurrentGraph((g) => { g.exitStates = value; })} />
         </>
       )}
       {graph.projectFlags === true && (
-        <div className="property-line danger">projectFlags is deprecated; new graphs should use explicit narrative state reads.</div>
+        <div className="property-line danger">projectFlags 已废弃；新图应使用明确的叙事状态读取。</div>
       )}
-      <div className="property-line">{Object.keys(graph.states).length} states / {graph.transitions.length} transitions</div>
+      <PropertySummary rows={[['状态', String(Object.keys(graph.states).length)], ['迁移', String(graph.transitions.length)]]} />
+      <AdvancedInspectorSection title="高级">
+        <TextField
+          label="Graph ID"
+          value={graph.id}
+          commitOnBlur
+          onChange={(value) => updateCurrentGraph((g, next) => {
+            try {
+              renameGraph(next, g, value);
+            } catch (e) {
+              props.setStatus?.(String(e));
+            }
+          })}
+        />
+        <TextField label="Owner Type" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
+        <TextField label="Owner ID" value={graph.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
+        {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
+          <div className="property-line note">Scenario 只有入口/出口状态可以和外部图直接连线；内部状态在展开后编辑。</div>
+        )}
+      </AdvancedInspectorSection>
     </div>
   );
 }
@@ -1576,26 +1633,13 @@ function StateInspector(props: {
   const { graph, state, stateId, updateCurrentGraph } = props;
   return (
     <div className="form-grid">
-      <TextField
-        label="id"
-        value={state.id}
-        commitOnBlur
-        onChange={(value) => updateCurrentGraph((g, next) => {
-          try {
-            const newId = renameStateInGraph(next, g, stateId, value);
-            props.setSelectedId(`state:${newId}`);
-          } catch (e) {
-            props.setStatus(String(e));
-          }
-        })}
-      />
-      <TextField label="label" value={state.label ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.states[stateId].label = value; })} />
-      <TextAreaField label="description" value={state.description ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.states[stateId].description = value; })} />
-      <label className="toggle">
+      <TextField label="显示名" value={state.label ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.states[stateId].label = value; })} />
+      <TextAreaField label="策划备注" value={state.description ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.states[stateId].description = value; })} />
+      <label className="toggle single-line-toggle">
         <input type="checkbox" checked={graph.initialState === stateId} onChange={(e) => e.target.checked && updateCurrentGraph((g) => { g.initialState = stateId; })} />
-        initialState
+        设为初始状态
       </label>
-      <label className="toggle">
+      <label className="toggle single-line-toggle">
         <input
           type="checkbox"
           checked={state.broadcastOnEnter === true}
@@ -1604,22 +1648,39 @@ function StateInspector(props: {
         进入时广播派生信号
       </label>
       {state.broadcastOnEnter === true && (
-        <ReadOnlyField label="derived signal" value={stateEnteredSignalKey(graph.id, stateId)} />
+        <div className="property-line note one-line-derived" title={stateEnteredSignalKey(graph.id, stateId)}>
+          Derived Signal: {stateEnteredSignalKey(graph.id, stateId)}
+        </div>
       )}
       <ActionListField
-        label="onEnterActions"
+        label="进入时动作"
         actions={state.onEnterActions ?? []}
         catalog={props.catalog}
         knownSignals={props.knownSignals}
         onChange={(actions) => updateCurrentGraph((g) => { g.states[stateId].onEnterActions = actions; })}
       />
       <ActionListField
-        label="onExitActions"
+        label="离开时动作"
         actions={state.onExitActions ?? []}
         catalog={props.catalog}
         knownSignals={props.knownSignals}
         onChange={(actions) => updateCurrentGraph((g) => { g.states[stateId].onExitActions = actions; })}
       />
+      <AdvancedInspectorSection title="高级">
+        <TextField
+          label="State ID"
+          value={state.id}
+          commitOnBlur
+          onChange={(value) => updateCurrentGraph((g, next) => {
+            try {
+              const newId = renameStateInGraph(next, g, stateId, value);
+              props.setSelectedId(`state:${newId}`);
+            } catch (e) {
+              props.setStatus(String(e));
+            }
+          })}
+        />
+      </AdvancedInspectorSection>
     </div>
   );
 }
@@ -1642,62 +1703,85 @@ function TransitionInspector(props: {
   const [pickerOpen, setPickerOpen] = useState(false);
   const stateChoices = Object.keys(graph.states);
   const legacyEndpoint = typeof transition.from !== 'string' || typeof transition.to !== 'string';
+  const triggerMode = transition.trigger ?? 'signal';
+  const isReactive = triggerMode === 'reactive' || triggerMode === 'reactiveAll' || triggerMode === 'reactiveAny';
   return (
     <div className="form-grid">
-      <TextField
-        label="id"
-        value={transition.id}
-        commitOnBlur
-        onChange={(value) => updateCurrentGraph((g) => {
-          try {
-            const newId = renameTransition(g, transition.id, value);
-            props.setSelectedId(`transition:${newId}`);
-          } catch (e) {
-            props.setStatus(String(e));
-          }
-        })}
-      />
-      <SelectField
-        label="from"
-        value={typeof transition.from === 'string' ? transition.from : ''}
-        values={stateChoices}
-        onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).from = value; })}
-      />
-      <SelectField
-        label="to"
-        value={typeof transition.to === 'string' ? transition.to : ''}
-        values={stateChoices}
-        onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).to = value; })}
-      />
-      <div className="property-line">
-        {legacyEndpoint
-          ? 'Unsupported legacy cross-graph endpoint. Choose local states; express graph-to-graph effects with signals, state broadcasts, or projection metadata.'
-          : 'Transitions only move between states inside this graph.'}
+      <div className="transition-route" title="迁移起止状态请在画布连线中修改">
+        <span>{typeof transition.from === 'string' ? transition.from : '—'}</span>
+        <b>→</b>
+        <span>{typeof transition.to === 'string' ? transition.to : '—'}</span>
       </div>
-      <div className="property-line">
-        <label>signal</label>
-        <div className="signal-field-row">
-          <input readOnly value={transition.signal || DEFAULT_DRAFT_SIGNAL} />
-          <button type="button" onClick={() => setPickerOpen(true)}>选择信号…</button>
-        </div>
+      <div className="field">
+        <label>触发方式</label>
+        <select
+          value={triggerMode}
+          onChange={(e) => {
+            const val = e.target.value;
+            updateCurrentGraph((g) => {
+              const t = transitionIn(g, transition.id);
+              if (val === 'signal') {
+                delete t.trigger;
+              } else {
+                t.trigger = val as 'reactive' | 'reactiveAll' | 'reactiveAny';
+              }
+            });
+          }}
+        >
+          <option value="signal">信号触发</option>
+          <option value="reactive">条件自动触发（原始条件）</option>
+          <option value="reactiveAll">等待全部满足（自动AND）</option>
+          <option value="reactiveAny">等待任一满足（自动OR）</option>
+        </select>
       </div>
-      <SignalPickerModal
-        open={pickerOpen}
-        data={props.data}
-        currentSignal={transition.signal}
-        onClose={() => setPickerOpen(false)}
-        onSelect={(signalId) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = signalId; })}
-        onDataChange={props.updateData}
-      />
-      <NumberField label="priority" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).priority = value; })} />
+      {legacyEndpoint && <div className="property-line danger">旧跨图端点不支持直接编辑。请选择本图状态，并用信号或投影元数据表达跨图影响。</div>}
+      {!isReactive && (
+        <>
+          <div className="property-line">
+            <label>信号</label>
+            <div className="signal-field-row">
+              <input readOnly value={transition.signal || DEFAULT_DRAFT_SIGNAL} />
+              <button type="button" onClick={() => setPickerOpen(true)}>选择</button>
+            </div>
+          </div>
+          <SignalPickerModal
+            open={pickerOpen}
+            data={props.data}
+            currentSignal={transition.signal}
+            onClose={() => setPickerOpen(false)}
+            onSelect={(signalId) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = signalId; })}
+            onDataChange={props.updateData}
+          />
+        </>
+      )}
+      {isReactive && (
+        <div className="property-line note">条件满足时自动推进，不需要选择信号。</div>
+      )}
       <ConditionBuilder
         value={transition.conditions ?? []}
         graphIds={props.graphIds}
         statesByGraph={props.statesByGraph}
         onApply={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).conditions = Array.isArray(value) ? value : value ? [value] : []; })}
       />
+      <NumberField label="优先级" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).priority = value; })} />
+      <AdvancedInspectorSection title="高级">
+        <TextField
+          label="Transition ID"
+          value={transition.id}
+          commitOnBlur
+          onChange={(value) => updateCurrentGraph((g) => {
+            try {
+              const newId = renameTransition(g, transition.id, value);
+              props.setSelectedId(`transition:${newId}`);
+            } catch (e) {
+              props.setStatus(String(e));
+            }
+          })}
+        />
+        <div className="property-line note">迁移只在当前图内移动状态；跨图影响应通过信号、状态广播或投影关系表达。</div>
+      </AdvancedInspectorSection>
       <div className="inspector-actions">
-        <button type="button" onClick={props.deleteSelected}>断开迁移边</button>
+        <button type="button" className="secondary" onClick={props.deleteSelected}>删除迁移</button>
       </div>
     </div>
   );
@@ -1721,35 +1805,19 @@ function ElementInspector(props: {
   const expanded = props.expandedElementIds.includes(element.id);
   return (
     <div className="form-grid">
-      <TextField
-        label="id"
-        value={element.id}
-        commitOnBlur
-        onChange={(value) => updateData((next) => {
-          const comp = getComposition(next, composition?.id ?? '');
-          if (!comp) return;
-          try {
-            const newId = renameElement(comp, element.id, value);
-            props.setSelectedId(`element:${newId}`);
-          } catch (e) {
-            props.setStatus(String(e));
-          }
-        })}
-      />
-      <div className="property-line">{kindLabel(element.kind)}</div>
-      <TextField label="label" value={element.label ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.label = value; })} />
+      <PropertySummary rows={[['类型', kindLabel(element.kind)]]} />
+      <TextField label="显示名" value={element.label ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.label = value; })} />
       {element.kind === 'wrapperGraph' ? (
         <>
           <SelectField label="绑定类型" value={element.ownerType ?? 'npc'} values={wrapperOwnerTypes} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; if (el.graph) el.graph.ownerType = value; })} />
-          <TextField label="绑定实体/NPC ownerId" value={element.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <TextField label="绑定对象" value={element.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.ownerId = value;
             if (el.graph) el.graph.ownerId = value;
           })} />
-          <div className="property-line">绑定后 DialogueGraph 的 OwnerStateNode 才能读取该 wrapper 的 activeState；ContextStateNode 应读取 flow/scenario 图，不能选 npc wrapper。</div>
         </>
       ) : element.kind === 'scenarioSubgraph' ? (
         <>
-          <TextField label="scenarioId" value={element.refId || element.ownerId || ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <TextField label="Scenario" value={element.refId || element.ownerId || ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.refId = value;
             el.ownerId = value;
             el.ownerType = 'scenario';
@@ -1760,38 +1828,60 @@ function ElementInspector(props: {
           })} />
           {element.graph && (
             <>
-              <SelectField label="entryState" value={element.graph.entryState ?? ''} values={Object.keys(element.graph.states)} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { if (el.graph) el.graph.entryState = value; })} />
-              <StringListField label="exitStates" value={element.graph.exitStates ?? []} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { if (el.graph) el.graph.exitStates = value; })} />
+              <SelectField label="入口状态" value={element.graph.entryState ?? ''} values={Object.keys(element.graph.states)} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { if (el.graph) el.graph.entryState = value; })} />
+              <StringListField label="出口状态" value={element.graph.exitStates ?? []} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { if (el.graph) el.graph.exitStates = value; })} />
             </>
           )}
-          <div className="property-line">Scenario 是有边界的局部子图：外部只能连 entryState，只有 exitStates 能连回外部。</div>
         </>
       ) : (
         <>
-          <TextField label="source type" value={element.ownerType ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; })} />
-          <TextField label="refId" value={element.refId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <TextField label="来源类型" value={element.ownerType ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; })} />
+          <TextField label="引用对象" value={element.refId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.refId = value;
           })} />
         </>
       )}
-      <SignalChipsField
-        label="emits"
-        value={element.meta?.emits ?? []}
-        options={props.knownSignals}
-        onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })}
-      />
-      <SignalChipsField
-        label="reads"
-        value={element.meta?.reads ?? []}
-        options={props.knownSignals}
-        onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })}
-      />
       {isSubgraph && (
         <div className="inspector-actions">
           <button type="button" onClick={() => props.toggleExpandedElement(element.id)}>{expanded ? '在主画布收起子图' : '在主画布展开子图'}</button>
           <button type="button" className="secondary" onClick={() => props.setGraphRef(`element:${element.id}`)}>独占打开子图</button>
         </div>
       )}
+      <AdvancedInspectorSection title="高级">
+        <TextField
+          label="Element ID"
+          value={element.id}
+          commitOnBlur
+          onChange={(value) => updateData((next) => {
+            const comp = getComposition(next, composition?.id ?? '');
+            if (!comp) return;
+            try {
+              const newId = renameElement(comp, element.id, value);
+              props.setSelectedId(`element:${newId}`);
+            } catch (e) {
+              props.setStatus(String(e));
+            }
+          })}
+        />
+        <SignalChipsField
+          label="发出信号"
+          value={element.meta?.emits ?? []}
+          options={props.knownSignals}
+          onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })}
+        />
+        <SignalChipsField
+          label="读取状态"
+          value={element.meta?.reads ?? []}
+          options={props.knownSignals}
+          onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })}
+        />
+        {element.kind === 'wrapperGraph' && (
+          <div className="property-line note">绑定后 DialogueGraph 的 OwnerStateNode 才能读取该 wrapper 的 activeState；ContextStateNode 应读取 flow/scenario 图，不能选 npc wrapper。</div>
+        )}
+        {element.kind === 'scenarioSubgraph' && (
+          <div className="property-line note">Scenario 是有边界的局部子图：外部只能连入口状态，只有出口状态能连回外部。</div>
+        )}
+      </AdvancedInspectorSection>
     </div>
   );
 }

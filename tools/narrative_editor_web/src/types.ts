@@ -42,6 +42,14 @@ export interface NarrativeTransitionDef {
   from: NarrativeEndpointDef;
   to: NarrativeEndpointDef;
   signal: string;
+  /**
+   * How this transition is triggered:
+   * - 'signal' (default): requires a matching signal + optional conditions
+   * - 'reactive': auto-fires when conditions (passed through as-is) are met
+   * - 'reactiveAll': auto-fires when ALL flat conditions met (auto-wrapped in {all})
+   * - 'reactiveAny': auto-fires when ANY flat condition met (auto-wrapped in {any})
+   */
+  trigger?: 'signal' | 'reactive' | 'reactiveAll' | 'reactiveAny';
   conditions?: unknown[];
   priority?: number;
 }

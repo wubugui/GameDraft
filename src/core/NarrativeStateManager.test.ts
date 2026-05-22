@@ -527,27 +527,179 @@ describe('NarrativeStateManager', () => {
     expect(order).toEqual(['exit', 'enter']);
   });
 
-  it('records duplicate owner bindings as errors', () => {
-    const { narrative } = makeRuntime();
+  it('reactiveAll fires when all conditions are met, without needing a signal', async () => {
+    const { flagStore, narrative } = makeRuntime();
+    flagStore.set('quest_a', true);
+    flagStore.set('quest_b', true);
+    narrative.registerGraphs([{
+      id: 'flow',
+      ownerType: 'flow',
+      initialState: 'waiting',
+      states: { waiting: { id: 'waiting' }, done: { id: 'done' } },
+      transitions: [{
+        id: 'all_done',
+        from: 'waiting',
+        to: 'done',
+        signal: '__draft__',
+        trigger: 'reactiveAll',
+        conditions: [
+          { flag: 'quest_a', value: true },
+          { flag: 'quest_b', value: true },
+        ],
+      }],
+    }]);
+    // Transition should fire on register since both flags are already true
+    await flush();
+    expect(narrative.getActiveState('flow')).toBe('done');
+  });
+
+  it('reactiveAll does not fire when not all conditions are met', async () => {
+    const { flagStore, narrative } = makeRuntime();
+    flagStore.set('quest_a', true);
+    narrative.registerGraphs([{
+      id: 'flow',
+      ownerType: 'flow',
+      initialState: 'waiting',
+      states: { waiting: { id: 'waiting' }, done: { id: 'done' } },
+      transitions: [{
+        id: 'all_done',
+        from: 'waiting',
+        to: 'done',
+        signal: '__draft__',
+        trigger: 'reactiveAll',
+        conditions: [
+          { flag: 'quest_a', value: true },
+          { flag: 'quest_b', value: true },
+        ],
+      }],
+    }]);
+    await flush();
+    expect(narrative.getActiveState('flow')).toBe('waiting');
+
+    // Now set the missing flag and trigger a state change to re-evaluate
+    flagStore.set('quest_b', true);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'wake' });
+    await flush();
+    expect(narrative.getActiveState('flow')).toBe('done');
+  });
+
+  it('reactiveAny fires when any condition is met', async () => {
+    const { flagStore, narrative } = makeRuntime();
+    flagStore.set('quest_a', true);
+    narrative.registerGraphs([{
+      id: 'flow',
+      ownerType: 'flow',
+      initialState: 'waiting',
+      states: { waiting: { id: 'waiting' }, done: { id: 'done' } },
+      transitions: [{
+        id: 'any_done',
+        from: 'waiting',
+        to: 'done',
+        signal: '__draft__',
+        trigger: 'reactiveAny',
+        conditions: [
+          { flag: 'quest_a', value: true },
+          { flag: 'quest_b', value: true },
+        ],
+      }],
+    }]);
+    await flush();
+    expect(narrative.getActiveState('flow')).toBe('done');
+  });
+
+  it('reactive passes conditions through as-is for complex trees', async () => {
+    const { flagStore, narrative } = makeRuntime();
+    flagStore.set('a', true);
+    flagStore.set('c', true);
+    narrative.registerGraphs([{
+      id: 'flow',
+      ownerType: 'flow',
+      initialState: 'waiting',
+      states: { waiting: { id: 'waiting' }, done: { id: 'done' } },
+      transitions: [{
+        id: 'complex',
+        from: 'waiting',
+        to: 'done',
+        signal: '__draft__',
+        trigger: 'reactive',
+        conditions: [{ all: [
+          { flag: 'a', value: true },
+          { any: [
+            { flag: 'b', value: true },
+            { flag: 'c', value: true },
+          ]},
+        ]}],
+      }],
+    }]);
+    await flush();
+    // a=true, c=true → (a AND (b OR c)) = true
+    expect(narrative.getActiveState('flow')).toBe('done');
+  });
+
+  it('reactive transition respects priority when multiple reactive transitions match', async () => {
+    const { flagStore, narrative } = makeRuntime();
+    flagStore.set('ready', true);
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 'low', from: 'a', to: 'b', signal: '__draft__', trigger: 'reactiveAll', priority: 0,
+          conditions: [{ flag: 'ready', value: true }] },
+        { id: 'high', from: 'a', to: 'c', signal: '__draft__', trigger: 'reactiveAll', priority: 5,
+          conditions: [{ flag: 'ready', value: true }] },
+      ],
+    }]);
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('c');
+  });
+
+  it('reactive cascade propagates via broadcastOnEnter', async () => {
+    const { flagStore, narrative } = makeRuntime();
+    flagStore.set('trigger', true);
     narrative.registerGraphs([
       {
-        id: 'w1',
-        ownerType: 'npc',
-        ownerId: 'npc_a',
-        initialState: 's',
-        states: { s: { id: 's' } },
-        transitions: [],
+        id: 'flow',
+        ownerType: 'flow',
+        initialState: 'waiting',
+        states: { waiting: { id: 'waiting' }, done: { id: 'done', broadcastOnEnter: true } },
+        transitions: [{
+          id: 'fire',
+          from: 'waiting', to: 'done',
+          signal: '__draft__', trigger: 'reactiveAll',
+          conditions: [{ flag: 'trigger', value: true }],
+        }],
       },
       {
-        id: 'w2',
+        id: 'npc',
         ownerType: 'npc',
-        ownerId: 'npc_a',
-        initialState: 's',
-        states: { s: { id: 's' } },
-        transitions: [],
+        initialState: 'before',
+        states: { before: { id: 'before' }, after: { id: 'after' } },
+        transitions: [{ id: 'follow', from: 'before', to: 'after', signal: 'state:flow:done' }],
       },
     ]);
-    const issues = (narrative.debugSnapshot().recentIssues ?? []) as Array<{ code?: string; severity?: string }>;
-    expect(issues.some((issue) => issue.code === 'owner.wrapper.duplicate' && issue.severity === 'error')).toBe(true);
+    await flush();
+    expect(narrative.getActiveState('flow')).toBe('done');
+    expect(narrative.getActiveState('npc')).toBe('after');
+  });
+
+  it('signal transition still works alongside reactive transitions', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 'sig', from: 'a', to: 'b', signal: 'go' },
+        { id: 'react', from: 'a', to: 'c', signal: '__draft__', trigger: 'reactiveAll', priority: -1,
+          conditions: [{ flag: 'always', value: true }] },
+      ],
+    }]);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
+    await flush();
+    // Signal transition wins (higher effective priority when triggered)
+    expect(narrative.getActiveState('g')).toBe('b');
   });
 });

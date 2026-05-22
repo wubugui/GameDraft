@@ -42,6 +42,7 @@ interface NarrativeTransitionLike {
   from?: unknown;
   to?: unknown;
   signal?: unknown;
+  trigger?: unknown;
   conditions?: unknown;
   priority?: unknown;
 }
@@ -359,6 +360,7 @@ function validateGraph(
     if (!graph.states?.[from.stateId]) addIssue(issues, 'error', 'transition.from.missing', `${graph.id}.${t.id}: from state is missing`, `${tPath}.from`, t.id, { ...transitionTarget, field: 'from' });
     if (!graph.states?.[to.stateId]) addIssue(issues, 'error', 'transition.to.missing', `${graph.id}.${t.id}: to state is missing`, `${tPath}.to`, t.id, { ...transitionTarget, field: 'to' });
     validateTransitionSignal(graph.id ?? '', t, tPath, issues, data, { ...transitionTarget, field: 'signal' });
+    validateReactiveTrigger(t, `${tPath}.trigger`, issues, { ...transitionTarget, field: 'trigger' });
     validateConditions(t.conditions, `${tPath}.conditions`, issues, `${graph.id}.${t.id}`, graphIndex, { ...transitionTarget, field: 'conditions' });
   }
 }
@@ -415,6 +417,53 @@ function validateTransitionSignal(
       transition.id,
       target,
     );
+  }
+}
+
+function validateReactiveTrigger(
+  transition: NarrativeTransitionLike,
+  path: string,
+  issues: NarrativeValidationIssue[],
+  target: NarrativeValidationTarget,
+): void {
+  const trigger = String(transition.trigger ?? 'signal').trim();
+  if (!['signal', 'reactive', 'reactiveAll', 'reactiveAny'].includes(trigger)) {
+    addIssue(
+      issues,
+      'error',
+      'transition.trigger.invalid',
+      `${transition.id}: trigger must be 'signal', 'reactive', 'reactiveAll', or 'reactiveAny', got '${trigger}'`,
+      `${path}.trigger`,
+      transition.id,
+      target,
+    );
+    return;
+  }
+  if (trigger === 'reactive' || trigger === 'reactiveAll' || trigger === 'reactiveAny') {
+    const conditions = transition.conditions;
+    if (!Array.isArray(conditions) || conditions.length === 0) {
+      addIssue(
+        issues,
+        'error',
+        'transition.reactive.noConditions',
+        `${transition.id}: reactive transition (trigger=${trigger}) requires at least one condition`,
+        `${path}.conditions`,
+        transition.id,
+        target,
+      );
+    }
+    const sig = String(transition.signal ?? '').trim();
+    if (sig && sig !== DEFAULT_NARRATIVE_DRAFT_SIGNAL) {
+      addIssue(
+        issues,
+        'warning',
+        'transition.reactive.signalIgnored',
+        `${transition.id}: reactive transition ignores signal field; signal '${sig}' will never be used`,
+        `${path}.signal`,
+        transition.id,
+        target,
+      );
+    }
   }
 }
 

@@ -222,9 +222,10 @@ describe('editorModel', () => {
     const codes = validateNarrativeData(data).filter((issue) => issue.severity === 'error').map((issue) => issue.code);
     expect(codes).toEqual(expect.arrayContaining([
       'transition.signal.legacyFormat',
-      'action.param.missing',
+      'action.type.unknown',
       'condition.shape',
       'stateCommand.unsafeInContent',
+      'stateCommand.target.missing',
     ]));
   });
 

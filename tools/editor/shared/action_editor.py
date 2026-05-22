@@ -4209,9 +4209,15 @@ class ActionEditor(QWidget):
         self._rows_layout = QVBoxLayout()
         self._rows_layout.setSpacing(4)
         root.addLayout(self._rows_layout)
+        # Keep action rows top-aligned even when dialog has extra height.
+        self._rows_layout.addStretch(1)
         add_btn = QPushButton(f"+ {label}")
         add_btn.clicked.connect(self._add_empty)
         root.addWidget(add_btn)
+
+    def _rows_insert_index(self) -> int:
+        # Last layout item is the stretch spacer added in __init__.
+        return max(0, self._rows_layout.count() - 1)
 
     def set_project_context(
         self,
@@ -4307,7 +4313,7 @@ class ActionEditor(QWidget):
         row.move_up.connect(lambda: self._move_row(row, -1))
         row.move_down.connect(lambda: self._move_row(row, 1))
         self._rows.append(row)
-        self._rows_layout.addWidget(row)
+        self._rows_layout.insertWidget(self._rows_insert_index(), row)
         self._refresh_reorder_buttons()
         self._refresh_fold_policy()
 
@@ -4332,7 +4338,7 @@ class ActionEditor(QWidget):
         for r in self._rows:
             self._rows_layout.removeWidget(r)
         for r in self._rows:
-            self._rows_layout.addWidget(r)
+            self._rows_layout.insertWidget(self._rows_insert_index(), r)
         self._refresh_reorder_buttons()
         self.changed.emit()
 
