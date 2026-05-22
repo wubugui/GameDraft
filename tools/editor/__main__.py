@@ -72,7 +72,7 @@ def main() -> None:
         if (project_root / "public" / "assets").is_dir():
             win.load_project(project_root)
 
-    win.show()
+    win.showMaximized()
 
     sys.exit(app.exec())
 

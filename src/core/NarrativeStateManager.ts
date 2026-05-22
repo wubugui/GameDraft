@@ -5,6 +5,11 @@ import type { FlagStore } from './FlagStore';
 import type { ActionDef, ConditionExpr, GameContext, IGameSystem } from '../data/types';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
+import {
+  blockingNarrativeValidationErrors,
+  validateNarrativeGraphData,
+  type NarrativeValidationIssue,
+} from './narrativeGraphValidation';
 
 export type NarrativeOwnerType =
   | 'flow'
@@ -21,7 +26,9 @@ export type NarrativeOwnerType =
 export type NarrativeTriggerKey = string;
 
 export interface NarrativeSignal {
-  sourceType:
+  /** Semantic event id used for transition matching. */
+  signal: string;
+  sourceType?:
     | 'dialogue'
     | 'zone'
     | 'minigame'
@@ -31,19 +38,24 @@ export interface NarrativeSignal {
     | 'entity'
     | 'state'
     | 'system';
-  sourceId: string;
-  signal: string;
+  sourceId?: string;
 }
 
 export interface NarrativeStateNode {
   id: string;
   label?: string;
   description?: string;
+  /** When true, entering this state auto-emits derived signal state:<graphId>:<stateId>. */
+  broadcastOnEnter?: boolean;
   onEnterActions?: ActionDef[];
   onExitActions?: ActionDef[];
   meta?: Record<string, unknown>;
 }
 
+/**
+ * Graph-local state id. Transitions never target another graph directly; cross-graph
+ * effects must be modeled with signals, state broadcasts, or projection metadata.
+ */
 export type NarrativeEndpoint = string;
 
 export interface NarrativeTransition {
@@ -129,6 +141,8 @@ export interface NarrativeRuntimeIssue {
   transitionId?: string;
 }
 
+export type NarrativeRuntimeValidationMode = 'off' | 'warn' | 'throw';
+
 export class NarrativeStateManager implements IGameSystem {
   private eventBus: EventBus;
   private flagStore: FlagStore;
@@ -146,6 +160,7 @@ export class NarrativeStateManager implements IGameSystem {
   private destroyed = false;
   private recentTransitions: NarrativeTransitionRecord[] = [];
   private recentIssues: NarrativeRuntimeIssue[] = [];
+  private validationMode: NarrativeRuntimeValidationMode = this.defaultRuntimeValidationMode();
   private static readonly MAX_DRAIN_STEPS = 128;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
@@ -154,67 +169,22 @@ export class NarrativeStateManager implements IGameSystem {
     this.actionExecutor = actionExecutor;
   }
 
-  static externalKey(signal: NarrativeSignal): NarrativeTriggerKey {
-    return `external:${this.encodeKeyPart(signal.sourceType)}:${this.encodeKeyPart(signal.sourceId)}:${this.encodeKeyPart(signal.signal)}`;
+  static readonly DEFAULT_DRAFT_SIGNAL = '__draft__';
+
+  /** Cross-graph broadcast when a graph enters a state. */
+  static stateEnteredSignalKey(graphId: string, stateId: string): NarrativeTriggerKey {
+    const g = String(graphId ?? '').trim();
+    const s = String(stateId ?? '').trim();
+    return `state:${g}:${s}`;
   }
 
-  /** Cross-graph broadcast when a graph enters a state (re-emit safe via emitNarrativeSignal). */
+  /** @deprecated Use {@link stateEnteredSignalKey}. */
   static graphStateEnteredKey(graphId: string, stateId: string): NarrativeTriggerKey {
-    return this.externalKey({ sourceType: 'state', sourceId: graphId, signal: stateId });
-  }
-
-  /** @deprecated Legacy lifecycle key; normalized to {@link graphStateEnteredKey}. */
-  static stateEnteredKey(graphId: string, stateId: string): NarrativeTriggerKey {
-    return this.graphStateEnteredKey(graphId, stateId);
-  }
-
-  /** @deprecated Legacy lifecycle key; no longer emitted by runtime. */
-  static stateExitedKey(graphId: string, stateId: string): NarrativeTriggerKey {
-    return `stateExited:${this.encodeKeyPart(graphId)}:${this.encodeKeyPart(stateId)}`;
+    return this.stateEnteredSignalKey(graphId, stateId);
   }
 
   static normalizeTriggerKey(key: NarrativeTriggerKey): NarrativeTriggerKey {
-    const raw = String(key ?? '').trim();
-    const external = this.parseExternalKey(raw);
-    if (external) return this.externalKey(external);
-    const lifecycle = this.parseLifecycleKey(raw);
-    if (lifecycle?.kind === 'stateEntered') {
-      return this.graphStateEnteredKey(lifecycle.graphId, lifecycle.stateId);
-    }
-    return raw;
-  }
-
-  private static encodeKeyPart(raw: unknown): string {
-    return encodeURIComponent(String(raw ?? '').trim());
-  }
-
-  private static decodeKeyPart(raw: string): string {
-    try {
-      return decodeURIComponent(raw);
-    } catch {
-      return raw;
-    }
-  }
-
-  private static parseExternalKey(key: string): NarrativeSignal | null {
-    const parts = key.split(':');
-    if (parts.length < 4 || parts[0] !== 'external') return null;
-    return {
-      sourceType: this.decodeKeyPart(parts[1] ?? '') as NarrativeSignal['sourceType'],
-      sourceId: this.decodeKeyPart(parts[2] ?? ''),
-      signal: this.decodeKeyPart(parts.slice(3).join(':')),
-    };
-  }
-
-  private static parseLifecycleKey(key: string): { kind: 'stateEntered' | 'stateExited'; graphId: string; stateId: string } | null {
-    const parts = key.split(':');
-    const kind = parts[0];
-    if ((kind !== 'stateEntered' && kind !== 'stateExited') || parts.length < 3) return null;
-    return {
-      kind,
-      graphId: this.decodeKeyPart(parts[1] ?? ''),
-      stateId: this.decodeKeyPart(parts.slice(2).join(':')),
-    };
+    return String(key ?? '').trim();
   }
 
   static triggerKeysEqual(a: NarrativeTriggerKey, b: NarrativeTriggerKey): boolean {
@@ -228,9 +198,14 @@ export class NarrativeStateManager implements IGameSystem {
     this.conditionCtxFactory = factory;
   }
 
+  setRuntimeValidationMode(mode: NarrativeRuntimeValidationMode): void {
+    this.validationMode = mode;
+  }
+
   async loadFromAsset(assetManager: AssetManager, path = '/assets/data/narrative_graphs.json'): Promise<void> {
     try {
       const data = await assetManager.loadJson<NarrativeGraphsFile>(path);
+      this.validateLoadedData(data, path);
       this.registerGraphs(compileNarrativeGraphs(data));
     } catch (e) {
       const message = `NarrativeStateManager: narrative_graphs.json not found or invalid: ${String(e)}`;
@@ -330,7 +305,11 @@ export class NarrativeStateManager implements IGameSystem {
   emitNarrativeSignal(signal: NarrativeSignal): Promise<void> {
     const clean = this.normalizeSignal(signal);
     if (!clean) return Promise.resolve();
-    return this.enqueue({ kind: 'external', key: NarrativeStateManager.externalKey(clean), source: clean });
+    if (clean.key === NarrativeStateManager.DEFAULT_DRAFT_SIGNAL) {
+      console.warn('NarrativeStateManager: refusing to emit draft signal');
+      return Promise.resolve();
+    }
+    return this.enqueue({ kind: 'external', key: clean.key, source: clean.source });
   }
 
   enqueueTriggerKey(key: NarrativeTriggerKey): Promise<void> {
@@ -339,14 +318,19 @@ export class NarrativeStateManager implements IGameSystem {
     return this.enqueue({ kind: 'external', key: k });
   }
 
-  setNarrativeState(graphId: string, stateId: string): Promise<void> {
+  debugSetNarrativeState(graphId: string, stateId: string): Promise<void> {
     const gid = String(graphId ?? '').trim();
     const sid = String(stateId ?? '').trim();
     if (!gid || !sid) return Promise.resolve();
-    const message = `NarrativeStateManager: setNarrativeState bypasses transitions and should only be used for debug/repair: ${gid}.${sid}`;
+    const message = `NarrativeStateManager: debugSetNarrativeState bypasses transitions and should only be used for debug/repair: ${gid}.${sid}`;
     this.recordIssue({ severity: 'warning', code: 'stateCommand.debugOnly', message, graphId: gid, stateId: sid });
     console.warn(message);
     return this.enqueue({ kind: 'setState', graphId: gid, stateId: sid });
+  }
+
+  /** @deprecated Content must use signals/transitions. Use debugSetNarrativeState for tooling repair only. */
+  setNarrativeState(graphId: string, stateId: string): Promise<void> {
+    return this.debugSetNarrativeState(graphId, stateId);
   }
 
   serialize(): object {
@@ -355,8 +339,11 @@ export class NarrativeStateManager implements IGameSystem {
 
   deserialize(data: object): void {
     const raw = data as { activeStates?: Record<string, unknown> };
-    const states = raw?.activeStates ?? {};
-    for (const [graphId, stateRaw] of Object.entries(states)) {
+    this.restoreActiveStates(raw?.activeStates ?? {});
+  }
+
+  restoreActiveStates(states: Record<string, unknown>): void {
+    for (const [graphId, stateRaw] of Object.entries(states ?? {})) {
       const graph = this.graphs.get(graphId);
       const stateId = String(stateRaw ?? '').trim();
       if (!graph || !stateId || !graph.states[stateId]) continue;
@@ -405,15 +392,16 @@ export class NarrativeStateManager implements IGameSystem {
     }
   }
 
-  private normalizeSignal(signal: NarrativeSignal): NarrativeSignal | null {
-    const sourceType = String(signal?.sourceType ?? '').trim() as NarrativeSignal['sourceType'];
-    const sourceId = String(signal?.sourceId ?? '').trim();
+  private normalizeSignal(signal: NarrativeSignal): { key: NarrativeTriggerKey; source?: NarrativeSignal } | null {
     const sig = String(signal?.signal ?? '').trim();
-    if (!sourceType || !sourceId || !sig) {
-      console.warn('NarrativeStateManager: invalid signal', signal);
+    if (!sig) {
+      console.warn('NarrativeStateManager: invalid signal (missing event id)', signal);
       return null;
     }
-    return { sourceType, sourceId, signal: sig };
+    const sourceType = String(signal?.sourceType ?? '').trim() as NarrativeSignal['sourceType'] | undefined;
+    const sourceId = String(signal?.sourceId ?? '').trim();
+    const source = sourceType && sourceId ? { signal: sig, sourceType, sourceId } : { signal: sig };
+    return { key: sig, source };
   }
 
   private enqueue(trigger: QueuedTrigger): Promise<void> {
@@ -608,14 +596,16 @@ export class NarrativeStateManager implements IGameSystem {
       transitionId,
     });
     await this.runActions(toState?.onEnterActions, `${graph.id}.${toStateId}.onEnter`);
-    this.enqueueGraphStateEntered(graph.id, toStateId);
+    if (toState?.broadcastOnEnter === true) {
+      this.enqueueGraphStateEntered(graph.id, toStateId);
+    }
   }
 
   /** Queue a re-emit-safe cross-graph broadcast; processed after the current queue item (no await). */
   private enqueueGraphStateEntered(graphId: string, stateId: string): void {
     if (this.destroyed) return;
-    const source: NarrativeSignal = { sourceType: 'state', sourceId: graphId, signal: stateId };
-    const key = NarrativeStateManager.externalKey(source);
+    const key = NarrativeStateManager.stateEnteredSignalKey(graphId, stateId);
+    const source: NarrativeSignal = { signal: key, sourceType: 'state', sourceId: graphId };
     this.queue.push({ trigger: { kind: 'external', key, source }, resolve: () => {}, reject: () => {} });
     if (this.draining && this.runningActionsDepth > 0) {
       void this.drainNestedQueue();
@@ -666,6 +656,42 @@ export class NarrativeStateManager implements IGameSystem {
   private isDevRuntime(): boolean {
     const meta = import.meta as unknown as { env?: { DEV?: boolean; MODE?: string } };
     return Boolean(meta.env?.DEV || meta.env?.MODE === 'development');
+  }
+
+  private defaultRuntimeValidationMode(): NarrativeRuntimeValidationMode {
+    const meta = import.meta as unknown as {
+      env?: { DEV?: boolean; MODE?: string; VITE_NARRATIVE_VALIDATE_RUNTIME?: string };
+    };
+    const raw = String(meta.env?.VITE_NARRATIVE_VALIDATE_RUNTIME ?? '').trim().toLowerCase();
+    if (raw === 'off' || raw === '0' || raw === 'false') return 'off';
+    if (raw === 'throw' || raw === 'error' || raw === 'strict') return 'throw';
+    if (raw === 'warn' || raw === '1' || raw === 'true') return 'warn';
+    return Boolean(meta.env?.DEV || meta.env?.MODE === 'development') ? 'warn' : 'off';
+  }
+
+  private validateLoadedData(data: NarrativeGraphsFile, path: string): void {
+    if (this.validationMode === 'off') return;
+    const issues = validateNarrativeGraphData(data);
+    if (issues.length === 0) return;
+    for (const issue of issues) {
+      this.recordValidationIssue(issue);
+    }
+    const errors = blockingNarrativeValidationErrors(issues);
+    const summary = `NarrativeStateManager: ${path} validation found ${errors.length} error(s), ${issues.length - errors.length} warning(s)`;
+    if (errors.length > 0 && this.validationMode === 'throw') {
+      const preview = errors.slice(0, 5).map((issue) => `${issue.code}: ${issue.message}`).join('; ');
+      throw new Error(`${summary}. ${preview}`);
+    }
+    console.warn(summary, issues);
+  }
+
+  private recordValidationIssue(issue: NarrativeValidationIssue): void {
+    this.recordIssue({
+      severity: issue.severity,
+      code: issue.code,
+      message: issue.path ? `${issue.message} (${issue.path})` : issue.message,
+      graphId: issue.itemId,
+    });
   }
 }
 

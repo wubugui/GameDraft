@@ -127,6 +127,7 @@ declare global {
       openDevPanel(): void;
       getNarrativeDebugSnapshot(): Record<string, unknown>;
       emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
+      debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
       setNarrativeState(graphId: string, stateId: string): Promise<void>;
     };
   }
@@ -1729,8 +1730,10 @@ export class Game {
         sourceId: String(signal?.sourceId ?? '').trim(),
         signal: String(signal?.signal ?? '').trim(),
       }),
+      debugSetNarrativeState: (graphId, stateId) =>
+        this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
       setNarrativeState: (graphId, stateId) =>
-        this.narrativeStateManager.setNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
+        this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
     };
 
     if (playCutscene) {

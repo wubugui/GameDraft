@@ -2,15 +2,17 @@
 
 All mutations to graph data (nodes, meta, topology) should go through this model
 so that proper change signals are emitted and dirty state is tracked consistently.
-Read access is via the ``data`` / ``nodes`` properties which return the live dict.
+Read access is via the ``data`` / ``nodes`` properties which return snapshots.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from PySide6.QtCore import QObject, Signal
 
 from .graph_mutations import (
+    collect_incoming_refs,
     connect_output_to_target,
     clear_output as _clear_output_impl,
     rename_node_id,
@@ -46,12 +48,20 @@ class GraphDocumentModel(QObject):
 
     @property
     def data(self) -> dict[str, Any]:
-        return self._data
+        return copy.deepcopy(self._data)
 
     @property
     def nodes(self) -> dict[str, Any]:
         n = self._data.get("nodes")
-        return n if isinstance(n, dict) else {}
+        return copy.deepcopy(n) if isinstance(n, dict) else {}
+
+    @property
+    def mutable_data(self) -> dict[str, Any]:
+        """Internal compatibility view for UI code that still owns live bindings."""
+        return self._data
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.data
 
     @property
     def entry(self) -> str:
@@ -65,7 +75,7 @@ class GraphDocumentModel(QObject):
 
     def load(self, data: dict[str, Any]) -> None:
         """Replace the entire backing dict (e.g. from file). Resets dirty."""
-        self._data = data
+        self._data = copy.deepcopy(data)
         self._set_dirty(False)
 
     def load_empty(self) -> None:
@@ -92,20 +102,21 @@ class GraphDocumentModel(QObject):
         nodes = self._data.get("nodes")
         if not isinstance(nodes, dict) or nid not in nodes:
             return
-        nodes[nid] = node_data
+        nodes[nid] = copy.deepcopy(node_data)
         self.node_changed.emit(nid)
         self.mark_dirty()
 
     def add_node(self, nid: str, node_data: dict[str, Any]) -> None:
         nodes = self._data.setdefault("nodes", {})
-        nodes[nid] = node_data
+        nodes[nid] = copy.deepcopy(node_data)
         self.node_added.emit(nid)
         self.mark_dirty()
 
     def remove_node(self, nid: str) -> None:
         nodes = self._data.get("nodes")
-        if isinstance(nodes, dict):
-            nodes.pop(nid, None)
+        if not isinstance(nodes, dict) or nid not in nodes:
+            return
+        nodes.pop(nid)
         self.node_removed.emit(nid)
         self.mark_dirty()
 
@@ -113,16 +124,20 @@ class GraphDocumentModel(QObject):
         nodes = self._data.get("nodes")
         if not isinstance(nodes, dict):
             return
+        removed = False
         for nid in nids:
-            nodes.pop(nid, None)
-            self.node_removed.emit(nid)
-        self.mark_dirty()
+            if nid in nodes:
+                nodes.pop(nid)
+                self.node_removed.emit(nid)
+                removed = True
+        if removed:
+            self.mark_dirty()
 
     # -- graph-level mutations ----------------------------------------------
 
     def apply_meta_patch(self, patch: dict[str, Any]) -> None:
         """Atomically apply top-level fields (id, entry, meta, preconditions, schemaVersion)."""
-        self._data.update(patch)
+        self._data.update(copy.deepcopy(patch))
         self.meta_changed.emit()
         self.mark_dirty()
 
@@ -146,15 +161,33 @@ class GraphDocumentModel(QObject):
         return err
 
     def clear_incoming_to(self, target_id: str) -> None:
+        affected_src_ids = sorted(
+            {src_id for src_id, *_ in collect_incoming_refs(self._data, target_id)}
+        )
+        if not affected_src_ids:
+            return
         clear_incoming_to_node(self._data, target_id)
+        for src_id in affected_src_ids:
+            self.topology_changed.emit(src_id)
+        self.mark_dirty()
 
     # -- rename -------------------------------------------------------------
 
     def rename_node(self, old_id: str, new_id: str) -> str | None:
+        affected_src_ids = sorted(
+            {src_id for src_id, *_ in collect_incoming_refs(self._data, old_id)}
+        )
+        entry_changed = str(self._data.get("entry", "") or "") == old_id and old_id != new_id
         err = rename_node_id(self._data, old_id, new_id)
         if err:
             return err
+        if old_id == new_id:
+            return None
         self.node_removed.emit(old_id)
         self.node_added.emit(new_id)
+        for src_id in affected_src_ids:
+            self.topology_changed.emit(src_id)
+        if entry_changed:
+            self.meta_changed.emit()
         self.mark_dirty()
         return None

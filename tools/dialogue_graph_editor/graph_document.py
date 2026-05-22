@@ -9,17 +9,7 @@ from typing import Any
 
 from tools.editor.shared.project_paths import ProjectPaths
 
-from .graph_mutations import (
-    OUT_CHOICE,
-    OUT_CONTEXT_STATE_CASE,
-    OUT_CONTEXT_STATE_DEFAULT,
-    OUT_NEXT,
-    OUT_OWNER_STATE_CASE,
-    OUT_OWNER_STATE_DEFAULT,
-    OUT_OWNER_STATE_MISSING,
-    OUT_SWITCH_CASE,
-    OUT_SWITCH_DEFAULT,
-)
+from .dialogue_topology import iter_output_slots
 
 
 def graphs_dir(project_root: Path) -> Path:
@@ -64,128 +54,28 @@ def save_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def extract_flow_edges(nodes: dict[str, Any]) -> list[tuple[str, str, str]]:
-    """有向边 (源节点 id, 目标节点 id, 连线标签)。仅用于编辑器画布，与校验逻辑一致。"""
+    """Return canvas edges as (source id, target id, label)."""
     edges: list[tuple[str, str, str]] = []
     for nid, raw in nodes.items():
         if not isinstance(raw, dict):
             continue
-        t = raw.get("type")
-        if t in ("line", "runActions"):
-            nx = str(raw.get("next", "") or "")
-            if nx:
-                edges.append((nid, nx, "next"))
-        elif t == "choice":
-            for i, opt in enumerate(raw.get("options") or []):
-                if not isinstance(opt, dict):
-                    continue
-                nxt = str(opt.get("next", "") or "")
-                if not nxt:
-                    continue
-                label = str(opt.get("text") or opt.get("id") or f"[{i}]")
-                if len(label) > 26:
-                    label = label[:23] + "…"
-                edges.append((nid, nxt, label))
-        elif t == "switch":
-            for i, c in enumerate(raw.get("cases") or []):
-                if not isinstance(c, dict):
-                    continue
-                nxt = str(c.get("next", "") or "")
-                if nxt:
-                    edges.append((nid, nxt, f"case{i}"))
-            dn = str(raw.get("defaultNext", "") or "")
-            if dn:
-                edges.append((nid, dn, "else"))
-        elif t == "ownerState":
-            for i, c in enumerate(raw.get("cases") or []):
-                if not isinstance(c, dict):
-                    continue
-                nxt = str(c.get("next", "") or "")
-                state = str(c.get("state", "") or "").strip()
-                label = state or f"state{i}"
-                if nxt:
-                    edges.append((nid, nxt, label))
-            dn = str(raw.get("defaultNext", "") or "")
-            if dn:
-                edges.append((nid, dn, "default"))
-            mn = str(raw.get("missingWrapperNext", "") or "")
-            if mn:
-                edges.append((nid, mn, "noWrapper"))
-        elif t == "contextState":
-            for i, c in enumerate(raw.get("cases") or []):
-                if not isinstance(c, dict):
-                    continue
-                nxt = str(c.get("next", "") or "")
-                state = str(c.get("state", "") or "").strip()
-                label = state or f"state{i}"
-                if nxt:
-                    edges.append((nid, nxt, label))
-            dn = str(raw.get("defaultNext", "") or "")
-            if dn:
-                edges.append((nid, dn, "default"))
+        for slot in iter_output_slots(raw):
+            if slot.target:
+                edges.append((nid, slot.target, slot.label))
     return edges
 
 
 def extract_flow_edges_detailed(
     nodes: dict[str, Any],
 ) -> list[tuple[str, str, str, str, int]]:
-    """(源, 目标, 标签, out_kind, index)；index 对 default 为 -1。"""
+    """Return canvas edges with output kind and index metadata."""
     edges: list[tuple[str, str, str, str, int]] = []
     for nid, raw in nodes.items():
         if not isinstance(raw, dict):
             continue
-        t = raw.get("type")
-        if t in ("line", "runActions"):
-            nx = str(raw.get("next", "") or "")
-            if nx:
-                edges.append((nid, nx, "next", OUT_NEXT, 0))
-        elif t == "choice":
-            for i, opt in enumerate(raw.get("options") or []):
-                if not isinstance(opt, dict):
-                    continue
-                nxt = str(opt.get("next", "") or "")
-                if not nxt:
-                    continue
-                label = str(opt.get("text") or opt.get("id") or f"[{i}]")
-                if len(label) > 26:
-                    label = label[:23] + "…"
-                edges.append((nid, nxt, label, OUT_CHOICE, i))
-        elif t == "switch":
-            for i, c in enumerate(raw.get("cases") or []):
-                if not isinstance(c, dict):
-                    continue
-                nxt = str(c.get("next", "") or "")
-                if nxt:
-                    edges.append((nid, nxt, f"case{i}", OUT_SWITCH_CASE, i))
-            dn = str(raw.get("defaultNext", "") or "")
-            if dn:
-                edges.append((nid, dn, "else", OUT_SWITCH_DEFAULT, -1))
-        elif t == "ownerState":
-            for i, c in enumerate(raw.get("cases") or []):
-                if not isinstance(c, dict):
-                    continue
-                nxt = str(c.get("next", "") or "")
-                state = str(c.get("state", "") or "").strip()
-                label = state or f"state{i}"
-                if nxt:
-                    edges.append((nid, nxt, label, OUT_OWNER_STATE_CASE, i))
-            dn = str(raw.get("defaultNext", "") or "")
-            if dn:
-                edges.append((nid, dn, "default", OUT_OWNER_STATE_DEFAULT, -1))
-            mn = str(raw.get("missingWrapperNext", "") or "")
-            if mn:
-                edges.append((nid, mn, "noWrapper", OUT_OWNER_STATE_MISSING, -2))
-        elif t == "contextState":
-            for i, c in enumerate(raw.get("cases") or []):
-                if not isinstance(c, dict):
-                    continue
-                nxt = str(c.get("next", "") or "")
-                state = str(c.get("state", "") or "").strip()
-                label = state or f"state{i}"
-                if nxt:
-                    edges.append((nid, nxt, label, OUT_CONTEXT_STATE_CASE, i))
-            dn = str(raw.get("defaultNext", "") or "")
-            if dn:
-                edges.append((nid, dn, "default", OUT_CONTEXT_STATE_DEFAULT, -1))
+        for slot in iter_output_slots(raw):
+            if slot.target:
+                edges.append((nid, slot.target, slot.label, slot.kind, slot.index))
     return edges
 
 

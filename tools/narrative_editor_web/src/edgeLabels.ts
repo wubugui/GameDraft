@@ -13,19 +13,12 @@ export function resolveStyledEdgeLabel(input: StyledEdgeLabelInput): string | un
 
 export function abbreviateSignal(signal: string, maxLen = 28): string {
   const text = signal.trim();
+  if (!text) return '';
+  if (text === '__draft__') return '草稿';
   if (text.length <= maxLen) return text;
-  if (text.startsWith('external:')) {
-    const parts = text.split(':');
-    const tail = parts.slice(-2).join(':');
-    return `…:${tail.length > maxLen - 1 ? `${tail.slice(0, maxLen - 4)}…` : tail}`;
-  }
-  if (text.startsWith('external:state:')) {
-    const rest = text.split(':').slice(-2).join(':');
+  if (text.startsWith('state:')) {
+    const rest = text.slice('state:'.length);
     return `态:${rest.length > maxLen - 3 ? `${rest.slice(0, maxLen - 4)}…` : rest}`;
-  }
-  if (text.startsWith('stateEntered:') || text.startsWith('stateExited:')) {
-    const rest = text.split(':').slice(-2).join(':');
-    return `${text.startsWith('stateEntered:') ? '入' : '出'}:${rest}`;
   }
   return `${text.slice(0, maxLen - 1)}…`;
 }

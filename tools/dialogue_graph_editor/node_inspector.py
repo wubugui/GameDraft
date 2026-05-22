@@ -2213,8 +2213,12 @@ class NodeInspector(QWidget):
         def rebuild_cases_layout() -> None:
             while cases_outer.count():
                 it = cases_outer.takeAt(0)
-                if it.widget():
-                    it.widget().deleteLater()
+                w = it.widget()
+                if w is not None:
+                    w.setParent(None)
+            for c in case_rows:
+                cases_outer.addWidget(c["outer"])
+            cases_outer.addWidget(btn_add)
 
         def make_case_block(case: dict[str, Any] | None) -> dict[str, Any]:
             outer = QWidget(cases_wrap)
@@ -2245,8 +2249,6 @@ class NodeInspector(QWidget):
                 case_rows.remove(rec)
                 outer.deleteLater()
                 rebuild_cases_layout()
-                for c in case_rows:
-                    cases_outer.addWidget(c["outer"])
                 self._emit_changed()
 
             btn_del.clicked.connect(do_del)
@@ -2264,16 +2266,14 @@ class NodeInspector(QWidget):
                     case_rows.append(make_case_block(c))
         else:
             case_rows.append(make_case_block({"state": "", "next": ""}))
-        for c in case_rows:
-            cases_outer.addWidget(c["outer"])
         btn_add = QPushButton("添加 state 分支", cases_wrap)
-        btn_add.clicked.connect(lambda: (
-            case_rows.append(make_case_block({"state": "", "next": ""})),
-            rebuild_cases_layout(),
-            [cases_outer.addWidget(c["outer"]) for c in case_rows],
-            self._emit_changed(),
-        ))
-        cases_outer.addWidget(btn_add)
+        def do_add() -> None:
+            case_rows.append(make_case_block({"state": "", "next": ""}))
+            rebuild_cases_layout()
+            self._emit_changed()
+
+        btn_add.clicked.connect(do_add)
+        rebuild_cases_layout()
         self._body_layout.addWidget(cases_wrap)
 
         dn = QLineEdit(str(data.get("defaultNext", "") or ""), self._body)
@@ -2354,11 +2354,16 @@ class NodeInspector(QWidget):
                 if not isinstance(cb, QComboBox):
                     continue
                 cur = cb.currentText()
-                cb.clear()
-                cb.addItem("")
-                for sid in ids:
-                    cb.addItem(sid)
-                cb.setCurrentText(cur)
+                cb.blockSignals(True)
+                try:
+                    cb.clear()
+                    cb.addItem("")
+                    for sid in ids:
+                        cb.addItem(sid)
+                    cb.setCurrentText(cur)
+                finally:
+                    cb.blockSignals(False)
+            self._emit_changed()
 
         btn_refresh.clicked.connect(refresh_states)
         self._topology_refs = {
@@ -2411,11 +2416,15 @@ class NodeInspector(QWidget):
                 if not isinstance(cb, QComboBox):
                     continue
                 cur = cb.currentText()
-                cb.clear()
-                cb.addItem("")
-                for sid in ids:
-                    cb.addItem(sid)
-                cb.setCurrentText(cur)
+                cb.blockSignals(True)
+                try:
+                    cb.clear()
+                    cb.addItem("")
+                    for sid in ids:
+                        cb.addItem(sid)
+                    cb.setCurrentText(cur)
+                finally:
+                    cb.blockSignals(False)
             if gid and not is_context_graph_allowed(self._project_root, gid):
                 hint.setStyleSheet("color: #c62828;")
             else:

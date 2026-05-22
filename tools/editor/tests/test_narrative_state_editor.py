@@ -137,6 +137,34 @@ class TestNarrativeStateEditor(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.save_all()
 
+    def test_validate_rejects_missing_narrative_condition_state(self) -> None:
+        issues = validate_narrative_graphs({
+            "schemaVersion": 3,
+            "signals": [{"id": "go"}],
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow",
+                        "ownerType": "flow",
+                        "initialState": "a",
+                        "states": {"a": {"id": "a"}, "b": {"id": "b"}},
+                        "transitions": [
+                            {
+                                "id": "t",
+                                "from": "a",
+                                "to": "b",
+                                "signal": "go",
+                                "conditions": [{"narrative": "flow", "state": "missing"}],
+                            }
+                        ],
+                    },
+                    "elements": [],
+                }
+            ],
+        })
+        self.assertTrue(any(i.get("code") == "condition.narrative.stateMissing" for i in issues))
+
     def test_projection_derives_real_trigger_edges_from_actions(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
@@ -456,7 +484,8 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 ]
             }
             m.narrative_graphs = {
-                "schemaVersion": 2,
+                "schemaVersion": 3,
+                "signals": [{"id": "won", "label": "won"}],
                 "compositions": [
                     {
                         "id": "comp",
@@ -466,7 +495,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
                             "initialState": "a",
                             "states": {"a": {"id": "a"}, "b": {"id": "b"}},
                             "transitions": [
-                                {"id": "t", "from": "a", "to": "b", "signal": "external:minigame:mg:won"},
+                                {"id": "t", "from": "a", "to": "b", "signal": "won"},
                             ],
                         },
                         "elements": [
@@ -552,6 +581,11 @@ class TestNarrativeStateEditor(unittest.TestCase):
         error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
         self.assertIn("wrapper.unbound", error_codes)
         self.assertIn("owner.wrapper.duplicate", error_codes)
+        wrapper_issue = next(issue for issue in issues if issue["code"] == "wrapper.unbound")
+        self.assertEqual(
+            wrapper_issue.get("target"),
+            {"kind": "element", "compositionId": "comp", "elementId": "wrapper_a"},
+        )
 
     def test_validate_reports_set_narrative_state_in_graph_actions_as_error(self) -> None:
         issues = validate_narrative_graphs({
@@ -579,6 +613,11 @@ class TestNarrativeStateEditor(unittest.TestCase):
         })
         error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
         self.assertIn("stateCommand.unsafeInContent", error_codes)
+        command_issue = next(issue for issue in issues if issue["code"] == "stateCommand.unsafeInContent")
+        self.assertEqual(
+            command_issue.get("target"),
+            {"kind": "state", "compositionId": "comp", "graphId": "flow", "stateId": "a", "field": "onEnterActions"},
+        )
 
     def test_validate_blocks_missing_transition_target_and_signal(self) -> None:
         issues = validate_narrative_graphs({
@@ -597,9 +636,15 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 },
             ],
         })
-        codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
-        self.assertIn("transition.to.missing", codes)
-        self.assertIn("transition.signal.empty", codes)
+        error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
+        warning_codes = {issue["code"] for issue in issues if issue["severity"] == "warning"}
+        self.assertIn("transition.to.missing", error_codes)
+        self.assertIn("transition.signal.draft", warning_codes)
+        signal_issue = next(issue for issue in issues if issue["code"] == "transition.signal.draft")
+        self.assertEqual(
+            signal_issue.get("target"),
+            {"kind": "transition", "compositionId": "comp", "graphId": "flow", "transitionId": "t", "field": "signal"},
+        )
 
     def test_validate_blocks_anchor_delimiters_and_bad_actions(self) -> None:
         issues = validate_narrative_graphs({

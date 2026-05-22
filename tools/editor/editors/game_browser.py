@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer, QEventLoop
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QLineEdit, QStyle,
+    QLineEdit, QStyle, QSizePolicy,
 )
 
 # Default must match vite.config.ts server.port
@@ -95,6 +95,11 @@ class GameBrowserTab(QWidget):
             self._view = QWebEngineView(self)
             if QuietWebEnginePage is not None:
                 self._view.setPage(QuietWebEnginePage(self._view))
+            self._view.setMinimumSize(0, 0)
+            self._view.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Ignored,
+            )
             root.addWidget(self._view, stretch=1)
             self.show_message(
                 "Press Run (F5) to start the dev server and load the game here.",
@@ -163,6 +168,11 @@ class GamePlayWindow(QWidget):
             self._view = QWebEngineView(self)
             if QuietWebEnginePage is not None:
                 self._view.setPage(QuietWebEnginePage(self._view))
+            self._view.setMinimumSize(0, 0)
+            self._view.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Ignored,
+            )
             lay.addWidget(self._view)
         else:
             self._view = None

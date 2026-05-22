@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "码头_",
-  "entry": "n_start",
+  "entry": "n_1",
   "meta": {
     "title": "new_dialogue"
   },
@@ -14,6 +14,21 @@
       },
       "next": "",
       "text": ""
+    },
+    "n_1": {
+      "type": "contextState",
+      "cases": [
+        {
+          "state": "board_read",
+          "next": "n_start"
+        },
+        {
+          "state": "crate_minigame_done",
+          "next": "n_start"
+        }
+      ],
+      "defaultNext": "n_start",
+      "graphId": "flow_dock_water_monkey"
     }
   }
 }

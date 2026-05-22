@@ -6,7 +6,7 @@ from typing import Any
 from OdenGraphQt import BaseNode
 
 from .graph_document import node_summary
-from .graph_mutations import (
+from .dialogue_ports import (
     OUT_CHOICE,
     OUT_CONTEXT_STATE_CASE,
     OUT_CONTEXT_STATE_DEFAULT,
@@ -16,57 +16,19 @@ from .graph_mutations import (
     OUT_OWNER_STATE_MISSING,
     OUT_SWITCH_CASE,
     OUT_SWITCH_DEFAULT,
+    PN_CONTEXT_STATE_DEFAULT,
+    PN_NEXT,
+    PN_OWNER_STATE_DEFAULT,
+    PN_OWNER_STATE_MISSING,
+    PN_SWITCH_DEFAULT,
+    parse_dialogue_out_port,
+    port_name_for_spec,
+    pn_choice,
+    pn_context_state_case,
+    pn_owner_state_case,
+    pn_switch_case,
 )
-
-PN_NEXT = "p_next"
-
-
-def pn_choice(i: int) -> str:
-    return f"p_c{i}"
-
-
-def pn_switch_case(i: int) -> str:
-    return f"p_s{i}"
-
-
-PN_SWITCH_DEFAULT = "p_sd"
-
-
-def pn_owner_state_case(i: int) -> str:
-    return f"p_o{i}"
-
-
-PN_OWNER_STATE_DEFAULT = "p_od"
-PN_OWNER_STATE_MISSING = "p_om"
-
-
-def pn_context_state_case(i: int) -> str:
-    return f"p_x{i}"
-
-
-PN_CONTEXT_STATE_DEFAULT = "p_xd"
-
-
-def parse_dialogue_out_port(name: str) -> tuple[str, int] | None:
-    if name == PN_NEXT:
-        return OUT_NEXT, 0
-    if name.startswith("p_c") and name[3:].isdigit():
-        return OUT_CHOICE, int(name[3:])
-    if name.startswith("p_s") and name[3:].isdigit():
-        return OUT_SWITCH_CASE, int(name[3:])
-    if name == PN_SWITCH_DEFAULT:
-        return OUT_SWITCH_DEFAULT, -1
-    if name.startswith("p_o") and len(name) > 2 and name[2:].isdigit():
-        return OUT_OWNER_STATE_CASE, int(name[2:])
-    if name == PN_OWNER_STATE_DEFAULT:
-        return OUT_OWNER_STATE_DEFAULT, -1
-    if name == PN_OWNER_STATE_MISSING:
-        return OUT_OWNER_STATE_MISSING, -2
-    if name.startswith("p_x") and len(name) > 2 and name[2:].isdigit():
-        return OUT_CONTEXT_STATE_CASE, int(name[2:])
-    if name == PN_CONTEXT_STATE_DEFAULT:
-        return OUT_CONTEXT_STATE_DEFAULT, -1
-    return None
+from .dialogue_topology import iter_output_slots
 
 
 def _dialogue_type_label_zh(t: object) -> str:
@@ -104,6 +66,17 @@ _TYPE_BORDER_RGBA: dict[str, tuple[int, int, int, int]] = {
 }
 _DEFAULT_BODY_RGBA = (52, 52, 58, 255)
 _DEFAULT_BORDER_RGBA = (75, 75, 88, 255)
+_PORT_RGBA_BY_KIND: dict[str, tuple[int, int, int]] = {
+    OUT_NEXT: (100, 150, 230),
+    OUT_CHOICE: (210, 150, 90),
+    OUT_SWITCH_CASE: (160, 120, 200),
+    OUT_SWITCH_DEFAULT: (120, 120, 140),
+    OUT_OWNER_STATE_CASE: (80, 175, 140),
+    OUT_OWNER_STATE_DEFAULT: (70, 140, 120),
+    OUT_OWNER_STATE_MISSING: (90, 120, 110),
+    OUT_CONTEXT_STATE_CASE: (110, 150, 200),
+    OUT_CONTEXT_STATE_DEFAULT: (90, 120, 170),
+}
 
 
 class DialogueFlowNode(BaseNode):
@@ -132,99 +105,17 @@ class DialogueFlowNode(BaseNode):
         for p in list(self.output_ports()):
             self.delete_output(p)
         t = raw.get("type")
-        if t in ("line", "runActions"):
+        for slot in iter_output_slots(raw):
+            port_name = port_name_for_spec(slot.kind, slot.index)
+            if port_name is None:
+                continue
             self.add_output(
-                PN_NEXT,
+                port_name,
                 multi_output=False,
                 display_name=True,
-                color=(100, 150, 230),
+                color=_PORT_RGBA_BY_KIND.get(slot.kind, (120, 120, 140)),
             )
-        elif t == "choice":
-            opts = raw.get("options") or []
-            for i in range(len(opts)):
-                self.add_output(
-                    pn_choice(i),
-                    multi_output=False,
-                    display_name=True,
-                    color=(210, 150, 90),
-                )
-            for i, opt in enumerate(opts):
-                if not isinstance(opt, dict):
-                    opt = {}
-                self._set_output_port_caption(pn_choice(i), self._choice_port_caption(i, opt))
-        elif t == "switch":
-            cases = raw.get("cases") or []
-            for i in range(len(cases)):
-                self.add_output(
-                    pn_switch_case(i),
-                    multi_output=False,
-                    display_name=True,
-                    color=(160, 120, 200),
-                )
-            for i, c in enumerate(cases):
-                if not isinstance(c, dict):
-                    c = {}
-                self._set_output_port_caption(pn_switch_case(i), self._switch_case_port_caption(i, c))
-            self.add_output(
-                PN_SWITCH_DEFAULT,
-                multi_output=False,
-                display_name=True,
-                color=(120, 120, 140),
-            )
-            self._set_output_port_caption(PN_SWITCH_DEFAULT, "else")
-        elif t == "ownerState":
-            cases = raw.get("cases") or []
-            for i in range(len(cases)):
-                self.add_output(
-                    pn_owner_state_case(i),
-                    multi_output=False,
-                    display_name=True,
-                    color=(80, 175, 140),
-                )
-            for i, c in enumerate(cases):
-                if not isinstance(c, dict):
-                    c = {}
-                state = str(c.get("state") or "").strip()
-                self._set_output_port_caption(pn_owner_state_case(i), state or f"state{i}")
-            self.add_output(
-                PN_OWNER_STATE_DEFAULT,
-                multi_output=False,
-                display_name=True,
-                color=(70, 140, 120),
-            )
-            self._set_output_port_caption(PN_OWNER_STATE_DEFAULT, "default")
-            self.add_output(
-                PN_OWNER_STATE_MISSING,
-                multi_output=False,
-                display_name=True,
-                color=(90, 120, 110),
-            )
-            self._set_output_port_caption(PN_OWNER_STATE_MISSING, "noWrapper")
-        elif t == "contextState":
-            cases = raw.get("cases") or []
-            for i in range(len(cases)):
-                self.add_output(
-                    pn_context_state_case(i),
-                    multi_output=False,
-                    display_name=True,
-                    color=(110, 150, 200),
-                )
-            for i, c in enumerate(cases):
-                if not isinstance(c, dict):
-                    c = {}
-                state = str(c.get("state") or "").strip()
-                self._set_output_port_caption(pn_context_state_case(i), state or f"state{i}")
-            self.add_output(
-                PN_CONTEXT_STATE_DEFAULT,
-                multi_output=False,
-                display_name=True,
-                color=(90, 120, 170),
-            )
-            self._set_output_port_caption(PN_CONTEXT_STATE_DEFAULT, "default")
-        elif t == "end":
-            pass
-        else:
-            pass
+            self._set_output_port_caption(port_name, slot.label)
 
         type_key = t if isinstance(t, str) else None
         body_by_type = _TYPE_BODY_RGBA.get(type_key, _DEFAULT_BODY_RGBA)
@@ -264,59 +155,6 @@ class DialogueFlowNode(BaseNode):
         if group_rgba is not None:
             tip_lines.append("已着色：编辑器分组")
         self.view.setToolTip("<br/>".join(tip_lines))
-
-    @staticmethod
-    def _choice_port_caption(index: int, opt: dict[str, Any]) -> str:
-        oid = str(opt.get("id") or "").strip()
-        otxt = str(opt.get("text") or "").strip()
-        if oid and otxt:
-            short = otxt if len(otxt) <= 20 else otxt[:17] + "…"
-            return f"{oid} · {short}"
-        if oid:
-            return oid
-        if otxt:
-            return otxt[:24] + "…" if len(otxt) > 24 else otxt
-        return f"[{index}]"
-
-    @staticmethod
-    def _switch_case_port_caption(index: int, case: dict[str, Any]) -> str:
-        conds = case.get("conditions")
-        if isinstance(conds, list) and conds:
-            c0 = conds[0]
-            if isinstance(c0, dict):
-                if "flag" in c0:
-                    fl = str(c0.get("flag") or "").strip()
-                    if fl:
-                        return fl[:22] + "…" if len(fl) > 22 else fl
-                if "scenario" in c0:
-                    s = str(c0.get("scenario") or "").strip()
-                    ph = str(c0.get("phase") or "").strip()
-                    label = f"{s}/{ph}" if ph else s
-                    if label:
-                        return label[:22] + "…" if len(label) > 22 else label
-                if "questId" in c0:
-                    q = str(c0.get("questId") or "").strip()
-                    if q:
-                        return f"Q:{q[:18]}" + ("…" if len(q) > 18 else "")
-                if "quest" in c0:
-                    q = str(c0.get("quest") or "").strip()
-                    if q:
-                        return f"Q:{q[:18]}" + ("…" if len(q) > 18 else "")
-        cond = case.get("condition")
-        if isinstance(cond, dict) and cond:
-            if any(k in cond for k in ("any", "all", "not")):
-                return f"[{index}] 条件组"
-            if "flag" in cond:
-                fl = str(cond.get("flag") or "").strip()
-                if fl:
-                    return fl[:22] + "…" if len(fl) > 22 else fl
-            if "scenario" in cond:
-                s = str(cond.get("scenario") or "").strip()
-                ph = str(cond.get("phase") or "").strip()
-                label = f"{s}/{ph}" if ph else s
-                if label:
-                    return label[:22] + "…" if len(label) > 22 else label
-        return f"case{index}"
 
     def _set_output_port_caption(self, port_name: str, caption: str) -> None:
         p = self.get_output(port_name)

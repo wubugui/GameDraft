@@ -11,6 +11,10 @@ import { applyEditorPreferences, loadEditorPreferences } from './utils/editorPre
 
 applyEditorPreferences(loadEditorPreferences());
 
+if (import.meta.env.PROD) {
+  console.info('[narrative-editor] build', import.meta.url);
+}
+
 document.addEventListener('contextmenu', (event) => event.preventDefault(), { capture: true });
 
 createRoot(document.getElementById('root')!).render(

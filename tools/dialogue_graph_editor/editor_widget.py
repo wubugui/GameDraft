@@ -16,14 +16,13 @@ from PySide6.QtWidgets import (
     QMenu, QCompleter, QDialog, QSizePolicy, QComboBox, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel, QSettings
-from PySide6.QtGui import QUndoStack, QUndoCommand, QAction, QCursor, QKeySequence, QShortcut
+from PySide6.QtGui import QUndoStack, QUndoCommand, QAction, QCursor, QKeySequence, QShortcut, QColor
 
 from .graph_document import (
     graphs_dir,
     list_graph_files,
     load_json,
     save_json,
-    validate_graph,
     validate_graph_tiered,
     node_search_haystack,
     node_summary,
@@ -33,9 +32,7 @@ from .graph_document import (
     extract_flow_edges_detailed,
 )
 from .graph_mutations import (
-    rename_node_id,
     collect_incoming_refs,
-    clear_incoming_to_node,
 )
 from .graph_document_model import GraphDocumentModel
 from .graph_analysis import analyze_node_tags
@@ -104,14 +101,10 @@ class _NodeDataChangedCmd(QUndoCommand):
         return True
 
     def redo(self) -> None:
-        nodes = self._model.data.get("nodes")
-        if isinstance(nodes, dict) and self._nid in nodes:
-            nodes[self._nid] = copy.deepcopy(self._new)
+        self._model.set_node(self._nid, copy.deepcopy(self._new))
 
     def undo(self) -> None:
-        nodes = self._model.data.get("nodes")
-        if isinstance(nodes, dict) and self._nid in nodes:
-            nodes[self._nid] = copy.deepcopy(self._old)
+        self._model.set_node(self._nid, copy.deepcopy(self._old))
 
 
 def _split_graph_preconditions(pre: object) -> tuple[list[dict[str, Any]], list[Any]]:
@@ -158,7 +151,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._graphs_dir = graphs_dir(self._project)
         self._current_path: Path | None = None
         self._model = GraphDocumentModel(self)
-        self._data: dict = self._model.data
+        self._data: dict = self._model.mutable_data
         self._editing_node_id: str | None = None
         self._positions: dict[str, tuple[float, float]] = {}
         self._layout_save_timer = QTimer(self)
@@ -170,6 +163,12 @@ class DialogueGraphEditorWidget(QWidget):
         self._meta_rebuild_timer = QTimer(self)
         self._meta_rebuild_timer.setSingleShot(True)
         self._meta_rebuild_timer.timeout.connect(self._rebuild_flow_scene)
+        self._validation_refresh_timer = QTimer(self)
+        self._validation_refresh_timer.setSingleShot(True)
+        self._validation_refresh_timer.timeout.connect(self._on_validation_refresh_timer)
+        self._validation_notify_toast = False
+        self._last_validation: tuple[list[str], list[str]] = ([], [])
+        self._connect_feedback_messages: list[str] = []
         self._ghost_positions: dict[str, tuple[float, float]] = {}
         self._editor_groups: dict[str, dict[str, Any]] = {}
         self._node_to_group: dict[str, str] = {}
@@ -275,6 +274,7 @@ class DialogueGraphEditorWidget(QWidget):
         )
         self._oden.canvas_node_selected.connect(self._on_flow_node_clicked)
         self._oden.data_topology_changed.connect(self._on_oden_topology_changed)
+        self._oden.connection_rejected.connect(self._on_connection_rejected)
         self._oden.auto_layout_requested.connect(self._flow_auto_layout)
         self._oden.canvas_context_menu.connect(self._on_flow_canvas_context_menu)
         self._oden.editor_frame_rename_requested.connect(self._on_editor_frame_rename)
@@ -487,6 +487,36 @@ class DialogueGraphEditorWidget(QWidget):
         self._restore_splitter_sizes()
 
         outer.addWidget(splitter, 1)
+
+        self._validation_dock = QWidget()
+        val_layout = QVBoxLayout(self._validation_dock)
+        val_layout.setContentsMargins(0, 0, 0, 0)
+        val_layout.setSpacing(2)
+
+        val_head = QHBoxLayout()
+        val_head.addWidget(QLabel("<b>校验</b>"))
+        self._validation_counts = QLabel("无加载图")
+        self._validation_counts.setStyleSheet("color: #888;")
+        val_head.addWidget(self._validation_counts, 1)
+        self._validation_toggle = QPushButton("收起")
+        self._validation_toggle.setFixedWidth(56)
+        self._validation_toggle.clicked.connect(self._toggle_validation_dock)
+        val_head.addWidget(self._validation_toggle)
+        val_layout.addLayout(val_head)
+
+        self._validation_body = QWidget()
+        val_body_layout = QVBoxLayout(self._validation_body)
+        val_body_layout.setContentsMargins(0, 0, 0, 0)
+        self._validation_list = QListWidget()
+        self._validation_list.setMinimumHeight(72)
+        self._validation_list.setMaximumHeight(160)
+        self._validation_list.setAlternatingRowColors(True)
+        val_body_layout.addWidget(self._validation_list)
+        val_layout.addWidget(self._validation_body)
+
+        outer.addWidget(self._validation_dock)
+        self._validation_dock_collapsed = False
+        self._restore_validation_dock_state()
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
@@ -713,6 +743,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._model.apply_meta_patch({"entry": nid})
         self._emit_title()
         self._rebuild_flow_scene()
+        self._schedule_validation_refresh()
 
     def _validate_current_graph(self) -> tuple[list[str], list[str]]:
         return validate_graph_tiered(
@@ -720,6 +751,118 @@ class DialogueGraphEditorWidget(QWidget):
             project_root=self._project,
             project_model=self._get_project_model_for_inspector(),
         )
+
+    def _schedule_validation_refresh(self, delay_ms: int = 350, *, notify_toast: bool = False) -> None:
+        if notify_toast:
+            self._validation_notify_toast = True
+        self._validation_refresh_timer.start(delay_ms)
+
+    def _on_validation_refresh_timer(self) -> None:
+        self._refresh_validation_panel(flush_inspector=False)
+        if not self._validation_notify_toast:
+            return
+        self._validation_notify_toast = False
+        err, warn = self._last_validation
+        if not err and not warn:
+            return
+        first = err[0] if err else warn[0]
+        prefix = "错误" if err else "警告"
+        self._set_validation_dock_collapsed(False)
+        self._save_validation_dock_state()
+        self._toast(f"{prefix}：{first}（见下方校验面板）", 5000)
+
+    @staticmethod
+    def _humanize_connect_err(err: str) -> str:
+        mapping = {
+            "cannot connect node to itself": "不能连接节点到自身",
+            "source node does not exist": "源节点不存在",
+            "invalid source node data": "源节点数据无效",
+            "invalid output port": (
+                "无效输出端口：画布端口与节点 JSON 不同步。"
+                "常见原因是 contextState/ownerState 在右侧改了分支数但画布尚未重建；"
+                "可先点「校验当前图」或切换节点刷新画布后再连线。"
+            ),
+            "node does not exist": "节点不存在",
+            "invalid node data": "节点数据无效",
+        }
+        return mapping.get(err.strip(), err)
+
+    def _sync_meta_for_validation(self) -> None:
+        if not isinstance(self._data.get("nodes"), dict):
+            return
+        try:
+            self._widgets_to_data_meta()
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    def _sync_data_for_validation(self) -> None:
+        self._sync_meta_for_validation()
+        try:
+            self._flush_current_inspector_to_data()
+        except ValueError:
+            pass
+
+    def _refresh_validation_panel(self, *, flush_inspector: bool = False) -> None:
+        self._validation_list.clear()
+        nodes = self._data.get("nodes")
+        if not isinstance(nodes, dict) or not nodes:
+            self._last_validation = ([], [])
+            self._validation_counts.setText("无加载图")
+            self._validation_counts.setStyleSheet("color: #888;")
+            return
+        if flush_inspector:
+            self._sync_data_for_validation()
+        else:
+            self._sync_meta_for_validation()
+        err, warn = self._validate_current_graph()
+        if self._connect_feedback_messages:
+            err = list(self._connect_feedback_messages) + err
+        self._last_validation = (err, warn)
+        if not err and not warn:
+            self._validation_counts.setText("无问题")
+            self._validation_counts.setStyleSheet("color: #4a8;")
+            item = QListWidgetItem("未发现校验问题")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._validation_list.addItem(item)
+            return
+        parts: list[str] = []
+        if err:
+            parts.append(f"错误 {len(err)}")
+        if warn:
+            parts.append(f"警告 {len(warn)}")
+        self._validation_counts.setText(" · ".join(parts))
+        self._validation_counts.setStyleSheet("color: #c44;" if err else "color: #a80;")
+        for msg in err:
+            item = QListWidgetItem(f"错误：{msg}")
+            item.setForeground(QColor("#e05050"))
+            self._validation_list.addItem(item)
+        for msg in warn:
+            item = QListWidgetItem(f"警告：{msg}")
+            item.setForeground(QColor("#d0a020"))
+            self._validation_list.addItem(item)
+
+    def _set_validation_dock_collapsed(self, collapsed: bool) -> None:
+        self._validation_dock_collapsed = collapsed
+        self._validation_body.setVisible(not collapsed)
+        self._validation_toggle.setText("展开" if collapsed else "收起")
+
+    def _toggle_validation_dock(self) -> None:
+        self._set_validation_dock_collapsed(not self._validation_dock_collapsed)
+        self._save_validation_dock_state()
+
+    def _restore_validation_dock_state(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        collapsed = bool(s.value("validation_dock_collapsed", False))
+        self._set_validation_dock_collapsed(collapsed)
+        height = s.value("validation_dock_height")
+        if isinstance(height, int) and 72 <= height <= 240:
+            self._validation_list.setMaximumHeight(height)
+            self._validation_list.setMinimumHeight(min(height, 120))
+
+    def _save_validation_dock_state(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        s.setValue("validation_dock_collapsed", self._validation_dock_collapsed)
+        s.setValue("validation_dock_height", self._validation_list.maximumHeight())
 
     def _owner_state_wrapper_available(self) -> tuple[bool, str]:
         model = self._get_project_model_for_inspector()
@@ -797,7 +940,7 @@ class DialogueGraphEditorWidget(QWidget):
                 },
             },
         })
-        self._data = self._model.data
+        self._data = self._model.mutable_data
         self._current_path = None
         self._draft_layout_basename = f"__draft_{uuid.uuid4().hex[:10]}.json"
         self._editor_groups.clear()
@@ -819,10 +962,11 @@ class DialogueGraphEditorWidget(QWidget):
         self._refresh_file_list(select_unsaved=True)
         self._emit_title()
         self._collapse_graph_prop_panel()
+        self._schedule_validation_refresh(0)
 
     def _reset_to_no_file_loaded(self) -> None:
         self._model.load_empty()
-        self._data = self._model.data
+        self._data = self._model.mutable_data
         self._current_path = None
         self._draft_layout_basename = None
         self._editing_node_id = None
@@ -838,6 +982,8 @@ class DialogueGraphEditorWidget(QWidget):
         self._set_dirty(False)
         self._sync_ui_enabled(False)
         self._emit_title()
+        self._connect_feedback_messages.clear()
+        self._refresh_validation_panel(flush_inspector=False)
 
     def delete_selected_graph_file(self) -> None:
         it = self._file_tree.currentItem()
@@ -1069,10 +1215,11 @@ class DialogueGraphEditorWidget(QWidget):
             )
             return
         old_graph_id = str(self._data.get("id", "")).strip()
-        self._data["id"] = new_stem
+        self._model.apply_meta_patch({"id": new_stem})
         try:
-            save_json(new_path, self._data)
+            save_json(new_path, self._model.to_dict())
         except OSError as e:
+            self._model.apply_meta_patch({"id": old_graph_id})
             QMessageBox.critical(self, "重命名图", f"写入新文件失败：{e}")
             return
         try:
@@ -1115,16 +1262,20 @@ class DialogueGraphEditorWidget(QWidget):
         except ValueError as e:
             QMessageBox.critical(self, "校验", str(e))
             return
-        err, warn = self._validate_current_graph()
+        self._connect_feedback_messages.clear()
+        self._refresh_validation_panel(flush_inspector=True)
+        err, warn = self._last_validation
         if not err and not warn:
-            QMessageBox.information(self, "校验", "未发现明显问题。")
+            self._toast("校验通过，未发现明显问题。", 3000)
             return
-        parts: list[str] = []
-        if err:
-            parts.append("错误：\n" + "\n".join(err))
-        if warn:
-            parts.append("警告：\n" + "\n".join(warn))
-        QMessageBox.warning(self, "校验", "\n\n".join(parts))
+        self._set_validation_dock_collapsed(False)
+        self._save_validation_dock_state()
+        self._toast(f"校验完成：错误 {len(err)}，警告 {len(warn)}（见下方校验面板）", 5000)
+
+    def _on_connection_rejected(self, err: str) -> None:
+        self._connect_feedback_messages = [f"连线失败：{self._humanize_connect_err(err)}"]
+        self._set_validation_dock_collapsed(False)
+        self._refresh_validation_panel(flush_inspector=False)
 
     def new_file(self) -> None:
         """兼容旧入口：等价于左侧「新建图」。"""
@@ -1260,8 +1411,10 @@ class DialogueGraphEditorWidget(QWidget):
         self._apply_selected_node_to_inspector()
 
     def _on_oden_topology_changed(self) -> None:
+        self._connect_feedback_messages.clear()
         self._emit_title()
         self._inspector_scene_timer.start(120)
+        self._schedule_validation_refresh(0, notify_toast=True)
 
     def _on_model_topology_changed(self, src_nid: str) -> None:
         """Canvas connection changed via Model -- update inspector if showing this node."""
@@ -1270,6 +1423,7 @@ class DialogueGraphEditorWidget(QWidget):
             node_data = self._model.nodes.get(src_nid)
             if node_data:
                 self._inspector.update_topology_from_data(node_data)
+        self._schedule_validation_refresh()
 
     def _sync_inspector_from_selection(self) -> None:
         nid = self._active_editing_nid()
@@ -1293,6 +1447,7 @@ class DialogueGraphEditorWidget(QWidget):
         if self._suppress_inspector_resync_from_undo:
             return
         self._sync_inspector_from_selection()
+        self._schedule_validation_refresh(500)
 
     def _reset_search_cycle(self) -> None:
         self._last_search_hits = []
@@ -1358,8 +1513,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
-        if validate_graph(self._data):
-            self._toast("重命名后存在校验问题，请运行「校验当前图」", 5000)
+        self._schedule_validation_refresh()
 
     @staticmethod
     def _remap_local_next(raw: dict, old_to_new: dict, seen: set[str]) -> None:
@@ -1775,7 +1929,7 @@ class DialogueGraphEditorWidget(QWidget):
             QMessageBox.critical(self, "打开失败", str(e))
             return
         self._model.load(raw)
-        self._data = self._model.data
+        self._data = self._model.mutable_data
         self._current_path = path
         self._draft_layout_basename = None
         self._editing_node_id = None
@@ -1822,6 +1976,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._refresh_file_list()
         self._sync_file_list_selection(path)
         self._collapse_graph_prop_panel()
+        self._schedule_validation_refresh(0)
 
     def _sync_file_list_selection(self, path: Path) -> None:
         target = path.resolve()
@@ -2010,6 +2165,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._rebuild_file_tree(preserve_selection=True)
         elif self._current_path is None and self._draft_layout_basename:
             self._update_unsaved_file_list_display()
+        self._schedule_validation_refresh()
 
     def _on_node_list_filter_changed(self, _t: str = "") -> None:
         if not isinstance(self._data.get("nodes"), dict):
@@ -2204,6 +2360,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
         self._refresh_node_list_row(nid)
         self._inspector_scene_timer.start(120)
+        self._schedule_validation_refresh()
 
     def _refresh_node_list_row(self, nid: str):
         for i in range(self._node_list.count()):
@@ -2284,6 +2441,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
+        self._schedule_validation_refresh()
 
     def _resolve_delete_targets(self, explicit_id: str | None) -> list[str]:
         """显式 id（右键菜单等）优先，否则用画布多选，再退回节点列表当前行。"""
@@ -2355,6 +2513,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._rebuild_flow_scene()
         if self._layout_path_for_io():
             self._flush_flow_layout_to_disk()
+        self._schedule_validation_refresh()
 
     def _remove_ghost_missing_targets(self, mids: list[str]) -> None:
         """幽灵节点对应 JSON 外 id：清空所有指向这些 id 的连线并移除布局里 ghost 坐标。"""
@@ -2369,6 +2528,7 @@ class DialogueGraphEditorWidget(QWidget):
             if self._layout_path_for_io():
                 self._flush_flow_layout_to_disk()
             self._toast("已移除幽灵布局坐标（无连线指向这些缺失 id）", 2500)
+            self._schedule_validation_refresh()
             return
         preview = "、".join(u[:16])
         if len(u) > 16:
@@ -2383,12 +2543,13 @@ class DialogueGraphEditorWidget(QWidget):
         if r != QMessageBox.StandardButton.Yes:
             return
         for mid in u:
-            clear_incoming_to_node(self._data, mid)
+            self._model.clear_incoming_to(mid)
             self._ghost_positions.pop(mid, None)
         self._mark_dirty()
         self._rebuild_flow_scene()
         if self._layout_path_for_io():
             self._flush_flow_layout_to_disk()
+        self._schedule_validation_refresh()
 
     def _delete_node(self, nid: str | None = None):
         # 工具栏 clicked 可能传入 bool；仅非空 str 才视为显式节点 id。
@@ -2431,6 +2592,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._node_list.blockSignals(False)
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
+        self._schedule_validation_refresh()
 
     def _restore_splitter_sizes(self) -> None:
         s = QSettings("GameDraft", "DialogueGraphEditor")
@@ -2449,6 +2611,7 @@ class DialogueGraphEditorWidget(QWidget):
 
     def hideEvent(self, event) -> None:
         self._save_splitter_sizes()
+        self._save_validation_dock_state()
         super().hideEvent(event)
 
     def _write_to_path(self, path: Path) -> bool:
@@ -2494,19 +2657,20 @@ class DialogueGraphEditorWidget(QWidget):
                 return False
 
         id_before_disk = str(self._data.get("id", "")).strip()
+        final_gid = path.stem
+        self._model.apply_meta_patch({"id": final_gid})
         try:
-            save_json(path, self._data)
+            save_json(path, self._model.to_dict())
         except OSError as e:
+            self._model.apply_meta_patch({"id": id_before_disk})
             QMessageBox.critical(self, "保存失败", str(e))
             return False
         if draft_lp is not None and old_draft:
             migrate_layout_map_key(self._project, draft_lp, path)
         self._current_path = path
         self._draft_layout_basename = None
-        self._data["id"] = path.stem
         pm_sv = self._injected_project_model
         if pm_sv is not None:
-            final_gid = str(self._data.get("id", "")).strip() or path.stem
             if id_before_disk and id_before_disk != final_gid:
                 pm_sv.rename_dialogue_graph_in_scenarios_catalog(id_before_disk, final_gid)
             meta_sv = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}

@@ -3,7 +3,7 @@ import { abbreviateSignal, displayEdgeLabel, resolveStyledEdgeLabel, shouldRende
 
 describe('edgeLabels', () => {
   it('resolves projection trigger labels from edge props', () => {
-    const label = 'external:dialogue:dock_board:board_read_done';
+    const label = 'board_read_done';
     expect(resolveStyledEdgeLabel({ label })).toBe(label);
     expect(resolveStyledEdgeLabel({ data: { label } })).toBe(label);
     expect(shouldRenderStyledEdgeLabel(label)).toBe(true);
@@ -15,7 +15,7 @@ describe('edgeLabels', () => {
   });
 
   it('abbreviates long transition signals when not selected', () => {
-    const full = 'external:dialogue:rolling_ring_boy:ring_taken';
+    const full = 'state:flow_dock_water_monkey:crate_minigame_done';
     expect(abbreviateSignal(full).length).toBeLessThan(full.length);
     expect(displayEdgeLabel(full, 'transition', false)).not.toBe(full);
     expect(displayEdgeLabel(full, 'transition', true)).toBe(full);

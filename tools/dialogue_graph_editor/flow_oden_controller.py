@@ -30,7 +30,7 @@ from OdenGraphQt.nodes.backdrop_node import BackdropNode
 from OdenGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from OdenGraphQt.widgets.viewer import NodeViewer
 
-from .graph_document import extract_flow_edges_detailed, validate_graph
+from .graph_document import extract_flow_edges_detailed
 
 _oden_nodegraph_pyside6_patch_done = False
 
@@ -205,22 +205,15 @@ def _patch_oden_nodegraph_for_pyside6() -> None:
     NodeGraph._on_nodes_moved = _on_nodes_moved_pyside_safe
     _oden_nodegraph_pyside6_patch_done = True
 from .graph_mutations import (
-    OUT_CHOICE,
-    OUT_NEXT,
-    OUT_SWITCH_CASE,
-    OUT_SWITCH_DEFAULT,
     connect_output_to_target,
     clear_output,
 )
+from .dialogue_ports import port_name_for_spec
 from .graph_document_model import GraphDocumentModel
 from .oden_dialogue_nodes import (
     DialogueFlowNode,
     DialogueGhostNode,
-    PN_NEXT,
-    PN_SWITCH_DEFAULT,
     parse_dialogue_out_port,
-    pn_choice,
-    pn_switch_case,
 )
 
 
@@ -284,6 +277,9 @@ class DialogueFlowOdenController(QObject):
     """画布上按下 Delete（由主窗口处理删除与确认）。"""
 
     auto_layout_requested = Signal()
+
+    connection_rejected = Signal(str)
+    """连线被拒绝（端口无效、自连等）；画布会回滚该连线。"""
 
     def __init__(
         self,
@@ -759,15 +755,8 @@ class DialogueFlowOdenController(QObject):
 
     @staticmethod
     def _output_port_for_spec(node: DialogueFlowNode, kind: str, index: int) -> Port | None:
-        if kind == OUT_NEXT:
-            return node.get_output(PN_NEXT)
-        if kind == OUT_CHOICE:
-            return node.get_output(pn_choice(index))
-        if kind == OUT_SWITCH_CASE:
-            return node.get_output(pn_switch_case(index))
-        if kind == OUT_SWITCH_DEFAULT:
-            return node.get_output(PN_SWITCH_DEFAULT)
-        return None
+        port_name = port_name_for_spec(kind, index)
+        return node.get_output(port_name) if port_name is not None else None
 
     def _on_nodes_moved(self, node_data: dict) -> None:
         if self._positions_get is None or self._ghost_positions_get is None:
@@ -845,14 +834,12 @@ class DialogueFlowOdenController(QObject):
             err = connect_output_to_target(data, src_id, kind, idx, dst_id)
         if err:
             self._toast(err, 5000)
+            self.connection_rejected.emit(err)
             try:
                 inp.disconnect_from(outp, push_undo=False, emit_signal=False)
             except Exception:
                 pass
             return
-        issues = validate_graph(data)
-        if issues:
-            self._toast(f"校验：{issues[0]}", 5000)
         self.data_topology_changed.emit()
 
     def _on_port_disconnected(self, inp: Port, outp: Port) -> None:

@@ -364,29 +364,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['scenarioId']);
 
   executor.register('emitNarrativeSignal', (p) => {
+    const signal = String(p.signal ?? '').trim();
+    if (!signal) {
+      console.warn('emitNarrativeSignal: missing signal (event id)', p);
+      return;
+    }
     const sourceType = String(p.sourceType ?? '').trim();
     const sourceId = String(p.sourceId ?? '').trim();
-    const signal = String(p.signal ?? '').trim();
-    if (!sourceType || !sourceId || !signal) {
-      console.warn('emitNarrativeSignal: missing sourceType/sourceId/signal', p);
-      return;
-    }
     return d.narrativeStateManager.emitNarrativeSignal({
-      sourceType: sourceType as any,
-      sourceId,
       signal,
+      ...(sourceType && sourceId ? { sourceType: sourceType as any, sourceId } : {}),
     });
-  }, ['sourceType', 'sourceId', 'signal']);
-
-  executor.register('setNarrativeState', (p) => {
-    const graphId = String(p.graphId ?? '').trim();
-    const stateId = String(p.stateId ?? '').trim();
-    if (!graphId || !stateId) {
-      console.warn('setNarrativeState: missing graphId/stateId', p);
-      return;
-    }
-    return d.narrativeStateManager.setNarrativeState(graphId, stateId);
-  }, ['graphId', 'stateId']);
+  }, ['signal']);
 
   executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
   executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);

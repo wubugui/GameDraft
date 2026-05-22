@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QStackedWidget, QToolButton,
 )
 from PySide6.QtGui import QAction, QKeySequence, QActionGroup
-from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize
 from PySide6.QtWidgets import QApplication
 
 from . import theme
@@ -90,6 +90,33 @@ def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
 
 
 _GAME_BROWSER_SENTINEL = object()
+
+
+class _StackPageHost(QWidget):
+    """Each stacked tab reports the same small minimum so hidden editors do not block maximize."""
+
+    _MIN = QSize(320, 240)
+
+    def __init__(self, content: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        content.setMinimumSize(0, 0)
+        content.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Ignored,
+        )
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(content, 1)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+
+    def minimumSize(self) -> QSize:  # noqa: N802 — Qt API
+        return self._MIN
+
+    def minimumSizeHint(self) -> QSize:
+        return self._MIN
 
 
 class MainWindow(QMainWindow):
@@ -601,7 +628,7 @@ class MainWindow(QMainWindow):
                     else:
                         preview_sig.connect(self._on_water_minigame_preview_requested)
 
-            self._stack.addWidget(widget)
+            self._stack.addWidget(_StackPageHost(widget, self))
             parent_item = self._ensure_nav_path(self._nav_tree, path)
             leaf = QTreeWidgetItem([label])
             parent_item.addChild(leaf)
@@ -629,10 +656,7 @@ class MainWindow(QMainWindow):
         nav_w = max(96, min(nav_w, 520))
         self._nav_tree.setFixedWidth(nav_w)
 
-        sp = self._splitter.sizes()
-        total = int(sum(sp))
-        if total < 200:
-            total = max(900, int(self.width() or 0))
+        total = max(int(sum(self._splitter.sizes())), int(self.width() or 0), 900)
         right = max(320, total - nav_w)
         self._splitter.setSizes([nav_w, right])
 
@@ -666,11 +690,16 @@ class MainWindow(QMainWindow):
             if callable(flush):
                 name = type(inst).__name__
                 t0 = time.perf_counter()
-                result = flush()
+                try:
+                    result = flush(for_save_all=True)
+                except TypeError:
+                    result = flush()
                 dt = time.perf_counter() - t0
                 maybe_stamp(flush_clk, f"{name} ok {dt*1000:.1f}ms")
                 if result is False:
-                    raise RuntimeError(f"{name} failed to flush pending edits")
+                    pop_error = getattr(inst, "pop_flush_error", None)
+                    detail = pop_error() if callable(pop_error) else None
+                    raise RuntimeError(detail or f"{name} 无法写入待保存的编辑内容")
         return True
 
     def _save_all(self) -> bool:

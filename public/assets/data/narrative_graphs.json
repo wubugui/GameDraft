@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "compositions": [
     {
       "id": "dock_water_monkey_ring_flow",
@@ -16,8 +16,8 @@
             "label": "未开始",
             "meta": {
               "editor": {
-                "x": 80,
-                "y": 160
+                "x": 24,
+                "y": 24
               }
             }
           },
@@ -26,8 +26,8 @@
             "label": "看板初读",
             "meta": {
               "editor": {
-                "x": 330,
-                "y": 160
+                "x": 374,
+                "y": 24
               }
             }
           },
@@ -36,18 +36,19 @@
             "label": "水边可触发",
             "meta": {
               "editor": {
-                "x": 590,
-                "y": 160
+                "x": 724,
+                "y": 24
               }
             }
           },
           "crate_minigame_done": {
             "id": "crate_minigame_done",
             "label": "箱子捞起",
+            "broadcastOnEnter": true,
             "meta": {
               "editor": {
-                "x": 861,
-                "y": 139
+                "x": 1074,
+                "y": 24
               }
             }
           }
@@ -57,19 +58,19 @@
             "id": "t_board_read",
             "from": "initial",
             "to": "board_read",
-            "signal": "external:dialogue:dock_board:board_read_done"
+            "signal": "board_read_done"
           },
           {
             "id": "t_waterside_available",
             "from": "board_read",
             "to": "waterside_available",
-            "signal": "external:zone:waterside:entered"
+            "signal": "entered"
           },
           {
             "id": "t_crate_done",
             "from": "waterside_available",
             "to": "crate_minigame_done",
-            "signal": "external:minigame:dock_crate_tutorial:pull_success"
+            "signal": "pull_success"
           }
         ]
       },
@@ -79,11 +80,11 @@
           "kind": "dialogueBlackbox",
           "label": "码头看板",
           "refId": "码头看板",
-          "x": 80,
-          "y": 20,
+          "x": 24,
+          "y": -96,
           "meta": {
             "emits": [
-              "external:dialogue:dock_board:board_read_done"
+              "board_read_done"
             ],
             "reads": [],
             "commands": []
@@ -94,11 +95,11 @@
           "kind": "zoneBlackbox",
           "label": "水边触发区",
           "refId": "码头白天:new_zone_2",
-          "x": 410,
-          "y": 20,
+          "x": 374,
+          "y": -96,
           "meta": {
             "emits": [
-              "external:zone:waterside:entered"
+              "entered"
             ],
             "reads": [],
             "commands": []
@@ -109,11 +110,11 @@
           "kind": "minigameBlackbox",
           "label": "捞箱小游戏",
           "refId": "dock_crate_tutorial",
-          "x": 639,
-          "y": -43,
+          "x": 724,
+          "y": -96,
           "meta": {
             "emits": [
-              "external:minigame:dock_crate_tutorial:pull_success"
+              "pull_success"
             ],
             "reads": [],
             "commands": []
@@ -125,8 +126,8 @@
           "label": "滚铁环小孩 Wrapper",
           "ownerType": "npc",
           "ownerId": "npc_ringboy",
-          "x": 870,
-          "y": 360,
+          "x": 1524,
+          "y": 60,
           "graph": {
             "id": "npc_ringboy",
             "ownerType": "npc",
@@ -171,6 +172,7 @@
               "ring_taken": {
                 "id": "ring_taken",
                 "label": "玩家已拿到铁环",
+                "broadcastOnEnter": true,
                 "meta": {
                   "editor": {
                     "x": 470,
@@ -194,19 +196,19 @@
                 "id": "t_ringboy_after_event",
                 "from": "before_event",
                 "to": "after_event",
-                "signal": "external:state:flow_dock_water_monkey:crate_minigame_done"
+                "signal": "state:flow_dock_water_monkey:crate_minigame_done"
               },
               {
                 "id": "t_ring_taken",
                 "from": "after_event",
                 "to": "ring_taken",
-                "signal": "external:dialogue:rolling_ring_boy:ring_taken"
+                "signal": "ring_taken"
               },
               {
                 "id": "t_ring_returned",
                 "from": "ring_taken",
                 "to": "ring_returned",
-                "signal": "external:dialogue:rolling_ring_boy:ring_returned"
+                "signal": "ring_returned"
               }
             ]
           },
@@ -221,15 +223,15 @@
           "kind": "dialogueBlackbox",
           "label": "滚铁环小孩对话",
           "refId": "滚铁环小孩",
-          "x": 1381,
-          "y": 15,
+          "x": 24,
+          "y": -186,
           "meta": {
             "reads": [
               "npc_ringboy"
             ],
             "emits": [
-              "external:dialogue:rolling_ring_boy:ring_taken",
-              "external:dialogue:rolling_ring_boy:ring_returned"
+              "ring_taken",
+              "ring_returned"
             ],
             "commands": []
           }
@@ -240,8 +242,8 @@
           "label": "归还铁环 Quest Wrapper",
           "ownerType": "quest",
           "ownerId": "支线-归还小孩铁环-归还铁环",
-          "x": 1280,
-          "y": 360,
+          "x": 1524,
+          "y": 150,
           "graph": {
             "id": "quest_return_ring",
             "ownerType": "quest",
@@ -292,7 +294,7 @@
                 "id": "t_activate_return_ring",
                 "from": "inactive",
                 "to": "active",
-                "signal": "external:state:npc_ringboy:ring_taken"
+                "signal": "state:npc_ringboy:ring_taken"
               }
             ]
           },
@@ -303,6 +305,180 @@
           }
         }
       ]
+    },
+    {
+      "id": "composition_1",
+      "label": "composition_1",
+      "mainGraph": {
+        "id": "flow_1",
+        "ownerType": "flow",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "initial",
+            "meta": {
+              "editor": {
+                "x": -322,
+                "y": 132
+              }
+            }
+          },
+          "state_1": {
+            "id": "state_1",
+            "label": "state_1",
+            "meta": {
+              "editor": {
+                "x": -86,
+                "y": 97
+              }
+            }
+          },
+          "state_2": {
+            "id": "state_2",
+            "label": "state_2",
+            "meta": {
+              "editor": {
+                "x": 126,
+                "y": 111
+              }
+            }
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_1",
+            "from": "initial",
+            "to": "state_1",
+            "signal": "__draft__",
+            "priority": 0
+          },
+          {
+            "id": "t_2",
+            "from": "state_1",
+            "to": "state_2",
+            "signal": "__draft__",
+            "priority": 0
+          }
+        ]
+      },
+      "elements": [
+        {
+          "id": "wrapper_1",
+          "kind": "wrapperGraph",
+          "label": "Wrapper Graph",
+          "refId": "",
+          "x": -89,
+          "y": 241,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "npc",
+          "ownerId": "T到室外",
+          "graph": {
+            "id": "wrapper_graph_1",
+            "ownerType": "npc",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "label": "initial",
+                "meta": {
+                  "editor": {
+                    "x": 123,
+                    "y": 265
+                  }
+                }
+              },
+              "state_1": {
+                "id": "state_1",
+                "label": "state_1",
+                "meta": {
+                  "editor": {
+                    "x": 369,
+                    "y": 130
+                  }
+                }
+              },
+              "state_2": {
+                "id": "state_2",
+                "label": "state_2",
+                "meta": {
+                  "editor": {
+                    "x": 778,
+                    "y": 43
+                  }
+                }
+              },
+              "state_3": {
+                "id": "state_3",
+                "label": "state_3",
+                "meta": {
+                  "editor": {
+                    "x": 327,
+                    "y": 283
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "initial",
+                "to": "state_1",
+                "signal": "__draft__",
+                "priority": 0
+              },
+              {
+                "id": "t_2",
+                "from": "state_1",
+                "to": "state_2",
+                "signal": "__draft__",
+                "priority": 0
+              },
+              {
+                "id": "t_3",
+                "from": "initial",
+                "to": "state_3",
+                "signal": "__draft__",
+                "priority": 0
+              },
+              {
+                "id": "t_4",
+                "from": "state_3",
+                "to": "state_2",
+                "signal": "__draft__",
+                "priority": 0
+              }
+            ],
+            "ownerId": "T到室外"
+          }
+        }
+      ]
+    }
+  ],
+  "signals": [
+    {
+      "id": "board_read_done",
+      "label": "board_read_done"
+    },
+    {
+      "id": "entered",
+      "label": "entered"
+    },
+    {
+      "id": "pull_success",
+      "label": "pull_success"
+    },
+    {
+      "id": "ring_taken",
+      "label": "ring_taken"
+    },
+    {
+      "id": "ring_returned",
+      "label": "ring_returned"
     }
   ]
 }

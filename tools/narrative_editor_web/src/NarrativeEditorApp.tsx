@@ -13,7 +13,15 @@ import {
   type OnEdgesChange,
   type OnNodesChange,
 } from '@xyflow/react';
-import { buildCanvasEdges, buildCanvasNodes, stateEndpointFromNodeId } from './canvas/buildCanvasModel';
+import {
+  applyFocusIssueResult,
+  issueBelongsToActiveGraph,
+  pickFocusFitNodeIds,
+  resolveValidationIssueFocus,
+  validationTargetSummary,
+} from './focusIssueResolution';
+import { buildCanvasEdges, buildCanvasNodes, stateEndpointFromNodeIdForView } from './canvas/buildCanvasModel';
+import { resolveActiveGraphView } from './canvas/activeGraphView';
 import { flowEdgeTypes } from './canvas/flowEdges';
 import { flowNodeTypes } from './canvas/flowNodes';
 import { applyCanvasSelection } from './canvas/canvasSelection';
@@ -24,11 +32,12 @@ import {
   resizeSubgraphParents,
   SUBGRAPH_CHILD_ORIGIN,
 } from './canvas/subgraphGroupLayout';
+import { layoutComposition, layoutGraph } from './canvas/autoLayout';
 import {
   shouldSnapTransitionAnchors,
   snapTransitionAnchorsToEdges,
 } from './canvas/transitionAnchorLayout';
-import { parseTransitionAnchorId } from './anchorCodec';
+import { parseTransitionAnchorId, transitionAnchorId } from './anchorCodec';
 import {
   inlineSubgraphStateId,
   inlineSubgraphTransitionId,
@@ -36,11 +45,13 @@ import {
   prefixInlineSelection,
   projectionEndpointLabel,
 } from './canvas/canvasIds';
-import { AddMenuDropdown, type AddMenuItem } from './components/AddMenuDropdown';
+import { ToolbarMenuDropdown, type ToolbarMenuItem } from './components/ToolbarMenuDropdown';
 import { SettingsMenu } from './components/SettingsMenu';
 import { ToolbarPopover } from './components/ToolbarPopover';
 import { ConditionBuilder } from './components/ConditionBuilder';
 import { SignalChipsField } from './components/SignalChipsField';
+import { SignalPickerModal } from './components/SignalPickerModal';
+import { DEFAULT_DRAFT_SIGNAL } from './signalConstants';
 import {
   elementSubtitle,
   extractActiveStates,
@@ -92,6 +103,7 @@ import {
   getElementByNodeId,
   graphLabel,
   isSubgraphElement,
+  mergeValidationIssues,
   normalizeFile,
   parseExternalSignalKey,
   renameGraph,
@@ -101,8 +113,9 @@ import {
   setStateEditorPosition,
   simulateSignalImpact,
   stateEditorPosition,
+  stateEnteredSignalKey,
+  validateNarrativeData,
   resolveEndpoint,
-  focusValidationIssue,
   type GraphRef,
   type SimulationResult,
 } from './editorModel';
@@ -166,11 +179,13 @@ function NarrativeEditorInner() {
   const [expandedElementIds, setExpandedElementIds] = useState<string[]>([]);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [validationCollapsed, setValidationCollapsed] = useState(false);
   const [panelLayout, setPanelLayout] = useState(loadPanelLayout);
   const [status, setStatus] = useState('就绪');
   const [fitViewRev, setFitViewRev] = useState(0);
   const [fitTargetNodeIds, setFitTargetNodeIds] = useState<string[]>([]);
-  const { startLeft, startRight } = usePanelResize({ setLayout: setPanelLayout, leftCollapsed, rightCollapsed });
+  const pendingFitNodeIdsRef = useRef<string[] | null>(null);
+  const { startLeft, startRight, startValidation } = usePanelResize({ setLayout: setPanelLayout, leftCollapsed, rightCollapsed });
   const [signalKey, setSignalKey] = useState('');
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeDebugSnapshotDef>({ ok: false, reason: 'Runtime not queried yet' });
@@ -200,6 +215,10 @@ function NarrativeEditorInner() {
     [composition, graph, graphRef, selectedId],
   );
 
+  const refreshProjectionAndValidation = useCallback(async (nextData = data) => {
+    await flushRemoteSync(normalizeFile(nextData));
+  }, [data, flushRemoteSync]);
+
   useEffect(() => {
     void loadNarrativeDataWithSource().then(async (loaded) => {
       const next = normalizeFile(loaded.data);
@@ -217,7 +236,7 @@ function NarrativeEditorInner() {
   }, []);
 
   useEffect(() => {
-    window.__narrativeEditor = {
+    const api = {
       getCurrentDataJson: () => currentDataJson,
       getCurrentDataHash: () => currentDataHash,
       isDirty: () => editorDirty,
@@ -227,12 +246,13 @@ function NarrativeEditorInner() {
       },
       refresh: () => { void refreshProjectionAndValidation(data); },
     };
+    window.__narrativeEditor = api;
     return () => {
-      if (window.__narrativeEditor?.getCurrentDataHash() === currentDataHash) {
+      if (window.__narrativeEditor === api) {
         delete window.__narrativeEditor;
       }
     };
-  }, [currentDataHash, currentDataJson, editorDirty]);
+  }, [currentDataHash, currentDataJson, editorDirty, data, refreshProjectionAndValidation]);
 
   useEffect(() => {
     void flushRemoteSync(data);
@@ -276,17 +296,27 @@ function NarrativeEditorInner() {
     setEdges(builtEdges);
 
     let raf2 = 0;
+    let raf3 = 0;
+    const pendingFit = pendingFitNodeIdsRef.current;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
         setNodes((current) => {
           const snapped = snapTransitionAnchorsToEdges(current, builtEdges);
           return resizeSubgraphParents(snapped ?? current);
         });
+        if (pendingFit?.length) {
+          pendingFitNodeIdsRef.current = null;
+          raf3 = requestAnimationFrame(() => {
+            setFitTargetNodeIds(pendingFit);
+            setFitViewRev((v) => v + 1);
+          });
+        }
       });
     });
     return () => {
       window.cancelAnimationFrame(raf1);
       if (raf2) window.cancelAnimationFrame(raf2);
+      if (raf3) window.cancelAnimationFrame(raf3);
     };
   }, [canvasStructureKey]); // eslint-disable-line react-hooks/exhaustive-deps -- key encodes canvasStructureInput
 
@@ -294,10 +324,6 @@ function NarrativeEditorInner() {
     () => applyCanvasSelection(nodes, edges, selectedId),
     [nodes, edges, selectedId],
   );
-
-  const refreshProjectionAndValidation = useCallback(async (nextData = data) => {
-    await flushRemoteSync(normalizeFile(nextData));
-  }, [data, flushRemoteSync]);
 
   const updateCurrentGraph = useCallback((updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => {
     updateData((next) => {
@@ -456,47 +482,46 @@ function NarrativeEditorInner() {
   }, [removeModelObjects]);
 
   const onConnect: OnConnect = useCallback((conn: Connection) => {
-    if (!composition || !graph || graphRef !== 'main') {
-      const from = conn.source?.startsWith('state:') ? conn.source.slice('state:'.length) : '';
-      const to = conn.target?.startsWith('state:') ? conn.target.slice('state:'.length) : '';
-      if (!from || !to) {
-        setStatus('Only state nodes can create transitions');
-        return;
-      }
-      let created: NarrativeTransitionDef | null = null;
-      updateCurrentGraph((g) => {
-        created = createTransition(g, from, to);
-      });
-      if (created) {
-        setSelectedId(`transition:${created.id}`);
-        setSelectedJson(JSON.stringify(created, null, 2));
-        setStatus(`Created transition ${created.id}`);
-      }
-      return;
-    }
+    if (!composition || !graph) return;
+    const view = resolveActiveGraphView(composition, graphRef);
+    if (!view) return;
 
-    const source = stateEndpointFromNodeId(conn.source ?? '', composition, graph);
-    const target = stateEndpointFromNodeId(conn.target ?? '', composition, graph);
+    const source = stateEndpointFromNodeIdForView(conn.source ?? '', view);
+    const target = stateEndpointFromNodeIdForView(conn.target ?? '', view);
     if (!source || !target) {
       setStatus('Only state nodes can create transitions');
       return;
     }
     if (source.graphId !== target.graphId) {
-      setStatus('Cross-graph relationships must be expressed through external signals (e.g. external:state:<graph>:<state>), not cross-graph transitions.');
+      setStatus('Cross-graph relationships must use signals, state broadcasts, or projection metadata, not cross-graph transitions.');
       return;
     }
-    let created: NarrativeTransitionDef | null = null;
+
+    if (view.kind === 'graphExclusive') {
+      let createdTransition: NarrativeTransitionDef | null = null;
+      updateCurrentGraph((g) => {
+        createdTransition = createTransition(g, source.stateId, target.stateId);
+      });
+      if (createdTransition) {
+        setSelectedId(view.scope.transitionEdgeId(createdTransition.id));
+        setSelectedJson(JSON.stringify(createdTransition, null, 2));
+        setStatus(`Created transition ${createdTransition.id}`);
+      }
+      return;
+    }
+
+    let createdTransition: NarrativeTransitionDef | null = null;
     updateData((next) => {
       const comp = getComposition(next, composition.id);
       const sourceGraph = findGraphById(comp, source.graphId);
       if (!sourceGraph) return;
-      created = createTransition(sourceGraph, source.stateId, target.stateId);
+      createdTransition = createTransition(sourceGraph, source.stateId, target.stateId);
     });
-    if (created) {
-      const edgeId = source.elementId ? inlineSubgraphTransitionId(source.elementId, created.id) : `transition:${created.id}`;
+    if (createdTransition) {
+      const edgeId = source.elementId ? inlineSubgraphTransitionId(source.elementId, createdTransition.id) : `transition:${createdTransition.id}`;
       setSelectedId(edgeId);
-      setSelectedJson(JSON.stringify(created, null, 2));
-      setStatus(`Created transition ${created.id}`);
+      setSelectedJson(JSON.stringify(createdTransition, null, 2));
+      setStatus(`Created transition ${createdTransition.id}`);
     }
   }, [composition, graph, graphRef, updateCurrentGraph, updateData]);
 
@@ -635,6 +660,30 @@ function NarrativeEditorInner() {
     removeModelObjects([selectedId]);
   }, [removeModelObjects, selectedId]);
 
+  const selectionDeletable = isSelectionDeletable(selectedId, graphRef);
+
+  const applyAutoLayout = useCallback(() => {
+    if (!composition) return;
+    updateData((next) => {
+      const comp = getComposition(next, compositionId);
+      if (!comp) return;
+      if (graphRef === 'main') {
+        layoutComposition(comp, expandedElementIds);
+      } else {
+        const target = getEditableGraph(comp, graphRef);
+        if (target) layoutGraph(target);
+      }
+    });
+    setFitTargetNodeIds([]);
+    setFitViewRev((v) => v + 1);
+    setStatus('已应用自动布局');
+  }, [composition, compositionId, expandedElementIds, graphRef, updateData]);
+
+  const fitCanvas = useCallback(() => {
+    setFitTargetNodeIds([]);
+    setFitViewRev((v) => v + 1);
+  }, []);
+
   const applySelectedJson = useCallback(async () => {
     if (!selectedId || selectedId.startsWith('projection:')) {
       setStatus('Projection edges are readonly');
@@ -661,7 +710,7 @@ function NarrativeEditorInner() {
       const normalized = normalizeFile(candidate);
       applyLocalValidation(normalized);
       await flushRemoteSync(normalized);
-      const issues = await validateNarrativeDataRemote(normalized);
+      const issues = mergeValidationIssues(validateNarrativeData(normalized), await validateNarrativeDataRemote(normalized));
       const errors = blockingValidationErrors(issues);
       if (errors.length) {
         setStatus(`JSON 应用被拦截：${errors.length} 个错误`);
@@ -680,7 +729,7 @@ function NarrativeEditorInner() {
   const save = useCallback(async () => {
     const normalized = normalizeFile(data);
     await flushRemoteSync(normalized);
-    const issues = await validateNarrativeDataRemote(normalized);
+    const issues = mergeValidationIssues(validateNarrativeData(normalized), await validateNarrativeDataRemote(normalized));
     const errors = blockingValidationErrors(issues);
     if (errors.length) {
       setStatus(`保存被拦截：${errors.length} 个校验错误`);
@@ -730,10 +779,10 @@ function NarrativeEditorInner() {
     if (issueFilter === 'error') return issue.severity === 'error';
     if (issueFilter === 'warning') return issue.severity === 'warning';
     if (issueFilter === 'composition' && composition) {
-      return issue.itemId === composition.id || Boolean(issue.path?.includes(composition.id));
+      return issueBelongsToActiveGraph(issue, composition.id, graphRef, data);
     }
     return true;
-  }), [validationIssues, issueFilter, composition]);
+  }), [validationIssues, issueFilter, composition, graphRef, data]);
 
   const statesByGraph = useMemo(() => {
     const out: Record<string, string[]> = {};
@@ -759,23 +808,37 @@ function NarrativeEditorInner() {
   }, [canvasMode, preferences.defaultShowMiniMap]);
 
   const focusIssue = useCallback((issue: ValidationIssueDef) => {
-    const result = focusValidationIssue(issue, data, {
+    const result = resolveValidationIssueFocus(issue, data);
+    if (!result) return;
+    applyFocusIssueResult(result, {
       compositionId,
       setCompositionId,
       setGraphRef,
       setExpandedElementIds,
       setSelectedId,
     });
-    if (!result?.nodeIds.length) return;
-    const nodeId = result.nodeIds[0];
-    const comp = getComposition(data, result.compositionId ?? compositionId);
-    const ref = result.graphRef ?? graphRef;
-    const g = getEditableGraph(comp, ref);
-    const obj = getNodeObject(comp, g, nodeId);
-    if (obj) setSelectedJson(JSON.stringify(obj, null, 2));
-    setFitTargetNodeIds(result.nodeIds);
+    const comp = getComposition(data, result.compositionId);
+    const g = getEditableGraph(comp, result.graphRef);
+    const anchorId = result.nodeIds.find((id) => id.startsWith('transition-anchor:'));
+    if (anchorId && g) {
+      const parsed = parseTransitionAnchorId(anchorId);
+      const transition = parsed ? g.transitions.find((t) => t.id === parsed.transitionId) : undefined;
+      if (transition) setSelectedJson(JSON.stringify(transition, null, 2));
+    } else if (result.selectedId.startsWith('transition:') && g) {
+      const tid = result.selectedId.slice('transition:'.length);
+      const transition = g.transitions.find((t) => t.id === tid);
+      if (transition) setSelectedJson(JSON.stringify(transition, null, 2));
+    } else {
+      const nodeId = result.nodeIds.find((id) => id.startsWith('state:') || id.startsWith('element:')) ?? result.selectedId;
+      const obj = getNodeObject(comp, g, nodeId);
+      if (obj) setSelectedJson(JSON.stringify(obj, null, 2));
+    }
+    const fitIds = pickFocusFitNodeIds(result.nodeIds);
+    if (!fitIds.length) return;
+    pendingFitNodeIdsRef.current = fitIds;
+    setFitTargetNodeIds(fitIds);
     setFitViewRev((v) => v + 1);
-  }, [compositionId, data, graphRef]);
+  }, [compositionId, data]);
 
   const breadcrumbs = useMemo(() => {
     if (!composition) return [] as { label: string; onClick?: () => void }[];
@@ -811,8 +874,42 @@ function NarrativeEditorInner() {
     return crumbs;
   }, [composition, expandedElementIds, graphRef, toggleExpandedElement]);
 
-  const addMenuItems = useMemo((): AddMenuItem[] => {
-    const items: AddMenuItem[] = [
+  const modeMenuItems = useMemo((): ToolbarMenuItem[] => (
+    (['edit', 'wiring', 'debug'] as CanvasMode[]).map((mode) => ({
+      id: mode,
+      label: canvasModeLabel[mode],
+      onSelect: () => changeCanvasMode(mode),
+    }))
+  ), [changeCanvasMode]);
+
+  const fileMenuItems = useMemo((): ToolbarMenuItem[] => [
+    { id: 'save', label: '保存  Ctrl+S', onSelect: () => { void save(); } },
+    {
+      id: 'refresh',
+      label: '刷新投影',
+      onSelect: () => { void refreshProjectionAndValidation(data); },
+    },
+    { id: 'reload', label: '重载页面  F5', onSelect: reloadNarrativeEditorPage },
+  ], [data, refreshProjectionAndValidation, save]);
+
+  const canvasMenuItems = useMemo((): ToolbarMenuItem[] => [
+    {
+      id: 'delete',
+      label: '删除选中  Del',
+      disabled: !selectionDeletable,
+      onSelect: deleteSelected,
+    },
+    {
+      id: 'autolayout',
+      label: '自动布局',
+      disabled: !composition,
+      onSelect: applyAutoLayout,
+    },
+    { id: 'fit', label: '适应画布  F', onSelect: fitCanvas },
+  ], [applyAutoLayout, composition, deleteSelected, fitCanvas, selectionDeletable]);
+
+  const addMenuItems = useMemo((): ToolbarMenuItem[] => {
+    const items: ToolbarMenuItem[] = [
       { id: 'state', label: '状态', disabled: !graph, onSelect: addState },
     ];
     if (graphRef === 'main') {
@@ -833,7 +930,17 @@ function NarrativeEditorInner() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+      const target = e.target;
+      const inTextField = target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || (target instanceof HTMLElement && target.isContentEditable);
+
+      if (e.key === 'Delete' && !inTextField && selectionDeletable) {
+        e.preventDefault();
+        deleteSelected();
+      }
+      if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !inTextField) {
         setFitTargetNodeIds([]);
         setFitViewRev((v) => v + 1);
       }
@@ -856,7 +963,7 @@ function NarrativeEditorInner() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [redo, save, undo]);
+  }, [deleteSelected, redo, save, selectionDeletable, undo]);
 
   return (
     <NarrativeCanvasActionsProvider value={canvasActions}>
@@ -918,80 +1025,29 @@ function NarrativeEditorInner() {
           </>
         )}
 
-        <div className="section-title">校验</div>
-        <button
-          type="button"
-          className={errorCount ? 'validation-pill error' : warningCount ? 'validation-pill warn' : 'validation-pill ok'}
-        >
-          {errorCount} 错误 / {warningCount} 警告{remoteSyncing ? ' · 同步中…' : ''}
-        </button>
-        <div className="issue-filters">
-          {(['all', 'error', 'warning', 'composition'] as IssueFilter[]).map((f) => (
-            <button key={f} type="button" className={issueFilter === f ? 'active' : ''} onClick={() => setIssueFilter(f)}>
-              {f === 'all' ? '全部' : f === 'error' ? '错误' : f === 'warning' ? '警告' : '当前编排'}
-            </button>
-          ))}
-        </div>
-        <div className="issue-list issue-list-full">
-          {filteredIssues.map((issue, index) => (
-            <button key={`${issue.code}-${issue.path}-${index}`} type="button" className={`issue ${issue.severity}`} title={issue.path} onClick={() => focusIssue(issue)}>
-              <b>{issue.severity === 'error' ? '错' : '警'}</b>
-              <span>{issue.message}</span>
-            </button>
-          ))}
-        </div>
         <div className="panel-resizer" onMouseDown={startLeft} aria-hidden />
       </aside>
 
       <main className="workspace">
         <header className="workspace-topbar">
-          <div className="topbar-cluster topbar-actions">
-            <div className="mode-switch mode-switch-compact">
-              {(['edit', 'wiring', 'debug'] as CanvasMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={`toolbar-btn ${canvasMode === mode ? 'active' : ''}`}
-                  onClick={() => changeCanvasMode(mode)}
-                >
-                  {canvasModeLabel[mode]}
-                </button>
-              ))}
-            </div>
-            <span className="topbar-sep" aria-hidden />
-            <button type="button" className="toolbar-btn primary" onClick={() => void save()} title="Ctrl+S">保存</button>
-            <button
-              type="button"
-              className="toolbar-btn"
-              onClick={() => void refreshProjectionAndValidation(data)}
-              title="重新计算 trigger/read 投影与校验，不重新加载页面"
-            >
-              刷新投影
-            </button>
-            <button
-              type="button"
-              className="toolbar-btn"
-              onClick={reloadNarrativeEditorPage}
-              title="重新加载 Web 画布（F5）。改完前端 build:narrative-editor 后使用"
-            >
-              重载页面
-            </button>
-            <button type="button" className="toolbar-btn" onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>删除</button>
-            <button
-              type="button"
-              className="toolbar-btn"
-              onClick={() => { setFitTargetNodeIds([]); setFitViewRev((v) => v + 1); }}
-              title="适应画布 (F)"
-            >
-              适应
-            </button>
-            <AddMenuDropdown items={addMenuItems} />
+          <div className="topbar-row topbar-cluster topbar-actions">
+            <ToolbarMenuDropdown
+              label={canvasModeLabel[canvasMode]}
+              items={modeMenuItems}
+              activeItemId={canvasMode}
+            />
+            <ToolbarMenuDropdown label="文件" items={fileMenuItems} />
+            <ToolbarMenuDropdown label="画布" items={canvasMenuItems} />
+            <ToolbarMenuDropdown label="添加" items={addMenuItems} />
             <span className="topbar-sep" aria-hidden />
             <button type="button" className="toolbar-btn" onClick={() => setLeftCollapsed((v) => !v)} title={leftCollapsed ? '展开左侧导航' : '收起左侧导航'}>
               {leftCollapsed ? '导航+' : '导航−'}
             </button>
             <button type="button" className="toolbar-btn" onClick={() => setRightCollapsed((v) => !v)} title={rightCollapsed ? '展开右侧属性' : '收起右侧属性'}>
               {rightCollapsed ? '属性+' : '属性−'}
+            </button>
+            <button type="button" className="toolbar-btn" onClick={() => setValidationCollapsed((v) => !v)} title={validationCollapsed ? '展开校验面板' : '收起校验面板'}>
+              {validationCollapsed ? '校验+' : '校验−'}
             </button>
             {(canvasMode === 'wiring' || canvasMode === 'debug') && (
               <ToolbarPopover label="图层" panelClassName="layers-popover-panel">
@@ -1019,54 +1075,98 @@ function NarrativeEditorInner() {
               onReset={resetPreferences}
             />
           </div>
-          <nav className="topbar-cluster topbar-path" aria-label="画布路径">
-            {graphRef !== 'main' && (
-              <span className="topbar-tag" title="独占编辑子图；主画布可双击子图元素展开或收起">独占</span>
-            )}
-            <div className="topbar-path-scroll">
-              {breadcrumbs.map((crumb, index) => (
-                <span key={`${crumb.label}-${index}`} className="breadcrumb-item">
-                  {index > 0 && <span className="breadcrumb-sep">›</span>}
-                  {crumb.onClick ? <button type="button" className="topbar-path-btn" onClick={crumb.onClick}>{crumb.label}</button> : <span className="topbar-path-text">{crumb.label}</span>}
-                </span>
-              ))}
-            </div>
-            {graphRef !== 'main' && (
-              <button
-                type="button"
-                className="toolbar-btn topbar-path-back"
-                onClick={() => { setGraphRef('main'); setSelectedId(''); setSelectedJson(''); }}
-              >
-                主画布
-              </button>
-            )}
-          </nav>
         </header>
 
-        <section className="canvas">
-          <NarrativeFlowCanvas
-            nodes={displayNodes}
-            edges={displayEdges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={selectNode}
-            onEdgeClick={selectEdge}
-            onNodeDragStop={onNodeDragStop}
-            onNodeDoubleClick={(_event, node) => {
-              if (!node.id.startsWith('element:')) return;
-              const eid = node.id.slice('element:'.length);
-              canvasActions.toggleSubgraphElement(eid);
-            }}
-            showMiniMap={showMiniMap}
-            canvasShowGrid={preferences.canvasShowGrid}
-            reduceMotion={preferences.reduceMotion}
-            fitViewRev={fitViewRev}
-            fitTargetNodeIds={fitTargetNodeIds}
-            compositionId={compositionId}
-            graphRef={graphRef}
-          />
-        </section>
+        <div className="workspace-body">
+          <section className="canvas">
+            <NarrativeFlowCanvas
+              nodes={displayNodes}
+              edges={displayEdges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={selectNode}
+              onEdgeClick={selectEdge}
+              onNodeDragStop={onNodeDragStop}
+              onNodeDoubleClick={(_event, node) => {
+                if (!node.id.startsWith('element:')) return;
+                const eid = node.id.slice('element:'.length);
+                canvasActions.toggleSubgraphElement(eid);
+              }}
+              showMiniMap={showMiniMap}
+              canvasShowGrid={preferences.canvasShowGrid}
+              reduceMotion={preferences.reduceMotion}
+              fitViewRev={fitViewRev}
+              fitTargetNodeIds={fitTargetNodeIds}
+              compositionId={compositionId}
+              graphRef={graphRef}
+            />
+          </section>
+
+          <aside
+            className={`validation-dock${validationCollapsed ? ' collapsed' : ''}`}
+            style={validationCollapsed ? undefined : { height: panelLayout.validationHeight }}
+          >
+            <div className="panel-resizer panel-resizer-top" onMouseDown={startValidation} aria-hidden />
+            <div className="validation-dock-head">
+              <span className="validation-dock-title">校验</span>
+              <button
+                type="button"
+                className={errorCount ? 'validation-pill error' : warningCount ? 'validation-pill warn' : 'validation-pill ok'}
+              >
+                {errorCount} 错误 / {warningCount} 警告{remoteSyncing ? ' · 同步中…' : ''}
+              </button>
+              <button type="button" className="validation-dock-toggle" onClick={() => setValidationCollapsed((v) => !v)}>
+                {validationCollapsed ? '展开' : '收起'}
+              </button>
+            </div>
+            {!validationCollapsed && (
+              <>
+                <div className="issue-filters">
+                  {(['all', 'error', 'warning', 'composition'] as IssueFilter[]).map((f) => (
+                    <button key={f} type="button" className={issueFilter === f ? 'active' : ''} onClick={() => setIssueFilter(f)}>
+                      {f === 'all' ? '全部' : f === 'error' ? '错误' : f === 'warning' ? '警告' : '当前编排'}
+                    </button>
+                  ))}
+                </div>
+                <div className="issue-list issue-list-dock">
+                  {filteredIssues.length === 0 ? (
+                    <div className="validation-dock-empty muted">无校验问题</div>
+                  ) : (
+                    filteredIssues.map((issue, index) => (
+                      <button key={`${issue.code}-${issue.path}-${index}`} type="button" className={`issue ${issue.severity}`} title={issue.path || validationTargetSummary(issue)} onClick={() => focusIssue(issue)}>
+                        <b>{issue.severity === 'error' ? '错' : '警'}</b>
+                        <span>{issue.message}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </aside>
+        </div>
+        <nav className="workspace-path-bar topbar-path-row topbar-path" aria-label="画布路径">
+          {graphRef !== 'main' && (
+            <span className="topbar-tag" title="独占编辑子图；主画布可双击子图元素展开或收起">独占</span>
+          )}
+          <div className="topbar-path-scroll">
+            {breadcrumbs.map((crumb, index) => (
+              <span key={`${crumb.label}-${index}`} className="breadcrumb-item">
+                {index > 0 && <span className="breadcrumb-sep">›</span>}
+                {crumb.onClick ? <button type="button" className="topbar-path-btn" onClick={crumb.onClick}>{crumb.label}</button> : <span className="topbar-path-text">{crumb.label}</span>}
+              </span>
+            ))}
+          </div>
+          {graphRef !== 'main' && (
+            <button
+              type="button"
+              className="toolbar-btn topbar-path-back"
+              onClick={() => { setGraphRef('main'); setSelectedId(''); setSelectedJson(''); }}
+            >
+              主画布
+            </button>
+          )}
+        </nav>
         <footer className="status">
           <span>{editorDirty ? `${status} *` : status}</span>
           <span>{dataSource || '来源未知'}</span>
@@ -1129,12 +1229,15 @@ function NarrativeEditorInner() {
                 onClick={() => {
                   setSelectedId(`transition:${tr.id}`);
                   setSelectedJson(JSON.stringify(tr, null, 2));
-                  setFitTargetNodeIds([`transition:${tr.id}`, `state:${tr.from}`]);
+                  setFitTargetNodeIds([
+                    transitionAnchorId(graph.id, tr.id),
+                    `state:${String(tr.from)}`,
+                  ]);
                   setFitViewRev((v) => v + 1);
                 }}
               >
                 <span>{String(tr.from)} → {String(tr.to)}</span>
-                <small>{tr.signal || '(无 signal)'}</small>
+                <small>{tr.signal === DEFAULT_DRAFT_SIGNAL ? '(草稿)' : (tr.signal || '(草稿)')}</small>
               </button>
             ))}
           </div>
@@ -1214,13 +1317,17 @@ function NarrativeFlowCanvas(props: {
     const duration = props.reduceMotion ? 0 : 220;
     const t = window.setTimeout(() => {
       if (props.fitTargetNodeIds.length) {
-        void fitView({ nodes: props.fitTargetNodeIds.map((id) => ({ id })), padding: 0.4, duration });
+        const existing = new Set(props.nodes.map((node) => node.id));
+        const targets = props.fitTargetNodeIds.filter((id) => existing.has(id));
+        if (targets.length) {
+          void fitView({ nodes: targets.map((id) => ({ id })), padding: 0.35, duration, maxZoom: 1.25 });
+        }
       } else {
         void fitView({ padding: 0.2, duration: props.reduceMotion ? 0 : 200 });
       }
-    }, 60);
+    }, 80);
     return () => window.clearTimeout(t);
-  }, [props.compositionId, props.graphRef, props.fitViewRev, props.fitTargetNodeIds, props.reduceMotion, fitView]);
+  }, [props.compositionId, props.graphRef, props.fitViewRev, props.fitTargetNodeIds, props.nodes, props.reduceMotion, fitView, props.nodes.length]);
 
   return (
     <ReactFlow
@@ -1228,6 +1335,7 @@ function NarrativeFlowCanvas(props: {
       edges={props.edges}
       nodeTypes={flowNodeTypes}
       edgeTypes={flowEdgeTypes}
+      defaultEdgeOptions={{ zIndex: 25 }}
       onNodesChange={props.onNodesChange}
       onEdgesChange={props.onEdgesChange}
       onConnect={props.onConnect}
@@ -1402,10 +1510,26 @@ function GraphInspector(props: {
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
   setStatus?: (status: string) => void;
 }) {
-  const { graph, updateCurrentGraph, catalog } = props;
+  const { graph, updateCurrentGraph, catalog, composition, graphRef } = props;
   const ownerChoices = ownerChoicesForGraph(graph, catalog);
+  const parentElement = graphRef !== 'main' ? getElementByGraphRef(composition, graphRef) : undefined;
+  const parentMeta = parentElement?.meta;
   return (
     <div className="form-grid">
+      {parentElement && (
+        <>
+          <div className="property-line">父元素：{parentElement.label || parentElement.id}（{elementSubtitle(parentElement)}）</div>
+          {(parentElement.ownerType || parentElement.ownerId) && (
+            <div className="property-line">绑定：{parentElement.ownerType || 'entity'} / {parentElement.ownerId || '—'}</div>
+          )}
+          {(parentMeta?.emits?.length ?? 0) > 0 && (
+            <div className="property-line">emits：{(parentMeta?.emits ?? []).join(', ')}</div>
+          )}
+          {(parentMeta?.reads?.length ?? 0) > 0 && (
+            <div className="property-line">reads：{(parentMeta?.reads ?? []).join(', ')}</div>
+          )}
+        </>
+      )}
       <TextField
         label="graph id"
         value={graph.id}
@@ -1471,6 +1595,17 @@ function StateInspector(props: {
         <input type="checkbox" checked={graph.initialState === stateId} onChange={(e) => e.target.checked && updateCurrentGraph((g) => { g.initialState = stateId; })} />
         initialState
       </label>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={state.broadcastOnEnter === true}
+          onChange={(e) => updateCurrentGraph((g) => { g.states[stateId].broadcastOnEnter = e.target.checked; })}
+        />
+        进入时广播派生信号
+      </label>
+      {state.broadcastOnEnter === true && (
+        <ReadOnlyField label="derived signal" value={stateEnteredSignalKey(graph.id, stateId)} />
+      )}
       <ActionListField
         label="onEnterActions"
         actions={state.onEnterActions ?? []}
@@ -1497,12 +1632,14 @@ function TransitionInspector(props: {
   knownSignals: string[];
   graphIds: string[];
   statesByGraph: Record<string, string[]>;
+  updateData: (updater: (next: NarrativeGraphsFileDef) => void) => void;
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
   setSelectedId: (id: string) => void;
   setStatus: (status: string) => void;
   deleteSelected: () => void;
 }) {
-  const { graph, transition, updateCurrentGraph, knownSignals } = props;
+  const { graph, transition, updateCurrentGraph } = props;
+  const [pickerOpen, setPickerOpen] = useState(false);
   const stateChoices = Object.keys(graph.states);
   const legacyEndpoint = typeof transition.from !== 'string' || typeof transition.to !== 'string';
   return (
@@ -1534,10 +1671,24 @@ function TransitionInspector(props: {
       />
       <div className="property-line">
         {legacyEndpoint
-          ? 'Unsupported legacy cross-graph endpoint. Choose local states; express graph-to-graph effects with external:state or emitNarrativeSignal.'
+          ? 'Unsupported legacy cross-graph endpoint. Choose local states; express graph-to-graph effects with signals, state broadcasts, or projection metadata.'
           : 'Transitions only move between states inside this graph.'}
       </div>
-      <TextField label="signal" value={transition.signal} datalistId="knownSignals" datalistValues={props.knownSignals} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = value; })} />
+      <div className="property-line">
+        <label>signal</label>
+        <div className="signal-field-row">
+          <input readOnly value={transition.signal || DEFAULT_DRAFT_SIGNAL} />
+          <button type="button" onClick={() => setPickerOpen(true)}>选择信号…</button>
+        </div>
+      </div>
+      <SignalPickerModal
+        open={pickerOpen}
+        data={props.data}
+        currentSignal={transition.signal}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(signalId) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = signalId; })}
+        onDataChange={props.updateData}
+      />
       <NumberField label="priority" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).priority = value; })} />
       <ConditionBuilder
         value={transition.conditions ?? []}

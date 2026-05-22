@@ -7,7 +7,7 @@ import type {
   RuntimeSignalRequestDef,
   ValidationIssueDef,
 } from './types';
-import { emptyCatalog, validateNarrativeData } from './editorModel';
+import { emptyCatalog, mergeValidationIssues, validateNarrativeData } from './editorModel';
 
 const DRAFT_STORAGE_KEY = 'narrative-editor-draft';
 
@@ -103,7 +103,7 @@ export function reloadNarrativeEditorPage(): void {
 export async function saveNarrativeData(data: NarrativeGraphsFileDef): Promise<string> {
   const bridge = await waitForBridge();
   const payload = JSON.stringify(data);
-  const issues = await validateNarrativeDataRemote(data);
+  const issues = mergeValidationIssues(validateNarrativeData(data), await validateNarrativeDataRemote(data));
   const errorCount = issues.filter((issue) => issue.severity === 'error').length;
   if (errorCount > 0) return `save blocked: ${errorCount} validation error(s)`;
   if (!bridge) {

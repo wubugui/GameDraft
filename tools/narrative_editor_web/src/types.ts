@@ -24,11 +24,17 @@ export interface NarrativeStateNodeDef {
   id: string;
   label?: string;
   description?: string;
+  /** When true, entering this state auto-emits derived signal state:<graphId>:<stateId>. */
+  broadcastOnEnter?: boolean;
   onEnterActions?: ActionDef[];
   onExitActions?: ActionDef[];
   meta?: Record<string, unknown>;
 }
 
+/**
+ * Graph-local state id. Transitions never target another graph directly; cross-graph
+ * effects must be modeled with signals, state broadcasts, or projection metadata.
+ */
 export type NarrativeEndpointDef = string;
 
 export interface NarrativeTransitionDef {
@@ -73,8 +79,43 @@ export interface NarrativeCompositionDef {
   elements?: CompositionElementDef[];
 }
 
+export interface NarrativeAuthorSignalDef {
+  id: string;
+  label?: string;
+  notes?: string;
+}
+
+export type SignalCatalogKind = 'author' | 'derived' | 'draft';
+
+export interface SignalCatalogEntryDef {
+  id: string;
+  kind: SignalCatalogKind;
+  label?: string;
+  notes?: string;
+  graphId?: string;
+  stateId?: string;
+  listeners: number;
+  emitters: number;
+  editable: boolean;
+}
+
+export interface SignalListenerRefDef {
+  compositionId: string;
+  graphId: string;
+  transitionId: string;
+  from: string;
+  to: string;
+}
+
+export interface SignalEmitterRefDef {
+  kind: string;
+  refId: string;
+  detail: string;
+}
+
 export interface NarrativeGraphsFileDef {
   schemaVersion?: number;
+  signals?: NarrativeAuthorSignalDef[];
   compositions?: NarrativeCompositionDef[];
 }
 
@@ -107,12 +148,21 @@ export interface ProjectionWarningDef {
   detail?: string;
 }
 
+export type ValidationTargetDef =
+  | { kind: 'composition'; compositionId: string; field?: string }
+  | { kind: 'graph'; compositionId: string; graphId: string; elementId?: string; field?: string }
+  | { kind: 'element'; compositionId: string; elementId: string; field?: string }
+  | { kind: 'state'; compositionId: string; graphId: string; stateId: string; elementId?: string; field?: string }
+  | { kind: 'transition'; compositionId: string; graphId: string; transitionId: string; elementId?: string; field?: string }
+  | { kind: 'signal'; signalId: string; field?: string };
+
 export interface ValidationIssueDef {
   severity: 'error' | 'warning';
   code: string;
   message: string;
   path?: string;
   itemId?: string;
+  target?: ValidationTargetDef;
 }
 
 export interface AuthoringCatalogDef {
