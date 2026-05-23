@@ -767,11 +767,11 @@ function NarrativeEditorInner() {
       setStatus('Signal is empty');
       return;
     }
-    const result = simulateSignalImpact(data, key);
+    const result = simulateSignalImpact(data, key, extractActiveStates(runtimeSnapshot) ?? undefined);
     setSimulation(result);
     setRuntimeSnapshot({ ok: false, reason: 'Showing local simulation' });
     setStatus(`Simulated ${result.recentTransitions.length} transition(s)`);
-  }, [data, signalKey]);
+  }, [data, runtimeSnapshot, signalKey]);
 
   const pullRuntimeSnapshot = useCallback(async () => {
     const result = await getRuntimeSnapshot();
@@ -1915,10 +1915,35 @@ function ExternalWiringInspector({ edge }: { edge: ProjectionEdgeDef }) {
 
 function PreviewPanel({ simulation, runtimeSnapshot }: { simulation: SimulationResult | null; runtimeSnapshot: RuntimeDebugSnapshotDef }) {
   const activeStates = extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? {};
+  const narrativeState = runtimeSnapshot.ok && runtimeSnapshot.snapshot && typeof runtimeSnapshot.snapshot === 'object'
+    ? (runtimeSnapshot.snapshot as { narrativeState?: { recentTransitions?: unknown[]; recentIssues?: unknown[] } }).narrativeState
+    : null;
+  const runtimeTransitions = Array.isArray(narrativeState?.recentTransitions) ? narrativeState.recentTransitions.slice(-8) : [];
+  const runtimeIssues = Array.isArray(narrativeState?.recentIssues) ? narrativeState.recentIssues.slice(-8) : [];
   return (
     <div className="preview-panel">
       <div className="section-title">Active States</div>
       <pre>{Object.keys(activeStates).length ? JSON.stringify(activeStates, null, 2) : '(none)'}</pre>
+      {runtimeTransitions.length > 0 && (
+        <>
+          <div className="section-title">Runtime Transitions</div>
+          <div className="timeline">
+            {runtimeTransitions.map((item, index) => (
+              <div key={index} className="log">{formatRuntimeTransition(item)}</div>
+            ))}
+          </div>
+        </>
+      )}
+      {runtimeIssues.length > 0 && (
+        <>
+          <div className="section-title">Runtime Issues</div>
+          <div className="timeline">
+            {runtimeIssues.map((item, index) => (
+              <div key={index} className="log">{formatRuntimeIssue(item)}</div>
+            ))}
+          </div>
+        </>
+      )}
       {simulation && (
         <>
           <div className="section-title">Simulation Log</div>
@@ -1929,6 +1954,26 @@ function PreviewPanel({ simulation, runtimeSnapshot }: { simulation: SimulationR
       )}
     </div>
   );
+}
+
+function formatRuntimeTransition(item: unknown): string {
+  if (!item || typeof item !== 'object') return String(item ?? '');
+  const transition = item as Record<string, unknown>;
+  const graphId = String(transition.graphId ?? '?');
+  const transitionId = String(transition.transitionId ?? '?');
+  const from = String(transition.from ?? '?');
+  const to = String(transition.to ?? '?');
+  const triggerKey = String(transition.triggerKey ?? '');
+  return `${graphId}: ${from} -> ${to} via ${transitionId}${triggerKey ? ` (${triggerKey})` : ''}`;
+}
+
+function formatRuntimeIssue(item: unknown): string {
+  if (!item || typeof item !== 'object') return String(item ?? '');
+  const issue = item as Record<string, unknown>;
+  const severity = String(issue.severity ?? 'issue');
+  const code = String(issue.code ?? 'unknown');
+  const message = String(issue.message ?? '');
+  return message ? `${severity}: ${code} - ${message}` : `${severity}: ${code}`;
 }
 
 

@@ -612,6 +612,8 @@ export class NarrativeStateManager implements IGameSystem {
     const graph = this.graphs.get(graphId);
     const transition = graph?.transitions.find(t => t.id === transitionId);
     if (graph && transition?.trigger) {
+      const active = this.activeStates.get(graphId) ?? graph.initialState;
+      if (transition.from !== active) return;
       if (this.evaluateReactiveConditions(transition)) {
         await this.applyTransition(graph, transition, '__reactive__');
       }

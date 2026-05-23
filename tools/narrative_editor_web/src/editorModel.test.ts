@@ -130,6 +130,41 @@ describe('editorModel', () => {
     expect(result.recentTransitions.map((t) => t.transitionId)).toEqual(['go', 'after']);
   });
 
+  it('simulates from supplied runtime active states when available', () => {
+    const data = normalizeFile(sample());
+    data.compositions![0]!.mainGraph.transitions.push({ id: 'back', from: 'b', to: 'a', signal: 'back' });
+    const result = simulateSignalImpact(data, 'back', { flow: 'b', npc: 'before' });
+    expect(result.activeStates.flow).toBe('a');
+    expect(result.recentTransitions.map((t) => t.transitionId)).toEqual(['back']);
+  });
+
+  it('guards local simulation against reactive transition loops', () => {
+    const data = normalizeFile(sample());
+    const flow = data.compositions![0]!.mainGraph;
+    flow.transitions = [
+      {
+        id: 'to_b',
+        from: 'a',
+        to: 'b',
+        signal: '__draft__',
+        trigger: 'reactiveAll',
+        conditions: [{ narrative: 'flow', state: 'a' }],
+      },
+      {
+        id: 'to_a',
+        from: 'b',
+        to: 'a',
+        signal: '__draft__',
+        trigger: 'reactiveAll',
+        conditions: [{ narrative: 'flow', state: 'b' }],
+      },
+    ];
+
+    const result = simulateSignalImpact(data, 'noop');
+    expect(result.loopGuardTripped).toBe(true);
+    expect(result.log.at(-1)).toBe('loop guard tripped at 128 reactive transitions');
+  });
+
   it('does not simulate legacy cross-graph transition endpoints', () => {
     const data = normalizeFile(sample());
     const comp = data.compositions![0]!;

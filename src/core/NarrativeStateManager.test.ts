@@ -400,6 +400,7 @@ describe('NarrativeStateManager', () => {
       'npc_ringboy',
       'quest_return_ring',
       'flow_1',
+      'wrapper_graph_1',
     ]);
     narrative.registerGraphs(graphs);
     narrative.emitNarrativeSignal({ sourceType: 'dialogue', sourceId: 'dock_board', signal: 'board_read_done' });

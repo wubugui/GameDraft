@@ -537,20 +537,28 @@ function parseLegacyExternalSignalKey(key: string): null | { sourceType: string;
   }
 }
 
-export function simulateSignalImpact(dataRaw: NarrativeGraphsFileDef, triggerKey: string): SimulationResult {
+export function simulateSignalImpact(
+  dataRaw: NarrativeGraphsFileDef,
+  triggerKey: string,
+  initialActiveStates?: Record<string, string>,
+): SimulationResult {
+  const maxSteps = 128;
   const data = normalizeFile(dataRaw);
   const graphs = compileGraphs(data).map((g) => g.graph);
   const graphMap = new Map(graphs.map((graph) => [graph.id, graph]));
-  const activeStates = Object.fromEntries(graphs.map((graph) => [graph.id, graph.initialState]));
+  const activeStates = Object.fromEntries(graphs.map((graph) => {
+    const active = initialActiveStates?.[graph.id];
+    return [graph.id, active && graph.states?.[active] ? active : graph.initialState];
+  }));
   const queue = [triggerKey].filter(Boolean);
   const recentTransitions: SimulationTransitionRecord[] = [];
   const log: string[] = [];
   let loopGuardTripped = false;
 
   for (let steps = 0; queue.length > 0; steps += 1) {
-    if (steps > 128) {
+    if (steps >= maxSteps) {
       loopGuardTripped = true;
-      log.push('loop guard tripped at 128 queued triggers');
+      log.push(`loop guard tripped at ${maxSteps} queued triggers`);
       queue.length = 0;
       break;
     }
@@ -595,7 +603,15 @@ export function simulateSignalImpact(dataRaw: NarrativeGraphsFileDef, triggerKey
 
     // Evaluate reactive transitions after each signal step
     let reactiveFired = true;
+    let reactiveSteps = 0;
     while (reactiveFired) {
+      if (reactiveSteps >= maxSteps) {
+        loopGuardTripped = true;
+        log.push(`loop guard tripped at ${maxSteps} reactive transitions`);
+        queue.length = 0;
+        break;
+      }
+      reactiveSteps += 1;
       reactiveFired = false;
       for (const graph of graphs) {
         const active = activeStates[graph.id] ?? graph.initialState;

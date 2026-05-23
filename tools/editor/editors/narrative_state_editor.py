@@ -527,13 +527,76 @@ class NarrativeEditorBridge(QObject):
         run_js_result = getattr(game, "run_js_result", None)
         if not callable(run_js_result):
             return {"ok": False, "reason": "Game window does not support JS return values"}
+        token = os.urandom(8).hex()
+        token_js = json.dumps(token)
+        wrapped = (
+            "(() => {"
+            f"const token = {token_js};"
+            "const store = window.__narrativeEditorRuntimeResults || (window.__narrativeEditorRuntimeResults = {});"
+            "const pack = (value) => {"
+            "try { return JSON.stringify(value ?? null); }"
+            "catch (err) { return JSON.stringify({ok:false, reason:'Runtime result is not JSON serializable: ' + String((err && (err.message || err)) || err)}); }"
+            "};"
+            "try {"
+            f"Promise.resolve({code}).then("
+            "value => { store[token] = {done:true, json:pack(value)}; },"
+            "err => { store[token] = {done:true, json:pack({ok:false, reason:String((err && (err.stack || err.message)) || err)})}; }"
+            ");"
+            "} catch (err) {"
+            "store[token] = {done:true, json:pack({ok:false, reason:String((err && (err.stack || err.message)) || err)})};"
+            "}"
+            "return JSON.stringify({ok:true, token});"
+            "})()"
+        )
+        poll = (
+            "(() => {"
+            "const store = window.__narrativeEditorRuntimeResults || {};"
+            f"const entry = store[{token_js}];"
+            "if (!entry) return JSON.stringify({done:false});"
+            f"delete store[{token_js}];"
+            "return JSON.stringify(entry);"
+            "})()"
+        )
         try:
-            value = run_js_result(code)
+            initial_raw = run_js_result(wrapped)
         except Exception as exc:
             return {"ok": False, "reason": f"runtime JS failed: {exc}"}
-        if isinstance(value, dict):
-            return value
-        return {"ok": False, "reason": "Runtime returned an empty result"}
+        if not isinstance(initial_raw, str):
+            return {"ok": False, "reason": "Runtime did not return a JSON start token"}
+        try:
+            initial = json.loads(initial_raw)
+        except Exception as exc:
+            return {"ok": False, "reason": f"Runtime returned invalid start token: {exc}"}
+        if not isinstance(initial, dict) or not initial.get("ok"):
+            return {"ok": False, "reason": "Runtime did not start JS result capture"}
+        for _ in range(60):
+            try:
+                polled_raw = run_js_result(poll, 250)
+            except TypeError:
+                polled_raw = run_js_result(poll)
+            except Exception as exc:
+                return {"ok": False, "reason": f"runtime JS poll failed: {exc}"}
+            if not isinstance(polled_raw, str):
+                return {"ok": False, "reason": "Runtime returned an empty poll result"}
+            try:
+                polled = json.loads(polled_raw)
+            except Exception as exc:
+                return {"ok": False, "reason": f"Runtime returned invalid poll JSON: {exc}"}
+            if isinstance(polled, dict) and polled.get("done"):
+                raw = polled.get("json")
+                if not isinstance(raw, str) or not raw:
+                    return {"ok": False, "reason": "Runtime returned an empty result"}
+                try:
+                    value = json.loads(raw)
+                except Exception as exc:
+                    return {"ok": False, "reason": f"Runtime returned invalid JSON: {exc}"}
+                if isinstance(value, dict):
+                    return value
+                return {"ok": False, "reason": "Runtime returned a non-object result"}
+            loop = QEventLoop()
+            QTimer.singleShot(50, loop.quit)
+            loop.exec()
+        return {"ok": False, "reason": "Runtime JS timed out"}
 
 
 class NarrativeStateEditor(QWidget):
