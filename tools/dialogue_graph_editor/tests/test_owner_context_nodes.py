@@ -60,6 +60,7 @@ class OwnerContextNodeTests(unittest.TestCase):
     def test_default_owner_state_node(self) -> None:
         node = default_node("ownerState", {})
         self.assertEqual(node["type"], "ownerState")
+        self.assertIn("wrapperGraphId", node)
         self.assertIn("cases", node)
         self.assertIn("defaultNext", node)
 
@@ -398,6 +399,46 @@ class OwnerContextNodeTests(unittest.TestCase):
 
         inspector.deleteLater()
 
+    def test_owner_state_inspector_persists_wrapper_graph_id(self) -> None:
+        root = Path(__file__).resolve().parents[3]
+        inspector = NodeInspector(
+            lambda: ["root", "hit", "fallback"],
+            project_root=root,
+            project_model_getter=lambda: object(),
+            dialogue_graph_id_getter=lambda: "dlg_x",
+        )
+        with patch("tools.editor.shared.narrative_catalog.resolve_owner_wrapper_states") as resolver:
+            resolver.return_value = {
+                "stateIds": ["before_event", "after_event"],
+                "wrappers": [
+                    {
+                        "graphId": "npc_ringboy_main",
+                        "ownerType": "npc",
+                        "ownerId": "npc_ringboy",
+                        "stateIds": ["before_event", "after_event"],
+                    }
+                ],
+                "ambiguous": False,
+                "message": "ok",
+            }
+            inspector.set_node(
+                "root",
+                {
+                    "type": "ownerState",
+                    "wrapperGraphId": "",
+                    "cases": [{"state": "before_event", "next": "hit"}],
+                    "defaultNext": "fallback",
+                    "missingWrapperNext": "fallback",
+                },
+            )
+            refs = inspector._topology_refs
+            wrapper_edit = refs["wrapper_graph_id_edit"]
+            wrapper_edit.setText("npc_ringboy_main")
+            node = inspector.get_node()
+            self.assertEqual(node["type"], "ownerState")
+            self.assertEqual(node["wrapperGraphId"], "npc_ringboy_main")
+        inspector.deleteLater()
+
     def test_rejects_set_narrative_state_in_run_actions(self) -> None:
         data = {
             "schemaVersion": 1,
@@ -433,6 +474,150 @@ class OwnerContextNodeTests(unittest.TestCase):
         }
         errors, _ = validate_graph_tiered(data, project_root=Path(__file__).resolve().parents[3])
         self.assertTrue(any("不允许读取" in e for e in errors))
+
+    def test_owner_state_warns_when_multi_wrapper_without_wrapper_graph_id(self) -> None:
+        data = {
+            "schemaVersion": 1,
+            "id": "dlg_x",
+            "entry": "root",
+            "nodes": {
+                "root": {
+                    "type": "ownerState",
+                    "cases": [{"state": "before_event", "next": "end"}],
+                    "defaultNext": "end",
+                    "missingWrapperNext": "end",
+                },
+                "end": {"type": "end"},
+            },
+        }
+        with patch("tools.editor.shared.narrative_catalog.resolve_owner_wrapper_states") as resolver:
+            resolver.return_value = {
+                "stateIds": ["before_event", "after_event"],
+                "wrappers": [
+                    {"graphId": "npc_ringboy_main", "stateIds": ["before_event"]},
+                    {"graphId": "npc_ringboy_quest", "stateIds": ["after_event"]},
+                ],
+                "ambiguous": False,
+                "message": "ok",
+            }
+            errors, warnings = validate_graph_tiered(
+                data,
+                project_root=Path(__file__).resolve().parents[3],
+                project_model=object(),
+            )
+        self.assertFalse(errors)
+        self.assertTrue(any("未设置 wrapperGraphId" in w for w in warnings))
+
+    def test_owner_state_rejects_missing_wrapper_graph_id_target(self) -> None:
+        data = {
+            "schemaVersion": 1,
+            "id": "dlg_x",
+            "entry": "root",
+            "nodes": {
+                "root": {
+                    "type": "ownerState",
+                    "wrapperGraphId": "missing_graph",
+                    "cases": [{"state": "before_event", "next": "end"}],
+                    "defaultNext": "end",
+                    "missingWrapperNext": "end",
+                },
+                "end": {"type": "end"},
+            },
+        }
+        with patch("tools.editor.shared.narrative_catalog.resolve_owner_wrapper_states") as resolver, \
+             patch("tools.editor.shared.narrative_catalog.graph_info") as graph_info:
+            resolver.return_value = {
+                "stateIds": ["before_event"],
+                "wrappers": [{"graphId": "npc_ringboy_main", "stateIds": ["before_event"]}],
+                "ambiguous": False,
+                "message": "ok",
+            }
+            graph_info.return_value = None
+            errors, warnings = validate_graph_tiered(
+                data,
+                project_root=Path(__file__).resolve().parents[3],
+                project_model=object(),
+            )
+        self.assertTrue(any("指向不存在的 wrapper graph" in e for e in errors))
+        self.assertFalse(any("不一致" in w for w in warnings))
+
+    def test_owner_state_rejects_non_wrapper_graph_id_target(self) -> None:
+        data = {
+            "schemaVersion": 1,
+            "id": "dlg_x",
+            "entry": "root",
+            "nodes": {
+                "root": {
+                    "type": "ownerState",
+                    "wrapperGraphId": "flow_dock",
+                    "cases": [{"state": "ready", "next": "end"}],
+                    "defaultNext": "end",
+                    "missingWrapperNext": "end",
+                },
+                "end": {"type": "end"},
+            },
+        }
+        with patch("tools.editor.shared.narrative_catalog.resolve_owner_wrapper_states") as resolver, \
+             patch("tools.editor.shared.narrative_catalog.graph_info") as graph_info:
+            resolver.return_value = {
+                "stateIds": ["before_event"],
+                "wrappers": [{"graphId": "npc_ringboy_main", "stateIds": ["before_event"]}],
+                "ambiguous": False,
+                "message": "ok",
+            }
+            graph_info.return_value = {
+                "graphId": "flow_dock",
+                "kind": "mainGraph",
+                "ownerType": "flow",
+                "ownerId": "dock",
+                "stateIds": ["ready"],
+            }
+            errors, warnings = validate_graph_tiered(
+                data,
+                project_root=Path(__file__).resolve().parents[3],
+                project_model=object(),
+            )
+        self.assertTrue(any("不是 wrapperGraph" in e for e in errors))
+        self.assertFalse(any("与当前对话 owner 不一致" in w for w in warnings))
+
+    def test_owner_state_warns_when_wrapper_graph_cross_owner(self) -> None:
+        data = {
+            "schemaVersion": 1,
+            "id": "dlg_x",
+            "entry": "root",
+            "nodes": {
+                "root": {
+                    "type": "ownerState",
+                    "wrapperGraphId": "npc_other_wrapper",
+                    "cases": [{"state": "other_state", "next": "end"}],
+                    "defaultNext": "end",
+                    "missingWrapperNext": "end",
+                },
+                "end": {"type": "end"},
+            },
+        }
+        with patch("tools.editor.shared.narrative_catalog.resolve_owner_wrapper_states") as resolver, \
+             patch("tools.editor.shared.narrative_catalog.graph_info") as graph_info:
+            resolver.return_value = {
+                "stateIds": ["before_event"],
+                "wrappers": [{"graphId": "npc_ringboy_main", "stateIds": ["before_event"]}],
+                "ambiguous": False,
+                "message": "ok",
+            }
+            graph_info.return_value = {
+                "graphId": "npc_other_wrapper",
+                "kind": "wrapperGraph",
+                "ownerType": "npc",
+                "ownerId": "npc_other",
+                "stateIds": ["other_state"],
+            }
+            errors, warnings = validate_graph_tiered(
+                data,
+                project_root=Path(__file__).resolve().parents[3],
+                project_model=object(),
+            )
+        self.assertFalse(any("指向不存在的 wrapper graph" in e for e in errors))
+        self.assertTrue(any("与当前对话 owner 不一致" in w for w in warnings))
 
 
 if __name__ == "__main__":

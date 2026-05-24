@@ -133,6 +133,7 @@
             "id": "npc_ringboy",
             "ownerType": "npc",
             "ownerId": "npc_ringboy",
+            "category": "水猴子事件状态",
             "initialState": "before_event",
             "states": {
               "before_event": {
@@ -249,6 +250,7 @@
             "id": "quest_return_ring",
             "ownerType": "quest",
             "ownerId": "支线-归还小孩铁环-归还铁环",
+            "category": "归还铁环任务",
             "initialState": "inactive",
             "states": {
               "inactive": {
@@ -381,6 +383,7 @@
           "graph": {
             "id": "wrapper_graph_1",
             "ownerType": "npc",
+            "category": "示例包装",
             "initialState": "initial",
             "states": {
               "initial": {

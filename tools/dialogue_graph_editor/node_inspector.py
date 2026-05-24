@@ -326,6 +326,11 @@ class NodeInspector(QWidget):
                 gid = refs.get("graph_id_edit")
                 if isinstance(gid, QComboBox):
                     gid.setCurrentText(str(node_data.get("graphId", "")))
+                wid = refs.get("wrapper_graph_id_edit")
+                if isinstance(wid, QComboBox):
+                    wid.setCurrentText(str(node_data.get("wrapperGraphId", "")))
+                elif isinstance(wid, QLineEdit):
+                    wid.setText(str(node_data.get("wrapperGraphId", "")))
         finally:
             self._suppress_change_emit = False
 
@@ -2336,7 +2341,68 @@ class NodeInspector(QWidget):
             warn.setStyleSheet("color: #b45309;")
             self._body_layout.addWidget(warn)
 
-        state_ids = [str(x) for x in (info.get("stateIds") or [])]
+        wrappers = [w for w in (info.get("wrappers") or []) if isinstance(w, dict)]
+        wrapper_map: dict[str, dict[str, Any]] = {}
+        wrapper_order: list[str] = []
+        for wrapper in wrappers:
+            gid = str(wrapper.get("graphId", "") or "").strip()
+            if not gid or gid in wrapper_map:
+                continue
+            wrapper_map[gid] = wrapper
+            wrapper_order.append(gid)
+
+        selected_wrapper_id = str(data.get("wrapperGraphId", "") or "").strip()
+        if not selected_wrapper_id and len(wrapper_order) == 1:
+            selected_wrapper_id = wrapper_order[0]
+
+        row_wid = QHBoxLayout()
+        row_wid.addWidget(QLabel("wrapperGraphId", self._body))
+        wrapper_edit = QLineEdit(selected_wrapper_id, self._body)
+        wrapper_edit.setPlaceholderText("选择或输入 wrapper graphId")
+        row_wid.addWidget(wrapper_edit, 1)
+        btn_pick_wrapper = QPushButton("选择 wrapper…", self._body)
+        row_wid.addWidget(btn_pick_wrapper)
+        self._body_layout.addLayout(row_wid)
+
+        wrapper_detail = QLabel(self._body)
+        wrapper_detail.setWordWrap(True)
+        wrapper_detail.setStyleSheet("color: #9fb0bf;")
+        self._body_layout.addWidget(wrapper_detail)
+
+        def _current_wrapper_graph_id() -> str:
+            return wrapper_edit.text().strip()
+
+        def _wrapper_detail_text(gid: str) -> str:
+            wrapper = wrapper_map.get(gid)
+            if not wrapper:
+                return "未选择 wrapperGraph；多 wrapper 实体下运行时会走 missingWrapperNext/defaultNext。"
+            owner_type = str(wrapper.get("ownerType", "") or "").strip()
+            owner_id = str(wrapper.get("ownerId", "") or "").strip()
+            category = str(wrapper.get("category", "") or "").strip()
+            comp = str(wrapper.get("compositionLabel", "") or wrapper.get("compositionId", "") or "").strip()
+            element = str(wrapper.get("elementLabel", "") or wrapper.get("elementId", "") or "").strip()
+            states = [str(x) for x in (wrapper.get("stateIds") or []) if str(x).strip()]
+            parts = [
+                f"实体：{owner_type}:{owner_id}" if owner_type or owner_id else "",
+                f"分类：{category}" if category else "分类：未填写",
+                f"编排：{comp}" if comp else "",
+                f"元素：{element}" if element else "",
+                f"状态：{', '.join(states)}" if states else "状态：无",
+            ]
+            return "　".join(part for part in parts if part)
+
+        def _refresh_wrapper_detail() -> None:
+            wrapper_detail.setText(_wrapper_detail_text(_current_wrapper_graph_id()))
+
+        def _state_ids_for_wrapper(gid: str) -> list[str]:
+            g = str(gid or "").strip()
+            if g:
+                hit = wrapper_map.get(g)
+                if isinstance(hit, dict):
+                    return [str(x) for x in (hit.get("stateIds") or []) if str(x).strip()]
+            return [str(x) for x in (info.get("stateIds") or []) if str(x).strip()]
+
+        state_ids = _state_ids_for_wrapper(selected_wrapper_id)
         btn_refresh = QPushButton("刷新 wrapper 状态列表", self._body)
         self._body_layout.addWidget(btn_refresh)
 
@@ -2346,9 +2412,7 @@ class NodeInspector(QWidget):
             include_missing=True,
         )
 
-        def refresh_states() -> None:
-            refreshed = self._owner_wrapper_state_options()
-            ids = [str(x) for x in (refreshed.get("stateIds") or [])]
+        def _apply_state_options(ids: list[str]) -> None:
             for row in case_rows:
                 cb = row.get("state_edit")
                 if not isinstance(cb, QComboBox):
@@ -2363,16 +2427,69 @@ class NodeInspector(QWidget):
                     cb.setCurrentText(cur)
                 finally:
                     cb.blockSignals(False)
+
+        def refresh_states() -> None:
+            nonlocal info
+            refreshed = self._owner_wrapper_state_options()
+            info = refreshed
+            wrappers2 = [w for w in (refreshed.get("wrappers") or []) if isinstance(w, dict)]
+            new_map: dict[str, dict[str, Any]] = {}
+            new_order: list[str] = []
+            for wrapper in wrappers2:
+                gid = str(wrapper.get("graphId", "") or "").strip()
+                if not gid or gid in new_map:
+                    continue
+                new_map[gid] = wrapper
+                new_order.append(gid)
+
+            cur_gid = _current_wrapper_graph_id()
+            wrapper_map.clear()
+            wrapper_map.update(new_map)
+            wrapper_order.clear()
+            wrapper_order.extend(new_order)
+            wrapper_edit.setText(cur_gid)
+
+            ids = _state_ids_for_wrapper(_current_wrapper_graph_id())
+            _apply_state_options(ids)
+            _refresh_wrapper_detail()
             self._emit_changed()
 
+        def on_wrapper_changed(_t: str = "") -> None:
+            ids = _state_ids_for_wrapper(_current_wrapper_graph_id())
+            _apply_state_options(ids)
+            _refresh_wrapper_detail()
+            self._emit_changed()
+
+        def pick_wrapper() -> None:
+            from .wrapper_graph_picker_dialog import WrapperGraphPickerDialog
+
+            dlg = WrapperGraphPickerDialog(
+                [wrapper_map[gid] for gid in wrapper_order if gid in wrapper_map],
+                initial_id=_current_wrapper_graph_id(),
+                parent=self,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            wrapper_edit.setText(dlg.selected_id())
+
+        wrapper_edit.textChanged.connect(on_wrapper_changed)
+        btn_pick_wrapper.clicked.connect(pick_wrapper)
         btn_refresh.clicked.connect(refresh_states)
+        _refresh_wrapper_detail()
         self._topology_refs = {
             "type": "ownerState",
             "case_rows": case_rows,
             "default_next": dn,
             "missing_next": missing_next,
+            "wrapper_graph_id_edit": wrapper_edit,
         }
-        self._getter = build_getter("ownerState")
+
+        def getter() -> dict[str, Any]:
+            base = build_getter("ownerState")()
+            base["wrapperGraphId"] = _current_wrapper_graph_id()
+            return base
+
+        self._getter = getter
 
     def _build_context_state(self, data: dict[str, Any]) -> None:
         from tools.editor.shared.narrative_catalog import (

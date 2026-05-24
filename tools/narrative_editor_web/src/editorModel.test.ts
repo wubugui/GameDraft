@@ -300,7 +300,7 @@ describe('editorModel', () => {
     });
   });
 
-  it('reports duplicate owner bindings as error', () => {
+  it('reports multi-wrapper owner bindings as warning', () => {
     const issues = validateNarrativeData({
       schemaVersion: 2,
       compositions: [{
@@ -344,7 +344,62 @@ describe('editorModel', () => {
         ],
       }],
     });
-    expect(issues.some((issue) => issue.code === 'owner.wrapper.duplicate' && issue.severity === 'error')).toBe(true);
+    expect(issues.some((issue) => issue.code === 'owner.wrapper.multi' && issue.severity === 'warning')).toBe(true);
+  });
+
+  it('does not report owner wrapper warnings for non-wrapper graphs', () => {
+    const issues = validateNarrativeData({
+      schemaVersion: 2,
+      compositions: [
+        {
+          id: 'comp_a',
+          mainGraph: {
+            id: 'flow_a',
+            ownerType: 'flow',
+            ownerId: 'shared_flow_owner',
+            initialState: 'idle',
+            states: { idle: { id: 'idle' } },
+            transitions: [],
+          },
+          elements: [{
+            id: 'scenario_a',
+            kind: 'scenarioSubgraph',
+            graph: {
+              id: 'scenario_a_graph',
+              ownerType: 'scenario',
+              ownerId: 'shared_scenario_owner',
+              initialState: 'idle',
+              states: { idle: { id: 'idle' } },
+              transitions: [],
+            },
+          }],
+        },
+        {
+          id: 'comp_b',
+          mainGraph: {
+            id: 'flow_b',
+            ownerType: 'flow',
+            ownerId: 'shared_flow_owner',
+            initialState: 'idle',
+            states: { idle: { id: 'idle' } },
+            transitions: [],
+          },
+          elements: [{
+            id: 'scenario_b',
+            kind: 'scenarioSubgraph',
+            graph: {
+              id: 'scenario_b_graph',
+              ownerType: 'scenario',
+              ownerId: 'shared_scenario_owner',
+              initialState: 'idle',
+              states: { idle: { id: 'idle' } },
+              transitions: [],
+            },
+          }],
+        },
+      ],
+    });
+    expect(issues.some((issue) => issue.code.startsWith('owner.wrapper.'))).toBe(false);
   });
 
   it('merges local and remote validation issues without duplicates', () => {

@@ -208,6 +208,38 @@ describe('NarrativeStateManager', () => {
     expect(narrative.isOwnerStateActive('npc', 'npc_ringboy', 'after_event')).toBe(true);
   });
 
+  it('keeps primary owner lookup undefined when owner has multiple wrappers', () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([
+      {
+        id: 'npc_ringboy_a',
+        ownerType: 'npc',
+        ownerId: 'npc_ringboy',
+        category: '剧情A',
+        initialState: 'before_event',
+        states: { before_event: { id: 'before_event' } },
+        transitions: [],
+      },
+      {
+        id: 'npc_ringboy_b',
+        ownerType: 'npc',
+        ownerId: 'npc_ringboy',
+        category: '剧情B',
+        initialState: 'before_event',
+        states: { before_event: { id: 'before_event' } },
+        transitions: [],
+      },
+    ]);
+
+    expect(narrative.getGraphIdsByOwner('npc', 'npc_ringboy')).toEqual(['npc_ringboy_a', 'npc_ringboy_b']);
+    expect(narrative.getPrimaryGraphByOwner('npc', 'npc_ringboy')).toBeUndefined();
+    expect(narrative.getPrimaryActiveStateByOwner('npc', 'npc_ringboy')).toBeUndefined();
+    expect(narrative.isOwnerStateActive('npc', 'npc_ringboy', 'before_event')).toBe(false);
+    const snapshot = JSON.stringify(narrative.debugSnapshot());
+    expect(snapshot).toContain('owner.wrapper.multi');
+    expect(snapshot).toContain('owner.primary.ambiguous');
+  });
+
   it('rejects legacy cross-graph transition endpoints at runtime', async () => {
     const { narrative } = makeRuntime();
     narrative.registerGraphs([

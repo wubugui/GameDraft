@@ -149,6 +149,29 @@ const elementKinds: ElementKind[] = [
 
 const wrapperOwnerTypes = ['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'system'];
 
+type DialogueRelationRead = {
+  graphId: string;
+  summary: string;
+};
+
+type DialogueRelationWrite = {
+  graphId: string;
+  summary: string;
+};
+
+type DialogueRelationEmit = {
+  signal: string;
+  summary: string;
+};
+
+type DialogueRelationIndex = {
+  reads: DialogueRelationRead[];
+  writes: DialogueRelationWrite[];
+  emits: DialogueRelationEmit[];
+};
+
+const emptyDialogueRelationIndex: DialogueRelationIndex = { reads: [], writes: [], emits: [] };
+
 export function NarrativeEditorApp() {
   return (
     <ReactFlowProvider>
@@ -170,6 +193,8 @@ function NarrativeEditorInner() {
   const [selectedJson, setSelectedJson] = useState('');
   const [canvasMode, setCanvasMode] = useState<CanvasMode>('edit');
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('properties');
+  const [entityPanelOpen, setEntityPanelOpen] = useState(false);
+  const [selectedEntityOwnerKey, setSelectedEntityOwnerKey] = useState('');
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
   const [showTrigger, setShowTrigger] = useState(false);
   const [showRead, setShowRead] = useState(false);
@@ -192,6 +217,7 @@ function NarrativeEditorInner() {
   const [dirty, setDirty] = useState(false);
   const [savedDataHash, setSavedDataHash] = useState('');
   const [dataSource, setDataSource] = useState('');
+  const [dialogueRelations, setDialogueRelations] = useState<DialogueRelationIndex>(emptyDialogueRelationIndex);
 
   const { wrapUpdater, undo, redo, resetHistory } = useEditorHistory(data, setDataInternal, (next) => {
     scheduleRemoteSync(next);
@@ -213,6 +239,10 @@ function NarrativeEditorInner() {
   const selectedObject = useMemo(
     () => getSelectedSummary(composition, graph, graphRef, selectedId),
     [composition, graph, graphRef, selectedId],
+  );
+  const entityNarrative = useMemo(
+    () => buildEntityNarrativeIndex(data, projection, validationIssues, activeStates, dialogueRelations),
+    [data, projection, validationIssues, activeStates, dialogueRelations],
   );
   const transitionsForInspector = useMemo(() => {
     if (!graph) return [];
@@ -279,6 +309,45 @@ function NarrativeEditorInner() {
   useEffect(() => {
     if (canvasMode === 'debug') setInspectorTab('debug');
   }, [canvasMode]);
+
+  useEffect(() => {
+    const ids = [...new Set((catalog.dialogueGraphIds ?? []).map((id) => String(id ?? '').trim()).filter(Boolean))];
+    if (ids.length === 0) {
+      setDialogueRelations(emptyDialogueRelationIndex);
+      return;
+    }
+    let cancelled = false;
+    void loadDialogueRelations(ids).then((next) => {
+      if (!cancelled) setDialogueRelations(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [catalog.dialogueGraphIds]);
+
+  useEffect(() => {
+    if (entityNarrative.owners.length === 0) {
+      if (selectedEntityOwnerKey) setSelectedEntityOwnerKey('');
+      return;
+    }
+    if (selectedEntityOwnerKey && entityNarrative.owners.some((owner) => owner.ownerKey === selectedEntityOwnerKey)) {
+      return;
+    }
+    const fallback = entityNarrative.owners[0]!.ownerKey;
+    if (selectedId.startsWith('element:') && composition) {
+      const element = getElementByNodeId(composition, selectedId);
+      const ownerType = element?.ownerType?.trim();
+      const ownerId = element?.ownerId?.trim();
+      if (element?.kind === 'wrapperGraph' && ownerType && ownerId) {
+        const key = `${ownerType}:${ownerId}`;
+        if (entityNarrative.owners.some((owner) => owner.ownerKey === key)) {
+          setSelectedEntityOwnerKey(key);
+          return;
+        }
+      }
+    }
+    setSelectedEntityOwnerKey(fallback);
+  }, [entityNarrative, selectedEntityOwnerKey, selectedId, composition]);
 
   const canvasStructureInput = useMemo(() => {
     if (!composition || !graph) return null;
@@ -1067,6 +1136,9 @@ function NarrativeEditorInner() {
             <button type="button" className="toolbar-btn" onClick={() => setValidationCollapsed((v) => !v)} title={validationCollapsed ? '展开校验面板' : '收起校验面板'}>
               {validationCollapsed ? '校验+' : '校验−'}
             </button>
+            <button type="button" className="toolbar-btn" onClick={() => setEntityPanelOpen((v) => !v)} title={entityPanelOpen ? '关闭实体叙事状态面板' : '打开实体叙事状态面板'}>
+              {entityPanelOpen ? '实体−' : '实体+'}
+            </button>
             {(canvasMode === 'wiring' || canvasMode === 'debug') && (
               <ToolbarPopover label="图层" panelClassName="layers-popover-panel">
                 <label className="toggle compact-toggle">
@@ -1120,6 +1192,29 @@ function NarrativeEditorInner() {
               graphRef={graphRef}
             />
           </section>
+
+          {entityPanelOpen && (
+            <aside className="entity-global-panel">
+              <div className="entity-global-head">
+                <div>
+                  <div className="section-title">实体叙事状态</div>
+                  <div className="muted">全局 wrapper / 读写 / 信号关系</div>
+                </div>
+                <button type="button" onClick={() => setEntityPanelOpen(false)}>关闭</button>
+              </div>
+              <EntityNarrativeInspector
+                index={entityNarrative}
+                selectedOwnerKey={selectedEntityOwnerKey}
+                onSelectOwnerKey={setSelectedEntityOwnerKey}
+                setCompositionId={setCompositionId}
+                setGraphRef={setGraphRef}
+                setSelectedId={setSelectedId}
+                setSelectedJson={setSelectedJson}
+                setFitTargetNodeIds={setFitTargetNodeIds}
+                setFitViewRev={setFitViewRev}
+              />
+            </aside>
+          )}
 
           <aside
             className={`validation-dock${validationCollapsed ? ' collapsed' : ''}`}
@@ -1197,7 +1292,13 @@ function NarrativeEditorInner() {
           <div className="inspector-tabs">
             {(['properties', 'transitions', 'debug', 'advanced'] as InspectorTab[]).map((tab) => (
               <button key={tab} type="button" className={inspectorTab === tab ? 'active' : ''} onClick={() => setInspectorTab(tab)}>
-                {tab === 'properties' ? '属性' : tab === 'transitions' ? '关联迁移' : tab === 'debug' ? '调试' : '高级'}
+                {tab === 'properties'
+                  ? '属性'
+                  : tab === 'transitions'
+                    ? '关联迁移'
+                    : tab === 'debug'
+                      ? '调试'
+                      : '高级'}
               </button>
             ))}
           </div>
@@ -1593,6 +1694,13 @@ function GraphInspector(props: {
       {graph.projectFlags === true && (
         <div className="property-line danger">projectFlags 已废弃；新图应使用明确的叙事状态读取。</div>
       )}
+      {parentElement?.kind === 'wrapperGraph' && (
+        <TextField
+          label="分类备注"
+          value={graph.category ?? ''}
+          onChange={(value) => updateCurrentGraph((g) => { g.category = value; })}
+        />
+      )}
       <PropertySummary rows={[['状态', String(Object.keys(graph.states).length)], ['迁移', String(graph.transitions.length)]]} />
       <AdvancedInspectorSection title="高级">
         <TextField
@@ -1814,6 +1922,9 @@ function ElementInspector(props: {
             el.ownerId = value;
             if (el.graph) el.graph.ownerId = value;
           })} />
+          <TextField label="分类备注" value={element.graph?.category ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+            if (el.graph) el.graph.category = value;
+          })} />
         </>
       ) : element.kind === 'scenarioSubgraph' ? (
         <>
@@ -1913,6 +2024,157 @@ function ExternalWiringInspector({ edge }: { edge: ProjectionEdgeDef }) {
   );
 }
 
+type EntityNarrativeWrapperSummary = {
+  ownerType: string;
+  ownerId: string;
+  ownerKey: string;
+  compositionId: string;
+  compositionLabel: string;
+  elementId: string;
+  elementLabel: string;
+  graphId: string;
+  category: string;
+  activeState: string;
+  states: string[];
+  transitions: number;
+  broadcasts: string[];
+  inputSignals: Array<{
+    signal: string;
+    transitionId: string;
+    from: string;
+    to: string;
+    emitters: string[];
+  }>;
+  outputs: Array<{
+    stateId: string;
+    signal: string;
+    downstream: string[];
+  }>;
+  reads: string[];
+  writes: string[];
+  issues: string[];
+};
+
+type EntityNarrativeOwnerSummary = {
+  ownerType: string;
+  ownerId: string;
+  ownerKey: string;
+  wrappers: EntityNarrativeWrapperSummary[];
+};
+
+type EntityNarrativeIndex = {
+  owners: EntityNarrativeOwnerSummary[];
+};
+
+function EntityNarrativeInspector(props: {
+  index: EntityNarrativeIndex;
+  selectedOwnerKey: string;
+  onSelectOwnerKey: (key: string) => void;
+  setCompositionId: (id: string) => void;
+  setGraphRef: (ref: GraphRef) => void;
+  setSelectedId: (id: string) => void;
+  setSelectedJson: (json: string) => void;
+  setFitTargetNodeIds: (ids: string[]) => void;
+  setFitViewRev: (value: number | ((value: number) => number)) => void;
+}) {
+  const [search, setSearch] = useState('');
+  if (props.index.owners.length === 0) {
+    return <div className="muted">当前没有绑定实体的 wrapperGraph。</div>;
+  }
+  const owner = props.index.owners.find((item) => item.ownerKey === props.selectedOwnerKey) ?? props.index.owners[0]!;
+  const q = search.trim().toLowerCase();
+  const wrappers = owner.wrappers.filter((wrapper) => {
+    if (!q) return true;
+    if (wrapper.graphId.toLowerCase().includes(q)) return true;
+    if (wrapper.category.toLowerCase().includes(q)) return true;
+    if (wrapper.states.some((sid) => sid.toLowerCase().includes(q))) return true;
+    if (wrapper.inputSignals.some((row) => row.signal.toLowerCase().includes(q))) return true;
+    return false;
+  });
+  return (
+    <div className="entity-view">
+      <div className="field">
+        <label>实体</label>
+        <select value={owner.ownerKey} onChange={(e) => props.onSelectOwnerKey(e.target.value)}>
+          {props.index.owners.map((item) => (
+            <option key={item.ownerKey} value={item.ownerKey}>
+              {item.ownerType}:{item.ownerId} ({item.wrappers.length})
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="property-summary">
+        <b>{owner.ownerType}:{owner.ownerId}</b>
+        <div className="property-summary-grid">
+          <div className="property-summary-row"><span>Wrapper</span><strong>{owner.wrappers.length}</strong></div>
+        </div>
+      </div>
+      <div className="field">
+        <label>搜索（graph/state/signal/category）</label>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+      <div className="entity-wrapper-list">
+        {wrappers.map((wrapper) => (
+          <details key={`${wrapper.compositionId}:${wrapper.elementId}`} className="entity-wrapper-card" open>
+            <summary>
+              <span>{wrapper.graphId}</span>
+              <small>{wrapper.category || '未分类'} / {wrapper.activeState || '—'}</small>
+            </summary>
+            <PropertySummary
+              rows={[
+                ['composition', wrapper.compositionLabel || wrapper.compositionId],
+                ['element', wrapper.elementLabel || wrapper.elementId],
+                ['category', wrapper.category || '—'],
+                ['states', wrapper.states.join(' / ')],
+                ['transitions', String(wrapper.transitions)],
+                ['broadcasts', wrapper.broadcasts.join(', ') || '—'],
+              ]}
+            />
+            <div className="inspector-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  props.setCompositionId(wrapper.compositionId);
+                  props.setGraphRef(`element:${wrapper.elementId}`);
+                  props.setSelectedId(`graph:${wrapper.graphId}`);
+                  props.setSelectedJson(JSON.stringify({ graphId: wrapper.graphId }, null, 2));
+                  props.setFitTargetNodeIds(wrapper.states[0] ? [`state:${wrapper.states[0]}`] : []);
+                  props.setFitViewRev((v) => v + 1);
+                }}
+              >
+                跳转到 Wrapper
+              </button>
+            </div>
+            <EntityRelationSection title="输入信号" rows={wrapper.inputSignals.map((row) => `${row.signal} | ${row.transitionId} | ${row.from} -> ${row.to}${row.emitters.length ? ` | 来自: ${row.emitters.join(' ; ')}` : ''}`)} />
+            <EntityRelationSection title="输出广播" rows={wrapper.outputs.map((row) => `${row.signal} | ${row.stateId}${row.downstream.length ? ` | 下游: ${row.downstream.join(' ; ')}` : ''}`)} />
+            <EntityRelationSection title="读取者" rows={wrapper.reads} />
+            <EntityRelationSection title="直接写入者" rows={wrapper.writes} />
+            <EntityRelationSection title="校验问题" rows={wrapper.issues} />
+          </details>
+        ))}
+        {wrappers.length === 0 && <div className="muted">没有命中搜索结果。</div>}
+      </div>
+    </div>
+  );
+}
+
+function EntityRelationSection({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <div className="entity-relation-block">
+      <div className="section-title">{title}</div>
+      {rows.length > 0 ? (
+        <div className="entity-relation-list">
+          {rows.map((row, index) => (
+            <div className="log" key={`${title}-${index}`}>{row}</div>
+          ))}
+        </div>
+      ) : (
+        <div className="muted">无</div>
+      )}
+    </div>
+  );
+}
+
 function PreviewPanel({ simulation, runtimeSnapshot }: { simulation: SimulationResult | null; runtimeSnapshot: RuntimeDebugSnapshotDef }) {
   const activeStates = extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? {};
   const narrativeState = runtimeSnapshot.ok && runtimeSnapshot.snapshot && typeof runtimeSnapshot.snapshot === 'object'
@@ -1974,6 +2236,340 @@ function formatRuntimeIssue(item: unknown): string {
   const code = String(issue.code ?? 'unknown');
   const message = String(issue.message ?? '');
   return message ? `${severity}: ${code} - ${message}` : `${severity}: ${code}`;
+}
+
+async function loadDialogueRelations(dialogueGraphIds: string[]): Promise<DialogueRelationIndex> {
+  const rows = await Promise.all(dialogueGraphIds.map(async (graphId) => {
+    const id = String(graphId ?? '').trim();
+    if (!id) return null;
+    try {
+      const path = `/assets/dialogues/graphs/${encodeURIComponent(id)}.json`;
+      const response = await fetch(path);
+      if (!response.ok) return null;
+      const file = await response.json() as {
+        id?: string;
+        preconditions?: unknown[];
+        nodes?: Record<string, unknown>;
+      };
+      return collectDialogueRelationsFromFile(id, file);
+    } catch {
+      return null;
+    }
+  }));
+  const out: DialogueRelationIndex = { reads: [], writes: [], emits: [] };
+  for (const row of rows) {
+    if (!row) continue;
+    out.reads.push(...row.reads);
+    out.writes.push(...row.writes);
+    out.emits.push(...row.emits);
+  }
+  out.reads = uniqueRelationRows(out.reads);
+  out.writes = uniqueRelationRows(out.writes);
+  out.emits = uniqueRelationRows(out.emits);
+  return out;
+}
+
+function collectDialogueRelationsFromFile(
+  dialogueId: string,
+  file: { preconditions?: unknown[]; nodes?: Record<string, unknown> },
+): DialogueRelationIndex {
+  const result: DialogueRelationIndex = { reads: [], writes: [], emits: [] };
+  collectNarrativeReadsFromExpr(file.preconditions, (graphId, stateId) => {
+    result.reads.push({
+      graphId,
+      summary: `dialogue ${dialogueId} / preconditions / narrative=${graphId} state=${stateId}`,
+    });
+  });
+  const nodes = file.nodes ?? {};
+  for (const [nodeId, nodeRaw] of Object.entries(nodes)) {
+    if (!nodeRaw || typeof nodeRaw !== 'object') continue;
+    const node = nodeRaw as Record<string, unknown>;
+    const type = String(node.type ?? '').trim();
+    if (type === 'ownerState') {
+      const wrapperGraphId = String(node.wrapperGraphId ?? '').trim();
+      if (wrapperGraphId) {
+        result.reads.push({
+          graphId: wrapperGraphId,
+          summary: `dialogue ${dialogueId} / ownerState ${nodeId} / wrapperGraphId=${wrapperGraphId}`,
+        });
+      }
+    } else if (type === 'contextState') {
+      const graphId = String(node.graphId ?? '').trim();
+      if (graphId) {
+        result.reads.push({
+          graphId,
+          summary: `dialogue ${dialogueId} / contextState ${nodeId} / graphId=${graphId}`,
+        });
+      }
+    }
+    collectNarrativeReadsFromUnknown(node, (graphId, stateId) => {
+      result.reads.push({
+        graphId,
+        summary: `dialogue ${dialogueId} / node ${nodeId} / condition narrative=${graphId} state=${stateId}`,
+      });
+    });
+    visitUnknownValue(node, (obj) => {
+      const actionType = String(obj.type ?? '').trim();
+      const params = obj.params && typeof obj.params === 'object' && !Array.isArray(obj.params)
+        ? obj.params as Record<string, unknown>
+        : null;
+      if (!params) return;
+      if (actionType === 'emitNarrativeSignal') {
+        const signal = String(params.signal ?? '').trim();
+        if (!signal) return;
+        result.emits.push({
+          signal,
+          summary: `dialogue ${dialogueId} / node ${nodeId} / emitNarrativeSignal signal=${signal}`,
+        });
+      } else if (actionType === 'setNarrativeState') {
+        const graphId = String(params.graphId ?? '').trim();
+        const stateId = String(params.stateId ?? '').trim();
+        if (!graphId) return;
+        result.writes.push({
+          graphId,
+          summary: `dialogue ${dialogueId} / node ${nodeId} / setNarrativeState ${graphId}${stateId ? `.${stateId}` : ''}`,
+        });
+      }
+    });
+  }
+  result.reads = uniqueRelationRows(result.reads);
+  result.writes = uniqueRelationRows(result.writes);
+  result.emits = uniqueRelationRows(result.emits);
+  return result;
+}
+
+function collectNarrativeReadsFromUnknown(
+  value: unknown,
+  onRead: (graphId: string, stateId: string) => void,
+): void {
+  visitUnknownValue(value, (obj) => {
+    collectNarrativeReadsFromExpr([obj], onRead);
+  });
+}
+
+function collectNarrativeReadsFromExpr(
+  exprList: unknown,
+  onRead: (graphId: string, stateId: string) => void,
+): void {
+  if (!Array.isArray(exprList)) return;
+  for (const exprRaw of exprList) {
+    if (!exprRaw || typeof exprRaw !== 'object' || Array.isArray(exprRaw)) continue;
+    const expr = exprRaw as Record<string, unknown>;
+    const graphId = String(expr.narrative ?? '').trim();
+    const stateId = String(expr.state ?? '').trim();
+    if (graphId && stateId) onRead(graphId, stateId);
+    if (Array.isArray(expr.all)) collectNarrativeReadsFromExpr(expr.all, onRead);
+    if (Array.isArray(expr.any)) collectNarrativeReadsFromExpr(expr.any, onRead);
+    if (expr.not && typeof expr.not === 'object') collectNarrativeReadsFromExpr([expr.not], onRead);
+  }
+}
+
+function visitUnknownValue(value: unknown, fn: (obj: Record<string, unknown>) => void): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => visitUnknownValue(item, fn));
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const obj = value as Record<string, unknown>;
+  fn(obj);
+  Object.values(obj).forEach((item) => visitUnknownValue(item, fn));
+}
+
+function uniqueRelationRows<T extends { summary: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const key = String(row.summary ?? '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+function buildEntityNarrativeIndex(
+  data: NarrativeGraphsFileDef,
+  projection: ProjectionResult,
+  validationIssues: ValidationIssueDef[],
+  activeStates: Record<string, string>,
+  dialogueRelations: DialogueRelationIndex,
+): EntityNarrativeIndex {
+  const transitionRows = compileGraphs(data).flatMap(({ graph }) => (graph.transitions ?? []).map((transition) => ({
+    graphId: graph.id,
+    transitionId: transition.id,
+    from: String(transition.from ?? ''),
+    to: String(transition.to ?? ''),
+    signal: String(transition.signal ?? ''),
+  })));
+  const byOwner = new Map<string, EntityNarrativeOwnerSummary>();
+  for (const comp of data.compositions ?? []) {
+    for (const element of comp.elements ?? []) {
+      if (element.kind !== 'wrapperGraph' || !element.graph) continue;
+      const ownerType = String(element.ownerType ?? element.graph.ownerType ?? '').trim();
+      const ownerId = String(element.ownerId ?? element.graph.ownerId ?? '').trim();
+      if (!ownerType || !ownerId) continue;
+      const ownerKey = `${ownerType}:${ownerId}`;
+      const graph = element.graph;
+      const wrapper: EntityNarrativeWrapperSummary = {
+        ownerType,
+        ownerId,
+        ownerKey,
+        compositionId: comp.id,
+        compositionLabel: comp.label ?? comp.id,
+        elementId: element.id,
+        elementLabel: element.label ?? element.id,
+        graphId: graph.id,
+        category: String(graph.category ?? '').trim(),
+        activeState: activeStates[graph.id] ?? '',
+        states: Object.keys(graph.states ?? {}),
+        transitions: graph.transitions?.length ?? 0,
+        broadcasts: [],
+        inputSignals: [],
+        outputs: [],
+        reads: [],
+        writes: [],
+        issues: [],
+      };
+      for (const transition of graph.transitions ?? []) {
+        const signal = String(transition.signal ?? '').trim();
+        if (!signal) continue;
+        const emitters = projection.triggerEdges
+          .filter((edge) =>
+            (edge.graphId === graph.id && edge.transitionId === transition.id)
+            || endpointMatchesTransition(edge.target, graph.id, transition.id)
+            || (String(edge.label ?? '').trim() === signal && endpointMentionsGraph(edge.target, graph.id)),
+          )
+          .map((edge) => projectionEdgeSummary(edge));
+        wrapper.inputSignals.push({
+          signal,
+          transitionId: transition.id,
+          from: String(transition.from ?? ''),
+          to: String(transition.to ?? ''),
+          emitters: uniqueStrings(emitters),
+        });
+      }
+      for (const [stateId, state] of Object.entries(graph.states ?? {})) {
+        if (state.broadcastOnEnter !== true) continue;
+        const signal = stateEnteredSignalKey(graph.id, stateId);
+        wrapper.broadcasts.push(signal);
+        const downstreamTransitions = transitionRows
+          .filter((row) => row.signal === signal)
+          .map((row) => `${row.graphId}.${row.transitionId} (${row.from} -> ${row.to})`);
+        const downstreamProjection = projection.triggerEdges
+          .filter((edge) => String(edge.label ?? '').trim() === signal)
+          .map((edge) => projectionEdgeSummary(edge));
+        wrapper.outputs.push({
+          stateId,
+          signal,
+          downstream: uniqueStrings([...downstreamTransitions, ...downstreamProjection]),
+        });
+      }
+      wrapper.reads = uniqueStrings(
+        [
+          ...projection.readEdges
+          .filter((edge) => endpointMentionsGraph(edge.source, graph.id) || endpointMentionsGraph(edge.target, graph.id) || edge.graphId === graph.id)
+            .map((edge) => projectionEdgeSummary(edge)),
+          ...dialogueRelations.reads.filter((row) => row.graphId === graph.id).map((row) => row.summary),
+        ],
+      );
+      wrapper.writes = uniqueStrings(
+        [
+          ...(projection.stateCommandEdges ?? [])
+            .filter((edge) => endpointMentionsGraph(edge.target, graph.id) || edge.graphId === graph.id)
+            .map((edge) => projectionEdgeSummary(edge)),
+          ...dialogueRelations.writes.filter((row) => row.graphId === graph.id).map((row) => row.summary),
+        ],
+      );
+      for (const input of wrapper.inputSignals) {
+        const dialogueEmitters = dialogueRelations.emits
+          .filter((row) => row.signal === input.signal)
+          .map((row) => row.summary);
+        input.emitters = uniqueStrings([...input.emitters, ...dialogueEmitters]);
+      }
+      wrapper.issues = uniqueStrings(validationIssues
+        .filter((issue) => (
+          issue.target?.kind === 'element'
+            ? issue.target.elementId === element.id
+            : issue.target?.kind === 'graph'
+              ? issue.target.graphId === graph.id
+              : issue.target?.kind === 'state'
+                ? issue.target.graphId === graph.id
+                : issue.target?.kind === 'transition'
+                  ? issue.target.graphId === graph.id
+                  : String(issue.message ?? '').includes(graph.id)
+        ))
+        .map((issue) => `${issue.severity}:${issue.code}${issue.message ? ` - ${issue.message}` : ''}`));
+      const owner = byOwner.get(ownerKey) ?? { ownerType, ownerId, ownerKey, wrappers: [] };
+      owner.wrappers.push(wrapper);
+      byOwner.set(ownerKey, owner);
+    }
+  }
+  const owners = [...byOwner.values()]
+    .map((owner) => ({
+      ...owner,
+      wrappers: owner.wrappers.sort((a, b) =>
+        `${a.compositionId}|${a.category}|${a.graphId}`.localeCompare(`${b.compositionId}|${b.category}|${b.graphId}`),
+      ),
+    }))
+    .sort((a, b) => a.ownerKey.localeCompare(b.ownerKey));
+  return { owners };
+}
+
+function endpointMatchesTransition(endpointRaw: string | undefined, graphId: string, transitionId: string): boolean {
+  const endpoint = String(endpointRaw ?? '').trim();
+  if (!endpoint) return false;
+  const parsed = parseTransitionAnchorEndpoint(endpoint);
+  return Boolean(parsed && parsed.graphId === graphId && parsed.transitionId === transitionId);
+}
+
+function endpointMentionsGraph(endpointRaw: string | undefined, graphId: string): boolean {
+  const endpoint = String(endpointRaw ?? '').trim();
+  if (!endpoint) return false;
+  const parsed = parseTransitionAnchorEndpoint(endpoint);
+  if (parsed?.graphId === graphId) return true;
+  if (endpoint === `graph:${graphId}`) return true;
+  if (endpoint === `state:${graphId}`) return true;
+  if (endpoint.startsWith(`projection-anchor:${graphId}.`)) return true;
+  if (endpoint.startsWith(`state:${graphId}:`)) return true;
+  return endpoint.includes(`${graphId}.`);
+}
+
+function parseTransitionAnchorEndpoint(endpoint: string): { graphId: string; transitionId: string } | null {
+  const match = /^transition-anchor:([^:]+):(.+)$/.exec(endpoint);
+  if (!match) return null;
+  const graphId = safeDecodeUri(match[1] ?? '');
+  const transitionId = safeDecodeUri(match[2] ?? '');
+  if (!graphId || !transitionId) return null;
+  return { graphId, transitionId };
+}
+
+function projectionEdgeSummary(edge: ProjectionEdgeDef): string {
+  const label = String(edge.label ?? '').trim();
+  const detail = String(edge.detail ?? '').trim();
+  const summary = `${edge.source} -> ${edge.target}`;
+  if (label && detail && detail !== label) return `${summary} [${label}] (${detail})`;
+  if (label) return `${summary} [${label}]`;
+  if (detail) return `${summary} (${detail})`;
+  return summary;
+}
+
+function safeDecodeUri(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values.map((item) => item.trim()).filter(Boolean)) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 

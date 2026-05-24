@@ -82,6 +82,8 @@ def _owner_state_wrapper_matches(
     for comp in narrative_data.get("compositions", []) or []:
         if not isinstance(comp, dict):
             continue
+        comp_id = str(comp.get("id", "")).strip()
+        comp_label = str(comp.get("label", "")).strip()
         for element in comp.get("elements", []) or []:
             if not isinstance(element, dict) or str(element.get("kind", "")).strip() != "wrapperGraph":
                 continue
@@ -95,6 +97,9 @@ def _owner_state_wrapper_matches(
                 continue
             states_raw = graph.get("states")
             state_ids = sorted(states_raw.keys()) if isinstance(states_raw, dict) else []
+            category = str(graph.get("category", "") or "").strip()
+            element_id = str(element.get("id", "")).strip()
+            element_label = str(element.get("label", "")).strip()
             for ref in owner_refs:
                 if owner_type != ref.get("ownerType") or owner_id != ref.get("ownerId"):
                     continue
@@ -107,6 +112,11 @@ def _owner_state_wrapper_matches(
                     "ownerType": owner_type,
                     "ownerId": owner_id,
                     "stateIds": state_ids,
+                    "category": category,
+                    "compositionId": comp_id,
+                    "compositionLabel": comp_label,
+                    "elementId": element_id,
+                    "elementLabel": element_label,
                 })
     return out
 
@@ -221,6 +231,57 @@ def graph_states(project_root: Path, graph_id: str) -> list[str]:
             states = graph.get("states")
             return sorted(states.keys()) if isinstance(states, dict) else []
     return []
+
+
+def graph_info(project_root: Path, graph_id: str) -> dict[str, Any] | None:
+    narrative = load_narrative_graphs(project_root)
+    if not narrative:
+        return None
+    graph_id = str(graph_id or "").strip()
+    if not graph_id:
+        return None
+    for comp in narrative.get("compositions", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        comp_id = str(comp.get("id", "")).strip()
+        main = comp.get("mainGraph")
+        if isinstance(main, dict) and str(main.get("id", "")).strip() == graph_id:
+            states = main.get("states")
+            return {
+                "graphId": graph_id,
+                "kind": "mainGraph",
+                "ownerType": str(main.get("ownerType", "")).strip(),
+                "ownerId": str(main.get("ownerId", "")).strip(),
+                "stateIds": sorted(states.keys()) if isinstance(states, dict) else [],
+                "compositionId": comp_id,
+            }
+        for element in comp.get("elements", []) or []:
+            if not isinstance(element, dict):
+                continue
+            graph = element.get("graph") if isinstance(element.get("graph"), dict) else {}
+            if str(graph.get("id", "")).strip() != graph_id:
+                continue
+            states = graph.get("states")
+            return {
+                "graphId": graph_id,
+                "kind": str(element.get("kind", "")).strip(),
+                "ownerType": str(element.get("ownerType") or graph.get("ownerType") or "").strip(),
+                "ownerId": str(element.get("ownerId") or graph.get("ownerId") or "").strip(),
+                "stateIds": sorted(states.keys()) if isinstance(states, dict) else [],
+                "compositionId": comp_id,
+                "elementId": str(element.get("id", "")).strip(),
+            }
+    for graph in narrative.get("graphs", []) or []:
+        if isinstance(graph, dict) and str(graph.get("id", "")).strip() == graph_id:
+            states = graph.get("states")
+            return {
+                "graphId": graph_id,
+                "kind": "legacyGraph",
+                "ownerType": str(graph.get("ownerType", "")).strip(),
+                "ownerId": str(graph.get("ownerId", "")).strip(),
+                "stateIds": sorted(states.keys()) if isinstance(states, dict) else [],
+            }
+    return None
 
 
 def is_context_graph_allowed(project_root: Path, graph_id: str) -> bool:

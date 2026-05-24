@@ -6,6 +6,7 @@
   "nodes": {
     "root": {
       "type": "ownerState",
+      "wrapperGraphId": "npc_ringboy",
       "cases": [
         {
           "state": "before_event",

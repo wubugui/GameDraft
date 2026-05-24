@@ -338,6 +338,7 @@ export type DialogueGraphNodeDef =
     }
   | {
       type: 'ownerState';
+      wrapperGraphId?: string;
       cases: {
         state: string;
         next: string;

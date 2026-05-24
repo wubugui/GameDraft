@@ -108,7 +108,12 @@ export function navigationForElement(el?: CompositionElementDef): null | { kind:
 
 export function elementSubtitle(el?: CompositionElementDef): string {
   if (!el) return '';
-  if (el.kind === 'wrapperGraph') return `实体包装 / ${el.ownerType || 'entity'}`;
+  if (el.kind === 'wrapperGraph') {
+    const category = el.graph?.category?.trim();
+    return category
+      ? `实体包装 / ${el.ownerType || 'entity'} / ${category}`
+      : `实体包装 / ${el.ownerType || 'entity'}`;
+  }
   if (el.kind === 'scenarioSubgraph') return 'Scenario 子图';
   if (el.kind === 'dialogueBlackbox') return '对话黑盒';
   if (el.kind === 'zoneBlackbox') return '区域黑盒';

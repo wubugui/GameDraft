@@ -715,11 +715,43 @@ export class GraphDialogueManager implements IGameSystem {
     const fallback = node.missingWrapperNext?.trim() || node.defaultNext;
     const ownerType = this.ownerType.trim();
     const ownerId = this.ownerId.trim();
+    const wrapperGraphId = node.wrapperGraphId?.trim() ?? '';
     if (!ownerType || !ownerId) {
       console.warn(`GraphDialogueManager: ownerState ${this.currentNodeId} has no dialogue owner context`);
       return fallback;
     }
-    const active = this.conditionCtx().narrativeState?.getPrimaryActiveStateByOwner?.(ownerType, ownerId);
+    const narrative = this.conditionCtx().narrativeState;
+    let active: string | undefined;
+    if (wrapperGraphId) {
+      const graph = narrative?.getGraph?.(wrapperGraphId);
+      if (!graph) {
+        console.warn(`GraphDialogueManager: ownerState ${this.currentNodeId} references missing wrapperGraphId ${wrapperGraphId}`);
+        return fallback;
+      }
+      if (ownerType && ownerId) {
+        const graphOwnerType = String(graph.ownerType ?? '').trim();
+        const graphOwnerId = String(graph.ownerId ?? '').trim();
+        if (graphOwnerType && graphOwnerId && (graphOwnerType !== ownerType || graphOwnerId !== ownerId)) {
+          console.warn(
+            `GraphDialogueManager: ownerState ${this.currentNodeId} wrapperGraphId ${wrapperGraphId} belongs to ${graphOwnerType}:${graphOwnerId}, current dialogue owner is ${ownerType}:${ownerId}`,
+          );
+        }
+      }
+      active = narrative?.getActiveState?.(wrapperGraphId);
+      if (!active) {
+        console.warn(`GraphDialogueManager: ownerState ${this.currentNodeId} cannot read active state for wrapperGraphId ${wrapperGraphId}`);
+        return fallback;
+      }
+    } else {
+      const ownerGraphIds = narrative?.getGraphIdsByOwner?.(ownerType, ownerId) ?? [];
+      if (ownerGraphIds.length > 1) {
+        console.warn(
+          `GraphDialogueManager: ownerState ${this.currentNodeId} is ambiguous for ${ownerType}:${ownerId}; set wrapperGraphId to one of [${ownerGraphIds.join(', ')}]`,
+        );
+        return fallback;
+      }
+      active = narrative?.getPrimaryActiveStateByOwner?.(ownerType, ownerId);
+    }
     if (!active) {
       console.warn(`GraphDialogueManager: ownerState ${this.currentNodeId} cannot resolve wrapper for ${ownerType}:${ownerId}`);
       return fallback;

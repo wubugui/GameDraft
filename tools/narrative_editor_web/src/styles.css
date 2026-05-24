@@ -294,6 +294,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
 .workspace-body > .canvas {
@@ -1359,6 +1360,99 @@ select {
 
 .transition-row small {
   color: #91a0ad;
+}
+
+.entity-view {
+  display: grid;
+  gap: 10px;
+}
+
+.entity-global-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(620px, calc(100% - 24px));
+  z-index: 18;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid #3b4650;
+  border-radius: 8px;
+  background: #151a1f;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+  padding: 12px;
+  overflow: hidden;
+}
+
+.entity-global-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.entity-global-head .section-title {
+  margin: 0 0 3px;
+}
+
+.entity-global-panel .entity-view {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.entity-wrapper-list {
+  display: grid;
+  gap: 8px;
+  max-height: 52vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.entity-global-panel .entity-wrapper-list {
+  max-height: none;
+  overflow: visible;
+}
+
+.entity-wrapper-card {
+  border: 1px solid #303a44;
+  border-radius: 6px;
+  background: #11161b;
+  overflow: hidden;
+}
+
+.entity-wrapper-card > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.entity-wrapper-card > summary small {
+  color: #91a0ad;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.entity-wrapper-card > :not(summary) {
+  padding: 0 9px 9px;
+}
+
+.entity-relation-block {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.entity-relation-list {
+  display: grid;
+  gap: 5px;
 }
 
 .signal-chips {

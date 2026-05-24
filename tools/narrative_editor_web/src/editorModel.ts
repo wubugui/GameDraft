@@ -307,6 +307,7 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind):
       : {
           id: uniqueId(graphPrefix, [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
           ownerType,
+          category: '',
           initialState: 'initial',
           states: { initial: { id: 'initial', label: 'initial', meta: { editor: { x: 120, y: 160 } } } },
           transitions: [],

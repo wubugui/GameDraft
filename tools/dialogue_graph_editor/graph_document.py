@@ -235,16 +235,86 @@ def _validate_owner_context_state_nodes(
                 msg = str(wrapper_info.get("message", "") or "未找到所属实体 wrapper")
                 warnings.append(f"节点 {nid}: 无法静态确定所属实体 wrapper（{msg}）")
                 continue
-            if wrapper_info.get("ambiguous"):
-                warnings.append(f"节点 {nid}: 多个 NPC/Hotspot 引用该对话图，ownerState 的 state 需手工确认")
-                continue
-            known = {str(s).strip() for s in (wrapper_info.get("stateIds") or []) if str(s).strip()}
+            wrapper_map = {
+                str((w or {}).get("graphId", "")).strip(): w
+                for w in wrappers
+                if isinstance(w, dict) and str((w or {}).get("graphId", "")).strip()
+            }
+            selected_wrapper = str(raw.get("wrapperGraphId", "") or "").strip()
+            target_graph = ""
+            known: set[str] = set()
+            validate_case_states = True
+
+            if selected_wrapper:
+                target_graph = selected_wrapper
+                selected_wrapper_info = wrapper_map.get(selected_wrapper)
+                if selected_wrapper_info is not None:
+                    known = {
+                        str(s).strip()
+                        for s in (selected_wrapper_info.get("stateIds") or [])
+                        if str(s).strip()
+                    }
+                else:
+                    known_from_catalog: set[str] = set()
+                    if project_root is not None:
+                        try:
+                            from tools.editor.shared.narrative_catalog import graph_info
+
+                            info = graph_info(project_root, selected_wrapper)
+                            if info and str(info.get("kind", "")).strip() != "wrapperGraph":
+                                errors.append(
+                                    f"节点 {nid}: ownerState.wrapperGraphId {selected_wrapper!r} 指向的图不是 wrapperGraph"
+                                )
+                                validate_case_states = False
+                            elif info:
+                                known_from_catalog = {
+                                    str(s).strip()
+                                    for s in (info.get("stateIds") or [])
+                                    if str(s).strip()
+                                }
+                        except Exception:
+                            known_from_catalog = set()
+                    if known_from_catalog:
+                        known = known_from_catalog
+                        candidates = ", ".join(sorted(wrapper_map.keys()))
+                        warnings.append(
+                            f"节点 {nid}: ownerState.wrapperGraphId {selected_wrapper!r} 与当前对话 owner 不一致"
+                            f"（候选: {candidates or '无'}）"
+                        )
+                    elif not any(
+                        f"ownerState.wrapperGraphId {selected_wrapper!r} 指向的图不是 wrapperGraph" in err
+                        for err in errors
+                    ):
+                        errors.append(
+                            f"节点 {nid}: ownerState.wrapperGraphId {selected_wrapper!r} 指向不存在的 wrapper graph"
+                        )
+                        validate_case_states = False
+            else:
+                if len(wrapper_map) > 1:
+                    candidates = ", ".join(sorted(wrapper_map.keys()))
+                    warnings.append(
+                        f"节点 {nid}: ownerState 未设置 wrapperGraphId，当前 owner 绑定多个 wrapper（{candidates}）"
+                    )
+                if wrapper_info.get("ambiguous"):
+                    warnings.append(f"节点 {nid}: 多个 NPC/Hotspot 引用该对话图，ownerState 的 state 需手工确认")
+                if len(wrapper_map) == 1:
+                    only_wrapper = next(iter(wrapper_map.values()))
+                    if isinstance(only_wrapper, dict):
+                        target_graph = str(only_wrapper.get("graphId", "")).strip()
+                        known = {
+                            str(s).strip()
+                            for s in (only_wrapper.get("stateIds") or [])
+                            if str(s).strip()
+                        }
+                else:
+                    known = {str(s).strip() for s in (wrapper_info.get("stateIds") or []) if str(s).strip()}
+
             for i, case in enumerate(raw.get("cases") or []):
                 if not isinstance(case, dict):
                     continue
                 sid = str(case.get("state", "") or "").strip()
-                if sid and sid not in known:
-                    graph_id = str((wrappers[0] or {}).get("graphId", "?"))
+                if validate_case_states and sid and sid not in known:
+                    graph_id = target_graph or str((wrappers[0] or {}).get("graphId", "?"))
                     errors.append(f"节点 {nid} ownerState case {i}: state {sid!r} 不存在于 wrapper {graph_id}")
         elif t == "contextState":
             gid = str(raw.get("graphId", "") or "").strip()
@@ -654,6 +724,7 @@ def default_node(node_type: str, nodes: dict[str, Any]) -> dict[str, Any]:
     if node_type == "ownerState":
         return {
             "type": "ownerState",
+            "wrapperGraphId": "",
             "cases": [],
             "defaultNext": "",
             "missingWrapperNext": "",

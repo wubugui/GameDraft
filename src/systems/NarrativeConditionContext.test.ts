@@ -6,14 +6,28 @@ import { DocumentRevealManager } from './DocumentRevealManager';
 import { GraphDialogueManager } from './GraphDialogueManager';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 
-function baseContext(active = true): { eventBus: EventBus; flagStore: FlagStore; ctx: ConditionEvalContext } {
+function baseContext(active = true, multiOwner = false): { eventBus: EventBus; flagStore: FlagStore; ctx: ConditionEvalContext } {
   const eventBus = new EventBus();
   const flagStore = new FlagStore(eventBus);
+  const ownerGraphIds = multiOwner ? ['npc_ringboy_a', 'npc_ringboy_b'] : ['npc_ringboy_a'];
   const narrativeState = {
-    getActiveState: (graphId: string) => (graphId === 'flow' && active ? 'ready' : 'other'),
+    getActiveState: (graphId: string) => {
+      if (graphId === 'flow') return active ? 'ready' : 'other';
+      if (graphId === 'npc_ringboy_a') return active ? 'after_event' : 'before_event';
+      if (graphId === 'npc_ringboy_b') return active ? 'ring_taken' : 'before_event';
+      return 'other';
+    },
     isStateActive: (graphId: string, stateId: string) => graphId === 'flow' && stateId === 'ready' && active,
+    getGraph: (graphId: string) => {
+      if (graphId === 'npc_ringboy_a' || graphId === 'npc_ringboy_b') return { id: graphId };
+      return undefined;
+    },
+    getGraphIdsByOwner: (ownerType: string, ownerId: string) =>
+      ownerType === 'npc' && ownerId === 'npc_ringboy' ? ownerGraphIds : [],
     getPrimaryActiveStateByOwner: (ownerType: string, ownerId: string) =>
-      ownerType === 'npc' && ownerId === 'npc_ringboy' && active ? 'after_event' : undefined,
+      ownerType === 'npc' && ownerId === 'npc_ringboy' && active && ownerGraphIds.length === 1
+        ? 'after_event'
+        : undefined,
   };
   return {
     eventBus,
@@ -31,8 +45,8 @@ function baseContext(active = true): { eventBus: EventBus; flagStore: FlagStore;
   };
 }
 
-function graphDialogue(active = true, graph: any) {
-  const { eventBus, flagStore, ctx } = baseContext(active);
+function graphDialogue(active = true, graph: any, multiOwner = false) {
+  const { eventBus, flagStore, ctx } = baseContext(active, multiOwner);
   const actionExecutor = new ActionExecutor(eventBus, flagStore);
   const assetManager = {
     loadJson: vi.fn(async () => graph),
@@ -166,6 +180,55 @@ describe('narrative condition context injection', () => {
     runtime.eventBus.on('dialogue:line', (payload) => { lineText = payload?.text ?? ''; });
     await runtime.manager.startDialogueGraph({ graphId: 'owner_default', npcName: 'NPC', npcId: 'npc_ringboy' });
     expect(lineText).toBe('fallback');
+  });
+
+  it('routes ownerState to missingWrapperNext when owner has multiple wrappers but no wrapperGraphId', async () => {
+    const ownerGraph = {
+      id: 'owner_multi_missing',
+      entry: 'owner_state',
+      nodes: {
+        owner_state: {
+          type: 'ownerState',
+          cases: [{ state: 'after_event', next: 'hit' }],
+          defaultNext: 'fallback',
+          missingWrapperNext: 'missing',
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'fallback', next: 'end' },
+        missing: { type: 'line', speaker: { kind: 'npc' }, text: 'missing', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const runtime = graphDialogue(true, ownerGraph, true);
+    let lineText = '';
+    runtime.eventBus.on('dialogue:line', (payload) => { lineText = payload?.text ?? ''; });
+    await runtime.manager.startDialogueGraph({ graphId: 'owner_multi_missing', npcName: 'NPC', npcId: 'npc_ringboy' });
+    expect(lineText).toBe('missing');
+  });
+
+  it('lets ownerState read explicit wrapperGraphId when owner has multiple wrappers', async () => {
+    const ownerGraph = {
+      id: 'owner_multi_explicit',
+      entry: 'owner_state',
+      nodes: {
+        owner_state: {
+          type: 'ownerState',
+          wrapperGraphId: 'npc_ringboy_b',
+          cases: [{ state: 'ring_taken', next: 'hit' }],
+          defaultNext: 'fallback',
+          missingWrapperNext: 'missing',
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'fallback', next: 'end' },
+        missing: { type: 'line', speaker: { kind: 'npc' }, text: 'missing', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const runtime = graphDialogue(true, ownerGraph, true);
+    let lineText = '';
+    runtime.eventBus.on('dialogue:line', (payload) => { lineText = payload?.text ?? ''; });
+    await runtime.manager.startDialogueGraph({ graphId: 'owner_multi_explicit', npcName: 'NPC', npcId: 'npc_ringboy' });
+    expect(lineText).toBe('hit');
   });
 
   it('routes ownerState to missingWrapperNext when dialogue owner context is missing', async () => {

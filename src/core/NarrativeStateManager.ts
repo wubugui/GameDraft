@@ -79,6 +79,8 @@ export interface NarrativeGraph {
   id: string;
   ownerType: NarrativeOwnerType;
   ownerId?: string;
+  /** Author note/category for wrapper usage grouping in tooling. */
+  category?: string;
   initialState: string;
   entryState?: string;
   exitStates?: string[];
@@ -169,6 +171,7 @@ export class NarrativeStateManager implements IGameSystem {
   private destroyed = false;
   private recentTransitions: NarrativeTransitionRecord[] = [];
   private recentIssues: NarrativeRuntimeIssue[] = [];
+  private primaryOwnerWarningKeys: Set<string> = new Set();
   private validationMode: NarrativeRuntimeValidationMode = this.defaultRuntimeValidationMode();
   private static readonly MAX_DRAIN_STEPS = 128;
 
@@ -232,6 +235,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.activeStates.clear();
     this.ownerIndex.clear();
     this.queue.length = 0;
+    this.primaryOwnerWarningKeys.clear();
     this.recentIssues = this.recentIssues.filter((issue) => issue.code === 'narrative.load.failed');
     for (const graph of graphs) {
       if (!graph || !graph.id || !graph.initialState || !graph.states?.[graph.initialState]) {
@@ -303,7 +307,11 @@ export class NarrativeStateManager implements IGameSystem {
 
   getPrimaryGraphByOwner(ownerType: string, ownerId: string): NarrativeGraph | undefined {
     const graphIds = this.getGraphIdsByOwner(ownerType, ownerId);
-    if (graphIds.length !== 1) return undefined;
+    if (graphIds.length === 0) return undefined;
+    if (graphIds.length > 1) {
+      this.recordPrimaryOwnerAmbiguous(ownerType, ownerId, graphIds);
+      return undefined;
+    }
     return this.graphs.get(graphIds[0]!);
   }
 
@@ -373,10 +381,18 @@ export class NarrativeStateManager implements IGameSystem {
   }
 
   debugSnapshot(): Record<string, unknown> {
+    const ownerIndex = Object.fromEntries(this.ownerIndex.entries());
+    const multiWrapperOwners = Object.entries(ownerIndex)
+      .filter(([, graphIds]) => Array.isArray(graphIds) && graphIds.length > 1)
+      .map(([ownerKey, graphIds]) => ({ ownerKey, graphIds }));
     return {
       activeStates: Object.fromEntries(this.activeStates.entries()),
+      graphIds: [...this.graphs.keys()],
+      ownerIndex,
+      multiWrapperOwners,
+      // keep legacy fields for older debug consumers
       graphs: [...this.graphs.keys()],
-      owners: Object.fromEntries(this.ownerIndex.entries()),
+      owners: ownerIndex,
       recentTransitions: this.recentTransitions.slice(-20),
       recentIssues: this.recentIssues.slice(-20),
       queued: this.queue.length,
@@ -400,10 +416,19 @@ export class NarrativeStateManager implements IGameSystem {
   private recordDuplicateOwnerBindings(): void {
     for (const [key, graphIds] of this.ownerIndex.entries()) {
       if (graphIds.length <= 1) continue;
-      const message = `NarrativeStateManager: duplicate wrapper owner binding ${key} -> ${graphIds.join(', ')}`;
-      this.recordIssue({ severity: 'error', code: 'owner.wrapper.duplicate', message });
+      const message = `NarrativeStateManager: owner has multiple wrapper graphs ${key} -> ${graphIds.join(', ')}`;
+      this.recordIssue({ severity: 'warning', code: 'owner.wrapper.multi', message });
       console.warn(message);
     }
+  }
+
+  private recordPrimaryOwnerAmbiguous(ownerType: string, ownerId: string, graphIds: string[]): void {
+    const key = `${ownerType}:${ownerId}`;
+    if (this.primaryOwnerWarningKeys.has(key)) return;
+    this.primaryOwnerWarningKeys.add(key);
+    const message = `NarrativeStateManager: primary owner lookup is ambiguous for ${key}; bound wrapper graphs: ${graphIds.join(', ')}`;
+    this.recordIssue({ severity: 'warning', code: 'owner.primary.ambiguous', message });
+    console.warn(message);
   }
 
   private normalizeSignal(signal: NarrativeSignal): { key: NarrativeTriggerKey; source?: NarrativeSignal } | null {

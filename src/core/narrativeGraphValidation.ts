@@ -51,6 +51,7 @@ interface NarrativeGraphLike {
   id?: string;
   ownerType?: string;
   ownerId?: string;
+  category?: string;
   initialState?: string;
   entryState?: string;
   exitStates?: unknown;
@@ -84,6 +85,7 @@ interface CompiledGraphRef {
   graph: NarrativeGraphLike;
   compositionId: string;
   elementId?: string;
+  elementKind?: ElementKind;
 }
 
 type GraphValidationContext = {
@@ -244,7 +246,7 @@ function compileGraphs(data: NarrativeGraphsFileLike): CompiledGraphRef[] {
     if (isGraph(comp.mainGraph)) out.push({ graph: comp.mainGraph, compositionId: String(comp.id ?? '') });
     for (const el of comp.elements ?? []) {
       if ((el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph') && isGraph(el.graph)) {
-        out.push({ graph: el.graph, compositionId: String(comp.id ?? ''), elementId: el.id });
+        out.push({ graph: el.graph, compositionId: String(comp.id ?? ''), elementId: el.id, elementKind: el.kind });
       }
     }
   }
@@ -505,27 +507,58 @@ function validateStateCommandTargets(data: NarrativeGraphsFileLike, graphIndex: 
 }
 
 function validateOwnerBindings(data: NarrativeGraphsFileLike, issues: NarrativeValidationIssue[]): void {
-  const byOwner = new Map<string, string[]>();
-  for (const { graph } of compileGraphs(data)) {
+  const byOwner = new Map<string, Array<{ graphId: string; category: string }>>();
+  for (const { graph, elementKind } of compileGraphs(data)) {
+    if (elementKind !== 'wrapperGraph') continue;
     const ownerType = String(graph.ownerType ?? '').trim();
     const ownerId = String(graph.ownerId ?? '').trim();
     const gid = String(graph.id ?? '').trim();
     if (!ownerType || !ownerId || !gid) continue;
     const key = `${ownerType}:${ownerId}`;
-    const graphIds = byOwner.get(key) ?? [];
-    graphIds.push(gid);
-    byOwner.set(key, graphIds);
+    const entries = byOwner.get(key) ?? [];
+    entries.push({ graphId: gid, category: String(graph.category ?? '').trim() });
+    byOwner.set(key, entries);
   }
-  for (const [key, graphIds] of byOwner.entries()) {
-    if (graphIds.length <= 1) continue;
+  for (const [key, graphs] of byOwner.entries()) {
+    if (graphs.length <= 1) continue;
+    const graphIds = graphs.map((entry) => entry.graphId);
     addIssue(
       issues,
-      'error',
-      'owner.wrapper.duplicate',
+      'warning',
+      'owner.wrapper.multi',
       `${key}: multiple wrapper graphs share the same owner binding (${graphIds.join(', ')})`,
       undefined,
       key,
     );
+    const missingCategoryIds = graphs.filter((entry) => !entry.category).map((entry) => entry.graphId);
+    if (missingCategoryIds.length > 0) {
+      addIssue(
+        issues,
+        'warning',
+        'owner.wrapper.category.missing',
+        `${key}: multiple wrappers should set category for clarity (missing on: ${missingCategoryIds.join(', ')})`,
+        undefined,
+        key,
+      );
+    }
+    const categoryMap = new Map<string, string[]>();
+    for (const entry of graphs) {
+      if (!entry.category) continue;
+      const ids = categoryMap.get(entry.category) ?? [];
+      ids.push(entry.graphId);
+      categoryMap.set(entry.category, ids);
+    }
+    for (const [category, ids] of categoryMap.entries()) {
+      if (ids.length <= 1) continue;
+      addIssue(
+        issues,
+        'warning',
+        'owner.wrapper.category.duplicate',
+        `${key}: wrapper category "${category}" is used by multiple wrappers (${ids.join(', ')})`,
+        undefined,
+        key,
+      );
+    }
   }
 }
 

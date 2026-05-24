@@ -58,6 +58,8 @@ export interface NarrativeGraphDef {
   id: string;
   ownerType: string;
   ownerId?: string;
+  /** Free-form wrapper category/remark used for grouping in entity view. */
+  category?: string;
   initialState: string;
   entryState?: string;
   exitStates?: string[];
