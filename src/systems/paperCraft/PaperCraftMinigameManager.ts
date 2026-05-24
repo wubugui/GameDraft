@@ -1,4 +1,5 @@
 import type { AssetManager } from '../../core/AssetManager';
+import type { AssetRef } from '../../core/AssetManager';
 import type { EventBus } from '../../core/EventBus';
 import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { InputManager } from '../../core/InputManager';
@@ -23,6 +24,7 @@ export class PaperCraftMinigameManager implements IGameSystem {
   private index: PaperCraftIndexEntry[] = [];
   private instanceCache = new Map<string, PaperCraftInstance>();
   private scene: PaperCraftMinigameScene | null = null;
+  private activeScopeId: string | null = null;
   private active = false;
   private prevState = GameState.Exploring;
   private unsubKey: (() => void) | null = null;
@@ -66,6 +68,7 @@ export class PaperCraftMinigameManager implements IGameSystem {
     this.unsubKey?.();
     this.unsubKey = null;
     this.inputManager?.setGameKeyboardBlocked(false);
+    this.releaseActiveScope();
     this.removeScene();
     this.active = false;
     const rs = this.sessionResolve;
@@ -115,6 +118,13 @@ export class PaperCraftMinigameManager implements IGameSystem {
       return;
     }
 
+    const scopeId = `minigame:paperCraft:${inst.id}`;
+    await this.assetManager.preloadManifest(
+      { scopeId, refs: this.buildInstanceManifestRefs(inst) },
+      { mode: 'stage', tolerateErrors: true },
+    );
+    this.activeScopeId = scopeId;
+
     this.prevState = this.stateController.currentState;
     this.stateController.setState(GameState.Minigame);
     this.inputManager.setGameKeyboardBlocked(true);
@@ -154,6 +164,26 @@ export class PaperCraftMinigameManager implements IGameSystem {
     this.eventBus.emit('minigame:paperCraftResult', result);
   }
 
+  private buildInstanceManifestRefs(inst: PaperCraftInstance): AssetRef[] {
+    const refs: AssetRef[] = [];
+    const addTexture = (path: string | undefined, label: string): void => {
+      if (path?.trim()) refs.push({ type: 'texture', path, label });
+    };
+    addTexture(inst.backgroundImage, `扎纸背景: ${inst.id}`);
+    for (const order of inst.orders) {
+      for (const part of order.parts) {
+        addTexture(part.image, `扎纸部件: ${part.id}`);
+      }
+    }
+    return refs;
+  }
+
+  private releaseActiveScope(): void {
+    if (!this.activeScopeId) return;
+    this.assetManager.releaseScope(this.activeScopeId);
+    this.activeScopeId = null;
+  }
+
   private async loadInstance(id: string): Promise<PaperCraftInstance | null> {
     const cached = this.instanceCache.get(id);
     if (cached) return cached;
@@ -176,6 +206,7 @@ export class PaperCraftMinigameManager implements IGameSystem {
     this.unsubKey?.();
     this.unsubKey = null;
     this.inputManager?.setGameKeyboardBlocked(false);
+    this.releaseActiveScope();
     this.removeScene();
     this.active = false;
     this.stateController?.setState(this.prevState);

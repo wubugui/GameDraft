@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import html
+from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer, QEventLoop
+from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer, QEventLoop, QStandardPaths
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -25,11 +26,53 @@ def _safe_placeholder(message: str) -> str:
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
+    from PySide6.QtWebEngineCore import QWebEngineProfile
 
     from ..web_engine_page import QuietWebEnginePage
 except ImportError:  # pragma: no cover
     QWebEngineView = None  # type: ignore[assignment,misc]
+    QWebEngineProfile = None  # type: ignore[assignment,misc]
     QuietWebEnginePage = None  # type: ignore[assignment,misc]
+
+
+_GAME_WEB_PROFILE = None
+
+
+def _game_webengine_profile():
+    """Persistent profile for game preview; default Qt profile is off-the-record here."""
+    global _GAME_WEB_PROFILE
+    if QWebEngineProfile is None:
+        return None
+    if _GAME_WEB_PROFILE is not None:
+        return _GAME_WEB_PROFILE
+
+    profile = QWebEngineProfile("GameDraftGamePreview")
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+    if not base:
+        base = str(Path.home() / "AppData" / "Local" / "GameDraft")
+    root = Path(base) / "webengine_game_preview"
+    cache = root / "cache"
+    storage = root / "storage"
+    cache.mkdir(parents=True, exist_ok=True)
+    storage.mkdir(parents=True, exist_ok=True)
+
+    profile.setCachePath(str(cache))
+    profile.setPersistentStoragePath(str(storage))
+    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
+    profile.setPersistentCookiesPolicy(
+        QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies,
+    )
+    _GAME_WEB_PROFILE = profile
+    return profile
+
+
+def _make_game_page(parent):
+    if QuietWebEnginePage is None:
+        return None
+    profile = _game_webengine_profile()
+    if profile is not None:
+        return QuietWebEnginePage(profile, parent)
+    return QuietWebEnginePage(parent)
 
 
 class GameBrowserTab(QWidget):
@@ -94,7 +137,7 @@ class GameBrowserTab(QWidget):
         if self._has_webengine:
             self._view = QWebEngineView(self)
             if QuietWebEnginePage is not None:
-                self._view.setPage(QuietWebEnginePage(self._view))
+                self._view.setPage(_make_game_page(self._view))
             self._view.setMinimumSize(0, 0)
             self._view.setSizePolicy(
                 QSizePolicy.Policy.Ignored,
@@ -167,7 +210,7 @@ class GamePlayWindow(QWidget):
         if QWebEngineView is not None:
             self._view = QWebEngineView(self)
             if QuietWebEnginePage is not None:
-                self._view.setPage(QuietWebEnginePage(self._view))
+                self._view.setPage(_make_game_page(self._view))
             self._view.setMinimumSize(0, 0)
             self._view.setSizePolicy(
                 QSizePolicy.Policy.Ignored,

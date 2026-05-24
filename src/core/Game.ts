@@ -1,7 +1,7 @@
 import { EventBus } from './EventBus';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { InputManager } from './InputManager';
-import { AssetManager } from './AssetManager';
+import { AssetManager, type AssetRef } from './AssetManager';
 import { ActionExecutor } from './ActionExecutor';
 import { SaveManager } from './SaveManager';
 import { Renderer } from '../rendering/Renderer';
@@ -258,6 +258,7 @@ export class Game {
     this.actionExecutor = new ActionExecutor(this.eventBus, this.flagStore, this.stateController);
     this.ruleOfferRegistry = new RuleOfferRegistry();
     this.renderer = new Renderer();
+    this.renderer.setAssetManager(this.assetManager);
     this.camera = new Camera(this.renderer.worldContainer);
     this.player = new Player(this.inputManager);
     this.interactionSystem = new InteractionSystem(this.eventBus, this.flagStore, this.inputManager);
@@ -516,10 +517,10 @@ export class Game {
       (onClose) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       this.stringsProvider,
     );
-    this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider);
-    this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider);
+    this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider, this.assetManager);
+    this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider, this.assetManager);
 
-    this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera);
+    this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera, this.assetManager);
     this.cutsceneManager = new CutsceneManager(
       this.eventBus, this.flagStore, this.actionExecutor,
       this.cutsceneRenderer,
@@ -1003,7 +1004,7 @@ export class Game {
     }
     this.saveManager.setFallbackScene(this.gameConfig.fallbackScene || this.gameConfig.initialScene);
 
-    await this.setupPlayer();
+    await this.setupPlayer({ deferAvatar: this.isDevMode });
 
     if (this.isDevMode) {
       await this.startDevMode(
@@ -1180,6 +1181,23 @@ export class Game {
   }
 
   /** 从磁盘加载玩家动画资源；失败返回 null（由调用方决定占位图集）。 */
+  private async buildAnimationManifestRefs(animPath: string, labelPrefix: string): Promise<AssetRef[]> {
+    const refs: AssetRef[] = [{ type: 'json', path: animPath, label: `${labelPrefix}清单` }];
+    try {
+      const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(animPath);
+      if (animRaw.spritesheet) {
+        refs.push({
+          type: 'texture',
+          path: resolvePathRelativeToAnimManifest(animPath, animRaw.spritesheet),
+          label: `${labelPrefix}图集`,
+        });
+      }
+    } catch {
+      // 实际加载会走占位图；startup manifest 只做尽力预热。
+    }
+    return refs;
+  }
+
   private async loadPlayerAvatarResources(
     playerAnimPath: string,
   ): Promise<{ texture: any; animDef: AnimationSetDef } | null> {
@@ -1267,16 +1285,35 @@ export class Game {
     await this.applyPlayerAvatarFromAction(path, avatar?.stateMap ?? null);
   }
 
-  private async setupPlayer(): Promise<void> {
+  private async setupPlayer(options: { deferAvatar?: boolean } = {}): Promise<void> {
     const avatar = this.gameConfig.playerAvatar;
     const defaultManifest = '/resources/runtime/animation/player_anim/anim.json';
     const playerAnimPath = (avatar?.animManifest?.trim() || defaultManifest);
-    const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
-    if (loaded) {
-      this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true);
-    } else {
+
+    if (options.deferAvatar) {
       const { texture, animDef } = this.placeholderPlayerAvatar();
       this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false);
+      void (async () => {
+        await this.assetManager.preloadManifest({
+          scopeId: 'startup:player',
+          refs: await this.buildAnimationManifestRefs(playerAnimPath, '玩家动画'),
+        }, { mode: 'runtime', tolerateErrors: true });
+        const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
+        if (!loaded || this.tearDownComplete || !this.renderer.isInitialized()) return;
+        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true);
+      })();
+    } else {
+      await this.assetManager.preloadManifest({
+        scopeId: 'startup:player',
+        refs: await this.buildAnimationManifestRefs(playerAnimPath, '玩家动画'),
+      }, { mode: 'stage', tolerateErrors: true });
+      const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
+      if (loaded) {
+        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true);
+      } else {
+        const { texture, animDef } = this.placeholderPlayerAvatar();
+        this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false);
+      }
     }
     this.renderer.entityLayer.addChild(this.player.sprite.container);
 
@@ -1400,6 +1437,7 @@ export class Game {
     this.sceneManager.setAudioApplier((bgm, ambient) => {
       this.audioManager.applySceneAudio(bgm, ambient);
     });
+    this.sceneManager.setAudioManifestResolver((bgm, ambient) => this.audioManager.getSceneAudioRefs(bgm, ambient));
 
     this.sceneManager.setZoneSetter((zones) => {
       this.zoneSystem.setZones(zones);

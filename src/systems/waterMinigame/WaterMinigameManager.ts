@@ -1,4 +1,5 @@
 import type { AssetManager } from '../../core/AssetManager';
+import type { AssetRef } from '../../core/AssetManager';
 import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { FlagStore } from '../../core/FlagStore';
 import type { InputManager } from '../../core/InputManager';
@@ -28,6 +29,7 @@ export class WaterMinigameManager implements IGameSystem {
   private instanceCache = new Map<string, WaterMinigameInstance>();
 
   private scene: WaterMinigameScene | null = null;
+  private activeScopeId: string | null = null;
   private active = false;
   private unsubKey: (() => void) | null = null;
   private prevState = GameState.Exploring;
@@ -100,6 +102,7 @@ export class WaterMinigameManager implements IGameSystem {
     this.unsubKey = null;
     this.detachSessionPullSpaceBridge();
     this.inputManager?.setGameKeyboardBlocked(false);
+    this.releaseActiveScope();
     if (this.scene) {
       if (this.scene.root.parent) {
         this.scene.root.parent.removeChild(this.scene.root);
@@ -176,6 +179,12 @@ export class WaterMinigameManager implements IGameSystem {
     const degraded = uses >= DAILY_SOFT_CAP;
 
     this.pendingUseKey = key;
+    const scopeId = `minigame:water:${inst.id}`;
+    await this.assetManager.preloadManifest(
+      { scopeId, refs: this.buildInstanceManifestRefs(inst) },
+      { mode: 'stage', tolerateErrors: true },
+    );
+    this.activeScopeId = scopeId;
 
     this.prevState = this.stateController.currentState;
     this.stateController.setState(GameState.Minigame);
@@ -236,8 +245,30 @@ export class WaterMinigameManager implements IGameSystem {
     this.consumedPullEntities.add(`${instanceId}::${entityId}`);
   }
 
+  private buildInstanceManifestRefs(inst: WaterMinigameInstance): AssetRef[] {
+    const refs: AssetRef[] = [];
+    const addTexture = (path: string | undefined, label: string): void => {
+      if (path?.trim()) refs.push({ type: 'texture', path, label });
+    };
+    addTexture(inst.waterBottom?.texture, `水域底图: ${inst.id}`);
+    for (const bank of inst.shoreForeground?.banks ?? []) {
+      addTexture(bank.sprite, `水域岸边: ${inst.id}`);
+    }
+    for (const ent of inst.entities) {
+      addTexture(ent.sprite, `水域实体: ${ent.id}`);
+    }
+    return refs;
+  }
+
+  private releaseActiveScope(): void {
+    if (!this.activeScopeId) return;
+    this.assetManager.releaseScope(this.activeScopeId);
+    this.activeScopeId = null;
+  }
+
   private attachSessionPullSpaceBridge(): void {
     this.detachSessionPullSpaceBridge();
+    this.releaseActiveScope();
     this.sessionPullSpaceHeld = false;
 
     this.boundPullSpaceKeyDown = (e: KeyboardEvent) => {

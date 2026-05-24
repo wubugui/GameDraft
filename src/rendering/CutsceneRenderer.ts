@@ -1,8 +1,9 @@
-import { Container, Graphics, Text, HTMLText, Sprite, Assets, Texture, type Mesh } from 'pixi.js';
+import { Container, Graphics, Text, HTMLText, Sprite, Texture, type Mesh } from 'pixi.js';
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
 import { resolveAssetPath } from '../core/assetPath';
 import { createOverlayBlendMesh } from './overlayBlendShader';
+import type { AssetManager } from '../core/AssetManager';
 
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
 export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
@@ -43,6 +44,7 @@ export class CutsceneRenderer {
   private resolveDisplay: ((s: string) => string) | null = null;
   private renderer: Renderer;
   private camera: Camera;
+  private assetManager: AssetManager;
 
   private fadeOverlay: Graphics | null = null;
   /** 仅遮住世界与 cutsceneOverlay 内容，不遮住 uiLayer（供对话期间「游戏画面渐黑」、台词仍用 DialogueUI 显示）。 */
@@ -62,9 +64,10 @@ export class CutsceneRenderer {
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
   /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
   private cutsceneOpResolvers = new Set<() => void>();
-  constructor(renderer: Renderer, camera: Camera) {
+  constructor(renderer: Renderer, camera: Camera, assetManager: AssetManager) {
     this.renderer = renderer;
     this.camera = camera;
+    this.assetManager = assetManager;
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -432,7 +435,7 @@ export class CutsceneRenderer {
     const resolvedPath = resolveAssetPath(imagePath);
     let texture: Texture;
     try {
-      texture = await Assets.load<Texture>(resolvedPath);
+      texture = await this.assetManager.loadTexture(resolvedPath);
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
       const sw = this.screenWidth;
@@ -487,7 +490,7 @@ export class CutsceneRenderer {
 
     let texture: Texture;
     try {
-      texture = await Assets.load<Texture>(resolvedPath);
+      texture = await this.assetManager.loadTexture(resolvedPath);
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
       const dispH = Math.max(8, dispW * 0.75);
@@ -563,11 +566,11 @@ export class CutsceneRenderer {
     let texFrom: Texture | undefined;
     let texTo: Texture | undefined;
     [texFrom, texTo] = await Promise.all([
-      Assets.load<Texture>(resolvedFrom).catch((err) => {
+      this.assetManager.loadTexture(resolvedFrom).catch((err) => {
         console.error(`[CutsceneRenderer] blendPercentImg 底图加载失败: ${resolvedFrom}`, err);
         return undefined;
       }),
-      Assets.load<Texture>(resolvedTo).catch((err) => {
+      this.assetManager.loadTexture(resolvedTo).catch((err) => {
         console.error(`[CutsceneRenderer] blendPercentImg 目标图加载失败: ${resolvedTo}`, err);
         return undefined;
       }),

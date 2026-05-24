@@ -1,5 +1,5 @@
 import { Container, Graphics, Sprite, Text } from 'pixi.js';
-import type { AssetManager } from '../core/AssetManager';
+import type { AssetManager, AssetManifest, AssetRef } from '../core/AssetManager';
 import type { EventBus } from '../core/EventBus';
 import type { Renderer } from '../rendering/Renderer';
 import { Hotspot } from '../entities/Hotspot';
@@ -85,12 +85,14 @@ export class SceneManager implements IGameSystem {
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
   private boundsOnlySetter: ((boundsW: number, boundsH: number) => void) | null = null;
   private audioApplier: ((bgm?: string, ambient?: string[]) => void) | null = null;
+  private audioManifestResolver: ((bgm?: string, ambient?: string[]) => AssetRef[]) | null = null;
   private zoneSetter: ((zones: import('../data/types').ZoneDef[]) => void) | null = null;
   private interactionSetter: ((hotspots: Hotspot[], npcs: Npc[]) => void) | null = null;
   private depthLoader: ((sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>) | null = null;
   private depthUnloader: (() => void) | null = null;
   /** 场景根 `onEnter` 动作：由 Game 注入 ActionExecutor.executeBatchAwait */
   private sceneEnterRunner: ((actions: ActionDef[]) => Promise<void>) | null = null;
+  private currentSceneScopeId: string | null = null;
 
   private onHotspotPickup: (payload: { hotspotId: string }) => void;
   private onHotspotInspected: (payload: { hotspotId: string }) => void;
@@ -130,6 +132,10 @@ export class SceneManager implements IGameSystem {
 
   setAudioApplier(fn: (bgm?: string, ambient?: string[]) => void): void {
     this.audioApplier = fn;
+  }
+
+  setAudioManifestResolver(fn: ((bgm?: string, ambient?: string[]) => AssetRef[]) | null): void {
+    this.audioManifestResolver = fn;
   }
 
   setZoneSetter(fn: (zones: import('../data/types').ZoneDef[]) => void): void {
@@ -811,6 +817,90 @@ export class SceneManager implements IGameSystem {
     return { bgLayers, hotspots, npcs };
   }
 
+  private async buildSceneResourceManifest(sceneId: string, sceneData: SceneData): Promise<AssetManifest> {
+    const refs: AssetRef[] = [];
+    const add = (ref: AssetRef | null | undefined): void => {
+      if (!ref?.path?.trim()) return;
+      refs.push(ref);
+    };
+
+    for (const layer of sceneData.backgrounds ?? []) {
+      add({ type: 'texture', path: layer.image, label: `背景: ${layer.image}` });
+    }
+
+    const committedMemory = this.getCommittedMemory(sceneId);
+    const activeCutsceneId = this.cutsceneStaging?.sceneId === sceneId ? this.cutsceneStaging.cutsceneId : null;
+    for (const def of sceneData.hotspots ?? []) {
+      const boundToActive = !!(activeCutsceneId && isEntityBoundToCutscene(def, activeCutsceneId));
+      if (!boundToActive) {
+        if (isCutsceneOnlyEntity(def)) continue;
+        if (committedMemory?.pickedUpHotspots.includes(def.id)) continue;
+        const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'outer');
+        if (ovr?.enabled === false) continue;
+      }
+      const defToUse = applyHotspotRuntimeOverride(
+        def,
+        this.getRuntimeOverrideForContext(
+          sceneId,
+          'hotspot',
+          def.id,
+          def,
+          boundToActive ? 'cutscene' : 'outer',
+        ) as Record<string, SceneEntityRuntimeValue> | undefined,
+      );
+      if (defToUse.displayImage?.image) {
+        add({ type: 'texture', path: defToUse.displayImage.image, label: `Hotspot: ${def.id}` });
+      }
+    }
+
+    for (const npcDef of sceneData.npcs ?? []) {
+      const boundToActive = !!(activeCutsceneId && isEntityBoundToCutscene(npcDef, activeCutsceneId));
+      if (!boundToActive && isCutsceneOnlyEntity(npcDef)) continue;
+      const snap = this.getRuntimeOverrideForContext(
+        sceneId,
+        'npc',
+        npcDef.id,
+        npcDef,
+        boundToActive ? 'cutscene' : 'outer',
+      ) as NpcRuntimeOverride | undefined;
+      const defToUse = applyNpcRuntimeOverride(npcDef, snap as Record<string, SceneEntityRuntimeValue> | undefined);
+      if (!defToUse.animFile) continue;
+      add({ type: 'json', path: defToUse.animFile, label: `NPC 动画清单: ${npcDef.id}` });
+      try {
+        const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
+        if (animRaw.spritesheet) {
+          add({
+            type: 'texture',
+            path: resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet),
+            label: `NPC 图集: ${npcDef.id}`,
+          });
+        }
+      } catch {
+        // 实例化时仍会降级为占位；manifest 只做尽力收集。
+      }
+    }
+
+    if (sceneData.depthConfig) {
+      const basePath = `resources/runtime/scenes/${sceneId}/`;
+      if (sceneData.depthConfig.depth_map) {
+        add({ type: 'texture', path: basePath + sceneData.depthConfig.depth_map, label: `深度图: ${sceneId}` });
+      }
+      if (sceneData.depthConfig.collision_map) {
+        add({ type: 'bitmap', path: basePath + sceneData.depthConfig.collision_map, label: `碰撞图: ${sceneId}` });
+      }
+    }
+
+    if (sceneData.filterId) {
+      add({ type: 'filter', path: sceneData.filterId, label: `滤镜: ${sceneData.filterId}` });
+    }
+
+    for (const ref of this.audioManifestResolver?.(sceneData.bgm, sceneData.ambientSounds) ?? []) {
+      add(ref);
+    }
+
+    return { scopeId: `scene:${sceneId}`, refs };
+  }
+
   async loadScene(
     sceneId: string,
     spawnPointId?: string,
@@ -821,6 +911,7 @@ export class SceneManager implements IGameSystem {
     onLoadProgress?.(0, `场景 JSON · ${sceneId}`);
     const sceneData = await this.assetManager.loadSceneData(sceneId);
     this.currentScene = sceneData;
+    const manifest = await this.buildSceneResourceManifest(sceneId, sceneData);
 
     const committedMemory = this.getCommittedMemory(sceneId);
     const activeCutsceneId = this.cutsceneStaging?.sceneId === sceneId ? this.cutsceneStaging.cutsceneId : null;
@@ -847,10 +938,22 @@ export class SceneManager implements IGameSystem {
       const depthBonus = this.depthLoader ? 1 : 0;
       const filterBonus = sceneData.filterId ? 1 : 0;
       const enterBonus = !!(sceneData.onEnter?.length && this.sceneEnterRunner) ? 1 : 0;
-      totalSteps = 1 + bgLayers + hsN + npcN + depthBonus + filterBonus + enterBonus;
+      totalSteps = 1 + manifest.refs.length + bgLayers + hsN + npcN + depthBonus + filterBonus + enterBonus;
       if (totalSteps < 1) totalSteps = 1;
       advance(`JSON ✓ · ${sceneData.name ?? sceneId}`);
     }
+
+    await this.assetManager.preloadManifest(manifest, {
+      mode: 'stage',
+      tolerateErrors: true,
+      onProgress: (r, label) => {
+        if (!onLoadProgress) return;
+        doneSteps = 1 + Math.round(r * manifest.refs.length);
+        onLoadProgress(Math.min(1, doneSteps / totalSteps), label);
+      },
+    });
+    doneSteps = onLoadProgress ? 1 + manifest.refs.length : doneSteps;
+    this.currentSceneScopeId = manifest.scopeId;
 
     // 计算世界→像素的转换比例（用于碰撞检测）
     let worldToPixelX = 1;
@@ -1005,6 +1108,10 @@ export class SceneManager implements IGameSystem {
   unloadScene(): void {
     this.eventBus.emit('scene:beforeUnload');
     this.interactionSetter?.([], []);
+    if (this.currentSceneScopeId) {
+      this.assetManager.releaseScope(this.currentSceneScopeId);
+      this.currentSceneScopeId = null;
+    }
 
     for (const hotspot of this.currentHotspots) {
       hotspot.destroy();

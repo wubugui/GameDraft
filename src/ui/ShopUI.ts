@@ -3,8 +3,8 @@ import { UITheme, fadeIn } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IInventoryDataProvider, ShopDef } from '../data/types';
-import { resolveAssetPath } from '../core/assetPath';
 import type { StringsProvider } from '../core/StringsProvider';
+import type { AssetManager } from '../core/AssetManager';
 
 const PANEL_W = 500;
 const PADDING = 20;
@@ -12,6 +12,7 @@ const ITEM_H = 36;
 
 export class ShopUI {
   private renderer: Renderer;
+  private assetManager: AssetManager;
   private eventBus: EventBus;
   private inventoryData: IInventoryDataProvider;
   private strings: StringsProvider;
@@ -22,8 +23,9 @@ export class ShopUI {
   private rebuildTimerId: ReturnType<typeof setTimeout> | null = null;
   private resolveDisplay: ((s: string) => string) | null = null;
 
-  constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider, strings: StringsProvider) {
+  constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider, strings: StringsProvider, assetManager: AssetManager) {
     this.renderer = renderer;
+    this.assetManager = assetManager;
     this.eventBus = eventBus;
     this.inventoryData = inventoryData;
     this.strings = strings;
@@ -35,8 +37,7 @@ export class ShopUI {
 
   async loadDefs(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/shops.json'));
-      const list: ShopDef[] = await resp.json();
+      const list = await this.assetManager.loadJson<ShopDef[]>('/assets/data/shops.json');
       for (const s of list) this.shopDefs.set(s.id, s);
     } catch { /* no shops yet */ }
   }

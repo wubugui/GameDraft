@@ -1,7 +1,7 @@
 import { Howler } from 'howler';
 import type { Howl } from 'howler';
 import type { EventBus } from '../core/EventBus';
-import type { AssetManager } from '../core/AssetManager';
+import type { AssetManager, AssetRef } from '../core/AssetManager';
 import { resolveAssetPath } from '../core/assetPath';
 import type { IGameSystem, GameContext, IAudioSettingsProvider } from '../data/types';
 
@@ -38,7 +38,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   /** 嵌入式 WebView 等场景下，页面加载后尚无用户手势，此时 play() 会触发 AudioContext 警告；推迟到首次输入再真正播放。 */
   private audioUnblocked = false;
-  private pendingPlayback: Array<() => void> = [];
+  private pendingPlayback: Array<() => void | Promise<void>> = [];
   private gestureListenersInstalled = false;
   private sfxEventListeners: Array<{ event: string; callback: EventCallback }> = [];
   private lastMapTravelSfxAt = 0;
@@ -78,7 +78,6 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
           Object.entries(raw.systemSfx ?? {}).filter(([, v]) => typeof v === 'string' && v.trim()),
         ),
       };
-      await this.preloadConfiguredAudio();
       this.loaded = true;
     } catch {
       console.warn('AudioManager: audio_config.json not found, running silent');
@@ -87,7 +86,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   playBgm(id: string, fadeMs: number = 1000): void {
-    this.runWhenAudioAllowed(() => {
+    this.runWhenAudioAllowed(async () => {
       if (this.currentBgmId === id) return;
 
       const entry = this.config.bgm[id];
@@ -102,11 +101,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         this.scheduleCleanup(() => { old.stop(); }, fadeMs);
       }
 
-      const howl = this.assetManager.getAudio(entry.src, { loop: true });
-      if (!howl) {
-        console.warn(`AudioManager: bgm "${id}" was not preloaded`);
-        return;
-      }
+      const howl = this.assetManager.getAudio(entry.src, { loop: true })
+        ?? await this.assetManager.loadAudio(entry.src, { loop: true });
       howl.loop(true);
       howl.volume(0);
       howl.play();
@@ -129,7 +125,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   addAmbient(id: string, volume?: number): void {
-    this.runWhenAudioAllowed(() => {
+    this.runWhenAudioAllowed(async () => {
       if (this.ambientLayers.has(id)) return;
 
       const entry = this.config.ambient[id];
@@ -139,11 +135,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       }
 
       const vol = (volume ?? entry.volume ?? 1.0) * this.ambientVolume;
-      const howl = this.assetManager.getAudio(entry.src, { loop: true });
-      if (!howl) {
-        console.warn(`AudioManager: ambient "${id}" was not preloaded`);
-        return;
-      }
+      const howl = this.assetManager.getAudio(entry.src, { loop: true })
+        ?? await this.assetManager.loadAudio(entry.src, { loop: true });
       howl.loop(true);
       howl.volume(vol);
       howl.play();
@@ -172,15 +165,13 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   playSfx(id: string): void {
-    this.runWhenAudioAllowed(() => {
+    this.runWhenAudioAllowed(async () => {
       const entry = this.config.sfx[id];
       if (!entry) return;
 
-      const howl = this.sfxCache.get(id) ?? this.assetManager.getAudio(entry.src, { loop: false });
-      if (!howl) {
-        console.warn(`AudioManager: sfx "${id}" was not preloaded`);
-        return;
-      }
+      const howl = this.sfxCache.get(id)
+        ?? this.assetManager.getAudio(entry.src, { loop: false })
+        ?? await this.assetManager.loadAudio(entry.src, { loop: false });
       if (!this.sfxCache.has(id)) this.sfxCache.set(id, howl);
       howl.volume(this.sfxVolume);
       howl.play();
@@ -249,34 +240,21 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.pendingTimers.add(id);
   }
 
-  private async preloadConfiguredAudio(): Promise<void> {
-    this.sfxCache.clear();
-    const jobs: Array<Promise<void>> = [];
-
-    const add = (id: string, src: string, loop: boolean, channel: 'bgm' | 'ambient' | 'sfx') => {
-      jobs.push(
-        this.assetManager.loadAudio(src, { loop })
-          .then((howl) => {
-            howl.stop();
-            howl.volume(0);
-            if (channel === 'sfx') this.sfxCache.set(id, howl);
-          })
-          .catch((e) => {
-            console.warn(`AudioManager: failed to preload ${channel} "${id}"`, e);
-          }),
-      );
-    };
-
-    for (const [id, entry] of Object.entries(this.config.bgm)) add(id, entry.src, true, 'bgm');
-    for (const [id, entry] of Object.entries(this.config.ambient)) add(id, entry.src, true, 'ambient');
-    for (const [id, entry] of Object.entries(this.config.sfx)) add(id, entry.src, false, 'sfx');
-
-    await Promise.all(jobs);
+  getSceneAudioRefs(bgmId?: string, ambientIds?: string[]): AssetRef[] {
+    const refs: AssetRef[] = [];
+    if (bgmId && this.config.bgm[bgmId]) {
+      refs.push({ type: 'audio', path: this.config.bgm[bgmId].src, options: { loop: true }, label: `BGM: ${bgmId}` });
+    }
+    for (const id of ambientIds ?? []) {
+      const entry = this.config.ambient[id];
+      if (entry) refs.push({ type: 'audio', path: entry.src, options: { loop: true }, label: `环境音: ${id}` });
+    }
+    return refs;
   }
 
-  private runWhenAudioAllowed(fn: () => void): void {
+  private runWhenAudioAllowed(fn: () => void | Promise<void>): void {
     if (this.audioUnblocked) {
-      fn();
+      void fn();
       return;
     }
     this.pendingPlayback.push(fn);
@@ -289,7 +267,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.removeAudioGestureListeners();
     const queued = this.pendingPlayback.splice(0);
     for (const fn of queued) {
-      fn();
+      void fn();
     }
   };
 

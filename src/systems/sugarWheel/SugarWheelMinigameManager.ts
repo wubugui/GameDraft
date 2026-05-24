@@ -1,4 +1,5 @@
 import type { AssetManager } from '../../core/AssetManager';
+import type { AssetRef } from '../../core/AssetManager';
 import type { EventBus } from '../../core/EventBus';
 import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { InputManager } from '../../core/InputManager';
@@ -29,6 +30,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
   private index: SugarWheelIndexEntry[] = [];
   private instanceCache = new Map<string, SugarWheelInstance>();
   private scene: SugarWheelMinigameScene | null = null;
+  private activeScopeId: string | null = null;
   private active = false;
   private prevState = GameState.Exploring;
   private unsubKey: (() => void) | null = null;
@@ -80,6 +82,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
     this.unsubKey?.();
     this.unsubKey = null;
     this.inputManager?.setGameKeyboardBlocked(false);
+    this.releaseActiveScope();
     this.removeScene();
     this.active = false;
     const rs = this.sessionResolve;
@@ -138,6 +141,13 @@ export class SugarWheelMinigameManager implements IGameSystem {
       return;
     }
 
+    const scopeId = `minigame:sugarWheel:${inst.id}`;
+    await this.assetManager.preloadManifest(
+      { scopeId, refs: this.buildInstanceManifestRefs(inst) },
+      { mode: 'stage', tolerateErrors: true },
+    );
+    this.activeScopeId = scopeId;
+
     this.prevState = this.stateController.currentState;
     this.stateController.setState(GameState.Minigame);
     this.inputManager.setGameKeyboardBlocked(true);
@@ -188,6 +198,24 @@ export class SugarWheelMinigameManager implements IGameSystem {
     this.eventBus.emit('minigame:sugarWheelResult', result);
   }
 
+  private buildInstanceManifestRefs(inst: SugarWheelInstance): AssetRef[] {
+    const refs: AssetRef[] = [];
+    const addTexture = (path: string | undefined, label: string): void => {
+      if (path?.trim()) refs.push({ type: 'texture', path, label });
+    };
+    addTexture(inst.backgroundImage, `糖画背景: ${inst.id}`);
+    addTexture(inst.foregroundImage, `糖画前景: ${inst.id}`);
+    addTexture(inst.wheelImage, `糖画转盘: ${inst.id}`);
+    addTexture(inst.pointerImage, `糖画指针: ${inst.id}`);
+    return refs;
+  }
+
+  private releaseActiveScope(): void {
+    if (!this.activeScopeId) return;
+    this.assetManager.releaseScope(this.activeScopeId);
+    this.activeScopeId = null;
+  }
+
   private async loadInstance(id: string): Promise<SugarWheelInstance | null> {
     const cached = this.instanceCache.get(id);
     if (cached) return cached;
@@ -210,6 +238,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
     this.unsubKey?.();
     this.unsubKey = null;
     this.inputManager?.setGameKeyboardBlocked(false);
+    this.releaseActiveScope();
     this.removeScene();
     this.active = false;
     this.stateController?.setState(this.prevState);

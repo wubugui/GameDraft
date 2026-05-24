@@ -99,7 +99,6 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       this.loadBooks(),
       this.loadItemDisplayNames(),
     ]);
-    await this.preloadContentImages();
     this.evaluateUnlocks();
     this.syncUnlockedBooksFromFlags();
   }

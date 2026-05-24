@@ -2,7 +2,6 @@ import { Texture } from 'pixi.js';
 import type { AssetManager } from './AssetManager';
 import type { SceneDepthConfig, IGameSystem, GameContext } from '../data/types';
 import { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
-import { resolveAssetPath } from './assetPath';
 import { depthLog, depthError } from './depthLog';
 
 const T = 'DepthSystem';
@@ -104,7 +103,7 @@ export class SceneDepthSystem implements IGameSystem {
             try {
                 const cp = basePath + depthConfig.collision_map;
                 depthLog(T, 'loading collision:', cp);
-                await this.loadCollisionBitmap(cp);
+                await this.loadCollisionBitmap(cp, assetManager);
                 depthLog(T, 'collision OK:', this.collisionW, 'x', this.collisionH, 'non-zero:', this.collisionData ? Array.from(this.collisionData.slice(0, 20)).filter(v => v > 0).length : 0);
             } catch (e) {
                 depthError(T, 'collision FAILED', e);
@@ -163,12 +162,8 @@ export class SceneDepthSystem implements IGameSystem {
         this.worldToPixelY = 1;
     }
 
-    private async loadCollisionBitmap(path: string): Promise<void> {
-        const resolved = resolveAssetPath(path);
-        const resp = await fetch(resolved);
-        if (!resp.ok) throw new Error(`fetch ${resp.status} for ${resolved}`);
-        const blob = await resp.blob();
-        const bitmap = await createImageBitmap(blob);
+    private async loadCollisionBitmap(path: string, assetManager: AssetManager): Promise<void> {
+        const bitmap = await assetManager.loadBitmap(path);
 
         const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
         const ctx = canvas.getContext('2d')!;
@@ -181,7 +176,6 @@ export class SceneDepthSystem implements IGameSystem {
         }
         this.collisionW = bitmap.width;
         this.collisionH = bitmap.height;
-        bitmap.close();
     }
 
     /**

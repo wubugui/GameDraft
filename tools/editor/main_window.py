@@ -127,7 +127,8 @@ class MainWindow(QMainWindow):
 
         self._model = ProjectModel(self)
         self._game_proc: QProcess | None = None
-        self._game_server_ready_for_current_run = False
+        self._game_server_ready = False
+        self._game_open_when_ready = False
         self._game_ready_timer = QTimer(self)
         self._game_ready_timer.setSingleShot(True)
         self._game_ready_timer.timeout.connect(self._on_game_server_ready_timeout)
@@ -338,6 +339,8 @@ class MainWindow(QMainWindow):
     def load_project(self, path: Path) -> None:
         if not self._confirm_can_replace_project():
             return
+        if self._model.project_path is not None:
+            self._stop_game(show_status=False)
         assets = path / "public" / "assets"
         if not assets.is_dir():
             QMessageBox.critical(self, "Error",
@@ -351,6 +354,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"GameDraft Editor - {path.name}")
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
+        QTimer.singleShot(500, self._prewarm_game_backend)
 
     def _confirm_pending_editor_changes(self) -> bool:
         from .editors.timeline_editor import TimelineEditor
@@ -735,6 +739,19 @@ class MainWindow(QMainWindow):
 
     # ---- run game ---------------------------------------------------------
 
+    def _is_game_backend_running(self) -> bool:
+        return (
+            self._game_proc is not None
+            and self._game_proc.state() != QProcess.ProcessState.NotRunning
+        )
+
+    def _prewarm_game_backend(self) -> None:
+        if self._model.project_path is None:
+            return
+        if self._is_game_backend_running():
+            return
+        self._start_game_backend(open_when_ready=False)
+
     def _run_game(self, *, launch_params: str | None = None) -> None:
         if self._model.project_path is None:
             return
@@ -749,16 +766,45 @@ class MainWindow(QMainWindow):
         if self._game_browser is None:
             return
 
-        if (self._game_proc is not None
-                and self._game_proc.state() != QProcess.ProcessState.NotRunning):
-            self._focus_game_tab_and_load(
-                self._last_vite_dev_url,
-                extra_params=launch_params or "",
-            )
-            self._status.showMessage("开发服务器已在运行；已切换到「运行与预览」。", 3000)
+        if self._is_game_backend_running():
+            if self._game_server_ready:
+                self._focus_game_tab_and_load(
+                    self._last_vite_dev_url,
+                    extra_params=launch_params or "",
+                )
+                self._status.showMessage("开发服务器已就绪；已打开游戏预览。", 3000)
+            else:
+                self._pending_launch_params = launch_params
+                self._game_open_when_ready = True
+                self._status.showMessage("开发服务器正在启动；就绪后会自动打开预览。", 5000)
+                if self._game_browser is not None:
+                    self._game_browser.show_message("Starting dev server…")
+                    idx = self._stack.indexOf(self._game_browser)
+                    if idx >= 0:
+                        self._show_stack_page(idx)
             return
 
-        self._game_server_ready_for_current_run = False
+        self._start_game_backend(open_when_ready=True, launch_params=launch_params)
+
+    def _start_game_backend(self, *, open_when_ready: bool,
+                            launch_params: str | None = None) -> None:
+        if self._model.project_path is None:
+            return
+        if self._is_game_backend_running():
+            if open_when_ready:
+                self._pending_launch_params = launch_params
+                self._game_open_when_ready = True
+            return
+
+        proj = self._model.project_path
+        pkg_json = proj / "package.json"
+        if not pkg_json.is_file():
+            if open_when_ready:
+                QMessageBox.warning(self, "Error", "package.json not found")
+            return
+
+        self._game_server_ready = False
+        self._game_open_when_ready = open_when_ready
         self._game_user_stopped = False
         self._game_proc_log = ""
         self._game_ready_timer.stop()
@@ -776,11 +822,15 @@ class MainWindow(QMainWindow):
         self._game_proc = proc
         self._pending_launch_params = launch_params
         self._game_proc.start("cmd.exe", ["/c", "npm run dev"])
-        self._status.showMessage("Starting Vite dev server…", 5000)
-        self._game_browser.show_message("Starting dev server…")
-        idx = self._stack.indexOf(self._game_browser)
-        if idx >= 0:
-            self._show_stack_page(idx)
+        self._status.showMessage(
+            "Starting Vite dev server…" if open_when_ready else "Prewarming Vite dev server…",
+            5000,
+        )
+        if open_when_ready and self._game_browser is not None:
+            self._game_browser.show_message("Starting dev server…")
+            idx = self._stack.indexOf(self._game_browser)
+            if idx >= 0:
+                self._show_stack_page(idx)
         self._game_ready_timer.start(60_000)
 
     def _run_game_dev(self) -> None:
@@ -859,18 +909,23 @@ class MainWindow(QMainWindow):
         self._game_play_window.activateWindow()
 
     def _mark_game_server_ready(self, url: str) -> None:
-        if self._game_server_ready_for_current_run:
+        if self._game_server_ready:
             return
-        self._game_server_ready_for_current_run = True
+        self._game_server_ready = True
         self._last_vite_dev_url = url
         self._game_ready_timer.stop()
-        params = self._pending_launch_params or ""
-        self._pending_launch_params = None
-        self._focus_game_tab_and_load(url, extra_params=params)
-        self._status.showMessage("Dev server ready.", 3000)
+        if self._game_open_when_ready:
+            params = self._pending_launch_params or ""
+            self._pending_launch_params = None
+            self._game_open_when_ready = False
+            self._focus_game_tab_and_load(url, extra_params=params)
+            self._status.showMessage("Dev server ready.", 3000)
+        else:
+            self._pending_launch_params = None
+            self._status.showMessage("Dev server prewarmed.", 3000)
 
     def _on_game_proc_output(self) -> None:
-        if self._game_server_ready_for_current_run or self._game_proc is None:
+        if self._game_server_ready or self._game_proc is None:
             return
         chunk = bytes(self._game_proc.readAllStandardOutput()).decode(
             "utf-8", errors="replace",
@@ -893,21 +948,29 @@ class MainWindow(QMainWindow):
             )
 
     def _on_game_server_ready_timeout(self) -> None:
-        if self._game_server_ready_for_current_run:
+        if self._game_server_ready:
             return
         if self._game_proc is None:
             return
         if self._game_proc.state() == QProcess.ProcessState.NotRunning:
             return
-        self._game_server_ready_for_current_run = True
+        self._game_server_ready = True
         url = _vite_dev_url_from_log(self._game_proc_log) or self._last_vite_dev_url or GAME_DEV_URL
-        params = self._pending_launch_params or ""
-        self._pending_launch_params = None
-        self._focus_game_tab_and_load(url, extra_params=params)
-        self._status.showMessage(
-            "超时：已打开开发 URL；若页面异常请查看「运行与预览」或终端输出。",
-            8000,
-        )
+        if self._game_open_when_ready:
+            params = self._pending_launch_params or ""
+            self._pending_launch_params = None
+            self._game_open_when_ready = False
+            self._focus_game_tab_and_load(url, extra_params=params)
+            self._status.showMessage(
+                "超时：已打开开发 URL；若页面异常请查看「运行与预览」或终端输出。",
+                8000,
+            )
+        else:
+            self._pending_launch_params = None
+            self._status.showMessage(
+                "开发服务器预热超时；按 F5/Ctrl+F5 时会继续尝试打开。",
+                8000,
+            )
 
     def _show_game_proc_failure(self, headline: str) -> None:
         tail = self._game_proc_log.strip()
@@ -924,8 +987,11 @@ class MainWindow(QMainWindow):
 
     def _on_game_proc_finished(self, exit_code: int, _exit_status) -> None:
         self._game_ready_timer.stop()
-        was_ready = self._game_server_ready_for_current_run
-        self._game_server_ready_for_current_run = False
+        was_ready = self._game_server_ready
+        wanted_open = self._game_open_when_ready
+        self._game_server_ready = False
+        self._game_open_when_ready = False
+        self._pending_launch_params = None
         self._close_game_play_window()
         proc = self.sender()
         if isinstance(proc, QProcess):
@@ -945,12 +1011,19 @@ class MainWindow(QMainWindow):
 
         if not was_ready:
             if exit_code != 0:
-                self._show_game_proc_failure(
+                msg = (
                     f"开发服务器异常结束（退出码 {exit_code}）。常见原因：未安装 Node/npm、"
-                    "脚本编译失败、或端口被占用。",
+                    "脚本编译失败、或端口被占用。"
                 )
+                if wanted_open:
+                    self._show_game_proc_failure(msg)
+                else:
+                    self._status.showMessage(msg, 8000)
             else:
-                self._show_game_proc_failure("开发进程已结束，未输出就绪信息。")
+                if wanted_open:
+                    self._show_game_proc_failure("开发进程已结束，未输出就绪信息。")
+                else:
+                    self._status.showMessage("开发服务器预热进程已结束，未输出就绪信息。", 8000)
             return
 
         if self._game_browser is not None and self._game_browser.is_webengine_available():
@@ -993,12 +1066,14 @@ class MainWindow(QMainWindow):
             # 否则 Qt 会在首次 close(ignore) 后误删窗口；引用在 closed 信号里清掉
             self._game_play_window.close()
 
-    def _stop_game(self) -> None:
+    def _stop_game(self, _checked: bool = False, *, show_status: bool = True) -> None:
         if self._model.project_path is None:
             return
         self._game_user_stopped = True
         self._game_ready_timer.stop()
-        self._game_server_ready_for_current_run = False
+        self._game_server_ready = False
+        self._game_open_when_ready = False
+        self._pending_launch_params = None
         self._close_game_play_window()
         cmd_path = self._model.project_path / "stop-game.cmd"
         if cmd_path.exists():
@@ -1016,13 +1091,17 @@ class MainWindow(QMainWindow):
                 pass
             self._game_proc = None
             if proc.state() != QProcess.ProcessState.NotRunning:
-                proc.kill()
+                proc.terminate()
+                if not proc.waitForFinished(1500):
+                    proc.kill()
+                    proc.waitForFinished(1500)
             proc.deleteLater()
-        if self._game_browser is not None and self._game_browser.is_webengine_available():
+        if show_status and self._game_browser is not None and self._game_browser.is_webengine_available():
             self._game_browser.show_message(
                 "Game stopped. Press Run (F5) to start the dev server.",
             )
-        self._status.showMessage("Game stopped.", 3000)
+        if show_status:
+            self._status.showMessage("Game stopped.", 3000)
 
     def _build_game(self) -> None:
         if self._model.project_path is None:

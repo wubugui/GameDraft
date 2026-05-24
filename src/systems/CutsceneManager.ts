@@ -294,17 +294,8 @@ export class CutsceneManager implements IGameSystem {
   async loadDefs(): Promise<void> {
     try {
       const list = await this.assetManager.loadJson<NewCutsceneDef[]>('/assets/data/cutscenes/index.json');
-      const imagePaths = new Set<string>();
       for (const def of list) {
         this.cutsceneDefs.set(def.id, def);
-        this.collectImagePathsFromSteps(def.steps ?? [], imagePaths);
-      }
-      for (const path of imagePaths) {
-        try {
-          await this.assetManager.loadTexture(path);
-        } catch (err) {
-          console.warn(`[CutsceneManager] 预加载失败: ${path}`, err);
-        }
       }
     } catch {
       // no cutscene data yet

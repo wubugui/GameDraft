@@ -4,7 +4,7 @@ import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { Condition, ConditionExpr, MapNodeDef } from '../data/types';
-import { resolveAssetPath } from '../core/assetPath';
+import type { AssetManager } from '../core/AssetManager';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
@@ -15,6 +15,7 @@ const NODE_R = 14;
 
 export class MapUI {
   private renderer: Renderer;
+  private assetManager: AssetManager;
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private strings: StringsProvider;
@@ -25,8 +26,9 @@ export class MapUI {
   private currentSceneId: string = '';
   private resolveDisplay: ((s: string) => string) | null = null;
 
-  constructor(renderer: Renderer, eventBus: EventBus, flagStore: FlagStore, strings: StringsProvider) {
+  constructor(renderer: Renderer, eventBus: EventBus, flagStore: FlagStore, strings: StringsProvider, assetManager: AssetManager) {
     this.renderer = renderer;
+    this.assetManager = assetManager;
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.strings = strings;
@@ -49,8 +51,7 @@ export class MapUI {
 
   async loadConfig(): Promise<void> {
     try {
-      const resp = await fetch(resolveAssetPath('/assets/data/map_config.json'));
-      this.nodes = await resp.json();
+      this.nodes = await this.assetManager.loadJson<MapNodeDef[]>('/assets/data/map_config.json');
     } catch { /* no map config yet */ }
   }
 

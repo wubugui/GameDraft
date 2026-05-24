@@ -1,6 +1,7 @@
 import { Application, Container, type Filter } from 'pixi.js';
 import { WorldFilterPipeline, loadFilter } from './filter';
 import { pointPolygonVerticalSide } from '../utils/zoneGeometry';
+import type { AssetManager } from '../core/AssetManager';
 
 /** Pixi 类型未包含 null，运行时必须赋 null 以断开 auto-resize */
 function setAppResizeTo(app: Application, target: Window | HTMLElement | null): void {
@@ -18,6 +19,7 @@ export class Renderer {
 
   /** 世界滤镜管线：仅作用于 worldContainer（场景+实体），GUI 不受影响 */
   public worldFilterPipeline: WorldFilterPipeline;
+  private assetManager: AssetManager | null = null;
 
   private initialized = false;
   /** Application 已 destroy 后为 true，尺寸访问需降级避免异常 */
@@ -37,6 +39,10 @@ export class Renderer {
     this.cutsceneOverlay = new Container();
     this.uiLayer = new Container();
     this.worldFilterPipeline = new WorldFilterPipeline(this.worldContainer);
+  }
+
+  setAssetManager(assetManager: AssetManager): void {
+    this.assetManager = assetManager;
   }
 
   async init(): Promise<void> {
@@ -280,7 +286,9 @@ export class Renderer {
    * @param filterId assets/data/filters/{filterId}.json
    */
   async loadAndSetWorldFilter(filterId: string): Promise<void> {
-    const filter = await loadFilter(filterId);
+    const filter = this.assetManager
+      ? await this.assetManager.loadFilter(filterId)
+      : await loadFilter(filterId);
     this.setWorldFilter(filter);
   }
 
