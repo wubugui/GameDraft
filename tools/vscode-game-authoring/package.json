@@ -1,0 +1,30 @@
+{
+  "name": "gamedraft-authoring-tools",
+  "displayName": "GameDraft Authoring Tools",
+  "description": "VS Code bridge for the GameDraft content pipeline.",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "activationEvents": [
+    "onWorkspaceContains:authoring/project.yaml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "gamedraftAuthoring.build", "title": "Game Authoring: Build Content" },
+      { "command": "gamedraftAuthoring.validate", "title": "Game Authoring: Validate Content" },
+      { "command": "gamedraftAuthoring.openReport", "title": "Game Authoring: Open Content Report" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.9.3"
+  }
+}
