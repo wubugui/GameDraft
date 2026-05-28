@@ -2,6 +2,7 @@ import './debug-panel-dock.css';
 import type { FlagStore } from '../core/FlagStore';
 import type { EventBus } from '../core/EventBus';
 import type { InputManager } from '../core/InputManager';
+import { runtimeTrace } from '../debug/RuntimeTrace';
 import { createDebugFlagSection, type DebugFlagSectionHandle } from './debugFlagSection';
 
 /** 可注册的 debug 区块内容：纯文本或带操作按钮；可选附加 DOM（如滑条） */
@@ -170,6 +171,14 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.root.appendChild(header);
     this.root.appendChild(tabBar);
     this.root.appendChild(panels);
+
+    this.addSection('运行时事件链', () => ({
+      text: runtimeTrace.formatRecent(160),
+      actions: [
+        { label: '清空 Trace', fn: () => runtimeTrace.clear() },
+        { label: '复制 Trace', fn: () => void navigator.clipboard?.writeText(runtimeTrace.formatRecent(400)) },
+      ],
+    }));
 
     this.selectTab(TAB_TOOLS);
   }
