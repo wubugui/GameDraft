@@ -1,0 +1,4 @@
+key,type,owner,meaning,default,notes
+case.bridge.heard_warning,bool,case.bridge,玩家听过桥雾警告,false,
+case.bridge.has_paper_charm,bool,case.bridge,玩家获得纸符,false,
+npc.old_zhou.helpful,bool,npc.old_zhou,老周愿意帮忙,false,
