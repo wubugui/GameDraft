@@ -1,0 +1,25 @@
+# Tool-side authoring project config. Runtime code never reads this file.
+# Default output goes to artifact/runtime_preview, so existing runtime JSON is not overwritten.
+publishRuntime: false
+runtimeOutputs:
+  flagRegistry: public/assets/data/flag_registry.json
+  narrativeGraphs: public/assets/data/narrative_graphs.json
+  quests: public/assets/data/quests.json
+  dialogueGraphs: public/assets/dialogues/graphs
+previewOutputs:
+  flagRegistry: artifact/content_pipeline/runtime_preview/public/assets/data/flag_registry.json
+  narrativeGraphs: artifact/content_pipeline/runtime_preview/public/assets/data/narrative_graphs.json
+  quests: artifact/content_pipeline/runtime_preview/public/assets/data/quests.json
+  dialogueGraphs: artifact/content_pipeline/runtime_preview/public/assets/dialogues/graphs
+artifacts:
+  root: artifact/content_pipeline
+  sourceMap: artifact/content_pipeline/source_map.json
+  contentIndex: artifact/content_pipeline/content_index.json
+  report: artifact/content_pipeline/content_report.md
+  graphModels: artifact/content_pipeline/graph_models
+  renderedGraphs: artifact/content_pipeline/rendered_graphs
+ownership:
+  public/assets/data/flag_registry.json: legacy_editor
+  public/assets/data/narrative_graphs.json: legacy_editor
+  public/assets/data/quests.json: legacy_editor
+  public/assets/dialogues/graphs/*: legacy_editor
