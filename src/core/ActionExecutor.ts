@@ -110,15 +110,34 @@ export class ActionExecutor {
       console.warn('ActionExecutor: action.type 无效，已跳过', action);
       return;
     }
-    await this.runWithExploreActionLock(async () => {
-      const handler = this.handlers.get(typeKey);
-      if (!handler) {
-        console.warn(`ActionExecutor: unknown action type "${typeKey}"`);
-        return;
-      }
-      const zctx = this.getZoneContext();
-      await Promise.resolve(handler(action.params, zctx));
-    });
+
+    const startedAt = performance.now();
+    this.eventBus.emit('action:start', { type: typeKey, params: action.params });
+    try {
+      await this.runWithExploreActionLock(async () => {
+        const handler = this.handlers.get(typeKey);
+        if (!handler) {
+          console.warn(`ActionExecutor: unknown action type "${typeKey}"`);
+          this.eventBus.emit('action:fail', { type: typeKey, params: action.params, reason: 'unknown action type' });
+          return;
+        }
+        const zctx = this.getZoneContext();
+        await Promise.resolve(handler(action.params, zctx));
+      });
+      this.eventBus.emit('action:end', {
+        type: typeKey,
+        params: action.params,
+        durationMs: performance.now() - startedAt,
+      });
+    } catch (e) {
+      this.eventBus.emit('action:fail', {
+        type: typeKey,
+        params: action.params,
+        durationMs: performance.now() - startedAt,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    }
   }
 
   /** 顺序执行批量动作并 await 每一条。 */
