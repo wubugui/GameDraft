@@ -1,0 +1,33 @@
+id: sample_intro
+kind: dialogueGraph
+entry: start
+nodes:
+  start:
+    type: line
+    speaker:
+      kind: literal
+      name: NPC
+    text: Hello.
+    next: ask
+  ask:
+    type: choice
+    options:
+      - id: continue
+        text: Continue.
+        next: action_node
+      - id: leave
+        text: Leave.
+        next: end
+  action_node:
+    type: runActions
+    actions:
+      - type: setFlag
+        params:
+          key: case.bridge.heard_warning
+          value: true
+      - type: emitNarrativeSignal
+        params:
+          signal: old_zhou.told_bridge_warning
+    next: end
+  end:
+    type: end
