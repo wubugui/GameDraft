@@ -1,0 +1,44 @@
+id: npc.old_zhou
+kind: narrativeGraph
+owner:
+  type: npc
+  id: old_zhou
+initialState: stranger
+states:
+  stranger:
+    label: 陌生
+  cautious:
+    label: 警惕
+  helpful:
+    label: 愿意帮忙
+    broadcastOnEnter: true
+    onEnterActions:
+      - type: setFlag
+        params:
+          key: npc.old_zhou.helpful
+          value: true
+transitions:
+  - id: hear_bridge_warning
+    from: stranger
+    to: cautious
+    signal: old_zhou.told_bridge_warning
+  - id: show_paper_charm
+    from: cautious
+    to: helpful
+    signal: player.showed_paper_charm
+    priority: 10
+    conditions:
+      - all:
+          - flag: case.bridge.has_paper_charm
+            op: ==
+            value: true
+layout:
+  stranger:
+    x: 0
+    y: 0
+  cautious:
+    x: 320
+    y: 0
+  helpful:
+    x: 640
+    y: 0
