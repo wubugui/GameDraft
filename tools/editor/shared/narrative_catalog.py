@@ -12,6 +12,16 @@ _CONTEXT_READABLE_OWNER_TYPES = frozenset({"flow", "scenario"})
 _FORBIDDEN_CONTEXT_OWNER_TYPES = frozenset({"npc", "hotspot", "zone", "quest", "dialogue"})
 
 
+def _display_ref(name: str, item_id: str) -> str:
+    name = str(name or "").strip()
+    item_id = str(item_id or "").strip()
+    return f"{name} ({item_id})" if name and name != item_id else item_id
+
+
+def _graph_name(graph: dict[str, Any], fallback: str = "") -> str:
+    return str(graph.get("label") or fallback or graph.get("id") or "").strip()
+
+
 def load_narrative_graphs(project_root: Path) -> dict[str, Any] | None:
     path = ProjectPaths(project_root).data_dir / "narrative_graphs.json"
     if not path.is_file():
@@ -83,7 +93,8 @@ def _owner_state_wrapper_matches(
         if not isinstance(comp, dict):
             continue
         comp_id = str(comp.get("id", "")).strip()
-        comp_label = str(comp.get("label", "")).strip()
+        main_graph = comp.get("mainGraph") if isinstance(comp.get("mainGraph"), dict) else {}
+        comp_label = _graph_name(main_graph, comp_id)
         for element in comp.get("elements", []) or []:
             if not isinstance(element, dict) or str(element.get("kind", "")).strip() != "wrapperGraph":
                 continue
@@ -100,6 +111,7 @@ def _owner_state_wrapper_matches(
             category = str(graph.get("category", "") or "").strip()
             element_id = str(element.get("id", "")).strip()
             element_label = str(element.get("label", "")).strip()
+            graph_label = _graph_name(graph, element_label or graph_id)
             for ref in owner_refs:
                 if owner_type != ref.get("ownerType") or owner_id != ref.get("ownerId"):
                     continue
@@ -109,6 +121,8 @@ def _owner_state_wrapper_matches(
                 seen.add(key)
                 out.append({
                     "graphId": graph_id,
+                    "label": _display_ref(graph_label, graph_id),
+                    "graphLabel": graph_label,
                     "ownerType": owner_type,
                     "ownerId": owner_id,
                     "stateIds": state_ids,
@@ -168,7 +182,7 @@ def resolve_owner_wrapper_states(
         "stateIds": list(matches[0]["stateIds"]),
         "wrappers": matches,
         "ambiguous": False,
-        "message": f"wrapper {matches[0]['graphId']} ({matches[0]['ownerType']}:{matches[0]['ownerId']})",
+        "message": f"wrapper {matches[0].get('label') or matches[0]['graphId']} ({matches[0]['ownerType']}:{matches[0]['ownerId']})",
     }
 
 
@@ -188,7 +202,8 @@ def list_context_readable_graphs(project_root: Path) -> list[dict[str, str]]:
             otype = str(main.get("ownerType", "")).strip()
             if gid and gid not in seen and otype in _CONTEXT_READABLE_OWNER_TYPES:
                 seen.add(gid)
-                out.append({"graphId": gid, "label": f"{gid} (main/{otype})"})
+                label = _display_ref(_graph_name(main, gid), gid)
+                out.append({"graphId": gid, "label": f"{label} (main/{otype})"})
         for element in comp.get("elements", []) or []:
             if not isinstance(element, dict):
                 continue
@@ -200,10 +215,10 @@ def list_context_readable_graphs(project_root: Path) -> list[dict[str, str]]:
             otype = str(element.get("ownerType") or graph.get("ownerType") or "").strip()
             if kind == "scenarioSubgraph" or otype == "scenario":
                 seen.add(gid)
-                out.append({"graphId": gid, "label": f"{gid} (scenario)"})
+                out.append({"graphId": gid, "label": f"{_display_ref(_graph_name(graph, str(element.get('label', '') or gid)), gid)} (scenario)"})
             elif otype == "flow":
                 seen.add(gid)
-                out.append({"graphId": gid, "label": f"{gid} (flow)"})
+                out.append({"graphId": gid, "label": f"{_display_ref(_graph_name(graph, gid), gid)} (flow)"})
     return out
 
 
@@ -249,6 +264,7 @@ def graph_info(project_root: Path, graph_id: str) -> dict[str, Any] | None:
             states = main.get("states")
             return {
                 "graphId": graph_id,
+                "label": _display_ref(_graph_name(main, graph_id), graph_id),
                 "kind": "mainGraph",
                 "ownerType": str(main.get("ownerType", "")).strip(),
                 "ownerId": str(main.get("ownerId", "")).strip(),
@@ -264,6 +280,7 @@ def graph_info(project_root: Path, graph_id: str) -> dict[str, Any] | None:
             states = graph.get("states")
             return {
                 "graphId": graph_id,
+                "label": _display_ref(_graph_name(graph, str(element.get("label", "") or graph_id)), graph_id),
                 "kind": str(element.get("kind", "")).strip(),
                 "ownerType": str(element.get("ownerType") or graph.get("ownerType") or "").strip(),
                 "ownerId": str(element.get("ownerId") or graph.get("ownerId") or "").strip(),
@@ -276,6 +293,7 @@ def graph_info(project_root: Path, graph_id: str) -> dict[str, Any] | None:
             states = graph.get("states")
             return {
                 "graphId": graph_id,
+                "label": _display_ref(_graph_name(graph, graph_id), graph_id),
                 "kind": "legacyGraph",
                 "ownerType": str(graph.get("ownerType", "")).strip(),
                 "ownerId": str(graph.get("ownerId", "")).strip(),

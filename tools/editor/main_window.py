@@ -33,6 +33,22 @@ _VITE_DEV_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+SOURCE_NAVIGATION_TABS = {
+    "quest": "Quest",
+    "encounter": "Encounter",
+    "scene_npc": "Scene",
+    "scene_hotspot": "Scene",
+    "scene_zone": "Scene",
+    "scene_zone_rule": "Scene",
+}
+
+SOURCE_NAVIGATION_SELECTORS = {
+    "scene_npc": "select_npc_by_id",
+    "scene_hotspot": "select_hotspot_by_id",
+    "scene_zone": "select_zone_by_id",
+    "scene_zone_rule": "select_zone_by_id",
+}
+
 
 def _vite_dev_url_from_log(log: str) -> str | None:
     plain = re.sub(r"\x1b\[[0-9;]*m", "", log)
@@ -1183,25 +1199,58 @@ class MainWindow(QMainWindow):
                 ed.select_scenario_by_id(sid)
                 return
 
+    def navigate_to_minigame(self, instance_id: str) -> None:
+        from .editors.paper_craft_editor import PaperCraftEditor
+        from .editors.sugar_wheel_editor import SugarWheelEditor
+        from .editors.water_minigame_editor import WaterMinigameEditor
+
+        iid = (instance_id or "").strip()
+        if not iid:
+            return
+        candidates: list[type] = []
+        if iid in getattr(self._model, "water_minigames_instances", {}):
+            candidates.append(WaterMinigameEditor)
+        if iid in getattr(self._model, "sugar_wheel_instances", {}):
+            candidates.append(SugarWheelEditor)
+        if iid in getattr(self._model, "paper_craft_instances", {}):
+            candidates.append(PaperCraftEditor)
+        for cls in candidates:
+            for i, ed in enumerate(self._editor_instances):
+                if not isinstance(ed, cls):
+                    continue
+                self._show_stack_page(i)
+                select = getattr(ed, "select_by_id", None)
+                if callable(select):
+                    select(iid)
+                return
+
+    def navigate_to_cutscene(self, cutscene_id: str) -> None:
+        from .editors.timeline_editor import TimelineEditor
+
+        cid = (cutscene_id or "").strip()
+        if not cid:
+            return
+        for i, ed in enumerate(self._editor_instances):
+            if isinstance(ed, TimelineEditor):
+                self._show_stack_page(i)
+                select = getattr(ed, "select_by_id", None)
+                if callable(select):
+                    select(cid)
+                return
+
     def _on_navigate_to_source(self, source_type: str, source_id: str, scene_id: str) -> None:
         if source_type == "dialogue_graph":
             self.navigate_to_dialogue_graph(source_id)
             return
-        tab_map = {
-            "quest": "Quest",
-            "encounter": "Encounter",
-            "scene_hotspot": "Scene",
-            "scene_zone": "Scene",
-            "scene_zone_rule": "Scene",
-        }
-        target_label = tab_map.get(source_type)
+        target_label = SOURCE_NAVIGATION_TABS.get(source_type)
         if not target_label:
             return
         for i, label in enumerate(self._editor_labels):
             if label == target_label:
                 self._show_stack_page(i)
                 ed = self._editor_instances[i]
-                select = getattr(ed, "select_by_id", None)
+                selector_name = SOURCE_NAVIGATION_SELECTORS.get(source_type, "select_by_id")
+                select = getattr(ed, selector_name, None)
                 if callable(select):
                     select(source_id, scene_id)
                 break

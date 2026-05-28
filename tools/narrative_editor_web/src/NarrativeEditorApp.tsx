@@ -61,6 +61,7 @@ import {
   navigationForElement,
   ownerChoicesFor,
   ownerChoicesForGraph,
+  WRAPPER_OWNER_TYPES,
   removeTransitionsReferencingState,
   transitionIn,
   updateElement,
@@ -101,18 +102,17 @@ import {
   getEditableGraph,
   getElementByGraphRef,
   getElementByNodeId,
+  graphDisplayName,
   graphLabel,
+  graphReferenceLabel,
   isSubgraphElement,
   mergeValidationIssues,
   normalizeFile,
   parseExternalSignalKey,
-  renameGraph,
-  renameElement,
-  renameStateInGraph,
-  renameTransition,
   setStateEditorPosition,
   simulateSignalImpact,
   stateEditorPosition,
+  stateReferenceLabel,
   stateEnteredSignalKey,
   validateNarrativeData,
   resolveEndpoint,
@@ -146,8 +146,6 @@ const elementKinds: ElementKind[] = [
   'minigameBlackbox',
   'cutsceneBlackbox',
 ];
-
-const wrapperOwnerTypes = ['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'system'];
 
 type DialogueRelationRead = {
   graphId: string;
@@ -715,14 +713,18 @@ function NarrativeEditorInner() {
 
   const addCompositionAction = useCallback(() => {
     let compId = '';
+    let graphId = '';
+    let graphJson = '';
     updateData((next) => {
       const comp = createComposition(next);
       compId = comp.id;
+      graphId = comp.mainGraph.id;
+      graphJson = JSON.stringify(comp.mainGraph, null, 2);
     });
     setCompositionId(compId);
     setGraphRef('main');
-    setSelectedId('');
-    setSelectedJson('');
+    setSelectedId(graphId ? `graph:${graphId}` : '');
+    setSelectedJson(graphJson);
     setExpandedElementIds([]);
   }, [updateData]);
 
@@ -732,7 +734,7 @@ function NarrativeEditorInner() {
     updateData((next) => {
       const comp = getComposition(next, composition.id);
       if (!comp) return;
-      id = createElement(comp, kind).id;
+      id = createElement(comp, kind, next).id;
     });
     if (id) {
       setSelectedId(`element:${id}`);
@@ -931,19 +933,19 @@ function NarrativeEditorInner() {
     if (!composition) return [] as { label: string; onClick?: () => void }[];
     const crumbs: { label: string; onClick?: () => void }[] = [
       {
-        label: composition.label || composition.id,
+        label: graphDisplayName(composition.mainGraph),
         onClick: () => {
           setGraphRef('main');
-          setSelectedId('');
-          setSelectedJson('');
+          setSelectedId(`graph:${composition.mainGraph.id}`);
+          setSelectedJson(JSON.stringify(composition.mainGraph, null, 2));
         },
       },
       {
         label: graphRef === 'main' ? `主图 ${composition.mainGraph.id}` : graphLabel(composition, graphRef),
         onClick: graphRef !== 'main' ? () => {
           setGraphRef('main');
-          setSelectedId('');
-          setSelectedJson('');
+          setSelectedId(`graph:${composition.mainGraph.id}`);
+          setSelectedJson(JSON.stringify(composition.mainGraph, null, 2));
         } : undefined,
       },
     ];
@@ -952,7 +954,7 @@ function NarrativeEditorInner() {
         const el = composition.elements?.find((item) => item.id === eid);
         if (el) {
           crumbs.push({
-            label: `${el.label || el.id}（内联）`,
+            label: `${el.graph ? graphDisplayName(el.graph) : (el.label || el.id)}（内联）`,
             onClick: () => toggleExpandedElement(eid),
           });
         }
@@ -982,7 +984,7 @@ function NarrativeEditorInner() {
   const canvasMenuItems = useMemo((): ToolbarMenuItem[] => [
     {
       id: 'delete',
-      label: '删除选中  Del',
+      label: '删除选中  Del / Backspace',
       disabled: !selectionDeletable,
       onSelect: deleteSelected,
     },
@@ -1017,39 +1019,54 @@ function NarrativeEditorInner() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
       const target = e.target;
       const inTextField = target instanceof HTMLInputElement
         || target instanceof HTMLTextAreaElement
         || target instanceof HTMLSelectElement
         || (target instanceof HTMLElement && target.isContentEditable);
+      const key = e.key.toLowerCase();
+      const command = e.ctrlKey || e.metaKey;
 
-      if (e.key === 'Delete' && !inTextField && selectionDeletable) {
+      if (command && key === 's') {
         e.preventDefault();
-        deleteSelected();
+        e.stopPropagation();
+        void save();
+        return;
       }
-      if (e.key === 'f' && !e.ctrlKey && !e.metaKey && !inTextField) {
+      if (!inTextField && command && key === 'z') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if (!inTextField && command && key === 'y') {
+        e.preventDefault();
+        e.stopPropagation();
+        redo();
+        return;
+      }
+      if (!inTextField && (key === 'delete' || key === 'backspace')) {
+        if (selectionDeletable) deleteSelected();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (!inTextField && key === 'f' && !command && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
         setFitTargetNodeIds([]);
         setFitViewRev((v) => v + 1);
+        return;
       }
-      if (e.key === 'F5') {
+      if (key === 'f5') {
         e.preventDefault();
+        e.stopPropagation();
         reloadNarrativeEditorPage();
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        void save();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo(); else undo();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
-        e.preventDefault();
-        redo();
-      }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, { capture: true });
+    return () => document.removeEventListener('keydown', onKey, { capture: true });
   }, [deleteSelected, redo, save, selectionDeletable, undo]);
 
   return (
@@ -1073,12 +1090,12 @@ function NarrativeEditorInner() {
               onClick={() => {
                 setCompositionId(comp.id);
                 setGraphRef('main');
-                setSelectedId('');
-                setSelectedJson('');
+                setSelectedId(`graph:${comp.mainGraph.id}`);
+                setSelectedJson(JSON.stringify(comp.mainGraph, null, 2));
               }}
             >
-              <span>{comp.label || comp.id}</span>
-              <small>{comp.mainGraph.id}</small>
+              <span>{graphDisplayName(comp.mainGraph)}</span>
+              <small>编排ID: {comp.id} · 主图ID: {comp.mainGraph.id}</small>
             </button>
           ))}
         </div>
@@ -1088,11 +1105,11 @@ function NarrativeEditorInner() {
             <div className="section-title">子图导航</div>
             <button type="button" className={graphRef === 'main' ? 'composition active' : 'composition'} onClick={() => {
               setGraphRef('main');
-              setSelectedId('');
-              setSelectedJson('');
+              setSelectedId(`graph:${composition.mainGraph.id}`);
+              setSelectedJson(JSON.stringify(composition.mainGraph, null, 2));
             }}>
-              <span>主图</span>
-              <small>{composition.mainGraph.id}</small>
+              <span>{graphDisplayName(composition.mainGraph) || '主图'}</span>
+              <small>主图ID: {composition.mainGraph.id}</small>
             </button>
             {(composition.elements ?? []).filter((el) => isSubgraphElement(el)).map((el) => (
               <button
@@ -1101,12 +1118,12 @@ function NarrativeEditorInner() {
                 className={graphRef === `element:${el.id}` ? 'composition active' : 'composition'}
                 onClick={() => {
                   setGraphRef(`element:${el.id}`);
-                  setSelectedId('');
-                  setSelectedJson('');
+                  setSelectedId(el.graph ? `graph:${el.graph.id}` : '');
+                  setSelectedJson(JSON.stringify(el.graph ?? {}, null, 2));
                 }}
               >
-                <span>{el.label || el.id}</span>
-                <small>{el.graph?.id} · 独占</small>
+                <span>{el.graph ? graphDisplayName(el.graph) : (el.label || el.id)}</span>
+                <small>图ID: {el.graph?.id || ''} · 独占</small>
               </button>
             ))}
           </>
@@ -1274,7 +1291,12 @@ function NarrativeEditorInner() {
             <button
               type="button"
               className="toolbar-btn topbar-path-back"
-              onClick={() => { setGraphRef('main'); setSelectedId(''); setSelectedJson(''); }}
+              onClick={() => {
+                if (!composition) return;
+                setGraphRef('main');
+                setSelectedId(`graph:${composition.mainGraph.id}`);
+                setSelectedJson(JSON.stringify(composition.mainGraph, null, 2));
+              }}
             >
               主画布
             </button>
@@ -1504,6 +1526,15 @@ function StructuredInspector(props: {
     for (const { graph: g } of compileGraphs(props.data)) out[g.id] = Object.keys(g.states ?? {});
     return out;
   }, [props.data]);
+  const graphLabels = useMemo(() => Object.fromEntries(
+    compileGraphs(props.data).map(({ graph: g }) => [g.id, graphReferenceLabel(g)]),
+  ), [props.data]);
+  const stateLabelsByGraph = useMemo(() => Object.fromEntries(
+    compileGraphs(props.data).map(({ graph: g }) => [
+      g.id,
+      Object.fromEntries(Object.entries(g.states ?? {}).map(([sid, state]) => [sid, stateReferenceLabel(state, sid)])),
+    ]),
+  ), [props.data]);
   if (!composition || !graph) return <p className="muted">未选择编排。</p>;
   if (!selectedId) return <GraphInspector {...props} graph={graph} />;
   if (selectedId.startsWith('graph:') || selectedId.startsWith('projection-anchor:')) {
@@ -1521,7 +1552,9 @@ function StructuredInspector(props: {
               transition={transition}
               graph={graph}
               graphIds={Object.keys(statesByGraph)}
+              graphLabels={graphLabels}
               statesByGraph={statesByGraph}
+              stateLabelsByGraph={stateLabelsByGraph}
               knownSignals={props.knownSignals}
             />
           );
@@ -1544,7 +1577,9 @@ function StructuredInspector(props: {
             graph={subgraph}
             transition={transition}
             graphIds={Object.keys(statesByGraph)}
+            graphLabels={graphLabels}
             statesByGraph={statesByGraph}
+            stateLabelsByGraph={stateLabelsByGraph}
             knownSignals={props.knownSignals}
             updateCurrentGraph={updateInlineGraph}
             setSelectedId={(id) => props.setSelectedId(prefixInlineSelection(element.id, id))}
@@ -1586,7 +1621,9 @@ function StructuredInspector(props: {
         graph={subgraph}
         transition={transition}
         graphIds={Object.keys(statesByGraph)}
+        graphLabels={graphLabels}
         statesByGraph={statesByGraph}
+        stateLabelsByGraph={stateLabelsByGraph}
         knownSignals={props.knownSignals}
         updateCurrentGraph={updateInlineGraph}
         setSelectedId={(id) => props.setSelectedId(prefixInlineSelection(inline.elementId, id))}
@@ -1607,7 +1644,9 @@ function StructuredInspector(props: {
           transition={transition}
           graph={graph}
           graphIds={Object.keys(statesByGraph)}
+          graphLabels={graphLabels}
           statesByGraph={statesByGraph}
+          stateLabelsByGraph={stateLabelsByGraph}
           knownSignals={props.knownSignals}
         />
       ) : <p className="muted">Missing transition.</p>;
@@ -1675,7 +1714,7 @@ function GraphInspector(props: {
     <div className="form-grid">
       {parentElement && (
         <PropertySummary
-          title={parentElement.label || parentElement.id}
+          title={parentElement.graph ? graphDisplayName(parentElement.graph) : (parentElement.label || parentElement.id)}
           rows={[
             ['类型', elementSubtitle(parentElement)],
             parentElement.ownerType || parentElement.ownerId ? ['绑定', `${parentElement.ownerType || 'entity'} / ${parentElement.ownerId || '—'}`] : null,
@@ -1684,6 +1723,18 @@ function GraphInspector(props: {
           ]}
         />
       )}
+      <TextField
+        label="显示名"
+        value={String(graph.label ?? '').trim() || graph.id}
+        onChange={(value) => updateCurrentGraph((g, next) => {
+          g.label = value;
+          if (parentElement && composition) {
+            const comp = getComposition(next, composition.id);
+            const el = comp?.elements?.find((item) => item.id === parentElement.id);
+            if (el) el.label = value;
+          }
+        })}
+      />
       <SelectField label="初始状态" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
       {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
         <>
@@ -1703,18 +1754,7 @@ function GraphInspector(props: {
       )}
       <PropertySummary rows={[['状态', String(Object.keys(graph.states).length)], ['迁移', String(graph.transitions.length)]]} />
       <AdvancedInspectorSection title="高级">
-        <TextField
-          label="Graph ID"
-          value={graph.id}
-          commitOnBlur
-          onChange={(value) => updateCurrentGraph((g, next) => {
-            try {
-              renameGraph(next, g, value);
-            } catch (e) {
-              props.setStatus?.(String(e));
-            }
-          })}
-        />
+        <ReadOnlyField label="Graph ID" value={graph.id} />
         <TextField label="Owner Type" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
         <TextField label="Owner ID" value={graph.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
         {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
@@ -1775,19 +1815,7 @@ function StateInspector(props: {
         onChange={(actions) => updateCurrentGraph((g) => { g.states[stateId].onExitActions = actions; })}
       />
       <AdvancedInspectorSection title="高级">
-        <TextField
-          label="State ID"
-          value={state.id}
-          commitOnBlur
-          onChange={(value) => updateCurrentGraph((g, next) => {
-            try {
-              const newId = renameStateInGraph(next, g, stateId, value);
-              props.setSelectedId(`state:${newId}`);
-            } catch (e) {
-              props.setStatus(String(e));
-            }
-          })}
-        />
+        <ReadOnlyField label="State ID" value={state.id || stateId} />
       </AdvancedInspectorSection>
     </div>
   );
@@ -1800,7 +1828,9 @@ function TransitionInspector(props: {
   transition: NarrativeTransitionDef;
   knownSignals: string[];
   graphIds: string[];
+  graphLabels: Record<string, string>;
   statesByGraph: Record<string, string[]>;
+  stateLabelsByGraph: Record<string, Record<string, string>>;
   updateData: (updater: (next: NarrativeGraphsFileDef) => void) => void;
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
   setSelectedId: (id: string) => void;
@@ -1868,24 +1898,14 @@ function TransitionInspector(props: {
       <ConditionBuilder
         value={transition.conditions ?? []}
         graphIds={props.graphIds}
+        graphLabels={props.graphLabels}
         statesByGraph={props.statesByGraph}
+        stateLabelsByGraph={props.stateLabelsByGraph}
         onApply={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).conditions = Array.isArray(value) ? value : value ? [value] : []; })}
       />
       <NumberField label="优先级" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).priority = value; })} />
       <AdvancedInspectorSection title="高级">
-        <TextField
-          label="Transition ID"
-          value={transition.id}
-          commitOnBlur
-          onChange={(value) => updateCurrentGraph((g) => {
-            try {
-              const newId = renameTransition(g, transition.id, value);
-              props.setSelectedId(`transition:${newId}`);
-            } catch (e) {
-              props.setStatus(String(e));
-            }
-          })}
-        />
+        <ReadOnlyField label="Transition ID" value={transition.id} />
         <div className="property-line note">迁移只在当前图内移动状态；跨图影响应通过信号、状态广播或投影关系表达。</div>
       </AdvancedInspectorSection>
       <div className="inspector-actions">
@@ -1902,6 +1922,7 @@ function ElementInspector(props: {
   knownSignals: string[];
   updateData: (updater: (next: NarrativeGraphsFileDef) => void) => void;
   setSelectedId: (id: string) => void;
+  setSelectedJson: (json: string) => void;
   setGraphRef: (ref: GraphRef) => void;
   setStatus: (status: string) => void;
   expandedElementIds: string[];
@@ -1911,13 +1932,21 @@ function ElementInspector(props: {
   const ownerChoices = ownerChoicesFor(element, catalog);
   const isSubgraph = isSubgraphElement(element);
   const expanded = props.expandedElementIds.includes(element.id);
+  const displayName = isSubgraph ? (String(element.graph?.label ?? element.label ?? '').trim() || element.graph?.id || element.id) : (element.label ?? '');
   return (
     <div className="form-grid">
       <PropertySummary rows={[['类型', kindLabel(element.kind)]]} />
-      <TextField label="显示名" value={element.label ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.label = value; })} />
+      <TextField
+        label="显示名"
+        value={displayName}
+        onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          el.label = value;
+          if (isSubgraph && el.graph) el.graph.label = value;
+        })}
+      />
       {element.kind === 'wrapperGraph' ? (
         <>
-          <SelectField label="绑定类型" value={element.ownerType ?? 'npc'} values={wrapperOwnerTypes} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; if (el.graph) el.graph.ownerType = value; })} />
+          <SelectField label="绑定类型" value={element.ownerType ?? 'npc'} values={WRAPPER_OWNER_TYPES} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; if (el.graph) el.graph.ownerType = value; })} />
           <TextField label="绑定对象" value={element.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.ownerId = value;
             if (el.graph) el.graph.ownerId = value;
@@ -1955,25 +1984,15 @@ function ElementInspector(props: {
       {isSubgraph && (
         <div className="inspector-actions">
           <button type="button" onClick={() => props.toggleExpandedElement(element.id)}>{expanded ? '在主画布收起子图' : '在主画布展开子图'}</button>
-          <button type="button" className="secondary" onClick={() => props.setGraphRef(`element:${element.id}`)}>独占打开子图</button>
+          <button type="button" className="secondary" onClick={() => {
+            props.setGraphRef(`element:${element.id}`);
+            props.setSelectedId(element.graph ? `graph:${element.graph.id}` : '');
+            props.setSelectedJson(JSON.stringify(element.graph ?? {}, null, 2));
+          }}>独占打开子图</button>
         </div>
       )}
       <AdvancedInspectorSection title="高级">
-        <TextField
-          label="Element ID"
-          value={element.id}
-          commitOnBlur
-          onChange={(value) => updateData((next) => {
-            const comp = getComposition(next, composition?.id ?? '');
-            if (!comp) return;
-            try {
-              const newId = renameElement(comp, element.id, value);
-              props.setSelectedId(`element:${newId}`);
-            } catch (e) {
-              props.setStatus(String(e));
-            }
-          })}
-        />
+        <ReadOnlyField label="Element ID" value={element.id} />
         <SignalChipsField
           label="发出信号"
           value={element.meta?.emits ?? []}
@@ -2415,10 +2434,10 @@ function buildEntityNarrativeIndex(
         ownerId,
         ownerKey,
         compositionId: comp.id,
-        compositionLabel: comp.label ?? comp.id,
+        compositionLabel: graphDisplayName(comp.mainGraph),
         elementId: element.id,
-        elementLabel: element.label ?? element.id,
         graphId: graph.id,
+        elementLabel: graphDisplayName(graph),
         category: String(graph.category ?? '').trim(),
         activeState: activeStates[graph.id] ?? '',
         states: Object.keys(graph.states ?? {}),
@@ -2623,35 +2642,31 @@ function applySelectedObjectJson(
     const el = comp.elements?.find((item) => item.id === inline.elementId);
     if (!el?.graph) return null;
     const nextState = parsed as unknown as NarrativeStateNodeDef;
-    const newId = renameStateInGraph(data, el.graph, inline.objectId, String(nextState.id || inline.objectId));
-    el.graph.states[newId] = { ...nextState, id: newId };
-    return inlineSubgraphStateId(inline.elementId, newId);
+    el.graph.states[inline.objectId] = { ...nextState, id: inline.objectId };
+    return inlineSubgraphStateId(inline.elementId, inline.objectId);
   }
   if (inline?.kind === 'transition') {
     const el = comp.elements?.find((item) => item.id === inline.elementId);
     if (!el?.graph || !el.graph.transitions.some((t) => t.id === inline.objectId)) return null;
     const transition = parsed as unknown as NarrativeTransitionDef;
-    const newId = renameTransition(el.graph, inline.objectId, String(transition.id || inline.objectId));
-    const idx = el.graph.transitions.findIndex((t) => t.id === newId);
-    if (idx >= 0) el.graph.transitions[idx] = { ...transition, id: newId };
-    return inlineSubgraphTransitionId(inline.elementId, newId);
+    const idx = el.graph.transitions.findIndex((t) => t.id === inline.objectId);
+    if (idx >= 0) el.graph.transitions[idx] = { ...transition, id: inline.objectId };
+    return inlineSubgraphTransitionId(inline.elementId, inline.objectId);
   }
   if (selectedId.startsWith('state:')) {
     const oldId = selectedId.slice('state:'.length);
     if (!g.states[oldId]) return null;
     const nextState = parsed as unknown as NarrativeStateNodeDef;
-    const newId = renameStateInGraph(data, g, oldId, String(nextState.id || oldId));
-    g.states[newId] = { ...nextState, id: newId };
-    return `state:${newId}`;
+    g.states[oldId] = { ...nextState, id: oldId };
+    return `state:${oldId}`;
   }
   if (selectedId.startsWith('transition:')) {
     const oldId = selectedId.slice('transition:'.length);
     if (!g.transitions.some((t) => t.id === oldId)) return null;
     const transition = parsed as unknown as NarrativeTransitionDef;
-    const newId = renameTransition(g, oldId, String(transition.id || oldId));
-    const idx = g.transitions.findIndex((t) => t.id === newId);
-    if (idx >= 0) g.transitions[idx] = { ...transition, id: newId };
-    return `transition:${newId}`;
+    const idx = g.transitions.findIndex((t) => t.id === oldId);
+    if (idx >= 0) g.transitions[idx] = { ...transition, id: oldId };
+    return `transition:${oldId}`;
   }
   if (selectedId.startsWith('element:') && graphRef === 'main') {
     const oldId = selectedId.slice('element:'.length);
@@ -2660,22 +2675,16 @@ function applySelectedObjectJson(
     if (!oldElement) return null;
     const nextElement = parsed as unknown as CompositionElementDef;
     const oldGraphId = oldElement.graph?.id;
-    const desiredGraphId = nextElement.graph?.id;
-    const newId = renameElement(comp, oldId, String(nextElement.id || oldId));
-    const idx = elements.findIndex((e) => e.id === newId);
+    const idx = elements.findIndex((e) => e.id === oldId);
     if (idx < 0) return null;
-    const replacement: CompositionElementDef = { ...nextElement, id: newId };
-    if (oldGraphId && desiredGraphId && replacement.graph && desiredGraphId !== oldGraphId) {
+    const replacement: CompositionElementDef = { ...nextElement, id: oldId };
+    if (oldGraphId && replacement.graph) {
       replacement.graph = { ...replacement.graph, id: oldGraphId };
     }
     elements[idx] = replacement;
-    if (oldGraphId && desiredGraphId && replacement.graph && desiredGraphId !== oldGraphId) {
-      renameGraph(data, replacement.graph, desiredGraphId);
-    }
-    return `element:${newId}`;
+    return `element:${oldId}`;
   }
   if (selectedId.startsWith('graph:') || selectedId.startsWith('transition-anchor:')) {
-    const desiredGraphId = String((parsed as Partial<NarrativeGraphDef>).id || g.id);
     const replacement: NarrativeGraphDef = { ...(parsed as unknown as NarrativeGraphDef), id: g.id };
     if (graphRef === 'main') {
       comp.mainGraph = replacement;
@@ -2684,7 +2693,6 @@ function applySelectedObjectJson(
       if (!element) return null;
       element.graph = replacement;
     }
-    if (desiredGraphId !== g.id) renameGraph(data, replacement, desiredGraphId);
     return `graph:${replacement.id}`;
   }
   return null;

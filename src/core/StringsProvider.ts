@@ -1,4 +1,5 @@
 import type { AssetManager } from './AssetManager';
+import { TEXT_URLS } from './projectPaths';
 
 /** strings.json 叶子值：展示层统一当字符串参与插值与 resolveText */
 export type StringTableLeaf = string | number | boolean;
@@ -11,7 +12,7 @@ export class StringsProvider {
 
   async load(assetManager: AssetManager): Promise<void> {
     try {
-      this.data = await assetManager.loadJson<Record<string, StringCategory>>('/assets/data/strings.json');
+      this.data = await assetManager.loadJson<Record<string, StringCategory>>(TEXT_URLS.strings);
     } catch {
       console.warn('StringsProvider: strings.json not found, using fallback strings');
     }

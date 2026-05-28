@@ -8,10 +8,10 @@ import type { DayManager } from '../DayManager';
 import type { Renderer } from '../../rendering/Renderer';
 import type { GameContext, IGameSystem } from '../../data/types';
 import { GameState } from '../../data/types';
+import { FlagKeys } from '../../core/FlagKeys';
+import { dataSubdirJsonUrl, TEXT_URLS } from '../../core/projectPaths';
 import type { WaterMinigameIndexEntry, WaterMinigameInstance } from './types';
 import { WaterMinigameScene } from './WaterMinigameScene';
-
-const INDEX_PATH = '/assets/data/water_minigames/index.json';
 
 /** 同日同 spot 累计开局超过此次数则剔除非 premium 实体 */
 const DAILY_SOFT_CAP = 3;
@@ -126,7 +126,7 @@ export class WaterMinigameManager implements IGameSystem {
 
   async loadIndex(): Promise<void> {
     try {
-      const raw = await this.assetManager.loadJson<WaterMinigameIndexEntry[]>(INDEX_PATH);
+      const raw = await this.assetManager.loadJson<WaterMinigameIndexEntry[]>(TEXT_URLS.waterMinigamesIndex);
       this.index = Array.isArray(raw) ? raw : [];
     } catch (e) {
       console.warn('WaterMinigameManager: failed to load index', e);
@@ -172,7 +172,7 @@ export class WaterMinigameManager implements IGameSystem {
     };
 
     const spot = inst.spotId ?? inst.id;
-    const dayRaw = this.dayManager?.currentDay ?? this.flagStore.get('current_day');
+    const dayRaw = this.dayManager?.currentDay ?? this.flagStore.get(FlagKeys.currentDay);
     const day = typeof dayRaw === 'number' && Number.isFinite(dayRaw) ? dayRaw : 1;
     const key = `${spot}|${day}`;
     const uses = this.usesBySpotDay.get(key) ?? 0;
@@ -231,7 +231,7 @@ export class WaterMinigameManager implements IGameSystem {
     const entry = this.index.find((x) => x.id === id);
     if (!entry) return null;
     try {
-      const path = entry.file.startsWith('/') ? entry.file : `/assets/data/water_minigames/${entry.file}`;
+      const path = dataSubdirJsonUrl('water_minigames', entry.file);
       const data = await this.assetManager.loadJson<WaterMinigameInstance>(path);
       this.instanceCache.set(id, data);
       return data;

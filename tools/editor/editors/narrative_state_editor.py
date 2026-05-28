@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, QUrl, Slot
-from PySide6.QtGui import QContextMenuEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtWidgets import QLabel, QMessageBox, QVBoxLayout, QWidget, QSizePolicy
 
 try:
@@ -349,7 +349,7 @@ def _asset_context_state_sources(assets: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _validation_errors_for_save(data: dict[str, Any], model: ProjectModel) -> list[dict[str, Any]]:
-    issues = validate_project_context(data, model)
+    issues = validate_narrative_graphs(data) + validate_project_context(data, model)
     return [issue for issue in issues if issue.get("severity") == "error"]
 
 
@@ -412,7 +412,7 @@ class NarrativeEditorBridge(QObject):
                 "message": f"JSON 无法解析：{exc}",
             }], ensure_ascii=False)
         normalized = _normalize_file(parsed)
-        issues = validate_project_context(normalized, self._model)
+        issues = validate_narrative_graphs(normalized) + validate_project_context(normalized, self._model)
         return json.dumps(issues, ensure_ascii=False)
 
     @Slot(result=str)
@@ -508,16 +508,24 @@ class NarrativeEditorBridge(QObject):
             win = win.parent()
         if win is None:
             return
-        if kind == "dialogue" and hasattr(win, "navigate_to_dialogue_graph"):
+        route = WRAPPER_OWNER_NAVIGATION.get(kind)
+        if route is None:
+            return
+        if route == "dialogue" and hasattr(win, "navigate_to_dialogue_graph"):
             win.navigate_to_dialogue_graph(ref_id)
-        elif kind == "scenario" and hasattr(win, "navigate_to_scenario_catalog"):
+        elif route == "scenario" and hasattr(win, "navigate_to_scenario_catalog"):
             win.navigate_to_scenario_catalog(ref_id)
+        elif route == "minigame" and hasattr(win, "navigate_to_minigame"):
+            win.navigate_to_minigame(ref_id)
+        elif route == "cutscene" and hasattr(win, "navigate_to_cutscene"):
+            win.navigate_to_cutscene(ref_id)
         elif hasattr(win, "_on_navigate_to_source"):
-            if kind == "quest":
+            if route == "quest":
                 win._on_navigate_to_source("quest", ref_id, "")
-            elif kind == "sceneEntity":
+            elif route in _SCENE_OWNER_SOURCE_TYPES:
                 scene_id, source_id = _split_scene_ref(ref_id)
-                win._on_navigate_to_source("scene_zone", source_id or ref_id, scene_id)
+                source_type = _SCENE_OWNER_SOURCE_TYPES[route]
+                win._on_navigate_to_source(source_type, source_id or ref_id, scene_id)
 
     def _run_game_js_result(self, code: str) -> dict[str, Any]:
         win = _find_main_window(self)
@@ -634,11 +642,6 @@ class NarrativeStateEditor(QWidget):
         self._view.page().setWebChannel(self._channel)
         root.addWidget(self._view, 1)
         self._load_web_editor()
-
-        save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
-        save_shortcut.activated.connect(self._toolbar_save)
-        reload_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F5), self)
-        reload_shortcut.activated.connect(self._toolbar_reload_page)
 
     def _toolbar_save(self) -> None:
         self.flush_to_model()
@@ -958,6 +961,8 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         *[x[0] for x in model.all_paper_craft_minigame_ids()],
     ]
     scene_refs: list[str] = []
+    scene_npc_refs: list[str] = []
+    scene_hotspot_refs: list[str] = []
     zone_refs: list[str] = []
     for sid, scene in sorted(model.scenes.items()):
         if not isinstance(scene, dict):
@@ -975,7 +980,13 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
                 ref = f"{sid}:{eid}"
                 scene_refs.append(ref)
                 scene_refs.append(eid)
-                if key == "zones":
+                if key == "npcs":
+                    scene_npc_refs.append(ref)
+                    scene_npc_refs.append(eid)
+                elif key == "hotspots":
+                    scene_hotspot_refs.append(ref)
+                    scene_hotspot_refs.append(eid)
+                elif key == "zones":
                     zone_refs.append(ref)
                     zone_refs.append(eid)
     return {
@@ -983,6 +994,8 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         "scenarioIds": model.scenario_ids_ordered(),
         "questIds": [x[0] for x in model.all_quest_ids()],
         "sceneEntityRefs": sorted(set(scene_refs)),
+        "sceneNpcRefs": sorted(set(scene_npc_refs)),
+        "sceneHotspotRefs": sorted(set(scene_hotspot_refs)),
         "zoneRefs": sorted(set(zone_refs)),
         "minigameIds": sorted(set(minigame_ids)),
         "cutsceneIds": [x[0] for x in model.all_cutscene_ids()],
@@ -1274,7 +1287,33 @@ def _validate_graph(
         _validate_conditions(transition.get("conditions"), f"{tpath}.conditions", issues, f"{gid}.{tid}", graph_index, _with_field(transition_target, "conditions"))
 
 
-_VALID_WRAPPER_OWNER_TYPES = {"npc", "hotspot", "zone", "quest", "dialogue", "minigame", "cutscene", "scenario", "system"}
+WRAPPER_OWNER_CATALOG_KEYS = {
+    "npc": "sceneNpcRefs",
+    "hotspot": "sceneHotspotRefs",
+    "zone": "zoneRefs",
+    "quest": "questIds",
+    "dialogue": "dialogueGraphIds",
+    "minigame": "minigameIds",
+    "cutscene": "cutsceneIds",
+    "scenario": "scenarioIds",
+}
+WRAPPER_OWNER_NAVIGATION = {
+    "npc": "npc",
+    "hotspot": "hotspot",
+    "zone": "zone",
+    "quest": "quest",
+    "dialogue": "dialogue",
+    "minigame": "minigame",
+    "cutscene": "cutscene",
+    "scenario": "scenario",
+}
+_SCENE_OWNER_SOURCE_TYPES = {
+    "npc": "scene_npc",
+    "hotspot": "scene_hotspot",
+    "zone": "scene_zone",
+}
+_NON_NAVIGABLE_WRAPPER_OWNER_TYPES = {"system"}
+_VALID_WRAPPER_OWNER_TYPES = set(WRAPPER_OWNER_CATALOG_KEYS) | _NON_NAVIGABLE_WRAPPER_OWNER_TYPES
 
 
 def _build_graph_index(data: dict[str, Any]) -> dict[str, dict[str, Any]]:

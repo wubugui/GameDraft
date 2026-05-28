@@ -155,6 +155,14 @@ class PaperCraftEditor(QWidget):
         self._syncing = False
         self._select_instance()
 
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+        iid = (item_id or "").strip()
+        if not iid:
+            return
+        idx = self.instance_combo.findData(iid)
+        if idx >= 0:
+            self.instance_combo.setCurrentIndex(idx)
+
     def _spin(self) -> QSpinBox:
         sp = QSpinBox()
         sp.setRange(-9999, 9999)

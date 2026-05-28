@@ -42,6 +42,7 @@ export const TEXT_URLS = {
   waterMinigamesIndex: '/assets/data/water_minigames/index.json',
   sugarWheelIndex: '/assets/data/sugar_wheel/index.json',
   paperCraftIndex: '/assets/data/paper_craft/index.json',
+  narrativeGraphs: '/assets/data/narrative_graphs.json',
 } as const;
 
 /** 媒体根 URL 子目录（不带尾斜杠）。 */
@@ -91,6 +92,30 @@ export function sceneJsonUrl(sceneId: string): string {
   const sid = (sceneId ?? '').trim();
   if (!sid) throw new Error('sceneJsonUrl: sceneId required');
   return `${TEXT_URLS.scenesDir}/${sid}.json`;
+}
+
+/** 图对话 JSON URL：`/assets/dialogues/graphs/<graphId>.json`。 */
+export function dialogueGraphJsonUrl(graphId: string): string {
+  const gid = (graphId ?? '').trim();
+  if (!gid) throw new Error('dialogueGraphJsonUrl: graphId required');
+  return `${TEXT_URLS.dialoguesDir}/graphs/${gid}.json`;
+}
+
+/** 滤镜 JSON URL：`/assets/data/filters/<filterId>.json`。 */
+export function filterJsonUrl(filterId: string): string {
+  const id = (filterId ?? '').trim();
+  if (!id) throw new Error('filterJsonUrl: filterId required');
+  return `${TEXT_URLS.filtersDir}/${id}.json`;
+}
+
+/** data 子目录下的 JSON URL；entry.file 已是绝对路径时原样返回。 */
+export function dataSubdirJsonUrl(subdir: string, file: string): string {
+  const name = (file ?? '').trim();
+  if (!name) throw new Error('dataSubdirJsonUrl: file required');
+  if (name.startsWith('/')) return name;
+  const dir = (subdir ?? '').trim().replace(/^\/+|\/+$/g, '');
+  if (!dir) throw new Error('dataSubdirJsonUrl: subdir required');
+  return joinPosix(TEXT_URLS.dataDir, dir, name);
 }
 
 /** 场景媒体子目录：`/resources/runtime/scenes/<sceneId>`。 */

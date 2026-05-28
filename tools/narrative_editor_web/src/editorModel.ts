@@ -73,6 +73,8 @@ export const emptyCatalog: AuthoringCatalogDef = {
   scenarioIds: [],
   questIds: [],
   sceneEntityRefs: [],
+  sceneNpcRefs: [],
+  sceneHotspotRefs: [],
   zoneRefs: [],
   minigameIds: [],
   cutsceneIds: [],
@@ -190,9 +192,30 @@ export function getComposition(data: NarrativeGraphsFileDef, compositionId: stri
 
 export function graphLabel(comp: NarrativeCompositionDef | undefined, graphRef: GraphRef): string {
   if (!comp) return 'No Graph';
-  if (graphRef === 'main') return comp.mainGraph.id;
+  if (graphRef === 'main') return graphDisplayName(comp.mainGraph);
   const el = getElementByGraphRef(comp, graphRef);
-  return el?.graph?.id || el?.label || graphRef;
+  return el?.graph ? graphDisplayName(el.graph) : el?.label || graphRef;
+}
+
+export function graphDisplayName(graph: NarrativeGraphDef | undefined): string {
+  if (!graph) return '';
+  return String(graph.label ?? '').trim() || graph.id;
+}
+
+export function graphReferenceLabel(graph: NarrativeGraphDef | undefined): string {
+  if (!graph) return '';
+  const name = graphDisplayName(graph);
+  return name && name !== graph.id ? `${name} (${graph.id})` : graph.id;
+}
+
+export function stateDisplayName(state: NarrativeStateNodeDef | undefined, stateId: string): string {
+  if (!state) return stateId;
+  return String(state.label ?? '').trim() || stateId;
+}
+
+export function stateReferenceLabel(state: NarrativeStateNodeDef | undefined, stateId: string): string {
+  const name = stateDisplayName(state, stateId);
+  return name && name !== stateId ? `${name} (${stateId})` : stateId;
 }
 
 export function getEditableGraph(comp: NarrativeCompositionDef | undefined, graphRef: GraphRef): NarrativeGraphDef | undefined {
@@ -252,12 +275,13 @@ export function createTransition(graph: NarrativeGraphDef, from: string, to: str
 export function createComposition(data: NarrativeGraphsFileDef): NarrativeCompositionDef {
   const comps = data.compositions ??= [];
   const id = uniqueId('composition', comps.map((c) => c.id));
-  const graphId = uniqueId('flow', comps.map((c) => c.mainGraph.id));
+  const graphId = uniqueGraphId(data, 'flow');
   const comp: NarrativeCompositionDef = {
     id,
     label: id,
     mainGraph: {
       id: graphId,
+      label: id,
       ownerType: 'flow',
       initialState: 'initial',
       states: { initial: { id: 'initial', label: 'initial', meta: { editor: { x: 120, y: 160 } } } },
@@ -269,7 +293,7 @@ export function createComposition(data: NarrativeGraphsFileDef): NarrativeCompos
   return comp;
 }
 
-export function createElement(comp: NarrativeCompositionDef, kind: ElementKind): CompositionElementDef {
+export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, data?: NarrativeGraphsFileDef): CompositionElementDef {
   const elements = comp.elements ??= [];
   const base = kind === 'wrapperGraph' ? 'wrapper' : kind.replace('Blackbox', '').replace('Subgraph', '');
   const id = uniqueId(base, elements.map((e) => e.id));
@@ -292,7 +316,8 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind):
     element.y = kind === 'wrapperGraph' ? 380 : 60;
     element.graph = kind === 'scenarioSubgraph'
       ? {
-          id: uniqueId(graphPrefix, [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
+          id: data ? uniqueGraphId(data, graphPrefix) : uniqueId(graphPrefix, [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
+          label: element.label,
           ownerType,
           initialState: 'inactive',
           entryState: 'entry',
@@ -305,7 +330,8 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind):
           transitions: [],
         }
       : {
-          id: uniqueId(graphPrefix, [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
+          id: data ? uniqueGraphId(data, graphPrefix) : uniqueId(graphPrefix, [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
+          label: element.label,
           ownerType,
           category: '',
           initialState: 'initial',
@@ -736,6 +762,10 @@ export function uniqueId(prefix: string, existing: string[]): string {
     id = `${clean}_${i}`;
   }
   return id;
+}
+
+export function uniqueGraphId(data: NarrativeGraphsFileDef, prefix: string): string {
+  return uniqueId(prefix, compileGraphs(data).map(({ graph }) => graph.id));
 }
 
 function cleanId(value: string): string {

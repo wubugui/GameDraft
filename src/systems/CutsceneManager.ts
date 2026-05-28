@@ -9,6 +9,7 @@ import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBub
 import { CUTSCENE_ACTION_WHITELIST } from '../data/types';
 import { Npc } from '../entities/Npc';
 import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
+import { TEXT_URLS } from '../core/projectPaths';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
 
@@ -293,7 +294,7 @@ export class CutsceneManager implements IGameSystem {
 
   async loadDefs(): Promise<void> {
     try {
-      const list = await this.assetManager.loadJson<NewCutsceneDef[]>('/assets/data/cutscenes/index.json');
+      const list = await this.assetManager.loadJson<NewCutsceneDef[]>(TEXT_URLS.cutscenesIndex);
       for (const def of list) {
         this.cutsceneDefs.set(def.id, def);
       }

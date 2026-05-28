@@ -3,6 +3,7 @@ import type { Howl } from 'howler';
 import type { EventBus } from '../core/EventBus';
 import type { AssetManager, AssetRef } from '../core/AssetManager';
 import { resolveAssetPath } from '../core/assetPath';
+import { TEXT_URLS } from '../core/projectPaths';
 import type { IGameSystem, GameContext, IAudioSettingsProvider } from '../data/types';
 
 interface AudioEntry {
@@ -61,7 +62,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         ambient?: Record<string, { src: string }>;
         sfx?: Record<string, { src: string }>;
         systemSfx?: Record<string, string>;
-      }>('/assets/data/audio_config.json');
+      }>(TEXT_URLS.audioConfig);
       const resolveSrc = (obj: Record<string, { src: string; volume?: number }>) => {
         const out: Record<string, { src: string; volume?: number }> = {};
         for (const [k, v] of Object.entries(obj)) {

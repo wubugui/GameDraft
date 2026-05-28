@@ -1241,6 +1241,15 @@ class SugarWheelEditor(QWidget):
             self._doc = None
             self._canvas.refresh(None)
 
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+        iid = (item_id or "").strip()
+        if not iid:
+            return
+        for row in self._model.sugar_wheel_index if isinstance(self._model.sugar_wheel_index, list) else []:
+            if isinstance(row, dict) and str(row.get("id") or "").strip() == iid:
+                self._reload_list(iid)
+                return
+
     def _set_enabled(self, on: bool) -> None:
         for w in (
             self._label, self._bg, self._bg_fit, self._foreground, self._foreground_fit, self._wheel, self._pointer,

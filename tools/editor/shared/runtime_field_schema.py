@@ -1,51 +1,30 @@
-"""NPC / Hotspot 可存档运行时字段的编辑器镜像。
+"""NPC / Hotspot persistent runtime-field schema for editor UI and validation.
 
-唯一权威在 `src/data/EntityRuntimeFieldSchema.ts`；本文件为其 Python 镜像（改字段请先改 TS，再镜像到此处）。
-本模块提供同名字段与 picker，使 Python 编辑器与 validator 在无 TS 执行环境下也能构建 UI 与校验 JSON。
+The shared schema lives at ``src/data/runtime_field_schema.json`` and is also
+used by the TypeScript runtime. Keep Python behavior here limited to loading
+that schema and validating values against it.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 
-RUNTIME_ENTITY_FIELD_SCHEMAS: dict[str, dict[str, dict[str, str]]] = {
-    "npc": {
-        "x": {"kind": "number", "picker": "plain", "apply": "position", "label": "x"},
-        "y": {"kind": "number", "picker": "plain", "apply": "position", "label": "y"},
-        "enabled": {"kind": "boolean", "picker": "plain", "apply": "visibility", "label": "enabled"},
-        "animFile": {
-            "kind": "string",
-            "picker": "animationManifest",
-            "apply": "reloadAnimation",
-            "label": "animFile",
-        },
-        "initialAnimState": {
-            "kind": "string",
-            "picker": "animationState",
-            "apply": "reloadAnimation",
-            "label": "initialAnimState",
-        },
-        "animState": {
-            "kind": "string",
-            "picker": "animationState",
-            "apply": "playAnimation",
-            "label": "animState",
-        },
-        "patrolDisabled": {"kind": "boolean", "picker": "plain", "apply": "patrol", "label": "patrolDisabled"},
-    },
-    "hotspot": {
-        "x": {"kind": "number", "picker": "plain", "apply": "position", "label": "x"},
-        "y": {"kind": "number", "picker": "plain", "apply": "position", "label": "y"},
-        "enabled": {"kind": "boolean", "picker": "plain", "apply": "visibility", "label": "enabled"},
-        "displayImage": {
-            "kind": "object",
-            "picker": "hotspotDisplayImage",
-            "apply": "reloadHotspotDisplayImage",
-            "label": "displayImage",
-        },
-    },
-}
+def _schema_path() -> Path:
+    return Path(__file__).resolve().parents[3] / "src" / "data" / "runtime_field_schema.json"
+
+
+def _load_schema() -> dict[str, dict[str, dict[str, Any]]]:
+    with _schema_path().open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+    if not isinstance(raw, dict):
+        raise ValueError("runtime_field_schema.json must contain an object")
+    return raw
+
+
+RUNTIME_ENTITY_FIELD_SCHEMAS: dict[str, dict[str, dict[str, Any]]] = _load_schema()
 
 
 def entity_kind_choices() -> list[tuple[str, str]]:
@@ -57,7 +36,7 @@ def field_choices(kind: str) -> list[tuple[str, str]]:
     return [(f"{name} ({meta.get('kind', '')})", name) for name, meta in schema.items()]
 
 
-def field_meta(kind: str, field_name: str) -> dict[str, str] | None:
+def field_meta(kind: str, field_name: str) -> dict[str, Any] | None:
     return RUNTIME_ENTITY_FIELD_SCHEMAS.get(kind, {}).get(field_name)
 
 

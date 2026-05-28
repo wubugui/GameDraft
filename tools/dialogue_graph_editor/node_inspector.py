@@ -2380,7 +2380,7 @@ class NodeInspector(QWidget):
             owner_id = str(wrapper.get("ownerId", "") or "").strip()
             category = str(wrapper.get("category", "") or "").strip()
             comp = str(wrapper.get("compositionLabel", "") or wrapper.get("compositionId", "") or "").strip()
-            element = str(wrapper.get("elementLabel", "") or wrapper.get("elementId", "") or "").strip()
+            element = str(wrapper.get("elementId", "") or "").strip()
             states = [str(x) for x in (wrapper.get("stateIds") or []) if str(x).strip()]
             parts = [
                 f"实体：{owner_type}:{owner_id}" if owner_type or owner_id else "",
@@ -2510,14 +2510,24 @@ class NodeInspector(QWidget):
         gid_cb.setEditable(True)
         gid_cb.addItem("")
         for g in graphs:
-            gid_cb.addItem(str(g.get("graphId", "")), g.get("label", ""))
-        gid_cb.setCurrentText(str(data.get("graphId", "") or ""))
+            gid = str(g.get("graphId", "") or "")
+            gid_cb.addItem(str(g.get("label", "") or gid), gid)
+        saved_gid = str(data.get("graphId", "") or "")
+        idx = gid_cb.findData(saved_gid)
+        if idx >= 0:
+            gid_cb.setCurrentIndex(idx)
+        else:
+            gid_cb.setCurrentText(saved_gid)
         row_gid = QHBoxLayout()
         row_gid.addWidget(QLabel("graphId", self._body))
         row_gid.addWidget(gid_cb, 1)
         self._body_layout.addLayout(row_gid)
 
-        state_options = graph_states(self._project_root, gid_cb.currentText().strip())
+        def _current_graph_id() -> str:
+            data_value = gid_cb.currentData()
+            return str(data_value).strip() if data_value is not None else gid_cb.currentText().strip()
+
+        state_options = graph_states(self._project_root, _current_graph_id())
 
         case_rows, dn, _missing, build_getter = self._make_state_branch_rows(
             data,
@@ -2526,7 +2536,7 @@ class NodeInspector(QWidget):
         )
 
         def on_graph_changed(_t: str = "") -> None:
-            gid = gid_cb.currentText().strip()
+            gid = _current_graph_id()
             ids = graph_states(self._project_root, gid)
             for row in case_rows:
                 cb = row.get("state_edit")
@@ -2558,7 +2568,7 @@ class NodeInspector(QWidget):
         }
 
         def getter() -> dict[str, Any]:
-            gid = gid_cb.currentText().strip()
+            gid = _current_graph_id()
             base = build_getter("contextState", gid)()
             return base
 

@@ -16,6 +16,40 @@ import type {
   RuntimeDebugSnapshotDef,
 } from '../types';
 
+type CatalogListKey =
+  | 'dialogueGraphIds'
+  | 'scenarioIds'
+  | 'questIds'
+  | 'sceneNpcRefs'
+  | 'sceneHotspotRefs'
+  | 'zoneRefs'
+  | 'minigameIds'
+  | 'cutsceneIds';
+
+type WrapperOwnerRule = {
+  catalogKey?: CatalogListKey;
+  navigationKind?: string;
+};
+
+export const WRAPPER_OWNER_REGISTRY = {
+  npc: { catalogKey: 'sceneNpcRefs', navigationKind: 'npc' },
+  hotspot: { catalogKey: 'sceneHotspotRefs', navigationKind: 'hotspot' },
+  zone: { catalogKey: 'zoneRefs', navigationKind: 'zone' },
+  quest: { catalogKey: 'questIds', navigationKind: 'quest' },
+  dialogue: { catalogKey: 'dialogueGraphIds', navigationKind: 'dialogue' },
+  minigame: { catalogKey: 'minigameIds', navigationKind: 'minigame' },
+  cutscene: { catalogKey: 'cutsceneIds', navigationKind: 'cutscene' },
+  scenario: { catalogKey: 'scenarioIds', navigationKind: 'scenario' },
+  system: {},
+} as const satisfies Record<string, WrapperOwnerRule>;
+
+export const WRAPPER_OWNER_TYPES = Object.keys(WRAPPER_OWNER_REGISTRY);
+
+export function ownerChoicesForType(ownerType: string | undefined, catalog: AuthoringCatalogDef): string[] {
+  const key = WRAPPER_OWNER_REGISTRY[(ownerType ?? '').trim() as keyof typeof WRAPPER_OWNER_REGISTRY]?.catalogKey;
+  return key ? catalog[key] : [];
+}
+
 export function extractActiveStates(runtimeSnapshot: RuntimeDebugSnapshotDef): Record<string, string> | null {
   if (!runtimeSnapshot.ok || !runtimeSnapshot.snapshot || typeof runtimeSnapshot.snapshot !== 'object') return null;
   const snap = runtimeSnapshot.snapshot as { narrativeState?: { activeStates?: Record<string, string> } };
@@ -69,14 +103,8 @@ export function updateElement(
 
 export function ownerChoicesForGraph(graph: NarrativeGraphDef, catalog: AuthoringCatalogDef): string[] {
   const ownerType = graph.ownerType?.trim();
-  if (ownerType === 'quest') return catalog.questIds;
-  if (ownerType === 'dialogue') return catalog.dialogueGraphIds;
-  if (ownerType === 'minigame') return catalog.minigameIds;
-  if (ownerType === 'cutscene') return catalog.cutsceneIds;
-  if (ownerType === 'zone') return catalog.zoneRefs;
-  if (ownerType === 'scenario') return catalog.scenarioIds;
   if (ownerType === 'flow') return catalog.scenarioIds;
-  return catalog.sceneEntityRefs;
+  return ownerChoicesForType(ownerType, catalog);
 }
 
 export function ownerChoicesFor(element: CompositionElementDef, catalog: AuthoringCatalogDef): string[] {
@@ -85,12 +113,7 @@ export function ownerChoicesFor(element: CompositionElementDef, catalog: Authori
   if (element.kind === 'zoneBlackbox') return catalog.zoneRefs;
   if (element.kind === 'minigameBlackbox') return catalog.minigameIds;
   if (element.kind === 'cutsceneBlackbox') return catalog.cutsceneIds;
-  if (element.ownerType === 'quest') return catalog.questIds;
-  if (element.ownerType === 'dialogue') return catalog.dialogueGraphIds;
-  if (element.ownerType === 'minigame') return catalog.minigameIds;
-  if (element.ownerType === 'cutscene') return catalog.cutsceneIds;
-  if (element.ownerType === 'zone') return catalog.zoneRefs;
-  if (element.ownerType === 'scenario') return catalog.scenarioIds;
+  if (element.kind === 'wrapperGraph') return ownerChoicesForType(element.ownerType, catalog);
   return catalog.sceneEntityRefs;
 }
 
@@ -98,11 +121,13 @@ export function navigationForElement(el?: CompositionElementDef): null | { kind:
   if (!el) return null;
   if (el.kind === 'dialogueBlackbox' && el.refId) return { kind: 'dialogue', id: el.refId };
   if (el.kind === 'scenarioSubgraph' && (el.refId || el.ownerId)) return { kind: 'scenario', id: el.refId || el.ownerId! };
-  if (el.kind === 'zoneBlackbox' && el.refId) return { kind: 'sceneEntity', id: el.refId };
+  if (el.kind === 'zoneBlackbox' && el.refId) return { kind: 'zone', id: el.refId };
   if (el.kind === 'minigameBlackbox' && el.refId) return { kind: 'minigame', id: el.refId };
   if (el.kind === 'cutsceneBlackbox' && el.refId) return { kind: 'cutscene', id: el.refId };
-  if (el.kind === 'wrapperGraph' && el.ownerType === 'quest' && el.ownerId) return { kind: 'quest', id: el.ownerId };
-  if (el.kind === 'wrapperGraph' && el.ownerId) return { kind: 'sceneEntity', id: el.ownerId };
+  if (el.kind === 'wrapperGraph' && el.ownerId) {
+    const rule = WRAPPER_OWNER_REGISTRY[(el.ownerType || '').trim() as keyof typeof WRAPPER_OWNER_REGISTRY];
+    if (rule?.navigationKind) return { kind: rule.navigationKind, id: el.ownerId };
+  }
   return null;
 }
 

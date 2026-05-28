@@ -1,5 +1,5 @@
 import { MarkerType } from '@xyflow/react';
-import { isSubgraphElement } from '../editorModel';
+import { graphDisplayName, isSubgraphElement, stateDisplayName } from '../editorModel';
 import type { CanvasMode } from '../types/canvas';
 import type {
   CanvasEdge,
@@ -154,6 +154,7 @@ function buildElementOverlayNodes(
   for (const [index, el] of (comp.elements ?? []).entries()) {
     const parentId = elementParentId(el.id);
     const expanded = expandedElementIds.includes(el.id) && isSubgraphElement(el) && Boolean(el.graph);
+    const elementDisplayName = el.graph ? graphDisplayName(el.graph) : (el.label || el.id);
 
     if (expanded && el.graph) {
       const bounds = computeSubgraphGroupBounds(el.graph);
@@ -167,7 +168,7 @@ function buildElementOverlayNodes(
         draggable: true,
         deletable: false,
         data: {
-          label: el.label || el.id,
+          label: elementDisplayName,
           subtitle: elementSubtitle(el),
           kind: el.kind,
           detail: el.graph.id,
@@ -187,8 +188,8 @@ function buildElementOverlayNodes(
           zIndex: 20,
           deletable: true,
           data: {
-            label: state.label || sid,
-            subtitle: `${el.label || el.id} / ${sid}`,
+            label: stateDisplayName(state, sid),
+            subtitle: `${elementDisplayName} / ${sid}`,
             kind: 'state' as const,
             boundary: scenarioBoundaryKind(el.graph, sid),
             detail: el.graph.id,
@@ -206,7 +207,7 @@ function buildElementOverlayNodes(
       zIndex: 20,
       deletable: true,
       data: {
-        label: el.label || el.id,
+        label: elementDisplayName,
         subtitle: elementSubtitle(el),
         kind: el.kind,
         detail: el.refId || el.ownerId || el.graph?.id || '',

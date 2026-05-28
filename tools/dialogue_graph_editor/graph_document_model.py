@@ -102,6 +102,8 @@ class GraphDocumentModel(QObject):
         nodes = self._data.get("nodes")
         if not isinstance(nodes, dict) or nid not in nodes:
             return
+        if nodes[nid] == node_data:
+            return
         nodes[nid] = copy.deepcopy(node_data)
         self.node_changed.emit(nid)
         self.mark_dirty()

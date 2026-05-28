@@ -18,7 +18,8 @@ import type {
 } from '../data/types';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
-import { mediaUrlFromShortPath } from '../core/projectPaths';
+import { FlagKeys } from '../core/FlagKeys';
+import { mediaUrlFromShortPath, TEXT_URLS } from '../core/projectPaths';
 
 type BookType = 'character' | 'lore' | 'document' | 'book' | 'bookEntry';
 
@@ -154,14 +155,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadCharacters(): Promise<void> {
     try {
-      const list = await this.assetManager.loadJson<CharacterEntry[]>('/assets/data/archive/characters.json');
+      const list = await this.assetManager.loadJson<CharacterEntry[]>(`${TEXT_URLS.archiveDir}/characters.json`);
       for (const e of list) this.characterDefs.set(e.id, e);
     } catch { /* no data yet */ }
   }
 
   private async loadLore(): Promise<void> {
     try {
-      const data = await this.assetManager.loadJson<LoreEntry[] | { entries?: LoreEntry[]; categories?: Record<string, string> }>('/assets/data/archive/lore.json');
+      const data = await this.assetManager.loadJson<LoreEntry[] | { entries?: LoreEntry[]; categories?: Record<string, string> }>(`${TEXT_URLS.archiveDir}/lore.json`);
       const list: LoreEntry[] = Array.isArray(data) ? data : data.entries ?? [];
       for (const e of list) this.loreDefs.set(e.id, e);
       if (!Array.isArray(data) && data.categories) {
@@ -172,14 +173,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async loadDocuments(): Promise<void> {
     try {
-      const list = await this.assetManager.loadJson<DocumentEntry[]>('/assets/data/archive/documents.json');
+      const list = await this.assetManager.loadJson<DocumentEntry[]>(`${TEXT_URLS.archiveDir}/documents.json`);
       for (const e of list) this.documentDefs.set(e.id, e);
     } catch { /* no data yet */ }
   }
 
   private async loadBooks(): Promise<void> {
     try {
-      const list = await this.assetManager.loadJson<BookDef[]>('/assets/data/archive/books.json');
+      const list = await this.assetManager.loadJson<BookDef[]>(`${TEXT_URLS.archiveDir}/books.json`);
       this.bookEntryIds.clear();
       for (const b of list) {
         this.bookDefs.set(b.id, b);
@@ -195,7 +196,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private async loadItemDisplayNames(): Promise<void> {
     this.itemDisplayNames.clear();
     try {
-      const list = await this.assetManager.loadJson<{ id: string; name?: string }[]>('/assets/data/items.json');
+      const list = await this.assetManager.loadJson<{ id: string; name?: string }[]>(TEXT_URLS.items);
       for (const it of list) {
         if (it?.id) this.itemDisplayNames.set(it.id, it.name ?? it.id);
       }
@@ -207,7 +208,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       case 'character':
         if (this.characterDefs.has(entryId) && !this.unlockedCharacters.has(entryId)) {
           this.unlockedCharacters.add(entryId);
-          this.flagStore.set(`archive_character_${entryId}`, true);
+          this.flagStore.set(FlagKeys.archiveCharacter(entryId), true);
           this.emitUpdate('character', entryId);
         }
         break;
@@ -316,7 +317,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       if (matchesNpc && !this.unlockedCharacters.has(def.id)) {
         if (this.checkConditions(def.unlockConditions)) {
           this.unlockedCharacters.add(def.id);
-          this.flagStore.set(`archive_character_${def.id}`, true);
+          this.flagStore.set(FlagKeys.archiveCharacter(def.id), true);
           this.emitUpdate('character', def.id);
         }
       }

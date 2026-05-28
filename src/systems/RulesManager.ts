@@ -10,6 +10,7 @@ import type {
   IRulesDataProvider,
 } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
+import { TEXT_URLS } from '../core/projectPaths';
 
 const LAYER_ORDER: RuleLayerKey[] = ['xiang', 'li', 'shu'];
 
@@ -149,7 +150,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
         fragments: FragmentRaw[];
         categories?: Record<string, string>;
         verifiedLabels?: Record<string, string>;
-      }>('/assets/data/rules.json');
+      }>(TEXT_URLS.rules);
       this.ruleDefs.clear();
       this.fragmentDefs.clear();
       for (const r of data.rules ?? []) {

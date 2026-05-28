@@ -13,12 +13,34 @@ from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 from tools.editor.editors.narrative_state_editor import (
     NarrativeStateEditor,
     NarrativeEditorBridge,
+    WRAPPER_OWNER_CATALOG_KEYS,
+    WRAPPER_OWNER_NAVIGATION,
+    _VALID_WRAPPER_OWNER_TYPES,
+    authoring_catalog,
     derive_projection,
     validate_narrative_graphs,
 )
 
 
 class TestNarrativeStateEditor(unittest.TestCase):
+    def test_wrapper_owner_registry_covers_valid_types(self) -> None:
+        self.assertEqual(
+            set(WRAPPER_OWNER_CATALOG_KEYS) | {"system"},
+            _VALID_WRAPPER_OWNER_TYPES,
+        )
+        self.assertEqual(set(WRAPPER_OWNER_NAVIGATION), set(WRAPPER_OWNER_CATALOG_KEYS))
+
+    def test_authoring_catalog_exposes_registered_owner_lists(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            catalog = authoring_catalog(m)
+            for owner_type, catalog_key in WRAPPER_OWNER_CATALOG_KEYS.items():
+                self.assertIn(catalog_key, catalog, owner_type)
+                self.assertIsInstance(catalog[catalog_key], list, owner_type)
+
     def test_missing_narrative_graphs_loads_empty_without_dirty(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"

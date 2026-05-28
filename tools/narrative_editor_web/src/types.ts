@@ -56,6 +56,7 @@ export interface NarrativeTransitionDef {
 
 export interface NarrativeGraphDef {
   id: string;
+  label?: string;
   ownerType: string;
   ownerId?: string;
   /** Free-form wrapper category/remark used for grouping in entity view. */
@@ -180,6 +181,8 @@ export interface AuthoringCatalogDef {
   scenarioIds: string[];
   questIds: string[];
   sceneEntityRefs: string[];
+  sceneNpcRefs: string[];
+  sceneHotspotRefs: string[];
   zoneRefs: string[];
   minigameIds: string[];
   cutsceneIds: string[];

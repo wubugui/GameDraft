@@ -5,6 +5,7 @@ import type { EventBus } from '../core/EventBus';
 import type { IInventoryDataProvider, ShopDef } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { AssetManager } from '../core/AssetManager';
+import { TEXT_URLS } from '../core/projectPaths';
 
 const PANEL_W = 500;
 const PADDING = 20;
@@ -37,7 +38,7 @@ export class ShopUI {
 
   async loadDefs(): Promise<void> {
     try {
-      const list = await this.assetManager.loadJson<ShopDef[]>('/assets/data/shops.json');
+      const list = await this.assetManager.loadJson<ShopDef[]>(TEXT_URLS.shops);
       for (const s of list) this.shopDefs.set(s.id, s);
     } catch { /* no shops yet */ }
   }

@@ -6,6 +6,7 @@ import type { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import type { EncounterManager } from '../systems/EncounterManager';
 import type { ActionDef } from '../data/types';
 import { GameState } from '../data/types';
+import { FlagKeys } from './FlagKeys';
 
 export interface EventBridgeDeps {
   dialogueManager: DialogueManager;
@@ -101,7 +102,7 @@ export class EventBridge {
       } catch (e) {
         console.warn('EventBridge: ruleUse:apply actions failed', e);
       }
-      await actionExecutor.executeAwait({ type: 'setFlag', params: { key: `rule_used_${p.ruleId}`, value: true } });
+      await actionExecutor.executeAwait({ type: 'setFlag', params: { key: FlagKeys.ruleUsed(p.ruleId), value: true } });
       if (p.resultText) {
         stateController.setState(GameState.UIOverlay);
         await inspectBox.show(p.resultText);

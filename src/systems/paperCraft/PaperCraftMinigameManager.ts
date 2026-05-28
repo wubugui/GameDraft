@@ -7,10 +7,9 @@ import type { GameStateController } from '../../core/GameStateController';
 import type { Renderer } from '../../rendering/Renderer';
 import type { GameContext, IGameSystem } from '../../data/types';
 import { GameState } from '../../data/types';
+import { dataSubdirJsonUrl, TEXT_URLS } from '../../core/projectPaths';
 import type { PaperCraftIndexEntry, PaperCraftInstance, PaperCraftResult } from './types';
 import { PaperCraftMinigameScene } from './PaperCraftMinigameScene';
-
-const INDEX_PATH = '/assets/data/paper_craft/index.json';
 
 export class PaperCraftMinigameManager implements IGameSystem {
   private eventBus!: EventBus;
@@ -84,7 +83,7 @@ export class PaperCraftMinigameManager implements IGameSystem {
 
   async loadIndex(): Promise<void> {
     try {
-      const raw = await this.assetManager.loadJson<PaperCraftIndexEntry[]>(INDEX_PATH);
+      const raw = await this.assetManager.loadJson<PaperCraftIndexEntry[]>(TEXT_URLS.paperCraftIndex);
       this.index = Array.isArray(raw) ? raw : [];
     } catch (e) {
       console.warn('PaperCraftMinigameManager: failed to load index', e);
@@ -190,7 +189,7 @@ export class PaperCraftMinigameManager implements IGameSystem {
     const entry = this.index.find((x) => x.id === id);
     if (!entry) return null;
     try {
-      const path = entry.file.startsWith('/') ? entry.file : `/assets/data/paper_craft/${entry.file}`;
+      const path = dataSubdirJsonUrl('paper_craft', entry.file);
       const data = await this.assetManager.loadJson<PaperCraftInstance>(path);
       this.instanceCache.set(id, data);
       return data;

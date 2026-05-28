@@ -8,6 +8,7 @@ import type { QuestManager } from './QuestManager';
 import type { InventoryManager } from './InventoryManager';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { ScenarioStateManager } from '../core/ScenarioStateManager';
+import { dialogueGraphJsonUrl } from '../core/projectPaths';
 import type {
   ActionDef,
   DialogueChoice,
@@ -317,7 +318,7 @@ export class GraphDialogueManager implements IGameSystem {
         return;
       }
 
-      const path = `/assets/dialogues/graphs/${gid}.json`;
+      const path = dialogueGraphJsonUrl(gid);
       let raw: DialogueGraphFile;
       try {
         raw = await this.assetManager.loadJson<DialogueGraphFile>(path);

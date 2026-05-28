@@ -6658,7 +6658,23 @@ class SceneEditor(QWidget):
         self._model.mark_dirty("scene", self._current_scene_id or "")
         self._load_scene(self._current_scene_id, reset_view=False)
 
-    def select_by_id(self, item_id: str, scene_id: str = "") -> None:
+    def _scene_id_for_entity(self, kind: str, item_id: str) -> str:
+        item_id = (item_id or "").strip()
+        if not item_id:
+            return ""
+        collection = {"npc": "npcs", "hotspot": "hotspots", "zone": "zones"}.get(kind)
+        if not collection:
+            return ""
+        for sid, scene in self._model.scenes.items():
+            if not isinstance(scene, dict):
+                continue
+            if any(isinstance(e, dict) and str(e.get("id", "")).strip() == item_id for e in scene.get(collection, []) or []):
+                return str(sid)
+        return ""
+
+    def _select_scene_entity_by_kind(self, kind: str, item_id: str, scene_id: str = "") -> bool:
+        item_id = (item_id or "").strip()
+        scene_id = (scene_id or "").strip() or self._scene_id_for_entity(kind, item_id)
         if scene_id:
             for i in range(self._scene_list.count()):
                 it = self._scene_list.item(i)
@@ -6666,15 +6682,29 @@ class SceneEditor(QWidget):
                     self._scene_list.setCurrentItem(it)
                     break
         if not item_id:
-            return
+            return False
         sc = self._model.scenes.get(self._current_scene_id or "")
         if not sc:
-            return
-        for hs in sc.get("hotspots", []):
-            if hs.get("id") == item_id:
-                self._props.load_hotspot_props(hs)
-                return
-        for zone in sc.get("zones", []):
-            if zone.get("id") == item_id:
-                self._props.load_zone_props(zone)
+            return False
+        collection = {"npc": "npcs", "hotspot": "hotspots", "zone": "zones"}.get(kind)
+        if not collection:
+            return False
+        for entity in sc.get(collection, []):
+            if isinstance(entity, dict) and str(entity.get("id", "")).strip() == item_id:
+                self._restore_canvas_selection(kind, item_id)
+                return True
+        return False
+
+    def select_npc_by_id(self, item_id: str, scene_id: str = "") -> None:
+        self._select_scene_entity_by_kind("npc", item_id, scene_id)
+
+    def select_hotspot_by_id(self, item_id: str, scene_id: str = "") -> None:
+        self._select_scene_entity_by_kind("hotspot", item_id, scene_id)
+
+    def select_zone_by_id(self, item_id: str, scene_id: str = "") -> None:
+        self._select_scene_entity_by_kind("zone", item_id, scene_id)
+
+    def select_by_id(self, item_id: str, scene_id: str = "") -> None:
+        for kind in ("npc", "hotspot", "zone"):
+            if self._select_scene_entity_by_kind(kind, item_id, scene_id):
                 return

@@ -1,4 +1,5 @@
 import type { HotspotDef, HotspotDisplayImage, NpcDef } from './types';
+import runtimeFieldSchemaJson from './runtime_field_schema.json';
 
 export type SceneEntityKind = 'npc' | 'hotspot';
 export type RuntimeFieldKind = 'string' | 'number' | 'boolean' | 'object';
@@ -26,59 +27,11 @@ export interface RuntimeFieldDescriptor {
   label: string;
 }
 
-type FieldOptions = Partial<Pick<RuntimeFieldDescriptor, 'picker' | 'apply' | 'label'>>;
+const RuntimeFieldSchemas = runtimeFieldSchemaJson as Record<SceneEntityKind, Record<string, RuntimeFieldDescriptor>>;
 
-function descriptor(
-  kind: RuntimeFieldKind,
-  persistent: boolean,
-  options: FieldOptions = {},
-): RuntimeFieldDescriptor {
-  return {
-    kind,
-    persistent,
-    picker: options.picker ?? 'plain',
-    apply: options.apply ?? 'position',
-    label: options.label ?? '',
-  };
-}
+export const NpcDefSchema = RuntimeFieldSchemas.npc;
 
-export const Field = {
-  string: (options?: FieldOptions) => descriptor('string', false, options),
-  number: (options?: FieldOptions) => descriptor('number', false, options),
-  boolean: (options?: FieldOptions) => descriptor('boolean', false, options),
-  object: (options?: FieldOptions) => descriptor('object', false, options),
-} as const;
-
-export const Save = {
-  string: (options?: FieldOptions) => descriptor('string', true, options),
-  number: (options?: FieldOptions) => descriptor('number', true, options),
-  boolean: (options?: FieldOptions) => descriptor('boolean', true, options),
-  object: (options?: FieldOptions) => descriptor('object', true, options),
-} as const;
-
-export const NpcDefSchema = {
-  id: Field.string({ label: 'id' }),
-  name: Field.string({ label: 'name' }),
-  x: Save.number({ apply: 'position', label: 'x' }),
-  y: Save.number({ apply: 'position', label: 'y' }),
-  enabled: Save.boolean({ apply: 'visibility', label: 'enabled' }),
-  animFile: Save.string({ picker: 'animationManifest', apply: 'reloadAnimation', label: 'animFile' }),
-  initialAnimState: Save.string({ picker: 'animationState', apply: 'reloadAnimation', label: 'initialAnimState' }),
-  animState: Save.string({ picker: 'animationState', apply: 'playAnimation', label: 'animState' }),
-  patrolDisabled: Save.boolean({ apply: 'patrol', label: 'patrolDisabled' }),
-} as const satisfies Record<string, RuntimeFieldDescriptor>;
-
-export const HotspotDefSchema = {
-  id: Field.string({ label: 'id' }),
-  x: Save.number({ apply: 'position', label: 'x' }),
-  y: Save.number({ apply: 'position', label: 'y' }),
-  enabled: Save.boolean({ apply: 'visibility', label: 'enabled' }),
-  displayImage: Save.object({
-    picker: 'hotspotDisplayImage',
-    apply: 'reloadHotspotDisplayImage',
-    label: 'displayImage',
-  }),
-} as const satisfies Record<string, RuntimeFieldDescriptor>;
+export const HotspotDefSchema = RuntimeFieldSchemas.hotspot;
 
 export type NpcRuntimeFieldName = keyof typeof NpcDefSchema;
 export type HotspotRuntimeFieldName = keyof typeof HotspotDefSchema;

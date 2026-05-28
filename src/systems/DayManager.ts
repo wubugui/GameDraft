@@ -2,6 +2,7 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { ActionDef, DelayedEvent, IGameSystem, GameContext } from '../data/types';
+import { FlagKeys } from '../core/FlagKeys';
 
 export class DayManager implements IGameSystem {
   private eventBus: EventBus;
@@ -59,7 +60,7 @@ export class DayManager implements IGameSystem {
   }
 
   private syncFlag(): void {
-    this.flagStore.set('current_day', this._currentDay);
+    this.flagStore.set(FlagKeys.currentDay, this._currentDay);
   }
 
   serialize(): object {

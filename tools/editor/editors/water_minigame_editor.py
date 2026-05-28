@@ -539,6 +539,15 @@ class WaterMinigameEditor(QWidget):
         if self._inst_list_w.count() > 0:
             self._inst_list_w.setCurrentRow(sel_row)
 
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+        iid = (item_id or "").strip()
+        if not iid:
+            return
+        for row in self._model.water_minigames_index if isinstance(self._model.water_minigames_index, list) else []:
+            if isinstance(row, dict) and str(row.get("id") or "").strip() == iid:
+                self._reload_instance_list(select_id=iid)
+                return
+
     def _set_editor_enabled(self, on: bool) -> None:
         for w in (
             self._inst_label,

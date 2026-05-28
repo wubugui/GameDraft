@@ -6,6 +6,7 @@ import { QuestStatus } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
+import { TEXT_URLS } from '../core/projectPaths';
 
 export class QuestManager implements IGameSystem, IQuestDataProvider {
   private eventBus: EventBus;
@@ -53,7 +54,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
   async loadDefs(): Promise<void> {
     try {
-      const defs = await this.assetManager.loadJson<QuestDef[]>('/assets/data/quests.json');
+      const defs = await this.assetManager.loadJson<QuestDef[]>(TEXT_URLS.quests);
       for (const def of defs) {
         this.questDefs.set(def.id, def);
         if (!this.questStatus.has(def.id)) {
