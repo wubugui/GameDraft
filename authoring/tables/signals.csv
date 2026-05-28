@@ -1,0 +1,4 @@
+key,owner,meaning,notes
+old_zhou.told_bridge_warning,npc.old_zhou,老周说出桥雾警告,
+player.showed_paper_charm,case.bridge,玩家向相关角色出示纸符,
+quest.bridge_find_source.completed,quest.bridge_find_source,桥雾来源调查完成,
