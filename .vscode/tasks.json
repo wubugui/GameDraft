@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "content:build",
+      "type": "shell",
+      "command": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline build",
+      "problemMatcher": "$gameContent"
+    },
+    {
+      "label": "content:validate",
+      "type": "shell",
+      "command": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline validate",
+      "problemMatcher": "$gameContent"
+    },
+    {
+      "label": "content:watch",
+      "type": "shell",
+      "command": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline watch",
+      "isBackground": true,
+      "problemMatcher": "$gameContent"
+    }
+  ]
+}
