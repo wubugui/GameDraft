@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as cp from 'node:child_process';
 import * as path from 'node:path';
 
 function workspaceRoot(): string | undefined {
@@ -31,9 +30,18 @@ async function openArtifact(relativePath: string): Promise<void> {
   try {
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc);
-  } catch (e) {
-    vscode.window.showWarningMessage(`Artifact not found. Run content:build first. (${relativePath})`);
+  } catch {
+    vscode.window.showWarningMessage(`Artifact not found. Generate or export it first. (${relativePath})`);
   }
+}
+
+async function showRuntimeTraceHint(): Promise<void> {
+  const message = [
+    'Runtime trace is available in-game through F2 → 运行时事件链.',
+    'The live object is also exposed as window.__GAME_RUNTIME_TRACE__ in dev tools.',
+    'Use the copy button in the F2 panel to move the trace into an artifact file for VS Code review.',
+  ].join('\n');
+  await vscode.window.showInformationMessage(message, { modal: true });
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -41,6 +49,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('gamedraftAuthoring.build', () => runPipeline('build')),
     vscode.commands.registerCommand('gamedraftAuthoring.validate', () => runPipeline('validate')),
     vscode.commands.registerCommand('gamedraftAuthoring.openReport', () => openArtifact('artifact/content_pipeline/content_report.md')),
+    vscode.commands.registerCommand('gamedraftAuthoring.openContentIndex', () => openArtifact('artifact/content_pipeline/content_index.json')),
+    vscode.commands.registerCommand('gamedraftAuthoring.openSourceMap', () => openArtifact('artifact/content_pipeline/source_map.json')),
+    vscode.commands.registerCommand('gamedraftAuthoring.runtimeTraceHelp', () => showRuntimeTraceHint()),
   );
 }
 
