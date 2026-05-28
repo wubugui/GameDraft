@@ -12,6 +12,7 @@ import {
   evaluateConditionExpr,
   type ConditionEvalContext,
 } from './graphDialogue/evaluateGraphCondition';
+import { TEXT_URLS } from '../core/projectPaths';
 
 export type DocumentRevealPhase = 'hidden' | 'blurred' | 'revealing' | 'revealed';
 
@@ -73,7 +74,7 @@ export class DocumentRevealManager implements IGameSystem {
   async loadDefinitions(): Promise<void> {
     this.defs.clear();
     try {
-      const list = await this.assetManager.loadJson<DocumentRevealDef[]>('/assets/data/document_reveals.json');
+      const list = await this.assetManager.loadJson<DocumentRevealDef[]>(TEXT_URLS.documentReveals);
       if (!Array.isArray(list)) return;
       for (const d of list) {
         if (d && typeof d.id === 'string' && d.id.trim()) {

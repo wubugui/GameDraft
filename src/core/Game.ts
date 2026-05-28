@@ -90,6 +90,7 @@ import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
 import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
 import { Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
 import {
   coerceRuntimeFieldValue,
   isHotspotDisplayImage,
@@ -421,7 +422,7 @@ export class Game {
   private async refreshTextResolveLookups(): Promise<void> {
     this.sceneDisplayNameById.clear();
     try {
-      const nodes = await this.assetManager.loadJson<MapNodeDef[]>('/assets/data/map_config.json');
+      const nodes = await this.assetManager.loadJson<MapNodeDef[]>(TEXT_URLS.mapConfig);
       for (const n of nodes) {
         if (n.sceneId) this.sceneDisplayNameById.set(n.sceneId, n.name);
       }
@@ -439,7 +440,7 @@ export class Game {
       [...sceneIds].map(async (sid) => {
         try {
           const raw = await this.assetManager.loadJson<{ npcs?: { id: string; name: string }[] }>(
-            `assets/scenes/${sid}.json`,
+            sceneJsonUrl(sid),
           );
           for (const npc of raw.npcs ?? []) {
             if (npc?.id) this.npcDisplayNameById.set(npc.id, npc.name ?? npc.id);
@@ -631,7 +632,7 @@ export class Game {
       this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
     await this.documentRevealManager.loadDefinitions();
     try {
-      const scenarioCat = await this.assetManager.loadJson<ScenarioCatalogFile>('/assets/data/scenarios.json');
+      const scenarioCat = await this.assetManager.loadJson<ScenarioCatalogFile>(TEXT_URLS.scenarios);
       this.scenarioStateManager.configureRuntime(this.flagStore, scenarioCat, this.eventBus);
     } catch {
       this.scenarioStateManager.configureRuntime(this.flagStore, null, this.eventBus);
@@ -1115,7 +1116,7 @@ export class Game {
 
   private async loadFlagRegistry(): Promise<void> {
     try {
-      const reg = await this.assetManager.loadJson<FlagRegistryJson>('/assets/data/flag_registry.json');
+      const reg = await this.assetManager.loadJson<FlagRegistryJson>(TEXT_URLS.flagRegistry);
       this.flagStore.configureRegistry(reg);
     } catch {
       this.flagStore.configureRegistry(null);
@@ -1124,7 +1125,7 @@ export class Game {
 
   private async loadGameConfig(): Promise<void> {
     try {
-      const cfg = await this.assetManager.loadJson<Partial<GameConfig>>('/assets/data/game_config.json');
+      const cfg = await this.assetManager.loadJson<Partial<GameConfig>>(TEXT_URLS.gameConfig);
       if (cfg.initialScene) this.gameConfig.initialScene = cfg.initialScene;
       if (cfg.initialQuest) this.gameConfig.initialQuest = cfg.initialQuest;
       if (cfg.fallbackScene) this.gameConfig.fallbackScene = cfg.fallbackScene;
@@ -1160,7 +1161,7 @@ export class Game {
       console.warn('Game: game_config.json not found, using defaults');
     }
     try {
-      const ov = await this.assetManager.loadJson<Record<string, string>>('/assets/data/overlay_images.json');
+      const ov = await this.assetManager.loadJson<Record<string, string>>(TEXT_URLS.overlayImages);
       this.overlayImageRegistry = ov && typeof ov === 'object' ? { ...ov } : {};
     } catch {
       this.overlayImageRegistry = {};
@@ -1346,11 +1347,7 @@ export class Game {
     const patrol = npc.def.patrol;
     if (!patrol?.route || patrol.route.length === 0) return;
     this.stopNpcPatrol(id);
-    const moveAnim =
-      npc.def.id === 'npc_ringboy' && this.narrativeStateManager.isOwnerStateActive('npc', 'npc_ringboy', 'before_event')
-        ? 'boy_walk'
-        : patrol.moveAnimState;
-    this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, moveAnim);
+    this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, patrol.moveAnimState);
   }
 
   private async sleepWhileNpcPatrolPaused(npc: Npc, gen: number): Promise<void> {
@@ -1388,11 +1385,7 @@ export class Game {
           break;
         }
         if (patrolStoppedByAction()) break;
-        const moveAnim =
-          npc.def.id === 'npc_ringboy' && this.narrativeStateManager.isOwnerStateActive('npc', 'npc_ringboy', 'before_event')
-            ? 'boy_walk'
-            : moveAnimState;
-        await npc.moveTo(route[i].x, route[i].y, speed, moveAnim);
+        await npc.moveTo(route[i].x, route[i].y, speed, moveAnimState);
         if (this.patrolGeneration !== gen || !this.sceneManager.getCurrentNpcs().includes(npc)) {
           break;
         }
@@ -1838,7 +1831,7 @@ export class Game {
     return Promise.all(
       ids.map(async (id) => {
         try {
-          const raw = await this.assetManager.loadJson<SceneDataRaw>(`assets/scenes/${id}.json`);
+          const raw = await this.assetManager.loadJson<SceneDataRaw>(sceneJsonUrl(id));
           const n = raw.name;
           const name = typeof n === 'string' && n.trim() ? n.trim() : id;
           return { id, name };

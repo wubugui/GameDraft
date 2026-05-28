@@ -2,6 +2,7 @@ import { Assets, Texture, type Filter } from 'pixi.js';
 import { Howl } from 'howler';
 import type { SceneData, SceneDataRaw } from '../data/types';
 import { resolveAssetPath } from './assetPath';
+import { filterJsonUrl, sceneJsonUrl } from './projectPaths';
 import { createFilterFromDef } from '../rendering/filter/FilterLoader';
 import type { FilterDef } from '../rendering/filter/types';
 
@@ -324,7 +325,7 @@ export class AssetManager {
       'filter',
       id,
       async () => {
-        const def = await this.loadJson<FilterDef>(`assets/data/filters/${id}.json`);
+        const def = await this.loadJson<FilterDef>(filterJsonUrl(id));
         return createFilterFromDef(def);
       },
       () => 1,
@@ -463,7 +464,7 @@ export class AssetManager {
    * 如果某个为 0 或缺失，用背景图尺寸按比例计算。
    */
   async loadSceneData(sceneId: string): Promise<SceneData> {
-    const cached = await this.loadJson<SceneDataRaw>(`assets/scenes/${sceneId}.json`);
+    const cached = await this.loadJson<SceneDataRaw>(sceneJsonUrl(sceneId));
     const raw = JSON.parse(JSON.stringify(cached)) as SceneDataRaw;
 
     if (raw.backgrounds) {

@@ -8,10 +8,9 @@ import type { Renderer } from '../../rendering/Renderer';
 import type { GameContext, IGameSystem } from '../../data/types';
 import { GameState } from '../../data/types';
 import type { ConditionExpr } from '../../data/types';
+import { dataSubdirJsonUrl, TEXT_URLS } from '../../core/projectPaths';
 import type { SugarWheelIndexEntry, SugarWheelInstance, SugarWheelResult } from './types';
 import { SugarWheelMinigameScene } from './SugarWheelMinigameScene';
-
-const INDEX_PATH = '/assets/data/sugar_wheel/index.json';
 
 export class SugarWheelMinigameManager implements IGameSystem {
   private eventBus!: EventBus;
@@ -102,7 +101,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
 
   async loadIndex(): Promise<void> {
     try {
-      const raw = await this.assetManager.loadJson<SugarWheelIndexEntry[]>(INDEX_PATH);
+      const raw = await this.assetManager.loadJson<SugarWheelIndexEntry[]>(TEXT_URLS.sugarWheelIndex);
       this.index = Array.isArray(raw) ? raw : [];
     } catch (e) {
       this.sugarMgrDbg(`加载 index 失败: ${String(e)}`);
@@ -222,7 +221,7 @@ export class SugarWheelMinigameManager implements IGameSystem {
     const entry = this.index.find((x) => x.id === id);
     if (!entry) return null;
     try {
-      const path = entry.file.startsWith('/') ? entry.file : `/assets/data/sugar_wheel/${entry.file}`;
+      const path = dataSubdirJsonUrl('sugar_wheel', entry.file);
       const data = await this.assetManager.loadJson<SugarWheelInstance>(path);
       this.instanceCache.set(id, data);
       return data;

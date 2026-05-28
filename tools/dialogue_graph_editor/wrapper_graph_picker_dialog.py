@@ -40,11 +40,11 @@ class WrapperGraphPickerDialog(QDialog):
         root.addWidget(self._filter)
 
         self._table = QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels(["graphId", "实体", "分类备注", "编排", "元素", "状态数"])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.doubleClicked.connect(self._accept_current)
+        self._table.setHorizontalHeaderLabels(["显示名 (id)", "Owner", "Category", "Composition", "Element", "States"])
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -71,6 +71,8 @@ class WrapperGraphPickerDialog(QDialog):
     def _wrapper_text(self, wrapper: dict[str, Any]) -> str:
         parts = [
             str(wrapper.get("graphId", "") or ""),
+            str(wrapper.get("label", "") or ""),
+            str(wrapper.get("graphLabel", "") or ""),
             str(wrapper.get("ownerType", "") or ""),
             str(wrapper.get("ownerId", "") or ""),
             str(wrapper.get("category", "") or ""),
@@ -96,12 +98,13 @@ class WrapperGraphPickerDialog(QDialog):
             row = self._table.rowCount()
             self._table.insertRow(row)
             gid = str(wrapper.get("graphId", "") or "").strip()
+            display = str(wrapper.get("label", "") or gid).strip()
             owner = f"{wrapper.get('ownerType', '')}:{wrapper.get('ownerId', '')}"
             comp = str(wrapper.get("compositionLabel", "") or wrapper.get("compositionId", "") or "")
-            element = str(wrapper.get("elementLabel", "") or wrapper.get("elementId", "") or "")
+            element = str(wrapper.get("elementId", "") or "")
             states = wrapper.get("stateIds") or []
             values = [
-                gid,
+                display,
                 owner,
                 str(wrapper.get("category", "") or ""),
                 comp,

@@ -16,6 +16,7 @@ import type {
 } from '../data/types';
 import { GameState } from '../data/types';
 import { inspectDataHasInteractablePayload } from '../utils/hotspotInteraction';
+import { FlagKeys } from './FlagKeys';
 
 export interface InteractionDeps {
   stateController: GameStateController;
@@ -256,7 +257,7 @@ export class InteractionCoordinator {
       type: 'pickup',
       params: { itemId: data.itemId, itemName: data.itemName, count: data.count, isCurrency: data.isCurrency },
     });
-    await actionExecutor.executeAwait({ type: 'setFlag', params: { key: `picked_up_${hotspot.def.id}`, value: true } });
+    await actionExecutor.executeAwait({ type: 'setFlag', params: { key: FlagKeys.hotspotPickedUp(hotspot.def.id), value: true } });
     eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
   }
 

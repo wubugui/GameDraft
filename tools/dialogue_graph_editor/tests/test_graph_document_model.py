@@ -54,6 +54,21 @@ class GraphDocumentModelTests(unittest.TestCase):
         self.assertTrue(model.is_dirty)
         self.assertEqual(model.nodes["choice"]["options"][1]["next"], "")
 
+    def test_set_node_same_data_is_noop(self) -> None:
+        model = GraphDocumentModel()
+        model.load(sample_graph())
+        changed: list[str] = []
+        dirty: list[bool] = []
+        model.node_changed.connect(changed.append)
+        model.dirty_changed.connect(dirty.append)
+
+        model.set_node("root", {"type": "line", "next": "choice"})
+
+        self.assertEqual(changed, [])
+        self.assertEqual(dirty, [])
+        self.assertFalse(model.is_dirty)
+        self.assertEqual(model.nodes["root"]["next"], "choice")
+
     def test_clear_incoming_to_noop_stays_clean(self) -> None:
         model = GraphDocumentModel()
         model.load(sample_graph())

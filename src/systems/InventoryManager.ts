@@ -4,6 +4,7 @@ import type { Condition, ConditionExpr, ItemDef, IGameSystem, GameContext, IInve
 import type { AssetManager } from '../core/AssetManager';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
+import { TEXT_URLS } from '../core/projectPaths';
 
 const MAX_SLOTS = 12;
 
@@ -37,7 +38,7 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
 
   async loadDefs(): Promise<void> {
     try {
-      const defs = await this.assetManager.loadJson<ItemDef[]>('/assets/data/items.json');
+      const defs = await this.assetManager.loadJson<ItemDef[]>(TEXT_URLS.items);
       for (const def of defs) {
         this.itemDefs.set(def.id, def);
       }

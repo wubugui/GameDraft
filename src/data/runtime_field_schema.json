@@ -1,0 +1,83 @@
+{
+  "npc": {
+    "x": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "position",
+      "label": "x"
+    },
+    "y": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "position",
+      "label": "y"
+    },
+    "enabled": {
+      "kind": "boolean",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "visibility",
+      "label": "enabled"
+    },
+    "animFile": {
+      "kind": "string",
+      "persistent": true,
+      "picker": "animationManifest",
+      "apply": "reloadAnimation",
+      "label": "animFile"
+    },
+    "initialAnimState": {
+      "kind": "string",
+      "persistent": true,
+      "picker": "animationState",
+      "apply": "reloadAnimation",
+      "label": "initialAnimState"
+    },
+    "animState": {
+      "kind": "string",
+      "persistent": true,
+      "picker": "animationState",
+      "apply": "playAnimation",
+      "label": "animState"
+    },
+    "patrolDisabled": {
+      "kind": "boolean",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "patrol",
+      "label": "patrolDisabled"
+    }
+  },
+  "hotspot": {
+    "x": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "position",
+      "label": "x"
+    },
+    "y": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "position",
+      "label": "y"
+    },
+    "enabled": {
+      "kind": "boolean",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "visibility",
+      "label": "enabled"
+    },
+    "displayImage": {
+      "kind": "object",
+      "persistent": true,
+      "picker": "hotspotDisplayImage",
+      "apply": "reloadHotspotDisplayImage",
+      "label": "displayImage"
+    }
+  }
+}

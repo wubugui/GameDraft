@@ -49,6 +49,7 @@ interface NarrativeTransitionLike {
 
 interface NarrativeGraphLike {
   id?: string;
+  label?: string;
   ownerType?: string;
   ownerId?: string;
   category?: string;
@@ -792,12 +793,12 @@ const knownActionParamSchemas: Record<string, string[]> = {
   stopNpcPatrol: ['npcId'],
   persistNpcDisablePatrol: ['npcId'],
   persistNpcEnablePatrol: ['npcId'],
-  persistNpcEntityEnabled: ['npcId', 'enabled'],
+  persistNpcEntityEnabled: ['target', 'enabled'],
   persistHotspotEnabled: ['sceneId', 'hotspotId', 'enabled'],
   setZoneEnabled: ['sceneId', 'zoneId', 'enabled'],
   persistZoneEnabled: ['sceneId', 'zoneId', 'enabled'],
   setSceneEntityPosition: ['sceneId', 'entityKind', 'entityId', 'x', 'y'],
-  persistNpcAt: ['npcId', 'sceneId', 'x', 'y'],
+  persistNpcAt: ['target', 'x', 'y'],
   persistNpcAnimState: ['target', 'state'],
   persistPlayNpcAnimation: ['target', 'state'],
   fadeWorldToBlack: [],
@@ -810,7 +811,7 @@ const knownActionParamSchemas: Record<string, string[]> = {
   startDialogueGraph: ['graphId'],
   waitClickContinue: [],
   playScriptedDialogue: ['lines'],
-  waitMs: ['ms'],
+  waitMs: ['durationMs'],
   moveEntityTo: ['target', 'x', 'y'],
   faceEntity: ['target'],
   cutsceneSpawnActor: ['id', 'name', 'x', 'y'],

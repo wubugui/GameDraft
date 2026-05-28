@@ -9,12 +9,16 @@ function isNarrativeLeaf(value: unknown): value is NarrativeLeaf {
 export function ConditionBuilder({
   value,
   graphIds,
+  graphLabels,
   statesByGraph,
+  stateLabelsByGraph,
   onApply,
 }: {
   value: unknown;
   graphIds: string[];
+  graphLabels?: Record<string, string>;
   statesByGraph: Record<string, string[]>;
+  stateLabelsByGraph?: Record<string, Record<string, string>>;
   onApply: (value: unknown) => void;
 }) {
   const [showJson, setShowJson] = useState(false);
@@ -59,7 +63,7 @@ export function ConditionBuilder({
                 updateLeaves(next);
               }}
             >
-              {graphIds.map((gid) => <option key={gid} value={gid}>{gid}</option>)}
+              {graphIds.map((gid) => <option key={gid} value={gid}>{graphLabels?.[gid] ?? gid}</option>)}
             </select>
             <select
               value={leaf.state}
@@ -69,7 +73,9 @@ export function ConditionBuilder({
                 updateLeaves(next);
               }}
             >
-              {(statesByGraph[leaf.narrative] ?? []).map((sid) => <option key={sid} value={sid}>{sid}</option>)}
+              {(statesByGraph[leaf.narrative] ?? []).map((sid) => (
+                <option key={sid} value={sid}>{stateLabelsByGraph?.[leaf.narrative]?.[sid] ?? sid}</option>
+              ))}
             </select>
             <button type="button" onClick={() => updateLeaves(leaves.filter((_, i) => i !== index))}>删</button>
           </div>

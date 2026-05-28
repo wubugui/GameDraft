@@ -10,6 +10,7 @@ import {
   validateNarrativeGraphData,
   type NarrativeValidationIssue,
 } from './narrativeGraphValidation';
+import { TEXT_URLS } from './projectPaths';
 
 export type NarrativeOwnerType =
   | 'flow'
@@ -77,6 +78,7 @@ export interface NarrativeTransition {
 
 export interface NarrativeGraph {
   id: string;
+  label?: string;
   ownerType: NarrativeOwnerType;
   ownerId?: string;
   /** Author note/category for wrapper usage grouping in tooling. */
@@ -214,7 +216,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.validationMode = mode;
   }
 
-  async loadFromAsset(assetManager: AssetManager, path = '/assets/data/narrative_graphs.json'): Promise<void> {
+  async loadFromAsset(assetManager: AssetManager, path = TEXT_URLS.narrativeGraphs): Promise<void> {
     try {
       const data = await assetManager.loadJson<NarrativeGraphsFile>(path);
       this.validateLoadedData(data, path);

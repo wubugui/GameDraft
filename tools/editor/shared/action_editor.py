@@ -108,7 +108,7 @@ from .runtime_field_schema import entity_kind_choices, field_meta
 
 ACTION_TYPES = [
     "runActions", "chooseAction", "randomBranch",
-    "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
@@ -146,6 +146,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "activateScenario": "save",
     "completeScenario": "save",
     "emitNarrativeSignal": "save",
+    "setNarrativeState": "save",
     "appendFlag": "save",
     "giveItem": "save",
     "removeItem": "save",

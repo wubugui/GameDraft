@@ -504,7 +504,7 @@
           }
         ],
         "speed": 60,
-        "moveAnimState": "boy_run_ring"
+        "moveAnimState": "boy_walk"
       },
       "animFile": "/resources/runtime/animation/boy_ring_anim/anim.json",
       "initialAnimState": "boy_run_ring"

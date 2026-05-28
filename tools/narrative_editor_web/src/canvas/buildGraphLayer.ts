@@ -1,6 +1,6 @@
 import { MarkerType } from '@xyflow/react';
 import { transitionAnchorId } from '../anchorCodec';
-import { stateEditorPosition } from '../editorModel';
+import { graphDisplayName, stateDisplayName, stateEditorPosition } from '../editorModel';
 import type { CanvasMode } from '../types/canvas';
 import type {
   CanvasEdge,
@@ -46,7 +46,7 @@ export function buildGraphStateNodes(input: GraphLayerInput): CanvasNode[] {
     zIndex: 20,
     deletable: true,
     data: {
-      label: state.label || sid,
+      label: stateDisplayName(state, sid),
       subtitle: `状态 / ${sid}`,
       kind: 'state' as const,
       boundary: scenarioBoundaryKind(graph, sid),
@@ -146,7 +146,7 @@ export function buildGraphLayer(input: GraphLayerInput & { includeTransitionAnch
       draggable: false,
       deletable: false,
       data: {
-        label: graph.label || graph.id,
+        label: graphDisplayName(graph),
         subtitle: '主图',
         kind: 'graphAnchor',
         detail: graph.id,

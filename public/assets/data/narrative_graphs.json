@@ -73,7 +73,8 @@
             "to": "crate_minigame_done",
             "signal": "pull_success"
           }
-        ]
+        ],
+        "label": "小孩滚铁环"
       },
       "elements": [
         {

@@ -13,6 +13,7 @@ import type {
 } from '../data/types';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
+import { TEXT_URLS } from '../core/projectPaths';
 
 type RuleNameResolveFn = (ruleId: string) => { name: string; incompleteName?: string } | undefined;
 
@@ -76,7 +77,7 @@ export class EncounterManager implements IGameSystem {
 
   async loadDefs(): Promise<void> {
     try {
-      const defs = await this.assetManager.loadJson<EncounterDef[]>('/assets/data/encounters.json');
+      const defs = await this.assetManager.loadJson<EncounterDef[]>(TEXT_URLS.encounters);
       for (const def of defs) {
         this.encounterDefs.set(def.id, def);
       }

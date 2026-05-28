@@ -8,6 +8,7 @@ import type { AssetManager } from '../core/AssetManager';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
+import { TEXT_URLS } from '../core/projectPaths';
 
 const PANEL_W = 600;
 const PANEL_H = 450;
@@ -51,7 +52,7 @@ export class MapUI {
 
   async loadConfig(): Promise<void> {
     try {
-      this.nodes = await this.assetManager.loadJson<MapNodeDef[]>('/assets/data/map_config.json');
+      this.nodes = await this.assetManager.loadJson<MapNodeDef[]>(TEXT_URLS.mapConfig);
     } catch { /* no map config yet */ }
   }
 

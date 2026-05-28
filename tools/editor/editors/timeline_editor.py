@@ -1976,6 +1976,15 @@ class TimelineEditor(QWidget):
         for c in self._model.cutscenes:
             self._list.addItem(c.get("id", "?"))
 
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+        cid = (item_id or "").strip()
+        if not cid:
+            return
+        for i, cutscene in enumerate(self._model.cutscenes):
+            if str(cutscene.get("id", "")).strip() == cid:
+                self._list.setCurrentRow(i)
+                return
+
     def _on_target_scene_changed(self, sid: str) -> None:
         if self._spawn_loading:
             return
