@@ -1,3 +1,5 @@
+import { traceEventBusEmit } from '../debug/RuntimeTrace';
+
 type EventCallback = (payload?: any) => void;
 
 export class EventBus {
@@ -15,6 +17,11 @@ export class EventBus {
   }
 
   emit(event: string, payload?: any): void {
+    try {
+      traceEventBusEmit(event, payload);
+    } catch (e) {
+      console.warn(`EventBus: runtime trace for "${event}" threw`, e);
+    }
     const set = this.listeners.get(event);
     if (!set || set.size === 0) return;
     const cbs = [...set];
