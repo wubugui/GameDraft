@@ -1,0 +1,26 @@
+id: bridge_find_source
+preconditions:
+  - all:
+      - flag: case.bridge.heard_warning
+        op: ==
+        value: true
+completionConditions:
+  - all:
+      - narrative: case.bridge
+        state: source_found
+acceptActions:
+  - type: showNotification
+    params:
+      text: New clue
+      type: quest
+rewards:
+  - type: emitNarrativeSignal
+    params:
+      signal: quest.bridge_find_source.completed
+nextQuests:
+  - questId: bridge_find_countermeasure
+    conditions:
+      - all:
+          - flag: case.bridge.has_paper_charm
+            op: ==
+            value: true
