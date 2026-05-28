@@ -15,7 +15,10 @@
     "commands": [
       { "command": "gamedraftAuthoring.build", "title": "Game Authoring: Build Content" },
       { "command": "gamedraftAuthoring.validate", "title": "Game Authoring: Validate Content" },
-      { "command": "gamedraftAuthoring.openReport", "title": "Game Authoring: Open Content Report" }
+      { "command": "gamedraftAuthoring.openReport", "title": "Game Authoring: Open Content Report" },
+      { "command": "gamedraftAuthoring.openContentIndex", "title": "Game Authoring: Open Content Index" },
+      { "command": "gamedraftAuthoring.openSourceMap", "title": "Game Authoring: Open Source Map" },
+      { "command": "gamedraftAuthoring.runtimeTraceHelp", "title": "Game Authoring: Runtime Trace Help" }
     ]
   },
   "scripts": {
