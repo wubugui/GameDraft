@@ -9,6 +9,12 @@
     "dev:narrative-editor": "vite --config tools/narrative_editor_web/vite.config.ts",
     "preview": "vite preview",
     "filter-tool": ".\\.tools\\Python311\\python.exe -m tools.filter_tool",
+    "content:build": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline build",
+    "content:validate": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline validate",
+    "content:index": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline index",
+    "content:render": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline render",
+    "content:simulate": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline simulate",
+    "content:watch": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline watch",
     "test": "vitest run"
   },
   "type": "module",
