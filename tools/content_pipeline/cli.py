@@ -8,6 +8,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -137,16 +138,81 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def load_project_config(ctx: BuildContext) -> Json:
-    path = AUTHORING / "project.yaml"
-    # Keep this deliberately tiny: the pipeline itself uses fixed defaults until a full YAML parser is added.
-    if not path.exists():
-        ctx.warn("project.missing", "authoring/project.yaml not found; using safe preview defaults")
+# Logical runtime output keys -> their canonical real runtime path (used for ownership lookup).
+_DEFAULT_RUNTIME_OUTPUTS = {
+    "flagRegistry": "public/assets/data/flag_registry.json",
+    "narrativeGraphs": "public/assets/data/narrative_graphs.json",
+    "quests": "public/assets/data/quests.json",
+    "dialogueGraphs": "public/assets/dialogues/graphs",
+}
+_DEFAULT_PREVIEW_OUTPUTS = {
+    "flagRegistry": "artifact/content_pipeline/runtime_preview/public/assets/data/flag_registry.json",
+    "narrativeGraphs": "artifact/content_pipeline/runtime_preview/public/assets/data/narrative_graphs.json",
+    "quests": "artifact/content_pipeline/runtime_preview/public/assets/data/quests.json",
+    "dialogueGraphs": "artifact/content_pipeline/runtime_preview/public/assets/dialogues/graphs",
+}
+_DEFAULT_OWNERSHIP = {
+    "public/assets/data/flag_registry.json": "legacy_editor",
+    "public/assets/data/narrative_graphs.json": "legacy_editor",
+    "public/assets/data/quests.json": "legacy_editor",
+    "public/assets/dialogues/graphs/*": "legacy_editor",
+}
+
+
+def _default_config() -> Json:
     return {
         "publishRuntime": False,
         "artifactRoot": ARTIFACT,
         "previewRoot": ARTIFACT / "runtime_preview",
+        "runtimeOutputs": dict(_DEFAULT_RUNTIME_OUTPUTS),
+        "previewOutputs": dict(_DEFAULT_PREVIEW_OUTPUTS),
+        "ownership": dict(_DEFAULT_OWNERSHIP),
     }
+
+
+def load_project_config(ctx: BuildContext) -> Json:
+    cfg = _default_config()
+    path = AUTHORING / "project.yaml"
+    if not path.exists():
+        ctx.warn("project.missing", "authoring/project.yaml not found; using safe preview defaults")
+        return cfg
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        ctx.error("project.parse", f"failed to parse project.yaml: {e}", _rel(path))
+        return cfg
+    if not isinstance(raw, dict):
+        ctx.warn("project.invalid", "project.yaml is not a mapping; using safe defaults", _rel(path))
+        return cfg
+    if isinstance(raw.get("publishRuntime"), bool):
+        cfg["publishRuntime"] = raw["publishRuntime"]
+    for key in ("runtimeOutputs", "previewOutputs", "ownership"):
+        if isinstance(raw.get(key), dict):
+            cfg[key] = {**cfg[key], **{k: v for k, v in raw[key].items() if isinstance(v, str)}}
+    return cfg
+
+
+def owner_for(real_path: str, ownership: dict[str, str]) -> str:
+    """Resolve the owner of a runtime path. Unlisted paths default to pipeline-owned."""
+    if real_path in ownership:
+        return ownership[real_path]
+    for pattern, owner in ownership.items():
+        if pattern.endswith("/*") and (real_path == pattern[:-2] or real_path.startswith(pattern[:-1])):
+            return owner
+        if fnmatch(real_path, pattern):
+            return owner
+    return "pipeline"
+
+
+def resolve_output_target(cfg: Json, key: str, publish: bool) -> tuple[Path, bool]:
+    """Return (absolute_path, published). Publishes to the real runtime path only when
+    publish is requested AND the target is not owned by the legacy editor."""
+    real = cfg["runtimeOutputs"].get(key, _DEFAULT_RUNTIME_OUTPUTS[key])
+    owner = owner_for(real, cfg["ownership"])
+    if publish and owner != "legacy_editor":
+        return (ROOT / real, True)
+    preview = cfg["previewOutputs"].get(key, _DEFAULT_PREVIEW_OUTPUTS[key])
+    return (ROOT / preview, False)
 
 
 def read_csv_rows(path: Path, ctx: BuildContext) -> list[dict[str, str]]:
@@ -345,32 +411,47 @@ def load_signals(ctx: BuildContext) -> None:
 
 def compile_narrative(ctx: BuildContext) -> Json:
     graphs = []
+    compositions: list[Json] = []
+    seen_graph_ids: set[str] = set()
     for path in sorted((AUTHORING / "narrative").glob("**/*.yaml")):
         data = parse_simple_yaml(path, ctx)
         if not isinstance(data, dict) or not data.get("id"):
             ctx.error("narrative.id.missing", "narrative graph id is required", _rel(path), 1, 1)
             continue
         gid = str(data["id"])
+        if gid in seen_graph_ids:
+            src = ctx.source(path, ("id",))
+            ctx.error("narrative.duplicate", f"duplicate narrative graph id: {gid}", src["file"], src["line"], src["column"])
+            continue
+        seen_graph_ids.add(gid)
+        comp_index = len(graphs)
+        comp_path = f"narrative_graphs.compositions[{comp_index}].mainGraph"
         ctx.add_source_map(
             f"narrative.{_slug(gid)}",
             runtime_ref=f"narrative:{gid}",
             source=ctx.source(path, ("id",)),
             kind="narrativeGraph",
-            runtime_path=f"narrative_graphs.compositions[{len(graphs)}].mainGraph",
+            runtime_path=comp_path,
         )
         owner = data.get("owner") if isinstance(data.get("owner"), dict) else {}
+        layout = data.get("layout") if isinstance(data.get("layout"), dict) else {}
         states_src = data.get("states") if isinstance(data.get("states"), dict) else {}
         transitions_src = data.get("transitions") if isinstance(data.get("transitions"), list) else []
         states: Json = {}
         for sid, sdef in states_src.items():
             sdef = sdef if isinstance(sdef, dict) else {}
             out: Json = {"id": sid}
+            if sdef.get("label") is not None:
+                out["label"] = str(sdef.get("label"))
+            pos = layout.get(sid) if isinstance(layout.get(sid), dict) else None
+            if pos is not None and (pos.get("x") is not None or pos.get("y") is not None):
+                out["meta"] = {"editor": {"x": pos.get("x", 0), "y": pos.get("y", 0)}}
             ctx.add_source_map(
                 f"narrative.{_slug(gid)}.state.{_slug(sid)}",
                 runtime_ref=f"narrative:{gid}.state:{sid}",
                 source=ctx.source(path, ("states", sid)),
                 kind="narrativeState",
-                runtime_path=f"narrative_graphs.{gid}.states.{sid}",
+                runtime_path=f"{comp_path}.states.{sid}",
             )
             if sdef.get("broadcastOnEnter") is not None:
                 out["broadcastOnEnter"] = bool(sdef.get("broadcastOnEnter"))
@@ -385,7 +466,7 @@ def compile_narrative(ctx: BuildContext) -> Json:
                         runtime_ref=f"narrative:{gid}.state:{sid}.onEnterActions[{i}]",
                         source=source,
                         kind="action",
-                        runtime_path=f"narrative_graphs.{gid}.states.{sid}.onEnterActions[{i}]",
+                        runtime_path=f"{comp_path}.states.{sid}.onEnterActions[{i}]",
                     )
             if isinstance(sdef.get("onExitActions"), list):
                 out["onExitActions"] = [normalize_action(a) for a in sdef["onExitActions"]]
@@ -398,7 +479,7 @@ def compile_narrative(ctx: BuildContext) -> Json:
                         runtime_ref=f"narrative:{gid}.state:{sid}.onExitActions[{i}]",
                         source=source,
                         kind="action",
-                        runtime_path=f"narrative_graphs.{gid}.states.{sid}.onExitActions[{i}]",
+                        runtime_path=f"{comp_path}.states.{sid}.onExitActions[{i}]",
                     )
             states[str(sid)] = out
             index_ref(ctx.index["narrativeStates"], f"{gid}.{sid}", "declaredAt", {"file": _rel(path), "symbol": f"narrative:{gid}.state:{sid}"})
@@ -420,7 +501,7 @@ def compile_narrative(ctx: BuildContext) -> Json:
                 runtime_ref=transition_ref,
                 source=ctx.source(path, ("transitions", ti)),
                 kind="narrativeTransition",
-                runtime_path=f"narrative_graphs.{gid}.transitions[{ti}]",
+                runtime_path=f"{comp_path}.transitions[{ti}]",
             )
             if t.get("signal") is not None:
                 out["signal"] = str(t.get("signal"))
@@ -437,7 +518,7 @@ def compile_narrative(ctx: BuildContext) -> Json:
                     runtime_ref=f"{transition_ref}.conditions",
                     source=source,
                     kind="condition",
-                    runtime_path=f"narrative_graphs.{gid}.transitions[{ti}].conditions",
+                    runtime_path=f"{comp_path}.transitions[{ti}].conditions",
                 )
             transitions.append(out)
         graph = {
@@ -449,18 +530,31 @@ def compile_narrative(ctx: BuildContext) -> Json:
             "transitions": transitions,
         }
         graphs.append(graph)
+        elements = data.get("elements") if isinstance(data.get("elements"), list) else []
+        composition: Json = {"id": gid, "mainGraph": graph, "elements": elements}
+        if data.get("label") is not None:
+            composition["label"] = str(data.get("label"))
+        if data.get("description") is not None:
+            composition["description"] = str(data.get("description"))
+        compositions.append(composition)
         index_ref(ctx.index["narrativeGraphs"], gid, "declaredAt", {"file": _rel(path), "symbol": f"narrative:{gid}"})
-    return {"schemaVersion": 3, "compositions": [{"id": g["id"], "mainGraph": g, "elements": []} for g in graphs]}
+    return {"schemaVersion": 3, "compositions": compositions}
 
 
 def compile_quests(ctx: BuildContext) -> list[Json]:
     base_rows = {r.get("id", ""): r for r in read_csv_rows(AUTHORING / "tables" / "quests.csv", ctx) if r.get("id")}
     out: list[Json] = []
+    seen_quest_ids: set[str] = set()
     for path in sorted((AUTHORING / "quests").glob("**/*.yaml")):
         data = parse_simple_yaml(path, ctx)
         if not isinstance(data, dict) or not data.get("id"):
             continue
         qid = str(data["id"])
+        if qid in seen_quest_ids:
+            src = ctx.source(path, ("id",))
+            ctx.error("quest.duplicate", f"duplicate quest id: {qid}", src["file"], src["line"], src["column"])
+            continue
+        seen_quest_ids.add(qid)
         base = base_rows.get(qid, {})
         ctx.add_source_map(
             f"quest.{_slug(qid)}",
@@ -540,13 +634,31 @@ def compile_quests(ctx: BuildContext) -> list[Json]:
     return out
 
 
+def normalize_speaker(speaker: Any) -> Json:
+    if isinstance(speaker, str):
+        kind = "npc" if speaker == "npc" else "player" if speaker == "player" else "literal"
+        return {"kind": kind, "name": speaker}
+    if isinstance(speaker, dict):
+        return speaker
+    return {"kind": "literal", "name": "旁白"}
+
+
+KNOWN_DIALOGUE_NODE_TYPES = frozenset({"line", "choice", "switch", "runActions", "end", "ownerState"})
+
+
 def compile_dialogues(ctx: BuildContext) -> dict[str, Json]:
     graphs: dict[str, Json] = {}
+    seen_dialogue_ids: set[str] = set()
     for path in sorted((AUTHORING / "dialogues").glob("**/*.yaml")):
         data = parse_simple_yaml(path, ctx)
         if not isinstance(data, dict) or not data.get("id"):
             continue
         gid = str(data["id"])
+        if gid in seen_dialogue_ids:
+            src = ctx.source(path, ("id",))
+            ctx.error("dialogue.duplicate", f"duplicate dialogue graph id: {gid}", src["file"], src["line"], src["column"])
+            continue
+        seen_dialogue_ids.add(gid)
         ctx.add_source_map(
             f"dialogue.{_slug(gid)}",
             runtime_ref=f"dialogue:{gid}",
@@ -558,7 +670,8 @@ def compile_dialogues(ctx: BuildContext) -> dict[str, Json]:
         out_nodes: Json = {}
         for nid, node in nodes.items():
             node = node if isinstance(node, dict) else {}
-            ntype = str(node.get("type") or ("end" if node.get("end") else "line"))
+            explicit_type = node.get("type")
+            ntype = str(explicit_type or ("end" if node.get("end") else "line"))
             node_ref = f"dialogue:{gid}.node:{nid}"
             ctx.add_source_map(
                 f"dialogue.{_slug(gid)}.node.{_slug(nid)}",
@@ -607,13 +720,46 @@ def compile_dialogues(ctx: BuildContext) -> dict[str, Json]:
                             kind="condition",
                             runtime_path=f"dialogues/graphs/{gid}.json.nodes.{nid}.cases[{ci}].condition",
                         )
+            elif ntype == "ownerState":
+                on: Json = {"type": "ownerState", "cases": node.get("cases") or []}
+                if node.get("wrapperGraphId") is not None:
+                    on["wrapperGraphId"] = str(node.get("wrapperGraphId"))
+                if node.get("defaultNext") is not None:
+                    on["defaultNext"] = str(node.get("defaultNext"))
+                if node.get("missingWrapperNext") is not None:
+                    on["missingWrapperNext"] = str(node.get("missingWrapperNext"))
+                out_nodes[nid] = on
             elif ntype == "end":
                 out_nodes[nid] = {"type": "end"}
+            elif ntype == "line":
+                speaker = normalize_speaker(node.get("speaker"))
+                line_out: Json = {"type": "line", "speaker": speaker, "next": str(node.get("next", ""))}
+                raw_lines = node.get("lines")
+                if isinstance(raw_lines, list) and raw_lines:
+                    beats: list[Json] = []
+                    first_text = ""
+                    for ln in raw_lines:
+                        if not isinstance(ln, dict):
+                            continue
+                        text = str(ln.get("text", ""))
+                        beats.append({"speaker": normalize_speaker(ln.get("speaker")), "text": text})
+                        if not first_text:
+                            first_text = text
+                    line_out["lines"] = beats
+                    line_out["text"] = str(node.get("text", first_text))
+                else:
+                    line_out["text"] = str(node.get("text", ""))
+                out_nodes[nid] = line_out
             else:
-                speaker = node.get("speaker") or {"kind": "literal", "name": "旁白"}
-                if isinstance(speaker, str):
-                    speaker = {"kind": "npc" if speaker == "npc" else "player" if speaker == "player" else "literal", "name": speaker}
-                out_nodes[nid] = {"type": "line", "speaker": speaker, "text": str(node.get("text", "")), "next": str(node.get("next", ""))}
+                # Unknown explicit node type: do NOT silently downgrade to a line.
+                src = ctx.source(path, ("nodes", nid))
+                ctx.error(
+                    "dialogue.node.unknownType",
+                    f"unknown dialogue node type '{ntype}' in graph {gid} node {nid}; emitted as passthrough",
+                    src["file"], src["line"], src["column"],
+                    "Add an emitter for this node type, or use a supported type (line/choice/switch/runActions/ownerState/end).",
+                )
+                out_nodes[nid] = {k: v for k, v in node.items() if k != "id"}
         graph = {"schemaVersion": 1, "id": gid, "entry": str(data.get("entry", "start")), "nodes": out_nodes}
         if data.get("preconditions"):
             graph["preconditions"] = normalize_condition(data.get("preconditions"))
@@ -754,9 +900,19 @@ def trace_resolve(path: str) -> int:
     return 1 if any(d.severity == "error" for d in ctx.diagnostics) else 0
 
 
-def build_all() -> tuple[BuildContext, dict[str, Any]]:
+# Artifact categories a command may choose to emit.
+#   preview    -> compiled runtime JSON (to preview path, or real path when published)
+#   render     -> mermaid graph renders
+#   index      -> content_index.json
+#   sourcemap  -> source_map.json / runtime_debug_map.json
+#   report     -> content_report.md / diagnostics.json
+EMIT_ALL = frozenset({"preview", "render", "index", "sourcemap", "report"})
+
+
+def build_all(*, publish: bool = False, emit: frozenset[str] | set[str] | None = None) -> tuple[BuildContext, dict[str, Any]]:
+    selected = EMIT_ALL if emit is None else frozenset(emit)
     ctx = BuildContext()
-    load_project_config(ctx)
+    cfg = load_project_config(ctx)
     load_signals(ctx)
     flags = compile_flags(ctx)
     narrative = compile_narrative(ctx)
@@ -764,25 +920,45 @@ def build_all() -> tuple[BuildContext, dict[str, Any]]:
     dialogues = compile_dialogues(ctx)
     validate_refs(ctx)
 
-    preview = ARTIFACT / "runtime_preview"
-    write_json(preview / "public/assets/data/flag_registry.json", flags)
-    write_json(preview / "public/assets/data/narrative_graphs.json", narrative)
-    write_json(preview / "public/assets/data/quests.json", quests)
-    for gid, graph in dialogues.items():
-        write_json(preview / "public/assets/dialogues/graphs" / f"{gid}.json", graph)
+    published: list[str] = []
+    if "preview" in selected:
+        for key, payload in (("flagRegistry", flags), ("narrativeGraphs", narrative), ("quests", quests)):
+            target, did_publish = resolve_output_target(cfg, key, publish)
+            write_json(target, payload)
+            if did_publish:
+                published.append(_rel(target))
+        dialogue_dir, dlg_published = resolve_output_target(cfg, "dialogueGraphs", publish)
+        for gid, graph in dialogues.items():
+            write_json(dialogue_dir / f"{gid}.json", graph)
+            if dlg_published:
+                published.append(_rel(dialogue_dir / f"{gid}.json"))
 
-    for gid, text in render_narrative_mermaid(narrative).items():
-        write_text(ARTIFACT / "rendered_graphs/narrative" / f"{gid}.mmd", text)
+    if "render" in selected:
+        for gid, text in render_narrative_mermaid(narrative).items():
+            write_text(ARTIFACT / "rendered_graphs/narrative" / f"{gid}.mmd", text)
 
-    write_json(ARTIFACT / "content_index.json", ctx.index)
-    write_json(ARTIFACT / "source_map.json", ctx.source_map)
-    write_json(ARTIFACT / "runtime_debug_map.json", ctx.source_map)
-    report = ["# Content Pipeline Report", "", f"Diagnostics: {len(ctx.diagnostics)}", ""]
-    for d in ctx.diagnostics:
-        report.append(f"- **{d.severity}** `{d.code}` {d.message}")
-    write_text(ARTIFACT / "content_report.md", "\n".join(report) + "\n")
-    write_json(ARTIFACT / "diagnostics.json", [d.to_dict() for d in ctx.diagnostics])
-    return ctx, {"flags": flags, "narrative": narrative, "quests": quests, "dialogues": dialogues}
+    if "index" in selected:
+        write_json(ARTIFACT / "content_index.json", ctx.index)
+
+    if "sourcemap" in selected:
+        write_json(ARTIFACT / "source_map.json", ctx.source_map)
+        write_json(ARTIFACT / "runtime_debug_map.json", ctx.source_map)
+
+    if "report" in selected:
+        report = ["# Content Pipeline Report", "", f"Diagnostics: {len(ctx.diagnostics)}", ""]
+        for d in ctx.diagnostics:
+            report.append(f"- **{d.severity}** `{d.code}` {d.message}")
+        write_text(ARTIFACT / "content_report.md", "\n".join(report) + "\n")
+        write_json(ARTIFACT / "diagnostics.json", [d.to_dict() for d in ctx.diagnostics])
+
+    return ctx, {
+        "flags": flags,
+        "narrative": narrative,
+        "quests": quests,
+        "dialogues": dialogues,
+        "published": published,
+        "config": cfg,
+    }
 
 
 def simulate(path: str | None = None) -> int:
@@ -843,7 +1019,13 @@ def watch() -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="content_pipeline")
     sub = parser.add_subparsers(dest="cmd")
-    for name in ("build", "validate", "index", "render"):
+    build_parser = sub.add_parser("build")
+    build_parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="write pipeline-owned outputs to real runtime paths (legacy_editor-owned files are never published)",
+    )
+    for name in ("validate", "index", "render"):
         sub.add_parser(name)
     sim = sub.add_parser("simulate")
     sim.add_argument("case", nargs="?")
@@ -858,9 +1040,20 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("watch")
     args = parser.parse_args(argv)
     if args.cmd in {"build", "validate", "index", "render", None}:
-        ctx, _ = build_all()
+        if args.cmd == "validate":
+            emit: frozenset[str] = frozenset()  # compile + diagnose only, no artifacts
+        elif args.cmd == "index":
+            emit = frozenset({"index"})
+        elif args.cmd == "render":
+            emit = frozenset({"render"})
+        else:  # build / default
+            emit = EMIT_ALL
+        publish = bool(getattr(args, "publish", False))
+        ctx, data = build_all(publish=publish, emit=emit)
         for d in ctx.diagnostics:
             print(d.format())
+        for path in data.get("published", []):
+            print(f"published -> {path}")
         return 1 if any(d.severity == "error" for d in ctx.diagnostics) else 0
     if args.cmd == "simulate":
         return simulate(args.case)

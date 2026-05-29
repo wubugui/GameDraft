@@ -2,44 +2,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { evaluateConditionExprWithTrace, type ConditionEvalContext } from '../../src/systems/graphDialogue/evaluateGraphCondition';
 import { QuestStatus, type Condition, type ConditionExpr } from '../../src/data/types';
+import { compareFlagOrder, looseEqualFlag } from '../../src/core/flagComparison';
 
 type Json = Record<string, any>;
 
 function readJson(path: string): any {
   return JSON.parse(readFileSync(resolve(path), 'utf8').replace(/^\uFEFF/, ''));
-}
-
-function looseEqual(a: any, b: any): boolean {
-  if (a === b) return true;
-  if (typeof a === 'string' || typeof b === 'string') return String(a) === String(b);
-  const na = typeof a === 'boolean' ? (a ? 1 : 0) : Number(a);
-  const nb = typeof b === 'boolean' ? (b ? 1 : 0) : Number(b);
-  return na === nb;
-}
-
-function toNum(v: any): number {
-  if (typeof v === 'boolean') return v ? 1 : 0;
-  if (typeof v === 'number') return v;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : NaN;
-}
-
-function compareOrder(a: any, b: any, op: '>' | '<' | '>=' | '<='): boolean {
-  const na = toNum(a);
-  const nb = toNum(b);
-  if (Number.isFinite(na) && Number.isFinite(nb)) {
-    if (op === '>') return na > nb;
-    if (op === '<') return na < nb;
-    if (op === '>=') return na >= nb;
-    return na <= nb;
-  }
-  const sa = String(a);
-  const sb = String(b);
-  const c = sa < sb ? -1 : sa > sb ? 1 : 0;
-  if (op === '>') return c > 0;
-  if (op === '<') return c < 0;
-  if (op === '>=') return c >= 0;
-  return c <= 0;
 }
 
 function questStatus(raw: any): QuestStatus {
@@ -62,9 +30,9 @@ function conditionContext(state: Json): ConditionEvalContext {
           const raw = flags[cond.flag];
           const actual = raw !== undefined ? raw : typeof expected === 'boolean' ? false : typeof expected === 'number' ? 0 : '';
           const op = cond.op ?? '==';
-          if (op === '==' && !looseEqual(actual, expected)) return false;
-          if (op === '!=' && looseEqual(actual, expected)) return false;
-          if ((op === '>' || op === '<' || op === '>=' || op === '<=') && !compareOrder(actual, expected, op)) return false;
+          if (op === '==' && !looseEqualFlag(actual, expected)) return false;
+          if (op === '!=' && looseEqualFlag(actual, expected)) return false;
+          if ((op === '>' || op === '<' || op === '>=' || op === '<=') && !compareFlagOrder(actual, expected, op)) return false;
         }
         return true;
       },

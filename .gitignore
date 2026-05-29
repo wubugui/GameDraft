@@ -13,6 +13,9 @@ dist/
 build/
 coverage/
 .vite/
+
+# Content pipeline generated output (regenerate with `npm run content:build`)
+artifact/content_pipeline/
 *.log
 *.tmp
 *.temp

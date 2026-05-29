@@ -2,6 +2,7 @@ import type { Condition, ConditionExpr } from '../data/types';
 import type { EventBus } from './EventBus';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
+import { compareFlagOrder, looseEqualFlag } from './flagComparison';
 
 /** 运行时 Flag 取值 */
 export type FlagValue = boolean | number | string;
@@ -217,22 +218,22 @@ export class FlagStore {
 
       switch (op) {
         case '==':
-          if (!this.looseEqual(actual, expected)) return false;
+          if (!looseEqualFlag(actual, expected)) return false;
           break;
         case '!=':
-          if (this.looseEqual(actual, expected)) return false;
+          if (looseEqualFlag(actual, expected)) return false;
           break;
         case '>':
-          if (!this.compareOrder(actual, expected, '>')) return false;
+          if (!compareFlagOrder(actual, expected, '>')) return false;
           break;
         case '<':
-          if (!this.compareOrder(actual, expected, '<')) return false;
+          if (!compareFlagOrder(actual, expected, '<')) return false;
           break;
         case '>=':
-          if (!this.compareOrder(actual, expected, '>=')) return false;
+          if (!compareFlagOrder(actual, expected, '>=')) return false;
           break;
         case '<=':
-          if (!this.compareOrder(actual, expected, '<=')) return false;
+          if (!compareFlagOrder(actual, expected, '<=')) return false;
           break;
       }
     }
@@ -271,44 +272,6 @@ export class FlagStore {
       }
     }
     return this.evalPureFlagConjunction(conditions as Condition[]);
-  }
-
-  private looseEqual(a: FlagValue, b: FlagValue): boolean {
-    if (a === b) return true;
-    if (typeof a === 'string' || typeof b === 'string') {
-      return String(a) === String(b);
-    }
-    return this.toNum(a as boolean | number) === this.toNum(b as boolean | number);
-  }
-
-  private toNum(v: FlagValue): number {
-    if (typeof v === 'boolean') return v ? 1 : 0;
-    if (typeof v === 'number') return v;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : NaN;
-  }
-
-  /** 数值可比较时按数值比，否则按字符串字典序 */
-  private compareOrder(a: FlagValue, b: FlagValue, op: '>' | '<' | '>=' | '<='): boolean {
-    const na = this.toNum(a);
-    const nb = this.toNum(b);
-    if (Number.isFinite(na) && Number.isFinite(nb)) {
-      switch (op) {
-        case '>': return na > nb;
-        case '<': return na < nb;
-        case '>=': return na >= nb;
-        case '<=': return na <= nb;
-      }
-    }
-    const sa = String(a);
-    const sb = String(b);
-    const c = sa < sb ? -1 : sa > sb ? 1 : 0;
-    switch (op) {
-      case '>': return c > 0;
-      case '<': return c < 0;
-      case '>=': return c >= 0;
-      case '<=': return c <= 0;
-    }
   }
 
   serialize(): Record<string, FlagValue> {

@@ -11,6 +11,13 @@ This branch adds a tooling-only authoring pipeline. Runtime JSON is treated as a
 
 ## Commands
 
+Each command writes a distinct subset of artifacts:
+
+- `build` — compile + write runtime preview JSON, renders, index, source map, report.
+- `validate` — compile + print diagnostics only; writes nothing to disk.
+- `index` — write only `content_index.json`.
+- `render` — write only the mermaid graph renders.
+
 Run:
 
     npm run content:build
@@ -25,6 +32,19 @@ Run:
 Direct CLI:
 
     .\.tools\Python311\python.exe -m tools.content_pipeline build
+
+## Publishing to real runtime paths
+
+By default everything is written to the preview tree. `build --publish` writes
+each output to its real `runtimeOutputs` path **only when that path is not owned
+by `legacy_editor`** in `authoring/project.yaml`'s `ownership` map. Files owned by
+the legacy editor are always kept in preview, so publishing can never clobber
+editor-authored runtime JSON:
+
+    .\.tools\Python311\python.exe -m tools.content_pipeline build --publish
+
+`project.yaml` is parsed for `publishRuntime`, `runtimeOutputs`, `previewOutputs`
+and `ownership`; missing keys fall back to safe defaults.
 
 ## Inputs
 
