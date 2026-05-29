@@ -9,18 +9,21 @@ completionConditions:
       - narrative: case.bridge
         state: source_found
 acceptActions:
-  - type: showNotification
+  - id: notify_new_clue
+    type: showNotification
     params:
       text: New clue
       type: quest
 rewards:
-  - type: emitNarrativeSignal
+  - id: emit_completed_signal
+    type: emitNarrativeSignal
     params:
       signal: quest.bridge_find_source.completed
 nextQuests:
   - questId: bridge_find_countermeasure
     conditions:
-      - all:
+      - id: has_paper_charm
+        all:
           - flag: case.bridge.has_paper_charm
             op: ==
             value: true

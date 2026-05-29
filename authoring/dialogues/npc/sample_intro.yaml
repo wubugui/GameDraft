@@ -21,11 +21,13 @@ nodes:
   action_node:
     type: runActions
     actions:
-      - type: setFlag
+      - id: set_heard_warning
+        type: setFlag
         params:
           key: case.bridge.heard_warning
           value: true
-      - type: emitNarrativeSignal
+      - id: emit_bridge_warning
+        type: emitNarrativeSignal
         params:
           signal: old_zhou.told_bridge_warning
     next: end

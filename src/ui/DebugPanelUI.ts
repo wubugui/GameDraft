@@ -177,6 +177,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
       actions: [
         { label: '清空 Trace', fn: () => runtimeTrace.clear() },
         { label: '复制 Trace', fn: () => void navigator.clipboard?.writeText(runtimeTrace.formatRecent(400)) },
+        { label: '复制 JSON', fn: () => void navigator.clipboard?.writeText(runtimeTrace.exportRecentJson(800)) },
       ],
     }));
 

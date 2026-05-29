@@ -5,7 +5,7 @@ import type { Condition, ConditionExpr, QuestDef, IGameSystem, GameContext, IQue
 import { QuestStatus } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
-import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
+import { evaluateConditionExprWithTrace } from './graphDialogue/evaluateGraphCondition';
 import { TEXT_URLS } from '../core/projectPaths';
 
 export class QuestManager implements IGameSystem, IQuestDataProvider {
@@ -38,10 +38,35 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   }
 
   private evalConditions(conds: ConditionExpr[]): boolean {
-    if (!conds.length) return true;
+    return this.evalConditionsWithTrace(conds).ok;
+  }
+
+  private evalConditionsWithTrace(conds: ConditionExpr[]): { ok: boolean; trace?: unknown; reason?: string } {
+    if (!conds.length) return { ok: true, reason: 'noConditions' };
     const ctx = this.conditionCtxFactory?.();
-    if (ctx) return evaluateConditionExprList(conds, ctx);
-    return this.flagStore.checkConditions(conds as Condition[]);
+    if (ctx) {
+      const expr = conds.length === 1 ? conds[0]! : { all: conds };
+      const result = evaluateConditionExprWithTrace(expr, ctx);
+      return { ok: result.result, trace: result.trace, reason: result.result ? 'conditionsMet' : 'conditionsBlocked' };
+    }
+    const ok = this.flagStore.checkConditions(conds as Condition[]);
+    return { ok, reason: ok ? 'flagFallbackMet' : 'flagFallbackBlocked' };
+  }
+
+  private traceEvaluate(
+    questId: string,
+    check: 'preconditions' | 'completionConditions' | 'nextQuestConditions',
+    runtimeRef: string,
+    result: { ok: boolean; trace?: unknown; reason?: string },
+  ): void {
+    this.eventBus.emit('quest:evaluate', {
+      phase: result.ok ? 'match' : 'block',
+      questId,
+      check,
+      runtimeRef,
+      conditionTrace: result.trace,
+      reason: result.reason,
+    });
   }
 
   init(ctx: GameContext): void {
@@ -86,7 +111,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     if (onAccept.length > 0) {
       this.enqueueQuestActions(async () => {
         try {
-          await this.actionExecutor.executeBatchAwait(onAccept);
+          await this.actionExecutor.executeBatchAwait(onAccept, { ownerKind: 'quest', ownerId: questId, runtimeRefPrefix: `quest:${questId}.acceptActions` });
         } catch (e) {
           console.warn('QuestManager: acceptActions failed', e);
         }
@@ -122,14 +147,17 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
       if (def.nextQuests && def.nextQuests.length > 0) {
         for (const edge of def.nextQuests) {
-          if (edge.conditions.length > 0 && !this.evalConditions(edge.conditions)) {
-            continue;
+          if (edge.conditions.length > 0) {
+            const result = this.evalConditionsWithTrace(edge.conditions);
+            this.traceEvaluate(def.id, 'nextQuestConditions', `quest:${def.id}.nextQuest:${edge.questId}.conditions`, result);
+            if (!result.ok) continue;
           }
           if (!edge.bypassPreconditions) {
             const targetDef = this.questDefs.get(edge.questId);
-            if (targetDef && targetDef.preconditions.length > 0 &&
-                !this.evalConditions(targetDef.preconditions)) {
-              continue;
+            if (targetDef && targetDef.preconditions.length > 0) {
+              const result = this.evalConditionsWithTrace(targetDef.preconditions);
+              this.traceEvaluate(edge.questId, 'preconditions', `quest:${edge.questId}.preconditions`, result);
+              if (!result.ok) continue;
             }
           }
           this.acceptQuest(edge.questId);
@@ -142,7 +170,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     if (def.rewards.length > 0) {
       this.enqueueQuestActions(async () => {
         try {
-          await this.actionExecutor.executeBatchAwait(def.rewards);
+          await this.actionExecutor.executeBatchAwait(def.rewards, { ownerKind: 'quest', ownerId: questId, runtimeRefPrefix: `quest:${questId}.rewards` });
         } catch (e) {
           console.warn('QuestManager: rewards failed', e);
         }
@@ -164,16 +192,22 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
       const status = this.questStatus.get(id) ?? QuestStatus.Inactive;
 
       if (status === QuestStatus.Active) {
-        if (def.completionConditions.length > 0 &&
-            this.evalConditions(def.completionConditions)) {
+        if (def.completionConditions.length > 0) {
+          const result = this.evalConditionsWithTrace(def.completionConditions);
+          this.traceEvaluate(id, 'completionConditions', `quest:${id}.completionConditions`, result);
+          if (result.ok) {
           this.completeQuest(id);
+          }
         }
       }
 
       if (status === QuestStatus.Inactive) {
-        if (def.preconditions.length > 0 &&
-            this.evalConditions(def.preconditions)) {
+        if (def.preconditions.length > 0) {
+          const result = this.evalConditionsWithTrace(def.preconditions);
+          this.traceEvaluate(id, 'preconditions', `quest:${id}.preconditions`, result);
+          if (result.ok) {
           this.acceptQuest(id);
+          }
         }
       }
     });

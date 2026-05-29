@@ -13,7 +13,8 @@ states:
     label: 愿意帮忙
     broadcastOnEnter: true
     onEnterActions:
-      - type: setFlag
+      - id: mark_helpful
+        type: setFlag
         params:
           key: npc.old_zhou.helpful
           value: true
@@ -28,7 +29,8 @@ transitions:
     signal: player.showed_paper_charm
     priority: 10
     conditions:
-      - all:
+      - id: has_paper_charm
+        all:
           - flag: case.bridge.has_paper_charm
             op: ==
             value: true

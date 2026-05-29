@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import subprocess
 import re
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 AUTHORING = ROOT / "authoring"
@@ -44,7 +47,12 @@ class Diagnostic:
 @dataclass
 class BuildContext:
     diagnostics: list[Diagnostic] = field(default_factory=list)
-    source_map: dict[str, Any] = field(default_factory=dict)
+    yaml_locations: dict[str, dict[str, Json]] = field(default_factory=dict)
+    source_map: dict[str, Any] = field(default_factory=lambda: {
+        "version": 2,
+        "sources": {},
+        "runtimeToSource": {},
+    })
     index: dict[str, Any] = field(default_factory=lambda: {
         "flags": {},
         "signals": {},
@@ -61,12 +69,58 @@ class BuildContext:
     def error(self, code: str, message: str, file: str = "", line: int = 0, column: int = 0, suggestion: str = "") -> None:
         self.diagnostics.append(Diagnostic("error", code, message, file, line, column, suggestion))
 
+    def source(self, path: Path, loc_path: tuple[Any, ...] = ()) -> Json:
+        rel = _rel(path)
+        locs = self.yaml_locations.get(rel, {})
+        loc = locs.get(_loc_key(loc_path)) or locs.get("")
+        return {"file": rel, "line": int(loc.get("line", 1)), "column": int(loc.get("column", 1))}
+
+    def source_id(self, prefix: str, raw: Any, *, source: Json, kind: str) -> str:
+        if isinstance(raw, dict) and isinstance(raw.get("id"), str) and raw["id"].strip():
+            return f"{prefix}.{_slug(raw['id'])}"
+        fallback = f"{prefix}._line{int(source.get('line', 1))}_col{int(source.get('column', 1))}"
+        self.warn(
+            "source_id.implicit",
+            f"{kind} missing stable id; generated fallback sourceId {fallback}",
+            str(source.get("file", "")),
+            int(source.get("line", 0) or 0),
+            int(source.get("column", 0) or 0),
+            "Add an authoring-only id field to keep trace/source mapping stable after reordering.",
+        )
+        return fallback
+
+    def add_source_map(self, source_id: str, *, runtime_ref: str, source: Json, kind: str, runtime_path: str = "") -> None:
+        self.source_map["sources"][source_id] = {
+            "kind": kind,
+            "runtimePath": runtime_path,
+            **source,
+        }
+        self.source_map["runtimeToSource"][runtime_ref] = source_id
+
 
 def _rel(path: Path) -> str:
     try:
         return path.resolve().relative_to(ROOT).as_posix()
     except Exception:
         return path.as_posix()
+
+
+def _loc_key(path: tuple[Any, ...]) -> str:
+    return ".".join(str(p) for p in path)
+
+
+def _slug(value: Any) -> str:
+    text = str(value).strip()
+    text = re.sub(r"[^0-9A-Za-z_.-]+", "_", text)
+    return text.strip("._-") or "unnamed"
+
+
+def _condition_id(raw: Any) -> str:
+    if isinstance(raw, dict) and isinstance(raw.get("id"), str):
+        return raw["id"]
+    if isinstance(raw, list) and raw and isinstance(raw[0], dict) and isinstance(raw[0].get("id"), str):
+        return str(raw[0]["id"])
+    return ""
 
 
 def ensure_dir(path: Path) -> None:
@@ -130,92 +184,50 @@ def parse_scalar(raw: str) -> Any:
 
 
 def parse_simple_yaml(path: Path, ctx: BuildContext) -> Any:
-    """A small YAML subset parser for authoring examples.
-
-    It supports indentation-based dict/list structures, string scalars, booleans,
-    numbers, and inline [] / {} via JSON-compatible syntax. This avoids adding a
-    runtime dependency while keeping files readable. Complex production data can
-    later switch to PyYAML without changing the compiler contract.
-    """
+    """Parse YAML and retain source locations for source maps and trace lookup."""
     if not path.exists():
         ctx.error("yaml.missing", f"missing YAML file: {_rel(path)}", _rel(path))
         return {}
-    lines = path.read_text(encoding="utf-8").splitlines()
-    root: Any = {}
-    stack: list[tuple[int, Any]] = [(-1, root)]
+    rel = _rel(path)
+    text = path.read_text(encoding="utf-8")
+    try:
+        root_node = yaml.compose(text)
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        ctx.error("yaml.parse", str(e), rel, int(getattr(mark, "line", 0)) + 1, int(getattr(mark, "column", 0)) + 1)
+        return {}
 
-    def strip_comment(line: str) -> str:
-        in_quote = False
-        quote = ""
-        out = []
-        for ch in line:
-            if ch in {'\"', "'"}:
-                if not in_quote:
-                    in_quote = True; quote = ch
-                elif quote == ch:
-                    in_quote = False
-            if ch == "#" and not in_quote:
-                break
-            out.append(ch)
-        return "".join(out).rstrip()
+    locs: dict[str, Json] = {}
 
-    for lineno, raw in enumerate(lines, start=1):
-        line = strip_comment(raw)
-        if not line.strip():
-            continue
-        indent = len(line) - len(line.lstrip(" "))
-        text = line.strip()
-        while stack and indent <= stack[-1][0]:
-            stack.pop()
-        parent = stack[-1][1]
-        try:
-            if text.startswith("- "):
-                item_text = text[2:].strip()
-                if not isinstance(parent, list):
-                    ctx.error("yaml.list.parent", "list item has non-list parent", _rel(path), lineno, indent + 1)
-                    continue
-                if ":" in item_text and not item_text.startswith(('"', "'")):
-                    key, value = item_text.split(":", 1)
-                    item: Json = {key.strip(): parse_scalar(value.strip()) if value.strip() else {}}
-                    parent.append(item)
-                    if not value.strip():
-                        stack.append((indent, item[key.strip()]))
-                    else:
-                        stack.append((indent, item))
-                else:
-                    parent.append(parse_scalar(item_text))
-                continue
-            if ":" not in text:
-                ctx.error("yaml.syntax", "expected key: value", _rel(path), lineno, indent + 1)
-                continue
-            key, value = text.split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            if value == "":
-                # Guess container type from the next meaningful line.
-                next_is_list = False
-                for later in lines[lineno:]:
-                    stripped = strip_comment(later).strip()
-                    if not stripped:
-                        continue
-                    next_indent = len(later) - len(later.lstrip(" "))
-                    next_is_list = next_indent > indent and stripped.startswith("- ")
-                    break
-                child: Any = [] if next_is_list else {}
-                if isinstance(parent, dict):
-                    parent[key] = child
-                else:
-                    ctx.error("yaml.map.parent", "mapping item has non-map parent", _rel(path), lineno, indent + 1)
-                    continue
-                stack.append((indent, child))
-            else:
-                if isinstance(parent, dict):
-                    parent[key] = parse_scalar(value)
-                else:
-                    ctx.error("yaml.map.parent", "mapping item has non-map parent", _rel(path), lineno, indent + 1)
-        except Exception as e:
-            ctx.error("yaml.parse", f"failed to parse line: {e}", _rel(path), lineno, indent + 1)
-    return root
+    def remember(loc_path: tuple[Any, ...], node: yaml.Node | None) -> None:
+        if node is None:
+            return
+        locs[_loc_key(loc_path)] = {
+            "file": rel,
+            "line": int(node.start_mark.line) + 1,
+            "column": int(node.start_mark.column) + 1,
+        }
+
+    def scalar_key(node: yaml.Node) -> Any:
+        if isinstance(node, yaml.ScalarNode):
+            return node.value
+        return "<complex>"
+
+    def walk(node: yaml.Node | None, loc_path: tuple[Any, ...] = ()) -> None:
+        remember(loc_path, node)
+        if isinstance(node, yaml.MappingNode):
+            for key_node, value_node in node.value:
+                key = scalar_key(key_node)
+                remember(loc_path + (key,), key_node)
+                walk(value_node, loc_path + (key,))
+        elif isinstance(node, yaml.SequenceNode):
+            for i, item in enumerate(node.value):
+                walk(item, loc_path + (i,))
+
+    walk(root_node)
+    ctx.yaml_locations[rel] = locs
+    return data if data is not None else {}
 
 
 def normalize_condition(expr: Any) -> Any:
@@ -224,7 +236,7 @@ def normalize_condition(expr: Any) -> Any:
     if isinstance(expr, list):
         return [normalize_condition(x) for x in expr]
     if isinstance(expr, dict):
-        return {k: normalize_condition(v) if k in {"all", "any", "not"} else v for k, v in expr.items()}
+        return {k: normalize_condition(v) if k in {"all", "any", "not"} else v for k, v in expr.items() if k != "id"}
     return expr
 
 
@@ -239,6 +251,20 @@ def normalize_action(raw: Any) -> Json:
             return {"type": "setFlag", "params": v}
         return {"type": str(k), "params": v if isinstance(v, dict) else {"value": v}}
     return {"type": "unknown", "params": {"raw": raw}}
+
+
+def normalize_next_quests(raw: Any) -> list[Json]:
+    if not isinstance(raw, list):
+        return []
+    out: list[Json] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        edge = {k: v for k, v in item.items() if k != "id"}
+        if "conditions" in edge:
+            edge["conditions"] = normalize_condition(edge.get("conditions"))
+        out.append(edge)
+    return out
 
 
 def index_ref(bucket: dict[str, Any], key: str, role: str, item: Json) -> None:
@@ -300,7 +326,9 @@ def compile_flags(ctx: BuildContext) -> Json:
             continue
         seen.add(key)
         static.append({"key": key, "valueType": "float" if typ in {"number", "float"} else typ})
-        index_ref(ctx.index["flags"], key, "declaredAt", {"file": row.get("__file"), "line": row.get("__line"), "owner": row.get("owner"), "meaning": row.get("meaning")})
+        source = {"file": row.get("__file"), "line": int(row.get("__line", "1") or 1), "column": 1}
+        index_ref(ctx.index["flags"], key, "declaredAt", {**source, "owner": row.get("owner"), "meaning": row.get("meaning")})
+        ctx.add_source_map(f"flag.{_slug(key)}", runtime_ref=f"flag:{key}", source=source, kind="flag", runtime_path=f"flag_registry.static.{key}")
     return {"static": static, "patterns": [], "runtime": {"warnUnknownInDev": True}}
 
 
@@ -310,7 +338,9 @@ def load_signals(ctx: BuildContext) -> None:
         key = row.get("key", "")
         if not key:
             continue
-        index_ref(ctx.index["signals"], key, "declaredAt", {"file": row.get("__file"), "line": row.get("__line"), "owner": row.get("owner"), "meaning": row.get("meaning")})
+        source = {"file": row.get("__file"), "line": int(row.get("__line", "1") or 1), "column": 1}
+        index_ref(ctx.index["signals"], key, "declaredAt", {**source, "owner": row.get("owner"), "meaning": row.get("meaning")})
+        ctx.add_source_map(f"signal.{_slug(key)}", runtime_ref=f"signal:{key}", source=source, kind="signal", runtime_path=f"signals.{key}")
 
 
 def compile_narrative(ctx: BuildContext) -> Json:
@@ -321,6 +351,13 @@ def compile_narrative(ctx: BuildContext) -> Json:
             ctx.error("narrative.id.missing", "narrative graph id is required", _rel(path), 1, 1)
             continue
         gid = str(data["id"])
+        ctx.add_source_map(
+            f"narrative.{_slug(gid)}",
+            runtime_ref=f"narrative:{gid}",
+            source=ctx.source(path, ("id",)),
+            kind="narrativeGraph",
+            runtime_path=f"narrative_graphs.compositions[{len(graphs)}].mainGraph",
+        )
         owner = data.get("owner") if isinstance(data.get("owner"), dict) else {}
         states_src = data.get("states") if isinstance(data.get("states"), dict) else {}
         transitions_src = data.get("transitions") if isinstance(data.get("transitions"), list) else []
@@ -328,18 +365,45 @@ def compile_narrative(ctx: BuildContext) -> Json:
         for sid, sdef in states_src.items():
             sdef = sdef if isinstance(sdef, dict) else {}
             out: Json = {"id": sid}
+            ctx.add_source_map(
+                f"narrative.{_slug(gid)}.state.{_slug(sid)}",
+                runtime_ref=f"narrative:{gid}.state:{sid}",
+                source=ctx.source(path, ("states", sid)),
+                kind="narrativeState",
+                runtime_path=f"narrative_graphs.{gid}.states.{sid}",
+            )
             if sdef.get("broadcastOnEnter") is not None:
                 out["broadcastOnEnter"] = bool(sdef.get("broadcastOnEnter"))
             if isinstance(sdef.get("onEnterActions"), list):
                 out["onEnterActions"] = [normalize_action(a) for a in sdef["onEnterActions"]]
                 scan_action_refs(sdef["onEnterActions"], ctx, {"file": _rel(path), "symbol": f"narrative:{gid}.state:{sid}", "path": f"states.{sid}.onEnterActions"})
+                for i, raw_action in enumerate(sdef["onEnterActions"]):
+                    source = ctx.source(path, ("states", sid, "onEnterActions", i))
+                    source_id = ctx.source_id(f"narrative.{_slug(gid)}.state.{_slug(sid)}.onEnterAction", raw_action, source=source, kind="action")
+                    ctx.add_source_map(
+                        source_id,
+                        runtime_ref=f"narrative:{gid}.state:{sid}.onEnterActions[{i}]",
+                        source=source,
+                        kind="action",
+                        runtime_path=f"narrative_graphs.{gid}.states.{sid}.onEnterActions[{i}]",
+                    )
             if isinstance(sdef.get("onExitActions"), list):
                 out["onExitActions"] = [normalize_action(a) for a in sdef["onExitActions"]]
                 scan_action_refs(sdef["onExitActions"], ctx, {"file": _rel(path), "symbol": f"narrative:{gid}.state:{sid}", "path": f"states.{sid}.onExitActions"})
+                for i, raw_action in enumerate(sdef["onExitActions"]):
+                    source = ctx.source(path, ("states", sid, "onExitActions", i))
+                    source_id = ctx.source_id(f"narrative.{_slug(gid)}.state.{_slug(sid)}.onExitAction", raw_action, source=source, kind="action")
+                    ctx.add_source_map(
+                        source_id,
+                        runtime_ref=f"narrative:{gid}.state:{sid}.onExitActions[{i}]",
+                        source=source,
+                        kind="action",
+                        runtime_path=f"narrative_graphs.{gid}.states.{sid}.onExitActions[{i}]",
+                    )
             states[str(sid)] = out
             index_ref(ctx.index["narrativeStates"], f"{gid}.{sid}", "declaredAt", {"file": _rel(path), "symbol": f"narrative:{gid}.state:{sid}"})
         transitions = []
-        for t in transitions_src:
+        for ti, t in enumerate(transitions_src):
             if not isinstance(t, dict):
                 continue
             tid = str(t.get("id", ""))
@@ -350,6 +414,14 @@ def compile_narrative(ctx: BuildContext) -> Json:
             if to and to not in states:
                 ctx.error("narrative.transition.to_missing", f"transition {tid} target state missing: {to}", _rel(path), 1, 1)
             out = {"id": tid, "from": frm, "to": to}
+            transition_ref = f"narrative:{gid}.transition:{tid or ti}"
+            ctx.add_source_map(
+                f"narrative.{_slug(gid)}.transition.{_slug(tid or ti)}",
+                runtime_ref=transition_ref,
+                source=ctx.source(path, ("transitions", ti)),
+                kind="narrativeTransition",
+                runtime_path=f"narrative_graphs.{gid}.transitions[{ti}]",
+            )
             if t.get("signal") is not None:
                 out["signal"] = str(t.get("signal"))
                 index_ref(ctx.index["signals"], out["signal"], "listeners", {"file": _rel(path), "symbol": f"narrative:{gid}.transition:{tid}"})
@@ -358,6 +430,15 @@ def compile_narrative(ctx: BuildContext) -> Json:
             if isinstance(t.get("conditions"), list):
                 out["conditions"] = normalize_condition(t.get("conditions"))
                 scan_condition_refs(out["conditions"], ctx, {"file": _rel(path), "symbol": f"narrative:{gid}.transition:{tid}", "path": f"transitions.{tid}.conditions"})
+                source = ctx.source(path, ("transitions", ti, "conditions"))
+                source_id = ctx.source_id(f"narrative.{_slug(gid)}.transition.{_slug(tid or ti)}.condition", {"id": _condition_id(t.get("conditions"))}, source=source, kind="condition")
+                ctx.add_source_map(
+                    source_id,
+                    runtime_ref=f"{transition_ref}.conditions",
+                    source=source,
+                    kind="condition",
+                    runtime_path=f"narrative_graphs.{gid}.transitions[{ti}].conditions",
+                )
             transitions.append(out)
         graph = {
             "id": gid,
@@ -381,6 +462,13 @@ def compile_quests(ctx: BuildContext) -> list[Json]:
             continue
         qid = str(data["id"])
         base = base_rows.get(qid, {})
+        ctx.add_source_map(
+            f"quest.{_slug(qid)}",
+            runtime_ref=f"quest:{qid}",
+            source=ctx.source(path, ("id",)),
+            kind="quest",
+            runtime_path=f"quests.{qid}",
+        )
         q = {
             "id": qid,
             "group": base.get("group") or data.get("group") or "default",
@@ -391,7 +479,7 @@ def compile_quests(ctx: BuildContext) -> list[Json]:
             "completionConditions": normalize_condition(data.get("completionConditions") or []),
             "acceptActions": [normalize_action(a) for a in data.get("acceptActions") or []],
             "rewards": [normalize_action(a) for a in data.get("rewards") or []],
-            "nextQuests": data.get("nextQuests") or [],
+            "nextQuests": normalize_next_quests(data.get("nextQuests")),
         }
         if base.get("sideType"):
             q["sideType"] = base["sideType"]
@@ -401,6 +489,53 @@ def compile_quests(ctx: BuildContext) -> list[Json]:
         scan_condition_refs(q["completionConditions"], ctx, {**loc, "path": "completionConditions"})
         scan_action_refs(data.get("acceptActions") or [], ctx, {**loc, "path": "acceptActions"})
         scan_action_refs(data.get("rewards") or [], ctx, {**loc, "path": "rewards"})
+        if data.get("preconditions") is not None:
+            source = ctx.source(path, ("preconditions",))
+            ctx.add_source_map(
+                ctx.source_id(f"quest.{_slug(qid)}.preconditions", {"id": "root"}, source=source, kind="condition"),
+                runtime_ref=f"quest:{qid}.preconditions",
+                source=source,
+                kind="condition",
+                runtime_path=f"quests.{qid}.preconditions",
+            )
+        if data.get("completionConditions") is not None:
+            source = ctx.source(path, ("completionConditions",))
+            ctx.add_source_map(
+                ctx.source_id(f"quest.{_slug(qid)}.completionConditions", {"id": "root"}, source=source, kind="condition"),
+                runtime_ref=f"quest:{qid}.completionConditions",
+                source=source,
+                kind="condition",
+                runtime_path=f"quests.{qid}.completionConditions",
+            )
+        for i, raw_action in enumerate(data.get("acceptActions") or []):
+            source = ctx.source(path, ("acceptActions", i))
+            ctx.add_source_map(
+                ctx.source_id(f"quest.{_slug(qid)}.acceptAction", raw_action, source=source, kind="action"),
+                runtime_ref=f"quest:{qid}.acceptActions[{i}]",
+                source=source,
+                kind="action",
+                runtime_path=f"quests.{qid}.acceptActions[{i}]",
+            )
+        for i, raw_action in enumerate(data.get("rewards") or []):
+            source = ctx.source(path, ("rewards", i))
+            ctx.add_source_map(
+                ctx.source_id(f"quest.{_slug(qid)}.reward", raw_action, source=source, kind="action"),
+                runtime_ref=f"quest:{qid}.rewards[{i}]",
+                source=source,
+                kind="action",
+                runtime_path=f"quests.{qid}.rewards[{i}]",
+            )
+        for i, edge in enumerate(data.get("nextQuests") or []):
+            if isinstance(edge, dict) and edge.get("conditions") is not None:
+                target = str(edge.get("questId", i))
+                source = ctx.source(path, ("nextQuests", i, "conditions"))
+                ctx.add_source_map(
+                    ctx.source_id(f"quest.{_slug(qid)}.nextQuest.{_slug(target)}.conditions", {"id": _condition_id(edge.get("conditions"))}, source=source, kind="condition"),
+                    runtime_ref=f"quest:{qid}.nextQuest:{target}.conditions",
+                    source=source,
+                    kind="condition",
+                    runtime_path=f"quests.{qid}.nextQuests[{i}].conditions",
+                )
         out.append(q)
     return out
 
@@ -412,26 +547,66 @@ def compile_dialogues(ctx: BuildContext) -> dict[str, Json]:
         if not isinstance(data, dict) or not data.get("id"):
             continue
         gid = str(data["id"])
+        ctx.add_source_map(
+            f"dialogue.{_slug(gid)}",
+            runtime_ref=f"dialogue:{gid}",
+            source=ctx.source(path, ("id",)),
+            kind="dialogueGraph",
+            runtime_path=f"dialogues/graphs/{gid}.json",
+        )
         nodes = data.get("nodes") if isinstance(data.get("nodes"), dict) else {}
         out_nodes: Json = {}
         for nid, node in nodes.items():
             node = node if isinstance(node, dict) else {}
             ntype = str(node.get("type") or ("end" if node.get("end") else "line"))
+            node_ref = f"dialogue:{gid}.node:{nid}"
+            ctx.add_source_map(
+                f"dialogue.{_slug(gid)}.node.{_slug(nid)}",
+                runtime_ref=node_ref,
+                source=ctx.source(path, ("nodes", nid)),
+                kind="dialogueNode",
+                runtime_path=f"dialogues/graphs/{gid}.json.nodes.{nid}",
+            )
             if ntype == "runActions":
                 out_nodes[nid] = {"type": "runActions", "actions": [normalize_action(a) for a in node.get("actions") or []], "next": str(node.get("next", ""))}
                 scan_action_refs(node.get("actions") or [], ctx, {"file": _rel(path), "symbol": f"dialogue:{gid}.node:{nid}", "path": f"nodes.{nid}.actions"})
+                for i, raw_action in enumerate(node.get("actions") or []):
+                    source = ctx.source(path, ("nodes", nid, "actions", i))
+                    ctx.add_source_map(
+                        ctx.source_id(f"dialogue.{_slug(gid)}.node.{_slug(nid)}.action", raw_action, source=source, kind="action"),
+                        runtime_ref=f"{node_ref}.actions[{i}]",
+                        source=source,
+                        kind="action",
+                        runtime_path=f"dialogues/graphs/{gid}.json.nodes.{nid}.actions[{i}]",
+                    )
             elif ntype == "choice":
                 out_nodes[nid] = {"type": "choice", "options": node.get("options") or []}
                 if node.get("promptLine"):
                     out_nodes[nid]["promptLine"] = node["promptLine"]
-                for opt in node.get("options") or []:
+                for oi, opt in enumerate(node.get("options") or []):
                     if isinstance(opt, dict) and opt.get("requireCondition"):
                         scan_condition_refs(opt["requireCondition"], ctx, {"file": _rel(path), "symbol": f"dialogue:{gid}.node:{nid}.option:{opt.get('id','')}"})
+                        source = ctx.source(path, ("nodes", nid, "options", oi, "requireCondition"))
+                        ctx.add_source_map(
+                            ctx.source_id(f"dialogue.{_slug(gid)}.node.{_slug(nid)}.option.{_slug(opt.get('id', oi))}.requireCondition", opt.get("requireCondition"), source=source, kind="condition"),
+                            runtime_ref=f"{node_ref}.option:{opt.get('id', oi)}.requireCondition",
+                            source=source,
+                            kind="condition",
+                            runtime_path=f"dialogues/graphs/{gid}.json.nodes.{nid}.options[{oi}].requireCondition",
+                        )
             elif ntype == "switch":
                 out_nodes[nid] = {"type": "switch", "cases": node.get("cases") or [], "defaultNext": str(node.get("defaultNext", ""))}
-                for case in node.get("cases") or []:
+                for ci, case in enumerate(node.get("cases") or []):
                     if isinstance(case, dict):
                         scan_condition_refs(case.get("condition") or case.get("conditions"), ctx, {"file": _rel(path), "symbol": f"dialogue:{gid}.node:{nid}.switch"})
+                        source = ctx.source(path, ("nodes", nid, "cases", ci, "condition"))
+                        ctx.add_source_map(
+                            ctx.source_id(f"dialogue.{_slug(gid)}.node.{_slug(nid)}.case", case, source=source, kind="condition"),
+                            runtime_ref=f"{node_ref}.case[{ci}].condition",
+                            source=source,
+                            kind="condition",
+                            runtime_path=f"dialogues/graphs/{gid}.json.nodes.{nid}.cases[{ci}].condition",
+                        )
             elif ntype == "end":
                 out_nodes[nid] = {"type": "end"}
             else:
@@ -478,6 +653,107 @@ def validate_refs(ctx: BuildContext) -> None:
             ctx.warn("signal.no_emitter", f"signal has listeners but no emitters: {key}")
 
 
+def load_json_file(path: str | None) -> Any:
+    if not path:
+        return {}
+    p = Path(path)
+    if not p.is_absolute():
+        p = ROOT / p
+    return json.loads(p.read_text(encoding="utf-8-sig"))
+
+
+def state_file_for_runner(case_path: str | None) -> Path:
+    if case_path:
+        p = Path(case_path)
+        return p if p.is_absolute() else ROOT / p
+    p = ARTIFACT / "empty_state.json"
+    write_json(p, {"flags": {}, "quests": {}, "scenarios": {}, "scenarioLines": {}, "narrative": {}, "literals": {}})
+    return p
+
+
+def run_explain_runtime(case_path: str | None = None, *, echo: bool = True) -> Json:
+    state_path = state_file_for_runner(case_path)
+    out_path = ARTIFACT / "condition_explain.json"
+    tsx = ROOT / "node_modules" / ".bin" / ("tsx.cmd" if sys.platform == "win32" else "tsx")
+    cmd = [
+        str(tsx),
+        "tools/content_pipeline/explain_runtime.ts",
+        str(ARTIFACT / "runtime_preview"),
+        str(state_path),
+        str(ARTIFACT / "source_map.json"),
+        str(out_path),
+    ]
+    proc = subprocess.run(cmd, cwd=ROOT, text=True, encoding="utf-8", errors="replace", capture_output=True)
+    if echo and proc.stdout.strip():
+        print(proc.stdout, end="" if proc.stdout.endswith("\n") else "\n")
+    if proc.returncode != 0:
+        if proc.stderr.strip():
+            print(proc.stderr, file=sys.stderr)
+        raise RuntimeError(f"runtime explain failed with exit code {proc.returncode}")
+    return load_json_file(str(out_path))
+
+
+def explain(case_path: str | None = None) -> int:
+    ctx, _ = build_all()
+    try:
+        out = run_explain_runtime(case_path)
+    except RuntimeError:
+        return 1
+    out["ok"] = out.get("ok") is True and not any(d.severity == "error" for d in ctx.diagnostics)
+    out["diagnostics"] = [d.to_dict() for d in ctx.diagnostics]
+    write_json(ARTIFACT / "condition_explain.json", out)
+    return 1 if any(d.severity == "error" for d in ctx.diagnostics) else 0
+
+
+def resolve_trace_ref(event: Json, source_map: Json) -> str | None:
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    runtime_ref = payload.get("runtimeRef")
+    if isinstance(runtime_ref, str) and runtime_ref:
+        return runtime_ref
+    typ = event.get("type")
+    phase = event.get("phase")
+    if typ == "dialogue":
+        graph_id = payload.get("graphId")
+        node_id = payload.get("nodeId") or payload.get("currentNodeId")
+        if graph_id and node_id:
+            return f"dialogue:{graph_id}.node:{node_id}"
+        if graph_id:
+            return f"dialogue:{graph_id}"
+    if typ == "narrative" and payload.get("graphId"):
+        graph_id = payload.get("graphId")
+        to_state = payload.get("to")
+        if phase == "change" and to_state:
+            return f"narrative:{graph_id}.state:{to_state}"
+        return f"narrative:{graph_id}"
+    if typ == "quest" and payload.get("questId"):
+        return f"quest:{payload['questId']}"
+    return None
+
+
+def trace_resolve(path: str) -> int:
+    ctx, _ = build_all()
+    trace = load_json_file(path)
+    events = trace.get("events") if isinstance(trace, dict) else trace
+    if not isinstance(events, list):
+        print("trace file must be an event array or {\"events\": [...]}", file=sys.stderr)
+        return 2
+    resolved = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        ref = resolve_trace_ref(event, ctx.source_map)
+        source_id = ctx.source_map.get("runtimeToSource", {}).get(ref or "")
+        source = ctx.source_map.get("sources", {}).get(source_id or "")
+        resolved.append({**event, "runtimeRef": ref, "sourceId": source_id, "source": source})
+    out = {"events": resolved}
+    write_json(ARTIFACT / "runtime_trace/resolved_trace.json", out)
+    for item in resolved:
+        src = item.get("source") or {}
+        where = f"{src.get('file')}:{src.get('line')}:{src.get('column')}" if src else "<unmapped>"
+        print(f"#{item.get('id', '?')} [{item.get('type')}:{item.get('phase', '')}] {item.get('label', '')} -> {where}")
+    return 1 if any(d.severity == "error" for d in ctx.diagnostics) else 0
+
+
 def build_all() -> tuple[BuildContext, dict[str, Any]]:
     ctx = BuildContext()
     load_project_config(ctx)
@@ -500,6 +776,7 @@ def build_all() -> tuple[BuildContext, dict[str, Any]]:
 
     write_json(ARTIFACT / "content_index.json", ctx.index)
     write_json(ARTIFACT / "source_map.json", ctx.source_map)
+    write_json(ARTIFACT / "runtime_debug_map.json", ctx.source_map)
     report = ["# Content Pipeline Report", "", f"Diagnostics: {len(ctx.diagnostics)}", ""]
     for d in ctx.diagnostics:
         report.append(f"- **{d.severity}** `{d.code}` {d.message}")
@@ -510,7 +787,20 @@ def build_all() -> tuple[BuildContext, dict[str, Any]]:
 
 def simulate(path: str | None = None) -> int:
     ctx, data = build_all()
-    result = {"ok": not any(d.severity == "error" for d in ctx.diagnostics), "diagnostics": [d.to_dict() for d in ctx.diagnostics], "summary": {"narrativeGraphs": len(data["narrative"].get("compositions", [])), "quests": len(data["quests"]), "dialogues": len(data["dialogues"])}}
+    try:
+        explain_result = run_explain_runtime(path, echo=False)
+    except RuntimeError:
+        explain_result = {"conditions": []}
+    result = {
+        "ok": not any(d.severity == "error" for d in ctx.diagnostics),
+        "diagnostics": [d.to_dict() for d in ctx.diagnostics],
+        "summary": {
+            "narrativeGraphs": len(data["narrative"].get("compositions", [])),
+            "quests": len(data["quests"]),
+            "dialogues": len(data["dialogues"]),
+        },
+        "conditions": explain_result.get("conditions", []),
+    }
     write_json(ARTIFACT / "simulation_result.json", result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if any(d.severity == "error" for d in ctx.diagnostics) else 0
@@ -557,6 +847,10 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_parser(name)
     sim = sub.add_parser("simulate")
     sim.add_argument("case", nargs="?")
+    exp = sub.add_parser("explain")
+    exp.add_argument("case", nargs="?")
+    tr = sub.add_parser("trace-resolve")
+    tr.add_argument("trace")
     nf = sub.add_parser("new")
     nf.add_argument("kind", choices=["narrative", "quest", "dialogue"])
     nf.add_argument("id")
@@ -570,6 +864,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if any(d.severity == "error" for d in ctx.diagnostics) else 0
     if args.cmd == "simulate":
         return simulate(args.case)
+    if args.cmd == "explain":
+        return explain(args.case)
+    if args.cmd == "trace-resolve":
+        return trace_resolve(args.trace)
     if args.cmd == "new":
         return new_file(args.kind, args.id, args.owner)
     if args.cmd == "watch":

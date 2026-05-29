@@ -14,6 +14,8 @@
     "content:index": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline index",
     "content:render": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline render",
     "content:simulate": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline simulate",
+    "content:explain": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline explain",
+    "content:trace-resolve": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline trace-resolve",
     "content:watch": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline watch",
     "test": "vitest run"
   },
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@types/howler": "^2.2.12",
+    "tsx": "^4.22.3",
     "typescript": "^5.9.3",
     "vite": "^8.0.0",
     "vitest": "^4.1.5"

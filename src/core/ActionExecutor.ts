@@ -13,6 +13,13 @@ export type ActionHandler = (
   zoneContext: ZoneActionContext | null,
 ) => void | Promise<void>;
 
+export interface ActionExecutionDebugContext {
+  runtimeRef?: string;
+  ownerKind?: 'dialogue' | 'narrative' | 'quest' | 'cutscene' | 'system';
+  ownerId?: string;
+  actionIndex?: number;
+}
+
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
   private paramNamesMap: Map<string, string[]> = new Map();
@@ -86,16 +93,16 @@ export class ActionExecutor {
    * 单次触发、不保证顺序（如商店单次购买）。
    * 若需与批内其它动作严格顺序，请用 executeBatchAwait。
    */
-  execute(action: ActionDef): void {
+  execute(action: ActionDef, debugCtx?: ActionExecutionDebugContext): void {
     if (this.destroyed) return;
-    void this.executeAwait(action).catch((e) => {
+    void this.executeAwait(action, debugCtx).catch((e) => {
       const t = ActionExecutor.normalizeActionTypeKey(action.type);
       console.warn(`ActionExecutor: async action "${t}" failed`, e);
     });
   }
 
   /** 单条动作：await handler 返回的 Promise。所有需要顺序执行的路径共用此入口。 */
-  async executeAwait(action: ActionDef): Promise<void> {
+  async executeAwait(action: ActionDef, debugCtx?: ActionExecutionDebugContext): Promise<void> {
     if (this.destroyed) {
       if (!this.warnedAfterDestroy) {
         this.warnedAfterDestroy = true;
@@ -112,27 +119,26 @@ export class ActionExecutor {
     }
 
     const startedAt = performance.now();
-    this.eventBus.emit('action:start', { type: typeKey, params: action.params });
+    const tracePayload = { type: typeKey, params: action.params, ...debugCtx };
+    this.eventBus.emit('action:start', tracePayload);
     try {
       await this.runWithExploreActionLock(async () => {
         const handler = this.handlers.get(typeKey);
         if (!handler) {
           console.warn(`ActionExecutor: unknown action type "${typeKey}"`);
-          this.eventBus.emit('action:fail', { type: typeKey, params: action.params, reason: 'unknown action type' });
+          this.eventBus.emit('action:fail', { ...tracePayload, reason: 'unknown action type' });
           return;
         }
         const zctx = this.getZoneContext();
         await Promise.resolve(handler(action.params, zctx));
       });
       this.eventBus.emit('action:end', {
-        type: typeKey,
-        params: action.params,
+        ...tracePayload,
         durationMs: performance.now() - startedAt,
       });
     } catch (e) {
       this.eventBus.emit('action:fail', {
-        type: typeKey,
-        params: action.params,
+        ...tracePayload,
         durationMs: performance.now() - startedAt,
         error: e instanceof Error ? e.message : String(e),
       });
@@ -141,9 +147,15 @@ export class ActionExecutor {
   }
 
   /** 顺序执行批量动作并 await 每一条。 */
-  async executeBatchAwait(actions: ActionDef[]): Promise<void> {
-    for (const action of actions) {
-      await this.executeAwait(action);
+  async executeBatchAwait(actions: ActionDef[], debugCtx?: Omit<ActionExecutionDebugContext, 'runtimeRef' | 'actionIndex'> & { runtimeRefPrefix?: string }): Promise<void> {
+    for (let i = 0; i < actions.length; i++) {
+      const action = actions[i]!;
+      await this.executeAwait(action, {
+        ownerKind: debugCtx?.ownerKind,
+        ownerId: debugCtx?.ownerId,
+        actionIndex: i,
+        runtimeRef: debugCtx?.runtimeRefPrefix ? `${debugCtx.runtimeRefPrefix}[${i}]` : undefined,
+      });
     }
   }
 

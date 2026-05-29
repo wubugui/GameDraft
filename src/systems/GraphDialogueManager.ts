@@ -395,7 +395,12 @@ export class GraphDialogueManager implements IGameSystem {
         const beats = this.lineBeatsFor(cur);
         if (this.lineBeatIndex + 1 < beats.length) {
           this.lineBeatIndex += 1;
-          const line = this.linePayloadToDialogueLine(beats[this.lineBeatIndex]!);
+          const line = {
+            ...this.linePayloadToDialogueLine(beats[this.lineBeatIndex]!),
+            graphId: this.graphSourceId,
+            nodeId: this.currentNodeId,
+            beatIndex: this.lineBeatIndex,
+          };
           this.eventBus.emit('dialogue:line', line);
           this.awaitingLineDismiss = true;
           const nextAfterLine = this.graph.nodes[cur.next];
@@ -440,7 +445,13 @@ export class GraphDialogueManager implements IGameSystem {
       const bc = built[index];
       if (!bc?.enabled) return;
 
-      this.eventBus.emit('dialogue:choiceSelected:log', { index, text: bc.text });
+      this.eventBus.emit('dialogue:choiceSelected:log', {
+        index,
+        text: bc.text,
+        graphId: this.graphSourceId,
+        nodeId: this.choicePhase.nodeId,
+        optionId: opt.id,
+      });
       this.choicePhase = null;
       this.currentNodeId = opt.next;
       this.pushNarrativeRouteStep(this.currentNodeId);
@@ -491,6 +502,7 @@ export class GraphDialogueManager implements IGameSystem {
         this.endDialogue();
         return;
       }
+      this.eventBus.emit('dialogue:node', { graphId: this.graphSourceId, nodeId: this.currentNodeId, nodeType: node.type });
 
       if (node.type === 'switch') {
         this.currentNodeId = this.evalSwitch(node);
@@ -513,8 +525,14 @@ export class GraphDialogueManager implements IGameSystem {
       if (node.type === 'runActions') {
         this.eventBus.emit('dialogue:hidePanel', {});
         try {
-          for (const a of node.actions) {
-            await this.actionExecutor.executeAwait(a as ActionDef);
+          for (let i = 0; i < node.actions.length; i++) {
+            const a = node.actions[i]!;
+            await this.actionExecutor.executeAwait(a as ActionDef, {
+              ownerKind: 'dialogue',
+              ownerId: this.graphSourceId,
+              actionIndex: i,
+              runtimeRef: `dialogue:${this.graphSourceId}.node:${this.currentNodeId}.actions[${i}]`,
+            });
           }
         } catch (e) {
           console.warn('GraphDialogueManager: runActions 执行失败，结束对话', e);
@@ -535,7 +553,12 @@ export class GraphDialogueManager implements IGameSystem {
           this.endDialogue();
           return;
         }
-        const line = this.linePayloadToDialogueLine(first);
+        const line = {
+          ...this.linePayloadToDialogueLine(first),
+          graphId: this.graphSourceId,
+          nodeId: this.currentNodeId,
+          beatIndex: this.lineBeatIndex,
+        };
         this.eventBus.emit('dialogue:line', line);
         this.awaitingLineDismiss = true;
         const next = this.graph.nodes[node.next];
@@ -551,7 +574,12 @@ export class GraphDialogueManager implements IGameSystem {
       if (node.type === 'choice') {
         if (node.promptLine) {
           this.choicePhase = { nodeId: this.currentNodeId, stage: 'prompt' };
-          const line = this.linePayloadToDialogueLine(node.promptLine);
+          const line = {
+            ...this.linePayloadToDialogueLine(node.promptLine),
+            graphId: this.graphSourceId,
+            nodeId: this.currentNodeId,
+            prompt: true,
+          };
           this.eventBus.emit('dialogue:line', line);
           this.awaitingLineDismiss = true;
           return;

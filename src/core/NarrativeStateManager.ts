@@ -4,7 +4,7 @@ import type { EventBus } from './EventBus';
 import type { FlagStore } from './FlagStore';
 import type { ActionDef, ConditionExpr, GameContext, IGameSystem } from '../data/types';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
-import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
+import { evaluateConditionExprWithTrace } from '../systems/graphDialogue/evaluateGraphCondition';
 import {
   blockingNarrativeValidationErrors,
   validateNarrativeGraphData,
@@ -546,16 +546,22 @@ export class NarrativeStateManager implements IGameSystem {
       if (migratedGraphs.has(graphId)) continue;
       const active = this.activeStates.get(graphId) ?? graph.initialState;
       const candidates = graph.transitions
-        .filter((t) => {
+        .map((t, index) => ({ t, index }))
+        .filter(({ t }) => {
           if (!NarrativeStateManager.triggerKeysEqual(t.signal, triggerKey)) return false;
           if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
+            this.traceTransitionCandidate(graph.id, t, triggerKey, false, 'unsupportedEndpoint');
             this.recordUnsupportedEndpoint(graphId, t.id);
             return false;
           }
-          return t.from === active &&
-            this.conditionsMet(t.conditions);
+          if (t.from !== active) {
+            this.traceTransitionCandidate(graph.id, t, triggerKey, false, 'inactiveSource');
+            return false;
+          }
+          const result = this.conditionsMetWithTrace(t.conditions);
+          this.traceTransitionCandidate(graph.id, t, triggerKey, result.ok, result.reason, result.trace);
+          return result.ok;
         })
-        .map((t, index) => ({ t, index }))
         .sort((a, b) => {
           const pa = a.t.priority ?? 0;
           const pb = b.t.priority ?? 0;
@@ -570,13 +576,44 @@ export class NarrativeStateManager implements IGameSystem {
   }
 
   private conditionsMet(conditions: ConditionExpr[] | undefined): boolean {
-    if (!conditions?.length) return true;
+    return this.conditionsMetWithTrace(conditions).ok;
+  }
+
+  private conditionsMetWithTrace(conditions: ConditionExpr[] | undefined): { ok: boolean; trace?: unknown; reason?: string } {
+    if (!conditions?.length) return { ok: true, reason: 'noConditions' };
     const ctx = this.conditionCtxFactory?.();
     if (!ctx) {
       console.warn('NarrativeStateManager: missing condition context; rejecting guarded transition');
-      return false;
+      return { ok: false, reason: 'missingConditionContext' };
     }
-    return evaluateConditionExprList(conditions, ctx);
+    const expr = conditions.length === 1 ? conditions[0]! : { all: conditions };
+    const result = evaluateConditionExprWithTrace(expr, ctx);
+    return { ok: result.result, trace: result.trace, reason: result.result ? 'conditionsMet' : 'conditionsBlocked' };
+  }
+
+  private transitionRuntimeRef(graphId: string, transitionId: string): string {
+    return `narrative:${graphId}.transition:${transitionId}`;
+  }
+
+  private traceTransitionCandidate(
+    graphId: string,
+    transition: NarrativeTransition,
+    triggerKey: NarrativeTriggerKey,
+    ok: boolean,
+    reason?: string,
+    conditionTrace?: unknown,
+  ): void {
+    this.eventBus.emit('narrative:transitionCandidate', {
+      phase: ok ? 'match' : 'block',
+      graphId,
+      transitionId: transition.id,
+      from: transition.from,
+      to: transition.to,
+      triggerKey,
+      runtimeRef: this.transitionRuntimeRef(graphId, transition.id),
+      reason,
+      conditionTrace,
+    });
   }
 
   /**
@@ -588,16 +625,22 @@ export class NarrativeStateManager implements IGameSystem {
     for (const [graphId, graph] of this.graphs) {
       const active = this.activeStates.get(graphId) ?? graph.initialState;
       const candidates = graph.transitions
-        .filter((t) => {
+        .map((t, index) => ({ t, index }))
+        .filter(({ t }) => {
           if (!t.trigger || t.trigger === 'signal') return false;
-          if (t.from !== active) return false;
+          if (t.from !== active) {
+            this.traceTransitionCandidate(graphId, t, '__reactive__', false, 'inactiveSource');
+            return false;
+          }
           if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
+            this.traceTransitionCandidate(graphId, t, '__reactive__', false, 'unsupportedEndpoint');
             this.recordUnsupportedEndpoint(graphId, t.id);
             return false;
           }
-          return this.evaluateReactiveConditions(t);
+          const result = this.evaluateReactiveConditionsWithTrace(t);
+          this.traceTransitionCandidate(graphId, t, '__reactive__', result.ok, result.reason, result.trace);
+          return result.ok;
         })
-        .map((t, index) => ({ t, index }))
         .sort((a, b) => {
           const pa = a.t.priority ?? 0;
           const pb = b.t.priority ?? 0;
@@ -621,17 +664,21 @@ export class NarrativeStateManager implements IGameSystem {
    * - 'reactiveAny': auto-wrap flat list in {any: conditions}
    */
   private evaluateReactiveConditions(t: NarrativeTransition): boolean {
-    if (!t.conditions?.length) return false;
+    return this.evaluateReactiveConditionsWithTrace(t).ok;
+  }
+
+  private evaluateReactiveConditionsWithTrace(t: NarrativeTransition): { ok: boolean; trace?: unknown; reason?: string } {
+    if (!t.conditions?.length) return { ok: false, reason: 'noConditions' };
     if (t.trigger === 'reactive') {
-      return this.conditionsMet(t.conditions);
+      return this.conditionsMetWithTrace(t.conditions);
     }
     if (t.trigger === 'reactiveAll') {
-      return this.conditionsMet([{ all: t.conditions }]);
+      return this.conditionsMetWithTrace([{ all: t.conditions }]);
     }
     if (t.trigger === 'reactiveAny') {
-      return this.conditionsMet([{ any: t.conditions }]);
+      return this.conditionsMetWithTrace([{ any: t.conditions }]);
     }
-    return false;
+    return { ok: false, reason: 'notReactive' };
   }
 
   /** Process a queued reactive trigger by double-checking conditions and applying the transition. */
@@ -641,7 +688,9 @@ export class NarrativeStateManager implements IGameSystem {
     if (graph && transition?.trigger) {
       const active = this.activeStates.get(graphId) ?? graph.initialState;
       if (transition.from !== active) return;
-      if (this.evaluateReactiveConditions(transition)) {
+      const result = this.evaluateReactiveConditionsWithTrace(transition);
+      this.traceTransitionCandidate(graph.id, transition, '__reactive__', result.ok, result.reason, result.trace);
+      if (result.ok) {
         await this.applyTransition(graph, transition, '__reactive__');
       }
     }
@@ -700,7 +749,7 @@ export class NarrativeStateManager implements IGameSystem {
   ): Promise<void> {
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
-    await this.runActions(fromState?.onExitActions, `${graph.id}.${fromStateId}.onExit`);
+    await this.runActions(fromState?.onExitActions, `${graph.id}.${fromStateId}.onExit`, `narrative:${graph.id}.state:${fromStateId}.onExitActions`);
     this.activeStates.set(graph.id, toStateId);
     this.recentTransitions.push({ graphId: graph.id, transitionId, from: fromStateId, to: toStateId, triggerKey });
     if (this.recentTransitions.length > 50) this.recentTransitions.splice(0, this.recentTransitions.length - 50);
@@ -710,8 +759,9 @@ export class NarrativeStateManager implements IGameSystem {
       to: toStateId,
       triggerKey,
       transitionId,
+      runtimeRef: transitionId ? this.transitionRuntimeRef(graph.id, transitionId) : undefined,
     });
-    await this.runActions(toState?.onEnterActions, `${graph.id}.${toStateId}.onEnter`);
+    await this.runActions(toState?.onEnterActions, `${graph.id}.${toStateId}.onEnter`, `narrative:${graph.id}.state:${toStateId}.onEnterActions`);
     if (toState?.broadcastOnEnter === true) {
       this.enqueueGraphStateEntered(graph.id, toStateId);
     }
@@ -738,11 +788,11 @@ export class NarrativeStateManager implements IGameSystem {
     console.warn(message);
   }
 
-  private async runActions(actions: ActionDef[] | undefined, label: string): Promise<void> {
+  private async runActions(actions: ActionDef[] | undefined, label: string, runtimeRefPrefix?: string): Promise<void> {
     if (!actions?.length) return;
     try {
       this.runningActionsDepth += 1;
-      await this.actionExecutor.executeBatchAwait(actions);
+      await this.actionExecutor.executeBatchAwait(actions, { ownerKind: 'narrative', ownerId: label, runtimeRefPrefix });
     } catch (e) {
       console.warn(`NarrativeStateManager: lifecycle actions failed at ${label}`, e);
     } finally {
