@@ -1,0 +1,32 @@
+{
+  "flags": {
+    "archive_book_entry_erta_geo_iron_ring": false
+  },
+  "quests": {
+    "支线-归还小孩铁环-归还铁环": "Inactive"
+  },
+  "scenarios": {},
+  "scenarioLines": {},
+  "narrative": {
+    "flow_dock_water_monkey": "crate_minigame_done",
+    "npc_ringboy": "after_event",
+    "quest_return_ring": "inactive"
+  },
+  "inventory": {
+    "items": {}
+  },
+  "literals": {},
+  "simulate": {
+    "type": "dialogueRoute",
+    "graphId": "滚铁环小孩",
+    "entry": "root",
+    "choices": {
+      "after_evt_choice": "snatch"
+    },
+    "owner": {
+      "type": "npc",
+      "id": "npc_ringboy"
+    },
+    "maxSteps": 80
+  }
+}

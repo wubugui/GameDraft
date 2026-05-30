@@ -1,6 +1,14 @@
-# Content Authoring Pipeline
+# Graph Authoring Pipeline
 
-This branch adds a tooling-only authoring pipeline. Runtime JSON is treated as an immutable contract.
+This branch adds a tooling-only graph authoring pipeline. Runtime JSON is treated as an immutable contract.
+
+The current production scope is intentionally narrow:
+
+- dialogue graphs, narrative graphs, and quest logic are authored in YAML;
+- `flags.csv`, `signals.csv`, and `quests.csv` are small registry/metadata tables used for validation, completion, and trace readability;
+- normal runtime data such as items, rules, archive entries, strings, audio, scenes, entities, zones, and routes stays in the existing runtime/editor workflow unless a separate migration is explicitly approved.
+
+This is **not** a full data-table migration pipeline.
 
 ## Boundary
 
@@ -8,6 +16,19 @@ This branch adds a tooling-only authoring pipeline. Runtime JSON is treated as a
 - Runtime JSON schemas are not extended.
 - Tool metadata is written under artifact/content_pipeline.
 - Generated JSON goes to artifact/content_pipeline/runtime_preview by default.
+- `public/assets/**` remains the runtime contract and is not hand-edited when a path is pipeline-owned.
+- The pipeline owns graph authoring outputs only where ownership says it may publish.
+
+## Authoring Source Rules
+
+Use these rules when deciding where content belongs:
+
+- Put dialogue route logic in `authoring/dialogues/**/*.yaml`.
+- Put narrative state machines and wrapper graphs in `authoring/narrative/**/*.yaml`.
+- Put quest structure, conditions, rewards, and dependencies in `authoring/quests/**/*.yaml`.
+- Put only registry/metadata rows in `authoring/tables/flags.csv`, `authoring/tables/signals.csv`, and `authoring/tables/quests.csv`.
+- Do not add new CSV tables for items/rules/archive/strings/audio/scenes unless the project explicitly changes scope.
+- Do not move map geometry, polygon editing, patrol routes, or entity placement into CSV just to use the pipeline.
 
 ## Commands
 
@@ -15,6 +36,7 @@ Each command writes a distinct subset of artifacts:
 
 - `build` — compile + write runtime preview JSON, renders, index, source map, report.
 - `validate` — compile + print diagnostics only; writes nothing to disk.
+- `diagnostics-json` — compile + print machine-readable diagnostics for tools/LSP.
 - `index` — write only `content_index.json`.
 - `render` — write only the mermaid graph renders.
 
@@ -22,10 +44,13 @@ Run:
 
     npm run content:build
     npm run content:validate
+    npm run content:diagnostics-json
     npm run content:index
     npm run content:render
     npm run content:simulate
     npm run content:explain
+    npm run content:lsp-smoke
+    npm run content:check
     npm run content:trace-resolve -- artifact/content_pipeline/runtime_trace/sample.json
     npm run content:watch
 
@@ -48,9 +73,9 @@ and `ownership`; missing keys fall back to safe defaults.
 
 ## Inputs
 
-- authoring/tables/flags.csv
-- authoring/tables/signals.csv
-- authoring/tables/quests.csv
+- authoring/tables/flags.csv — flag registry only.
+- authoring/tables/signals.csv — signal registry only.
+- authoring/tables/quests.csv — quest metadata only.
 - authoring/narrative/**/*.yaml
 - authoring/quests/**/*.yaml
 - authoring/dialogues/**/*.yaml
@@ -64,6 +89,7 @@ and `ownership`; missing keys fall back to safe defaults.
 - artifact/content_pipeline/content_report.md
 - artifact/content_pipeline/rendered_graphs
 - artifact/content_pipeline/condition_explain.json
+- artifact/content_pipeline/simulation_result.json
 - artifact/content_pipeline/runtime_trace/resolved_trace.json
 
 ## Debug Trace
@@ -93,7 +119,7 @@ Runtime traces can be exported as an event array, then resolved back to authorin
 
     .\.tools\Python311\python.exe -m tools.content_pipeline trace-resolve path\to\trace.json
 
-Condition simulation reads compiled runtime preview JSON and uses the TypeScript runtime evaluator via `tsx`. It accepts an optional JSON state file:
+Condition explanation reads compiled runtime preview JSON and uses the TypeScript runtime evaluator via `tsx`. It accepts an optional JSON state file:
 
     .\.tools\Python311\python.exe -m tools.content_pipeline explain path\to\state.json
 
@@ -110,6 +136,62 @@ State shape:
 }
 ```
 
+Runtime simulation uses the same state shape and adds an optional `simulate` block.
+It writes `artifact/content_pipeline/simulation_result.json` with `initialState`,
+`finalState`, `diff`, `events`, `route`, `blocked`, and condition traces resolved
+back to authoring source locations.
+
+Dialogue route preview:
+
+```json
+{
+  "flags": {},
+  "quests": {},
+  "scenarios": {},
+  "scenarioLines": {},
+  "narrative": {},
+  "literals": {},
+  "simulate": {
+    "type": "dialogueRoute",
+    "graphId": "sample_intro",
+    "choices": { "ask": "continue" },
+    "owner": { "type": "npc", "id": "old_zhou" },
+    "maxSteps": 100
+  }
+}
+```
+
+Other supported simulation entries:
+
+```json
+{ "simulate": { "type": "emitSignal", "signal": "old_zhou.told_bridge_warning" } }
+{ "simulate": { "type": "actions", "actions": [{ "type": "setFlag", "params": { "key": "x", "value": true } }] } }
+```
+
+Simulation currently applies the high-value runtime mutations used by narrative
+authoring: flags, emitted narrative signals, narrative transitions including
+reactive transitions, quest accept/complete/next quest evaluation, dialogue
+line/choice/switch/runActions/ownerState/contextState routing, scenario
+lifecycle actions, inventory/currency deltas, scene switches, and entity
+position writes. Unsupported actions are still recorded as events so authored
+paths remain auditable.
+
+## Validation
+
+The compiler validates both topology and parameter shape. It catches duplicate
+ids, missing dialogue targets, unreachable/dead-end dialogue nodes, undeclared
+flags/signals/quests/graphs/states/scenes, flag read/write asymmetry, action
+required params, action numeric params, `setFlag` value type mismatches against
+`flags.csv`, `appendFlag` type misuse, quest/scenario status enums, and invalid
+ordered comparisons against non-numeric flags.
+
+Reference checks for items/rules/archive/audio/scenes are graph-authoring checks.
+They do not imply those runtime data files have been migrated to authoring CSV.
+
 ## VS Code
 
-A VS Code extension skeleton lives in tools/vscode-game-authoring. It provides commands for build, validate, and opening the report. An optional LSP placeholder is in tools/content_pipeline/lsp_server.py.
+A VS Code extension lives in tools/vscode-game-authoring. It provides build,
+diagnostics refresh, report opening, map position picking, completion, hover,
+definition, and references. The extension starts the stdio LSP server in
+tools/content_pipeline/lsp_server.py for YAML/CSV authoring diagnostics and
+language features.

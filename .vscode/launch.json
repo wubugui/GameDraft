@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run GameDraft Authoring Tools",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/tools/vscode-game-authoring",
+        "${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/tools/vscode-game-authoring/dist/**/*.js"
+      ],
+      "preLaunchTask": "vscode-authoring:compile"
+    }
+  ]
+}

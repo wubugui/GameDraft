@@ -1,0 +1,97 @@
+id: 码头看板
+entry: n_1
+meta:
+  title: 码头看板
+  scenarioId: 码头水鬼
+preconditions: []
+nodes:
+  n_1:
+    type: switch
+    cases:
+      - id: dock_board_truth_revealed
+        conditions:
+          - flag: 码头水鬼真相已揭示
+            op: ==
+            value: true
+        next: n_2
+    defaultNext: n_board
+  n_board:
+    type: runActions
+    actions:
+      - id: dock_board_show_false_notice
+        type: showOverlayImage
+        params:
+          id: 水猴子告示X
+          image: /resources/runtime/images/illustrations/告示-抓水猴子X.png
+          xPercent: 50.0
+          yPercent: 50.0
+          widthPercent: 40.0
+      - id: dock_board_wait_notice
+        type: waitClickContinue
+        params:
+          text: ""
+      - id: dock_board_read_first_lines
+        type: playScriptedDialogue
+        params:
+          lines:
+            - speaker: 你
+              text: 女......
+            - speaker: 你
+              text: 子......
+      - id: dock_board_comment_notice
+        type: playScriptedDialogue
+        params:
+          lines:
+            - speaker: 你
+              text: 哪家的婆娘能有这么戳，这啥鸡毛丑八怪！
+      - id: dock_board_read_reward
+        type: playScriptedDialogue
+        params:
+          lines:
+            - speaker: 你
+              text: 三......五......
+            - speaker: 你
+              text: 钱？！
+      - id: dock_board_hide_false_notice
+        type: hideOverlayImage
+        params:
+          id: 水猴子告示X
+      - id: dock_board_activate_scenario
+        type: activateScenario
+        params:
+          scenarioId: 码头水鬼
+      - id: dock_board_mark_phase_done
+        type: setScenarioPhase
+        params:
+          scenarioId: 码头水鬼
+          phase: 看板初读
+          status: done
+      - id: dock_board_emit_read_done
+        type: emitNarrativeSignal
+        params:
+          sourceType: dialogue
+          sourceId: dock_board
+          signal: board_read_done
+    next: e_end
+  n_2:
+    type: runActions
+    actions:
+      - id: dock_board_show_true_notice
+        type: showOverlayImage
+        params:
+          id: 临时
+          image: /resources/runtime/images/illustrations/告示-抓水猴子.png
+          xPercent: 50.0
+          yPercent: 50.0
+          widthPercent: 40.0
+      - id: dock_board_wait_true_notice
+        type: waitClickContinue
+        params:
+          text: ""
+      - id: dock_board_hide_true_notice
+        type: hideOverlayImage
+        params:
+          id: 临时
+    next: e_end
+  e_end:
+    type: end

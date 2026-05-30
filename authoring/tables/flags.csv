@@ -2,3 +2,7 @@ key,type,owner,meaning,default,notes
 case.bridge.heard_warning,bool,case.bridge,玩家听过桥雾警告,false,
 case.bridge.has_paper_charm,bool,case.bridge,玩家获得纸符,false,
 npc.old_zhou.helpful,bool,npc.old_zhou,老周愿意帮忙,false,
+archive_book_entry_erta_geo_iron_ring,bool,archive.book_erta_guide,风物志铁环词条是否已收录,false,
+书籍_风物志_铁环标注,string,archive.book_erta_guide,风物志铁环词条的玩家标注,,
+铁环小孩_已经获得铁环,bool,npc_ringboy,玩家是否已经拿到铁环,false,
+码头水鬼真相已揭示,bool,flow.码头水鬼,码头水鬼真相是否已经揭示,false,

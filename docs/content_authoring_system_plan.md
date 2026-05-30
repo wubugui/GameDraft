@@ -2,18 +2,35 @@
 
 This document defines the target architecture and implementation plan for the GameDraft content authoring system. It is intended as the long-term roadmap for continuing the branch `codex-content-pipeline-runtime-trace`.
 
-The system is an authoring/tooling layer. It must compile tables, DSL files, editor operations, validators, visualizers, and simulator results into the existing runtime JSON contract. It must not require the game runtime to understand authoring data.
+2026-05-30 scope decision:
+
+```text
+The production direction is now Graph Authoring Pipeline, not full data-table migration.
+
+Current source-of-truth migration target:
+1. dialogue graphs -> YAML
+2. narrative graphs / wrapper graphs -> YAML
+3. quest logic / dependencies -> YAML
+4. flags/signals/quest metadata -> small registry CSV tables
+
+Out of current scope:
+1. items/rules/archive/strings/audio/scenes full table migration
+2. replacing map/scene editors with CSV
+3. forcing ordinary runtime data into authoring tables
+```
+
+The system is an authoring/tooling layer for graph content. It compiles the graph YAML files, minimal registry tables, editor operations, validators, visualizers, and simulator results into the existing runtime JSON contract. It must not require the game runtime to understand authoring data.
 
 ---
 
 ## 1. Core Goal
 
-Build a production-grade content authoring pipeline for a nonlinear narrative game with many quests, dialogue branches, flags, signals, narrative state machines, and cross-system dependencies.
+Build a production-grade graph authoring pipeline for a nonlinear narrative game with many quests, dialogue branches, flags, signals, narrative state machines, and cross-system dependencies.
 
 The system should let creators maintain content through:
 
-- tables for pure configuration data;
-- YAML DSL for state machines, quests, dialogue flows, scenarios, and complex logic;
+- minimal registry tables for flags, signals, and quest metadata;
+- YAML DSL for state machines, quests, dialogue flows, and complex graph logic;
 - VS Code integration for authoring, validation, navigation, search, references, and graph preview;
 - generated visualizations for state machines, dialogue graphs, quest dependencies, signal flows, and flag read/write graphs;
 - simulator tooling for checking conditions, signals, quest evaluation, dialogue choices, and state diffs;
@@ -21,6 +38,8 @@ The system should let creators maintain content through:
 - source maps from runtime JSON / runtime trace events back to authoring files.
 
 The game runtime must continue to consume only the existing JSON formats.
+
+This document may still mention broader table-driven authoring as a historical or future option. Those parts are not active scope unless a later plan explicitly reopens full data migration.
 
 ---
 
@@ -70,17 +89,9 @@ authoring/
   project.yaml
 
   tables/
-    flags.csv
-    signals.csv
-    quests.csv
-    items.csv
-    rules.csv
-    rule_fragments.csv
-    archive_entries.csv
-    strings.csv
-    npcs.csv
-    audio.csv
-    scenes.csv
+    flags.csv      # registry only
+    signals.csv    # registry only
+    quests.csv     # metadata only
 
   narrative/
     npc/
@@ -103,10 +114,6 @@ authoring/
     main/
     day/
     case/
-
-  scenes/
-    zones/
-    hotspots/
 
   simulations/
     narrative/
@@ -212,24 +219,16 @@ Ownership is important. The old editor, hand-authored JSON, and new pipeline mus
 
 ## 5. Data Categories
 
-The authoring system should separate content into three categories.
+The graph authoring system should separate content into three categories.
 
-### 5.1 Pure Configuration Data
+### 5.1 Registry / Metadata Tables
 
-Use tables. These are mostly flat or relational datasets with stable columns.
+Use tables only for small registries and metadata that support graph authoring.
 
-Examples:
+Current active tables:
 
 - flags;
 - signals;
-- items;
-- rules;
-- rule fragments;
-- archive entries;
-- UI strings;
-- NPC base data;
-- audio registry;
-- scene registry;
 - quest base metadata.
 
 Tables should support:
@@ -240,7 +239,20 @@ Tables should support:
 - reference validation;
 - hover docs in VS Code;
 - definition/reference navigation;
-- stable generated JSON.
+- stable generated JSON where the pipeline owns the output.
+
+Out of current scope:
+
+- items;
+- rules;
+- rule fragments;
+- archive entries;
+- UI strings;
+- NPC base data;
+- audio registry;
+- scene registry.
+
+These remain in the existing runtime/editor workflow. The graph pipeline may index references to them for diagnostics, but it does not migrate them into tables.
 
 ### 5.2 Structured Logic Data
 
@@ -263,9 +275,11 @@ Runtime JSON should be treated as generated ABI, not as the preferred authoring 
 
 ---
 
-## 6. Table System
+## 6. Minimal Registry Table System
 
-Tables should be CSV initially, with the option to later support XLSX, Google Sheets, Feishu sheets, or internal table tooling.
+Tables are CSV files in this repository. They are intentionally minimal. Do not add new data tables just because a runtime JSON file exists.
+
+If the project later needs Sheet/Excel/Airtable integration, it should export into these same minimal CSV registries or into a separately approved table format.
 
 ### 6.1 `flags.csv`
 
@@ -1344,10 +1358,10 @@ The recommended implementation order is:
 1. Solidify project config and ownership rules.
 2. Replace the lightweight YAML subset parser with a full YAML parser in tooling environment.
 3. Split current monolithic pipeline into parser / AST / compiler / validator / indexer / renderer modules.
-4. Implement full table schemas for flags, signals, quests, items, rules, strings, NPCs, audio, scenes.
+4. Keep only minimal registry table schemas for flags, signals, and quest metadata.
 5. Implement complete narrative DSL parser/compiler/validator/source map.
-6. Implement complete quest table + quest DSL compiler/validator/source map.
-7. Implement complete dialogue DSL compiler/validator/source map.
+6. Implement complete quest YAML compiler/validator/source map.
+7. Implement complete dialogue YAML compiler/validator/source map.
 8. Implement compatibility validator against existing runtime JSON contracts.
 9. Implement complete content index and reference scanner.
 10. Implement graph model outputs for narrative, dialogue, quest, signal, and flag graphs.
@@ -1358,13 +1372,13 @@ The recommended implementation order is:
 15. Expand runtime trace to include candidate transition match/block and quest evaluation details.
 16. Connect runtime trace to source map and VS Code source jump.
 17. Add CI and publish workflow.
-18. Gradually migrate real project content from legacy JSON/editor output into authoring DSL and tables.
+18. Gradually migrate real graph content from legacy JSON/editor output into authoring YAML.
 
 ---
 
 ## 26. Migration Strategy
 
-The old editor and new pipeline should coexist during migration.
+The old editor and graph authoring pipeline should coexist during migration.
 
 Rules:
 
@@ -1372,17 +1386,15 @@ Rules:
 - pipeline-owned files should be generated, not hand edited;
 - legacy-owned files should not be overwritten by the pipeline;
 - duplicate runtime IDs across legacy and pipeline output should be errors;
-- migration should happen by content category, not randomly file by file.
+- graph migration should happen by closed content batch, not randomly file by file.
 
 Suggested migration order:
 
-1. flags and signals;
-2. narrative state machines;
-3. quest metadata and quest logic;
-4. dialogue graphs;
-5. items/rules/archives/strings;
-6. scenarios;
-7. scene/hotspot data if needed.
+1. keep flags/signals/quest metadata registries current;
+2. migrate narrative state machines;
+3. migrate dialogue graphs;
+4. migrate quest logic and dependency wrappers;
+5. keep ordinary runtime data such as items/rules/archive/strings/audio/scenes in the existing workflow unless a separate production need appears.
 
 ---
 

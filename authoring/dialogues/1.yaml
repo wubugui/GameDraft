@@ -1,0 +1,13 @@
+id: 1
+kind: dialogueGraph
+entry: start
+nodes:
+  start:
+    type: line
+    speaker:
+      kind: literal
+      name: 旁白
+    text: ''
+    next: end
+  end:
+    type: end

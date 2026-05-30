@@ -13,21 +13,45 @@
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      { "command": "gamedraftAuthoring.openPlannerDashboard", "title": "Game Authoring: Open Planner Dashboard" },
       { "command": "gamedraftAuthoring.build", "title": "Game Authoring: Build Content" },
       { "command": "gamedraftAuthoring.validate", "title": "Game Authoring: Validate Content" },
+      { "command": "gamedraftAuthoring.refreshDiagnostics", "title": "Game Authoring: Refresh Diagnostics" },
       { "command": "gamedraftAuthoring.openReport", "title": "Game Authoring: Open Content Report" },
       { "command": "gamedraftAuthoring.openContentIndex", "title": "Game Authoring: Open Content Index" },
       { "command": "gamedraftAuthoring.openSourceMap", "title": "Game Authoring: Open Source Map" },
+      { "command": "gamedraftAuthoring.openFile", "title": "Game Authoring: Open File" },
+      { "command": "gamedraftAuthoring.showActionSchema", "title": "Game Authoring: Show Action Schema Help" },
+      { "command": "gamedraftAuthoring.pickMapPosition", "title": "Game Authoring: Pick Map Position" },
+      { "command": "gamedraftAuthoring.openReferenceView", "title": "Game Authoring: Open Graph / Reference View" },
+      { "command": "gamedraftAuthoring.showSignalFlow", "title": "Game Authoring: Show Signal Flow" },
+      { "command": "gamedraftAuthoring.showFlagReadWrite", "title": "Game Authoring: Show Flag Read/Write" },
+      { "command": "gamedraftAuthoring.showQuestDependency", "title": "Game Authoring: Show Quest Dependency" },
+      { "command": "gamedraftAuthoring.showDialogueRouteExplain", "title": "Game Authoring: Show Dialogue Route Explain" },
+      { "command": "gamedraftAuthoring.showRuntimeTraceTimeline", "title": "Game Authoring: Show Runtime Trace Timeline" },
+      { "command": "gamedraftAuthoring.pickSpatialField", "title": "Game Authoring: Pick Spatial Field (auto-detect)" },
+      { "command": "gamedraftAuthoring.pickPolygon", "title": "Game Authoring: Edit Polygon" },
+      { "command": "gamedraftAuthoring.pickRoute", "title": "Game Authoring: Edit Patrol Route" },
+      { "command": "gamedraftAuthoring.pickSpawn", "title": "Game Authoring: Pick Spawn Point" },
+      { "command": "gamedraftAuthoring.pickZone", "title": "Game Authoring: Pick Zone" },
+      { "command": "gamedraftAuthoring.pickEntity", "title": "Game Authoring: Pick Entity" },
       { "command": "gamedraftAuthoring.runtimeTraceHelp", "title": "Game Authoring: Runtime Trace Help" }
     ]
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "install:local": "vsce package && code --install-extension gamedraft-authoring-tools-0.1.0.vsix --force",
+    "test": "tsc -p ./ && node --test dist/spatial/fieldResolver.test.js dist/spatial/yamlBlock.test.js dist/spatial/sceneGeometry.test.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.7.1",
     "typescript": "^5.9.3"
   }
 }

@@ -19,6 +19,12 @@
       "command": ".\\.tools\\Python311\\python.exe -m tools.content_pipeline watch",
       "isBackground": true,
       "problemMatcher": "$gameContent"
+    },
+    {
+      "label": "vscode-authoring:compile",
+      "type": "shell",
+      "command": "npm --prefix tools\\vscode-game-authoring run compile",
+      "problemMatcher": "$tsc"
     }
   ]
 }

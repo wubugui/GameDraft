@@ -1,0 +1,20 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "d:\\GameDraft\\logs\\.3e8372a3b354d28fb17379f86ee5420eec8b8213-audit.json",
+    "files": [
+        {
+            "date": 1780065354801,
+            "name": "d:\\GameDraft\\logs\\mcp-puppeteer-2026-05-29.log",
+            "hash": "6406008c47249d5836fa30dd8497659e2e15289460f1d3382234ecb61b0030d2"
+        },
+        {
+            "date": 1780073380949,
+            "name": "d:\\GameDraft\\logs\\mcp-puppeteer-2026-05-30.log",
+            "hash": "b4aa3f3080ffd5c3fcc9a378db1dae9e174bd859aae48f0216d616115c35ad55"
+        }
+    ],
+    "hashType": "sha256"
+}

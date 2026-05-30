@@ -1,0 +1,66 @@
+name: Content toolchain
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: content-toolchain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build content
+        run: python3 -m tools.content_pipeline build
+
+      - name: Export diagnostics
+        run: python3 -m tools.content_pipeline diagnostics-json
+
+      - name: Simulate content
+        run: python3 -m tools.content_pipeline simulate
+
+      - name: Runtime compatibility
+        run: python3 -m tools.content_pipeline runtime-compatibility
+
+      - name: LSP smoke
+        run: python3 -m tools.content_pipeline lsp-smoke
+
+      - name: Content pipeline tests
+        run: python3 -m unittest tools.content_pipeline.tests.test_cli
+
+      - name: Compile VS Code extension
+        run: npm --prefix tools/vscode-game-authoring run compile
+
+      - name: Upload content artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-toolchain-artifacts
+          path: |
+            artifact/content_pipeline/diagnostics.json
+            artifact/content_pipeline/simulation_result.json
+            artifact/content_pipeline/simulation_report.md
+            artifact/content_pipeline/runtime_compatibility.json
+            artifact/content_pipeline/content_report.md

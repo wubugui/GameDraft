@@ -1,7 +1,8 @@
-"""Authoring content pipeline.
+"""Graph authoring content pipeline.
 
-This package is tooling-only. It compiles authoring tables / DSL into the existing
-runtime JSON contract, while keeping runtime code and runtime JSON schemas unchanged.
+This package is tooling-only. It compiles graph YAML plus minimal registry tables
+into the existing runtime JSON contract, while keeping runtime code and runtime
+JSON schemas unchanged.
 """
 
 __all__ = ["__version__"]

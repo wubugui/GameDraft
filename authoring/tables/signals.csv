@@ -2,3 +2,8 @@ key,owner,meaning,notes
 old_zhou.told_bridge_warning,npc.old_zhou,老周说出桥雾警告,
 player.showed_paper_charm,case.bridge,玩家向相关角色出示纸符,
 quest.bridge_find_source.completed,quest.bridge_find_source,桥雾来源调查完成,
+board_read_done,flow.码头水鬼,码头水鬼流程：码头看板阅读完成,
+entered,flow.码头水鬼,码头水鬼流程：玩家进入水边触发区,
+pull_success,flow.码头水鬼,码头水鬼流程：捞箱小游戏成功,
+ring_taken,npc_ringboy,滚铁环小孩：玩家拿到铁环,
+ring_returned,npc_ringboy,滚铁环小孩：玩家归还铁环,
