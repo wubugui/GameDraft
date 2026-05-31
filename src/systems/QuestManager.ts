@@ -189,6 +189,14 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     return this.questStatus.get(questId) ?? QuestStatus.Inactive;
   }
 
+  debugSetQuestStatus(questId: string, status: QuestStatus | number | string): void {
+    const id = questId.trim();
+    if (!id) return;
+    const normalized = this.normalizeQuestStatus(status);
+    this.questStatus.set(id, normalized);
+    this.syncFlag(id);
+  }
+
   getQuestTitle(questId: string): string | undefined {
     return this.questDefs.get(questId)?.title;
   }
@@ -226,6 +234,17 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   private syncFlag(questId: string): void {
     const status = this.questStatus.get(questId) ?? QuestStatus.Inactive;
     this.flagStore.set(`quest_${questId}_status`, status);
+  }
+
+  private normalizeQuestStatus(status: QuestStatus | number | string): QuestStatus {
+    if (status === QuestStatus.Completed || status === 2 || String(status).toLowerCase() === 'completed') {
+      return QuestStatus.Completed;
+    }
+    const text = String(status).trim().toLowerCase();
+    if (status === QuestStatus.Active || status === 1 || text === 'active' || text === 'accepted') {
+      return QuestStatus.Active;
+    }
+    return QuestStatus.Inactive;
   }
 
   serialize(): object {

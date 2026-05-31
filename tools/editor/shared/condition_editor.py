@@ -1,7 +1,8 @@
-"""热区/任务等条件编辑：多行 flag 条件 + 可选「附加 ConditionExpr」JSON。
+"""热区/任务等条件编辑：多行 flag 条件 + 结构化 ConditionExpr 树。
 
-导出为 `ConditionExpr[]` 语义（组内 AND）。JSON 区可写 scenario/quest 叶子或 all/any/not，
-与运行时 evaluateConditionExpr 一致。下方提供递归「表达式树」编辑 all/any/not 与 quest/scenario 叶子（与运行时一致）。
+导出为 `ConditionExpr[]` 语义（组内 AND）。递归「表达式树」负责编辑
+all/any/not 与 flag/quest/scenario/scenarioLine 叶子（与运行时一致）。
+原始 JSON 粘贴区只保留为专家兜底，不作为常规填写入口。
 """
 from __future__ import annotations
 
@@ -162,15 +163,15 @@ class ConditionEditor(QWidget):
         root.addWidget(QLabel("<b>表达式树（与上行 flag 条件组内 AND）</b>"))
         root.addWidget(self._tree_root, stretch=1)
 
-        ej = QLabel("专家：附加 ConditionExpr（JSON，可选；与树二选一导出时优先树）")
+        ej = QLabel("专家兜底：原始 ConditionExpr 粘贴区（通常不用；表达式树优先）")
         ej.setToolTip(
-            "单个对象如 {\"scenario\":\"…\",\"phase\":\"…\",\"status\":\"done\"}；"
-            "或多个的数组。与上方 flag 行语义为组内 AND。",
+            "遇到未来新增条件类型且树暂未支持时可临时粘贴；"
+            "单个对象或对象数组均可。与上方 flag 行语义为组内 AND。",
         )
         root.addWidget(ej)
         self._extra_json = QPlainTextEdit()
         self._extra_json.setPlaceholderText(
-            "例如 {\"scenario\":\"码头水鬼\",\"phase\":\"看板初读\",\"status\":\"done\"}",
+            "通常留空。仅临时兼容未来新增 ConditionExpr 形状。",
         )
         self._extra_json.setMinimumHeight(180)
         self._extra_json.setMaximumHeight(380)

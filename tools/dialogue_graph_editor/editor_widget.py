@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QSplitter, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout,
     QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel, QLineEdit,
-    QPlainTextEdit, QFormLayout, QScrollArea, QGroupBox, QInputDialog,
+    QFormLayout, QScrollArea, QGroupBox, QInputDialog,
     QMenu, QCompleter, QDialog, QSizePolicy, QComboBox, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel, QSettings
@@ -74,9 +74,6 @@ def _graph_form_label(text: str, tip: str | None = None, *, max_w: int = 100) ->
         lb.setToolTip(tip)
     return lb
 
-_GRAPH_PRE_FLAG_KEYS = frozenset({"flag", "op", "value"})
-
-
 class _NodeDataChangedCmd(QUndoCommand):
     """Snapshot-based undo for inspector edits. Merges consecutive edits to the same node."""
 
@@ -107,24 +104,25 @@ class _NodeDataChangedCmd(QUndoCommand):
         self._model.set_node(self._nid, copy.deepcopy(self._old))
 
 
-def _split_graph_preconditions(pre: object) -> tuple[list[dict[str, Any]], list[Any]]:
+def _graph_preconditions_for_editor(pre: object) -> list[dict[str, Any]]:
+    return _split_graph_preconditions_for_editor(pre)[0]
+
+
+def _split_graph_preconditions_for_editor(pre: object) -> tuple[list[dict[str, Any]], list[Any]]:
     if pre is None:
         return [], []
+    if isinstance(pre, dict):
+        return [pre], []
     if not isinstance(pre, list):
-        # 非数组的 preconditions 整段放入附加 JSON，避免加载后静默丢失
         return [], [pre]
-    flags: list[dict[str, Any]] = []
-    extra: list[Any] = []
-    for c in pre:
-        if (
-            isinstance(c, dict)
-            and "flag" in c
-            and set(c.keys()) <= _GRAPH_PRE_FLAG_KEYS
-        ):
-            flags.append(dict(c))
+    editable: list[dict[str, Any]] = []
+    unknown: list[Any] = []
+    for item in pre:
+        if isinstance(item, dict):
+            editable.append(dict(item))
         else:
-            extra.append(c)
-    return flags, extra
+            unknown.append(copy.deepcopy(item))
+    return editable, unknown
 
 
 class DialogueGraphEditorWidget(QWidget):
@@ -369,17 +367,13 @@ class DialogueGraphEditorWidget(QWidget):
         self._btn_pick_entry.clicked.connect(self._on_pick_entry_clicked)
         self._edit_title = QLineEdit()
         self._pre_cond_ed = ConditionEditor(
-            "preconditions（flag 条件）",
+            "preconditions（结构化条件）",
             parent=self,
-            hint="仅含 flag / op / value 的条目用下表编辑；其余形状保留在「附加 JSON」并与上表合并保存。",
+            hint="用 flag 行和表达式树编辑；quest / scenario / scenarioLine / all / any / not 不需要手写 JSON。",
         )
         self._pre_cond_ed.setMinimumHeight(160)
         self._pre_cond_ed.changed.connect(self._on_graph_meta_changed)
-        self._edit_pre_extra = QPlainTextEdit()
-        self._edit_pre_extra.setPlaceholderText(
-            '附加条件 JSON 数组，例如含 quest 的项；可为空。例：[{"quest":"q1","questStatus":"Active"}]'
-        )
-        self._edit_pre_extra.setMaximumHeight(120)
+        self._pre_unknown_preconditions: list[Any] = []
         erow = QHBoxLayout()
         erow.addWidget(self._edit_entry)
         erow.addWidget(self._btn_pick_entry)
@@ -426,13 +420,6 @@ class DialogueGraphEditorWidget(QWidget):
             self._meta_scenario_row,
         )
         gform.addRow(QLabel(), self._pre_cond_ed)
-        gform.addRow(
-            _graph_form_label(
-                "附加 JSON",
-                tip="preconditions 中无法用 flag 表表达的项（如 quest），JSON 数组；与上表合并保存",
-            ),
-            self._edit_pre_extra,
-        )
         rv.addWidget(self._graph_prop_body)
         self._collapse_graph_prop_panel()
 
@@ -441,12 +428,8 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_entry,
             self._edit_title,
         ):
-            if isinstance(w, QPlainTextEdit):
-                w.textChanged.connect(self._on_graph_meta_changed)
-            else:
-                w.textChanged.connect(self._on_graph_meta_changed)
+            w.textChanged.connect(self._on_graph_meta_changed)
         self._edit_meta_scenario.currentTextChanged.connect(self._on_graph_meta_changed)
-        self._edit_pre_extra.textChanged.connect(self._on_graph_meta_changed)
 
         self._inspector = NodeInspector(
             self._node_ids_sorted,
@@ -1104,7 +1087,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._widgets_to_data_meta()
         except json.JSONDecodeError as e:
             QMessageBox.critical(
-                self, "保存失败", f"附加 preconditions（JSON）解析失败：{e}"
+                self, "保存失败", f"preconditions 条件解析失败：{e}"
             )
             return False
         except ValueError as e:
@@ -1153,7 +1136,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._flush_current_inspector_to_data()
         except json.JSONDecodeError as e:
             QMessageBox.critical(
-                self, "重命名图", f"附加 preconditions（JSON）解析失败：{e}"
+                self, "重命名图", f"preconditions 条件解析失败：{e}"
             )
             return
         except ValueError as e:
@@ -1257,7 +1240,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._widgets_to_data_meta()
             self._flush_current_inspector_to_data()
         except json.JSONDecodeError as e:
-            QMessageBox.critical(self, "校验", f"附加 preconditions（JSON）：{e}")
+            QMessageBox.critical(self, "校验", f"preconditions 条件解析失败：{e}")
             return
         except ValueError as e:
             QMessageBox.critical(self, "校验", str(e))
@@ -2041,7 +2024,6 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_graph_id,
             self._edit_entry,
             self._edit_title,
-            self._edit_pre_extra,
         ):
             w.blockSignals(True)
         self._edit_meta_scenario.blockSignals(True)
@@ -2055,27 +2037,18 @@ class DialogueGraphEditorWidget(QWidget):
             self._refresh_meta_scenario_combo()
             self._set_meta_scenario_value(saved_sc)
             pre = self._data.get("preconditions")
-            flag_part, extra_part = _split_graph_preconditions(pre)
+            editable_pre, unknown_pre = _split_graph_preconditions_for_editor(pre)
+            self._pre_unknown_preconditions = copy.deepcopy(unknown_pre)
             self._pre_cond_ed.set_flag_pattern_context(
                 self._get_project_model_for_inspector(), None
             )
-            self._pre_cond_ed.set_data(flag_part)
-            if not extra_part:
-                self._edit_pre_extra.setPlainText("")
-            else:
-                try:
-                    self._edit_pre_extra.setPlainText(
-                        json.dumps(extra_part, ensure_ascii=False, indent=2)
-                    )
-                except (TypeError, ValueError):
-                    self._edit_pre_extra.setPlainText(str(extra_part))
+            self._pre_cond_ed.set_data(editable_pre)
         finally:
             self._pre_cond_ed.blockSignals(False)
             for w in (
                 self._edit_graph_id,
                 self._edit_entry,
                 self._edit_title,
-                self._edit_pre_extra,
             ):
                 w.blockSignals(False)
             self._edit_meta_scenario.blockSignals(False)
@@ -2119,14 +2092,9 @@ class DialogueGraphEditorWidget(QWidget):
         if scenario_id:
             meta["scenarioId"] = scenario_id
         patch["meta"] = meta
-        merged: list[Any] = list(self._pre_cond_ed.to_list())
-        raw_ex = self._edit_pre_extra.toPlainText().strip()
-        if raw_ex:
-            extra = json.loads(raw_ex)
-            if not isinstance(extra, list):
-                raise ValueError("附加 preconditions 必须是 JSON 数组")
-            merged.extend(extra)
-        patch["preconditions"] = merged
+        merged_preconditions = list(self._pre_cond_ed.to_list())
+        merged_preconditions.extend(copy.deepcopy(self._pre_unknown_preconditions))
+        patch["preconditions"] = merged_preconditions
         self._model.apply_meta_patch(patch)
         self._sync_scenario_catalog_for_graph_meta(old_graph_id)
 
@@ -2622,7 +2590,7 @@ class DialogueGraphEditorWidget(QWidget):
             self._flush_current_inspector_to_data()
         except json.JSONDecodeError as e:
             QMessageBox.critical(
-                self, "保存失败", f"附加 preconditions（JSON）解析失败：{e}"
+                self, "保存失败", f"preconditions 条件解析失败：{e}"
             )
             return False
         except ValueError as e:

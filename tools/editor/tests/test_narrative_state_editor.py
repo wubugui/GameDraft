@@ -20,9 +20,14 @@ from tools.editor.editors.narrative_state_editor import (
     derive_projection,
     validate_narrative_graphs,
 )
+from tools.editor.shared.action_editor import ACTION_TYPES, CONTENT_ACTION_TYPES
 
 
 class TestNarrativeStateEditor(unittest.TestCase):
+    def test_set_narrative_state_is_schema_known_but_hidden_from_content_picker(self) -> None:
+        self.assertIn("setNarrativeState", ACTION_TYPES)
+        self.assertNotIn("setNarrativeState", CONTENT_ACTION_TYPES)
+
     def test_wrapper_owner_registry_covers_valid_types(self) -> None:
         self.assertEqual(
             set(WRAPPER_OWNER_CATALOG_KEYS) | {"system"},
@@ -540,7 +545,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
                 for e in projection["stateCommandEdges"]
             ))
 
-    def test_validate_reports_unbound_wrapper_and_duplicate_owner_as_errors(self) -> None:
+    def test_validate_reports_unbound_wrapper_as_error_and_duplicate_owner_as_warning(self) -> None:
         issues = validate_narrative_graphs({
             "schemaVersion": 2,
             "compositions": [
@@ -601,8 +606,9 @@ class TestNarrativeStateEditor(unittest.TestCase):
             ],
         })
         error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
+        warning_codes = {issue["code"] for issue in issues if issue["severity"] == "warning"}
         self.assertIn("wrapper.unbound", error_codes)
-        self.assertIn("owner.wrapper.duplicate", error_codes)
+        self.assertIn("owner.wrapper.multi", warning_codes)
         wrapper_issue = next(issue for issue in issues if issue["code"] == "wrapper.unbound")
         self.assertEqual(
             wrapper_issue.get("target"),

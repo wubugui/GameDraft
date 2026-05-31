@@ -117,6 +117,37 @@ export class ScenarioStateManager implements IGameSystem {
     this.byScenario.delete(sid);
   }
 
+  debugSetScenarioLineLifecycle(scenarioId: string, state: ScenarioLineLifecycleState): void {
+    const sid = scenarioId.trim();
+    if (!sid) return;
+    if (state === 'inactive') {
+      this.lineLifecycleByScenario.delete(sid);
+      return;
+    }
+    this.lineLifecycleByScenario.set(sid, state);
+  }
+
+  debugSetScenarioPhase(
+    scenarioId: string,
+    phase: string,
+    payload: { status: string; outcome?: string | number | boolean | null },
+  ): void {
+    const sid = scenarioId.trim();
+    const ph = phase.trim();
+    const status = payload.status.trim();
+    if (!sid || !ph || !status) return;
+    let m = this.byScenario.get(sid);
+    if (!m) {
+      m = new Map();
+      this.byScenario.set(sid, m);
+    }
+    const cur = m.get(ph) ?? { status: 'pending' };
+    m.set(ph, {
+      status,
+      outcome: payload.outcome !== undefined ? payload.outcome : cur.outcome,
+    });
+  }
+
   /**
    * 本 scenario 是否尚无任意 phase 的持久化条目（进线前 / 进线后）。
    */

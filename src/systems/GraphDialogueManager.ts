@@ -276,6 +276,22 @@ export class GraphDialogueManager implements IGameSystem {
     return this.active;
   }
 
+  getDebugInteractionState(): {
+    active: boolean;
+    graphSourceId: string;
+    currentNodeId: string;
+    choiceStage: 'none' | 'prompt' | 'options';
+    awaitingLineDismiss: boolean;
+  } {
+    return {
+      active: this.active,
+      graphSourceId: this.graphSourceId,
+      currentNodeId: this.currentNodeId,
+      choiceStage: this.choicePhase?.stage ?? 'none',
+      awaitingLineDismiss: this.awaitingLineDismiss,
+    };
+  }
+
   /** startDialogueGraph 传入的 npcId（trim）；未开图对话时为空串。供 playScriptedDialogue 的 {{npc}} 解析。 */
   getContextNpcId(): string {
     return this.npcId.trim();
@@ -446,6 +462,59 @@ export class GraphDialogueManager implements IGameSystem {
       this.pushNarrativeRouteStep(this.currentNodeId);
       await this.advanceCore();
     });
+  }
+
+  async debugAdvanceUntilBlocking(maxSteps: number = 24): Promise<{
+    steps: number;
+    active: boolean;
+    currentNodeId: string;
+    choiceStage: 'none' | 'prompt' | 'options';
+  }> {
+    const limit = Math.max(1, Math.min(200, Math.trunc(maxSteps || 24)));
+    let steps = 0;
+    for (let i = 0; i < limit; i++) {
+      const before = this.getDebugInteractionState();
+      if (!before.active || before.choiceStage === 'options') break;
+      await this.advance();
+      steps += 1;
+      const after = this.getDebugInteractionState();
+      if (!after.active || after.choiceStage === 'options') break;
+      if (
+        after.currentNodeId === before.currentNodeId &&
+        after.choiceStage === before.choiceStage &&
+        after.awaitingLineDismiss === before.awaitingLineDismiss
+      ) {
+        break;
+      }
+    }
+    const finalState = this.getDebugInteractionState();
+    return {
+      steps,
+      active: finalState.active,
+      currentNodeId: finalState.currentNodeId,
+      choiceStage: finalState.choiceStage,
+    };
+  }
+
+  async debugChooseOption(params: { index?: number; text?: string }): Promise<boolean> {
+    if (!this.active || !this.graph) return false;
+    if (this.choicePhase?.stage === 'prompt') {
+      await this.advance();
+    }
+    if (!this.active || !this.graph || this.choicePhase?.stage !== 'options') return false;
+    const node = this.graph.nodes[this.choicePhase.nodeId];
+    if (!node || node.type !== 'choice') return false;
+    const choices = this.buildChoicesForNode(node);
+    let index = Number.isFinite(params.index) ? Math.trunc(params.index as number) : -1;
+    if (index < 0 && params.text?.trim()) {
+      const needle = this.normalizeChoiceText(params.text);
+      const exact = choices.find((choice) => this.normalizeChoiceText(choice.text) === needle && choice.enabled);
+      const partial = exact ?? choices.find((choice) => this.normalizeChoiceText(choice.text).includes(needle) && choice.enabled);
+      index = partial?.index ?? -1;
+    }
+    if (index < 0 || index >= choices.length || !choices[index]?.enabled) return false;
+    await this.chooseOption(index);
+    return true;
   }
 
   endDialogue(): void {
@@ -667,6 +736,10 @@ export class GraphDialogueManager implements IGameSystem {
       return s.get('dialogue', 'choiceNeedCoins', { amount: args.costAmount });
     }
     return undefined;
+  }
+
+  private normalizeChoiceText(text: string): string {
+    return this.r(text).replace(/\s+/g, '').trim().toLowerCase();
   }
 
   private evalSwitch(node: Extract<DialogueGraphNodeDef, { type: 'switch' }>): string {

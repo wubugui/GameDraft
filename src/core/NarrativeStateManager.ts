@@ -154,6 +154,38 @@ export interface NarrativeRuntimeIssue {
   transitionId?: string;
 }
 
+export type NarrativeTraceEventType =
+  | 'signal.received'
+  | 'signal.ignored'
+  | 'signal.broadcast'
+  | 'signal.processed'
+  | 'trigger.enqueued'
+  | 'trigger.start'
+  | 'trigger.end'
+  | 'transition.applied'
+  | 'state.command'
+  | 'state.changed'
+  | 'reactive.queued'
+  | 'actions.start'
+  | 'actions.end'
+  | 'actions.failed'
+  | 'issue';
+
+export interface NarrativeTraceEvent {
+  seq: number;
+  at: number;
+  type: NarrativeTraceEventType;
+  graphId?: string;
+  stateId?: string;
+  transitionId?: string;
+  triggerKey?: string;
+  from?: string;
+  to?: string;
+  label?: string;
+  message?: string;
+  payload?: Record<string, unknown>;
+}
+
 export type NarrativeRuntimeValidationMode = 'off' | 'warn' | 'throw';
 
 export class NarrativeStateManager implements IGameSystem {
@@ -173,9 +205,12 @@ export class NarrativeStateManager implements IGameSystem {
   private destroyed = false;
   private recentTransitions: NarrativeTransitionRecord[] = [];
   private recentIssues: NarrativeRuntimeIssue[] = [];
+  private recentTrace: NarrativeTraceEvent[] = [];
+  private traceSeq = 0;
   private primaryOwnerWarningKeys: Set<string> = new Set();
   private validationMode: NarrativeRuntimeValidationMode = this.defaultRuntimeValidationMode();
   private static readonly MAX_DRAIN_STEPS = 128;
+  private static readonly MAX_TRACE_EVENTS = 160;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -328,11 +363,23 @@ export class NarrativeStateManager implements IGameSystem {
 
   emitNarrativeSignal(signal: NarrativeSignal): Promise<void> {
     const clean = this.normalizeSignal(signal);
-    if (!clean) return Promise.resolve();
-    if (clean.key === NarrativeStateManager.DEFAULT_DRAFT_SIGNAL) {
-      console.warn('NarrativeStateManager: refusing to emit draft signal');
+    if (!clean) {
+      this.recordTrace('signal.ignored', { message: 'invalid signal', payload: { raw: signal as unknown as Record<string, unknown> } });
       return Promise.resolve();
     }
+    if (clean.key === NarrativeStateManager.DEFAULT_DRAFT_SIGNAL) {
+      console.warn('NarrativeStateManager: refusing to emit draft signal');
+      this.recordTrace('signal.ignored', {
+        triggerKey: clean.key,
+        message: 'refusing to emit draft signal',
+        payload: { source: clean.source },
+      });
+      return Promise.resolve();
+    }
+    this.recordTrace('signal.received', {
+      triggerKey: clean.key,
+      payload: { source: clean.source },
+    });
     return this.enqueue({ kind: 'external', key: clean.key, source: clean.source });
   }
 
@@ -348,6 +395,11 @@ export class NarrativeStateManager implements IGameSystem {
     if (!gid || !sid) return Promise.resolve();
     const message = `NarrativeStateManager: debugSetNarrativeState bypasses transitions and should only be used for debug/repair: ${gid}.${sid}`;
     this.recordIssue({ severity: 'warning', code: 'stateCommand.debugOnly', message, graphId: gid, stateId: sid });
+    this.recordTrace('state.command', {
+      graphId: gid,
+      stateId: sid,
+      message: 'debugSetNarrativeState requested',
+    });
     console.warn(message);
     return this.enqueue({ kind: 'setState', graphId: gid, stateId: sid });
   }
@@ -397,8 +449,14 @@ export class NarrativeStateManager implements IGameSystem {
       owners: ownerIndex,
       recentTransitions: this.recentTransitions.slice(-20),
       recentIssues: this.recentIssues.slice(-20),
+      recentTrace: this.recentTrace.slice(-80),
+      traceLength: this.recentTrace.length,
       queued: this.queue.length,
     };
+  }
+
+  clearDebugTrace(): void {
+    this.recentTrace = [];
   }
 
   private ownerKey(ownerType: string, ownerId: string | undefined): string {
@@ -450,6 +508,7 @@ export class NarrativeStateManager implements IGameSystem {
     const queued = new Promise<void>((resolve, reject) => {
       this.queue.push({ trigger, resolve, reject });
     });
+    this.recordTrace('trigger.enqueued', this.tracePatchForTrigger(trigger));
     if (!this.draining) {
       const drain = this.drainQueue();
       this.drainPromise = drain.finally(() => {
@@ -525,6 +584,7 @@ export class NarrativeStateManager implements IGameSystem {
   private async processQueueItem(item: QueuedItem): Promise<void> {
     const trigger = item.trigger;
     try {
+      this.recordTrace('trigger.start', this.tracePatchForTrigger(trigger));
       if (trigger.kind === 'setState') {
         await this.applyStateCommand(trigger.graphId, trigger.stateId);
       } else if (trigger.kind === 'reactive') {
@@ -532,8 +592,13 @@ export class NarrativeStateManager implements IGameSystem {
       } else {
         await this.processTrigger(NarrativeStateManager.normalizeTriggerKey(trigger.key));
       }
+      this.recordTrace('trigger.end', this.tracePatchForTrigger(trigger));
       this.completedQueueItems.push(item);
     } catch (e) {
+      this.recordTrace('issue', {
+        message: `trigger failed: ${e instanceof Error ? e.message : String(e)}`,
+        payload: { trigger },
+      });
       item.reject(e);
       throw e;
     }
@@ -542,6 +607,7 @@ export class NarrativeStateManager implements IGameSystem {
   private async processTrigger(triggerKey: NarrativeTriggerKey): Promise<void> {
     const migratedGraphs = new Set<string>();
     const graphEntries = [...this.graphs.entries()];
+    const matchedGraphIds: string[] = [];
     for (const [graphId, graph] of graphEntries) {
       if (migratedGraphs.has(graphId)) continue;
       const active = this.activeStates.get(graphId) ?? graph.initialState;
@@ -566,7 +632,13 @@ export class NarrativeStateManager implements IGameSystem {
       if (!selected) continue;
       await this.applyTransition(graph, selected, triggerKey);
       migratedGraphs.add(graphId);
+      matchedGraphIds.push(graphId);
     }
+    this.recordTrace('signal.processed', {
+      triggerKey,
+      payload: { matchedGraphIds },
+      message: matchedGraphIds.length ? `matched ${matchedGraphIds.length} graph(s)` : 'no matching transition',
+    });
   }
 
   private conditionsMet(conditions: ConditionExpr[] | undefined): boolean {
@@ -606,6 +678,11 @@ export class NarrativeStateManager implements IGameSystem {
         });
       const selected = candidates[0]?.t;
       if (!selected) continue;
+      this.recordTrace('reactive.queued', {
+        graphId,
+        transitionId: selected.id,
+        triggerKey: '__reactive__',
+      });
       this.queue.push({
         trigger: { kind: 'reactive', graphId, transitionId: selected.id },
         resolve: () => {},
@@ -652,16 +729,19 @@ export class NarrativeStateManager implements IGameSystem {
     if (!graph || !graph.states[stateId]) {
       const message = `NarrativeStateManager: setState target missing ${graphId}.${stateId}`;
       this.recordIssue({ severity: 'warning', code: 'setState.target.missing', message, graphId, stateId });
+      this.recordTrace('state.command', { graphId, stateId, message: 'target missing' });
       console.warn(message);
       return;
     }
     if (!this.canRemoteEnterState(graph, stateId)) {
       const message = `NarrativeStateManager: setState target violates scenario boundary ${graphId}.${stateId}`;
       this.recordIssue({ severity: 'error', code: 'scenario.boundary.stateCommand', message, graphId, stateId });
+      this.recordTrace('state.command', { graphId, stateId, message: 'scenario boundary rejected' });
       console.warn(message);
       return;
     }
     const from = this.activeStates.get(graphId) ?? graph.initialState;
+    this.recordTrace('state.command', { graphId, stateId, from, to: stateId, message: 'applying debug state command' });
     await this.enterState(graph, from, stateId, `setState:${graphId}:${stateId}`);
   }
 
@@ -701,9 +781,23 @@ export class NarrativeStateManager implements IGameSystem {
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
     await this.runActions(fromState?.onExitActions, `${graph.id}.${fromStateId}.onExit`);
+    this.recordTrace('transition.applied', {
+      graphId: graph.id,
+      transitionId,
+      triggerKey,
+      from: fromStateId,
+      to: toStateId,
+    });
     this.activeStates.set(graph.id, toStateId);
     this.recentTransitions.push({ graphId: graph.id, transitionId, from: fromStateId, to: toStateId, triggerKey });
     if (this.recentTransitions.length > 50) this.recentTransitions.splice(0, this.recentTransitions.length - 50);
+    this.recordTrace('state.changed', {
+      graphId: graph.id,
+      transitionId,
+      triggerKey,
+      from: fromStateId,
+      to: toStateId,
+    });
     this.eventBus.emit('narrative:stateChanged', {
       graphId: graph.id,
       from: fromStateId,
@@ -722,6 +816,12 @@ export class NarrativeStateManager implements IGameSystem {
     if (this.destroyed) return;
     const key = NarrativeStateManager.stateEnteredSignalKey(graphId, stateId);
     const source: NarrativeSignal = { signal: key, sourceType: 'state', sourceId: graphId };
+    this.recordTrace('signal.broadcast', {
+      graphId,
+      stateId,
+      triggerKey: key,
+      payload: { source },
+    });
     this.queue.push({ trigger: { kind: 'external', key, source }, resolve: () => {}, reject: () => {} });
     if (this.draining && this.runningActionsDepth > 0) {
       void this.drainNestedQueue();
@@ -741,10 +841,23 @@ export class NarrativeStateManager implements IGameSystem {
   private async runActions(actions: ActionDef[] | undefined, label: string): Promise<void> {
     if (!actions?.length) return;
     try {
+      this.recordTrace('actions.start', {
+        label,
+        payload: { count: actions.length, types: actions.map((action) => action.type) },
+      });
       this.runningActionsDepth += 1;
       await this.actionExecutor.executeBatchAwait(actions);
+      this.recordTrace('actions.end', {
+        label,
+        payload: { count: actions.length },
+      });
     } catch (e) {
       console.warn(`NarrativeStateManager: lifecycle actions failed at ${label}`, e);
+      this.recordTrace('actions.failed', {
+        label,
+        message: e instanceof Error ? e.message : String(e),
+        payload: { count: actions.length },
+      });
     } finally {
       this.runningActionsDepth = Math.max(0, this.runningActionsDepth - 1);
     }
@@ -767,6 +880,49 @@ export class NarrativeStateManager implements IGameSystem {
   private recordIssue(issue: NarrativeRuntimeIssue): void {
     this.recentIssues.push(issue);
     if (this.recentIssues.length > 50) this.recentIssues.splice(0, this.recentIssues.length - 50);
+    this.recordTrace('issue', {
+      graphId: issue.graphId,
+      stateId: issue.stateId,
+      transitionId: issue.transitionId,
+      message: issue.message,
+      payload: { severity: issue.severity, code: issue.code },
+    });
+  }
+
+  private recordTrace(type: NarrativeTraceEventType, patch: Partial<NarrativeTraceEvent> = {}): void {
+    const event: NarrativeTraceEvent = {
+      seq: ++this.traceSeq,
+      at: Date.now(),
+      type,
+      ...patch,
+    };
+    this.recentTrace.push(event);
+    if (this.recentTrace.length > NarrativeStateManager.MAX_TRACE_EVENTS) {
+      this.recentTrace.splice(0, this.recentTrace.length - NarrativeStateManager.MAX_TRACE_EVENTS);
+    }
+  }
+
+  private tracePatchForTrigger(trigger: QueuedTrigger): Partial<NarrativeTraceEvent> {
+    if (trigger.kind === 'external') {
+      return {
+        triggerKey: trigger.key,
+        payload: { kind: trigger.kind, source: trigger.source },
+      };
+    }
+    if (trigger.kind === 'setState') {
+      return {
+        graphId: trigger.graphId,
+        stateId: trigger.stateId,
+        triggerKey: `setState:${trigger.graphId}:${trigger.stateId}`,
+        payload: { kind: trigger.kind },
+      };
+    }
+    return {
+      graphId: trigger.graphId,
+      transitionId: trigger.transitionId,
+      triggerKey: '__reactive__',
+      payload: { kind: trigger.kind },
+    };
   }
 
   private isDevRuntime(): boolean {

@@ -399,6 +399,49 @@ class OwnerContextNodeTests(unittest.TestCase):
 
         inspector.deleteLater()
 
+    def test_switch_condition_expr_uses_structured_tree_not_json_editor(self) -> None:
+        class FakeProjectModel:
+            flag_registry: dict = {}
+
+            def scenario_ids_ordered(self) -> list[str]:
+                return ["scenario_a", "line_a"]
+
+            def phases_for_scenario(self, scenario_id: str) -> list[str]:
+                return ["phase_a"] if scenario_id == "scenario_a" else []
+
+        root = Path(__file__).resolve().parents[3]
+        condition = {
+            "all": [
+                {"quest": "q_bridge", "questStatus": "Active"},
+                {"scenario": "scenario_a", "phase": "phase_a", "status": "done"},
+                {"scenarioLine": "line_a", "lineStatus": "active"},
+                {"not": {"flag": "debug_flag", "op": "!=", "value": False}},
+            ],
+        }
+        inspector = NodeInspector(
+            lambda: ["root", "hit", "fallback"],
+            project_root=root,
+            project_model_getter=lambda: FakeProjectModel(),
+        )
+        inspector.set_node(
+            "root",
+            {
+                "type": "switch",
+                "cases": [{"condition": condition, "next": "hit"}],
+                "defaultNext": "fallback",
+            },
+        )
+
+        refs = inspector._topology_refs
+        case = refs["case_rows"][0]
+        self.assertIn("expr_tree", case)
+        self.assertNotIn("expr_edit", case)
+        node = inspector.get_node()
+        self.assertEqual(node["cases"][0]["condition"], condition)
+        self.assertNotIn("conditions", node["cases"][0])
+
+        inspector.deleteLater()
+
     def test_owner_state_inspector_persists_wrapper_graph_id(self) -> None:
         root = Path(__file__).resolve().parents[3]
         inspector = NodeInspector(

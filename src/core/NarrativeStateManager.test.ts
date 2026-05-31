@@ -78,6 +78,53 @@ describe('NarrativeStateManager', () => {
     expect(narrative.getActiveState('npc')).toBe('after');
   });
 
+  it('records a structured runtime trace for signals, transitions, actions, and broadcasts', async () => {
+    const { actionExecutor, flagStore, narrative } = makeRuntime();
+    actionExecutor.register('markTraceAction', () => {
+      flagStore.set('trace.action', true);
+    }, []);
+    narrative.registerGraphs([
+      {
+        id: 'flow',
+        ownerType: 'flow',
+        initialState: 'initial',
+        states: {
+          initial: { id: 'initial' },
+          done: {
+            id: 'done',
+            broadcastOnEnter: true,
+            onEnterActions: [{ type: 'markTraceAction', params: {} }],
+          },
+        },
+        transitions: [{ id: 'finish', from: 'initial', to: 'done', signal: 'done' }],
+      },
+      {
+        id: 'npc',
+        ownerType: 'npc',
+        initialState: 'before',
+        states: { before: { id: 'before' }, after: { id: 'after' } },
+        transitions: [{ id: 'after', from: 'before', to: 'after', signal: 'state:flow:done' }],
+      },
+    ]);
+
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'done' });
+
+    const snapshot = narrative.debugSnapshot() as { recentTrace: Array<{ type: string; graphId?: string; triggerKey?: string }> };
+    const types = snapshot.recentTrace.map((event) => event.type);
+    expect(types).toContain('signal.received');
+    expect(types).toContain('trigger.enqueued');
+    expect(types).toContain('transition.applied');
+    expect(types).toContain('actions.start');
+    expect(types).toContain('actions.end');
+    expect(types).toContain('signal.broadcast');
+    expect(snapshot.recentTrace.some((event) => event.type === 'transition.applied' && event.graphId === 'npc')).toBe(true);
+
+    narrative.clearDebugTrace();
+    const cleared = narrative.debugSnapshot() as { recentTrace: unknown[]; traceLength: number };
+    expect(cleared.recentTrace).toEqual([]);
+    expect(cleared.traceLength).toBe(0);
+  });
+
   it('does not cascade derived state broadcast when broadcastOnEnter is false', async () => {
     const { narrative } = makeRuntime();
     narrative.registerGraphs([

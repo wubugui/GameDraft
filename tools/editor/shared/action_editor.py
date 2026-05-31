@@ -134,6 +134,9 @@ ACTION_TYPES = [
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
 ]
 
+DEBUG_ONLY_ACTION_TYPES = {"setNarrativeState"}
+CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TYPES]
+
 # 编辑器用：会改动存档/可持久化数据 vs 以运行时演出与瞬时状态为主（与实现细节若有出入以策划理解为准，见文档注释）。
 # "save" = 常关联存档、任务、背包、flag、持久化 override 等；"memory" = 多为镜头、UI、过场、等待、切场景、音效等
 ACTION_PERSISTENCE: dict[str, str] = {
@@ -233,6 +236,12 @@ ACTION_SAVE_DOT_TOOLTIP = (
 
 def action_type_writes_save(type_id: str) -> bool:
     return ACTION_PERSISTENCE.get(type_id) == "save"
+
+
+def _action_type_orphan_label(type_id: str) -> str:
+    if type_id in DEBUG_ONLY_ACTION_TYPES:
+        return f"{type_id}  [仅调试/修复：普通内容不可新建]"
+    return type_id
 
 
 def _assert_action_persistence_covers_types() -> None:
@@ -930,7 +939,8 @@ class ActionTypePickerDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         legend = QLabel(
-            "红圆点仅标「会改存档/可持久化数据」的动作，悬停圆点查看说明；无圆点为偏演出/瞬时/流程类。",
+            "红圆点仅标「会改存档/可持久化数据」的动作，悬停圆点查看说明；"
+            "无圆点为偏演出/瞬时/流程类。仅调试/修复动作不会出现在普通新建列表里。",
             self,
         )
         legend.setWordWrap(True)
@@ -1508,8 +1518,10 @@ class ActionRow(QWidget):
         self._fold_toggle.setToolTip("折叠 / 展开参数区")
         self._fold_toggle.clicked.connect(self._on_fold_clicked)
         top.addWidget(self._fold_toggle)
-        self.type_combo = ActionTypePickerField.from_flat_strings(
-            ACTION_TYPES, parent=self,
+        self.type_combo = ActionTypePickerField(
+            [(t, t) for t in CONTENT_ACTION_TYPES],
+            parent=self,
+            orphan_label=_action_type_orphan_label,
         )
         self._btn_up = QPushButton("\u2191", self)
         self._btn_up.setFixedWidth(24)

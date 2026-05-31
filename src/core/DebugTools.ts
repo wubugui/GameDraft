@@ -349,6 +349,22 @@ export class DebugTools {
           ne && typeof ne.summaryText === 'string' && ne.summaryText.trim()
             ? ne.summaryText.trim()
             : '';
+        const narrativeState = snap.narrativeState as { recentTrace?: unknown[] } | undefined;
+        const recentTrace = Array.isArray(narrativeState?.recentTrace) ? narrativeState.recentTrace.slice(-10) : [];
+        if (recentTrace.length > 0) {
+          narrativeBlock += '\n\n【Runtime Trace】\n' + recentTrace.map((item) => {
+            if (!item || typeof item !== 'object') return String(item ?? '');
+            const event = item as Record<string, unknown>;
+            const seq = event.seq === undefined ? '' : `#${String(event.seq)} `;
+            const type = String(event.type ?? 'trace');
+            const graph = event.graphId ? ` ${String(event.graphId)}` : '';
+            const transition = event.transitionId ? `.${String(event.transitionId)}` : '';
+            const fromTo = event.from || event.to ? ` ${String(event.from ?? '?')} -> ${String(event.to ?? '?')}` : '';
+            const trigger = event.triggerKey ? ` [${String(event.triggerKey)}]` : '';
+            const message = event.message ? ` - ${String(event.message)}` : '';
+            return `${seq}${type}${graph}${transition}${fromTo}${trigger}${message}`;
+          }).join('\n');
+        }
       } catch {
         narrativeBlock = '（快照序列化失败）';
       }

@@ -1368,7 +1368,7 @@ class NodeInspector(QWidget):
         self._body_layout.addWidget(
             QLabel(
                 "分支：自上而下命中第一条。"
-                "每条可选用「多条条件 AND」或「单条 ConditionExpr（JSON，与运行时 evaluateConditionExpr 一致）」；"
+                "每条可选用「多条条件 AND」或「单条结构化 ConditionExpr（与运行时 evaluateConditionExpr 一致）」；"
                 "后者保存时写入 condition字段并优先于 conditions。",
                 self._body,
             ),
@@ -1461,28 +1461,21 @@ class NodeInspector(QWidget):
 
             case_mode = QComboBox(content)
             case_mode.addItem("多条条件（AND）", "and")
-            case_mode.addItem("ConditionExpr（JSON）", "expr")
+            case_mode.addItem("ConditionExpr（结构化）", "expr")
             cm_row = QHBoxLayout()
             cm_row.addWidget(QLabel("本分支条件", content))
             cm_row.addWidget(case_mode, 1)
             cv.addLayout(cm_row)
 
-            expr_edit = QPlainTextEdit(content)
-            expr_edit.setPlaceholderText(
-                '{"all":[...]} / {"scenario":"...","phase":"...","status":"done"} 等',
-            )
-            expr_edit.setMinimumHeight(240)
-            expr_edit.setMaximumHeight(720)
-            expr_edit.setSizePolicy(
-                QSizePolicy.Policy.Expanding,
-                QSizePolicy.Policy.MinimumExpanding,
-            )
-            expr_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            expr_edit.textChanged.connect(self._emit_changed)
-            cv.addWidget(expr_edit)
+            def _pm_get() -> Any:
+                return self._project_model_getter() if self._project_model_getter else None
+
+            expr_tree = ConditionExprTreeRootWidget(content, model_getter=_pm_get)
+            expr_tree.changed.connect(self._emit_changed)
+            cv.addWidget(expr_tree)
 
             btn_and_to_json = QPushButton(
-                "将当前 AND 条件导出为 JSON 并切换到 ConditionExpr", content
+                "将当前 AND 条件转成结构化 ConditionExpr", content
             )
             cv.addWidget(btn_and_to_json)
 
@@ -1997,6 +1990,7 @@ class NodeInspector(QWidget):
 
             def _sync_case_mode_ui() -> None:
                 ex = case_mode.currentData() == "expr"
+                expr_tree.setVisible(ex)
                 and_block.setVisible(not ex)
                 btn_and_to_json.setVisible(not ex)
 
@@ -2010,9 +2004,7 @@ class NodeInspector(QWidget):
             def on_export_and() -> None:
                 conds_part = [r["serialize"]() for r in cond_rows]
                 wrap: dict[str, Any] = {"all": conds_part} if conds_part else {}
-                expr_edit.setPlainText(
-                    json.dumps(wrap, ensure_ascii=False, indent=2),
-                )
+                expr_tree.set_expr(wrap)
                 case_mode.setCurrentIndex(1)
                 _sync_case_mode_ui()
                 update_case_summary()
@@ -2022,12 +2014,9 @@ class NodeInspector(QWidget):
 
             if isinstance(cond_expr_init, dict) and cond_expr_init:
                 case_mode.setCurrentIndex(1)
-                try:
-                    expr_edit.setPlainText(
-                        json.dumps(cond_expr_init, ensure_ascii=False, indent=2),
-                    )
-                except (TypeError, ValueError):
-                    expr_edit.setPlainText("{}")
+                expr_tree.set_expr(cond_expr_init)
+            else:
+                expr_tree.set_expr(None)
 
             _sync_case_mode_ui()
 
@@ -2113,7 +2102,7 @@ class NodeInspector(QWidget):
                     "next_edit": nx,
                     "cond_rows": cond_rows,
                     "case_mode": case_mode,
-                    "expr_edit": expr_edit,
+                    "expr_tree": expr_tree,
                     "btn_up": btn_up,
                     "btn_down": btn_down,
                 }
@@ -2169,20 +2158,10 @@ class NodeInspector(QWidget):
                 next_s = cb["next_edit"].text().strip()
                 cm = cb["case_mode"]
                 if cm.currentData() == "expr":
-                    raw = cb["expr_edit"].toPlainText().strip()
-                    if raw:
-                        try:
-                            obj = json.loads(raw)
-                        except json.JSONDecodeError as e:
-                            QMessageBox.warning(
-                                self,
-                                "switch",
-                                f"分支 next={next_s or '?'} 的 ConditionExpr非合法 JSON：{e}",
-                            )
-                            obj = None
-                        if isinstance(obj, dict) and obj:
-                            cs.append({"next": next_s, "condition": obj})
-                            continue
+                    obj = cb["expr_tree"].get_expr()
+                    if isinstance(obj, dict) and obj:
+                        cs.append({"next": next_s, "condition": obj})
+                        continue
                     cs.append({"next": next_s, "conditions": []})
                 else:
                     conds = [r["serialize"]() for r in cb["cond_rows"]]
@@ -2506,6 +2485,11 @@ class NodeInspector(QWidget):
         self._body_layout.addWidget(hint)
 
         graphs = list_context_readable_graphs(self._project_root)
+        graph_ids = {
+            str(g.get("graphId", "") or "").strip()
+            for g in graphs
+            if str(g.get("graphId", "") or "").strip()
+        }
         gid_cb = QComboBox(self._body)
         gid_cb.setEditable(True)
         gid_cb.addItem("")
@@ -2524,8 +2508,23 @@ class NodeInspector(QWidget):
         self._body_layout.addLayout(row_gid)
 
         def _current_graph_id() -> str:
+            text = gid_cb.currentText().strip()
             data_value = gid_cb.currentData()
-            return str(data_value).strip() if data_value is not None else gid_cb.currentText().strip()
+            data_id = str(data_value).strip() if data_value is not None else ""
+            current_index = gid_cb.currentIndex()
+            current_label = gid_cb.itemText(current_index).strip() if current_index >= 0 else ""
+            if text and text in graph_ids:
+                return text
+            if text and current_index >= 0 and text == current_label and data_id:
+                return data_id
+            if text:
+                for idx in range(gid_cb.count()):
+                    if gid_cb.itemText(idx).strip() == text:
+                        item_data = gid_cb.itemData(idx)
+                        item_id = str(item_data).strip() if item_data is not None else ""
+                        return item_id or text
+                return text
+            return data_id
 
         state_options = graph_states(self._project_root, _current_graph_id())
 

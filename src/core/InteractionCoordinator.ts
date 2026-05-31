@@ -162,6 +162,24 @@ export class InteractionCoordinator {
     }
   }
 
+  async debugTriggerHotspotById(hotspotId: string): Promise<boolean> {
+    const id = hotspotId.trim();
+    if (!id) return false;
+    const hotspot = this.deps.sceneManager.getCurrentHotspots().find((h) => h.def.id === id);
+    if (!hotspot) return false;
+    await this.handleHotspot(hotspot, hotspot.def);
+    return true;
+  }
+
+  async debugInteractNpcById(npcId: string): Promise<boolean> {
+    const id = npcId.trim();
+    if (!id) return false;
+    const npc = this.deps.sceneManager.getNpcById(id);
+    if (!npc) return false;
+    await this.handleNpc(npc);
+    return true;
+  }
+
   private async handleInspect(hotspot: Hotspot, data: InspectData): Promise<void> {
     if (!inspectDataHasInteractablePayload(data)) {
       return;

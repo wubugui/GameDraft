@@ -942,8 +942,8 @@ def derive_projection(data: dict[str, Any], model: ProjectModel) -> dict[str, An
 
 def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
     try:
-        from ..shared.action_editor import ACTION_TYPES, ACTION_PERSISTENCE, _PARAM_SCHEMAS
-        action_types = [str(x) for x in ACTION_TYPES]
+        from ..shared.action_editor import CONTENT_ACTION_TYPES, ACTION_PERSISTENCE, _PARAM_SCHEMAS
+        action_types = [str(x) for x in CONTENT_ACTION_TYPES]
         action_param_schemas = {
             str(k): [[str(name), str(kind)] for name, kind in v]
             for k, v in _PARAM_SCHEMAS.items()
@@ -1448,25 +1448,50 @@ def _validate_state_command_targets(data: dict[str, Any], graph_index: dict[str,
 
 
 def _validate_owner_bindings(data: dict[str, Any], issues: list[dict[str, Any]]) -> None:
-    by_owner: dict[str, list[str]] = {}
+    by_owner: dict[str, list[dict[str, str]]] = {}
     for comp in data.get("compositions", []) or []:
         if not isinstance(comp, dict):
             continue
-        graphs: list[dict[str, Any]] = []
-        if isinstance(comp.get("mainGraph"), dict):
-            graphs.append(comp["mainGraph"])
         for el in comp.get("elements", []) or []:
-            if isinstance(el, dict) and isinstance(el.get("graph"), dict):
-                graphs.append(el["graph"])
-        for graph in graphs:
+            if not isinstance(el, dict) or str(el.get("kind", "")).strip() != "wrapperGraph":
+                continue
+            graph = el.get("graph") if isinstance(el.get("graph"), dict) else {}
             owner_type = str(graph.get("ownerType", "")).strip()
             owner_id = str(graph.get("ownerId", "")).strip()
             gid = str(graph.get("id", "")).strip()
             if owner_type and owner_id and gid:
-                by_owner.setdefault(f"{owner_type}:{owner_id}", []).append(gid)
-    for key, graph_ids in by_owner.items():
-        if len(graph_ids) > 1:
-            _issue(issues, "error", "owner.wrapper.duplicate", f"{key}: 多个 wrapper graph 绑定同一 owner ({', '.join(graph_ids)})", item_id=key)
+                by_owner.setdefault(f"{owner_type}:{owner_id}", []).append({
+                    "graphId": gid,
+                    "category": str(graph.get("category", "") or "").strip(),
+                })
+    for key, wrappers in by_owner.items():
+        if len(wrappers) <= 1:
+            continue
+        graph_ids = [entry["graphId"] for entry in wrappers]
+        _issue(issues, "warning", "owner.wrapper.multi", f"{key}: 多个 wrapper graph 绑定同一 owner ({', '.join(graph_ids)})", item_id=key)
+        missing_category_ids = [entry["graphId"] for entry in wrappers if not entry["category"]]
+        if missing_category_ids:
+            _issue(
+                issues,
+                "warning",
+                "owner.wrapper.category.missing",
+                f"{key}: 多 wrapper 应填写 category 以区分用途（缺少：{', '.join(missing_category_ids)}）",
+                item_id=key,
+            )
+        by_category: dict[str, list[str]] = {}
+        for entry in wrappers:
+            category = entry["category"]
+            if category:
+                by_category.setdefault(category, []).append(entry["graphId"])
+        for category, ids in by_category.items():
+            if len(ids) > 1:
+                _issue(
+                    issues,
+                    "warning",
+                    "owner.wrapper.category.duplicate",
+                    f"{key}: wrapper category {category!r} 被多个 graph 使用（{', '.join(ids)}）",
+                    item_id=key,
+                )
 
 
 def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:

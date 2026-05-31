@@ -31,6 +31,25 @@ def main() -> None:
     import tools.asset_ingest.ingest_window  # noqa: F401
     import tools.filter_tool.paths  # noqa: F401
     import tools.migrate_anim_bundles  # noqa: F401
+    import tools.production_workbench.story_units  # noqa: F401
+    import tools.production_workbench.asset_audit  # noqa: F401
+    import tools.production_workbench.asset_style_sampler  # noqa: F401
+    import tools.production_workbench.asset_candidates  # noqa: F401
+    import tools.production_workbench.asset_output_validation  # noqa: F401
+    import tools.production_workbench.asset_postprocess  # noqa: F401
+    import tools.production_workbench.asset_tasks  # noqa: F401
+    import tools.production_workbench.animation_sheet  # noqa: F401
+    import tools.production_workbench.codex_asset_runner  # noqa: F401
+    import tools.production_workbench.image_tools  # noqa: F401
+    import tools.production_workbench.runtime_command  # noqa: F401
+    import tools.production_workbench.runtime_debug  # noqa: F401
+    import tools.production_workbench.report_log  # noqa: F401
+    import tools.production_workbench.story_acceptance  # noqa: F401
+    import tools.production_workbench.story_acceptance_commands  # noqa: F401
+    import tools.production_workbench.story_acceptance_run  # noqa: F401
+    import tools.production_workbench.daily_check  # noqa: F401
+    import tools.production_workbench.graph_diagnostics  # noqa: F401
+    import tools.production_workbench.workbench_window  # noqa: F401
 
     # video_to_atlas / scene_depth_editor 依赖 numpy/PyOpenGL，
     # 这里只在能导入时做 smoke check

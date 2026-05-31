@@ -241,6 +241,7 @@ class MainWindow(QMainWindow):
         self._act(ext, "Filter Tool", self._launch_filter_tool_external)
         self._act(ext, "Copy Manager", self._launch_copy_manager_external)
         self._act(ext, "Video to Atlas", self._launch_video_to_atlas_external)
+        self._act(ext, "Production Workbench", self._launch_production_workbench_external)
 
         view_menu = mb.addMenu("View")
         ag_theme = QActionGroup(self)
@@ -494,6 +495,17 @@ class MainWindow(QMainWindow):
         ws = ProjectPaths(root.resolve()).default_dir(DIR_KIND_EDITOR_ANIMATION_PROJECT)
         args = [str(ws.resolve())] if (ws / "project.json").is_file() else []
         self._launch_external_tool("tools.video_to_atlas", args, "Video to Atlas", root=root)
+
+    def _launch_production_workbench_external(self) -> None:
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        self._launch_external_tool(
+            "tools.production_workbench",
+            [str(root.resolve())],
+            "Production Workbench",
+            root=root,
+        )
 
     def _clear_editor_stack(self) -> None:
         while self._stack.count():

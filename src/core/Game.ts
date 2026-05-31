@@ -1,5 +1,6 @@
 import { EventBus } from './EventBus';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
+import { applyDevRuntimeCommand } from './devRuntimeCommands';
 import { InputManager } from './InputManager';
 import { AssetManager, type AssetRef } from './AssetManager';
 import { ActionExecutor } from './ActionExecutor';
@@ -66,7 +67,7 @@ import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
 import { ScenarioStateManager } from './ScenarioStateManager';
-import { NarrativeStateManager } from './NarrativeStateManager';
+import { NarrativeStateManager, type NarrativeSignal } from './NarrativeStateManager';
 import { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
@@ -127,6 +128,7 @@ declare global {
       /** 重新打开 Dev Mode 面板（从场景列表跳转后不会自动再开） */
       openDevPanel(): void;
       getNarrativeDebugSnapshot(): Record<string, unknown>;
+      clearNarrativeDebugTrace(): void;
       emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
       debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
       setNarrativeState(graphId: string, stateId: string): Promise<void>;
@@ -224,6 +226,10 @@ export class Game {
   private webglContextLostHandler: ((ev: Event) => void) | null = null;
   private webglContextRestoredHandler: (() => void) | null = null;
   private runtimeDebugLogCleanup: (() => void) | null = null;
+  private runtimeDebugSnapshotTimer: number | null = null;
+  private runtimeCommandPollTimer: number | null = null;
+  private runtimeCommandPollInFlight = false;
+  private lastRuntimeCommandResults: { id: string; type: string; ok: boolean; message: string }[] = [];
 
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
@@ -935,13 +941,7 @@ export class Game {
       clearEntityPixelDensityMatchBlurScaleDebug: () => {
         this.clearEntityPixelDensityMatchBlurScaleDebug();
       },
-      getNarrativeDebugSnapshot: () => ({
-        /** 人类可读的解算路径 + 结构化字段 */
-        narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
-        narrativeState: this.narrativeStateManager.debugSnapshot(),
-        scenarioState: this.scenarioStateManager.serialize(),
-        documentReveals: this.documentRevealManager.debugSnapshot(),
-      }),
+      getNarrativeDebugSnapshot: () => this.buildRuntimeDebugSnapshot('debug-panel'),
       getScenarioDebugPanelRows: (): ScenarioDebugPanelRow[] => this.listScenarioDebugPanelRows(),
       scenarioDebugActivate: (scenarioId) => {
         const id = scenarioId.trim();
@@ -1750,12 +1750,8 @@ export class Game {
       reload: () => this.devReload(),
       isReady: () => true,
       openDevPanel: () => this.devModeUI?.open(),
-      getNarrativeDebugSnapshot: () => ({
-        narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
-        narrativeState: this.narrativeStateManager.debugSnapshot(),
-        scenarioState: this.scenarioStateManager.serialize(),
-        documentReveals: this.documentRevealManager.debugSnapshot(),
-      }),
+      getNarrativeDebugSnapshot: () => this.buildRuntimeDebugSnapshot('dev-api'),
+      clearNarrativeDebugTrace: () => this.narrativeStateManager.clearDebugTrace(),
       emitNarrativeSignal: (signal) => this.narrativeStateManager.emitNarrativeSignal({
         sourceType: String(signal?.sourceType ?? '').trim() as any,
         sourceId: String(signal?.sourceId ?? '').trim(),
@@ -1766,6 +1762,8 @@ export class Game {
       setNarrativeState: (graphId, stateId) =>
         this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
     };
+    this.setupRuntimeDebugSnapshotPublishing();
+    this.setupRuntimeCommandPolling();
 
     if (playCutscene) {
       setTimeout(() => this.devPlayCutscene(playCutscene), 300);
@@ -2300,6 +2298,241 @@ export class Game {
     this.stateController.setState(GameState.Exploring);
   }
 
+  private buildRuntimeDebugSnapshot(reason: string): Record<string, unknown> {
+    return {
+      reason,
+      capturedAt: new Date().toISOString(),
+      currentSceneId: this.sceneManager.currentSceneData?.id ?? null,
+      gameState: this.stateController.currentState,
+      previousGameState: this.stateController.previousState,
+      flags: this.flagStore.serialize(),
+      questState: this.questManager.serialize(),
+      scenarioState: this.scenarioStateManager.serialize(),
+      narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
+      narrativeState: this.narrativeStateManager.debugSnapshot(),
+      documentReveals: this.documentRevealManager.debugSnapshot(),
+      dialogue: this.graphDialogueManager.serialize(),
+      runtimeCommands: {
+        lastResults: this.lastRuntimeCommandResults.slice(-20),
+      },
+    };
+  }
+
+  private setupRuntimeDebugSnapshotPublishing(): void {
+    if (!import.meta.env.DEV) return;
+    const events = [
+      'narrative:stateChanged',
+      'flag:changed',
+      'quest:accepted',
+      'quest:completed',
+      'dialogue:start',
+      'dialogue:line',
+      'dialogue:choices',
+      'dialogue:end',
+      'scene:enter',
+    ];
+    for (const event of events) {
+      this.listenEvent(event, () => this.scheduleRuntimeDebugSnapshotPublish(event));
+    }
+    this.scheduleRuntimeDebugSnapshotPublish('runtime-ready');
+  }
+
+  private scheduleRuntimeDebugSnapshotPublish(reason: string): void {
+    if (!import.meta.env.DEV) return;
+    if (this.runtimeDebugSnapshotTimer !== null) {
+      window.clearTimeout(this.runtimeDebugSnapshotTimer);
+    }
+    this.runtimeDebugSnapshotTimer = window.setTimeout(() => {
+      this.runtimeDebugSnapshotTimer = null;
+      void this.publishRuntimeDebugSnapshot(reason);
+    }, 120);
+  }
+
+  private async publishRuntimeDebugSnapshot(reason: string): Promise<void> {
+    if (!import.meta.env.DEV) return;
+    try {
+      await fetch('/__gamedraft-api/runtime-debug-snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.buildRuntimeDebugSnapshot(reason)),
+      });
+    } catch {
+      // Dev server may be unavailable when previewing static builds; keep runtime quiet.
+    }
+  }
+
+  private setupRuntimeCommandPolling(): void {
+    if (!import.meta.env.DEV) return;
+    if (this.runtimeCommandPollTimer !== null) {
+      window.clearInterval(this.runtimeCommandPollTimer);
+    }
+    this.runtimeCommandPollTimer = window.setInterval(() => {
+      void this.pollRuntimeCommands();
+    }, 600);
+    void this.pollRuntimeCommands();
+  }
+
+  private async pollRuntimeCommands(): Promise<void> {
+    if (!import.meta.env.DEV || this.runtimeCommandPollInFlight) return;
+    this.runtimeCommandPollInFlight = true;
+    try {
+      const response = await fetch('/__gamedraft-api/runtime-command', { method: 'GET' });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const commands = Array.isArray(payload?.commands) ? payload.commands : [];
+      if (commands.length === 0) return;
+      const results = [];
+      for (const command of commands.slice(0, 50)) {
+        try {
+          results.push(await this.applyRuntimeCommand(command));
+        } catch (error) {
+          results.push({
+            id: '',
+            type: 'unknown',
+            ok: false,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      this.lastRuntimeCommandResults = results;
+      await fetch('/__gamedraft-api/runtime-command', { method: 'DELETE' });
+      await this.publishRuntimeDebugSnapshot(
+        results.every((r) => r.ok) ? 'runtime-command:complete' : 'runtime-command:failed',
+      );
+      if (results.some((r) => !r.ok)) {
+        console.warn('[GameDraft runtime-command] command failed', results);
+      }
+    } catch {
+      // Dev server may be unavailable when previewing static builds; keep runtime quiet.
+    } finally {
+      this.runtimeCommandPollInFlight = false;
+    }
+  }
+
+  private applyRuntimeCommand(command: unknown): Promise<{ id: string; type: string; ok: boolean; message: string }> {
+    return applyDevRuntimeCommand(command, {
+      captureSnapshot: (reason) => this.publishRuntimeDebugSnapshot(reason),
+      clearNarrativeTrace: () => this.narrativeStateManager.clearDebugTrace(),
+      emitNarrativeSignal: (signal) => this.narrativeStateManager.emitNarrativeSignal(signal as NarrativeSignal),
+      debugSetNarrativeState: (graphId, stateId) => this.narrativeStateManager.debugSetNarrativeState(graphId, stateId),
+      setFlag: (key, value) => this.flagStore.set(key, value),
+      isFlagAllowed: (key) => this.flagStore.isKeyAllowedByRegistry(key),
+      getFlagValueKind: (key) => this.flagStore.getDebugValueKind(key),
+      debugSetQuestStatus: (questId, status) => this.questManager.debugSetQuestStatus(questId, status),
+      debugSetScenarioPhase: (scenarioId, phase, payload) =>
+        this.scenarioStateManager.debugSetScenarioPhase(scenarioId, phase, payload),
+      debugSetScenarioLineLifecycle: (scenarioId, state) =>
+        this.scenarioStateManager.debugSetScenarioLineLifecycle(scenarioId, state),
+      debugResetScenarioProgress: (scenarioId) => this.scenarioStateManager.resetScenarioProgressForDebug(scenarioId),
+      debugStartDialogueGraph: (params) => this.graphDialogueManager.startDialogueGraph(params),
+      debugAdvanceDialogue: async (maxSteps) => {
+        await this.graphDialogueManager.debugAdvanceUntilBlocking(maxSteps);
+      },
+      debugChooseDialogueOption: (params) => this.graphDialogueManager.debugChooseOption(params),
+      debugSwitchScene: async (sceneId, spawnPoint) => {
+        await this.actionExecutor.executeAwait({
+          type: 'switchScene',
+          params: { targetScene: sceneId, targetSpawnPoint: spawnPoint },
+        });
+      },
+      debugTriggerHotspot: (hotspotId) => this.interactionCoordinator.debugTriggerHotspotById(hotspotId),
+      debugInteractNpc: (npcId) => this.interactionCoordinator.debugInteractNpcById(npcId),
+      debugWait: (durationMs) => this.debugWait(durationMs),
+      debugSetPlayerPosition: (x, y, snapCamera) => this.debugSetPlayerPosition(x, y, snapCamera),
+      debugMovePlayerTo: (x, y, speed, snapCamera) => this.debugMovePlayerTo(x, y, speed, snapCamera),
+      debugClick: (x, y) => this.debugClick(x, y),
+      debugDrag: (fromX, fromY, toX, toY, durationMs) => this.debugDrag(fromX, fromY, toX, toY, durationMs),
+      debugSaveGame: (slot) => this.saveManager.save(slot),
+      debugLoadGame: (slot) => this.saveManager.load(slot),
+      debugReloadScene: (sceneId) => this.reloadScene(
+        sceneId || this.sceneManager.currentSceneData?.id || this.gameConfig.fallbackScene,
+      ),
+    });
+  }
+
+  private async debugWait(durationMs: number): Promise<void> {
+    const ms = Math.max(1, Math.min(60_000, Math.trunc(durationMs)));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  private debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): void {
+    this.player.x = x;
+    this.player.y = y;
+    if (snapCamera) {
+      this.camera.snapTo(x, y);
+    } else {
+      this.camera.follow(x, y);
+    }
+  }
+
+  private async debugMovePlayerTo(x: number, y: number, speed: number, snapCamera: boolean): Promise<void> {
+    const safeSpeed = Math.max(1, Math.min(5000, speed));
+    const dx = x - this.player.x;
+    const dy = y - this.player.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance < 0.5) {
+      this.debugSetPlayerPosition(x, y, snapCamera);
+      return;
+    }
+
+    const timeoutMs = Math.min(15_000, Math.max(500, Math.ceil((distance / safeSpeed) * 1000) + 1000));
+    let timeoutHandle: number | null = null;
+    const timeout = new Promise<void>((resolve) => {
+      timeoutHandle = window.setTimeout(resolve, timeoutMs);
+    });
+    await Promise.race([this.player.moveTo(x, y, safeSpeed, ANIM_WALK, true), timeout]);
+    if (timeoutHandle !== null) {
+      window.clearTimeout(timeoutHandle);
+    }
+    this.debugSetPlayerPosition(x, y, snapCamera);
+  }
+
+  private async debugClick(x: number, y: number): Promise<void> {
+    const target = this.renderer?.app?.canvas as HTMLCanvasElement | undefined;
+    if (!target) return;
+    this.dispatchPointerLike(target, 'pointerdown', x, y);
+    this.dispatchPointerLike(target, 'pointerup', x, y);
+    this.dispatchPointerLike(target, 'click', x, y);
+    await this.debugWait(50);
+  }
+
+  private async debugDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): Promise<void> {
+    const target = this.renderer?.app?.canvas as HTMLCanvasElement | undefined;
+    if (!target) return;
+    this.dispatchPointerLike(target, 'pointerdown', fromX, fromY);
+    const steps = Math.max(2, Math.min(20, Math.ceil(durationMs / 50)));
+    for (let idx = 1; idx <= steps; idx += 1) {
+      const t = idx / steps;
+      this.dispatchPointerLike(
+        target,
+        'pointermove',
+        fromX + (toX - fromX) * t,
+        fromY + (toY - fromY) * t,
+      );
+      await this.debugWait(Math.max(1, Math.floor(durationMs / steps)));
+    }
+    this.dispatchPointerLike(target, 'pointerup', toX, toY);
+  }
+
+  private dispatchPointerLike(target: HTMLCanvasElement, type: string, x: number, y: number): void {
+    const init = {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: type === 'pointerup' || type === 'click' ? 0 : 1,
+    };
+    try {
+      target.dispatchEvent(new PointerEvent(type, init));
+    } catch {
+      target.dispatchEvent(new MouseEvent(type === 'pointermove' ? 'mousemove' : type === 'pointerup' ? 'mouseup' : 'mousedown', init));
+    }
+  }
+
   private listenEvent(event: string, fn: (...args: any[]) => void): void {
     this.eventBus.on(event, fn);
     this.boundCallbacks.push({ event, fn });
@@ -2350,6 +2583,15 @@ export class Game {
     this.webglContextRestoredHandler = null;
     this.runtimeDebugLogCleanup?.();
     this.runtimeDebugLogCleanup = null;
+    if (this.runtimeDebugSnapshotTimer !== null) {
+      window.clearTimeout(this.runtimeDebugSnapshotTimer);
+      this.runtimeDebugSnapshotTimer = null;
+    }
+    if (this.runtimeCommandPollTimer !== null) {
+      window.clearInterval(this.runtimeCommandPollTimer);
+      this.runtimeCommandPollTimer = null;
+    }
+    this.runtimeCommandPollInFlight = false;
 
     for (const { event, fn } of this.boundCallbacks) {
       this.eventBus.off(event, fn);

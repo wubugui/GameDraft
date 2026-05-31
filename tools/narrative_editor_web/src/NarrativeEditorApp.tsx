@@ -2197,14 +2197,25 @@ function EntityRelationSection({ title, rows }: { title: string; rows: string[] 
 function PreviewPanel({ simulation, runtimeSnapshot }: { simulation: SimulationResult | null; runtimeSnapshot: RuntimeDebugSnapshotDef }) {
   const activeStates = extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? {};
   const narrativeState = runtimeSnapshot.ok && runtimeSnapshot.snapshot && typeof runtimeSnapshot.snapshot === 'object'
-    ? (runtimeSnapshot.snapshot as { narrativeState?: { recentTransitions?: unknown[]; recentIssues?: unknown[] } }).narrativeState
+    ? (runtimeSnapshot.snapshot as { narrativeState?: { recentTransitions?: unknown[]; recentIssues?: unknown[]; recentTrace?: unknown[] } }).narrativeState
     : null;
+  const runtimeTrace = Array.isArray(narrativeState?.recentTrace) ? narrativeState.recentTrace.slice(-12) : [];
   const runtimeTransitions = Array.isArray(narrativeState?.recentTransitions) ? narrativeState.recentTransitions.slice(-8) : [];
   const runtimeIssues = Array.isArray(narrativeState?.recentIssues) ? narrativeState.recentIssues.slice(-8) : [];
   return (
     <div className="preview-panel">
       <div className="section-title">Active States</div>
       <pre>{Object.keys(activeStates).length ? JSON.stringify(activeStates, null, 2) : '(none)'}</pre>
+      {runtimeTrace.length > 0 && (
+        <>
+          <div className="section-title">Runtime Trace</div>
+          <div className="timeline">
+            {runtimeTrace.map((item, index) => (
+              <div key={index} className="log">{formatRuntimeTrace(item)}</div>
+            ))}
+          </div>
+        </>
+      )}
       {runtimeTransitions.length > 0 && (
         <>
           <div className="section-title">Runtime Transitions</div>
@@ -2235,6 +2246,19 @@ function PreviewPanel({ simulation, runtimeSnapshot }: { simulation: SimulationR
       )}
     </div>
   );
+}
+
+function formatRuntimeTrace(item: unknown): string {
+  if (!item || typeof item !== 'object') return String(item ?? '');
+  const event = item as Record<string, unknown>;
+  const seq = event.seq === undefined ? '' : `#${String(event.seq)} `;
+  const type = String(event.type ?? 'trace');
+  const graph = event.graphId ? ` ${String(event.graphId)}` : '';
+  const transition = event.transitionId ? `.${String(event.transitionId)}` : '';
+  const fromTo = event.from || event.to ? ` ${String(event.from ?? '?')} -> ${String(event.to ?? '?')}` : '';
+  const trigger = event.triggerKey ? ` [${String(event.triggerKey)}]` : '';
+  const message = event.message ? ` - ${String(event.message)}` : '';
+  return `${seq}${type}${graph}${transition}${fromTo}${trigger}${message}`;
 }
 
 function formatRuntimeTransition(item: unknown): string {
