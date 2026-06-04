@@ -1,6 +1,7 @@
 """PySide6 production workbench window."""
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -77,6 +79,7 @@ from .animation_sheet import (
 )
 from .codex_asset_runner import format_codex_asset_run_result, run_codex_asset_task
 from .codex_probe import format_probe_result, probe_codex
+from .console import WorkbenchConsoleDock, WorkbenchConsoleWidget
 from .daily_check import DailyCheckReport, format_daily_check_report, run_daily_check
 from .graph_diagnostics import (
     GraphDiagnosticsReport,
@@ -96,6 +99,7 @@ from .runtime_debug import (
     load_runtime_debug_snapshot,
 )
 from .runtime_command import (
+    ALLOWED_RUNTIME_COMMANDS,
     clear_runtime_command_queue,
     enqueue_runtime_command,
     format_runtime_command_queue_report,
@@ -134,6 +138,15 @@ def _repo_root() -> Path:
 
 def _is_project_root(path: Path) -> bool:
     return (path / "public" / "assets").is_dir()
+
+
+def _inline_console_from_dock(dock: WorkbenchConsoleDock, *, minimum_height: int = 160) -> WorkbenchConsoleWidget:
+    console = dock.console
+    console.setParent(None)
+    dock.setProperty("inlineConsole", True)
+    dock.setWidget(QWidget(dock))
+    console.setMinimumHeight(minimum_height)
+    return console
 
 
 class CropPreviewLabel(QLabel):
@@ -411,6 +424,23 @@ class SearchPickerDialog(QDialog):
         self.detail.setPlainText("\n".join(lines))
 
 
+class ReportDialog(QDialog):
+    """Non-modal text report window used by GUI actions that also write to the console."""
+
+    def __init__(self, title: str, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(860, 620)
+        layout = QVBoxLayout(self)
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setPlainText(text)
+        layout.addWidget(self.output, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.close)
+        layout.addWidget(buttons)
+
+
 class ScenePointPreviewLabel(QLabel):
     """Clickable scene preview that records one point or a path."""
 
@@ -564,6 +594,8 @@ class WorkbenchWindow(QMainWindow):
         if not _is_project_root(root):
             root = Path(__file__).resolve().parents[2]
         self.project_root = root
+        self._console_docks: dict[str, WorkbenchConsoleDock] = {}
+        self._tab_console_docks: dict[QWidget, list[WorkbenchConsoleDock]] = {}
         self.setWindowTitle(f"GameDraft 生产工作台 - {self.project_root.name}")
         self.resize(1320, 820)
 
@@ -585,6 +617,7 @@ class WorkbenchWindow(QMainWindow):
         root_layout.addLayout(top)
 
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self._sync_current_tab_console)
         root_layout.addWidget(self.tabs, 1)
 
         self.story_tab = StoryUnitTab(self)
@@ -608,7 +641,18 @@ class WorkbenchWindow(QMainWindow):
         self.tabs.addTab(self.asset_task_tab, "素材任务")
         self.tabs.addTab(self.codex_tab, "Codex/GPT")
 
+        self.register_tab_console(self.story_tab, self.story_tab.summary_dock)
+        self.register_tab_console(self.daily_tab, self.daily_tab.output_dock)
+        self.register_tab_console(self.graph_tab, self.graph_tab.output_dock)
+        self.register_tab_console(self.runtime_debug_tab, self.runtime_debug_tab.output_dock)
+        self.register_tab_console(self.asset_tab, self.asset_tab.output_dock)
+        self.register_tab_console(self.asset_candidate_tab, self.asset_candidate_tab.output_dock)
+        self.register_tab_console(self.image_tab, self.image_tab.output_dock)
+        self.register_tab_console(self.animation_sheet_tab, self.animation_sheet_tab.output_dock)
+        self.register_tab_console(self.asset_task_tab, self.asset_task_tab.prompt_dock)
+        self.register_tab_console(self.codex_tab, self.codex_tab.output_dock)
         self._reload_tabs()
+        QTimer.singleShot(0, self._sync_current_tab_console)
 
     def _pick_project(self) -> None:
         running = self._running_background_thread_names()
@@ -624,8 +668,37 @@ class WorkbenchWindow(QMainWindow):
             return
         self.project_root = candidate
         self._project_label.setText(str(self.project_root))
+        for dock in self._console_docks.values():
+            dock.console.set_project_root(self.project_root)
         self.setWindowTitle(f"GameDraft 生产工作台 - {self.project_root.name}")
         self._reload_tabs()
+
+    def console_dock(self, context_id: str, title: str) -> WorkbenchConsoleDock:
+        dock = self._console_docks.get(context_id)
+        if dock is not None:
+            return dock
+        dock = WorkbenchConsoleDock(self.project_root, context_id, title, parent=self)
+        self._console_docks[context_id] = dock
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        dock.hide()
+        return dock
+
+    def register_tab_console(self, tab: QWidget, dock: WorkbenchConsoleDock) -> None:
+        docks = self._tab_console_docks.setdefault(tab, [])
+        if dock not in docks:
+            docks.append(dock)
+        self._sync_current_tab_console()
+
+    def _sync_current_tab_console(self, _index: int | None = None) -> None:
+        current = self.tabs.currentWidget() if hasattr(self, "tabs") else None
+        visible = set(self._tab_console_docks.get(current, []))
+        for dock in self._console_docks.values():
+            if dock.property("inlineConsole"):
+                dock.hide()
+                continue
+            if dock.isFloating() and dock.isVisible():
+                continue
+            dock.setVisible(dock in visible)
 
     def open_reports_folder(self) -> None:
         path = workbench_reports_root(self.project_root)
@@ -703,6 +776,7 @@ class StoryUnitTab(QWidget):
         self.loading_fields = False
         self._story_thread: StoryUnitLoadThread | None = None
         self._picker_model: ProjectModel | None = None
+        self._workflow_guide_dialog: ReportDialog | None = None
 
         layout = QVBoxLayout(self)
         toolbar = QHBoxLayout()
@@ -921,9 +995,9 @@ class StoryUnitTab(QWidget):
         form_scroll.setWidget(form_wrap)
         right_layout.addWidget(form_scroll, 3)
 
-        self.summary = QTextEdit()
-        self.summary.setReadOnly(True)
-        self.summary.setMinimumHeight(210)
+        self.summary_dock = host.console_dock("story-unit", "Story Unit Summary")
+        self.summary = _inline_console_from_dock(self.summary_dock, minimum_height=210)
+        self.summary_dock.setProperty("inlineConsole", False)
         right_layout.addWidget(QLabel("自动聚合摘要"))
         right_layout.addWidget(self.summary, 1)
         splitter.addWidget(right)
@@ -1093,6 +1167,13 @@ class StoryUnitTab(QWidget):
         display = _with_saved_report_note(self.project_root, f"story-workflow-{unit.record.composition_id}", text)
         self.summary.setPlainText(display)
         QApplication.clipboard().setText(display)
+        if self._workflow_guide_dialog is None:
+            self._workflow_guide_dialog = ReportDialog("Story Unit Workflow Guide", display, self)
+        else:
+            self._workflow_guide_dialog.output.setPlainText(display)
+        self._workflow_guide_dialog.show()
+        self._workflow_guide_dialog.raise_()
+        self._workflow_guide_dialog.activateWindow()
 
     def choose_unit_type(self) -> None:
         item = self._pick_item("选择剧情单元类型", _unit_type_items())
@@ -1265,6 +1346,37 @@ class StoryUnitTab(QWidget):
         self.refresh_acceptance_steps_table()
 
     def refresh_acceptance_steps_table(self) -> None:
+        self._refresh_acceptance_steps_table()
+
+    def clear_acceptance_steps_list(self) -> None:
+        unit = self._current_unit()
+        if unit is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Clear Acceptance Route",
+            "Clear generated acceptance route steps for the current story unit?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for editor in [
+            self.edit_script_entry,
+            self.edit_script_flags,
+            self.edit_script_quests,
+            self.edit_script_scenarios,
+            self.edit_script_states,
+            self.edit_script_actions,
+            self.edit_script_options,
+            self.edit_script_expected_signals,
+            self.edit_script_expected_states,
+            self.edit_script_expected_quests,
+            self.edit_script_expected_scenarios,
+            self.edit_script_save_load,
+        ]:
+            editor.clear()
+        self._save_current_fields()
         self._refresh_acceptance_steps_table()
 
     def copy_acceptance_route(self) -> None:
@@ -1880,8 +1992,8 @@ class DailyCheckTab(QWidget):
         top.addWidget(self.btn_copy)
         top.addStretch(1)
         layout.addWidget(_scrollable_toolbar(top))
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
+        self.output_dock = host.console_dock("daily-check", "Daily Check Output")
+        self.output = _inline_console_from_dock(self.output_dock)
         layout.addWidget(self.output, 1)
 
     def set_project_root(self, project_root: Path) -> None:
@@ -2025,52 +2137,77 @@ class GraphDiagnosticsTab(QWidget):
         self.project_root = host.project_root
         self.report: GraphDiagnosticsReport | None = None
         self._graph_thread: GraphDiagnosticsThread | None = None
+        self._ignore_composition_selection = False
+        self.output_dock = host.console_dock("graph-diagnostics", "Graph Diagnostics Output")
+        self.output = _inline_console_from_dock(self.output_dock)
 
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.btn_refresh = QPushButton("刷新 Graph 诊断")
-        self.btn_copy = QPushButton("复制报告")
-        self.btn_open_sources = QPushButton("打开相关源")
-        self.edit_composition = _readonly_picker_line("全部")
+        self.btn_refresh = QPushButton("Refresh Graph Diagnostics")
+        self.btn_copy = QPushButton("Copy Report")
+        self.btn_open_sources = QPushButton("Open Sources")
+        self.edit_composition = _readonly_picker_line("All")
         self.edit_composition.setMinimumWidth(280)
-        self.btn_pick_composition = QPushButton("选择范围")
-        self.btn_all_compositions = QPushButton("全部")
+        self.btn_pick_composition = QPushButton("Choose Scope")
+        self.btn_all_compositions = QPushButton("All")
         self.btn_refresh.clicked.connect(self.refresh)
         self.btn_copy.clicked.connect(self.copy_report)
         self.btn_open_sources.clicked.connect(self.open_sources)
         self.btn_pick_composition.clicked.connect(self.choose_composition)
         self.btn_all_compositions.clicked.connect(self.clear_composition_filter)
         top.addWidget(self.btn_refresh)
-        top.addWidget(QLabel("范围"))
+        top.addWidget(QLabel("Composition"))
         top.addWidget(self.edit_composition, 1)
         top.addWidget(self.btn_pick_composition)
         top.addWidget(self.btn_all_compositions)
         top.addWidget(self.btn_open_sources)
         top.addWidget(self.btn_copy)
-        layout.addWidget(_scrollable_toolbar(top))
 
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setPlaceholderText(
-            "诊断 signal flow / flag read-write / quest dependency / dialogue route / runtime trace timeline。"
-        )
-        layout.addWidget(self.output, 1)
+        self.overview_table = self._diagnostic_table(["Metric", "Value"])
+        self.comp_table = self._diagnostic_table(["Composition", "Label", "Status", "Issues", "Signal", "Read", "StateWrite", "ActionRW"])
+        self.comp_table.itemSelectionChanged.connect(self._on_comp_row_selected)
+        self.flow_table = self._diagnostic_table(["Composition", "Type", "Source", "Target", "Label", "Detail"])
+        self.flagrw_table = self._diagnostic_table(["Composition", "Type", "Source", "Target", "Detail"])
+        self.route_table = self._diagnostic_table(["Composition", "Type", "Content"])
+        self.warning_table = self._diagnostic_table(["Composition", "Type", "Content"])
+        self.runtime_table = self._diagnostic_table(["Seq", "Type", "Graph", "Transition", "Summary"])
+
+        self.graph_tabs = QTabWidget()
+        self.graph_tabs.addTab(self._table_page("Graph Overview", self.overview_table), "Overview")
+        self.graph_tabs.addTab(self._table_page("Composition List", self.comp_table), "Compositions")
+        self.graph_tabs.addTab(self._table_page("Signal Flow / State Read", self.flow_table), "Flow")
+        self.graph_tabs.addTab(self._table_page("Flag / Action / State Writes", self.flagrw_table), "ReadWrite")
+        self.graph_tabs.addTab(self._table_page("Routes and Dependencies", self.route_table), "Routes")
+        self.graph_tabs.addTab(self._table_page("Warnings and Validation", self.warning_table), "Warnings")
+        self.graph_tabs.addTab(self._table_page("Runtime Trace", self.runtime_table), "Runtime")
+
+        body = QSplitter(Qt.Orientation.Vertical)
+        body.addWidget(self.graph_tabs)
+        body.addWidget(self.output)
+        body.setSizes([500, 180])
+        body.setCollapsible(0, False)
+        body.setCollapsible(1, False)
+        layout.addWidget(_scrollable_toolbar(top))
+        layout.addWidget(body, 1)
+        self.output.setPlaceholderText("Structured diagnostics are shown above; the raw report stays here for copy/export.")
 
     def set_project_root(self, project_root: Path) -> None:
         self.project_root = project_root
         self.report = None
-        _set_picker_line_value(self.edit_composition, [_raw_picker_item("", "全部")], "")
-        self.output.setPlainText("点击“刷新 Graph 诊断”后读取 signal flow、flag read/write、quest dependency 和 runtime trace。")
+        _set_picker_line_value(self.edit_composition, [_raw_picker_item("", "All")], "")
+        self._clear_tables()
+        self.output.setPlainText("点击“刷新 Graph 诊断”读取 signal flow、flag read/write、quest dependency、routes 和 runtime trace。")
 
     def refresh(self) -> None:
         self.reload(save_report=True)
 
     def reload(self, *, save_report: bool = False) -> None:
         if self._graph_thread is not None and self._graph_thread.isRunning():
-            QMessageBox.information(self, "Graph 诊断", "Graph 诊断正在刷新，请稍等。")
+            QMessageBox.information(self, "Graph Diagnostics", "Graph diagnostics are already refreshing.")
             return
         self.btn_refresh.setEnabled(False)
-        self.output.setPlainText("正在刷新 Graph 诊断...")
+        self.output.setPlainText("Refreshing Graph Diagnostics...")
+        self._clear_tables()
         thread = GraphDiagnosticsThread(self.project_root, save_report=save_report, parent=self)
         self._graph_thread = thread
         thread.completed.connect(self._on_graph_diagnostics_completed)
@@ -2095,7 +2232,8 @@ class GraphDiagnosticsTab(QWidget):
         if result.project_root.resolve() != self.project_root.resolve():
             return
         self.report = None
-        text = f"Graph 诊断加载失败:\n{result.message}"
+        self._clear_tables()
+        text = f"Graph diagnostics failed:\n{result.message}"
         if result.save_report:
             text = _with_saved_report_note(self.project_root, "graph-diagnostics-failed", text)
         self.output.setPlainText(text)
@@ -2112,7 +2250,7 @@ class GraphDiagnosticsTab(QWidget):
     def choose_composition(self) -> None:
         if self.report is None:
             return
-        if _pick_line_value(self, "选择 Graph 诊断范围", self.edit_composition, _graph_composition_items(self.report)):
+        if _pick_line_value(self, "Choose Graph Diagnostics Scope", self.edit_composition, _graph_composition_items(self.report)):
             self._render()
 
     def clear_composition_filter(self) -> None:
@@ -2134,20 +2272,20 @@ class GraphDiagnosticsTab(QWidget):
         try:
             workspace = load_story_unit_workspace(self.project_root)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "打开相关源", f"加载剧情单元失败:\n{exc}")
+            QMessageBox.warning(self, "Open Sources", f"Failed to load story units:\n{exc}")
             return
         unit = workspace.by_id().get(composition_id)
         if unit is None:
-            QMessageBox.warning(self, "打开相关源", f"找不到剧情单元: {composition_id}")
+            QMessageBox.warning(self, "Open Sources", f"Story unit not found: {composition_id}")
             return
         item = _pick_source_item(self, self.project_root, unit)
         if item and isinstance(item.get("path"), Path):
-            _open_local_path(self, item["path"], "打开源文件")
+            _open_local_path(self, item["path"], "Open Source")
 
     def _pick_composition_for_sources(self) -> str:
         if self.report is None:
             return ""
-        item = _pick_item_dialog(self, "选择要打开源文件的 Graph 范围", _graph_composition_items(self.report, include_all=False))
+        item = _pick_item_dialog(self, "Choose Graph Scope for Source Opening", _graph_composition_items(self.report, include_all=False))
         return str(item.get("value") or "") if item else ""
 
     def _render(self, *, save_report: bool = False) -> None:
@@ -2155,30 +2293,232 @@ class GraphDiagnosticsTab(QWidget):
             return
         cid = _picker_line_value(self.edit_composition, "")
         cid = cid.strip() if isinstance(cid, str) else ""
-        text = format_graph_diagnostics_report(
-            self.report,
-            composition_id=cid or None,
-        )
+        text = format_graph_diagnostics_report(self.report, composition_id=cid or None)
         if save_report:
             category = f"graph-diagnostics-{cid}" if cid else "graph-diagnostics-all"
             text = _with_saved_report_note(self.project_root, category, text)
         self.output.setPlainText(text)
+        self._update_graph_tables(composition_id=cid or None)
+
+    def _on_comp_row_selected(self) -> None:
+        if self._ignore_composition_selection or self.report is None:
+            return
+        selection = self.comp_table.selectionModel().selectedRows() if self.comp_table.selectionModel() else []
+        if not selection:
+            return
+        item = self.comp_table.item(selection[0].row(), 0)
+        cid = item.text().strip() if item is not None else ""
+        if not cid:
+            return
+        _set_picker_line_value(self.edit_composition, _graph_composition_items(self.report), cid)
+        self._render()
+
+    def _update_graph_tables(self, *, composition_id: str | None) -> None:
+        if self.report is None:
+            return
+        selected = [comp for comp in self.report.compositions if not composition_id or comp.composition_id == composition_id]
+        if not selected:
+            selected = list(self.report.compositions)
+            composition_id = None
+        self._set_table_rows(self.overview_table, self._overview_rows(selected, composition_id))
+        self._set_table_rows(self.comp_table, self._composition_rows(selected))
+        self._sync_composition_selection(composition_id)
+        self._set_table_rows(self.flow_table, self._flow_rows(selected))
+        self._set_table_rows(self.flagrw_table, self._read_write_rows(selected))
+        self._set_table_rows(self.route_table, self._route_rows(selected))
+        self._set_table_rows(self.warning_table, self._warning_rows(selected))
+        self._set_table_rows(self.runtime_table, self._runtime_rows())
+
+    def _overview_rows(self, selected: list[Any], composition_id: str | None) -> list[list[Any]]:
+        if self.report is None:
+            return []
+        rows = [["Composition count", len(self.report.compositions)], ["Filtered", composition_id or "ALL"], ["Visible compositions", len(selected)], ["Signal flow", self.report.trigger_count], ["State read", self.report.read_count], ["State direct write", self.report.state_command_count], ["Action read/write", self.report.action_read_write_count], ["Global warnings", len(self.report.global_warnings)]]
+        snapshot = self.report.runtime_snapshot
+        if snapshot is None:
+            rows.append(["Runtime snapshot", "none"])
+        else:
+            rows.append(["Runtime snapshot", "ok" if snapshot.ok else "failed"])
+            rows.append(["Trace events", len(snapshot.trace or [])])
+            rows.append(["Runtime command results", len(snapshot.runtime_command_results or [])])
+        return rows
+
+    def _composition_rows(self, comps: list[Any]) -> list[list[Any]]:
+        return [[comp.composition_id, comp.label, comp.production_status, comp.issue_count, len(comp.trigger_edges), len(comp.read_edges), len(comp.state_command_edges), len(comp.action_read_write_edges)] for comp in comps] or [["", "No compositions", "", "", "", "", "", ""]]
+
+    def _flow_rows(self, comps: list[Any]) -> list[list[Any]]:
+        rows = []
+        for comp in comps:
+            for edge in comp.trigger_edges:
+                rows.append(self._edge_row(comp.composition_id, "signal flow", edge))
+            for edge in comp.read_edges:
+                rows.append(self._edge_row(comp.composition_id, "state read", edge))
+        return rows or [["", "none", "", "", "", "No signal/state edges"]]
+
+    def _read_write_rows(self, comps: list[Any]) -> list[list[Any]]:
+        rows = []
+        for comp in comps:
+            for edge in comp.state_command_edges:
+                rows.append([comp.composition_id, "state direct write", edge.get("source", ""), edge.get("target", ""), edge.get("detail", "") or edge.get("label", "")])
+            for edge in comp.action_read_write_edges:
+                rows.append([comp.composition_id, edge.get("kind", "ref"), edge.get("source", ""), edge.get("target", ""), edge.get("detail", "")])
+        return rows or [["", "none", "", "", "No read/write edges"]]
+
+    def _route_rows(self, comps: list[Any]) -> list[list[Any]]:
+        rows = []
+        for comp in comps:
+            for quest in comp.quests:
+                rows.append([comp.composition_id, "quest", quest])
+            for dialogue in comp.dialogues:
+                rows.append([comp.composition_id, "dialogue", dialogue])
+            for scenario in comp.scenarios:
+                rows.append([comp.composition_id, "scenario", scenario])
+            for signal in comp.signals:
+                rows.append([comp.composition_id, "signal", signal])
+            for route in comp.dialogue_routes:
+                rows.append([comp.composition_id, "dialogue route", route])
+        return rows or [["", "none", "No route/dependency data"]]
+
+    def _warning_rows(self, comps: list[Any]) -> list[list[Any]]:
+        rows = []
+        for comp in comps:
+            for warning in comp.owner_boundary_warnings:
+                rows.append([comp.composition_id, "owner boundary", warning])
+            for warning in comp.projection_warnings:
+                rows.append([comp.composition_id, "projection", warning])
+            for issue in comp.validation_issues:
+                rows.append([comp.composition_id, "validation", issue])
+        if self.report is not None:
+            for warning in self.report.global_warnings:
+                rows.append(["<global>", "global", warning])
+        return rows or [["", "none", "No warnings"]]
+
+    def _runtime_rows(self) -> list[list[Any]]:
+        if self.report is None or self.report.runtime_snapshot is None:
+            return [["", "", "", "", "No runtime snapshot"]]
+        trace = self.report.runtime_snapshot.trace or []
+        rows = [[event.get("seq", ""), event.get("type", ""), event.get("graphId", ""), event.get("transitionId", ""), event.get("message") or event.get("triggerKey") or ""] for event in trace[-80:]]
+        return rows or [["", "", "", "", "No runtime trace"]]
+
+    def _edge_row(self, composition_id: str, kind: str, edge: dict[str, Any]) -> list[Any]:
+        return [composition_id, kind, edge.get("source", ""), edge.get("target", ""), edge.get("label", ""), edge.get("detail", "")]
+
+    def _table_page(self, label: str, table: QTableWidget) -> QWidget:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel(label))
+        page_layout.addWidget(table, 1)
+        return page
+
+    def _diagnostic_table(self, headers: list[str]) -> QTableWidget:
+        table = QTableWidget(0, len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        return table
+
+    def _set_table_rows(self, table: QTableWidget, rows: list[list[Any]]) -> None:
+        table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            for column_index in range(table.columnCount()):
+                value = row[column_index] if column_index < len(row) else ""
+                item = QTableWidgetItem(self._diag_value_text(value))
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(row_index, column_index, item)
+        table.resizeColumnsToContents()
+
+    def _diag_value_text(self, value: Any) -> str:
+        if isinstance(value, str):
+            text = value
+        elif value is None:
+            text = ""
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                text = str(value)
+        return text if len(text) <= 512 else text[:509] + "..."
+
+    def _sync_composition_selection(self, composition_id: str | None) -> None:
+        self._ignore_composition_selection = True
+        try:
+            self.comp_table.clearSelection()
+            if composition_id:
+                for row in range(self.comp_table.rowCount()):
+                    item = self.comp_table.item(row, 0)
+                    if item is not None and item.text() == composition_id:
+                        self.comp_table.selectRow(row)
+                        break
+        finally:
+            self._ignore_composition_selection = False
+
+    def _clear_tables(self) -> None:
+        for table in [self.overview_table, self.comp_table, self.flow_table, self.flagrw_table, self.route_table, self.warning_table, self.runtime_table]:
+            table.setRowCount(0)
+_RUNTIME_COMMAND_PAYLOAD_EXAMPLES: dict[str, dict[str, Any]] = {
+    "captureSnapshot": {},
+    "clearNarrativeTrace": {},
+    "emitNarrativeSignal": {"sourceType": "debug", "sourceId": "workbench", "signal": "signal_id"},
+    "debugSetNarrativeState": {"graphId": "graph_id", "stateId": "state_id"},
+    "setFlag": {"key": "flag_id", "value": True},
+    "debugSetQuestStatus": {"questId": "quest_id", "status": 2},
+    "debugSetScenarioPhase": {"scenarioId": "scenario_id", "phase": "phase_id", "status": "completed"},
+    "debugSetScenarioLineLifecycle": {"scenarioId": "scenario_id", "state": "active"},
+    "debugResetScenarioProgress": {"scenarioId": "scenario_id"},
+    "debugStartDialogueGraph": {"graphId": "graph_id", "entry": "entry_id", "npcName": "NPC"},
+    "debugAdvanceDialogue": {"maxSteps": 24},
+    "debugChooseDialogueOption": {"index": 0},
+    "debugSwitchScene": {"sceneId": "scene_id", "spawnPoint": "spawn_id"},
+    "debugTriggerHotspot": {"hotspotId": "hotspot_id"},
+    "debugInteractNpc": {"npcId": "npc_id"},
+    "debugWait": {"durationMs": 500},
+    "debugSetPlayerPosition": {"x": 320, "y": 240, "snapCamera": True},
+    "debugMovePlayerTo": {"x": 320, "y": 240, "speed": 180, "snapCamera": True},
+    "debugClick": {"x": 320, "y": 240},
+    "debugDrag": {"fromX": 240, "fromY": 240, "toX": 420, "toY": 240, "durationMs": 350},
+    "debugSaveGame": {"slot": 2},
+    "debugLoadGame": {"slot": 2},
+    "debugReloadScene": {},
+}
+
+
+def _runtime_command_payload_example(command_type: str) -> str:
+    payload = _RUNTIME_COMMAND_PAYLOAD_EXAMPLES.get(command_type, {})
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _runtime_command_items() -> list[dict[str, Any]]:
+    return [
+        {
+            "value": command_type,
+            "label": command_type,
+            "detail": _runtime_command_payload_example(command_type),
+            "keywords": command_type,
+        }
+        for command_type in sorted(ALLOWED_RUNTIME_COMMANDS)
+    ]
 
 
 class RuntimeDebugTab(QWidget):
+    _MIN_OUTPUT_HEIGHT = 180
+    _MIN_VISUAL_HEIGHT = 260
+
     def __init__(self, host: WorkbenchWindow) -> None:
         super().__init__(host)
         self.project_root = host.project_root
+        self._picker_model: ProjectModel | None = None
+        self.output_dock = host.console_dock("runtime-debug", "Runtime Debug Output")
+        self.output = _inline_console_from_dock(self.output_dock, minimum_height=self._MIN_OUTPUT_HEIGHT)
 
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.btn_refresh = QPushButton("刷新运行时快照")
-        self.btn_capture = QPushButton("请求 runtime 快照")
-        self.btn_clear_trace = QPushButton("清 runtime trace")
-        self.btn_copy = QPushButton("复制事故报告")
-        self.btn_clear = QPushButton("清空旧快照")
-        self.btn_queue = QPushButton("查看命令队列")
-        self.btn_clear_queue = QPushButton("清空命令队列")
+        self.btn_refresh = QPushButton("Refresh Snapshot")
+        self.btn_capture = QPushButton("Request Snapshot")
+        self.btn_clear_trace = QPushButton("Clear Trace")
+        self.btn_copy = QPushButton("Copy Report")
+        self.btn_clear = QPushButton("Clear Snapshot")
+        self.btn_queue = QPushButton("Show Queue")
+        self.btn_clear_queue = QPushButton("Clear Queue")
         self.btn_refresh.clicked.connect(self.refresh)
         self.btn_capture.clicked.connect(self.request_snapshot)
         self.btn_clear_trace.clicked.connect(self.request_clear_trace)
@@ -2186,90 +2526,348 @@ class RuntimeDebugTab(QWidget):
         self.btn_clear.clicked.connect(self.clear_snapshot)
         self.btn_queue.clicked.connect(self.show_command_queue)
         self.btn_clear_queue.clicked.connect(self.clear_command_queue)
-        top.addWidget(self.btn_refresh)
-        top.addWidget(self.btn_capture)
-        top.addWidget(self.btn_clear_trace)
-        top.addWidget(self.btn_copy)
-        top.addWidget(self.btn_clear)
-        top.addWidget(self.btn_queue)
-        top.addWidget(self.btn_clear_queue)
+        for button in [self.btn_refresh, self.btn_capture, self.btn_clear_trace, self.btn_copy, self.btn_clear, self.btn_queue, self.btn_clear_queue]:
+            top.addWidget(button)
         top.addStretch(1)
         layout.addWidget(_scrollable_toolbar(top))
 
-        hint = QLabel(
-            "使用方式：先运行 npm run dev 并打开游戏页面；浏览器 runtime 会自动把 narrative/flag/quest/scenario/trace 快照写到 production_workbench/runtime_debug_snapshot.json。"
-            "这里也可以通过 DEV 命令队列请求 runtime 立刻抓快照或清空 Narrative trace。"
-        )
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self.hint = QLabel("Run the game page, then inspect snapshots, trace, state, and queued runtime commands here.")
+        self.hint.setWordWrap(False)
+        self.hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.hint.setMaximumHeight(self.hint.sizeHint().height() + 6)
+        layout.addWidget(self.hint)
 
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setPlaceholderText("这里显示运行中的浏览器上报的最新 Debug 快照和 Runtime Trace。")
-        layout.addWidget(self.output, 1)
+        self.command_box = QGroupBox("Send Runtime Command")
+        command_layout = QVBoxLayout(self.command_box)
+        command_row = QHBoxLayout()
+        self.edit_command_type = _readonly_picker_line("Choose command")
+        self.btn_pick_command_type = QPushButton("Choose")
+        self.edit_command_reason = QLineEdit("workbench:manual-command")
+        self.command_param_widgets: dict[str, QWidget] = {}
+        self.command_param_defaults: dict[str, Any] = {}
+        self.btn_reset_command_payload = QPushButton("Reset Params")
+        self.btn_enqueue_command = QPushButton("Send")
+        self.btn_pick_command_type.clicked.connect(self.pick_command_type)
+        self.btn_reset_command_payload.clicked.connect(self.reset_command_payload)
+        self.btn_enqueue_command.clicked.connect(self.enqueue_selected_command)
+        command_row.addWidget(self.edit_command_type, 2)
+        command_row.addWidget(self.btn_pick_command_type)
+        command_row.addWidget(self.edit_command_reason, 2)
+        command_row.addWidget(self.btn_reset_command_payload)
+        command_row.addWidget(self.btn_enqueue_command)
+        command_layout.addLayout(command_row)
+        self.command_param_box = QWidget()
+        self.command_param_form = QFormLayout(self.command_param_box)
+        self.command_param_form.setContentsMargins(0, 0, 0, 0)
+        command_layout.addWidget(self.command_param_box)
+        self.set_command_type("captureSnapshot")
+
+        self.visual_tabs = QTabWidget()
+        self.visual_tabs.setMinimumHeight(self._MIN_VISUAL_HEIGHT)
+        self.overview_table = self._runtime_table(["Field", "Value"])
+        self.active_state_table = self._runtime_table(["Graph", "State"])
+        self.flag_table = self._runtime_table(["Flag", "Value"])
+        self.quest_table = self._runtime_table(["Quest", "Value"])
+        self.scenario_table = self._runtime_table(["Scenario", "Value"])
+        self.trace_table = self._runtime_table(["Seq", "Type", "Graph", "Summary", "Raw"])
+        self.transition_table = self._runtime_table(["Graph", "Transition", "From -> To", "Trigger", "Raw"])
+        self.issue_table = self._runtime_table(["Severity", "Code", "Message", "Raw"])
+        self.pending_command_table = self._runtime_table(["#", "Type", "Reason", "Payload"])
+        self.command_result_table = self._runtime_table(["Status", "Type", "ID", "Message"])
+
+        state_tabs = QTabWidget()
+        state_tabs.addTab(self.active_state_table, "Narrative")
+        state_tabs.addTab(self.flag_table, "Flags")
+        state_tabs.addTab(self.quest_table, "Quests")
+        state_tabs.addTab(self.scenario_table, "Scenarios")
+        trace_tabs = QTabWidget()
+        trace_tabs.addTab(self.trace_table, "Trace")
+        trace_tabs.addTab(self.transition_table, "Transitions")
+        trace_tabs.addTab(self.issue_table, "Issues")
+
+        self.command_page = QWidget()
+        command_page_layout = QVBoxLayout(self.command_page)
+        self.command_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.command_splitter.addWidget(self.command_box)
+        command_tables = QWidget()
+        command_tables_layout = QVBoxLayout(command_tables)
+        command_tables_layout.addWidget(QLabel("Pending Commands"))
+        command_tables_layout.addWidget(self.pending_command_table, 1)
+        command_tables_layout.addWidget(QLabel("Recent Results"))
+        command_tables_layout.addWidget(self.command_result_table, 1)
+        self.command_splitter.addWidget(command_tables)
+        self.command_splitter.setSizes([160, 300])
+        command_page_layout.addWidget(self.command_splitter, 1)
+
+        self.narrative_eval = QTextEdit()
+        self.narrative_eval.setReadOnly(True)
+        self.narrative_eval.setMaximumHeight(96)
+        overview_page = QWidget()
+        overview_layout = QVBoxLayout(overview_page)
+        overview_layout.addWidget(QLabel("Snapshot Overview"))
+        overview_layout.addWidget(self.overview_table, 1)
+        overview_layout.addWidget(QLabel("Dialogue / condition summary"))
+        overview_layout.addWidget(self.narrative_eval)
+        self.visual_tabs.addTab(overview_page, "Overview")
+        self.visual_tabs.addTab(self._widget_page(state_tabs), "State")
+        self.visual_tabs.addTab(self._widget_page(trace_tabs), "Trace")
+        self.visual_tabs.addTab(self.command_page, "Commands")
+
+        body = QSplitter(Qt.Orientation.Vertical)
+        body.addWidget(self.visual_tabs)
+        body.addWidget(self.output)
+        body.setSizes([520, 180])
+        body.setCollapsible(0, False)
+        body.setCollapsible(1, False)
+        layout.addWidget(body, 1)
+        self.output.setPlaceholderText("Structured runtime snapshot data is shown above; raw report stays here for copy/export.")
 
     def set_project_root(self, project_root: Path) -> None:
         self.project_root = project_root
+        self._picker_model = None
         self.reload()
+
+    def ensure_output_space(self) -> None:
+        self.output.setMinimumHeight(self._MIN_OUTPUT_HEIGHT)
+        self.visual_tabs.setMinimumHeight(self._MIN_VISUAL_HEIGHT)
 
     def refresh(self) -> None:
         self.reload(save_report=True)
 
     def reload(self, *, save_report: bool = False) -> None:
-        report = load_runtime_debug_snapshot(self.project_root)
-        text = format_runtime_debug_report(report)
+        snapshot = load_runtime_debug_snapshot(self.project_root)
+        queue = load_runtime_command_queue(self.project_root)
+        text = format_runtime_debug_report(snapshot)
         if save_report:
             text = _with_saved_report_note(self.project_root, "runtime-debug-snapshot", text)
         self.output.setPlainText(text)
+        self.render_snapshot(snapshot)
+        self.render_command_queue(queue)
 
     def copy_report(self) -> None:
         QApplication.clipboard().setText(self.output.toPlainText())
 
     def clear_snapshot(self) -> None:
         removed = clear_runtime_debug_snapshot(self.project_root)
-        text = "已清空旧运行时快照。" if removed else "没有可清空的运行时快照。"
+        text = "Runtime snapshot cleared." if removed else "No runtime snapshot to clear."
         self.output.setPlainText(_with_saved_report_note(self.project_root, "runtime-debug-clear-snapshot", text))
+        self._clear_snapshot_tables()
 
     def request_snapshot(self) -> None:
-        report = enqueue_runtime_command(
-            self.project_root,
-            "captureSnapshot",
-            reason="workbench:manual-capture",
-        )
-        self.output.setPlainText(
-            _with_saved_report_note(
-                self.project_root,
-                "runtime-debug-capture-request",
-                "已发送请求：运行中的浏览器会在下一次轮询时抓取 runtime 快照。\n\n"
-                + format_runtime_command_queue_report(report),
-            )
-        )
+        report = enqueue_runtime_command(self.project_root, "captureSnapshot", reason="workbench:manual-capture")
+        self.output.setPlainText(_with_saved_report_note(self.project_root, "runtime-debug-capture-request", "Snapshot request queued.\n\n" + format_runtime_command_queue_report(report)))
+        self.render_command_queue(report)
 
     def request_clear_trace(self) -> None:
-        report = enqueue_runtime_command(
-            self.project_root,
-            "clearNarrativeTrace",
-            reason="workbench:manual-clear-trace",
-        )
-        self.output.setPlainText(
-            _with_saved_report_note(
-                self.project_root,
-                "runtime-debug-clear-trace-request",
-                "已发送请求：运行中的浏览器会在下一次轮询时清空 Narrative trace 并写入新快照。\n\n"
-                + format_runtime_command_queue_report(report),
-            )
-        )
+        report = enqueue_runtime_command(self.project_root, "clearNarrativeTrace", reason="workbench:manual-clear-trace")
+        self.output.setPlainText(_with_saved_report_note(self.project_root, "runtime-debug-clear-trace-request", "Clear trace request queued.\n\n" + format_runtime_command_queue_report(report)))
+        self.render_command_queue(report)
 
     def show_command_queue(self) -> None:
-        text = format_runtime_command_queue_report(load_runtime_command_queue(self.project_root))
+        report = load_runtime_command_queue(self.project_root)
+        text = format_runtime_command_queue_report(report)
         self.output.setPlainText(_with_saved_report_note(self.project_root, "runtime-command-queue", text))
+        self.render_command_queue(report)
 
     def clear_command_queue(self) -> None:
         removed = clear_runtime_command_queue(self.project_root)
-        text = "已清空 runtime 命令队列。" if removed else "没有可清空的 runtime 命令队列。"
+        text = "Runtime command queue cleared." if removed else "No runtime command queue to clear."
         self.output.setPlainText(_with_saved_report_note(self.project_root, "runtime-command-queue-clear", text))
+        self._set_table_rows(self.pending_command_table, [])
 
+    def set_command_type(self, command_type: str) -> None:
+        command_type = command_type.strip()
+        if command_type not in ALLOWED_RUNTIME_COMMANDS:
+            raise ValueError(f"Unsupported runtime command: {command_type}")
+        self.edit_command_type.setText(command_type)
+        self.edit_command_type.setProperty("pickerValue", command_type)
+        self.reset_command_payload()
 
+    def current_command_type(self) -> str:
+        value = _picker_line_value(self.edit_command_type, "captureSnapshot")
+        return str(value or "captureSnapshot").strip()
+
+    def pick_command_type(self) -> None:
+        if _pick_line_value(self, "Choose runtime command", self.edit_command_type, _runtime_command_items()):
+            self.reset_command_payload()
+
+    def reset_command_payload(self) -> None:
+        self.rebuild_command_param_form(self.current_command_type())
+
+    def rebuild_command_param_form(self, command_type: str) -> None:
+        while self.command_param_form.count():
+            item = self.command_param_form.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.command_param_widgets = {}
+        self.command_param_defaults = dict(_RUNTIME_COMMAND_PAYLOAD_EXAMPLES.get(command_type, {}))
+        if not self.command_param_defaults:
+            empty = QLabel("This command does not need parameters.")
+            self.command_param_form.addRow("Params", empty)
+            return
+        for name, default in self.command_param_defaults.items():
+            widget = self._command_param_widget(name, default)
+            self.command_param_widgets[name] = widget
+            row = _line_with_button(widget, _small_button("Pick", lambda n=name: self.pick_command_param(n))) if name in {"sceneId", "spawnPoint"} else widget
+            self.command_param_form.addRow(name, row)
+
+    def _command_param_widget(self, name: str, default: Any) -> QWidget:
+        if isinstance(default, bool):
+            check = QCheckBox()
+            check.setChecked(default)
+            return check
+        if isinstance(default, int) and not isinstance(default, bool):
+            spin = QSpinBox()
+            spin.setRange(-1_000_000, 1_000_000)
+            spin.setValue(default)
+            return spin
+        line = _readonly_picker_line() if name in {"sceneId", "spawnPoint"} else QLineEdit()
+        if name not in {"sceneId", "spawnPoint"}:
+            line.setText(str(default))
+            line.setProperty("pickerValue", str(default))
+        return line
+
+    def pick_command_param(self, name: str) -> None:
+        widget = self.command_param_widgets.get(name)
+        if not isinstance(widget, QLineEdit):
+            return
+        if name == "sceneId":
+            if _pick_line_value(self, "Choose scene", widget, _scene_items(self._load_picker_model())):
+                spawn = self.command_param_widgets.get("spawnPoint")
+                if isinstance(spawn, QLineEdit):
+                    spawn.clear()
+                    spawn.setProperty("pickerValue", None)
+            return
+        if name == "spawnPoint":
+            scene_widget = self.command_param_widgets.get("sceneId")
+            scene_id = _picker_line_value(scene_widget, "") if isinstance(scene_widget, QLineEdit) else ""
+            scene_id = str(scene_id or "").strip()
+            if not scene_id:
+                QMessageBox.warning(self, "Runtime Command", "Choose sceneId before choosing spawnPoint.")
+                return
+            _pick_line_value(self, f"Choose {scene_id} spawnPoint", widget, _spawn_items(self._load_picker_model(), scene_id))
+
+    def _load_picker_model(self) -> ProjectModel:
+        if self._picker_model is not None:
+            return self._picker_model
+        model = ProjectModel()
+        model.load_project(self.project_root)
+        self._picker_model = model
+        return model
+
+    def _command_payload_from_widgets(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for name, widget in self.command_param_widgets.items():
+            if isinstance(widget, QCheckBox):
+                payload[name] = widget.isChecked()
+            elif isinstance(widget, QSpinBox):
+                payload[name] = widget.value()
+            elif isinstance(widget, QDoubleSpinBox):
+                payload[name] = widget.value()
+            elif isinstance(widget, QLineEdit):
+                value = _picker_line_value(widget, widget.text())
+                payload[name] = value
+        return payload
+
+    def enqueue_selected_command(self) -> None:
+        command_type = self.current_command_type()
+        payload = self._command_payload_from_widgets()
+        report = enqueue_runtime_command(
+            self.project_root,
+            command_type,
+            payload=payload,
+            reason=self.edit_command_reason.text().strip() or "workbench:manual-command",
+        )
+        self.output.setPlainText(_with_saved_report_note(self.project_root, f"runtime-command-{command_type}", format_runtime_command_queue_report(report)))
+        self.render_command_queue(report)
+    def render_snapshot(self, report: Any) -> None:
+        if not report.ok:
+            self._set_table_rows(self.overview_table, [["Status", "Unavailable"], ["Path", str(report.path)], ["Reason", report.message or "unknown"]])
+            self.narrative_eval.clear()
+            self._clear_snapshot_tables(except_overview=True)
+            return
+        self._set_table_rows(self.overview_table, [["Status", "Available"], ["Path", str(report.path)], ["Source", report.source], ["Captured", report.captured_at], ["Reason", report.reason], ["Scene", report.current_scene_id], ["GameState", report.game_state], ["Active states", len(report.active_states)], ["Flags", len(report.flags)], ["Quests", len(report.quest_state)], ["Scenarios", len(report.scenario_state)], ["Trace events", len(report.trace)], ["Runtime command results", len(report.runtime_command_results)]])
+        self.narrative_eval.setPlainText(report.narrative_eval_summary.strip() or "")
+        self._set_table_rows(self.active_state_table, [[graph, state] for graph, state in sorted(report.active_states.items())])
+        self._set_table_rows(self.flag_table, [[key, value] for key, value in sorted(report.flags.items())])
+        self._set_table_rows(self.quest_table, [[key, value] for key, value in sorted(report.quest_state.items())])
+        self._set_table_rows(self.scenario_table, [[key, value] for key, value in sorted(report.scenario_state.items())])
+        self._set_table_rows(self.trace_table, [self._trace_row(event) for event in report.trace[-80:]])
+        self._set_table_rows(self.transition_table, [self._transition_row(item) for item in report.transitions[-80:]])
+        self._set_table_rows(self.issue_table, [self._issue_row(issue) for issue in report.issues[-80:]])
+        self._set_table_rows(self.command_result_table, [["OK" if item.get("ok") else "FAIL", item.get("type", ""), item.get("id", ""), item.get("message", "")] for item in report.runtime_command_results[-80:]])
+
+    def render_command_queue(self, report: Any) -> None:
+        if not report.ok:
+            self._set_table_rows(self.pending_command_table, [["!", "Unavailable", "", report.message]])
+            return
+        self._set_table_rows(self.pending_command_table, [[index + 1, command.get("type", ""), command.get("reason", ""), command] for index, command in enumerate(report.commands)])
+
+    def _runtime_table(self, headers: list[str]) -> QTableWidget:
+        table = QTableWidget(0, len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        return table
+
+    def _set_table_rows(self, table: QTableWidget, rows: list[list[Any]]) -> None:
+        table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            for column_index in range(table.columnCount()):
+                value = row[column_index] if column_index < len(row) else ""
+                item = QTableWidgetItem(self._runtime_value_text(value))
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(row_index, column_index, item)
+        table.resizeColumnsToContents()
+
+    def _runtime_value_text(self, value: Any) -> str:
+        if isinstance(value, str):
+            text = value
+        elif value is None:
+            text = ""
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                text = str(value)
+        return text if len(text) <= 600 else text[:597] + "..."
+
+    def _clear_snapshot_tables(self, *, except_overview: bool = False) -> None:
+        tables = [self.active_state_table, self.flag_table, self.quest_table, self.scenario_table, self.trace_table, self.transition_table, self.issue_table, self.command_result_table]
+        if not except_overview:
+            tables.insert(0, self.overview_table)
+        for table in tables:
+            table.setRowCount(0)
+        if hasattr(self, "narrative_eval"):
+            self.narrative_eval.clear()
+
+    def _trace_row(self, event: dict[str, Any]) -> list[Any]:
+        summary = event.get("message") or event.get("transitionId") or event.get("triggerKey") or ""
+        if event.get("from") or event.get("to"):
+            summary = f"{event.get('from', '?')} -> {event.get('to', '?')} {summary}".strip()
+        return [event.get("seq", ""), event.get("type", ""), event.get("graphId", ""), summary, event]
+
+    def _transition_row(self, item: dict[str, Any]) -> list[Any]:
+        return [item.get("graphId", ""), item.get("transitionId", ""), f"{item.get('from', '?')} -> {item.get('to', '?')}", item.get("triggerKey", ""), item]
+
+    def _issue_row(self, issue: dict[str, Any]) -> list[Any]:
+        return [issue.get("severity", ""), issue.get("code", ""), issue.get("message", ""), issue]
+
+    def _table_page(self, label: str, table: QTableWidget) -> QWidget:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(QLabel(label))
+        page_layout.addWidget(table, 1)
+        return page
+
+    def _widget_page(self, widget: QWidget) -> QWidget:
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(widget, 1)
+        return page
 class AssetAuditTab(QWidget):
     def __init__(self, host: WorkbenchWindow) -> None:
         super().__init__(host)
@@ -2291,8 +2889,8 @@ class AssetAuditTab(QWidget):
         top.addStretch(1)
         layout.addWidget(_scrollable_toolbar(top))
 
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
+        self.output_dock = host.console_dock("asset-audit", "Asset Audit Output")
+        self.output = _inline_console_from_dock(self.output_dock)
         self.output.setPlaceholderText("审计素材目录、图片尺寸/格式/alpha、动画 sheet 和分类组织。")
         layout.addWidget(self.output, 1)
 
@@ -2567,10 +3165,15 @@ class AssetCandidateTab(QWidget):
         post_form.addRow("", post_flags)
         layout.addWidget(post_wrap)
 
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
+        self.output_dock = host.console_dock("asset-candidates", "Asset Candidates Output")
+        self.output = _inline_console_from_dock(self.output_dock)
         self.output.setPlaceholderText("这里列出 Codex/GPT 素材任务输出的 savedPath 候选，可一键送到图片工具继续缩放、裁剪、调色。")
-        layout.addWidget(self.output, 1)
+        output_splitter = QSplitter(Qt.Orientation.Vertical)
+        output_splitter.addWidget(QWidget())
+        output_splitter.addWidget(self.output)
+        output_splitter.setCollapsible(0, False)
+        output_splitter.setCollapsible(1, False)
+        layout.addWidget(output_splitter, 1)
 
     def set_project_root(self, project_root: Path) -> None:
         self.project_root = project_root
@@ -2984,12 +3587,19 @@ class ImageToolsTab(QWidget):
         self.preview.setMinimumSize(480, 320)
         self.preview.setStyleSheet("QLabel { background: #1f1f1f; color: #ddd; border: 1px solid #777; }")
         right_lay.addWidget(self.preview, 2)
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
+        self.output_dock = host.console_dock("image-tools", "Image Tools Output")
+        self.output = _inline_console_from_dock(self.output_dock)
         self.output.setPlaceholderText("处理结果、输出路径和错误会显示在这里，可一键复制。")
-        right_lay.addWidget(self.output, 1)
+        output_splitter = QSplitter(Qt.Orientation.Vertical)
+        output_splitter.addWidget(QWidget())
+        output_splitter.addWidget(self.output)
+        output_splitter.setCollapsible(0, False)
+        output_splitter.setCollapsible(1, False)
+        right_lay.addWidget(output_splitter, 1)
         splitter.addWidget(right)
         splitter.setSizes([500, 820])
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
 
     def set_project_root(self, project_root: Path) -> None:
         self.project_root = project_root
@@ -3375,10 +3985,15 @@ class AnimationSheetTab(QWidget):
         splitter.addWidget(right)
         splitter.setSizes([640, 640])
 
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
+        self.output_dock = host.console_dock("animation-sheet", "Animation Sheet Output")
+        self.output = _inline_console_from_dock(self.output_dock)
         self.output.setPlaceholderText("检查、拆帧、合成结果会显示在这里，可复制给 Codex 继续修。")
-        layout.addWidget(self.output, 1)
+        output_splitter = QSplitter(Qt.Orientation.Vertical)
+        output_splitter.addWidget(QWidget())
+        output_splitter.addWidget(self.output)
+        output_splitter.setCollapsible(0, False)
+        output_splitter.setCollapsible(1, False)
+        layout.addWidget(output_splitter, 1)
 
     def set_project_root(self, project_root: Path) -> None:
         self.project_root = project_root
@@ -3673,18 +4288,12 @@ class AssetTaskTab(QWidget):
         form.addRow("", self.check_auto_postprocess)
         splitter.addWidget(form_wrap)
 
-        right = QWidget()
-        right_lay = QVBoxLayout(right)
-        hint = QLabel(
-            "这里生成并保存 GPT 素材任务单；点击执行会调用本地 Codex CLI，并把 prompt、日志和事件记录落盘。"
-        )
-        hint.setWordWrap(True)
-        right_lay.addWidget(hint)
-        self.prompt = QTextEdit()
-        self.prompt.setReadOnly(True)
-        right_lay.addWidget(self.prompt, 1)
-        splitter.addWidget(right)
+        self.prompt_dock = host.console_dock("asset-task", "Asset Task Output")
+        self.prompt = _inline_console_from_dock(self.prompt_dock)
+        splitter.addWidget(self.prompt)
         splitter.setSizes([520, 760])
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
 
     def set_project_root(self, project_root: Path) -> None:
         self.project_root = project_root
@@ -3976,8 +4585,8 @@ class CodexProbeTab(QWidget):
         top.addWidget(self.btn_copy)
         top.addStretch(1)
         layout.addWidget(_scrollable_toolbar(top))
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
+        self.output_dock = host.console_dock("codex-probe", "Codex Probe Output")
+        self.output = _inline_console_from_dock(self.output_dock)
         self.output.setPlaceholderText("检查 codex CLI、image_generation、app-server、图片 savedPath 事件和 token 用量事件。")
         layout.addWidget(self.output, 1)
 
@@ -4591,11 +5200,14 @@ def _planner_workflow_guide(project_root: Path, unit: StoryUnit) -> str:
     if not route_rows:
         draft = _build_acceptance_draft(unit)
         if draft["startEntry"] or draft["actions"] or draft["expectedSignals"] or draft["expectedStates"]:
-            actions.append("点“生成验收草稿”，然后检查验收路线是不是符合真实玩法。")
+            actions.append("点“生成验收草稿”（草稿可推断），然后检查验收路线是不是符合真实玩法。")
         else:
             actions.append("用选择器添加验收起点、步骤和期望结果；不要手写 ID。")
     elif static_errors:
         actions.append("点“1. 检查脚本”，按错误提示修验收路线。")
+    elif rec.acceptance_script.last_run_status in {"失败", "阻塞"}:
+        actions.append("先复盘最近一次验收失败/阻塞记录，确认缺的是脚本路线、游戏逻辑还是素材状态。")
+        actions.append("复制当前单元报告给 Codex，先处理失败/阻塞原因。")
     elif static_ok and rec.production_status in {"未做", "制作中", "可玩", ""}:
         actions.append("如果内容已经能走通，把“制作状态”选择为“待验收”。")
     elif static_ok and rec.production_status == "待验收":
@@ -4609,15 +5221,13 @@ def _planner_workflow_guide(project_root: Path, unit: StoryUnit) -> str:
 
     if rec.acceptance_script.last_run_status == "通过" and rec.production_status == "待验收":
         actions.append("最近验收已通过，可以把“制作状态”选择为“通过”或“冻结”。")
-    elif rec.acceptance_script.last_run_status in {"失败", "阻塞"}:
-        actions.append("复制当前单元报告给 Codex，先处理失败/阻塞原因。")
 
     lines = [
         "剧情单元操作向导",
         f"单元: {rec.display_name or unit.summary.label} ({rec.composition_id})",
         f"当前状态: {rec.production_status or '未做'} / 最近验收: {rec.acceptance_script.last_run_status or '未跑'}",
         "",
-        "照着做:",
+        "下一步:",
     ]
     lines.extend(f"{index}. {action}" for index, action in enumerate(actions, start=1))
     lines.extend([

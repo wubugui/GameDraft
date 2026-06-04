@@ -80,6 +80,78 @@ class ProductionWorkbenchStoryAcceptanceTests(TestCase):
             self.assertFalse(report.ok)
             self.assertTrue(any(issue.code == "acceptance.required" for issue in report.issues))
 
+    def test_acceptance_checker_validates_scenario_phase_references(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            _write_json(
+                root / "public" / "assets" / "data" / "scenarios.json",
+                {
+                    "scenarios": [
+                        {
+                            "id": "line_a",
+                            "phases": {
+                                "intro": {"status": "pending"},
+                                "done": {"status": "pending"},
+                            },
+                        }
+                    ]
+                },
+            )
+            unit = load_story_unit_workspace(root).units[0]
+            unit.record.acceptance_script = AcceptanceScript(
+                start_entry="scene:test_scene",
+                setup_scenarios=["line_a.intro done"],
+                expected_scenario_changes=["scenario=line_a phase=done active"],
+                actions=["dialogue:ringboy"],
+                expected_signals=["ringboy.met"],
+                save_load_check="manual",
+            )
+
+            report = check_story_unit_acceptance_script(root, unit)
+
+            self.assertTrue(report.ok, format_acceptance_check_report(report))
+            self.assertIn("scenario:line_a.intro", report.checked_items)
+            self.assertIn("scenario:line_a.done", report.checked_items)
+
+    def test_acceptance_checker_accepts_dynamic_registry_flags(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            _write_json(
+                root / "public" / "assets" / "data" / "archive" / "characters.json",
+                [{"id": "storyteller_zhang", "name": "storyteller"}],
+            )
+            _write_json(
+                root / "public" / "assets" / "data" / "flag_registry.json",
+                {
+                    "static": [],
+                    "patterns": [
+                        {
+                            "id": "archive_character",
+                            "prefix": "archive_character_",
+                            "idSource": "archive_character",
+                            "valueType": "bool",
+                        }
+                    ],
+                    "migrations": {},
+                    "runtime": {},
+                },
+            )
+            unit = load_story_unit_workspace(root).units[0]
+            unit.record.acceptance_script = AcceptanceScript(
+                start_entry="scene:test_scene",
+                setup_flags=["archive_character_storyteller_zhang = false"],
+                actions=["dialogue:ringboy"],
+                expected_signals=["ringboy.met"],
+                save_load_check="manual",
+            )
+
+            report = check_story_unit_acceptance_script(root, unit)
+
+            self.assertTrue(report.ok, format_acceptance_check_report(report))
+            self.assertFalse(any(issue.code == "acceptance.flag.unknown" for issue in report.issues))
+
     def test_runtime_compare_matches_latest_snapshot(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
@@ -234,6 +306,11 @@ def _write_runtime_snapshot(
         },
     }
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

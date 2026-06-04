@@ -1,8 +1,10 @@
 """Capability probing for local Codex CLI integration."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,11 +107,16 @@ def find_codex_executable() -> str | None:
 
 
 def _find_codex_executable() -> str | None:
-    from_path = shutil.which("codex")
-    if from_path:
-        return from_path
+    for env_name in ("GAMEDRAFT_CODEX_EXE", "CODEX_EXE"):
+        env_value = os.environ.get(env_name, "").strip().strip('"')
+        if env_value:
+            return env_value
 
     candidates: list[Path] = []
+    from_path = shutil.which("codex")
+    if from_path:
+        candidates.append(Path(from_path))
+
     home = Path.home()
     extension_roots = [
         home / ".vscode" / "extensions",
@@ -119,12 +126,70 @@ def _find_codex_executable() -> str | None:
         if not root.is_dir():
             continue
         for path in root.glob("openai.chatgpt-*/bin/**/codex*"):
-            if path.is_file() and path.suffix.lower() in {"", ".exe", ".cmd"}:
+            if path.is_file() and _is_codex_cli_name(path):
                 candidates.append(path)
     if not candidates:
         return None
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return str(candidates[0])
+    path_candidate_count = 1 if from_path else 0
+    ordered = candidates[:path_candidate_count]
+    extension_candidates = [
+        path
+        for path in candidates[path_candidate_count:]
+        if _is_platform_compatible_codex(path)
+    ]
+    extension_candidates.sort(key=lambda p: (_platform_preference(path), p.stat().st_mtime), reverse=True)
+    ordered.extend(extension_candidates)
+    seen: set[str] = set()
+    for path in ordered:
+        key = str(path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_windowsapps_alias(path):
+            continue
+        return str(path)
+    return None
+
+
+def _is_windowsapps_alias(path: Path) -> bool:
+    parts = {part.lower() for part in path.parts}
+    if "windowsapps" not in parts:
+        return False
+    text = str(path).lower()
+    return "openai.codex_" in text or path.name.lower() == "codex.exe"
+
+
+def _is_codex_cli_name(path: Path) -> bool:
+    return path.name.lower() in {"codex", "codex.exe", "codex.cmd"}
+
+
+def _is_platform_compatible_codex(path: Path) -> bool:
+    parts = {part.lower() for part in path.parts}
+    if sys.platform.startswith("win"):
+        return not ({"linux-x86_64", "darwin-x86_64", "darwin-arm64"} & parts)
+    if sys.platform == "darwin":
+        return not ({"windows-x86_64", "win32", "linux-x86_64"} & parts)
+    return not ({"windows-x86_64", "win32", "darwin-x86_64", "darwin-arm64"} & parts)
+
+
+def _platform_preference(path: Path) -> int:
+    parts = {part.lower() for part in path.parts}
+    name = path.name.lower()
+    if sys.platform.startswith("win"):
+        if "windows-x86_64" in parts:
+            return 3
+        if "win32" in parts:
+            return 2
+        if name in {"codex.exe", "codex.cmd"}:
+            return 1
+        return 0
+    if sys.platform == "darwin":
+        if "darwin-arm64" in parts or "darwin-x86_64" in parts:
+            return 3
+        return 1 if name == "codex" else 0
+    if "linux-x86_64" in parts:
+        return 3
+    return 1 if name == "codex" else 0
 
 
 def _run(argv: list[str], *, timeout_sec: int) -> subprocess.CompletedProcess[str]:

@@ -96,8 +96,6 @@ def check_story_unit_acceptance_script(
     for field, values, known, label in [
         ("setupQuests", script.setup_quests, indexes.quests, "quest"),
         ("expectedQuestChanges", script.expected_quest_changes, indexes.quests, "quest"),
-        ("setupScenarios", script.setup_scenarios, indexes.scenarios, "scenario"),
-        ("expectedScenarioChanges", script.expected_scenario_changes, indexes.scenarios, "scenario"),
     ]:
         for raw in values:
             item_id = _first_identifier(raw)
@@ -107,6 +105,35 @@ def check_story_unit_acceptance_script(
             checked.append(f"{label}:{item_id}")
             if item_id not in known:
                 add("error", f"acceptance.{label}.missing", f"{field}: {label} 不存在：{item_id}", field)
+
+    for field, values in [
+        ("setupScenarios", script.setup_scenarios),
+        ("expectedScenarioChanges", script.expected_scenario_changes),
+    ]:
+        for raw in values:
+            scenario_ref = _parse_scenario_ref(raw)
+            if scenario_ref is None:
+                add("warning", "acceptance.scenario.unparsed", f"{field}: 无法识别 scenario id：{raw}", field)
+                continue
+            checked.append(
+                f"scenario:{scenario_ref.scenario_id}"
+                + (f".{scenario_ref.phase}" if scenario_ref.phase else "")
+            )
+            phases = indexes.scenario_phases.get(scenario_ref.scenario_id)
+            if phases is None:
+                add(
+                    "error",
+                    "acceptance.scenario.missing",
+                    f"{field}: scenario 不存在：{scenario_ref.scenario_id}",
+                    field,
+                )
+            elif scenario_ref.phase and scenario_ref.phase not in phases:
+                add(
+                    "error",
+                    "acceptance.scenario.phase.missing",
+                    f"{field}: scenario phase 不存在：{scenario_ref.scenario_id}.{scenario_ref.phase}",
+                    field,
+                )
 
     for raw in script.setup_flags:
         flag = _first_identifier(raw)
@@ -444,6 +471,7 @@ class _AcceptanceIndexes:
     dialogues: set[str]
     quests: set[str]
     scenarios: set[str]
+    scenario_phases: dict[str, set[str]]
     scenes: set[str]
     flags: set[str]
 
@@ -452,6 +480,7 @@ class _AcceptanceIndexes:
         graph_states, signals = _narrative_indexes(model.narrative_graphs)
         signals.update(_string_ids(model.narrative_graphs.get("signals") if isinstance(model.narrative_graphs, dict) else []))
         flags = set(model.all_flags())
+        flags.update(model.registry_flag_choices())
         registry = model.flag_registry
         if isinstance(registry, dict):
             for key in registry.keys():
@@ -462,15 +491,56 @@ class _AcceptanceIndexes:
                 flags.update(_string_ids(raw_flags))
             elif isinstance(raw_flags, dict):
                 flags.update(str(k).strip() for k in raw_flags.keys() if str(k).strip())
+        scenario_ids = model.scenario_ids_ordered()
         return cls(
             graph_states=graph_states,
             signals=signals,
             dialogues=set(model.all_dialogue_graph_ids()),
             quests={qid for qid, _label in model.all_quest_ids()},
-            scenarios=set(model.scenario_ids_ordered()),
+            scenarios=set(scenario_ids),
+            scenario_phases={
+                sid: set(model.phases_for_scenario(sid))
+                for sid in scenario_ids
+            },
             scenes=set(model.scenes.keys()),
             flags=flags,
         )
+
+
+@dataclass(frozen=True)
+class _ScenarioRef:
+    scenario_id: str
+    phase: str = ""
+
+
+def _parse_scenario_ref(raw: str) -> _ScenarioRef | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    named = re.search(
+        r"(?:scenario|scenarioId)\s*[:=：]\s*([0-9A-Za-z_.\-\u4e00-\u9fff]+)",
+        text,
+        re.IGNORECASE,
+    )
+    first = named.group(1).strip(" .:-：") if named else _first_identifier(text)
+    if not first:
+        return None
+    scenario_id = first
+    phase = ""
+    if "." in scenario_id:
+        scenario_id, phase = scenario_id.split(".", 1)
+    explicit_phase = re.search(
+        r"(?:phase|阶段)\s*[:=：]\s*([0-9A-Za-z_\-\u4e00-\u9fff]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if explicit_phase:
+        phase = explicit_phase.group(1).strip()
+    scenario_id = scenario_id.strip()
+    phase = phase.strip()
+    if not scenario_id:
+        return None
+    return _ScenarioRef(scenario_id=scenario_id, phase=phase)
 
 
 def _load_model(project_root: Path) -> ProjectModel:
@@ -646,16 +716,12 @@ class _ExpectedScenario:
 
 def _parse_expected_scenario(raw: str) -> _ExpectedScenario | None:
     text = str(raw or "").strip()
-    first = _first_identifier(text)
-    if not first:
+    scenario_ref = _parse_scenario_ref(text)
+    if scenario_ref is None:
         return None
-    scenario_id = first
-    phase = ""
-    if "." in first:
-        scenario_id, phase = first.split(".", 1)
     return _ExpectedScenario(
-        scenario_id=scenario_id.strip(),
-        phase=phase.strip(),
+        scenario_id=scenario_ref.scenario_id,
+        phase=scenario_ref.phase,
         status=_expected_scenario_status(text),
     )
 

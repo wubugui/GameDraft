@@ -13,7 +13,7 @@ from PIL import Image
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QComboBox, QScrollArea
+from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QScrollArea
 
 from tools.editor.tests.test_production_workbench_asset_audit import _png_bytes
 from tools.editor.tests.test_production_workbench_story_units import _write_story_unit_project
@@ -45,7 +45,7 @@ from tools.production_workbench.story_acceptance import check_story_unit_accepta
 from tools.production_workbench.report_log import workbench_reports_root
 from tools.production_workbench.story_units import load_story_unit_workspace
 from tools.production_workbench.codex_asset_runner import CodexAssetRunResult, CodexEventSummary, asset_task_runs_root
-from tools.production_workbench.runtime_command import enqueue_runtime_command
+from tools.production_workbench.runtime_command import enqueue_runtime_command, load_runtime_command_queue
 from tools.production_workbench.runtime_debug import runtime_debug_snapshot_path
 from tools.editor.project_model import ProjectModel
 
@@ -58,6 +58,16 @@ def _wait_for_qt(condition, *, timeout_sec: float = 5.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("timed out waiting for Qt condition")
+
+
+def _table_text(table) -> str:
+    values = []
+    for row in range(table.rowCount()):
+        for column in range(table.columnCount()):
+            item = table.item(row, column)
+            if item is not None:
+                values.append(item.text())
+    return "\n".join(values)
 
 
 def _reload_story_tab(tab) -> None:
@@ -175,6 +185,35 @@ class ProductionWorkbenchStoryUnitGuiTests(TestCase):
             report = check_story_unit_acceptance_script(root, unit)
             self.assertTrue(report.ok, [issue.message for issue in report.issues])
 
+    def test_clear_acceptance_steps_list_keeps_tracking_fields(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            window = WorkbenchWindow(root)
+            tab = window.story_tab
+            _reload_story_tab(tab)
+
+            tab.edit_entry.setPlainText("玩家进入集市巷")
+            tab.edit_exit.setPlainText("ringboy_flow.done")
+            tab.edit_acceptance.setPlainText("发出 ringboy.met")
+            tab.generate_acceptance_draft()
+            self.assertGreater(tab.acceptance_steps_table.rowCount(), 0)
+
+            with patch(
+                "tools.production_workbench.workbench_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                tab.clear_acceptance_steps_list()
+
+            unit = tab._current_unit()
+            self.assertEqual(tab.acceptance_steps_table.rowCount(), 0)
+            self.assertEqual(unit.record.entry, "玩家进入集市巷")
+            self.assertEqual(unit.record.exit, "ringboy_flow.done")
+            self.assertEqual(unit.record.acceptance, "发出 ringboy.met")
+            self.assertEqual(unit.record.acceptance_script.start_entry, "")
+            self.assertEqual(unit.record.acceptance_script.actions, [])
+            self.assertEqual(unit.record.acceptance_script.expected_signals, [])
+
     def test_planner_self_check_reports_next_action(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
@@ -214,9 +253,10 @@ class ProductionWorkbenchStoryUnitGuiTests(TestCase):
 
             empty_guide = _planner_workflow_guide(root, unit)
 
-            self.assertIn("照着做", empty_guide)
+            self.assertIn("下一步", empty_guide)
             self.assertIn("剧情入口", empty_guide)
             self.assertIn("生成验收草稿", empty_guide)
+            self.assertIn("草稿可推断", empty_guide)
 
             tab.edit_type.setText("支线")
             tab.edit_status.setText("制作中")
@@ -238,6 +278,23 @@ class ProductionWorkbenchStoryUnitGuiTests(TestCase):
 
             self.assertIn("npm run dev", acceptance_guide)
             self.assertIn("2. 发送到游戏运行", acceptance_guide)
+
+            tab.edit_script_status.setText("失败")
+            tab.edit_script_note.setPlainText("没有发出 ringboy.met")
+            tab._save_current_fields()
+            failed_guide = _planner_workflow_guide(root, tab._current_unit())
+
+            self.assertIn("先复盘最近一次验收失败", failed_guide)
+            self.assertIn("复制当前单元报告", failed_guide)
+            self.assertNotIn("2. 发送到游戏运行", failed_guide)
+
+            tab.show_planner_workflow_guide()
+            self.assertIsNotNone(tab._workflow_guide_dialog)
+            guide_window_text = tab._workflow_guide_dialog.output.toPlainText()
+            tab.show_planner_self_check()
+
+            self.assertIn("当前单元自检", tab.summary.toPlainText())
+            self.assertEqual(guide_window_text, tab._workflow_guide_dialog.output.toPlainText())
 
     def test_planner_workbench_uses_search_picker_fields_not_combo_boxes(self) -> None:
         root = Path.cwd()
@@ -858,6 +915,153 @@ class ProductionWorkbenchStoryUnitGuiTests(TestCase):
             self.assertTrue(any("runtime-command-queue-clear" in name for name in report_names))
             self.assertTrue(any("runtime-debug-clear-snapshot" in name for name in report_names))
             self.assertIn("报告已自动保存", tab.output.toPlainText())
+
+    def test_runtime_debug_tab_can_enqueue_selected_runtime_command(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            window = WorkbenchWindow(root)
+            tab = window.runtime_debug_tab
+
+            tab.set_command_type("debugSwitchScene")
+            tab.edit_command_reason.setText("test-switch")
+            scene_widget = tab.command_param_widgets["sceneId"]
+            spawn_widget = tab.command_param_widgets["spawnPoint"]
+            self.assertTrue(scene_widget.isReadOnly())
+            self.assertTrue(spawn_widget.isReadOnly())
+            scene_widget.setText("Dev Room")
+            scene_widget.setProperty("pickerValue", "dev_room")
+            spawn_widget.setText("Entry")
+            spawn_widget.setProperty("pickerValue", "entry")
+            tab.enqueue_selected_command()
+
+            report = load_runtime_command_queue(root)
+            self.assertTrue(report.ok)
+            self.assertEqual(len(report.commands), 1)
+            self.assertEqual(report.commands[0]["type"], "debugSwitchScene")
+            self.assertEqual(report.commands[0]["reason"], "test-switch")
+            self.assertEqual(report.commands[0]["sceneId"], "dev_room")
+            self.assertEqual(report.commands[0]["spawnPoint"], "entry")
+            self.assertIn("debugSwitchScene", tab.output.toPlainText())
+            self.assertIn("debugSwitchScene", _table_text(tab.pending_command_table))
+            self.assertIn("dev_room", _table_text(tab.pending_command_table))
+            self.assertFalse(hasattr(tab, "edit_command_payload"))
+
+            _wait_for_qt(lambda: window.story_tab._story_thread is None)
+            window.close()
+
+    def test_runtime_debug_tab_uses_scene_picker_for_switch_scene(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            window = WorkbenchWindow(root)
+            tab = window.runtime_debug_tab
+
+            tab.set_command_type("debugSwitchScene")
+            spawn_widget = tab.command_param_widgets["spawnPoint"]
+            with patch("tools.production_workbench.workbench_window.QMessageBox.warning", return_value=None) as warning:
+                tab.pick_command_param("spawnPoint")
+            self.assertTrue(warning.called)
+
+            scene_widget = tab.command_param_widgets["sceneId"]
+            spawn_widget.setText("Door")
+            spawn_widget.setProperty("pickerValue", "door")
+
+            def choose_scene(_parent, _title, line, _items):
+                line.setText("Scene A")
+                line.setProperty("pickerValue", "sc_a")
+                return True
+
+            with patch("tools.production_workbench.workbench_window._pick_line_value", side_effect=choose_scene):
+                tab.pick_command_param("sceneId")
+            self.assertEqual(scene_widget.property("pickerValue"), "sc_a")
+            self.assertEqual(spawn_widget.text(), "")
+            self.assertIsNone(spawn_widget.property("pickerValue"))
+
+            with patch("tools.production_workbench.workbench_window._pick_line_value", return_value=False) as picker:
+                tab.pick_command_param("spawnPoint")
+            self.assertIn("sc_a", picker.call_args.args[1])
+            self.assertTrue(any(item.get("value") == "" for item in picker.call_args.args[3]))
+
+            _wait_for_qt(lambda: window.story_tab._story_thread is None)
+            window.close()
+
+    def test_runtime_debug_tab_renders_snapshot_as_structured_gui(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            snapshot = runtime_debug_snapshot_path(root)
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "capturedAt": "2026-06-04T00:00:00Z",
+                        "source": "vite-runtime",
+                        "snapshot": {
+                            "reason": "runtime-command:complete",
+                            "capturedAt": "2026-06-04T00:00:00Z",
+                            "currentSceneId": "dev_room",
+                            "gameState": "Exploring",
+                            "flags": {"flag_a": True},
+                            "questState": {"quest_a": {"status": 2}},
+                            "scenarioState": {"scenario_a": {"phase": {"status": "completed"}}},
+                            "narrativeState": {
+                                "activeStates": {"graph_a": "state_b"},
+                                "recentTrace": [
+                                    {
+                                        "seq": 7,
+                                        "type": "transition",
+                                        "graphId": "graph_a",
+                                        "from": "state_a",
+                                        "to": "state_b",
+                                        "message": "advanced",
+                                    }
+                                ],
+                                "recentTransitions": [
+                                    {
+                                        "graphId": "graph_a",
+                                        "transitionId": "t1",
+                                        "from": "state_a",
+                                        "to": "state_b",
+                                        "triggerKey": "signal_a",
+                                    }
+                                ],
+                                "recentIssues": [
+                                    {"severity": "warning", "code": "missing", "message": "check me"}
+                                ],
+                            },
+                            "runtimeCommands": {
+                                "lastResults": [
+                                    {
+                                        "id": "cmd1",
+                                        "type": "debugSwitchScene",
+                                        "ok": True,
+                                        "message": "scene switched",
+                                    }
+                                ]
+                            },
+                            "narrativeEval": {"summaryText": "condition summary"},
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            window = WorkbenchWindow(root)
+            tab = window.runtime_debug_tab
+            tab.reload()
+
+            self.assertIn("dev_room", _table_text(tab.overview_table))
+            self.assertIn("graph_a", _table_text(tab.active_state_table))
+            self.assertIn("flag_a", _table_text(tab.flag_table))
+            self.assertIn("advanced", _table_text(tab.trace_table))
+            self.assertIn("check me", _table_text(tab.issue_table))
+            self.assertIn("debugSwitchScene", _table_text(tab.command_result_table))
+            self.assertIn("condition summary", tab.narrative_eval.toPlainText())
+
+            _wait_for_qt(lambda: window.story_tab._story_thread is None)
+            window.close()
 
     def test_story_acceptance_failures_are_saved_and_copied(self) -> None:
         with TemporaryDirectory() as td:

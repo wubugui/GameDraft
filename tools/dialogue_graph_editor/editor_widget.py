@@ -1049,6 +1049,9 @@ class DialogueGraphEditorWidget(QWidget):
     def has_unsaved_changes(self) -> bool:
         return self._model.is_dirty
 
+    def current_path(self) -> Path | None:
+        return self._current_path
+
     def confirm_discard_or_save_before_close(self, parent: QWidget | None) -> bool:
         if not self._model.is_dirty:
             return True

@@ -158,6 +158,7 @@ def format_asset_candidate_report(report: AssetCandidateReport) -> str:
     lines = [
         "素材候选版本",
         f"工程: {report.project_root}",
+        f"扫描目录: {asset_task_runs_root(report.project_root)}",
         f"候选: {len(report.candidates)}，存在: {report.existing_count}，缺失: {report.missing_count}",
         "",
     ]
@@ -167,6 +168,7 @@ def format_asset_candidate_report(report: AssetCandidateReport) -> str:
         lines.append("")
     if not report.candidates:
         lines.append("没有候选。先在“素材任务”里执行 Codex 并记录，或确认 Codex 输出了 savedPath。")
+        lines.append("排查点: run_dir/summary.json 需要包含 eventSummary.savedPaths。")
         return "\n".join(lines)
 
     for item in report.candidates:

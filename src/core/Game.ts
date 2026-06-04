@@ -229,6 +229,8 @@ export class Game {
   private runtimeDebugSnapshotTimer: number | null = null;
   private runtimeCommandPollTimer: number | null = null;
   private runtimeCommandPollInFlight = false;
+  private runtimeDebugSnapshotErrorLogged = false;
+  private runtimeCommandPollErrorLogged = false;
   private lastRuntimeCommandResults: { id: string; type: string; ok: boolean; message: string }[] = [];
 
   private registeredSystems: { name: string; system: IGameSystem }[] = [];
@@ -1006,6 +1008,8 @@ export class Game {
     this.saveManager.setFallbackScene(this.gameConfig.fallbackScene || this.gameConfig.initialScene);
 
     await this.setupPlayer({ deferAvatar: this.isDevMode });
+    this.setupRuntimeDebugSnapshotPublishing();
+    this.setupRuntimeCommandPolling();
 
     if (this.isDevMode) {
       await this.startDevMode(
@@ -1762,9 +1766,6 @@ export class Game {
       setNarrativeState: (graphId, stateId) =>
         this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
     };
-    this.setupRuntimeDebugSnapshotPublishing();
-    this.setupRuntimeCommandPolling();
-
     if (playCutscene) {
       setTimeout(() => this.devPlayCutscene(playCutscene), 300);
     }
@@ -2356,8 +2357,11 @@ export class Game {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.buildRuntimeDebugSnapshot(reason)),
       });
-    } catch {
-      // Dev server may be unavailable when previewing static builds; keep runtime quiet.
+    } catch (error) {
+      if (!this.runtimeDebugSnapshotErrorLogged) {
+        this.runtimeDebugSnapshotErrorLogged = true;
+        console.warn('[GameDraft runtime-debug] snapshot publish failed', error);
+      }
     }
   }
 
@@ -2377,7 +2381,13 @@ export class Game {
     this.runtimeCommandPollInFlight = true;
     try {
       const response = await fetch('/__gamedraft-api/runtime-command', { method: 'GET' });
-      if (!response.ok) return;
+      if (!response.ok) {
+        if (!this.runtimeCommandPollErrorLogged) {
+          this.runtimeCommandPollErrorLogged = true;
+          console.warn('[GameDraft runtime-command] poll failed', response.status, response.statusText);
+        }
+        return;
+      }
       const payload = await response.json();
       const commands = Array.isArray(payload?.commands) ? payload.commands : [];
       if (commands.length === 0) return;
@@ -2402,8 +2412,11 @@ export class Game {
       if (results.some((r) => !r.ok)) {
         console.warn('[GameDraft runtime-command] command failed', results);
       }
-    } catch {
-      // Dev server may be unavailable when previewing static builds; keep runtime quiet.
+    } catch (error) {
+      if (!this.runtimeCommandPollErrorLogged) {
+        this.runtimeCommandPollErrorLogged = true;
+        console.warn('[GameDraft runtime-command] poll failed', error);
+      }
     } finally {
       this.runtimeCommandPollInFlight = false;
     }

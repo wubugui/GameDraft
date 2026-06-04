@@ -27,6 +27,22 @@ class DialogueGraphEditorTab(QWidget):
         """按图资源 id（与 graphs/*.json 文件名一致，可带或不带 .json）打开。"""
         if self._panel is None or self._model.project_path is None:
             return
+        gid = graph_id.strip()
+        if gid.endswith(".json"):
+            name = gid
+        else:
+            name = f"{gid}.json"
+        path = graphs_dir(self._model.project_path) / name
+        if not path.is_file():
+            QMessageBox.information(self, "图对话", f"找不到图文件：{name}")
+            return
+        current_path = self._panel.current_path()
+        if current_path is not None:
+            try:
+                if current_path.resolve() == path.resolve():
+                    return
+            except OSError:
+                pass
         if self._panel.has_unsaved_changes():
             r = QMessageBox.question(
                 self,
@@ -41,16 +57,7 @@ class DialogueGraphEditorTab(QWidget):
                     return
             elif r == QMessageBox.StandardButton.Cancel:
                 return
-        gid = graph_id.strip()
-        if gid.endswith(".json"):
-            name = gid
-        else:
-            name = f"{gid}.json"
-        path = graphs_dir(self._model.project_path) / name
-        if path.is_file():
-            self._panel.load_path(path)
-        else:
-            QMessageBox.information(self, "图对话", f"找不到图文件：{name}")
+        self._panel.load_path(path)
 
     def flush_to_model(self) -> bool:
         if self._panel is not None and self._panel.has_unsaved_changes():
