@@ -6,7 +6,7 @@
       {
         "kind": "present",
         "type": "showImg",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/04_taoist_discovers_tomb_omen.png"
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/taoist_finds_scroll_cliff.png"
       },
       {
         "kind": "action",
@@ -1311,7 +1311,150 @@
     "targetSpawnPoint": "spawn_2"
   },
   {
-    "id": "cutscene_10",
+    "id": "说书-李天狗大战旱魃",
+    "steps": [
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "_img",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/01_mountain_path_to_shenxianling_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "说有一天李天狗来到一处穷山恶水之地。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleEmote": {
+          "target": "storyteller_zhang",
+          "emote": "!!",
+          "duration": 1500.0,
+          "anchorOffsetX": 0.0,
+          "anchorOffsetY": 0.0
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/02_taoist_enters_shenxianling_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/03_taoist_reaches_grave_site_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/04_taoist_discovers_tomb_omen_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/05_graverobbers_unearth_hanba_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/06_taoist_rescues_graverobbers_wide_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/07_taoist_duels_hanba_medium_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/08_taoist_duels_hanba_close_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/09_taoist_subdues_hanba_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/10_graverobbers_offer_reward_round2.png"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      }
+    ],
+    "targetScene": "teahouse"
+  },
+  {
+    "id": "cutscene_11",
     "steps": []
   }
 ]
