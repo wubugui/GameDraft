@@ -1,6 +1,40 @@
 {
-  "bgm": {},
+  "bgm": {
+    "bgm_placeholder_dread_piano": {
+      "src": "/resources/runtime/audio/demo/bgm_placeholder_dread_piano.mp3",
+      "volume": 0.5
+    },
+    "bgm_placeholder_dark_shadows": {
+      "src": "/resources/runtime/audio/demo/bgm_placeholder_dark_shadows.mp3",
+      "volume": 0.5
+    },
+    "bgm_placeholder_low_tension": {
+      "src": "/resources/runtime/audio/demo/bgm_placeholder_low_tension.mp3",
+      "volume": 0.45
+    }
+  },
   "ambient": {
+    "amb_riverbank_loop": {
+      "src": "/resources/runtime/audio/demo/amb_riverbank_loop.wav"
+    },
+    "amb_dock_water_crowd_loop": {
+      "src": "/resources/runtime/audio/demo/amb_dock_water_crowd_loop.wav",
+      "volume": 0.8
+    },
+    "amb_night_forest_loop": {
+      "src": "/resources/runtime/audio/demo/amb_night_forest_loop.wav"
+    },
+    "amb_yizhuang_room_tone": {
+      "src": "/resources/runtime/audio/demo/amb_yizhuang_room_tone.wav",
+      "volume": 0.7
+    },
+    "amb_chenghuang_temple_loop": {
+      "src": "/resources/runtime/audio/demo/amb_chenghuang_temple_loop.wav"
+    },
+    "amb_light_rain_loop": {
+      "src": "/resources/runtime/audio/demo/amb_light_rain_loop.wav",
+      "volume": 0.7
+    },
     "teahouse_roomtone": {
       "src": "/resources/runtime/audio/teahouse_roomtone.wav"
     },
@@ -33,6 +67,65 @@
     }
   },
   "sfx": {
+    "sfx_force_swallowed_thud": {
+      "src": "/resources/runtime/audio/demo/sfx_force_swallowed_thud.wav"
+    },
+    "sfx_heartbeat_bed": {
+      "src": "/resources/runtime/audio/demo/sfx_heartbeat_bed.wav",
+      "volume": 0.6
+    },
+    "sfx_paper_hand_rustle": {
+      "src": "/resources/runtime/audio/demo/sfx_paper_hand_rustle.wav"
+    },
+    "sfx_underwater_grab": {
+      "src": "/resources/runtime/audio/demo/sfx_underwater_grab.wav"
+    },
+    "sfx_well_cry_stop": {
+      "src": "/resources/runtime/audio/demo/sfx_well_cry_stop.wav"
+    },
+    "sfx_abnormal_breath": {
+      "src": "/resources/runtime/audio/demo/sfx_abnormal_breath.wav"
+    },
+    "sfx_bone_dull_knock": {
+      "src": "/resources/runtime/audio/demo/sfx_bone_dull_knock.wav"
+    },
+    "sfx_ink_line_snap": {
+      "src": "/resources/runtime/audio/demo/sfx_ink_line_snap.wav"
+    },
+    "sfx_stone_press": {
+      "src": "/resources/runtime/audio/demo/sfx_stone_press.wav"
+    },
+    "sfx_axiu_faint_hum": {
+      "src": "/resources/runtime/audio/demo/sfx_axiu_faint_hum.wav",
+      "volume": 0.55
+    },
+    "sfx_axiu_tiny_signal": {
+      "src": "/resources/runtime/audio/demo/sfx_axiu_tiny_signal.wav",
+      "volume": 0.55
+    },
+    "sfx_lamp_oil_flame": {
+      "src": "/resources/runtime/audio/demo/sfx_lamp_oil_flame.wav"
+    },
+    "sfx_night_bird_startle": {
+      "src": "/resources/runtime/audio/demo/sfx_night_bird_startle.wav"
+    },
+    "sfx_rice_scatter": {
+      "src": "/resources/runtime/audio/demo/sfx_rice_scatter.wav"
+    },
+    "sfx_hold_pressure_loop": {
+      "src": "/resources/runtime/audio/demo/sfx_hold_pressure_loop.wav",
+      "volume": 0.6
+    },
+    "sfx_ui_paper_tick": {
+      "src": "/resources/runtime/audio/demo/sfx_ui_paper_tick.wav"
+    },
+    "sfx_corpse_cloth_creak": {
+      "src": "/resources/runtime/audio/demo/sfx_corpse_cloth_creak.wav"
+    },
+    "sfx_well_childlike_cry_loop": {
+      "src": "/resources/runtime/audio/demo/sfx_well_childlike_cry_loop.wav",
+      "volume": 0.8
+    },
     "story_intro": {
       "src": "/resources/runtime/audio/story_intro.wav"
     },
