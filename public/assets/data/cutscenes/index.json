@@ -1502,6 +1502,20 @@
     ]
   },
   {
+    "id": "寻狗_名声蒙太奇",
+    "steps": [
+      { "kind": "present", "type": "fadeToBlack", "duration": 900 },
+      { "kind": "present", "type": "showTitle", "text": "几天后", "duration": 1500 },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "婆子家的事，加上码头那一场，再经茶馆这口大锅一炖——" },
+      { "kind": "present", "type": "showDialogue", "speaker": "茶客们", "text": "「李天狗那一脉的来了雾津！背尸出身，专管邪门事！」" },
+      { "kind": "present", "type": "showDialogue", "speaker": "脚帮的", "text": "「人家念两句，院里的邪祟自个儿就退了——价钱还公道！」" },
+      { "kind": "present", "type": "showDialogue", "speaker": "街坊", "text": "「嘘——听说他师爷当年在神仙顶，一道符镇了旱魃……」" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "名声滚起来了。滚得连关二狗自己都开始信：俺兴许真有两下子？" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "接着，有人为一条「狗」，找上门来。" },
+      { "kind": "present", "type": "fadeIn", "duration": 900 }
+    ]
+  },
+  {
     "id": "寻狗_灵堂进场",
     "steps": [
       { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },

@@ -3,16 +3,129 @@
   "id": "寻狗_枯井往下看",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_枯井往下看（占位：第二幕制作中）"
+    "title": "寻狗Demo·枯井狗脸（越界者的下场）"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "xg_kujing_done",
+              "value": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第二幕内容制作中。）",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "井边静悄悄的。不看了。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "他把绳子在井栏上绕了两圈，扒着井沿，往下看。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "runActions",
+      "actions": [
+        { "type": "playSfx", "params": { "id": "sfx_well_cry_stop" } }
+      ],
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "叫声，骤停。",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "well_nonhuman_face",
+            "image": "well_nonhuman_face",
+            "xPercent": 50,
+            "yPercent": 50,
+            "widthPercent": 68
+          }
+        },
+        { "type": "playSfx", "params": { "id": "sfx_heartbeat_bed" } }
+      ],
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "井底半截处，蜷着个毛茸茸的东西。仰着脸。冲他。",
+      "next": "n6"
+    },
+    "n6": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "那不是狗的脸。也不是人脸。说不出是什么。",
+      "next": "n7"
+    },
+    "n7": {
+      "type": "runActions",
+      "actions": [
+        { "type": "waitMs", "params": { "durationMs": 1300 } }
+      ],
+      "next": "n8"
+    },
+    "n8": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "对看一息。浑身的血，一寸一寸凉下去。",
+      "next": "n9"
+    },
+    "n9": {
+      "type": "runActions",
+      "actions": [
+        { "type": "hideOverlayImage", "params": { "id": "well_nonhuman_face" } },
+        { "type": "playSignalCue", "params": { "id": "axiu_hint" } }
+      ],
+      "next": "n10"
+    },
+    "n10": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "像那东西本就在等一个人。看了他一眼——自己没了兴致，慢慢把脸转了回去。",
+      "next": "n11"
+    },
+    "n11": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "关二狗扔下绳子撒腿就跑，一口气跑出半里地才敢回头——井边静悄悄。叫了两天两夜的哭声，没了。",
+      "next": "n12"
+    },
+    "n12": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（河滩。井底。……这些东西，到底拿俺当什么？）",
+      "next": "n_flag"
+    },
+    "n_flag": {
+      "type": "runActions",
+      "actions": [
+        { "type": "setFlag", "params": { "key": "xg_kujing_done", "value": true } },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "雾津街头",
+            "targetSpawnPoint": "from_event"
+          }
+        }
+      ],
       "next": "end1"
     },
     "end1": {

@@ -3,16 +3,225 @@
   "id": "寻狗_码头选择",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_码头选择（占位：第二幕制作中）"
+    "title": "寻狗Demo·码头捞箱（A跳水/B喊价/C看热闹）"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "xg_laoxiang_done",
+              "value": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第二幕内容制作中。）",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "洋船还泊在那儿。码头的热闹散了，热闹留下的话头才刚开始长牙。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "箱子还在水里扑腾着冒泡。埃德加的「Ten DOLLARS!」悬在半空，人群的眼神发烫——可没一个人动。",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "a_tiao",
+          "text": "〔跳水捞箱〕脱了褂子就往下扎",
+          "next": "a_1"
+        },
+        {
+          "id": "b_han",
+          "text": "〔当中间人〕「十块大洋谁信呐！先把定钱亮出来——我给你们张罗人！」",
+          "next": "b_1"
+        },
+        {
+          "id": "c_kan",
+          "text": "〔看热闹〕抱着胳膊往后站站",
+          "next": "c_1"
+        }
+      ]
+    },
+    "a_1": {
+      "type": "runActions",
+      "actions": [
+        { "type": "setFlag", "params": { "key": "xg_dock_choice", "value": 1 } },
+        { "type": "startWaterMinigame", "params": { "id": "dock_crate_tutorial" } }
+      ],
+      "next": "a_2"
+    },
+    "a_2": {
+      "type": "runActions",
+      "actions": [
+        { "type": "playSfx", "params": { "id": "sfx_underwater_grab" } }
+      ],
+      "next": "a_3"
+    },
+    "a_3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "摸到箱子那一刻——脚腕猛地被拽了一下。黑浑的水里什么都看不见，只有那一下，又冷又实。",
+      "next": "a_4"
+    },
+    "a_4": {
+      "type": "runActions",
+      "actions": [
+        { "type": "playSignalCue", "params": { "id": "axiu_faint" } }
+      ],
+      "next": "a_5"
+    },
+    "a_5": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "ankle_scratch",
+            "image": "ankle_scratch",
+            "xPercent": 50,
+            "yPercent": 48,
+            "widthPercent": 52
+          }
+        }
+      ],
+      "next": "a_6"
+    },
+    "a_6": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "他侥幸上了岸。手腕上多了几道抓痕——又细又深，水底下，不该有这种来源。",
+      "next": "a_7"
+    },
+    "a_7": {
+      "type": "runActions",
+      "actions": [
+        { "type": "hideOverlayImage", "params": { "id": "ankle_scratch" } },
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "compass_silver_map_book",
+            "image": "compass_silver_map_book",
+            "xPercent": 50,
+            "yPercent": 47,
+            "widthPercent": 60
+          }
+        }
+      ],
+      "next": "a_8"
+    },
+    "a_8": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "箱子开了：一只指针乱转的罗盘。几页手绘地图碎片——上头标着「神仙顶」「阎王岭」，旁边一行行洋文批注。还有一摞线装风水古籍的复印件，和一张洋婆子的照片。",
+      "next": "a_9"
+    },
+    "a_9": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（罗盘乱转必撞煞……洋人研究这个干啥？）",
+      "next": "a_10"
+    },
+    "a_10": {
+      "type": "runActions",
+      "actions": [
+        { "type": "hideOverlayImage", "params": { "id": "compass_silver_map_book" } }
+      ],
+      "next": "a_11"
+    },
+    "a_11": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "埃德加" },
+      "text": "Good job！说好的十块大洋——呃，box 进了水，货损了 value……（从兜里摸出两枚银角子塞过来）辛苦费！Very 慷慨！",
+      "next": "a_12"
+    },
+    "a_12": {
+      "type": "runActions",
+      "actions": [
+        { "type": "giveItem", "params": { "id": "silver_dimes", "count": 2 } },
+        { "type": "giveCurrency", "params": { "amount": 4 } }
+      ],
+      "next": "a_13"
+    },
+    "a_13": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "两枚银角子？！你管这叫十块大洋？！……行吧，洋人的账，比僵尸还邪门。",
+      "next": "a_14"
+    },
+    "a_14": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "一旁的克拉拉没看箱子。她盯着他手腕上那几道抓痕，皱了皱眉——没说话。心里记了一笔。",
+      "next": "n_end_flags"
+    },
+    "b_1": {
+      "type": "runActions",
+      "actions": [
+        { "type": "setFlag", "params": { "key": "xg_dock_choice", "value": 2 } }
+      ],
+      "next": "b_2"
+    },
+    "b_2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "他往人群前头一站，嗓门一扯，三句话把价钱从十块「大洋」砍成了看得见摸得着的几串铜钱，又把两个会水的脚夫推下了水。",
+      "next": "b_3"
+    },
+    "b_3": {
+      "type": "runActions",
+      "actions": [
+        { "type": "giveCurrency", "params": { "amount": 8 } }
+      ],
+      "next": "b_4"
+    },
+    "b_4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "箱子捞上来，他抽了头钱。远远地，他瞥见开箱时露出的物件——罗盘、地图、一摞旧书。地图上有两个他认得的地名：神仙顶。阎王岭。",
+      "next": "b_5"
+    },
+    "b_5": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "克拉拉把这个会来事的本地人上下打量了一遍，在小本子上记了点什么。",
+      "next": "n_end_flags"
+    },
+    "c_1": {
+      "type": "runActions",
+      "actions": [
+        { "type": "setFlag", "params": { "key": "xg_dock_choice", "value": 3 } }
+      ],
+      "next": "c_2"
+    },
+    "c_2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "他抱着胳膊看完了全场：有人下水，箱子捞起，洋人掏钱比掏心还慢。热闹散场，各回各家。",
+      "next": "c_3"
+    },
+    "c_3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "当晚茶馆里，箱子里的物件已经被传得有鼻子有眼——罗盘、洋文地图，还有人赌咒发誓说看见了「神仙顶」三个字。",
+      "next": "n_end_flags"
+    },
+    "n_end_flags": {
+      "type": "runActions",
+      "actions": [
+        { "type": "setFlag", "params": { "key": "xg_laoxiang_done", "value": true } },
+        { "type": "startCutscene", "params": { "id": "寻狗_名声蒙太奇" } }
+      ],
       "next": "end1"
     },
     "end1": {

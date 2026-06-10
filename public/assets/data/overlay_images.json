@@ -2,5 +2,17 @@
   "码头抓水猴子告示": "/resources/runtime/images/illustrations/告示-抓水猴子.png",
   "axiu_cue": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
   "axiu_lamp_cue": "/resources/runtime/images/ui_vfx/axiu_lamp_glow.png",
-  "scare_closeup": "/resources/runtime/images/illustrations/demo/bride_face_closeup.png"
+  "scare_closeup": "/resources/runtime/images/illustrations/demo/bride_face_closeup.png",
+  "river_ghost_hand": "/resources/runtime/images/illustrations/demo/river_ghost_hand.png",
+  "ankle_scratch": "/resources/runtime/images/illustrations/demo/ankle_scratch.png",
+  "compass_silver_map_book": "/resources/runtime/images/illustrations/demo/compass_silver_map_book.png",
+  "well_nonhuman_face": "/resources/runtime/images/illustrations/demo/well_nonhuman_face.png",
+  "clara_notebook_photo": "/resources/runtime/images/illustrations/demo/clara_notebook_photo.png",
+  "fake_taoist_kit": "/resources/runtime/images/illustrations/demo/fake_taoist_kit.png",
+  "soul_calling_map": "/resources/runtime/images/illustrations/demo/soul_calling_map.png",
+  "zombie_suppression_kit": "/resources/runtime/images/illustrations/demo/zombie_suppression_kit.png",
+  "forest_name_call": "/resources/runtime/images/illustrations/demo/forest_name_call.png",
+  "yizhuang_corpses": "/resources/runtime/images/illustrations/demo/yizhuang_corpses.png",
+  "chenghuang_lamp": "/resources/runtime/images/illustrations/demo/chenghuang_lamp.png",
+  "demo_end_panel": "/resources/runtime/images/illustrations/demo/demo_end_panel.png"
 }

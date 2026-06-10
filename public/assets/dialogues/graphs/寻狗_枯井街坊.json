@@ -3,16 +3,93 @@
   "id": "寻狗_枯井街坊",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_枯井街坊（占位：第二幕制作中）"
+    "title": "寻狗Demo·枯井活计（街坊上门）"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "xg_kujing_done",
+              "value": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第二幕内容制作中。）",
+      "speaker": { "kind": "npc" },
+      "text": "井那边……真不叫了？哎，不叫了就好，不叫了就好……（他没敢问细节）",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "小先生！可寻着您了。土地庙后头那口枯井，掉了条狗——叫了两天两夜了！",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "（压低声）白天听，是狗叫。夜里听……像小孩哭。庙那边没人敢过去。您给捞上来，街坊们凑了钱。",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "qu",
+          "text": "「一条狗而已。带路。」",
+          "next": "c_qu"
+        },
+        {
+          "id": "qian",
+          "text": "「钱，先拿来。」",
+          "next": "c_qian"
+        }
+      ]
+    },
+    "c_qu": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "哎！哎！钱在这儿，您先拿着——庙后头，您自个儿过去成不？俺、俺就不陪了……",
+      "next": "n_pay"
+    },
+    "c_qian": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "在这儿在这儿！十五文，一文不少！……庙后头您自个儿过去成不？俺实在是、是腿脚不便……",
+      "next": "n_pay"
+    },
+    "n_pay": {
+      "type": "runActions",
+      "actions": [
+        { "type": "giveCurrency", "params": { "amount": 15 } }
+      ],
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（腿脚不便。刚才一路小跑过来的。）……行，俺去。",
+      "next": "n_go"
+    },
+    "n_go": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "枯井土地庙",
+            "targetSpawnPoint": "entry"
+          }
+        }
+      ],
       "next": "end1"
     },
     "end1": {
