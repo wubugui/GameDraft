@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_管事义庄内",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·寻狗_管事义庄内（占位：第三幕制作中）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "（第三幕内容制作中。）",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

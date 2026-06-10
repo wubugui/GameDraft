@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_婆子",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·第一单（婆子上门）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "xg_pozi_done",
+              "value": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "小先生的恩，老婆子记下了。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "可算寻着了！你就是……李天狗那一脉的小先生不？",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（李天狗那一脉？……哦。俺。）正是。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "俺家院里，夜夜有动静！鸡也不下蛋了，狗叫到后半夜——钱，老婆子拍这儿了！您可得给瞧瞧！",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "jie",
+          "text": "「走。带俺去看。」",
+          "next": "c_jie"
+        },
+        {
+          "id": "tai",
+          "text": "〔抬抬价〕「这种活……寻常先生可不接。」",
+          "next": "c_tai"
+        }
+      ]
+    },
+    "c_tai": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "（一咬牙）再加十文！不能再多了，小先生！",
+      "next": "c_tai_pay"
+    },
+    "c_tai_pay": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 10
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "c_jie": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "哎！哎！小先生这边走——",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "这是头一个主动找上门的活儿。关二狗跟着婆子出城，一路把说书先生的词在肚子里又过了一遍。",
+      "next": "n_go"
+    },
+    "n_go": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "婆子家院",
+            "targetSpawnPoint": "entry"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

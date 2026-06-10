@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_背尸",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·背庄家尸（教学：背尸力学）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "xg_beishi_done",
+              "value": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "不看了。这辈子都不想再看。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "大红嫁衣在烛光底下红得发黑。关二狗啐了口唾沫搓搓手——上前，过肩，搭手。背尸的老把式，闭着眼都不会错。",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_bride_corpse"
+          }
+        }
+      ],
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "瘫坐在地上喘气的工夫，鼻尖掠过一缕味儿——浆洗棉布、线头，和一点……廉价香料。",
+      "next": "n_cue"
+    },
+    "n_cue": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_faint"
+          }
+        }
+      ],
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "尸臭俺闻过八百回。这味儿——不是。",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "凉透骨。重得邪门。停了多日像才刚停下。这尸，哪样都不对劲。头皮一层一层麻上来。",
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "工钱……工钱个屁！！",
+      "next": "n6"
+    },
+    "n6": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "他连滚带爬夺门而出，一口气跑回城，天都蒙蒙亮了。后头四十文的事，再没人提起——他也没敢回去要。",
+      "next": "n_flag"
+    },
+    "n_flag": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_beishi_done",
+            "value": true
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "雾津街头",
+            "targetSpawnPoint": "from_event"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

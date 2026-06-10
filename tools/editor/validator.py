@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -574,7 +575,91 @@ def validate(model: ProjectModel) -> list[Issue]:
 
     _validate_dialogue_graphs(model, issues)
 
+    _validate_pressure_holds(model, issues)
+    _validate_signal_cues(model, issues)
+
     return issues
+
+
+def _validate_pressure_holds(model: ProjectModel, issues: list[Issue]) -> None:
+    """pressure_holds.json：结构 + 内嵌 Action 校验（id 唯一、fillSeconds 正数、atRatio 严格递增）。"""
+    seen: set[str] = set()
+    for h in model.pressure_holds:
+        if not isinstance(h, dict):
+            issues.append(Issue("error", "pressure_hold", "?", "条目须为对象"))
+            continue
+        hid = str(h.get("id") or "").strip()
+        if not hid:
+            issues.append(Issue("error", "pressure_hold", "?", "缺少 id"))
+            continue
+        if hid in seen:
+            issues.append(Issue("error", "pressure_hold", hid, f"id 重复: {hid!r}"))
+        seen.add(hid)
+        try:
+            fs = float(h.get("fillSeconds"))
+            if not (fs > 0) or not math.isfinite(fs):
+                raise ValueError
+        except (TypeError, ValueError):
+            issues.append(Issue("error", "pressure_hold", hid, "fillSeconds 须为正有限数"))
+        if not str(h.get("prompt") or "").strip():
+            issues.append(Issue("warning", "pressure_hold", hid, "prompt 为空（进度条无引导文案）"))
+        bar = h.get("barColor")
+        if bar is not None and not re.fullmatch(r"#[0-9a-fA-F]{6}", str(bar)):
+            issues.append(Issue("error", "pressure_hold", hid, "barColor 须为 #rrggbb"))
+        sfx = str(h.get("holdSfx") or "").strip()
+        if sfx and sfx not in (model.audio_config.get("sfx") or {}):
+            issues.append(Issue("warning", "pressure_hold", hid, f"holdSfx {sfx!r} 不在 audio_config.sfx 中"))
+        prev = 0.0
+        for i, it in enumerate(h.get("interrupts") or []):
+            if not isinstance(it, dict):
+                issues.append(Issue("error", "pressure_hold", hid, f"interrupts[{i}] 须为对象"))
+                continue
+            try:
+                r = float(it.get("atRatio"))
+            except (TypeError, ValueError):
+                issues.append(Issue("error", "pressure_hold", hid, f"interrupts[{i}].atRatio 须为数值"))
+                continue
+            if not (0 < r < 1):
+                issues.append(Issue("error", "pressure_hold", hid, f"interrupts[{i}].atRatio 须在 (0,1) 内"))
+            if r <= prev and i > 0:
+                issues.append(Issue("error", "pressure_hold", hid, f"interrupts[{i}].atRatio 须严格递增"))
+            prev = r
+            rt = it.get("resetToRatio")
+            if rt is not None:
+                try:
+                    rtv = float(rt)
+                    if not (0 <= rtv < 1):
+                        raise ValueError
+                except (TypeError, ValueError):
+                    issues.append(Issue("error", "pressure_hold", hid, f"interrupts[{i}].resetToRatio 须在 [0,1) 内"))
+            _walk_action_defs(model, issues, it.get("actions"), "pressure_hold", hid, None)
+        _walk_action_defs(model, issues, h.get("onComplete"), "pressure_hold", hid, None)
+
+
+def _validate_signal_cues(model: ProjectModel, issues: list[Issue]) -> None:
+    """signal_cues.json：id 唯一 + 内嵌 Action 校验（含 cue 自引用检查）。"""
+    seen: set[str] = set()
+    for c in model.signal_cues:
+        if not isinstance(c, dict):
+            issues.append(Issue("error", "signal_cue", "?", "条目须为对象"))
+            continue
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            issues.append(Issue("error", "signal_cue", "?", "缺少 id"))
+            continue
+        if cid in seen:
+            issues.append(Issue("error", "signal_cue", cid, f"id 重复: {cid!r}"))
+        seen.add(cid)
+        actions = c.get("actions")
+        if not isinstance(actions, list):
+            issues.append(Issue("error", "signal_cue", cid, "actions 须为数组"))
+            continue
+        for act in actions:
+            if isinstance(act, dict) and act.get("type") == "playSignalCue":
+                ref = str((act.get("params") or {}).get("id") or "").strip()
+                if ref == cid:
+                    issues.append(Issue("error", "signal_cue", cid, "cue 不可自引用（运行时会被拒绝）"))
+        _walk_action_defs(model, issues, actions, "signal_cue", cid, None)
 
 
 def _validate_overlay_images(model: ProjectModel, issues: list[Issue]) -> None:
@@ -753,6 +838,28 @@ def _append_action_param_ref_issues(
     temp = cutscene_temp_ids or frozenset()
     graph_ids = set(model.all_dialogue_graph_ids())
     overlay_keys = set(model.overlay_images.keys()) if isinstance(model.overlay_images, dict) else set()
+
+    if t == "startPressureHold":
+        hid = str(p.get("id") or "").strip()
+        known = {str(h.get("id") or "") for h in model.pressure_holds if isinstance(h, dict)}
+        if not hid:
+            issues.append(Issue("error", data_type, item_id, "startPressureHold 缺少 id"))
+        elif hid not in known:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"startPressureHold id {hid!r} 不在 pressure_holds.json 中",
+            ))
+
+    if t == "playSignalCue":
+        cid = str(p.get("id") or "").strip()
+        known = {str(c.get("id") or "") for c in model.signal_cues if isinstance(c, dict)}
+        if not cid:
+            issues.append(Issue("error", data_type, item_id, "playSignalCue 缺少 id"))
+        elif cid not in known:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"playSignalCue id {cid!r} 不在 signal_cues.json 中",
+            ))
 
     if t == "startDialogueGraph":
         gid = str(p.get("graphId") or "").strip()

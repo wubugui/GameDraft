@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_婆子家宣布",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·第一单收尾（板着脸宣布）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "关二狗进屋绕了一圈，水缸看了，房梁咳了，又从说书先生那儿听来的词里挑了几句，抑扬顿挫地念出来。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（板着脸，声音压得又沉又慢）「行了。——压住了。」",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "院里安静了一瞬。不知怎么，风向变了一变——狗不叫了，鸡窝里也没了响动。",
+      "next": "n_cue"
+    },
+    "n_cue": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_faint"
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "谁也没看见什么。旁人只看见：道士来了，事就平了。",
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "婆子" },
+      "text": "灵了！真灵了！！小先生——钱！钱您拿好！",
+      "next": "n_pay"
+    },
+    "n_pay": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 30
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_pozi_done",
+            "value": true
+          }
+        }
+      ],
+      "next": "n6"
+    },
+    "n6": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（攥着铜钱，手心发烫）来钱……真他妈容易。",
+      "next": "n7"
+    },
+    "n7": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "当夜，他没走大路，绕河滩回城——倒不是怂。是稳妥。行吧，是怂。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

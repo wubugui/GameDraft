@@ -606,6 +606,7 @@ class MainWindow(QMainWindow):
         from .editors.water_minigame_editor import WaterMinigameEditor
         from .editors.sugar_wheel_editor import SugarWheelEditor
         from .editors.paper_craft_editor import PaperCraftEditor
+        from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
 
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
@@ -614,6 +615,8 @@ class MainWindow(QMainWindow):
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
             (["数据编辑", "叙事编排"], "叙事状态机", NarrativeStateEditor),
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
+            (["数据编辑", "叙事编排"], "临场长按", PressureHoldEditor),
+            (["数据编辑", "叙事编排"], "信号Cue", SignalCueEditor),
             (["数据编辑", "叙事编排"], "水域小游戏", WaterMinigameEditor),
             (["数据编辑", "叙事编排"], "转盘小游戏", SugarWheelEditor),
             (["数据编辑", "叙事编排"], "扎纸小游戏", PaperCraftEditor),

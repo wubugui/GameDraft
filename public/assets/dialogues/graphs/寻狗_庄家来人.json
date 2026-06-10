@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_庄家来人",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·入场钩子（庄家来人寻背尸的）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "xg_beishi_done",
+              "value": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "……庄上的事，烂在肚子里。谁问都没有。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "关二狗正骂骂咧咧拍身上的灰，一个面皮紧绷的汉子径直走过来，上下打量他。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "你就是那个背尸的？庄上要寻个背尸的。今夜。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "（压低声）阴婚。新娘子停了多日……不腐。你只管背，别的别问。",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "「阴婚」「女尸不腐」八个字一出，街边躲雨的几个人不约而同退开两步。只有关二狗站着没动——他被「工钱」两个字勾住了脚。",
+      "next": "n_choice"
+    },
+    "n_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "xianqi",
+          "text": "「晦气！大晦气！……先付几成？」",
+          "next": "c_xianqi"
+        },
+        {
+          "id": "jiele",
+          "text": "「活人钱难挣，死人钱好挣。带路。」",
+          "next": "c_jiele"
+        }
+      ]
+    },
+    "c_xianqi": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "（从袖里摸出一小串钱）定钱十文。事成再给四十。嘴上嫌晦气，手倒是伸得快。",
+      "next": "n_accept"
+    },
+    "c_jiele": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "（多看了他一眼）爽快。定钱十文，事成再给四十。走。",
+      "next": "n_accept"
+    },
+    "n_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 10
+          }
+        }
+      ],
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "嘴上嫌晦气，眼睛早瞟向了那根背尸的旧绳。他跟着来人，一路往庄家去——",
+      "next": "n_go"
+    },
+    "n_go": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "庄家灵堂",
+            "targetSpawnPoint": "entry"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

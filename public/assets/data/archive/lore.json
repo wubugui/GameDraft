@@ -55,6 +55,78 @@
           "value": true
         }
       ]
+    },
+    {
+      "id": "lore_xianshanding",
+      "title": "神仙顶",
+      "content": "说书段子里李天狗除魃的地界。脚帮死活不往那边去，一提就换眼神。茶馆里人人会讲神仙顶，没一个人真上去过——能讲的都是听来的，上去过的都没回来讲。",
+      "source": "茶馆闲话",
+      "category": "geography",
+      "unlockConditions": [
+        {
+          "flag": "xg_tingshu_done"
+        }
+      ]
+    },
+    {
+      "id": "lore_jiangshi_terror",
+      "title": "僵尸——这地界的招牌恐怖",
+      "content": "先生书里讲：白僵、紫僵，最毒的是会飞天遁地的飞僵。茶馆里讲到僵尸，连最不信邪的脚夫都往灯底下凑。志怪、朝局、江湖八卦都在茶馆里流转，可只有僵尸，是没人敢拿来打趣的。",
+      "source": "说书人张叨叨",
+      "category": "folklore",
+      "unlockConditions": [
+        {
+          "flag": "xg_chuiniu_done"
+        }
+      ]
+    },
+    {
+      "id": "lore_dianzizhou",
+      "title": "癫子周的螺旋酒楼",
+      "content": "脚帮压低嗓子讲的：癫子周年年梦见阎王岭里有座螺旋向下的酒楼，他在梦里挖了二十年，还在挖。讲的人说到这儿就不讲了，听的人也不问。",
+      "source": "脚帮闲话",
+      "category": "legend",
+      "unlockConditions": [
+        {
+          "flag": "xg_songhuo_road_talk"
+        }
+      ]
+    },
+    {
+      "id": "lore_matuhu",
+      "title": "马屠户追妻",
+      "content": "马屠户的婆娘走失在阎王岭，他追进去，迷了三天三夜。回来人就疯了，操刀砍自己的儿子。如今铺子关着，门板上的血道子没人敢擦。",
+      "source": "脚帮闲话",
+      "category": "affairs",
+      "unlockConditions": [
+        {
+          "flag": "xg_songhuo_road_talk"
+        }
+      ]
+    },
+    {
+      "id": "lore_xiagu_village",
+      "title": "山里下蛊的寨子",
+      "content": "说是阎王岭再往里有个寨子，寨里人不种地、不赶集，靠「养东西」过活。脚帮说到这儿，连最贫嘴的也住了声。",
+      "source": "脚帮闲话",
+      "category": "folklore",
+      "unlockConditions": [
+        {
+          "flag": "xg_songhuo_road_talk"
+        }
+      ]
+    },
+    {
+      "id": "lore_litiangou_lineage",
+      "title": "「李天狗那一脉」",
+      "content": "街坊们如今传：李天狗的徒弟的徒弟来了雾津，背尸出身，专管邪门事，价钱还公道。这名头是谁先喊出来的已经查不清了——反正不是关二狗自己……吧。",
+      "source": "街坊传闻",
+      "category": "affairs",
+      "unlockConditions": [
+        {
+          "flag": "xg_laoxiang_done"
+        }
+      ]
     }
   ]
 }

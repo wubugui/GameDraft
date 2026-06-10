@@ -93,5 +93,33 @@
     "type": "key",
     "description": "小孩滚着玩的铁环，摸着冰凉。",
     "maxStack": 1
+  },
+  {
+    "id": "joss_paper",
+    "name": "纸钱",
+    "type": "consumable",
+    "description": "河滩上那只手递来的纸钱，黄的、软的。用剩下这几张，扔也不是，留也不是。",
+    "maxStack": 10
+  },
+  {
+    "id": "heavy_bundle",
+    "name": "沉甸甸的包袱",
+    "type": "key",
+    "description": "雇主交代送到阎王岭山口歇脚棚的包袱。死沉，棱角硌背。别问里头是啥——一问，工钱就没了。",
+    "maxStack": 1
+  },
+  {
+    "id": "taoist_outfit",
+    "name": "凑合的行头",
+    "type": "key",
+    "description": "用零活攒的钱置办的一身「道士皮」：旧道袍、歪符、桃木剑。不全、不正经，但远看……还行。",
+    "maxStack": 1
+  },
+  {
+    "id": "silver_dimes",
+    "name": "银角子",
+    "type": "key",
+    "description": "埃德加塞过来的两枚银角子。说好的十块大洋呢？洋人的账，比僵尸还邪门。",
+    "maxStack": 2
   }
 ]

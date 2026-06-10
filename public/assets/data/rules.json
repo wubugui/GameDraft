@@ -56,6 +56,38 @@
           "verified": "unverified"
         }
       }
+    },
+    {
+      "id": "rule_no_answer_name",
+      "name": "山里喊名，千万别应",
+      "incompleteName": "进山的某条老忌讳",
+      "category": "taboo",
+      "layers": {
+        "xiang": {
+          "text": "背尸的老手都听过：山里要是有人一声一声喊你名字，千万别应。那声音慢悠悠的，像个熟人——可前不着村后不着店的山路上，哪来的熟人。",
+          "verified": "unverified"
+        },
+        "li": {
+          "text": "亲身撞上了一回。那是山里的杂气学人声，应一声，魂就被勾了去，像马屠户那样在林子里转到死。它跟了一截，像凑近打量他、认不准他是个什么，散了。为什么认不准——他没敢细想。",
+          "verified": "effective"
+        }
+      }
+    },
+    {
+      "id": "rule_zhenshi_sizhang",
+      "name": "镇尸四样",
+      "incompleteName": "背尸行里的土办法",
+      "category": "ward",
+      "layers": {
+        "xiang": {
+          "text": "背尸行传下来的土办法，专对不安分的尸：糙米连豆子绕尸撒一圈；墨斗线在中间绷一道；七颗枣核（没有就用石子）按进尸背；剪子横在中间。哪样管用没人说得清——没人敢试第二回。",
+          "verified": "unverified"
+        },
+        "shu": {
+          "text": "义庄里真用过一回：四样下去，两具扭在一起的尸真就松了手，直挺挺躺平。……虽说到现在也不知道，到底是哪一样起的作用，还是——另有什么替他把场面圆上了。",
+          "verified": "questionable"
+        }
+      }
     }
   ],
   "fragments": [

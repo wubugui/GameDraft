@@ -71,6 +71,8 @@ class ProjectModel(QObject):
         self.scenarios_catalog: dict = {}
         self.narrative_graphs: dict = {}
         self.document_reveals: list = []
+        self.pressure_holds: list[dict] = []
+        self.signal_cues: list[dict] = []
 
         self.water_minigames_index: list[dict] = []
         self.water_minigames_instances: dict[str, dict] = {}
@@ -154,6 +156,8 @@ class ProjectModel(QObject):
         self.archive_lore = self._load(dp / "archive" / "lore.json", {})
         self.archive_books = self._load(dp / "archive" / "books.json", [])
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
+        self.pressure_holds = self._load(dp / "pressure_holds.json", [])
+        self.signal_cues = self._load(dp / "signal_cues.json", [])
 
         self.animations = {}
         anim_root = self.animation_bundles_path
@@ -386,6 +390,10 @@ class ProjectModel(QObject):
                 write_json(dp / "narrative_graphs.json", self.narrative_graphs)
             if "document_reveals" in dty:
                 write_json(dp / "document_reveals.json", self.document_reveals)
+            if "pressure_holds" in dty:
+                write_json(dp / "pressure_holds.json", self.pressure_holds)
+            if "signal_cues" in dty:
+                write_json(dp / "signal_cues.json", self.signal_cues)
             if "water_minigames" in dty:
                 wm_dir = dp / "water_minigames"
                 wm_dir.mkdir(parents=True, exist_ok=True)

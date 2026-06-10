@@ -168,5 +168,117 @@
       }
     ],
     "unlockConditions": []
+  },
+  {
+    "id": "clara_crossley",
+    "name": "克拉拉·克罗斯利",
+    "title": "洋人考察者",
+    "impressions": [
+      {
+        "text": "码头上那个洋婆子。眼睛尖，话不多，看人的时候像在记账。",
+        "conditions": []
+      },
+      {
+        "text": "她瞥见过你手腕上的抓痕，皱了皱眉，没说话。那一眼让你后脖颈发凉——她心里记了一笔。",
+        "conditions": [
+          {
+            "flag": "xg_dock_choice",
+            "op": "==",
+            "value": 1
+          }
+        ]
+      },
+      {
+        "text": "义庄那一夜之后，她认定你「压得住那些东西」。她看见的是你——她看不见替你圆场的是什么。",
+        "conditions": [
+          {
+            "flag": "xg_zhaomu_done"
+          }
+        ]
+      }
+    ],
+    "knownInfo": [
+      {
+        "text": "和丈夫埃德加来雾津做志怪田野考察，半生不熟的中文夹着英文。",
+        "conditions": []
+      },
+      {
+        "text": "要进神仙顶，没人敢带路。她出重金，雇了你当向导。",
+        "conditions": [
+          {
+            "flag": "xg_zhaomu_done"
+          }
+        ]
+      }
+    ],
+    "unlockConditions": [
+      {
+        "flag": "xg_laoxiang_done"
+      }
+    ]
+  },
+  {
+    "id": "edgar_crossley",
+    "name": "埃德加·克罗斯利",
+    "title": "洋行执照持有人",
+    "impressions": [
+      {
+        "text": "急躁、自信、嗓门大，拿执照当护身符。不信风水，但信钱。",
+        "conditions": []
+      },
+      {
+        "text": "嘴上喊十块大洋，最后摸出来两枚银角子。这洋人控起成本来，比掌柜的还老练。",
+        "conditions": [
+          {
+            "flag": "xg_dock_choice",
+            "op": "==",
+            "value": 1
+          }
+        ]
+      }
+    ],
+    "knownInfo": [
+      {
+        "text": "克拉拉的丈夫。箱子里装着罗盘、地图碎片和风水古籍的复印件——洋人研究这个做什么？",
+        "conditions": [
+          {
+            "flag": "xg_dock_choice",
+            "op": "==",
+            "value": 1
+          }
+        ]
+      }
+    ],
+    "unlockConditions": [
+      {
+        "flag": "xg_laoxiang_done"
+      }
+    ]
+  },
+  {
+    "id": "yizhuang_keeper",
+    "name": "义庄管事",
+    "title": "看死人屋的",
+    "impressions": [
+      {
+        "text": "瘦弱、惊惶，说话时眼睛不敢往庄里看。请不起正经先生，才轮到你。",
+        "conditions": []
+      }
+    ],
+    "knownInfo": [
+      {
+        "text": "庄里停着两具尸：一具城里老爷子寄停等吉日，一具外乡运来等认领。守夜的打了个盹，醒来就吓尿跑了。",
+        "conditions": [
+          {
+            "flag": "xg_yizhuang_intro"
+          }
+        ]
+      }
+    ],
+    "unlockConditions": [
+      {
+        "flag": "xg_yizhuang_intro"
+      }
+    ]
   }
 ]

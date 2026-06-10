@@ -1,3 +1,6 @@
 {
-  "码头抓水猴子告示": "/resources/runtime/images/illustrations/告示-抓水猴子.png"
+  "码头抓水猴子告示": "/resources/runtime/images/illustrations/告示-抓水猴子.png",
+  "axiu_cue": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
+  "axiu_lamp_cue": "/resources/runtime/images/ui_vfx/axiu_lamp_glow.png",
+  "scare_closeup": "/resources/runtime/images/illustrations/demo/bride_face_closeup.png"
 }

@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_茶馆吹牛",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·回城吹牛（教学：吹牛/对话）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "xg_chuiniu_done",
+              "value": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "牛已吹出。覆水难收。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "关二狗往茶客堆里一坐，清了清嗓子。腰还酸着，可嘴上的功夫不能酸。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "昨儿夜里，俺接了桩大活——庄家的阴婚尸，俺一个人背的。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "茶客" },
+      "text": "啧，背尸的还讲上书了？接着说，接着说。",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "shi",
+          "text": "〔七分真〕「那尸停了多日——跟才咽气的一样。」",
+          "next": "c1_shi"
+        },
+        {
+          "id": "chui",
+          "text": "〔往大了吹〕「那尸半夜自己坐起来，冲俺笑！」",
+          "next": "c1_chui"
+        }
+      ]
+    },
+    "c1_shi": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "几个茶客半信半疑，可凳子都往这边挪了挪。真话有真话的瘆人处。",
+      "next": "n4"
+    },
+    "c1_chui": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "邻桌的瓜子停在半空。有人小声骂了句「胡吹」，骂完往这边又凑近了半尺。",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "不知是谁，给他添了碗茶。热的。关二狗趁热打铁——",
+      "next": "c2"
+    },
+    "c2": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "shiye",
+          "text": "「实不相瞒——李天狗，就是俺师爷！」",
+          "next": "c2_a"
+        },
+        {
+          "id": "hui",
+          "text": "「俺师父的师父，姓李，讳——天狗。」",
+          "next": "c2_b"
+        }
+      ]
+    },
+    "c2_a": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "茶客" },
+      "text": "嚯——！李天狗的徒孙？！怪不得敢背阴婚尸！",
+      "next": "n5"
+    },
+    "c2_b": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "茶客" },
+      "text": "（倒吸凉气）连名讳都不敢直呼……是真的？是真的吧！",
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "反正死无对证。「李天狗徒弟的徒弟」这颗种子，就这么随口埋下了。他顺嘴还把背尸行镇尸的土办法抖了几样——糙米、墨斗线、枣核、剪子，唬得满座一愣一愣。",
+      "next": "n_flag"
+    },
+    "n_flag": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "grantRuleLayer",
+          "params": {
+            "ruleId": "rule_zhenshi_sizhang",
+            "layer": "xiang"
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_chuiniu_done",
+            "value": true
+          }
+        }
+      ],
+      "next": "n6"
+    },
+    "n6": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "茶馆是消息集散地。他这段书，明儿就会长出八个版本——其中两个版本里，他会画符。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

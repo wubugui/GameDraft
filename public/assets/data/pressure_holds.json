@@ -33,7 +33,7 @@
             "type": "showOverlayImage",
             "params": {
               "id": "scare_closeup",
-              "image": "/resources/runtime/images/illustrations/demo/bride_face_closeup.png",
+              "image": "scare_closeup",
               "xPercent": 50,
               "yPercent": 50,
               "widthPercent": 72

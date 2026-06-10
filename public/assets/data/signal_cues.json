@@ -7,7 +7,7 @@
         "type": "showOverlayImage",
         "params": {
           "id": "axiu_cue",
-          "image": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
+          "image": "axiu_cue",
           "xPercent": 50,
           "yPercent": 46,
           "widthPercent": 26
@@ -25,7 +25,7 @@
         "type": "showOverlayImage",
         "params": {
           "id": "axiu_cue",
-          "image": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
+          "image": "axiu_cue",
           "xPercent": 50,
           "yPercent": 45,
           "widthPercent": 34
@@ -44,7 +44,7 @@
         "type": "showOverlayImage",
         "params": {
           "id": "axiu_cue",
-          "image": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
+          "image": "axiu_cue",
           "xPercent": 50,
           "yPercent": 44,
           "widthPercent": 52
@@ -62,8 +62,8 @@
       {
         "type": "showOverlayImage",
         "params": {
-          "id": "axiu_cue",
-          "image": "/resources/runtime/images/ui_vfx/axiu_lamp_glow.png",
+          "id": "axiu_lamp_cue",
+          "image": "axiu_lamp_cue",
           "xPercent": 50,
           "yPercent": 42,
           "widthPercent": 22
@@ -71,7 +71,7 @@
       },
       { "type": "playSfx", "params": { "id": "sfx_lamp_oil_flame" } },
       { "type": "waitMs", "params": { "durationMs": 2200 } },
-      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+      { "type": "hideOverlayImage", "params": { "id": "axiu_lamp_cue" } }
     ]
   }
 ]
