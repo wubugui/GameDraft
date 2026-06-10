@@ -1,0 +1,260 @@
+{
+  "id": "义庄",
+  "name": "义庄",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.25,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "amb_yizhuang_room_tone"
+  ],
+  "spawnPoint": {
+    "x": 660.0,
+    "y": 660.0
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 660.0,
+      "y": 660.0
+    }
+  },
+  "zones": [
+    {
+      "id": "z_义庄进门",
+      "polygon": [
+        { "x": 420.0, "y": 500.0 },
+        { "x": 920.0, "y": 500.0 },
+        { "x": 920.0, "y": 620.0 },
+        { "x": 420.0, "y": 620.0 }
+      ],
+      "conditions": [
+        {
+          "flag": "xg_yizhuang_intro",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_yizhuang_intro",
+            "value": true
+          }
+        },
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "寻狗_义庄进门"
+          }
+        }
+      ]
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_两尸",
+      "type": "inspect",
+      "label": "扭在地上的两具尸",
+      "x": 650.0,
+      "y": 420.0,
+      "interactionRange": 90.0,
+      "displayImage": {
+        "image": "/resources/runtime/images/corpses/demo/two_corpses_grappling.png",
+        "worldWidth": 260.0,
+        "worldHeight": 160.0,
+        "spriteSort": "back"
+      },
+      "collisionPolygon": [
+        { "x": -120.0, "y": -70.0 },
+        { "x": 120.0, "y": -70.0 },
+        { "x": 120.0, "y": -10.0 },
+        { "x": -120.0, "y": -10.0 }
+      ],
+      "collisionPolygonLocal": true,
+      "data": {
+        "graphId": "寻狗_看两尸"
+      }
+    },
+    {
+      "id": "hs_镇尸_撒米",
+      "type": "inspect",
+      "label": "抓糙米连豆子，绕两尸撒一圈",
+      "x": 520.0,
+      "y": 480.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "flag": "xg_yizhuang_intro",
+          "value": true
+        },
+        {
+          "flag": "xg_zhenshi_rice",
+          "op": "!=",
+          "value": true
+        },
+        {
+          "flag": "xg_yizhuang_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_镇尸_撒米"
+      }
+    },
+    {
+      "id": "hs_镇尸_墨斗",
+      "type": "inspect",
+      "label": "扯墨斗线，在两尸中间绷一道",
+      "x": 790.0,
+      "y": 470.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "flag": "xg_yizhuang_intro",
+          "value": true
+        },
+        {
+          "flag": "xg_zhenshi_ink",
+          "op": "!=",
+          "value": true
+        },
+        {
+          "flag": "xg_yizhuang_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_镇尸_墨斗"
+      }
+    },
+    {
+      "id": "hs_镇尸_石子",
+      "type": "inspect",
+      "label": "捡七颗石子，按进尸背",
+      "x": 560.0,
+      "y": 350.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "flag": "xg_yizhuang_intro",
+          "value": true
+        },
+        {
+          "flag": "xg_zhenshi_stone",
+          "op": "!=",
+          "value": true
+        },
+        {
+          "flag": "xg_yizhuang_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_镇尸_石子"
+      }
+    },
+    {
+      "id": "hs_镇尸_剪子",
+      "type": "inspect",
+      "label": "抄供桌上的剪子，横在中间",
+      "x": 740.0,
+      "y": 230.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "flag": "xg_yizhuang_intro",
+          "value": true
+        },
+        {
+          "flag": "xg_zhenshi_scissors",
+          "op": "!=",
+          "value": true
+        },
+        {
+          "flag": "xg_yizhuang_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_镇尸_剪子"
+      }
+    },
+    {
+      "id": "hs_停尸凳",
+      "type": "inspect",
+      "label": "空了的停尸凳",
+      "x": 300.0,
+      "y": 300.0,
+      "interactionRange": 70.0,
+      "data": {
+        "text": "两条停尸凳，凳上的草席还压着人形的印子。尸是自己下来的——这个念头一冒出来，关二狗后脖颈就一阵发麻。"
+      }
+    },
+    {
+      "id": "T_出义庄",
+      "type": "transition",
+      "label": "出去",
+      "x": 660.0,
+      "y": 720.0,
+      "interactionRange": 56.0,
+      "conditions": [
+        {
+          "flag": "xg_yizhuang_done",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_event"
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_管事",
+      "name": "义庄管事",
+      "x": 880.0,
+      "y": 600.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_管事义庄内",
+      "dialogueCameraZoom": 1.45
+    },
+    {
+      "id": "npc_克拉拉",
+      "name": "克拉拉",
+      "x": 1000.0,
+      "y": 520.0,
+      "interactionRange": 70.0,
+      "animFile": "/resources/runtime/animation/克拉拉_anim/anim.json",
+      "initialAnimState": "克拉拉_走路",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_克拉拉招募",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "flag": "xg_yizhuang_done",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    }
+  ]
+}

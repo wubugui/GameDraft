@@ -1,0 +1,162 @@
+{
+  "id": "婆子家院",
+  "name": "婆子家小院",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.2,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "夜晚蛐蛐叫"
+  ],
+  "spawnPoint": {
+    "x": 330.0,
+    "y": 660.0
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 330.0,
+      "y": 660.0
+    }
+  },
+  "zones": [
+    {
+      "id": "z_院外扫脸色",
+      "polygon": [
+        { "x": 200.0, "y": 560.0 },
+        { "x": 470.0, "y": 560.0 },
+        { "x": 470.0, "y": 700.0 },
+        { "x": 200.0, "y": 700.0 }
+      ],
+      "conditions": [
+        {
+          "flag": "xg_pozi_intro",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_pozi_intro",
+            "value": true
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              { "speaker": "", "text": "进门前，关二狗在院外站了一会儿——这是背尸行里学的：先看人，再看屋。" },
+              { "speaker": "", "text": "谁最慌、谁一开口另一个先去看他，比屋里有什么都说得明白。" }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_屋内水缸",
+      "type": "inspect",
+      "label": "看看水缸",
+      "x": 430.0,
+      "y": 240.0,
+      "interactionRange": 64.0,
+      "data": {
+        "text": "缸沿一圈干净，水面却浮着层细灰。关二狗绕着缸走了半圈，板起脸，从说书先生那儿听来的词里挑了两句，煞有介事地念了。"
+      }
+    },
+    {
+      "id": "hs_房梁",
+      "type": "inspect",
+      "label": "抬头看看房梁",
+      "x": 700.0,
+      "y": 330.0,
+      "interactionRange": 70.0,
+      "data": {
+        "text": "梁上挂着去年的苞谷，绳结发黑。他盯着看了半晌，重重咳了一声——咳得屋里两个人都跟着一哆嗦。"
+      }
+    },
+    {
+      "id": "hs_院中宣布",
+      "type": "inspect",
+      "label": "板着脸宣布",
+      "x": 660.0,
+      "y": 480.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "flag": "xg_pozi_read_pozi",
+          "value": true
+        },
+        {
+          "flag": "xg_pozi_read_son",
+          "value": true
+        },
+        {
+          "flag": "xg_pozi_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_婆子家宣布"
+      }
+    },
+    {
+      "id": "T_出院子",
+      "type": "transition",
+      "label": "离开",
+      "x": 300.0,
+      "y": 720.0,
+      "interactionRange": 56.0,
+      "conditions": [
+        {
+          "flag": "xg_pozi_done",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "河边",
+        "targetSpawnPoint": "从城里"
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_院中婆子",
+      "name": "婆子",
+      "x": 560.0,
+      "y": 430.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "寻狗_读人_婆子",
+      "dialogueCameraZoom": 1.5
+    },
+    {
+      "id": "npc_她儿子",
+      "name": "她儿子",
+      "x": 870.0,
+      "y": 400.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_读人_儿子",
+      "dialogueCameraZoom": 1.5
+    }
+  ]
+}

@@ -56,14 +56,14 @@
       "interactionRange": 20.0,
       "conditions": [
         {
-          "flag": "got_iron_box",
+          "flag": "xg_tingshu_done",
           "op": "!=",
           "value": true
         }
       ],
       "label": "门口",
       "data": {
-        "text": "你本想先出去转转，可耳边还响着张叨叨那段书，瞎子李也刚进门。真要想学门糊口的本事，还是先把这段缘由听明白再走。"
+        "text": "你本想先出去转转，可先生那段书正说到要紧处——「李天狗」「神仙顶」，这两个词像钩子，把你钉在了人堆后头。"
       }
     },
     {
@@ -74,13 +74,59 @@
       "interactionRange": 20.0,
       "conditions": [
         {
-          "flag": "got_iron_box"
+          "flag": "xg_tingshu_done"
         }
       ],
-      "label": "出门 (街巷)",
+      "label": "出门",
       "data": {
-        "targetScene": "test_room_a",
+        "targetScene": "雾津街头",
         "targetSpawnPoint": "from_teahouse"
+      }
+    },
+    {
+      "id": "hs_茶客吹牛",
+      "type": "inspect",
+      "label": "凑到茶客堆里",
+      "x": 350.0,
+      "y": 300.0,
+      "interactionRange": 64.0,
+      "conditions": [
+        {
+          "quest": "xg03_chuiniu",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_chuiniu_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_茶馆吹牛"
+      }
+    },
+    {
+      "id": "hs_向导传闻",
+      "type": "inspect",
+      "label": "新贴的告示 · 重金寻向导",
+      "x": 714.3,
+      "y": 120.0,
+      "interactionRange": 64.0,
+      "conditions": [
+        {
+          "quest": "xg08_xiangdao",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_xiangdao_heard",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_向导传闻"
       }
     }
   ],
@@ -90,7 +136,7 @@
       "name": "说书人张叨叨",
       "x": 485.7,
       "y": 431.6,
-      "dialogueGraphId": "茶馆说书人",
+      "dialogueGraphId": "寻狗_说书人",
       "interactionRange": 71.4,
       "animFile": "/resources/runtime/animation/npc_storyteller_anim/anim.json",
       "patrol": {
@@ -115,7 +161,25 @@
       "dialogueGraphId": "茶馆瞎子李",
       "interactionRange": 71.4,
       "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
-      "initialAnimState": "boy_run_ring"
+      "initialAnimState": "boy_run_ring",
+      "conditions": [
+        {
+          "flag": "legacy_iron_box_flow",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_掌柜",
+      "name": "茶馆掌柜",
+      "x": 600.0,
+      "y": 300.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_茶馆掌柜"
     },
     {
       "id": "waiter_xiaoer",

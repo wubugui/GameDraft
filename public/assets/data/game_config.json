@@ -1,9 +1,9 @@
 {
   "initialScene": "teahouse",
-  "initialQuest": "opening_01",
-  "fallbackScene": "test_room_a",
-  "initialCutscene": "prologue_opening",
-  "initialCutsceneDoneFlag": "prologue_started",
+  "initialQuest": "xg01_tingshu",
+  "fallbackScene": "teahouse",
+  "initialCutscene": "寻狗_开场",
+  "initialCutsceneDoneFlag": "xg_prologue_started",
   "startupFlags": {
     "archive_book_book_erta_guide": true
   },

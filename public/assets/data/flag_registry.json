@@ -219,9 +219,30 @@
     {
       "key": "铁环小孩_已经获得铁环",
       "valueType": "bool"
+    },
+    {
+      "key": "legacy_iron_box_flow",
+      "valueType": "bool"
+    },
+    {
+      "key": "xg_face_style",
+      "valueType": "float"
+    },
+    {
+      "key": "xg_dock_choice",
+      "valueType": "float"
+    },
+    {
+      "key": "xg_zhenshi_steps",
+      "valueType": "float"
     }
   ],
   "patterns": [
+    {
+      "id": "xungou_demo",
+      "prefix": "xg_",
+      "valueType": "bool"
+    },
     {
       "id": "picked_up",
       "prefix": "picked_up_",

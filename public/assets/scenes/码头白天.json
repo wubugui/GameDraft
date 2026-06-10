@@ -371,24 +371,25 @@
     {
       "id": "T码头到街巷",
       "type": "transition",
-      "label": "到街巷",
+      "label": "回街上",
       "x": 2666.6,
       "y": 216.1,
       "interactionRange": 50.0,
       "data": {
-        "targetScene": "test_room_a",
-        "targetSpawnPoint": "spawn_1"
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_dock"
       }
     },
     {
       "id": "T到街巷2",
       "type": "transition",
-      "label": "到街巷",
+      "label": "回街上",
       "x": 44.3,
       "y": 597.7,
       "interactionRange": 50.0,
       "data": {
-        "targetScene": "test_room_a"
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_dock"
       }
     },
     {
@@ -671,8 +672,13 @@
       ],
       "conditions": [
         {
-          "scenarioLine": "码头水鬼",
-          "lineStatus": "completed"
+          "quest": "xg06_laoxiang",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_laoxiang_done",
+          "op": "!=",
+          "value": true
         }
       ],
       "onEnter": [
@@ -836,9 +842,9 @@
           }
         },
         {
-          "type": "startWaterMinigame",
+          "type": "startDialogueGraph",
           "params": {
-            "id": "dock_crate_tutorial"
+            "graphId": "寻狗_码头选择"
           }
         },
         {

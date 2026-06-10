@@ -1,0 +1,118 @@
+{
+  "id": "枯井土地庙",
+  "name": "土地庙后 · 枯井",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.2,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "bgm": "bgm_placeholder_dread_piano",
+  "ambientSounds": [
+    "amb_night_forest_loop"
+  ],
+  "spawnPoint": {
+    "x": 820.0,
+    "y": 660.0
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 820.0,
+      "y": 660.0
+    }
+  },
+  "zones": [
+    {
+      "id": "z_井边哭声",
+      "polygon": [
+        { "x": 640.0, "y": 380.0 },
+        { "x": 1080.0, "y": 380.0 },
+        { "x": 1080.0, "y": 560.0 },
+        { "x": 640.0, "y": 560.0 }
+      ],
+      "conditions": [
+        {
+          "flag": "xg_kujing_intro",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_kujing_intro",
+            "value": true
+          }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_well_childlike_cry_loop"
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              { "speaker": "", "text": "离井还有几步，那叫声就停了一息，又起。" },
+              { "speaker": "", "text": "白天听是狗叫。这会儿天擦黑，听着——像个小孩在井底哭。" },
+              { "speaker": "{{player}}", "text": "……狗。是狗。给钱了，是狗也得捞。" }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_枯井",
+      "type": "inspect",
+      "label": "往井下看",
+      "x": 870.0,
+      "y": 290.0,
+      "interactionRange": 80.0,
+      "collisionPolygon": [
+        { "x": -80.0, "y": -50.0 },
+        { "x": 80.0, "y": -50.0 },
+        { "x": 80.0, "y": 10.0 },
+        { "x": -80.0, "y": 10.0 }
+      ],
+      "collisionPolygonLocal": true,
+      "data": {
+        "graphId": "寻狗_枯井往下看"
+      }
+    },
+    {
+      "id": "hs_土地庙",
+      "type": "inspect",
+      "label": "塌了半边的土地庙",
+      "x": 350.0,
+      "y": 420.0,
+      "interactionRange": 80.0,
+      "data": {
+        "text": "庙塌了半边，土地公的脸叫雨水淋花了，看不出喜怒。香炉里插着几根新香——这种地方，还有人来上香。"
+      }
+    },
+    {
+      "id": "T_回城",
+      "type": "transition",
+      "label": "回城",
+      "x": 1180.0,
+      "y": 680.0,
+      "interactionRange": 64.0,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_event"
+      }
+    }
+  ],
+  "npcs": []
+}

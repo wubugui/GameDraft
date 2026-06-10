@@ -1,0 +1,158 @@
+{
+  "id": "阎王岭山口",
+  "name": "阎王岭山口",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.2,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "bgm": "bgm_placeholder_low_tension",
+  "ambientSounds": [
+    "amb_night_forest_loop"
+  ],
+  "spawnPoint": {
+    "x": 240.0,
+    "y": 650.0
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 240.0,
+      "y": 650.0
+    }
+  },
+  "zones": [
+    {
+      "id": "z_同行闲扯",
+      "polygon": [
+        { "x": 320.0, "y": 480.0 },
+        { "x": 760.0, "y": 380.0 },
+        { "x": 820.0, "y": 520.0 },
+        { "x": 380.0, "y": 640.0 }
+      ],
+      "conditions": [
+        {
+          "flag": "xg_songhuo_road_talk",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_songhuo_road_talk",
+            "value": true
+          }
+        },
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "寻狗_脚帮闲扯"
+          }
+        }
+      ]
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_歇脚棚",
+      "type": "inspect",
+      "label": "歇脚棚 · 把包袱放下",
+      "x": 610.0,
+      "y": 170.0,
+      "interactionRange": 80.0,
+      "conditions": [
+        {
+          "flag": "xg_songhuo_delivered",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_送包袱到棚"
+      }
+    },
+    {
+      "id": "hs_进山的路",
+      "type": "inspect",
+      "label": "那条进山的路",
+      "x": 1130.0,
+      "y": 150.0,
+      "interactionRange": 90.0,
+      "conditions": [
+        {
+          "flag": "xg_songhuo_delivered",
+          "value": true
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_看进山路"
+      }
+    },
+    {
+      "id": "T_下山回城",
+      "type": "transition",
+      "label": "掉头下山",
+      "x": 160.0,
+      "y": 700.0,
+      "interactionRange": 64.0,
+      "conditions": [
+        {
+          "flag": "xg_songhuo_done",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_event"
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_脚帮甲",
+      "name": "挑担的脚夫",
+      "x": 420.0,
+      "y": 540.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "conditions": [
+        {
+          "flag": "xg_songhuo_delivered",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_脚帮乙",
+      "name": "背货的脚夫",
+      "x": 500.0,
+      "y": 580.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "conditions": [
+        {
+          "flag": "xg_songhuo_delivered",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    }
+  ]
+}

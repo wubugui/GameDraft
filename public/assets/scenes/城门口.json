@@ -1,0 +1,69 @@
+{
+  "id": "城门口",
+  "name": "城门口 · 拂晓",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.15,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 560.0,
+    "y": 650.0
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 560.0,
+      "y": 650.0
+    }
+  },
+  "hotspots": [
+    {
+      "id": "hs_城门雾路",
+      "type": "inspect",
+      "label": "门外那条进山的路",
+      "x": 900.0,
+      "y": 150.0,
+      "interactionRange": 90.0,
+      "data": {
+        "text": "雾压着路，看不到头。就是这条路——过了岭，就是神仙顶。"
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_埃德加",
+      "name": "埃德加",
+      "x": 700.0,
+      "y": 470.0,
+      "interactionRange": 70.0,
+      "animFile": "/resources/runtime/animation/埃德加_anim/anim.json",
+      "initialAnimState": "埃德加_走路",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_城门汇合",
+      "dialogueCameraZoom": 1.45
+    },
+    {
+      "id": "npc_克拉拉城门",
+      "name": "克拉拉",
+      "x": 780.0,
+      "y": 500.0,
+      "interactionRange": 70.0,
+      "animFile": "/resources/runtime/animation/克拉拉_anim/anim.json",
+      "initialAnimState": "克拉拉_走路",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_城门汇合",
+      "dialogueCameraZoom": 1.45
+    }
+  ]
+}

@@ -170,5 +170,240 @@
     "acceptActions": [],
     "rewards": [],
     "nextQuests": []
+  },
+  {
+    "id": "xg01_tingshu",
+    "group": "xungou",
+    "type": "main",
+    "title": "听先生说书",
+    "description": "茶馆里先生正说到「大旱魃」。挤进人缝，把「李天狗」「神仙顶」这两个词听明白。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_tingshu_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg02_beishi",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg02_beishi",
+    "group": "xungou",
+    "type": "main",
+    "title": "背庄家尸",
+    "description": "庄家的人寻来找「背尸的」。旁人一听阴婚纷纷后退，可工钱已经勾住了你的脚。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_beishi_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg03_chuiniu",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg03_chuiniu",
+    "group": "xungou",
+    "type": "main",
+    "title": "回茶馆缓口气",
+    "description": "那趟背尸邪门得很。回茶馆找人说道说道——顺便把它吹得像样点。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_chuiniu_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg04_pozi",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg04_pozi",
+    "group": "xungou",
+    "type": "main",
+    "title": "第一单：婆子家的动静",
+    "description": "一个婆子找上门，说院里夜夜有动静，钱已经拍在桌上。这是第一个主动找上门的活儿。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_pozi_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg05_hebian",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg05_hebian",
+    "group": "xungou",
+    "type": "main",
+    "title": "连夜回城",
+    "description": "活儿办完了，钱也到手了。趁天没亮透，从河滩绕回城去。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_hebian_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg06_laoxiang",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg06_laoxiang",
+    "group": "xungou",
+    "type": "main",
+    "title": "码头的洋热闹",
+    "description": "码头来了条洋船，听说卸货卸出了乱子。去瞧瞧——有热闹的地方就有铜钱。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_laoxiang_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg07_kujing",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg07_kujing",
+    "group": "xungou",
+    "type": "main",
+    "title": "枯井里的「狗」",
+    "description": "土地庙后枯井掉了条狗，叫了两天两夜，夜里像小孩哭。给几个钱，问谁能捞上来。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_kujing_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg08_xiangdao",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg08_xiangdao",
+    "group": "xungou",
+    "type": "main",
+    "title": "重金寻向导",
+    "description": "那对洋人在找进神仙顶的向导，重金。去茶馆和街上探探风声，再掂量掂量自己这副行头。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_xiangdao_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg09_songhuo",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg09_songhuo",
+    "group": "xungou",
+    "type": "main",
+    "title": "送货到阎王岭",
+    "description": "一个面生的雇主出高价：把一个沉甸甸的包袱送到阎王岭山口的歇脚棚。别问里头是啥。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_songhuo_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg10_yizhuang",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg10_yizhuang",
+    "group": "xungou",
+    "type": "main",
+    "title": "义庄的两具尸",
+    "description": "义庄管事脸色发白来寻你：两具尸在地上扭着、揪着、互相压。守夜的吓跑了，正经先生请不起。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_zhaomu_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "xg11_shouye",
+        "conditions": []
+      },
+      {
+        "questId": "xg12_chufa",
+        "conditions": []
+      }
+    ]
+  },
+  {
+    "id": "xg11_shouye",
+    "group": "xungou",
+    "type": "side",
+    "sideType": "commission",
+    "title": "城隍庙守半夜",
+    "description": "出发前还有桩杂活：独自在城隍庙守半夜。庙里停着一具无名女尸，灵前长明灯整夜不能灭。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_shouye_done"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
+  },
+  {
+    "id": "xg12_chufa",
+    "group": "xungou",
+    "type": "main",
+    "title": "置办行头 · 城门口汇合",
+    "description": "克拉拉的定钱收了。用攒下的钱置一身「道士皮」，天亮前到城门口与洋人夫妇汇合。",
+    "preconditions": [],
+    "completionConditions": [
+      {
+        "flag": "xg_demo_finished"
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
   }
 ]

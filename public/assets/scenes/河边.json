@@ -118,12 +118,44 @@
       ],
       "zoneKind": "depth_floor",
       "floorOffsetBoost": 0.1
+    },
+    {
+      "id": "z_河边递纸",
+      "polygon": [
+        { "x": 520.0, "y": 330.0 },
+        { "x": 950.0, "y": 330.0 },
+        { "x": 950.0, "y": 560.0 },
+        { "x": 520.0, "y": 560.0 }
+      ],
+      "conditions": [
+        {
+          "quest": "xg05_hebian",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_hebian_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_河边递纸"
+          }
+        }
+      ]
     }
   ],
   "spawnPoints": {
     "从山路": {
       "x": 136.6,
       "y": 724.5
+    },
+    "从城里": {
+      "x": 1190.0,
+      "y": 230.0
     }
   },
   "hotspots": [
@@ -138,9 +170,22 @@
         "targetScene": "mountain_pass",
         "targetSpawnPoint": "spawn_0"
       }
+    },
+    {
+      "id": "T回城",
+      "type": "transition",
+      "label": "回城",
+      "x": 1250.0,
+      "y": 200.0,
+      "interactionRange": 60.0,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_river"
+      }
     }
   ],
   "ambientSounds": [
-    "夜晚蛐蛐叫"
+    "夜晚蛐蛐叫",
+    "amb_riverbank_loop"
   ]
 }

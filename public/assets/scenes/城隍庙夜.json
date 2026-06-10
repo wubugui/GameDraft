@@ -1,0 +1,159 @@
+{
+  "id": "城隍庙夜",
+  "name": "城隍庙 · 夜",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.25,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "bgm": "bgm_placeholder_dark_shadows",
+  "ambientSounds": [
+    "amb_chenghuang_temple_loop"
+  ],
+  "spawnPoint": {
+    "x": 700.0,
+    "y": 660.0
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 700.0,
+      "y": 660.0
+    }
+  },
+  "zones": [
+    {
+      "id": "z_守夜进庙",
+      "polygon": [
+        { "x": 420.0, "y": 520.0 },
+        { "x": 980.0, "y": 520.0 },
+        { "x": 980.0, "y": 640.0 },
+        { "x": 420.0, "y": 640.0 }
+      ],
+      "conditions": [
+        {
+          "flag": "xg_shouye_intro",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_shouye_intro",
+            "value": true
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              { "speaker": "", "text": "活儿很简单：独自在庙里守半夜。庙里停着一具无名女尸，没人认领。" },
+              { "speaker": "", "text": "规矩也简单：灵前一盏长明灯，整夜不能灭。供桌一只压路熟鸡，一碗插筷的倒头饭。" },
+              { "speaker": "{{player}}", "text": "灯油是庙里的，火苗才豆大点……抠成这样。" }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_无名女尸",
+      "type": "inspect",
+      "label": "停着的无名女尸",
+      "x": 640.0,
+      "y": 440.0,
+      "interactionRange": 80.0,
+      "displayImage": {
+        "image": "/resources/runtime/images/corpses/demo/chenghuang_unknown_woman.png",
+        "worldWidth": 250.0,
+        "worldHeight": 130.0,
+        "spriteSort": "back"
+      },
+      "collisionPolygon": [
+        { "x": -115.0, "y": -55.0 },
+        { "x": 115.0, "y": -55.0 },
+        { "x": 115.0, "y": -5.0 },
+        { "x": -115.0, "y": -5.0 }
+      ],
+      "collisionPolygonLocal": true,
+      "data": {
+        "graphId": "寻狗_守夜看女尸"
+      }
+    },
+    {
+      "id": "hs_长明灯",
+      "type": "inspect",
+      "label": "长明灯 · 续点油",
+      "x": 420.0,
+      "y": 300.0,
+      "interactionRange": 70.0,
+      "data": {
+        "graphId": "寻狗_守夜续油"
+      }
+    },
+    {
+      "id": "hs_供桌",
+      "type": "inspect",
+      "label": "供桌",
+      "x": 760.0,
+      "y": 240.0,
+      "interactionRange": 70.0,
+      "data": {
+        "text": "一只熟鸡压着纸，一碗倒头饭直挺挺插着筷子。香是新的，烟笔直往上走——今夜没风，可灯苗一直在晃。"
+      }
+    },
+    {
+      "id": "hs_坐下想东西",
+      "type": "inspect",
+      "label": "找个角落坐下",
+      "x": 980.0,
+      "y": 480.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "flag": "xg_shouye_oil_added",
+          "value": true
+        },
+        {
+          "flag": "xg_shouye_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_守夜坐下"
+      }
+    },
+    {
+      "id": "T_出庙",
+      "type": "transition",
+      "label": "天亮了 · 出庙",
+      "x": 700.0,
+      "y": 720.0,
+      "interactionRange": 56.0,
+      "conditions": [
+        {
+          "flag": "xg_shouye_done",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_event"
+      }
+    }
+  ],
+  "npcs": []
+}

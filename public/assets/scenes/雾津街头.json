@@ -1,0 +1,293 @@
+{
+  "id": "雾津街头",
+  "name": "雾津街头",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.15,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "amb_light_rain_loop",
+    "人声闹市"
+  ],
+  "spawnPoint": {
+    "x": 660.0,
+    "y": 470.0
+  },
+  "spawnPoints": {
+    "from_teahouse": {
+      "x": 805.0,
+      "y": 420.0
+    },
+    "from_dock": {
+      "x": 165.0,
+      "y": 600.0
+    },
+    "from_river": {
+      "x": 1230.0,
+      "y": 180.0
+    },
+    "from_event": {
+      "x": 620.0,
+      "y": 500.0
+    }
+  },
+  "hotspots": [
+    {
+      "id": "T_进茶馆",
+      "type": "transition",
+      "label": "进茶馆",
+      "x": 840.0,
+      "y": 390.0,
+      "interactionRange": 56.0,
+      "data": {
+        "targetScene": "teahouse",
+        "targetSpawnPoint": "from_street"
+      }
+    },
+    {
+      "id": "T_去码头",
+      "type": "transition",
+      "label": "去码头",
+      "x": 110.0,
+      "y": 620.0,
+      "interactionRange": 60.0,
+      "data": {
+        "targetScene": "码头白天",
+        "targetSpawnPoint": "spawn_0"
+      }
+    },
+    {
+      "id": "T_出城",
+      "type": "transition",
+      "label": "出城（河滩方向）",
+      "x": 1260.0,
+      "y": 150.0,
+      "interactionRange": 64.0,
+      "conditions": [
+        {
+          "flag": "xg_pozi_done",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "河边",
+        "targetSpawnPoint": "从城里"
+      }
+    },
+    {
+      "id": "T_去城隍庙",
+      "type": "transition",
+      "label": "去城隍庙（守夜的活）",
+      "x": 1080.0,
+      "y": 540.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "quest": "xg11_shouye",
+          "questStatus": "Active"
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "城隍庙夜",
+        "targetSpawnPoint": "entry"
+      }
+    },
+    {
+      "id": "T_去城门",
+      "type": "transition",
+      "label": "去城门口",
+      "x": 1180.0,
+      "y": 300.0,
+      "interactionRange": 64.0,
+      "conditions": [
+        {
+          "quest": "xg12_chufa",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_outfit_bought",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "城门口",
+        "targetSpawnPoint": "entry"
+      }
+    },
+    {
+      "id": "hs_围观人群",
+      "type": "inspect",
+      "label": "围观的人堆",
+      "x": 430.0,
+      "y": 330.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "quest": "xg08_xiangdao",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_xiangdao_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "displayImage": {
+        "image": "/resources/runtime/images/props/demo/crowd_sheet.png",
+        "worldWidth": 300.0,
+        "worldHeight": 130.0,
+        "spriteSort": "back"
+      },
+      "data": {
+        "graphId": "寻狗_围观竞争"
+      }
+    },
+    {
+      "id": "hs_街头闲话",
+      "type": "inspect",
+      "label": "听街坊闲话",
+      "x": 980.0,
+      "y": 480.0,
+      "interactionRange": 60.0,
+      "data": {
+        "text": "街坊们凑在屋檐底下躲雨，三句话不离怪事：谁家夜里听见瓦响，哪条巷子不让走夜路。雾津就是这样，越潮的天，闲话越多。"
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_庄家来人",
+      "name": "庄家来人",
+      "x": 760.0,
+      "y": 470.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_庄家来人",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "quest": "xg02_beishi",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_beishi_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_婆子",
+      "name": "找上门的婆子",
+      "x": 720.0,
+      "y": 450.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_婆子",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "quest": "xg04_pozi",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_pozi_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_枯井街坊",
+      "name": "土地庙方向来的街坊",
+      "x": 540.0,
+      "y": 520.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "寻狗_枯井街坊",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "quest": "xg07_kujing",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_kujing_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_送货雇主",
+      "name": "半遮着脸的雇主",
+      "x": 880.0,
+      "y": 520.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_送货雇主",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "quest": "xg09_songhuo",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_songhuo_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_义庄管事",
+      "name": "脸色发白的义庄管事",
+      "x": 700.0,
+      "y": 480.0,
+      "interactionRange": 70.0,
+      "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_义庄管事",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "quest": "xg10_yizhuang",
+          "questStatus": "Active"
+        },
+        {
+          "flag": "xg_yizhuang_done",
+          "op": "!=",
+          "value": true
+        }
+      ],
+      "conditionHidesEntity": true
+    }
+  ],
+  "zones": []
+}
