@@ -1,0 +1,77 @@
+[
+  {
+    "id": "axiu_faint",
+    "description": "Axiu 信号·极轻：只有一缕香粉味的暗示（淡微尘浮层，无声）。用于①背尸/③婆子家/④河边/⑤水下/⑪城隍庙等埋点。",
+    "actions": [
+      {
+        "type": "showOverlayImage",
+        "params": {
+          "id": "axiu_cue",
+          "image": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
+          "xPercent": 50,
+          "yPercent": 46,
+          "widthPercent": 26
+        }
+      },
+      { "type": "waitMs", "params": { "durationMs": 1400 } },
+      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+    ]
+  },
+  {
+    "id": "axiu_hint",
+    "description": "Axiu 信号·轻触：香粉味＋小调一闪。用于⑦枯井/⑨林中喊名等临界点。",
+    "actions": [
+      {
+        "type": "showOverlayImage",
+        "params": {
+          "id": "axiu_cue",
+          "image": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
+          "xPercent": 50,
+          "yPercent": 45,
+          "widthPercent": 34
+        }
+      },
+      { "type": "playSfx", "params": { "id": "sfx_axiu_tiny_signal" } },
+      { "type": "waitMs", "params": { "durationMs": 1800 } },
+      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+    ]
+  },
+  {
+    "id": "axiu_full",
+    "description": "Axiu 信号·正式确立：香粉味陡浓＋半句跑调小调。仅⑩义庄两尸松手与之后的重场面使用。",
+    "actions": [
+      {
+        "type": "showOverlayImage",
+        "params": {
+          "id": "axiu_cue",
+          "image": "/resources/runtime/images/ui_vfx/axiu_signal_glow.png",
+          "xPercent": 50,
+          "yPercent": 44,
+          "widthPercent": 52
+        }
+      },
+      { "type": "playSfx", "params": { "id": "sfx_axiu_faint_hum" } },
+      { "type": "waitMs", "params": { "durationMs": 3200 } },
+      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+    ]
+  },
+  {
+    "id": "axiu_lamp_steady",
+    "description": "Axiu 信号·城隍庙变体：香粉味一飘，长明灯火苗稳住（烛火辉光替代微尘）。",
+    "actions": [
+      {
+        "type": "showOverlayImage",
+        "params": {
+          "id": "axiu_cue",
+          "image": "/resources/runtime/images/ui_vfx/axiu_lamp_glow.png",
+          "xPercent": 50,
+          "yPercent": 42,
+          "widthPercent": 22
+        }
+      },
+      { "type": "playSfx", "params": { "id": "sfx_lamp_oil_flame" } },
+      { "type": "waitMs", "params": { "durationMs": 2200 } },
+      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+    ]
+  }
+]

@@ -1,0 +1,119 @@
+[
+  {
+    "id": "carry_bride_corpse",
+    "prompt": "按住——过肩、搭手，把她架起来",
+    "fillSeconds": 2.6,
+    "decayPerSecond": 0.9,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#6e1f1f",
+    "interrupts": [
+      {
+        "atRatio": 0.55,
+        "resetToRatio": 0,
+        "actions": [
+          { "type": "playSfx", "params": { "id": "sfx_force_swallowed_thud" } },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                { "speaker": "", "text": "腿一软。使出去的力像扔进了深水，一点回声都没有。" },
+                { "speaker": "{{player}}", "text": "邪了门了……瘦条条一具，咋重得跟铁块似的？" }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "atRatio": 0.85,
+        "abort": true,
+        "actions": [
+          { "type": "playSfx", "params": { "id": "sfx_force_swallowed_thud" } },
+          { "type": "waitMs", "params": { "durationMs": 350 } },
+          {
+            "type": "showOverlayImage",
+            "params": {
+              "id": "scare_closeup",
+              "image": "/resources/runtime/images/illustrations/demo/bride_face_closeup.png",
+              "xPercent": 50,
+              "yPercent": 50,
+              "widthPercent": 72
+            }
+          },
+          { "type": "playSfx", "params": { "id": "sfx_heartbeat_bed" } },
+          { "type": "waitClickContinue", "params": { "text": "……" } },
+          { "type": "hideOverlayImage", "params": { "id": "scare_closeup" } },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                { "speaker": "", "text": "第二次倒下去的时候，他和那张惨白的脸正面打了个照面。" },
+                { "speaker": "", "text": "停了多日的尸，该塌的没塌，该烂的没烂——像才刚停下。" }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "forest_name_call",
+    "prompt": "咬住牙，闷头赶路——千万别应声",
+    "releaseHint": "差点应了声！",
+    "fillSeconds": 9,
+    "decayPerSecond": 1.1,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#27402c",
+    "interrupts": [
+      {
+        "atRatio": 0.35,
+        "resetToRatio": 0.3,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                { "speaker": "林子里", "text": "二狗——" },
+                { "speaker": "", "text": "声音从左边黑林子里飘出来，又像在右边，又像在背后。慢悠悠的，像个熟人。" }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "atRatio": 0.7,
+        "resetToRatio": 0.62,
+        "actions": [
+          { "type": "playSfx", "params": { "id": "sfx_abnormal_breath" } },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                { "speaker": "林子里", "text": "二——狗——" },
+                { "speaker": "", "text": "那声音凑近了些，像是贴着后颈在打量他、认不准他是个什么。" }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      { "type": "playSfx", "params": { "id": "sfx_night_bird_startle" } },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            { "speaker": "", "text": "喊声跟了他一截，渐渐地，散了。" }
+          ]
+        }
+      },
+      { "type": "playSignalCue", "params": { "id": "axiu_hint" } }
+    ]
+  },
+  {
+    "id": "zhenshi_step",
+    "prompt": "手上别抖——",
+    "fillSeconds": 1.5,
+    "decayPerSecond": 0.7,
+    "barColor": "#3a3a52"
+  }
+]

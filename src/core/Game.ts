@@ -28,6 +28,9 @@ import { PickupNotification } from '../ui/PickupNotification';
 import { DialogueUI } from '../ui/DialogueUI';
 import { EncounterUI } from '../ui/EncounterUI';
 import { ActionChoiceUI } from '../ui/ActionChoiceUI';
+import { PressureHoldUI } from '../ui/PressureHoldUI';
+import { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
+import { SignalCueManager } from '../systems/SignalCueManager';
 import { HUD } from '../ui/HUD';
 import { NotificationUI } from '../ui/NotificationUI';
 import { QuestPanelUI } from '../ui/QuestPanelUI';
@@ -204,6 +207,9 @@ export class Game {
   private waterMinigameManager: WaterMinigameManager;
   private sugarWheelMinigameManager: SugarWheelMinigameManager;
   private paperCraftMinigameManager: PaperCraftMinigameManager;
+  private pressureHoldManager: PressureHoldManager;
+  private signalCueManager: SignalCueManager;
+  private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: DepthOcclusionFilter | null = null;
 
@@ -302,6 +308,8 @@ export class Game {
     this.waterMinigameManager = new WaterMinigameManager();
     this.sugarWheelMinigameManager = new SugarWheelMinigameManager();
     this.paperCraftMinigameManager = new PaperCraftMinigameManager();
+    this.pressureHoldManager = new PressureHoldManager(this.actionExecutor);
+    this.signalCueManager = new SignalCueManager(this.actionExecutor);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
@@ -325,6 +333,8 @@ export class Game {
       { name: 'waterMinigameManager', system: this.waterMinigameManager },
       { name: 'sugarWheelMinigameManager', system: this.sugarWheelMinigameManager },
       { name: 'paperCraftMinigameManager', system: this.paperCraftMinigameManager },
+      { name: 'pressureHoldManager', system: this.pressureHoldManager },
+      { name: 'signalCueManager', system: this.signalCueManager },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'zoneSystem', system: this.zoneSystem },
@@ -503,6 +513,7 @@ export class Game {
     this.dialogueUI = new DialogueUI(this.renderer, this.eventBus, this.stringsProvider);
     this.encounterUI = new EncounterUI(this.renderer, this.eventBus, this.stringsProvider);
     this.actionChoiceUI = new ActionChoiceUI(this.renderer);
+    this.pressureHoldUI = new PressureHoldUI(this.renderer);
     this.hud = new HUD(this.renderer, this.eventBus, this.stringsProvider);
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
     this.questPanelUI = new QuestPanelUI(this.renderer, this.questManager, this.stringsProvider);
@@ -804,6 +815,23 @@ export class Game {
       waterMinigameManager: this.waterMinigameManager,
       sugarWheelMinigameManager: this.sugarWheelMinigameManager,
       paperCraftMinigameManager: this.paperCraftMinigameManager,
+      pressureHoldManager: this.pressureHoldManager,
+      signalCueManager: this.signalCueManager,
+    });
+
+    this.pressureHoldManager.bindRuntime({
+      resolveDisplayText: (s) => this.resolveDisplayText(s),
+      runSegment: async (req) => {
+        const prevState = this.stateController.currentState;
+        this.stateController.setState(GameState.UIOverlay);
+        try {
+          await this.pressureHoldUI.runSegment(req);
+        } finally {
+          if (this.stateController.currentState === GameState.UIOverlay) {
+            this.stateController.setState(prevState);
+          }
+        }
+      },
     });
 
     this.waterMinigameManager.bindRuntime({
@@ -989,6 +1017,8 @@ export class Game {
       this.rulesManager.loadDefs(),
       this.questManager.loadDefs(),
       this.encounterManager.loadDefs(),
+      this.pressureHoldManager.loadDefs(),
+      this.signalCueManager.loadDefs(),
       this.audioManager.loadConfig(),
       this.cutsceneManager.loadDefs(),
       this.archiveManager.loadDefs(),
@@ -2631,6 +2661,7 @@ export class Game {
     this.dialogueUI?.destroy();
     this.encounterUI?.destroy();
     this.actionChoiceUI?.destroy();
+    this.pressureHoldUI?.destroy();
     this.hud?.destroy();
     this.notificationUI?.destroy();
     this.bookReaderUI?.destroy();

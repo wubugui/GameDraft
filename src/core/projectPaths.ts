@@ -43,6 +43,8 @@ export const TEXT_URLS = {
   sugarWheelIndex: '/assets/data/sugar_wheel/index.json',
   paperCraftIndex: '/assets/data/paper_craft/index.json',
   narrativeGraphs: '/assets/data/narrative_graphs.json',
+  pressureHolds: '/assets/data/pressure_holds.json',
+  signalCues: '/assets/data/signal_cues.json',
 } as const;
 
 /** 媒体根 URL 子目录（不带尾斜杠）。 */

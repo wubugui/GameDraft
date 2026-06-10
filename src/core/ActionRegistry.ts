@@ -31,6 +31,8 @@ import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import type { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import type { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
+import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
+import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
@@ -197,6 +199,8 @@ export interface ActionRegistryDeps {
   waterMinigameManager: WaterMinigameManager;
   sugarWheelMinigameManager: SugarWheelMinigameManager;
   paperCraftMinigameManager: PaperCraftMinigameManager;
+  pressureHoldManager: PressureHoldManager;
+  signalCueManager: SignalCueManager;
 }
 
 function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
@@ -445,6 +449,24 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     await d.waterMinigameManager.runUntilDone(id);
+  }, ['id']);
+
+  executor.register('startPressureHold', async (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      console.warn('startPressureHold: 需要 params.id');
+      return;
+    }
+    await d.pressureHoldManager.runUntilDone(id);
+  }, ['id']);
+
+  executor.register('playSignalCue', async (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      console.warn('playSignalCue: 需要 params.id');
+      return;
+    }
+    await d.signalCueManager.play(id);
   }, ['id']);
 
   executor.register('startSugarWheelMinigame', async (p) => {

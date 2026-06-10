@@ -55,6 +55,24 @@ export class ActionExecutor {
       this.flagStore.appendStringFlag(params.key as string, String(params.text ?? ''));
     }, ['key', 'text']);
 
+    /** 数值标记自增：当前值非数字（含未设置）按 0 处理；delta 非有限数字时跳过并告警。 */
+    this.register('addFlagValue', (params) => {
+      const key = String(params.key ?? '').trim();
+      if (!key) {
+        console.warn('addFlagValue: 需要 params.key');
+        return;
+      }
+      const deltaRaw = params.delta;
+      const delta = typeof deltaRaw === 'number' ? deltaRaw : Number(deltaRaw);
+      if (!Number.isFinite(delta)) {
+        console.warn(`addFlagValue: delta 须为有限数字: ${String(deltaRaw)}`);
+        return;
+      }
+      const cur = this.flagStore.get(key);
+      const base = typeof cur === 'number' && Number.isFinite(cur) ? cur : 0;
+      this.flagStore.set(key, base + delta);
+    }, ['key', 'delta']);
+
     this.register('showNotification', (params) => {
       let text = String(params.text ?? '');
       if (this.resolveNotificationText) text = this.resolveNotificationText(text);
