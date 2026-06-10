@@ -69,6 +69,7 @@ import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import { registerActionHandlers } from './ActionRegistry';
+import { collectRecentPageErrors, installPageErrorTrap } from './pageErrorTrap';
 import { ScenarioStateManager } from './ScenarioStateManager';
 import { NarrativeStateManager, type NarrativeSignal } from './NarrativeStateManager';
 import { DocumentRevealManager } from '../systems/DocumentRevealManager';
@@ -235,6 +236,8 @@ export class Game {
   private runtimeDebugSnapshotTimer: number | null = null;
   private runtimeCommandPollTimer: number | null = null;
   private runtimeCommandPollInFlight = false;
+  /** 本次页面会话的实例 id；快照携带，命令可用 targetBootId 指向特定实例（多开页签时避免互抢） */
+  private readonly runtimeBootId = Math.random().toString(36).slice(2, 10);
   private runtimeDebugSnapshotErrorLogged = false;
   private runtimeCommandPollErrorLogged = false;
   private lastRuntimeCommandResults: { id: string; type: string; ok: boolean; message: string }[] = [];
@@ -2346,11 +2349,14 @@ export class Game {
       runtimeCommands: {
         lastResults: this.lastRuntimeCommandResults.slice(-20),
       },
+      recentPageErrors: collectRecentPageErrors(),
+      bootId: this.runtimeBootId,
     };
   }
 
   private setupRuntimeDebugSnapshotPublishing(): void {
     if (!import.meta.env.DEV) return;
+    installPageErrorTrap();
     const events = [
       'narrative:stateChanged',
       'flag:changed',
@@ -2419,7 +2425,14 @@ export class Game {
         return;
       }
       const payload = await response.json();
-      const commands = Array.isArray(payload?.commands) ? payload.commands : [];
+      const rawCommands = Array.isArray(payload?.commands) ? payload.commands : [];
+      if (rawCommands.length === 0) return;
+      // 多开页签时的指向性消费：命令可带 targetBootId；与本实例不符的命令留在队列里
+      // 等目标实例取走。无 targetBootId 的命令保持旧行为（任意实例可执行）。
+      const commands = rawCommands.filter((c: unknown) => {
+        const t = (c as { targetBootId?: unknown })?.targetBootId;
+        return t === undefined || t === null || String(t) === this.runtimeBootId;
+      });
       if (commands.length === 0) return;
       const results = [];
       for (const command of commands.slice(0, 50)) {
