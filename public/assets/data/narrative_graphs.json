@@ -462,6 +462,526 @@
           }
         }
       ]
+    },
+    {
+      "id": "xungou_demo_main",
+      "label": "寻狗记Demo · 主线",
+      "description": "分镜版剧本主线：开局到黑屏的13个里程碑。对话图发信号推进状态；里程碑 flag（xg_*_done）由状态 onEnter 统一投影，供场景条件/任务面板读取。",
+      "mainGraph": {
+        "id": "flow_xungou_main",
+        "ownerType": "flow",
+        "ownerId": "寻狗Demo主线",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "开局·茶馆门外的人",
+            "meta": {
+              "editor": {
+                "x": 24,
+                "y": 24
+              }
+            }
+          },
+          "s01_tingshu": {
+            "id": "s01_tingshu",
+            "label": "听书完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 284,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_tingshu_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s02_beishi": {
+            "id": "s02_beishi",
+            "label": "背庄家尸完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 544,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_beishi_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s03_chuiniu": {
+            "id": "s03_chuiniu",
+            "label": "茶馆吹牛完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 804,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_chuiniu_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s04_pozi": {
+            "id": "s04_pozi",
+            "label": "婆子家第一单完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 1064,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_pozi_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s05_hebian": {
+            "id": "s05_hebian",
+            "label": "河边递纸完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 1324,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_hebian_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s06_laoxiang": {
+            "id": "s06_laoxiang",
+            "label": "码头捞箱完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 1584,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_laoxiang_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s07_kujing": {
+            "id": "s07_kujing",
+            "label": "枯井狗脸完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 1844,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_kujing_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s08_xiangdao": {
+            "id": "s08_xiangdao",
+            "label": "决定装道士",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 2104,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_xiangdao_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s09_songhuo": {
+            "id": "s09_songhuo",
+            "label": "阎王岭送货完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 2364,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_songhuo_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s10_yizhuang": {
+            "id": "s10_yizhuang",
+            "label": "义庄镇尸完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 2624,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_yizhuang_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s11_zhaomu": {
+            "id": "s11_zhaomu",
+            "label": "克拉拉招募完成",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 2884,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_zhaomu_done",
+                  "value": true
+                }
+              }
+            ]
+          },
+          "s12_chufa": {
+            "id": "s12_chufa",
+            "label": "出发·Demo终",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 3144,
+                "y": 24
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "setFlag",
+                "params": {
+                  "key": "xg_demo_finished",
+                  "value": true
+                }
+              }
+            ]
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_s01_tingshu",
+            "from": "initial",
+            "to": "s01_tingshu",
+            "signal": "xg_tingshu_completed"
+          },
+          {
+            "id": "t_s02_beishi",
+            "from": "s01_tingshu",
+            "to": "s02_beishi",
+            "signal": "xg_beishi_completed"
+          },
+          {
+            "id": "t_s03_chuiniu",
+            "from": "s02_beishi",
+            "to": "s03_chuiniu",
+            "signal": "xg_chuiniu_completed"
+          },
+          {
+            "id": "t_s04_pozi",
+            "from": "s03_chuiniu",
+            "to": "s04_pozi",
+            "signal": "xg_pozi_completed"
+          },
+          {
+            "id": "t_s05_hebian",
+            "from": "s04_pozi",
+            "to": "s05_hebian",
+            "signal": "xg_hebian_completed"
+          },
+          {
+            "id": "t_s06_laoxiang",
+            "from": "s05_hebian",
+            "to": "s06_laoxiang",
+            "signal": "xg_laoxiang_completed"
+          },
+          {
+            "id": "t_s07_kujing",
+            "from": "s06_laoxiang",
+            "to": "s07_kujing",
+            "signal": "xg_kujing_completed"
+          },
+          {
+            "id": "t_s08_xiangdao",
+            "from": "s07_kujing",
+            "to": "s08_xiangdao",
+            "signal": "xg_xiangdao_completed"
+          },
+          {
+            "id": "t_s09_songhuo",
+            "from": "s08_xiangdao",
+            "to": "s09_songhuo",
+            "signal": "xg_songhuo_completed"
+          },
+          {
+            "id": "t_s10_yizhuang",
+            "from": "s09_songhuo",
+            "to": "s10_yizhuang",
+            "signal": "xg_yizhuang_completed"
+          },
+          {
+            "id": "t_s11_zhaomu",
+            "from": "s10_yizhuang",
+            "to": "s11_zhaomu",
+            "signal": "xg_zhaomu_completed"
+          },
+          {
+            "id": "t_s12_chufa",
+            "from": "s11_zhaomu",
+            "to": "s12_chufa",
+            "signal": "xg_chufa_completed"
+          }
+        ],
+        "label": "寻狗Demo主线"
+      },
+      "elements": [
+        {
+          "id": "dlg_01",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_说书人",
+          "refId": "寻狗_说书人",
+          "x": 284,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_tingshu_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_02",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_背尸",
+          "refId": "寻狗_背尸",
+          "x": 544,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_beishi_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_03",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_茶馆吹牛",
+          "refId": "寻狗_茶馆吹牛",
+          "x": 804,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_chuiniu_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_04",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_婆子家宣布",
+          "refId": "寻狗_婆子家宣布",
+          "x": 1064,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_pozi_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_05",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_河边递纸",
+          "refId": "寻狗_河边递纸",
+          "x": 1324,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_hebian_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_06",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_码头选择",
+          "refId": "寻狗_码头选择",
+          "x": 1584,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_laoxiang_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_07",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_枯井往下看",
+          "refId": "寻狗_枯井往下看",
+          "x": 1844,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_kujing_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_08",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_围观竞争",
+          "refId": "寻狗_围观竞争",
+          "x": 2104,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_xiangdao_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_09",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_看进山路",
+          "refId": "寻狗_看进山路",
+          "x": 2364,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_songhuo_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_10",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_镇尸_剪子",
+          "refId": "寻狗_镇尸_剪子",
+          "x": 2624,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_yizhuang_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_11",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_克拉拉招募",
+          "refId": "寻狗_克拉拉招募",
+          "x": 2884,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_zhaomu_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_12",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_城门汇合",
+          "refId": "寻狗_城门汇合",
+          "x": 3144,
+          "y": -120,
+          "meta": {
+            "emits": [
+              "xg_chufa_completed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        }
+      ]
     }
   ],
   "signals": [
@@ -484,6 +1004,54 @@
     {
       "id": "ring_returned",
       "label": "ring_returned"
+    },
+    {
+      "id": "xg_tingshu_completed",
+      "label": "听书完成"
+    },
+    {
+      "id": "xg_beishi_completed",
+      "label": "背庄家尸完成"
+    },
+    {
+      "id": "xg_chuiniu_completed",
+      "label": "茶馆吹牛完成"
+    },
+    {
+      "id": "xg_pozi_completed",
+      "label": "婆子家第一单完成"
+    },
+    {
+      "id": "xg_hebian_completed",
+      "label": "河边递纸完成"
+    },
+    {
+      "id": "xg_laoxiang_completed",
+      "label": "码头捞箱完成"
+    },
+    {
+      "id": "xg_kujing_completed",
+      "label": "枯井狗脸完成"
+    },
+    {
+      "id": "xg_xiangdao_completed",
+      "label": "决定装道士"
+    },
+    {
+      "id": "xg_songhuo_completed",
+      "label": "阎王岭送货完成"
+    },
+    {
+      "id": "xg_yizhuang_completed",
+      "label": "义庄镇尸完成"
+    },
+    {
+      "id": "xg_zhaomu_completed",
+      "label": "克拉拉招募完成"
+    },
+    {
+      "id": "xg_chufa_completed",
+      "label": "出发·Demo终"
     }
   ]
 }

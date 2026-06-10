@@ -255,10 +255,16 @@ export type ScenarioLineConditionLeaf = {
   lineStatus: 'inactive' | 'active' | 'completed';
 };
 
-/** NarrativeStateManager activeState leaf. */
+/**
+ * NarrativeStateManager 状态叶子。
+ * - 缺省（`reached` 不填）：判断该图 **当前** activeState 是否等于 `state`。
+ * - `reached: true`：判断该图是否 **到达过** `state`（含当前；initialState 视为到达过）。
+ *   线性流程里的「X 之后可见/可去」类门控应使用 reached 语义。
+ */
 export type NarrativeStateConditionLeaf = {
   narrative: string;
   state: string;
+  reached?: boolean;
 };
 
 /** 图对话原子条件（无逻辑组合） */

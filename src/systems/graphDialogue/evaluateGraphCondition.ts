@@ -33,6 +33,8 @@ export interface ConditionEvalContext {
   narrativeState?: {
     getActiveState(graphId: string): string | undefined;
     isStateActive(graphId: string, stateId: string): boolean;
+    /** 到达过（含当前；initialState 视为到达过）。未注入时 reached 条件退化为 isStateActive。 */
+    hasReachedState?(graphId: string, stateId: string): boolean;
     getGraph?(graphId: string): { id: string; ownerType?: string; ownerId?: string } | undefined;
     getGraphIdsByOwner?(ownerType: string, ownerId: string): string[];
     getPrimaryGraphByOwner?(ownerType: string, ownerId: string): { id: string } | undefined;
@@ -153,7 +155,15 @@ export function evaluateConditionExpr(
   if (isNarrativeStateLeaf(expr)) {
     const graphId = expr.narrative.trim();
     const stateId = expr.state.trim();
-    return Boolean(graphId && stateId && ctx.narrativeState?.isStateActive(graphId, stateId));
+    if (!graphId || !stateId || !ctx.narrativeState) return false;
+    if ((expr as { reached?: unknown }).reached === true) {
+      const ns = ctx.narrativeState;
+      if (typeof ns.hasReachedState === 'function') {
+        return ns.hasReachedState(graphId, stateId);
+      }
+      return ns.isStateActive(graphId, stateId);
+    }
+    return ctx.narrativeState.isStateActive(graphId, stateId);
   }
 
   if (isQuestLeaf(expr)) {

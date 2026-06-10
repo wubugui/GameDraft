@@ -30,6 +30,65 @@ describe('NarrativeStateManager', () => {
     expect(NarrativeStateManager.triggerKeysEqual('go', 'go')).toBe(true);
   });
 
+  it('tracks reached states across transitions (initial counts, history persists)', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 't1', from: 'a', to: 'b', signal: 'go1' },
+        { id: 't2', from: 'b', to: 'c', signal: 'go2' },
+      ],
+    }]);
+    expect(narrative.hasReachedState('g', 'a')).toBe(true);
+    expect(narrative.hasReachedState('g', 'b')).toBe(false);
+    narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'go1' });
+    await flush();
+    narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'go2' });
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('c');
+    // 已离开的状态仍视为「到达过」——线性流程的里程碑门控语义
+    expect(narrative.hasReachedState('g', 'a')).toBe(true);
+    expect(narrative.hasReachedState('g', 'b')).toBe(true);
+    expect(narrative.hasReachedState('g', 'c')).toBe(true);
+    expect(narrative.hasReachedState('g', 'nope')).toBe(false);
+  });
+
+  it('serializes reached states and backfills legacy saves from activeState', async () => {
+    const { narrative } = makeRuntime();
+    const graphs = [{
+      id: 'g',
+      ownerType: 'flow' as const,
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 't1', from: 'a', to: 'b', signal: 'go1' },
+        { id: 't2', from: 'b', to: 'c', signal: 'go2' },
+      ],
+    }];
+    narrative.registerGraphs(graphs);
+    narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'go1' });
+    await flush();
+    const saved = JSON.parse(JSON.stringify(narrative.serialize()));
+
+    const fresh = makeRuntime().narrative;
+    fresh.registerGraphs(graphs);
+    fresh.deserialize(saved);
+    expect(fresh.getActiveState('g')).toBe('b');
+    expect(fresh.hasReachedState('g', 'a')).toBe(true);
+    expect(fresh.hasReachedState('g', 'b')).toBe(true);
+    expect(fresh.hasReachedState('g', 'c')).toBe(false);
+
+    // 旧档：只有 activeStates，无 reachedStates —— 回填 initial + 当前态
+    const legacy = makeRuntime().narrative;
+    legacy.registerGraphs(graphs);
+    legacy.deserialize({ activeStates: { g: 'c' } });
+    expect(legacy.hasReachedState('g', 'c')).toBe(true);
+    expect(legacy.hasReachedState('g', 'a')).toBe(true);
+  });
+
   it('matches transitions by active state, trigger key, priority, and conditions', async () => {
     const { flagStore, narrative } = makeRuntime();
     flagStore.set('ready', true);
@@ -480,6 +539,7 @@ describe('NarrativeStateManager', () => {
       'quest_return_ring',
       'flow_1',
       'wrapper_graph_1',
+      'flow_xungou_main',
     ]);
     narrative.registerGraphs(graphs);
     narrative.emitNarrativeSignal({ sourceType: 'dialogue', sourceId: 'dock_board', signal: 'board_read_done' });
@@ -509,7 +569,10 @@ describe('NarrativeStateManager', () => {
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
     await flush();
     expect(narrative.getActiveState('g')).toBe('b');
-    expect(narrative.serialize()).toEqual({ activeStates: { g: 'b' } });
+    expect(narrative.serialize()).toEqual({
+      activeStates: { g: 'b' },
+      reachedStates: { g: ['a', 'b'] },
+    });
 
     narrative.deserialize({ activeStates: { g: 'a' } });
     expect(narrative.getActiveState('g')).toBe('a');

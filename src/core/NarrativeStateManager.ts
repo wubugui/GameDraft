@@ -204,6 +204,8 @@ export class NarrativeStateManager implements IGameSystem {
   private drainStepCount = 0;
   private destroyed = false;
   private recentTransitions: NarrativeTransitionRecord[] = [];
+  /** graphId → 到达过的状态集合（含 initialState 与当前状态），随存档持久化 */
+  private reachedStates: Map<string, Set<string>> = new Map();
   private recentIssues: NarrativeRuntimeIssue[] = [];
   private recentTrace: NarrativeTraceEvent[] = [];
   private traceSeq = 0;
@@ -270,6 +272,7 @@ export class NarrativeStateManager implements IGameSystem {
   registerGraphs(graphs: NarrativeGraph[]): void {
     this.graphs.clear();
     this.activeStates.clear();
+    this.reachedStates.clear();
     this.ownerIndex.clear();
     this.queue.length = 0;
     this.primaryOwnerWarningKeys.clear();
@@ -292,6 +295,7 @@ export class NarrativeStateManager implements IGameSystem {
       }
       this.graphs.set(graph.id, graph);
       this.activeStates.set(graph.id, graph.initialState);
+      this.markStateReached(graph.id, graph.initialState);
       this.indexGraphOwner(graph);
       if (graph.projectFlags) {
         const message = `NarrativeStateManager: graph.projectFlags is deprecated and ignored on ${graph.id}`;
@@ -313,6 +317,27 @@ export class NarrativeStateManager implements IGameSystem {
 
   isStateActive(graphId: string, stateId: string): boolean {
     return this.activeStates.get(graphId) === stateId;
+  }
+
+  /**
+   * 该图是否「到达过」某状态（含当前状态；initialState 注册即视为到达）。
+   * 供线性流程的里程碑门控使用：`{ narrative, state, reached: true }` 条件叶子。
+   */
+  hasReachedState(graphId: string, stateId: string): boolean {
+    const g = String(graphId ?? '').trim();
+    const s = String(stateId ?? '').trim();
+    if (!g || !s) return false;
+    if (this.activeStates.get(g) === s) return true;
+    return this.reachedStates.get(g)?.has(s) ?? false;
+  }
+
+  private markStateReached(graphId: string, stateId: string): void {
+    let set = this.reachedStates.get(graphId);
+    if (!set) {
+      set = new Set();
+      this.reachedStates.set(graphId, set);
+    }
+    set.add(stateId);
   }
 
   getGraph(graphId: string): NarrativeGraph | undefined {
@@ -410,12 +435,21 @@ export class NarrativeStateManager implements IGameSystem {
   }
 
   serialize(): object {
-    return { activeStates: Object.fromEntries(this.activeStates.entries()) };
+    return {
+      activeStates: Object.fromEntries(this.activeStates.entries()),
+      reachedStates: Object.fromEntries(
+        [...this.reachedStates.entries()].map(([g, set]) => [g, [...set]]),
+      ),
+    };
   }
 
   deserialize(data: object): void {
-    const raw = data as { activeStates?: Record<string, unknown> };
+    const raw = data as {
+      activeStates?: Record<string, unknown>;
+      reachedStates?: Record<string, unknown>;
+    };
     this.restoreActiveStates(raw?.activeStates ?? {});
+    this.restoreReachedStates(raw?.reachedStates);
   }
 
   restoreActiveStates(states: Record<string, unknown>): void {
@@ -427,10 +461,30 @@ export class NarrativeStateManager implements IGameSystem {
     }
   }
 
+  /** 旧档无 reachedStates 时回填：initialState + 当前 activeState 视为到达过。 */
+  private restoreReachedStates(states: Record<string, unknown> | undefined): void {
+    if (states && typeof states === 'object') {
+      for (const [graphId, listRaw] of Object.entries(states)) {
+        const graph = this.graphs.get(graphId);
+        if (!graph || !Array.isArray(listRaw)) continue;
+        for (const sRaw of listRaw) {
+          const stateId = String(sRaw ?? '').trim();
+          if (stateId && graph.states[stateId]) this.markStateReached(graphId, stateId);
+        }
+      }
+    }
+    for (const [graphId, stateId] of this.activeStates.entries()) {
+      this.markStateReached(graphId, stateId);
+      const graph = this.graphs.get(graphId);
+      if (graph) this.markStateReached(graphId, graph.initialState);
+    }
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.graphs.clear();
     this.activeStates.clear();
+    this.reachedStates.clear();
     this.queue.length = 0;
   }
 
@@ -789,6 +843,7 @@ export class NarrativeStateManager implements IGameSystem {
       to: toStateId,
     });
     this.activeStates.set(graph.id, toStateId);
+    this.markStateReached(graph.id, toStateId);
     this.recentTransitions.push({ graphId: graph.id, transitionId, from: fromStateId, to: toStateId, triggerKey });
     if (this.recentTransitions.length > 50) this.recentTransitions.splice(0, this.recentTransitions.length - 50);
     this.recordTrace('state.changed', {

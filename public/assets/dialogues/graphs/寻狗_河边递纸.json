@@ -23,26 +23,39 @@
     },
     "done_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "河滩上雾还没散。他下意识摸了摸怀里那几张纸钱——快走吧。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "回程，河滩。雾压着水面，黄昏的光淌不进来。走到半道，关二狗肚子一阵绞——他钻进芦苇丛后头，蹲下了。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（……纸。纸啊。出门忘带纸了。）",
       "next": "n3"
     },
     "n3": {
       "type": "runActions",
       "actions": [
-        { "type": "playSfx", "params": { "id": "sfx_paper_hand_rustle" } },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_paper_hand_rustle"
+          }
+        },
         {
           "type": "showOverlayImage",
           "params": {
@@ -58,7 +71,10 @@
     },
     "n4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "身后，伸过来一只手。递来一沓纸钱——黄的，软的，分量正好。",
       "next": "c1"
     },
@@ -79,80 +95,140 @@
     },
     "c1_a": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "他接得那叫一个自然，还客气地道了声谢，扯了几张用了。",
       "next": "n5"
     },
     "c1_b": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "手比脑子快。等纸已经到了手里，他才想起来该说声谢——也说了。",
       "next": "n5"
     },
     "n5": {
       "type": "runActions",
       "actions": [
-        { "type": "hideOverlayImage", "params": { "id": "river_ghost_hand" } },
-        { "type": "waitMs", "params": { "durationMs": 600 } }
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "river_ghost_hand"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 600
+          }
+        }
       ],
       "next": "n6"
     },
     "n6": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（…………等等。）",
       "next": "n7"
     },
     "n7": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（前不着村，后不着店。这河滩上——哪来的人？？）",
       "next": "n8"
     },
     "n8": {
       "type": "runActions",
       "actions": [
-        { "type": "playSfx", "params": { "id": "sfx_night_bird_startle" } }
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_night_bird_startle"
+          }
+        }
       ],
       "next": "n9"
     },
     "n9": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "猛回头——没人。雾里空荡荡，远处水声哗哗。手里，还攥着剩下的纸钱。",
       "next": "n_cue"
     },
     "n_cue": {
       "type": "runActions",
       "actions": [
-        { "type": "playSignalCue", "params": { "id": "axiu_faint" } }
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_faint"
+          }
+        }
       ],
       "next": "n10"
     },
     "n10": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "当年他蹲在旁边看人出恭、看人窘迫还嘻嘻笑。如今轮到他蹲着，一只手客客气气递来纸——那东西规规矩矩的，把他当「自家人」。",
       "next": "n11"
     },
     "n11": {
       "type": "runActions",
       "actions": [
-        { "type": "giveItem", "params": { "id": "joss_paper", "count": 5 } },
-        { "type": "setFlag", "params": { "key": "xg_hebian_paper", "value": true } },
-        { "type": "setFlag", "params": { "key": "xg_hebian_done", "value": true } }
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "joss_paper",
+            "count": 5
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "xg_hebian_paper",
+            "value": true
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_河边递纸",
+            "signal": "xg_hebian_completed"
+          }
+        }
       ],
       "next": "n12"
     },
     "n12": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（有东西……在跟着俺。）",
       "next": "n13"
     },
     "n13": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "他提着裤子一路小跑回城。那几张没用完的纸钱，扔也不是，留也不是，最后还是揣进了怀里——扔了，不吉利。",
       "next": "end1"
     },

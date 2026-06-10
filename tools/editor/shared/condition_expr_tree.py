@@ -1,4 +1,4 @@
-"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine）。"""
+"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative）。"""
 from __future__ import annotations
 
 import json
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QFormLayout,
+    QCheckBox,
     QComboBox,
     QPushButton,
     QLineEdit,
@@ -67,6 +68,7 @@ class ConditionExprNodeEditor(QWidget):
             ("任务状态", "quest"),
             ("Scenario 阶段", "scenario"),
             ("Scenario 线（生命周期）", "scenarioLine"),
+            ("叙事状态", "narrative"),
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
@@ -102,6 +104,10 @@ class ConditionExprNodeEditor(QWidget):
         self._sc_out: QLineEdit | None = None
         self._sl_id: QComboBox | None = None
         self._sl_st: QComboBox | None = None
+        self._nv_wrap: QWidget | None = None
+        self._nv_graph: QComboBox | None = None
+        self._nv_state: QComboBox | None = None
+        self._nv_reached: QCheckBox | None = None
 
         self._remove_callback: Callable[[ConditionExprNodeEditor], None] | None = None
 
@@ -155,6 +161,10 @@ class ConditionExprNodeEditor(QWidget):
         self._sc_out = None
         self._sl_id = None
         self._sl_st = None
+        self._nv_wrap = None
+        self._nv_graph = None
+        self._nv_state = None
+        self._nv_reached = None
 
     def _rebuild_body(self, kind: str) -> None:
         self._clear_body()
@@ -283,6 +293,79 @@ class ConditionExprNodeEditor(QWidget):
             self._sl_wrap = lw
             self._body.addWidget(lw)
             self._fill_scenario_line_combo()
+        elif kind == "narrative":
+            nw = QWidget()
+            nf = QFormLayout(nw)
+            self._nv_graph = QComboBox()
+            self._nv_graph.setEditable(False)
+            self._nv_graph.currentIndexChanged.connect(self._on_narrative_graph_combo)
+            self._nv_state = QComboBox()
+            self._nv_state.setEditable(False)
+            self._nv_state.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._nv_reached = QCheckBox("曾到达过（含当前；用于「X 之后」类门控）")
+            self._nv_reached.stateChanged.connect(lambda _s: self.changed.emit())
+            nf.addRow("叙事图", self._nv_graph)
+            nf.addRow("状态", self._nv_state)
+            nf.addRow("", self._nv_reached)
+            self._nv_wrap = nw
+            self._body.addWidget(nw)
+            self._fill_narrative_combos()
+
+    def _narrative_graph_entries(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。"""
+        m = self._model()
+        data = getattr(m, "narrative_graphs", None) if m else None
+        out: list[tuple[str, str, dict[str, Any]]] = []
+        if not isinstance(data, dict):
+            return out
+        for comp in data.get("compositions") or []:
+            if not isinstance(comp, dict):
+                continue
+            main = comp.get("mainGraph")
+            if isinstance(main, dict) and main.get("id"):
+                label = str(main.get("label") or comp.get("label") or main["id"])
+                out.append((f"{label} ({main['id']})", str(main["id"]), main))
+            for el in comp.get("elements") or []:
+                if not isinstance(el, dict) or el.get("kind") != "wrapperGraph":
+                    continue
+                g = el.get("graph")
+                if isinstance(g, dict) and g.get("id"):
+                    label = str(el.get("label") or g.get("label") or g["id"])
+                    out.append((f"{label} ({g['id']})", str(g["id"]), g))
+        return out
+
+    def _fill_narrative_combos(self) -> None:
+        if not self._nv_graph:
+            return
+        self._nv_graph.blockSignals(True)
+        self._nv_graph.clear()
+        self._nv_graph.addItem("（选择）", "")
+        for label, gid, _g in self._narrative_graph_entries():
+            self._nv_graph.addItem(label, gid)
+        self._nv_graph.blockSignals(False)
+        self._fill_narrative_state_combo()
+
+    def _on_narrative_graph_combo(self, _i: int) -> None:
+        self._fill_narrative_state_combo()
+        self.changed.emit()
+
+    def _fill_narrative_state_combo(self) -> None:
+        if not self._nv_state or not self._nv_graph:
+            return
+        gid = self._nv_graph.currentData()
+        gid = gid.strip() if isinstance(gid, str) else ""
+        self._nv_state.blockSignals(True)
+        self._nv_state.clear()
+        self._nv_state.addItem("（选择）", "")
+        if gid:
+            for _label, g_id, g in self._narrative_graph_entries():
+                if g_id != gid:
+                    continue
+                for sid, st in (g.get("states") or {}).items():
+                    lab = str((st or {}).get("label") or sid) if isinstance(st, dict) else str(sid)
+                    self._nv_state.addItem(f"{lab} ({sid})" if lab != sid else str(sid), str(sid))
+                break
+        self._nv_state.blockSignals(False)
 
     def _fill_scenario_combos(self) -> None:
         if not self._sc_id or not self._sc_ph:
@@ -410,6 +493,8 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(6)
         elif isinstance(data.get("scenario"), str) and str(data.get("scenario", "")).strip():
             self._kind.setCurrentIndex(5)
+        elif isinstance(data.get("narrative"), str) and str(data.get("narrative", "")).strip():
+            self._kind.setCurrentIndex(7)
         else:
             self._kind.setCurrentIndex(3)
         k = self._kind.currentData()
@@ -494,6 +579,25 @@ class ConditionExprNodeEditor(QWidget):
                     self._sc_out.setText(json.dumps(oc, ensure_ascii=False))
                 except (TypeError, ValueError):
                     self._sc_out.setText(str(oc))
+        elif k == "narrative" and self._nv_graph and self._nv_state and self._nv_reached:
+            gid = str(data.get("narrative", "")).strip()
+            idx = self._nv_graph.findData(gid)
+            if idx < 0 and gid:
+                self._nv_graph.addItem(f"（数据）{gid}", gid)
+                idx = self._nv_graph.count() - 1
+            self._nv_graph.blockSignals(True)
+            self._nv_graph.setCurrentIndex(max(0, idx))
+            self._nv_graph.blockSignals(False)
+            self._fill_narrative_state_combo()
+            sid = str(data.get("state", "")).strip()
+            i2 = self._nv_state.findData(sid)
+            if i2 < 0 and sid:
+                self._nv_state.addItem(f"（数据）{sid}", sid)
+                i2 = self._nv_state.count() - 1
+            self._nv_state.blockSignals(True)
+            self._nv_state.setCurrentIndex(max(0, i2))
+            self._nv_state.blockSignals(False)
+            self._nv_reached.setChecked(data.get("reached") is True)
 
     def to_dict(self) -> dict[str, Any]:
         k = self._kind.currentData()
@@ -568,6 +672,17 @@ class ConditionExprNodeEditor(QWidget):
                     else:
                         out["outcome"] = ot
             return out
+        if k == "narrative" and self._nv_graph and self._nv_state and self._nv_reached:
+            gid = self._nv_graph.currentData()
+            gid = gid.strip() if isinstance(gid, str) else ""
+            sid = self._nv_state.currentData()
+            sid = sid.strip() if isinstance(sid, str) else ""
+            if not gid or not sid:
+                return {}
+            leaf: dict[str, Any] = {"narrative": gid, "state": sid}
+            if self._nv_reached.isChecked():
+                leaf["reached"] = True
+            return leaf
         return {}
 
 

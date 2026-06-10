@@ -1,4 +1,4 @@
-# 层次叙事状态机设计文档
+﻿# 层次叙事状态机设计文档
 
 ## 1. 系统定义
 
@@ -381,38 +381,38 @@ Action 失败视为内容或代码 bug，记录错误。
 状态机队列继续处理后续 trigger。
 ```
 
-## 4.8 Optional State Flag Projection
+## 4.8 状态查询与 Flag 投影（与实现一致）
 
-状态 flag 投影是可选能力。它把某个当前 active 的 narrative state 写成一个全局只读 flag，供现有条件系统、旧 JSON 配置、调试面板读取。
+> 历史说明：早期设计中的自动 flag projection（`narrative.<graphId>.<stateId>.active`）已废弃；
+> 运行时对 `graph.projectFlags` 仅告警并忽略。本节描述当前实际支持的查询与投影方式。
 
-```text
-narrative.<graphId>.<stateId>.active
-```
-
-示例：
-
-```text
-narrative.npc_ringboy.after_event.active = true
-narrative.flow_dock_water_monkey.crate_minigame_done.active = true
-```
-
-flag projection 由 `NarrativeStateManager` 维护，供 `ConditionExpr`、调试面板和旧系统读取。
-
-运行时主查询方式是：
+运行时主查询 API：
 
 ```ts
-narrative.getActiveState(graphId)
-narrative.isStateActive(graphId, stateId)
+narrative.getActiveState(graphId)              // 当前状态 id
+narrative.isStateActive(graphId, stateId)      // 是否「正处于」该状态
+narrative.hasReachedState(graphId, stateId)    // 是否「到达过」该状态（含当前；initialState 注册即视为到达）
 ```
 
-`NarrativeStateManager.activeState` 是唯一状态源。flag projection 只是从 activeState 派生出的只读投影。其它系统可以读这个 flag，但不能手动写入它。
+条件系统（`ConditionExpr`）的叙事叶子，两种语义：
 
-第一阶段可以按需开启 projection：
+```jsonc
+// 等值：当前正处于该状态（状态往前走后变为 false）
+{ "narrative": "flow_xungou_main", "state": "s04_pozi" }
 
-```text
-需要给旧 ConditionExpr / DialogueGraph 条件 / 调试面板读取的状态 -> 投影为 flag
-只被新系统直接查询的状态 -> 不投影
+// 到达过：线性流程里「X 之后可见/可去」类门控应使用本形态
+{ "narrative": "flow_xungou_main", "state": "s04_pozi", "reached": true }
 ```
+
+`reached` 集合随存档持久化；旧档无该数据时按 initialState + 当前 activeState 回填。
+编辑器条件树（「叙事状态」叶子）提供图/状态下拉与「曾到达过」开关。
+
+仍需要全局 flag 的场景（旧系统、跨存档兼容字段），使用**手工投影**：
+在 State 的 `onEnterActions` 里显式 `setFlag`。这样投影本身显示在状态图画布的属性面板上，
+flag 的来源对策划单点可见，符合「叙事编排全部收口在状态图」的原则。
+
+`NarrativeStateManager.activeState` 仍是唯一状态源；手工投影的 flag 是状态生命周期的产物，
+不应在其它地方写入同名 flag。
 
 ---
 

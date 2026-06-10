@@ -577,8 +577,169 @@ def validate(model: ProjectModel) -> list[Issue]:
 
     _validate_pressure_holds(model, issues)
     _validate_signal_cues(model, issues)
+    _validate_narrative(model, issues)
 
     return issues
+
+
+def _iter_narrative_graphs(model: ProjectModel):
+    """遍历 narrative_graphs.json 内的所有图（mainGraph + wrapper 子图）。"""
+    data = model.narrative_graphs
+    if not isinstance(data, dict):
+        return
+    for comp in data.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        main = comp.get("mainGraph")
+        if isinstance(main, dict) and main.get("id"):
+            yield main
+        for el in comp.get("elements") or []:
+            if isinstance(el, dict) and el.get("kind") == "wrapperGraph":
+                g = el.get("graph")
+                if isinstance(g, dict) and g.get("id"):
+                    yield g
+
+
+def _narrative_graph_index(model: ProjectModel) -> dict[str, set[str]]:
+    """graphId → 状态 id 集合。"""
+    out: dict[str, set[str]] = {}
+    for g in _iter_narrative_graphs(model):
+        states = g.get("states")
+        out[str(g["id"])] = set(states.keys()) if isinstance(states, dict) else set()
+    return out
+
+
+def _narrative_listened_signals(model: ProjectModel) -> set[str]:
+    """所有 Transition 正在监听的 signal 集合（含 state:* 跨图广播 key）。"""
+    out: set[str] = set()
+    for g in _iter_narrative_graphs(model):
+        for t in g.get("transitions") or []:
+            if isinstance(t, dict):
+                sig = str(t.get("signal") or "").strip()
+                if sig:
+                    out.add(sig)
+    return out
+
+
+def _narrative_registered_signal_ids(model: ProjectModel) -> set[str]:
+    data = model.narrative_graphs
+    if not isinstance(data, dict):
+        return set()
+    return {
+        str(s.get("id") or "").strip()
+        for s in data.get("signals") or []
+        if isinstance(s, dict) and str(s.get("id") or "").strip()
+    }
+
+
+def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
+    """叙事状态机数据一致性：信号注册表、Transition 信号引用、黑盒 emits 与对话图实际发信号的漂移。
+
+    目标：策划在状态图画布上看到的因果关系必须与运行时真值一致。
+    """
+    data = model.narrative_graphs
+    if not isinstance(data, dict) or not data.get("compositions"):
+        return
+    registered = _narrative_registered_signal_ids(model)
+    graphs = _narrative_graph_index(model)
+
+    # 1. 信号注册表：重复 id
+    seen: set[str] = set()
+    for s in data.get("signals") or []:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id") or "").strip()
+        if not sid:
+            issues.append(Issue("error", "narrative", "signals", "信号注册表存在空 id"))
+            continue
+        if sid in seen:
+            issues.append(Issue("error", "narrative", "signals", f"信号 id 重复: {sid!r}"))
+        seen.add(sid)
+
+    # 2. Transition.signal：须为已注册信号 / state:<图>:<状态> / __draft__（草稿告警）
+    for g in _iter_narrative_graphs(model):
+        gid = str(g["id"])
+        for t in g.get("transitions") or []:
+            if not isinstance(t, dict):
+                continue
+            sig = str(t.get("signal") or "").strip()
+            tid = str(t.get("id") or "?")
+            if not sig:
+                issues.append(Issue("error", "narrative", gid, f"Transition {tid!r} 缺少 signal"))
+                continue
+            if sig == "__draft__":
+                issues.append(Issue(
+                    "warning", "narrative", gid,
+                    f"Transition {tid!r} 仍是草稿信号 __draft__（不会被任何来源触发）",
+                ))
+                continue
+            if sig.startswith("state:"):
+                parts = sig.split(":", 2)
+                ref_g = parts[1] if len(parts) > 1 else ""
+                ref_s = parts[2] if len(parts) > 2 else ""
+                if ref_g not in graphs:
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"Transition {tid!r} 的跨图信号引用的图 {ref_g!r} 不存在",
+                    ))
+                elif ref_s not in graphs[ref_g]:
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"Transition {tid!r} 的跨图信号引用的状态 {ref_g}:{ref_s} 不存在",
+                    ))
+                continue
+            if sig not in registered:
+                issues.append(Issue(
+                    "warning", "narrative", gid,
+                    f"Transition {tid!r} 的信号 {sig!r} 未在信号注册表（signals）登记",
+                ))
+
+    # 3. dialogueBlackbox meta.emits 与对话图实际 emitNarrativeSignal 的漂移（画布不可说谎）
+    gd = model.dialogues_path / "graphs"
+    for comp in data.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        for el in comp.get("elements") or []:
+            if not isinstance(el, dict) or el.get("kind") != "dialogueBlackbox":
+                continue
+            ref = str(el.get("refId") or "").strip()
+            if not ref:
+                continue
+            declared = {
+                str(x).strip()
+                for x in ((el.get("meta") or {}).get("emits") or [])
+                if str(x).strip()
+            }
+            path = gd / f"{ref}.json"
+            if not path.is_file():
+                issues.append(Issue(
+                    "warning", "narrative", str(comp.get("id") or "?"),
+                    f"dialogueBlackbox 引用的对话图 {ref!r} 不存在",
+                ))
+                continue
+            try:
+                gdata = read_json(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            actual: set[str] = set()
+            for node in (gdata.get("nodes") or {}).values() if isinstance(gdata, dict) else []:
+                if not isinstance(node, dict):
+                    continue
+                for act in node.get("actions") or []:
+                    if isinstance(act, dict) and act.get("type") == "emitNarrativeSignal":
+                        sig = str((act.get("params") or {}).get("signal") or "").strip()
+                        if sig:
+                            actual.add(sig)
+            for missing in sorted(declared - actual):
+                issues.append(Issue(
+                    "warning", "narrative", str(comp.get("id") or "?"),
+                    f"画布黑盒 {ref!r} 声明发出 {missing!r}，但对话图里没有对应 emitNarrativeSignal（画布与真值漂移）",
+                ))
+            for undeclared in sorted(actual - declared):
+                issues.append(Issue(
+                    "warning", "narrative", str(comp.get("id") or "?"),
+                    f"对话图 {ref!r} 实际发出 {undeclared!r}，但画布黑盒未声明（画布与真值漂移）",
+                ))
 
 
 def _validate_pressure_holds(model: ProjectModel, issues: list[Issue]) -> None:
@@ -838,6 +999,24 @@ def _append_action_param_ref_issues(
     temp = cutscene_temp_ids or frozenset()
     graph_ids = set(model.all_dialogue_graph_ids())
     overlay_keys = set(model.overlay_images.keys()) if isinstance(model.overlay_images, dict) else set()
+
+    if t == "emitNarrativeSignal":
+        sig = str(p.get("signal") or "").strip()
+        if not sig:
+            issues.append(Issue("error", data_type, item_id, "emitNarrativeSignal 缺少 signal"))
+        elif not sig.startswith("state:"):
+            registered = _narrative_registered_signal_ids(model)
+            listened = _narrative_listened_signals(model)
+            if registered and sig not in registered:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"emitNarrativeSignal 信号 {sig!r} 未在 narrative_graphs.signals 注册表登记",
+                ))
+            if listened and sig not in listened:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"emitNarrativeSignal 信号 {sig!r} 没有任何 Transition 监听（发出后不会推动任何迁移）",
+                ))
 
     if t == "startPressureHold":
         hid = str(p.get("id") or "").strip()
@@ -1487,6 +1666,32 @@ def _scan_condition_expr(
                     "error", data_type, item_id,
                     f"scenario 条件 phase {ph!r} 不在 {sid!r} 的 phases 清单",
                 ))
+        return
+    if isinstance(expr.get("narrative"), str):
+        gid = str(expr["narrative"]).strip()
+        sid = str(expr.get("state", "")).strip()
+        graphs = _narrative_graph_index(model)
+        if not gid or not sid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "narrative 条件需要非空 narrative（图 id）与 state",
+            ))
+        elif gid not in graphs:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"narrative 条件引用的图 {gid!r} 不在 narrative_graphs.json",
+            ))
+        elif sid not in graphs[gid]:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"narrative 条件 state {sid!r} 不在图 {gid!r} 的 states 中",
+            ))
+        reached = expr.get("reached")
+        if reached is not None and not isinstance(reached, bool):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "narrative 条件 reached 须为布尔（true=曾到达过，含当前）",
+            ))
         return
     issues.append(Issue(
         "warning", data_type, item_id,

@@ -67,6 +67,18 @@ function graphDialogue(active = true, graph: any, multiOwner = false) {
 }
 
 describe('narrative condition context injection', () => {
+  it('evaluates reached-state leaves via hasReachedState (with isStateActive fallback)', async () => {
+    const { evaluateConditionExprList } = await import('./graphDialogue/conditionEvalBridge');
+    const { ctx } = baseContext(false);
+    // 当前不在 ready，但「到达过」——reached 叶子为真，等值叶子为假
+    (ctx.narrativeState as any).hasReachedState = (g: string, s: string) => g === 'flow' && s === 'ready';
+    expect(evaluateConditionExprList([{ narrative: 'flow', state: 'ready', reached: true } as any], ctx)).toBe(true);
+    expect(evaluateConditionExprList([{ narrative: 'flow', state: 'ready' } as any], ctx)).toBe(false);
+    // 未注入 hasReachedState 时 reached 退化为 isStateActive
+    delete (ctx.narrativeState as any).hasReachedState;
+    expect(evaluateConditionExprList([{ narrative: 'flow', state: 'ready', reached: true } as any], ctx)).toBe(false);
+  });
+
   it('lets graph dialogue preconditions read narrative state', async () => {
     const graph = {
       id: 'd',

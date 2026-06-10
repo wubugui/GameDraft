@@ -32,49 +32,73 @@
     },
     "ret_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "说书人张叨叨" },
+      "speaker": {
+        "kind": "literal",
+        "name": "说书人张叨叨"
+      },
       "text": "今儿的书讲完了。明儿请早——明儿讲飞僵，白僵紫僵都得靠边站的那种。",
       "next": "end1"
     },
     "feijiang_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "说书人张叨叨" },
+      "speaker": {
+        "kind": "literal",
+        "name": "说书人张叨叨"
+      },
       "text": "（醒木一拍）——要说这僵尸，白僵不算凶，紫僵才开荤。最毒的是飞僵！飞天遁地，米山符海都拦不住！",
       "next": "feijiang_2"
     },
     "feijiang_2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "满堂听客大气不敢出。关二狗缩在人堆后头，捂着还在发酸的腰——他刚从一具「不对劲」底下逃回来，这书听着比往常扎耳朵多了。",
       "next": "end1"
     },
     "ts_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "说书人张叨叨" },
+      "speaker": {
+        "kind": "literal",
+        "name": "说书人张叨叨"
+      },
       "text": "「……那墓门一开，地里腾起一只大旱魃！赤地千里，草木一舔就焦——」",
       "next": "ts_2"
     },
     "ts_2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "满堂茶客围着先生。关二狗在人堆最后头，踮脚、伸脖子——没点茶，挪着小步往里蹭。",
       "next": "ts_3"
     },
     "ts_3": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "说书人张叨叨" },
+      "speaker": {
+        "kind": "literal",
+        "name": "说书人张叨叨"
+      },
       "text": "「也是那伙倒斗的命不该绝！李天狗一袭旧道袍路过神仙顶，拔剑、咬指、画符——剑光跟焦风撞在一处！」",
       "next": "ts_4"
     },
     "ts_4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "说书人张叨叨" },
+      "speaker": {
+        "kind": "literal",
+        "name": "说书人张叨叨"
+      },
       "text": "「一道符下去，旱魃生生镇进地里！倒斗的连滚带爬，捧着银钱磕头谢恩呐——」",
       "next": "ts_5"
     },
     "ts_5": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "「神仙顶」「拿钱谢恩」——这两个词一进耳朵，关二狗的眼睛唰地亮了。李天狗。神仙顶。他把这两个词，仔仔细细收进了肚子。",
       "next": "ts_arc"
     },
@@ -101,7 +125,10 @@
     "ts_choice": {
       "type": "choice",
       "promptLine": {
-        "speaker": { "kind": "literal", "name": "旁白" },
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
         "text": "白听了半截书，浑身的不自在。总得干点什么——"
       },
       "options": [
@@ -137,7 +164,10 @@
     },
     "fc_ceng_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "邻桌茶客斜他一眼，到底把半碗凉茶推了过来。关二狗一仰脖灌下去，喝出了一身热汗的架势。",
       "next": "kicked_1"
     },
@@ -156,7 +186,10 @@
     },
     "fc_kua_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "先生的扇子顿了一顿，朝这边瞥来。满堂目光跟着扫过来——这才发现叫好的是个没点茶的。咳。",
       "next": "kicked_1"
     },
@@ -175,19 +208,28 @@
     },
     "fc_gang_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "邻桌茶客跟他争得脸红脖子粗。论嘴皮子，关二狗在雾津还没怕过谁——贫嘴这一手，露得漂亮。",
       "next": "kicked_1"
     },
     "kicked_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "茶馆伙计拎着抹布过来，一把薅住他后领。",
       "next": "kicked_2"
     },
     "kicked_2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "茶馆掌柜" },
+      "speaker": {
+        "kind": "literal",
+        "name": "茶馆掌柜"
+      },
       "text": "（头也不抬）「背尸的，别挡客人的道。」",
       "next": "kicked_3"
     },
@@ -195,10 +237,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_tingshu_done",
-            "value": true
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_说书人",
+            "signal": "xg_tingshu_completed"
           }
         }
       ],
@@ -206,7 +249,10 @@
     },
     "kicked_4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "门里，李天狗的故事还在往下讲。门外，是他的位置。——出门去吧。",
       "next": "end1"
     },
