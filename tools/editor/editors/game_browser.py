@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import html
+import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer, QEventLoop, QStandardPaths
@@ -38,6 +40,18 @@ except ImportError:  # pragma: no cover
 _GAME_WEB_PROFILE = None
 
 
+def _default_app_data_dir() -> Path:
+    """Platform-appropriate fallback when Qt cannot resolve AppLocalDataLocation."""
+    home = Path.home()
+    if sys.platform == "win32":
+        return home / "AppData" / "Local" / "GameDraft"
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "GameDraft"
+    xdg = os.environ.get("XDG_DATA_HOME", "")
+    base = Path(xdg) if xdg else home / ".local" / "share"
+    return base / "GameDraft"
+
+
 def _game_webengine_profile():
     """Persistent profile for game preview; default Qt profile is off-the-record here."""
     global _GAME_WEB_PROFILE
@@ -49,7 +63,7 @@ def _game_webengine_profile():
     profile = QWebEngineProfile("GameDraftGamePreview")
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
     if not base:
-        base = str(Path.home() / "AppData" / "Local" / "GameDraft")
+        base = str(_default_app_data_dir())
     root = Path(base) / "webengine_game_preview"
     cache = root / "cache"
     storage = root / "storage"
