@@ -12,8 +12,9 @@
         {
           "conditions": [
             {
-              "flag": "xg_hebian_done",
-              "value": true
+              "narrative": "flow_xungou_main",
+              "state": "s05_hebian",
+              "reached": true
             }
           ],
           "next": "done_1"

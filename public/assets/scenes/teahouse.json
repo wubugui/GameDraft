@@ -56,9 +56,11 @@
       "interactionRange": 20.0,
       "conditions": [
         {
-          "flag": "xg_tingshu_done",
-          "op": "!=",
-          "value": true
+          "not": {
+            "narrative": "flow_xungou_main",
+            "state": "s01_tingshu",
+            "reached": true
+          }
         }
       ],
       "label": "门口",
@@ -74,7 +76,9 @@
       "interactionRange": 20.0,
       "conditions": [
         {
-          "flag": "xg_tingshu_done"
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu",
+          "reached": true
         }
       ],
       "label": "出门",
@@ -92,13 +96,8 @@
       "interactionRange": 64.0,
       "conditions": [
         {
-          "quest": "xg03_chuiniu",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_chuiniu_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s02_beishi"
         }
       ],
       "conditionHidesEntity": true,
@@ -115,8 +114,8 @@
       "interactionRange": 64.0,
       "conditions": [
         {
-          "quest": "xg08_xiangdao",
-          "questStatus": "Active"
+          "narrative": "flow_xungou_main",
+          "state": "s07_kujing"
         },
         {
           "flag": "xg_xiangdao_heard",

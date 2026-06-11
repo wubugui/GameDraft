@@ -12,8 +12,9 @@
         {
           "conditions": [
             {
-              "flag": "xg_kujing_done",
-              "value": true
+              "narrative": "flow_xungou_main",
+              "state": "s07_kujing",
+              "reached": true
             }
           ],
           "next": "done_1"

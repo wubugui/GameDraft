@@ -32,10 +32,22 @@
     {
       "id": "z_同行闲扯",
       "polygon": [
-        { "x": 320.0, "y": 480.0 },
-        { "x": 760.0, "y": 380.0 },
-        { "x": 820.0, "y": 520.0 },
-        { "x": 380.0, "y": 640.0 }
+        {
+          "x": 320.0,
+          "y": 480.0
+        },
+        {
+          "x": 760.0,
+          "y": 380.0
+        },
+        {
+          "x": 820.0,
+          "y": 520.0
+        },
+        {
+          "x": 380.0,
+          "y": 640.0
+        }
       ],
       "conditions": [
         {
@@ -106,8 +118,9 @@
       "interactionRange": 64.0,
       "conditions": [
         {
-          "flag": "xg_songhuo_done",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,

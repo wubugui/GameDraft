@@ -122,20 +122,27 @@
     {
       "id": "z_河边递纸",
       "polygon": [
-        { "x": 520.0, "y": 330.0 },
-        { "x": 950.0, "y": 330.0 },
-        { "x": 950.0, "y": 560.0 },
-        { "x": 520.0, "y": 560.0 }
+        {
+          "x": 520.0,
+          "y": 330.0
+        },
+        {
+          "x": 950.0,
+          "y": 330.0
+        },
+        {
+          "x": 950.0,
+          "y": 560.0
+        },
+        {
+          "x": 520.0,
+          "y": 560.0
+        }
       ],
       "conditions": [
         {
-          "quest": "xg05_hebian",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_hebian_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s04_pozi"
         }
       ],
       "onEnter": [

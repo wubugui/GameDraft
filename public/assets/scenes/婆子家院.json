@@ -31,10 +31,22 @@
     {
       "id": "z_院外扫脸色",
       "polygon": [
-        { "x": 200.0, "y": 560.0 },
-        { "x": 470.0, "y": 560.0 },
-        { "x": 470.0, "y": 700.0 },
-        { "x": 200.0, "y": 700.0 }
+        {
+          "x": 200.0,
+          "y": 560.0
+        },
+        {
+          "x": 470.0,
+          "y": 560.0
+        },
+        {
+          "x": 470.0,
+          "y": 700.0
+        },
+        {
+          "x": 200.0,
+          "y": 700.0
+        }
       ],
       "conditions": [
         {
@@ -55,8 +67,14 @@
           "type": "playScriptedDialogue",
           "params": {
             "lines": [
-              { "speaker": "", "text": "进门前，关二狗在院外站了一会儿——这是背尸行里学的：先看人，再看屋。" },
-              { "speaker": "", "text": "谁最慌、谁一开口另一个先去看他，比屋里有什么都说得明白。" }
+              {
+                "speaker": "",
+                "text": "进门前，关二狗在院外站了一会儿——这是背尸行里学的：先看人，再看屋。"
+              },
+              {
+                "speaker": "",
+                "text": "谁最慌、谁一开口另一个先去看他，比屋里有什么都说得明白。"
+              }
             ]
           }
         }
@@ -103,9 +121,11 @@
           "value": true
         },
         {
-          "flag": "xg_pozi_done",
-          "op": "!=",
-          "value": true
+          "not": {
+            "narrative": "flow_xungou_main",
+            "state": "s04_pozi",
+            "reached": true
+          }
         }
       ],
       "conditionHidesEntity": true,
@@ -122,8 +142,9 @@
       "interactionRange": 56.0,
       "conditions": [
         {
-          "flag": "xg_pozi_done",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s04_pozi",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,

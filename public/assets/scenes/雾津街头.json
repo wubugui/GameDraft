@@ -74,8 +74,9 @@
       "interactionRange": 64.0,
       "conditions": [
         {
-          "flag": "xg_pozi_done",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s04_pozi",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,
@@ -112,8 +113,8 @@
       "interactionRange": 64.0,
       "conditions": [
         {
-          "quest": "xg12_chufa",
-          "questStatus": "Active"
+          "narrative": "flow_xungou_main",
+          "state": "s11_zhaomu"
         },
         {
           "flag": "xg_outfit_bought",
@@ -135,13 +136,8 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "quest": "xg08_xiangdao",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_xiangdao_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s07_kujing"
         }
       ],
       "conditionHidesEntity": true,
@@ -181,13 +177,8 @@
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
-          "quest": "xg02_beishi",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_beishi_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu"
         }
       ],
       "conditionHidesEntity": true
@@ -205,13 +196,8 @@
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
-          "quest": "xg04_pozi",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_pozi_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s03_chuiniu"
         }
       ],
       "conditionHidesEntity": true
@@ -229,13 +215,8 @@
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
-          "quest": "xg07_kujing",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_kujing_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s06_laoxiang"
         }
       ],
       "conditionHidesEntity": true
@@ -253,13 +234,8 @@
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
-          "quest": "xg09_songhuo",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_songhuo_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s08_xiangdao"
         }
       ],
       "conditionHidesEntity": true
@@ -277,13 +253,8 @@
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
-          "quest": "xg10_yizhuang",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_yizhuang_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo"
         }
       ],
       "conditionHidesEntity": true

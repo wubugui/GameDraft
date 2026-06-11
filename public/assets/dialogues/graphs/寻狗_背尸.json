@@ -12,8 +12,9 @@
         {
           "conditions": [
             {
-              "flag": "xg_beishi_done",
-              "value": true
+              "narrative": "flow_xungou_main",
+              "state": "s02_beishi",
+              "reached": true
             }
           ],
           "next": "done_1"

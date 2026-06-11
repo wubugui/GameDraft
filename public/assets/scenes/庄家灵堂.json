@@ -31,10 +31,22 @@
     {
       "id": "z_灵堂进场",
       "polygon": [
-        { "x": 380.0, "y": 460.0 },
-        { "x": 960.0, "y": 460.0 },
-        { "x": 960.0, "y": 580.0 },
-        { "x": 380.0, "y": 580.0 }
+        {
+          "x": 380.0,
+          "y": 460.0
+        },
+        {
+          "x": 960.0,
+          "y": 460.0
+        },
+        {
+          "x": 960.0,
+          "y": 580.0
+        },
+        {
+          "x": 380.0,
+          "y": 580.0
+        }
       ],
       "conditions": [
         {
@@ -75,10 +87,22 @@
         "spriteSort": "back"
       },
       "collisionPolygon": [
-        { "x": -150.0, "y": -60.0 },
-        { "x": 150.0, "y": -60.0 },
-        { "x": 150.0, "y": 0.0 },
-        { "x": -150.0, "y": 0.0 }
+        {
+          "x": -150.0,
+          "y": -60.0
+        },
+        {
+          "x": 150.0,
+          "y": -60.0
+        },
+        {
+          "x": 150.0,
+          "y": 0.0
+        },
+        {
+          "x": -150.0,
+          "y": 0.0
+        }
       ],
       "collisionPolygonLocal": true,
       "data": {
@@ -105,8 +129,9 @@
       "interactionRange": 56.0,
       "conditions": [
         {
-          "flag": "xg_beishi_done",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s02_beishi",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,
@@ -118,4 +143,3 @@
   ],
   "npcs": []
 }
-

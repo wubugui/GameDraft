@@ -12,8 +12,9 @@
         {
           "conditions": [
             {
-              "flag": "xg_chuiniu_done",
-              "value": true
+              "narrative": "flow_xungou_main",
+              "state": "s03_chuiniu",
+              "reached": true
             }
           ],
           "next": "done_1"

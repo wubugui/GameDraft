@@ -12,8 +12,9 @@
         {
           "conditions": [
             {
-              "flag": "xg_laoxiang_done",
-              "value": true
+              "narrative": "flow_xungou_main",
+              "state": "s06_laoxiang",
+              "reached": true
             }
           ],
           "next": "done_1"

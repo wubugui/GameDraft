@@ -672,13 +672,8 @@
       ],
       "conditions": [
         {
-          "quest": "xg06_laoxiang",
-          "questStatus": "Active"
-        },
-        {
-          "flag": "xg_laoxiang_done",
-          "op": "!=",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s05_hebian"
         }
       ],
       "onEnter": [

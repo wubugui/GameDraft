@@ -31,10 +31,22 @@
     {
       "id": "z_义庄进门",
       "polygon": [
-        { "x": 420.0, "y": 500.0 },
-        { "x": 920.0, "y": 500.0 },
-        { "x": 920.0, "y": 620.0 },
-        { "x": 420.0, "y": 620.0 }
+        {
+          "x": 420.0,
+          "y": 500.0
+        },
+        {
+          "x": 920.0,
+          "y": 500.0
+        },
+        {
+          "x": 920.0,
+          "y": 620.0
+        },
+        {
+          "x": 420.0,
+          "y": 620.0
+        }
       ],
       "conditions": [
         {
@@ -75,10 +87,22 @@
         "spriteSort": "back"
       },
       "collisionPolygon": [
-        { "x": -120.0, "y": -70.0 },
-        { "x": 120.0, "y": -70.0 },
-        { "x": 120.0, "y": -10.0 },
-        { "x": -120.0, "y": -10.0 }
+        {
+          "x": -120.0,
+          "y": -70.0
+        },
+        {
+          "x": 120.0,
+          "y": -70.0
+        },
+        {
+          "x": 120.0,
+          "y": -10.0
+        },
+        {
+          "x": -120.0,
+          "y": -10.0
+        }
       ],
       "collisionPolygonLocal": true,
       "data": {
@@ -103,9 +127,11 @@
           "value": true
         },
         {
-          "flag": "xg_yizhuang_done",
-          "op": "!=",
-          "value": true
+          "not": {
+            "narrative": "flow_xungou_main",
+            "state": "s10_yizhuang",
+            "reached": true
+          }
         }
       ],
       "data": {
@@ -130,9 +156,11 @@
           "value": true
         },
         {
-          "flag": "xg_yizhuang_done",
-          "op": "!=",
-          "value": true
+          "not": {
+            "narrative": "flow_xungou_main",
+            "state": "s10_yizhuang",
+            "reached": true
+          }
         }
       ],
       "data": {
@@ -157,9 +185,11 @@
           "value": true
         },
         {
-          "flag": "xg_yizhuang_done",
-          "op": "!=",
-          "value": true
+          "not": {
+            "narrative": "flow_xungou_main",
+            "state": "s10_yizhuang",
+            "reached": true
+          }
         }
       ],
       "data": {
@@ -184,9 +214,11 @@
           "value": true
         },
         {
-          "flag": "xg_yizhuang_done",
-          "op": "!=",
-          "value": true
+          "not": {
+            "narrative": "flow_xungou_main",
+            "state": "s10_yizhuang",
+            "reached": true
+          }
         }
       ],
       "data": {
@@ -213,8 +245,9 @@
       "interactionRange": 56.0,
       "conditions": [
         {
-          "flag": "xg_yizhuang_done",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s10_yizhuang",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,
@@ -250,8 +283,9 @@
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
-          "flag": "xg_yizhuang_done",
-          "value": true
+          "narrative": "flow_xungou_main",
+          "state": "s10_yizhuang",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true

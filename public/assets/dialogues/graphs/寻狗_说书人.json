@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "quest": "xg03_chuiniu",
-              "questStatus": "Active"
+              "narrative": "flow_xungou_main",
+              "state": "s02_beishi"
             }
           ],
           "next": "feijiang_1"
@@ -21,8 +21,9 @@
         {
           "conditions": [
             {
-              "flag": "xg_tingshu_done",
-              "value": true
+              "narrative": "flow_xungou_main",
+              "state": "s01_tingshu",
+              "reached": true
             }
           ],
           "next": "ret_1"

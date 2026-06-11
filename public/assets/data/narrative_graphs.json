@@ -812,7 +812,9 @@
             "emits": [
               "xg_tingshu_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -827,7 +829,9 @@
             "emits": [
               "xg_beishi_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -842,7 +846,9 @@
             "emits": [
               "xg_chuiniu_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -857,7 +863,9 @@
             "emits": [
               "xg_pozi_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -872,7 +880,9 @@
             "emits": [
               "xg_hebian_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -887,7 +897,9 @@
             "emits": [
               "xg_laoxiang_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -902,7 +914,9 @@
             "emits": [
               "xg_kujing_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -917,7 +931,9 @@
             "emits": [
               "xg_xiangdao_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -932,7 +948,9 @@
             "emits": [
               "xg_songhuo_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -947,7 +965,9 @@
             "emits": [
               "xg_yizhuang_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -962,7 +982,9 @@
             "emits": [
               "xg_zhaomu_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         },
@@ -977,7 +999,9 @@
             "emits": [
               "xg_chufa_completed"
             ],
-            "reads": [],
+            "reads": [
+              "flow_xungou_main"
+            ],
             "commands": []
           }
         }

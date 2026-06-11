@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "quest": "xg08_xiangdao",
-              "questStatus": "Active"
+              "narrative": "flow_xungou_main",
+              "state": "s07_kujing"
             }
           ],
           "next": "xd_1"
@@ -21,8 +21,9 @@
         {
           "conditions": [
             {
-              "flag": "xg_chuiniu_done",
-              "value": true
+              "narrative": "flow_xungou_main",
+              "state": "s03_chuiniu",
+              "reached": true
             }
           ],
           "next": "after_1"
@@ -32,31 +33,41 @@
     },
     "def_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "不点茶就别占座。要听书，站墙根去。",
       "next": "def_2"
     },
     "def_2": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "嘿，掌柜的，俺这不是给您聚人气嘛。",
       "next": "end1"
     },
     "after_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "（拨着算盘）「李天狗那一脉的」……哼，茶钱照样一文不能少。",
       "next": "end1"
     },
     "xd_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "听说了没？码头那对洋人，重金找进神仙顶的向导。重金。多少人挤破头——告示就贴在那边。",
       "next": "xd_2"
     },
     "xd_2": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（重金？）……掌柜的，这茶我改天一定点。",
       "next": "end1"
     },
