@@ -50,8 +50,8 @@
       ],
       "conditions": [
         {
-          "narrative": "wrap_灵堂进场",
-          "state": "initial"
+          "narrative": "scenario_背尸",
+          "state": "hired"
         }
       ],
       "onEnter": [

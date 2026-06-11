@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "narrative": "flow_xungou_main",
-              "state": "s02_beishi",
+              "narrative": "scenario_背尸",
+              "state": "fled",
               "reached": true
             }
           ],
@@ -65,9 +65,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "playSignalCue",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "axiu_faint"
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_背尸",
+            "signal": "beishi_scent"
           }
         }
       ],
@@ -115,7 +117,7 @@
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_背尸",
-            "signal": "xg_beishi_completed"
+            "signal": "beishi_fled"
           }
         },
         {

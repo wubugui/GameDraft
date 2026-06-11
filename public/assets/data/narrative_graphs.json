@@ -627,7 +627,7 @@
             "id": "t_s02_beishi",
             "from": "s01_tingshu",
             "to": "s02_beishi",
-            "signal": "xg_beishi_completed"
+            "signal": "state:scenario_背尸:fled"
           },
           {
             "id": "t_s03_chuiniu",
@@ -722,7 +722,8 @@
           "y": -140,
           "meta": {
             "emits": [
-              "xg_beishi_completed"
+              "beishi_scent",
+              "beishi_fled"
             ],
             "reads": [
               "flow_xungou_main"
@@ -1160,65 +1161,6 @@
             "emits": [
               "shouye_intro_entered"
             ],
-            "reads": [],
-            "commands": []
-          }
-        },
-        {
-          "id": "el_wrap_灵堂进场",
-          "kind": "wrapperGraph",
-          "label": "灵堂进场演出",
-          "ownerType": "zone",
-          "ownerId": "庄家灵堂:z_灵堂进场",
-          "x": 24,
-          "y": 220,
-          "graph": {
-            "id": "wrap_灵堂进场",
-            "ownerType": "zone",
-            "ownerId": "庄家灵堂:z_灵堂进场",
-            "initialState": "initial",
-            "states": {
-              "initial": {
-                "id": "initial",
-                "label": "未触发",
-                "meta": {
-                  "editor": {
-                    "x": 30,
-                    "y": 20
-                  }
-                }
-              },
-              "done": {
-                "id": "done",
-                "label": "已触发",
-                "onEnterActions": [
-                  {
-                    "type": "startCutscene",
-                    "params": {
-                      "id": "寻狗_灵堂进场"
-                    }
-                  }
-                ],
-                "meta": {
-                  "editor": {
-                    "x": 250,
-                    "y": 20
-                  }
-                }
-              }
-            },
-            "transitions": [
-              {
-                "id": "t_wrap_灵堂进场",
-                "from": "initial",
-                "to": "done",
-                "signal": "lingtang_intro_entered"
-              }
-            ],
-            "label": "灵堂进场演出"
-          },
-          "meta": {
-            "emits": [],
             "reads": [],
             "commands": []
           }
@@ -2587,6 +2529,264 @@
             "reads": [],
             "commands": []
           }
+        },
+        {
+          "id": "el_scenario_背尸",
+          "kind": "wrapperGraph",
+          "label": "背庄家尸（场景①·完整节拍）",
+          "ownerType": "scenario",
+          "ownerId": "寻狗_背尸",
+          "x": 24,
+          "y": 560,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "scenario_背尸",
+            "ownerType": "scenario",
+            "ownerId": "寻狗_背尸",
+            "label": "背庄家尸",
+            "initialState": "not_started",
+            "entryState": "not_started",
+            "exitStates": [
+              "fled"
+            ],
+            "states": {
+              "not_started": {
+                "id": "not_started",
+                "label": "未接活",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "hired": {
+                "id": "hired",
+                "label": "接了活（定钱到手）",
+                "meta": {
+                  "editor": {
+                    "x": 230,
+                    "y": 20
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "giveCurrency",
+                    "params": {
+                      "amount": 10
+                    }
+                  }
+                ]
+              },
+              "at_lingtang": {
+                "id": "at_lingtang",
+                "label": "进了灵堂（红嫁衣压场）",
+                "meta": {
+                  "editor": {
+                    "x": 430,
+                    "y": 20
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "startCutscene",
+                    "params": {
+                      "id": "寻狗_灵堂进场"
+                    }
+                  }
+                ]
+              },
+              "try1_swallowed": {
+                "id": "try1_swallowed",
+                "label": "第一次发力·力被吞",
+                "meta": {
+                  "editor": {
+                    "x": 630,
+                    "y": 20
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "playSfx",
+                    "params": {
+                      "id": "sfx_force_swallowed_thud"
+                    }
+                  },
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "腿一软。使出去的力像扔进了深水，一点回声都没有。"
+                        },
+                        {
+                          "speaker": "{{player}}",
+                          "text": "邪了门了……瘦条条一具，咋重得跟铁块似的？"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "try2_face": {
+                "id": "try2_face",
+                "label": "第二次倒下·打照面（吓点）",
+                "meta": {
+                  "editor": {
+                    "x": 830,
+                    "y": 20
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "playSfx",
+                    "params": {
+                      "id": "sfx_force_swallowed_thud"
+                    }
+                  },
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "durationMs": 350
+                    }
+                  },
+                  {
+                    "type": "showOverlayImage",
+                    "params": {
+                      "id": "scare_closeup",
+                      "image": "scare_closeup",
+                      "xPercent": 50,
+                      "yPercent": 50,
+                      "widthPercent": 72
+                    }
+                  },
+                  {
+                    "type": "playSfx",
+                    "params": {
+                      "id": "sfx_heartbeat_bed"
+                    }
+                  },
+                  {
+                    "type": "waitClickContinue",
+                    "params": {
+                      "text": "……"
+                    }
+                  },
+                  {
+                    "type": "hideOverlayImage",
+                    "params": {
+                      "id": "scare_closeup"
+                    }
+                  },
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "第二次倒下去的时候，他和那张惨白的脸正面打了个照面。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "停了多日的尸，该塌的没塌，该烂的没烂——像才刚停下。"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "scent": {
+                "id": "scent",
+                "label": "香粉味掠过（Axiu·极轻）",
+                "meta": {
+                  "editor": {
+                    "x": 1030,
+                    "y": 20
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "playSignalCue",
+                    "params": {
+                      "id": "axiu_faint"
+                    }
+                  }
+                ]
+              },
+              "fled": {
+                "id": "fled",
+                "label": "夺门而逃（beat完成）",
+                "meta": {
+                  "editor": {
+                    "x": 1230,
+                    "y": 20
+                  }
+                },
+                "broadcastOnEnter": true
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_hired",
+                "from": "not_started",
+                "to": "hired",
+                "signal": "beishi_hired"
+              },
+              {
+                "id": "t_at",
+                "from": "hired",
+                "to": "at_lingtang",
+                "signal": "lingtang_intro_entered"
+              },
+              {
+                "id": "t_try1",
+                "from": "at_lingtang",
+                "to": "try1_swallowed",
+                "signal": "beishi_try1"
+              },
+              {
+                "id": "t_try2",
+                "from": "try1_swallowed",
+                "to": "try2_face",
+                "signal": "beishi_try2"
+              },
+              {
+                "id": "t_scent",
+                "from": "try2_face",
+                "to": "scent",
+                "signal": "beishi_scent"
+              },
+              {
+                "id": "t_fled",
+                "from": "scent",
+                "to": "fled",
+                "signal": "beishi_fled"
+              }
+            ]
+          }
+        },
+        {
+          "id": "dlg_beishi_hire",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_庄家来人",
+          "refId": "寻狗_庄家来人",
+          "x": 24,
+          "y": -450,
+          "meta": {
+            "emits": [
+              "beishi_hired"
+            ],
+            "reads": [
+              "flow_xungou_main",
+              "scenario_背尸"
+            ],
+            "commands": []
+          }
         }
       ]
     }
@@ -2755,6 +2955,26 @@
     {
       "id": "outfit_bought",
       "label": "置办行头完成"
+    },
+    {
+      "id": "beishi_hired",
+      "label": "背尸·接活"
+    },
+    {
+      "id": "beishi_try1",
+      "label": "背尸·第一次发力被吞"
+    },
+    {
+      "id": "beishi_try2",
+      "label": "背尸·第二次倒下打照面"
+    },
+    {
+      "id": "beishi_scent",
+      "label": "背尸·闻到香粉味"
+    },
+    {
+      "id": "beishi_fled",
+      "label": "背尸·夺门而逃"
     }
   ]
 }
