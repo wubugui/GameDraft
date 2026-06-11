@@ -50,23 +50,17 @@
       ],
       "conditions": [
         {
-          "flag": "xg_yizhuang_intro",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_义庄进门",
+          "state": "initial"
         }
       ],
       "onEnter": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_yizhuang_intro",
-            "value": true
-          }
-        },
-        {
-          "type": "startCutscene",
-          "params": {
-            "id": "寻狗_义庄进门"
+            "sourceType": "zone",
+            "sourceId": "义庄:z_义庄进门",
+            "signal": "yizhuang_intro_entered"
           }
         }
       ]
@@ -118,13 +112,12 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "flag": "xg_yizhuang_intro",
-          "value": true
+          "narrative": "wrap_义庄进门",
+          "state": "done"
         },
         {
-          "flag": "xg_zhenshi_rice",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_镇尸_撒米",
+          "state": "undone"
         },
         {
           "not": {
@@ -147,13 +140,12 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "flag": "xg_yizhuang_intro",
-          "value": true
+          "narrative": "wrap_义庄进门",
+          "state": "done"
         },
         {
-          "flag": "xg_zhenshi_ink",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_镇尸_墨斗",
+          "state": "undone"
         },
         {
           "not": {
@@ -176,13 +168,12 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "flag": "xg_yizhuang_intro",
-          "value": true
+          "narrative": "wrap_义庄进门",
+          "state": "done"
         },
         {
-          "flag": "xg_zhenshi_stone",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_镇尸_石子",
+          "state": "undone"
         },
         {
           "not": {
@@ -205,13 +196,12 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "flag": "xg_yizhuang_intro",
-          "value": true
+          "narrative": "wrap_义庄进门",
+          "state": "done"
         },
         {
-          "flag": "xg_zhenshi_scissors",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_镇尸_剪子",
+          "state": "undone"
         },
         {
           "not": {

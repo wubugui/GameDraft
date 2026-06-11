@@ -182,9 +182,9 @@
         "text": "她瞥见过你手腕上的抓痕，皱了皱眉，没说话。那一眼让你后脖颈发凉——她心里记了一笔。",
         "conditions": [
           {
-            "flag": "xg_dock_choice",
-            "op": "==",
-            "value": 1
+            "narrative": "wrap_码头选择",
+            "state": "chose_a",
+            "reached": true
           }
         ]
       },
@@ -192,7 +192,9 @@
         "text": "义庄那一夜之后，她认定你「压得住那些东西」。她看见的是你——她看不见替你圆场的是什么。",
         "conditions": [
           {
-            "flag": "xg_zhaomu_done"
+            "narrative": "flow_xungou_main",
+            "state": "s11_zhaomu",
+            "reached": true
           }
         ]
       }
@@ -206,14 +208,18 @@
         "text": "要进神仙顶，没人敢带路。她出重金，雇了你当向导。",
         "conditions": [
           {
-            "flag": "xg_zhaomu_done"
+            "narrative": "flow_xungou_main",
+            "state": "s11_zhaomu",
+            "reached": true
           }
         ]
       }
     ],
     "unlockConditions": [
       {
-        "flag": "xg_laoxiang_done"
+        "narrative": "flow_xungou_main",
+        "state": "s06_laoxiang",
+        "reached": true
       }
     ]
   },
@@ -230,9 +236,9 @@
         "text": "嘴上喊十块大洋，最后摸出来两枚银角子。这洋人控起成本来，比掌柜的还老练。",
         "conditions": [
           {
-            "flag": "xg_dock_choice",
-            "op": "==",
-            "value": 1
+            "narrative": "wrap_码头选择",
+            "state": "chose_a",
+            "reached": true
           }
         ]
       }
@@ -242,16 +248,18 @@
         "text": "克拉拉的丈夫。箱子里装着罗盘、地图碎片和风水古籍的复印件——洋人研究这个做什么？",
         "conditions": [
           {
-            "flag": "xg_dock_choice",
-            "op": "==",
-            "value": 1
+            "narrative": "wrap_码头选择",
+            "state": "chose_a",
+            "reached": true
           }
         ]
       }
     ],
     "unlockConditions": [
       {
-        "flag": "xg_laoxiang_done"
+        "narrative": "flow_xungou_main",
+        "state": "s06_laoxiang",
+        "reached": true
       }
     ]
   },
@@ -270,14 +278,18 @@
         "text": "庄里停着两具尸：一具城里老爷子寄停等吉日，一具外乡运来等认领。守夜的打了个盹，醒来就吓尿跑了。",
         "conditions": [
           {
-            "flag": "xg_yizhuang_intro"
+            "narrative": "wrap_义庄进门",
+            "state": "done",
+            "reached": true
           }
         ]
       }
     ],
     "unlockConditions": [
       {
-        "flag": "xg_yizhuang_intro"
+        "narrative": "wrap_义庄进门",
+        "state": "done",
+        "reached": true
       }
     ]
   }

@@ -50,32 +50,17 @@
       ],
       "conditions": [
         {
-          "flag": "xg_pozi_intro",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_院外扫脸色",
+          "state": "initial"
         }
       ],
       "onEnter": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_pozi_intro",
-            "value": true
-          }
-        },
-        {
-          "type": "playScriptedDialogue",
-          "params": {
-            "lines": [
-              {
-                "speaker": "",
-                "text": "进门前，关二狗在院外站了一会儿——这是背尸行里学的：先看人，再看屋。"
-              },
-              {
-                "speaker": "",
-                "text": "谁最慌、谁一开口另一个先去看他，比屋里有什么都说得明白。"
-              }
-            ]
+            "sourceType": "zone",
+            "sourceId": "婆子家院:z_院外扫脸色",
+            "signal": "pozi_intro_entered"
           }
         }
       ]
@@ -113,12 +98,12 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "flag": "xg_pozi_read_pozi",
-          "value": true
+          "narrative": "wrap_读人_婆子",
+          "state": "read"
         },
         {
-          "flag": "xg_pozi_read_son",
-          "value": true
+          "narrative": "wrap_读人_儿子",
+          "state": "read"
         },
         {
           "not": {

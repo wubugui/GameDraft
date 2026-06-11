@@ -199,13 +199,6 @@
           }
         },
         {
-          "type": "setFlag",
-          "params": {
-            "key": "xg_hebian_paper",
-            "value": true
-          }
-        },
-        {
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",

@@ -107,13 +107,6 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
-          "params": {
-            "key": "heard_teahouse_story",
-            "value": true
-          }
-        },
-        {
           "type": "addArchiveEntry",
           "params": {
             "bookType": "character",
@@ -154,10 +147,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_face_style",
-            "value": 1
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_说书人",
+            "signal": "face_ceng"
           }
         }
       ],
@@ -176,10 +170,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_face_style",
-            "value": 2
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_说书人",
+            "signal": "face_kua"
           }
         }
       ],
@@ -198,10 +193,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_face_style",
-            "value": 3
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_说书人",
+            "signal": "face_gang"
           }
         }
       ],

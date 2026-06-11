@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "flag": "xg_pozi_read_son",
-              "value": true
+              "narrative": "wrap_读人_儿子",
+              "state": "read"
             }
           ],
           "next": "again_1"
@@ -23,19 +23,27 @@
     },
     "again_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "后生还倚在门框上，眼神躲着人。看过了。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "后生倚着门框，胳膊抱在胸前。你一进院他眼皮就跳；他娘一开口，他先去看她——一句话都还没轮到他说。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（这院里的「动静」，多半跟这小子脱不了干系。……管他呢，钱照收，戏照做。）",
       "next": "n_flag"
     },
@@ -43,10 +51,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_pozi_read_son",
-            "value": true
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_读人_儿子",
+            "signal": "pozi_read_son"
           }
         }
       ],

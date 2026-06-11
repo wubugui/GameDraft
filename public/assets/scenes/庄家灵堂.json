@@ -50,23 +50,17 @@
       ],
       "conditions": [
         {
-          "flag": "xg_lingtang_intro",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_灵堂进场",
+          "state": "initial"
         }
       ],
       "onEnter": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_lingtang_intro",
-            "value": true
-          }
-        },
-        {
-          "type": "startCutscene",
-          "params": {
-            "id": "寻狗_灵堂进场"
+            "sourceType": "zone",
+            "sourceId": "庄家灵堂:z_灵堂进场",
+            "signal": "lingtang_intro_entered"
           }
         }
       ]

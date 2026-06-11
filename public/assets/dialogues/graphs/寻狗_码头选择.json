@@ -64,10 +64,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_dock_choice",
-            "value": 1
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_码头选择",
+            "signal": "dock_chose_a"
           }
         },
         {
@@ -237,10 +238,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_dock_choice",
-            "value": 2
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_码头选择",
+            "signal": "dock_chose_b"
           }
         }
       ],
@@ -289,10 +291,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_dock_choice",
-            "value": 3
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_码头选择",
+            "signal": "dock_chose_c"
           }
         }
       ],

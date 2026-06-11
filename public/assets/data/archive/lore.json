@@ -14,7 +14,9 @@
       "category": "legend",
       "unlockConditions": [
         {
-          "flag": "heard_teahouse_story"
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu",
+          "reached": true
         }
       ]
     },
@@ -64,7 +66,9 @@
       "category": "geography",
       "unlockConditions": [
         {
-          "flag": "xg_tingshu_done"
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu",
+          "reached": true
         }
       ]
     },
@@ -76,7 +80,9 @@
       "category": "folklore",
       "unlockConditions": [
         {
-          "flag": "xg_chuiniu_done"
+          "narrative": "flow_xungou_main",
+          "state": "s03_chuiniu",
+          "reached": true
         }
       ]
     },
@@ -88,7 +94,9 @@
       "category": "legend",
       "unlockConditions": [
         {
-          "flag": "xg_songhuo_road_talk"
+          "narrative": "wrap_同行闲扯",
+          "state": "done",
+          "reached": true
         }
       ]
     },
@@ -100,7 +108,9 @@
       "category": "affairs",
       "unlockConditions": [
         {
-          "flag": "xg_songhuo_road_talk"
+          "narrative": "wrap_同行闲扯",
+          "state": "done",
+          "reached": true
         }
       ]
     },
@@ -112,7 +122,9 @@
       "category": "folklore",
       "unlockConditions": [
         {
-          "flag": "xg_songhuo_road_talk"
+          "narrative": "wrap_同行闲扯",
+          "state": "done",
+          "reached": true
         }
       ]
     },
@@ -124,7 +136,9 @@
       "category": "affairs",
       "unlockConditions": [
         {
-          "flag": "xg_laoxiang_done"
+          "narrative": "flow_xungou_main",
+          "state": "s06_laoxiang",
+          "reached": true
         }
       ]
     }

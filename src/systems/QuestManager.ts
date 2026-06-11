@@ -48,6 +48,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     this.strings = ctx.strings;
     this.assetManager = ctx.assetManager;
     this.eventBus.on('flag:changed', this.onFlagChanged);
+    // 完成条件可为叙事状态叶子（{narrative, state, reached}）：状态迁移后须重评
+    this.eventBus.on('narrative:stateChanged', this.onFlagChanged);
   }
 
   update(_dt: number): void {}
@@ -263,6 +265,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
 
   destroy(): void {
     this.eventBus.off('flag:changed', this.onFlagChanged);
+    this.eventBus.off('narrative:stateChanged', this.onFlagChanged);
     this.questDefs.clear();
     this.questStatus.clear();
     this.questActionTail = Promise.resolve();

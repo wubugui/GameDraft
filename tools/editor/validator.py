@@ -662,6 +662,15 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
         for t in g.get("transitions") or []:
             if not isinstance(t, dict):
                 continue
+            trig = str(t.get("trigger") or "").strip()
+            if trig in ("reactive", "reactiveAll", "reactiveAny"):
+                # 条件驱动迁移：signal 仅为占位（约定 __draft__），不参与触发
+                if not (t.get("conditions") or []):
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"Transition {t.get('id')!r} 为 reactive 触发但缺少 conditions",
+                    ))
+                continue
             sig = str(t.get("signal") or "").strip()
             tid = str(t.get("id") or "?")
             if not sig:

@@ -180,7 +180,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_tingshu_done"
+        "narrative": "flow_xungou_main",
+        "state": "s01_tingshu",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -200,7 +202,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_beishi_done"
+        "narrative": "flow_xungou_main",
+        "state": "s02_beishi",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -220,7 +224,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_chuiniu_done"
+        "narrative": "flow_xungou_main",
+        "state": "s03_chuiniu",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -240,7 +246,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_pozi_done"
+        "narrative": "flow_xungou_main",
+        "state": "s04_pozi",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -260,7 +268,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_hebian_done"
+        "narrative": "flow_xungou_main",
+        "state": "s05_hebian",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -280,7 +290,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_laoxiang_done"
+        "narrative": "flow_xungou_main",
+        "state": "s06_laoxiang",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -300,7 +312,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_kujing_done"
+        "narrative": "flow_xungou_main",
+        "state": "s07_kujing",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -320,7 +334,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_xiangdao_done"
+        "narrative": "flow_xungou_main",
+        "state": "s08_xiangdao",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -340,7 +356,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_songhuo_done"
+        "narrative": "flow_xungou_main",
+        "state": "s09_songhuo",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -360,7 +378,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_zhaomu_done"
+        "narrative": "flow_xungou_main",
+        "state": "s11_zhaomu",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -385,7 +405,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_shouye_done"
+        "narrative": "wrap_守夜",
+        "state": "done",
+        "reached": true
       }
     ],
     "rewards": [],
@@ -400,7 +422,9 @@
     "preconditions": [],
     "completionConditions": [
       {
-        "flag": "xg_demo_finished"
+        "narrative": "flow_xungou_main",
+        "state": "s12_chufa",
+        "reached": true
       }
     ],
     "rewards": [],

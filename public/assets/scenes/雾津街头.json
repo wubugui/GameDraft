@@ -117,8 +117,9 @@
           "state": "s11_zhaomu"
         },
         {
-          "flag": "xg_outfit_bought",
-          "value": true
+          "narrative": "wrap_行头",
+          "state": "bought",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,

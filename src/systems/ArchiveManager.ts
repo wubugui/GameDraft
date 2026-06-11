@@ -65,6 +65,8 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.strings = ctx.strings;
     this.assetManager = ctx.assetManager;
     this.eventBus.on('flag:changed', this.onFlagChanged);
+    // 解锁条件可为叙事状态叶子（{narrative, state, reached}）：状态迁移后须重评
+    this.eventBus.on('narrative:stateChanged', this.onFlagChanged);
     this.eventBus.on('dialogue:start', this.onDialogueStart);
   }
 
@@ -493,6 +495,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   destroy(): void {
     this.eventBus.off('flag:changed', this.onFlagChanged);
+    this.eventBus.off('narrative:stateChanged', this.onFlagChanged);
     this.eventBus.off('dialogue:start', this.onDialogueStart);
     this.characterDefs.clear();
     this.loreDefs.clear();

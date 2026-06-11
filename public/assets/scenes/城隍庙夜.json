@@ -32,34 +32,36 @@
     {
       "id": "z_守夜进庙",
       "polygon": [
-        { "x": 420.0, "y": 520.0 },
-        { "x": 980.0, "y": 520.0 },
-        { "x": 980.0, "y": 640.0 },
-        { "x": 420.0, "y": 640.0 }
+        {
+          "x": 420.0,
+          "y": 520.0
+        },
+        {
+          "x": 980.0,
+          "y": 520.0
+        },
+        {
+          "x": 980.0,
+          "y": 640.0
+        },
+        {
+          "x": 420.0,
+          "y": 640.0
+        }
       ],
       "conditions": [
         {
-          "flag": "xg_shouye_intro",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_守夜进庙",
+          "state": "initial"
         }
       ],
       "onEnter": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_shouye_intro",
-            "value": true
-          }
-        },
-        {
-          "type": "playScriptedDialogue",
-          "params": {
-            "lines": [
-              { "speaker": "", "text": "活儿很简单：独自在庙里守半夜。庙里停着一具无名女尸，没人认领。" },
-              { "speaker": "", "text": "规矩也简单：灵前一盏长明灯，整夜不能灭。供桌一只压路熟鸡，一碗插筷的倒头饭。" },
-              { "speaker": "{{player}}", "text": "灯油是庙里的，火苗才豆大点……抠成这样。" }
-            ]
+            "sourceType": "zone",
+            "sourceId": "城隍庙夜:z_守夜进庙",
+            "signal": "shouye_intro_entered"
           }
         }
       ]
@@ -80,10 +82,22 @@
         "spriteSort": "back"
       },
       "collisionPolygon": [
-        { "x": -115.0, "y": -55.0 },
-        { "x": 115.0, "y": -55.0 },
-        { "x": 115.0, "y": -5.0 },
-        { "x": -115.0, "y": -5.0 }
+        {
+          "x": -115.0,
+          "y": -55.0
+        },
+        {
+          "x": 115.0,
+          "y": -55.0
+        },
+        {
+          "x": 115.0,
+          "y": -5.0
+        },
+        {
+          "x": -115.0,
+          "y": -5.0
+        }
       ],
       "collisionPolygonLocal": true,
       "data": {
@@ -121,13 +135,8 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "flag": "xg_shouye_oil_added",
-          "value": true
-        },
-        {
-          "flag": "xg_shouye_done",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_守夜",
+          "state": "oil_added"
         }
       ],
       "conditionHidesEntity": true,
@@ -144,8 +153,9 @@
       "interactionRange": 56.0,
       "conditions": [
         {
-          "flag": "xg_shouye_done",
-          "value": true
+          "narrative": "wrap_守夜",
+          "state": "done",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,

@@ -533,14 +533,13 @@ describe('NarrativeStateManager', () => {
     const { narrative } = makeRuntime();
     const raw = narrativeGraphsData as unknown as NarrativeGraphsFile;
     const graphs = compileNarrativeGraphs(raw);
-    expect(graphs.map((g) => g.id)).toEqual([
+    // 真实数据会随内容迭代增长：只断言验证链所需的图存在（不耦合内容数量）
+    expect(graphs.map((g) => g.id)).toEqual(expect.arrayContaining([
       'flow_dock_water_monkey',
       'npc_ringboy',
       'quest_return_ring',
-      'flow_1',
-      'wrapper_graph_1',
       'flow_xungou_main',
-    ]);
+    ]));
     narrative.registerGraphs(graphs);
     narrative.emitNarrativeSignal({ sourceType: 'dialogue', sourceId: 'dock_board', signal: 'board_read_done' });
     await flush();

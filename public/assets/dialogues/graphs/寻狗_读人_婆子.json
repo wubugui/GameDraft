@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "flag": "xg_pozi_read_pozi",
-              "value": true
+              "narrative": "wrap_读人_婆子",
+              "state": "read"
             }
           ],
           "next": "again_1"
@@ -23,19 +23,27 @@
     },
     "again_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "婆子还在绞围裙角。看过了——慌是真慌，慌的不全是「东西」。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "婆子站在院心，手一直绞着围裙角，话比来时多了一倍。慌，是真慌——可她的眼睛，时不时往她儿子那边瞟。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（她怕的不光是「动静」，还有这个家本身。……记下了。）",
       "next": "n_flag"
     },
@@ -43,10 +51,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_pozi_read_pozi",
-            "value": true
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_读人_婆子",
+            "signal": "pozi_read_pozi"
           }
         }
       ],

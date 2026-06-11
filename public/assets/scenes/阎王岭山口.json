@@ -51,23 +51,17 @@
       ],
       "conditions": [
         {
-          "flag": "xg_songhuo_road_talk",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_同行闲扯",
+          "state": "initial"
         }
       ],
       "onEnter": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_songhuo_road_talk",
-            "value": true
-          }
-        },
-        {
-          "type": "startCutscene",
-          "params": {
-            "id": "寻狗_脚帮闲扯"
+            "sourceType": "zone",
+            "sourceId": "阎王岭山口:z_同行闲扯",
+            "signal": "songhuo_road_entered"
           }
         }
       ]
@@ -83,9 +77,8 @@
       "interactionRange": 80.0,
       "conditions": [
         {
-          "flag": "xg_songhuo_delivered",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_送货",
+          "state": "bundle_taken"
         }
       ],
       "data": {
@@ -101,8 +94,9 @@
       "interactionRange": 90.0,
       "conditions": [
         {
-          "flag": "xg_songhuo_delivered",
-          "value": true
+          "narrative": "wrap_送货",
+          "state": "delivered",
+          "reached": true
         }
       ],
       "data": {
@@ -142,9 +136,8 @@
       "initialFacing": "right",
       "conditions": [
         {
-          "flag": "xg_songhuo_delivered",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_送货",
+          "state": "bundle_taken"
         }
       ],
       "conditionHidesEntity": true
@@ -160,9 +153,8 @@
       "initialFacing": "right",
       "conditions": [
         {
-          "flag": "xg_songhuo_delivered",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_送货",
+          "state": "bundle_taken"
         }
       ],
       "conditionHidesEntity": true

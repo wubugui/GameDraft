@@ -32,40 +32,36 @@
     {
       "id": "z_井边哭声",
       "polygon": [
-        { "x": 640.0, "y": 380.0 },
-        { "x": 1080.0, "y": 380.0 },
-        { "x": 1080.0, "y": 560.0 },
-        { "x": 640.0, "y": 560.0 }
+        {
+          "x": 640.0,
+          "y": 380.0
+        },
+        {
+          "x": 1080.0,
+          "y": 380.0
+        },
+        {
+          "x": 1080.0,
+          "y": 560.0
+        },
+        {
+          "x": 640.0,
+          "y": 560.0
+        }
       ],
       "conditions": [
         {
-          "flag": "xg_kujing_intro",
-          "op": "!=",
-          "value": true
+          "narrative": "wrap_井边哭声",
+          "state": "initial"
         }
       ],
       "onEnter": [
         {
-          "type": "setFlag",
+          "type": "emitNarrativeSignal",
           "params": {
-            "key": "xg_kujing_intro",
-            "value": true
-          }
-        },
-        {
-          "type": "playSfx",
-          "params": {
-            "id": "sfx_well_childlike_cry_loop"
-          }
-        },
-        {
-          "type": "playScriptedDialogue",
-          "params": {
-            "lines": [
-              { "speaker": "", "text": "离井还有几步，那叫声就停了一息，又起。" },
-              { "speaker": "", "text": "白天听是狗叫。这会儿天擦黑，听着——像个小孩在井底哭。" },
-              { "speaker": "{{player}}", "text": "……狗。是狗。给钱了，是狗也得捞。" }
-            ]
+            "sourceType": "zone",
+            "sourceId": "枯井土地庙:z_井边哭声",
+            "signal": "kujing_intro_entered"
           }
         }
       ]
@@ -80,10 +76,22 @@
       "y": 290.0,
       "interactionRange": 80.0,
       "collisionPolygon": [
-        { "x": -80.0, "y": -50.0 },
-        { "x": 80.0, "y": -50.0 },
-        { "x": 80.0, "y": 10.0 },
-        { "x": -80.0, "y": 10.0 }
+        {
+          "x": -80.0,
+          "y": -50.0
+        },
+        {
+          "x": 80.0,
+          "y": -50.0
+        },
+        {
+          "x": 80.0,
+          "y": 10.0
+        },
+        {
+          "x": -80.0,
+          "y": 10.0
+        }
       ],
       "collisionPolygonLocal": true,
       "data": {
