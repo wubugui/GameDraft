@@ -3,16 +3,83 @@
   "id": "寻狗_义庄管事",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_义庄管事（占位：第三幕制作中）"
+    "title": "寻狗Demo·义庄管事上门（半推半架）"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            { "narrative": "flow_xungou_main", "state": "s10_yizhuang", "reached": true }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第三幕内容制作中。）",
+      "speaker": { "kind": "npc" },
+      "text": "先生的大恩……庄里给您立长生牌位！哦不不，呸呸，给您多包一份钱！",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "关、关先生！可算寻着您了！义庄……义庄出事了！！",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "（压着嗓子，眼珠子直打颤）庄里停的两具尸——在地上、扭着！揪着！互相压着！守夜的瞧了一眼，裤子都吓湿了，人已经跑没影了！",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "……扭着？尸还能自己下板凳？你莫不是把酒当饭吃了。",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "小的哪敢拿这种事说笑！正经先生……正经先生庄里请不起啊。您是「李天狗那一脉」，您肯定有法子！钱！钱好说！",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ying",
+          "text": "「……带路。」（钱好说这三个字，最好使）",
+          "next": "c_go"
+        },
+        {
+          "id": "tui",
+          "text": "「俺今儿不太方便——」（话没说完就被拽住了袖子）",
+          "next": "c_drag"
+        }
+      ]
+    },
+    "c_drag": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "管事力气不大，架不住豁得出去——半求半拽，关二狗就这么被「请」上了路。",
+      "next": "c_go"
+    },
+    "c_go": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "义庄",
+            "targetSpawnPoint": "entry"
+          }
+        }
+      ],
       "next": "end1"
     },
     "end1": {

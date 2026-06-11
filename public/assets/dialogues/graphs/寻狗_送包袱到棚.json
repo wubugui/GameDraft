@@ -3,16 +3,45 @@
   "id": "寻狗_送包袱到棚",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_送包袱到棚（占位：第三幕制作中）"
+    "title": "寻狗Demo·包袱送达歇脚棚"
   },
   "nodes": {
     "root": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第三幕内容制作中。）",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "歇脚棚四面漏风，棚柱上钉着几张褪色的符。他把包袱搁在棚里的石台上——放下的那一瞬，肩膀轻得发飘。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "石台底下压着一小串钱，数目正好。一手交货，一手收钱——只是这「另一手」，从头到尾没露过面。",
+      "next": "n_sig"
+    },
+    "n_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_送包袱到棚",
+            "signal": "songhuo_delivered"
+          }
+        }
+      ],
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（货到付清，童叟无欺。……就是这地方，付钱的方式叫人后脖子发麻。）",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "脚帮俩人不知什么时候已经下山了，连招呼都没打。天色——擦黑了。",
       "next": "end1"
     },
     "end1": {

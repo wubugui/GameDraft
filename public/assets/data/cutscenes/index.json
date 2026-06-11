@@ -1516,6 +1516,100 @@
     ]
   },
   {
+    "id": "寻狗_终幕",
+    "steps": [
+      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.12 },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "三人一驴，过了城门。雾把路吞到第十步开外。" },
+      { "kind": "present", "type": "cameraMove", "x": 900, "y": 180, "duration": 2400 },
+      { "kind": "present", "type": "showSubtitle", "text": "茶馆里：「听说了吗，洋人把『李天狗那一脉』请去神仙顶了！」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
+      { "kind": "present", "type": "showSubtitle", "text": "脚帮里：「阎王岭喊名那一夜，人家眉头都没皱——真人不露相。」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
+      { "kind": "present", "type": "showSubtitle", "text": "义庄管事：「两具僵尸，四样镇下！我亲眼瞧见的！！」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
+      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（传成什么样的都有。……行吧，就当是真的。贫道——出发了。）" },
+      { "kind": "present", "type": "fadeToBlack", "duration": 1400 },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "endpanel",
+        "image": "/resources/runtime/images/illustrations/demo/demo_end_panel.png"
+      },
+      { "kind": "present", "type": "showTitle", "text": "寻狗记 · Demo 完", "duration": 2600 },
+      { "kind": "present", "type": "showDialogue", "speaker": "", "text": "——他还不知道自己背后跟着什么。观众也只闻到了一缕香粉味。（点击继续）" },
+      { "kind": "present", "type": "hideImg", "id": "endpanel" },
+      { "kind": "present", "type": "fadeIn", "duration": 900 }
+    ]
+  },
+  {
+    "id": "寻狗_脚帮闲扯",
+    "steps": [
+      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "同路的两个脚夫一前一后，扁担吱呀。山里不兴安静，安静了才瘆人——于是他们讲古。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "脚夫甲", "text": "癫子周晓得吧？年年做一个梦：阎王岭里有座酒楼，往地底下螺旋着长。他在梦里挖了二十年——还在挖。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "脚夫乙", "text": "马屠户追他婆娘进了岭，迷了三天。出来人就疯了，操刀砍自家儿子。铺子门板上的血道子，到今儿没人敢擦。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "脚夫甲", "text": "（压低嗓）再往里头，有个寨子。不种地，不赶集，靠「养东西」过活。——这话到这儿，别往下问。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "脚夫乙", "text": "对了先生，山里要是有人喊你名字——一声一声，像个熟人——千万、千万别应。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（这帮人讲古不要钱，吓人也不要钱。）……晓得了。" },
+      { "kind": "present", "type": "hideMovieBar" }
+    ]
+  },
+  {
+    "id": "寻狗_义庄进门",
+    "steps": [
+      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
+      { "kind": "present", "type": "cameraZoom", "scale": 1.45, "duration": 800 },
+      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_bone_dull_knock" } },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "门一推开，他先听见的不是声音——是没有声音。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "两具尸在地上扭着。揪着。互相压着。布料窸窣，骨头磕地，闷闷的。" },
+      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_corpse_cloth_creak" } },
+      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（跑。现在跑还来得及。）（……跑了，「李天狗那一脉」明儿就成笑话。）" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "脑子在打架，手已经伸向了供桌——背过尸的手，是熟的。" },
+      { "kind": "present", "type": "hideMovieBar" }
+    ]
+  },
+  {
+    "id": "寻狗_两尸松手",
+    "steps": [
+      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
+      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_force_swallowed_thud" } },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "第四样落地。庄里那股拧着的劲——散了。" },
+      { "kind": "action", "type": "playSignalCue", "params": { "id": "axiu_full" } },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "香粉味陡然浓了一瞬。耳边极轻地，飘过半句跑了调的小曲——像谁哼着哄孩子。" },
+      {
+        "kind": "action",
+        "type": "setHotspotDisplayImage",
+        "params": {
+          "sceneId": "义庄",
+          "hotspotId": "hs_两尸",
+          "image": "/resources/runtime/images/corpses/demo/two_corpses_lie_flat.png",
+          "worldWidth": 260,
+          "worldHeight": 140
+        }
+      },
+      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_corpse_cloth_creak" } },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "两具尸，松了手。直挺挺躺平，规规矩矩，像睡熟的。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（成了？……是俺哪一样使对了？米？线？石子？剪子？）" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "他不知道。他只闻见那缕香粉味，慢慢淡下去——像有人办完了事，掸掸手，退回暗处。" },
+      { "kind": "present", "type": "hideMovieBar" }
+    ]
+  },
+  {
+    "id": "寻狗_置办蒙太奇",
+    "steps": [
+      { "kind": "present", "type": "fadeToBlack", "duration": 800 },
+      { "kind": "present", "type": "showTitle", "text": "置办行头", "duration": 1400 },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "outfit",
+        "image": "/resources/runtime/images/illustrations/demo/fake_taoist_kit.png"
+      },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "当铺淘的旧道袍，洗三遍还是那股霉味。桃木剑是真桃木——就是轻得像烧火棍。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "符是城东先生画的。先生收钱的时候手很稳，画符的时候手很不稳。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "钱花光了，行头凑齐了——凑合齐了。" },
+      { "kind": "present", "type": "hideImg", "id": "outfit" },
+      { "kind": "present", "type": "fadeIn", "duration": 800 }
+    ]
+  },
+  {
     "id": "寻狗_灵堂进场",
     "steps": [
       { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },

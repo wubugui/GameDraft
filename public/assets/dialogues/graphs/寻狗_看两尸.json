@@ -3,16 +3,49 @@
   "id": "寻狗_看两尸",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_看两尸（占位：第三幕制作中）"
+    "title": "寻狗Demo·细看两尸（手是熟的）"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            { "narrative": "scenario_义庄镇尸", "state": "all_done", "reached": true }
+          ],
+          "next": "after_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "after_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第三幕内容制作中。）",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "两具尸直挺挺并排躺着，规规矩矩，像睡熟的。越规矩，越不敢多看。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "两具尸在地上扭着、揪着、互相压——没有声音。只有布料摩擦的窸窣，和骨头磕在地上的闷响。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "老爷子的手揪着外乡尸的领口，外乡尸的胳膊反压着他的肩——招招都是巷子里打架的路数。死人，打的活人架。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（脑子嗡的一声。腿肚子在转筋。可手……手是熟的。背过尸的手，知道下一步该干什么。）",
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "吹牛时抖出去的那套「镇尸四样」，这会儿一样一样浮上来：糙米连豆，墨斗线，七颗子，一把剪。——自选顺序，别选错时辰。",
       "next": "end1"
     },
     "end1": {

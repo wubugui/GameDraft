@@ -3,7 +3,7 @@
   "id": "寻狗_镇尸_剪子",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_镇尸_剪子（占位：第三幕制作中）"
+    "title": "寻狗Demo·剪子（镇尸步骤）"
   },
   "nodes": {
     "root": {
@@ -12,7 +12,56 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "（第三幕内容制作中。）",
+      "text": "供桌上那把裁衣剪，黄铜柄都磨亮了。他张开剪口，横着搁在两尸正中间——",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "zhenshi_step"
+          }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_corpse_cloth_creak"
+          }
+        }
+      ],
+      "next": "n_doing"
+    },
+    "n_doing": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "剪子贴地的一瞬，庄里安静了一拍。连他自己的喘气声都听得见。",
+      "next": "n_sig"
+    },
+    "n_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_镇尸_剪子",
+            "signal": "zhenshi_scissors_done"
+          }
+        }
+      ],
+      "next": "n_after"
+    },
+    "n_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（张口的剪，断的是纠缠。老辈人这么说的。……老辈人也没见过这阵仗吧。）",
       "next": "end1"
     },
     "end1": {

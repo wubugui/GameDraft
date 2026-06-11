@@ -3,7 +3,7 @@
   "id": "寻狗_镇尸_墨斗",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_镇尸_墨斗（占位：第三幕制作中）"
+    "title": "寻狗Demo·墨斗（镇尸步骤）"
   },
   "nodes": {
     "root": {
@@ -12,7 +12,56 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "（第三幕内容制作中。）",
+      "text": "墨斗线在指间绷直。他把线头钉在门槛，拉到供桌腿上，从两尸中间——绷！",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "zhenshi_step"
+          }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_ink_line_snap"
+          }
+        }
+      ],
+      "next": "n_doing"
+    },
+    "n_doing": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "墨线弹在地上，一道笔直的黑。两具尸扭打的劲头，像被这道线从中间裁了一刀。",
+      "next": "n_sig"
+    },
+    "n_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_镇尸_墨斗",
+            "signal": "zhenshi_ink_done"
+          }
+        }
+      ],
+      "next": "n_after"
+    },
+    "n_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（木匠的线，裁的是木头。今儿裁的是什么，他不敢细想。）",
       "next": "end1"
     },
     "end1": {

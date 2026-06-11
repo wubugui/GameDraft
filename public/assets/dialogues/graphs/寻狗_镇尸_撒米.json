@@ -3,7 +3,7 @@
   "id": "寻狗_镇尸_撒米",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_镇尸_撒米（占位：第三幕制作中）"
+    "title": "寻狗Demo·撒米（镇尸步骤）"
   },
   "nodes": {
     "root": {
@@ -12,7 +12,56 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "（第三幕内容制作中。）",
+      "text": "他从供桌上抓了一把糙米连豆子，沿着两具尸外围，倒退着走——",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "zhenshi_step"
+          }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_rice_scatter"
+          }
+        }
+      ],
+      "next": "n_doing"
+    },
+    "n_doing": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "米粒砸在土地上，沙沙一圈。圈口合拢的那一下，像有什么撞了下无形的墙，顿了一顿。",
+      "next": "n_sig"
+    },
+    "n_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_镇尸_撒米",
+            "signal": "zhenshi_rice_done"
+          }
+        }
+      ],
+      "next": "n_after"
+    },
+    "n_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（这有用吗？……管它呢。下一样。）",
       "next": "end1"
     },
     "end1": {

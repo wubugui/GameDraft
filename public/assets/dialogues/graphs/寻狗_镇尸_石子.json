@@ -3,7 +3,7 @@
   "id": "寻狗_镇尸_石子",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_镇尸_石子（占位：第三幕制作中）"
+    "title": "寻狗Demo·石子（镇尸步骤）"
   },
   "nodes": {
     "root": {
@@ -12,7 +12,56 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "（第三幕内容制作中。）",
+      "text": "没有枣核，门口的石子也凑数。七颗，挑圆的。他蹲下去，一颗一颗往尸背的衣褶里按——",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "zhenshi_step"
+          }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_stone_press"
+          }
+        }
+      ],
+      "next": "n_doing"
+    },
+    "n_doing": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "按到第七颗，指尖底下那具尸轻轻一弹，像活人被人点了麻筋。他差点叫出声。",
+      "next": "n_sig"
+    },
+    "n_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_镇尸_石子",
+            "signal": "zhenshi_stone_done"
+          }
+        }
+      ],
+      "next": "n_after"
+    },
+    "n_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（七颗。一颗都不能少。谁定的规矩？不知道。守就完了。）",
       "next": "end1"
     },
     "end1": {

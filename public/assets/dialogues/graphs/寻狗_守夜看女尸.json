@@ -3,16 +3,43 @@
   "id": "寻狗_守夜看女尸",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_守夜看女尸（占位：第四幕制作中）"
+    "title": "寻狗Demo·守夜·无名女尸"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            { "narrative": "wrap_守夜", "state": "done", "reached": true }
+          ],
+          "next": "after_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "after_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第四幕内容制作中。）",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "天快亮了。她还是没人认领。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "席子底下停着具很瘦很白的女尸。无名无姓，没人认领——城隍庙收的，最后一程的香火钱都是庙里出。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "脸盖着黄纸。纸很平整——夜里没风，可灵前那盏灯的火苗，一直在极轻地晃。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（无名无姓……死了连个收尸的名字都没有。这世道，人比鬼薄。）",
       "next": "end1"
     },
     "end1": {

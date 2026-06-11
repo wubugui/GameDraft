@@ -139,6 +139,10 @@
         {
           "narrative": "flow_xungou_main",
           "state": "s07_kujing"
+        },
+        {
+          "narrative": "wrap_向导告示",
+          "state": "seen"
         }
       ],
       "conditionHidesEntity": true,

@@ -3,16 +3,62 @@
   "id": "寻狗_管事义庄内",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_管事义庄内（占位：第三幕制作中）"
+    "title": "寻狗Demo·管事（义庄内·按镇尸阶段变口）"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            { "narrative": "scenario_义庄镇尸", "state": "all_done", "reached": true }
+          ],
+          "next": "after_1"
+        },
+        {
+          "conditions": [
+            { "narrative": "scenario_义庄镇尸", "state": "in_progress", "reached": true }
+          ],
+          "next": "mid_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "after_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第三幕内容制作中。）",
+      "speaker": { "kind": "npc" },
+      "text": "躺、躺平了……真躺平了！先生！您这手段，比城里请的先生还硬！（往他手里塞钱，塞得很实）",
+      "next": "after_2"
+    },
+    "after_2": {
+      "type": "runActions",
+      "actions": [
+        { "type": "giveCurrency", "params": { "amount": 50 } }
+      ],
+      "next": "after_3"
+    },
+    "after_3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "管事只给一次钱，但谢能谢八遍。第三遍起，关二狗已经在想别的事了——刚才那一下，到底是哪样压住的？",
+      "next": "end1"
+    },
+    "mid_1": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "（贴着门框，半个身子在门外）先、先生您接着来！小的在这儿……在这儿给您把门！",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "就、就是它们俩……老爷子是寄停的，等吉日下葬；外乡那具是船运来的，等家里人认领。昨儿夜里还好好的躺着！",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "npc" },
+      "text": "您要使什么物件，供桌上都有——米、墨斗、剪子，石子儿外头地上有的是。小的就不近前了！",
       "next": "end1"
     },
     "end1": {

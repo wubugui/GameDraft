@@ -3,16 +3,63 @@
   "id": "寻狗_向导传闻",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_向导传闻（占位：第三幕制作中）"
+    "title": "寻狗Demo·向导传闻（茶馆告示）"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            { "narrative": "wrap_向导告示", "state": "seen" }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第三幕内容制作中。）",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "「重金」两个字他已经看过八遍了。每看一遍都更重一分。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "新贴的告示，墨都没干透：洋人克罗斯利夫妇，重金诚聘进神仙顶的向导。落款盖着洋行的章。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "重金……神仙顶……（那不就是李天狗镇旱魃的地界？！）",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "茶馆里嗡嗡的全是这事。听说洋人住处门口已经排开了人——真道士、滑头脚帮、三教九流，都来了。",
+      "next": "n_sig"
+    },
+    "n_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_向导传闻",
+            "signal": "xiangdao_notice_read"
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（去街上瞄一眼。先看看都是些什么货色在抢俺的钱。）",
       "next": "end1"
     },
     "end1": {

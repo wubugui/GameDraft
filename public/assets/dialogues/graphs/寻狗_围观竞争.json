@@ -3,16 +3,105 @@
   "id": "寻狗_围观竞争",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·寻狗_围观竞争（占位：第三幕制作中）"
+    "title": "寻狗Demo·围观竞争对手 + 决定置办行头"
   },
   "nodes": {
     "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            { "narrative": "flow_xungou_main", "state": "s08_xiangdao", "reached": true }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
       "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "（第三幕内容制作中。）",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "人堆还没散。让他们抢去吧——他有他的路数。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "洋人住处门口，门庭若市。道袍的、短打的、揣罗盘的、举幡的——一字排开，互相用眼角剜对方。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "有个白胡子老道，行头是真齐整：拂尘、法印、八卦镜，一样不少。开价也真齐整——贵得洋人都皱眉。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "（行头……是了，行头。人靠衣装，神靠金装——「李天狗那一脉」，也得有身皮。）",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ban",
+          "text": "〔置办行头〕把攒下的钱全掏出来",
+          "next": "m1"
+        },
+        {
+          "id": "ban2",
+          "text": "〔置办行头〕先数数钱……再全掏出来",
+          "next": "m0"
+        }
+      ]
+    },
+    "m0": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "数了两遍。两遍都不够。……数第三遍也不会够的，二狗。",
+      "next": "m1"
+    },
+    "m1": {
+      "type": "runActions",
+      "actions": [
+        { "type": "startCutscene", "params": { "id": "寻狗_置办蒙太奇" } }
+      ],
+      "next": "m2"
+    },
+    "m2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_围观竞争",
+            "signal": "outfit_bought"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_围观竞争",
+            "signal": "xg_xiangdao_completed"
+          }
+        }
+      ],
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": { "kind": "literal", "name": "旁白" },
+      "text": "旧道袍洗得发白，符是城东先生画的（歪的），桃木剑轻得像烧火棍。镜子里那个人——远看，还真有那么点意思。",
+      "next": "n6"
+    },
+    "n6": {
+      "type": "line",
+      "speaker": { "kind": "player" },
+      "text": "李天狗那一脉的关二狗，见过诸位。……嗯，腔调还得练。",
       "next": "end1"
     },
     "end1": {
