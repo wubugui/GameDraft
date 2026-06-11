@@ -1,9 +1,8 @@
 @echo off
 cd /d "%~dp0"
-title GameDraft - Main Editor
 if not exist ".tools\Python311\python.exe" (
-  echo Missing local Python runtime. Run init-runtime.cmd first.
+  echo Missing local Python runtime. Run bootstrap.cmd first.
   exit /b 1
 )
-".tools\Python311\python.exe" -m tools.editor "%~dp0."
+".tools\Python311\python.exe" -m tools.dev editor %*
 if errorlevel 1 pause

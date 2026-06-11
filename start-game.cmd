@@ -1,10 +1,8 @@
 @echo off
 cd /d "%~dp0"
-title GameDraft - Vite
-if exist ".tools\node-portable\node-v22.14.0-win-x64\npm.cmd" (
-  set "PATH=%~dp0.tools\node-portable\node-v22.14.0-win-x64;%PATH%"
+if not exist ".tools\Python311\python.exe" (
+  echo Missing local Python runtime. Run bootstrap.cmd first.
+  exit /b 1
 )
-echo Starting GameDraft Vite dev server at http://localhost:5173 ...
-echo Press Ctrl+C to stop.
-echo.
-npm run dev
+".tools\Python311\python.exe" -m tools.dev game start
+if errorlevel 1 pause

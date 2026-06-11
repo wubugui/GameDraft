@@ -1,8 +1,4 @@
 @echo off
-cd /d "%~dp0"
-if not exist ".tools\Python311\python.exe" (
-  echo Missing local Python runtime. Run init-runtime.cmd first.
-  exit /b 1
-)
-".tools\Python311\python.exe" -m tools.chronicle_sim
-if errorlevel 1 pause
+echo start-chronicle-sim.cmd is deprecated ^(tools.chronicle_sim was removed^).
+echo Use chronicle-sim.cmd ^(v3^) or start-chronicle-sim-v2.cmd ^(v2^) instead.
+exit /b 1
