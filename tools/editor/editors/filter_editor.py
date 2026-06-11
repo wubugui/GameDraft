@@ -187,8 +187,9 @@ class FilterEditor(QWidget):
             QMessageBox.warning(
                 self,
                 "滤镜工具",
-                "无法启动。请在仓库根目录确认已运行 install-deps.cmd，并执行：\n"
-                ".\\.tools\\Python311\\python.exe -m tools.filter_tool",
+                "无法启动。请在仓库根目录确认已安装依赖"
+                "（install-deps.cmd / ./dev.sh install-deps），并执行：\n"
+                "dev.cmd filter-tool（Windows）/ ./dev.sh filter-tool（macOS/Linux）",
             )
             proc.deleteLater()
             return

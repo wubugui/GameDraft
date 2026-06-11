@@ -42,7 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_push.add_argument("--git-proxy", default="")
 
     p_commit = sub.add_parser("commit", help="dvc add + git add/commit (commit-all)")
-    p_commit.add_argument("-m", "--message", required=True)
+    p_commit.add_argument("-m", "--message", default=None)
+    p_commit.add_argument("message_pos", nargs="?", default=None, help="Commit message (positional alternative to -m)")
 
     p_upload = sub.add_parser("upload-bootstrap", help="Upload portable Python archive to OSS")
     p_upload.add_argument("--bucket", default="gamedraft-assets")
@@ -104,7 +105,10 @@ def main(argv: list[str] | None = None) -> int:
     if task == "commit":
         from tools.dev import sync
 
-        return sync.commit(args.message)
+        message = args.message or args.message_pos
+        if not message:
+            parser.error("commit requires a message (-m \"...\" or positional)")
+        return sync.commit(message)
     if task == "upload-bootstrap":
         from tools.dev import sync
 

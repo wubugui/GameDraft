@@ -36,7 +36,7 @@ def main() -> None:
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
-        print("缺少依赖 mcp，请运行 .\\install-deps.cmd", file=sys.stderr)
+        print("缺少依赖 mcp，请运行 install-deps.cmd（Windows）或 ./dev.sh install-deps（macOS/Linux）", file=sys.stderr)
         raise SystemExit(1) from None
 
     app = FastMCP("chronicle_sim")
