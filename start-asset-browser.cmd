@@ -1,8 +1,8 @@
 @echo off
 cd /d "%~dp0"
 if not exist ".tools\Python311\python.exe" (
-  echo Missing local Python runtime. Run init-runtime.cmd first.
+  echo Missing local Python runtime. Run bootstrap.cmd first.
   exit /b 1
 )
-".tools\Python311\python.exe" -m tools.asset_browser.main
+".tools\Python311\python.exe" -m tools.dev asset-browser %*
 if errorlevel 1 pause

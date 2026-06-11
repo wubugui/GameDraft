@@ -1,2 +1,8 @@
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\pull-all.ps1" %*
+cd /d "%~dp0"
+if not exist ".tools\Python311\python.exe" (
+  echo Missing local Python runtime. Run bootstrap.cmd first.
+  exit /b 1
+)
+".tools\Python311\python.exe" -m tools.dev pull %*
+if errorlevel 1 pause

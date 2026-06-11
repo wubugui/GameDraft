@@ -3,233 +3,193 @@ param(
   [string]$Action = ""
 )
 
+# Minimal Windows bootstrap: acquire the portable Python runtime (the one
+# chicken-and-egg step that cannot run inside Python yet), collect OSS
+# credentials into .tools/oss.env, then delegate everything else to the
+# cross-platform task runner: python -m tools.dev.
+#
+# The OSS signed-GET download below is intentionally duplicated from the
+# Python port in tools/dev/oss_http.py and frozen — it must keep working
+# before any third-party dependency exists.
+
 $ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "no-proxy.ps1")
-Initialize-BootstrapProcessWithoutProxy
-
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
-$Python = Join-Path $Root ".tools\Python311\python.exe"
+$ToolsDir = Join-Path $Root ".tools"
+$PythonExe = Join-Path $ToolsDir "Python311\python.exe"
+$OssEnvFile = Join-Path $ToolsDir "oss.env"
+$ArchiveName = "python311-dvc-win-x64.zip"
 
-function Invoke-RepoScript {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$Name,
-    [string[]]$Arguments = @()
-  )
-
-  & (Join-Path $PSScriptRoot $Name) @Arguments
+function Mask-ProxyEnv {
+  foreach ($entry in [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process).GetEnumerator()) {
+    $name = [string]$entry.Key
+    $lu = $name.ToLowerInvariant()
+    if ($lu.EndsWith('_proxy') -or $lu -eq 'no_proxy' -or $lu -eq 'all_proxy' -or ($lu.StartsWith('npm_config_') -and $lu.Contains('proxy'))) {
+      [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+  }
+  [Environment]::SetEnvironmentVariable('NO_PROXY', '*', 'Process')
+  [Environment]::SetEnvironmentVariable('no_proxy', '*', 'Process')
 }
 
 function ConvertFrom-SecureStringPlainText {
   param([Parameter(Mandatory = $true)][securestring]$Value)
-
   $Bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
-  try {
-    [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Bstr)
-  }
-  finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Bstr)
-  }
+  try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Bstr) }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Bstr) }
 }
 
-function Ensure-LocalPython {
-  if (Test-Path $Python) {
-    Write-Host "Local Python runtime: ready"
-    return
+function Read-OssEnvFile {
+  $result = @{}
+  if (Test-Path $OssEnvFile) {
+    foreach ($line in Get-Content $OssEnvFile) {
+      $t = $line.Trim()
+      if (-not $t -or $t.StartsWith('#') -or -not $t.Contains('=')) { continue }
+      $idx = $t.IndexOf('=')
+      $result[$t.Substring(0, $idx).Trim()] = $t.Substring($idx + 1).Trim()
+    }
   }
+  return $result
+}
 
-  Write-Host "Local Python runtime: missing, downloading bootstrap runtime..."
-  Invoke-RepoScript "bootstrap-dvc.ps1"
+function Write-OssEnvFile {
+  param([string]$KeyId, [string]$KeySecret)
+  New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
+  $content = "OSS_ACCESS_KEY_ID=$KeyId`nOSS_ACCESS_KEY_SECRET=$KeySecret`n"
+  [System.IO.File]::WriteAllText($OssEnvFile, $content, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 function Ensure-OssCredentials {
-  $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
-  if (-not $KeyId) {
-    $KeyId = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User")
-    if ($KeyId) {
-      [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
+  $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
+  $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
+  if ($kid -and $ks) { return }
+
+  $file = Read-OssEnvFile
+  if (-not $kid) { $kid = $file["OSS_ACCESS_KEY_ID"] }
+  if (-not $ks) { $ks = $file["OSS_ACCESS_KEY_SECRET"] }
+
+  # Legacy User-scope env (older installs); migrate into .tools/oss.env below.
+  if (-not $kid) { $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "User") }
+  if (-not $ks) { $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User") }
+
+  if (-not $kid -or -not $ks) {
+    Write-Host "OSS credentials are missing. They will be saved to .tools/oss.env."
+    if (-not $kid) { $kid = Read-Host "OSS_ACCESS_KEY_ID" }
+    if (-not $ks) {
+      $secure = Read-Host "OSS_ACCESS_KEY_SECRET" -AsSecureString
+      $ks = ConvertFrom-SecureStringPlainText $secure
     }
   }
 
-  $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
-  if (-not $KeySecret) {
-    $KeySecret = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "User")
-    if ($KeySecret) {
-      [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "Process")
+  if ($kid -and $ks) {
+    Write-OssEnvFile -KeyId $kid -KeySecret $ks
+    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $kid, "Process")
+    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $ks, "Process")
+    Write-Host "OSS credentials: saved to .tools/oss.env"
+  }
+}
+
+function Get-BootstrapBaseUrl {
+  $u = $env:GAMEDRAFT_BOOTSTRAP_BASE_URL
+  if ($u) { return $u }
+  foreach ($name in @("bootstrap-oss.json", "bootstrap-oss.example.json")) {
+    $path = Join-Path $Root "config\$name"
+    if (Test-Path $path) {
+      $cfg = Get-Content $path -Raw | ConvertFrom-Json
+      if ($cfg.baseUrl) { return [string]$cfg.baseUrl }
     }
   }
-
-  if ($KeyId -and $KeySecret) {
-    Write-Host "OSS credentials: ready"
-    return
-  }
-
-  Write-Host "OSS credentials are missing. They will be saved to your Windows user environment."
-  if (-not $KeyId) {
-    $KeyId = Read-Host "OSS_ACCESS_KEY_ID"
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "User")
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_ID", $KeyId, "Process")
-  }
-  if (-not $KeySecret) {
-    $SecretSecure = Read-Host "OSS_ACCESS_KEY_SECRET" -AsSecureString
-    $KeySecret = ConvertFrom-SecureStringPlainText $SecretSecure
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "User")
-    [Environment]::SetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", $KeySecret, "Process")
-  }
-
-  Write-Host "OSS credentials: saved"
+  return $null
 }
 
-function Test-DependenciesReady {
-  $Node = Join-Path $Root ".tools\node-portable\node-v22.14.0-win-x64\npm.cmd"
-  $NodeModules = Join-Path $Root "node_modules"
-  if (-not (Test-Path $Node)) { return $false }
-  if (-not (Test-Path $NodeModules)) { return $false }
-  if (-not (Test-Path $Python)) { return $false }
-
-  & $Python -c "import dvc, oss2, yaml, PySide6, numpy, cv2, PIL" *> $null
-  return ($LASTEXITCODE -eq 0)
-}
-
-function Ensure-Dependencies {
-  if (Test-DependenciesReady) {
-    Write-Host "Third-party dependencies: ready"
-    return
-  }
-
-  Write-Host "Third-party dependencies: missing or incomplete, installing..."
-  Invoke-RepoScript "install-deps.ps1"
-}
-
-function Pull-DvcTarget {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$Target
-  )
-
-  Invoke-OssWithoutProxy {
-    & $Python (Join-Path $PSScriptRoot "sync-dvc-cache.py") pull $Target
-    & $Python -m dvc checkout $Target
-  }
-}
-
-function Initialize-Game {
-  Push-Location $Root
+function Invoke-WebRequestDirect {
+  param([string]$Uri, [string]$OutFile, [hashtable]$Headers = @{})
+  $handler = New-Object System.Net.Http.HttpClientHandler
+  $handler.UseProxy = $false
+  $client = New-Object System.Net.Http.HttpClient($handler)
+  $client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
   try {
-    Ensure-OssCredentials
-    Ensure-LocalPython
-    Ensure-Dependencies
-    Write-Host "Runtime resources: syncing..."
-    Pull-DvcTarget "public/resources/runtime.dvc"
-    Write-Host "Game initialization complete."
-  }
-  finally {
-    Pop-Location
-  }
-}
-
-function Initialize-Editor {
-  Push-Location $Root
-  try {
-    Ensure-OssCredentials
-    Ensure-LocalPython
-    Ensure-Dependencies
-    Write-Host "Runtime resources: syncing..."
-    Pull-DvcTarget "public/resources/runtime.dvc"
-    Write-Host "Editor project resources: syncing..."
-    Pull-DvcTarget "resources/editor_projects.dvc"
-    Write-Host "Editor initialization complete."
-  }
-  finally {
-    Pop-Location
-  }
-}
-
-function Remove-RepoPath {
-  param([Parameter(Mandatory = $true)][string]$RelativePath)
-
-  $Target = Join-Path $Root $RelativePath
-  if (-not (Test-Path $Target)) {
-    return
-  }
-
-  $ResolvedRoot = [System.IO.Path]::GetFullPath($Root)
-  $ResolvedTarget = [System.IO.Path]::GetFullPath($Target)
-  if (-not $ResolvedTarget.StartsWith($ResolvedRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to clean path outside repo: $ResolvedTarget"
-  }
-
-  Write-Host "Removing $RelativePath"
-  Remove-Item -LiteralPath $ResolvedTarget -Recurse -Force
-}
-
-function Clean-LocalEnvironment {
-  Push-Location $Root
-  try {
-    Write-Host "Clean removes local fetched resources, dependency installs, build output, and DVC cache."
-    Write-Host "It does not remove Git-tracked code or your saved OSS credentials."
-    $Confirm = Read-Host "Type CLEAN to continue"
-    if ($Confirm -ne "CLEAN") {
-      Write-Host "Clean cancelled."
-      return
+    $request = New-Object System.Net.Http.HttpRequestMessage @([System.Net.Http.HttpMethod]::Get, $Uri)
+    foreach ($key in @($Headers.Keys)) { [void]$request.Headers.TryAddWithoutValidation($key, [string]$Headers[$key]) }
+    $response = $client.SendAsync($request).GetAwaiter().GetResult()
+    try {
+      if (-not $response.IsSuccessStatusCode) { throw ('HTTP ' + [int]$response.StatusCode + ' ' + $response.ReasonPhrase + ': GET ' + $Uri) }
+      $parent = Split-Path -LiteralPath $OutFile -Parent
+      if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+      $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+      try {
+        $fs = New-Object System.IO.FileStream($OutFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try { $stream.CopyTo($fs) } finally { $fs.Dispose() }
+      }
+      finally { $stream.Dispose() }
     }
+    finally { $response.Dispose() }
+  }
+  finally { $client.Dispose() }
+}
 
-    $Paths = @(
-      ".tools",
-      "node_modules",
-      ".cache",
-      ".dvc\cache",
-      "dist",
-      "public\resources\runtime",
-      "resources\editor_projects",
-      "resources\vendor_archives"
-    )
+function Invoke-OssSignedObjectGet {
+  param([string]$UriString, [string]$OutFile, [string]$AccessKeyId, [string]$AccessKeySecret)
+  $uri = [Uri]$UriString
+  $hostName = $uri.Host
+  $m = [regex]::Match($hostName, '^(?<bucket>[^.]+)\.(?<suffix>oss-.+\.aliyuncs\.com)$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if ($m.Success) {
+    $bucket = $m.Groups["bucket"].Value
+    $objectKey = [Uri]::UnescapeDataString($uri.AbsolutePath.TrimStart("/"))
+  }
+  else {
+    $segments = @($uri.AbsolutePath.Trim("/").Split([char[]]'/', [StringSplitOptions]::RemoveEmptyEntries))
+    if ($segments.Count -lt 2) { throw "Cannot derive bucket/object key from OSS URL: $UriString" }
+    $bucket = $segments[0]
+    $objectKey = [Uri]::UnescapeDataString(($segments[1..($segments.Count - 1)] -join "/"))
+  }
+  $canonicalResource = "/$bucket/$objectKey"
+  $dateGmt = (Get-Date).ToUniversalTime().ToString("ddd, dd MMM yyyy HH:mm:ss \G\M\T", [Globalization.CultureInfo]::InvariantCulture)
+  $stringToSign = "GET`n`n`n$dateGmt`n$canonicalResource"
+  $hmac = New-Object System.Security.Cryptography.HMACSHA1
+  try {
+    $hmac.Key = [Text.Encoding]::UTF8.GetBytes($AccessKeySecret)
+    $sig = [Convert]::ToBase64String($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($stringToSign)))
+  }
+  finally { $hmac.Dispose() }
+  Invoke-WebRequestDirect -Uri $UriString -OutFile $OutFile -Headers @{ "Date" = $dateGmt; "Authorization" = "OSS ${AccessKeyId}:$sig" }
+}
 
-    foreach ($Path in $Paths) {
-      Remove-RepoPath $Path
+function Ensure-LocalPython {
+  if (Test-Path $PythonExe) { return }
+  Write-Host "Local Python runtime: missing, downloading bootstrap runtime..."
+  New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
+
+  $vendorArchive = Join-Path $Root "resources\vendor_archives\$ArchiveName"
+  if (Test-Path $vendorArchive) {
+    $archive = $vendorArchive
+  }
+  else {
+    $baseUrl = Get-BootstrapBaseUrl
+    if (-not $baseUrl) { throw "Missing bootstrap OSS URL. Set GAMEDRAFT_BOOTSTRAP_BASE_URL or provide config/bootstrap-oss.json." }
+    $cacheDir = Join-Path $Root ".cache\bootstrap"
+    New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    $archive = Join-Path $cacheDir $ArchiveName
+    $url = $baseUrl.TrimEnd("/") + "/" + $ArchiveName
+    $kid = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_ID", "Process")
+    $ks = [Environment]::GetEnvironmentVariable("OSS_ACCESS_KEY_SECRET", "Process")
+    if ($kid -and $ks) {
+      Write-Host ("Downloading DVC portable runtime - OSS signed GET - from " + $url)
+      Invoke-OssSignedObjectGet -UriString $url -OutFile $archive -AccessKeyId $kid -AccessKeySecret $ks
     }
-
-    Write-Host "Clean complete."
+    else {
+      Write-Host ("Downloading DVC portable runtime - anonymous GET - from " + $url)
+      Invoke-WebRequestDirect -Uri $url -OutFile $archive
+    }
   }
-  finally {
-    Pop-Location
-  }
+
+  Write-Host "Extracting $ArchiveName"
+  Expand-Archive -LiteralPath $archive -DestinationPath $ToolsDir -Force
+  if (-not (Test-Path $PythonExe)) { throw "DVC portable runtime did not extract to .tools/Python311." }
 }
 
-function Show-Menu {
-  Write-Host ""
-  Write-Host "GameDraft Bootstrap"
-  Write-Host "1. Initialize game"
-  Write-Host "2. Initialize editor"
-  Write-Host "3. Clean local environment"
-  Write-Host "0. Exit"
-  Write-Host ""
-}
+Mask-ProxyEnv
+Ensure-OssCredentials
+Ensure-LocalPython
 
-function Invoke-Action {
-  param([Parameter(Mandatory = $true)][string]$SelectedAction)
-
-  switch ($SelectedAction) {
-    "game" { Initialize-Game }
-    "editor" { Initialize-Editor }
-    "clean" { Clean-LocalEnvironment }
-    default { throw "Unknown bootstrap action: $SelectedAction" }
-  }
-}
-
-if ($Action) {
-  Invoke-Action $Action
-  exit 0
-}
-
-while ($true) {
-  Show-Menu
-  $Choice = Read-Host "Select"
-  switch ($Choice) {
-    "1" { Initialize-Game }
-    "2" { Initialize-Editor }
-    "3" { Clean-LocalEnvironment }
-    "0" { exit 0 }
-    default { Write-Host "Unknown selection." }
-  }
-}
+& $PythonExe -m tools.dev bootstrap $Action
+exit $LASTEXITCODE
