@@ -147,18 +147,10 @@
     {
       "id": "T_出庙",
       "type": "transition",
-      "label": "天亮了 · 出庙",
+      "label": "出庙",
       "x": 700.0,
       "y": 720.0,
       "interactionRange": 56.0,
-      "conditions": [
-        {
-          "narrative": "wrap_守夜",
-          "state": "done",
-          "reached": true
-        }
-      ],
-      "conditionHidesEntity": true,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_event"

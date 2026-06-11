@@ -126,6 +126,18 @@
         "targetScene": "河边",
         "targetSpawnPoint": "从城里"
       }
+    },
+    {
+      "id": "T_出院回街",
+      "type": "transition",
+      "label": "出院门（回街上）",
+      "x": 200.0,
+      "y": 700.0,
+      "interactionRange": 56.0,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_event"
+      }
     }
   ],
   "npcs": [

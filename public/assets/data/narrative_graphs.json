@@ -2095,8 +2095,8 @@
                 "label": "未接活",
                 "meta": {
                   "editor": {
-                    "x": 30,
-                    "y": 20
+                    "x": 24,
+                    "y": 24
                   }
                 }
               },
@@ -2105,8 +2105,8 @@
                 "label": "接了活（定钱到手）",
                 "meta": {
                   "editor": {
-                    "x": 230,
-                    "y": 20
+                    "x": 374,
+                    "y": 24
                   }
                 },
                 "onEnterActions": [
@@ -2123,8 +2123,8 @@
                 "label": "进了灵堂（红嫁衣压场）",
                 "meta": {
                   "editor": {
-                    "x": 430,
-                    "y": 20
+                    "x": 724,
+                    "y": 24
                   }
                 },
                 "onEnterActions": [
@@ -2141,8 +2141,8 @@
                 "label": "第一次发力·力被吞",
                 "meta": {
                   "editor": {
-                    "x": 630,
-                    "y": 20
+                    "x": 1074,
+                    "y": 24
                   }
                 },
                 "onEnterActions": [
@@ -2174,8 +2174,8 @@
                 "label": "第二次倒下·打照面（吓点）",
                 "meta": {
                   "editor": {
-                    "x": 830,
-                    "y": 20
+                    "x": 1424,
+                    "y": 24
                   }
                 },
                 "onEnterActions": [
@@ -2241,8 +2241,8 @@
                 "label": "香粉味掠过（Axiu·极轻）",
                 "meta": {
                   "editor": {
-                    "x": 1030,
-                    "y": 20
+                    "x": 1774,
+                    "y": 24
                   }
                 },
                 "onEnterActions": [
@@ -2259,8 +2259,8 @@
                 "label": "夺门而逃（beat完成）",
                 "meta": {
                   "editor": {
-                    "x": 1230,
-                    "y": 20
+                    "x": 2124,
+                    "y": 24
                   }
                 },
                 "broadcastOnEnter": true

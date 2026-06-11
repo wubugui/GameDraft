@@ -118,14 +118,6 @@
       "x": 160.0,
       "y": 700.0,
       "interactionRange": 64.0,
-      "conditions": [
-        {
-          "narrative": "flow_xungou_main",
-          "state": "s09_songhuo",
-          "reached": true
-        }
-      ],
-      "conditionHidesEntity": true,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_event"

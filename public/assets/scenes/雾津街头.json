@@ -166,6 +166,141 @@
       "data": {
         "text": "街坊们凑在屋檐底下躲雨，三句话不离怪事：谁家夜里听见瓦响，哪条巷子不让走夜路。雾津就是这样，越潮的天，闲话越多。"
       }
+    },
+    {
+      "id": "T_去庄家灵堂",
+      "type": "transition",
+      "label": "去庄家（灵堂）",
+      "x": 1010.0,
+      "y": 250.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_背尸",
+          "state": "hired",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_背尸",
+            "state": "fled",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "庄家灵堂",
+        "targetSpawnPoint": "entry"
+      }
+    },
+    {
+      "id": "T_去婆子家院",
+      "type": "transition",
+      "label": "去婆子家小院",
+      "x": 320.0,
+      "y": 220.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_婆子家",
+          "state": "hired",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_婆子家",
+            "state": "paid",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "婆子家院",
+        "targetSpawnPoint": "entry"
+      }
+    },
+    {
+      "id": "T_去土地庙",
+      "type": "transition",
+      "label": "去土地庙（枯井）",
+      "x": 1320.0,
+      "y": 480.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_枯井",
+          "state": "hired",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_枯井",
+            "state": "fled",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "枯井土地庙",
+        "targetSpawnPoint": "entry"
+      }
+    },
+    {
+      "id": "T_去阎王岭",
+      "type": "transition",
+      "label": "上阎王岭（送货）",
+      "x": 1320.0,
+      "y": 230.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "bundle_taken",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_送货",
+            "state": "returned",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "阎王岭山口",
+        "targetSpawnPoint": "entry"
+      }
+    },
+    {
+      "id": "T_去义庄",
+      "type": "transition",
+      "label": "去义庄",
+      "x": 1150.0,
+      "y": 650.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "any": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s09_songhuo"
+            },
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s10_yizhuang"
+            }
+          ]
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "义庄",
+        "targetSpawnPoint": "entry"
+      }
     }
   ],
   "npcs": [

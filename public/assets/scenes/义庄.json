@@ -237,14 +237,6 @@
       "x": 660.0,
       "y": 720.0,
       "interactionRange": 56.0,
-      "conditions": [
-        {
-          "narrative": "flow_xungou_main",
-          "state": "s10_yizhuang",
-          "reached": true
-        }
-      ],
-      "conditionHidesEntity": true,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_event"

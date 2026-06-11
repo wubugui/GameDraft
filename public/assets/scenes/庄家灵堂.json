@@ -121,14 +121,6 @@
       "x": 700.0,
       "y": 720.0,
       "interactionRange": 56.0,
-      "conditions": [
-        {
-          "narrative": "flow_xungou_main",
-          "state": "s02_beishi",
-          "reached": true
-        }
-      ],
-      "conditionHidesEntity": true,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_event"
