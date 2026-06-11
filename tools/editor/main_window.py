@@ -91,6 +91,22 @@ def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
         nvm_link = os.environ.get("NVM_SYMLINK", "")
         if nvm_link and os.path.isdir(nvm_link):
             prefixes.insert(0, nvm_link)
+    else:
+        # macOS/Linux: GUI launches (Finder/Dock) often start with a minimal
+        # PATH that omits Homebrew / volta / nvm node installs.
+        home = os.path.expanduser("~")
+        for d in (
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            os.path.join(home, ".volta", "bin"),
+        ):
+            if os.path.isdir(d):
+                prefixes.append(d)
+        nvm_dir = os.environ.get("NVM_DIR", "")
+        if nvm_dir:
+            nvm_current = os.path.join(nvm_dir, "current", "bin")
+            if os.path.isdir(nvm_current):
+                prefixes.insert(0, nvm_current)
 
     seen: set[str] = set()
     merged: list[str] = []
@@ -849,7 +865,10 @@ class MainWindow(QMainWindow):
         proc.finished.connect(self._on_game_proc_finished)
         self._game_proc = proc
         self._pending_launch_params = launch_params
-        self._game_proc.start("cmd.exe", ["/c", "npm run dev"])
+        if sys.platform == "win32":
+            self._game_proc.start("cmd.exe", ["/c", "npm run dev"])
+        else:
+            self._game_proc.start("npm", ["run", "dev"])
         self._status.showMessage(
             "Starting Vite dev server…" if open_when_ready else "Prewarming Vite dev server…",
             5000,
@@ -1103,10 +1122,13 @@ class MainWindow(QMainWindow):
         self._game_open_when_ready = False
         self._pending_launch_params = None
         self._close_game_play_window()
-        cmd_path = self._model.project_path / "stop-game.cmd"
-        if cmd_path.exists():
-            subprocess.run(["cmd", "/c", str(cmd_path), "nopause"],
-                           cwd=str(self._model.project_path))
+        # Free the Vite dev-server ports cross-platform (replaces stop-game.cmd).
+        try:
+            from tools.dev.game import stop_dev_ports
+
+            stop_dev_ports()
+        except Exception:
+            pass
         proc = self._game_proc
         if proc is not None:
             try:

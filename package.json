@@ -7,9 +7,9 @@
     "build": "tsc && vite build && npm run build:narrative-editor",
     "build:narrative-editor": "vite build --config tools/narrative_editor_web/vite.config.ts",
     "dev:narrative-editor": "vite --config tools/narrative_editor_web/vite.config.ts",
-    "planner:gui": ".\\.tools\\Python311\\python.exe -m tools.production_workbench .",
+    "planner:gui": "node scripts/pytool.cjs production_workbench .",
     "preview": "vite preview",
-    "filter-tool": ".\\.tools\\Python311\\python.exe -m tools.filter_tool",
+    "filter-tool": "node scripts/pytool.cjs filter_tool",
     "test": "vitest run"
   },
   "type": "module",
