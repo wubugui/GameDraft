@@ -60,17 +60,23 @@ def _unix_node_candidate_dirs() -> list[Path]:
 
 
 def node_dir() -> Path | None:
-    """Directory containing node/npm, or None when not found."""
+    """Directory containing node/npm, or None when not found.
+
+    Resolve via ``node`` (a real binary) and keep its directory as-is — do not
+    follow symlinks, or e.g. ``/usr/bin/npm`` would resolve into npm's
+    package dir, which has no node sibling and breaks ``npm``.
+    """
     if sys.platform == "win32":
         portable = repo_root() / ".tools" / "node-portable" / WIN_PORTABLE_NODE_DIRNAME
         if (portable / "npm.cmd").is_file():
             return portable
-    npm = shutil.which("npm")
-    if npm:
-        return Path(npm).resolve().parent
+    for tool in ("node", "npm"):
+        found = shutil.which(tool)
+        if found:
+            return Path(found).parent
     if sys.platform != "win32":
         for d in _unix_node_candidate_dirs():
-            if (d / "npm").is_file():
+            if (d / "node").is_file() or (d / "npm").is_file():
                 return d
     return None
 
