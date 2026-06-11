@@ -5,6 +5,8 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 *.ps1 text eol=crlf
+# Unix shell 脚本：工作区保持 LF（即使在 Windows 检出）
+*.sh text eol=lf
 # 二进制：禁止按文本做换行归一
 *.7z binary
 *.aif binary
