@@ -50,8 +50,8 @@
       ],
       "conditions": [
         {
-          "narrative": "wrap_义庄进门",
-          "state": "initial"
+          "narrative": "scenario_义庄镇尸",
+          "state": "not_entered"
         }
       ],
       "onEnter": [
@@ -112,8 +112,9 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "wrap_义庄进门",
-          "state": "done"
+          "narrative": "scenario_义庄镇尸",
+          "state": "entered",
+          "reached": true
         },
         {
           "narrative": "wrap_镇尸_撒米",
@@ -140,8 +141,9 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "wrap_义庄进门",
-          "state": "done"
+          "narrative": "scenario_义庄镇尸",
+          "state": "entered",
+          "reached": true
         },
         {
           "narrative": "wrap_镇尸_墨斗",
@@ -168,8 +170,9 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "wrap_义庄进门",
-          "state": "done"
+          "narrative": "scenario_义庄镇尸",
+          "state": "entered",
+          "reached": true
         },
         {
           "narrative": "wrap_镇尸_石子",
@@ -196,8 +199,9 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "wrap_义庄进门",
-          "state": "done"
+          "narrative": "scenario_义庄镇尸",
+          "state": "entered",
+          "reached": true
         },
         {
           "narrative": "wrap_镇尸_剪子",

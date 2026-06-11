@@ -107,10 +107,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "addArchiveEntry",
+          "type": "emitNarrativeSignal",
           "params": {
-            "bookType": "character",
-            "entryId": "storyteller_zhang"
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_说书人",
+            "signal": "tingshu_words"
           }
         }
       ],
@@ -238,7 +239,7 @@
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_说书人",
-            "signal": "xg_tingshu_completed"
+            "signal": "tingshu_kicked"
           }
         }
       ],

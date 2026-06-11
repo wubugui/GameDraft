@@ -51,18 +51,11 @@
         "resetToRatio": 0.3,
         "actions": [
           {
-            "type": "playScriptedDialogue",
+            "type": "emitNarrativeSignal",
             "params": {
-              "lines": [
-                {
-                  "speaker": "林子里",
-                  "text": "二狗——"
-                },
-                {
-                  "speaker": "",
-                  "text": "声音从左边黑林子里飘出来，又像在右边，又像在背后。慢悠悠的，像个熟人。"
-                }
-              ]
+              "sourceType": "minigame",
+              "sourceId": "forest_name_call",
+              "signal": "songhuo_call1"
             }
           }
         ]
@@ -72,24 +65,11 @@
         "resetToRatio": 0.62,
         "actions": [
           {
-            "type": "playSfx",
+            "type": "emitNarrativeSignal",
             "params": {
-              "id": "sfx_abnormal_breath"
-            }
-          },
-          {
-            "type": "playScriptedDialogue",
-            "params": {
-              "lines": [
-                {
-                  "speaker": "林子里",
-                  "text": "二——狗——"
-                },
-                {
-                  "speaker": "",
-                  "text": "那声音凑近了些，像是贴着后颈在打量他、认不准他是个什么。"
-                }
-              ]
+              "sourceType": "minigame",
+              "sourceId": "forest_name_call",
+              "signal": "songhuo_call2"
             }
           }
         ]
@@ -97,26 +77,11 @@
     ],
     "onComplete": [
       {
-        "type": "playSfx",
+        "type": "emitNarrativeSignal",
         "params": {
-          "id": "sfx_night_bird_startle"
-        }
-      },
-      {
-        "type": "playScriptedDialogue",
-        "params": {
-          "lines": [
-            {
-              "speaker": "",
-              "text": "喊声跟了他一截，渐渐地，散了。"
-            }
-          ]
-        }
-      },
-      {
-        "type": "playSignalCue",
-        "params": {
-          "id": "axiu_hint"
+          "sourceType": "minigame",
+          "sourceId": "forest_name_call",
+          "signal": "songhuo_survived"
         }
       }
     ]

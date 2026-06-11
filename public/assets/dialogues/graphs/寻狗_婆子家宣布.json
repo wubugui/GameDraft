@@ -21,7 +21,7 @@
         "kind": "player"
       },
       "text": "（板着脸，声音压得又沉又慢）「行了。——压住了。」",
-      "next": "n3"
+      "next": "n_cue"
     },
     "n3": {
       "type": "line",
@@ -36,9 +36,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "playSignalCue",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "axiu_faint"
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_performed"
           }
         }
       ],
@@ -66,17 +68,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "giveCurrency",
-          "params": {
-            "amount": 30
-          }
-        },
-        {
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_婆子家宣布",
-            "signal": "xg_pozi_completed"
+            "signal": "pozi_paid"
           }
         }
       ],

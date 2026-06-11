@@ -117,8 +117,8 @@
           "state": "s11_zhaomu"
         },
         {
-          "narrative": "wrap_行头",
-          "state": "bought",
+          "narrative": "scenario_向导",
+          "state": "outfitted",
           "reached": true
         }
       ],
@@ -141,8 +141,8 @@
           "state": "s07_kujing"
         },
         {
-          "narrative": "wrap_向导告示",
-          "state": "seen"
+          "narrative": "scenario_向导",
+          "state": "noticed"
         }
       ],
       "conditionHidesEntity": true,

@@ -50,8 +50,8 @@
       ],
       "conditions": [
         {
-          "narrative": "wrap_院外扫脸色",
-          "state": "initial"
+          "narrative": "scenario_婆子家",
+          "state": "hired"
         }
       ],
       "onEnter": [
@@ -98,19 +98,8 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "wrap_读人_婆子",
-          "state": "read"
-        },
-        {
-          "narrative": "wrap_读人_儿子",
-          "state": "read"
-        },
-        {
-          "not": {
-            "narrative": "flow_xungou_main",
-            "state": "s04_pozi",
-            "reached": true
-          }
+          "narrative": "scenario_婆子家",
+          "state": "read_all"
         }
       ],
       "conditionHidesEntity": true,

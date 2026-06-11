@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "narrative": "flow_xungou_main",
-              "state": "s05_hebian",
+              "narrative": "scenario_河边",
+              "state": "fled",
               "reached": true
             }
           ],
@@ -52,19 +52,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "playSfx",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "sfx_paper_hand_rustle"
-          }
-        },
-        {
-          "type": "showOverlayImage",
-          "params": {
-            "id": "river_ghost_hand",
-            "image": "river_ghost_hand",
-            "xPercent": 50,
-            "yPercent": 46,
-            "widthPercent": 58
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_河边递纸",
+            "signal": "hebian_handed"
           }
         }
       ],
@@ -116,15 +108,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "hideOverlayImage",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "river_ghost_hand"
-          }
-        },
-        {
-          "type": "waitMs",
-          "params": {
-            "durationMs": 600
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_河边递纸",
+            "signal": "hebian_took"
           }
         }
       ],
@@ -150,9 +138,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "playSfx",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "sfx_night_bird_startle"
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_河边递纸",
+            "signal": "hebian_realized"
           }
         }
       ],
@@ -165,18 +155,6 @@
         "name": "旁白"
       },
       "text": "猛回头——没人。雾里空荡荡，远处水声哗哗。手里，还攥着剩下的纸钱。",
-      "next": "n_cue"
-    },
-    "n_cue": {
-      "type": "runActions",
-      "actions": [
-        {
-          "type": "playSignalCue",
-          "params": {
-            "id": "axiu_faint"
-          }
-        }
-      ],
       "next": "n10"
     },
     "n10": {
@@ -192,18 +170,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "giveItem",
-          "params": {
-            "id": "joss_paper",
-            "count": 5
-          }
-        },
-        {
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_河边递纸",
-            "signal": "xg_hebian_completed"
+            "signal": "hebian_fled"
           }
         }
       ],

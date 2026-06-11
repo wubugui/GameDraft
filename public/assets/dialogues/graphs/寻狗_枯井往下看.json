@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "narrative": "flow_xungou_main",
-              "state": "s07_kujing",
+              "narrative": "scenario_枯井",
+              "state": "fled",
               "reached": true
             }
           ],
@@ -44,9 +44,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "playSfx",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "sfx_well_cry_stop"
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_枯井往下看",
+            "signal": "kujing_looked"
           }
         }
       ],
@@ -132,9 +134,11 @@
           }
         },
         {
-          "type": "playSignalCue",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "axiu_hint"
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_枯井往下看",
+            "signal": "kujing_stared"
           }
         }
       ],
@@ -174,7 +178,7 @@
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_枯井往下看",
-            "signal": "xg_kujing_completed"
+            "signal": "kujing_fled"
           }
         },
         {

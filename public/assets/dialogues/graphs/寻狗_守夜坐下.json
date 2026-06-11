@@ -11,7 +11,11 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "wrap_守夜", "state": "done", "reached": true }
+            {
+              "narrative": "wrap_守夜",
+              "state": "done",
+              "reached": true
+            }
           ],
           "next": "after_1"
         }
@@ -20,44 +24,67 @@
     },
     "after_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "坐过了。后半夜冷，话也说完了。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "他在供桌边的草垫上坐下来。庙里很静，静得能听见灯芯吃油的细响。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（无名无姓，停在这儿。要不是庙里出钱，连口薄棺都没有。）",
       "next": "n3"
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（俺从小没爹没娘，要是哪天横死在外头……估摸也就这待遇。）——都是可怜人。",
       "next": "n_cue"
     },
     "n_cue": {
       "type": "runActions",
       "actions": [
-        { "type": "playSignalCue", "params": { "id": "axiu_lamp_steady" } }
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_守夜坐下",
+            "signal": "shouye_lamp_steady"
+          }
+        }
       ],
       "next": "n4"
     },
     "n4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "说不上来从哪一刻起，灯苗不晃了。火光稳稳的，把灵前照得很安生——一缕似有似无的香粉味，陪他坐了后半夜。",
       "next": "n5"
     },
     "n5": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "那半夜，什么都没出。天蒙蒙亮时，他给那具无名女尸上了三炷香——自掏的香火钱。",
       "next": "n_sig"
     },
@@ -71,14 +98,16 @@
             "sourceId": "寻狗_守夜坐下",
             "signal": "shouye_sit_done"
           }
-        },
-        { "type": "giveCurrency", "params": { "amount": 20 } }
+        }
       ],
       "next": "n6"
     },
     "n6": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "守夜钱二十文，庙祝一文没少给。出庙的时候，他回头看了一眼那盏灯——还亮着。",
       "next": "end1"
     },

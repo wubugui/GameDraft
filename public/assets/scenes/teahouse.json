@@ -118,8 +118,8 @@
           "state": "s07_kujing"
         },
         {
-          "narrative": "wrap_向导告示",
-          "state": "unseen"
+          "narrative": "scenario_向导",
+          "state": "not_started"
         }
       ],
       "conditionHidesEntity": true,

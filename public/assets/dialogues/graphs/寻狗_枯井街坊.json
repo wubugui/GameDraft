@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "narrative": "flow_xungou_main",
-              "state": "s07_kujing",
+              "narrative": "scenario_枯井",
+              "state": "fled",
               "reached": true
             }
           ],
@@ -81,9 +81,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "giveCurrency",
+          "type": "emitNarrativeSignal",
           "params": {
-            "amount": 15
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_枯井街坊",
+            "signal": "kujing_hired"
           }
         }
       ],

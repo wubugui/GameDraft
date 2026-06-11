@@ -11,7 +11,11 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "flow_xungou_main", "state": "s09_songhuo", "reached": true }
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s09_songhuo",
+              "reached": true
+            }
           ],
           "next": "done_1"
         }
@@ -20,37 +24,64 @@
     },
     "done_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "不看了。那条路看人的时候，比人看它的时候多。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "棚子后头，那条进山的路扎进雾里，看不到第十步。两边的树静得不对——鸟都不落。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（过了岭，就是神仙顶……李天狗当年，走的就是这条道？）",
       "next": "n3"
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "盯着盯着，一股寒气顺着脊梁骨往上爬。他打了个寒颤，啐了一口，掉头就走——",
       "next": "n_night"
     },
     "n_night": {
       "type": "runActions",
       "actions": [
-        { "type": "fadeWorldToBlack", "params": { "durationMs": 900 } },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "songhuo_gazed"
+          }
+        },
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 900
+          }
+        },
         {
           "type": "playScriptedDialogue",
           "params": {
             "lines": [
-              { "speaker": "", "text": "下山一半，天彻底黑透。林子里的虫鸣，一声一声稀下去——然后，没了。" }
+              {
+                "speaker": "",
+                "text": "下山一半，天彻底黑透。林子里的虫鸣，一声一声稀下去——然后，没了。"
+              }
             ]
           }
         }
@@ -60,30 +91,35 @@
     "n_hold": {
       "type": "runActions",
       "actions": [
-        { "type": "fadeWorldFromBlack", "params": { "durationMs": 600 } },
-        { "type": "startPressureHold", "params": { "id": "forest_name_call" } }
-      ],
-      "next": "n_rule"
-    },
-    "n_rule": {
-      "type": "runActions",
-      "actions": [
         {
-          "type": "grantRuleLayer",
-          "params": { "ruleId": "rule_no_answer_name", "layer": "li" }
+          "type": "fadeWorldFromBlack",
+          "params": {
+            "durationMs": 600
+          }
+        },
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "forest_name_call"
+          }
         }
       ],
       "next": "n4"
     },
     "n4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "下到山脚，回头望——林子黑沉沉的，什么都没有。脚帮那句闲话，他算是亲身验过了：山里喊名，千万别应。",
       "next": "n5"
     },
     "n5": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（它凑近看了俺一眼……认不准俺是个什么。——为什么认不准？）",
       "next": "n_sig"
     },
@@ -95,7 +131,7 @@
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_看进山路",
-            "signal": "xg_songhuo_completed"
+            "signal": "songhuo_returned"
           }
         },
         {
@@ -109,7 +145,10 @@
           "type": "playScriptedDialogue",
           "params": {
             "lines": [
-              { "speaker": "", "text": "回到城里，他给自己灌了二两烧酒。酒入喉是热的，后脖颈还是凉的。" }
+              {
+                "speaker": "",
+                "text": "回到城里，他给自己灌了二两烧酒。酒入喉是热的，后脖颈还是凉的。"
+              }
             ]
           }
         }

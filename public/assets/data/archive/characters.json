@@ -278,8 +278,8 @@
         "text": "庄里停着两具尸：一具城里老爷子寄停等吉日，一具外乡运来等认领。守夜的打了个盹，醒来就吓尿跑了。",
         "conditions": [
           {
-            "narrative": "wrap_义庄进门",
-            "state": "done",
+            "narrative": "scenario_义庄镇尸",
+            "state": "entered",
             "reached": true
           }
         ]
@@ -287,8 +287,8 @@
     ],
     "unlockConditions": [
       {
-        "narrative": "wrap_义庄进门",
-        "state": "done",
+        "narrative": "scenario_义庄镇尸",
+        "state": "entered",
         "reached": true
       }
     ]

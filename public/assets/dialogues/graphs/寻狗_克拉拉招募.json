@@ -11,7 +11,11 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "flow_xungou_main", "state": "s11_zhaomu", "reached": true }
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s11_zhaomu",
+              "reached": true
+            }
           ],
           "next": "done_1"
         }
@@ -20,31 +24,43 @@
     },
     "done_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "明早，城门口。Guan 先生，不要迟到。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "庄门口不知何时站着克拉拉。她不进门，也不躲，就那么看完了全程——从他撒第一把米，到两具尸躺平。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "Guan 先生。婆子家的院子，码头的水，这里的……（她在本子上翻了一页）「僵尸」。三次。你都让东西安静下来了。",
       "next": "n3"
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "我们要进神仙顶。三十块大洋——这次是 real 的三十块，先付十块。你做我们的向导。",
       "next": "n4"
     },
     "n4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "她说「你压得住那些东西」。她看见的是他。她看不见的是——每一次替他把场面圆上的，到底是什么。",
       "next": "c1"
     },
@@ -70,32 +86,37 @@
     },
     "c_a": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "（数出十块大洋，拍进他手心）很好。生意人，我喜欢。",
       "next": "n_pay"
     },
     "c_b": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "（面无表情地看完整套动作，在本子上记了什么）……「表演性仪式」。好，贫道先生，定钱十块。",
       "next": "n_pay"
     },
     "c_c": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "（难得地笑了一下）这是今天听到的，最 honest 的一句话。定钱十块。",
       "next": "n_pay"
     },
     "n_pay": {
       "type": "runActions",
       "actions": [
-        { "type": "giveCurrency", "params": { "amount": 100 } },
         {
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_克拉拉招募",
-            "signal": "xg_zhaomu_completed"
+            "signal": "zhaomu_recruited"
           }
         }
       ],
@@ -103,13 +124,17 @@
     },
     "n5": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "明早，城门口汇合。需要置办什么，今晚办好。（她合上本子）晚安，Guan 先生。",
       "next": "n6"
     },
     "n6": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（十块大洋在手心里发烫。神仙顶……李天狗的神仙顶。这回，俺真要去了。）",
       "next": "end1"
     },

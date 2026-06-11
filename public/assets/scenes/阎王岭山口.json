@@ -51,8 +51,8 @@
       ],
       "conditions": [
         {
-          "narrative": "wrap_同行闲扯",
-          "state": "initial"
+          "narrative": "scenario_送货",
+          "state": "bundle_taken"
         }
       ],
       "onEnter": [
@@ -77,8 +77,16 @@
       "interactionRange": 80.0,
       "conditions": [
         {
-          "narrative": "wrap_送货",
-          "state": "bundle_taken"
+          "narrative": "scenario_送货",
+          "state": "bundle_taken",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_送货",
+            "state": "delivered",
+            "reached": true
+          }
         }
       ],
       "data": {
@@ -94,7 +102,7 @@
       "interactionRange": 90.0,
       "conditions": [
         {
-          "narrative": "wrap_送货",
+          "narrative": "scenario_送货",
           "state": "delivered",
           "reached": true
         }
@@ -136,8 +144,16 @@
       "initialFacing": "right",
       "conditions": [
         {
-          "narrative": "wrap_送货",
-          "state": "bundle_taken"
+          "narrative": "scenario_送货",
+          "state": "bundle_taken",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_送货",
+            "state": "delivered",
+            "reached": true
+          }
         }
       ],
       "conditionHidesEntity": true
@@ -153,8 +169,16 @@
       "initialFacing": "right",
       "conditions": [
         {
-          "narrative": "wrap_送货",
-          "state": "bundle_taken"
+          "narrative": "scenario_送货",
+          "state": "bundle_taken",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_送货",
+            "state": "delivered",
+            "reached": true
+          }
         }
       ],
       "conditionHidesEntity": true

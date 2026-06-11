@@ -51,8 +51,8 @@
       ],
       "conditions": [
         {
-          "narrative": "wrap_守夜进庙",
-          "state": "initial"
+          "narrative": "wrap_守夜",
+          "state": "not_started"
         }
       ],
       "onEnter": [

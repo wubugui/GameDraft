@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "narrative": "flow_xungou_main",
-              "state": "s06_laoxiang",
+              "narrative": "scenario_码头",
+              "state": "resolved",
               "reached": true
             }
           ],
@@ -327,13 +327,7 @@
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_码头选择",
-            "signal": "xg_laoxiang_completed"
-          }
-        },
-        {
-          "type": "startCutscene",
-          "params": {
-            "id": "寻狗_名声蒙太奇"
+            "signal": "dock_resolved"
           }
         }
       ],

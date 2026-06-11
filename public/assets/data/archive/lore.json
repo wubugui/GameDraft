@@ -94,8 +94,8 @@
       "category": "legend",
       "unlockConditions": [
         {
-          "narrative": "wrap_同行闲扯",
-          "state": "done",
+          "narrative": "scenario_送货",
+          "state": "on_road",
           "reached": true
         }
       ]
@@ -108,8 +108,8 @@
       "category": "affairs",
       "unlockConditions": [
         {
-          "narrative": "wrap_同行闲扯",
-          "state": "done",
+          "narrative": "scenario_送货",
+          "state": "on_road",
           "reached": true
         }
       ]
@@ -122,8 +122,8 @@
       "category": "folklore",
       "unlockConditions": [
         {
-          "narrative": "wrap_同行闲扯",
-          "state": "done",
+          "narrative": "scenario_送货",
+          "state": "on_road",
           "reached": true
         }
       ]

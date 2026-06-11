@@ -12,8 +12,8 @@
         {
           "conditions": [
             {
-              "narrative": "flow_xungou_main",
-              "state": "s03_chuiniu",
+              "narrative": "scenario_吹牛",
+              "state": "spread",
               "reached": true
             }
           ],
@@ -145,18 +145,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "grantRuleLayer",
-          "params": {
-            "ruleId": "rule_zhenshi_sizhang",
-            "layer": "xiang"
-          }
-        },
-        {
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_茶馆吹牛",
-            "signal": "xg_chuiniu_completed"
+            "signal": "chuiniu_seed"
           }
         }
       ],
@@ -169,10 +162,24 @@
         "name": "旁白"
       },
       "text": "茶馆是消息集散地。他这段书，明儿就会长出八个版本——其中两个版本里，他会画符。",
-      "next": "end1"
+      "next": "n_done"
     },
     "end1": {
       "type": "end"
+    },
+    "n_done": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_茶馆吹牛",
+            "signal": "chuiniu_spread"
+          }
+        }
+      ],
+      "next": "end1"
     }
   }
 }

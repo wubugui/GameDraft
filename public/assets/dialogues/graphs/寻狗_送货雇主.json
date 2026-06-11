@@ -11,7 +11,11 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "wrap_送货", "state": "bundle_taken", "reached": true }
+            {
+              "narrative": "scenario_送货",
+              "state": "bundle_taken",
+              "reached": true
+            }
           ],
           "next": "done_1"
         }
@@ -20,25 +24,34 @@
     },
     "done_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "……东西送到，钱货两清。我们，谁也不认得谁。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "雾里站着个面生的雇主，帽檐压得很低，半张脸埋在领子里。他不挑人——他等的就是「李天狗那一脉」。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "一个包袱。送到阎王岭山口的歇脚棚，放下就走。工钱四十文，货到付清。",
       "next": "n3"
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "（把包袱递过来，死沉）规矩只有一条——别问里头是啥。一问，工钱就没了。",
       "next": "c1"
     },
@@ -59,13 +72,19 @@
     },
     "c_jie": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "包袱上肩，棱角硌背，凉得不像今天的天气。雇主已经转身走进了雾里。",
       "next": "n_sig"
     },
     "c_dian": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "问题在嗓子眼里转了个弯，被四十文压了回去。包袱上肩，棱角硌背，凉得不像今天的天气。",
       "next": "n_sig"
     },

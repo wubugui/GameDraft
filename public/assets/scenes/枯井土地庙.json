@@ -51,8 +51,8 @@
       ],
       "conditions": [
         {
-          "narrative": "wrap_井边哭声",
-          "state": "initial"
+          "narrative": "scenario_枯井",
+          "state": "hired"
         }
       ],
       "onEnter": [

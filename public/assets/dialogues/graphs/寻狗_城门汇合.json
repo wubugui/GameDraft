@@ -11,7 +11,11 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "flow_xungou_main", "state": "s12_chufa", "reached": true }
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s12_chufa",
+              "reached": true
+            }
           ],
           "next": "done_1"
         }
@@ -20,19 +24,28 @@
     },
     "done_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "雾还压着那条路。故事到这儿——才刚开头。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "埃德加" },
+      "speaker": {
+        "kind": "literal",
+        "name": "埃德加"
+      },
       "text": "Ah，我们的向导先生！Look at you——这身行头，very 专业！（他冲克拉拉挑了挑眉）",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "克拉拉" },
+      "speaker": {
+        "kind": "literal",
+        "name": "克拉拉"
+      },
       "text": "（上下打量了一遍那身凑合的道袍，在本子上记了一笔，什么也没说）行李齐了。Guan 先生，可以出发了吗？",
       "next": "c1"
     },
@@ -53,7 +66,10 @@
     },
     "n3b": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "他回头望了一眼。茶馆的幌子、码头的桅杆、城隍庙的飞檐——都泡在晨雾里。",
       "next": "n3"
     },
@@ -65,10 +81,9 @@
           "params": {
             "sourceType": "dialogue",
             "sourceId": "寻狗_城门汇合",
-            "signal": "xg_chufa_completed"
+            "signal": "chufa_departed"
           }
-        },
-        { "type": "startCutscene", "params": { "id": "寻狗_终幕" } }
+        }
       ],
       "next": "end1"
     },
