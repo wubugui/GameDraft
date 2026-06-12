@@ -7,6 +7,37 @@ from pathlib import Path
 from tools.dev import deps, proxyenv
 
 
+def test_pip_places_proxy_before_command_and_progress_after_install(monkeypatch):
+    calls = []
+
+    def fake_call(argv, cwd=None, env=None):
+        calls.append(argv)
+        return 0
+
+    monkeypatch.setattr(deps.subprocess, "call", fake_call)
+
+    deps._pip(
+        ["install", "-r", "requirements.txt"],
+        "Installing test deps",
+        proxy_url="http://proxy:7",
+    )
+
+    assert calls == [
+        [
+            str(deps.project_python()),
+            "-m",
+            "pip",
+            "--proxy",
+            "http://proxy:7",
+            "install",
+            "--progress-bar",
+            "raw",
+            "-r",
+            "requirements.txt",
+        ]
+    ]
+
+
 def test_install_deps_uses_default_temporary_proxy(monkeypatch, tmp_path: Path):
     (tmp_path / "node_modules").mkdir()
     pip_envs = []

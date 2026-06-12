@@ -18,7 +18,9 @@ def _pip(
     env: dict[str, str] | None = None,
     proxy_url: str = "",
 ) -> None:
-    pip_args = ["--progress-bar", "raw", *args]
+    pip_args = list(args)
+    if pip_args and pip_args[0] == "install":
+        pip_args = ["install", "--progress-bar", "raw", *pip_args[1:]]
     if proxy_url:
         pip_args = ["--proxy", proxy_url, *pip_args]
     rc = subprocess.call(
@@ -67,8 +69,8 @@ def install_deps(
         install_env = env_with_node_path()
         proxy_url = proxyenv.git_proxy_url(npm_proxy or "")
         install_env.update(proxyenv.loopback_safe_proxy_env(proxy_url))
-        print(f"install-deps via temporary proxy {proxy_url}")
-        print(f"pip --proxy {proxy_url}")
+        print(f"install-deps via temporary proxy {proxy_url}", flush=True)
+        print(f"pip --proxy {proxy_url}", flush=True)
 
     _pip(
         ["install", "-c", DEPS_CONSTRAINTS, "dvc", "dvc-oss"],
