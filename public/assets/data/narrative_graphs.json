@@ -466,7 +466,7 @@
     {
       "id": "xungou_demo_main",
       "label": "寻狗记Demo · 主线",
-      "description": "分镜主线（13里程碑）+ 实体wrapper（区域/NPC/热区）+ beat scenario（镇尸/送货/守夜）。流程逻辑全部走信号与状态，无内容侧 setFlag。",
+      "description": "分镜主线（14里程碑，含①.5梦）+ 实体wrapper（区域/NPC/热区）+ beat scenario（镇尸/送货两段式/守夜/梦待死之礼）。流程逻辑全部走信号与状态，无内容侧 setFlag。",
       "mainGraph": {
         "id": "flow_xungou_main",
         "ownerType": "flow",
@@ -502,6 +502,17 @@
               "editor": {
                 "x": 544,
                 "y": 24
+              }
+            }
+          },
+          "s02b_meng": {
+            "id": "s02b_meng",
+            "label": "梦·待死之礼完成（①.5）",
+            "broadcastOnEnter": true,
+            "meta": {
+              "editor": {
+                "x": 544,
+                "y": 124
               }
             }
           },
@@ -630,8 +641,14 @@
             "signal": "state:scenario_背尸:fled"
           },
           {
-            "id": "t_s03_chuiniu",
+            "id": "t_s02b_meng",
             "from": "s02_beishi",
+            "to": "s02b_meng",
+            "signal": "state:scenario_梦待死之礼:woken"
+          },
+          {
+            "id": "t_s03_chuiniu",
+            "from": "s02b_meng",
             "to": "s03_chuiniu",
             "signal": "state:scenario_吹牛:spread"
           },
@@ -940,10 +957,20 @@
           "meta": {
             "emits": [
               "songhuo_gazed",
+              "hanming_ret_p3",
+              "hanming_ret_p2",
+              "hanming_ret_p1",
+              "hanming_awakening",
+              "hanming_climax",
+              "hanming_escaped",
               "songhuo_returned"
             ],
             "reads": [
-              "flow_xungou_main"
+              "flow_xungou_main",
+              "wrap_喊名_点二",
+              "wrap_喊名_点三",
+              "wrap_喊名_恍然",
+              "scenario_送货"
             ],
             "commands": []
           }
@@ -3175,7 +3202,7 @@
             "id": "scenario_送货",
             "ownerType": "scenario",
             "ownerId": "寻狗_送货",
-            "label": "阎王岭送货+夜路喊名（场景⑨）",
+            "label": "阎王岭送货+林中喊名·两段式（场景⑨）",
             "initialState": "not_taken",
             "entryState": "not_taken",
             "exitStates": [
@@ -3219,7 +3246,7 @@
                     "y": 20
                   }
                 },
-                "label": "山路·脚帮闲扯三故事",
+                "label": "山路·出发段（打趣+规矩）",
                 "onEnterActions": [
                   {
                     "type": "startCutscene",
@@ -3236,11 +3263,116 @@
                   }
                 ]
               },
+              "x1_called": {
+                "id": "x1_called",
+                "meta": {
+                  "editor": {
+                    "x": 660,
+                    "y": 20
+                  }
+                },
+                "label": "X点①·他自己顺口喊了（半脚本·保底账）",
+                "onEnterActions": [
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "第一个画X的地方到了。他朝大队喊了声「俺去撒泡尿」，几十步外，林子黑沉沉地立着。"
+                        },
+                        {
+                          "speaker": "{{player}}",
+                          "text": "（喊呗。几个铜板呢。）「李长生——」"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "林子里，极轻地，「应」了一下。像回声。又不太像。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "一阵凉。他愣了半息，又笑自己多心，紧走几步追上大队——没人注意他离开过。"
+                        },
+                        {
+                          "speaker": "脚夫甲",
+                          "text": "癫子周晓得吧？年年做一个梦：阎王岭里有座酒楼，往地底下螺旋着长。他在梦里挖了二十年——还在挖。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "队伍里有人哄笑。天，还亮着。"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "x2_resolved": {
+                "id": "x2_resolved",
+                "meta": {
+                  "editor": {
+                    "x": 870,
+                    "y": 20
+                  }
+                },
+                "label": "X点②·有了答案（闲扯·马屠户）",
+                "onEnterActions": [
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "天擦黑了。隔着一道坡，大队的人声远远的。"
+                        },
+                        {
+                          "speaker": "脚夫乙",
+                          "text": "马屠户追他婆娘进了岭，迷了三天。出来人就疯了，操刀砍自家儿子。铺子门板上的血道子，到今儿没人敢擦。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "这回，没人接茬。"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "x3_resolved": {
+                "id": "x3_resolved",
+                "meta": {
+                  "editor": {
+                    "x": 1080,
+                    "y": 20
+                  }
+                },
+                "label": "X点③·有了答案（闲扯断在半句）",
+                "onEnterActions": [
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "暮色压死了。大队走远了一截，他追得有点发慌。"
+                        },
+                        {
+                          "speaker": "脚夫甲",
+                          "text": "（压低嗓）再往里头，有个寨子。不种地，不赶集，靠「养东西」过活。——"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "话说到一半，他自己住了口。打那往后，没人再说话。到岭口，连贼嘴的脚夫也没了声。"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
               "delivered": {
                 "id": "delivered",
                 "meta": {
                   "editor": {
-                    "x": 660,
+                    "x": 1290,
                     "y": 20
                   }
                 },
@@ -3265,77 +3397,57 @@
                 "id": "gazed",
                 "meta": {
                   "editor": {
-                    "x": 870,
+                    "x": 1500,
                     "y": 20
                   }
                 },
                 "label": "看了眼进山的路（打寒颤）"
               },
-              "night_call1": {
-                "id": "night_call1",
+              "ret_p3": {
+                "id": "ret_p3",
                 "meta": {
                   "editor": {
-                    "x": 1080,
+                    "x": 1710,
                     "y": 20
                   }
                 },
-                "label": "入夜·第一声喊名",
-                "onEnterActions": [
-                  {
-                    "type": "playScriptedDialogue",
-                    "params": {
-                      "lines": [
-                        {
-                          "speaker": "林子里",
-                          "text": "二狗——"
-                        },
-                        {
-                          "speaker": "",
-                          "text": "声音从左边黑林子里飘出来，又像在右边，又像在背后。慢悠悠的，像个熟人。"
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "label": "回程·点③（强度=去程选择）"
               },
-              "night_call2": {
-                "id": "night_call2",
+              "ret_p2": {
+                "id": "ret_p2",
                 "meta": {
                   "editor": {
-                    "x": 1290,
+                    "x": 1920,
                     "y": 20
                   }
                 },
-                "label": "喊声凑近·贴着后颈打量",
-                "onEnterActions": [
-                  {
-                    "type": "playSfx",
-                    "params": {
-                      "id": "sfx_abnormal_breath"
-                    }
-                  },
-                  {
-                    "type": "playScriptedDialogue",
-                    "params": {
-                      "lines": [
-                        {
-                          "speaker": "林子里",
-                          "text": "二——狗——"
-                        },
-                        {
-                          "speaker": "",
-                          "text": "那声音凑近了些，像是贴着后颈在打量他、认不准他是个什么。"
-                        }
-                      ]
-                    }
+                "label": "回程·点②（强度=去程选择）"
+              },
+              "ret_p1": {
+                "id": "ret_p1",
+                "meta": {
+                  "editor": {
+                    "x": 2130,
+                    "y": 20
                   }
-                ]
+                },
+                "label": "回程·点①（保底声·人人必经）"
+              },
+              "climax": {
+                "id": "climax",
+                "meta": {
+                  "editor": {
+                    "x": 2340,
+                    "y": 20
+                  }
+                },
+                "label": "认不准·不容松手（必触发汇流点）"
               },
               "survived": {
                 "id": "survived",
                 "meta": {
                   "editor": {
-                    "x": 1500,
+                    "x": 2550,
                     "y": 20
                   }
                 },
@@ -3345,17 +3457,6 @@
                     "type": "playSfx",
                     "params": {
                       "id": "sfx_night_bird_startle"
-                    }
-                  },
-                  {
-                    "type": "playScriptedDialogue",
-                    "params": {
-                      "lines": [
-                        {
-                          "speaker": "",
-                          "text": "喊声跟了他一截，渐渐地，散了。"
-                        }
-                      ]
                     }
                   },
                   {
@@ -3373,11 +3474,31 @@
                   }
                 ]
               },
+              "answered": {
+                "id": "answered",
+                "meta": {
+                  "editor": {
+                    "x": 2550,
+                    "y": 140
+                  }
+                },
+                "label": "应了声（失败分支·不卡关）"
+              },
+              "escaped": {
+                "id": "escaped",
+                "meta": {
+                  "editor": {
+                    "x": 2760,
+                    "y": 140
+                  }
+                },
+                "label": "狂奔下山（逃出来了）"
+              },
               "returned": {
                 "id": "returned",
                 "meta": {
                   "editor": {
-                    "x": 1710,
+                    "x": 2760,
                     "y": 20
                   }
                 },
@@ -3399,8 +3520,26 @@
                 "signal": "songhuo_road_entered"
               },
               {
-                "id": "t_deliver",
+                "id": "t_x1",
                 "from": "on_road",
+                "to": "x1_called",
+                "signal": "hanming_x1_reached"
+              },
+              {
+                "id": "t_x2",
+                "from": "x1_called",
+                "to": "x2_resolved",
+                "signal": "hanming_x2_done"
+              },
+              {
+                "id": "t_x3",
+                "from": "x2_resolved",
+                "to": "x3_resolved",
+                "signal": "hanming_x3_done"
+              },
+              {
+                "id": "t_deliver",
+                "from": "x3_resolved",
                 "to": "delivered",
                 "signal": "songhuo_delivered"
               },
@@ -3411,26 +3550,56 @@
                 "signal": "songhuo_gazed"
               },
               {
-                "id": "t_call1",
+                "id": "t_ret3",
                 "from": "gazed",
-                "to": "night_call1",
-                "signal": "songhuo_call1"
+                "to": "ret_p3",
+                "signal": "hanming_ret_p3"
               },
               {
-                "id": "t_call2",
-                "from": "night_call1",
-                "to": "night_call2",
-                "signal": "songhuo_call2"
+                "id": "t_ret2",
+                "from": "ret_p3",
+                "to": "ret_p2",
+                "signal": "hanming_ret_p2"
+              },
+              {
+                "id": "t_ret1",
+                "from": "ret_p2",
+                "to": "ret_p1",
+                "signal": "hanming_ret_p1"
+              },
+              {
+                "id": "t_climax",
+                "from": "ret_p1",
+                "to": "climax",
+                "signal": "hanming_climax"
               },
               {
                 "id": "t_survive",
-                "from": "night_call2",
+                "from": "climax",
                 "to": "survived",
                 "signal": "songhuo_survived"
               },
               {
-                "id": "t_return",
+                "id": "t_answer",
+                "from": "climax",
+                "to": "answered",
+                "signal": "hanming_answered"
+              },
+              {
+                "id": "t_escape",
+                "from": "answered",
+                "to": "escaped",
+                "signal": "hanming_escaped"
+              },
+              {
+                "id": "t_return_held",
                 "from": "survived",
+                "to": "returned",
+                "signal": "songhuo_returned"
+              },
+              {
+                "id": "t_return_answered",
+                "from": "escaped",
                 "to": "returned",
                 "signal": "songhuo_returned"
               }
@@ -3563,6 +3732,469 @@
                 "signal": "chufa_departed"
               }
             ]
+          }
+        },
+        {
+          "id": "el_scenario_梦待死之礼",
+          "kind": "wrapperGraph",
+          "label": "梦·待死之礼（场景①.5 · 全游戏的眼）",
+          "ownerType": "scenario",
+          "ownerId": "寻狗_梦待死之礼",
+          "x": 544,
+          "y": 1140,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "scenario_梦待死之礼",
+            "ownerType": "scenario",
+            "ownerId": "寻狗_梦待死之礼",
+            "label": "梦·待死之礼（场景①.5）",
+            "initialState": "not_started",
+            "entryState": "not_started",
+            "exitStates": [
+              "woken"
+            ],
+            "states": {
+              "not_started": {
+                "id": "not_started",
+                "label": "未入梦",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "road": {
+                "id": "road",
+                "label": "躲藏昏睡·夜路（梦的入口已开）",
+                "meta": {
+                  "editor": {
+                    "x": 240,
+                    "y": 20
+                  }
+                }
+              },
+              "at_house": {
+                "id": "at_house",
+                "label": "门先开了（可算回来了）",
+                "meta": {
+                  "editor": {
+                    "x": 450,
+                    "y": 20
+                  }
+                }
+              },
+              "fed": {
+                "id": "fed",
+                "label": "吃了倒头饭（玩家亲手按的）",
+                "meta": {
+                  "editor": {
+                    "x": 660,
+                    "y": 20
+                  }
+                }
+              },
+              "clothed": {
+                "id": "clothed",
+                "label": "穿了寿衣（无扣结带·她缝的）",
+                "meta": {
+                  "editor": {
+                    "x": 870,
+                    "y": 20
+                  }
+                }
+              },
+              "lying": {
+                "id": "lying",
+                "label": "躺上门板（脚朝门·脚尾灯）",
+                "meta": {
+                  "editor": {
+                    "x": 1080,
+                    "y": 20
+                  }
+                }
+              },
+              "paper_stopped": {
+                "id": "paper_stopped",
+                "label": "盖脸纸停了（死寂两拍）",
+                "meta": {
+                  "editor": {
+                    "x": 1290,
+                    "y": 20
+                  }
+                }
+              },
+              "tune_trembled": {
+                "id": "tune_trembled",
+                "label": "小调首现·纸猛地一颤（她不答应）",
+                "meta": {
+                  "editor": {
+                    "x": 1500,
+                    "y": 20
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "playSignalCue",
+                    "params": {
+                      "id": "axiu_tune_far"
+                    }
+                  }
+                ]
+              },
+              "woken": {
+                "id": "woken",
+                "label": "两天后·土路醒来（beat完成）",
+                "broadcastOnEnter": true,
+                "meta": {
+                  "editor": {
+                    "x": 1710,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_road",
+                "from": "not_started",
+                "to": "road",
+                "trigger": "reactiveAll",
+                "conditions": [
+                  {
+                    "narrative": "scenario_背尸",
+                    "state": "fled"
+                  }
+                ],
+                "signal": "__draft__"
+              },
+              {
+                "id": "t_house",
+                "from": "road",
+                "to": "at_house",
+                "signal": "meng_house"
+              },
+              {
+                "id": "t_ate",
+                "from": "at_house",
+                "to": "fed",
+                "signal": "meng_ate"
+              },
+              {
+                "id": "t_clothed",
+                "from": "fed",
+                "to": "clothed",
+                "signal": "meng_clothed"
+              },
+              {
+                "id": "t_lying",
+                "from": "clothed",
+                "to": "lying",
+                "signal": "meng_lying"
+              },
+              {
+                "id": "t_paper",
+                "from": "lying",
+                "to": "paper_stopped",
+                "signal": "meng_paper_stopped"
+              },
+              {
+                "id": "t_tune",
+                "from": "paper_stopped",
+                "to": "tune_trembled",
+                "signal": "meng_tune"
+              },
+              {
+                "id": "t_woken",
+                "from": "tune_trembled",
+                "to": "woken",
+                "signal": "meng_woken"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_wrap_喊名_点二",
+          "kind": "wrapperGraph",
+          "label": "喊名点②·选择记忆",
+          "ownerType": "flow",
+          "ownerId": "寻狗_喊名点二线",
+          "x": 744,
+          "y": 1140,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "wrap_喊名_点二",
+            "ownerType": "flow",
+            "ownerId": "寻狗_喊名点二线",
+            "label": "喊名点②（陈四海）",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未到/未选",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "right": {
+                "id": "right",
+                "label": "喊对了（陈四海）",
+                "meta": {
+                  "editor": {
+                    "x": 250,
+                    "y": 20
+                  }
+                }
+              },
+              "wrong": {
+                "id": "wrong",
+                "label": "喊错了（认错主·乱）",
+                "meta": {
+                  "editor": {
+                    "x": 470,
+                    "y": 20
+                  }
+                }
+              },
+              "skipped": {
+                "id": "skipped",
+                "label": "没喊（走过去就是答案）",
+                "meta": {
+                  "editor": {
+                    "x": 690,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_right",
+                "from": "undecided",
+                "to": "right",
+                "signal": "hanming_x2_right"
+              },
+              {
+                "id": "t_wrong",
+                "from": "undecided",
+                "to": "wrong",
+                "signal": "hanming_x2_wrong"
+              },
+              {
+                "id": "t_skip",
+                "from": "undecided",
+                "to": "skipped",
+                "signal": "hanming_x2_skipped"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_wrap_喊名_点三",
+          "kind": "wrapperGraph",
+          "label": "喊名点③·选择记忆",
+          "ownerType": "flow",
+          "ownerId": "寻狗_喊名点三线",
+          "x": 984,
+          "y": 1140,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "wrap_喊名_点三",
+            "ownerType": "flow",
+            "ownerId": "寻狗_喊名点三线",
+            "label": "喊名点③（黄秉文）",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未到/未选",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "right": {
+                "id": "right",
+                "label": "喊对了（黄秉文）",
+                "meta": {
+                  "editor": {
+                    "x": 250,
+                    "y": 20
+                  }
+                }
+              },
+              "wrong": {
+                "id": "wrong",
+                "label": "喊错了（认错主·乱）",
+                "meta": {
+                  "editor": {
+                    "x": 470,
+                    "y": 20
+                  }
+                }
+              },
+              "skipped": {
+                "id": "skipped",
+                "label": "没喊（走过去就是答案）",
+                "meta": {
+                  "editor": {
+                    "x": 690,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_right",
+                "from": "undecided",
+                "to": "right",
+                "signal": "hanming_x3_right"
+              },
+              {
+                "id": "t_wrong",
+                "from": "undecided",
+                "to": "wrong",
+                "signal": "hanming_x3_wrong"
+              },
+              {
+                "id": "t_skip",
+                "from": "undecided",
+                "to": "skipped",
+                "signal": "hanming_x3_skipped"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_wrap_喊名_恍然",
+          "kind": "wrapperGraph",
+          "label": "喊名·恍然一拍（只播一次）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_喊名恍然线",
+          "x": 1224,
+          "y": 1140,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "wrap_喊名_恍然",
+            "ownerType": "flow",
+            "ownerId": "寻狗_喊名恍然线",
+            "label": "恍然：那些名字是喊魂",
+            "initialState": "pending",
+            "states": {
+              "pending": {
+                "id": "pending",
+                "label": "还没想明白",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "done": {
+                "id": "done",
+                "label": "恍然（是老子自己喊出来的）",
+                "meta": {
+                  "editor": {
+                    "x": 250,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_awaken",
+                "from": "pending",
+                "to": "done",
+                "signal": "hanming_awakening"
+              }
+            ]
+          }
+        },
+        {
+          "id": "dlg_meng",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_梦待死之礼",
+          "refId": "寻狗_梦待死之礼",
+          "x": 544,
+          "y": -450,
+          "meta": {
+            "emits": [
+              "meng_house",
+              "meng_ate",
+              "meng_clothed",
+              "meng_lying",
+              "meng_paper_stopped",
+              "meng_tune",
+              "meng_woken"
+            ],
+            "reads": [
+              "scenario_梦待死之礼"
+            ],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_hanming_x2",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_喊名_点二",
+          "refId": "寻狗_喊名_点二",
+          "x": 744,
+          "y": -450,
+          "meta": {
+            "emits": [
+              "hanming_x2_right",
+              "hanming_x2_wrong",
+              "hanming_x2_skipped",
+              "hanming_x2_done"
+            ],
+            "reads": [
+              "wrap_喊名_点二"
+            ],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_hanming_x3",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_喊名_点三",
+          "refId": "寻狗_喊名_点三",
+          "x": 984,
+          "y": -450,
+          "meta": {
+            "emits": [
+              "hanming_x3_right",
+              "hanming_x3_wrong",
+              "hanming_x3_skipped",
+              "hanming_x3_done"
+            ],
+            "reads": [
+              "wrap_喊名_点三"
+            ],
+            "commands": []
           }
         },
         {
@@ -3812,16 +4444,100 @@
       "label": "送货·看了进山路"
     },
     {
-      "id": "songhuo_call1",
-      "label": "夜路·第一声喊名"
-    },
-    {
-      "id": "songhuo_call2",
-      "label": "夜路·喊声凑近"
-    },
-    {
       "id": "songhuo_survived",
       "label": "夜路·憋住了"
+    },
+    {
+      "id": "meng_house",
+      "label": "梦·走到那户人家"
+    },
+    {
+      "id": "meng_ate",
+      "label": "梦·吃了倒头饭（玩家亲手按的）"
+    },
+    {
+      "id": "meng_clothed",
+      "label": "梦·穿了寿衣"
+    },
+    {
+      "id": "meng_lying",
+      "label": "梦·躺上门板"
+    },
+    {
+      "id": "meng_paper_stopped",
+      "label": "梦·盖脸纸停了"
+    },
+    {
+      "id": "meng_tune",
+      "label": "梦·小调首现纸颤"
+    },
+    {
+      "id": "meng_woken",
+      "label": "梦·两天后醒来"
+    },
+    {
+      "id": "hanming_x1_reached",
+      "label": "喊名·走到X点①（区域）"
+    },
+    {
+      "id": "hanming_x2_right",
+      "label": "喊名·点②喊对"
+    },
+    {
+      "id": "hanming_x2_wrong",
+      "label": "喊名·点②喊错"
+    },
+    {
+      "id": "hanming_x2_skipped",
+      "label": "喊名·点②没喊"
+    },
+    {
+      "id": "hanming_x2_done",
+      "label": "喊名·点②有了答案"
+    },
+    {
+      "id": "hanming_x3_right",
+      "label": "喊名·点③喊对"
+    },
+    {
+      "id": "hanming_x3_wrong",
+      "label": "喊名·点③喊错"
+    },
+    {
+      "id": "hanming_x3_skipped",
+      "label": "喊名·点③没喊"
+    },
+    {
+      "id": "hanming_x3_done",
+      "label": "喊名·点③有了答案"
+    },
+    {
+      "id": "hanming_awakening",
+      "label": "喊名·恍然（那些名字是喊魂）"
+    },
+    {
+      "id": "hanming_ret_p3",
+      "label": "回程·过点③"
+    },
+    {
+      "id": "hanming_ret_p2",
+      "label": "回程·过点②"
+    },
+    {
+      "id": "hanming_ret_p1",
+      "label": "回程·过点①（保底声）"
+    },
+    {
+      "id": "hanming_climax",
+      "label": "回程·认不准关口"
+    },
+    {
+      "id": "hanming_answered",
+      "label": "回程·应了声（失败分支）"
+    },
+    {
+      "id": "hanming_escaped",
+      "label": "回程·狂奔逃出"
     },
     {
       "id": "songhuo_returned",

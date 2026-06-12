@@ -14,7 +14,11 @@ export interface PressureHoldSegmentRequest {
   stopRatio: number;
   fillSeconds: number;
   decayPerSecond: number;
+  /** 进度 ≥ 此值后松手即整段以 'released' 收场（「不容松手」关口） */
+  abortOnReleaseFromRatio?: number;
 }
+
+export type PressureHoldSegmentOutcome = 'reached' | 'released';
 
 const BAR_WIDTH = 420;
 const BAR_HEIGHT = 18;
@@ -23,7 +27,8 @@ const HINT_FLASH_MS = 900;
 /**
  * 临场长按交互的表现层：底部进度条 + 引导文案。
  * 输入：按住空格或在画面任意处按住指针。
- * 每次 runSegment 返回时进度已到达 stopRatio；中途松手只回落不失败。
+ * 每次 runSegment 返回时进度已到达 stopRatio（'reached'）；中途松手默认只回落不失败，
+ * 但配置了 abortOnReleaseFromRatio 且松手时进度 ≥ 该值，则整段以 'released' 收场。
  * 自带 rAF 驱动（长按常发生在对话/演出间隙，游戏主循环可能未在更新该系统）。
  */
 export class PressureHoldUI {
@@ -35,18 +40,22 @@ export class PressureHoldUI {
   private holding = false;
   private hintShownAt = 0;
   private detachInput: (() => void) | null = null;
-  private resolveSegment: (() => void) | null = null;
+  private resolveSegment: ((outcome: PressureHoldSegmentOutcome) => void) | null = null;
+  private currentRatio = 0;
+  private abortOnReleaseFromRatio: number | undefined;
 
   constructor(renderer: Renderer) {
     this.renderer = renderer;
   }
 
-  /** 跑一段长按充能；进度到达 stopRatio 时 resolve。 */
-  runSegment(req: PressureHoldSegmentRequest): Promise<void> {
+  /** 跑一段长按充能；进度到达 stopRatio resolve 'reached'，不容松手关口松手 resolve 'released'。 */
+  runSegment(req: PressureHoldSegmentRequest): Promise<PressureHoldSegmentOutcome> {
     this.cancel();
-    return new Promise<void>((resolve) => {
+    return new Promise<PressureHoldSegmentOutcome>((resolve) => {
       this.resolveSegment = resolve;
       this.holding = false;
+      this.currentRatio = req.startRatio;
+      this.abortOnReleaseFromRatio = req.abortOnReleaseFromRatio;
       this.buildView(req);
       this.attachInput();
 
@@ -62,10 +71,11 @@ export class PressureHoldUI {
         const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000));
         lastTs = ts;
         progress.tick(dt, this.holding);
+        this.currentRatio = progress.current;
         this.redrawFill(progress.current, req.barColor ?? UITheme.colors.borderActive);
         this.updateHintVisibility(ts);
         if (progress.reachedStop) {
-          this.finishSegment();
+          this.finishSegment('reached');
           return;
         }
         this.rafId = requestAnimationFrame(step);
@@ -74,16 +84,16 @@ export class PressureHoldUI {
     });
   }
 
-  /** 强制结束当前段（场景销毁等）；进行中的 Promise 直接 resolve，避免悬挂调用链。 */
+  /** 强制结束当前段（场景销毁等）；进行中的 Promise 以 'reached' resolve，避免悬挂调用链。 */
   cancel(): void {
-    this.finishSegment();
+    this.finishSegment('reached');
   }
 
   destroy(): void {
     this.cancel();
   }
 
-  private finishSegment(): void {
+  private finishSegment(outcome: PressureHoldSegmentOutcome): void {
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
       this.rafId = 0;
@@ -99,7 +109,7 @@ export class PressureHoldUI {
     }
     const resolve = this.resolveSegment;
     this.resolveSegment = null;
-    resolve?.();
+    resolve?.(outcome);
   }
 
   private buildView(req: PressureHoldSegmentRequest): void {
@@ -211,9 +221,17 @@ export class PressureHoldUI {
   }
 
   private markRelease(): void {
-    if (this.holding && this.hintText) {
+    const wasHolding = this.holding;
+    if (wasHolding && this.hintText) {
       this.hintShownAt = performance.now();
     }
     this.holding = false;
+    if (
+      wasHolding &&
+      this.abortOnReleaseFromRatio !== undefined &&
+      this.currentRatio >= this.abortOnReleaseFromRatio
+    ) {
+      this.finishSegment('released');
+    }
   }
 }

@@ -9,6 +9,8 @@ import type { ActionDef } from '../../data/types';
  *   （演出 / 台词 / 音效等），然后：
  *   - `abort` 为 true：整次交互以「被打断」收场（即剧本里的脚软、吓退）；
  *   - 否则进度重置到 `resetToRatio` 继续；
+ * - 配置了 `abortOnReleaseFromRatio` 时，进度 ≥ 该值后一旦松手，整次交互
+ *   立即以 aborted 收场并执行 `onAborted`（即剧本里「不容松手」的关口，如夜路应声）；
  * - 进度到 1 且无未触发的 abort interrupt 时执行 `onComplete`。
  *
  * 数据文件：`public/assets/data/pressure_holds.json`（数组）。
@@ -41,6 +43,13 @@ export interface PressureHoldDef {
   interrupts?: PressureHoldInterruptDef[];
   /** 进度满且未被 abort 打断时执行 */
   onComplete?: ActionDef[];
+  /**
+   * 进度 ≥ 此值（0-1 开区间）后一旦松手，整次长按立即以 aborted 收场。
+   * 此前的松手仍按 decay 回落（即「前段容错、末段不容松」）。缺省不启用。
+   */
+  abortOnReleaseFromRatio?: number;
+  /** 因 abortOnReleaseFromRatio 松手失败时执行（如夜路「应了声」分支） */
+  onAborted?: ActionDef[];
 }
 
 export type PressureHoldOutcome = 'completed' | 'aborted';

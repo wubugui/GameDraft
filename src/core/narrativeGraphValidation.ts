@@ -803,6 +803,7 @@ const knownActionParamSchemas: Record<string, string[]> = {
   persistPlayNpcAnimation: ['target', 'state'],
   fadeWorldToBlack: [],
   fadeWorldFromBlack: [],
+  playSignalCue: ['id'],
   showOverlayImage: ['id', 'imagePath'],
   setHotspotDisplayImage: ['sceneId', 'hotspotId', 'image'],
   setEntityField: ['sceneId', 'entityKind', 'entityId', 'fieldName', 'value'],

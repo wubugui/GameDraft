@@ -1542,11 +1542,10 @@
     "id": "寻狗_脚帮闲扯",
     "steps": [
       { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "同路的两个脚夫一前一后，扁担吱呀。山里不兴安静，安静了才瘆人——于是他们讲古。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "脚夫甲", "text": "癫子周晓得吧？年年做一个梦：阎王岭里有座酒楼，往地底下螺旋着长。他在梦里挖了二十年——还在挖。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "脚夫乙", "text": "马屠户追他婆娘进了岭，迷了三天。出来人就疯了，操刀砍自家儿子。铺子门板上的血道子，到今儿没人敢擦。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "脚夫甲", "text": "（压低嗓）再往里头，有个寨子。不种地，不赶集，靠「养东西」过活。——这话到这儿，别往下问。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "脚夫乙", "text": "对了先生，山里要是有人喊你名字——一声一声，像个熟人——千万、千万别应。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "同路的两个脚夫一前一后，扁担吱呀。出城这段路还宽敞，太阳也还高。" },
+      { "kind": "present", "type": "showDialogue", "speaker": "脚夫甲", "text": "哟，这不是「李天狗那一脉」么。揣个皮纸鬼鬼祟祟的，又接了什么邪门活计？" },
+      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "跑腿。正经跑腿。（笑骂两句，混了过去。）" },
+      { "kind": "present", "type": "showDialogue", "speaker": "脚夫乙", "text": "对了先生，往岭上走有句老话——山里要是有人喊你名字，一声一声，像个熟人，千万、千万别应。" },
       { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（这帮人讲古不要钱，吓人也不要钱。）……晓得了。" },
       { "kind": "present", "type": "hideMovieBar" }
     ]

@@ -103,6 +103,69 @@ describe('PressureHoldManager.runUntilDone', () => {
   });
 });
 
+describe('PressureHoldManager · abortOnReleaseFromRatio（不容松手关口）', () => {
+  function makeReleaseManager(
+    def: PressureHoldDef,
+    segmentOutcomes: Array<'reached' | 'released'>,
+  ): { manager: PressureHoldManager; flags: FlagStore; thresholds: Array<number | undefined> } {
+    const bus = new EventBus();
+    const flags = new FlagStore(bus);
+    const executor = new ActionExecutor(bus, flags);
+    const manager = new PressureHoldManager(executor);
+    (manager as unknown as { defs: Map<string, PressureHoldDef> }).defs.set(def.id, def);
+    const thresholds: Array<number | undefined> = [];
+    let i = 0;
+    manager.bindRuntime({
+      resolveDisplayText: (s) => s,
+      runSegment: async (req) => {
+        thresholds.push(req.abortOnReleaseFromRatio);
+        return segmentOutcomes[Math.min(i++, segmentOutcomes.length - 1)];
+      },
+    });
+    return { manager, flags, thresholds };
+  }
+
+  const def: PressureHoldDef = {
+    id: 'climax',
+    prompt: 'p',
+    fillSeconds: 9,
+    abortOnReleaseFromRatio: 0.72,
+    interrupts: [
+      { atRatio: 0.45, resetToRatio: 0.38, actions: [{ type: 'setFlag', params: { key: 'beat1', value: true } }] },
+    ],
+    onComplete: [{ type: 'setFlag', params: { key: 'held', value: true } }],
+    onAborted: [{ type: 'setFlag', params: { key: 'answered', value: true } }],
+  };
+
+  it('末段松手：执行 onAborted、不执行 onComplete、返回 aborted', async () => {
+    const { manager, flags, thresholds } = makeReleaseManager(def, ['reached', 'released']);
+    const outcome = await manager.runUntilDone('climax');
+    expect(outcome).toBe('aborted');
+    expect(flags.get('beat1')).toBe(true);
+    expect(flags.get('answered')).toBe(true);
+    expect(flags.get('held')).toBeUndefined();
+    expect(thresholds).toEqual([0.72, 0.72]);
+  });
+
+  it('全程撑住：onComplete 照常、onAborted 不执行', async () => {
+    const { manager, flags } = makeReleaseManager(def, ['reached', 'reached']);
+    const outcome = await manager.runUntilDone('climax');
+    expect(outcome).toBe('completed');
+    expect(flags.get('held')).toBe(true);
+    expect(flags.get('answered')).toBeUndefined();
+  });
+
+  it('旧绑定 resolve undefined 视同 reached（向后兼容）', async () => {
+    const { manager, flags } = makeReleaseManager(
+      { ...def, id: 'compat' },
+      [undefined as unknown as 'reached', undefined as unknown as 'reached'],
+    );
+    const outcome = await manager.runUntilDone('compat');
+    expect(outcome).toBe('completed');
+    expect(flags.get('held')).toBe(true);
+  });
+});
+
 describe('parseHexColor', () => {
   it('解析 #rrggbb，拒绝其它格式', () => {
     expect(parseHexColor('#6e1f1f')).toBe(0x6e1f1f);

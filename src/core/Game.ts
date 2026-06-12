@@ -828,7 +828,7 @@ export class Game {
         const prevState = this.stateController.currentState;
         this.stateController.setState(GameState.UIOverlay);
         try {
-          await this.pressureHoldUI.runSegment(req);
+          return await this.pressureHoldUI.runSegment(req);
         } finally {
           if (this.stateController.currentState === GameState.UIOverlay) {
             this.stateController.setState(prevState);

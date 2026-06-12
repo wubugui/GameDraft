@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_喊名_点二",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·喊名X点②（相近名选择·记忆打滑）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "not": {
+                "narrative": "wrap_喊名_点二",
+                "state": "undecided"
+              }
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "这个画X的地方，已经过了。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "第二个画X的地方。他离了队，下到林子边——黑沉沉的，一丝风都没有。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（雇主教的那个名字……叫啥来着？隔了一截路、一个怪谈，名字在脑壳里打滑。）",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "wrong_a",
+          "text": "「陈世海——」",
+          "next": "fb_wrong"
+        },
+        {
+          "id": "right",
+          "text": "「陈四海——」",
+          "next": "fb_right"
+        },
+        {
+          "id": "wrong_b",
+          "text": "「陈四改——」",
+          "next": "fb_wrong"
+        },
+        {
+          "id": "skip",
+          "text": "（这地方瘆人……算了，不喊。回头说喊了就行。）",
+          "next": "fb_skip"
+        }
+      ]
+    },
+    "fb_right": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "回应来得慢了半拍。音，也不太对。他皱起眉，回头看了一眼。",
+      "next": "sig_right"
+    },
+    "sig_right": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点二",
+            "signal": "hanming_x2_right"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点二",
+            "signal": "hanming_x2_done"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "fb_wrong": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "喊完，林子里好几处同时窸窣起来——像不止一个东西，以为是在叫自己。有什么在挪动。他后脖子一阵发凉。",
+      "next": "n_wrong2"
+    },
+    "n_wrong2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（……好像是叫这个吧。管他呢，差不多就行。）",
+      "next": "sig_wrong"
+    },
+    "sig_wrong": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点二",
+            "signal": "hanming_x2_wrong"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点二",
+            "signal": "hanming_x2_done"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "fb_skip": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他没喊。林子太静了，静得他加快了脚步。",
+      "next": "sig_skip"
+    },
+    "sig_skip": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点二",
+            "signal": "hanming_x2_skipped"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点二",
+            "signal": "hanming_x2_done"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

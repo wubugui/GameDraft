@@ -106,7 +106,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "他连滚带爬夺门而出，一口气跑回城，天都蒙蒙亮了。后头四十文的事，再没人提起——他也没敢回去要。",
+      "text": "他连滚带爬夺门而出。没敢回城——顺着官道跑出二里地，腿一软，一头钻进路边一孔废砖窑。后头四十文的事，再没人提起，他也没敢回去要。",
       "next": "n_flag"
     },
     "n_flag": {
@@ -118,6 +118,12 @@
             "sourceType": "dialogue",
             "sourceId": "寻狗_背尸",
             "signal": "beishi_fled"
+          }
+        },
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 900
           }
         },
         {

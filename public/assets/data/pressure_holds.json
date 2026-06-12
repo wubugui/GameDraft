@@ -45,31 +45,52 @@
     "decayPerSecond": 1.1,
     "holdSfx": "sfx_hold_pressure_loop",
     "barColor": "#27402c",
+    "abortOnReleaseFromRatio": 0.72,
     "interrupts": [
       {
-        "atRatio": 0.35,
-        "resetToRatio": 0.3,
+        "atRatio": 0.45,
+        "resetToRatio": 0.38,
         "actions": [
           {
-            "type": "emitNarrativeSignal",
+            "type": "playScriptedDialogue",
             "params": {
-              "sourceType": "minigame",
-              "sourceId": "forest_name_call",
-              "signal": "songhuo_call1"
+              "lines": [
+                {
+                  "speaker": "林子里",
+                  "text": "「二狗——」"
+                },
+                {
+                  "speaker": "",
+                  "text": "又一声，从另一个方向。还没回过神，背后也响起一声。喊得慢悠悠的，像个熟人。"
+                }
+              ]
             }
           }
         ]
       },
       {
-        "atRatio": 0.7,
-        "resetToRatio": 0.62,
+        "atRatio": 0.8,
+        "resetToRatio": 0.74,
         "actions": [
           {
-            "type": "emitNarrativeSignal",
+            "type": "playSfx",
             "params": {
-              "sourceType": "minigame",
-              "sourceId": "forest_name_call",
-              "signal": "songhuo_call2"
+              "id": "sfx_abnormal_breath"
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "林子里",
+                  "text": "「二狗……？」"
+                },
+                {
+                  "speaker": "",
+                  "text": "近得很。像在确认，在等他应。四面八方，同时响。它凑近了，在打量——认不准他是个什么。"
+                }
+              ]
             }
           }
         ]
@@ -82,6 +103,33 @@
           "sourceType": "minigame",
           "sourceId": "forest_name_call",
           "signal": "songhuo_survived"
+        }
+      }
+    ],
+    "onAborted": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "forest_name_call",
+          "signal": "hanming_answered"
+        }
+      }
+    ]
+  },
+  {
+    "id": "forest_escape_run",
+    "prompt": "跑！往山下跑——别回头！",
+    "fillSeconds": 2.8,
+    "decayPerSecond": 0.4,
+    "barColor": "#5a2a1a",
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "forest_escape_run",
+          "signal": "hanming_escaped"
         }
       }
     ]

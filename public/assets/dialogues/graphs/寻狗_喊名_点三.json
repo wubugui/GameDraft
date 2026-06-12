@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_喊名_点三",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·喊名X点③（暮色压死·记忆更滑）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "not": {
+                "narrative": "wrap_喊名_点三",
+                "state": "undecided"
+              }
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "这个画X的地方，已经过了。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "第三个画X的地方，要下进一条沟。大队的人声彻底听不见了，只有他自己的喘。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（最后一个。喊完拿钱。……叫、叫啥来着？）",
+      "next": "c1"
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "wrong_a",
+          "text": "「黄丙文——」",
+          "next": "fb_wrong"
+        },
+        {
+          "id": "wrong_b",
+          "text": "「王秉文——」",
+          "next": "fb_wrong"
+        },
+        {
+          "id": "right",
+          "text": "「黄秉文——」",
+          "next": "fb_right"
+        },
+        {
+          "id": "skip",
+          "text": "（黑成这样……不喊了。几个铜板，不挣了。）",
+          "next": "fb_skip"
+        }
+      ]
+    },
+    "fb_right": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "喊完，林子里像有什么「醒了」——宿鸟惊飞，枝叶无风自动。他心里一阵发毛。",
+      "next": "sig_right"
+    },
+    "sig_right": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_night_bird_startle"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点三",
+            "signal": "hanming_x3_right"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点三",
+            "signal": "hanming_x3_done"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "fb_wrong": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "喊出去的名字落进沟里，四下顿时乱成一团——东一处、西一处，全是动静，像捅了个窝。他撒腿就往大队的方向追。",
+      "next": "sig_wrong"
+    },
+    "sig_wrong": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_night_bird_startle"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点三",
+            "signal": "hanming_x3_wrong"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点三",
+            "signal": "hanming_x3_done"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "fb_skip": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他几乎是小跑着离开了这个点。",
+      "next": "sig_skip"
+    },
+    "sig_skip": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点三",
+            "signal": "hanming_x3_skipped"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_喊名_点三",
+            "signal": "hanming_x3_done"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

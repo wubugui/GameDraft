@@ -400,5 +400,52 @@
       "conditionHidesEntity": true
     }
   ],
-  "zones": []
+  "zones": [
+    {
+      "id": "z_梦待死之礼",
+      "polygon": [
+        {
+          "x": 520.0,
+          "y": 400.0
+        },
+        {
+          "x": 760.0,
+          "y": 400.0
+        },
+        {
+          "x": 760.0,
+          "y": 600.0
+        },
+        {
+          "x": 520.0,
+          "y": 600.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "scenario_背尸",
+          "state": "fled",
+          "reached": true
+        },
+        {
+          "narrative": "scenario_梦待死之礼",
+          "state": "road"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 80
+          }
+        },
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_梦待死之礼"
+          }
+        }
+      ]
+    }
+  ]
 }
