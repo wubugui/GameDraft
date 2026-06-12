@@ -4,6 +4,7 @@ import argparse
 import atexit
 import json
 import os
+import signal
 import socket
 import subprocess
 import threading
@@ -88,6 +89,8 @@ class ConsoleState:
             if not msg:
                 return False, "请输入提交说明。"
             return self._run_exclusive("Commit", ["./commit-all.sh", msg], cwd=self.scripts_dir)
+        if action == "cancel_active":
+            return self._cancel_active()
         if action == "git_status":
             return self._run_exclusive("Git status", ["git", "status", "--short", "--branch"])
         if action == "start_game":
@@ -121,6 +124,16 @@ class ConsoleState:
     def _stop_game(self) -> tuple[bool, str]:
         self._start_process("Stop game", [str(self.dev_sh), "game", "stop"], exclusive=False)
         return True, "started"
+
+    def _cancel_active(self) -> tuple[bool, str]:
+        with self.lock:
+            proc = self.active_process
+            title = self.active_title
+        if proc is None or proc.poll() is not None:
+            return False, "没有正在执行的一次性任务。"
+        self.add_log(f"Stopping {title} ...", "cmd")
+        self._terminate_process_group(proc)
+        return True, "stopping"
 
     def _run_exclusive(
         self,
@@ -156,6 +169,7 @@ class ConsoleState:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         threading.Thread(target=self._watch_process, args=(title, proc, exclusive), daemon=True).start()
         return proc
@@ -175,7 +189,20 @@ class ConsoleState:
 
     def stop_game_on_exit(self) -> None:
         if self.game_process is not None and self.game_process.poll() is None:
+            self._terminate_process_group(self.game_process)
             subprocess.Popen([str(self.dev_sh), "game", "stop"], cwd=str(self.root))
+
+    @staticmethod
+    def _terminate_process_group(proc: subprocess.Popen[str]) -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                return
 
 
 STATE = ConsoleState()
@@ -328,6 +355,7 @@ input{min-height:36px;border:1px solid #9ca3af;border-radius:5px;padding:0 10px;
 <div class="sep"></div>
 <div class="two">
 <button data-action="install_deps" data-exclusive="1">安装依赖</button>
+<button data-action="cancel_active">停止当前任务</button>
 <button data-action="git_status" data-exclusive="1">Git 状态</button>
 <button data-action="init_runtime" data-exclusive="1">拉运行资源</button>
 <button data-action="init_editor" data-exclusive="1">拉编辑器资源</button>
