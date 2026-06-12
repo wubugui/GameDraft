@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GameDraft bootstrap for macOS/Linux. Creates a project venv (.tools/venv)
 # from a system Python 3.11+, installs DVC, then delegates to the Python task
-# runner. Windows users run bootstrap.cmd instead.
+# runner.
 #
 # Usage:
 #   ./bootstrap.sh                 # menu (game / editor / clean)

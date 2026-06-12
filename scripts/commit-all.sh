@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# macOS/Linux equivalent of scripts/commit-all.ps1.
+# Add DVC/git changes and create a commit.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

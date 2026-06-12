@@ -1,9 +1,4 @@
-"""``python -m tools.dev <task>`` — cross-platform GameDraft task runner.
-
-Replaces the Windows .cmd/.ps1 launchers. Run ``python -m tools.dev --help``
-for the full task list. Launcher tasks accept ``--check`` to print the
-resolved interpreter/argv without spawning anything (for CI/headless checks).
-"""
+"""``python -m tools.dev <task>`` — GameDraft task runner."""
 
 from __future__ import annotations
 
@@ -35,7 +30,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pull = sub.add_parser("pull", help="git pull + DVC pull (pull-all)")
     p_pull.add_argument("--editor", action="store_true")
-    p_pull.add_argument("--vendor", action="store_true")
     p_pull.add_argument("--git-proxy", default="")
 
     p_push = sub.add_parser("push", help="DVC push + git push (push-all)")
@@ -44,12 +38,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_commit = sub.add_parser("commit", help="dvc add + git add/commit (commit-all)")
     p_commit.add_argument("-m", "--message", default=None)
     p_commit.add_argument("message_pos", nargs="?", default=None, help="Commit message (positional alternative to -m)")
-
-    p_upload = sub.add_parser("upload-bootstrap", help="Upload portable Python archive to OSS")
-    p_upload.add_argument("--bucket", default="gamedraft-assets")
-    p_upload.add_argument("--endpoint", default="https://oss-cn-shanghai.aliyuncs.com")
-    p_upload.add_argument("--prefix", default="gamedraft/bootstrap")
-    p_upload.add_argument("--archive", default="python311-dvc-win-x64.zip")
 
     p_game = sub.add_parser("game", help="Vite dev server")
     game_sub = p_game.add_subparsers(dest="game_action", required=True)
@@ -97,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     if task == "pull":
         from tools.dev import sync
 
-        return sync.pull(editor=args.editor, vendor=args.vendor, git_proxy=args.git_proxy)
+        return sync.pull(editor=args.editor, git_proxy=args.git_proxy)
     if task == "push":
         from tools.dev import sync
 
@@ -109,10 +97,6 @@ def main(argv: list[str] | None = None) -> int:
         if not message:
             parser.error("commit requires a message (-m \"...\" or positional)")
         return sync.commit(message)
-    if task == "upload-bootstrap":
-        from tools.dev import sync
-
-        return sync.upload_bootstrap(args.bucket, args.endpoint, args.prefix, args.archive)
     if task == "game":
         from tools.dev import game
 

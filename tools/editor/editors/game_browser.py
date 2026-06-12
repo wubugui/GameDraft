@@ -43,8 +43,6 @@ _GAME_WEB_PROFILE = None
 def _default_app_data_dir() -> Path:
     """Platform-appropriate fallback when Qt cannot resolve AppLocalDataLocation."""
     home = Path.home()
-    if sys.platform == "win32":
-        return home / "AppData" / "Local" / "GameDraft"
     if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "GameDraft"
     xdg = os.environ.get("XDG_DATA_HOME", "")

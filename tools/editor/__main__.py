@@ -1,4 +1,4 @@
-"""Entry point: .\\.tools\\Python311\\python.exe -m tools.editor [project_path]."""
+"""Entry point: .tools/venv/bin/python -m tools.editor [project_path]."""
 from __future__ import annotations
 
 import faulthandler

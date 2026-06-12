@@ -1,10 +1,4 @@
-"""Proxy environment isolation, ported from scripts/no-proxy.ps1.
-
-Aliyun OSS phases must not go through a local HTTP proxy; git remotes may
-need one. The masking/restore semantics here mirror the PowerShell helpers
-one-to-one — orchestrators (pull/push) mask once at entry so nested
-``without_proxy()`` blocks do not restore inherited HTTP(S)_PROXY mid-run.
-"""
+"""Proxy environment isolation for OSS and git tasks."""
 
 from __future__ import annotations
 
@@ -12,8 +6,6 @@ import contextlib
 import os
 import subprocess
 from collections.abc import Iterator
-
-from tools.dev import winenv
 
 DEFAULT_GIT_PROXY = "http://127.0.0.1:7078"
 # Local dev server must bypass any temporary proxy (HMR / loopback).
@@ -67,10 +59,6 @@ def git_proxy_url(proxy_url: str = "") -> str:
     u = (proxy_url or "").strip()
     if not u:
         u = os.environ.get("GAMEDRAFT_GIT_PROXY", "").strip()
-    if not u:
-        u = (winenv.read_user_env("GAMEDRAFT_GIT_PROXY") or "").strip()
-    if not u:
-        u = (winenv.read_machine_env("GAMEDRAFT_GIT_PROXY") or "").strip()
     if not u:
         # Default local Git proxy (e.g. clash/v2ray mixed port); override with
         # --git-proxy or GAMEDRAFT_GIT_PROXY.

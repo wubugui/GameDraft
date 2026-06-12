@@ -298,16 +298,14 @@ def _daily_toolchain_commands(project_root: Path) -> list[tuple[str, list[str], 
 
 
 def _python_executable(project_root: Path) -> str:
-    # Single source of truth for the project interpreter (win: .tools/Python311,
-    # unix: .tools/venv); falls back to the running interpreter.
+    # Single source of truth for the project interpreter; falls back to the
+    # running interpreter.
     try:
         from tools.dev.paths import project_python
 
         return str(project_python())
     except Exception:
-        local = project_root / ".tools" / "Python311" / (
-            "python.exe" if sys.platform == "win32" else "python"
-        )
+        local = project_root / ".tools" / "venv" / "bin" / "python"
         if local.is_file():
             return str(local)
         return sys.executable

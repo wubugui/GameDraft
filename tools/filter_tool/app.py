@@ -314,7 +314,7 @@ def main() -> None:
     try:
         import numpy
     except ImportError:
-        print("请运行 install-deps.cmd（Windows）或 ./dev.sh install-deps（macOS/Linux）安装本地 Python 依赖")
+        print("请运行 ./dev.sh install-deps 安装本地 Python 依赖")
         sys.exit(1)
     app = FilterToolApp()
     app.root.mainloop()

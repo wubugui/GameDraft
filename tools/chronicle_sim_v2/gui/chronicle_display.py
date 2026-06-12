@@ -529,7 +529,7 @@ def summary_markdown_to_html(text: str) -> str:
     except ImportError:
         inner = f"<div class='card'><pre class='raw'>{E(text)}</pre></div>"
         inner += (
-            "<p class='muted'>（未安装 markdown 库，已显示原文；请运行 install-deps.cmd）</p>"
+            "<p class='muted'>（未安装 markdown 库，已显示原文；请运行 ./dev.sh install-deps）</p>"
         )
         return _wrap_page("周总结", inner)
     body = md.markdown(

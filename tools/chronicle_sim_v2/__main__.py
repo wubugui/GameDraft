@@ -1,4 +1,4 @@
-"""Entry point: run with .\\.tools\\Python311\\python.exe -m tools.chronicle_sim_v2."""
+"""Entry point: run with .tools/venv/bin/python -m tools.chronicle_sim_v2."""
 from __future__ import annotations
 
 import os

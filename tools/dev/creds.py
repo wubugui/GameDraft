@@ -1,18 +1,11 @@
-"""OSS credential load / prompt / persist.
-
-Storage is the git-ignored ``.tools/oss.env`` (two KEY=VALUE lines) on all
-platforms. Load order: process env > .tools/oss.env > legacy Windows User
-registry scope (auto-migrated into the file when found).
-"""
+"""OSS credential load / prompt / persist."""
 
 from __future__ import annotations
 
 import getpass
 import os
-import sys
 from pathlib import Path
 
-from tools.dev import winenv
 from tools.dev.paths import repo_root
 
 KEY_ID = "OSS_ACCESS_KEY_ID"
@@ -20,9 +13,8 @@ KEY_SECRET = "OSS_ACCESS_KEY_SECRET"
 
 MISSING_CREDS_MESSAGE = (
     "OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must both be set. "
-    "Run the bootstrap (bootstrap.cmd / ./bootstrap.sh) first so credentials "
-    "are collected into .tools/oss.env, or export them in this shell before "
-    "using OSS-backed tasks."
+    "Run ./bootstrap.sh first so credentials are collected into .tools/oss.env, "
+    "or export them in this shell before using OSS-backed tasks."
 )
 
 
@@ -54,7 +46,7 @@ def write_oss_env_file(key_id: str, key_secret: str) -> Path:
 
 
 def hydrate_credentials() -> tuple[str | None, str | None]:
-    """Fill os.environ from file / legacy registry; return (key_id, secret)."""
+    """Fill os.environ from file; return (key_id, secret)."""
     kid = os.environ.get(KEY_ID)
     ks = os.environ.get(KEY_SECRET)
     if kid and ks:
@@ -64,21 +56,10 @@ def hydrate_credentials() -> tuple[str | None, str | None]:
     kid = kid or from_file.get(KEY_ID)
     ks = ks or from_file.get(KEY_SECRET)
 
-    migrated = False
-    if not (kid and ks) and sys.platform == "win32":
-        reg_kid = winenv.read_user_env(KEY_ID)
-        reg_ks = winenv.read_user_env(KEY_SECRET)
-        kid = kid or reg_kid
-        ks = ks or reg_ks
-        migrated = bool(kid and ks and not from_file)
-
     if kid:
         os.environ[KEY_ID] = kid
     if ks:
         os.environ[KEY_SECRET] = ks
-    if migrated and kid and ks:
-        write_oss_env_file(kid, ks)
-        print(f"Migrated legacy OSS credentials from user environment to {oss_env_file()}.")
     return kid, ks
 
 

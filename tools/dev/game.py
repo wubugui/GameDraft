@@ -1,9 +1,4 @@
-"""Vite dev server start/stop (ports 5173-5176), cross-platform.
-
-Replaces start-game.cmd / start-game-proxy.cmd / stop-game.cmd. The stop
-logic is importable so the editor can call it in-process instead of
-shelling out to stop-game.cmd.
-"""
+"""Vite dev server start/stop (ports 5173-5176)."""
 
 from __future__ import annotations
 
@@ -11,7 +6,6 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 import time
 
 from tools.dev import proxyenv
@@ -45,22 +39,6 @@ def start(proxy: str | None = None, check: bool = False) -> int:
     return subprocess.call([npm, "run", "dev"], cwd=str(root), env=env)
 
 
-def _listening_pids_windows(port: int) -> set[int]:
-    output = subprocess.run(
-        ["netstat", "-ano"], capture_output=True, text=True, check=False
-    ).stdout
-    pids: set[int] = set()
-    for line in output.splitlines():
-        parts = line.split()
-        # Proto Local-Address Foreign-Address State PID
-        if len(parts) >= 5 and parts[3].upper() == "LISTENING" and parts[1].endswith(f":{port}"):
-            try:
-                pids.add(int(parts[4]))
-            except ValueError:
-                continue
-    return pids
-
-
 def _listening_pids_unix(port: int) -> set[int]:
     if shutil.which("lsof"):
         result = subprocess.run(
@@ -81,19 +59,6 @@ def _listening_pids_unix(port: int) -> set[int]:
 def stop_dev_ports(ports: tuple[int, ...] = DEV_SERVER_PORTS, grace: float = 1.5) -> int:
     """Kill processes listening on the dev server ports. Returns kill count."""
     killed = 0
-    if sys.platform == "win32":
-        for port in ports:
-            for pid in _listening_pids_windows(port):
-                rc = subprocess.call(
-                    ["taskkill", "/F", "/PID", str(pid)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                if rc == 0:
-                    print(f"已结束进程 PID {pid} (端口 {port})")
-                    killed += 1
-        return killed
-
     pending: dict[int, int] = {}
     for port in ports:
         for pid in _listening_pids_unix(port):

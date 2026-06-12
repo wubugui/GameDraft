@@ -1,8 +1,4 @@
-"""DVC/OSS/git orchestration tasks, ported from scripts/*.ps1.
-
-Covers: init-runtime, init-editor, pull (pull-all), push (push-all),
-commit (commit-all), configure-oss, upload-bootstrap.
-"""
+"""DVC/OSS/git orchestration tasks."""
 
 from __future__ import annotations
 
@@ -13,13 +9,9 @@ from tools.dev.paths import project_python, repo_root
 
 RUNTIME_TARGET = "public/resources/runtime.dvc"
 EDITOR_TARGET = "resources/editor_projects.dvc"
-VENDOR_TARGET = "resources/vendor_archives.dvc"
-
-# Ported verbatim from scripts/commit-all.ps1, plus the cross-platform entries.
 COMMIT_DVC_ADD_PATHS = [
     "public/resources/runtime",
     "resources/editor_projects",
-    "resources/vendor_archives",
 ]
 COMMIT_GIT_ADD_PATHS = [
     ".dvc",
@@ -84,9 +76,9 @@ def init_editor() -> int:
     return 0
 
 
-def pull(editor: bool = False, vendor: bool = False, git_proxy: str = "") -> int:
+def pull(editor: bool = False, git_proxy: str = "") -> int:
     # Mask once at entry so nested without_proxy() blocks do not restore
-    # inherited HTTP(S)_PROXY mid-run (see scripts/no-proxy.ps1 notes).
+    # inherited HTTP(S)_PROXY mid-run.
     proxyenv.mask_proxy_env()
     rc = proxyenv.run_git_with_temp_proxy(["pull"], git_proxy)
     if rc != 0:
@@ -97,8 +89,6 @@ def pull(editor: bool = False, vendor: bool = False, git_proxy: str = "") -> int
     pull_dvc_target(RUNTIME_TARGET)
     if editor:
         pull_dvc_target(EDITOR_TARGET)
-    if vendor:
-        pull_dvc_target(VENDOR_TARGET)
     return 0
 
 
@@ -109,7 +99,7 @@ def push(git_proxy: str = "") -> int:
 
     with proxyenv.without_proxy():
         run_project_python(["-m", "dvc", "status"])
-        sync_dvc_cache("push", RUNTIME_TARGET, EDITOR_TARGET, VENDOR_TARGET)
+        sync_dvc_cache("push", RUNTIME_TARGET, EDITOR_TARGET)
 
     rc = proxyenv.run_git_with_temp_proxy(["push"], git_proxy)
     if rc != 0:
@@ -139,21 +129,4 @@ def configure_oss(
         run_project_python(["-m", "dvc", "remote", "modify", "--local", "aliyun_oss", "oss_key_id", key_id])
         run_project_python(["-m", "dvc", "remote", "modify", "--local", "aliyun_oss", "oss_key_secret", key_secret])
         run_project_python(["-m", "dvc", "remote", "list"])
-    return 0
-
-
-def upload_bootstrap(
-    bucket: str = "gamedraft-assets",
-    endpoint: str = "https://oss-cn-shanghai.aliyuncs.com",
-    prefix: str = "gamedraft/bootstrap",
-    archive_name: str = "python311-dvc-win-x64.zip",
-) -> int:
-    creds.assert_credentials()
-    archive = repo_root() / "resources" / "vendor_archives" / archive_name
-    key = prefix.rstrip("/") + "/" + archive_name
-    script = repo_root() / "scripts" / "upload-bootstrap.py"
-    with proxyenv.without_proxy():
-        run_project_python(
-            [str(script), "--bucket", bucket, "--endpoint", endpoint, "--file", str(archive), "--key", key]
-        )
     return 0

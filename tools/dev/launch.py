@@ -1,4 +1,4 @@
-"""Generic launchers for the Python GUI tools (replaces start-*.cmd).
+"""Generic launchers for the Python GUI tools.
 
 Each runs ``<project_python> -m tools.<module> [args]`` from the repo root.
 """
@@ -43,16 +43,13 @@ def run_tool(task: str, extra: list[str], check: bool = False) -> int:
         print(f"[check] cwd={repo_root()}")
         return 0
     if not project_python_ready():
-        print(
-            "Project Python runtime missing. Run bootstrap "
-            "(bootstrap.cmd / ./bootstrap.sh) first."
-        )
+        print("Project Python runtime missing. Run ./bootstrap.sh first.")
         return 1
     return subprocess.call([str(python), *argv], cwd=str(repo_root()))
 
 
 def run_chronicle_week(extra: list[str], check: bool = False) -> int:
-    """Replaces run-chronicle-sim-week.cmd (sets PYTHONPATH=repo_root)."""
+    """Run the weekly simulation helper with ``PYTHONPATH`` set to repo root."""
     import os
 
     script = "tools/chronicle_sim_v2/scripts/run_simulation_once.py"

@@ -28,8 +28,8 @@ class DialoguePanel(QWidget):
         self._header.setText("".join(lines))
         self._text.setPlainText(
             "请使用「图对话编辑器」编辑对白：\n"
-            "  工程根目录运行 edit-dialogue-graph.cmd\n"
-            "  或：.\\.tools\\Python311\\python.exe -m tools.dialogue_graph_editor --project <工程根>\n"
+            "  工程根目录运行 ./dev.sh dialogue-graph\n"
+            "  或：.tools/venv/bin/python -m tools.dialogue_graph_editor --project <工程根>\n"
             "资源路径：public/assets/dialogues/graphs/<id>.json\n"
             "本 Graph Editor 窗口仅展示引用关系。",
         )

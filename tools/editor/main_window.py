@@ -63,7 +63,7 @@ def _vite_dev_url_from_log(log: str) -> str | None:
 
 def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
     """GUI 启动的进程常缺少终端里的 PATH；补全常见 Node/npm 目录。"""
-    path_key = "Path" if sys.platform == "win32" else "PATH"
+    path_key = "PATH"
     if not env.contains(path_key):
         for alt in ("PATH", "Path"):
             if env.contains(alt):
@@ -76,18 +76,6 @@ def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
     if npm:
         prefixes.append(str(Path(npm).resolve().parent))
 
-    if sys.platform == "win32":
-        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-        pfx86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-        home = os.environ.get("USERPROFILE", "")
-        for d in (
-            os.path.join(pf, "nodejs"),
-            os.path.join(pfx86, "nodejs"),
-            os.path.join(home, "AppData", "Roaming", "npm"),
-            os.path.join(home, ".volta", "bin"),
-        ):
-            if os.path.isdir(d):
-                prefixes.append(d)
         nvm_link = os.environ.get("NVM_SYMLINK", "")
         if nvm_link and os.path.isdir(nvm_link):
             prefixes.insert(0, nvm_link)
@@ -868,10 +856,7 @@ class MainWindow(QMainWindow):
         proc.finished.connect(self._on_game_proc_finished)
         self._game_proc = proc
         self._pending_launch_params = launch_params
-        if sys.platform == "win32":
-            self._game_proc.start("cmd.exe", ["/c", "npm run dev"])
-        else:
-            self._game_proc.start("npm", ["run", "dev"])
+        self._game_proc.start("npm", ["run", "dev"])
         self._status.showMessage(
             "Starting Vite dev server…" if open_when_ready else "Prewarming Vite dev server…",
             5000,
@@ -1125,7 +1110,7 @@ class MainWindow(QMainWindow):
         self._game_open_when_ready = False
         self._pending_launch_params = None
         self._close_game_play_window()
-        # Free the Vite dev-server ports cross-platform (replaces stop-game.cmd).
+        # Free the Vite dev-server ports before closing the embedded preview.
         try:
             from tools.dev.game import stop_dev_ports
 

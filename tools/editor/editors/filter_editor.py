@@ -188,8 +188,8 @@ class FilterEditor(QWidget):
                 self,
                 "滤镜工具",
                 "无法启动。请在仓库根目录确认已安装依赖"
-                "（install-deps.cmd / ./dev.sh install-deps），并执行：\n"
-                "dev.cmd filter-tool（Windows）/ ./dev.sh filter-tool（macOS/Linux）",
+                "（./dev.sh install-deps），并执行：\n"
+                "./dev.sh filter-tool",
             )
             proc.deleteLater()
             return
