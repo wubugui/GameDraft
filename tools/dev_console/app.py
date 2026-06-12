@@ -93,7 +93,7 @@ class ConsoleState:
         if action == "start_game":
             return self._start_game()
         if action == "stop_game":
-            return self._run_exclusive("Stop game", [str(self.dev_sh), "game", "stop"])
+            return self._stop_game()
         if action == "build":
             return self._run_exclusive("Build", [npm_command(), "run", "build"], env=env_with_node_path())
         if action == "test":
@@ -121,6 +121,10 @@ class ConsoleState:
         if self.game_process is not None and self.game_process.poll() is None:
             return True, "Game server is already running."
         self.game_process = self._start_process("Game server", [str(self.dev_sh), "game", "start"], exclusive=False)
+        return True, "started"
+
+    def _stop_game(self) -> tuple[bool, str]:
+        self._start_process("Stop game", [str(self.dev_sh), "game", "stop"], exclusive=False)
         return True, "started"
 
     def _run_exclusive(
@@ -314,24 +318,24 @@ input{min-height:36px;border:1px solid #9ca3af;border-radius:5px;padding:0 10px;
 <section>
 <h2>版本与运行</h2>
 <div class="two">
-<button data-action="pull">Pull</button>
-<button data-action="push">Push</button>
+<button data-action="pull" data-exclusive="1">Pull</button>
+<button data-action="push" data-exclusive="1">Push</button>
 <input id="commitMessage" placeholder="提交说明">
-<button id="commitBtn">Commit</button>
+<button id="commitBtn" data-exclusive="1">Commit</button>
 </div>
 <div class="sep"></div>
 <div class="two">
-<button data-action="start_game">启动游戏</button>
+<button data-action="start_game" data-game-start="1">启动游戏</button>
 <button data-action="stop_game">停止游戏</button>
-<button data-action="build">Build</button>
-<button data-action="test">Test</button>
+<button data-action="build" data-exclusive="1">Build</button>
+<button data-action="test" data-exclusive="1">Test</button>
 </div>
 <div class="sep"></div>
 <div class="two">
-<button data-action="install_deps">安装依赖</button>
-<button data-action="git_status">Git 状态</button>
-<button data-action="init_runtime">拉运行资源</button>
-<button data-action="init_editor">拉编辑器资源</button>
+<button data-action="install_deps" data-exclusive="1">安装依赖</button>
+<button data-action="git_status" data-exclusive="1">Git 状态</button>
+<button data-action="init_runtime" data-exclusive="1">拉运行资源</button>
+<button data-action="init_editor" data-exclusive="1">拉编辑器资源</button>
 </div>
 </section>
 <section>
@@ -369,8 +373,13 @@ async function poll(){
   stateEl.textContent = data.active ? `运行中: ${data.activeTitle}` : (data.gameRunning ? "游戏服务运行中" : "空闲");
   for(const entry of data.logs){ append(entry); seq = Math.max(seq, entry.seq); }
   document.querySelectorAll("button[data-action],#commitBtn").forEach(btn=>{
-    const action = btn.dataset.action || "commit";
-    btn.disabled = data.active && action !== "start_game";
+    if(btn.dataset.gameStart === "1"){
+      btn.disabled = data.gameRunning;
+    }else if(btn.dataset.exclusive === "1"){
+      btn.disabled = data.active;
+    }else{
+      btn.disabled = false;
+    }
   });
 }
 document.querySelectorAll("button[data-action]").forEach(btn=>{
