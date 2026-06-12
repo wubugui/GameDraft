@@ -55,6 +55,7 @@ from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runti
 from ..shared.move_entity_map_picker import WorldPointPickView, resolve_world_size_for_scene_json
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.project_paths import ProjectPaths
+from ..shared.fonts import MONO_FONT_FAMILY
 
 
 def _scene_background_disk_path(model: ProjectModel, scene_id: str, sc: dict) -> Path | None:
@@ -496,7 +497,7 @@ class _DraggableCircle(QGraphicsEllipseItem):
 
         self._label = QGraphicsTextItem(entity_id, self)
         self._label.setDefaultTextColor(Qt.GlobalColor.white)
-        self._label.setFont(QFont("Consolas", 8))
+        self._label.setFont(QFont(MONO_FONT_FAMILY, 8))
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label.setFlag(
@@ -569,7 +570,7 @@ class _DraggableRect(QGraphicsRectItem):
 
         self._label = QGraphicsTextItem(entity_id, self)
         self._label.setDefaultTextColor(Qt.GlobalColor.white)
-        self._label.setFont(QFont("Consolas", 8))
+        self._label.setFont(QFont(MONO_FONT_FAMILY, 8))
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label.setFlag(
@@ -737,7 +738,7 @@ class _EditableZonePolygon(QGraphicsObject):
             xs = [p[0] for p in self._points]
             ys = [p[1] for p in self._points]
             painter.setPen(QPen(Qt.GlobalColor.white))
-            painter.setFont(QFont("Consolas", 8))
+            painter.setFont(QFont(MONO_FONT_FAMILY, 8))
             painter.drawText(QPointF(min(xs) + 3, min(ys) + 12), self.entity_id)
         painter.restore()
 
@@ -1024,7 +1025,7 @@ class _NpcPatrolPolyline(QGraphicsObject):
             painter.setPen(QPen(QColor(0, 120, 140), 0))
             painter.drawEllipse(QPointF(px, py), hrad, hrad)
             painter.setPen(QPen(Qt.GlobalColor.white))
-            painter.setFont(QFont("Consolas", 8))
+            painter.setFont(QFont(MONO_FONT_FAMILY, 8))
             painter.drawText(QPointF(px + hrad + 2, py + 4), str(i))
         painter.restore()
 
@@ -1677,7 +1678,7 @@ class SceneCanvas(QGraphicsView):
             self._npc_ref_items.append(rect)
             tag = QGraphicsTextItem(f"{corner}\n{label_txt}")
             tag.setDefaultTextColor(QColor(200, 240, 210))
-            tag.setFont(QFont("Consolas", 8))
+            tag.setFont(QFont(MONO_FONT_FAMILY, 8))
             tag.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
             tag.setPos(x + 3, y + 3)
             tag.setZValue(_NPC_REF_Z + 0.1)
@@ -2066,7 +2067,7 @@ class CutsceneCameraPointPickerDialog(QDialog):
         root.addWidget(hint)
 
         self._coord_lbl = QLabel()
-        self._coord_lbl.setStyleSheet("font-family: Consolas; font-size: 12px;")
+        self._coord_lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY}; font-size: 12px;")
         root.addWidget(self._coord_lbl)
 
         self._view = WorldPointPickView(self)
@@ -2160,7 +2161,7 @@ class SceneEntityPositionPickerDialog(QDialog):
         root.addWidget(hint)
 
         self._coord_lbl = QLabel()
-        self._coord_lbl.setStyleSheet("font-family: Consolas; font-size: 12px;")
+        self._coord_lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY}; font-size: 12px;")
         root.addWidget(self._coord_lbl)
 
         self._view = WorldPointPickView(self)

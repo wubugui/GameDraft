@@ -28,7 +28,7 @@ _GROUP_COLORS = {"main": QColor(50, 80, 140), "side": QColor(40, 120, 80)}
 _NODE_COLOR = QColor(60, 80, 140)
 _IMPLICIT_EDGE_COLOR = QColor(120, 120, 140, 160)
 _EXPLICIT_EDGE_COLOR = QColor(100, 160, 255)
-_FONT = "Microsoft YaHei"
+_FONT = "PingFang SC"
 
 
 class QuestGroupItem(QGraphicsRectItem):

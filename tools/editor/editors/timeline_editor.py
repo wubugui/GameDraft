@@ -34,6 +34,7 @@ from ..shared.action_editor import (
 from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
 from ..shared.rich_text_field import RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
+from ..shared.fonts import MONO_FONT_FAMILY
 from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
 
 # Cutscene 步骤表头拖拽排序（TimelineEditor._dnd_cutscene_step_source 存 payload）
@@ -1176,7 +1177,7 @@ class StepOutlineFrame(QFrame):
         self._idx_lbl = QLabel("—")
         self._idx_lbl.setFixedWidth(28)
         self._idx_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        fmono = QFont("Consolas")
+        fmono = QFont(MONO_FONT_FAMILY)
         fmono.setStyleHint(QFont.StyleHint.Monospace)
         self._idx_lbl.setFont(fmono)
         hl.addWidget(self._idx_lbl)

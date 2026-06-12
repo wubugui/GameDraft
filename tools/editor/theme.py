@@ -357,7 +357,7 @@ def _stylesheet_flat_modern() -> str:
         QWidget {{
             color: {tx};
             font-size: 13px;
-            font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+            font-family: "PingFang SC", "Helvetica Neue";
         }}
         QMenuBar {{
             background-color: {w};

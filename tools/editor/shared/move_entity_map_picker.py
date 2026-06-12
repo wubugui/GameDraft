@@ -34,6 +34,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QRectF, QPoint, QPointF, Signal, QTimer, QLineF
 
 from ..project_model import ProjectModel
+from .fonts import MONO_FONT_FAMILY
 
 _MARKER_CAM_PICK = QColor(255, 70, 90, 210)
 _MARKER_CAM_EDGE = QPen(QColor(255, 210, 220), 0)
@@ -381,7 +382,7 @@ class MoveEntityToMapPickerDialog(QDialog):
         root.addLayout(toolbar)
 
         self._lbl = QLabel("", self)
-        self._lbl.setStyleSheet("font-family: Consolas; font-size:12px;")
+        self._lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY}; font-size:12px;")
         root.addWidget(self._lbl)
 
         self._view = MoveEntityPathPickView(self)

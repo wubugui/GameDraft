@@ -19,6 +19,7 @@ from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit
+from ..shared.fonts import MONO_FONT_FAMILY
 
 
 class _ZoomableView(QGraphicsView):
@@ -133,7 +134,7 @@ class MapNodeGraphicsItem(QGraphicsEllipseItem):
         self.setFlags(fl)
         self._label_item = QGraphicsTextItem(label, self)
         self._label_item.setDefaultTextColor(Qt.GlobalColor.white)
-        self._label_item.setFont(QFont("Consolas", 7))
+        self._label_item.setFont(QFont(MONO_FONT_FAMILY, 7))
         self._label_item.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label_item.setPos(radius + 2, -8)
@@ -425,7 +426,7 @@ class MapEditor(QWidget):
         if label:
             mx = (sx + ex) / 2
             my = (sy + ey) / 2
-            lbl = self._map_scene.addText(label, QFont("Consolas", 6))
+            lbl = self._map_scene.addText(label, QFont(MONO_FONT_FAMILY, 6))
             lbl.setDefaultTextColor(
                 QColor(255, 170, 50) if conditional else QColor(140, 200, 255))
             lbl.setPos(mx + 4, my - 10)
