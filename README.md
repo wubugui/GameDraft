@@ -53,9 +53,11 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 - OSS 凭据保存在 `.tools/oss.env`（git 忽略，两行
   `OSS_ACCESS_KEY_ID=` / `OSS_ACCESS_KEY_SECRET=`）。`bootstrap` 会在缺失时
   提示填写。
+- 依赖安装和 git 推拉默认使用临时代理 `http://127.0.0.1:7078`。
+  依赖安装不走代理时加 `install-deps --no-proxy`。
 - OSS 阶段会绕过本地代理；git 推拉默认使用 `http://127.0.0.1:7078`。
   只有临时换代理时才需要传 `--git-proxy <url>` 或设置 `GAMEDRAFT_GIT_PROXY`。
-  npm 装包走代理用 `install-deps --npm-proxy` 或 `game start --proxy`。
+  npm/game 临时换代理用 `install-deps --npm-proxy <url>` 或 `game start --proxy <url>`。
 
 ## 资源结构
 

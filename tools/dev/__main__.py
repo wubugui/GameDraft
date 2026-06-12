@@ -17,7 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_deps = sub.add_parser("install-deps", help="Install third-party dependencies")
     p_deps.add_argument("--skip-dvc-pull", action="store_true")
     p_deps.add_argument("--tools", default=None, help="Comma list or 'all' for extra tool requirements")
-    p_deps.add_argument("--npm-proxy", nargs="?", const="", default=None, help="Run npm install via proxy (default 127.0.0.1:7078)")
+    p_deps.add_argument("--npm-proxy", nargs="?", const="", default=None, help="Override install proxy (default 127.0.0.1:7078)")
+    p_deps.add_argument("--no-proxy", action="store_true", help="Install dependencies without the temporary 7078 proxy")
 
     p_initrt = sub.add_parser("init-runtime", help="Sync game runtime resources")
     p_initrt.add_argument("--install-deps", action="store_true")
@@ -73,7 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     if task == "install-deps":
         from tools.dev import deps
 
-        return deps.install_deps(skip_dvc_pull=args.skip_dvc_pull, tools=args.tools, npm_proxy=args.npm_proxy)
+        return deps.install_deps(
+            skip_dvc_pull=args.skip_dvc_pull,
+            tools=args.tools,
+            npm_proxy=args.npm_proxy,
+            no_proxy=args.no_proxy,
+        )
     if task == "init-runtime":
         from tools.dev import sync
 
