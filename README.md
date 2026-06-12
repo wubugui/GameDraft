@@ -17,9 +17,9 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 ## 常用命令
 
 ```bash
-./scripts/pull-all.sh --editor --git-proxy http://127.0.0.1:7078
+./scripts/pull-all.sh
 ./scripts/commit-all.sh "提交说明"
-./scripts/push-all.sh --git-proxy http://127.0.0.1:7078
+./scripts/push-all.sh
 ```
 
 也可以直接使用通用入口：
@@ -51,9 +51,9 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 - OSS 凭据保存在 `.tools/oss.env`（git 忽略，两行
   `OSS_ACCESS_KEY_ID=` / `OSS_ACCESS_KEY_SECRET=`）。`bootstrap` 会在缺失时
   提示填写。
-- OSS 阶段会绕过本地代理；git 推拉可用 `--git-proxy <url>`（或环境变量
-  `GAMEDRAFT_GIT_PROXY`，默认 `http://127.0.0.1:7078`）。npm 装包走代理用
-  `install-deps --npm-proxy` 或 `game start --proxy`。
+- OSS 阶段会绕过本地代理；git 推拉默认使用 `http://127.0.0.1:7078`。
+  只有临时换代理时才需要传 `--git-proxy <url>` 或设置 `GAMEDRAFT_GIT_PROXY`。
+  npm 装包走代理用 `install-deps --npm-proxy` 或 `game start --proxy`。
 
 ## 资源结构
 
