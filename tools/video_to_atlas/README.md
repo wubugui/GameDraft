@@ -4,20 +4,20 @@
 
 ## 环境
 
-- 项目本地 Python：`.\.tools\Python311\python.exe`
+- 项目本地 Python：`.tools/venv/bin/python`
 
 ## 安装
 
-```bat
-cd /d f:\GameDraft
-.\install-deps.cmd
+```sh
+cd /path/to/GameDraft
+./dev.sh install-deps
 ```
 
 ## 启动
 
-```bat
-cd /d f:\GameDraft
-.\.tools\Python311\python.exe -m tools.video_to_atlas
+```sh
+cd /path/to/GameDraft
+.tools/venv/bin/python -m tools.video_to_atlas
 ```
 
 ## 模块结构

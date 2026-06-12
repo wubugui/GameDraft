@@ -218,7 +218,7 @@ class AgentRunner(Protocol):
     ) -> AgentResult: ...
 ```
 
-`SubprocessAgentRunner` 基类共享：临时 ws 创建 / 归档、env 强制剥代理（见 §5.1）、Windows libuv 重试、stderr 流式回调 observer。`ClineRunner` 与 `ExternalRunner` 都继承之。
+`SubprocessAgentRunner` 基类共享：临时 ws 创建 / 归档、env 强制剥代理（见 §5.1）、stderr 流式回调 observer。`ClineRunner` 与 `ExternalRunner` 都继承之。
 
 ### 5.1 系统代理硬纪律（用户硬约束）
 

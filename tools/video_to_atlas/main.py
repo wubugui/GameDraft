@@ -1,15 +1,12 @@
 """启动 GUI。"""
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
-# 先于 Qt / OpenCV / 解码库加载：减轻循环 seek 时 H.264/FFmpeg 刷 stderr
-if sys.platform == "win32":
-    # 优先走系统解码（WMF），通常不再走 libav，可避免反复 setPosition 时的提示
-    os.environ.setdefault("QT_MEDIA_BACKEND", "windows")
+import os
 
+# 先于 Qt / OpenCV / 解码库加载：减轻循环 seek 时 H.264/FFmpeg 刷 stderr
 os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
 os.environ.setdefault("AV_LOG_LEVEL", "quiet")
 

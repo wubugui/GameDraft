@@ -31,7 +31,6 @@ def _project_key_from_path(project_path: str | Path) -> str:
     p = Path(project_path).resolve()
     drive = p.drive
     if drive:
-        # Windows: "F:\GameDraft" -> "f-GameDraft"
         letter = drive.rstrip(":").lower()
         rel = p.relative_to(p.anchor) if p.anchor else p
         parts = [letter] + list(rel.parts)

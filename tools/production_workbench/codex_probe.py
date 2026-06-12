@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -132,11 +131,7 @@ def _find_codex_executable() -> str | None:
         return None
     path_candidate_count = 1 if from_path else 0
     ordered = candidates[:path_candidate_count]
-    extension_candidates = [
-        path
-        for path in candidates[path_candidate_count:]
-        if _is_platform_compatible_codex(path)
-    ]
+    extension_candidates = candidates[path_candidate_count:]
     extension_candidates.sort(key=lambda p: (_platform_preference(path), p.stat().st_mtime), reverse=True)
     ordered.extend(extension_candidates)
     seen: set[str] = set()
@@ -145,48 +140,19 @@ def _find_codex_executable() -> str | None:
         if key in seen:
             continue
         seen.add(key)
-        if _is_windowsapps_alias(path):
-            continue
         return str(path)
     return None
 
 
-def _is_windowsapps_alias(path: Path) -> bool:
-    parts = {part.lower() for part in path.parts}
-    if "windowsapps" not in parts:
-        return False
-    text = str(path).lower()
-    return "openai.codex_" in text or path.name.lower() == "codex.exe"
-
-
 def _is_codex_cli_name(path: Path) -> bool:
-    return path.name.lower() in {"codex", "codex.exe", "codex.cmd"}
-
-
-def _is_platform_compatible_codex(path: Path) -> bool:
-    parts = {part.lower() for part in path.parts}
-    if sys.platform.startswith("win"):
-        return not ({"linux-x86_64", "darwin-x86_64", "darwin-arm64"} & parts)
-    if sys.platform == "darwin":
-        return not ({"windows-x86_64", "win32", "linux-x86_64"} & parts)
-    return not ({"windows-x86_64", "win32", "darwin-x86_64", "darwin-arm64"} & parts)
+    return path.name == "codex"
 
 
 def _platform_preference(path: Path) -> int:
     parts = {part.lower() for part in path.parts}
-    name = path.name.lower()
-    if sys.platform.startswith("win"):
-        if "windows-x86_64" in parts:
-            return 3
-        if "win32" in parts:
-            return 2
-        if name in {"codex.exe", "codex.cmd"}:
-            return 1
-        return 0
-    if sys.platform == "darwin":
-        if "darwin-arm64" in parts or "darwin-x86_64" in parts:
-            return 3
-        return 1 if name == "codex" else 0
+    name = path.name
+    if "darwin-arm64" in parts or "darwin-x86_64" in parts:
+        return 3
     if "linux-x86_64" in parts:
         return 3
     return 1 if name == "codex" else 0

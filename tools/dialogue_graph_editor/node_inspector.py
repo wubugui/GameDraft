@@ -212,8 +212,8 @@ class NodeInspector(QWidget):
         editor_groups: dict[str, dict[str, Any]] | None = None,
         editor_group_for_node: str | None = None,
     ):
-        # 按 Qt 官方推荐，用 setUpdatesEnabled(False/True) 包住 mass rebuild，避免一次点击里多个
-        # QComboBox popup HWND 创建/销毁被 DWM 采样造成任务栏叠图标与小顶层窗闪烁。
+        # 按 Qt 官方推荐，用 setUpdatesEnabled(False/True) 包住 mass rebuild，
+        # 避免一次点击里多个 QComboBox popup 创建/销毁造成小顶层窗闪烁。
         _win = self.window()
         if _win is not None:
             _win.setUpdatesEnabled(False)
@@ -1122,7 +1122,7 @@ class NodeInspector(QWidget):
             ]
             for rid, rname in rule_pairs:
                 rh_entries.append((f"{rname}（{rid}）", rid))
-            # select_only=True：不让 editable 模式在构造时触发 QComboBoxPrivateContainer 作为 top-level HWND 闪现。
+            # select_only=True：不让 editable 模式在构造时触发 QComboBoxPrivateContainer 顶层闪烁。
             rh_cb = FilterableTypeCombo(rh_entries, content, select_only=True)
             rh_cb.setToolTip(
                 "对话 UI 上「规矩」标签与配色；与 requireFlag 是否满足无关。\n"
@@ -1629,7 +1629,7 @@ class NodeInspector(QWidget):
                 scen_ids: list[str] = []
                 if pm_switch is not None:
                     scen_ids = list(pm_switch.scenario_ids_ordered())
-                # 直接用不可编辑 QComboBox + 固定 placeholder；规避 editable combobox 在 Windows 下
+                # 直接用不可编辑 QComboBox + 固定 placeholder；规避 editable combobox
                 # activated -> clear/addItem 路径引发的原生崩溃。
                 scen_id_combo = QComboBox(scenario_w)
                 scen_id_combo.setEditable(False)

@@ -12,7 +12,7 @@
 
 已通过：
 
-- `.\.tools\Python311\python.exe -m unittest discover tools/editor/tests -p "test_production_workbench*.py"`：118 tests OK
+- `.tools/venv/bin/python -m unittest discover tools/editor/tests -p "test_production_workbench*.py"`：118 tests OK
 - 生产工作台真实每日检查：`每日检查: 通过`
 - 当前计数：`error=0, blocker=0, warning=12`
 
@@ -25,10 +25,9 @@
 
 ## 验收入口
 
-1. 双击 `start-production-workbench.cmd`
-2. 或运行：
+1. 运行：
 
-```powershell
+```sh
 npm run planner:gui
 ```
 

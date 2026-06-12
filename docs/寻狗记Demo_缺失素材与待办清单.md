@@ -41,7 +41,7 @@
 1. **实机全流程目检**：状态机层联调已由 `XungouMainFlowIntegration.test.ts` 覆盖（全信号序列→12 里程碑）；
    视觉/演出/长按手感需开可见窗口跑一遍（后台标签 rAF 节流会卡演出，务必前台运行）。
 2. **DVC 资源推送**：`public/resources/runtime` 下新增的入库素材（场景背景/动画包/插画/音频）未进 DVC。
-   跑 `.\push-all.cmd`（或先 `python -m dvc status` 核对）。
+   跑 `./scripts/push-all.sh`（或先 `.tools/venv/bin/python -m dvc status` 核对）。
 3. **旧示例清理（可选）**：`narrative_graphs.json` 里的 `composition_1`（含 4 条 `__draft__` 草稿迁移）是历史示例，
    校验器会一直提示；建议在编辑器里删除。
 4. **引擎引导 flag（已报告）**：`xg_prologue_started`（game_config.initialCutsceneDoneFlag 引擎契约）与

@@ -313,7 +313,7 @@ class DialogueGraphEditorWidget(QWidget):
             "F 适应整图 · A /「自动布局」按图 entry 做 BFS 分层（避开已有分组框占位）· "
             "空白处右键可「新建分组框」；节点中心在框内即归入该组 · "
             "布局写入 resources/editor_projects/editor_data/dialogue_flow_layout.json · "
-            "依赖由 install-deps.cmd 安装"
+            "依赖由 ./dev.sh install-deps 安装"
         )
         flow_hint.setWordWrap(True)
         flow_hint.setStyleSheet("color: #888; font-size: 11px;")

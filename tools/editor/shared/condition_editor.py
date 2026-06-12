@@ -302,10 +302,10 @@ class ConditionEditor(QWidget):
             r.deleteLater()
         self._rows.clear()
         # 禁止主动 processEvents / sendPostedEvents：
-        # 会显式化 QComboBoxPrivateContainer 的 HWND 生命周期，在 Windows 上造成顶层窗闪烁。
+        # 会显式化 QComboBoxPrivateContainer 的生命周期，增加顶层弹窗闪烁风险。
 
     def _add_row(self, data: dict | None = None) -> None:
-        # parent=self 避免 QWidget 构造时成为无 parent 的 top-level，Windows 下会短暂 create HWND。
+        # parent=self 避免 QWidget 构造时成为无 parent 的 top-level。
         row = ConditionRow(data, self._ctx_model, self._ctx_scene_id, parent=self)
         row.removed.connect(self._remove_row)
         row.changed.connect(self.changed)

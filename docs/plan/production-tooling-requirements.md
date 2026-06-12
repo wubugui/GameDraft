@@ -23,7 +23,7 @@
 
 入口：
 
-- `start-production-workbench.cmd`
+- `npm run planner:gui`
 - `npm run planner:gui`
 - `python -m tools.production_workbench <project_root>`
 - 主编辑器 `Tools -> External tools (new process) -> Production Workbench`

@@ -60,7 +60,7 @@ def _make_default_billboard_image() -> Image.Image:
 
 def _make_text_texture(text: str, color: tuple[float, float, float]) -> tuple[int, int, int]:
     """Render text to OpenGL texture. Returns (tex_id, width, height) in texels."""
-    for path in ("arial.ttf", "C:/Windows/Fonts/arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+    for path in ("arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
         try:
             font = ImageFont.truetype(path, 16)
             break

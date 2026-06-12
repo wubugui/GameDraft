@@ -181,7 +181,7 @@ tools/chronicle_sim_v3/
 docs/
   rfc/v3-engine.md  v3-llm.md
   plan/v3-implementation.md  v3-node-catalog.md
-chronicle-sim.cmd                # Windows 包装脚本（可选）
+dev.sh                           # 统一开发入口
 ```
 
 ### 3.2 Run 内（数据层）

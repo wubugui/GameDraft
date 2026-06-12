@@ -4,14 +4,14 @@ Python + PIL 实现，与游戏 ColorMatrix 格式一致。输出 JSON 供游戏
 
 ## 安装
 
-```powershell
-.\install-deps.cmd
+```sh
+./dev.sh install-deps
 ```
 
 ## 运行
 
-```powershell
-.\.tools\Python311\python.exe -m tools.filter_tool
+```sh
+.tools/venv/bin/python -m tools.filter_tool
 ```
 
 或从项目根目录：`npm run filter-tool`

@@ -38,10 +38,10 @@ def _hide_combo_popups_under(widget: QWidget) -> None:
         cb.hidePopup()
 
 
-# 以下四个函数为历史兜底（曾用于手动清理 Windows 上偶发残留的 QComboBoxPrivateContainer）。
+# 以下四个函数为历史兜底（曾用于手动清理偶发残留的 QComboBoxPrivateContainer）。
 # 按 Qt 官方立场（https://forum.qt.io/topic/132029），QComboBoxPrivateContainer 是 editable QComboBox
-# 的内部顶层容器，应该「just ignore it」；主动 close/deleteLater 反而会让 HWND 被 DWM 采样到，
-# 表现为任务栏叠图标 + 顶层小窗闪烁。任何新代码禁止在 rebuild 路径中调用这些函数。
+# 的内部顶层容器，应该「just ignore it」；主动 close/deleteLater 反而会增加顶层小窗闪烁风险。
+# 任何新代码禁止在 rebuild 路径中调用这些函数。
 def _hide_active_application_popups(max_rounds: int = 8) -> None:
     """[已弃用] 仅收起 QApplication.activePopupWidget 链。勿在重建路径中调用，保留仅为潜在兜底。"""
     app = QApplication.instance()
@@ -1516,8 +1516,7 @@ class ActionRow(QWidget):
         outer.setSpacing(2)
         self._outer_layout = outer
 
-        # 所有子 widget 均显式传 parent=self：避免任何 QWidget 子类（尤其 QComboBox）在构造时
-        # 以"无 parent"短暂成为 top-level HWND，Windows 上会被 DWM 采样表现为任务栏闪现小窗。
+        # 所有子 widget 均显式传 parent=self，避免任何 QWidget 子类在构造时短暂成为 top-level。
         top = QHBoxLayout()
         self._fold_toggle = QToolButton(self)
         self._fold_toggle.setAutoRaise(True)
@@ -2787,7 +2786,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow("scenarioId", sid_combo)
 
             phase_combo = QComboBox(self)
-            # 非 editable：避免构造时创建 QComboBoxPrivateContainer 顶层 HWND 闪烁；
+            # 非 editable：避免构造时创建 QComboBoxPrivateContainer 顶层弹窗；
             # 未知 phase（旧数据）会以 "(缺失) xxx" 条目形式保留。
             phase_combo.setEditable(False)
 
@@ -3548,7 +3547,7 @@ class ActionRow(QWidget):
                 w.value_changed.connect(self.changed)
             elif act_type == "showNotification" and pname == "type":
                 w = QComboBox(self)
-                # 非 editable：notification type 是固定枚举，不需要手写；同时避免 HWND 闪烁。
+                # 非 editable：notification type 是固定枚举，不需要手写；同时避免顶层弹窗闪烁。
                 w.setEditable(False)
                 w.addItems(list(_NOTIFICATION_TYPES))
                 tv = str(val) if val is not None else "info"
@@ -4314,11 +4313,10 @@ class ActionEditor(QWidget):
             r.deleteLater()
         self._rows.clear()
         # 禁止主动 _dismiss_active_popup_stack / processEvents / sendPostedEvents：
-        # 这些组合会显式化 QComboBoxPrivateContainer 的 HWND 生命周期，在 Windows 上造成闪烁。
+        # 这些组合会显式化 QComboBoxPrivateContainer 的生命周期，增加弹窗闪烁风险。
 
     def _add_row(self, data: dict | None = None) -> None:
-        # parent=self：让 ActionRow 从构造的第一刻起就不是无 parent 的 top-level，
-        # 避免 Windows 上 QWidget 作为 top-level 短暂 create HWND 引发任务栏闪现。
+        # parent=self：让 ActionRow 从构造的第一刻起就不是无 parent 的 top-level。
         row = ActionRow(
             data,
             parent=self,
