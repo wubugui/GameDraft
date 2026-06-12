@@ -109,12 +109,7 @@ class ConsoleState:
     def launch_tool(self, task: str) -> tuple[bool, str]:
         if task not in {tool.task for tool in TOOLS}:
             return False, f"Unknown tool: {task}"
-        try:
-            subprocess.Popen([str(self.dev_sh), task], cwd=str(self.root))
-        except OSError as exc:
-            self.add_log(f"Launch {task} failed: {exc}", "err")
-            return False, str(exc)
-        self.add_log(f"Launch {task}: ok", "ok")
+        self._start_process(f"Launch {task}", [str(self.dev_sh), task], exclusive=False)
         return True, "ok"
 
     def _start_game(self) -> tuple[bool, str]:
