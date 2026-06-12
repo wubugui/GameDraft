@@ -11,4 +11,5 @@ if [ ! -x "$VENV_PY" ]; then
   exit 1
 fi
 
+cd "$ROOT"
 exec "$VENV_PY" -m tools.dev "$@"
