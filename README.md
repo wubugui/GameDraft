@@ -20,6 +20,7 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 ./scripts/pull-all.sh
 ./scripts/commit-all.sh "提交说明"
 ./scripts/push-all.sh
+./scripts/console.sh
 ```
 
 也可以直接使用通用入口：
@@ -34,6 +35,7 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 | 拉取代码+资源 | `./dev.sh pull --editor` |
 | 推送代码+资源 | `./dev.sh push` |
 | 提交 | `./dev.sh commit -m "说明"` |
+| 控制台 | `./dev.sh console` |
 | 启动编辑器 | `./dev.sh editor` |
 | 启动游戏开发服 | `./dev.sh game start` |
 | 停止游戏开发服 | `./dev.sh game stop` |

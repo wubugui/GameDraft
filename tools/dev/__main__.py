@@ -52,7 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     for name in [*TOOL_MODULES.keys(), "chronicle-week"]:
         tp = sub.add_parser(name, help=f"Launch {name}")
         tp.add_argument("--check", action="store_true")
-        tp.add_argument("extra", nargs=argparse.REMAINDER)
+        if name == "console":
+            tp.add_argument("--port", type=int, default=None)
+            tp.add_argument("--no-open", action="store_true")
+        else:
+            tp.add_argument("extra", nargs=argparse.REMAINDER)
 
     return parser
 
@@ -106,7 +110,14 @@ def main(argv: list[str] | None = None) -> int:
 
     from tools.dev.launch import TOOL_MODULES, run_chronicle_week, run_tool
 
-    extra = [a for a in getattr(args, "extra", []) if a != "--"]
+    if task == "console":
+        extra = []
+        if args.port is not None:
+            extra.extend(["--port", str(args.port)])
+        if args.no_open:
+            extra.append("--no-open")
+    else:
+        extra = [a for a in getattr(args, "extra", []) if a != "--"]
     if task == "chronicle-week":
         return run_chronicle_week(extra, check=args.check)
     if task in TOOL_MODULES:

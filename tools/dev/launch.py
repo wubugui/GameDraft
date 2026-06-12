@@ -11,6 +11,7 @@ from tools.dev.paths import project_python, project_python_ready, repo_root
 
 # task name -> (module, default extra argv)
 TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
+    "console": ("tools.dev_console", []),
     "editor": ("tools.editor", []),
     "asset-browser": ("tools.asset_browser.main", []),
     "asset-ingest": ("tools.asset_ingest.main", []),
@@ -45,7 +46,10 @@ def run_tool(task: str, extra: list[str], check: bool = False) -> int:
     if not project_python_ready():
         print("Project Python runtime missing. Run ./bootstrap.sh first.")
         return 1
-    return subprocess.call([str(python), *argv], cwd=str(repo_root()))
+    try:
+        return subprocess.call([str(python), *argv], cwd=str(repo_root()))
+    except KeyboardInterrupt:
+        return 130
 
 
 def run_chronicle_week(extra: list[str], check: bool = False) -> int:
@@ -59,6 +63,9 @@ def run_chronicle_week(extra: list[str], check: bool = False) -> int:
         return 0
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo_root())
-    return subprocess.call(
-        [str(python), script, *extra], cwd=str(repo_root()), env=env
-    )
+    try:
+        return subprocess.call(
+            [str(python), script, *extra], cwd=str(repo_root()), env=env
+        )
+    except KeyboardInterrupt:
+        return 130
