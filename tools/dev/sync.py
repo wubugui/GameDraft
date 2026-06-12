@@ -38,6 +38,9 @@ COMMIT_GIT_ADD_PATHS = [
     "README.md",
     "bootstrap.sh",
     "dev.sh",
+    "pull-all.sh",
+    "push-all.sh",
+    "commit-all.sh",
 ]
 
 
