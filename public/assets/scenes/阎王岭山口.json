@@ -65,9 +65,200 @@
           }
         }
       ]
+    },
+    {
+      "id": "z_X点一",
+      "polygon": [
+        {
+          "x": 0.0,
+          "y": 380.0
+        },
+        {
+          "x": 1376.0,
+          "y": 380.0
+        },
+        {
+          "x": 1376.0,
+          "y": 460.0
+        },
+        {
+          "x": 0.0,
+          "y": 460.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "on_road"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "阎王岭山口:z_X点一",
+            "signal": "hanming_x1_reached"
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_越点二",
+      "polygon": [
+        {
+          "x": 0.0,
+          "y": 285.0
+        },
+        {
+          "x": 1376.0,
+          "y": 285.0
+        },
+        {
+          "x": 1376.0,
+          "y": 335.0
+        },
+        {
+          "x": 0.0,
+          "y": 335.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "x1_called"
+        },
+        {
+          "narrative": "wrap_喊名_点二",
+          "state": "undecided"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "第二个画X的地方，他脚没停——走过去，就是答案。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "阎王岭山口:z_越点二",
+            "signal": "hanming_x2_skipped"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "阎王岭山口:z_越点二",
+            "signal": "hanming_x2_done"
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_越点三",
+      "polygon": [
+        {
+          "x": 0.0,
+          "y": 195.0
+        },
+        {
+          "x": 1376.0,
+          "y": 195.0
+        },
+        {
+          "x": 1376.0,
+          "y": 240.0
+        },
+        {
+          "x": 0.0,
+          "y": 240.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "x2_resolved"
+        },
+        {
+          "narrative": "wrap_喊名_点三",
+          "state": "undecided"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "第三个画X的地方，他看都没看——黑成那样的沟，谁爱喊谁喊。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "阎王岭山口:z_越点三",
+            "signal": "hanming_x3_skipped"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "阎王岭山口:z_越点三",
+            "signal": "hanming_x3_done"
+          }
+        }
+      ]
     }
   ],
   "hotspots": [
+    {
+      "id": "hs_X点二_林边",
+      "type": "inspect",
+      "label": "林子边 · 画X的地方（二）",
+      "x": 1010.0,
+      "y": 355.0,
+      "interactionRange": 80.0,
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "x1_called"
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_喊名_点二"
+      }
+    },
+    {
+      "id": "hs_X点三_林边",
+      "type": "inspect",
+      "label": "林子边 · 画X的地方（三）",
+      "x": 860.0,
+      "y": 252.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "x2_resolved"
+        }
+      ],
+      "data": {
+        "graphId": "寻狗_喊名_点三"
+      }
+    },
     {
       "id": "hs_歇脚棚",
       "type": "inspect",
@@ -78,7 +269,7 @@
       "conditions": [
         {
           "narrative": "scenario_送货",
-          "state": "bundle_taken",
+          "state": "x3_resolved",
           "reached": true
         },
         {

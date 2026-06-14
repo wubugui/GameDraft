@@ -33,7 +33,7 @@ function flush(): Promise<void> {
 }
 
 describe('寻狗记Demo 主线编排（真实数据）', () => {
-  it('从听书到出城黑屏：全信号序列推进 12 个里程碑', async () => {
+  it('从听书到出城黑屏：全信号序列推进 13 个里程碑（含①.5梦）', async () => {
     const { narrative } = makeRuntime();
     const emit = async (sourceType: string, sourceId: string, signal: string) => {
       narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
@@ -66,6 +66,20 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     await emit('dialogue', '寻狗_背尸', 'beishi_fled');
     beatAt('scenario_背尸', 'fled');
     flowAt('s02_beishi');
+
+    // ①.5 梦·待死之礼：背尸 fled 后 reactive 自动开梦门（躲藏昏睡）
+    beatAt('scenario_梦待死之礼', 'road');
+    await emit('dialogue', '寻狗_梦待死之礼', 'meng_house');
+    await emit('dialogue', '寻狗_梦待死之礼', 'meng_ate');
+    beatAt('scenario_梦待死之礼', 'fed');
+    await emit('dialogue', '寻狗_梦待死之礼', 'meng_clothed');
+    await emit('dialogue', '寻狗_梦待死之礼', 'meng_lying');
+    await emit('dialogue', '寻狗_梦待死之礼', 'meng_paper_stopped');
+    await emit('dialogue', '寻狗_梦待死之礼', 'meng_tune');
+    beatAt('scenario_梦待死之礼', 'tune_trembled');
+    await emit('dialogue', '寻狗_梦待死之礼', 'meng_woken');
+    beatAt('scenario_梦待死之礼', 'woken');
+    flowAt('s02b_meng');
 
     // ② 吹牛
     await emit('dialogue', '寻狗_茶馆吹牛', 'chuiniu_seed');
@@ -112,16 +126,31 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     beatAt('scenario_向导', 'outfitted');
     flowAt('s08_xiangdao');
 
-    // ⑨ 送货+夜路喊名
+    // ⑨ 送货+林中喊名（两段式：去程 X①半脚本+②③选择写账，回程按账还）
     await emit('dialogue', '寻狗_送货雇主', 'songhuo_bundle_taken');
     await emit('zone', '阎王岭山口:z_同行闲扯', 'songhuo_road_entered');
+    await emit('zone', '阎王岭山口:z_X点一', 'hanming_x1_reached');
+    beatAt('scenario_送货', 'x1_called'); // 半脚本必经：保底账挂上
+    await emit('dialogue', '寻狗_喊名_点二', 'hanming_x2_wrong');
+    await emit('dialogue', '寻狗_喊名_点二', 'hanming_x2_done');
+    beatAt('wrap_喊名_点二', 'wrong');
+    beatAt('scenario_送货', 'x2_resolved');
+    await emit('zone', '阎王岭山口:z_越点三', 'hanming_x3_skipped');
+    await emit('zone', '阎王岭山口:z_越点三', 'hanming_x3_done');
+    beatAt('wrap_喊名_点三', 'skipped'); // 走过去就是答案
     await emit('dialogue', '寻狗_送包袱到棚', 'songhuo_delivered');
     await emit('dialogue', '寻狗_看进山路', 'songhuo_gazed');
-    await emit('minigame', 'forest_name_call', 'songhuo_call1');
-    await emit('minigame', 'forest_name_call', 'songhuo_call2');
-    beatAt('scenario_送货', 'night_call2');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_ret_p3');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_awakening');
+    beatAt('wrap_喊名_恍然', 'done');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_ret_p2');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_ret_p1');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_climax');
+    beatAt('scenario_送货', 'climax');
     await emit('minigame', 'forest_name_call', 'songhuo_survived');
+    beatAt('scenario_送货', 'survived');
     await emit('dialogue', '寻狗_看进山路', 'songhuo_returned');
+    beatAt('scenario_送货', 'returned');
     flowAt('s09_songhuo');
 
     // ⑩ 义庄镇尸：进门 + 四步任意顺序（reactive：动手→任2步反扑→4步齐）
@@ -156,7 +185,7 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     flowAt('s12_chufa');
 
     // reached 历史完整（任务面板/档案门控依赖）
-    for (const s of ['s01_tingshu', 's04_pozi', 's07_kujing', 's10_yizhuang', 's12_chufa']) {
+    for (const s of ['s01_tingshu', 's02b_meng', 's04_pozi', 's07_kujing', 's10_yizhuang', 's12_chufa']) {
       expect(narrative.hasReachedState(FLOW, s)).toBe(true);
     }
   });
@@ -167,5 +196,98 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     await flush();
     expect(narrative.getActiveState(FLOW)).toBe('initial');
     expect(narrative.getActiveState('scenario_吹牛')).toBe('not_started');
+  });
+
+  it('梦·待死之礼乱序保护：背尸未逃，梦门不开', async () => {
+    const { narrative } = makeRuntime();
+    narrative.emitNarrativeSignal({ sourceType: 'dialogue', sourceId: 'x', signal: 'meng_ate' });
+    await flush();
+    expect(narrative.getActiveState('scenario_梦待死之礼')).toBe('not_started');
+    narrative.emitNarrativeSignal({ sourceType: 'dialogue', sourceId: 'x', signal: 'meng_woken' });
+    await flush();
+    expect(narrative.getActiveState(FLOW)).toBe('initial');
+  });
+});
+
+describe('林中喊名 两段式分支（真实数据）', () => {
+  type Pick = 'right' | 'wrong' | 'skipped';
+
+  async function driveToClimax(x2: Pick, x3: Pick) {
+    const { narrative } = makeRuntime();
+    const emit = async (sourceType: string, sourceId: string, signal: string) => {
+      narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
+      await flush();
+      await flush();
+    };
+    await emit('dialogue', '寻狗_送货雇主', 'songhuo_bundle_taken');
+    await emit('zone', '阎王岭山口:z_同行闲扯', 'songhuo_road_entered');
+    await emit('zone', '阎王岭山口:z_X点一', 'hanming_x1_reached');
+    await emit('dialogue', '寻狗_喊名_点二', `hanming_x2_${x2}`);
+    await emit('dialogue', '寻狗_喊名_点二', 'hanming_x2_done');
+    await emit('dialogue', '寻狗_喊名_点三', `hanming_x3_${x3}`);
+    await emit('dialogue', '寻狗_喊名_点三', 'hanming_x3_done');
+    await emit('dialogue', '寻狗_送包袱到棚', 'songhuo_delivered');
+    await emit('dialogue', '寻狗_看进山路', 'songhuo_gazed');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_ret_p3');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_ret_p2');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_ret_p1');
+    await emit('dialogue', '寻狗_看进山路', 'hanming_climax');
+    return { narrative, emit };
+  }
+
+  it('②③选择九宫格：全部组合都汇入认不准关口，点①保底账必经', async () => {
+    const picks: Pick[] = ['right', 'wrong', 'skipped'];
+    for (const x2 of picks) {
+      for (const x3 of picks) {
+        const { narrative } = await driveToClimax(x2, x3);
+        expect(narrative.getActiveState('scenario_送货')).toBe('climax');
+        expect(narrative.getActiveState('wrap_喊名_点二')).toBe(x2);
+        expect(narrative.getActiveState('wrap_喊名_点三')).toBe(x3);
+        // 半脚本保底：无论怎么选，点①必经（回程那一声必兑现的图结构前提）
+        expect(narrative.hasReachedState('scenario_送货', 'x1_called')).toBe(true);
+      }
+    }
+  });
+
+  it('忍住分支：撑过认不准 → 散开 → 回城收束', async () => {
+    const { narrative, emit } = await driveToClimax('right', 'right');
+    await emit('minigame', 'forest_name_call', 'songhuo_survived');
+    expect(narrative.getActiveState('scenario_送货')).toBe('survived');
+    await emit('dialogue', '寻狗_看进山路', 'songhuo_returned');
+    expect(narrative.getActiveState('scenario_送货')).toBe('returned');
+    expect(narrative.hasReachedState('scenario_送货', 'answered')).toBe(false);
+  });
+
+  it('应声分支：失败不卡关，逃出后照样回城收束（创伤留痕）', async () => {
+    const { narrative, emit } = await driveToClimax('skipped', 'skipped');
+    await emit('minigame', 'forest_name_call', 'hanming_answered');
+    expect(narrative.getActiveState('scenario_送货')).toBe('answered');
+    await emit('minigame', 'forest_escape_run', 'hanming_escaped');
+    expect(narrative.getActiveState('scenario_送货')).toBe('escaped');
+    await emit('dialogue', '寻狗_看进山路', 'songhuo_returned');
+    expect(narrative.getActiveState('scenario_送货')).toBe('returned');
+    // 创伤留痕：reached 历史可供 ⑫ 终幕回放/外围文本取变体
+    expect(narrative.hasReachedState('scenario_送货', 'answered')).toBe(true);
+    expect(narrative.hasReachedState('scenario_送货', 'survived')).toBe(false);
+  });
+
+  it('越点线即不喊：zone 越线信号与热点选择互斥收敛', async () => {
+    const { narrative } = makeRuntime();
+    const emit = async (sourceType: string, sourceId: string, signal: string) => {
+      narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
+      await flush();
+      await flush();
+    };
+    await emit('dialogue', '寻狗_送货雇主', 'songhuo_bundle_taken');
+    await emit('zone', '阎王岭山口:z_同行闲扯', 'songhuo_road_entered');
+    await emit('zone', '阎王岭山口:z_X点一', 'hanming_x1_reached');
+    // 玩家没去林边，直接越线：wrap 记 skipped，scenario 照常推进
+    await emit('zone', '阎王岭山口:z_越点二', 'hanming_x2_skipped');
+    await emit('zone', '阎王岭山口:z_越点二', 'hanming_x2_done');
+    expect(narrative.getActiveState('wrap_喊名_点二')).toBe('skipped');
+    expect(narrative.getActiveState('scenario_送货')).toBe('x2_resolved');
+    // 越线后补喊不算数：wrap 已收敛，迟到的选择信号不再改写
+    await emit('dialogue', '寻狗_喊名_点二', 'hanming_x2_right');
+    expect(narrative.getActiveState('wrap_喊名_点二')).toBe('skipped');
   });
 });

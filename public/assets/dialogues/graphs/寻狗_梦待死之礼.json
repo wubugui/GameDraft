@@ -1,0 +1,422 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_梦待死之礼",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·梦·待死之礼（①.5 全游戏的眼）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_梦待死之礼",
+              "state": "woken",
+              "reached": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "那一觉的事，他谁也没说过。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他没回城。腿肚子还在转筋，顺着墙根滑进一孔废砖窑，把自己塞进黑里。冷、饿、乏——眼皮一合，人就沉了底。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一条夜路。雾薄。远处一户人家亮着灯，暖黄暖黄的，是这片黑里唯一的光。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（脚自己在往那边走。路两旁什么都没有。静得只剩俺自己的脚步声。）",
+      "next": "n_house"
+    },
+    "n_house": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_house"
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "门在他敲之前就开了。一对老两口站在门里，灯光从他们背后涌出来。",
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "老妇人"
+      },
+      "text": "「可算回来了。」",
+      "next": "n6"
+    },
+    "n6": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "不问姓名。笑得很真。屋里桌上饭已经摆好——一碗白米饭，还冒着热气。像今晚刚摆的，又像等了他很久。",
+      "next": "n7"
+    },
+    "n7": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "那碗饭，一双筷子，直直插在饭中央。",
+      "next": "n8"
+    },
+    "n8": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（饿。饿得前胸贴后背。老两口在旁边看着他，和善地，等。）",
+      "next": "n_eat"
+    },
+    "n_eat": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "chooseAction",
+          "params": {
+            "prompt": "",
+            "allowCancel": false,
+            "options": [
+              {
+                "text": "【吃】",
+                "actions": [
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "sourceType": "dialogue",
+                      "sourceId": "寻狗_梦待死之礼",
+                      "signal": "meng_ate"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "next": "n9"
+    },
+    "n9": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他吃得很急。老妇人不声不响给他添了一回。没人说话。灯影暖暖的。",
+      "next": "n10"
+    },
+    "n10": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "饭罢，老妇人捧来一身干净衣裳——浆洗得发白的棉布，针脚还新，线头都没剪。",
+      "next": "n11"
+    },
+    "n11": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他摸了半天，没摸到一颗扣子。全是结带的。",
+      "next": "n12"
+    },
+    "n12": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（……样式真旧。）",
+      "next": "n_clothed"
+    },
+    "n_clothed": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_clothed"
+          }
+        }
+      ],
+      "next": "n13"
+    },
+    "n13": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "穿上了。很合身。像照着他的身量缝的。",
+      "next": "n14"
+    },
+    "n14": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "老头把他引到里屋。让他睡的不是床——是一块卸下来的门板，脚朝着门口。脚边点着一盏豆大的灯。",
+      "next": "n15"
+    },
+    "n15": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "院里有人在烧纸。火光透窗，一明一灭。",
+      "next": "n16"
+    },
+    "n16": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "老头"
+      },
+      "text": "（轻声）「给你烧的。」",
+      "next": "n17"
+    },
+    "n17": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗躺下。吃饱了，穿暖了，困意压上来。——他这辈子，没被这么好好待过。",
+      "next": "n_lying"
+    },
+    "n_lying": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_lying"
+          }
+        }
+      ],
+      "next": "n18"
+    },
+    "n18": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "院门外"
+      },
+      "text": "（一个拖长的调子，远远传来）「回来咯——」",
+      "next": "n19"
+    },
+    "n19": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "屋里一家人"
+      },
+      "text": "（围在门板边，齐声、轻轻地，替他应）「回来了。」",
+      "next": "n20"
+    },
+    "n20": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "老妇人俯下身，像哄孩子入睡一样，把一方白纸，轻轻盖上他的脸。",
+      "next": "n21"
+    },
+    "n21": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "纸随他的呼吸，一起，一伏。一起，一伏。",
+      "next": "n22"
+    },
+    "n22": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "然后，不动了。",
+      "next": "n_stop"
+    },
+    "n_stop": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_paper_stopped"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 1600
+          }
+        }
+      ],
+      "next": "n_tune"
+    },
+    "n_tune": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_tune"
+          }
+        }
+      ],
+      "next": "n23"
+    },
+    "n23": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "极远处，飘来半句跑了调的小调。",
+      "next": "n24"
+    },
+    "n24": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "纸——猛地，一颤。",
+      "next": "n_gap"
+    },
+    "n_gap": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 900
+          }
+        }
+      ],
+      "next": "n25"
+    },
+    "n25": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "—— 两 天 后 ——",
+      "next": "n26"
+    },
+    "n26": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "大晴天。鸟叫。城外土路上，牛车碾过辙印。关二狗坐在路边石头上：头发乱成鸡窝，眼下两团青黑。他盯着地上一只蚂蚁，看了很久，很久。",
+      "next": "n27"
+    },
+    "n27": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "……好饿。",
+      "next": "n28"
+    },
+    "n28": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他站起来，拍拍屁股，往城里走。身上还是自己那身破衣裳——梦里的东西，一件都没跟出来。除了饿。",
+      "next": "n_wake"
+    },
+    "n_wake": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_woken"
+          }
+        },
+        {
+          "type": "fadeWorldFromBlack",
+          "params": {
+            "durationMs": 1200
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

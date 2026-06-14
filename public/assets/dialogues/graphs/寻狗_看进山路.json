@@ -3,7 +3,7 @@
   "id": "寻狗_看进山路",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·看进山路 + 夜路喊名（心理抗性）"
+    "title": "寻狗Demo·看进山路 + 夜路回程（两段式：恍然/变体/不容松手/成败分支）"
   },
   "nodes": {
     "root": {
@@ -80,15 +80,19 @@
             "lines": [
               {
                 "speaker": "",
-                "text": "下山一半，天彻底黑透。林子里的虫鸣，一声一声稀下去——然后，没了。"
+                "text": "脚帮在岭口就散了，各有各的去处。他独自往回赶。下山一半，天彻底黑透。"
+              },
+              {
+                "speaker": "",
+                "text": "回程的道，把去程那三个画X的地方，倒着再走一遍。林子里的虫鸣，一声一声稀下去——然后，没了。"
               }
             ]
           }
         }
       ],
-      "next": "n_hold"
+      "next": "n_p3sig"
     },
-    "n_hold": {
+    "n_p3sig": {
       "type": "runActions",
       "actions": [
         {
@@ -98,12 +102,466 @@
           }
         },
         {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "hanming_ret_p3"
+          }
+        }
+      ],
+      "next": "sw_p3"
+    },
+    "sw_p3": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_喊名_点三",
+              "state": "right"
+            }
+          ],
+          "next": "p3r_call"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_喊名_点三",
+              "state": "wrong"
+            }
+          ],
+          "next": "p3w_call"
+        }
+      ],
+      "defaultNext": "p3q"
+    },
+    "p3r_call": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "林子里"
+      },
+      "text": "「二狗——」",
+      "next": "p3r_tail"
+    },
+    "p3r_tail": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一声。清清楚楚，从他喊过「黄秉文」的那条沟里飘出来。慢悠悠的，认得他的名。",
+      "next": "sw_awk_p3"
+    },
+    "p3w_call": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "林子里"
+      },
+      "text": "「二狗——」「二狗……」「——二狗？」",
+      "next": "p3w_tail"
+    },
+    "p3w_tail": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "好几个声音抢着喊。急，杂，一声压着一声，全从他喊岔了名的那条沟里涌上来。",
+      "next": "sw_awk_p3"
+    },
+    "p3q": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "过那条沟的时候，只有风。他脚步没停。",
+      "next": "sw_awk_p3"
+    },
+    "sw_awk_p3": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "not": {
+                "narrative": "wrap_喊名_点三",
+                "state": "skipped"
+              }
+            },
+            {
+              "narrative": "wrap_喊名_恍然",
+              "state": "pending"
+            }
+          ],
+          "next": "awk3_1"
+        }
+      ],
+      "defaultNext": "n_p2sig"
+    },
+    "awk3_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（这声音——从俺喊名的地方来的。）",
+      "next": "awk3_2"
+    },
+    "awk3_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（那些名字……是喊魂。俺一路喊，把它们喊、醒、了。要是还喊岔了名——认错了主，就全乱了。）",
+      "next": "awk3_3"
+    },
+    "awk3_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "脚帮那句话在耳朵里嗡嗡响：山里喊名，千万别应。应一声，魂就被勾了去。",
+      "next": "awk3_sig"
+    },
+    "awk3_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "hanming_awakening"
+          }
+        }
+      ],
+      "next": "n_p2sig"
+    },
+    "n_p2sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "hanming_ret_p2"
+          }
+        }
+      ],
+      "next": "sw_p2"
+    },
+    "sw_p2": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_喊名_点二",
+              "state": "right"
+            }
+          ],
+          "next": "p2r"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_喊名_点二",
+              "state": "wrong"
+            }
+          ],
+          "next": "p2w"
+        }
+      ],
+      "defaultNext": "p2q"
+    },
+    "p2r": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "「二狗——」又一声，从隔坡那个画X的地方来。不急。像个熟人在等他回头。",
+      "next": "sw_awk_p2"
+    },
+    "p2w": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "抢着喊的那几个声音，又起来了。这回，离得近——左边一声，右边一声，背后还有一声。",
+      "next": "sw_awk_p2"
+    },
+    "p2q": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "隔坡那处，安安静静。只有他自己的脚步声，深一脚，浅一脚。",
+      "next": "sw_awk_p2"
+    },
+    "sw_awk_p2": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "not": {
+                "narrative": "wrap_喊名_点二",
+                "state": "skipped"
+              }
+            },
+            {
+              "narrative": "wrap_喊名_恍然",
+              "state": "pending"
+            }
+          ],
+          "next": "awk2_1"
+        }
+      ],
+      "defaultNext": "n_p1sig"
+    },
+    "awk2_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（这声音——从俺喊名的地方来的。）",
+      "next": "awk2_2"
+    },
+    "awk2_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（那些名字……是喊魂。俺一路喊，把它们喊、醒、了。）",
+      "next": "awk2_3"
+    },
+    "awk2_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "脚帮那句话在耳朵里嗡嗡响：山里喊名，千万别应。应一声，魂就被勾了去。",
+      "next": "awk2_sig"
+    },
+    "awk2_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "hanming_awakening"
+          }
+        }
+      ],
+      "next": "n_p1sig"
+    },
+    "n_p1sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "hanming_ret_p1"
+          }
+        }
+      ],
+      "next": "p1_a"
+    },
+    "p1_a": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "最后一个画X的地方到了——他自己亲口喊过「李长生」的那块林子边。",
+      "next": "p1_call"
+    },
+    "p1_call": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "林子里"
+      },
+      "text": "「二狗——」",
+      "next": "p1_b"
+    },
+    "p1_b": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一声。清清楚楚。不远不近，就在林子第一排树的后头。",
+      "next": "sw_awk_p1"
+    },
+    "sw_awk_p1": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_喊名_恍然",
+              "state": "pending"
+            }
+          ],
+          "next": "awk1_1"
+        }
+      ],
+      "defaultNext": "n_climax_sig"
+    },
+    "awk1_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（那是……俺自己亲口喊过名字的地方。）",
+      "next": "awk1_2"
+    },
+    "awk1_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（那些名字……是喊魂。一路上就数俺嗓门亮——是俺自己，把它喊醒的。）",
+      "next": "awk1_3"
+    },
+    "awk1_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "脚帮那句话在耳朵里嗡嗡响：山里喊名，千万别应。应一声，魂就被勾了去。",
+      "next": "awk1_sig"
+    },
+    "awk1_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "hanming_awakening"
+          }
+        }
+      ],
+      "next": "n_climax_sig"
+    },
+    "n_climax_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "hanming_climax"
+          }
+        }
+      ],
+      "next": "cl_1"
+    },
+    "cl_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "喊声，停了。",
+      "next": "cl_2"
+    },
+    "cl_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "换成了呼吸声。不远不近，吸气特别长——左边一口，右边一口，背后，一口。",
+      "next": "cl_3"
+    },
+    "cl_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（别应。咬住。别应——）",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
           "type": "startPressureHold",
           "params": {
             "id": "forest_name_call"
           }
         }
       ],
+      "next": "sw_outcome"
+    },
+    "sw_outcome": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_送货",
+              "state": "answered",
+              "reached": true
+            }
+          ],
+          "next": "ans_1"
+        }
+      ],
+      "defaultNext": "ok_1"
+    },
+    "ok_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "不知过了多久——那几口呼吸，像在犹豫。",
+      "next": "ok_2"
+    },
+    "ok_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一缕极淡的香粉味，飘过。",
+      "next": "ok_3"
+    },
+    "ok_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "呼吸声退了。风声、虫鸣、夜鸟叫，一样一样地回来了。山里，重新有了正常的声音。",
+      "next": "ok_4"
+    },
+    "ok_4": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（别应……千万别应……）",
       "next": "n4"
     },
     "n4": {
@@ -148,6 +606,102 @@
               {
                 "speaker": "",
                 "text": "回到城里，他给自己灌了二两烧酒。酒入喉是热的，后脖颈还是凉的。"
+              }
+            ]
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "ans_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "——「哎。」",
+      "next": "ans_2"
+    },
+    "ans_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "字出口的一瞬，他自己都没反应过来。是嘴，自己应的。",
+      "next": "ans_3"
+    },
+    "ans_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一切声音，骤停。比安静更安静。整座山，像把耳朵一齐竖了起来。",
+      "next": "ans_4"
+    },
+    "ans_4": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（跑——！）",
+      "next": "n_escape"
+    },
+    "n_escape": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "forest_escape_run"
+          }
+        }
+      ],
+      "next": "ans_5"
+    },
+    "ans_5": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他不记得自己是怎么滚下最后一段坡的。冲出林子时，天刚泛起鱼肚白。他趴在地上，干呕。",
+      "next": "ans_6"
+    },
+    "ans_6": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（俺应了……俺应了……为什么要应……）",
+      "next": "n_sig_ans"
+    },
+    "n_sig_ans": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_看进山路",
+            "signal": "songhuo_returned"
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "雾津街头",
+            "targetSpawnPoint": "from_event"
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "回到城里，他给自己灌了四两烧酒。这回是热是凉，他没尝出来。那一声「哎」，在耳朵里转了一夜。"
               }
             ]
           }

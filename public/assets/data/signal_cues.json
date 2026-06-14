@@ -37,6 +37,13 @@
     ]
   },
   {
+    "id": "axiu_tune_far",
+    "description": "Axiu 信号·小调首现（①.5 梦·待死之礼，纸停之后）：极远处飘来半句跑调的小调。与 ⑩ 同旋律的远场残缺版。刻意无画面叠加——梦里的暖是布光的暖，绝不可用暖光微尘 VFX，否则信号体系被农家院污染。",
+    "actions": [
+      { "type": "playSfx", "params": { "id": "sfx_axiu_faint_hum" } }
+    ]
+  },
+  {
     "id": "axiu_full",
     "description": "Axiu 信号·正式确立：香粉味陡浓＋半句跑调小调。仅⑩义庄两尸松手与之后的重场面使用。",
     "actions": [
