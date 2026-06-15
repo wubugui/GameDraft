@@ -1,0 +1,141 @@
+{
+  "id": "梦_里屋",
+  "name": "梦·三四·睡觉与收束",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.25,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 380.0,
+    "y": 680.0
+  },
+  "spawnPoints": {
+    "from_meal": {
+      "x": 380.0,
+      "y": 680.0
+    }
+  },
+  "onEnter": [
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 500
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_dream_old_man",
+      "name": "老头",
+      "x": 880.0,
+      "y": 520.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "npc_dream_old_woman",
+      "name": "老妇人",
+      "x": 560.0,
+      "y": 520.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_门板",
+      "type": "inspect",
+      "x": 720.0,
+      "y": 560.0,
+      "interactionRange": 64.0,
+      "data": {
+        "text": "让他睡的不是床——是一块卸下来的门板，脚朝着门口。"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/dream_door_plank.png",
+        "worldWidth": 180.0,
+        "worldHeight": 130.0,
+        "spriteSort": "back"
+      }
+    },
+    {
+      "id": "deco_脚尾灯",
+      "type": "inspect",
+      "x": 840.0,
+      "y": 585.0,
+      "interactionRange": 40.0,
+      "data": {
+        "text": "脚边点着一盏豆大的灯。"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/dream_foot_lamp.png",
+        "worldWidth": 40.0,
+        "worldHeight": 41.0,
+        "spriteSort": "front"
+      }
+    },
+    {
+      "id": "deco_火盆",
+      "type": "inspect",
+      "x": 1150.0,
+      "y": 300.0,
+      "interactionRange": 40.0,
+      "data": {
+        "text": "院里有人在烧纸，火光透窗，一明一灭。"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/dream_joss_brazier.png",
+        "worldWidth": 90.0,
+        "worldHeight": 88.0,
+        "spriteSort": "back"
+      }
+    }
+  ],
+  "zones": [
+    {
+      "id": "z_门板",
+      "polygon": [
+        {
+          "x": 640.0,
+          "y": 540.0
+        },
+        {
+          "x": 820.0,
+          "y": 540.0
+        },
+        {
+          "x": 820.0,
+          "y": 640.0
+        },
+        {
+          "x": 640.0,
+          "y": 640.0
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "梦_段D_里屋"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "id": "梦_农家院",
+  "name": "梦·农家院",
+  "worldWidth": 1376,
+  "worldHeight": 768,
+  "camera": { "zoom": 1.2, "pixelsPerUnit": 1.0 },
+  "backgrounds": [
+    { "image": "background.png", "x": 0, "y": 0 }
+  ],
+  "ambientSounds": ["夜晚蛐蛐叫", "阴风"],
+  "spawnPoint": { "x": 300, "y": 680 },
+  "spawnPoints": {
+    "from_night_road": { "x": 300, "y": 680 }
+  },
+  "onEnter": [
+    { "type": "fadeWorldFromBlack", "params": { "durationMs": 600 } },
+    { "type": "startDialogueGraph", "params": { "graphId": "梦_段B_农家院" } }
+  ],
+  "npcs": [
+    {
+      "id": "npc_dream_old_man",
+      "name": "老头",
+      "x": 760,
+      "y": 440,
+      "interactionRange": 64,
+      "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "npc_dream_old_woman",
+      "name": "老妇人",
+      "x": 700,
+      "y": 455,
+      "interactionRange": 64,
+      "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_院门",
+      "type": "inspect",
+      "label": "敞开的院门",
+      "x": 720,
+      "y": 400,
+      "interactionRange": 64,
+      "data": {
+        "text": "门没等他敲就开了，灯光从里头涌出来。"
+      }
+    }
+  ],
+  "zones": [
+    {
+      "id": "z_进屋",
+      "polygon": [
+        { "x": 640, "y": 360 },
+        { "x": 820, "y": 360 },
+        { "x": 820, "y": 460 },
+        { "x": 640, "y": 460 }
+      ],
+      "onEnter": [
+        { "type": "fadeWorldToBlack", "params": { "durationMs": 500 } },
+        { "type": "switchScene", "params": { "targetScene": "梦_饭屋", "targetSpawnPoint": "from_courtyard" } }
+      ]
+    }
+  ],
+  "notes": "坐标待微调：spawnPoint(300,680) 假定入院在背景左下；两NPC(760,440)/(700,455) 与 hs_院门(720,400) 及 z_进屋多边形(640-820,360-460) 均按背景中部估算，需对照 scenes/梦_农家院/background.png 微调使 NPC 站在屋门口、玩家踩进 z_进屋即触发进屋转场。NPC 源图朝右，initialFacing=left 使其朝向自左下入院的玩家。"
+}

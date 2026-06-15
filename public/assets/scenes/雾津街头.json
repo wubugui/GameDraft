@@ -38,6 +38,10 @@
     "from_event": {
       "x": 620.0,
       "y": 500.0
+    },
+    "from_dream": {
+      "x": 900.0,
+      "y": 300.0
     }
   },
   "hotspots": [
@@ -436,13 +440,13 @@
         {
           "type": "fadeWorldToBlack",
           "params": {
-            "durationMs": 80
+            "durationMs": 600
           }
         },
         {
-          "type": "startDialogueGraph",
+          "type": "switchScene",
           "params": {
-            "graphId": "寻狗_梦待死之礼"
+            "targetScene": "梦_夜路"
           }
         }
       ]

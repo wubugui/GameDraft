@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "id": "梦_段D_里屋",
+  "entry": "n14",
+  "meta": {
+    "title": "梦·段D·里屋（待死之礼）"
+  },
+  "nodes": {
+    "n14": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "老头把他引到里屋。让他睡的不是床——是一块卸下来的门板，脚朝着门口。脚边点着一盏豆大的灯。",
+      "next": "n15"
+    },
+    "n15": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "院里有人在烧纸。火光透窗，一明一灭。",
+      "next": "n16"
+    },
+    "n16": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "老头"
+      },
+      "text": "（轻声）「给你烧的。」",
+      "next": "n17"
+    },
+    "n17": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗躺下。吃饱了，穿暖了，困意压上来。——他这辈子，没被这么好好待过。",
+      "next": "n_lying"
+    },
+    "n_lying": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_lying"
+          }
+        }
+      ],
+      "next": "n18"
+    },
+    "n18": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "院门外"
+      },
+      "text": "（一个拖长的调子，远远传来）「回来咯——」",
+      "next": "n19"
+    },
+    "n19": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "屋里一家人"
+      },
+      "text": "（围在门板边，齐声、轻轻地，替他应）「回来了。」",
+      "next": "n20"
+    },
+    "n20": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "老妇人俯下身，像哄孩子入睡一样，把一方白纸，轻轻盖上他的脸。",
+      "next": "n21"
+    },
+    "n21": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "纸随他的呼吸，一起，一伏。一起，一伏。",
+      "next": "n22"
+    },
+    "n22": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "然后，不动了。",
+      "next": "n_stop"
+    },
+    "n_stop": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_paper_stopped"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 1600
+          }
+        }
+      ],
+      "next": "n_tune"
+    },
+    "n_tune": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_tune"
+          }
+        }
+      ],
+      "next": "n23"
+    },
+    "n23": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "极远处，飘来半句跑了调的小调。",
+      "next": "n24"
+    },
+    "n24": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "纸——猛地，一颤。",
+      "next": "n_gap"
+    },
+    "n_gap": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 900
+          }
+        }
+      ],
+      "next": "d_end"
+    },
+    "d_end": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 1000
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "梦_醒来土路",
+            "targetSpawnPoint": "from_dream"
+          }
+        }
+      ],
+      "next": "d_end_end"
+    },
+    "d_end_end": {
+      "type": "end"
+    }
+  }
+}

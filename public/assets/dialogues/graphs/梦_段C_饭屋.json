@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "id": "梦_段C_饭屋",
+  "entry": "n6",
+  "meta": {
+    "title": "寻狗Demo·梦·段C·饭屋"
+  },
+  "nodes": {
+    "n6": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "不问姓名。笑得很真。屋里桌上饭已经摆好——一碗白米饭，还冒着热气。像今晚刚摆的，又像等了他很久。",
+      "next": "n7"
+    },
+    "n7": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "那碗饭，一双筷子，直直插在饭中央。",
+      "next": "n8"
+    },
+    "n8": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（饿。饿得前胸贴后背。老两口在旁边看着他，和善地，等。）",
+      "next": "n_eat"
+    },
+    "n_eat": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "chooseAction",
+          "params": {
+            "prompt": "",
+            "allowCancel": false,
+            "options": [
+              {
+                "text": "【吃】",
+                "actions": [
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "sourceType": "dialogue",
+                      "sourceId": "寻狗_梦待死之礼",
+                      "signal": "meng_ate"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "next": "n9"
+    },
+    "n9": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他吃得很急。老妇人不声不响给他添了一回。没人说话。灯影暖暖的。",
+      "next": "n10"
+    },
+    "n10": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "饭罢，老妇人捧来一身干净衣裳——浆洗得发白的棉布，针脚还新，线头都没剪。",
+      "next": "n11"
+    },
+    "n11": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他摸了半天，没摸到一颗扣子。全是结带的。",
+      "next": "n12"
+    },
+    "n12": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（……样式真旧。）",
+      "next": "n_clothed"
+    },
+    "n_clothed": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_clothed"
+          }
+        }
+      ],
+      "next": "n13"
+    },
+    "n13": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "穿上了。很合身。像照着他的身量缝的。",
+      "next": "c_end"
+    },
+    "c_end": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 800
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "梦_里屋",
+            "targetSpawnPoint": "from_meal"
+          }
+        }
+      ],
+      "next": "c_end_end"
+    },
+    "c_end_end": {
+      "type": "end"
+    }
+  }
+}
