@@ -3,29 +3,76 @@
   "name": "梦·夜路",
   "worldWidth": 1376,
   "worldHeight": 768,
-  "camera": { "zoom": 1.15, "pixelsPerUnit": 1.0 },
+  "camera": {
+    "zoom": 1.15,
+    "pixelsPerUnit": 1.0
+  },
   "backgrounds": [
-    { "image": "background.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "ambientSounds": ["夜晚蛐蛐叫", "阴风"],
-  "spawnPoint": { "x": 620, "y": 720 },
+  "ambientSounds": [
+    "夜晚蛐蛐叫",
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 620,
+    "y": 720
+  },
   "onEnter": [
-    { "type": "fadeWorldFromBlack", "params": { "durationMs": 800 } },
-    { "type": "startDialogueGraph", "params": { "graphId": "梦_段A_夜路" } }
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 800
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段A_夜路"
+      }
+    }
   ],
   "zones": [
     {
       "id": "z_梦_到农家院",
       "polygon": [
-        { "x": 980, "y": 200 },
-        { "x": 1340, "y": 200 },
-        { "x": 1340, "y": 480 },
-        { "x": 980, "y": 480 }
+        {
+          "x": 980,
+          "y": 200
+        },
+        {
+          "x": 1340,
+          "y": 200
+        },
+        {
+          "x": 1340,
+          "y": 480
+        },
+        {
+          "x": 980,
+          "y": 480
+        }
       ],
       "onEnter": [
-        { "type": "fadeWorldToBlack", "params": { "durationMs": 800 } },
-        { "type": "switchScene", "params": { "targetScene": "梦_农家院", "targetSpawnPoint": "from_night_road" } }
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 800
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "梦_农家院",
+            "targetSpawnPoint": "from_night_road"
+          }
+        }
       ]
     }
-  ]
+  ],
+  "bgm": "bgm_placeholder_low_tension"
 }

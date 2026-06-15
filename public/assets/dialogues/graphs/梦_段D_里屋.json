@@ -52,9 +52,21 @@
             "sourceId": "寻狗_梦待死之礼",
             "signal": "meng_lying"
           }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_corpse_cloth_creak"
+          }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_heartbeat_bed"
+          }
         }
       ],
-      "next": "n18"
+      "next": "n_call"
     },
     "n18": {
       "type": "line",
@@ -63,7 +75,7 @@
         "name": "院门外"
       },
       "text": "（一个拖长的调子，远远传来）「回来咯——」",
-      "next": "n19"
+      "next": "n_answer_pause"
     },
     "n19": {
       "type": "line",
@@ -81,7 +93,7 @@
         "name": "旁白"
       },
       "text": "老妇人俯下身，像哄孩子入睡一样，把一方白纸，轻轻盖上他的脸。",
-      "next": "n21"
+      "next": "n_cover"
     },
     "n21": {
       "type": "line",
@@ -113,6 +125,12 @@
           }
         },
         {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_force_swallowed_thud"
+          }
+        },
+        {
           "type": "waitMs",
           "params": {
             "durationMs": 1600
@@ -130,6 +148,12 @@
             "sourceType": "dialogue",
             "sourceId": "寻狗_梦待死之礼",
             "signal": "meng_tune"
+          }
+        },
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_tune_far"
           }
         }
       ],
@@ -156,6 +180,12 @@
     "n_gap": {
       "type": "runActions",
       "actions": [
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_abnormal_breath"
+          }
+        },
         {
           "type": "waitMs",
           "params": {
@@ -186,6 +216,60 @@
     },
     "d_end_end": {
       "type": "end"
+    },
+    "n_cover": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 2000
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 700
+          }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_heartbeat_bed"
+          }
+        }
+      ],
+      "next": "n21"
+    },
+    "n_call": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_hint"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 1000
+          }
+        }
+      ],
+      "next": "n18"
+    },
+    "n_answer_pause": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 800
+          }
+        }
+      ],
+      "next": "n19"
     }
   }
 }

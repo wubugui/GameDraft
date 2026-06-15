@@ -16,6 +16,12 @@
             "sourceId": "寻狗_梦待死之礼",
             "signal": "meng_house"
           }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 1200
+          }
         }
       ],
       "next": "n4"

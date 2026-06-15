@@ -15,7 +15,7 @@
     }
   ],
   "ambientSounds": [
-    "夜晚蛐蛐叫"
+    "阴风"
   ],
   "spawnPoint": {
     "x": 360.0,
@@ -120,5 +120,6 @@
         }
       ]
     }
-  ]
+  ],
+  "bgm": "bgm_placeholder_dark_shadows"
 }

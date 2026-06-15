@@ -22,7 +22,7 @@
         "name": "旁白"
       },
       "text": "那碗饭，一双筷子，直直插在饭中央。",
-      "next": "n8"
+      "next": "n_realize"
     },
     "n8": {
       "type": "line",
@@ -105,6 +105,12 @@
             "sourceId": "寻狗_梦待死之礼",
             "signal": "meng_clothed"
           }
+        },
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_corpse_cloth_creak"
+          }
         }
       ],
       "next": "n13"
@@ -139,6 +145,18 @@
     },
     "c_end_end": {
       "type": "end"
+    },
+    "n_realize": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 900
+          }
+        }
+      ],
+      "next": "n8"
     }
   }
 }

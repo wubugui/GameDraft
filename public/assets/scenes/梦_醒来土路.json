@@ -1,20 +1,49 @@
 {
   "id": "梦_醒来土路",
   "name": "两天后·城外土路",
-  "worldWidth": 1376,
-  "worldHeight": 768,
-  "camera": { "zoom": 1.15, "pixelsPerUnit": 1.0 },
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.15,
+    "pixelsPerUnit": 1.0
+  },
   "backgrounds": [
-    { "image": "background.png", "x": 0, "y": 0 }
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
   ],
-  "ambientSounds": ["野外鸟叫"],
-  "spawnPoint": { "x": 520, "y": 640 },
+  "ambientSounds": [
+    "野外鸟叫"
+  ],
+  "spawnPoint": {
+    "x": 520,
+    "y": 640
+  },
   "spawnPoints": {
-    "from_dream": { "x": 520, "y": 640 }
+    "from_dream": {
+      "x": 520,
+      "y": 640
+    }
   },
   "onEnter": [
-    { "type": "fadeWorldFromBlack", "params": { "durationMs": 1000 } },
-    { "type": "startDialogueGraph", "params": { "graphId": "梦_段E_醒来" } }
+    {
+      "type": "stopBgm",
+      "params": {}
+    },
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 1000
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段E_醒来"
+      }
+    }
   ],
   "npcs": [],
   "hotspots": [

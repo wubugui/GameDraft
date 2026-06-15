@@ -15,7 +15,8 @@
     }
   ],
   "ambientSounds": [
-    "阴风"
+    "阴风",
+    "temple_rumble"
   ],
   "spawnPoint": {
     "x": 380.0,
@@ -137,5 +138,6 @@
         }
       ]
     }
-  ]
+  ],
+  "bgm": "bgm_placeholder_dread_piano"
 }

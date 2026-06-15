@@ -59,7 +59,14 @@
     },
     "a_end": {
       "type": "runActions",
-      "actions": [],
+      "actions": [
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_faint"
+          }
+        }
+      ],
       "next": "a_end_end"
     },
     "a_end_end": {
