@@ -2,7 +2,7 @@
   "initialScene": "teahouse",
   "initialQuest": "xg01_tingshu",
   "fallbackScene": "teahouse",
-  "initialCutscene": "寻狗_开场",
+  "initialCutscene": "说书-李天狗大战旱魃",
   "initialCutsceneDoneFlag": "xg_prologue_started",
   "startupFlags": {
     "archive_book_book_erta_guide": true

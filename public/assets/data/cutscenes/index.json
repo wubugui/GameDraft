@@ -6,7 +6,7 @@
       {
         "kind": "present",
         "type": "showImg",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/taoist_finds_scroll_cliff.png"
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/01_mountain_path_to_shenxianling.png"
       },
       {
         "kind": "action",
@@ -1315,8 +1315,13 @@
     "steps": [
       {
         "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.12
+      },
+      {
+        "kind": "present",
         "type": "showImg",
-        "id": "_img",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/01_mountain_path_to_shenxianling_round2.png"
       },
       {
@@ -1336,119 +1341,187 @@
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/02_taoist_enters_shenxianling_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "那地方唤作神仙顶——名头好听，实则乱坟遍野，阴风刮得人脊背发凉。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/03_taoist_reaches_grave_site_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "李天狗一袭旧道袍，独自循着邪气，摸到半山一座古墓跟前。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/04_taoist_discovers_tomb_omen_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "墓砖焦黑，土缝里直冒热气。他心里咯噔一声——底下镇着的，是个旱魃！",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/05_graverobbers_unearth_hanba_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "「……那墓门一开，地里腾起一只大旱魃！赤地千里，草木一舔就焦——」",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/06_taoist_rescues_graverobbers_wide_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "几个倒斗的吓瘫在地，眼看就要喂了妖物。说时迟那时快，李天狗一把将人拽到身后！",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/07_taoist_duels_hanba_medium_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "「李天狗一袭旧道袍路过神仙顶——拔剑！咬指！画符！剑光跟焦风撞在一处！」",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/08_taoist_duels_hanba_close_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "那旱魃张口喷火、扑爪带风；道士咬定牙关，符纸一张接着一张，往它身上招呼！",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/09_taoist_subdues_hanba_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "「一道符，生生把那旱魃镇进地里！」",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
+        "id": "shuoshu",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/10_graverobbers_offer_reward_round2.png"
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "「倒斗的连滚带爬，捧着银钱磕头谢恩呐——」",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "fadeToBlack",
+        "duration": 1500
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "shuoshu"
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      },
+      {
+        "kind": "present",
+        "type": "cameraMove",
+        "x": 285,
+        "y": 195,
+        "duration": 1
+      },
+      {
+        "kind": "present",
+        "type": "fadeIn",
+        "duration": 1500
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gavel_rap"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "醒木『啪』地一声脆响。茶碗、瓜子壳、半空的热气——满堂茶客，正围着那说书先生。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "人堆最后头，关二狗踮着脚伸长脖子。没点茶。从小没爹没娘，靠帮人跑腿背尸混口饭吃。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "他不是来听道理的——他是听见「拿钱谢恩」四个字，眼睛唰地亮了。"
+      },
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "[tag:string:place:wujin]",
+        "duration": 1600
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 400
+      },
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "寻狗记 · 开端",
+        "duration": 1600
       }
     ],
     "targetScene": "teahouse"

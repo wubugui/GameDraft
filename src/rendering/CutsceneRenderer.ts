@@ -431,13 +431,13 @@ export class CutsceneRenderer {
 
   /** 显示图片：居中无拉伸填满视口（cover 模式），id 作为句柄供 hideImg 使用 */
   async showImg(imagePath: string, id: string): Promise<void> {
-    this.hideImg(id);
     const resolvedPath = resolveAssetPath(imagePath);
     let texture: Texture;
     try {
       texture = await this.assetManager.loadTexture(resolvedPath);
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
+      this.hideImg(id);
       const sw = this.screenWidth;
       const sh = this.screenHeight;
       const placeholder = new Graphics();
@@ -462,6 +462,9 @@ export class CutsceneRenderer {
     sprite.x = sw / 2;
     sprite.y = sh / 2;
     sprite.label = id;
+    // 先把新贴图加载、布置好，最后一刻才移除旧图并加入新图：
+    // 避免「先 hideImg → 再 await 加载」期间叠加层出现空帧，导致切图闪烁/漏出底层（旧图或场景）。
+    this.hideImg(id);
     this.renderer.cutsceneOverlay.addChild(sprite);
     this.images.set(id, { sprite, imagePath: resolvedPath });
   }

@@ -129,6 +129,10 @@
     "story_intro": {
       "src": "/resources/runtime/audio/story_intro.wav"
     },
+    "sfx_gavel_rap": {
+      "src": "/resources/runtime/audio/sfx_gavel_rap.wav",
+      "volume": 0.8
+    },
     "iron_box_chime": {
       "src": "/resources/runtime/audio/iron_box_chime.wav"
     },

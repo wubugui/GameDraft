@@ -326,6 +326,16 @@ export class CutsceneManager implements IGameSystem {
     this.skipping = false;
     this.playbackCutsceneId = id;
     this.eventBus.emit('cutscene:start', { id });
+
+    // 预热本过场用到的全部图片，避免首次切图时按需加载造成停顿/不流畅。
+    // loadTexture 自带缓存，重复调用安全；以 fire-and-forget 并行预热，showImg 自身仍会兜底加载。
+    if ('steps' in def && Array.isArray((def as NewCutsceneDef).steps)) {
+      const imgPaths = new Set<string>();
+      this.collectImagePathsFromSteps((def as NewCutsceneDef).steps, imgPaths);
+      for (const p of imgPaths) {
+        void this.assetManager.loadTexture(p).catch(() => { /* 预热失败留给 showImg 兜底 */ });
+      }
+    }
     this.unsubPointer = this.inputManager?.subscribePointerDown(this.onClickBound) ?? null;
     this.unsubKey = this.inputManager?.subscribeKeyDown((e) => {
       if (!this.playing) return;
