@@ -63,7 +63,13 @@ export type RuntimeCommand =
     }
   | { id?: unknown; type: 'debugSaveGame'; slot?: unknown; reason?: unknown }
   | { id?: unknown; type: 'debugLoadGame'; slot?: unknown; reason?: unknown }
-  | { id?: unknown; type: 'debugReloadScene'; sceneId?: unknown; reason?: unknown };
+  | { id?: unknown; type: 'debugReloadScene'; sceneId?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'playerInteract'; reason?: unknown }
+  | { id?: unknown; type: 'playerAdvance'; reason?: unknown }
+  | { id?: unknown; type: 'playerChoose'; index?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'playerMoveTo'; x?: unknown; y?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'playerTap'; reason?: unknown }
+  | { id?: unknown; type: 'setPlayerCollisions'; enabled?: unknown; reason?: unknown };
 
 export type RuntimeCommandResult = {
   id: string;
@@ -109,6 +115,14 @@ export type RuntimeCommandDeps = {
   debugSaveGame(slot: number): void;
   debugLoadGame(slot: number): Promise<boolean>;
   debugReloadScene(sceneId?: string): Promise<void>;
+  // 玩家输入：同步注入到真实输入路径、即发即走（不 await 游戏逻辑，理论上不会卡死游戏）
+  playerInteract(): void;
+  playerAdvance(): void;
+  playerChoose(index: number): void;
+  playerMoveTo(x: number, y: number): void;
+  playerTap(): void;
+  // 测试用环境开关：关碰撞让玩家直线走到任意 NPC（不推任何叙事状态，非作弊）
+  setPlayerCollisions(enabled: boolean): void;
 };
 
 export async function applyDevRuntimeCommand(
@@ -309,6 +323,43 @@ export async function applyDevRuntimeCommand(
         await deps.debugReloadScene(optionalString(command.sceneId) || undefined);
         await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugReloadScene');
         return ok(id, type, 'scene reloaded for debug');
+      }
+      // ---- 玩家输入命令：同步注入真实输入路径、即发即走，不 await 游戏逻辑 ----
+      case 'playerInteract': {
+        deps.playerInteract();
+        await deps.captureSnapshot('runtime-command:playerInteract');
+        return ok(id, type, 'player interact (E) injected');
+      }
+      case 'playerAdvance': {
+        deps.playerAdvance();
+        await deps.captureSnapshot('runtime-command:playerAdvance');
+        return ok(id, type, 'player advance injected');
+      }
+      case 'playerChoose': {
+        const idx = Math.trunc(Number(command.index));
+        if (!Number.isFinite(idx) || idx < 0) throw new Error('index must be a non-negative number');
+        deps.playerChoose(idx);
+        await deps.captureSnapshot('runtime-command:playerChoose');
+        return ok(id, type, `player choose option ${idx} injected`);
+      }
+      case 'playerMoveTo': {
+        const x = Number(command.x);
+        const y = Number(command.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('x and y must be numbers');
+        deps.playerMoveTo(x, y);
+        await deps.captureSnapshot('runtime-command:playerMoveTo');
+        return ok(id, type, 'player move target set');
+      }
+      case 'playerTap': {
+        deps.playerTap();
+        await deps.captureSnapshot('runtime-command:playerTap');
+        return ok(id, type, 'player tap (click/continue) injected');
+      }
+      case 'setPlayerCollisions': {
+        const enabled = command.enabled !== false; // 默认开；显式 false 关碰撞（noclip，测试用）
+        deps.setPlayerCollisions(enabled);
+        await deps.captureSnapshot('runtime-command:setPlayerCollisions');
+        return ok(id, type, `player collisions ${enabled ? 'enabled' : 'disabled (noclip)'}`);
       }
       default:
         return {

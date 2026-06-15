@@ -441,6 +441,8 @@ class StepWidget(QFrame):
         form.addRow("type", self._type_combo)
 
         self._present_params_layout = QFormLayout()
+        self._present_params_layout.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         form_w = QWidget()
         form_w.setLayout(form)
         self._body.addWidget(form_w)
@@ -510,7 +512,8 @@ class StepWidget(QFrame):
                 w.toggled.connect(self._emit_dirty)
             elif pt == "text":
                 w = QTextEdit(str(val))
-                w.setMaximumHeight(50)
+                w.setMinimumHeight(60)
+                w.setMaximumHeight(96)
                 w.textChanged.connect(self._emit_dirty)
             elif pt == "image":
                 w = CutsceneImagePathRow(self._model, str(val) if val else "", self)
@@ -1641,6 +1644,7 @@ class TimelineEditor(QWidget):
         btn_del.clicked.connect(self._delete)
         btn_row.addWidget(btn_add)
         btn_row.addWidget(btn_del)
+        btn_row.addStretch(1)
         ll.addLayout(btn_row)
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_select)
@@ -1711,11 +1715,12 @@ class TimelineEditor(QWidget):
         rl.addLayout(bind_form)
 
         hint_row = QHBoxLayout()
-        hint = QLabel(
-            "<b>步骤序列</b>（竖排 = 执行顺序；PRESENT / ACTION / PARALLEL 色条区分；"
+        hint = QLabel("<b>步骤序列</b>")
+        hint.setToolTip(
+            "竖排 = 执行顺序；PRESENT / ACTION / PARALLEL 色条区分；"
             "可拖动表头调整顺序（仅限同级）；点击表头空白或摘要可折叠/展开详情；"
             "右侧「不定/~ms」与灰条为粗估，仅供参考；"
-            "「⋯」菜单：并行轨移出到外层、两项合并为并行、并入上/下一并行）"
+            "「⋯」菜单：并行轨移出到外层、两项合并为并行、并入上/下一并行"
         )
         hint.setWordWrap(True)
         hint_row.addWidget(hint, stretch=1)
@@ -1747,6 +1752,7 @@ class TimelineEditor(QWidget):
         step_btns.addWidget(add_present)
         step_btns.addWidget(add_action)
         step_btns.addWidget(add_parallel)
+        step_btns.addStretch(1)
         rl.addLayout(step_btns)
 
         apply_btn = QPushButton("Apply")

@@ -173,7 +173,15 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
       }
 
       if (status === QuestStatus.Inactive) {
-        if (def.preconditions.length > 0 &&
+        const preconditionsOk = def.preconditions.length === 0 ||
+          this.evalConditions(def.preconditions);
+        if (preconditionsOk && def.completionConditions.length > 0 &&
+            this.evalConditions(def.completionConditions)) {
+          // 状态跳变（dev 跳转 / 读档不一致）时，从当前叙事/标记态把任务链「追平」：
+          // 可达且完成条件已满足的非活跃任务直接判完成，并经 nextQuests 链式激活后续。
+          // 正常顺序游玩不受影响——完成条件只会在任务激活后随流程满足，不会先于激活成立。
+          this.completeQuest(id);
+        } else if (def.preconditions.length > 0 &&
             this.evalConditions(def.preconditions)) {
           this.acceptQuest(id);
         }

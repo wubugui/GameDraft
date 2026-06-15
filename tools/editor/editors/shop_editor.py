@@ -42,13 +42,19 @@ class ShopEditor(QWidget):
         rl.addWidget(QLabel("<b>Items</b>"))
         self._table = QTableWidget(0, 2)
         self._table.setHorizontalHeaderLabels(["itemId", "price"])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._table.verticalHeader().setDefaultSectionSize(34)
+        self._table.setMinimumHeight(180)
         rl.addWidget(self._table)
         item_btns = QHBoxLayout()
         add_item = QPushButton("+ Item"); add_item.clicked.connect(self._add_item)
         del_item = QPushButton("- Item"); del_item.clicked.connect(self._del_item)
+        move_up = QPushButton("Move Up"); move_up.clicked.connect(self._move_up)
+        move_down = QPushButton("Move Down"); move_down.clicked.connect(self._move_down)
         item_btns.addWidget(add_item); item_btns.addWidget(del_item)
+        item_btns.addWidget(move_up); item_btns.addWidget(move_down)
         rl.addLayout(item_btns)
         apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply)
         rl.addWidget(apply_btn)
@@ -94,6 +100,44 @@ class ShopEditor(QWidget):
         r = self._table.currentRow()
         if r >= 0:
             self._table.removeRow(r)
+
+    def _read_rows(self) -> list[tuple[str, str]]:
+        """Read current table rows into (itemId, price_text) tuples.
+
+        Uses the same value extraction as _apply (cellWidget current_id +
+        price item text) but preserves raw strings so the table can be
+        rebuilt losslessly.
+        """
+        rows: list[tuple[str, str]] = []
+        for i in range(self._table.rowCount()):
+            iid_w = self._table.cellWidget(i, 0)
+            price = self._table.item(i, 1)
+            iid = iid_w.current_id() if isinstance(iid_w, IdRefSelector) else ""
+            rows.append((iid, price.text() if price else "0"))
+        return rows
+
+    def _repopulate(self, rows: list[tuple[str, str]]) -> None:
+        """Rebuild the items table from a list of (itemId, price_text)."""
+        self._table.setRowCount(len(rows))
+        for i, (iid, price_text) in enumerate(rows):
+            self._table.setCellWidget(i, 0, self._make_item_pick(iid))
+            self._table.setItem(i, 1, QTableWidgetItem(price_text))
+
+    def _move_row(self, delta: int) -> None:
+        r = self._table.currentRow()
+        target = r + delta
+        if r < 0 or target < 0 or target >= self._table.rowCount():
+            return
+        rows = self._read_rows()
+        rows[r], rows[target] = rows[target], rows[r]
+        self._repopulate(rows)
+        self._table.setCurrentCell(target, 0)
+
+    def _move_up(self) -> None:
+        self._move_row(-1)
+
+    def _move_down(self) -> None:
+        self._move_row(1)
 
     def _apply(self) -> None:
         if self._current_idx < 0:

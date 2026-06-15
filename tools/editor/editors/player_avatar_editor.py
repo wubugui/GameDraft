@@ -63,13 +63,14 @@ class PlayerAvatarEditor(QWidget):
         lay = QVBoxLayout(inner)
 
         hint = QLabel(
-            "逻辑状态名 <b>idle / walk / run</b> 由游戏代码固定（见 <code>Player.ts</code>）。"
-            "此处选择动画包并为三态指定 <code>anim.json</code> 里 <code>states</code> 的键。"
-            "<br/>事件中可用 Action：<b>setPlayerAvatar</b>（<code>animManifest</code> 或 <code>bundleId</code> +可选 <code>stateMap</code>）"
-            "切换化身；<b>resetPlayerAvatar</b> 恢复为下方保存的默认（与 <code>game_config</code> 一致）。"
-        )
+            "逻辑状态名 <b>idle / walk / run</b> 由游戏代码固定（见 <code>Player.ts</code>）。")
         hint.setWordWrap(True)
         hint.setTextFormat(Qt.TextFormat.RichText)
+        hint.setToolTip(
+            "此处选择动画包并为三态指定 anim.json 里 states 的键。\n"
+            "事件中可用 Action：setPlayerAvatar（animManifest 或 bundleId + 可选 stateMap）"
+            "切换化身；resetPlayerAvatar 恢复为下方保存的默认（与 game_config 一致）。"
+        )
         lay.addWidget(hint)
 
         pack_box = QGroupBox("动画包（anim.json）")

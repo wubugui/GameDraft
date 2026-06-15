@@ -9,14 +9,17 @@ from tools.dev.paths import project_python, repo_root
 
 RUNTIME_TARGET = "public/resources/runtime.dvc"
 EDITOR_TARGET = "resources/editor_projects.dvc"
+VENDOR_TARGET = "resources/vendor_archives.dvc"
 COMMIT_DVC_ADD_PATHS = [
     "public/resources/runtime",
     "resources/editor_projects",
+    "resources/vendor_archives",
 ]
 COMMIT_GIT_ADD_PATHS = [
     ".dvc",
     ".dvcignore",
     ".gitignore",
+    "public/assets",
     "public/resources",
     "resources",
     "src",
@@ -59,6 +62,7 @@ def pull_dvc_target(target: str) -> None:
 def init_runtime(install_deps_after: bool = False) -> int:
     bootstrap.ensure_local_python()
     creds.assert_credentials()
+    pull_dvc_target(VENDOR_TARGET)
     pull_dvc_target(RUNTIME_TARGET)
     if install_deps_after:
         from tools.dev import deps
@@ -71,6 +75,7 @@ def init_runtime(install_deps_after: bool = False) -> int:
 def init_editor() -> int:
     bootstrap.ensure_local_python()
     creds.assert_credentials()
+    pull_dvc_target(VENDOR_TARGET)
     pull_dvc_target(EDITOR_TARGET)
     print("Editor project resources are ready.")
     return 0
@@ -86,6 +91,7 @@ def pull(editor: bool = False, git_proxy: str = "") -> int:
 
     bootstrap.ensure_local_python()
     creds.assert_credentials()
+    pull_dvc_target(VENDOR_TARGET)
     pull_dvc_target(RUNTIME_TARGET)
     if editor:
         pull_dvc_target(EDITOR_TARGET)
@@ -99,7 +105,7 @@ def push(git_proxy: str = "") -> int:
 
     with proxyenv.without_proxy():
         run_project_python(["-m", "dvc", "status"])
-        sync_dvc_cache("push", RUNTIME_TARGET, EDITOR_TARGET)
+        sync_dvc_cache("push", RUNTIME_TARGET, EDITOR_TARGET, VENDOR_TARGET)
 
     rc = proxyenv.run_git_with_temp_proxy(["push"], git_proxy)
     if rc != 0:

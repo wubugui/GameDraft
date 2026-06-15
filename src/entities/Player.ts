@@ -61,6 +61,8 @@ export class Player implements ICutsceneActor {
   set x(v: number) { this.sprite.x = v; }
   get y(): number { return this.sprite.y; }
   set y(v: number) { this.sprite.y = v; }
+  /** 当前朝向（委托内部 sprite，供调试快照只读）。 */
+  get facingDirection(): 'left' | 'right' { return this.sprite.facingDirection; }
 
   getDisplayObject(): unknown {
     return this.sprite.container;

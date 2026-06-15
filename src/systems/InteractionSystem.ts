@@ -181,6 +181,90 @@ export class InteractionSystem implements IGameSystem {
     }
   }
 
+  /** 玩家视角：当前能看到的实体（可见 NPC、active 热区/出口），只含玩家可感知字段。 */
+  getPlayerVisibleEntities(): Array<{
+    kind: 'npc' | 'hotspot' | 'exit'; label: string; x: number; y: number; image?: string; leadsTo?: string;
+  }> {
+    const out: Array<{ kind: 'npc' | 'hotspot' | 'exit'; label: string; x: number; y: number; image?: string; leadsTo?: string }> = [];
+    for (const h of this.hotspots) {
+      if (!h.active) continue;
+      if (h.def.type === 'transition') {
+        const data = h.def.data as { targetScene?: string } | undefined;
+        out.push({ kind: 'exit', label: h.def.label || '出口', x: h.centerX, y: h.centerY, leadsTo: data?.targetScene });
+      } else {
+        out.push({ kind: 'hotspot', label: h.def.label || h.def.id, x: h.centerX, y: h.centerY, image: h.def.displayImage?.image });
+      }
+    }
+    for (const n of this.npcs) {
+      if (!n.container.visible) continue;
+      out.push({ kind: 'npc', label: n.def.name, x: n.x, y: n.y });
+    }
+    return out;
+  }
+
+  /** 玩家视角：当前"按 E 可交互"提示指向的目标（玩家走到范围内时屏上那行），否则 null。 */
+  getNearestPrompt(): { kind: 'npc' | 'hotspot'; label: string; x: number; y: number } | null {
+    const t = this.nearestTarget;
+    if (!t) return null;
+    if (t.kind === 'hotspot' && t.hotspot) {
+      return { kind: 'hotspot', label: t.hotspot.def.label || t.hotspot.def.id, x: t.hotspot.centerX, y: t.hotspot.centerY };
+    }
+    if (t.kind === 'npc' && t.npc) {
+      return { kind: 'npc', label: t.npc.def.name, x: t.npc.x, y: t.npc.y };
+    }
+    return null;
+  }
+
+  /** 只读：列出当前场景的可交互对象（id/坐标/范围/是否可用/是否在范围内），供调试快照做数据驱动决策。
+   *  判定门槛与 update() 中的真实交互一致；不产生副作用。 */
+  debugListInteractables(px: number, py: number): Array<{
+    kind: 'hotspot' | 'npc';
+    id: string;
+    type?: string;
+    x: number;
+    y: number;
+    interactionRange: number;
+    available: boolean;
+    inRange: boolean;
+    distance: number;
+  }> {
+    const out: Array<{
+      kind: 'hotspot' | 'npc'; id: string; type?: string; x: number; y: number;
+      interactionRange: number; available: boolean; inRange: boolean; distance: number;
+    }> = [];
+    for (const hotspot of this.hotspots) {
+      const available =
+        hotspot.active &&
+        hotspotOffersPlayerInteraction(hotspot.def) &&
+        (!hotspot.def.conditions?.length || this.evalConditionsList(hotspot.def.conditions));
+      const dx = px - hotspot.centerX;
+      const dy = py - hotspot.centerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      out.push({
+        kind: 'hotspot', id: hotspot.def.id, type: hotspot.def.type,
+        x: hotspot.centerX, y: hotspot.centerY,
+        interactionRange: hotspot.def.interactionRange,
+        available, inRange: available && dist <= hotspot.def.interactionRange,
+        distance: Math.round(dist * 10) / 10,
+      });
+    }
+    for (const npc of this.npcs) {
+      const available =
+        npc.container.visible &&
+        (!npc.def.conditions?.length || this.evalConditionsList(npc.def.conditions));
+      const dx = px - npc.x;
+      const dy = py - npc.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      out.push({
+        kind: 'npc', id: npc.entityId, x: npc.x, y: npc.y,
+        interactionRange: npc.interactionRange,
+        available, inRange: available && dist <= npc.interactionRange,
+        distance: Math.round(dist * 10) / 10,
+      });
+    }
+    return out;
+  }
+
   private isSameTarget(a: InteractableTarget | null, b: InteractableTarget | null): boolean {
     if (a === null && b === null) return true;
     if (a === null || b === null) return false;

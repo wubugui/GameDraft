@@ -101,6 +101,12 @@ function deps() {
       debugReloadScene: async (sceneId?: string) => {
         calls.push(`reloadScene:${sceneId ?? ''}`);
       },
+      playerInteract: () => { calls.push('playerInteract'); },
+      playerAdvance: () => { calls.push('playerAdvance'); },
+      playerChoose: (index: number) => { calls.push(`playerChoose:${index}`); },
+      playerMoveTo: (x: number, y: number) => { calls.push(`playerMoveTo:${x},${y}`); },
+      playerTap: () => { calls.push('playerTap'); },
+      setPlayerCollisions: (enabled: boolean) => { calls.push(`setPlayerCollisions:${enabled}`); },
     },
   };
 }

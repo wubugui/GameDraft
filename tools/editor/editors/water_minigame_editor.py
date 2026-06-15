@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..shared.action_editor import ActionEditor
+from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.pick_strings_dialog import pick_string_tag_marker
@@ -90,54 +91,6 @@ def _collect_spot_id_items(model: ProjectModel, extras: set[str]) -> list[tuple[
 def _looks_like_string_tag(s: str) -> bool:
     t = (s or "").strip()
     return t.startswith("[tag:string:") and t.endswith("]")
-
-
-class HexColorPickRow(QWidget):
-    """只读展示 #RRGGBB +「颜色…」取色，禁止手输 hex。"""
-
-    changed = Signal()
-
-    def __init__(self, initial: str = "#1b2f42", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        self._swatch = QLabel()
-        self._swatch.setFixedSize(32, 22)
-        self._disp = QLineEdit()
-        self._disp.setReadOnly(True)
-        btn = QPushButton("颜色…")
-        btn.clicked.connect(self._pick)
-        lay.addWidget(self._swatch)
-        lay.addWidget(self._disp, stretch=1)
-        lay.addWidget(btn)
-        self.set_hex(initial)
-
-    def hex(self) -> str:
-        return self._disp.text().strip()
-
-    def set_hex(self, hx: str) -> None:
-        s = (hx or "").strip()
-        if not s.startswith("#"):
-            s = f"#{s}"
-        c = QColor(s)
-        if not c.isValid():
-            c = QColor("#1b2f42")
-        self._disp.blockSignals(True)
-        self._disp.setText(c.name().lower())
-        self._disp.blockSignals(False)
-        self._apply_swatch(c)
-
-    def _apply_swatch(self, c: QColor) -> None:
-        self._swatch.setStyleSheet(f"background-color: {c.name()}; border: 1px solid #777;")
-
-    def _pick(self) -> None:
-        cur = QColor(self.hex())
-        if not cur.isValid():
-            cur = QColor("#1b2f42")
-        picked = QColorDialog.getColor(cur, self, "水底色调 waterBottom.tint")
-        if picked.isValid():
-            self.set_hex(picked.name())
-            self.changed.emit()
 
 
 def _combo_set_text(cb: QComboBox, text: str) -> None:
@@ -247,7 +200,7 @@ class WaterMinigameEditor(QWidget):
             external_copy_hint="水底贴图：仅 Browse 写入路径",
             path_edit_read_only=True,
         )
-        self._wb_tint_row = HexColorPickRow("#1b2f42")
+        self._wb_tint_row = HexColorPickRow("#1b2f42", title="水底色调 waterBottom.tint")
         self._wb_depth = QDoubleSpinBox()
         self._wb_depth.setRange(0.0, 9999.0)
         self._wb_depth.setDecimals(3)

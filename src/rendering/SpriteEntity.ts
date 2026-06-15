@@ -26,6 +26,11 @@ export class SpriteEntity {
   private frames: Map<string, Texture[]> = new Map();
   private facingX: 1 | -1 = 1;
 
+  /** 当前朝向（供调试快照只读）。 */
+  get facingDirection(): 'left' | 'right' {
+    return this.facingX < 0 ? 'left' : 'right';
+  }
+
   private worldWidth: number = 0;
   private worldHeight: number = 0;
 

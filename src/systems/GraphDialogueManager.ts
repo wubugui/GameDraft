@@ -292,6 +292,81 @@ export class GraphDialogueManager implements IGameSystem {
     };
   }
 
+  /** 玩家视角：当前对话的可感知内容（说话人/正文/可见选项），不含 node id 等幕后信息。
+   *  text 直接从当前 line 节点解析；choices 复用 buildChoicesForNode（selectable=玩家看到的置灰与否）。 */
+  getPlayerDialogue(): {
+    active: boolean;
+    speaker: string;
+    text: string;
+    awaitingAdvance: boolean;
+    choices: Array<{ index: number; text: string; selectable: boolean }>;
+  } {
+    if (!this.active || !this.graph) {
+      return { active: false, speaker: '', text: '', awaitingAdvance: false, choices: [] };
+    }
+    let choices: Array<{ index: number; text: string; selectable: boolean }> = [];
+    if (this.choicePhase?.stage === 'options') {
+      const cnode = this.graph.nodes[this.choicePhase.nodeId];
+      if (cnode && cnode.type === 'choice') {
+        choices = this.buildChoicesForNode(cnode).map((c) => ({
+          index: c.index, text: c.text, selectable: c.enabled,
+        }));
+      }
+    }
+    let text = '';
+    const cur = this.graph.nodes[this.currentNodeId];
+    if (cur && cur.type === 'line') {
+      const beats = this.lineBeatsFor(cur);
+      const beat = beats[Math.min(this.lineBeatIndex, beats.length - 1)];
+      if (beat) text = this.linePayloadToDialogueLine(beat).text ?? '';
+    }
+    return {
+      active: true,
+      speaker: this.npcName,
+      text,
+      awaitingAdvance: this.awaitingLineDismiss,
+      choices,
+    };
+  }
+
+  /** 只读：当前对话视图（活跃图/节点/选项列表），供调试快照做数据驱动的"盲操作"。
+   *  choices 复用 buildChoicesForNode，其 index/text/enabled 与 debugChooseOption 完全一致。 */
+  getDialogueViewDebug(): {
+    active: boolean;
+    graphId: string;
+    npcName: string;
+    nodeId: string;
+    nodeType: string | null;
+    choiceStage: 'none' | 'prompt' | 'options';
+    choices: Array<{ index: number; text: string; enabled: boolean }>;
+  } {
+    if (!this.active || !this.graph) {
+      return {
+        active: false, graphId: '', npcName: '', nodeId: '',
+        nodeType: null, choiceStage: 'none', choices: [],
+      };
+    }
+    let choices: Array<{ index: number; text: string; enabled: boolean }> = [];
+    if (this.choicePhase?.stage === 'options') {
+      const cnode = this.graph.nodes[this.choicePhase.nodeId];
+      if (cnode && cnode.type === 'choice') {
+        choices = this.buildChoicesForNode(cnode).map((c) => ({
+          index: c.index, text: c.text, enabled: c.enabled,
+        }));
+      }
+    }
+    const node = this.graph.nodes[this.currentNodeId];
+    return {
+      active: true,
+      graphId: this.graphSourceId || this.graph.id,
+      npcName: this.npcName,
+      nodeId: this.currentNodeId,
+      nodeType: node?.type ?? null,
+      choiceStage: this.choicePhase?.stage ?? 'none',
+      choices,
+    };
+  }
+
   /** startDialogueGraph 传入的 npcId（trim）；未开图对话时为空串。供 playScriptedDialogue 的 {{npc}} 解析。 */
   getContextNpcId(): string {
     return this.npcId.trim();

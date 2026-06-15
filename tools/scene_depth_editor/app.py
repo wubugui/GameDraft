@@ -1,16 +1,41 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
+
+_QT_UI = sys.platform == "darwin"
+
+if _QT_UI:
+    from . import qt_compat as tk
+    filedialog = tk.filedialog
+    messagebox = tk.messagebox
+    ttk = tk.ttk
+    ImageTk = None
+else:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+    from PIL import ImageTk
 
 
 def _make_scrollable(parent, width: int) -> tuple[ttk.Frame, tk.Canvas]:
     """Create a scrollable frame. Returns (interior_frame, canvas)."""
+    if _QT_UI:
+        from PySide6.QtWidgets import QScrollArea
+        from PySide6.QtCore import Qt as _Qt
+        area = QScrollArea(parent)
+        area.setWidgetResizable(True)
+        area.setMinimumWidth(width)
+        # 只竖向滚动：禁掉横向滚动条，内容被压到面板宽度内，杜绝数值被裁/横向溢出
+        area.setHorizontalScrollBarPolicy(_Qt.ScrollBarAlwaysOff)
+        interior = ttk.Frame()
+        area.setWidget(interior)
+        parent._layout.addWidget(area, 0, 0)
+        return interior, area
+
     canvas = tk.Canvas(parent, width=width, highlightthickness=0)
     scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
     interior = ttk.Frame(canvas, width=width)
@@ -35,18 +60,20 @@ def _make_scrollable(parent, width: int) -> tuple[ttk.Frame, tk.Canvas]:
 
 def _bind_wheel_recursive(widget, canvas):
     """Bind MouseWheel to widget and all descendants so scrolling works over any control."""
+    if _QT_UI:
+        return
     widget.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
     for c in widget.winfo_children():
         _bind_wheel_recursive(c, canvas)
 
 
-from PIL import Image, ImageTk
+from PIL import Image
 
 from .calibration import OrthoCamera, reconstruct_points
 from .depth_estimator import MODEL_OPTIONS, DepthEstimator
 from .reconstruction import (
     DepthMapping, OrthoProjection, WorldHeightMap, apply_depth_mapping,
-    inverse_depth_mapping, build_M, encode_depth_rg16,
+    inverse_depth_mapping, build_M, encode_depth_rg16, fit_ground_surface,
     generate_screen_collision_overlay, render_billboard_occlusion_2d,
 )
 
@@ -62,6 +89,12 @@ except ImportError as exc:
         "缺少 OpenGL 依赖。请执行:\n"
         ".\\.tools\\Python311\\python.exe -m pip install PyOpenGL pyopengltk"
     ) from exc
+
+
+def _make_photo_image(img: Image.Image):
+    if _QT_UI:
+        return tk.PhotoImage(img)
+    return ImageTk.PhotoImage(img)
 
 
 def _repo_root() -> Path:
@@ -143,6 +176,7 @@ class SceneDepthEditorApp:
         self.stretch_factor_var = tk.DoubleVar(value=3.0)
         self.collision_height_var = tk.DoubleVar(value=0.05)
         self.collision_alpha_var = tk.DoubleVar(value=0.3)
+        self.ground_height_threshold_var = tk.DoubleVar(value=0.1)
         self._occlusion_uv: list[float] = [0.0, 0.0]
         self._occlusion_sprite: Image.Image | None = None
         self._occlusion_window: tk.Toplevel | None = None
@@ -150,6 +184,11 @@ class SceneDepthEditorApp:
         self._occlusion_label: tk.Label | None = None
         self._occlusion_display_ratio: float = 1.0
         self._world_height_map: WorldHeightMap | None = None
+        self._ground_refresh_pending = False
+        # 地面拟合预览（仅测试/可视化，独立窗口，不碰碰撞/导出/运行时）
+        self._ground_window = None
+        self._ground_label = None
+        self._ground_photo = None
         self._screen_collision: np.ndarray | None = None
         self._cached_mesh_xyz: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._collision_locked: bool = False
@@ -179,7 +218,7 @@ class SceneDepthEditorApp:
         left_outer.grid(row=0, column=0, sticky="ns")
         left_outer.rowconfigure(0, weight=1)
         left_outer.columnconfigure(0, weight=1)
-        left, left_canvas = _make_scrollable(left_outer, width=300)
+        left, left_canvas = _make_scrollable(left_outer, width=330)
         left.configure(padding=8)
 
         # -- Right panel (GL viewer, expanding) --
@@ -212,6 +251,7 @@ class SceneDepthEditorApp:
         row = self._build_billboard_section(left, row)
         row = self._build_occlusion_section(left, row)
         row = self._build_collision_edit_section(left, row)
+        row = self._build_ground_fit_section(left, row)
         row = self._build_depth_edit_section(left, row)
         row = self._build_export_section(left, row)
 
@@ -312,7 +352,7 @@ class SceneDepthEditorApp:
         scale_row.columnconfigure(0, weight=1)
         self._scale_slider = tk.Scale(
             scale_row, from_=0.01, to=100.0, orient="horizontal", resolution=0.01,
-            variable=self.dm_scale_var, showvalue=True, highlightthickness=0,
+            variable=self.dm_scale_var, showvalue=False, highlightthickness=0,
             command=lambda _: self._sync_scale_entry())
         self._scale_slider.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self._scale_entry = ttk.Entry(scale_row, width=8)
@@ -327,7 +367,7 @@ class SceneDepthEditorApp:
         offset_row.columnconfigure(0, weight=1)
         self._offset_slider = tk.Scale(
             offset_row, from_=-200.0, to=200.0, orient="horizontal", resolution=0.1,
-            variable=self.dm_offset_var, showvalue=True, highlightthickness=0,
+            variable=self.dm_offset_var, showvalue=False, highlightthickness=0,
             command=lambda _: self._sync_offset_entry())
         self._offset_slider.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self._offset_entry = ttk.Entry(offset_row, width=8)
@@ -456,6 +496,30 @@ class SceneDepthEditorApp:
 
         return row + 1
 
+    # ---- Ground-fit (auto collision) section ----
+
+    def _build_ground_fit_section(self, parent, row: int) -> int:
+        box = ttk.LabelFrame(parent, text="地面拟合预览（仅测试）", padding=6)
+        box.grid(row=row, column=0, sticky="ew", pady=(0, 8))
+        box.columnconfigure(0, weight=1)
+
+        ttk.Button(box, text="拟合非平面地面并预览",
+                   command=self._open_ground_fit_preview).grid(
+            row=0, column=0, sticky="ew")
+        ttk.Button(box, text="多边形地面标定（试验）",
+                   command=self._open_ground_calib).grid(
+            row=1, column=0, sticky="ew", pady=(4, 0))
+        self._slider(box, "离地高度上限(着色)", self.ground_height_threshold_var,
+                     2, 0.01, 2.0, 0.01)
+
+        self._ground_fit_label = ttk.Label(
+            box, text="仅测试/可视化，不改碰撞/导出/运行时。\n"
+                      "「预览」=离地高度着色；「多边形标定」=框地面→补全完整地面深度。",
+            foreground="#888", wraplength=300, justify="left")
+        self._ground_fit_label.grid(row=4, column=0, sticky="w", pady=(4, 0))
+
+        return row + 1
+
     # ---- Depth editing section ----
 
     def _build_depth_edit_section(self, parent, row: int) -> int:
@@ -530,6 +594,7 @@ class SceneDepthEditorApp:
         self.billboard_scale_var.trace_add("write", lambda *_: self._on_billboard_scale_changed())
         self.stretch_factor_var.trace_add("write", lambda *_: self._on_stretch_factor_changed())
         self.collision_height_var.trace_add("write", lambda *_: self._on_collision_height_changed())
+        self.ground_height_threshold_var.trace_add("write", lambda *_: self._on_ground_threshold_changed())
         self.brush_radius_var.trace_add("write", lambda *_: self.gl_viewer.set_brush_radius(
             self.brush_radius_var.get()))
         self._refresh_pending = False
@@ -614,6 +679,11 @@ class SceneDepthEditorApp:
 
     def _workspace_scenes_initialdir(self) -> str:
         d = _workspace_scenes_dir()
+        return str(d) if d.is_dir() else str(_repo_root())
+
+    def _editor_data_initialdir(self) -> str:
+        from tools.editor.shared.project_paths import DIR_KIND_EDITOR_DATA
+        d = _project_paths().default_dir(DIR_KIND_EDITOR_DATA)
         return str(d) if d.is_dir() else str(_repo_root())
 
     def _game_export_picker_initialdir(self) -> str:
@@ -775,8 +845,7 @@ class SceneDepthEditorApp:
             initialdir=self._workspace_scenes_initialdir())
         if not path:
             return
-        from tkinter import simpledialog
-        name = simpledialog.askstring("新建场景", "场景名称:", parent=self.root)
+        name = tk.simpledialog.askstring("新建场景", "场景名称:", parent=self.root)
         if not name or not name.strip():
             return
         scene_dir = Path(path) / name.strip()
@@ -794,7 +863,7 @@ class SceneDepthEditorApp:
     def _open_scene(self) -> None:
         path = filedialog.askdirectory(
             title="打开场景文件夹",
-            initialdir=self._workspace_scenes_initialdir())
+            initialdir=self._editor_data_initialdir())
         if not path:
             return
         scene_dir = Path(path)
@@ -990,7 +1059,9 @@ class SceneDepthEditorApp:
                     status=lambda t: self.root.after(0, lambda: self._set_status(t)))
                 self.root.after(0, lambda: self._on_depth_done(result))
             except Exception as exc:
-                self.root.after(0, lambda: self._show_error(str(exc)))
+                # 必须先取出消息：except 块结束后 exc 会被解绑，延迟到主线程的 lambda 里再读会 NameError
+                msg = str(exc)
+                self.root.after(0, lambda: self._show_error(msg))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1100,7 +1171,7 @@ class SceneDepthEditorApp:
         ratio = min(max_w / img.width, max_h / img.height, 1.0)
         thumb = img.resize((int(img.width * ratio), int(img.height * ratio)),
                            Image.Resampling.LANCZOS)
-        self._thumb_photo = ImageTk.PhotoImage(thumb)
+        self._thumb_photo = _make_photo_image(thumb)
         self.thumb_label.configure(image=self._thumb_photo)
 
     # ==================================================================
@@ -1180,6 +1251,102 @@ class SceneDepthEditorApp:
         n = int(self._world_height_map.covered.sum()) if self._world_height_map else 0
         self._collision_edit_label.configure(text=f"草稿已生成 ({n} 个碰撞格)")
         self._set_status("碰撞草稿已生成，可使用工具编辑")
+
+    # ==================================================================
+    # Ground fit → auto collision
+    # ==================================================================
+
+    # ---- 地面拟合预览：仅测试/可视化；不写碰撞、不写导出、不碰运行时 ----
+
+    def _open_ground_fit_preview(self) -> None:
+        if self._cached_mesh_xyz is None or self.source_image is None:
+            self._set_status("请先加载背景图并生成深度")
+            return
+        if self._ground_window is not None and self._ground_window.winfo_exists():
+            self._ground_window.focus_force()
+            self._refresh_ground_fit_preview()
+            return
+        win = tk.Toplevel(self.root)
+        win.title("地面拟合预览  绿=贴地 红=凸起  (仅测试，不改任何数据)")
+        self._ground_window = win
+        self._ground_label = tk.Label(win)
+        self._ground_label.pack(fill="both", expand=True)
+        win.protocol("WM_DELETE_WINDOW", self._close_ground_fit_preview)
+        self._refresh_ground_fit_preview()
+        win.focus_force()
+
+    def _close_ground_fit_preview(self) -> None:
+        if self._ground_window is not None:
+            self._ground_window.destroy()
+            self._ground_window = None
+            self._ground_label = None
+
+    def _refresh_ground_fit_preview(self) -> None:
+        if self._cached_mesh_xyz is None or self.source_image is None:
+            return
+        if self._ground_window is None or not self._ground_window.winfo_exists():
+            return
+        X, Y, Z = self._cached_mesh_xyz
+        _G, _x0, _z0, _cell, height_above = fit_ground_surface(X, Y, Z)
+        hi = max(1e-6, self.ground_height_threshold_var.get())
+        h = np.clip(height_above / hi, 0.0, 1.0)
+        rgba = np.zeros((h.shape[0], h.shape[1], 4), dtype=np.uint8)
+        rgba[..., 0] = (h * 255).astype(np.uint8)          # 红 = 凸起
+        rgba[..., 1] = ((1.0 - h) * 255).astype(np.uint8)  # 绿 = 贴地
+        rgba[..., 2] = 0
+        rgba[..., 3] = 130
+        small = Image.fromarray(rgba, "RGBA")
+        big = small.resize(self.source_image.size, Image.Resampling.BILINEAR)
+        base = self.source_image.convert("RGBA")
+        result = Image.alpha_composite(base, big).convert("RGB")
+        self._show_ground_image(result)
+
+        ground_ratio = float(np.mean(h < 0.5)) * 100.0
+        if hasattr(self, "_ground_fit_label") and self._ground_fit_label.winfo_exists():
+            self._ground_fit_label.configure(
+                text=f"非平面地面已拟合(仅测试)。贴地占比≈{ground_ratio:.0f}%，"
+                     f"上限 {hi:.2f}。绿=贴地、红=凸起；不改碰撞/导出。")
+
+    def _show_ground_image(self, img: Image.Image) -> None:
+        max_w, max_h = 1200, 800
+        ratio = min(max_w / img.width, max_h / img.height, 1.0)
+        disp = img.resize((int(img.width * ratio), int(img.height * ratio)),
+                          Image.Resampling.LANCZOS)
+        win = self._ground_window
+        if win is not None and win.winfo_exists():
+            win.geometry(f"{disp.width}x{disp.height}")
+        self._ground_photo = tk.PhotoImage(disp)
+        if self._ground_label is not None:
+            self._ground_label.configure(image=self._ground_photo)
+
+    def _on_ground_threshold_changed(self) -> None:
+        # 仅当预览窗口打开时即时重算着色；不触碰碰撞/导出
+        if self._ground_window is None or not self._ground_window.winfo_exists():
+            return
+        if self._ground_refresh_pending:
+            return
+        self._ground_refresh_pending = True
+        self.root.after(80, self._do_ground_threshold_refresh)
+
+    def _do_ground_threshold_refresh(self) -> None:
+        self._ground_refresh_pending = False
+        self._refresh_ground_fit_preview()
+
+    # ---- 多边形地面标定（试验，独立 PySide 窗口；不碰碰撞/导出/运行时） ----
+
+    def _open_ground_calib(self) -> None:
+        if self.source_image is None or self.calibrated_depth is None:
+            self._set_status("请先加载背景图并生成深度")
+            return
+        try:
+            from .ground_calib import GroundCalibDialog
+        except Exception as exc:
+            self._show_error(f"地面标定窗口加载失败：{exc}")
+            return
+        self._ground_calib_dlg = GroundCalibDialog(
+            self.source_image, self.calibrated_depth)
+        self._ground_calib_dlg.show()
+        self._set_status("多边形地面标定（试验）：左键画地面、右键闭合、点「计算」")
 
     def _on_collision_edit(self, action: str, points: list, radius: float) -> None:
         hmap = self._world_height_map
@@ -1602,7 +1769,7 @@ class SceneDepthEditorApp:
             if cur_geo != target:
                 win.geometry(target)
 
-        self._occlusion_photo = ImageTk.PhotoImage(display)
+        self._occlusion_photo = _make_photo_image(display)
         if self._occlusion_label is not None:
             self._occlusion_label.configure(image=self._occlusion_photo)
 
@@ -1672,8 +1839,7 @@ class SceneDepthEditorApp:
             json.dumps(presets, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _save_preset(self) -> None:
-        from tkinter import simpledialog
-        name = simpledialog.askstring("保存 Preset", "请输入 Preset 名称:", parent=self.root)
+        name = tk.simpledialog.askstring("保存 Preset", "请输入 Preset 名称:", parent=self.root)
         if not name or not name.strip():
             return
         name = name.strip()

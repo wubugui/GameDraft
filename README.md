@@ -43,6 +43,7 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 | 资源入库 | `./dev.sh asset-ingest` |
 | 对话图编辑器 | `./dev.sh dialogue-graph` |
 | 制作工作台 | `./dev.sh workbench` |
+| 全量数据校验 | `./dev.sh validate-data` |
 | 编年史模拟 v2 / v3 | `./dev.sh chronicle-sim-v2` / `./dev.sh chronicle-sim` |
 | 周模拟 | `./dev.sh chronicle-week <run_dir> --week 1` |
 
@@ -65,11 +66,12 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 本地 checkout，实际 OSS 上传/下载由 `scripts/sync-dvc-cache.py` 使用阿里云
 官方 `oss2` SDK 完成。
 
-DVC 托管两类资源：
+DVC 托管三类资源：
 
 ```text
 public/resources/runtime.dvc        # 游戏运行时媒体资源
 resources/editor_projects.dvc       # 编辑器工程/中间工程资源
+resources/vendor_archives.dvc       # 离线依赖/运行环境归档
 ```
 
 对应目录：
@@ -77,6 +79,7 @@ resources/editor_projects.dvc       # 编辑器工程/中间工程资源
 ```text
 public/resources/runtime/
 resources/editor_projects/
+resources/vendor_archives/
 ```
 
 ## 日常开发

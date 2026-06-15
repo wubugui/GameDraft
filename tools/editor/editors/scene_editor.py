@@ -3291,8 +3291,9 @@ class ScenePropertyPanel(QScrollArea):
         gcombo.setMinimumWidth(160)
         self._hs_inspect_graph_combo = gcombo
         graph_row.addRow("graphId", gcombo)
-        self._hs_inspect_entry = QLineEdit()
-        self._hs_inspect_entry.setPlaceholderText("可选 entry节点 id")
+        self._hs_inspect_entry = FilterableTypeCombo([], self, select_only=False)
+        self._hs_inspect_entry.setMinimumWidth(160)
+        self._hs_inspect_entry.lineEdit().setPlaceholderText("可选 entry 节点 id（从 graphId 的节点中选）")
         graph_row.addRow("entry", self._hs_inspect_entry)
         self._hs_inspect_graph_wrap = QWidget()
         self._hs_inspect_graph_wrap.setLayout(graph_row)
@@ -3315,10 +3316,8 @@ class ScenePropertyPanel(QScrollArea):
 
         self._hs_inspect_mode_group.buttonClicked.connect(_on_inspect_mode_clicked)
         for sig_widget in (gcombo, self._hs_inspect_entry):
-            if isinstance(sig_widget, FilterableTypeCombo):
-                sig_widget.typeCommitted.connect(lambda *_: self._emit_props_changed())
-            else:
-                sig_widget.textChanged.connect(lambda *_: self._emit_props_changed())
+            sig_widget.typeCommitted.connect(lambda *_: self._emit_props_changed())
+        gcombo.typeCommitted.connect(lambda *_: self._refresh_inspect_entry_choices())
         _sync_inspect_mode_ui()
 
         # pickup data
@@ -3826,10 +3825,10 @@ class ScenePropertyPanel(QScrollArea):
                     if gid:
                         self._hs_inspect_mode_graph.setChecked(True)
                         self._hs_inspect_graph_combo.set_committed_type(gid)
-                        self._hs_inspect_entry.setText(str(data.get("entry") or ""))
+                        self._set_inspect_entry_choices(gid, str(data.get("entry") or ""))
                     else:
                         self._hs_inspect_mode_actions.setChecked(True)
-                        self._hs_inspect_entry.clear()
+                        self._set_inspect_entry_choices("", "")
                         if gids:
                             self._hs_inspect_graph_combo.set_committed_type(gids[0])
                         else:
@@ -4103,7 +4102,7 @@ class ScenePropertyPanel(QScrollArea):
                 new_data: dict = {}
                 if gid:
                     new_data["graphId"] = gid
-                ent = self._hs_inspect_entry.text().strip()
+                ent = self._hs_inspect_entry.committed_type().strip()
                 if ent:
                     new_data["entry"] = ent
                 if acts:
@@ -4168,10 +4167,15 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_dialogue_graph.setMinimumWidth(220)
         self._npc_dialogue_graph.setToolTip("对应 public/assets/dialogues/graphs/<id>.json")
         self._npc_dialogue_graph.value_changed.connect(lambda _x: self._emit_props_changed())
+        self._npc_dialogue_graph.value_changed.connect(
+            lambda _x: self._refresh_npc_dialogue_entry_choices())
         form.addRow("dialogueGraphId", self._npc_dialogue_graph)
-        self._npc_dialogue_graph_entry = QLineEdit()
-        self._npc_dialogue_graph_entry.setPlaceholderText("可选，覆盖图 JSON 的 entry 节点 id")
-        self._npc_dialogue_graph_entry.textChanged.connect(lambda *_: self._emit_props_changed())
+        self._npc_dialogue_graph_entry = FilterableTypeCombo([], self, select_only=False)
+        self._npc_dialogue_graph_entry.setMinimumWidth(220)
+        self._npc_dialogue_graph_entry.lineEdit().setPlaceholderText(
+            "可选，覆盖图 JSON 的 entry 节点 id")
+        self._npc_dialogue_graph_entry.typeCommitted.connect(
+            lambda *_: self._emit_props_changed())
         form.addRow("dialogueGraphEntry", self._npc_dialogue_graph_entry)
         self._npc_dialogue_zoom = QDoubleSpinBox()
         self._npc_dialogue_zoom.setRange(0.05, 8.0)
@@ -4292,11 +4296,12 @@ class ScenePropertyPanel(QScrollArea):
         patrol_outer.addLayout(sp_row)
         move_anim_row = QHBoxLayout()
         move_anim_row.addWidget(QLabel("巡逻移动动画状态"))
-        self._npc_patrol_move_anim = QLineEdit()
-        self._npc_patrol_move_anim.setPlaceholderText(
+        self._npc_patrol_move_anim = QComboBox()
+        self._npc_patrol_move_anim.setMinimumWidth(180)
+        self._npc_patrol_move_anim.setToolTip(
             "animFile 内 states 的键名，与运行时一致；留空则移动时不切动画")
-        self._npc_patrol_move_anim.editingFinished.connect(
-            self._on_npc_patrol_move_anim_finished)
+        self._npc_patrol_move_anim.currentIndexChanged.connect(
+            lambda *_: self._on_npc_patrol_move_anim_finished())
         move_anim_row.addWidget(self._npc_patrol_move_anim)
         patrol_outer.addLayout(move_anim_row)
         self._npc_patrol_preview = QCheckBox("画布预览巡逻（不写回 x,y）")
@@ -4322,8 +4327,15 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_patrol_add_pt.clicked.connect(self._on_npc_patrol_add_point)
         self._npc_patrol_del_pt = QPushButton("删除所选路点")
         self._npc_patrol_del_pt.clicked.connect(self._on_npc_patrol_remove_point)
+        self._npc_patrol_up_pt = QPushButton("上移")
+        self._npc_patrol_up_pt.clicked.connect(lambda: self._move_npc_patrol_point(-1))
+        self._npc_patrol_down_pt = QPushButton("下移")
+        self._npc_patrol_down_pt.clicked.connect(lambda: self._move_npc_patrol_point(1))
         pr_btns.addWidget(self._npc_patrol_add_pt)
         pr_btns.addWidget(self._npc_patrol_del_pt)
+        pr_btns.addWidget(self._npc_patrol_up_pt)
+        pr_btns.addWidget(self._npc_patrol_down_pt)
+        pr_btns.addStretch(1)
         patrol_outer.addLayout(pr_btns)
         patrol_box.add_body(patrol_inner)
         self._npc_patrol_fold = patrol_box
@@ -4344,6 +4356,8 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_patrol_table.setEnabled(en)
         self._npc_patrol_add_pt.setEnabled(en)
         self._npc_patrol_del_pt.setEnabled(en)
+        self._npc_patrol_up_pt.setEnabled(en)
+        self._npc_patrol_down_pt.setEnabled(en)
         self._update_npc_patrol_preview_enabled()
 
     def _update_npc_patrol_preview_enabled(self) -> None:
@@ -4417,7 +4431,7 @@ class ScenePropertyPanel(QScrollArea):
         pat["route"] = route
         if "speed" not in pat:
             pat["speed"] = int(self._npc_patrol_speed.value())
-        v = self._npc_patrol_move_anim.text().strip()
+        v = self._npc_patrol_move_anim.currentText().strip()
         if v:
             pat["moveAnimState"] = v
         elif "moveAnimState" in pat:
@@ -4430,7 +4444,7 @@ class ScenePropertyPanel(QScrollArea):
         if npc is None or not self._npc_patrol_enable.isChecked():
             return
         pat = npc.setdefault("patrol", {})
-        v = self._npc_patrol_move_anim.text().strip()
+        v = self._npc_patrol_move_anim.currentText().strip()
         if v:
             pat["moveAnimState"] = v
         elif "moveAnimState" in pat:
@@ -4456,10 +4470,7 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_patrol_speed.setValue(int(patrol.get("speed", 60) or 60))
             self._npc_patrol_speed.blockSignals(False)
             self._fill_npc_patrol_table(patrol["route"])
-            self._npc_patrol_move_anim.blockSignals(True)
-            self._npc_patrol_move_anim.setText(
-                str(patrol.get("moveAnimState", "") or ""))
-            self._npc_patrol_move_anim.blockSignals(False)
+            self._fill_npc_patrol_move_anim_combo()
         else:
             npc.pop("patrol", None)
             self._npc_patrol_preview.blockSignals(True)
@@ -4535,6 +4546,26 @@ class ScenePropertyPanel(QScrollArea):
         self._emit_props_changed()
         self.npc_patrol_overlay_refresh_requested.emit()
 
+    def _move_npc_patrol_point(self, delta: int) -> None:
+        if self._stack.currentWidget() != self._npc_panel or not self._npc_patrol_enable.isChecked():
+            return
+        t = self._npc_patrol_table
+        row = t.currentRow()
+        if row < 0:
+            return
+        target = row + delta
+        if target < 0 or target >= t.rowCount():
+            return
+        route = self._npc_patrol_route_from_table()
+        if row >= len(route) or target >= len(route):
+            return
+        route[row], route[target] = route[target], route[row]
+        self._fill_npc_patrol_table(route)
+        self._npc_patrol_table.setCurrentCell(target, 1)
+        self._sync_patrol_dict_from_table()
+        self._emit_props_changed()
+        self.npc_patrol_overlay_refresh_requested.emit()
+
     def _load_npc_patrol_ui(self, npc: dict) -> None:
         pat = npc.get("patrol")
         en = isinstance(pat, dict) and isinstance(pat.get("route"), list) and len(pat["route"]) >= 2
@@ -4548,10 +4579,7 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_patrol_speed.setValue(int(pat.get("speed", 60) or 60))
             self._npc_patrol_speed.blockSignals(False)
             self._fill_npc_patrol_table(pat["route"])
-            self._npc_patrol_move_anim.blockSignals(True)
-            self._npc_patrol_move_anim.setText(
-                str(pat.get("moveAnimState", "") or ""))
-            self._npc_patrol_move_anim.blockSignals(False)
+            self._fill_npc_patrol_move_anim_combo()
         else:
             self._npc_patrol_speed.blockSignals(True)
             self._npc_patrol_speed.setValue(60)
@@ -4625,6 +4653,7 @@ class ScenePropertyPanel(QScrollArea):
         elif "animFile" in npc:
             del npc["animFile"]
         self._fill_npc_initial_state_combo()
+        self._fill_npc_patrol_move_anim_combo()
         self._sync_npc_initial_anim_state_to_dict()
         self._emit_props_changed()
         self._request_scene_npc_anim_refresh()
@@ -4696,6 +4725,62 @@ class ScenePropertyPanel(QScrollArea):
         elif "initialAnimState" in npc:
             del npc["initialAnimState"]
 
+    # --- entry / 动画 state 节点选择器（候选取自模型，保留已存值） -------------
+    def _set_inspect_entry_choices(self, graph_id: str, entry_value: str) -> None:
+        gid = (graph_id or "").strip()
+        node_ids = self._model.dialogue_graph_node_ids(gid) if gid else []
+        self._hs_inspect_entry.blockSignals(True)
+        try:
+            self._hs_inspect_entry.set_entries(
+                [("（留空）", "")] + [(n, n) for n in node_ids])
+            self._hs_inspect_entry.set_committed_type(entry_value or "")
+        finally:
+            self._hs_inspect_entry.blockSignals(False)
+
+    def _refresh_inspect_entry_choices(self) -> None:
+        self._set_inspect_entry_choices(
+            self._hs_inspect_graph_combo.committed_type().strip(),
+            self._hs_inspect_entry.committed_type())
+
+    def _set_npc_dialogue_entry_choices(self, graph_id: str, entry_value: str) -> None:
+        gid = (graph_id or "").strip()
+        node_ids = self._model.dialogue_graph_node_ids(gid) if gid else []
+        self._npc_dialogue_graph_entry.blockSignals(True)
+        try:
+            self._npc_dialogue_graph_entry.set_entries(
+                [("（留空）", "")] + [(n, n) for n in node_ids])
+            self._npc_dialogue_graph_entry.set_committed_type(entry_value or "")
+        finally:
+            self._npc_dialogue_graph_entry.blockSignals(False)
+
+    def _refresh_npc_dialogue_entry_choices(self) -> None:
+        self._set_npc_dialogue_entry_choices(
+            self._npc_dialogue_graph.current_id().strip(),
+            self._npc_dialogue_graph_entry.committed_type())
+
+    def _fill_npc_patrol_move_anim_combo(self) -> None:
+        """填巡逻移动动画状态下拉：留空 + 该 NPC animFile 的 states；保留已存值。"""
+        self._npc_patrol_move_anim.blockSignals(True)
+        try:
+            self._npc_patrol_move_anim.clear()
+            self._npc_patrol_move_anim.addItem("")  # 留空 = 移动时不切动画
+            anim_id = self._npc_anim.current_id().strip()
+            names = (
+                [str(k) for k in self._anim_states_from_model(anim_id).keys()]
+                if anim_id else [])
+            saved = ""
+            pat = self._pending_npc.get("patrol") if self._pending_npc else None
+            if isinstance(pat, dict):
+                saved = str(pat.get("moveAnimState", "") or "").strip()
+            if saved and saved not in names:
+                names.insert(0, saved)
+            for n in names:
+                self._npc_patrol_move_anim.addItem(n)
+            idx = self._npc_patrol_move_anim.findText(saved) if saved else 0
+            self._npc_patrol_move_anim.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            self._npc_patrol_move_anim.blockSignals(False)
+
     def load_npc_props(self, npc: dict) -> None:
         with self._suppress_props_changed_emits():
             self.flush_active_panel_widgets_to_staging(only_shared_scene_staging=True)
@@ -4731,7 +4816,8 @@ class ScenePropertyPanel(QScrollArea):
                 g_items = [(cur_g, cur_g)] + g_items
             self._npc_dialogue_graph.set_items(g_items)
             self._npc_dialogue_graph.set_current(cur_g)
-            self._npc_dialogue_graph_entry.setText(str(st.get("dialogueGraphEntry", "") or ""))
+            self._set_npc_dialogue_entry_choices(
+                cur_g, str(st.get("dialogueGraphEntry", "") or ""))
             self._npc_dialogue_zoom.blockSignals(True)
             try:
                 self._npc_dialogue_zoom.setValue(float(st.get("dialogueCameraZoom", 1.0)))
@@ -4807,7 +4893,7 @@ class ScenePropertyPanel(QScrollArea):
             npc["dialogueGraphId"] = dg
         elif "dialogueGraphId" in npc:
             del npc["dialogueGraphId"]
-        dge = self._npc_dialogue_graph_entry.text().strip()
+        dge = self._npc_dialogue_graph_entry.committed_type().strip()
         if dge:
             npc["dialogueGraphEntry"] = dge
         elif "dialogueGraphEntry" in npc:
@@ -4862,7 +4948,7 @@ class ScenePropertyPanel(QScrollArea):
                     "route": self._default_patrol_route_for_npc(npc),
                     "speed": int(self._npc_patrol_speed.value()),
                 }
-            ma = self._npc_patrol_move_anim.text().strip()
+            ma = self._npc_patrol_move_anim.currentText().strip()
             if ma:
                 pat_out["moveAnimState"] = ma
             npc["patrol"] = pat_out

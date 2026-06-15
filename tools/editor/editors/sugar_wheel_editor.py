@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..shared.action_editor import ActionEditor
+from ..shared.collapsible_section import CollapsibleSection
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 
 
@@ -606,7 +607,9 @@ class SugarWheelEditor(QWidget):
         ff_r.addRow("chargeButtonWheelOffsetXPx", self._charge_btn_ox)
         ff_r.addRow("chargeButtonWheelOffsetYPx", self._charge_btn_oy)
         ff_r.addRow("chargeButtonDiameterPx", self._charge_btn_d)
-        rv.addWidget(g_res)
+        _sec_res = CollapsibleSection("外观与资源", start_open=True)
+        _sec_res.add_body(g_res)
+        rv.addWidget(_sec_res)
 
         g_sec = QGroupBox("分格与指针校准")
         ff_s = QFormLayout(g_sec)
@@ -622,7 +625,9 @@ class SugarWheelEditor(QWidget):
         ff_s.addRow("sectorCenterPhase", self._sector_phase)
         ff_s.addRow("pointerArtOffsetDeg", self._pointer_art_deg)
         ff_s.addRow("sectorDirection", self._direction)
-        rv.addWidget(g_sec)
+        _sec_calib = CollapsibleSection("分格与指针校准", start_open=False)
+        _sec_calib.add_body(g_sec)
+        rv.addWidget(_sec_calib)
 
         g_chg = QGroupBox("蓄力曲线")
         ff_h = QFormLayout(g_chg)
@@ -633,7 +638,9 @@ class SugarWheelEditor(QWidget):
         ff_h.addRow("powerChargeMs", self._charge_ms)
         ff_h.addRow("minLaunchPower", self._min_power)
         ff_h.addRow("powerChargeCurve", self._charge_curve)
-        rv.addWidget(g_chg)
+        _sec_chg = CollapsibleSection("蓄力曲线", start_open=False)
+        _sec_chg.add_body(g_chg)
+        rv.addWidget(_sec_chg)
 
         g_phy = QGroupBox("物理停针（运行时）")
         ff_p = QFormLayout(g_phy)
@@ -675,7 +682,9 @@ class SugarWheelEditor(QWidget):
         ff_p.addRow("spinStopSettleSec", self._stop_settle)
         ff_p.addRow("spinDryFrictionAccelRadPerSec2", self._dry_fric)
         ff_p.addRow("spinWeightBiasCreepRefRadPerSec", self._bias_creep)
-        rv.addWidget(g_phy)
+        _sec_phy = CollapsibleSection("物理停针（运行时）", start_open=False)
+        _sec_phy.add_body(g_phy)
+        rv.addWidget(_sec_phy)
 
         g_pre_ch = QGroupBox("蓄力前：条件与 Action（beforeCharge）")
         g_pre_ch.setToolTip(
@@ -701,14 +710,18 @@ class SugarWheelEditor(QWidget):
             ae.changed.connect(self._on_before_charge_changed)
         pre_l.addWidget(self._ae_before_charge_pass)
         pre_l.addWidget(self._ae_before_charge_fail)
-        rv.addWidget(g_pre_ch)
+        _sec_pre_ch = CollapsibleSection("蓄力前：条件与 Action（beforeCharge）", start_open=False)
+        _sec_pre_ch.add_body(g_pre_ch)
+        rv.addWidget(_sec_pre_ch)
 
         g_sp = QGroupBox("对白气泡 showSpeech")
         ff_sp = QFormLayout(g_sp)
         self._speech_dur = self._double(500, 120000, 3000, 0)
         self._speech_dur.setToolTip("默认气泡停留毫秒（外部调用未传 durationMs 时）。")
         ff_sp.addRow("speechDurationMs", self._speech_dur)
-        rv.addWidget(g_sp)
+        _sec_sp = CollapsibleSection("对白气泡 showSpeech", start_open=False)
+        _sec_sp.add_body(g_sp)
+        rv.addWidget(_sec_sp)
 
         self._speech_table = QTableWidget(0, 5)
         self._speech_table.setHorizontalHeaderLabels(["role", "label", "xRatio", "yRatio", "tailDirection"])
@@ -766,6 +779,8 @@ class SugarWheelEditor(QWidget):
         sb = QHBoxLayout()
         self._btn_add_sector = QPushButton("+格子")
         self._btn_del_sector = QPushButton("−格子")
+        self._btn_up_sector = QPushButton("上移")
+        self._btn_down_sector = QPushButton("下移")
         _sec_lbl = QLabel("格子 sectors（顺时针须与贴图一致；weight 悬停列表头可看说明）")
         _sec_lbl.setToolTip(
             "每行对应盘面上一格。\n「weight」不设=1，视为平地。\n"
@@ -775,12 +790,16 @@ class SugarWheelEditor(QWidget):
         sb.addStretch()
         sb.addWidget(self._btn_add_sector)
         sb.addWidget(self._btn_del_sector)
+        sb.addWidget(self._btn_up_sector)
+        sb.addWidget(self._btn_down_sector)
         sw = QWidget()
         swl = QVBoxLayout(sw)
         swl.setContentsMargins(0, 0, 0, 0)
         swl.addLayout(sb)
         swl.addWidget(self._sector_table)
-        rv.addWidget(sw)
+        _sec_sectors = CollapsibleSection("格子 sectors", start_open=False)
+        _sec_sectors.add_body(sw)
+        rv.addWidget(_sec_sectors)
 
         self._g_sector_actions = QGroupBox("选中格 · Action（与水族馆实体相同筛选器）")
         self._g_sector_actions.setToolTip(
@@ -797,7 +816,9 @@ class SugarWheelEditor(QWidget):
             ae.changed.connect(self._on_sector_actions_editor_changed)
         ga_l.addWidget(self._ae_sector_drag)
         ga_l.addWidget(self._ae_sector_landing)
-        rv.addWidget(self._g_sector_actions)
+        _sec_sector_actions = CollapsibleSection("选中格 · Action（与水族馆实体相同筛选器）", start_open=False)
+        _sec_sector_actions.add_body(self._g_sector_actions)
+        rv.addWidget(_sec_sector_actions)
         self._bind_wheel_action_speech_role_getter()
 
         # ── 旋转氛围脚本 ──
@@ -923,7 +944,9 @@ class SugarWheelEditor(QWidget):
             self._atmos_phase_tabs.addTab(page, plabel)
         atmos_root.addWidget(self._atmos_phase_tabs)
 
-        rv.addWidget(g_atmos)
+        _sec_atmos = CollapsibleSection("旋转氛围脚本 atmosphereGroups", start_open=False)
+        _sec_atmos.add_body(g_atmos)
+        rv.addWidget(_sec_atmos)
 
         rv.addStretch()
         right.setWidget(right_inner)
@@ -1000,6 +1023,8 @@ class SugarWheelEditor(QWidget):
         self._speech_table.itemChanged.connect(self._on_speech_item_changed)
         self._btn_add_sector.clicked.connect(self._add_sector)
         self._btn_del_sector.clicked.connect(self._delete_sector)
+        self._btn_up_sector.clicked.connect(lambda _c=False: self._move_sector(-1))
+        self._btn_down_sector.clicked.connect(lambda _c=False: self._move_sector(1))
         self._btn_add_speech.clicked.connect(self._add_speech_row)
         self._btn_del_speech.clicked.connect(self._delete_speech_row)
         self._sector_table.itemSelectionChanged.connect(self._on_sector_selection_changed)
@@ -1263,6 +1288,7 @@ class SugarWheelEditor(QWidget):
             self._a_hl, self._stop_w, self._stop_settle, self._dry_fric, self._bias_creep,
             self._speech_dur,
             self._sector_table, self._btn_add_sector, self._btn_del_sector,
+            self._btn_up_sector, self._btn_down_sector,
             self._g_sector_actions,
             self._speech_table, self._btn_add_speech, self._btn_del_speech,
             self._btn_preview,
@@ -1701,6 +1727,20 @@ class SugarWheelEditor(QWidget):
         n = len(sectors)
         hint = max(0, min(r, n - 1)) if n > 0 else -1
         self._fill_sectors(hint)
+
+    def _move_sector(self, direction: int) -> None:
+        if not self._doc:
+            return
+        r = self._sector_table.currentRow()
+        sectors = self._sectors()
+        if r < 0 or r >= len(sectors):
+            return
+        nr = r + direction
+        if nr < 0 or nr >= len(sectors):
+            return
+        sectors[r], sectors[nr] = sectors[nr], sectors[r]
+        self._mark_dirty()
+        self._fill_sectors(nr)
 
     def _add_instance(self) -> None:
         raw, ok = QInputDialog.getText(self, "新增转盘实例", "实例 id（将作为文件名 stem）：")

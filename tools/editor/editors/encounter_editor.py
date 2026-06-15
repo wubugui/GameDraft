@@ -231,11 +231,9 @@ class OptionWidget(QFrame):
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._rule.setMaximumWidth(360)
         f.addRow("requiredRuleId", self._rule)
-        f.addRow(
-            QLabel(
-                "requiredRuleLayers（不勾=须完整掌握；勾选者须对应层已解锁）",
-            ),
-        )
+        _rl_label = QLabel("requiredRuleLayers")
+        _rl_label.setToolTip("不勾 = 须完整掌握；勾选者须对应层已解锁")
+        f.addRow(_rl_label)
         rl_row = QHBoxLayout()
         self._rl_xiang = QCheckBox("象")
         self._rl_li = QCheckBox("理")

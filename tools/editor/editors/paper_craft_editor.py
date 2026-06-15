@@ -5,8 +5,10 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QTextEdit, QSpinBox, QCheckBox, QListWidget,
-    QListWidgetItem, QGroupBox,
+    QListWidgetItem, QGroupBox, QStyle,
 )
+
+from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 
 
 class PaperCraftEditor(QWidget):
@@ -48,6 +50,7 @@ class PaperCraftEditor(QWidget):
         order_form = QFormLayout(order_box)
         self.order_combo = QComboBox()
         self.order_combo.currentIndexChanged.connect(self._select_order)
+        order_form.addRow("", self._crud_row(self._add_order, self._remove_order))
         self.order_title = QLineEdit()
         self.order_title.editingFinished.connect(self._write_order)
         self.order_desc = QTextEdit()
@@ -73,6 +76,7 @@ class PaperCraftEditor(QWidget):
         part_form = QFormLayout(part_box)
         self.part_combo = QComboBox()
         self.part_combo.currentIndexChanged.connect(self._select_part)
+        part_form.addRow("", self._crud_row(self._add_part, self._remove_part))
         self.part_label = QLineEdit()
         self.part_label.editingFinished.connect(self._write_part)
         self.part_score = QSpinBox()
@@ -91,6 +95,7 @@ class PaperCraftEditor(QWidget):
         slot_form = QFormLayout(slot_box)
         self.slot_combo = QComboBox()
         self.slot_combo.currentIndexChanged.connect(self._select_slot)
+        slot_form.addRow("", self._crud_row(self._add_slot, self._remove_slot))
         self.slot_label = QLineEdit()
         self.slot_label.editingFinished.connect(self._write_slot)
         self.slot_optional = QCheckBox("可不放")
@@ -118,6 +123,7 @@ class PaperCraftEditor(QWidget):
         paper_form = QFormLayout(paper_box)
         self.paper_combo = QComboBox()
         self.paper_combo.currentIndexChanged.connect(self._select_paper)
+        paper_form.addRow("", self._crud_row(self._add_paper, self._remove_paper))
         self.paper_label = QLineEdit()
         self.paper_label.editingFinished.connect(self._write_paper)
         self.paper_score = QSpinBox()
@@ -132,6 +138,7 @@ class PaperCraftEditor(QWidget):
         finish_form = QFormLayout(finish_box)
         self.finish_combo = QComboBox()
         self.finish_combo.currentIndexChanged.connect(self._select_finish)
+        finish_form.addRow("", self._crud_row(self._add_finish, self._remove_finish))
         self.finish_label = QLineEdit()
         self.finish_label.editingFinished.connect(self._write_finish)
         self.finish_score = QSpinBox()
@@ -168,6 +175,35 @@ class PaperCraftEditor(QWidget):
         sp.setRange(-9999, 9999)
         return sp
 
+    def _crud_row(self, on_add, on_remove) -> QWidget:
+        """生成一行「+ / −」短按钮，仅做增删，不触碰既有读写/取值逻辑。"""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        add_btn = outline_row_tool_button(
+            self, "新增", std=QStyle.StandardPixmap.SP_FileDialogNewFolder, fallback_text="+"
+        )
+        del_btn = outline_row_tool_button(
+            self, "删除当前", std=delete_standard_pixmap(), fallback_text="−"
+        )
+        add_btn.clicked.connect(on_add)
+        del_btn.clicked.connect(on_remove)
+        lay.addWidget(add_btn)
+        lay.addWidget(del_btn)
+        lay.addStretch(1)
+        return row
+
+    def _unique_id(self, rows: list, prefix: str) -> str:
+        """在 *rows* 现有 id 之外生成一个唯一 id，保持顺序无关。"""
+        used = {
+            str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id") is not None
+        }
+        n = len(rows) + 1
+        while f"{prefix}_{n}" in used:
+            n += 1
+        return f"{prefix}_{n}"
+
     def _mark_dirty(self) -> None:
         self._model.mark_dirty("paper_craft")
 
@@ -196,6 +232,55 @@ class PaperCraftEditor(QWidget):
         idx = self.order_combo.currentIndex()
         self._order = orders[idx] if 0 <= idx < len(orders) and isinstance(orders[idx], dict) else None
         self._refresh_order_fields()
+
+    def _orders_list(self) -> list | None:
+        orders = (self._doc or {}).get("orders")
+        return orders if isinstance(orders, list) else None
+
+    def _add_order(self) -> None:
+        orders = self._orders_list()
+        if orders is None:
+            return
+        oid = self._unique_id(orders, "order")
+        orders.append({
+            "id": oid,
+            "title": "新订单",
+            "description": "",
+            "correctPaper": "",
+            "successScore": 76,
+            "warnScore": 50,
+            "paperOptions": [],
+            "finishOptions": [],
+            "slots": [],
+            "parts": [],
+        })
+        self._refill_orders(len(orders) - 1)
+        self._mark_dirty()
+
+    def _remove_order(self) -> None:
+        orders = self._orders_list()
+        if not orders:
+            return
+        idx = self.order_combo.currentIndex()
+        if not (0 <= idx < len(orders)):
+            return
+        orders.pop(idx)
+        self._refill_orders(min(idx, len(orders) - 1))
+        self._mark_dirty()
+
+    def _refill_orders(self, select: int) -> None:
+        """复用 _select_instance 的填充语义重建订单下拉，再选中 *select*。"""
+        self._syncing = True
+        self.order_combo.clear()
+        for order in (self._doc or {}).get("orders", []):
+            if isinstance(order, dict):
+                self.order_combo.addItem(
+                    str(order.get("title") or order.get("id") or ""), order.get("id")
+                )
+        self._syncing = False
+        if self.order_combo.count():
+            self.order_combo.setCurrentIndex(max(0, select))
+        self._select_order()
 
     def _refresh_order_fields(self) -> None:
         self._syncing = True
@@ -256,6 +341,48 @@ class PaperCraftEditor(QWidget):
         self._part["tags"] = self._split_tags(self.part_tags.text())
         self._mark_dirty()
 
+    def _order_list(self, key: str) -> list | None:
+        if not isinstance(self._order, dict):
+            return None
+        rows = self._order.get(key)
+        if not isinstance(rows, list):
+            rows = []
+            self._order[key] = rows
+        return rows
+
+    def _refill_order_list(self, combo: QComboBox, key: str, select: int, after) -> None:
+        """复用 _fill_combo 的填充语义重建下拉，再选中 *select* 并触发对应 _select_*。
+
+        与 _pick_from(key, index) 的取值语义保持一致：下拉项与 list 顺序一一对应。
+        """
+        self._syncing = True
+        self._fill_combo(combo, self._order_list(key) or [])
+        self._syncing = False
+        if combo.count():
+            combo.setCurrentIndex(max(0, min(select, combo.count() - 1)))
+        after()
+
+    def _add_part(self) -> None:
+        rows = self._order_list("parts")
+        if rows is None:
+            return
+        rows.append({"id": self._unique_id(rows, "part"), "label": "新部件", "score": 0, "tags": []})
+        self._refill_order_list(self.part_combo, "parts", len(rows) - 1, self._select_part)
+        self._refresh_accepts_list()
+        self._mark_dirty()
+
+    def _remove_part(self) -> None:
+        rows = self._order_list("parts")
+        if not rows:
+            return
+        idx = self.part_combo.currentIndex()
+        if not (0 <= idx < len(rows)):
+            return
+        rows.pop(idx)
+        self._refill_order_list(self.part_combo, "parts", min(idx, len(rows) - 1), self._select_part)
+        self._refresh_accepts_list()
+        self._mark_dirty()
+
     def _select_slot(self) -> None:
         self._slot = self._pick_from("slots", self.slot_combo.currentIndex())
         self._syncing = True
@@ -293,6 +420,33 @@ class PaperCraftEditor(QWidget):
         self._slot["height"] = self.slot_h.value()
         self._mark_dirty()
 
+    def _add_slot(self) -> None:
+        rows = self._order_list("slots")
+        if rows is None:
+            return
+        rows.append({
+            "id": self._unique_id(rows, "slot"),
+            "label": "新槽位",
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 100,
+            "accepts": [],
+        })
+        self._refill_order_list(self.slot_combo, "slots", len(rows) - 1, self._select_slot)
+        self._mark_dirty()
+
+    def _remove_slot(self) -> None:
+        rows = self._order_list("slots")
+        if not rows:
+            return
+        idx = self.slot_combo.currentIndex()
+        if not (0 <= idx < len(rows)):
+            return
+        rows.pop(idx)
+        self._refill_order_list(self.slot_combo, "slots", min(idx, len(rows) - 1), self._select_slot)
+        self._mark_dirty()
+
     def _write_slot_accepts(self) -> None:
         if self._syncing or not self._slot:
             return
@@ -319,6 +473,32 @@ class PaperCraftEditor(QWidget):
         self._paper["score"] = self.paper_score.value()
         self._mark_dirty()
 
+    def _add_paper(self) -> None:
+        rows = self._order_list("paperOptions")
+        if rows is None:
+            return
+        rows.append({
+            "id": self._unique_id(rows, "paper"),
+            "label": "新纸色",
+            "tint": "#cccccc",
+            "score": 0,
+        })
+        self._refill_order_list(self.paper_combo, "paperOptions", len(rows) - 1, self._select_paper)
+        self._mark_dirty()
+
+    def _remove_paper(self) -> None:
+        rows = self._order_list("paperOptions")
+        if not rows:
+            return
+        idx = self.paper_combo.currentIndex()
+        if not (0 <= idx < len(rows)):
+            return
+        rows.pop(idx)
+        self._refill_order_list(
+            self.paper_combo, "paperOptions", min(idx, len(rows) - 1), self._select_paper
+        )
+        self._mark_dirty()
+
     def _select_finish(self) -> None:
         self._finish = self._pick_from("finishOptions", self.finish_combo.currentIndex())
         self._syncing = True
@@ -334,6 +514,29 @@ class PaperCraftEditor(QWidget):
         self._finish["label"] = self.finish_label.text()
         self._finish["score"] = self.finish_score.value()
         self._finish["tags"] = self._split_tags(self.finish_tags.text())
+        self._mark_dirty()
+
+    def _add_finish(self) -> None:
+        rows = self._order_list("finishOptions")
+        if rows is None:
+            return
+        rows.append({"id": self._unique_id(rows, "finish"), "label": "新收尾", "score": 0, "tags": []})
+        self._refill_order_list(
+            self.finish_combo, "finishOptions", len(rows) - 1, self._select_finish
+        )
+        self._mark_dirty()
+
+    def _remove_finish(self) -> None:
+        rows = self._order_list("finishOptions")
+        if not rows:
+            return
+        idx = self.finish_combo.currentIndex()
+        if not (0 <= idx < len(rows)):
+            return
+        rows.pop(idx)
+        self._refill_order_list(
+            self.finish_combo, "finishOptions", min(idx, len(rows) - 1), self._select_finish
+        )
         self._mark_dirty()
 
     def _pick_from(self, key: str, idx: int) -> dict | None:

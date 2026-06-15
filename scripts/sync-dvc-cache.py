@@ -21,6 +21,7 @@ OBJECT_WORKERS = 16
 DEFAULT_DVCFILES = [
     "public/resources/runtime.dvc",
     "resources/editor_projects.dvc",
+    "resources/vendor_archives.dvc",
 ]
 PROXY_ENV_NAMES = [
     "HTTP_PROXY",

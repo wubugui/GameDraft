@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import math
+import sys
 from typing import Callable
 
 import numpy as np
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from pyopengltk import OpenGLFrame
+
+_QT_OPENGL = sys.platform == "darwin"
+
+if _QT_OPENGL:
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtOpenGLWidgets import QOpenGLWidget as OpenGLFrame
+else:
+    from pyopengltk import OpenGLFrame
 
 TOOL_NONE = "none"
 TOOL_BRUSH = "brush"
@@ -95,8 +103,20 @@ class SceneGLViewer(OpenGLFrame):
     """
 
     def __init__(self, master, **kw):
+        width = int(kw.pop("width", 800))
+        height = int(kw.pop("height", 600))
         super().__init__(master, **kw)
-        self.animate = 16
+        if _QT_OPENGL:
+            self.resize(width, height)
+            self.setMinimumSize(320, 240)
+            self.setMouseTracking(True)
+            self.setFocusPolicy(Qt.StrongFocus)
+            self._update_timer = QTimer(self)
+            self._update_timer.timeout.connect(self.update)
+            self._update_timer.start(16)
+        else:
+            self.configure(width=width, height=height)
+            self.animate = 16
 
         # Mesh GPU data
         self._vertices: np.ndarray | None = None
@@ -179,16 +199,30 @@ class SceneGLViewer(OpenGLFrame):
         self._depth_edit_cb: Callable | None = None
         self._depth_edit_end_cb: Callable | None = None
 
-        self.bind("<ButtonPress-1>", self._btn1_down)
-        self.bind("<B1-Motion>", self._btn1_drag)
-        self.bind("<ButtonRelease-1>", self._btn1_up)
-        self.bind("<ButtonPress-3>", self._btn3_down)
-        self.bind("<B3-Motion>", self._btn3_drag)
-        self.bind("<ButtonPress-2>", self._btn2_down)
-        self.bind("<B2-Motion>", self._btn2_drag)
-        self.bind("<MouseWheel>", self._on_scroll)
-        self.bind("<Motion>", self._on_motion)
-        self.bind("<Escape>", self._on_escape)
+        if not _QT_OPENGL:
+            self.bind("<ButtonPress-1>", self._btn1_down)
+            self.bind("<B1-Motion>", self._btn1_drag)
+            self.bind("<ButtonRelease-1>", self._btn1_up)
+            self.bind("<ButtonPress-3>", self._btn3_down)
+            self.bind("<B3-Motion>", self._btn3_drag)
+            self.bind("<ButtonPress-2>", self._btn2_down)
+            self.bind("<B2-Motion>", self._btn2_drag)
+            self.bind("<MouseWheel>", self._on_scroll)
+            self.bind("<Motion>", self._on_motion)
+            self.bind("<Escape>", self._on_escape)
+
+    if _QT_OPENGL:
+        def grid(self, row: int = 0, column: int = 0, sticky: str | None = None,
+                 columnspan: int = 1, **_kwargs) -> None:
+            parent = self.parent()
+            if parent is not None and hasattr(parent, "_layout"):
+                parent._layout.addWidget(self, row, column, 1, columnspan)
+
+        def _request_redraw(self) -> None:
+            self.update()
+    else:
+        def _request_redraw(self) -> None:
+            pass
 
     # ------------------------------------------------------------------
     # OpenGL lifecycle
@@ -214,14 +248,17 @@ class SceneGLViewer(OpenGLFrame):
             self._upload()
 
     def redraw(self):
-        w = max(1, self.winfo_width())
-        h = max(1, self.winfo_height())
-        glViewport(0, 0, w, h)
+        w = max(1, self.width() if _QT_OPENGL else self.winfo_width())
+        h = max(1, self.height() if _QT_OPENGL else self.winfo_height())
+        dpr = self.devicePixelRatioF() if _QT_OPENGL else 1.0
+        fb_w = max(1, int(round(w * dpr)))
+        fb_h = max(1, int(round(h * dpr)))
+        glViewport(0, 0, fb_w, fb_h)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        aspect = w / h
+        aspect = fb_w / fb_h
         extent = self._distance * 0.6
         glOrtho(-extent * aspect, extent * aspect, -extent, extent, 0.01, 500.0)
 
@@ -253,6 +290,16 @@ class SceneGLViewer(OpenGLFrame):
         if self._billboard_enabled and self._billboard_tex_id is not None:
             self._draw_billboard()
         self._draw_edit_overlay()
+
+    if _QT_OPENGL:
+        def initializeGL(self):  # noqa: N802
+            self.initgl()
+
+        def paintGL(self):  # noqa: N802
+            self.redraw()
+
+        def resizeGL(self, _w: int, _h: int):  # noqa: N802
+            self.update()
 
     # ------------------------------------------------------------------
     # Floor grid (Y = 0)
@@ -699,9 +746,11 @@ class SceneGLViewer(OpenGLFrame):
         self.tri_count = len(indices) // 3
         if auto_fit:
             self._auto_fit()
+        self._request_redraw()
 
     def set_mesh_texture(self, image: Image.Image) -> None:
         self._mesh_tex_pending = image
+        self._request_redraw()
 
     def clear_mesh(self):
         self._vertices = None
@@ -711,21 +760,27 @@ class SceneGLViewer(OpenGLFrame):
         self._index_count = 0
         self.vertex_count = 0
         self.tri_count = 0
+        self._request_redraw()
 
     def set_wireframe(self, on: bool):
         self._wireframe = on
+        self._request_redraw()
 
     def set_show_grid(self, on: bool):
         self._show_grid = on
+        self._request_redraw()
 
     def set_show_axes(self, on: bool):
         self._show_axes = on
+        self._request_redraw()
 
     def set_show_labels(self, on: bool):
         self._show_labels = on
+        self._request_redraw()
 
     def set_show_collision(self, on: bool):
         self._show_collision = on
+        self._request_redraw()
 
     def set_collision_data(self, mask: np.ndarray | None,
                            x_min: float = 0.0, z_min: float = 0.0,
@@ -739,6 +794,7 @@ class SceneGLViewer(OpenGLFrame):
         self._collision_z_min = z_min
         self._collision_cell = cell_size
         self._collision_y = y_level
+        self._request_redraw()
 
     def set_calibration_camera(self, camera) -> None:
         """Set OrthoCamera for axes (X=image right, Y=image up, Z=depth)."""
@@ -750,16 +806,20 @@ class SceneGLViewer(OpenGLFrame):
             self._billboard_pending_image = _make_default_billboard_image()
         else:
             self._billboard_pending_image = Image.open(path).convert("RGBA")
+        self._request_redraw()
 
     def set_billboard_enabled(self, on: bool) -> None:
         self._billboard_enabled = on
+        self._request_redraw()
 
     def set_billboard_pos(self, x: float, z: float) -> None:
         self._billboard_pos[0] = x
         self._billboard_pos[1] = z
+        self._request_redraw()
 
     def set_billboard_scale(self, scale: float) -> None:
         self._billboard_scale = max(0.01, float(scale))
+        self._request_redraw()
 
     def get_billboard_scale(self) -> float:
         return self._billboard_scale
@@ -778,13 +838,17 @@ class SceneGLViewer(OpenGLFrame):
     def _auto_fit(self):
         if self._vertices is None or len(self._vertices) == 0:
             return
-        vmin = self._vertices.min(axis=0)
-        vmax = self._vertices.max(axis=0)
+        # 分位数包围盒：剔除深度断裂处被甩飞的离群顶点。否则少数极端顶点会把包围盒
+        # 撑得很大，auto_fit 去框那些离群点 → 主体网格只占视口一角(用户反馈的浪费空间)。
+        vmin = np.percentile(self._vertices, 1.5, axis=0)
+        vmax = np.percentile(self._vertices, 98.5, axis=0)
         center = (vmin + vmax) / 2.0
         extent = float(np.linalg.norm(vmax - vmin))
 
         self._center = center.astype(np.float64)
-        self._distance = max(0.5, extent * 0.8)
+        # 按「当前视角下包围盒的屏幕投影 + 视口宽高比」定距离，让网格填满视口；
+        # 旧版用 3D 对角线，会把相机拉得过远、网格只占视口一角，浪费空间。
+        self._distance = max(0.5, self._fit_distance(vmin, vmax, center))
         self._billboard_pos[0] = float(center[0])
         self._billboard_pos[1] = float(center[2])
 
@@ -793,6 +857,39 @@ class SceneGLViewer(OpenGLFrame):
         self._grid_major = half
         self._grid_minor = half / 4
         self._axes_length = max(0.5, extent * 0.35)
+
+    def _fit_distance(self, vmin, vmax, center) -> float:
+        """让网格在当前视角/视口比例下填满视口所需的相机距离。
+
+        把包围盒 8 个角点投影到当前屏幕的右/上方向，取投影半宽/半高，
+        再结合视口宽高比换算成 ``redraw`` 用的 ``distance``（视口竖直半高 = distance*0.6）。
+        """
+        el = math.radians(self._elevation)
+        az = math.radians(self._azimuth)
+        fwd = -np.array([math.cos(el) * math.cos(az), math.sin(el),
+                         math.cos(el) * math.sin(az)], dtype=np.float64)
+        nf = float(np.linalg.norm(fwd))
+        if nf < 1e-9:
+            return float(np.linalg.norm(vmax - vmin) * 0.8)
+        fwd /= nf
+        right = np.cross(fwd, np.array([0.0, 1.0, 0.0]))
+        rn = float(np.linalg.norm(right))
+        right = right / rn if rn > 1e-9 else np.array([1.0, 0.0, 0.0])
+        up = np.cross(right, fwd)
+        un = float(np.linalg.norm(up))
+        up = up / un if un > 1e-9 else np.array([0.0, 1.0, 0.0])
+
+        cx, cy, cz = (vmin[0], vmax[0]), (vmin[1], vmax[1]), (vmin[2], vmax[2])
+        corners = np.array([[x, y, z] for x in cx for y in cy for z in cz],
+                           dtype=np.float64) - center
+        half_w = float(np.abs(corners @ right).max())
+        half_h = float(np.abs(corners @ up).max())
+
+        w = self.width() if _QT_OPENGL else self.winfo_width()
+        h = self.height() if _QT_OPENGL else self.winfo_height()
+        aspect = (w / h) if (w and h and h > 0) else 1.6
+        need = max(half_h, half_w / max(aspect, 0.1)) * 1.12  # ~12% 边距
+        return need / 0.6
 
     # ------------------------------------------------------------------
     # Mouse interaction
@@ -827,8 +924,8 @@ class SceneGLViewer(OpenGLFrame):
     # ------------------------------------------------------------------
 
     def _screen_to_xz(self, mx: int, my: int) -> tuple[float, float] | None:
-        w = max(1, self.winfo_width())
-        h = max(1, self.winfo_height())
+        w = max(1, self.width() if _QT_OPENGL else self.winfo_width())
+        h = max(1, self.height() if _QT_OPENGL else self.winfo_height())
         ndc_x = (2.0 * mx / w) - 1.0
         ndc_y = 1.0 - (2.0 * my / h)
 
@@ -1025,6 +1122,7 @@ class SceneGLViewer(OpenGLFrame):
     def _on_escape(self, e):
         if self._edit_tool == TOOL_POLYGON:
             self._polygon_verts.clear()
+            self._request_redraw()
 
     def _pan(self, dx, dy):
         speed = self._distance * 0.0015
@@ -1037,3 +1135,114 @@ class SceneGLViewer(OpenGLFrame):
     def _on_scroll(self, e):
         factor = 0.9 if e.delta > 0 else 1.1
         self._distance = max(0.05, min(200.0, self._distance * factor))
+        self._request_redraw()
+
+    if _QT_OPENGL:
+        @staticmethod
+        def _qt_ctrl_held(event) -> bool:
+            return bool(event.modifiers() & Qt.ControlModifier)
+
+        @staticmethod
+        def _qt_xy(event) -> tuple[int, int]:
+            p = event.position()
+            return int(p.x()), int(p.y())
+
+        def mousePressEvent(self, event):  # noqa: N802
+            x, y = self._qt_xy(event)
+            self._last_mx, self._last_my = x, y
+            button = event.button()
+            if button == Qt.LeftButton:
+                self._qt_left_down(x, y, self._qt_ctrl_held(event))
+            elif button in (Qt.RightButton, Qt.MiddleButton):
+                self._last_mx, self._last_my = x, y
+
+        def mouseMoveEvent(self, event):  # noqa: N802
+            x, y = self._qt_xy(event)
+            buttons = event.buttons()
+            ctrl = self._qt_ctrl_held(event)
+            if buttons & Qt.LeftButton:
+                self._qt_left_drag(x, y)
+            elif buttons & Qt.RightButton:
+                dx = self._last_mx - x
+                dy = self._last_my - y
+                self._last_mx, self._last_my = x, y
+                self._azimuth += dx * 0.4
+                self._elevation = max(-89.0, min(89.0, self._elevation - dy * 0.3))
+            elif buttons & Qt.MiddleButton:
+                dx = self._last_mx - x
+                dy = self._last_my - y
+                self._last_mx, self._last_my = x, y
+                self._pan(dx, dy)
+            elif self._edit_tool != TOOL_NONE:
+                self._mouse_xz = self._screen_to_xz(x, y)
+            if ctrl or buttons:
+                self._request_redraw()
+
+        def mouseReleaseEvent(self, event):  # noqa: N802
+            if event.button() == Qt.LeftButton:
+                self._qt_left_up()
+
+        def wheelEvent(self, event):  # noqa: N802
+            delta = event.angleDelta().y()
+            factor = 0.9 if delta > 0 else 1.1
+            self._distance = max(0.05, min(200.0, self._distance * factor))
+            self._request_redraw()
+
+        def keyPressEvent(self, event):  # noqa: N802
+            if event.key() == Qt.Key_Escape:
+                if self._edit_tool == TOOL_POLYGON:
+                    self._polygon_verts.clear()
+                    self._request_redraw()
+                return
+            text = event.text().lower()
+            if text:
+                self.on_key(text)
+
+        def _qt_left_down(self, x: int, y: int, ctrl: bool) -> None:
+            if ctrl and self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
+                xz = self._screen_to_xz(x, y)
+                if xz and self._on_edit_cb:
+                    action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
+                    self._on_edit_cb(action, [xz], self._brush_radius)
+                self._editing_active = True
+            elif ctrl and self._edit_tool == TOOL_POLYGON:
+                xz = self._screen_to_xz(x, y)
+                if xz:
+                    self._polygon_verts.append(xz)
+                self._editing_active = True
+            elif ctrl and self._edit_tool in _DEPTH_TOOLS:
+                xz = self._screen_to_xz(x, y)
+                if xz and self._depth_edit_cb:
+                    self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
+                self._editing_active = True
+            else:
+                self._editing_active = False
+
+        def _qt_left_drag(self, x: int, y: int) -> None:
+            if self._editing_active and self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
+                xz = self._screen_to_xz(x, y)
+                if xz and self._on_edit_cb:
+                    action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
+                    self._on_edit_cb(action, [xz], self._brush_radius)
+                self._last_mx, self._last_my = x, y
+            elif self._editing_active and self._edit_tool in _DEPTH_TOOLS:
+                xz = self._screen_to_xz(x, y)
+                if xz and self._depth_edit_cb:
+                    self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
+                self._last_mx, self._last_my = x, y
+            else:
+                dx = self._last_mx - x
+                dy = self._last_my - y
+                self._last_mx, self._last_my = x, y
+                self._pan(dx, dy)
+
+        def _qt_left_up(self) -> None:
+            if self._editing_active:
+                if self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
+                    if self._on_edit_end_cb:
+                        self._on_edit_end_cb()
+                elif self._edit_tool in _DEPTH_TOOLS:
+                    if self._depth_edit_end_cb:
+                        self._depth_edit_end_cb()
+            self._editing_active = False
+            self._request_redraw()

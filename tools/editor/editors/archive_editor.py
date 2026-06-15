@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QTabWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
     QScrollArea, QLabel, QGroupBox, QFileDialog, QDialog, QMessageBox,
+    QToolButton, QStyle,
 )
 from PySide6.QtCore import Qt
 
@@ -15,9 +16,29 @@ from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.action_editor import ActionEditor
 from ..shared.rich_text_field import InsertRefDialog, RichTextLineEdit, RichTextTextEdit
+from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.project_paths import (
     DIR_KIND_RUNTIME_IMAGES_ILLUSTRATIONS,
 )
+
+
+def _tool_std_icon_btn(
+    parent: QWidget,
+    std: QStyle.StandardPixmap,
+    tip: str,
+    px: int = 26,
+    text_fallback: str = "",
+) -> QToolButton:
+    """工具条式 QToolButton，与遭遇/过场行内按钮视觉一致。"""
+    return outline_row_tool_button(
+        parent,
+        tip,
+        theme_names=(),
+        std=std,
+        fallback_text=text_fallback,
+        fixed_width=px,
+        fixed_height=px,
+    )
 
 
 def _make_insert_image_btn(
@@ -113,6 +134,18 @@ class _CondTextGroup(QGroupBox):
                  model: ProjectModel | None = None, parent: QWidget | None = None):
         super().__init__(title, parent)
         lay = QVBoxLayout(self)
+        head = QHBoxLayout()
+        head.addStretch(1)
+        self._btn_up = _tool_std_icon_btn(
+            self, QStyle.StandardPixmap.SP_ArrowUp, "上移", text_fallback="上")
+        self._btn_down = _tool_std_icon_btn(
+            self, QStyle.StandardPixmap.SP_ArrowDown, "下移", text_fallback="下")
+        self._btn_del = _tool_std_icon_btn(
+            self, delete_standard_pixmap(), "删除该条", text_fallback="删")
+        head.addWidget(self._btn_up)
+        head.addWidget(self._btn_down)
+        head.addWidget(self._btn_del)
+        lay.addLayout(head)
         self._cond = ConditionEditor("conditions")
         self._cond.set_flag_pattern_context(model, None)
         self._cond.set_data(data.get("conditions", []))
@@ -307,18 +340,79 @@ class ArchiveEditor(QWidget):
         widgets.clear()
         for i, item in enumerate(items):
             g = _CondTextGroup(f"{prefix} {i + 1}", item, self._model)
+            self._wire_cond_text_group(g)
             widgets.append(g)
             layout.addWidget(g)
+
+    def _wire_cond_text_group(self, g: _CondTextGroup) -> None:
+        g._btn_up.clicked.connect(self._move_cond_text_up)
+        g._btn_down.clicked.connect(self._move_cond_text_down)
+        g._btn_del.clicked.connect(self._remove_cond_text_sender)
+
+    def _cond_text_context_from_sender(self):
+        """返回 (layout, widgets, prefix) 三元组以定位 sender 所属的列表。"""
+        w = self.sender()
+        while w is not None and not isinstance(w, _CondTextGroup):
+            w = w.parent()
+        if not isinstance(w, _CondTextGroup):
+            return None
+        if w in self._imp_widgets:
+            return (w, self._ch_imp_layout, self._imp_widgets, "Impression")
+        if w in self._ki_widgets:
+            return (w, self._ch_ki_layout, self._ki_widgets, "Info")
+        return None
+
+    def _renumber_cond_text(self, layout, widgets, prefix) -> None:
+        for w in widgets:
+            layout.removeWidget(w)
+        for i, w in enumerate(widgets):
+            w.setTitle(f"{prefix} {i + 1}")
+            layout.addWidget(w)
+
+    def _move_cond_text_up(self) -> None:
+        ctx = self._cond_text_context_from_sender()
+        if ctx is None:
+            return
+        g, layout, widgets, prefix = ctx
+        idx = widgets.index(g)
+        if idx <= 0:
+            return
+        widgets[idx - 1], widgets[idx] = widgets[idx], widgets[idx - 1]
+        self._renumber_cond_text(layout, widgets, prefix)
+
+    def _move_cond_text_down(self) -> None:
+        ctx = self._cond_text_context_from_sender()
+        if ctx is None:
+            return
+        g, layout, widgets, prefix = ctx
+        idx = widgets.index(g)
+        if idx >= len(widgets) - 1:
+            return
+        widgets[idx + 1], widgets[idx] = widgets[idx], widgets[idx + 1]
+        self._renumber_cond_text(layout, widgets, prefix)
+
+    def _remove_cond_text_sender(self) -> None:
+        ctx = self._cond_text_context_from_sender()
+        if ctx is None:
+            return
+        g, layout, widgets, prefix = ctx
+        idx = widgets.index(g)
+        layout.removeWidget(g)
+        widgets.pop(idx)
+        g.deleteLater()
+        self._renumber_cond_text(layout, widgets, prefix)
 
     def _add_impression(self) -> None:
         g = _CondTextGroup(f"Impression {len(self._imp_widgets) + 1}",
                            {"conditions": [], "text": ""}, self._model)
+        self._wire_cond_text_group(g)
         self._imp_widgets.append(g)
         self._ch_imp_layout.addWidget(g)
 
     def _add_known_info(self) -> None:
         g = _CondTextGroup(f"Info {len(self._ki_widgets) + 1}",
                            {"conditions": [], "text": ""}, self._model)
+        self._wire_cond_text_group(g)
         self._ki_widgets.append(g)
         self._ch_ki_layout.addWidget(g)
 
@@ -609,7 +703,13 @@ class ArchiveEditor(QWidget):
         dl.addWidget(self._page_list)
         page_btns = QHBoxLayout()
         add_pg = QPushButton("+ Page"); add_pg.clicked.connect(self._add_page)
+        del_pg = QPushButton("删除页"); del_pg.clicked.connect(self._del_page)
+        up_pg = QPushButton("上移页"); up_pg.clicked.connect(self._move_page_up)
+        down_pg = QPushButton("下移页"); down_pg.clicked.connect(self._move_page_down)
         page_btns.addWidget(add_pg)
+        page_btns.addWidget(del_pg)
+        page_btns.addWidget(up_pg)
+        page_btns.addWidget(down_pg)
         dl.addLayout(page_btns)
 
         pf = QFormLayout()
@@ -638,8 +738,14 @@ class ArchiveEditor(QWidget):
         btn_add_ent.clicked.connect(self._add_page_entry)
         btn_del_ent = QPushButton("Delete Entry")
         btn_del_ent.clicked.connect(self._del_page_entry)
+        btn_up_ent = QPushButton("上移条目")
+        btn_up_ent.clicked.connect(self._move_entry_up)
+        btn_down_ent = QPushButton("下移条目")
+        btn_down_ent.clicked.connect(self._move_entry_down)
         ent_btn_row.addWidget(btn_add_ent)
         ent_btn_row.addWidget(btn_del_ent)
+        ent_btn_row.addWidget(btn_up_ent)
+        ent_btn_row.addWidget(btn_down_ent)
         dl.addLayout(ent_btn_row)
         ef = QFormLayout()
         self._en_id = QLineEdit()
@@ -822,12 +928,89 @@ class ArchiveEditor(QWidget):
         self._refresh_entry_list()
         self._clear_entry_form()
 
+    def _page_entries(self) -> list | None:
+        if self._book_idx < 0 or self._page_idx < 0:
+            return None
+        pages = self._model.archive_books[self._book_idx].get("pages", [])
+        if self._page_idx >= len(pages):
+            return None
+        ents = pages[self._page_idx].get("entries")
+        return ents if isinstance(ents, list) else None
+
+    def _move_entry_up(self) -> None:
+        ents = self._page_entries()
+        if ents is None or self._entry_idx <= 0 or self._entry_idx >= len(ents):
+            return
+        i = self._entry_idx
+        ents[i - 1], ents[i] = ents[i], ents[i - 1]
+        self._entry_idx = -1
+        self._model.mark_dirty("archive")
+        self._refresh_entry_list()
+        self._entry_list.setCurrentRow(i - 1)
+
+    def _move_entry_down(self) -> None:
+        ents = self._page_entries()
+        if ents is None or self._entry_idx < 0 or self._entry_idx >= len(ents) - 1:
+            return
+        i = self._entry_idx
+        ents[i + 1], ents[i] = ents[i], ents[i + 1]
+        self._entry_idx = -1
+        self._model.mark_dirty("archive")
+        self._refresh_entry_list()
+        self._entry_list.setCurrentRow(i + 1)
+
     def _add_page(self) -> None:
         if self._book_idx < 0:
             return
         pages = self._model.archive_books[self._book_idx].setdefault("pages", [])
         pages.append({"pageNum": len(pages) + 1, "content": "", "unlockConditions": []})
         self._on_book_select(self._book_idx)
+
+    def _renumber_pages(self, pages: list[dict]) -> None:
+        """重排后让每页 pageNum 等于其顺序号（1 起），与列表位置一致。"""
+        for i, pg in enumerate(pages):
+            if isinstance(pg, dict):
+                pg["pageNum"] = i + 1
+
+    def _del_page(self) -> None:
+        if self._book_idx < 0 or self._page_idx < 0:
+            return
+        pages = self._model.archive_books[self._book_idx].get("pages", [])
+        if self._page_idx >= len(pages):
+            return
+        pages.pop(self._page_idx)
+        self._renumber_pages(pages)
+        self._page_idx = -1
+        self._model.mark_dirty("archive")
+        self._on_book_select(self._book_idx)
+
+    def _move_page_up(self) -> None:
+        if self._book_idx < 0 or self._page_idx <= 0:
+            return
+        pages = self._model.archive_books[self._book_idx].get("pages", [])
+        if self._page_idx >= len(pages):
+            return
+        i = self._page_idx
+        pages[i - 1], pages[i] = pages[i], pages[i - 1]
+        self._renumber_pages(pages)
+        self._page_idx = -1
+        self._model.mark_dirty("archive")
+        self._on_book_select(self._book_idx)
+        self._page_list.setCurrentRow(i - 1)
+
+    def _move_page_down(self) -> None:
+        if self._book_idx < 0 or self._page_idx < 0:
+            return
+        pages = self._model.archive_books[self._book_idx].get("pages", [])
+        if self._page_idx >= len(pages) - 1:
+            return
+        i = self._page_idx
+        pages[i + 1], pages[i] = pages[i], pages[i + 1]
+        self._renumber_pages(pages)
+        self._page_idx = -1
+        self._model.mark_dirty("archive")
+        self._on_book_select(self._book_idx)
+        self._page_list.setCurrentRow(i + 1)
 
     def _apply_book(self) -> None:
         if self._book_idx < 0:

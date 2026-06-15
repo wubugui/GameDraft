@@ -4,20 +4,36 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QComboBox, QPushButton, QSpinBox,
-    QDoubleSpinBox, QScrollArea, QGroupBox, QLabel,
+    QDoubleSpinBox, QScrollArea, QGroupBox, QLabel, QStyle,
 )
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 
 
 class DynDescWidget(QGroupBox):
     def __init__(self, idx: int, data: dict,
                  model: ProjectModel | None = None, parent: QWidget | None = None):
         super().__init__(f"Dynamic Desc {idx + 1}", parent)
+        self._idx = idx
         lay = QVBoxLayout(self)
+
+        head = QHBoxLayout()
+        self._btn_up = outline_row_tool_button(
+            self, "上移", std=QStyle.StandardPixmap.SP_ArrowUp, fallback_text="上")
+        self._btn_down = outline_row_tool_button(
+            self, "下移", std=QStyle.StandardPixmap.SP_ArrowDown, fallback_text="下")
+        self._btn_del = outline_row_tool_button(
+            self, "删除该动态描述", std=delete_standard_pixmap(), fallback_text="删")
+        head.addStretch(1)
+        head.addWidget(self._btn_up)
+        head.addWidget(self._btn_down)
+        head.addWidget(self._btn_del)
+        lay.addLayout(head)
+
         self._cond = ConditionEditor("Conditions")
         self._cond.set_flag_pattern_context(model, None)
         self._cond.set_data(data.get("conditions", []))
@@ -27,6 +43,10 @@ class DynDescWidget(QGroupBox):
         self._text.setPlainText(data.get("text", ""))
         self._text.setMaximumHeight(100)
         lay.addWidget(self._text)
+
+    def set_dyn_index(self, idx: int) -> None:
+        self._idx = idx
+        self.setTitle(f"Dynamic Desc {idx + 1}")
 
     def to_dict(self) -> dict:
         return {"conditions": self._cond.to_list(), "text": self._text.toPlainText()}
@@ -112,11 +132,71 @@ class ItemEditor(QWidget):
         self._dyn_widgets.clear()
         for i, d in enumerate(dyns):
             dw = DynDescWidget(i, d, self._model)
+            self._connect_dyn(dw)
             self._dyn_widgets.append(dw)
             self._dyn_layout.addWidget(dw)
 
+    def _connect_dyn(self, dw: DynDescWidget) -> None:
+        dw._btn_up.clicked.connect(self._move_dyn_up)
+        dw._btn_down.clicked.connect(self._move_dyn_down)
+        dw._btn_del.clicked.connect(self._remove_dyn_sender)
+
+    def _dyn_widget_from_sender(self) -> DynDescWidget | None:
+        w = self.sender()
+        while w is not None and not isinstance(w, DynDescWidget):
+            w = w.parent()
+        return w if isinstance(w, DynDescWidget) else None
+
+    def _move_dyn_up(self) -> None:
+        dw = self._dyn_widget_from_sender()
+        if dw is None:
+            return
+        try:
+            idx = self._dyn_widgets.index(dw)
+        except ValueError:
+            return
+        if idx <= 0:
+            return
+        self._swap_dyn(idx, idx - 1)
+
+    def _move_dyn_down(self) -> None:
+        dw = self._dyn_widget_from_sender()
+        if dw is None:
+            return
+        try:
+            idx = self._dyn_widgets.index(dw)
+        except ValueError:
+            return
+        if idx >= len(self._dyn_widgets) - 1:
+            return
+        self._swap_dyn(idx, idx + 1)
+
+    def _swap_dyn(self, a: int, b: int) -> None:
+        self._dyn_widgets[a], self._dyn_widgets[b] = (
+            self._dyn_widgets[b], self._dyn_widgets[a])
+        for w in self._dyn_widgets:
+            self._dyn_layout.removeWidget(w)
+        for i, w in enumerate(self._dyn_widgets):
+            w.set_dyn_index(i)
+            self._dyn_layout.addWidget(w)
+
+    def _remove_dyn_sender(self) -> None:
+        dw = self._dyn_widget_from_sender()
+        if dw is None:
+            return
+        try:
+            idx = self._dyn_widgets.index(dw)
+        except ValueError:
+            return
+        self._dyn_layout.removeWidget(dw)
+        self._dyn_widgets.pop(idx)
+        dw.deleteLater()
+        for i, w in enumerate(self._dyn_widgets):
+            w.set_dyn_index(i)
+
     def _add_dyn(self) -> None:
         dw = DynDescWidget(len(self._dyn_widgets), {"conditions": [], "text": ""}, self._model)
+        self._connect_dyn(dw)
         self._dyn_widgets.append(dw)
         self._dyn_layout.addWidget(dw)
 

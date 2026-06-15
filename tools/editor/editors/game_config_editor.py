@@ -93,10 +93,14 @@ class GameConfigEditor(QWidget):
         self._flags_table = QTableWidget(0, 2)
         self._flags_table.setHorizontalHeaderLabels(["key", "value"])
         self._flags_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._flags_table.setMinimumHeight(120)
         lay.addWidget(self._flags_table)
-        flag_btns = QFormLayout()
+        flag_btns = QHBoxLayout()
         add_flag = QPushButton("+ Flag"); add_flag.clicked.connect(self._add_flag)
+        del_flag = QPushButton("− Flag"); del_flag.clicked.connect(self._del_flag)
         flag_btns.addWidget(add_flag)
+        flag_btns.addWidget(del_flag)
+        flag_btns.addStretch(1)
         lay.addLayout(flag_btns)
 
         apply_btn = QPushButton("Apply")
@@ -152,6 +156,11 @@ class GameConfigEditor(QWidget):
         self._flags_table.setCellWidget(r, 1, vf)
         vf.set_flag_key(pf.key())
         vf.set_value(True)
+
+    def _del_flag(self) -> None:
+        r = self._flags_table.currentRow()
+        if r >= 0:
+            self._flags_table.removeRow(r)
 
     def _apply(self) -> None:
         cfg = self._model.game_config

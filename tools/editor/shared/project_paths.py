@@ -234,14 +234,6 @@ class ProjectPaths:
         if not s:
             return None
 
-        # 本机绝对路径
-        try:
-            cand = Path(s)
-        except (OSError, ValueError):
-            cand = None
-        if cand is not None and cand.is_absolute():
-            return cand
-
         # http(s) 不解析为本地资源
         low = s.lower()
         if low.startswith("http://") or low.startswith("https://"):
@@ -276,6 +268,15 @@ class ProjectPaths:
             if rel is None:
                 return None
             return self.assets_root.joinpath(*rel.split("/"))
+
+        # 本机绝对路径。必须放在 public URL 前缀之后，否则
+        # /resources/runtime/... 会被误判为文件系统根目录下的绝对路径。
+        try:
+            cand = Path(s)
+        except (OSError, ValueError):
+            cand = None
+        if cand is not None and cand.is_absolute():
+            return cand
 
         # 无前缀短名：媒体按 runtime_root 拼，文本按 assets_root 拼
         rel = _normalize_rel(s)

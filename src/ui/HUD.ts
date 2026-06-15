@@ -156,6 +156,11 @@ export class HUD {
     }
   }
 
+  /** 玩家视角：HUD 当前显示的任务追踪文字（玩家可见），供 getPlayerView。 */
+  getQuestHintText(): string {
+    return this.questText.text;
+  }
+
   setRuleHintVisible(visible: boolean): void {
     this.hasRuleSlots = visible;
     this.ruleHintBg.visible = visible;

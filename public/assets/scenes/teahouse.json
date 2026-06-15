@@ -83,7 +83,7 @@
       ],
       "label": "出门",
       "data": {
-        "targetScene": "雾津街头",
+        "targetScene": "test_room_a",
         "targetSpawnPoint": "from_teahouse"
       }
     },

@@ -140,6 +140,16 @@ declare global {
   }
 }
 
+/** dev 菜单「叙事」跳转配置（public/assets/data/dev_narrative_warps.json）。 */
+type DevNarrativeWarp = {
+  id: string;
+  label: string;
+  scene: string;
+  flowGraph?: string;
+  flowState?: string;
+  set?: Array<{ graph: string; state: string }>;
+};
+
 export class Game {
   private eventBus: EventBus;
   private flagStore: FlagStore;
@@ -1722,6 +1732,45 @@ export class Game {
     });
   }
 
+  private narrativeWarps: DevNarrativeWarp[] = [];
+
+  private async loadNarrativeWarps(): Promise<void> {
+    try {
+      const data = await this.assetManager.loadJson<{ warps?: DevNarrativeWarp[] }>(
+        '/assets/data/dev_narrative_warps.json',
+      );
+      this.narrativeWarps = Array.isArray(data?.warps) ? data.warps : [];
+    } catch {
+      this.narrativeWarps = [];
+    }
+  }
+
+  /** dev 跳转：把主流程图沿线性链推进到 flowState（逐个 setState 使前置 reached、任务链推进），
+   *  再按 set 设各状态，最后进入对应场景。 */
+  private async enterNarrativeWarp(id: string): Promise<void> {
+    const warp = this.narrativeWarps.find((w) => w.id === id);
+    if (!warp) return;
+    if (warp.flowGraph && warp.flowState) {
+      const graph = this.narrativeStateManager.getGraph(warp.flowGraph);
+      if (graph) {
+        const nextOf = new Map<string, string>();
+        for (const t of graph.transitions ?? []) nextOf.set(t.from, t.to);
+        let s: string | undefined = graph.initialState;
+        const seen = new Set<string>();
+        while (s && !seen.has(s)) {
+          seen.add(s);
+          await this.narrativeStateManager.debugSetNarrativeState(warp.flowGraph, s);
+          if (s === warp.flowState) break;
+          s = nextOf.get(s);
+        }
+      }
+    }
+    for (const st of warp.set ?? []) {
+      await this.narrativeStateManager.debugSetNarrativeState(st.graph, st.state);
+    }
+    await this.devLoadScene(warp.scene);
+  }
+
   private async startDevMode(
     playCutscene?: string,
     waterPreview?: string,
@@ -1731,6 +1780,7 @@ export class Game {
     const DEV_SCENE = 'dev_room';
     await this.sceneManager.loadScene(DEV_SCENE);
 
+    await this.loadNarrativeWarps();
     this.devModeUI = new DevModeUI(this.renderer, {
       getCutsceneIds: () => this.cutsceneManager.getCutsceneIds(),
       playCutscene: (id: string) => this.devPlayCutscene(id),
@@ -1763,6 +1813,8 @@ export class Game {
           void this.waterMinigameManager.start(entry.id);
         }
       },
+      getNarrativeWarps: () => this.narrativeWarps.map((w) => ({ id: w.id, label: w.label })),
+      enterNarrativeWarp: (id: string) => { void this.enterNarrativeWarp(id); },
     });
     this.devModeUI.open();
 
@@ -2332,6 +2384,74 @@ export class Game {
     this.stateController.setState(GameState.Exploring);
   }
 
+  private playerNavTarget: { x: number; y: number } | null = null;
+  private playerNavFrames = 0;
+  private playerNavPrev: { x: number; y: number } | null = null;
+  private playerNavStuck = 0;
+
+  private setPlayerNavTarget(x: number, y: number): void {
+    this.playerNavTarget = { x, y };
+    this.playerNavFrames = 0;
+    this.playerNavPrev = null;
+    this.playerNavStuck = 0;
+  }
+
+  /** 每帧把玩家朝导航目标推进（用与触屏一致的移动轴，走真实移动/碰撞），到达或超时即停。非阻塞。
+   *  卡住时改为只沿单轴走、并在 x/y 间交替，以滑动绕过简单障碍（非完整寻路）。 */
+  private updatePlayerNav(): void {
+    const t = this.playerNavTarget;
+    if (!t) return;
+    const dx = t.x - this.player.x;
+    const dy = t.y - this.player.y;
+    if (Math.hypot(dx, dy) < 14 || this.playerNavFrames > 1200) {
+      this.playerNavTarget = null;
+      this.playerNavPrev = null;
+      this.inputManager.setTouchMoveAxes(0, 0);
+      return;
+    }
+    if (this.playerNavPrev) {
+      const moved = Math.hypot(this.player.x - this.playerNavPrev.x, this.player.y - this.playerNavPrev.y);
+      this.playerNavStuck = moved < 0.6 ? this.playerNavStuck + 1 : 0;
+    }
+    this.playerNavPrev = { x: this.player.x, y: this.player.y };
+    this.playerNavFrames += 1;
+    let ax: -1 | 0 | 1 = dx > 6 ? 1 : dx < -6 ? -1 : 0;
+    let ay: -1 | 0 | 1 = dy > 6 ? 1 : dy < -6 ? -1 : 0;
+    if (this.playerNavStuck > 6) {
+      // 卡住：交替只走 x 或只走 y，沿墙滑动绕障
+      const useX = Math.floor(this.playerNavFrames / 26) % 2 === 0;
+      if (useX && ax !== 0) ay = 0;
+      else if (!useX && ay !== 0) ax = 0;
+      else if (ax === 0) ay = this.playerNavFrames % 52 < 26 ? 1 : -1;
+      else ax = this.playerNavFrames % 52 < 26 ? 1 : -1;
+    }
+    this.inputManager.setTouchMoveAxes(ax, ay);
+  }
+
+  /** 玩家视角观测：只含玩家可感知信息（位置/可见实体/交互提示/对话/HUD/模式），
+   *  不含 flag/任务状态码/scenario/narrative 等幕后状态。供数据驱动的玩家同构测试。 */
+  private getPlayerView(): Record<string, unknown> {
+    const gs = String(this.stateController.currentState);
+    const modeMap: Record<string, string> = {
+      MainMenu: 'menu', Exploring: 'exploring', ActionSequence: 'busy',
+      Dialogue: 'dialogue', Encounter: 'encounter', Cutscene: 'cutscene',
+      UIOverlay: 'menu', Minigame: 'minigame',
+    };
+    return {
+      mode: modeMap[gs] ?? gs,
+      scene: this.sceneManager.currentSceneData?.name ?? this.sceneManager.currentSceneData?.id ?? null,
+      player: { x: this.player.x, y: this.player.y, facing: this.player.facingDirection },
+      entities: this.interactionSystem.getPlayerVisibleEntities(),
+      interactionPrompt: this.interactionSystem.getNearestPrompt(),
+      dialogue: this.graphDialogueManager.getPlayerDialogue(),
+      hud: {
+        coins: this.inventoryManager.getCoins(),
+        questTracker: this.hud.getQuestHintText(),
+      },
+      navTargetActive: this.playerNavTarget !== null,
+    };
+  }
+
   private buildRuntimeDebugSnapshot(reason: string): Record<string, unknown> {
     return {
       reason,
@@ -2346,6 +2466,11 @@ export class Game {
       narrativeState: this.narrativeStateManager.debugSnapshot(),
       documentReveals: this.documentRevealManager.debugSnapshot(),
       dialogue: this.graphDialogueManager.serialize(),
+      dialogueView: this.graphDialogueManager.getDialogueViewDebug(),
+      player: { x: this.player.x, y: this.player.y, facing: this.player.facingDirection },
+      inventory: this.inventoryManager.serialize(),
+      interactables: this.interactionSystem.debugListInteractables(this.player.x, this.player.y),
+      playerView: this.getPlayerView(),
       runtimeCommands: {
         lastResults: this.lastRuntimeCommandResults.slice(-20),
       },
@@ -2503,6 +2628,13 @@ export class Game {
       debugReloadScene: (sceneId) => this.reloadScene(
         sceneId || this.sceneManager.currentSceneData?.id || this.gameConfig.fallbackScene,
       ),
+      // 玩家输入：注入真实输入路径、即发即走（不 await 游戏逻辑，故不会卡死通道）
+      playerInteract: () => this.inputManager.injectKeyJustPressed('KeyE'),
+      playerAdvance: () => this.eventBus.emit('dialogue:advance', {}),
+      playerChoose: (index) => this.eventBus.emit('dialogue:choiceSelected', { index }),
+      playerMoveTo: (x, y) => this.setPlayerNavTarget(x, y),
+      playerTap: () => this.inputManager.injectPointerDown(),
+      setPlayerCollisions: (enabled) => this.player.setCollisionsEnabled(enabled),
     });
   }
 
@@ -2719,6 +2851,7 @@ export class Game {
     this.camera.setPixelSnapTranslation(this.isEntityPixelDensityMatchRenderingOn());
 
     if (this.stateController.currentState === GameState.Exploring) {
+      this.updatePlayerNav();
       this.player.update(dt);
       this.interactionSystem.update(dt);
       this.zoneSystem.update(dt);

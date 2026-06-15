@@ -135,6 +135,14 @@ export class InputManager {
     this.keyJustPressed.add(code);
   }
 
+  /** 注入一次"点击/继续"（与真实 pointerdown 同效，通知过场/点击继续/任意输入订阅者）。
+   *  供玩家同构测试的 playerTap：推进过场、点击继续、对话行等玩家用鼠标点的路径。 */
+  injectPointerDown(): void {
+    this.mouseJustClicked = true;
+    for (const cb of this.anyInputSubscribers) cb();
+    for (const cb of this.pointerDownSubscribers) cb();
+  }
+
   setTouchMoveAxes(x: -1 | 0 | 1, y: -1 | 0 | 1): void {
     this.touchMoveX = x;
     this.touchMoveY = y;
