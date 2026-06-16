@@ -1,10 +1,9 @@
 {
   "id": "梦_农家院",
   "name": "梦·农家院",
-  "worldWidth": 1376,
-  "worldHeight": 768,
+  "worldWidth": 1700,
   "camera": {
-    "zoom": 1.2,
+    "zoom": 1.0,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
@@ -19,13 +18,13 @@
     "阴风"
   ],
   "spawnPoint": {
-    "x": 300,
-    "y": 680
+    "x": 480,
+    "y": 770
   },
   "spawnPoints": {
     "from_night_road": {
-      "x": 300,
-      "y": 680
+      "x": 480,
+      "y": 770
     }
   },
   "onEnter": [
@@ -46,9 +45,9 @@
     {
       "id": "npc_dream_old_man",
       "name": "老头",
-      "x": 760,
-      "y": 440,
-      "interactionRange": 64,
+      "x": 952,
+      "y": 304,
+      "interactionRange": 70,
       "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
@@ -56,9 +55,9 @@
     {
       "id": "npc_dream_old_woman",
       "name": "老妇人",
-      "x": 700,
-      "y": 455,
-      "interactionRange": 64,
+      "x": 816,
+      "y": 304,
+      "interactionRange": 70,
       "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
@@ -69,9 +68,9 @@
       "id": "hs_院门",
       "type": "inspect",
       "label": "敞开的院门",
-      "x": 720,
-      "y": 400,
-      "interactionRange": 64,
+      "x": 884,
+      "y": 300,
+      "interactionRange": 70,
       "data": {
         "text": "门没等他敲就开了，灯光从里头涌出来。"
       }
@@ -82,20 +81,20 @@
       "id": "z_进屋",
       "polygon": [
         {
-          "x": 640,
-          "y": 360
+          "x": 782,
+          "y": 247
         },
         {
-          "x": 820,
-          "y": 360
+          "x": 986,
+          "y": 247
         },
         {
-          "x": 820,
-          "y": 460
+          "x": 986,
+          "y": 361
         },
         {
-          "x": 640,
-          "y": 460
+          "x": 782,
+          "y": 361
         }
       ],
       "onEnter": [
