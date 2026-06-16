@@ -1593,7 +1593,7 @@
     "steps": [
       { "kind": "present", "type": "showMovieBar", "heightPercent": 0.12 },
       { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "三人一驴，过了城门。雾把路吞到第十步开外。" },
-      { "kind": "present", "type": "cameraMove", "x": 900, "y": 180, "duration": 2400 },
+      { "kind": "present", "type": "cameraMove", "x": 1308.14, "y": 261.63, "duration": 2400 },
       { "kind": "present", "type": "showSubtitle", "text": "茶馆里：「听说了吗，洋人把『李天狗那一脉』请去神仙顶了！」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
       { "kind": "present", "type": "showSubtitle", "text": "脚帮里：「阎王岭喊名那一夜，人家眉头都没皱——真人不露相。」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
       { "kind": "present", "type": "showSubtitle", "text": "义庄管事：「两具僵尸，四样镇下！我亲眼瞧见的！！」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
