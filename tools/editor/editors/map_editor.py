@@ -171,6 +171,7 @@ class MapEditor(QWidget):
         self._edge_items: list[QGraphicsItem] = []
         self._syncing_selection = False
         self._updating_from_spin = False
+        self._loading_ui = False
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -197,10 +198,17 @@ class MapEditor(QWidget):
         cl.addWidget(self._map_view)
         self._map_scene.selectionChanged.connect(self._on_scene_selection_changed)
 
+        # 右侧属性面板：表单 + 解锁条件整体放进同一个滚动区，解锁条件
+        # （含表达式树 / 兜底文本框）才能拿到自然高度，不再被挤压成重叠布局。
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         detail = QWidget()
-        f = QFormLayout(detail)
+        dv = QVBoxLayout(detail)
+        dv.setContentsMargins(6, 6, 6, 6)
+
+        form_box = QWidget()
+        f = QFormLayout(form_box)
+        f.setContentsMargins(0, 0, 0, 0)
         self._m_scene = IdRefSelector(allow_empty=False, editable=False, click_opens_popup=True)
         f.addRow("sceneId", self._m_scene)
         self._m_name = RichTextLineEdit(self._model)
@@ -214,24 +222,29 @@ class MapEditor(QWidget):
         self._m_y.setDecimals(4)
         f.addRow("y", self._m_y)
         self._m_cond = ConditionEditor("unlockConditions")
-        apply_btn = QPushButton("Apply")
-        apply_btn.setToolTip("写入 sceneId / name / 解锁条件（坐标也可通过拖移或右侧 x/y 实时写入，均会标记为已修改，保存需 Save All）")
-        apply_btn.clicked.connect(self._apply)
 
+        dv.addWidget(form_box)
+        dv.addWidget(self._m_cond)
+        dv.addStretch(1)
+        scroll.setWidget(detail)
+
+        # 所有字段一律即时提交（与 x/y 拖移一致）：切换节点不再丢失未保存的
+        # name / sceneId / 解锁条件编辑，消除「数据回弹」。载入期由 _loading_ui 守门。
         self._m_x.valueChanged.connect(self._on_xy_spin_changed)
         self._m_y.valueChanged.connect(self._on_xy_spin_changed)
+        self._m_scene.value_changed.connect(self._on_scene_field_changed)
+        self._m_name.textChanged.connect(self._on_name_field_changed)
+        self._m_cond.changed.connect(self._on_cond_field_changed)
 
         right = QWidget()
         rl = QVBoxLayout(right)
-        rl.addWidget(scroll)
-        scroll.setWidget(detail)
-        rl.addWidget(self._m_cond)
-        rl.addWidget(apply_btn)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(scroll, 1)
 
         splitter.addWidget(left)
         splitter.addWidget(center)
         splitter.addWidget(right)
-        splitter.setSizes([180, 400, 300])
+        splitter.setSizes([180, 400, 320])
         root.addWidget(splitter)
         self._refresh()
 
@@ -286,7 +299,7 @@ class MapEditor(QWidget):
     def _on_xy_spin_changed(self) -> None:
         if self._current_idx < 0:
             return
-        if self._updating_from_spin:
+        if self._updating_from_spin or self._loading_ui:
             return
         idx = self._current_idx
         if idx >= len(self._node_graphics):
@@ -453,38 +466,66 @@ class MapEditor(QWidget):
         finally:
             self._syncing_selection = False
         n = self._model.map_nodes[row]
-        self._m_scene.set_current(n.get("sceneId", ""))
-        self._m_name.setText(n.get("name", ""))
-        # 仅用模型/图元坐标更新数值框，且必须 blockSignals：否则会触发 _on_xy_spin_changed，
-        # 默认 2 位小数舍入会把节点 setPos 到错误位置。
-        if row < len(self._node_graphics):
-            p = self._node_graphics[row].pos()
-            vx, vy = float(p.x()), float(p.y())
-        else:
-            vx = float(n.get("x", 0))
-            vy = float(n.get("y", 0))
-        self._m_x.blockSignals(True)
-        self._m_y.blockSignals(True)
+        # 载入字段期间屏蔽即时提交回写（_loading_ui），否则 setText / set_data 会把
+        # 刚载入的值又「提交」回模型并刷新列表/画布，造成抖动。
+        self._loading_ui = True
         try:
-            self._m_x.setValue(vx)
-            self._m_y.setValue(vy)
+            self._m_scene.set_current(n.get("sceneId", ""))
+            self._m_name.setText(n.get("name", ""))
+            # 仅用模型/图元坐标更新数值框，且必须 blockSignals：否则会触发 _on_xy_spin_changed，
+            # 默认舍入会把节点 setPos 到错误位置。
+            if row < len(self._node_graphics):
+                p = self._node_graphics[row].pos()
+                vx, vy = float(p.x()), float(p.y())
+            else:
+                vx = float(n.get("x", 0))
+                vy = float(n.get("y", 0))
+            self._m_x.blockSignals(True)
+            self._m_y.blockSignals(True)
+            try:
+                self._m_x.setValue(vx)
+                self._m_y.setValue(vy)
+            finally:
+                self._m_x.blockSignals(False)
+                self._m_y.blockSignals(False)
+            self._m_cond.set_flag_pattern_context(self._model, None)
+            self._m_cond.set_data(n.get("unlockConditions", []))
         finally:
-            self._m_x.blockSignals(False)
-            self._m_y.blockSignals(False)
-        self._m_cond.set_flag_pattern_context(self._model, None)
-        self._m_cond.set_data(n.get("unlockConditions", []))
+            self._loading_ui = False
 
-    def _apply(self) -> None:
-        if self._current_idx < 0:
-            return
-        n = self._model.map_nodes[self._current_idx]
-        n["sceneId"] = self._m_scene.current_id()
-        n["name"] = self._m_name.text()
-        n["x"] = self._m_x.value()
-        n["y"] = self._m_y.value()
-        n["unlockConditions"] = self._m_cond.to_list()
+    def _commit_node_field(self, key: str, value) -> bool:
+        """即时把单个字段写回当前节点；载入 UI 期间忽略，避免回写覆盖。"""
+        if self._loading_ui:
+            return False
+        if self._current_idx < 0 or self._current_idx >= len(self._model.map_nodes):
+            return False
+        self._model.map_nodes[self._current_idx][key] = value
         self._model.mark_dirty("map")
-        self._refresh()
+        return True
+
+    def _update_list_label(self, idx: int) -> None:
+        if 0 <= idx < self._list.count() and idx < len(self._model.map_nodes):
+            n = self._model.map_nodes[idx]
+            it = self._list.item(idx)
+            if it is not None:
+                it.setText(f"{n.get('sceneId', '?')}  [{n.get('name', '')}]")
+
+    def _on_scene_field_changed(self, _value: str = "") -> None:
+        if not self._commit_node_field("sceneId", self._m_scene.current_id()):
+            return
+        self._update_list_label(self._current_idx)
+        self._redraw_edges()
+
+    def _on_name_field_changed(self, _value: str = "") -> None:
+        name = self._m_name.text()
+        if not self._commit_node_field("name", name):
+            return
+        self._update_list_label(self._current_idx)
+        if self._current_idx < len(self._node_graphics):
+            self._node_graphics[self._current_idx].set_label(name)
+
+    def _on_cond_field_changed(self) -> None:
+        self._commit_node_field("unlockConditions", self._m_cond.to_list())
 
     def _add(self) -> None:
         self._model.map_nodes.append({

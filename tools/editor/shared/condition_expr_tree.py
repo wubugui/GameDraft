@@ -28,7 +28,9 @@ _SCENARIO_STATUSES = ("pending", "active", "done", "locked")
 _QUEST_STATUSES = ("Inactive", "Active", "Completed")
 _SCENARIO_LINE_STATUSES = ("inactive", "active", "completed")
 _MAX_DEPTH = 32
-_CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT = 640
+# 单个 flag 节点约 ~120px；旧值 640 会让常见的一节点条件凭空占掉大片空白。
+# 设一个紧凑的下限，内容更多时由滚动条接管（直到 MAX）。
+_CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT = 180
 _CONDITION_EXPR_TREE_SCROLL_MAX_HEIGHT = 2400
 
 
@@ -722,14 +724,12 @@ class ConditionExprTreeRootWidget(QWidget):
         hl.addWidget(self._root)
         hl.addStretch()
         scroll.setWidget(host)
-        lay.addWidget(scroll, stretch=1)
-        tip = QLabel(
-            "与运行时 evaluateConditionExpr 一致；嵌套最深32 层。"
-            "根节点可为任意类型；留空 flag / scenario / scenarioLine / quest 必填项则导出时省略该分支逻辑（见 get_expr）。",
-            self,
+        # 说明改入 tooltip，不在界面长期堆大段文字（没人会逐字读）。
+        scroll.setToolTip(
+            "与运行时 evaluateConditionExpr 一致；嵌套最深 32 层。"
+            "根节点可为任意类型；留空必填项（flag / scenario / scenarioLine / quest）导出时省略该分支。",
         )
-        tip.setWordWrap(True)
-        lay.addWidget(tip)
+        lay.addWidget(scroll, stretch=1)
 
     def set_model_refresh(self) -> None:
         """清单（scenarios 等）变更后刷新 scenario 下拉。"""

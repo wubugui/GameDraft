@@ -18,6 +18,7 @@ from PySide6.QtCore import Signal
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .condition_expr_tree import ConditionExprTreeRootWidget
+from .collapsible_section import CollapsibleSection
 
 if TYPE_CHECKING:
     from ..project_model import ProjectModel
@@ -137,7 +138,9 @@ class ConditionEditor(QWidget):
         self._pattern_frame.setVisible(False)
         pr = QVBoxLayout(self._pattern_frame)
         pr.setContentsMargins(0, 4, 0, 0)
-        pr.addWidget(QLabel("行内快速拼装（复杂请用每行「选择…」里「编辑登记表」）"))
+        _pat_lbl = QLabel("快速拼装")
+        _pat_lbl.setToolTip("复杂请用每行「选择…」里「编辑登记表」")
+        pr.addWidget(_pat_lbl)
         ph = QHBoxLayout()
         self._pat_combo = QComboBox()
         self._pat_combo.setMinimumWidth(96)
@@ -160,23 +163,27 @@ class ConditionEditor(QWidget):
 
         self._tree_root = ConditionExprTreeRootWidget(model_getter=self._get_model)
         self._tree_root.changed.connect(self.changed.emit)
-        root.addWidget(QLabel("<b>表达式树（与上行 flag 条件组内 AND）</b>"))
+        tree_head = QLabel("<b>表达式树</b>")
+        tree_head.setToolTip("与上行 flag 条件组内 AND")
+        root.addWidget(tree_head)
         root.addWidget(self._tree_root, stretch=1)
 
-        ej = QLabel("专家兜底：原始 ConditionExpr 粘贴区（通常不用；表达式树优先）")
-        ej.setToolTip(
-            "遇到未来新增条件类型且树暂未支持时可临时粘贴；"
-            "单个对象或对象数组均可。与上方 flag 行语义为组内 AND。",
-        )
-        root.addWidget(ej)
+        # 专家兜底（原始 ConditionExpr 粘贴）几乎永远为空：默认折叠，避免长期占大片空白；
+        # 说明收进折叠标题的 tooltip，不在界面堆解释文字。
         self._extra_json = QPlainTextEdit()
         self._extra_json.setPlaceholderText(
             "通常留空。仅临时兼容未来新增 ConditionExpr 形状。",
         )
-        self._extra_json.setMinimumHeight(180)
-        self._extra_json.setMaximumHeight(380)
+        self._extra_json.setMinimumHeight(80)
+        self._extra_json.setMaximumHeight(320)
         self._extra_json.textChanged.connect(self.changed.emit)
-        root.addWidget(self._extra_json)
+        expert = CollapsibleSection("专家兜底：原始 ConditionExpr（通常不用）", start_open=False)
+        expert.set_header_tool_tip(
+            "遇到未来新增条件类型且树暂未支持时可临时粘贴；"
+            "单个对象或对象数组均可。与上方 flag 行语义为组内 AND。",
+        )
+        expert.add_body(self._extra_json)
+        root.addWidget(expert)
 
     def _get_model(self) -> ProjectModel | None:
         return self._ctx_model
