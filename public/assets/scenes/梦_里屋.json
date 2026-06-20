@@ -1,7 +1,7 @@
 {
   "id": "梦_里屋",
   "name": "梦·三四·睡觉与收束",
-  "worldWidth": 1050,
+  "worldWidth": 1050.0,
   "camera": {
     "zoom": 1.1,
     "pixelsPerUnit": 1.0
@@ -14,8 +14,8 @@
     }
   ],
   "ambientSounds": [
-    "阴风",
-    "temple_rumble"
+    "temple_rumble",
+    "阴风"
   ],
   "spawnPoint": {
     "x": 320,
@@ -39,8 +39,8 @@
     {
       "id": "npc_dream_old_man",
       "name": "老头",
-      "x": 651,
-      "y": 270,
+      "x": 700.9,
+      "y": 325.1,
       "interactionRange": 55,
       "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
       "initialAnimState": "idle",
@@ -49,8 +49,8 @@
     {
       "id": "npc_dream_old_woman",
       "name": "老妇人",
-      "x": 357,
-      "y": 270,
+      "x": 362.1,
+      "y": 353.7,
       "interactionRange": 55,
       "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
       "initialAnimState": "idle",
@@ -58,22 +58,6 @@
     }
   ],
   "hotspots": [
-    {
-      "id": "hs_门板",
-      "type": "inspect",
-      "x": 504,
-      "y": 293,
-      "interactionRange": 55,
-      "data": {
-        "text": "让他睡的不是床——是一块卸下来的门板，脚朝着门口。"
-      },
-      "displayImage": {
-        "image": "/resources/runtime/images/illustrations/dream_door_plank.png",
-        "worldWidth": 200,
-        "worldHeight": 145,
-        "spriteSort": "back"
-      }
-    },
     {
       "id": "deco_脚尾灯",
       "type": "inspect",

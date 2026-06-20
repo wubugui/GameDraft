@@ -76,11 +76,12 @@ class FlagPickerDialog(QDialog):
 
         quick = QGroupBox("快速拼装（与条件区模板相同）")
         qf = QFormLayout(quick)
+        qf.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         self._pat_combo = QComboBox()
-        self._pat_combo.setMinimumWidth(200)
+        self._pat_combo.setMinimumWidth(160)
         self._id_combo = QComboBox()
         self._id_combo.setEditable(False)
-        self._id_combo.setMinimumWidth(160)
+        self._id_combo.setMinimumWidth(130)
         preview = QLabel("")
         preview.setWordWrap(True)
         self._preview_label = preview

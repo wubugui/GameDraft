@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { AssetManager, AssetManifest, AssetRef } from '../core/AssetManager';
 import type { EventBus } from '../core/EventBus';
 import type { Renderer } from '../rendering/Renderer';
@@ -739,6 +739,16 @@ export class SceneManager implements IGameSystem {
       x: first.texture.width / scene.worldWidth,
       y: first.texture.height / scene.worldHeight,
     };
+  }
+
+  /** 第一层背景的纹理（用于构建辐照度探针）；无有效背景精灵时返回 null。 */
+  getPrimaryBackgroundTexture(): Texture | null {
+    const bg = this.sceneContainerBg;
+    if (!bg) return null;
+    const first = bg.children.find(
+      (c): c is Sprite => c instanceof Sprite && c.texture?.width > 0 && c.texture?.height > 0,
+    );
+    return first ? first.texture : null;
   }
 
   private async instantiateHotspot(def: HotspotDef, overrides: HotspotRuntimeOverride | undefined): Promise<Hotspot> {

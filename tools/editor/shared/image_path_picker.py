@@ -169,11 +169,9 @@ class CutsceneImagePathRow(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
 
         self._preview = QLabel()
-        self._preview.setFixedSize(100, 100)
+        self._preview.setFixedSize(84, 84)
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview.setStyleSheet("border: 1px solid #555; color: #888;")
-        self._preview.setMaximumWidth(100)
-        self._preview.setMaximumHeight(100)
 
         right = QVBoxLayout()
         row = QHBoxLayout()
@@ -183,18 +181,15 @@ class CutsceneImagePathRow(QWidget):
             "/resources/runtime/... 或点 Browse 从任意位置选择（自动复制到 runtime）",
         )
         self._edit.textChanged.connect(lambda *_: self.changed.emit())
+        hint_text = external_copy_hint or (
+            f"项目外文件会复制到 resources/runtime/images/{self._external_copy_subdir}/"
+        )
         btn = QPushButton("Browse…")
-        btn.setToolTip("打开文件对话框（任意文件夹），选中后预览并写入游戏内路径")
+        btn.setToolTip("打开文件对话框（任意文件夹），选中后预览并写入游戏内路径。\n" + hint_text)
         btn.clicked.connect(self._on_browse)
         row.addWidget(self._edit, stretch=1)
         row.addWidget(btn)
         right.addLayout(row)
-        hint_text = external_copy_hint or (
-            f"项目外文件会复制到 resources/runtime/images/{self._external_copy_subdir}/"
-        )
-        hint = QLabel(hint_text)
-        hint.setStyleSheet("color:#888;font-size:11px;")
-        right.addWidget(hint)
 
         root.addWidget(self._preview)
         root.addLayout(right, stretch=1)

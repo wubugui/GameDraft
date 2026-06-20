@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 from ..project_model import ProjectModel
 from ..shared.action_editor import ActionEditor
 from ..shared.collapsible_section import CollapsibleSection
+from ..shared.form_layout import compact_form
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 
 
@@ -271,12 +272,12 @@ class SugarWheelCanvas(QWidget):
 
         bar = QHBoxLayout()
         bar.addWidget(self._btn_fit)
-        bar.addWidget(
-            QLabel(
-                "预览：背景→转盘→指针→前景→蓄力圆(蓝)→气泡锚点；"
-                "可拖盘面/指针/蓄力圆/彩色圆点；蓄力圆 Ctrl+滚轮调直径"
-            )
+        _preview_hint = QLabel("预览")
+        _preview_hint.setToolTip(
+            "预览：背景→转盘→指针→前景→蓄力圆(蓝)→气泡锚点；"
+            "可拖盘面/指针/蓄力圆/彩色圆点；蓄力圆 Ctrl+滚轮调直径"
         )
+        bar.addWidget(_preview_hint)
         bar.addStretch()
 
         root = QVBoxLayout(self)
@@ -556,7 +557,7 @@ class SugarWheelEditor(QWidget):
         self._label = QLineEdit()
 
         g_res = QGroupBox("外观与资源")
-        ff_r = QFormLayout(g_res)
+        ff_r = compact_form(QFormLayout(g_res))
         self._bg = CutsceneImagePathRow(model, "", external_copy_subdir="sugar_wheel", path_edit_read_only=True)
         self._bg_fit = QComboBox()
         self._bg_fit.addItems(["cover", "contain"])
@@ -578,6 +579,22 @@ class SugarWheelEditor(QWidget):
         self._charge_btn_ox = self._double(-1200, 1200, 0, 1)
         self._charge_btn_oy = self._double(-1200, 1200, 0, 1)
         self._charge_btn_d = self._double(28, 160, 52, 0)
+        for _spin in (
+            self._pointer_anchor_x,
+            self._pointer_anchor,
+            self._pointer_scale,
+            self._wheel_scale,
+            self._wheel_pct,
+            self._wheel_px,
+            self._wheel_cx_off,
+            self._wheel_cy_off,
+            self._ptr_ox,
+            self._ptr_oy,
+            self._charge_btn_ox,
+            self._charge_btn_oy,
+            self._charge_btn_d,
+        ):
+            _spin.setMaximumWidth(110)
         self._wheel_cx_off.setToolTip("转盘层相对布局中心的水平偏移（px），可在画布拖动盘面。")
         self._wheel_cy_off.setToolTip("转盘层相对布局中心的竖直偏移（px），可在画布拖动盘面。")
         self._ptr_ox.setToolTip("指针在转盘局部坐标内相对盘心的水平偏移（px），可在画布拖动指针。")
@@ -612,7 +629,7 @@ class SugarWheelEditor(QWidget):
         rv.addWidget(_sec_res)
 
         g_sec = QGroupBox("分格与指针校准")
-        ff_s = QFormLayout(g_sec)
+        ff_s = compact_form(QFormLayout(g_sec))
         self._angle = self._double(-360, 360, 0, 2)
         self._sector_phase = self._double(-2, 2, 0, 3)
         self._pointer_art_deg = self._double(-180, 180, 0, 2)
@@ -630,7 +647,7 @@ class SugarWheelEditor(QWidget):
         rv.addWidget(_sec_calib)
 
         g_chg = QGroupBox("蓄力曲线")
-        ff_h = QFormLayout(g_chg)
+        ff_h = compact_form(QFormLayout(g_chg))
         self._charge_ms = self._double(100, 15000, 2600, 0)
         self._min_power = self._double(0, 1, 0, 3)
         self._charge_curve = self._double(1, 3, 1.4, 2)
@@ -643,7 +660,7 @@ class SugarWheelEditor(QWidget):
         rv.addWidget(_sec_chg)
 
         g_phy = QGroupBox("物理停针（运行时）")
-        ff_p = QFormLayout(g_phy)
+        ff_p = compact_form(QFormLayout(g_phy))
         self._drag = self._double(0.02, 8, 0.58, 3)
         self._drag_low_thr = self._double(0, 20, 2.2, 3)
         self._drag_low_boost = self._double(0, 15, 2.0, 3)
@@ -656,6 +673,21 @@ class SugarWheelEditor(QWidget):
         self._stop_settle = self._double(0, 2, 0.12, 3)
         self._dry_fric = self._double(0, 4, 0.34, 3)
         self._bias_creep = self._double(0, 6, 1.2, 2)
+        for _spin in (
+            self._drag,
+            self._drag_low_thr,
+            self._drag_low_boost,
+            self._v_min,
+            self._v_max,
+            self._a_min,
+            self._a_max,
+            self._a_hl,
+            self._stop_w,
+            self._stop_settle,
+            self._dry_fric,
+            self._bias_creep,
+        ):
+            _spin.setMaximumWidth(110)
         self._drag.setToolTip("阻力 k（1/s），ω ← ω + (α − k·ω)·Δt；高速段基准。")
         self._drag_low_thr.setToolTip("|ω| 低于该值（rad/s）时阻力在 k 上渐增，0=关闭。")
         self._drag_low_boost.setToolTip("停转附近最大额外 k（1/s）；与阈值内 smootherstep 混合，末段柔和。")
@@ -715,7 +747,7 @@ class SugarWheelEditor(QWidget):
         rv.addWidget(_sec_pre_ch)
 
         g_sp = QGroupBox("对白气泡 showSpeech")
-        ff_sp = QFormLayout(g_sp)
+        ff_sp = compact_form(QFormLayout(g_sp))
         self._speech_dur = self._double(500, 120000, 3000, 0)
         self._speech_dur.setToolTip("默认气泡停留毫秒（外部调用未传 durationMs 时）。")
         ff_sp.addRow("speechDurationMs", self._speech_dur)
@@ -737,7 +769,7 @@ class SugarWheelEditor(QWidget):
         self._speech_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._speech_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._speech_table.verticalHeader().setVisible(False)
-        self._speech_table.setMinimumHeight(140)
+        self._speech_table.setMinimumHeight(110)
         self._speech_table.horizontalHeader().setStretchLastSection(True)
         sb_sp = QHBoxLayout()
         self._btn_add_speech = QPushButton("+锚点")
@@ -751,7 +783,9 @@ class SugarWheelEditor(QWidget):
         sw_spl.setContentsMargins(0, 0, 0, 0)
         sw_spl.addLayout(sb_sp)
         sw_spl.addWidget(self._speech_table)
-        rv.addWidget(sw_sp)
+        _sec_speech = CollapsibleSection("对白锚点 speechAnchors", start_open=False)
+        _sec_speech.add_body(sw_sp)
+        rv.addWidget(_sec_speech)
 
         self._sector_table = QTableWidget(0, 4)
         self._sector_table.setHorizontalHeaderLabels(["id", "label", "weight", "payload JSON"])
@@ -781,7 +815,7 @@ class SugarWheelEditor(QWidget):
         self._btn_del_sector = QPushButton("−格子")
         self._btn_up_sector = QPushButton("上移")
         self._btn_down_sector = QPushButton("下移")
-        _sec_lbl = QLabel("格子 sectors（顺时针须与贴图一致；weight 悬停列表头可看说明）")
+        _sec_lbl = QLabel("格子 sectors")
         _sec_lbl.setToolTip(
             "每行对应盘面上一格。\n「weight」不设=1，视为平地。\n"
             "想体感上少中就写小一点（高坡），容易中就写大一点（低谷）；不是要填「概率％」。"
@@ -832,7 +866,7 @@ class SugarWheelEditor(QWidget):
 
         atmos_bar = QHBoxLayout()
         self._atmos_group_list = QListWidget()
-        self._atmos_group_list.setMaximumHeight(100)
+        self._atmos_group_list.setMinimumHeight(80)
         self._atmos_group_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._btn_add_atmos_group = QPushButton("+组")
         self._btn_del_atmos_group = QPushButton("-组")
@@ -845,7 +879,7 @@ class SugarWheelEditor(QWidget):
         atmos_root.addLayout(atmos_bar)
         atmos_root.addWidget(self._atmos_group_list)
 
-        ag_form = QFormLayout()
+        ag_form = compact_form(QFormLayout())
         self._atmos_group_id = QLineEdit()
         self._atmos_group_id.setPlaceholderText("组 id")
         self._atmos_group_label = QLineEdit()
@@ -862,7 +896,7 @@ class SugarWheelEditor(QWidget):
 
         # ── vars: 池列表 + 池内文案列表 ──
         vars_split = QSplitter(Qt.Orientation.Horizontal)
-        vars_split.setMaximumHeight(180)
+        vars_split.setMinimumHeight(140)
         vars_left = QWidget()
         vll = QVBoxLayout(vars_left)
         vll.setContentsMargins(0, 0, 0, 0)
@@ -926,7 +960,7 @@ class SugarWheelEditor(QWidget):
             tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
             tbl.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
             tbl.verticalHeader().setVisible(False)
-            tbl.setMinimumHeight(140)
+            tbl.setMinimumHeight(110)
             tbl.horizontalHeader().setStretchLastSection(True)
             h0 = tbl.horizontalHeaderItem(0)
             if h0:

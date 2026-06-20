@@ -34,6 +34,7 @@ TOOLS: tuple[ToolAction, ...] = (
     ToolAction("资源浏览器", "asset-browser", "浏览、拖拽、入库记录"),
     ToolAction("资源入库", "asset-ingest", "导入素材到工程结构"),
     ToolAction("滤镜工具", "filter-tool", "ColorMatrix 预制和导出"),
+    ToolAction("LightVolume 实验室", "lightvol", "深度图烘焙辐照度体积 / quad 预览(Web)"),
     ToolAction("编年史 v3", "chronicle-sim", "ChronicleSim v3"),
     ToolAction("编年史 v2", "chronicle-sim-v2", "ChronicleSim v2"),
 )

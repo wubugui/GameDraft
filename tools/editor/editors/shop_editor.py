@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from ..project_model import ProjectModel
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit
+from ..shared.form_layout import compact_form
 
 
 class ShopEditor(QWidget):
@@ -35,7 +36,7 @@ class ShopEditor(QWidget):
 
         right = QWidget()
         rl = QVBoxLayout(right)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._s_id = QLineEdit(); f.addRow("id", self._s_id)
         self._s_name = RichTextLineEdit(self._model); f.addRow("name", self._s_name)
         rl.addLayout(f)
@@ -45,8 +46,8 @@ class ShopEditor(QWidget):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.verticalHeader().setDefaultSectionSize(34)
-        self._table.setMinimumHeight(180)
+        self._table.verticalHeader().setDefaultSectionSize(26)
+        self._table.setMinimumHeight(100)
         rl.addWidget(self._table)
         item_btns = QHBoxLayout()
         add_item = QPushButton("+ Item"); add_item.clicked.connect(self._add_item)

@@ -57,7 +57,7 @@ class _OneRow(QWidget):
         lay.addWidget(QLabel("短 id"))
         self._id_edit = QLineEdit(short_id)
         self._id_edit.setPlaceholderText("如：码头告示")
-        self._id_edit.setMinimumWidth(160)
+        self._id_edit.setMinimumWidth(110)
         lay.addWidget(self._id_edit)
         lay.addWidget(QLabel("图片"), alignment=Qt.AlignmentFlag.AlignRight)
         self._path_row = CutsceneImagePathRow(
@@ -95,14 +95,13 @@ class OverlayImagesEditor(QWidget):
         self._model = model
 
         root = QVBoxLayout(self)
-        hint = QLabel(
-            "此处登记「短 id → /assets/... 路径」。"
-            "图对话 <code>runActions</code> 里 <code>showOverlayImage</code> 的 <code>image</code> 可填短 id；"
-            "第二段为短 id 时由运行时解析；若以 <code>/</code> 开头则当作完整路径。",
-        )
-        hint.setWordWrap(True)
+        hint = QLabel("登记「短 id → /assets/... 路径」，供动作的 image 参数引用。")
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setOpenExternalLinks(False)
+        hint.setToolTip(
+            "图对话 runActions 里 showOverlayImage 的 image 可填短 id；"
+            "第二段为短 id 时由运行时解析；若以 / 开头则当作完整路径。"
+        )
         root.addWidget(hint)
 
         self._status = QLabel("")

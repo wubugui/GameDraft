@@ -54,6 +54,7 @@ from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 from ..shared.move_entity_map_picker import WorldPointPickView, resolve_world_size_for_scene_json
 from ..shared.collapsible_section import CollapsibleSection
+from ..shared.form_layout import compact_form
 from ..shared.project_paths import ProjectPaths
 from ..shared.fonts import MONO_FONT_FAMILY
 
@@ -2473,7 +2474,7 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_width.valueChanged.connect(self._on_world_width_changed)
         self._sc_height.valueChanged.connect(self._on_world_height_changed)
         self._sc_bgm = IdRefSelector(allow_empty=True, editable=True)
-        self._sc_bgm.setMinimumWidth(200)
+        self._sc_bgm.setMinimumWidth(160)
         self._sc_bgm.value_changed.connect(lambda _x: self._emit_props_changed())
         form.addRow("bgm", self._sc_bgm)
         self._sc_filter = IdRefSelector(allow_empty=True, editable=True)
@@ -2492,7 +2493,7 @@ class ScenePropertyPanel(QScrollArea):
             "默认折叠；与 Scene Depth Editor 导出一致，此处仅微调 tolerance / floor_offset",
         )
         depth_inner = QWidget()
-        depth_form = QFormLayout(depth_inner)
+        depth_form = compact_form(QFormLayout(depth_inner))
         self._sc_depth_tol = QDoubleSpinBox()
         self._sc_depth_tol.setRange(-50.0, 50.0)
         self._sc_depth_tol.setDecimals(4)
@@ -2519,7 +2520,7 @@ class ScenePropertyPanel(QScrollArea):
 
         move_g = self._section("角色移动速度", start_open=True)
         move_inner = QWidget()
-        move_f = QFormLayout(move_inner)
+        move_f = compact_form(QFormLayout(move_inner))
         self._sc_walk = QDoubleSpinBox(); self._sc_walk.setRange(0, 9999)
         move_f.addRow("walkSpeed", self._sc_walk)
         self._sc_run = QDoubleSpinBox(); self._sc_run.setRange(0, 9999)
@@ -2530,16 +2531,10 @@ class ScenePropertyPanel(QScrollArea):
         amb_g = self._section("环境音效 ambientSounds", start_open=True)
         amb_inner = QWidget()
         amb_lay = QVBoxLayout(amb_inner)
-        amb_hint = QLabel(
+        self._sc_ambient_list = QListWidget()
+        self._sc_ambient_list.setToolTip(
             "勾选 audio_config.ambient 中的 id；目录外 id 在下方填写（逗号分隔）。",
         )
-        amb_hint.setWordWrap(True)
-        amb_hint.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        amb_lay.addWidget(amb_hint)
-        self._sc_ambient_list = QListWidget()
         self._sc_ambient_list.setFixedHeight(110)
         self._sc_ambient_list.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -3082,7 +3077,7 @@ class ScenePropertyPanel(QScrollArea):
         lay.setAlignment(Qt.AlignmentFlag.AlignTop)
         basic_g = self._section("基本：id、类型、位置与交互", start_open=True)
         basic_inner = QWidget()
-        form = QFormLayout(basic_inner)
+        form = compact_form(QFormLayout(basic_inner))
         self._hs_id = QLineEdit(); form.addRow("id", self._hs_id)
         self._hs_type = QComboBox()
         self._hs_type.addItems(["inspect", "pickup", "transition", "npc", "encounter"])
@@ -3098,6 +3093,13 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("interactionRange", self._hs_range)
         self._hs_range.valueChanged.connect(self._on_hotspot_interaction_range_live)
         self._hs_auto = QCheckBox(); form.addRow("autoTrigger", self._hs_auto)
+        self._hs_cast_shadow = QCheckBox("投射阴影 + 接触AO")
+        self._hs_cast_shadow.setToolTip(
+            "缺省开启：有展示图的热区在地面投射阴影并带脚下接触 AO。"
+            "关闭则此热区不投影也无接触 AO（仅对有展示图的热区有效）。"
+        )
+        self._hs_cast_shadow.stateChanged.connect(lambda _s: self._emit_props_changed())
+        form.addRow("castShadow", self._hs_cast_shadow)
         self._hs_cutscene_only = QCheckBox("仅过场实体（普通场景不生成）")
         self._hs_cutscene_only.setToolTip(
             "默认开启：实体只在关联过场中从场景文件初始化，不读 committed sceneMemory。"
@@ -3138,12 +3140,11 @@ class ScenePropertyPanel(QScrollArea):
         cond_g.add_body(cond_inner)
         lay.addWidget(cond_g)
 
-        disp = CollapsibleSection(
-            "显示图（可选，底边中点对齐 x,y；世界宽高可独立编辑，换图不会自动改尺寸；"
-            "「自动」按当前图素比从另一维推导）",
-            start_open=False,
+        disp = CollapsibleSection("显示图（可选）", start_open=False)
+        disp.set_header_tool_tip(
+            "底边中点对齐 x,y；世界宽高可独立编辑，换图不会自动改尺寸；"
+            "「自动」按当前图素比从另一维推导。默认折叠，配置立绘/展示图时展开。"
         )
-        disp.set_header_tool_tip("默认折叠；配置立绘/展示图时展开")
         disp_inner = QWidget()
         dlay = QVBoxLayout(disp_inner)
         self._hs_disp_row = CutsceneImagePathRow(
@@ -3152,7 +3153,7 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._hs_disp_row.changed.connect(self._on_hs_display_row_changed)
         dlay.addWidget(self._hs_disp_row)
-        df = QFormLayout()
+        df = compact_form(QFormLayout())
         ww_row = QWidget()
         ww_h = QHBoxLayout(ww_row)
         ww_h.setContentsMargins(0, 0, 0, 0)
@@ -3286,7 +3287,7 @@ class ScenePropertyPanel(QScrollArea):
         mode_row.addWidget(self._hs_inspect_mode_graph)
         mode_row.addStretch()
         il.addLayout(mode_row)
-        graph_row = QFormLayout()
+        graph_row = compact_form(QFormLayout())
         gcombo = FilterableTypeCombo([], self, select_only=True)
         gcombo.setMinimumWidth(160)
         self._hs_inspect_graph_combo = gcombo
@@ -3321,10 +3322,10 @@ class ScenePropertyPanel(QScrollArea):
         _sync_inspect_mode_ui()
 
         # pickup data
-        pp = QWidget(); pf = QFormLayout(pp)
+        pp = QWidget(); pf = compact_form(QFormLayout(pp))
         self._hs_pickup_item = IdRefSelector(
             allow_empty=False, editable=False, click_opens_popup=True)
-        self._hs_pickup_item.setMinimumWidth(200)
+        self._hs_pickup_item.setMinimumWidth(160)
         self._hs_pickup_item.value_changed.connect(lambda _x: self._emit_props_changed())
         pf.addRow("itemId", self._hs_pickup_item)
         self._hs_pickup_name = QLineEdit(); pf.addRow("itemName", self._hs_pickup_name)
@@ -3336,7 +3337,7 @@ class ScenePropertyPanel(QScrollArea):
         # transition data
         tp = QWidget()
         tlv = QVBoxLayout(tp)
-        tf = QFormLayout()
+        tf = compact_form(QFormLayout())
         self._hs_trans_scene = IdRefSelector(
             allow_empty=False, editable=False, click_opens_popup=True)
         tf.addRow("targetScene", self._hs_trans_scene)
@@ -3356,16 +3357,16 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_data_stack.addWidget(tp)
 
         # npc hotspot data
-        np_ = QWidget(); nf = QFormLayout(np_)
+        np_ = QWidget(); nf = compact_form(QFormLayout(np_))
         self._hs_npc_id = IdRefSelector(
             allow_empty=True, editable=False, click_opens_popup=True)
-        self._hs_npc_id.setMinimumWidth(200)
+        self._hs_npc_id.setMinimumWidth(160)
         self._hs_npc_id.value_changed.connect(lambda _x: self._emit_props_changed())
         nf.addRow("npcId", self._hs_npc_id)
         self._hs_data_stack.addWidget(np_)
 
         # encounter data
-        ep = QWidget(); ef = QFormLayout(ep)
+        ep = QWidget(); ef = compact_form(QFormLayout(ep))
         self._hs_enc_id = IdRefSelector(
             allow_empty=False, editable=False, click_opens_popup=True)
         ef.addRow("encounterId", self._hs_enc_id)
@@ -3736,6 +3737,7 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_range.setValue(st.get("interactionRange", 50))
             self._hs_range.blockSignals(False)
             self._hs_auto.setChecked(st.get("autoTrigger", False))
+            self._hs_cast_shadow.setChecked(st.get("castShadow", True) is not False)
             self._hs_cutscene_ids_pending = self._entity_cutscene_ids_from_data(st)
             self._hs_cutscene_ids_label.setText(
                 self._format_cutscene_ids_label(self._hs_cutscene_ids_pending),
@@ -4048,6 +4050,11 @@ class ScenePropertyPanel(QScrollArea):
             hs["autoTrigger"] = True
         elif "autoTrigger" in hs:
             del hs["autoTrigger"]
+        # castShadow 缺省开：仅取消勾选才落 false，勾选时省略字段（保持 JSON 干净 + 默认开）
+        if not self._hs_cast_shadow.isChecked():
+            hs["castShadow"] = False
+        elif "castShadow" in hs:
+            del hs["castShadow"]
         hs_ids = [x for x in self._hs_cutscene_ids_pending if str(x).strip()]
         if hs_ids:
             hs["cutsceneIds"] = hs_ids
@@ -4148,7 +4155,7 @@ class ScenePropertyPanel(QScrollArea):
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
         base_g = self._section("身份、位置、对话与交互范围", start_open=True)
         base_inner = QWidget()
-        form = QFormLayout(base_inner)
+        form = compact_form(QFormLayout(base_inner))
         self._npc_id = QLineEdit(); form.addRow("id", self._npc_id)
         self._npc_name = QLineEdit(); form.addRow("name", self._npc_name)
         self._npc_x = QDoubleSpinBox(); self._npc_x.setRange(-99999, 99999); self._npc_x.setDecimals(1)
@@ -4164,14 +4171,14 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_facing.currentIndexChanged.connect(self._on_npc_facing_changed)
         form.addRow("initialFacing", self._npc_facing)
         self._npc_dialogue_graph = IdRefSelector(allow_empty=True, editable=True)
-        self._npc_dialogue_graph.setMinimumWidth(220)
+        self._npc_dialogue_graph.setMinimumWidth(160)
         self._npc_dialogue_graph.setToolTip("对应 public/assets/dialogues/graphs/<id>.json")
         self._npc_dialogue_graph.value_changed.connect(lambda _x: self._emit_props_changed())
         self._npc_dialogue_graph.value_changed.connect(
             lambda _x: self._refresh_npc_dialogue_entry_choices())
         form.addRow("dialogueGraphId", self._npc_dialogue_graph)
         self._npc_dialogue_graph_entry = FilterableTypeCombo([], self, select_only=False)
-        self._npc_dialogue_graph_entry.setMinimumWidth(220)
+        self._npc_dialogue_graph_entry.setMinimumWidth(160)
         self._npc_dialogue_graph_entry.lineEdit().setPlaceholderText(
             "可选，覆盖图 JSON 的 entry 节点 id")
         self._npc_dialogue_graph_entry.typeCommitted.connect(
@@ -4210,6 +4217,12 @@ class ScenePropertyPanel(QScrollArea):
         npc_multi_l.addWidget(self._npc_cutscene_ids_btn)
         npc_multi_l.addWidget(self._npc_cutscene_ids_clear_btn)
         form.addRow("cutsceneIds", npc_multi_row)
+        self._npc_cast_shadow = QCheckBox("投射阴影 + 接触AO")
+        self._npc_cast_shadow.setToolTip(
+            "缺省开启：该 NPC 在地面投射阴影并带脚下接触 AO。关闭则此 NPC 不投影也无接触 AO。"
+        )
+        self._npc_cast_shadow.stateChanged.connect(lambda _s: self._emit_props_changed())
+        form.addRow("castShadow", self._npc_cast_shadow)
         base_g.add_body(base_inner)
         outer.addWidget(base_g)
 
@@ -4267,13 +4280,13 @@ class ScenePropertyPanel(QScrollArea):
 
         anim_g = self._section("骨骼动画 animFile / 初始状态", start_open=True)
         anim_inner = QWidget()
-        anim_f = QFormLayout(anim_inner)
+        anim_f = compact_form(QFormLayout(anim_inner))
         self._npc_anim = IdRefSelector(allow_empty=True, editable=True)
-        self._npc_anim.setMinimumWidth(220)
+        self._npc_anim.setMinimumWidth(180)
         self._npc_anim.value_changed.connect(self._on_npc_anim_file_changed)
         anim_f.addRow("animFile", self._npc_anim)
         self._npc_initial_state = QComboBox()
-        self._npc_initial_state.setMinimumWidth(220)
+        self._npc_initial_state.setMinimumWidth(180)
         self._npc_initial_state.currentIndexChanged.connect(self._on_npc_initial_state_changed)
         anim_f.addRow("initialAnimState", self._npc_initial_state)
         anim_g.add_body(anim_inner)
@@ -4297,7 +4310,7 @@ class ScenePropertyPanel(QScrollArea):
         move_anim_row = QHBoxLayout()
         move_anim_row.addWidget(QLabel("巡逻移动动画状态"))
         self._npc_patrol_move_anim = QComboBox()
-        self._npc_patrol_move_anim.setMinimumWidth(180)
+        self._npc_patrol_move_anim.setMinimumWidth(150)
         self._npc_patrol_move_anim.setToolTip(
             "animFile 内 states 的键名，与运行时一致；留空则移动时不切动画")
         self._npc_patrol_move_anim.currentIndexChanged.connect(
@@ -4837,6 +4850,9 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_cond_hide_entity.blockSignals(True)
             self._npc_cond_hide_entity.setChecked(st.get("conditionHidesEntity", False) is True)
             self._npc_cond_hide_entity.blockSignals(False)
+            self._npc_cast_shadow.blockSignals(True)
+            self._npc_cast_shadow.setChecked(st.get("castShadow", True) is not False)
+            self._npc_cast_shadow.blockSignals(False)
             self._npc_facing.blockSignals(True)
             try:
                 cur_f = str(st.get("initialFacing", "") or "").strip().lower()
@@ -4926,6 +4942,11 @@ class ScenePropertyPanel(QScrollArea):
             npc["conditionHidesEntity"] = True
         elif "conditionHidesEntity" in npc:
             del npc["conditionHidesEntity"]
+        # castShadow 缺省开：仅取消勾选才落 false，勾选时省略字段（保持 JSON 干净 + 默认开）
+        if not self._npc_cast_shadow.isChecked():
+            npc["castShadow"] = False
+        elif "castShadow" in npc:
+            del npc["castShadow"]
         anim = self._npc_anim.current_id().strip()
         if anim:
             npc["animFile"] = anim
@@ -4984,7 +5005,7 @@ class ScenePropertyPanel(QScrollArea):
         lay.setAlignment(Qt.AlignmentFlag.AlignTop)
         top_g = self._section("基本：id 与区域类型", start_open=True)
         top_inner = QWidget()
-        form = QFormLayout(top_inner)
+        form = compact_form(QFormLayout(top_inner))
         self._zn_id = QLineEdit()
         form.addRow("id", self._zn_id)
         self._zn_kind = QComboBox()
@@ -5019,7 +5040,7 @@ class ScenePropertyPanel(QScrollArea):
             1, QHeaderView.ResizeMode.Stretch)
         self._zn_poly_table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.Stretch)
-        self._zn_poly_table.setMinimumHeight(220)
+        self._zn_poly_table.setMinimumHeight(120)
         self._zn_poly_table.itemChanged.connect(self._on_zone_poly_cell_changed)
         poly_l.addWidget(self._zn_poly_table)
 
@@ -5315,7 +5336,7 @@ class ScenePropertyPanel(QScrollArea):
         sp_inner = QWidget()
         sp_l = QVBoxLayout(sp_inner)
         form_host = QWidget()
-        form = QFormLayout(form_host)
+        form = compact_form(QFormLayout(form_host))
         self._sp_key = QLineEdit()
         form.addRow("key", self._sp_key)
         self._sp_x = QDoubleSpinBox()

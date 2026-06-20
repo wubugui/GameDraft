@@ -16,6 +16,7 @@ from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
+from ..shared.form_layout import compact_form
 
 
 def _tool_std_icon_btn(
@@ -87,7 +88,7 @@ class _ConsumeItemRow(QWidget):
         self._item_sel.set_current(data.get("id", ""))
         self._item_sel.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self._item_sel.setMaximumWidth(320)
+        self._item_sel.setMaximumWidth(220)
         lay.addWidget(self._item_sel, stretch=0)
 
         self._count = QSpinBox()
@@ -211,7 +212,7 @@ class OptionWidget(QFrame):
         body_lay = QVBoxLayout(self._body)
         body_lay.setContentsMargins(0, 4, 0, 0)
 
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._text = RichTextLineEdit(model)
         self._text.setText(data.get("text", ""))
         self._text.setPlaceholderText("选项显示文案")
@@ -229,7 +230,7 @@ class OptionWidget(QFrame):
         self._rule.set_current(data.get("requiredRuleId", ""))
         self._rule.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self._rule.setMaximumWidth(360)
+        self._rule.setMaximumWidth(220)
         f.addRow("requiredRuleId", self._rule)
         _rl_label = QLabel("requiredRuleLayers")
         _rl_label.setToolTip("不勾 = 须完整掌握；勾选者须对应层已解锁")
@@ -250,7 +251,8 @@ class OptionWidget(QFrame):
         f.addRow(rl_row)
         self._result_text = RichTextTextEdit(model)
         self._result_text.setPlainText(data.get("resultText", ""))
-        self._result_text.setMaximumHeight(80)
+        self._result_text.setMinimumHeight(56)
+        self._result_text.setMaximumHeight(140)
         self._result_text.setPlaceholderText("选择该选项后的叙事（可选）")
         f.addRow("resultText", self._result_text)
         body_lay.addLayout(f)
@@ -388,7 +390,7 @@ class EncounterEditor(QWidget):
         self._detail = QWidget()
         self._detail_layout = QVBoxLayout(self._detail)
         self._detail_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._e_id_row = QWidget()
         _idl = QHBoxLayout(self._e_id_row)
         _idl.setContentsMargins(0, 0, 0, 0)

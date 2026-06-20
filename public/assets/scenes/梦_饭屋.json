@@ -1,14 +1,14 @@
 {
   "id": "梦_饭屋",
   "name": "梦·一·吃饭",
-  "worldWidth": 1050,
+  "worldWidth": 800.0,
   "camera": {
     "zoom": 1.1,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
     {
-      "image": "background.png",
+      "image": "background_pure.png",
       "x": 0,
       "y": 0
     }
@@ -17,13 +17,13 @@
     "阴风"
   ],
   "spawnPoint": {
-    "x": 525,
-    "y": 470
+    "x": 518.1,
+    "y": 235.7
   },
   "spawnPoints": {
     "from_courtyard": {
-      "x": 525,
-      "y": 470
+      "x": 90.7,
+      "y": 379.8
     }
   },
   "onEnter": [
@@ -38,9 +38,9 @@
     {
       "id": "npc_dream_old_man",
       "name": "老头",
-      "x": 651,
-      "y": 270,
-      "interactionRange": 55,
+      "x": 282.0,
+      "y": 270.6,
+      "interactionRange": 55.0,
       "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
@@ -48,9 +48,9 @@
     {
       "id": "npc_dream_old_woman",
       "name": "老妇人",
-      "x": 420,
-      "y": 258,
-      "interactionRange": 55,
+      "x": 408.5,
+      "y": 348.9,
+      "interactionRange": 55.0,
       "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
@@ -60,33 +60,32 @@
     {
       "id": "hs_倒头饭",
       "type": "inspect",
-      "x": 525,
-      "y": 293,
-      "interactionRange": 55,
-      "data": {
-        "text": "一碗白米饭，还冒着热气。一双筷子，直直插在饭中央。"
-      },
+      "x": 358.9,
+      "y": 249.1,
+      "interactionRange": 55.0,
+      "data": {},
       "displayImage": {
-        "image": "/resources/runtime/images/illustrations/dream_ritual_rice_bowl.png",
-        "worldWidth": 55,
-        "worldHeight": 58,
+        "image": "/resources/runtime/images/props/dream/dream_meal_table_props.png",
+        "worldWidth": 51.4,
+        "worldHeight": 56.0,
         "spriteSort": "front"
-      }
+      },
+      "label": ""
     },
     {
-      "id": "hs_寿衣",
+      "id": "hs_油灯",
       "type": "inspect",
-      "x": 315,
-      "y": 375,
-      "interactionRange": 55,
-      "data": {
-        "text": "浆洗发白的棉布，针脚还新，线头都没剪。摸了半天——没有一颗扣子，全是结带的。"
-      },
+      "x": 345.1,
+      "y": 203.8,
+      "interactionRange": 40.0,
+      "data": {},
       "displayImage": {
-        "image": "/resources/runtime/images/illustrations/dream_shroud_v2.png",
-        "worldWidth": 70,
-        "worldHeight": 64
-      }
+        "image": "/resources/runtime/images/props/dream/dream_oil_lamp_table_prop.png",
+        "worldWidth": 21.8,
+        "worldHeight": 48.5,
+        "spriteSort": "front"
+      },
+      "label": ""
     }
   ],
   "zones": [
@@ -94,20 +93,20 @@
       "id": "z_饭桌",
       "polygon": [
         {
-          "x": 420,
-          "y": 340
+          "x": 282.0,
+          "y": 212.6
         },
         {
-          "x": 630,
-          "y": 340
+          "x": 398.4,
+          "y": 287.6
         },
         {
-          "x": 630,
-          "y": 434
+          "x": 340.0,
+          "y": 353.1
         },
         {
-          "x": 420,
-          "y": 434
+          "x": 234.2,
+          "y": 278.7
         }
       ],
       "onEnter": [
@@ -120,5 +119,6 @@
       ]
     }
   ],
-  "bgm": "bgm_placeholder_dark_shadows"
+  "bgm": "bgm_placeholder_dark_shadows",
+  "worldHeight": 446.51
 }

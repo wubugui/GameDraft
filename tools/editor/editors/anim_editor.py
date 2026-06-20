@@ -28,6 +28,7 @@ def _preview_poll_interval_ms(fps: float) -> int:
     return max(4, min(16, int(round(ideal))))
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
 
 _ATLAS_VIEW_MAX_W = 580
 _ATLAS_VIEW_MAX_H = 300
@@ -80,21 +81,21 @@ class AnimEditor(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        hint = QLabel(
+        hint = QLabel("动画包（只读）：video_to_atlas 导出")
+        hint.setToolTip(
             "动画包目录：public/resources/runtime/animation/<id>/\n"
             "（anim.json + 图集；由 video_to_atlas 导出）"
         )
-        hint.setWordWrap(True)
         hint.setStyleSheet("color: #888;")
         ll.addWidget(hint)
         row_tools = QHBoxLayout()
-        btn_vta = QPushButton("打开视频动画工具（新进程）…")
+        btn_vta = QPushButton("视频工具…")
         btn_vta.setToolTip(
             "启动 tools/video_to_atlas，独立窗口；若存在 resources/editor_projects/editor_data/animation/project.json 将自动打开该工作区。"
         )
         btn_vta.clicked.connect(self._open_video_atlas_detached)
         row_tools.addWidget(btn_vta)
-        btn_reload = QPushButton("从磁盘重载全部动画")
+        btn_reload = QPushButton("重载动画")
         btn_reload.setToolTip(
             "重新扫描 public/resources/runtime/animation/*/anim.json 并更新内存；在视频工具导出后点此同步主编辑器。"
         )
@@ -108,7 +109,6 @@ class AnimEditor(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(480)
         detail = QWidget()
         self._anim_detail_panel = detail
         dl = QVBoxLayout(detail)
@@ -116,7 +116,7 @@ class AnimEditor(QWidget):
         self._lbl_disk.setWordWrap(True)
         self._lbl_disk.setStyleSheet("color: #6af;")
         dl.addWidget(self._lbl_disk)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._a_stem = QLineEdit()
         self._a_stem.setReadOnly(True)
         f.addRow("包 ID（目录名）", self._a_stem)
@@ -150,6 +150,9 @@ class AnimEditor(QWidget):
         self._a_world_mode.addItem("按高度（只写 worldHeight）", 1)
         self._a_world_mode.addItem("同时写宽高（高级）", 2)
         self._a_world_mode.setEnabled(False)
+        self._a_world_mode.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self._a_world_mode.setMaximumWidth(220)
         f.addRow("世界尺寸", self._a_world_mode)
         self._a_ww = QSpinBox()
         self._a_ww.setRange(1, 9999)

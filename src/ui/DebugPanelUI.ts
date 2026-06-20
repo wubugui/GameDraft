@@ -9,7 +9,8 @@ export type DebugSectionContent =
   | string
   | {
       text: string;
-      actions?: { label: string; fn: () => void }[];
+      /** noRefresh=true：点击后不重渲染整段（避免重建滑条/复位）；由按钮自行就地更新显示 */
+      actions?: { label: string; fn: () => void; noRefresh?: boolean }[];
       /** 排在按钮行之后；勿在 input 回调里调用 refresh()，否则拖拽会中断 */
       extra?: HTMLElement;
     };
@@ -391,7 +392,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
             btn.addEventListener('click', () => {
               try {
                 a.fn();
-                this.refresh();
+                if (!a.noRefresh) this.refresh();
               } catch (e) {
                 this.log(`Error: ${String(e)}`);
               }

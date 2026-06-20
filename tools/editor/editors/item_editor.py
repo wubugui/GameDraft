@@ -12,6 +12,7 @@ from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
+from ..shared.form_layout import compact_form
 
 
 class DynDescWidget(QGroupBox):
@@ -41,7 +42,8 @@ class DynDescWidget(QGroupBox):
         pm = model if model is not None else ProjectModel()
         self._text = RichTextTextEdit(pm)
         self._text.setPlainText(data.get("text", ""))
-        self._text.setMaximumHeight(100)
+        self._text.setMinimumHeight(72)
+        self._text.setMaximumHeight(180)
         lay.addWidget(self._text)
 
     def set_dyn_index(self, idx: int) -> None:
@@ -75,12 +77,17 @@ class ItemEditor(QWidget):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         detail = QWidget()
         dl = QVBoxLayout(detail)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._i_id = QLineEdit(); f.addRow("id", self._i_id)
-        self._i_name = RichTextLineEdit(self._model); f.addRow("name", self._i_name)
+        self._i_name = RichTextLineEdit(self._model)
+        self._i_name.setMinimumWidth(240)
+        f.addRow("name", self._i_name)
         self._i_type = QComboBox(); self._i_type.addItems(["consumable", "key"])
         f.addRow("type", self._i_type)
-        self._i_desc = RichTextTextEdit(self._model); self._i_desc.setMaximumHeight(100)
+        self._i_desc = RichTextTextEdit(self._model)
+        self._i_desc.setMinimumHeight(72)
+        self._i_desc.setMaximumHeight(180)
+        self._i_desc.setMinimumWidth(240)
         f.addRow("description", self._i_desc)
         self._i_stack = QSpinBox(); self._i_stack.setRange(1, 999)
         f.addRow("maxStack", self._i_stack)

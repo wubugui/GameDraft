@@ -20,6 +20,7 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "chronicle-sim-v2": ("tools.chronicle_sim_v2", []),
     "chronicle-sim": ("tools.chronicle_sim_v3", []),
     "filter-tool": ("tools.filter_tool", []),
+    "lightvol": ("tools.lightvolume_lab", []),
     "validate-data": ("tools.editor.validate", []),
 }
 

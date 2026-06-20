@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>LightVolume Lab — 深度图离线辐照度体积烘焙 / 预览</title>
+<style>
+  :root { --bg:#15171c; --panel:#1d2026; --panel2:#23272f; --line:#333a45; --txt:#d7dce3; --dim:#8b94a3; --acc:#6db3ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:13px/1.5 ui-sans-serif,system-ui,"PingFang SC","Microsoft YaHei",sans-serif; }
+  h1 { font-size:15px; margin:0; font-weight:600; }
+  h2 { font-size:12px; margin:14px 0 6px; color:var(--acc); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  header { padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .wrap { display:flex; gap:14px; padding:14px; align-items:flex-start; }
+  .col { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .col.left { flex:0 0 auto; }
+  .col.right { flex:1 1 auto; min-width:320px; }
+  label { display:block; color:var(--dim); margin:6px 0 2px; }
+  input[type=text], input[type=number] { background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:5px; padding:4px 6px; width:100%; }
+  input[type=range] { width:100%; }
+  button { background:#2b78d4; color:#fff; border:0; border-radius:5px; padding:6px 11px; cursor:pointer; font-size:12px; }
+  button.sec { background:var(--panel2); border:1px solid var(--line); color:var(--txt); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .row > * { flex:1; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  canvas { display:block; background:#000; border-radius:6px; }
+  #view { cursor:crosshair; max-width:100%; }
+  .muted { color:var(--dim); font-size:12px; }
+  .pill { background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:3px 7px; font-size:11px; color:var(--dim); }
+  #prog { height:6px; background:var(--panel2); border-radius:3px; overflow:hidden; }
+  #prog > i { display:block; height:100%; width:0; background:var(--acc); transition:width .1s; }
+  .slices { display:flex; gap:8px; flex-wrap:wrap; }
+  .slices figure { margin:0; }
+  .slices figcaption { font-size:11px; color:var(--dim); text-align:center; }
+  .slices canvas { image-rendering:pixelated; width:140px; height:auto; border:1px solid var(--line); }
+  details { margin-top:8px; } summary { cursor:pointer; color:var(--acc); }
+  code { background:#0c0e12; padding:1px 4px; border-radius:3px; color:#bcd; }
+  .err { color:#ff8a8a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LightVolume Lab</h1>
+  <span class="muted">手绘背景 + 深度图 → 离线光线追踪烘焙辐照度体积 → 拖一个 quad 进去看着色。独立工具,不接游戏。</span>
+</header>
+
+<div class="wrap">
+  <!-- ============ LEFT: load + bake controls ============ -->
+  <div class="col left" style="width:330px">
+    <h2>1 · 载入场景</h2>
+    <div class="muted">选场景 JSON 即可——自动找同名背景+深度(经 <code>./dev.sh lightvol</code> 或服务方式打开时)。</div>
+    <label>场景 JSON(含 worldWidth/Height + depthConfig)</label><input type="file" id="fCfg" accept=".json,application/json">
+    <details>
+      <summary>自动找不到素材时(file:// 直接双击打开)在此手动补</summary>
+      <label>背景 PNG</label><input type="file" id="fBg" accept="image/png,image/*">
+      <label>深度 PNG (raw_depth_rg)</label><input type="file" id="fDepth" accept="image/png,image/*">
+    </details>
+    <details>
+      <summary>或:直接按 scene id 抓取</summary>
+      <label>asset base URL (vite 留空;静态服 <code>/public</code>)</label>
+      <input type="text" id="base" value="">
+      <label>scene id</label>
+      <div class="row"><input type="text" id="sid" value="mountain_pass"><button class="sec" id="bFetch" style="flex:0 0 auto">抓取</button></div>
+    </details>
+    <div id="loadMsg" class="muted" style="margin-top:8px">未载入。</div>
+
+    <h2>2 · 烘焙体积(光线追踪)</h2>
+    <div class="grid3">
+      <div><label>格 X</label><input type="number" id="nx" value="40" min="2" max="200"></div>
+      <div><label>格 Y(地面)</label><input type="number" id="ny" value="28" min="2" max="200"></div>
+      <div><label>层 K(高度)</label><input type="number" id="nk" value="6" min="1" max="40"></div>
+    </div>
+    <div class="grid2">
+      <div><label>每体素光线数</label><input type="number" id="rays" value="80" min="8" max="512"></div>
+      <div><label>march 步数</label><input type="number" id="steps" value="48" min="8" max="256"></div>
+    </div>
+    <div class="grid2">
+      <div><label>最大高度 (M-world)</label><input type="number" id="maxh" value="0.55" step="0.05"></div>
+      <div><label>天光强度</label><input type="number" id="skyI" value="1.0" step="0.1"></div>
+    </div>
+    <div class="grid2">
+      <div><label>AO 半径 (M-world)</label><input type="number" id="aoR" value="0.4" step="0.05"></div>
+      <div><label>反弹强度 bounce</label><input type="number" id="bounce" value="0.3" step="0.05"></div>
+    </div>
+    <div class="grid2">
+      <div><label>radiance 预滤波 px(越小越糊;irradiance 只卷低频光)</label><input type="number" id="preW" value="40" min="6" max="512"></div>
+      <div><label>体积后模糊(格,0=关)</label><input type="number" id="volBlur" value="1" min="0" max="4"></div>
+    </div>
+    <label class="row" style="margin-top:6px"><input type="checkbox" id="upperOnly" style="flex:0 0 auto"> 仅上半球采样(只朝上打线,忽略地面反弹)</label>
+    <label class="row" style="margin-top:2px"><input type="checkbox" id="cosWeight" checked style="flex:0 0 auto"> cosine 上半球加权(按朝上余弦 max(0,dir·up) 加权,偏天光)</label>
+    <div class="row" style="margin-top:10px">
+      <button id="bBake">烘焙体积</button>
+      <span class="pill" id="bakeStat">未烘焙</span>
+    </div>
+    <div id="prog" style="margin-top:8px"><i></i></div>
+    <div class="row" style="margin-top:8px">
+      <button class="sec" id="bExport" disabled>导出体积 .json</button>
+      <button class="sec" id="bImport" style="flex:0 0 auto">导入 .json</button>
+      <input type="file" id="fImport" accept=".json,application/json" style="display:none">
+    </div>
+
+    <h2>3 · 体积切片</h2>
+    <div class="slices" id="slices"><span class="muted">烘焙后显示地面层 / 中层 / 顶层。</span></div>
+  </div>
+
+  <!-- ============ RIGHT: preview ============ -->
+  <div class="col right">
+    <h2>预览 — 在背景上点一下放角色脚点</h2>
+    <canvas id="view" width="900" height="520"></canvas>
+    <div class="grid3" style="margin-top:10px">
+      <div><label>quad 屏幕宽 px</label><input type="range" id="qw" min="20" max="240" value="70"></div>
+      <div><label>quad 屏幕高 px</label><input type="range" id="qh" min="40" max="480" value="150"></div>
+      <div><label>采样高度 HqM (M-world)</label><input type="range" id="hqm" min="0.05" max="1.2" step="0.01" value="0.5"></div>
+    </div>
+    <div class="grid3" style="margin-top:6px">
+      <div><label>色调强度 tone</label><input type="range" id="tone" min="0" max="1" step="0.02" value="0.7"></div>
+      <div>
+        <label>着色模式</label>
+        <select id="mode" style="width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:5px;padding:4px">
+          <option value="tint">给样片做保亮度白平衡(=游戏 tone)</option>
+          <option value="raw">直接显示体积环境色(raw)</option>
+          <option value="ao">AO 灰度(可见性/开阔度)</option>
+        </select>
+      </div>
+      <div><label>样片 PNG(可选,否则用灰片)</label><input type="file" id="fSpr" accept="image/*"></div>
+    </div>
+    <div class="muted" id="viewMsg" style="margin-top:8px">载入并烘焙后,点背景放角色。左=平涂(无 tone),右=体积着色。</div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="col" style="flex:1; min-width:340px">
+    <h2>环境 FX — 2D 近似(WebGL · 全部可开关)</h2>
+    <div class="muted">共用上面载入的 bg+depth。画布上拖<b style="color:#ffcf4d">黄点=角色</b>:雾会绕开它流动;开「雪地脚印」时拖动会在雪上留脚印。</div>
+    <canvas id="fx" width="900" height="500" style="margin-top:8px;cursor:move"></canvas>
+    <div id="fxmsg" class="muted" style="margin-top:6px">未载入场景。</div>
+    <h2>开关</h2>
+    <div class="grid3">
+      <label class="row"><input type="checkbox" id="enHFog" checked style="flex:0 0 auto"> 高度雾</label>
+      <label class="row"><input type="checkbox" id="enVFog" checked style="flex:0 0 auto"> 流体体积雾(实时模拟)</label>
+      <label class="row"><input type="checkbox" id="enGod" style="flex:0 0 auto"> 体积光/神光</label>
+      <label class="row"><input type="checkbox" id="enPud" style="flex:0 0 auto"> 地面积水+反射</label>
+      <label class="row"><input type="checkbox" id="enSnow" style="flex:0 0 auto"> 积雪</label>
+      <label class="row"><input type="checkbox" id="enFoot" style="flex:0 0 auto"> 雪地脚印(需开积雪)</label>
+    </div>
+    <h2>参数</h2>
+    <div class="grid3">
+      <div><label>雾浓度</label><input type="range" id="pFogD" min="0" max="3" step="0.02" value="0.8"></div>
+      <div><label>雾高度衰减</label><input type="range" id="pFogH" min="0" max="12" step="0.1" value="4"></div>
+      <div><label>雾流速</label><input type="range" id="pFlow" min="0" max="3" step="0.02" value="1.2"></div>
+      <div><label>涡度(打圈强度)</label><input type="range" id="pVort" min="0" max="2" step="0.02" value="0.8"></div>
+      <div><label>角色扰动半径</label><input type="range" id="pCarve" min="0.02" max="0.3" step="0.01" value="0.1"></div>
+      <div><label>神光强度</label><input type="range" id="pGod" min="0" max="3" step="0.02" value="1"></div>
+      <div><label>神光方位°</label><input type="range" id="pGodA" min="0" max="360" step="1" value="70"></div>
+      <div><label>神光仰角°</label><input type="range" id="pGodEl" min="5" max="85" step="1" value="40"></div>
+      <div><label>神光步数(越多越连续)</label><input type="range" id="pGodN" min="16" max="96" step="1" value="72"></div>
+      <div><label>神光距离</label><input type="range" id="pGodD" min="1" max="14" step="0.5" value="7"></div>
+      <div><label>积水量</label><input type="range" id="pPud" min="0" max="1" step="0.02" value="0.6"></div>
+      <div><label>积水反射强度</label><input type="range" id="pPudR" min="0" max="1" step="0.02" value="0.7"></div>
+      <div><label>涟漪强度</label><input type="range" id="pRefl" min="0" max="0.25" step="0.005" value="0.04"></div>
+      <div><label>倒影步长(px,越小越无缝)</label><input type="range" id="pSsrD" min="1" max="6" step="0.5" value="1.5"></div>
+      <div><label>倒影扫描行数(越多越深)</label><input type="range" id="pSsrN" min="16" max="256" step="1" value="220"></div>
+      <div><label>最小反射高度(滤地面/越大只反射高物)</label><input type="range" id="pReflH" min="0" max="1" step="0.02" value="0.35"></div>
+      <div><label>积雪量</label><input type="range" id="pSnow" min="0" max="1" step="0.02" value="0.7"></div>
+      <div><label>积雪朝上阈值</label><input type="range" id="pSnowU" min="0" max="1" step="0.02" value="0.3"></div>
+      <div class="row" style="gap:6px;align-items:flex-end"><span class="muted">雾色</span><input type="color" id="pFogC" value="#9aa6b0" style="flex:0 0 auto"><span class="muted">雪色</span><input type="color" id="pSnowC" value="#e8edf2" style="flex:0 0 auto"></div>
+    </div>
+    <div class="grid3" style="margin-top:6px">
+      <div><label>拖动作用</label><select id="pMode" style="width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:5px;padding:4px"><option value="char">移动角色</option><option value="paint">画积水(湿度)</option><option value="erase">擦积水</option></select></div>
+      <div><label>积水笔刷大小</label><input type="range" id="pBrush" min="0.01" max="0.12" step="0.005" value="0.04"></div>
+      <div></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="sec" id="fxClearFoot">清除脚印</button>
+      <button class="sec" id="fxClearWet">清除积水</button>
+      <button class="sec" id="fxPlay">暂停/继续动画</button>
+      <span class="pill" id="fxStat">—</span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ===================== 状态 =====================
+const S = {
+  cfg:null,            // {invert,scale,offset,floorA,floorB,ppu,cx,cy,W,H,bgW,bgH,wtpX,wtpY,right,up,vd}
+  bgW:0,bgH:0,bgData:null,           // Uint8ClampedArray RGBA
+  dW:0,dH:0,depthScalar:null,        // Float32Array 预解码 sceneDepth
+  vol:null,dims:{nx:0,ny:0,nk:0},maxH:0,sky:[0.5,0.5,0.5],
+  foot:null,           // {gx,gy}
+  spr:null,            // {w,h,data}
+};
+const $ = id => document.getElementById(id);
+const dot = (a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+// 非节流让步(后台标签 rAF/setTimeout 会被限速;MessageChannel 不会),让烘焙分块不卡 UI 又不依赖前台
+const _mc=new MessageChannel(); let _yq=[]; _mc.port1.onmessage=()=>{ const l=_yq; _yq=[]; for(const r of l) r(); };
+const yieldTick=()=>new Promise(r=>{ _yq.push(r); _mc.port2.postMessage(0); });
+
+// ===================== 几何 / 采样 =====================
+// 游戏世界 (gx,gy) + 深度 → M-world 3D(约定同 deferred 阴影 / scene_depth_editor)
+function reconstruct(gx,gy,depth){
+  const c=S.cfg;
+  const sx=gx*c.wtpX, sy=gy*c.wtpY;
+  const px=(sx-c.cx)/c.ppu, py=(c.cy-sy)/c.ppu;
+  return [ c.right[0]*px + c.up[0]*py + c.vd[0]*depth,
+           c.right[1]*px + c.up[1]*py + c.vd[1]*depth,
+           c.right[2]*px + c.up[2]*py + c.vd[2]*depth ];
+}
+function floorDepthAt(gy){ const c=S.cfg; const sy=gy*c.wtpY; return c.floorA*sy + c.floorB; }
+
+// 预解码后的深度标量(near=小);最近邻足够(march 用)
+function depthAtUV(u,v){
+  if(u<0||u>1||v<0||v>1) return null;
+  const x=Math.min(S.dW-1, (u*S.dW)|0), y=Math.min(S.dH-1,(v*S.dH)|0);
+  return S.depthScalar[y*S.dW+x];
+}
+function bgAtUV(u,v,out){ // 0..1 rgb, 双线性
+  u=Math.min(1,Math.max(0,u)); v=Math.min(1,Math.max(0,v));
+  const fx=u*(S.bgW-1), fy=v*(S.bgH-1);
+  const x0=fx|0,y0=fy|0,x1=Math.min(S.bgW-1,x0+1),y1=Math.min(S.bgH-1,y0+1);
+  const tx=fx-x0,ty=fy-y0,d=S.bgData;
+  for(let ch=0;ch<3;ch++){
+    const a=d[(y0*S.bgW+x0)*4+ch], b=d[(y0*S.bgW+x1)*4+ch], e=d[(y1*S.bgW+x0)*4+ch], f=d[(y1*S.bgW+x1)*4+ch];
+    out[ch]=((a*(1-tx)+b*tx)*(1-ty)+(e*(1-tx)+f*tx)*ty)/255;
+  }
+  return out;
+}
+// M-world 点 Q → 屏幕归一化 uv + 视向深度
+function projUV(Q){
+  const c=S.cfg;
+  const px=dot(Q,c.right), py=dot(Q,c.up), dd=dot(Q,c.vd);
+  const sx=px*c.ppu+c.cx, sy=c.cy-py*c.ppu;
+  return [sx/c.bgW, sy/c.bgH, dd];
+}
+function fibSphere(n, upperOnly){
+  const dirs=[], ga=Math.PI*(3-Math.sqrt(5));
+  for(let i=0;i<n;i++){
+    let y = 1 - (i+0.5)/n*2;          // 1..-1
+    if(upperOnly) y = 1 - (i+0.5)/n;  // 1..0  (世界上半 = +Y)
+    const r=Math.sqrt(Math.max(0,1-y*y)), th=ga*i;
+    // 世界 up 是 [0,1,0]; 这里直接用世界轴(x,y,z 对应 M-world)
+    dirs.push([Math.cos(th)*r, y, Math.sin(th)*r]);
+  }
+  return dirs;
+}
+
+// ===================== 烘焙(光线追踪 march 深度面) =====================
+// 可分离 3D box blur(ch 通道,边界夹取)
+function box3(arr,ch,nx,ny,nk,r){
+  const idx=(i,j,k)=>((k*ny+j)*nx+i)*ch, tmp=new Float32Array(arr.length);
+  const pass=(ax)=>{
+    for(let k=0;k<nk;k++)for(let j=0;j<ny;j++)for(let i=0;i<nx;i++)for(let c=0;c<ch;c++){
+      let s=0,n=0;
+      for(let d=-r;d<=r;d++){
+        let ii=i,jj=j,kk=k;
+        if(ax===0){ii=i+d; if(ii<0||ii>=nx)continue;} else if(ax===1){jj=j+d; if(jj<0||jj>=ny)continue;} else {kk=k+d; if(kk<0||kk>=nk)continue;}
+        s+=arr[idx(ii,jj,kk)+c]; n++;
+      }
+      tmp[idx(i,j,k)+c]=s/n;
+    }
+    arr.set(tmp);
+  };
+  pass(0); pass(1); pass(2);
+}
+
+let baking=false;
+async function bake(){
+  if(!S.cfg||!S.depthScalar||baking) return;
+  baking=true; $('bBake').disabled=true;
+  const nx=clampInt('nx',2,200), ny=clampInt('ny',2,200), nk=clampInt('nk',1,40);
+  const RAYS=clampInt('rays',8,512), STEPS=clampInt('steps',8,256);
+  const maxH=parseFloat($('maxh').value)||0.55, skyI=parseFloat($('skyI').value)||1;
+  const aoR=Math.max(0.01,parseFloat($('aoR').value)||0.4), bounce=Math.max(0,parseFloat($('bounce').value)||0.3);
+  const upperOnly=$('upperOnly').checked, cosWeight=$('cosWeight').checked;
+  const dirs=fibSphere(RAYS,upperOnly);
+  const wts=dirs.map(D=>cosWeight?Math.max(0,D[1]):1); let wsum=0; for(const w of wts) wsum+=w; if(wsum<=0) wsum=1;
+  const c=S.cfg;
+  // march 距离:覆盖场景(用世界 quad 反算的 M-world 跨度估)
+  const corners=[reconstruct(0,0,floorDepthAt(0)),reconstruct(c.W,c.H,floorDepthAt(c.H)),
+                 reconstruct(c.W,0,floorDepthAt(0)),reconstruct(0,c.H,floorDepthAt(c.H))];
+  let span=0; for(const a of corners)for(const b of corners){const dx=a[0]-b[0],dy=a[1]-b[1],dz=a[2]-b[2];span=Math.max(span,Math.hypot(dx,dy,dz));}
+  const maxDist=span*1.3, stepLen=maxDist/STEPS, bias=Math.abs(c.scale)*0.012+1e-4;
+  const sky=S.sky, skyc=[sky[0]*skyI,sky[1]*skyI,sky[2]*skyI];
+
+  // ---- 辐射预滤波:bg 降采样成低频环境光(irradiance 只卷低频光照,丢掉砖/木板等反照率高频) ----
+  const preW=Math.max(6,Math.min(512,parseInt($('preW').value)||40));
+  const pbW=Math.max(6,Math.min(preW,S.bgW)), pbH=Math.max(4,Math.round(pbW*S.bgH/S.bgW));
+  const pcv=new OffscreenCanvas(pbW,pbH), pctx=pcv.getContext('2d');
+  pctx.imageSmoothingEnabled=true; pctx.imageSmoothingQuality='high'; pctx.drawImage(bgImg,0,0,pbW,pbH);
+  const radpx=pctx.getImageData(0,0,pbW,pbH).data;
+  const sampleRad=(u,v,out)=>{ u=u<0?0:u>1?1:u; v=v<0?0:v>1?1:v;
+    const fx=u*(pbW-1),fy=v*(pbH-1),x0=fx|0,y0=fy|0,x1=Math.min(pbW-1,x0+1),y1=Math.min(pbH-1,y0+1),tx=fx-x0,ty=fy-y0;
+    for(let ch=0;ch<3;ch++){const a=radpx[(y0*pbW+x0)*4+ch],b=radpx[(y0*pbW+x1)*4+ch],e=radpx[(y1*pbW+x0)*4+ch],f=radpx[(y1*pbW+x1)*4+ch];
+      out[ch]=((a*(1-tx)+b*tx)*(1-ty)+(e*(1-tx)+f*tx)*ty)/255;} return out; };
+
+  const vol=new Float32Array(nx*ny*nk*3);
+  const aovol=new Float32Array(nx*ny*nk);
+  const tmp=[0,0,0];
+  const t0=performance.now();
+
+  const total=nx*ny*nk; let done=0;
+  // 逐 (j) 行分块,保持 UI 不卡
+  for(let j=0;j<ny;j++){
+    const gy = ny>1 ? j/(ny-1)*c.H : c.H*0.5;
+    const fd = floorDepthAt(gy);
+    for(let i=0;i<nx;i++){
+      const gx = nx>1 ? i/(nx-1)*c.W : c.W*0.5;
+      const foot=reconstruct(gx,gy,fd);
+      for(let k=0;k<nk;k++){
+        const h = nk>1 ? k/(nk-1)*maxH : 0;
+        const C=[foot[0], foot[1]+h, foot[2]];   // 沿世界 up [0,1,0] 抬高
+        let rr=0,gg=0,bb=0,aoAcc=0;
+        for(let d=0;d<RAYS;d++){
+          const wt=wts[d]; if(wt<=0) continue;
+          const D=dirs[d];
+          // march 求首次命中距离 tHit(未命中=逃逸到天)
+          let tHit=Infinity, hR=0,hG=0,hB=0;
+          for(let s=1;s<=STEPS;s++){
+            const t=s*stepLen;
+            const Qx=C[0]+D[0]*t, Qy=C[1]+D[1]*t, Qz=C[2]+D[2]*t;
+            const px=Qx*c.right[0]+Qy*c.right[1]+Qz*c.right[2];
+            const py=Qx*c.up[0]+Qy*c.up[1]+Qz*c.up[2];
+            const dd=Qx*c.vd[0]+Qy*c.vd[1]+Qz*c.vd[2];
+            const u=(px*c.ppu+c.cx)/c.bgW, v=(c.cy-py*c.ppu)/c.bgH;
+            if(u<0||u>1||v<0||v>1) break;            // 出画 → 逃逸(开阔,看到天)
+            const sd=depthAtUV(u,v);
+            if(dd >= sd - bias){ tHit=t; sampleRad(u,v,tmp); hR=tmp[0];hG=tmp[1];hB=tmp[2]; break; } // 命中:取预滤波低频辐射
+          }
+          // 可见性(软距离 AO):无命中/远命中=看到天(vis→1);近命中=被遮挡(vis→0)
+          const vis = tHit>=aoR ? 1 : tHit/aoR;
+          // 该方向到达辐射 = 可见天光 + 被遮挡处的暗反弹(bounce≪1)
+          rr += (vis*skyc[0] + (1-vis)*hR*bounce)*wt;
+          gg += (vis*skyc[1] + (1-vis)*hG*bounce)*wt;
+          bb += (vis*skyc[2] + (1-vis)*hB*bounce)*wt;
+          aoAcc += vis*wt;
+        }
+        const o=((k*ny+j)*nx+i)*3, oa=(k*ny+j)*nx+i;
+        vol[o]=rr/wsum; vol[o+1]=gg/wsum; vol[o+2]=bb/wsum; aovol[oa]=aoAcc/wsum;
+      }
+      done+=nk;
+    }
+    $('prog').firstElementChild.style.width = (done/total*100).toFixed(0)+'%';
+    $('bakeStat').textContent = '烘焙中 '+(done/total*100|0)+'%';
+    await yieldTick();
+  }
+  // 体积后模糊(irradiance 本就低频;分离 3D box blur,顺手抹掉离散光线噪声)
+  const vb=Math.max(0,Math.min(4,parseInt($('volBlur').value)||0));
+  if(vb>0){ box3(vol,3,nx,ny,nk,vb); box3(aovol,1,nx,ny,nk,vb); }
+  S.vol=vol; S.ao=aovol; S.dims={nx,ny,nk}; S.maxH=maxH;
+  S.bakeMeta={rays:RAYS,steps:STEPS,upperOnly,cosWeight,maxH,skyI,aoR,bounce,preW,volBlur:vb};
+  const ms=(performance.now()-t0)|0;
+  $('prog').firstElementChild.style.width='100%';
+  $('bakeStat').textContent = `已烘焙 ${nx}×${ny}×${nk} · ${RAYS}线${cosWeight?' · cos':''}${upperOnly?' · 上半球':''} · ${ms}ms`;
+  baking=false; $('bBake').disabled=false; $('bExport').disabled=false;
+  drawSlices(); render();
+}
+
+// 三线性采样体积:游戏脚点 (gx,gy) + M-world 高度 h → rgb
+function sampleVolume(gx,gy,h,out){
+  const {nx,ny,nk}=S.dims, c=S.cfg, V=S.vol;
+  let fx=gx/c.W*(nx-1), fy=gy/c.H*(ny-1), fz=(S.maxH>0?h/S.maxH:0)*(nk-1);
+  fx=Math.min(nx-1,Math.max(0,fx)); fy=Math.min(ny-1,Math.max(0,fy)); fz=Math.min(nk-1,Math.max(0,fz));
+  const x0=fx|0,y0=fy|0,z0=fz|0,x1=Math.min(nx-1,x0+1),y1=Math.min(ny-1,y0+1),z1=Math.min(nk-1,z0+1);
+  const tx=fx-x0,ty=fy-y0,tz=fz-z0;
+  const at=(i,j,k,ch)=>V[((k*ny+j)*nx+i)*3+ch];
+  for(let ch=0;ch<3;ch++){
+    const c00=at(x0,y0,z0,ch)*(1-tx)+at(x1,y0,z0,ch)*tx, c10=at(x0,y1,z0,ch)*(1-tx)+at(x1,y1,z0,ch)*tx;
+    const c01=at(x0,y0,z1,ch)*(1-tx)+at(x1,y0,z1,ch)*tx, c11=at(x0,y1,z1,ch)*(1-tx)+at(x1,y1,z1,ch)*tx;
+    const c0=c00*(1-ty)+c10*ty, c1=c01*(1-ty)+c11*ty;
+    out[ch]=c0*(1-tz)+c1*tz;
+  }
+  return out;
+}
+// AO 标量(可见性/开阔度,1=开阔 0=封闭),三线性
+function sampleAO(gx,gy,h){
+  if(!S.ao) return 1;
+  const {nx,ny,nk}=S.dims, c=S.cfg, V=S.ao;
+  let fx=gx/c.W*(nx-1), fy=gy/c.H*(ny-1), fz=(S.maxH>0?h/S.maxH:0)*(nk-1);
+  fx=Math.min(nx-1,Math.max(0,fx)); fy=Math.min(ny-1,Math.max(0,fy)); fz=Math.min(nk-1,Math.max(0,fz));
+  const x0=fx|0,y0=fy|0,z0=fz|0,x1=Math.min(nx-1,x0+1),y1=Math.min(ny-1,y0+1),z1=Math.min(nk-1,z0+1);
+  const tx=fx-x0,ty=fy-y0,tz=fz-z0, at=(i,j,k)=>V[(k*ny+j)*nx+i];
+  const c00=at(x0,y0,z0)*(1-tx)+at(x1,y0,z0)*tx, c10=at(x0,y1,z0)*(1-tx)+at(x1,y1,z0)*tx;
+  const c01=at(x0,y0,z1)*(1-tx)+at(x1,y0,z1)*tx, c11=at(x0,y1,z1)*(1-tx)+at(x1,y1,z1)*tx;
+  return (c00*(1-ty)+c10*ty)*(1-tz)+(c01*(1-ty)+c11*ty)*tz;
+}
+
+// ===================== 预览渲染 =====================
+const view=$('view'), vctx=view.getContext('2d');
+let bgScale=1, bgImg=null;
+function fitBg(){
+  if(!bgImg) return;
+  const maxW=900; bgScale=Math.min(1,maxW/bgImg.width);
+  view.width=Math.round(bgImg.width*bgScale); view.height=Math.round(bgImg.height*bgScale);
+}
+function render(){
+  if(!bgImg){return;}
+  vctx.clearRect(0,0,view.width,view.height);
+  vctx.drawImage(bgImg,0,0,view.width,view.height);
+  if(!S.vol||!S.foot){ return; }
+  drawQuad();
+}
+const luma=c=>0.2126*c[0]+0.7152*c[1]+0.0722*c[2];
+function whiteBalance(base,amb,tone,out){
+  const l=Math.max(luma(amb),0.04);
+  const wb=[Math.min(1.7,Math.max(0.5,amb[0]/l)),Math.min(1.7,Math.max(0.5,amb[1]/l)),Math.min(1.7,Math.max(0.5,amb[2]/l))];
+  for(let i=0;i<3;i++) out[i]=base[i]*(1-tone + wb[i]*tone);
+  return out;
+}
+function drawQuad(){
+  const {gx,gy}=S.foot, c=S.cfg;
+  const footSx=gx*c.wtpX*bgScale, footSy=gy*c.wtpY*bgScale;
+  const W=+$('qw').value, H=+$('qh').value, HqM=+$('hqm').value, tone=+$('tone').value;
+  const mode=$('mode').value;
+  // 两份:左平涂(无 tone) 右体积着色
+  for(let side=0;side<2;side++){
+    const ox=Math.round(footSx + (side===0? -W-6 : 6));   // 并排:左 flat / 右 shaded
+    const oy=Math.round(footSy - H);
+    const img=vctx.createImageData(W,H);
+    const base=[0,0,0],amb=[0,0,0],col=[0,0,0];
+    for(let py=0;py<H;py++){
+      const v=py/(H-1);                 // 0 头 → 1 脚
+      const h=(1-v)*HqM;
+      for(let px=0;px<W;px++){
+        const u=px/(W-1);
+        // base:样片或灰片
+        let a=1;
+        if(S.spr){ const sx=Math.min(S.spr.w-1,(u*S.spr.w)|0), sy=Math.min(S.spr.h-1,(v*S.spr.h)|0); const si=(sy*S.spr.w+sx)*4;
+          base[0]=S.spr.data[si]/255; base[1]=S.spr.data[si+1]/255; base[2]=S.spr.data[si+2]/255; a=S.spr.data[si+3]/255;
+          if(a<0.02){ img.data[(py*W+px)*4+3]=0; continue; }
+        } else { base[0]=base[1]=base[2]=0.62; }
+        let o;
+        if(side===0){ o=base; }                          // flat
+        else if(mode==='ao'){ const a2=sampleAO(gx,gy,h); amb[0]=amb[1]=amb[2]=a2; o=amb; }
+        else { sampleVolume(gx,gy,h,amb); o = mode==='raw'? amb : whiteBalance(base,amb,tone,col); }
+        const di=(py*W+px)*4;
+        img.data[di]=Math.min(255,o[0]*255); img.data[di+1]=Math.min(255,o[1]*255); img.data[di+2]=Math.min(255,o[2]*255); img.data[di+3]=255*a;
+      }
+    }
+    vctx.putImageData(img,ox,oy);
+    vctx.fillStyle='rgba(0,0,0,.55)'; vctx.fillRect(ox,oy-15,W,14);
+    vctx.fillStyle='#cfe'; vctx.font='11px sans-serif'; vctx.fillText(side===0?'flat':(mode==='ao'?'AO':(mode==='raw'?'volume raw':'volume tint')),ox+3,oy-4);
+  }
+  // 脚点标记
+  vctx.strokeStyle='#ffcf4d'; vctx.beginPath(); vctx.arc(footSx,footSy,4,0,7); vctx.stroke();
+}
+function drawSlices(){
+  const host=$('slices'); host.innerHTML='';
+  if(!S.vol) return;
+  const {nx,ny,nk}=S.dims;
+  const addSlice=(name,fn)=>{
+    const cv=document.createElement('canvas'); cv.width=nx; cv.height=ny;
+    const ctx=cv.getContext('2d'), ix=ctx.createImageData(nx,ny);
+    for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){ const c=fn(i,j), di=(j*nx+i)*4;
+      ix.data[di]=Math.min(255,c[0]*255); ix.data[di+1]=Math.min(255,c[1]*255); ix.data[di+2]=Math.min(255,c[2]*255); ix.data[di+3]=255; }
+    ctx.putImageData(ix,0,0);
+    const fig=document.createElement('figure'); fig.appendChild(cv);
+    const cap=document.createElement('figcaption'); cap.textContent=name; fig.appendChild(cap); host.appendChild(fig);
+  };
+  const col=(k)=>(i,j)=>{ const o=((k*ny+j)*nx+i)*3; return [S.vol[o],S.vol[o+1],S.vol[o+2]]; };
+  const ao=(k)=>(i,j)=>{ const a=S.ao?S.ao[(k*ny+j)*nx+i]:1; return [a,a,a]; };
+  const mid=nk>2?(nk>>1):0;
+  addSlice('色·地面 k0', col(0)); addSlice('色·中层', col(mid)); addSlice('色·顶层', col(nk-1));
+  if(S.ao){ addSlice('AO·地面 k0', ao(0)); addSlice('AO·顶层', ao(nk-1)); }
+}
+
+// ===================== 载入 =====================
+function buildCfg(scene){
+  const dc=scene.depthConfig, dm=dc.depth_mapping, sh=dc.shader, M=dc.M, R=M.R;
+  return {
+    invert: dm.invert?1:0, scale:dm.scale, offset:dm.offset,
+    floorA:sh.floor_depth_A, floorB:sh.floor_depth_B,
+    ppu:M.ppu, cx:M.cx, cy:M.cy,
+    W:scene.worldWidth, H:scene.worldHeight ?? (scene.worldWidth*S.bgH/S.bgW),
+    bgW:S.bgW, bgH:S.bgH, wtpX:S.bgW/scene.worldWidth, wtpY:S.bgH/(scene.worldHeight ?? (scene.worldWidth*S.bgH/S.bgW)),
+    right:[R[0][0],R[1][0],R[2][0]], up:[R[0][1],R[1][1],R[2][1]], vd:[R[0][2],R[1][2],R[2][2]],
+  };
+}
+function decodeDepth(){
+  const c=S.cfg, n=S.dW*S.dH, out=new Float32Array(n), d=S._depthRGBA;
+  for(let i=0;i<n;i++){ const r=d[i*4],g=d[i*4+1]; let raw=(r*256+g)/65535; if(c.invert) raw=1-raw; out[i]=raw*c.scale+c.offset; }
+  S.depthScalar=out;
+}
+function computeSky(){ // 取最远 8% 深度像素的平均 bg 色作天光
+  const c=S.cfg, n=S.dW*S.dH;
+  // 阈值
+  const sampleN=Math.min(n,20000), stride=Math.max(1,(n/sampleN)|0), arr=[];
+  for(let i=0;i<n;i+=stride) arr.push(S.depthScalar[i]);
+  arr.sort((a,b)=>a-b); const thr=arr[(arr.length*0.92)|0];
+  let r=0,g=0,b=0,cnt=0,t=[0,0,0];
+  for(let i=0;i<n;i+=stride){ if(S.depthScalar[i]>=thr){ const u=(i%S.dW)/S.dW, v=((i/S.dW)|0)/S.dH; bgAtUV(u,v,t); r+=t[0];g+=t[1];b+=t[2];cnt++; } }
+  S.sky = cnt? [r/cnt,g/cnt,b/cnt] : [0.5,0.5,0.5];
+}
+function imgToData(img){
+  const cv=document.createElement('canvas'); cv.width=img.naturalWidth; cv.height=img.naturalHeight;
+  const x=cv.getContext('2d',{willReadFrequently:true}); x.drawImage(img,0,0);
+  return {w:cv.width,h:cv.height,data:x.getImageData(0,0,cv.width,cv.height).data};
+}
+function loadImg(src){ return new Promise((res,rej)=>{ const im=new Image(); im.crossOrigin='anonymous'; im.onload=()=>res(im); im.onerror=rej; im.src=src; }); }
+
+async function finalizeLoad(bg, depth, scene){
+  bgImg=bg; const bd=imgToData(bg); S.bgW=bd.w; S.bgH=bd.h; S.bgData=bd.data;
+  const dd=imgToData(depth); S.dW=dd.w; S.dH=dd.h; S._depthRGBA=dd.data;
+  S.cfg=buildCfg(scene); decodeDepth(); computeSky();
+  // 默认采样高度 ≈ 角色(150 世界单位)的 M-world 高
+  const r11=Math.abs(S.cfg.up[1])||1; const charHM=150*S.cfg.wtpY/(S.cfg.ppu*r11);
+  $('maxh').value=(charHM*1.1).toFixed(2); $('hqm').value=charHM.toFixed(2);
+  S.foot={gx:S.cfg.W*0.5, gy:S.cfg.H*0.72}; S.vol=null;
+  fitBg(); render();
+  $('loadMsg').innerHTML=`已载入 · bg ${S.bgW}×${S.bgH} · depth ${S.dW}×${S.dH} · world ${S.cfg.W|0}×${S.cfg.H|0} · 天光 rgb(${S.sky.map(x=>(x*255|0)).join(',')})`;
+  $('viewMsg').textContent='已载入。点「烘焙体积」后再点背景放角色。';
+  if(window.__fxOnLoad) window.__fxOnLoad();
+}
+async function loadByScene(base, id){
+  $('loadMsg').textContent='抓取中…';
+  try{
+    const scene=await (await fetch(`${base}/assets/scenes/${id}.json`)).json();
+    const dir=`${base}/resources/runtime/scenes/${id}`;
+    const bg=await loadImg(`${dir}/background.png`);
+    const depth=await loadImg(`${dir}/${scene.depthConfig.depth_map}`);
+    S.sceneId=id; await finalizeLoad(bg,depth,scene);
+    return true;
+  }catch(e){ $('loadMsg').innerHTML=`<span class="err">抓取失败:${e}</span>`; return false; }
+}
+
+// ===================== 导出 / 导入体积(为将来接游戏铺路 + 免重烘) =====================
+function f32b64(f32){ const u8=new Uint8Array(f32.buffer,f32.byteOffset,f32.byteLength); let s=''; const C=0x8000; for(let i=0;i<u8.length;i+=C) s+=String.fromCharCode.apply(null,u8.subarray(i,Math.min(u8.length,i+C))); return btoa(s); }
+function b64f32(b64){ const s=atob(b64); const u8=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u8[i]=s.charCodeAt(i); return new Float32Array(u8.buffer); }
+function buildExportObj(){
+  if(!S.vol) return null;
+  return { format:'lightvolume.v1', scene:S.sceneId||'manual', dims:S.dims,
+    world:{width:S.cfg.W,height:S.cfg.H}, maxH:S.maxH, sky:S.sky, bake:S.bakeMeta||{},
+    axis:'idx(i,j,k) -> gameX=i/(nx-1)*width, gameY=j/(ny-1)*height(地面), h=k/(nk-1)*maxH 沿世界 up[0,1,0]; data=RGB辐照度线性0..~1 flat=((k*ny+j)*nx+i)*3; ao=可见性0..1(1开阔) flat=(k*ny+j)*nx+i',
+    encoding:'float32-le-base64', data:f32b64(S.vol), ao: S.ao?f32b64(S.ao):null };
+}
+function exportVolume(){
+  const obj=buildExportObj(); if(!obj) return;
+  const blob=new Blob([JSON.stringify(obj)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`lightvol_${obj.scene}_${obj.dims.nx}x${obj.dims.ny}x${obj.dims.nk}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+function importParsed(obj){
+  if(!obj||obj.format!=='lightvolume.v1') throw new Error('格式不符(需 lightvolume.v1)');
+  S.vol=b64f32(obj.data); S.ao=obj.ao?b64f32(obj.ao):null; S.dims=obj.dims; S.maxH=obj.maxH; S.sky=obj.sky||S.sky; S.sceneId=obj.scene; S.bakeMeta=obj.bake||{};
+  if(!S.cfg) S.cfg={W:obj.world.width,H:obj.world.height}; else { S.cfg.W=obj.world.width; S.cfg.H=obj.world.height; }
+  $('bExport').disabled=false;
+  $('bakeStat').textContent=`已导入 ${S.dims.nx}×${S.dims.ny}×${S.dims.nk}`;
+  drawSlices(); render();
+}
+async function importVolume(file){ try{ importParsed(JSON.parse(await file.text())); $('loadMsg').innerHTML+='<br>已导入体积(无背景时只看切片/采样)。'; }catch(e){ alert('导入失败:'+e); } }
+
+// ===================== UI 接线 =====================
+function clampInt(id,lo,hi){ return Math.min(hi,Math.max(lo, parseInt($(id).value)||lo)); }
+const fileURL=f=>URL.createObjectURL(f);
+let pBg=null,pDepth=null,pCfg=null;
+async function tryManual(){
+  if(!(pBg&&pDepth&&pCfg)) return;
+  try{
+    const bg=await loadImg(fileURL(pBg)), depth=await loadImg(fileURL(pDepth));
+    const scene=JSON.parse(await pCfg.text());
+    if(!scene.depthConfig){ $('loadMsg').innerHTML='<span class="err">JSON 缺 depthConfig(请选场景 JSON,非 depthConfig 片段)</span>'; return; }
+    await finalizeLoad(bg,depth,scene);
+  }catch(e){ $('loadMsg').innerHTML=`<span class="err">载入失败:${e}</span>`; }
+}
+$('fBg').onchange=e=>{pBg=e.target.files[0]; tryManual();};
+$('fDepth').onchange=e=>{pDepth=e.target.files[0]; tryManual();};
+$('fCfg').onchange=async e=>{
+  pCfg=e.target.files[0]; if(!pCfg) return;
+  let scene;
+  try{ scene=JSON.parse(await pCfg.text()); }catch(err){ $('loadMsg').innerHTML='<span class="err">JSON 解析失败:'+err+'</span>'; return; }
+  if(!scene.depthConfig){ $('loadMsg').innerHTML='<span class="err">JSON 缺 depthConfig(请选场景 JSON,非片段)</span>'; return; }
+  // 有了 JSON 就能定位素材:id=场景 id 或文件名;素材在 resources/runtime/scenes/<id>/
+  const id=(scene.id||pCfg.name.replace(/\.json$/i,'')).trim();
+  const base=$('base').value.trim();
+  const dir=`${base}/resources/runtime/scenes/${id}`;
+  const bgFile=(scene.backgrounds&&scene.backgrounds[0]&&scene.backgrounds[0].image)||'background.png';
+  $('loadMsg').textContent='由 JSON 自动定位素材…';
+  try{
+    const bg=await loadImg(`${dir}/${bgFile}`), depth=await loadImg(`${dir}/${scene.depthConfig.depth_map}`);
+    S.sceneId=id; await finalizeLoad(bg,depth,scene);
+    $('loadMsg').innerHTML += `<br>已由 JSON 自动载入背景+深度(id=${id})。`;
+  }catch(err){
+    $('loadMsg').innerHTML=`已选场景 JSON,但自动抓素材失败(file:// 直开常见)。请展开下方手动补背景/深度 PNG,或用 <code>./dev.sh lightvol</code> 打开。`;
+    tryManual(); // 若用户已手动补了 bg/depth 就直接用
+  }
+};
+$('fSpr').onchange=async e=>{ const im=await loadImg(fileURL(e.target.files[0])); S.spr=imgToData(im); render(); };
+$('bFetch').onclick=()=>loadByScene($('base').value.trim(), $('sid').value.trim());
+$('bBake').onclick=bake;
+$('bExport').onclick=exportVolume;
+$('bImport').onclick=()=>$('fImport').click();
+$('fImport').onchange=e=>{ if(e.target.files[0]) importVolume(e.target.files[0]); };
+view.onclick=e=>{
+  if(!S.cfg) return;
+  const r=view.getBoundingClientRect();
+  const sx=(e.clientX-r.left)/bgScale, sy=(e.clientY-r.top)/bgScale; // bg px
+  S.foot={gx:sx/S.cfg.wtpX, gy:sy/S.cfg.wtpY}; render();
+};
+for(const id of ['qw','qh','hqm','tone','mode']) $(id).oninput=render;
+
+// 程序化 API(测试/高级用)
+window.LVL = {
+  S, loadByScene, bake, buildExportObj, exportVolume, importParsed, sampleVolume:(gx,gy,h)=>sampleVolume(gx,gy,h,[0,0,0]), sampleAO:(gx,gy,h)=>sampleAO(gx,gy,h),
+  aoStats(){ if(!S.ao) return null; let mn=9,mx=-9,sum=0; for(const x of S.ao){mn=Math.min(mn,x);mx=Math.max(mx,x);sum+=x;} return {min:+mn.toFixed(3),max:+mx.toFixed(3),mean:+(sum/S.ao.length).toFixed(3)}; },
+  volStats(){ if(!S.vol) return null; let mn=9,mx=-9,sum=0; for(const x of S.vol){mn=Math.min(mn,x);mx=Math.max(mx,x);sum+=x;} return {n:S.vol.length,min:+mn.toFixed(3),max:+mx.toFixed(3),mean:+(sum/S.vol.length).toFixed(3),dims:S.dims,sky:S.sky}; },
+  ready(){ return {loaded:!!S.cfg, baked:!!S.vol}; },
+};
+
+// 查询参数自动载入/烘焙:?base=&scene=&autobake=1
+(async function(){
+  const q=new URLSearchParams(location.search);
+  if(q.get('base')!==null) $('base').value=q.get('base');   // 始终应用 base,JSON-pick 自动找素材也要用
+  if(q.get('scene')){
+    $('sid').value=q.get('scene');
+    const ok=await loadByScene($('base').value, q.get('scene'));
+    if(ok && q.get('autobake')) await bake();
+  }
+})();
+</script>
+<script>
+// ===================== 环境 FX(WebGL2 统一后处理,全部可开关) =====================
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const cv=$('fx'); const gl=cv.getContext('webgl2',{antialias:false,premultipliedAlpha:false});
+if(!gl){ $('fxmsg').textContent='WebGL2 不可用,环境 FX 关闭'; return; }
+
+const VS=`#version 300 es
+out vec2 vUv; void main(){ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2)); vUv=p; gl_Position=vec4(p*2.-1.,0.,1.); }`;
+function prog(fs){ const c=(t,s)=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(sh));return sh;};
+  const p=gl.createProgram();gl.attachShader(p,c(gl.VERTEX_SHADER,VS));gl.attachShader(p,c(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p; }
+
+const NOISE=`float hash(vec2 p){p=fract(p*vec2(123.34,345.45));p+=dot(p,p+34.345);return fract(p.x*p.y);}
+float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vnoise(p);p*=2.;a*=.5;}return s;}`;
+const CAL=`uniform float uW,uH,uWtpX,uWtpY,uPpu,uCx,uCy,uInvert,uScale,uOffset,uFloorA,uFloorB;uniform vec3 uRight,uUp,uVd;
+float dDepth(sampler2D dm,vec2 iuv){vec4 ds=texture(dm,iuv);float raw=(ds.r*255.*256.+ds.g*255.)/65535.;float dr=uInvert>.5?1.-raw:raw;return dr*uScale+uOffset;}`;
+
+let COMP,SIM,STAMP,PAINT;
+try{
+COMP=prog(`#version 300 es
+precision highp float; in vec2 vUv; out vec4 o;
+uniform sampler2D uBg,uDepth,uFog,uFoot; uniform float uTime;
+${CAL}
+uniform float enHFog,enVFog,enGod,enPud,enSnow,enFoot;
+uniform vec3 uFogCol,uSnowCol,uSkyCol,uLightW; uniform vec2 uCharShow; uniform sampler2D uWet;
+uniform float uFogD,uFogH,uGodInt,uPudAmt,uPudRefl,uSnowAmt,uSnowUp,uRipple,uSsrDist,uShadowDist,uDbg,uReflMinH; uniform int uSsrSteps,uShadowSteps;
+${NOISE}
+void main(){
+  vec2 iuv=vec2(vUv.x,1.-vUv.y);
+  vec3 col=texture(uBg,iuv).rgb;
+  float sd=dDepth(uDepth,iuv);
+  float gy=iuv.y*uH, sy=gy*uWtpY, gx=iuv.x*uW, sx=gx*uWtpX;
+  float px=(sx-uCx)/uPpu, py=(uCy-sy)/uPpu;
+  vec3 P=uRight*px+uUp*py+uVd*sd; float height=P.y;
+  float fl=uFloorA*sy+uFloorB; float tol=0.08*abs(uScale)+1e-3;
+  float ground=1.-smoothstep(0.,tol,abs(sd-fl));
+  if(uDbg>1.5){ float hh=height-(uRight*px+uUp*py+uVd*fl).y; // 调试2:本像素相对地面高度场
+    o=vec4(clamp(hh*0.5+0.5,0.,1.), clamp(hh,0.,1.), clamp(-hh,0.,1.),1.); return; }
+  float wet = enPud>.5 ? clamp(texture(uWet,vUv).r*uPudAmt,0.,1.) : 0.;   // 手绘湿度 mask:画哪儿湿哪儿
+  if(wet>0.004){
+    // —— 平面水镜:解析"同列竖直镜像" ——
+    // 本相机 right=世界Z、反射视线 reflect(uVd,worldUp) 的 z=0 → 倒影严格落在同一屏幕列(right.y=0,数学证明精确)。
+    // 沿本列自下而上扫描源像素,重建其相对水面的高度 h;其镜像落点 sy_pred = sy_src + 2*up.y*ppu*h。
+    // 取第一个 h>0 且 sy_pred 覆盖到本水像素的源 = 倒影:天然竖直翻转、无竖纹、近反射体优先(=正确遮挡)。
+    float bgW=uW*uWtpX, bgH=uH*uWtpY;
+    float Yw=(uRight*px+uUp*py+uVd*fl).y;            // 水面世界高度(本列水面)
+    float k=2.0*uUp.y*uPpu;                          // 镜像竖直系数(px / 世界高)
+    float rstep=clamp(uSsrDist,1.,6.);               // 源行步长(px,越小越无缝)
+    float sySrc=sy; vec3 refl=uSkyCol; bool hit=false; float dbgSrc=-1.;
+    for(int s=1;s<=256;s++){ if(s>uSsrSteps) break;
+      sySrc-=rstep; if(sySrc<0.) break;             // 向上扫描(屏幕上方=世界更高)
+      float vSrc=sySrc/bgH;
+      float dS=dDepth(uDepth, vec2(iuv.x, vSrc));
+      float pyS=(uCy-sySrc)/uPpu;
+      float Sy=uUp.y*pyS + uVd.y*dS;                // 源像素世界高度(right.y=0,省略 px 项,精确)
+      float h=Sy-Yw;
+      if(h<=uReflMinH) continue;                    // 高于水面不足阈值=地面/噪声,非反射体,跳过(避免近自反射)
+      float syPred=sySrc + k*h;                     // 该源的镜像落到第几行
+      if(syPred>=sy){                                // 首个覆盖本水像素的反射体=最近反射体
+        float wob=(fbm(vec2(iuv.x*70., vSrc*40.+uTime*0.7))-0.5)*2.*uRipple*0.06; // 水波横向摇曳(平面镜的廉价涟漪近似)
+        refl=texture(uBg, vec2(clamp(iuv.x+wob,0.,1.), vSrc)).rgb; hit=true; dbgSrc=vSrc; break;
+      }
+    }
+    // 没命中反射体 → refl 保持 uSkyCol(水映天),绝不取最后一行垃圾
+    if(uDbg>0.5){ o = hit ? vec4(dbgSrc,1.,0.,1.) : vec4(0.,0.,1.,1.); return; } // 调试:R=源行 vSrc, G=命中, B=未命中
+    float fres=mix(0.5,1.0,pow(1.+uVd.y,3.));        // 掠射更镜面(-uVd.y≈0.59)
+    float reflW=clamp(uPudRefl*fres,0.,1.);
+    vec3 wetCol=mix(col*0.7, refl*1.06, reflW);      // 湿面略压暗 + 倒影
+    col=mix(col, wetCol, wet);
+  }
+  if(enSnow>.5){
+    vec3 n=normalize(cross(dFdx(P),dFdy(P))); float up=abs(n.y);
+    float cover=uSnowAmt*mix(ground*0.5,1.0,smoothstep(uSnowUp,1.0,up));
+    float fp=enFoot>.5?clamp(texture(uFoot,vUv).r,0.,1.):0.;
+    cover*=(1.-fp);
+    col=mix(col,uSnowCol,clamp(cover,0.,1.));
+    col*=1.-0.3*fp*step(0.5,enFoot);
+  }
+  // ---- 雾(高度 + 流体体积,按世界高度 profile 贴地)----
+  float bgW2=uW*uWtpX, bgH2=uH*uWtpY;
+  float floorY=(uRight*px+uUp*py+uVd*fl).y;
+  float prof=exp(-max(height-floorY,0.)*uFogH);          // 离地越高越稀
+  float df=clamp(sd*0.25,0.,4.);
+  float fog=0.;
+  if(enHFog>.5) fog += uFogD*prof;
+  if(enVFog>.5) fog += texture(uFog,vUv).b*1.3*prof;      // 流体密度(.b)带浓淡/打圈
+  fog=clamp(fog*(0.4+0.6*df),0.,1.);
+  // ---- 体积光 = 沿光向 march,逐步累计"被照亮的雾"(连续积分,不是二值遮挡):被几何挡住后段=阴影,停止累计 ----
+  // 连续光束来自累计而非单点 lit/0;步数越多越平滑(无雾则恒 0)
+  float shaft=0.;
+  if(enGod>.5 && fog>0.005){
+    float bias=0.05*abs(uScale)+1e-3; float stp=uShadowDist/float(uShadowSteps);
+    vec3 Q3=uRight*px+uUp*py+uVd*sd;
+    for(int i=1;i<=96;i++){ if(i>uShadowSteps) break;
+      Q3+=uLightW*stp;
+      float u=(dot(Q3,uRight)*uPpu+uCx)/bgW2, v=(uCy-dot(Q3,uUp)*uPpu)/bgH2;
+      if(u<0.||u>1.||v<0.||v>1.) break;                  // 到画外=见天,后段无遮挡,停止累计
+      if(dot(Q3,uVd) > dDepth(uDepth,vec2(u,v))+bias) break;  // 被几何挡=后段是影,停止
+      shaft += exp(-max(Q3.y-floorY,0.)*uFogH);          // 累计沿途(未被挡处)被照亮的雾量
+    }
+    shaft *= 0.05*fog;                                    // 归一 + 受本像素雾量调制(无雾无光)
+  }
+  col=mix(col,uFogCol,fog);
+  col+=uFogCol*shaft*uGodInt;
+  col=mix(col,vec3(1.,.85,.2),0.9*smoothstep(0.014,0.007,distance(vUv,uCharShow)));
+  o=vec4(col,1.);
+}`);
+SIM=prog(`#version 300 es
+precision highp float; in vec2 vUv; out vec4 o;
+uniform sampler2D uPrev,uDepth; uniform float uTime,uDt,uFlow,uDissip,uSrc,uCarveR,uVort; uniform vec2 uCharUv,uCharVel;
+${CAL}
+${NOISE}
+// RG=角色扰动速度场(*0.5+0.5 编码), B=雾密度
+// 双级域扭曲 curl-flow 环境流(打圈)+ fbm 浓淡 + 历史平流(动量/拖尾) + 角色"运动"注入的扰动尾迹
+void main(){
+  vec2 uv=vUv;
+  vec2 iuv=vec2(uv.x,1.-uv.y);
+  float sd=dDepth(uDepth,iuv); float fl=uFloorA*(iuv.y*uH*uWtpY)+uFloorB;
+  float ground=1.-smoothstep(0.,0.1*abs(uScale)+1e-3,abs(sd-fl));
+  // —— 角色扰动速度场:只有"动起来"(uCharVel≠0)才注入气流;静止 → 衰减回稳,不排雾 ——
+  vec2 dist=texture(uPrev,uv).xy*2.-1.;            // 解码上一帧扰动速度
+  dist=texture(uPrev, uv - dist*uDt*8.).xy*2.-1.;  // 沿自身速度自平流(尾迹会移动/扩散)
+  dist*=0.90;                                       // 衰减:角色停下,扰动几帧内消退,雾回到环境流
+  float dc=distance(uv,uCharUv);
+  float ker=exp(-dc*dc/max(uCarveR*uCarveR,1e-4)); // 角色周围高斯影响范围
+  dist += uCharVel*ker;                             // 沿运动方向推开气流(uCharVel=0 时无注入)
+  dist += vec2(-uCharVel.y,uCharVel.x)*ker*(0.5+uVort); // 垂直分量 → 身后卷出涡/打圈
+  // —— 环境雾:curl-flow 浓淡 + 平流;角色扰动叠加进平流位移 ——
+  float t=uTime*0.5*max(uFlow,0.1);
+  vec2 q=uv*3.0;
+  vec2 w1=vec2(fbm(q+vec2(t,1.7)), fbm(q+vec2(8.3,t*0.9)))-0.5;                 // 一级流场
+  vec2 w2=vec2(fbm(q*2.+w1*3.+vec2(0.,t*1.4)), fbm(q*2.+w1*3.+vec2(5.,-t*1.1)))-0.5; // 二级卷曲(打圈)
+  float target=fbm(q + w1*1.6 + w2*1.6*(0.4+uVort));                            // 浓淡 + 卷曲
+  target=smoothstep(0.42,0.9,target)*ground;                                    // 稀疏浓淡,只在地面
+  vec2 flow=w2*0.12*max(uFlow,0.1) + dist*2.0;                                   // 环境流 + 角色扰动流
+  float hist=texture(uPrev, uv - flow*uDt*30.).b * uDissip;                     // 平流历史(动量/拖尾)
+  float dens=max(hist*0.7, target);                                             // 历史保留 + 新生成
+  o=vec4(clamp(dist*0.5+0.5,0.,1.), clamp(dens,0.,1.), 1.);
+}`);
+STAMP=prog(`#version 300 es
+precision highp float; in vec2 vUv; out vec4 o; uniform vec2 uCharUv; uniform float uR;
+void main(){ float d=distance(vUv,uCharUv); o=vec4(exp(-d*d/(uR*uR))*0.7,0.,0.,1.); }`);
+PAINT=prog(`#version 300 es
+precision highp float; in vec2 vUv; out vec4 o; uniform vec2 uC; uniform float uR,uStr;
+void main(){ float d=distance(vUv,uC); o=vec4(uStr*exp(-d*d/(uR*uR)),0.,0.,1.); }`);
+}catch(e){ $('fxmsg').textContent='shader 编译失败: '+e; return; }
+
+function tex(){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE); return t; }
+function dataTex(w,h,data){ const t=tex(); gl.bindTexture(gl.TEXTURE_2D,t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,data); return t; }
+function rt(w,h){ const t=tex(); gl.bindTexture(gl.TEXTURE_2D,t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0); gl.bindFramebuffer(gl.FRAMEBUFFER,null); return {t,f,w,h}; }
+function clearRT(r){ gl.bindFramebuffer(gl.FRAMEBUFFER,r.f); gl.viewport(0,0,r.w,r.h); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); gl.bindFramebuffer(gl.FRAMEBUFFER,null); }
+
+let bgTex,depthTex,fog=[null,null],cur=0,foot=null,wet=null,SIMW=220,SIMH=140,ready=false;
+let charUv=[0.5,0.18], prevChar=[0.5,0.18], dragging=false, playing=true, time=0, last=0;
+
+function uplCalib(p){ const c=window.LVL.S.cfg, u=n=>gl.getUniformLocation(p,n);
+  gl.uniform1f(u('uW'),c.W); gl.uniform1f(u('uH'),c.H); gl.uniform1f(u('uWtpX'),c.wtpX); gl.uniform1f(u('uWtpY'),c.wtpY);
+  gl.uniform1f(u('uPpu'),c.ppu); gl.uniform1f(u('uCx'),c.cx); gl.uniform1f(u('uCy'),c.cy);
+  gl.uniform1f(u('uInvert'),c.invert); gl.uniform1f(u('uScale'),c.scale); gl.uniform1f(u('uOffset'),c.offset);
+  gl.uniform1f(u('uFloorA'),c.floorA); gl.uniform1f(u('uFloorB'),c.floorB);
+  gl.uniform3fv(u('uRight'),c.right); gl.uniform3fv(u('uUp'),c.up); gl.uniform3fv(u('uVd'),c.vd); }
+
+function initFromScene(){
+  const S=window.LVL.S; if(!S.cfg||!S.bgData||!S._depthRGBA){ $('fxmsg').textContent='请先在上面载入场景'; return; }
+  const sc=Math.min(1,900/S.bgW); cv.width=Math.round(S.bgW*sc); cv.height=Math.round(S.bgH*sc);
+  bgTex=dataTex(S.bgW,S.bgH,S.bgData); depthTex=dataTex(S.dW,S.dH,S._depthRGBA);
+  SIMH=Math.max(60,Math.round(SIMW*S.bgH/S.bgW));
+  fog=[rt(SIMW,SIMH),rt(SIMW,SIMH)];
+  for(const r of fog){ gl.bindFramebuffer(gl.FRAMEBUFFER,r.f); gl.viewport(0,0,r.w,r.h); gl.clearColor(0.5,0.5,0,1); gl.clear(gl.COLOR_BUFFER_BIT); } // 速度中性=0.5
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.clearColor(0,0,0,1);
+  foot=rt(cv.width,cv.height); clearRT(foot);
+  wet=rt(cv.width,cv.height); clearRT(wet);
+  ready=true; $('fxmsg').textContent='就绪。拖动=角色;切「拖动作用」为画积水可手绘水坑湿度。';
+}
+window.__fxOnLoad=initFromScene;
+
+const val=id=>parseFloat($(id).value), chk=id=>$(id).checked?1:0;
+function hex(id){ const h=$(id).value; return [parseInt(h.substr(1,2),16)/255,parseInt(h.substr(3,2),16)/255,parseInt(h.substr(5,2),16)/255]; }
+function bindTex(p,name,t,unit){ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t); gl.uniform1i(gl.getUniformLocation(p,name),unit); }
+
+function simStep(dt){
+  const dst=fog[cur^1], src=fog[cur];
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dst.f); gl.viewport(0,0,dst.w,dst.h);
+  gl.useProgram(SIM); uplCalib(SIM); bindTex(SIM,'uPrev',src.t,0); bindTex(SIM,'uDepth',depthTex,1);
+  const u=n=>gl.getUniformLocation(SIM,n);
+  gl.uniform1f(u('uTime'),time); gl.uniform1f(u('uDt'),Math.min(dt,0.05)); gl.uniform1f(u('uFlow'),val('pFlow'));
+  gl.uniform1f(u('uDissip'),0.985); gl.uniform1f(u('uSrc'),1.4); gl.uniform1f(u('uCarveR'),val('pCarve')); gl.uniform2fv(u('uCharUv'),charUv);
+  gl.uniform1f(u('uVort'),val('pVort'));
+  // 角色"运动速度"(本帧位移):静止=0 → 不注入扰动;移动越快注入越强
+  const cvx=(charUv[0]-prevChar[0])*7.0, cvy=(charUv[1]-prevChar[1])*7.0;
+  prevChar=[charUv[0],charUv[1]];
+  gl.uniform2f(u('uCharVel'),cvx,cvy);
+  gl.drawArrays(gl.TRIANGLES,0,3); cur^=1;
+}
+function stamp(){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,foot.f); gl.viewport(0,0,foot.w,foot.h);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.useProgram(STAMP);
+  gl.uniform2fv(gl.getUniformLocation(STAMP,'uCharUv'),charUv); gl.uniform1f(gl.getUniformLocation(STAMP,'uR'),0.012);
+  gl.drawArrays(gl.TRIANGLES,0,3); gl.disable(gl.BLEND); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+function composite(){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,cv.width,cv.height);
+  gl.useProgram(COMP); uplCalib(COMP);
+  bindTex(COMP,'uBg',bgTex,0); bindTex(COMP,'uDepth',depthTex,1); bindTex(COMP,'uFog',fog[cur].t,2); bindTex(COMP,'uFoot',foot.t,3); bindTex(COMP,'uWet',wet.t,4);
+  const u=n=>gl.getUniformLocation(COMP,n);
+  gl.uniform1f(u('uTime'),time);
+  gl.uniform1f(u('enHFog'),chk('enHFog')); gl.uniform1f(u('enVFog'),chk('enVFog')); gl.uniform1f(u('enGod'),chk('enGod'));
+  gl.uniform1f(u('enPud'),chk('enPud')); gl.uniform1f(u('enSnow'),chk('enSnow')); gl.uniform1f(u('enFoot'),chk('enFoot'));
+  gl.uniform3fv(u('uFogCol'),hex('pFogC')); gl.uniform3fv(u('uSnowCol'),hex('pSnowC'));
+  gl.uniform1f(u('uFogD'),val('pFogD')); gl.uniform1f(u('uFogH'),val('pFogH'));
+  gl.uniform1f(u('uGodInt'),val('pGod'));
+  { const az=val('pGodA')*Math.PI/180, el=val('pGodEl')*Math.PI/180, ce=Math.cos(el);
+    gl.uniform3f(u('uLightW'), ce*Math.cos(az), Math.sin(el), ce*Math.sin(az));
+    gl.uniform1i(u('uShadowSteps'),Math.round(val('pGodN'))); gl.uniform1f(u('uShadowDist'),val('pGodD')); }
+  gl.uniform1f(u('uDbg'), (window.__dbgRefl===true)?1:(+window.__dbgRefl||0));
+  gl.uniform1f(u('uReflMinH'), (window.__reflMinH!=null?window.__reflMinH:val('pReflH')));
+  gl.uniform1f(u('uPudAmt'),val('pPud')); gl.uniform1f(u('uPudRefl'),val('pPudR'));
+  gl.uniform1f(u('uRipple'),val('pRefl')); gl.uniform1f(u('uSsrDist'),val('pSsrD')); gl.uniform1i(u('uSsrSteps'),Math.round(val('pSsrN')));
+  gl.uniform3fv(u('uSkyCol'), window.LVL.S.sky||[0.5,0.5,0.5]);
+  gl.uniform1f(u('uSnowAmt'),val('pSnow')); gl.uniform1f(u('uSnowUp'),val('pSnowU')); gl.uniform2fv(u('uCharShow'),charUv);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+function frame(t){ requestAnimationFrame(frame); if(!ready) return;
+  const dt=last?Math.min(0.05,(t-last)/1000):0.016; last=t; if(playing) time+=dt;
+  if(chk('enVFog')&&playing) simStep(dt);
+  composite();
+  $('fxStat').textContent=`fog ${SIMW}×${SIMH} · ${Math.round(1/(dt||1))}fps`;
+}
+requestAnimationFrame(frame);
+
+function paintWet(erase){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,wet.f); gl.viewport(0,0,wet.w,wet.h);
+  gl.enable(gl.BLEND); gl.blendEquation(erase?gl.FUNC_REVERSE_SUBTRACT:gl.FUNC_ADD); gl.blendFunc(gl.ONE,gl.ONE);
+  gl.useProgram(PAINT); gl.uniform2fv(gl.getUniformLocation(PAINT,'uC'),charUv);
+  gl.uniform1f(gl.getUniformLocation(PAINT,'uR'),val('pBrush')); gl.uniform1f(gl.getUniformLocation(PAINT,'uStr'),0.5);
+  gl.drawArrays(gl.TRIANGLES,0,3); gl.disable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+function setCur(e){ const r=cv.getBoundingClientRect(); charUv=[(e.clientX-r.left)/r.width, 1-(e.clientY-r.top)/r.height]; }
+function onDrag(){ const m=$('pMode').value; if(m==='paint') paintWet(false); else if(m==='erase') paintWet(true); else if(chk('enFoot')) stamp(); }
+cv.addEventListener('pointerdown',e=>{dragging=true; setCur(e); onDrag();});
+cv.addEventListener('pointermove',e=>{ if(!dragging)return; setCur(e); onDrag(); });
+window.addEventListener('pointerup',()=>dragging=false);
+$('fxClearFoot').onclick=()=>{ if(foot) clearRT(foot); };
+$('fxClearWet').onclick=()=>{ if(wet) clearRT(wet); };
+$('fxPlay').onclick=()=>{ playing=!playing; };
+
+if(window.LVL && window.LVL.ready && window.LVL.ready().loaded) initFromScene();
+window.__FX={ initFromScene, setChar:(x,y)=>{charUv=[x,y];}, stamp, glErr:()=>gl.getError(), get ready(){return ready;},
+  paintAt(x,y,erase){ charUv=[x,y]; paintWet(!!erase); }, clearWet(){ if(wet) clearRT(wet); },
+  step(n){ for(let i=0;i<(n||1);i++){ if(playing) time+=0.016; if(chk('enVFog')&&playing) simStep(0.016); } composite(); },
+  readRGB(nx,ny){ composite(); const p=new Uint8Array(4); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.readPixels(Math.round(nx*cv.width), Math.round((1-ny)*cv.height), 1,1, gl.RGBA, gl.UNSIGNED_BYTE, p); return [p[0],p[1],p[2]]; },
+  fogAt(nx,ny){ const f=fog[cur]; const p=new Uint8Array(4); gl.bindFramebuffer(gl.FRAMEBUFFER,f.f);
+    gl.readPixels(Math.round(nx*f.w), Math.round(ny*f.h), 1,1, gl.RGBA, gl.UNSIGNED_BYTE, p); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    return { velX:(p[0]/255-0.5)*2, velY:(p[1]/255-0.5)*2, dens:p[2]/255 }; },
+  dbg(v){ window.__dbgRefl=(v===true)?1:(+v||0); },
+  raw(nx,ny){ composite(); const p=new Uint8Array(4); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.readPixels(Math.round(nx*cv.width), Math.round((1-ny)*cv.height), 1,1, gl.RGBA, gl.UNSIGNED_BYTE, p); return [p[0],p[1],p[2],p[3]]; },
+  moveTo(x,y,steps){ // 模拟"移动"角色:每步推进一点,产生运动速度
+    steps=steps||8; const sx=charUv[0],sy=charUv[1];
+    for(let i=1;i<=steps;i++){ charUv=[sx+(x-sx)*i/steps, sy+(y-sy)*i/steps]; if(chk('enVFog')&&playing){ time+=0.016; simStep(0.016);} } } };
+})();
+</script>
+</body>
+</html>

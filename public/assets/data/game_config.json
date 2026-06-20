@@ -17,6 +17,41 @@
   },
   "entityPixelDensityMatch": true,
   "entityPixelDensityMatchBlurScale": 0.25,
+  "entityLighting": {
+    "enabled": true,
+    "shadowMode": "real",
+    "toneEnabled": true,
+    "defaultLightEnv": {
+      "key": {
+        "azimuthDeg": 125,
+        "elevationDeg": 55,
+        "color": [
+          1.0,
+          0.97,
+          0.92
+        ],
+        "intensity": 1.0
+      },
+      "ambient": {
+        "color": [
+          0.55,
+          0.6,
+          0.72
+        ],
+        "intensity": 1.0
+      },
+      "shadow": {
+        "enabled": true,
+        "darkness": 0.45,
+        "softness": 1.0
+      },
+      "toneStrength": 0.45,
+      "ao": {
+        "contact": 0.45,
+        "form": 0.25
+      }
+    }
+  },
   "playerAvatar": {
     "animManifest": "/resources/runtime/animation/player_anim/anim.json",
     "stateMap": {

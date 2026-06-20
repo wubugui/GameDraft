@@ -77,7 +77,7 @@ class FlagValueEdit(QWidget):
 
         self._line = QLineEdit()
         self._line.setPlaceholderText("字符串")
-        self._line.setMinimumWidth(120)
+        self._line.setMinimumWidth(80)
         self._line.textChanged.connect(lambda *_: self.valueChanged.emit())
 
         lay.addWidget(self._bool_combo)

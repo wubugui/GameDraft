@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
 from ..project_model import ProjectModel
 from .image_path_picker import disk_path_for_runtime_url
 
-# 参考「屏」比例 16:9；宽度占表单一列，高度随比例
-PREVIEW_W = 420
+# 参考「屏」比例 16:9；预览是辅助查看面板，取较小尺寸（百分比相对 PREVIEW_W，缩放等比）
+PREVIEW_W = 320
 PREVIEW_H = int(round(PREVIEW_W * 9 / 16))
 DEBOUNCE_MS = 220
 MAX_PREVIEW_DELAY_MS = 6000
@@ -80,9 +80,10 @@ class BlendOverlayPreviewWidget(QWidget):
         self._pending_blend_ms = 1000
         self._cap_note = ""
 
-        self._status = QLabel("调整参数后自动刷新构图；「播放过渡」按 delay/duration 预览（过长已截断）。")
+        self._status = QLabel("调整参数后自动刷新构图。")
         self._status.setWordWrap(True)
         self._status.setStyleSheet("color:#888;font-size:11px;")
+        self._status.setToolTip("「播放过渡」按 delay/duration 预览动画（过长已截断）。")
 
         btn_row = QHBoxLayout()
         self._btn_play = QPushButton("播放过渡")

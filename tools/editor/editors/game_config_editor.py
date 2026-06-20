@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel,
-    QTableWidget, QHeaderView, QSpinBox, QGroupBox, QCheckBox,
+    QTableWidget, QHeaderView, QSpinBox, QCheckBox,
 )
 
 from ..project_model import ProjectModel
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
+from ..shared.form_layout import compact_form
+from ..shared.collapsible_section import CollapsibleSection
 
 
 def _make_size_row(label: str) -> tuple[QHBoxLayout, QCheckBox, QSpinBox, QSpinBox]:
@@ -42,7 +44,7 @@ class GameConfigEditor(QWidget):
         self._model = model
 
         lay = QVBoxLayout(self)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
 
         self._initial_scene = IdRefSelector(allow_empty=True, editable=True)
         self._initial_scene.set_items([(s, s) for s in model.all_scene_ids()])
@@ -61,13 +63,15 @@ class GameConfigEditor(QWidget):
         f.addRow("initialCutscene", self._initial_cutscene)
 
         self._cutscene_flag = FlagKeyPickField(model, None, "", self)
-        self._cutscene_flag.setMinimumWidth(320)
+        self._cutscene_flag.setMinimumWidth(200)
         f.addRow("initialCutsceneDoneFlag", self._cutscene_flag)
         lay.addLayout(f)
 
         # -- Display settings ---------------------------------------------------
-        disp_box = QGroupBox("Display")
-        disp_lay = QVBoxLayout(disp_box)
+        disp_section = CollapsibleSection("Display（分辨率/窗口）", start_open=False)
+        disp_inner = QWidget()
+        disp_lay = QVBoxLayout(disp_inner)
+        disp_lay.setContentsMargins(0, 0, 0, 0)
 
         vp_row, self._vp_chk, self._vp_w, self._vp_h = _make_size_row("Viewport")
         self._vp_w.setValue(1280)
@@ -86,14 +90,17 @@ class GameConfigEditor(QWidget):
         )
         disp_lay.addLayout(ws_row)
 
-        lay.addWidget(disp_box)
+        disp_section.add_body(disp_inner)
+        lay.addWidget(disp_section)
 
         # -- Startup flags ------------------------------------------------------
         lay.addWidget(QLabel("<b>startupFlags</b>"))
         self._flags_table = QTableWidget(0, 2)
         self._flags_table.setHorizontalHeaderLabels(["key", "value"])
-        self._flags_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._flags_table.setMinimumHeight(120)
+        _flags_header = self._flags_table.horizontalHeader()
+        _flags_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        _flags_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self._flags_table.setMinimumHeight(70)
         lay.addWidget(self._flags_table)
         flag_btns = QHBoxLayout()
         add_flag = QPushButton("+ Flag"); add_flag.clicked.connect(self._add_flag)

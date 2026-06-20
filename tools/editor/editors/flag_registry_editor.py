@@ -38,7 +38,7 @@ class FlagRegistryEditor(QWidget):
 
         splitter.addWidget(left)
         splitter.addWidget(right)
-        splitter.setSizes([500, 500])
+        splitter.setSizes([620, 380])
         root.addWidget(splitter)
 
         self._refresh_static()

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QGroupBox, QStyle,
 )
 
+from ..shared.form_layout import compact_form
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 
 
@@ -47,14 +48,17 @@ class PaperCraftEditor(QWidget):
         body.addLayout(right, 1)
 
         order_box = QGroupBox("订单")
-        order_form = QFormLayout(order_box)
+        order_form = compact_form(QFormLayout(order_box))
         self.order_combo = QComboBox()
         self.order_combo.currentIndexChanged.connect(self._select_order)
         order_form.addRow("", self._crud_row(self._add_order, self._remove_order))
         self.order_title = QLineEdit()
+        self.order_title.setMinimumWidth(240)
         self.order_title.editingFinished.connect(self._write_order)
         self.order_desc = QTextEdit()
-        self.order_desc.setFixedHeight(82)
+        self.order_desc.setMinimumWidth(240)
+        self.order_desc.setMinimumHeight(56)
+        self.order_desc.setMaximumHeight(140)
         self.order_desc.textChanged.connect(self._write_order)
         self.correct_paper_combo = QComboBox()
         self.correct_paper_combo.currentTextChanged.connect(self._write_order)
@@ -73,7 +77,7 @@ class PaperCraftEditor(QWidget):
         left.addWidget(order_box)
 
         part_box = QGroupBox("部件")
-        part_form = QFormLayout(part_box)
+        part_form = compact_form(QFormLayout(part_box))
         self.part_combo = QComboBox()
         self.part_combo.currentIndexChanged.connect(self._select_part)
         part_form.addRow("", self._crud_row(self._add_part, self._remove_part))
@@ -84,6 +88,7 @@ class PaperCraftEditor(QWidget):
         self.part_score.valueChanged.connect(self._write_part)
         self.part_tags = QLineEdit()
         self.part_tags.setPlaceholderText("逗号分隔，如：点眼犯忌, 红白相冲")
+        self.part_tags.setMinimumWidth(240)
         self.part_tags.editingFinished.connect(self._write_part)
         part_form.addRow("部件", self.part_combo)
         part_form.addRow("显示名", self.part_label)
@@ -92,7 +97,7 @@ class PaperCraftEditor(QWidget):
         left.addWidget(part_box)
 
         slot_box = QGroupBox("槽位")
-        slot_form = QFormLayout(slot_box)
+        slot_form = compact_form(QFormLayout(slot_box))
         self.slot_combo = QComboBox()
         self.slot_combo.currentIndexChanged.connect(self._select_slot)
         slot_form.addRow("", self._crud_row(self._add_slot, self._remove_slot))
@@ -107,7 +112,7 @@ class PaperCraftEditor(QWidget):
         for sp in (self.slot_x, self.slot_y, self.slot_w, self.slot_h):
             sp.valueChanged.connect(self._write_slot)
         self.accepts_list = QListWidget()
-        self.accepts_list.setMinimumHeight(170)
+        self.accepts_list.setMinimumHeight(120)
         self.accepts_list.itemChanged.connect(self._write_slot_accepts)
         slot_form.addRow("槽位", self.slot_combo)
         slot_form.addRow("显示名", self.slot_label)
@@ -120,7 +125,7 @@ class PaperCraftEditor(QWidget):
         right.addWidget(slot_box, 1)
 
         paper_box = QGroupBox("纸色")
-        paper_form = QFormLayout(paper_box)
+        paper_form = compact_form(QFormLayout(paper_box))
         self.paper_combo = QComboBox()
         self.paper_combo.currentIndexChanged.connect(self._select_paper)
         paper_form.addRow("", self._crud_row(self._add_paper, self._remove_paper))
@@ -135,7 +140,7 @@ class PaperCraftEditor(QWidget):
         right.addWidget(paper_box)
 
         finish_box = QGroupBox("收尾")
-        finish_form = QFormLayout(finish_box)
+        finish_form = compact_form(QFormLayout(finish_box))
         self.finish_combo = QComboBox()
         self.finish_combo.currentIndexChanged.connect(self._select_finish)
         finish_form.addRow("", self._crud_row(self._add_finish, self._remove_finish))
@@ -145,6 +150,7 @@ class PaperCraftEditor(QWidget):
         self.finish_score.setRange(-999, 999)
         self.finish_score.valueChanged.connect(self._write_finish)
         self.finish_tags = QLineEdit()
+        self.finish_tags.setMinimumWidth(240)
         self.finish_tags.editingFinished.connect(self._write_finish)
         finish_form.addRow("方式", self.finish_combo)
         finish_form.addRow("显示名", self.finish_label)

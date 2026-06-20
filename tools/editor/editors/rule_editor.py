@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 
@@ -46,7 +47,7 @@ class RuleEditor(QWidget):
         link_box = QGroupBox("本规矩的碎片（双击跳转编辑）")
         link_lay = QVBoxLayout(link_box)
         self._rule_frag_list = QListWidget()
-        self._rule_frag_list.setMaximumHeight(140)
+        self._rule_frag_list.setMinimumHeight(100)
         self._rule_frag_list.itemDoubleClicked.connect(self._on_rule_frag_sidebar_activated)
         link_lay.addWidget(self._rule_frag_list)
         btn_frag_row = QHBoxLayout()
@@ -62,7 +63,7 @@ class RuleEditor(QWidget):
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         detail = QWidget()
-        f = QFormLayout(detail)
+        f = compact_form(QFormLayout(detail))
         self._r_id = QLineEdit(); f.addRow("id", self._r_id)
         self._r_name = RichTextLineEdit(self._model); f.addRow("name", self._r_name)
         self._r_iname = RichTextLineEdit(self._model); f.addRow("incompleteName", self._r_iname)
@@ -72,7 +73,7 @@ class RuleEditor(QWidget):
         self._layer_edits: dict[str, tuple[RichTextTextEdit, RichTextLineEdit, QComboBox]] = {}
         for lk, title in (("xiang", "象"), ("li", "理"), ("shu", "术")):
             gb = QGroupBox(f"层：{title}")
-            gl = QFormLayout(gb)
+            gl = compact_form(QFormLayout(gb))
             te = RichTextTextEdit(self._model)
             te.setMaximumHeight(100)
             hi = RichTextLineEdit(self._model)
@@ -319,9 +320,11 @@ class RuleEditor(QWidget):
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         detail = QWidget()
-        f = QFormLayout(detail)
+        f = compact_form(QFormLayout(detail))
         self._f_id = QLineEdit(); f.addRow("id", self._f_id)
-        self._f_text = RichTextTextEdit(self._model); self._f_text.setMaximumHeight(100)
+        self._f_text = RichTextTextEdit(self._model)
+        self._f_text.setMinimumHeight(72)
+        self._f_text.setMaximumHeight(180)
         f.addRow("text", self._f_text)
         self._f_rule_display = QLineEdit()
         self._f_rule_display.setReadOnly(True)

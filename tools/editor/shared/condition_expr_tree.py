@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .rich_text_field import RichTextLineEdit
+from .form_layout import compact_form
 
 # 与 narrative_data_editors /运行时一致
 _SCENARIO_STATUSES = ("pending", "active", "done", "locked")
@@ -245,7 +246,7 @@ class ConditionExprNodeEditor(QWidget):
             self._sync_flag_value_widgets_visibility()
         elif kind == "quest":
             qw = QWidget()
-            qf = QFormLayout(qw)
+            qf = compact_form(QFormLayout(qw))
             self._q_id = QLineEdit()
             self._q_id.setPlaceholderText("quest id")
             self._q_id.textChanged.connect(lambda: self.changed.emit())
@@ -259,7 +260,7 @@ class ConditionExprNodeEditor(QWidget):
             self._body.addWidget(qw)
         elif kind == "scenario":
             sw = QWidget()
-            sf = QFormLayout(sw)
+            sf = compact_form(QFormLayout(sw))
             self._sc_id = QComboBox()
             self._sc_id.setEditable(False)
             self._sc_id.currentIndexChanged.connect(self._on_scenario_combo)
@@ -282,7 +283,7 @@ class ConditionExprNodeEditor(QWidget):
             self._fill_scenario_combos()
         elif kind == "scenarioLine":
             lw = QWidget()
-            lf = QFormLayout(lw)
+            lf = compact_form(QFormLayout(lw))
             self._sl_id = QComboBox()
             self._sl_id.setEditable(False)
             self._sl_id.currentIndexChanged.connect(lambda _i: self.changed.emit())
@@ -297,7 +298,7 @@ class ConditionExprNodeEditor(QWidget):
             self._fill_scenario_line_combo()
         elif kind == "narrative":
             nw = QWidget()
-            nf = QFormLayout(nw)
+            nf = compact_form(QFormLayout(nw))
             self._nv_graph = QComboBox()
             self._nv_graph.setEditable(False)
             self._nv_graph.currentIndexChanged.connect(self._on_narrative_graph_combo)

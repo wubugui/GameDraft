@@ -101,6 +101,8 @@ from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .blend_overlay_preview import BlendOverlayPreviewWidget
+from .collapsible_section import CollapsibleSection
+from .form_layout import compact_form
 from .image_path_picker import CutsceneImagePathRow
 from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
 from .scripted_lines_editor import ScriptedLinesEditor
@@ -1267,7 +1269,8 @@ class RuleSlotsParamEditor(QWidget):
         rm.setToolTip("删除")
         bl.addWidget(QLabel("resultText"))
         tx = QTextEdit()
-        tx.setMaximumHeight(80)
+        tx.setMinimumHeight(56)
+        tx.setMaximumHeight(140)
         tx.setPlainText(str(data.get("resultText", "")))
         tx.textChanged.connect(lambda: self.changed.emit())
         bl.addWidget(tx)
@@ -1558,7 +1561,11 @@ class ActionRow(QWidget):
 
         self._params_frame = QFrame(self._foldable_body)
         self._params_layout = QFormLayout(self._params_frame)
-        self._params_layout.setContentsMargins(20, 0, 0, 0)
+        # 字段按内容宽度排布：短参数（数字/枚举/复选框）不再被拉满整行。
+        self._params_layout.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint,
+        )
+        self._params_layout.setContentsMargins(12, 0, 0, 0)
         self._foldable_layout.addWidget(self._params_frame)
         outer.addWidget(self._foldable_body)
         self._foldable_body.setVisible(False)
@@ -2188,7 +2195,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow("fieldName", field_combo)
 
             value_frame = QFrame(self)
-            value_layout = QFormLayout(value_frame)
+            value_layout = compact_form(QFormLayout(value_frame))
             value_layout.setContentsMargins(0, 0, 0, 0)
             self._param_widgets["_valueFrame"] = value_frame
             self._params_layout.addRow("value", value_frame)
@@ -2999,7 +3006,10 @@ class ActionRow(QWidget):
             self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
 
             bprev = BlendOverlayPreviewWidget(self._ctx_model, self._blend_preview_params, self)
-            self._params_layout.addRow("过渡预览（Qt 近似）", bprev)
+            # 预览是辅助查看面板，默认折叠，避免常驻占大块固定区域。
+            _bprev_sec = CollapsibleSection("过渡预览（Qt 近似）", start_open=False)
+            _bprev_sec.add_body(bprev)
+            self._params_layout.addRow(_bprev_sec)
             from_row.changed.connect(bprev.schedule_refresh)
             to_row.changed.connect(bprev.schedule_refresh)
             dur.valueChanged.connect(bprev.schedule_refresh)

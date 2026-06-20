@@ -12,6 +12,8 @@ export class Renderer {
   public app: Application;
   public worldContainer: Container;
   public backgroundLayer: Container;
+  /** 投影阴影层：世界单位，位于背景之上、实体之下 */
+  public shadowLayer: Container;
   public entityLayer: Container;
   /** 演出用覆盖层：图片、电影黑边等，位于世界之上、UI之下 */
   public cutsceneOverlay: Container;
@@ -35,6 +37,7 @@ export class Renderer {
     this.app = new Application();
     this.worldContainer = new Container();
     this.backgroundLayer = new Container();
+    this.shadowLayer = new Container();
     this.entityLayer = new Container();
     this.cutsceneOverlay = new Container();
     this.uiLayer = new Container();
@@ -61,6 +64,7 @@ export class Renderer {
     else document.body.appendChild(canvas);
 
     this.worldContainer.addChild(this.backgroundLayer);
+    this.worldContainer.addChild(this.shadowLayer);
     this.entityLayer.sortableChildren = true;
     this.worldContainer.addChild(this.entityLayer);
 

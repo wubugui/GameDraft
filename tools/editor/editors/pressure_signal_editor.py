@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..shared.action_editor import ActionEditor
+from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextLineEdit
 
 
@@ -106,12 +107,14 @@ class PressureHoldEditor(QWidget):
 
         right_host = QWidget()
         rl = QVBoxLayout(right_host)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._f_id = QLineEdit()
         f.addRow("id", self._f_id)
         self._f_prompt = RichTextLineEdit(self._model)
+        self._f_prompt.setMinimumWidth(240)
         f.addRow("prompt（引导文案）", self._f_prompt)
         self._f_release = RichTextLineEdit(self._model)
+        self._f_release.setMinimumWidth(240)
         f.addRow("releaseHint（松手闪现）", self._f_release)
         self._f_fill = QDoubleSpinBox()
         self._f_fill.setRange(0.1, 120.0)
@@ -287,10 +290,11 @@ class SignalCueEditor(QWidget):
 
         right_host = QWidget()
         rl = QVBoxLayout(right_host)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._f_id = QLineEdit()
         f.addRow("id", self._f_id)
         self._f_desc = QLineEdit()
+        self._f_desc.setMinimumWidth(240)
         f.addRow("description（策划备注）", self._f_desc)
         rl.addLayout(f)
         self._actions = ActionEditor("Cue 表现序列 (actions)")

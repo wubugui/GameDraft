@@ -15,6 +15,7 @@ from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.collapsible_section import CollapsibleSection
+from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from .quest_graph_scene import QuestGraphScene
 from .quest_graph_items import QuestGroupItem, QuestNodeItem
@@ -361,7 +362,7 @@ class QuestEditor(QWidget):
         splitter.addWidget(left)
         splitter.addWidget(center)
         splitter.addWidget(self._prop_scroll)
-        splitter.setSizes([220, 500, 380])
+        splitter.setSizes([220, 520, 300])
         root.addWidget(splitter)
 
         self._graph_view.node_clicked.connect(self._on_graph_node_selected)
@@ -377,7 +378,7 @@ class QuestEditor(QWidget):
         gl = QVBoxLayout(self._grp_frame)
 
         grp_basic = QWidget()
-        f = QFormLayout(grp_basic)
+        f = compact_form(QFormLayout(grp_basic))
         self._g_id = QLineEdit()
         f.addRow("id", self._g_id)
         self._g_name = RichTextLineEdit(self._model)
@@ -404,7 +405,7 @@ class QuestEditor(QWidget):
         ql = QVBoxLayout(self._quest_frame)
 
         q_basic = QWidget()
-        f = QFormLayout(q_basic)
+        f = compact_form(QFormLayout(q_basic))
         self._q_id = QLineEdit()
         f.addRow("id", self._q_id)
         self._q_group = IdRefSelector(allow_empty=False, editable=False, click_opens_popup=True)
@@ -418,7 +419,8 @@ class QuestEditor(QWidget):
         self._q_title = RichTextLineEdit(self._model)
         f.addRow("title", self._q_title)
         self._q_desc = RichTextTextEdit(self._model)
-        self._q_desc.setMaximumHeight(100)
+        self._q_desc.setMinimumHeight(72)
+        self._q_desc.setMaximumHeight(180)
         f.addRow("description", self._q_desc)
         sec_q_basic = CollapsibleSection("任务 · 基本信息", start_open=True)
         sec_q_basic.add_body(q_basic)

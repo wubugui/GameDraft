@@ -34,6 +34,8 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..scenarios_catalog_validate import validate_scenarios_list
+from ..shared.collapsible_section import CollapsibleSection
+from ..shared.form_layout import compact_form
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
 from ..shared.id_ref_selector import IdRefSelector
@@ -191,12 +193,16 @@ class ScenarioRequiresExprEdit(QWidget):
         dlg.setWindowTitle("requires JSON")
         dlg.resize(520, 320)
         root = QVBoxLayout(dlg)
-        tip = QLabel(
-            "对象仅允许单键 all / any / not；叶子为 phase 名字符串（语义为该 phase 已为 done）。",
-        )
+        tip = QLabel("requires 表达式 JSON")
         tip.setWordWrap(True)
         root.addWidget(tip)
         te = QPlainTextEdit()
+        te.setPlaceholderText(
+            "对象仅允许单键 all / any / not；叶子为 phase 名字符串（语义为该 phase 已为 done）。",
+        )
+        te.setToolTip(
+            "对象仅允许单键 all / any / not；叶子为 phase 名字符串（语义为该 phase 已为 done）。",
+        )
         te.setPlainText(self._json_doc)
         root.addWidget(te)
         bb = QDialogButtonBox(
@@ -320,14 +326,14 @@ class ScenariosCatalogEditor(QWidget):
         self._loading_ui = False
 
         root = QVBoxLayout(self)
-        tip = QLabel(
-            "scenarioId、exposes 的 flag 须从清单选择；requires 叶子为 phase 名（语义为该 phase 已为 done）。"
+        tip = QLabel("scenarios.json：scenarioId / exposes flag 须从清单选择；requires 叶子为 phase 名（须已 done）。")
+        tip.setWordWrap(True)
+        tip.setToolTip(
             "与/或可用表单多选；含非或嵌套请用 JSON 模式。"
             "phase 名称与 description 可手写。status 仅四种枚举。Apply 写入内存；保存工程写入 data/scenarios.json。"
             "图对话 setScenarioPhase、scenario 条件须与本页一致。"
             "若勾选整条线手动生命周期，须在游戏中用 activateScenario / completeScenario 包住 phase 推进。"
         )
-        tip.setWordWrap(True)
         root.addWidget(tip)
 
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -352,7 +358,7 @@ class ScenariosCatalogEditor(QWidget):
         self._detail_form_host = right_host
         rfl = QVBoxLayout(right_host)
 
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         self._f_id_row = QWidget()
         _idl = QHBoxLayout(self._f_id_row)
         _idl.setContentsMargins(0, 0, 0, 0)
@@ -416,7 +422,7 @@ class ScenariosCatalogEditor(QWidget):
         )
         dg_l = QVBoxLayout(dg_g)
         self._lw_linked_graphs = QListWidget()
-        self._lw_linked_graphs.setMinimumHeight(100)
+        self._lw_linked_graphs.setMinimumHeight(70)
         self._lw_linked_graphs.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection,
         )
@@ -1139,12 +1145,12 @@ class DocumentRevealsEditor(QWidget):
         self._reveals: list[dict] = []
 
         root = QVBoxLayout(self)
-        tip = QLabel(
-            "条目 id、任务条件 quest、revealedFlag、overlayId 均从工程清单选择；"
+        tip = QLabel("document_reveals.json：id / quest / revealedFlag / overlayId 均从工程清单选择。")
+        tip.setWordWrap(True)
+        tip.setToolTip(
             "Scenario/phase/status 用下拉；outcome 与 JSON/表达式树模式仍为专家手写。"
             "Apply 写入内存；保存工程写入 data/document_reveals.json。",
         )
-        tip.setWordWrap(True)
         root.addWidget(tip)
 
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -1168,7 +1174,7 @@ class DocumentRevealsEditor(QWidget):
         rh = QWidget()
         rfl = QVBoxLayout(rh)
 
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         self._dr_id_row = QWidget(rh)
         _drl = QHBoxLayout(self._dr_id_row)
         _drl.setContentsMargins(0, 0, 0, 0)
@@ -1189,6 +1195,7 @@ class DocumentRevealsEditor(QWidget):
             self._model, "", self, external_copy_subdir="illustrations",
             external_copy_hint="模糊图：可 Browse，外部图复制到 resources/runtime/images/illustrations/",
         )
+        self._dr_blur.setMinimumWidth(240)
         self._dr_blur.changed.connect(self._dr_on_edit)
         form.addRow("blurredImagePath", self._dr_blur)
 
@@ -1196,6 +1203,7 @@ class DocumentRevealsEditor(QWidget):
             self._model, "", self, external_copy_subdir="illustrations",
             external_copy_hint="清晰图：同上",
         )
+        self._dr_clear.setMinimumWidth(240)
         self._dr_clear.changed.connect(self._dr_on_edit)
         form.addRow("clearImagePath", self._dr_clear)
 
@@ -1214,7 +1222,7 @@ class DocumentRevealsEditor(QWidget):
 
         self._dr_cond_stack = QStackedWidget()
         w0 = QWidget()
-        w0l = QFormLayout(w0)
+        w0l = compact_form(QFormLayout(w0))
         self._dr_sc_scen = QComboBox()
         self._dr_sc_scen.setEditable(False)
         self._dr_sc_scen.currentIndexChanged.connect(self._dr_scenario_changed)
@@ -1240,6 +1248,7 @@ class DocumentRevealsEditor(QWidget):
         self._dr_fl_key.valueChanged.connect(self._dr_flag_key_changed)
         self._dr_fl_op = QComboBox()
         self._dr_fl_op.addItems(["==", "!=", ">", "<", ">=", "<="])
+        self._dr_fl_op.setMaximumWidth(64)
         self._dr_fl_op.currentTextChanged.connect(self._dr_on_edit)
         self._dr_fl_val = FlagValueEdit(self, self._model.flag_registry)
         self._dr_fl_val.valueChanged.connect(self._dr_on_edit)
@@ -1248,7 +1257,7 @@ class DocumentRevealsEditor(QWidget):
         w1l.addWidget(self._dr_fl_val)
 
         w2 = QWidget()
-        w2l = QFormLayout(w2)
+        w2l = compact_form(QFormLayout(w2))
         self._dr_q_id = IdRefSelector(w2, allow_empty=True, editable=False, click_opens_popup=True)
         self._dr_q_id.setToolTip("quests.json 中的任务 id")
         self._dr_q_id.value_changed.connect(self._dr_on_edit)
@@ -1263,8 +1272,8 @@ class DocumentRevealsEditor(QWidget):
         w3l = QVBoxLayout(w3)
         self._dr_cond_json = QPlainTextEdit()
         self._dr_cond_json.setPlaceholderText('例如 {"all":[...]} 或任意 ConditionExpr JSON')
-        self._dr_cond_json.setMinimumHeight(220)
-        self._dr_cond_json.setMaximumHeight(520)
+        self._dr_cond_json.setMinimumHeight(120)
+        self._dr_cond_json.setMaximumHeight(320)
         self._dr_cond_json.textChanged.connect(self._dr_on_edit)
         w3l.addWidget(self._dr_cond_json)
 
@@ -1284,7 +1293,7 @@ class DocumentRevealsEditor(QWidget):
         cg.addWidget(self._dr_cond_stack)
         rfl.addWidget(cond_g)
 
-        anim = QFormLayout()
+        anim = compact_form(QFormLayout())
         self._dr_dur = QSpinBox()
         self._dr_dur.setRange(0, 600_000)
         self._dr_dur.setSingleStep(100)
@@ -1293,12 +1302,13 @@ class DocumentRevealsEditor(QWidget):
         self._dr_delay.setRange(0, 600_000)
         self._dr_delay.setSingleStep(100)
         for sp in (self._dr_dur, self._dr_delay):
+            sp.setMaximumWidth(90)
             sp.valueChanged.connect(self._dr_on_edit)
         anim.addRow("animation.durationMs", self._dr_dur)
         anim.addRow("animation.delayMs", self._dr_delay)
         rfl.addLayout(anim)
 
-        opt = QFormLayout()
+        opt = compact_form(QFormLayout())
         self._dr_rflag = FlagKeyPickField(self._model, None, "", rh)
         self._dr_rflag.setToolTip("可选：揭示完成后写入的 flag（与登记表一致）")
         self._dr_rflag.valueChanged.connect(self._dr_on_edit)
@@ -1315,6 +1325,7 @@ class DocumentRevealsEditor(QWidget):
         self._dr_w.setRange(1, 100)
         self._dr_w.setValue(40)
         for sp in (self._dr_x, self._dr_y, self._dr_w):
+            sp.setMaximumWidth(90)
             sp.valueChanged.connect(self._dr_on_edit)
         opt.addRow("revealedFlag", self._dr_rflag)
         opt.addRow("overlayId", self._dr_oid)
@@ -1323,12 +1334,14 @@ class DocumentRevealsEditor(QWidget):
         opt.addRow("widthPercent", self._dr_w)
         rfl.addLayout(opt)
 
-        prev_g = QGroupBox("揭示过渡预览（Qt 近似，语义同 blendOverlayImage：模糊图 from → 清晰图 to）")
-        prev_gl = QVBoxLayout(prev_g)
+        prev_g = CollapsibleSection(
+            "揭示过渡预览（Qt 近似，语义同 blendOverlayImage：模糊图 from → 清晰图 to）",
+            start_open=False,
+        )
         self._dr_blend_preview = BlendOverlayPreviewWidget(
             self._model, self._dr_blend_preview_params, rh,
         )
-        prev_gl.addWidget(self._dr_blend_preview)
+        prev_g.add_body(self._dr_blend_preview)
         rfl.addWidget(prev_g)
         self._dr_blur.changed.connect(self._dr_blend_preview.schedule_refresh)
         self._dr_clear.changed.connect(self._dr_blend_preview.schedule_refresh)
@@ -1338,12 +1351,11 @@ class DocumentRevealsEditor(QWidget):
         self._dr_y.valueChanged.connect(self._dr_blend_preview.schedule_refresh)
         self._dr_w.valueChanged.connect(self._dr_blend_preview.schedule_refresh)
 
-        exp = QGroupBox("专家：本条原始 JSON（只读对照）")
-        exl = QVBoxLayout(exp)
+        exp = CollapsibleSection("专家：本条原始 JSON（只读对照）", start_open=False)
         self._dr_json_preview = QPlainTextEdit()
         self._dr_json_preview.setReadOnly(True)
         self._dr_json_preview.setMaximumHeight(120)
-        exl.addWidget(self._dr_json_preview)
+        exp.add_body(self._dr_json_preview)
         rfl.addWidget(exp)
 
         rfl.addStretch()

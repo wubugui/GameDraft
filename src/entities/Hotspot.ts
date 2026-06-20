@@ -142,6 +142,21 @@ export class Hotspot {
     return this.container.y;
   }
 
+  /** 投射阴影用：展示图世界尺寸；无展示图时为 0（阴影源该帧不画） */
+  getWorldSize(): { width: number; height: number } {
+    return { width: this.def.displayImage?.worldWidth ?? 0, height: this._displayWorldHeight };
+  }
+
+  /** 投射阴影用：当前展示帧纹理（剪影）；无展示图返回 null */
+  getDisplayTexture(): Texture | null {
+    return this.displaySprite?.texture ?? null;
+  }
+
+  /** 投射阴影用：左右朝向（与展示图镜像一致），left=-1 / right=+1 */
+  getFacing(): 1 | -1 {
+    return this._effectiveDisplayFacing() === 'left' ? -1 : 1;
+  }
+
   /**
    * 仅挂到 displaySprite，避免 E 提示等子节点被深度裁切。
    * 须在场景 depth 加载完成之后调用。

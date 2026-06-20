@@ -203,6 +203,12 @@ export class SpriteEntity {
     return { width: this.worldWidth, height: this.worldHeight };
   }
 
+  /** 当前显示帧纹理（供投影阴影复用剪影）；未加载时返回 null */
+  getDisplayTexture(): Texture | null {
+    const t = this.sprite.texture;
+    return t && t !== Texture.EMPTY ? t : null;
+  }
+
   /**
    * 是否参与「实体与背景像素密度匹配」。关时移除内层密度滤镜。
    */

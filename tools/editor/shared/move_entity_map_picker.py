@@ -358,10 +358,13 @@ class MoveEntityToMapPickerDialog(QDialog):
         self.resize(980, 620)
 
         root = QVBoxLayout(self)
-        root.addWidget(QLabel(
-            "左键在地图上点击：在「途经点」模式下逐个追加折线顶点；切换到「终点」模式后单击设定最终到达位置。\n"
-            "中键平移画布，滚轮缩放。终点为必填；未设置途经点时游戏中沿直线移动到终点。"
-        ))
+        _intro = QLabel("左键点击地图设置途经点 / 终点；中键平移，滚轮缩放。")
+        _intro.setStyleSheet("color:#888;font-size:11px;")
+        _intro.setToolTip(
+            "「途经点」模式下左键逐个追加折线顶点；切换到「终点」模式后单击设定最终到达位置。\n"
+            "终点为必填；未设置途经点时游戏中沿直线移动到终点。"
+        )
+        root.addWidget(_intro)
 
         toolbar = QHBoxLayout()
         self._rb_vertex = QRadioButton("途经点模式")

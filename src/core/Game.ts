@@ -56,6 +56,7 @@ import type {
   AnimationSetDef,
   GameConfig,
   MapNodeDef,
+  SceneData,
   SceneDataRaw,
   ScenarioCatalogFile,
   ICutsceneActor,
@@ -68,6 +69,7 @@ import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
+import type { Hotspot } from '../entities/Hotspot';
 import { registerActionHandlers } from './ActionRegistry';
 import { collectRecentPageErrors, installPageErrorTrap } from './pageErrorTrap';
 import { ScenarioStateManager } from './ScenarioStateManager';
@@ -82,7 +84,13 @@ import { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameMana
 import { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
-import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
+import type { IEntityShadingFilter } from '../rendering/EntityLightingFilter';
+import { resolveLightEnv, type ResolvedLightEnv } from '../rendering/lightEnv';
+import { buildIrradianceProbe } from '../rendering/irradianceProbe';
+import { PlanarEntityShadow } from '../rendering/EntityShadow';
+import { DeferredEntityShadow } from '../rendering/DeferredEntityShadow';
+import type { ShadowSource, IEntityShadow } from '../rendering/entityShadowTypes';
+import { UniformShadowField, type ShadowProjectionField } from '../rendering/shadowField';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExpr } from '../systems/graphDialogue/evaluateGraphCondition';
@@ -94,7 +102,7 @@ import { resolveText, type ResolveContext } from './resolveText';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
 import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
-import { Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
 import {
   coerceRuntimeFieldValue,
@@ -222,7 +230,16 @@ export class Game {
   private signalCueManager: SignalCueManager;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
-  private playerDepthFilter: DepthOcclusionFilter | null = null;
+  private playerDepthFilter: IEntityShadingFilter | null = null;
+
+  /** 当前场景辐照度探针 RT（逐 entity 色调融入），场景卸载时销毁 */
+  private currentProbe: RenderTexture | null = null;
+  /** 当前场景解析后的光照环境（驱动阴影） */
+  private currentLightEnv: ResolvedLightEnv | null = null;
+  /** 阴影方向/长度来源（今天=全局 LightEnv 均匀场；将来可换成场景灯光方向场） */
+  private currentShadowField: ShadowProjectionField | null = null;
+  /** 玩家/各 NPC 的投影阴影（key: 'player' / npc.id） */
+  private entityShadows = new Map<string, IEntityShadow>();
 
   /** null = 跟随 game_config.entityPixelDensityMatch；非 null 为调试强制开/关 */
   private entityPixelDensityMatchDebugOverride: boolean | null = null;
@@ -1021,6 +1038,19 @@ export class Game {
         this.sceneDepthSystem.occlusionBlendFactor = factor;
       },
       depthOcclusionActive: () => this.sceneDepthSystem.isEnabled,
+      entityShadowActive: () => this.entityShadowDebugActive(),
+      getEntityShadowDebug: () => this.getEntityShadowDebug(),
+      cycleShadowMode: () => this.cycleShadowModeDebug(),
+      toggleEntityTone: () => this.toggleEntityToneDebug(),
+      toggleEntityShadowBillboard: () => this.toggleEntityShadowBillboardDebug(),
+      setEntityShadowAzimuth: (deg) => this.setEntityShadowAzimuthDebug(deg),
+      nudgeEntityShadowElevation: (d) => this.nudgeEntityShadowElevationDebug(d),
+      nudgeEntityShadowLength: (d) => this.nudgeEntityShadowLengthDebug(d),
+      nudgeEntityShadowDarkness: (d) => this.nudgeEntityShadowDarknessDebug(d),
+      nudgeEntityShadowContact: (d) => this.nudgeEntityShadowContactDebug(d),
+      nudgeEntityShadowContactSize: (d) => this.nudgeEntityShadowContactSizeDebug(d),
+      nudgeEntityShadowSoftSamples: (d) => this.nudgeEntityShadowSoftSamplesDebug(d),
+      toggleEntityShadowEnabled: () => this.toggleEntityShadowEnabledDebug(),
     });
     this.debugTools.init();
 
@@ -1203,6 +1233,9 @@ export class Game {
         cfg.entityPixelDensityMatchBlurScale > 0
       ) {
         this.gameConfig.entityPixelDensityMatchBlurScale = cfg.entityPixelDensityMatchBlurScale;
+      }
+      if (cfg.entityLighting && typeof cfg.entityLighting === 'object') {
+        this.gameConfig.entityLighting = cfg.entityLighting;
       }
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
@@ -1519,13 +1552,24 @@ export class Game {
           drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} 无depthConfig`);
         }
       }
+      this.setupSceneLighting(sceneData, worldToPixelX, worldToPixelY);
       this.refreshPlayerWorldCollision();
     });
 
     this.sceneManager.setDepthUnloader(() => {
       this.sceneDepthSystem.unload();
       this.refreshPlayerWorldCollision();
+      // NPC/热区滤镜已在场景卸载更早处销毁；此处先经 unload() 清空系统滤镜表，
+      // 再断开玩家滤镜，最后销毁探针 RT，确保无残留引用采样已销毁的纹理。
+      this.player.sprite.container.filters = [];
       this.playerDepthFilter = null;
+      this.clearEntityShadows();
+      if (this.currentProbe) {
+        this.currentProbe.destroy(true);
+        this.currentProbe = null;
+      }
+      this.currentLightEnv = null;
+      this.currentShadowField = null;
     });
 
     this.sceneManager.setSceneEnterRunner((actions) => this.actionExecutor.executeBatchAwait(actions));
@@ -1547,6 +1591,243 @@ export class Game {
       }
       return false;
     });
+  }
+
+  /**
+   * 场景加载时配置逐 entity 光照：解析光照环境、按背景建辐照度探针、启用光照系统。
+   * 总开关关闭或上一探针存在时先清理。需在 depth load/loadDefault 之后调用（共享 sceneW/worldToPixel）。
+   */
+  private setupSceneLighting(
+    sceneData: SceneData,
+    worldToPixelX: number,
+    worldToPixelY: number,
+  ): void {
+    if (this.currentProbe) {
+      this.currentProbe.destroy(true);
+      this.currentProbe = null;
+    }
+    this.currentLightEnv = null;
+    this.currentShadowField = null;
+
+    const cfg = this.gameConfig.entityLighting;
+    if (!cfg?.enabled) {
+      this.sceneDepthSystem.disableLighting();
+      return;
+    }
+
+    const env = resolveLightEnv(sceneData.lightEnv, cfg);
+    this.currentLightEnv = env;
+    this.currentShadowField = new UniformShadowField(env);
+
+    let probeSource = null;
+    const bgTex = this.sceneManager.getPrimaryBackgroundTexture();
+    if (bgTex) {
+      this.currentProbe = buildIrradianceProbe(this.renderer.app, bgTex);
+      probeSource = this.currentProbe ? this.currentProbe.source : null;
+    }
+
+    this.sceneDepthSystem.enableLighting(
+      probeSource,
+      env,
+      sceneData.worldWidth,
+      sceneData.worldHeight,
+      worldToPixelX,
+      worldToPixelY,
+    );
+  }
+
+  /** 为玩家与各 NPC 重建投影阴影（按 shadowMode 选实现；off 不建）。 */
+  private rebuildEntityShadows(): void {
+    this.clearEntityShadows();
+    const env = this.currentLightEnv;
+    if (!env || env.shadow.mode === 'off' || !this.sceneDepthSystem.isLightingEnabled) return;
+
+    this.entityShadows.set('player', this.createShadowImpl(env.shadow.mode));
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      if (npc.def.castShadow === false) continue;
+      this.entityShadows.set(npc.id, this.createShadowImpl(env.shadow.mode));
+    }
+    // hotspot：仅有展示图（精灵）且未关闭开关者投影；键加前缀避免与 npc.id 撞
+    for (const h of this.sceneManager.getCurrentHotspots()) {
+      if (h.def.castShadow === false || !h.def.displayImage?.image) continue;
+      this.entityShadows.set(`hotspot:${h.def.id}`, this.createShadowImpl(env.shadow.mode));
+    }
+  }
+
+  /** 按模式建阴影实现：real+有深度→deferred；否则→planar（real 无深度时退化为纯平面）。 */
+  private createShadowImpl(mode: 'real' | 'planar' | 'off'): IEntityShadow {
+    const layer = this.renderer.shadowLayer;
+    const ctx = this.sceneDepthSystem.getShadowSceneContext();
+    if (mode === 'real' && ctx) return new DeferredEntityShadow(layer, ctx);
+    return new PlanarEntityShadow(layer, ctx);
+  }
+
+  /** 按 toneEnabled / mode 设置所有光照滤镜的 tone 与 sprite-AO（接触斑唯一归地面侧，避免双压）。 */
+  private applyShadowAndAO(): void {
+    const env = this.currentLightEnv;
+    if (!env) return;
+    const tone = env.toneEnabled ? env.toneStrength : 0;
+    const aoForm = env.shadow.mode === 'off' ? 0 : env.ao.form;
+    this.sceneDepthSystem.applyShadowFilterToneAO(tone, 0, aoForm);
+  }
+
+  /** F2 切换 shadowMode/tone/billboard 后重建阴影实例并重设滤镜 tone/AO。 */
+  private applyShadowModeChange(): void {
+    this.rebuildEntityShadows();
+    this.applyShadowAndAO();
+  }
+
+  /** 每帧更新投影阴影（位置/剪影/朝向跟随实体）。 */
+  private updateEntityShadows(): void {
+    const env = this.currentLightEnv;
+    if (!env || this.entityShadows.size === 0) return;
+
+    const field = this.currentShadowField;
+    const playerShadow = this.entityShadows.get('player');
+    if (playerShadow) {
+      playerShadow.update(this.makePlayerShadowSource(), env, field);
+    }
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      const sh = this.entityShadows.get(npc.id);
+      if (sh) sh.update(this.makeNpcShadowSource(npc), env, field);
+    }
+    for (const h of this.sceneManager.getCurrentHotspots()) {
+      const sh = this.entityShadows.get(`hotspot:${h.def.id}`);
+      if (sh) sh.update(this.makeHotspotShadowSource(h), env, field);
+    }
+  }
+
+  private makePlayerShadowSource(): ShadowSource {
+    const p = this.player;
+    return {
+      getFootX: () => p.x,
+      getFootY: () => p.y,
+      getWorldWidth: () => p.sprite.getWorldSize().width,
+      getWorldHeight: () => p.sprite.getWorldSize().height,
+      getTexture: () => p.sprite.getDisplayTexture(),
+      getFacing: () => (p.facingDirection === 'left' ? -1 : 1),
+      isVisible: () => p.sprite.container.visible,
+    };
+  }
+
+  private makeNpcShadowSource(npc: Npc): ShadowSource {
+    return {
+      getFootX: () => npc.x,
+      getFootY: () => npc.y,
+      getWorldWidth: () => npc.getWorldSize().width,
+      getWorldHeight: () => npc.getWorldSize().height,
+      getTexture: () => npc.getDisplayTexture(),
+      getFacing: () => npc.getFacing(),
+      isVisible: () => npc.container.visible,
+    };
+  }
+
+  private makeHotspotShadowSource(h: Hotspot): ShadowSource {
+    return {
+      getFootX: () => h.container.x,
+      getFootY: () => h.depthOcclusionFootWorldY(),
+      getWorldWidth: () => h.getWorldSize().width,
+      getWorldHeight: () => h.getWorldSize().height,
+      getTexture: () => h.getDisplayTexture(),
+      getFacing: () => h.getFacing(),
+      isVisible: () => h.container.visible,
+    };
+  }
+
+  private clearEntityShadows(): void {
+    for (const sh of this.entityShadows.values()) sh.destroy();
+    this.entityShadows.clear();
+  }
+
+  // ---- F2 投影阴影实时调试：直接改当前解析的 LightEnv（逐帧被阴影读取），仅影响渲染 ----
+  private entityShadowDebugActive(): boolean {
+    return this.sceneDepthSystem.isLightingEnabled && this.currentLightEnv !== null;
+  }
+
+  private getEntityShadowDebug(): { mode: string; toneEnabled: boolean; billboard: string; enabled: boolean; azimuthDeg: number; elevationDeg: number; lengthFactor: number; darkness: number; contact: number; contactSize: number; softSamples: number } | null {
+    const e = this.currentLightEnv;
+    if (!e) return null;
+    return {
+      mode: e.shadow.mode,
+      toneEnabled: e.toneEnabled,
+      billboard: e.shadow.billboard,
+      enabled: e.shadow.enabled,
+      azimuthDeg: e.key.azimuthDeg,
+      elevationDeg: e.key.elevationDeg,
+      lengthFactor: e.shadow.length,
+      darkness: e.shadow.darkness,
+      contact: e.shadow.contact,
+      contactSize: e.shadow.contactSize,
+      softSamples: e.shadow.softSamples,
+    };
+  }
+
+  private cycleShadowModeDebug(): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.mode = e.shadow.mode === 'real' ? 'planar' : e.shadow.mode === 'planar' ? 'off' : 'real';
+    this.applyShadowModeChange();
+  }
+
+  private toggleEntityToneDebug(): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.toneEnabled = !e.toneEnabled;
+    this.applyShadowAndAO();
+  }
+
+  private toggleEntityShadowBillboardDebug(): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.billboard = e.shadow.billboard === 'light' ? 'camera' : 'light';
+  }
+
+  private nudgeEntityShadowElevationDebug(delta: number): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.key.elevationDeg = Math.max(5, Math.min(85, e.key.elevationDeg + delta));
+  }
+
+  private nudgeEntityShadowSoftSamplesDebug(delta: number): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.softSamples = Math.max(1, Math.min(8, Math.round(e.shadow.softSamples + delta)));
+  }
+
+  private setEntityShadowAzimuthDebug(deg: number): void {
+    const e = this.currentLightEnv;
+    if (!e || !Number.isFinite(deg)) return;
+    e.key.azimuthDeg = ((deg % 360) + 360) % 360;
+  }
+
+  private nudgeEntityShadowLengthDebug(delta: number): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.length = Math.max(0.05, Math.min(3, e.shadow.length + delta));
+  }
+
+  private nudgeEntityShadowDarknessDebug(delta: number): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.darkness = Math.max(0, Math.min(1, e.shadow.darkness + delta));
+  }
+
+  private nudgeEntityShadowContactDebug(delta: number): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.contact = Math.max(0, Math.min(1, e.shadow.contact + delta));
+  }
+
+  private nudgeEntityShadowContactSizeDebug(delta: number): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.contactSize = Math.max(0.1, Math.min(3, e.shadow.contactSize + delta));
+  }
+
+  private toggleEntityShadowEnabledDebug(): void {
+    const e = this.currentLightEnv;
+    if (!e) return;
+    e.shadow.enabled = !e.shadow.enabled;
   }
 
   private registerUIPanels(): void {
@@ -1643,13 +1924,17 @@ export class Game {
       this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
       this.interactionSystem.update(0);
 
+      const lightingOn = this.sceneDepthSystem.isLightingEnabled;
       try {
-        this.playerDepthFilter = this.sceneDepthSystem.createFilterForEntity();
+        const playerLift = 0.4 * this.player.sprite.getWorldSize().height;
+        this.playerDepthFilter = lightingOn
+          ? this.sceneDepthSystem.createLightingFilterForEntity(playerLift)
+          : this.sceneDepthSystem.createFilterForEntity();
         if (this.playerDepthFilter) {
-          depthLog('Game', 'attaching depth filter to player');
+          depthLog('Game', 'attaching entity filter to player, lighting=', lightingOn);
           this.player.sprite.container.filters = [this.playerDepthFilter];
         } else {
-          depthLog('Game', 'no depth filter for player (disabled or no data)');
+          depthLog('Game', 'no entity filter for player (disabled or no data)');
           this.player.sprite.container.filters = [];
         }
       } catch (e) {
@@ -1660,9 +1945,12 @@ export class Game {
 
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         try {
-          const npcFilter = this.sceneDepthSystem.createFilterForEntity();
+          const npcLift = 0.4 * npc.getWorldSize().height;
+          const npcFilter = lightingOn
+            ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift)
+            : this.sceneDepthSystem.createFilterForEntity();
           if (npcFilter) {
-            depthLog('Game', 'attaching depth filter to NPC:', npc.id);
+            depthLog('Game', 'attaching entity filter to NPC:', npc.id, 'lighting=', lightingOn);
             npc.container.filters = [npcFilter];
           }
         } catch (e) {
@@ -1692,6 +1980,8 @@ export class Game {
         }
       }
 
+      this.rebuildEntityShadows();
+      this.applyShadowAndAO();
       this.syncEntityPixelDensityMatch();
 
       // 背景调试可视化：传递当前场景的深度纹理和配置
@@ -2922,7 +3212,7 @@ export class Game {
 
     this.syncEntityPixelDensityMatch();
 
-    if (this.sceneDepthSystem.isEnabled) {
+    if (this.sceneDepthSystem.isActive) {
       const S = this.camera.getProjectionScale();
       this.sceneDepthSystem.updatePerFrame(
         this.renderer.worldContainer.x,
@@ -2966,7 +3256,7 @@ export class Game {
                 narrativeState: this.narrativeStateManager,
               });
               this.sceneDepthSystem.updateEntityDepthOcclusion(
-                f as unknown as DepthOcclusionFilter,
+                f as unknown as IEntityShadingFilter,
                 c.x,
                 c.y,
                 ex,
@@ -2988,6 +3278,8 @@ export class Game {
         this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
       }
     }
+
+    this.updateEntityShadows();
 
     this.renderer.sortEntityLayer(this.player.x, this.player.y);
     this.touchMobileControls?.update();

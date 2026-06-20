@@ -57,6 +57,20 @@ export interface DebugToolsDeps {
   getDepthOcclusionBlendFactor: () => number;
   setDepthOcclusionBlendFactor: (factor: number) => void;
   depthOcclusionActive: () => boolean;
+  /** F2：阴影/AO 模式与参数实时调试（仅影响渲染，不动存档/配置文件） */
+  entityShadowActive: () => boolean;
+  getEntityShadowDebug: () => { mode: string; toneEnabled: boolean; billboard: string; enabled: boolean; azimuthDeg: number; elevationDeg: number; lengthFactor: number; darkness: number; contact: number; contactSize: number; softSamples: number } | null;
+  cycleShadowMode: () => void;
+  toggleEntityTone: () => void;
+  toggleEntityShadowBillboard: () => void;
+  setEntityShadowAzimuth: (deg: number) => void;
+  nudgeEntityShadowElevation: (delta: number) => void;
+  nudgeEntityShadowLength: (delta: number) => void;
+  nudgeEntityShadowDarkness: (delta: number) => void;
+  nudgeEntityShadowContact: (delta: number) => void;
+  nudgeEntityShadowContactSize: (delta: number) => void;
+  nudgeEntityShadowSoftSamples: (delta: number) => void;
+  toggleEntityShadowEnabled: () => void;
   /** ScenarioStateManager + DocumentRevealManager 只读快照（F2 工具页） */
   getNarrativeDebugSnapshot: () => Record<string, unknown>;
   /** Scenario 列表（与 catalog 顺序一致，供 F2 逐项操作） */
@@ -532,6 +546,91 @@ export class DebugTools {
             ]
           : [],
         extra,
+      };
+    });
+
+    debugPanelUI.addSection('投影阴影（调试）', () => {
+      const active = this.deps.entityShadowActive();
+      const s = this.deps.getEntityShadowDebug();
+      if (!active || !s) {
+        return { text: '当前场景未启用逐 entity 光照阴影（game_config.entityLighting.enabled 关或 lightEnv.shadow 关）。' };
+      }
+
+      // 数值/滑块放进持久 extra，按钮 noRefresh + 就地 sync()，按按钮不会重建/复位滑块。
+      const wrap = document.createElement('div');
+      wrap.className = 'debug-dock__section-extra';
+
+      const valLine = document.createElement('div');
+      valLine.className = 'debug-dock__slider-hint';
+
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'debug-dock__slider-value';
+
+      const sync = (): void => {
+        const cur = this.deps.getEntityShadowDebug();
+        if (!cur) return;
+        valLine.textContent =
+          `模式 ${cur.mode}　色调 ${cur.toneEnabled ? '开' : '关'}　billboard ${cur.billboard}\n` +
+          `方位 ${Math.round(cur.azimuthDeg)}°　仰角 ${Math.round(cur.elevationDeg)}°　长 ${cur.lengthFactor.toFixed(2)}　暗 ${cur.darkness.toFixed(2)}\n` +
+          `接触 ${cur.contact.toFixed(2)}(大小 ${cur.contactSize.toFixed(2)})　软采样 ${cur.softSamples}　${cur.enabled ? '阴影开' : '阴影关'}`;
+      };
+
+      const hint = document.createElement('div');
+      hint.className = 'debug-dock__slider-hint';
+      hint.textContent =
+        '模式: real=深度真实阴影 / planar=平面+碰撞裁切 / off。方位角=光来向(0°右/90°前/180°左/270°后),阴影朝反方向。' +
+        '滑块调方位角;按钮不复位滑块。满意后写进 lightEnv 或 game_config。';
+
+      const row = document.createElement('div');
+      row.className = 'debug-dock__slider-row';
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = '0';
+      range.max = '359';
+      range.step = '1';
+      range.value = String(Math.round(s.azimuthDeg));
+      valueSpan.textContent = `${Math.round(s.azimuthDeg)}°`;
+      range.addEventListener('input', () => {
+        const deg = Number(range.value);
+        this.deps.setEntityShadowAzimuth(deg);
+        valueSpan.textContent = `${deg}°`;
+        sync();
+      });
+      row.appendChild(range);
+      row.appendChild(valueSpan);
+
+      wrap.appendChild(valLine);
+      wrap.appendChild(hint);
+      wrap.appendChild(row);
+      sync();
+
+      const btn = (label: string, fn: () => void): { label: string; fn: () => void; noRefresh: boolean } => ({
+        label,
+        noRefresh: true,
+        fn: () => { fn(); sync(); },
+      });
+
+      return {
+        text: '',
+        extra: wrap,
+        actions: [
+          btn('模式 real/planar/off ↻', () => this.deps.cycleShadowMode()),
+          btn('色调融入 开/关', () => this.deps.toggleEntityTone()),
+          btn('billboard 光/相机 ↻', () => this.deps.toggleEntityShadowBillboard()),
+          btn('阴影 开/关', () => this.deps.toggleEntityShadowEnabled()),
+          btn('仰角 −5', () => this.deps.nudgeEntityShadowElevation(-5)),
+          btn('仰角 +5', () => this.deps.nudgeEntityShadowElevation(5)),
+          btn('长度 −0.1', () => this.deps.nudgeEntityShadowLength(-0.1)),
+          btn('长度 +0.1', () => this.deps.nudgeEntityShadowLength(0.1)),
+          btn('暗度 −0.1', () => this.deps.nudgeEntityShadowDarkness(-0.1)),
+          btn('暗度 +0.1', () => this.deps.nudgeEntityShadowDarkness(0.1)),
+          btn('接触 −0.1', () => this.deps.nudgeEntityShadowContact(-0.1)),
+          btn('接触 +0.1', () => this.deps.nudgeEntityShadowContact(0.1)),
+          btn('接触大小 −0.1', () => this.deps.nudgeEntityShadowContactSize(-0.1)),
+          btn('接触大小 +0.1', () => this.deps.nudgeEntityShadowContactSize(0.1)),
+          btn('软采样 −1', () => this.deps.nudgeEntityShadowSoftSamples(-1)),
+          btn('软采样 +1', () => this.deps.nudgeEntityShadowSoftSamples(1)),
+        ],
       };
     });
 

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..shared.action_editor import ActionEditor
+from ..shared.form_layout import compact_form
 from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
@@ -157,9 +158,9 @@ class WaterMinigameEditor(QWidget):
 
         inst_scroll = QScrollArea()
         inst_scroll.setWidgetResizable(True)
-        inst_scroll.setMinimumHeight(200)
+        inst_scroll.setMinimumHeight(140)
         inst_host = QWidget()
-        inst_form = QFormLayout(inst_host)
+        inst_form = compact_form(QFormLayout(inst_host))
 
         self._inst_label = QLineEdit()
         self._inst_label.setPlaceholderText("列表显示名")
@@ -190,6 +191,7 @@ class WaterMinigameEditor(QWidget):
         bounds_row.addWidget(self._bounds_w)
         bounds_row.addWidget(QLabel("×"))
         bounds_row.addWidget(self._bounds_h)
+        bounds_row.addStretch(1)
         bounds_wrap = QWidget()
         bounds_wrap.setLayout(bounds_row)
 
@@ -232,10 +234,10 @@ class WaterMinigameEditor(QWidget):
 
         ent_scroll = QScrollArea()
         ent_scroll.setWidgetResizable(True)
-        ent_scroll.setMinimumWidth(400)
-        ent_scroll.setMinimumHeight(320)
+        ent_scroll.setMinimumWidth(300)
+        ent_scroll.setMinimumHeight(240)
         ent_host = QWidget()
-        ef = QFormLayout(ent_host)
+        ef = compact_form(QFormLayout(ent_host))
 
         self._ent_id = QLineEdit()
         self._ent_cat = QComboBox()
@@ -258,6 +260,7 @@ class WaterMinigameEditor(QWidget):
         px.addWidget(self._ent_px)
         px.addWidget(QLabel(","))
         px.addWidget(self._ent_py)
+        px.addStretch(1)
         pxw = QWidget()
         pxw.setLayout(px)
 
@@ -268,7 +271,7 @@ class WaterMinigameEditor(QWidget):
 
         self._motion_group = QGroupBox("位移 motion")
         self._motion_group.setCheckable(True)
-        mf = QFormLayout(self._motion_group)
+        mf = compact_form(QFormLayout(self._motion_group))
         self._motion_path = QComboBox()
         for p in _MOTION_PATH:
             self._motion_path.addItem(p)
@@ -281,7 +284,7 @@ class WaterMinigameEditor(QWidget):
 
         self._pull_group = QGroupBox("拉扯 pull")
         self._pull_group.setCheckable(True)
-        pf = QFormLayout(self._pull_group)
+        pf = compact_form(QFormLayout(self._pull_group))
         self._pull_zone = QDoubleSpinBox()
         self._pull_zone.setRange(0.001, 1.0)
         self._pull_zone.setDecimals(4)
@@ -327,6 +330,7 @@ class WaterMinigameEditor(QWidget):
         self._cue_stack.addWidget(cue_tag_w)
         self._cue_mode = QComboBox()
         self._cue_mode.addItems(["自定义文案", "Strings 词条引用"])
+        self._cue_mode.setMaximumWidth(120)
 
         self._hint_stack = QStackedWidget()
         self._hint_plain = QPlainTextEdit()
@@ -344,18 +348,21 @@ class WaterMinigameEditor(QWidget):
         self._hint_stack.addWidget(hint_tag_w)
         self._hint_mode = QComboBox()
         self._hint_mode.addItems(["自定义文案", "Strings 词条引用"])
+        self._hint_mode.setMaximumWidth(120)
 
         cue_box = QWidget()
         cuel = QVBoxLayout(cue_box)
         cuel.setContentsMargins(0, 0, 0, 0)
         cuel.addWidget(self._cue_mode)
         cuel.addWidget(self._cue_stack)
+        cue_box.setMinimumWidth(240)
 
         hint_box = QWidget()
         hintl = QVBoxLayout(hint_box)
         hintl.setContentsMargins(0, 0, 0, 0)
         hintl.addWidget(self._hint_mode)
         hintl.addWidget(self._hint_stack)
+        hint_box.setMinimumWidth(240)
 
         ef.addRow("实体 id", self._ent_id)
         ef.addRow("category", self._ent_cat)

@@ -118,6 +118,21 @@ export class Npc implements ICutsceneActor {
   get interactionRange(): number { return this.def.interactionRange; }
   get id(): string { return this.def.id; }
 
+  /** 投影阴影用：当前显示帧纹理；无精灵时 null */
+  getDisplayTexture(): Texture | null {
+    return this.sprite?.getDisplayTexture() ?? null;
+  }
+
+  /** 投影阴影用：世界尺寸（宽高） */
+  getWorldSize(): { width: number; height: number } {
+    return this.sprite?.getWorldSize() ?? { width: 0, height: 0 };
+  }
+
+  /** 投影阴影用：左右朝向（来自 container.scale.x 符号） */
+  getFacing(): 1 | -1 {
+    return this.container.scale.x < 0 ? -1 : 1;
+  }
+
   getDisplayObject(): unknown {
     return this.container;
   }

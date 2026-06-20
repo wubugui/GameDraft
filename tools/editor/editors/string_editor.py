@@ -27,6 +27,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextTextEdit
 
 _STRING_NODE_KIND = Qt.ItemDataRole.UserRole + 10
@@ -97,8 +98,9 @@ class StringEditor(QWidget):
         self._path_label = QLabel("")
         self._path_label.setStyleSheet("color:#888;font-size:12px;")
         dl.addWidget(self._path_label)
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         self._key_edit = QLineEdit()
+        self._key_edit.setMinimumWidth(240)
         self._key_edit.setPlaceholderText("选中树节点后可编辑键名（分类或叶子）")
         self._key_edit.textChanged.connect(self._on_key_edit_changed)
         form.addRow("Key", self._key_edit)

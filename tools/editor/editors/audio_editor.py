@@ -139,8 +139,6 @@ class _AudioSrcRow(QWidget):
 
         self._edit.setPlaceholderText("点此侧「选择文件…」，起始目录为 public/resources/runtime/audio")
 
-        self._edit.setMinimumWidth(180)
-
         browse = QPushButton("选择文件…")
 
         browse.setToolTip("打开文件选择器，默认目录 public/resources/runtime/audio；只接受 runtime 树下的文件")
@@ -493,9 +491,10 @@ class _SystemSfxTab(QWidget):
 
         lay = QVBoxLayout(self)
 
-        lay.addWidget(QLabel("System event keys mapped to SFX ids. Leave the SFX id empty to disable that sound."))
-
         self._table = QTableWidget(0, 2)
+
+        self._table.setToolTip(
+            "System event keys mapped to SFX ids. Leave the SFX id empty to disable that sound.")
 
         self._table.setHorizontalHeaderLabels(["system key", "sfx id"])
 

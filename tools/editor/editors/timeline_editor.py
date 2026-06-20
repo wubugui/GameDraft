@@ -35,6 +35,7 @@ from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
 from ..shared.rich_text_field import RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.fonts import MONO_FONT_FAMILY
+from ..shared.form_layout import compact_form
 from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
 
 # Cutscene 步骤表头拖拽排序（TimelineEditor._dnd_cutscene_step_source 存 payload）
@@ -429,7 +430,7 @@ class StepWidget(QFrame):
             self._build_parallel()
 
     def _build_present(self) -> None:
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         self._type_combo = FilterableTypeCombo(
             [(t, t) for t in PRESENT_TYPES],
             orphan_label=lambda v: f"[unknown] {v}",
@@ -504,6 +505,7 @@ class StepWidget(QFrame):
                 w = QDoubleSpinBox()
                 w.setRange(-99999, 99999)
                 w.setDecimals(2)
+                w.setMaximumWidth(120)
                 w.setValue(float(val) if val != "" else 0)
                 w.valueChanged.connect(self._emit_dirty)
             elif pt == "bool":
@@ -517,7 +519,7 @@ class StepWidget(QFrame):
                 w.textChanged.connect(self._emit_dirty)
             elif pt == "image":
                 w = CutsceneImagePathRow(self._model, str(val) if val else "", self)
-                w.setMinimumWidth(360)
+                w.setMinimumWidth(240)
                 w._edit.textChanged.connect(self._emit_dirty)
             else:
                 w = QLineEdit(str(val) if val else "")
@@ -689,7 +691,8 @@ class StepWidget(QFrame):
             tw = RichTextTextEdit(self._model, self)
             tw.setPlainText(str(raw_txt))
             tw.textChanged.connect(self._emit_dirty)
-            tw.setPlaceholderText(
+            tw.setPlaceholderText("字幕文案…")
+            tw.setToolTip(
                 "字幕文案；请用右侧「插入引用」添加 [tag:…]，勿手打。"
             )
             tw.core_text_edit().setMinimumHeight(72)
@@ -825,14 +828,14 @@ class StepWidget(QFrame):
                 se_oy = 0.0
 
         emote_body = QWidget(self)
-        emote_form = QFormLayout(emote_body)
+        emote_form = compact_form(QFormLayout(emote_body))
         emote_form.setContentsMargins(8, 4, 8, 4)
         ed_sc = self._editor
         bind_sid = ""
         if ed_sc is not None and hasattr(ed_sc, "cutscene_binding_target_scene"):
             bind_sid = ed_sc.cutscene_binding_target_scene()
         emote_tgt = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
-        emote_tgt.setMinimumWidth(220)
+        emote_tgt.setMinimumWidth(160)
         emote_tgt.set_items(_cutscene_subtitle_emote_target_rows(
             self._model,
             bind_sid,
@@ -852,7 +855,7 @@ class StepWidget(QFrame):
             self._emit_dirty,
             include_empty_choice=True,
         )
-        emote_txt.setMinimumWidth(360)
+        emote_txt.setMinimumWidth(240)
         emote_dur = QDoubleSpinBox()
         emote_dur.setRange(1.0, 999999.0)
         emote_dur.setDecimals(0)
@@ -915,7 +918,7 @@ class StepWidget(QFrame):
         committed = str(self._step_data.get("id", "") or "").strip()
         orphan = (f"{committed} · 仅此数据引用") if committed else "未命名"
         sel = IdRefSelector(self, allow_empty=True, editable=True)
-        sel.setMinimumWidth(220)
+        sel.setMinimumWidth(160)
         if ed is not None and hasattr(ed, "_merged_overlay_rows"):
             rows_u = ed._merged_overlay_rows(uni, committed, orphan)
         else:
@@ -932,7 +935,7 @@ class StepWidget(QFrame):
         )
 
         img = CutsceneImagePathRow(self._model, str(self._step_data.get("image") or ""), self)
-        img.setMinimumWidth(320)
+        img.setMinimumWidth(240)
         img._edit.textChanged.connect(self._emit_dirty)
 
         self._widgets["id"] = sel
@@ -950,7 +953,7 @@ class StepWidget(QFrame):
         committed = str(self._step_data.get("id", "") or "").strip()
         orphan = (f"{committed} · 先于 showImg") if committed else "未命名"
         sel = IdRefSelector(self, allow_empty=True, editable=True)
-        sel.setMinimumWidth(220)
+        sel.setMinimumWidth(160)
         if ed is not None and hasattr(ed, "_merged_overlay_rows"):
             rows_u = ed._merged_overlay_rows(uni_show, committed, orphan)
         else:
@@ -1654,7 +1657,7 @@ class TimelineEditor(QWidget):
         rl = QVBoxLayout(right)
 
         top_row = QHBoxLayout()
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._c_id = QLineEdit()
         f.addRow("id", self._c_id)
         top_row.addLayout(f, stretch=1)
@@ -1664,7 +1667,7 @@ class TimelineEditor(QWidget):
         top_row.addWidget(self._play_btn)
         rl.addLayout(top_row)
 
-        bind_form = QFormLayout()
+        bind_form = compact_form(QFormLayout())
         self._target_scene = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
         self._target_scene.setMinimumWidth(240)
         self._target_scene.setToolTip(

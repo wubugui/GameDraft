@@ -638,6 +638,10 @@ export class CutsceneRenderer {
     const barHeight = Math.round(sh * Math.max(0, Math.min(1, heightPercent)));
     this.movieBarHeightPx = barHeight;
     this.movieBarContainer = new Container();
+    // 电影黑边须始终盖在过场图片之上（信箱构图）。showImg 的贴图按「cover」铺满全屏且
+    // 后加入覆盖层，会盖住先加入的黑边；用高 zIndex + sortableChildren 保证黑边恒在最上层，
+    // 且对其余等 zIndex 的内容（图片/世界渐黑）保持插入顺序不变。
+    this.movieBarContainer.zIndex = 10000;
     const top = new Graphics();
     top.rect(0, 0, sw, barHeight);
     top.fill(0x000000);
@@ -646,6 +650,7 @@ export class CutsceneRenderer {
     bottom.rect(0, sh - barHeight, sw, barHeight);
     bottom.fill(0x000000);
     this.movieBarContainer.addChild(bottom);
+    this.renderer.cutsceneOverlay.sortableChildren = true;
     this.renderer.cutsceneOverlay.addChild(this.movieBarContainer);
   }
 

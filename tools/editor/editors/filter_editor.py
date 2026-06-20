@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
 from .. import theme as app_theme
 
 try:
@@ -89,28 +90,31 @@ class FilterEditor(QWidget):
             rl.addLayout(preset_row)
 
         preset_hint = QLabel(
-            "内置预制可在上方下拉选择（悬浮查看全部 id）"
+            "内置预制：上方下拉选择后「填入 matrix」"
             if BUILTIN_PRESETS
             else "（未能导入 tools.filter_tool.presets）"
         )
         if BUILTIN_PRESETS:
             preset_hint.setToolTip(
                 "内置 id：" + ", ".join(sorted(BUILTIN_PRESETS.keys())))
-        preset_hint.setWordWrap(True)
+            if hasattr(self, "_preset_combo"):
+                self._preset_combo.setToolTip(
+                    "内置预制（与 filter_tool 相同）。内置 id："
+                    + ", ".join(sorted(BUILTIN_PRESETS.keys())))
         self._preset_hint = preset_hint
         self._preset_hint.setStyleSheet(
             app_theme.secondary_label_stylesheet(app_theme.current_theme_id()))
         rl.addWidget(self._preset_hint)
 
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         self._lbl_stem = QLabel("-")
         form.addRow("id（文件名）", self._lbl_stem)
         self._matrix_edit = QLineEdit()
         self._matrix_edit.setPlaceholderText("1, 0, 0, 0, 0, 0, 1, 0, ...")
+        self._matrix_edit.setMinimumWidth(240)
         self._matrix_edit.setToolTip(
-            "matrix：20 个浮点，与 Pixi ColorMatrixFilter、filter_tool 导出格式一致。"
-            "逗号/空格分隔或 JSON 数组。filter_tool 里点「保存滤镜」会写进上方目录；"
-            "编辑后请「从磁盘重载」或关闭滤镜工具后再本页点重载。"
+            "matrix：20 个浮点（逗号/空格分隔或 JSON 数组），"
+            "与 Pixi ColorMatrixFilter、filter_tool 导出格式一致。"
         )
         form.addRow("matrix", self._matrix_edit)
         self._alpha = QDoubleSpinBox()

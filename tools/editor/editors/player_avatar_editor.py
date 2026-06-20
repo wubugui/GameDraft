@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
 
 _DEFAULT_MANIFEST = "/resources/runtime/animation/player_anim/anim.json"
 _IDENTITY = "（与逻辑名相同，不映射）"
@@ -52,7 +53,7 @@ class PlayerAvatarEditor(QWidget):
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
         self._model = model
-        self.setMinimumSize(520, 560)
+        self.setMinimumSize(420, 460)
 
         root = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -74,16 +75,16 @@ class PlayerAvatarEditor(QWidget):
         lay.addWidget(hint)
 
         pack_box = QGroupBox("动画包（anim.json）")
-        pack_form = QFormLayout(pack_box)
+        pack_form = compact_form(QFormLayout(pack_box))
         self._bundle_combo = QComboBox()
-        self._bundle_combo.setMinimumWidth(280)
+        self._bundle_combo.setMinimumWidth(200)
         self._bundle_combo.currentIndexChanged.connect(self._on_bundle_changed)
         pack_form.addRow("工程内动画包", self._bundle_combo)
 
         man_row = QHBoxLayout()
         self._manifest_edit = QLineEdit()
         self._manifest_edit.setPlaceholderText(_DEFAULT_MANIFEST)
-        self._manifest_edit.setMinimumWidth(400)
+        self._manifest_edit.setMinimumWidth(240)
         man_row.addWidget(self._manifest_edit, 1)
         reset_m = QPushButton("按包名填充路径")
         reset_m.setToolTip(f"写入 {_MANIFEST_RE.pattern} 形式的标准 URL")
@@ -94,18 +95,21 @@ class PlayerAvatarEditor(QWidget):
         lay.addWidget(pack_box)
 
         map_box = QGroupBox("逻辑状态 → clip（states 键）")
-        map_form = QFormLayout(map_box)
+        map_form = compact_form(QFormLayout(map_box))
         self._clip_combos: dict[str, QComboBox] = {}
         for logical, desc in _LOGICAL_ROWS:
             row = QHBoxLayout()
-            lab = QLabel(f"<b>{logical}</b> — {desc}")
-            lab.setWordWrap(True)
+            short_desc, _, detail = desc.partition("（")
+            short_desc = short_desc.strip()
+            lab = QLabel(f"<b>{logical}</b> — {short_desc}")
             lab.setTextFormat(Qt.TextFormat.RichText)
-            row.addWidget(lab, 1)
+            row.addWidget(lab)
             cb = QComboBox()
-            cb.setMinimumWidth(220)
+            cb.setMinimumWidth(180)
+            if detail:
+                cb.setToolTip(detail.rstrip("）"))
             self._clip_combos[logical] = cb
-            row.addWidget(cb)
+            row.addWidget(cb, 1)
             w = QWidget()
             w.setLayout(row)
             map_form.addRow(w)

@@ -19,6 +19,7 @@ from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit
+from ..shared.form_layout import compact_form
 from ..shared.fonts import MONO_FONT_FAMILY
 
 
@@ -207,11 +208,13 @@ class MapEditor(QWidget):
         dv.setContentsMargins(6, 6, 6, 6)
 
         form_box = QWidget()
-        f = QFormLayout(form_box)
+        f = compact_form(QFormLayout(form_box))
         f.setContentsMargins(0, 0, 0, 0)
         self._m_scene = IdRefSelector(allow_empty=False, editable=False, click_opens_popup=True)
+        self._m_scene.setMinimumWidth(180)
         f.addRow("sceneId", self._m_scene)
         self._m_name = RichTextLineEdit(self._model)
+        self._m_name.setMinimumWidth(200)
         f.addRow("name", self._m_name)
         self._m_x = QDoubleSpinBox()
         self._m_x.setRange(-9999, 9999)

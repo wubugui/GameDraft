@@ -132,7 +132,7 @@ class ScriptedLinesEditor(QWidget):
             tx_wrap.setPlainText(str(data.get("text", "") or ""))
             tx_wrap.textChanged.connect(self.changed.emit)
             tx = tx_wrap
-        tx.setMinimumHeight(72)
+        tx.setMinimumHeight(48)
         tx.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         bl.addWidget(tx_wrap)
         rec = {"box": box, "speaker": sp, "text": tx, "btn_up": up, "btn_down": dn}

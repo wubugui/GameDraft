@@ -21,6 +21,7 @@ from PySide6.QtGui import QAction
 
 from .id_ref_selector import IdRefSelector
 from .rich_text_field import RichTextLineEdit
+from .form_layout import compact_form
 
 _SPEAKER_INSERTS = (
     ("{{player}}", "玩家显示名"),
@@ -42,7 +43,7 @@ class NpcIdPickDialog(QDialog):
         self.setWindowTitle("选择 NPC id")
         lay = QVBoxLayout(self)
         self._sel = IdRefSelector(self, allow_empty=False, editable=False, click_opens_popup=True)
-        self._sel.setMinimumWidth(220)
+        self._sel.setMinimumWidth(160)
         items = npc_items_for_dialogue_picker(model, scene_id)
         self._sel.set_items(items if items else [("", "（无 NPC 数据）")])
         lay.addWidget(self._sel)
@@ -141,7 +142,7 @@ class CutsceneShowDialogueFields(QWidget):
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         tip = QLabel("speaker：工程内可走「引用」插入 [tag:…]；或 {{player}}/{{npc}}", self)
         tip.setToolTip(
             "与 playScriptedDialogue 一致；{{npc}} 使用下方 scriptedNpcId 或图对话 npcId；"
@@ -149,7 +150,7 @@ class CutsceneShowDialogueFields(QWidget):
         )
         form.addRow(tip)
         self._snpc = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
-        self._snpc.setMinimumWidth(160)
+        self._snpc.setMinimumWidth(140)
         self._snpc.set_items(npc_items_for_dialogue_picker(model, scene_id))
         self._snpc.set_current(str(scripted_npc_id or ""))
         self._snpc.value_changed.connect(lambda _v: on_change())
@@ -164,7 +165,8 @@ class CutsceneShowDialogueFields(QWidget):
         )
         form.addRow(sh)
         self._text = QTextEdit(self)
-        self._text.setMaximumHeight(80)
+        self._text.setMinimumHeight(56)
+        self._text.setMaximumHeight(160)
         self._text.setPlainText(str(text or ""))
         self._text.textChanged.connect(on_change)
         form.addRow("text", self._text)

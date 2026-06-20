@@ -86,6 +86,82 @@ export interface SceneDepthConfig {
   floor_offset: number;
 }
 
+/** RGB 颜色，分量 0..1 */
+export type RgbColor = [number, number, number];
+
+/** 主光（key light），定义阴影投射方向与色温 */
+export interface SceneKeyLight {
+  /** 光来向方位角（度，屏幕平面，0=右、逆时针）；阴影朝其反方向投 */
+  azimuthDeg?: number;
+  /** 仰角（度）：越低阴影越长 */
+  elevationDeg?: number;
+  /** 主光颜色 0..1，缺省暖白 */
+  color?: RgbColor;
+  /** 主光强度，缺省 1 */
+  intensity?: number;
+}
+
+/** 环境光（ambient），决定 sprite 整体被染上的底色 */
+export interface SceneAmbientLight {
+  color?: RgbColor;
+  intensity?: number;
+}
+
+/** 阴影/AO 模式:real=深度重建的真实阴影;planar=早期平面投影+碰撞裁切+遮挡 blend;off=关闭 */
+export type ShadowMode = 'real' | 'planar' | 'off';
+
+/** 投影阴影参数（per-scene 可覆盖由 key light 推导出的默认值） */
+export interface SceneShadowParams {
+  enabled?: boolean;
+  /** 阴影/AO 模式（场景级覆盖全局 entityLighting.shadowMode） */
+  mode?: ShadowMode;
+  /** real 模式软阴影采样数（1=硬，默认 1） */
+  softSamples?: number;
+  /** real 模式软阴影锥半径（默认 0.05） */
+  softRadius?: number;
+  /** real 模式遮挡 billboard 朝向：light=垂直于光(默认)，camera=朝相机 */
+  billboard?: 'light' | 'camera';
+  /** 阴影不透明度 0..1 */
+  darkness?: number;
+  /** 柔和度（模糊强度倍率），1=默认 */
+  softness?: number;
+  /** 阴影长度相对角色高度的倍率，缺省由仰角推导 */
+  length?: number;
+  /** 额外水平倾斜（弧度），缺省由方位角推导 */
+  skewX?: number;
+  /** 脚底接触阴影（地面 omni 暗斑）强度 0..1，让角色"坐进"地面；0=关闭 */
+  contact?: number;
+  /** 接触暗斑大小倍率，默认 1 */
+  contactSize?: number;
+  /** depth-drape 强度：阴影剪影沿深度场爬上抬升表面（石头/台阶立面）；0=纯平地投影；约 1 为按 floor 模型物理推导 */
+  drape?: number;
+  /** depth-drape 开关（便于对比开/关效果），默认 true */
+  drapeEnabled?: boolean;
+}
+
+/** Ambient Occlusion（shader 内逐像素）参数 */
+export interface SceneAoParams {
+  /** 脚底接触暗化 0..1 */
+  contact?: number;
+  /** 体积/自遮挡暗化 0..1 */
+  form?: number;
+}
+
+/**
+ * 单场景光照环境：驱动「逐 entity 色调融入 + AO + 投影阴影」。
+ * 全部字段可缺省，缺省时回落到 game_config.entityLighting.defaultLightEnv 再到内置基线。
+ */
+export interface SceneLightEnv {
+  key?: SceneKeyLight;
+  ambient?: SceneAmbientLight;
+  shadow?: SceneShadowParams;
+  /** 色调融入强度 0..1：sprite 向脚底 probe 采样到的环境色做保亮度白平衡 */
+  toneStrength?: number;
+  /** 色调融入开关（场景级覆盖全局 entityLighting.toneEnabled），与阴影模式解耦 */
+  toneEnabled?: boolean;
+  ao?: SceneAoParams;
+}
+
 export interface SceneData {
   id: string;
   name: string;
@@ -104,6 +180,8 @@ export interface SceneData {
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
   depthConfig?: SceneDepthConfig;
+  /** 光照环境（逐 entity 阴影/色调/AO）；缺省回落到全局默认 */
+  lightEnv?: SceneLightEnv;
   /** 相机配置 */
   camera?: SceneCameraConfig;
   /** 世界整体缩放（用于背景图分辨率不够时整体缩小），默认1 */
@@ -181,6 +259,8 @@ export interface HotspotDef {
   collisionPolygon?: { x: number; y: number }[];
   /** 为 true 时 `collisionPolygon` 为局部坐标；缺省视为旧版世界坐标 */
   collisionPolygonLocal?: boolean;
+  /** 投射阴影 + 接触 AO 开关（合并）；缺省视为 true。false 时该实体不投影也无接触 AO。仅对有 displayImage 的热区有意义。 */
+  castShadow?: boolean;
 }
 
 /** 无 graphId 的 inspect：可选正文浮层 + 可选 actions（可与 actions 单独存在） */
@@ -492,6 +572,8 @@ export interface NpcDef {
   collisionPolygon?: { x: number; y: number }[];
   /** 为 true 时 `collisionPolygon` 为相对 (x,y) 的局部坐标；缺省视为旧版世界坐标 */
   collisionPolygonLocal?: boolean;
+  /** 投射阴影 + 接触 AO 开关（合并）；缺省视为 true。false 时该 NPC 不投影也无接触 AO。 */
+  castShadow?: boolean;
 }
 
 export type CutsceneBindableEntityDef = Pick<NpcDef | HotspotDef, 'cutsceneIds' | 'cutsceneOnly'>;
@@ -1134,6 +1216,20 @@ export interface GameConfig {
    * 低通强度倍率，缺省 0.25。仅当 entityPixelDensityMatch 生效时读取；建议约 0.25～2。
    */
   entityPixelDensityMatchBlurScale?: number;
+  /** 逐 entity 光照（阴影 + 色调融入 + AO）配置，关闭时完全走旧渲染管线 */
+  entityLighting?: EntityLightingConfig;
+}
+
+/** 逐 entity 光照全局配置 */
+export interface EntityLightingConfig {
+  /** 总开关；关闭（或缺省）时不创建光照滤镜/阴影，渲染与旧版一致 */
+  enabled?: boolean;
+  /** 全局阴影/AO 模式（场景 lightEnv.shadow.mode 可覆盖），默认 real */
+  shadowMode?: ShadowMode;
+  /** 全局色调融入开关（与阴影模式解耦；场景 lightEnv.toneEnabled 可覆盖），默认 true */
+  toneEnabled?: boolean;
+  /** 场景未配 lightEnv 时使用的全局默认光照环境 */
+  defaultLightEnv?: SceneLightEnv;
 }
 
 // ============================================================
