@@ -16,8 +16,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 110.0,
-    "y": 233.0
+    "x": 115.5,
+    "y": 227.9
   },
   "spawnPoints": {
     "from_street": {
@@ -52,7 +52,7 @@
       "id": "teahouse_door_too_early",
       "type": "inspect",
       "x": 164.7,
-      "y": 171.2,
+      "y": 170.8,
       "interactionRange": 20.0,
       "conditions": [
         {
@@ -124,6 +124,19 @@
       "data": {
         "graphId": "寻狗_向导传闻"
       }
+    },
+    {
+      "id": "茶馆_自动事件",
+      "type": "inspect",
+      "label": "自动剧情点",
+      "x": 66.5,
+      "y": 241.8,
+      "interactionRange": 50.0,
+      "data": {
+        "graphId": "茶馆_自动事件"
+      },
+      "castShadow": false,
+      "autoTrigger": true
     }
   ],
   "npcs": [

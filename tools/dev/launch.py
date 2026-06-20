@@ -5,6 +5,8 @@ Each runs ``<project_python> -m tools.<module> [args]`` from the repo root.
 
 from __future__ import annotations
 
+import os
+import platform
 import subprocess
 
 from tools.dev.paths import project_python, project_python_ready, repo_root
@@ -37,6 +39,14 @@ def _argv_for(task: str, extra: list[str]) -> list[str]:
     return args
 
 
+def _tool_env(base: dict[str, str] | None = None) -> dict[str, str] | None:
+    if platform.system() != "Windows":
+        return base
+    env = dict(os.environ if base is None else base)
+    env.setdefault("PYDANTIC_DISABLE_PLUGINS", "1")
+    return env
+
+
 def run_tool(task: str, extra: list[str], check: bool = False) -> int:
     argv = _argv_for(task, extra)
     python = project_python()
@@ -49,7 +59,7 @@ def run_tool(task: str, extra: list[str], check: bool = False) -> int:
         print("Project Python runtime missing. Run ./bootstrap.sh first.")
         return 1
     try:
-        return subprocess.call([str(python), *argv], cwd=str(repo_root()))
+        return subprocess.call([str(python), *argv], cwd=str(repo_root()), env=_tool_env())
     except KeyboardInterrupt:
         return 130
 
@@ -66,8 +76,6 @@ def run_chronicle_week(extra: list[str], check: bool = False) -> int:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo_root())
     try:
-        return subprocess.call(
-            [str(python), script, *extra], cwd=str(repo_root()), env=env
-        )
+        return subprocess.call([str(python), script, *extra], cwd=str(repo_root()), env=_tool_env(env))
     except KeyboardInterrupt:
         return 130

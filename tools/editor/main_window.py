@@ -26,6 +26,7 @@ from . import theme
 from .project_model import ProjectModel
 from .validator import validate, Issue
 from .editors.game_browser import GAME_DEV_URL, GameBrowserTab, GamePlayWindow
+from tools.dev.paths import env_with_node_path, npm_command
 
 # Vite 就绪行示例:  Local:   http://127.0.0.1:5173/
 _VITE_DEV_URL_RE = re.compile(
@@ -107,6 +108,19 @@ def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
             merged.append(p)
     if merged:
         env.insert(path_key, os.pathsep.join(merged) + os.pathsep + current)
+
+
+def _copy_env_to_qprocess(env: QProcessEnvironment, values: dict[str, str]) -> None:
+    for key, value in values.items():
+        env.insert(key, value)
+
+
+def _npm_run_command(*args: str) -> tuple[str, list[str]]:
+    npm = npm_command()
+    if os.name == "nt":
+        comspec = os.environ.get("ComSpec") or "cmd.exe"
+        return comspec, ["/d", "/c", npm, *args]
+    return npm, list(args)
 
 
 _GAME_BROWSER_SENTINEL = object()
@@ -847,6 +861,7 @@ class MainWindow(QMainWindow):
         proc = QProcess(self)
         proc.setWorkingDirectory(str(proj))
         env = QProcessEnvironment.systemEnvironment()
+        _copy_env_to_qprocess(env, env_with_node_path())
         env.insert("GAMEDRAFT_EDITOR_EMBED", "1")
         _augment_env_for_nodejs(env)
         proc.setProcessEnvironment(env)
@@ -856,7 +871,9 @@ class MainWindow(QMainWindow):
         proc.finished.connect(self._on_game_proc_finished)
         self._game_proc = proc
         self._pending_launch_params = launch_params
-        self._game_proc.start("npm", ["run", "dev"])
+        program, args = _npm_run_command("run", "dev")
+        self._game_proc_log += f"$ {program} {' '.join(args)}\n"
+        self._game_proc.start(program, args)
         self._status.showMessage(
             "Starting Vite dev server…" if open_when_ready else "Prewarming Vite dev server…",
             5000,
@@ -979,7 +996,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Run Game",
                 "无法启动开发服务器子进程（FailedToStart）。\n"
-                "若已安装 Node，请尝试从「开始菜单」启动本编辑器，或检查安全软件是否拦截。",
+                f"启动命令：{self._game_proc_log.strip() or 'npm run dev'}\n"
+                "若已安装 Node，请检查 Node/npm 是否在 PATH 中，或安全软件是否拦截。",
             )
 
     def _on_game_server_ready_timeout(self) -> None:

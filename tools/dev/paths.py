@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import sys
 from pathlib import Path
@@ -16,19 +17,34 @@ def unix_venv_python() -> Path:
     return repo_root() / ".tools" / "venv" / "bin" / "python"
 
 
+def windows_venv_python() -> Path:
+    return repo_root() / ".tools" / "venv" / "Scripts" / "python.exe"
+
+
+def platform_venv_python() -> Path:
+    if platform.system() == "Windows":
+        return windows_venv_python()
+    return unix_venv_python()
+
+
 def project_python() -> Path:
     """Resolve the project-managed Python interpreter.
 
     Falls back to the running interpreter when the venv is still being created.
     """
-    candidate = unix_venv_python()
+    candidate = platform_venv_python()
     if candidate.is_file():
         return candidate
     return Path(sys.executable).resolve()
 
 
 def project_python_ready() -> bool:
-    return unix_venv_python().is_file()
+    if platform_venv_python().is_file():
+        return True
+    # Windows developers often launch the console from an already-prepared
+    # Python install before the project venv exists. Keep Unix bootstrap
+    # behavior unchanged while allowing that Windows path to run tools.
+    return platform.system() == "Windows" and Path(sys.executable).is_file()
 
 
 def _unix_node_candidate_dirs() -> list[Path]:
@@ -60,11 +76,17 @@ def node_dir() -> Path | None:
 
 def npm_command() -> str:
     """Full npm invocation path when resolvable, else bare command name."""
-    name = "npm"
     d = node_dir()
-    if d is not None and (d / name).is_file():
-        return str(d / name)
-    return name
+    if platform.system() == "Windows":
+        names = ("npm.cmd", "npm.exe", "npm")
+    else:
+        names = ("npm",)
+    if d is not None:
+        for name in names:
+            candidate = d / name
+            if candidate.is_file():
+                return str(candidate)
+    return names[0]
 
 
 def env_with_node_path(base: dict[str, str] | None = None) -> dict[str, str]:
