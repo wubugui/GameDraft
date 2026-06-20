@@ -620,12 +620,29 @@ class AudioEditor(QWidget):
 
         tabs = QTabWidget()
 
-        tabs.addTab(_AudioChannelTab(model, "bgm"), "BGM")
+        # 保留子页引用，供 Save All 时统一提交（否则未点 Apply 的音频表编辑会被静默丢弃）。
+        self._sub_tabs = [
+            _AudioChannelTab(model, "bgm"),
+            _AudioChannelTab(model, "ambient"),
+            _AudioChannelTab(model, "sfx"),
+            _SystemSfxTab(model),
+        ]
 
-        tabs.addTab(_AudioChannelTab(model, "ambient"), "Ambient")
+        tabs.addTab(self._sub_tabs[0], "BGM")
 
-        tabs.addTab(_AudioChannelTab(model, "sfx"), "SFX")
+        tabs.addTab(self._sub_tabs[1], "Ambient")
 
-        tabs.addTab(_SystemSfxTab(model), "System SFX")
+        tabs.addTab(self._sub_tabs[2], "SFX")
+
+        tabs.addTab(self._sub_tabs[3], "System SFX")
 
         lay.addWidget(tabs)
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：提交各音频子页表格的未应用编辑。表驱动 _apply 无条件提交安全——
+        只写当前表状态，未编辑写回等值数据，保存后清脏。"""
+        for tab in self._sub_tabs:
+            ap = getattr(tab, "_apply", None)
+            if callable(ap):
+                ap()
+        return True

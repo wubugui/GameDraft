@@ -789,6 +789,28 @@ class EncounterEditor(QWidget):
     def _apply(self) -> None:
         self._apply_impl(refresh_select_id=None)
 
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：把当前未应用的遭遇编辑提交进模型。
+
+        本编辑器编辑只存在于 UI、仅 Apply 才写回模型；若不在保存前 flush，未点 Apply
+        的编辑会在 Save All 时被静默丢弃（与场景编辑器同类的丢数据缺陷）。校验失败时
+        _apply_impl 返回 False，由主窗口的 flush 流程上报、中止保存。
+        """
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        return self._apply_impl()
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        """关闭 / 切项目门控：有未应用编辑则提示保存/放弃/取消，避免静默丢弃。"""
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        choice = self._prompt_save_discard()
+        if choice == "cancel":
+            return False
+        if choice == "save":
+            return self._apply_impl()
+        return True  # discard：用户明确放弃
+
     def _add(self) -> None:
         new_id = self._suggest_unique_encounter_id()
         self._model.encounters.append({

@@ -1,9 +1,11 @@
 """Global game config editor."""
 from __future__ import annotations
 
+import copy
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel,
-    QTableWidget, QHeaderView, QSpinBox, QCheckBox,
+    QTableWidget, QHeaderView, QSpinBox, QCheckBox, QMessageBox,
 )
 
 from ..project_model import ProjectModel
@@ -169,8 +171,38 @@ class GameConfigEditor(QWidget):
         if r >= 0:
             self._flags_table.removeRow(r)
 
-    def _apply(self) -> None:
-        cfg = self._model.game_config
+    def _is_dirty(self) -> bool:
+        """把 UI 写进模型的临时副本与现状比较，判断是否有未应用改动。
+
+        deepcopy-write-compare 避免逐字段镜像 _apply 的复杂逻辑，且 _write_config_into
+        就地改写（保留未受管字段），不会误判/误删。"""
+        test = copy.deepcopy(self._model.game_config)
+        self._write_config_into(test)
+        return test != self._model.game_config
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用编辑在保存前提交，避免静默丢弃。"""
+        if self._is_dirty():
+            self._apply()
+        return True
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "游戏配置有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._apply()
+        return True
+
+    def _write_config_into(self, cfg: dict) -> None:
+        """把当前 UI 值就地写入 cfg（不 mark_dirty）。_apply 与脏判断共用。"""
         cfg["initialScene"] = self._initial_scene.current_id()
         cfg["initialQuest"] = self._initial_quest.current_id()
         cfg["fallbackScene"] = self._fallback_scene.current_id()
@@ -213,4 +245,7 @@ class GameConfigEditor(QWidget):
             cfg["startupFlags"] = sf
         elif "startupFlags" in cfg:
             del cfg["startupFlags"]
+
+    def _apply(self) -> None:
+        self._write_config_into(self._model.game_config)
         self._model.mark_dirty("config")

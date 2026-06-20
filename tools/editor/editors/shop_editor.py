@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QPushButton, QSpinBox, QLabel, QTableWidget,
-    QTableWidgetItem, QHeaderView,
+    QTableWidgetItem, QHeaderView, QMessageBox,
 )
 from PySide6.QtCore import Qt
 
@@ -81,6 +81,10 @@ class ShopEditor(QWidget):
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.shops):
             return
+        # commit-on-leave：切到别的商店前提交上一项未应用编辑，避免静默丢弃。
+        if 0 <= self._current_idx < len(self._model.shops) and self._current_idx != row \
+                and self._is_dirty():
+            self._apply()
         self._current_idx = row
         s = self._model.shops[row]
         self._s_id.setText(s.get("id", ""))
@@ -140,13 +144,9 @@ class ShopEditor(QWidget):
     def _move_down(self) -> None:
         self._move_row(1)
 
-    def _apply(self) -> None:
-        if self._current_idx < 0:
-            return
-        s = self._model.shops[self._current_idx]
-        s["id"] = self._s_id.text().strip()
-        s["name"] = self._s_name.text()
-        items = []
+    def _shop_items_from_ui(self) -> list[dict]:
+        """从表格读出 items（与 _apply 同一套提取逻辑，供脏判断与提交共用）。"""
+        items: list[dict] = []
         for i in range(self._table.rowCount()):
             iid_w = self._table.cellWidget(i, 0)
             price = self._table.item(i, 1)
@@ -160,7 +160,48 @@ class ShopEditor(QWidget):
                 except ValueError:
                     si["price"] = 0
                 items.append(si)
-        s["items"] = items
+        return items
+
+    def _is_dirty(self) -> bool:
+        if self._current_idx < 0 or self._current_idx >= len(self._model.shops):
+            return False
+        s = self._model.shops[self._current_idx]
+        if self._s_id.text().strip() != s.get("id", ""):
+            return True
+        if self._s_name.text() != s.get("name", ""):
+            return True
+        if self._shop_items_from_ui() != (s.get("items") or []):
+            return True
+        return False
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用编辑在保存前提交，避免静默丢弃。"""
+        if self._current_idx >= 0 and self._is_dirty():
+            self._apply()
+        return True
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "当前商店有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._apply()
+        return True
+
+    def _apply(self) -> None:
+        if self._current_idx < 0:
+            return
+        s = self._model.shops[self._current_idx]
+        s["id"] = self._s_id.text().strip()
+        s["name"] = self._s_name.text()
+        s["items"] = self._shop_items_from_ui()
         self._model.mark_dirty("shop")
         row = self._current_idx
         lw = self._list.item(row)

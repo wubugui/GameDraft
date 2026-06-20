@@ -127,7 +127,7 @@ export class MenuUI {
     this.container.addChild(title);
 
     const buttons: { label: string; action: () => void }[] = [
-      { label: this.strings.get('menu', 'resume'), action: () => this.close() },
+      { label: this.strings.get('menu', 'resume'), action: () => { this.close(); this.eventBus.emit('menu:resume', {}); } },
       { label: this.strings.get('menu', 'save'), action: () => { this.previousMode = this.mode; this.mode = 'save'; this.build(); } },
       { label: this.strings.get('menu', 'load'), action: () => { this.previousMode = this.mode; this.mode = 'load'; this.build(); } },
       { label: this.strings.get('menu', 'settings'), action: () => { this.previousMode = this.mode; this.mode = 'settings'; this.build(); } },

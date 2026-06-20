@@ -151,6 +151,30 @@ class TestMapEditorLiveCommit(unittest.TestCase):
             editor._m_cond._extra_json.setPlainText('{"flag": "f_expert"}')
             self.assertIn({"flag": "f_expert"}, editor._m_cond.to_list())
 
+    def test_refresh_preserves_selection(self) -> None:
+        # 回归 HIGH-9：_refresh() 里 scene.clear() 触发 selectionChanged 把 _current_idx
+        # 清成 -1，旧实现末尾恢复块成死代码、选择丢失。快照修复后选择须存活。
+        with TemporaryDirectory() as td:
+            editor, model = self._editor(Path(td) / "p")
+            editor._list.setCurrentRow(1)
+            self.assertEqual(editor._current_idx, 1)
+            editor._refresh()
+            self.assertEqual(editor._current_idx, 1, "_refresh 后选中行必须保留")
+            self.assertTrue(editor._node_graphics[1].isSelected())
+
+    def test_scene_change_marks_map_needs_refresh_when_hidden(self) -> None:
+        # 回归：别处改场景后地图连线过期；data_changed('scene') 须标记待刷新。
+        with TemporaryDirectory() as td:
+            editor, model = self._editor(Path(td) / "p")
+            editor.hide()
+            editor._needs_refresh = False
+            editor._on_model_data_changed("scene", "sc_a")
+            self.assertTrue(editor._needs_refresh, "场景变更须让地图标记待刷新")
+            # 地图自身的 'map' 变更不应触发外部刷新（避免拖拽中自我打断）
+            editor._needs_refresh = False
+            editor._on_model_data_changed("map", "")
+            self.assertFalse(editor._needs_refresh)
+
     def test_condition_tree_height_is_compact(self) -> None:
         from tools.editor.shared import condition_expr_tree as cet
         # 回归护栏：树滚动区下限不得再膨胀回旧的 640（凭空占大片空白）。

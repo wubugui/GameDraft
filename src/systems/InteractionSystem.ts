@@ -58,7 +58,12 @@ export class InteractionSystem implements IGameSystem {
 
   private evalConditionsList(conds: ConditionExpr[] | undefined): boolean {
     if (!conds?.length) return true;
-    const ctx = this.conditionCtxFactory?.();
+    return this.evalWith(conds, this.conditionCtxFactory?.() ?? null);
+  }
+
+  /** 用调用方预先构建的 ctx 求值，避免在同一帧内为同一实体重复 new 上下文。 */
+  private evalWith(conds: ConditionExpr[] | undefined, ctx: ConditionEvalContext | null): boolean {
+    if (!conds?.length) return true;
     if (ctx) return evaluateConditionExprList(conds, ctx);
     return this.flagStore.checkConditions(conds as Condition[]);
   }
@@ -96,9 +101,10 @@ export class InteractionSystem implements IGameSystem {
     }
   }
 
-  private applyHotspotVisibilityAndBase(hotspot: Hotspot): void {
+  /** 返回该热点的条件是否满足（供同帧的交互判定复用，避免二次求值）。 */
+  private applyHotspotVisibilityAndBase(hotspot: Hotspot, ctx: ConditionEvalContext | null): boolean {
     const conds = hotspot.def.conditions;
-    const condOk = this.evalConditionsList(conds);
+    const condOk = this.evalWith(conds, ctx);
     const base = this.hotspotBaseEnabled?.(hotspot) ?? true;
     const hideWhenFail = hotspot.def.conditionHidesEntity === true && !!conds?.length;
     if (hideWhenFail) {
@@ -106,11 +112,13 @@ export class InteractionSystem implements IGameSystem {
     } else {
       hotspot.setEnabled(base);
     }
+    return condOk;
   }
 
-  private applyNpcVisibilityAndBase(npc: Npc): void {
+  /** 返回该 NPC 的条件是否满足（供同帧的交互判定复用，避免二次求值）。 */
+  private applyNpcVisibilityAndBase(npc: Npc, ctx: ConditionEvalContext | null): boolean {
     const conds = npc.def.conditions;
-    const condOk = this.evalConditionsList(conds);
+    const condOk = this.evalWith(conds, ctx);
     const base = this.npcBaseVisible?.(npc) ?? true;
     const hideWhenFail = npc.def.conditionHidesEntity === true && !!conds?.length;
     if (hideWhenFail) {
@@ -118,6 +126,7 @@ export class InteractionSystem implements IGameSystem {
     } else {
       npc.setVisible(base);
     }
+    return condOk;
   }
 
   update(_dt: number): void {
@@ -128,13 +137,14 @@ export class InteractionSystem implements IGameSystem {
     let closestTarget: InteractableTarget | null = null;
     let closestDist = Infinity;
 
+    // 每帧仅构建一次条件上下文，供本帧所有实体复用（避免 per-entity 分配 + 二次求值）。
+    const ctx = this.conditionCtxFactory?.() ?? null;
+
     for (const hotspot of this.hotspots) {
-      this.applyHotspotVisibilityAndBase(hotspot);
+      const condOk = this.applyHotspotVisibilityAndBase(hotspot, ctx);
       if (!hotspot.active) continue;
       if (!hotspotOffersPlayerInteraction(hotspot.def)) continue;
-      if (hotspot.def.conditions && hotspot.def.conditions.length > 0) {
-        if (!this.evalConditionsList(hotspot.def.conditions)) continue;
-      }
+      if (hotspot.def.conditions && hotspot.def.conditions.length > 0 && !condOk) continue;
 
       const dx = pos.x - hotspot.centerX;
       const dy = pos.y - hotspot.centerY;
@@ -147,11 +157,9 @@ export class InteractionSystem implements IGameSystem {
     }
 
     for (const npc of this.npcs) {
-      this.applyNpcVisibilityAndBase(npc);
+      const condOk = this.applyNpcVisibilityAndBase(npc, ctx);
       if (!npc.container.visible) continue;
-      if (npc.def.conditions && npc.def.conditions.length > 0) {
-        if (!this.evalConditionsList(npc.def.conditions)) continue;
-      }
+      if (npc.def.conditions && npc.def.conditions.length > 0 && !condOk) continue;
       const dx = pos.x - npc.x;
       const dy = pos.y - npc.y;
       const dist = Math.sqrt(dx * dx + dy * dy);

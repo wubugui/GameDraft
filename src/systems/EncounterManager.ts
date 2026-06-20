@@ -27,6 +27,8 @@ export class EncounterManager implements IGameSystem {
   private currentEncounter: EncounterDef | null = null;
   private currentOptions: ResolvedOption[] = [];
   private active: boolean = false;
+  /** chooseOption 在途锁：消耗道具/结果动作含 await，期间禁止再次进入，避免重复消耗/重复执行。 */
+  private resolving: boolean = false;
 
   private ruleNameResolver: RuleNameResolveFn | null = null;
   private resolveDisplay: ((s: string) => string) | null = null;
@@ -194,30 +196,39 @@ export class EncounterManager implements IGameSystem {
   }
 
   async chooseOption(index: number): Promise<void> {
+    if (this.resolving || !this.active) return;
     const opt = this.currentOptions[index];
     if (!opt || !opt.enabled) return;
 
-    if (opt.consumeItems) {
-      for (const req of opt.consumeItems) {
-        await this.actionExecutor.executeAwait({
-          type: 'removeItem',
-          params: { id: req.id, count: req.count },
-        });
+    this.resolving = true;
+    // 进入结算即清空选项：opt.enabled 是生成时缓存值，await 边界上不再可信；
+    // 清空后第二次进入会因 currentOptions[index] 为空而短路，杜绝重复消耗/重复结果。
+    this.currentOptions = [];
+    try {
+      if (opt.consumeItems) {
+        for (const req of opt.consumeItems) {
+          await this.actionExecutor.executeAwait({
+            type: 'removeItem',
+            params: { id: req.id, count: req.count },
+          });
+        }
       }
-    }
 
-    if (opt.resultActions.length > 0) {
-      try {
-        await this.actionExecutor.executeBatchAwait(opt.resultActions);
-      } catch (e) {
-        console.warn('EncounterManager: resultActions failed', e);
+      if (opt.resultActions.length > 0) {
+        try {
+          await this.actionExecutor.executeBatchAwait(opt.resultActions);
+        } catch (e) {
+          console.warn('EncounterManager: resultActions failed', e);
+        }
       }
-    }
 
-    if (opt.resultText) {
-      this.eventBus.emit('encounter:result', { text: this.r(opt.resultText) });
-    } else {
-      this.endEncounter();
+      if (opt.resultText) {
+        this.eventBus.emit('encounter:result', { text: this.r(opt.resultText) });
+      } else {
+        this.endEncounter();
+      }
+    } finally {
+      this.resolving = false;
     }
   }
 

@@ -28,6 +28,8 @@ export class EncounterUI {
   private optionsContainer: Container | null = null;
   private resultText: Text | null = null;
   private currentOptions: ResolvedOption[] = [];
+  /** 选项一旦被点选即上锁，避免快速双击/点击+按键造成 encounter:choiceSelected 重复派发。 */
+  private choiceLocked = false;
 
   private fullText: string = '';
   private displayedChars: number = 0;
@@ -121,6 +123,7 @@ export class EncounterUI {
     this.clearNarrative();
     this.phase = EncounterPhase.Options;
     this.currentOptions = options;
+    this.choiceLocked = false;
 
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
 
@@ -188,7 +191,14 @@ export class EncounterUI {
         });
         row.on('pointerout', () => { hoverBg.visible = false; rowBg.visible = true; });
         row.on('pointerdown', () => {
-          this.eventBus.emit('encounter:choiceSelected', { index: opt.index });
+          this.selectOption(opt);
+        });
+      } else if (opt.disableReason) {
+        // 置灰选项点击时给出原因反馈，与 DialogueUI 的禁用提示一致，避免“点了没反应”。
+        row.eventMode = 'static';
+        row.cursor = 'default';
+        row.on('pointerdown', () => {
+          this.eventBus.emit('notification:show', { text: opt.disableReason, type: 'warning' });
         });
       }
 
@@ -269,9 +279,16 @@ export class EncounterUI {
       const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
       const opt = this.currentOptions[idx];
       if (opt && opt.enabled) {
-        this.eventBus.emit('encounter:choiceSelected', { index: opt.index });
+        this.selectOption(opt);
       }
     }
+  }
+
+  /** 统一的选项派发入口：上锁后只派发一次，防止双击 / 点击+按键重复触发结算。 */
+  private selectOption(opt: ResolvedOption): void {
+    if (this.choiceLocked) return;
+    this.choiceLocked = true;
+    this.eventBus.emit('encounter:choiceSelected', { index: opt.index });
   }
 
   private handleAdvance(): void {

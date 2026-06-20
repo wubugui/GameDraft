@@ -435,15 +435,49 @@ class StringEditor(QWidget):
         self._set_leaf_typed(it, "number", n)
         return True
 
+    def _collect_tree(self) -> dict:
+        """把整棵树收集成 strings 字典（不校验、不写模型）。脏判断与提交共用。"""
+        result: dict = {}
+        for i in range(self._tree.topLevelItemCount()):
+            self._collect(self._tree.topLevelItem(i), result)
+        return result
+
+    def _is_dirty(self) -> bool:
+        """树（值控件 live 写入，始终与 UI 同步）与模型是否有差异。"""
+        try:
+            return self._collect_tree() != (self._model.strings or {})
+        except Exception:
+            return True  # 结构异常时保守判脏，宁可提示也不丢
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用编辑在保存前提交；校验失败则中止保存。"""
+        if not self._is_dirty():
+            return True
+        self._apply()
+        # _apply 校验失败时不写盘；若仍判脏，说明被拦截，返回 False 让保存上报中止。
+        return not self._is_dirty()
+
+    def confirm_close(self, parent=None) -> bool:
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "字符串表有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._apply()
+        return True
+
     def _apply(self) -> None:
         if not self._validate_tree_structure():
             return
         if not self._flush_current_leaf_from_ui_into_tree():
             return
-        result: dict = {}
-        for i in range(self._tree.topLevelItemCount()):
-            self._collect(self._tree.topLevelItem(i), result)
-        self._model.strings = result
+        self._model.strings = self._collect_tree()
         self._model.mark_dirty("strings")
 
     def _validate_tree_structure(self) -> bool:

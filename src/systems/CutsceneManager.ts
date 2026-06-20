@@ -410,6 +410,11 @@ export class CutsceneManager implements IGameSystem {
             await this.sceneManagerAPI.exitCutsceneInstancesForCurrent(id);
           }
           this.sceneManagerAPI?.endCutsceneStaging();
+          // 同场景过场也恢复快照（玩家位置/相机/缩放），与跨场景分支一致；
+          // restoreState:false 时跳过。否则同场景过场里的 cameraZoom / 移动玩家会在结束后残留。
+          if (!this.destroyed && def.restoreState !== false) {
+            await this.restoreSnapshot();
+          }
         }
       } catch (e) {
         console.warn('CutsceneManager: restore cutscene scene session failed', e);

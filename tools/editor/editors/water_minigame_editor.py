@@ -116,6 +116,9 @@ class WaterMinigameEditor(QWidget):
         self._current_inst_id: str | None = None
         self._doc: dict | None = None
         self._cur_ent: dict | None = None
+        # ActionEditor 当前归属的实体（按身份记，而非行号）：懒回写只写它，
+        # 删除/重排后行号漂移也不会把动作串台进别的实体。
+        self._ae_owner: dict | None = None
         self._extra_spot_ids: set[str] = set()
         self._prev_ent_row: int = -1
         self._selected_ent_row: int = -1
@@ -548,14 +551,18 @@ class WaterMinigameEditor(QWidget):
         self._btn_preview.setEnabled(on and self._current_inst_id is not None)
 
     def _flush_actions_for_entity_row(self, row: int) -> None:
-        if not self._doc or row < 0:
+        # 按身份回写：只把 ActionEditor 内容写回它当前归属的那个实体 dict，且仅当该实体
+        # 仍在列表中。这样删除/重排导致行号漂移时，绝不会把动作误刷进顶上来补位的实体
+        # （历史上按 row 取 ents[row] 正是串台根因）。row 参数仅保留兼容签名。
+        if not self._doc:
+            return
+        owner = self._ae_owner
+        if not isinstance(owner, dict):
             return
         ents = self._doc.get("entities")
-        if not isinstance(ents, list) or row >= len(ents):
+        if not isinstance(ents, list) or not any(owner is e for e in ents):
             return
-        e = ents[row]
-        if isinstance(e, dict):
-            self._ae_assign(e)
+        self._ae_assign(owner)
 
     def _on_inst_row_changed(self, row: int) -> None:
         self._flush_actions_for_entity_row(self._selected_ent_row)
@@ -885,6 +892,8 @@ class WaterMinigameEditor(QWidget):
         self._reload_entities_canvas(len(ents) - 1)
 
     def _fill_entity_form(self, ent: dict | None) -> None:
+        # ActionEditor 自此归属 ent（身份记账），后续懒回写只认它。
+        self._ae_owner = ent if isinstance(ent, dict) else None
         self._loading = True
         try:
             if ent is None:

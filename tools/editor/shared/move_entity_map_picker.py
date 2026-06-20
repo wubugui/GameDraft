@@ -261,18 +261,8 @@ class MoveEntityPathPickView(WorldPointPickView):
         if self._marker is not None and self._marker.scene() is self._gfx:
             self._gfx.removeItem(self._marker)
         self._marker = None
-        dx, dy = self._dest_xy
-        self._dest_xy = (
-            float(max(0.0, min(self._world_w, dx))),
-            float(max(0.0, min(self._world_h, dy))),
-        )
-        nv: list[tuple[float, float]] = []
-        for vx, vy in self._vertices:
-            nv.append((
-                float(max(0.0, min(self._world_w, vx))),
-                float(max(0.0, min(self._world_h, vy))),
-            ))
-        self._vertices = nv
+        # 不再在载入时把已授权的终点/途经点夹到世界边界：那会在用户仅查看后点 OK 时
+        # 静默改写既有坐标（数据篡改）。新拾取仍在 _handle_left_pick_world 处夹取。
         self._redraw_route()
         return ww, wh
 

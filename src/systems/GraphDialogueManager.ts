@@ -531,6 +531,13 @@ export class GraphDialogueManager implements IGameSystem {
       const bc = built[index];
       if (!bc?.enabled) return;
 
+      // 扣除该选项标注的铜钱花费。buildChoicesForNode 仅据此置灰门槛，真正扣减在此处，
+      // 否则 costCoins 选项实为“免费”。与背包铜钱一致，走 InventoryManager。
+      const cost = opt.costCoins;
+      if (typeof cost === 'number' && cost > 0) {
+        this.inventoryManager.removeCoins(cost);
+      }
+
       this.eventBus.emit('dialogue:choiceSelected:log', { index, text: bc.text });
       this.choicePhase = null;
       this.currentNodeId = opt.next;

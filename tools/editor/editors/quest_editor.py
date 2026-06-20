@@ -290,6 +290,8 @@ class QuestEditor(QWidget):
         self._model = model
         self._current_selection: str = ""
         self._selection_type: str = ""
+        # 防 commit-on-leave 在 apply→_refresh 重建树后重选时再次触发提交（递归/悬挂）。
+        self._suppress_tree_commit: bool = False
         self._breadcrumb: list[str] = []
 
         root = QHBoxLayout(self)
@@ -555,12 +557,26 @@ class QuestEditor(QWidget):
         self._refresh_graph()
 
     def _on_graph_node_selected(self, node_id: str) -> None:
+        # 经树选择统一收口：选中对应树节点触发 _on_tree_select，同步面板 + 图高亮 +
+        # _selection_type/_current_selection，避免"图里点了、树没动、当前选择过期"
+        # 导致编辑/Apply 落到上一个实体（单向选择脱节）。
+        root = self._tree.invisibleRootItem()
+        for kind in ("group", "quest"):
+            it = self._find_tree_item(root, kind, node_id)
+            if it is not None:
+                self._tree.setCurrentItem(it)
+                return
+        # 兜底：树里找不到（极少）时仍直接显示属性，至少不丢交互。
         for g in self._model.quest_groups:
             if g["id"] == node_id:
+                self._selection_type = "group"
+                self._current_selection = node_id
                 self._show_group_props(node_id)
                 return
         for q in self._model.quests:
             if q["id"] == node_id:
+                self._selection_type = "quest"
+                self._current_selection = node_id
                 self._show_quest_props(node_id)
                 return
 
@@ -575,6 +591,79 @@ class QuestEditor(QWidget):
 
     # ======== tree selection ========
 
+    def _is_dirty(self) -> bool:
+        """当前面板是否与模型里的该分组/任务有未应用差异（脏判断与 apply 字段对齐）。"""
+        if self._selection_type == "group" and self._current_selection:
+            g = next((g for g in self._model.quest_groups
+                      if g["id"] == self._current_selection), None)
+            if not g:
+                return False
+            if self._g_id.text().strip() != g.get("id", ""):
+                return True
+            if self._g_name.text().strip() != g.get("name", ""):
+                return True
+            if self._g_type.currentText() != g.get("type", "main"):
+                return True
+            if (self._g_parent.current_id() or "") != (g.get("parentGroup") or ""):
+                return True
+            return False
+        if self._selection_type == "quest" and self._current_selection:
+            q = next((q for q in self._model.quests
+                      if q["id"] == self._current_selection), None)
+            if not q:
+                return False
+            if self._q_id.text().strip() != q.get("id", ""):
+                return True
+            if (self._q_group.current_id() or "") != q.get("group", ""):
+                return True
+            if self._q_type.currentText() != q.get("type", "main"):
+                return True
+            if self._q_side_type.currentText() != q.get("sideType", ""):
+                return True
+            if self._q_title.text() != q.get("title", ""):
+                return True
+            if self._q_desc.toPlainText() != q.get("description", ""):
+                return True
+            if self._q_pre.to_list() != (q.get("preconditions") or []):
+                return True
+            if self._q_comp.to_list() != (q.get("completionConditions") or []):
+                return True
+            if self._q_accept.to_list() != (q.get("acceptActions") or []):
+                return True
+            if self._q_rewards.to_list() != (q.get("rewards") or []):
+                return True
+            if self._q_next_editor.to_list() != (q.get("nextQuests") or []):
+                return True
+            return False
+        return False
+
+    def _commit_current_selection(self) -> None:
+        if self._selection_type == "group":
+            self._apply_group()
+        elif self._selection_type == "quest":
+            self._apply_quest()
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用编辑在保存前提交，避免静默丢弃。"""
+        if self._is_dirty():
+            self._commit_current_selection()
+        return True
+
+    def confirm_close(self, parent=None) -> bool:
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "当前任务/分组有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._commit_current_selection()
+        return True
+
     def _on_tree_select(self, current: QTreeWidgetItem | None, _prev) -> None:
         if not current:
             return
@@ -582,6 +671,23 @@ class QuestEditor(QWidget):
         if not data:
             return
         sel_type, sel_id = data
+
+        # commit-on-leave：切到别的节点前先提交上一个节点的未应用编辑。apply 会 _refresh
+        # 重建树使 current 悬挂，因此提交后用 id 重新定位目标并加 _suppress 防递归。
+        if (not self._suppress_tree_commit
+                and self._selection_type and self._current_selection
+                and (self._selection_type, self._current_selection) != (sel_type, sel_id)
+                and self._is_dirty()):
+            self._commit_current_selection()
+            it = self._find_tree_item(self._tree.invisibleRootItem(), sel_type, sel_id)
+            if it is not None:
+                self._suppress_tree_commit = True
+                try:
+                    self._tree.setCurrentItem(it)
+                finally:
+                    self._suppress_tree_commit = False
+            return
+
         self._selection_type = sel_type
         self._current_selection = sel_id
 

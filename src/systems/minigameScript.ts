@@ -30,14 +30,25 @@ export interface MinigameScriptStep {
 }
 
 /**
+ * 子步骤块标记：handler 调 `runChildren(steps)` 得到它并 `return`，
+ * runner 会以 `yield*` 展开执行，保证子步骤里的 `wait` 时序贯穿父子。
+ */
+export interface MinigameScriptChildBlock<S extends MinigameScriptStep = MinigameScriptStep> {
+  readonly __children: S[];
+}
+
+/**
  * 单个 opcode 的处理函数。
- * 返回 `void`（同步完成）或 `number`（需等待的秒数，由 runner 计时）。
+ * 返回值：
+ * - `void` —— 同步完成；
+ * - `number` —— 需等待的秒数，由 runner 计时；
+ * - `MinigameScriptChildBlock` —— 由 `runChildren(steps)` 产生，交还给 runner 按时序展开。
  */
 export type OpcodeHandler<S extends MinigameScriptStep = MinigameScriptStep> = (
   step: S,
   ctx: MinigameScriptContext,
-  runChildren: (steps: S[]) => Promise<void>,
-) => void | number | Promise<void | number>;
+  runChildren: (steps: S[]) => MinigameScriptChildBlock<S>,
+) => void | number | MinigameScriptChildBlock<S>;
 
 /** opcode 注册表 */
 export type OpcodeRegistry<S extends MinigameScriptStep = MinigameScriptStep> = Record<
@@ -114,27 +125,13 @@ export function createMinigameScriptRunner<S extends MinigameScriptStep>(
         console.warn(`[minigameScript] unknown op: ${step.op}`);
         continue;
       }
-      const childRunner = (children: S[]) => {
-        const childSteps = [...children];
-        const childPromise = new Promise<void>((resolve) => {
-          const saved = gen;
-          const childGen = execute(childSteps);
-          const pump = (): void => {
-            const r = childGen.next();
-            if (r.done) {
-              resolve();
-              return;
-            }
-            waitRemain = r.value;
-          };
-          pump();
-          void saved;
-          resolve();
-        });
-        return childPromise;
-      };
-      const result = handler(step, ctx, childRunner);
-      if (typeof result === 'number' && result > 0) {
+      // runChildren 只产出一个「子步骤块」标记；真正的执行由下方 yield* 委托完成，
+      // 这样子步骤中的 wait 会贯穿到父生成器的计时里（旧实现 pump 一次即 resolve，会丢弃首个 wait 之后的全部子步骤）。
+      const runChildren = (children: S[]): MinigameScriptChildBlock<S> => ({ __children: [...children] });
+      const result = handler(step, ctx, runChildren);
+      if (result && typeof result === 'object' && '__children' in result) {
+        yield* execute(result.__children);
+      } else if (typeof result === 'number' && result > 0) {
         yield result;
       }
     }

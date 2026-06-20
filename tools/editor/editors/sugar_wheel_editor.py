@@ -2255,6 +2255,13 @@ class SugarWheelEditor(QWidget):
         self._pull_atmos_step_from_ui(pname)
 
     def flush_to_model(self) -> None:
+        # 保存前先把"懒回写"的编辑器内容落进模型：当前激活 sector 的动作、充能前置
+        # 条件/动作等都是切行/切实例时才提交，若不在此 flush，未切换的最后一处编辑
+        # 会在 Save All 时静默丢失（save-roundtrip 数据丢失）。
+        if self._doc is not None:
+            self._flush_before_charge_from_editors()
+            if self._selected_sector_row >= 0:
+                self._flush_sector_actions_row(self._selected_sector_row)
         for iid, doc in self._model.sugar_wheel_instances.items():
             if not isinstance(doc, dict):
                 raise ValueError(f"sugar_wheel[{iid}]: 根必须为对象")

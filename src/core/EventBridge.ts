@@ -81,6 +81,12 @@ export class EventBridge {
     this.listen('shop:closed', () => stateController.setState(GameState.Exploring));
 
     this.listen('map:travel', async (p: { sceneId: string }) => {
+      // 地图面板点选传送：MapUI.close() 只拆 UI、不恢复状态机，state 仍停在 UIOverlay
+      // 且 overlayReturnStack 仍压着 [Exploring]。先退回覆盖层状态（回到 Exploring）再切场景，
+      // 否则 switchScene 完成后会按“进入时的 prev=UIOverlay”恢复，导致快速旅行后卡在 UIOverlay。
+      if (stateController.currentState === GameState.UIOverlay) {
+        stateController.restorePreviousState();
+      }
       try {
         await actionExecutor.executeAwait({
           type: 'switchScene',
@@ -93,6 +99,13 @@ export class EventBridge {
 
     this.listen('menu:newGame', () => { menuUI.close(); stateController.setState(GameState.Exploring); });
     this.listen('menu:returnToMain', () => { stateController.setState(GameState.MainMenu); menuUI.openMainMenu(); });
+    // 暂停菜单「继续」：MenuUI.close() 只关 UI，不动状态机。此处把游戏状态从 UIOverlay 恢复，
+    // 否则点「继续」后会卡在 UIOverlay（玩家冻结、Esc 也无效）。与 Esc 关闭暂停菜单的恢复语义一致。
+    this.listen('menu:resume', () => {
+      if (stateController.currentState === GameState.UIOverlay) {
+        stateController.restorePreviousState();
+      }
+    });
 
     this.listen('scene:enter', (p: { sceneId: string }) => mapUI.setCurrentScene(p.sceneId));
 

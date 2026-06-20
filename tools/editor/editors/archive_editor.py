@@ -253,6 +253,19 @@ class ArchiveEditor(QWidget):
         tabs.addTab(self._build_documents_tab(), "Documents")
         tabs.addTab(self._build_books_tab(), "Books")
 
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：提交四个档案区当前选中项的未应用编辑（跨页编辑也一并提交）。
+
+        每个 _apply_* 在对应区无选中（idx<0）时自守空转；无条件提交是安全的——只写入当前
+        UI 状态，未编辑的区写回等值数据（语义上无操作），保存后清脏；黄金往返测试保证不损坏。
+        这堵住"改了档案没点 Apply 就 Ctrl+S 被静默丢弃"的主要丢失路径。
+        """
+        self._apply_char()
+        self._apply_lore()
+        self._apply_doc()
+        self._apply_book()
+        return True
+
     # ---- Characters -------------------------------------------------------
 
     def _build_characters_tab(self) -> QWidget:

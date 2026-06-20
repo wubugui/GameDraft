@@ -433,12 +433,20 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['bookType', 'entryId']);
 
   executor.register('startCutscene', (p) => {
+    // 进入前的状态可能是 Exploring 加锁后的 ActionSequence、或对话 runActions 里的 Dialogue。
+    // 结束后恢复到该状态，而非硬切 Exploring（否则会顶掉仍在进行的对话）。
+    const prev = d.stateController.currentState;
+    const restore = () => {
+      if (d.stateController.currentState === GameState.Cutscene) {
+        d.stateController.setState(prev);
+      }
+    };
     d.stateController.setState(GameState.Cutscene);
     return d.cutsceneManager.startCutscene(p.id as string)
-      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .then(restore)
       .catch((e) => {
         console.warn('ActionRegistry: startCutscene failed', e);
-        d.stateController.setState(GameState.Exploring);
+        restore();
       });
   }, ['id']);
 
@@ -672,26 +680,38 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   };
 
   executor.register('switchScene', (p) => {
+    const prev = d.stateController.currentState;
+    const restore = () => {
+      if (d.stateController.currentState === GameState.Cutscene) {
+        d.stateController.setState(prev);
+      }
+    };
     d.stateController.setState(GameState.Cutscene);
     prepareSceneSwitch();
     return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined)
-      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .then(restore)
       .catch((e) => {
         console.warn('ActionRegistry: switchScene failed', e);
-        d.stateController.setState(GameState.Exploring);
+        restore();
       });
   }, ['targetScene', 'targetSpawnPoint']);
 
   executor.register('changeScene', (p) => {
+    const prev = d.stateController.currentState;
+    const restore = () => {
+      if (d.stateController.currentState === GameState.Cutscene) {
+        d.stateController.setState(prev);
+      }
+    };
     d.stateController.setState(GameState.Cutscene);
     prepareSceneSwitch();
     const cam = typeof p.cameraX === 'number' && typeof p.cameraY === 'number'
       ? { x: p.cameraX as number, y: p.cameraY as number } : undefined;
     return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined, cam)
-      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .then(restore)
       .catch((e) => {
         console.warn('ActionRegistry: changeScene failed', e);
-        d.stateController.setState(GameState.Exploring);
+        restore();
       });
   }, ['targetScene', 'targetSpawnPoint', 'cameraX', 'cameraY']);
 

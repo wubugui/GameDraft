@@ -50,12 +50,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private onFlagChanged: () => void;
   private onDialogueStart: (payload: { npcName?: string }) => void;
   private resolveForDisplay: ((raw: string | undefined) => string) | null = null;
+  /** 读档期间为 true：抑制 flag:changed 触发的解锁重评，避免在 unlocked 集合尚未恢复时喷出虚假“档案更新”通知/音效 */
+  private restoring: boolean = false;
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
 
-    this.onFlagChanged = () => this.evaluateUnlocks();
+    this.onFlagChanged = () => { if (!this.restoring) this.evaluateUnlocks(); };
     this.onDialogueStart = (payload) => {
       if (payload.npcName) this.tryUnlockCharacterByNpc(payload.npcName);
     };
@@ -72,6 +74,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
     this.conditionCtxFactory = factory;
+  }
+
+  /** 由 Game 在分发存档前后调用，包裹整个 deserialize 过程。 */
+  setRestoring(v: boolean): void {
+    this.restoring = v;
   }
 
   /** 由 Game 注入：统一解析 [tag:…] */

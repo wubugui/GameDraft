@@ -637,6 +637,12 @@ export class Game {
       this.stringsProvider,
       this.gameConfig.fallbackScene,
     );
+    // 仅在探索 / UI 覆盖层（暂停菜单打开）可存档；对话/遭遇/演出/小游戏等在途态拒绝存档，
+    // 避免半态存档（这些系统不持久化在途状态，读档会丢失或半执行）。
+    this.saveManager.setCanSavePredicate(() => {
+      const s = this.stateController.currentState;
+      return s === GameState.Exploring || s === GameState.UIOverlay;
+    });
     this.menuUI = new MenuUI(this.renderer, this.eventBus, this.saveManager, this.audioManager, this.stringsProvider);
     this.ruleUseUI = new RuleUseUI(this.renderer, this.eventBus, this.zoneSystem, this.rulesManager, this.stringsProvider);
     this.debugPanelUI = new DebugPanelUI(
@@ -1521,6 +1527,15 @@ export class Game {
       this.interactionSystem.setNpcs(npcs);
     });
 
+    // 过场重建 / 卸载实体时，先把其滤镜从深度系统的每帧驱动列表摘除再销毁，
+    // 否则已 destroy 的滤镜仍被 updatePerFrame 引用（且热点滤镜此前根本不销毁，造成 GPU 泄漏）。
+    this.sceneManager.setEntityFilterReleaser((filters) => {
+      for (const f of filters) {
+        this.sceneDepthSystem.removeFilter(f as Parameters<typeof this.sceneDepthSystem.removeFilter>[0]);
+        f.destroy();
+      }
+    });
+
     this.sceneManager.setDepthLoader(async (sceneId, sceneData, worldToPixelX, worldToPixelY) => {
       if (sceneData.depthConfig) {
         const dc = sceneData.depthConfig;
@@ -2255,12 +2270,23 @@ export class Game {
   }
 
   private distributeSaveData(data: Record<string, object>): void {
-    if (data['flagStore']) this.flagStore.deserialize(data['flagStore'] as Record<string, boolean | number>);
-    for (const entry of this.registeredSystems) {
-      if (entry.system && data[entry.name]) entry.system.deserialize(data[entry.name]);
+    // 读档期间抑制 QuestManager / ArchiveManager 对 flag:changed 的反应：
+    // 各系统 deserialize 会逐个 syncFlag → emit flag:changed，但此刻 scenario/narrative/档案集合
+    // 可能尚未恢复，按半态重评会导致任务误判完成/激活、以及虚假“档案更新”通知。
+    // 全部恢复后再放开；恢复出的状态本身自洽，无需强制重评。
+    this.questManager.setRestoring(true);
+    this.archiveManager.setRestoring(true);
+    try {
+      if (data['flagStore']) this.flagStore.deserialize(data['flagStore'] as Record<string, boolean | number>);
+      for (const entry of this.registeredSystems) {
+        if (entry.system && data[entry.name]) entry.system.deserialize(data[entry.name]);
+      }
+      if (data['dialogueLog']) this.dialogueLogUI.deserialize(data['dialogueLog'] as any);
+      if (data['game']) this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
+    } finally {
+      this.questManager.setRestoring(false);
+      this.archiveManager.setRestoring(false);
     }
-    if (data['dialogueLog']) this.dialogueLogUI.deserialize(data['dialogueLog'] as any);
-    if (data['game']) this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
   }
 
   private getEntityPixelDensityMatchEffective(): boolean {
@@ -3087,8 +3113,6 @@ export class Game {
     this.unsubRendererResize?.();
     this.unsubRendererResize = null;
 
-    this.eventBus.clear();
-
     this.stateController.closeAllPanels();
 
     this.inspectBox?.destroy();
@@ -3127,6 +3151,10 @@ export class Game {
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.destroy();
     }
+
+    // 各系统/UI/桥接均已各自 off 监听后，再清空总线作为兜底；
+    // 早于各 destroy() 清空会使各模块的 off() 作用在空总线上，掩盖其监听泄漏。
+    this.eventBus.clear();
 
     this.actionExecutor.destroy();
     this.flagStore.destroy();

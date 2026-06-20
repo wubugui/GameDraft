@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QComboBox, QPushButton, QSpinBox,
-    QDoubleSpinBox, QScrollArea, QGroupBox, QLabel, QStyle,
+    QDoubleSpinBox, QScrollArea, QGroupBox, QLabel, QStyle, QMessageBox,
 )
 from PySide6.QtCore import Qt
 
@@ -119,9 +119,58 @@ class ItemEditor(QWidget):
             tag = "[K]" if it.get("type") == "key" else "[C]"
             self._list.addItem(f"{tag} {it.get('id', '?')}  {it.get('name', '')}")
 
+    def _is_dirty(self) -> bool:
+        """当前 UI 是否与模型里的该物品有差异（用于切换/保存/关闭时判断是否需提交）。"""
+        if self._current_idx < 0 or self._current_idx >= len(self._model.items):
+            return False
+        it = self._model.items[self._current_idx]
+        if self._i_id.text().strip() != it.get("id", ""):
+            return True
+        if self._i_name.text() != it.get("name", ""):
+            return True
+        if self._i_type.currentText() != it.get("type", "consumable"):
+            return True
+        if self._i_desc.toPlainText() != it.get("description", ""):
+            return True
+        if self._i_stack.value() != it.get("maxStack", 1):
+            return True
+        if self._i_price.value() != (it.get("buyPrice", 0) or 0):
+            return True
+        dyns = [dw.to_dict() for dw in self._dyn_widgets]
+        if dyns != (it.get("dynamicDescriptions") or []):
+            return True
+        return False
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用的编辑在保存前提交进模型，否则被静默丢弃。"""
+        if self._current_idx >= 0 and self._is_dirty():
+            self._apply()
+        return True
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        """关闭/切项目门控：有未应用编辑则提示保存/放弃/取消。"""
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改",
+            "当前物品有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._apply()
+        return True
+
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.items):
             return
+        # commit-on-leave：切到别的物品前，把上一项未应用的编辑提交，避免静默丢弃。
+        if 0 <= self._current_idx < len(self._model.items) and self._current_idx != row \
+                and self._is_dirty():
+            self._apply()
         self._current_idx = row
         it = self._model.items[row]
         self._i_id.setText(it.get("id", ""))

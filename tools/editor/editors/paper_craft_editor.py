@@ -297,6 +297,9 @@ class PaperCraftEditor(QWidget):
         self.warn_score.setValue(int(o.get("warnScore") or 50))
 
         self.correct_paper_combo.clear()
+        # 显式"未设置"哨兵（data=""）占据 index 0：当 correctPaper 为空或指向已删/未知纸张时
+        # 选中它，使 _write_order 写回的仍是 ""，不再把第一种纸张静默写成正确答案（HIGH-10）。
+        self.correct_paper_combo.addItem("（未设置）", "")
         for p in o.get("paperOptions", []):
             if isinstance(p, dict):
                 self.correct_paper_combo.addItem(str(p.get("label") or p.get("id") or ""), str(p.get("id") or ""))

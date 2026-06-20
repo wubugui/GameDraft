@@ -27,6 +27,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   private currentBgm: Howl | null = null;
   private currentBgmId: string | null = null;
+  /** 每次 playBgm/stopBgm 自增；await loadAudio 期间若被更新的请求取代，旧请求放弃播放，避免泄漏正在播放的 Howl。 */
+  private bgmRequestSeq = 0;
   private ambientLayers: Map<string, Howl> = new Map();
   private sfxCache: Map<string, Howl> = new Map();
 
@@ -87,8 +89,11 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   playBgm(id: string, fadeMs: number = 1000): void {
+    const myReq = ++this.bgmRequestSeq;
     this.runWhenAudioAllowed(async () => {
-      if (this.currentBgmId === id) return;
+      // 排队期间已被更新的请求取代：放弃。
+      if (myReq !== this.bgmRequestSeq) return;
+      if (this.currentBgmId === id && this.currentBgm) return;
 
       const entry = this.config.bgm[id];
       if (!entry) {
@@ -96,14 +101,24 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         return;
       }
 
-      if (this.currentBgm) {
-        const old = this.currentBgm;
-        old.fade(old.volume(), 0, fadeMs);
-        this.scheduleCleanup(() => { old.stop(); }, fadeMs);
-      }
-
+      // 先加载、后切换：加载期间保持当前 BGM 播放；若加载期间被更新请求/stopBgm 取代则原样退出，
+      // 绝不在“尚未提交新 BGM”时就清空 currentBgm（否则会出现 currentBgm=null 但 currentBgmId 仍旧的错位）。
       const howl = this.assetManager.getAudio(entry.src, { loop: true })
         ?? await this.assetManager.loadAudio(entry.src, { loop: true });
+      if (myReq !== this.bgmRequestSeq) return;
+      if (this.currentBgmId === id && this.currentBgm === howl) return;
+
+      // 提交切换：仅当旧 BGM 与新实例不同才淡出（避免重复请求同一缓存 Howl 时把自己停掉）；
+      // currentBgm 与 currentBgmId 一起更新，无中间空窗。
+      if (this.currentBgm && this.currentBgm !== howl) {
+        const old = this.currentBgm;
+        old.fade(old.volume(), 0, fadeMs);
+        // 若淡出期间该 Howl 又被重新设为当前（A→B→A 且共享缓存实例），延时到点时不要再 stop。
+        this.scheduleCleanup(() => { if (this.currentBgm !== old) old.stop(); }, fadeMs);
+      }
+      // 复用缓存 Howl 前，先停掉其上任何残留发声实例（如 A→B→A 中被淡出但仍在循环的旧实例）：
+      // Howler 的 play() 在已有发声时会再开一个并发实例，volume(0) 不会停旧实例，故不先 stop 会叠音。
+      howl.stop();
       howl.loop(true);
       howl.volume(0);
       howl.play();
@@ -115,11 +130,14 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   stopBgm(fadeMs: number = 1000): void {
+    // 使任何在途的 playBgm 失效（其 myReq 将不再匹配），避免 stop 后旧加载又把 BGM 拉起。
+    ++this.bgmRequestSeq;
     this.runWhenAudioAllowed(() => {
       if (!this.currentBgm) return;
       const bgm = this.currentBgm;
       bgm.fade(bgm.volume(), 0, fadeMs);
-      this.scheduleCleanup(() => { bgm.stop(); }, fadeMs);
+      // 若淡出期间又有 playBgm 重新起用同一 Howl，到点时不要把它 stop 掉。
+      this.scheduleCleanup(() => { if (this.currentBgm !== bgm) bgm.stop(); }, fadeMs);
       this.currentBgm = null;
       this.currentBgmId = null;
     });
@@ -364,6 +382,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   destroy(): void {
+    // 使任何仍在 await loadAudio 的 playBgm 失效：到点 resume 时 myReq!==bgmRequestSeq 即放弃 play()，
+    // 否则会在 destroy 之后才起一个永不被停止的 Howl。
+    ++this.bgmRequestSeq;
     for (const { event, callback } of this.sfxEventListeners) {
       this.eventBus.off(event, callback);
     }

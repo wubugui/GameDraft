@@ -88,6 +88,9 @@ export class SceneManager implements IGameSystem {
   private audioManifestResolver: ((bgm?: string, ambient?: string[]) => AssetRef[]) | null = null;
   private zoneSetter: ((zones: import('../data/types').ZoneDef[]) => void) | null = null;
   private interactionSetter: ((hotspots: Hotspot[], npcs: Npc[]) => void) | null = null;
+  /** 由 Game 注入：从深度系统摘除并销毁实体滤镜（Game 持有 SceneDepthSystem）。
+   *  实体在过场重建 / 卸载时若不摘除，已 destroy 的滤镜仍留在每帧驱动列表里。 */
+  private entityFilterReleaser: ((filters: Array<{ destroy(): void }>) => void) | null = null;
   private depthLoader: ((sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>) | null = null;
   private depthUnloader: (() => void) | null = null;
   /** 场景根 `onEnter` 动作：由 Game 注入 ActionExecutor.executeBatchAwait */
@@ -144,6 +147,28 @@ export class SceneManager implements IGameSystem {
 
   setInteractionSetter(fn: (hotspots: Hotspot[], npcs: Npc[]) => void): void {
     this.interactionSetter = fn;
+  }
+
+  setEntityFilterReleaser(fn: (filters: Array<{ destroy(): void }>) => void): void {
+    this.entityFilterReleaser = fn;
+  }
+
+  /** 摘除并销毁热点的深度滤镜（先从深度系统列表移除，再销毁 GPU 资源）。重复调用安全（detach 返回 null）。 */
+  private releaseHotspotFilters(h: Hotspot): void {
+    const f = h.detachDepthOcclusionFilter();
+    if (!f) return;
+    if (this.entityFilterReleaser) this.entityFilterReleaser([f]);
+    else f.destroy();
+  }
+
+  /** 摘除并销毁 NPC 容器上的滤镜，并清空 container.filters。 */
+  private releaseNpcFilters(n: Npc): void {
+    const filters = n.container.filters as readonly { destroy(): void }[] | null | undefined;
+    if (filters && filters.length > 0) {
+      if (this.entityFilterReleaser) this.entityFilterReleaser([...filters]);
+      else for (const f of filters) f.destroy();
+    }
+    n.container.filters = [];
   }
 
   setDepthLoader(fn: (sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>): void {
@@ -416,6 +441,7 @@ export class SceneManager implements IGameSystem {
         const idx = this.currentHotspots.findIndex(h => h.def.id === def.id);
         if (idx >= 0) {
           const h = this.currentHotspots[idx];
+          this.releaseHotspotFilters(h);
           this.renderer.entityLayer.removeChild(h.container);
           h.destroy();
           this.currentHotspots.splice(idx, 1);
@@ -433,11 +459,7 @@ export class SceneManager implements IGameSystem {
         const idx = this.currentNpcs.findIndex(n => n.def.id === npcDef.id);
         if (idx >= 0) {
           const n = this.currentNpcs[idx];
-          const filters = n.container.filters;
-          if (filters && filters.length > 0) {
-            for (const f of filters) f.destroy();
-          }
-          n.container.filters = [];
+          this.releaseNpcFilters(n);
           this.renderer.entityLayer.removeChild(n.container);
           n.destroy();
           this.currentNpcs.splice(idx, 1);
@@ -464,6 +486,7 @@ export class SceneManager implements IGameSystem {
         const idx = this.currentHotspots.findIndex(h => h.def.id === def.id);
         if (idx >= 0) {
           const h = this.currentHotspots[idx];
+          this.releaseHotspotFilters(h);
           this.renderer.entityLayer.removeChild(h.container);
           h.destroy();
           this.currentHotspots.splice(idx, 1);
@@ -485,11 +508,7 @@ export class SceneManager implements IGameSystem {
         const idx = this.currentNpcs.findIndex(n => n.def.id === npcDef.id);
         if (idx >= 0) {
           const n = this.currentNpcs[idx];
-          const filters = n.container.filters;
-          if (filters && filters.length > 0) {
-            for (const f of filters) f.destroy();
-          }
-          n.container.filters = [];
+          this.releaseNpcFilters(n);
           this.renderer.entityLayer.removeChild(n.container);
           n.destroy();
           this.currentNpcs.splice(idx, 1);
@@ -1124,18 +1143,14 @@ export class SceneManager implements IGameSystem {
     }
 
     for (const hotspot of this.currentHotspots) {
+      // scene:beforeUnload 通常已摘除热点深度滤镜；此处再摘一次是幂等兜底（detach 返回 null 即跳过）。
+      this.releaseHotspotFilters(hotspot);
       hotspot.destroy();
     }
     this.currentHotspots = [];
 
     for (const npc of this.currentNpcs) {
-      const filters = npc.container.filters;
-      if (filters && filters.length > 0) {
-        for (const f of filters) {
-          f.destroy();
-        }
-      }
-      npc.container.filters = [];
+      this.releaseNpcFilters(npc);
       npc.destroy();
     }
     this.currentNpcs = [];

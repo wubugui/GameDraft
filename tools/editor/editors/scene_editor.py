@@ -1287,9 +1287,6 @@ class SceneCanvas(QGraphicsView):
         # 仅重建展示图；碰撞多边形在已存在时原地更新顶点，避免在鼠标事件栈内
         # removeItem 掉正在拖拽/悬停的多边形（与巡逻折线延后刷新同类 Qt 崩溃）。
         disp_key = f"hotspot_display:{hid}"
-        old_disp = self._entity_items.pop(disp_key, None)
-        if old_disp is not None and old_disp.scene() is self._gfx:
-            self._gfx.removeItem(old_disp)
         di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
         img = str(di.get("image", "") or "").strip()
         try:
@@ -1297,36 +1294,52 @@ class SceneCanvas(QGraphicsView):
             hh = float(di.get("worldHeight", 0) or 0)
         except (TypeError, ValueError):
             ww, hh = 0.0, 0.0
-        if img and ww > 0 and hh > 0:
-            cx = float(hs.get("x", 0))
-            cy = float(hs.get("y", 0))
-            pm_data = QPixmap()
-            disk_path = (
-                disk_path_for_runtime_url(self._project_model, img)
-                if self._project_model
-                else None
-            )
-            if disk_path and disk_path.is_file():
-                pm_data = QPixmap(str(disk_path))
-            if not pm_data.isNull():
-                facing = str(di.get("facing", "") or "right").strip().lower()
-                if facing == "left":
-                    pm_data = QPixmap.fromImage(pm_data.toImage().mirrored(True, False))
-                sw = max(pm_data.width(), 1)
-                sh = max(pm_data.height(), 1)
-                pix_it = QGraphicsPixmapItem(pm_data)
-                pix_it.setPos(cx - ww * 0.5, cy - hh)
-                pix_it.setTransform(QTransform.fromScale(ww / sw, hh / sh))
-                pix_it.setZValue(-4)
-                self._gfx.addItem(pix_it)
-                self._entity_items[disp_key] = pix_it
-            else:
-                rect = QGraphicsRectItem(cx - ww * 0.5, cy - hh, ww, hh)
-                rect.setBrush(QBrush(QColor(200, 120, 255, 38)))
-                rect.setPen(QPen(QColor(140, 70, 190, 200), 0, Qt.PenStyle.DashLine))
-                rect.setZValue(-4)
-                self._gfx.addItem(rect)
-                self._entity_items[disp_key] = rect
+        cx = float(hs.get("x", 0))
+        cy = float(hs.get("y", 0))
+        facing = str(di.get("facing", "") or "right").strip().lower()
+        # displayImage 来源签名：拖拽中只有 x/y 变、签名不变时，原地平移既有 pixmap，
+        # 不再每帧 remove+重建+从磁盘重载 —— 消除"拖热区时贴图狂闪 + 卡顿"（perf-reload）。
+        disp_sig = (img, ww, hh, facing) if (img and ww > 0 and hh > 0) else None
+        existing_disp = self._entity_items.get(disp_key)
+        if (
+            disp_sig is not None
+            and isinstance(existing_disp, QGraphicsPixmapItem)
+            and getattr(existing_disp, "_disp_sig", None) == disp_sig
+            and existing_disp.scene() is self._gfx
+        ):
+            existing_disp.setPos(cx - ww * 0.5, cy - hh)
+        else:
+            old_disp = self._entity_items.pop(disp_key, None)
+            if old_disp is not None and old_disp.scene() is self._gfx:
+                self._gfx.removeItem(old_disp)
+            if disp_sig is not None:
+                pm_data = QPixmap()
+                disk_path = (
+                    disk_path_for_runtime_url(self._project_model, img)
+                    if self._project_model
+                    else None
+                )
+                if disk_path and disk_path.is_file():
+                    pm_data = QPixmap(str(disk_path))
+                if not pm_data.isNull():
+                    if facing == "left":
+                        pm_data = QPixmap.fromImage(pm_data.toImage().mirrored(True, False))
+                    sw = max(pm_data.width(), 1)
+                    sh = max(pm_data.height(), 1)
+                    pix_it = QGraphicsPixmapItem(pm_data)
+                    pix_it.setPos(cx - ww * 0.5, cy - hh)
+                    pix_it.setTransform(QTransform.fromScale(ww / sw, hh / sh))
+                    pix_it.setZValue(-4)
+                    pix_it._disp_sig = disp_sig
+                    self._gfx.addItem(pix_it)
+                    self._entity_items[disp_key] = pix_it
+                else:
+                    rect = QGraphicsRectItem(cx - ww * 0.5, cy - hh, ww, hh)
+                    rect.setBrush(QBrush(QColor(200, 120, 255, 38)))
+                    rect.setPen(QPen(QColor(140, 70, 190, 200), 0, Qt.PenStyle.DashLine))
+                    rect.setZValue(-4)
+                    self._gfx.addItem(rect)
+                    self._entity_items[disp_key] = rect
         col_key = f"hotspot_collision:{hid}"
         poly = hs.get("collisionPolygon")
         pts: list[tuple[float, float]] = []
@@ -1527,6 +1540,25 @@ class SceneCanvas(QGraphicsView):
         item = self._entity_items.get(key)
         if item is not None and hasattr(item, "set_interaction_range"):
             item.set_interaction_range(range_radius)
+
+    def move_entity_handle(self, kind: str, entity_id: str, x: float, y: float) -> None:
+        """数值框改 x/y 时让可拖图元（hotspot/npc/spawn 的 _DraggableCircle）跟随，
+        与精灵/碰撞保持单一真相源（修复"改坐标只动精灵、图元不动"的反向脱节）。
+
+        临时关闭 ItemSendsGeometryChanges，避免 setPos 触发 itemChange→item_position_live
+        造成与数值框的回写环。"""
+        item = self._entity_items.get(f"{kind}:{entity_id}")
+        if item is None or item.scene() is not self._gfx:
+            return
+        flag = QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        had = bool(item.flags() & flag)
+        if had:
+            item.setFlag(flag, False)
+        try:
+            item.setPos(float(x), float(y))
+        finally:
+            if had:
+                item.setFlag(flag, True)
 
     def remove_hotspot_graphics(self, entity_id: str) -> None:
         hid = str(entity_id).strip()
@@ -2456,6 +2488,7 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._sc_id = QLineEdit(); form.addRow("id", self._sc_id)
         self._sc_name = QLineEdit(); form.addRow("name", self._sc_name)
+        self._sc_name.textChanged.connect(lambda *_: self._emit_props_changed())
         self._sc_width = QDoubleSpinBox()
         self._sc_width.setRange(0, 99999)
         self._sc_width.setDecimals(2)
@@ -3051,11 +3084,18 @@ class ScenePropertyPanel(QScrollArea):
         因为 _pending_* 与 _staging_* 是同一对象，且只有可见面板的 widgets 才
         承载用户最新输入；其它已离开的实体的 _pending_* 早已与 widgets 无关。
         """
+        from ..editor_perf import perf_log_enabled
+
+        # 该 flush 既走 Save All，也走 commit-on-leave（切实体/切场景）。性能戳只在
+        # 显式开启 perf 日志时打印，避免每次切换都喷 [SaveAll] 噪声（且名不副实）。
+        log_on = perf_log_enabled()
         t0 = time.perf_counter()
         last = t0
 
         def _stamp(msg: str) -> None:
             nonlocal last
+            if not log_on:
+                return
             wall = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             now = time.perf_counter()
             print(
@@ -3079,10 +3119,12 @@ class ScenePropertyPanel(QScrollArea):
         basic_inner = QWidget()
         form = compact_form(QFormLayout(basic_inner))
         self._hs_id = QLineEdit(); form.addRow("id", self._hs_id)
+        self._hs_id.textChanged.connect(lambda *_: self._emit_props_changed())
         self._hs_type = QComboBox()
         self._hs_type.addItems(["inspect", "pickup", "transition", "npc", "encounter"])
         form.addRow("type", self._hs_type)
         self._hs_label = RichTextLineEdit(self._model); form.addRow("label", self._hs_label)
+        self._hs_label.textChanged.connect(lambda *_: self._emit_props_changed())
         self._hs_x = QDoubleSpinBox(); self._hs_x.setRange(-99999, 99999); self._hs_x.setDecimals(1)
         self._hs_x.valueChanged.connect(self._on_hs_xy_live_refresh)
         form.addRow("x", self._hs_x)
@@ -4157,7 +4199,9 @@ class ScenePropertyPanel(QScrollArea):
         base_inner = QWidget()
         form = compact_form(QFormLayout(base_inner))
         self._npc_id = QLineEdit(); form.addRow("id", self._npc_id)
+        self._npc_id.textChanged.connect(lambda *_: self._emit_props_changed())
         self._npc_name = QLineEdit(); form.addRow("name", self._npc_name)
+        self._npc_name.textChanged.connect(lambda *_: self._emit_props_changed())
         self._npc_x = QDoubleSpinBox(); self._npc_x.setRange(-99999, 99999); self._npc_x.setDecimals(1)
         self._npc_x.valueChanged.connect(self._on_npc_xy_live)
         form.addRow("x", self._npc_x)
@@ -5008,6 +5052,7 @@ class ScenePropertyPanel(QScrollArea):
         form = compact_form(QFormLayout(top_inner))
         self._zn_id = QLineEdit()
         form.addRow("id", self._zn_id)
+        self._zn_id.textChanged.connect(lambda *_: self._emit_props_changed())
         self._zn_kind = QComboBox()
         self._zn_kind.addItem("普通（进出/停留）", "standard")
         self._zn_kind.addItem("深度 floor 修正（仅遮挡，脚底中心判点）", "depth_floor")
@@ -5669,6 +5714,7 @@ class SceneEditor(QWidget):
             return
         pat = target.setdefault("patrol", {})
         pat["route"] = norm
+        self._mark_canvas_edit()
         self._props.refresh_npc_patrol_table(npc_id, norm)
         self._patrol_preview_state.pop(npc_id, None)
 
@@ -5890,6 +5936,18 @@ class SceneEditor(QWidget):
             self._scene_npc_anim_timer.start()
 
     @Slot()
+    def _npc_render_pos_dict(self, rid: str, model_npc: dict) -> dict:
+        """统一的 NPC 位置真相源：正在编辑（staging）的那个 NPC 读 staging，其它读模型。
+
+        这是修复"精灵闪烁/不跟随"的关键——动画定时器、draw_at、refresh 都经此解析，
+        与拖拽/数值框写入处一致，杜绝"定时器读模型、编辑写 staging"的每 8ms 回弹。
+        与 _staging_npc_for_canvas_drag 同源（拖拽写哪里、这里就读哪里）。
+        """
+        sn = self._props._staging_npc
+        if sn is not None and str(sn.get("id", "")) == str(rid):
+            return sn
+        return model_npc
+
     def _tick_scene_npc_anims(self) -> None:
         sc = self._model.scenes.get(self._current_scene_id or "")
         if not sc:
@@ -5910,8 +5968,9 @@ class SceneEditor(QWidget):
                 px, py = self._patrol_preview_advance(rid, npc, dt)
                 rt.tick(dt, px, py)
             else:
-                x = float(npc.get("x", 0))
-                y = float(npc.get("y", 0))
+                pos = self._npc_render_pos_dict(rid, npc)
+                x = float(pos.get("x", 0))
+                y = float(pos.get("y", 0))
                 rt.tick(dt, x, y)
         self._canvas.viewport().update()
 
@@ -5938,6 +5997,7 @@ class SceneEditor(QWidget):
                     break
         if n is None:
             return
+        self._canvas.move_entity_handle("npc", npc_id, n.get("x", 0), n.get("y", 0))
         self._canvas.refresh_npc_collision_visuals(n)
         if rt is None:
             return
@@ -5962,6 +6022,8 @@ class SceneEditor(QWidget):
         self._load_scene(sid)
 
     def _load_scene(self, scene_id: str, *, reset_view: bool = True) -> None:
+        # 离开当前场景前先提交未应用的画布/面板编辑，避免切场景静默丢弃。
+        self._commit_pending_scene_edits()
         self._current_scene_id = scene_id
         sc = self._model.scenes.get(scene_id)
         if sc is None:
@@ -6046,6 +6108,7 @@ class SceneEditor(QWidget):
                         and str(sh.get("id", "")) == str(eid)
                     ):
                         return
+                    self._commit_pending_scene_edits()
                     props.load_hotspot_props(hs)
                     return
         elif kind in ("npc", "npc_collision"):
@@ -6058,6 +6121,7 @@ class SceneEditor(QWidget):
                         and str(sn.get("id", "")) == str(eid)
                     ):
                         return
+                    self._commit_pending_scene_edits()
                     props.load_npc_props(npc)
                     return
         elif kind == "zone":
@@ -6070,6 +6134,7 @@ class SceneEditor(QWidget):
                         and str(sz.get("id", "")) == str(eid)
                     ):
                         return
+                    self._commit_pending_scene_edits()
                     props.load_zone_props(zone)
                     return
         elif kind == "spawn":
@@ -6078,6 +6143,7 @@ class SceneEditor(QWidget):
                 and str(props._spawn_name_original or "") == str(eid)
             ):
                 return
+            self._commit_pending_scene_edits()
             scene_use = props._staging_scene
             if scene_use is None or scene_use.get("id") != sc.get("id"):
                 scene_use = sc
@@ -6132,6 +6198,7 @@ class SceneEditor(QWidget):
                     break
             else:
                 return
+        self._mark_canvas_edit()
         self._props.refresh_zone_polygon_table(eid, poly_list)
         self._canvas.item_selected.emit(kind, eid)
 
@@ -6155,6 +6222,7 @@ class SceneEditor(QWidget):
             return
         target["collisionPolygon"] = _hotspot_collision_world_to_local(target, poly_list)
         target["collisionPolygonLocal"] = True
+        self._mark_canvas_edit()
 
         def _deferred_hotspot_collision_ui() -> None:
             self._props.refresh_hotspot_collision_table(eid)
@@ -6188,6 +6256,7 @@ class SceneEditor(QWidget):
             return
         target["collisionPolygon"] = _hotspot_collision_world_to_local(target, poly_list)
         target["collisionPolygonLocal"] = True
+        self._mark_canvas_edit()
 
         def _deferred_npc_collision_ui() -> None:
             self._props.refresh_npc_collision_table(eid)
@@ -6213,6 +6282,7 @@ class SceneEditor(QWidget):
             return
         hs_st = self._props._staging_hotspot
         if hs_st is not None and str(hs_st.get("id", "")) == str(eid):
+            self._canvas.move_entity_handle("hotspot", eid, hs_st.get("x", 0), hs_st.get("y", 0))
             self._canvas.refresh_hotspot_visuals(hs_st)
             return
         sc = self._model.scenes.get(self._current_scene_id or "")
@@ -6220,6 +6290,7 @@ class SceneEditor(QWidget):
             return
         for hs in sc.get("hotspots", []):
             if hs.get("id") == eid:
+                self._canvas.move_entity_handle("hotspot", eid, hs.get("x", 0), hs.get("y", 0))
                 self._canvas.refresh_hotspot_visuals(hs)
                 return
 
@@ -6273,6 +6344,7 @@ class SceneEditor(QWidget):
             hs["y"] = ry
             self._canvas.refresh_hotspot_visuals(hs)
             self._props.sync_hotspot_xy_widgets(eid, rx, ry)
+            self._mark_canvas_edit()
             return
         if kind == "npc":
             npc = self._staging_npc_for_canvas_drag(eid)
@@ -6287,6 +6359,7 @@ class SceneEditor(QWidget):
                 self._canvas.viewport().update()
             self._canvas.refresh_npc_collision_visuals(npc)
             self._props.sync_npc_xy_widgets(eid, rx, ry)
+            self._mark_canvas_edit()
             return
         if kind == "spawn":
             scw = self._spawn_scene_write_dict()
@@ -6298,10 +6371,58 @@ class SceneEditor(QWidget):
                 sps = scw.setdefault("spawnPoints", {})
                 sps[eid] = {"x": rx, "y": ry}
             self._props.sync_spawn_xy_widgets(eid, rx, ry)
+            self._mark_canvas_edit()
 
     def flush_to_model(self) -> None:
         """Save All：与 Apply 相同，原子提交 staging 并增量同步画布。"""
         self._apply_props()
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        """关闭 / 切项目门控钩子（被 MainWindow._confirm_pending_editor_changes 调用）。
+
+        把未应用的画布/面板编辑提交进模型，让随后的 is_dirty 检查能感知并弹出保存
+        提示，修复"拖拽/改名后关闭或切项目静默丢弃"（HIGH-11/12）。本身不弹窗、
+        始终返回 True 不阻塞——保存与否由主窗口统一的 Unsaved Changes 提示决定；
+        若用户选择放弃，内存模型随之丢弃，本次提交不会落盘。
+        """
+        if self._props.is_pending_dirty():
+            self._apply_props()
+        return True
+
+    def _mark_canvas_edit(self) -> None:
+        """任何画布编辑（拖实体/出生点/多边形顶点）统一入口：
+
+        立即把模型标脏并点亮"未应用"提示。这保证：
+        - 关闭程序 / 切项目的门控读 model.is_dirty 时能感知，弹出保存提示，
+          不再静默丢弃（修复 HIGH-3/4/11/12/13/15）；
+        - 红色未应用指示与切换时的 commit-on-leave 一致触发。
+        """
+        sid = self._current_scene_id or ""
+        if sid:
+            self._model.mark_dirty("scene", sid)
+        self._props._set_pending_dirty(True)
+
+    def _commit_pending_scene_edits(self) -> None:
+        """commit-on-leave：离开当前实体/场景前，把未应用的 staging 编辑提交回模型。
+
+        消除"切实体/切场景静默丢弃拖拽"的丢数据簇（HIGH-5/7/14）。只在确有未应用
+        编辑时执行（is_pending_dirty 门控，避免无谓 flush 与日志噪声），且不触碰画布
+        （即将离开当前视图，重绘交由目标视图加载）。
+        """
+        props = self._props
+        if not props.is_pending_dirty():
+            return
+        sc_id = self._current_scene_id or ""
+        if not sc_id or self._model.scenes.get(sc_id) is None or props._source_scene is None:
+            props._set_pending_dirty(False)
+            return
+        props.flush_pending_to_model()          # 可见面板 widgets -> staging
+        props.commit_scene_staging_to_source()  # 场景级非列表字段（含 spawnPoint/spawnPoints）
+        self._commit_staging_dict_into(props._source_hotspot, props._staging_hotspot)
+        self._commit_staging_dict_into(props._source_npc, props._staging_npc)
+        self._commit_staging_dict_into(props._source_zone, props._staging_zone)
+        self._model.mark_dirty("scene", sc_id)
+        props._set_pending_dirty(False)
 
     def _spawn_scene_write_dict(self) -> dict | None:
         props = self._props

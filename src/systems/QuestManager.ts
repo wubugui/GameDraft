@@ -23,13 +23,20 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   private onFlagChanged: () => void;
   /** 任务奖励 / 接取动作串行，避免与 evaluate 或它处异步交错 */
   private questActionTail: Promise<void> = Promise.resolve();
+  /** 读档期间为 true：抑制 flag:changed 触发的 evaluate，避免在 scenario/narrative 等尚未恢复时按半态误判任务完成/激活 */
+  private restoring: boolean = false;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.actionExecutor = actionExecutor;
 
-    this.onFlagChanged = () => this.evaluate();
+    this.onFlagChanged = () => { if (!this.restoring) this.evaluate(); };
+  }
+
+  /** 由 Game 在分发存档前后调用，包裹整个 deserialize 过程。 */
+  setRestoring(v: boolean): void {
+    this.restoring = v;
   }
 
   /** 与图对话共用 `evaluateConditionExpr`；未注入时退化为纯 flag AND。 */

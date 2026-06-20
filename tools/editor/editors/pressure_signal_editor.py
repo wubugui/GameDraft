@@ -7,10 +7,13 @@
 """
 from __future__ import annotations
 
+import copy
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
+    QMessageBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -190,6 +193,10 @@ class PressureHoldEditor(QWidget):
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.pressure_holds):
             return
+        # commit-on-leave：切到别的条目前提交上一项未应用编辑，避免静默丢弃。
+        if 0 <= self._current_idx < len(self._model.pressure_holds) \
+                and self._current_idx != row and self._is_dirty():
+            self._apply()
         self._current_idx = row
         h = self._model.pressure_holds[row]
         self._f_id.setText(h.get("id", ""))
@@ -206,10 +213,37 @@ class PressureHoldEditor(QWidget):
         self._on_complete.set_project_context(self._model, None)
         self._on_complete.set_data(h.get("onComplete", []) or [])
 
-    def _apply(self) -> None:
-        if self._current_idx < 0:
-            return
+    def _is_dirty(self) -> bool:
+        if self._current_idx < 0 or self._current_idx >= len(self._model.pressure_holds):
+            return False
         h = self._model.pressure_holds[self._current_idx]
+        test = copy.deepcopy(h)
+        self._write_hold_into(test)
+        return test != h
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用编辑在保存前提交，避免静默丢弃。"""
+        if self._current_idx >= 0 and self._is_dirty():
+            self._apply()
+        return True
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "当前临场长按有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._apply()
+        return True
+
+    def _write_hold_into(self, h: dict) -> None:
+        """把当前 UI 值就地写入 h（不 mark_dirty / 不刷新列表）。_apply 与脏判断共用。"""
         h["id"] = self._f_id.text().strip()
         h["prompt"] = self._f_prompt.text()
         release = self._f_release.text().strip()
@@ -239,6 +273,12 @@ class PressureHoldEditor(QWidget):
             h["onComplete"] = on_complete
         else:
             h.pop("onComplete", None)
+
+    def _apply(self) -> None:
+        if self._current_idx < 0:
+            return
+        h = self._model.pressure_holds[self._current_idx]
+        self._write_hold_into(h)
         self._model.mark_dirty("pressure_holds")
         lw = self._list.item(self._current_idx)
         if lw is not None:
@@ -322,6 +362,10 @@ class SignalCueEditor(QWidget):
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.signal_cues):
             return
+        # commit-on-leave：切到别的信号 Cue 前提交上一项未应用编辑。
+        if 0 <= self._current_idx < len(self._model.signal_cues) \
+                and self._current_idx != row and self._is_dirty():
+            self._apply()
         self._current_idx = row
         c = self._model.signal_cues[row]
         self._f_id.setText(c.get("id", ""))
@@ -329,10 +373,7 @@ class SignalCueEditor(QWidget):
         self._actions.set_project_context(self._model, None)
         self._actions.set_data(c.get("actions", []) or [])
 
-    def _apply(self) -> None:
-        if self._current_idx < 0:
-            return
-        c = self._model.signal_cues[self._current_idx]
+    def _write_cue_into(self, c: dict) -> None:
         c["id"] = self._f_id.text().strip()
         desc = self._f_desc.text().strip()
         if desc:
@@ -340,6 +381,40 @@ class SignalCueEditor(QWidget):
         else:
             c.pop("description", None)
         c["actions"] = self._actions.to_list()
+
+    def _is_dirty(self) -> bool:
+        if self._current_idx < 0 or self._current_idx >= len(self._model.signal_cues):
+            return False
+        c = self._model.signal_cues[self._current_idx]
+        test = copy.deepcopy(c)
+        self._write_cue_into(test)
+        return test != c
+
+    def flush_to_model(self) -> bool:
+        if self._current_idx >= 0 and self._is_dirty():
+            self._apply()
+        return True
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "当前信号 Cue 有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._apply()
+        return True
+
+    def _apply(self) -> None:
+        if self._current_idx < 0:
+            return
+        c = self._model.signal_cues[self._current_idx]
+        self._write_cue_into(c)
         self._model.mark_dirty("signal_cues")
         lw = self._list.item(self._current_idx)
         if lw is not None:

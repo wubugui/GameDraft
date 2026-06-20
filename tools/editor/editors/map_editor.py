@@ -173,6 +173,9 @@ class MapEditor(QWidget):
         self._syncing_selection = False
         self._updating_from_spin = False
         self._loading_ui = False
+        # 别处改了场景/过渡后，地图连线会过期；标记待刷新，下次显示该页时重建。
+        self._needs_refresh = False
+        model.data_changed.connect(self._on_model_data_changed)
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -251,6 +254,23 @@ class MapEditor(QWidget):
         root.addWidget(splitter)
         self._refresh()
 
+    def _on_model_data_changed(self, data_type: str, _item_id: str = "") -> None:
+        # 仅"场景"数据影响地图连线（过渡来自各场景的 changeScene/hotspot）。
+        # 地图自身的节点编辑（'map'）已即时反映，不在此重建以免拖拽中自我打断。
+        if data_type != "scene":
+            return
+        self._needs_refresh = True
+        if self.isVisible():
+            # 当前就在地图页：立即重建连线（场景编辑通常发生在别的页，极少同时可见）。
+            self._needs_refresh = False
+            self._refresh()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._needs_refresh:
+            self._needs_refresh = False
+            self._refresh()
+
     def _clear_edge_items(self) -> None:
         for it in self._edge_items:
             self._map_scene.removeItem(it)
@@ -283,10 +303,12 @@ class MapEditor(QWidget):
     def _on_scene_selection_changed(self) -> None:
         if self._syncing_selection:
             return
-        sel = [
-            it for it in self._map_scene.selectedItems()
-            if isinstance(it, MapNodeGraphicsItem)
-        ]
+        try:
+            selected = self._map_scene.selectedItems()
+        except RuntimeError:
+            # 销毁期：C++ QGraphicsScene 已释放而信号仍连着，避免 SAGV/崩溃。
+            return
+        sel = [it for it in selected if isinstance(it, MapNodeGraphicsItem)]
         if not sel:
             self._syncing_selection = True
             try:
@@ -320,8 +342,15 @@ class MapEditor(QWidget):
         self._redraw_edges()
 
     def _refresh(self) -> None:
-        self._list.clear()
-        self._map_scene.clear()
+        # 快照目标选中行：clear() 会同步触发 selectionChanged / currentRowChanged(-1)，
+        # 把 _current_idx 清成 -1，若不先快照，末尾的恢复块就成了死代码（选择丢失）。
+        target = self._current_idx
+        self._syncing_selection = True
+        try:
+            self._list.clear()
+            self._map_scene.clear()
+        finally:
+            self._syncing_selection = False
         self._node_graphics.clear()
         self._edge_items.clear()
 
@@ -342,11 +371,12 @@ class MapEditor(QWidget):
         self._map_view.fit_all()
         self._m_scene.set_items([(s, s) for s in self._model.all_scene_ids()])
 
-        if 0 <= self._current_idx < len(self._model.map_nodes):
+        if 0 <= target < len(self._model.map_nodes):
+            self._current_idx = target
             self._syncing_selection = True
             try:
-                self._list.setCurrentRow(self._current_idx)
-                self._node_graphics[self._current_idx].setSelected(True)
+                self._list.setCurrentRow(target)
+                self._node_graphics[target].setSelected(True)
             finally:
                 self._syncing_selection = False
         else:

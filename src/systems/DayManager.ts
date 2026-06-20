@@ -44,19 +44,23 @@ export class DayManager implements IGameSystem {
   }
 
   private async processDelayedEvents(): Promise<void> {
+    const due: DelayedEvent[] = [];
     const remaining: DelayedEvent[] = [];
     for (const evt of this.delayedEvents) {
-      if (evt.targetDay <= this._currentDay) {
-        try {
-          await this.actionExecutor.executeBatchAwait(evt.actions);
-        } catch (e) {
-          console.warn('DayManager: delayed actions failed', e);
-        }
-      } else {
-        remaining.push(evt);
+      if (evt.targetDay <= this._currentDay) due.push(evt);
+      else remaining.push(evt);
+    }
+    // 先摘除到期事件（处理期间若有动作再注册延迟事件，保留进 remaining，不被覆盖）。
+    this.delayedEvents = remaining;
+    // 同一 endDay 内多条到期事件按 targetDay 升序执行（早到期的先生效），相同 targetDay 保持注册顺序（稳定排序）。
+    due.sort((a, b) => a.targetDay - b.targetDay);
+    for (const evt of due) {
+      try {
+        await this.actionExecutor.executeBatchAwait(evt.actions);
+      } catch (e) {
+        console.warn('DayManager: delayed actions failed', e);
       }
     }
-    this.delayedEvents = remaining;
   }
 
   private syncFlag(): void {

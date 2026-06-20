@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QTabWidget, QFormLayout, QLineEdit, QComboBox, QPushButton,
-    QScrollArea, QLabel, QGroupBox,
+    QScrollArea, QLabel, QGroupBox, QMessageBox,
 )
 from PySide6.QtCore import Qt
 
@@ -17,6 +17,11 @@ class RuleEditor(QWidget):
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
         self._model = model
+        # 快照式脏判断（UI 与「载入时的 UI」比较，只认用户改动，绕开旧数据→layers 的
+        # 自动迁移误判）+ 防 apply→refresh 重选时重复提交。
+        self._rule_snapshot = None
+        self._frag_snapshot = None
+        self._suppress_commit = False
 
         root = QVBoxLayout(self)
         self._tabs = QTabWidget()
@@ -96,12 +101,75 @@ class RuleEditor(QWidget):
         self._rule_idx = -1
         return w
 
+    def _rule_ui_state(self):
+        layers = {}
+        for lk in ("xiang", "li", "shu"):
+            te, hi, ver = self._layer_edits[lk]
+            layers[lk] = (te.toPlainText(), hi.text(), ver.currentText())
+        return (self._r_id.text(), self._r_name.text(), self._r_iname.text(),
+                self._r_cat.currentText(), layers)
+
+    def _frag_ui_state(self):
+        return (self._f_id.text(), self._f_text.toPlainText(),
+                self._f_layer.currentText(), self._f_src.text())
+
+    def _is_dirty_rule(self) -> bool:
+        rules = self._model.rules_data.get("rules", [])
+        return (0 <= self._rule_idx < len(rules)
+                and self._rule_snapshot is not None
+                and self._rule_ui_state() != self._rule_snapshot)
+
+    def _is_dirty_frag(self) -> bool:
+        frags = self._model.rules_data.get("fragments", [])
+        return (0 <= self._frag_idx < len(frags)
+                and self._frag_snapshot is not None
+                and self._frag_ui_state() != self._frag_snapshot)
+
+    def _is_dirty(self) -> bool:
+        return self._is_dirty_rule() or self._is_dirty_frag()
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：先提交碎片（其 apply 会刷新碎片列表），再提交规矩。"""
+        if self._is_dirty_frag():
+            self._apply_frag()
+        if self._is_dirty_rule():
+            self._apply_rule()
+        return True
+
+    def confirm_close(self, parent=None) -> bool:
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "当前规矩/碎片有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            if self._is_dirty_frag():
+                self._apply_frag()
+            if self._is_dirty_rule():
+                self._apply_rule()
+        return True
+
     def _on_rule_select(self, row: int) -> None:
         rules = self._model.rules_data.get("rules", [])
         if row < 0 or row >= len(rules):
             self._rule_idx = -1
+            self._rule_snapshot = None
             self._rule_frag_list.clear()
             return
+        # commit-on-leave：切到别的规矩前提交上一条未应用编辑。_apply_rule 不重建规矩
+        # 列表（只刷新碎片侧栏），故 row 不会悬挂；_suppress_commit 防刷新触发的重入。
+        if (not self._suppress_commit and 0 <= self._rule_idx < len(rules)
+                and self._rule_idx != row and self._is_dirty_rule()):
+            self._suppress_commit = True
+            try:
+                self._apply_rule()
+            finally:
+                self._suppress_commit = False
         self._rule_idx = row
         r = rules[row]
         self._r_id.setText(r.get("id", ""))
@@ -128,6 +196,7 @@ class RuleEditor(QWidget):
                 hi.setText("")
                 ver.setCurrentIndex(0)
         self._refresh_rule_fragments_sidebar()
+        self._rule_snapshot = self._rule_ui_state()
 
     def _refresh_rule_fragments_sidebar(self) -> None:
         self._rule_frag_list.clear()
@@ -448,6 +517,7 @@ class RuleEditor(QWidget):
         layer_i = self._f_layer.findText(lv)
         self._f_layer.setCurrentIndex(layer_i if layer_i >= 0 else 0)
         self._f_src.setText(fr.get("source", ""))
+        self._frag_snapshot = self._frag_ui_state()
 
     def _apply_frag(self) -> None:
         frags = self._model.rules_data.get("fragments", [])

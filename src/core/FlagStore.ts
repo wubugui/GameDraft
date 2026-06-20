@@ -188,8 +188,13 @@ export class FlagStore {
   }
 
   set(key: string, value: FlagValue): void {
+    const prev = this.flags.get(key);
     this.flags.set(key, value);
-    this.eventBus.emit('flag:changed', { key, value });
+    // 仅在值真正变化时广播：避免无意义的 flag:changed 触发各系统重评（读档时尤甚）。
+    // 新建键（prev === undefined）视为变化。
+    if (prev !== value) {
+      this.eventBus.emit('flag:changed', { key, value });
+    }
   }
 
   get(key: string): FlagValue | undefined {

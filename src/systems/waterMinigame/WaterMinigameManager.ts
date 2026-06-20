@@ -268,7 +268,8 @@ export class WaterMinigameManager implements IGameSystem {
 
   private attachSessionPullSpaceBridge(): void {
     this.detachSessionPullSpaceBridge();
-    this.releaseActiveScope();
+    // 注意：不要在此释放资源 scope。本方法只负责（重）绑定空格/鼠标的拉拽监听；
+    // scope 的钉住贯穿整局，统一在 teardownSession/destroy 释放。
     this.sessionPullSpaceHeld = false;
 
     this.boundPullSpaceKeyDown = (e: KeyboardEvent) => {
@@ -331,6 +332,9 @@ export class WaterMinigameManager implements IGameSystem {
       this.scene.destroy();
       this.scene = null;
     }
+
+    // 场景纹理已不再需要：释放本局钉住的资源 scope（scope 在 start 钉住，贯穿整局）。
+    this.releaseActiveScope();
 
     this.active = false;
     if (this.stateController) {
