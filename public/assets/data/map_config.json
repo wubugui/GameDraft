@@ -16,8 +16,8 @@
   {
     "sceneId": "码头白天",
     "name": "码头",
-    "x": 122.0,
-    "y": 224.0,
+    "x": 55.28706624605677,
+    "y": 218.99652996845427,
     "unlockConditions": []
   },
   {
@@ -43,8 +43,8 @@
   {
     "sceneId": "婆子家院",
     "name": "婆子家小院",
-    "x": 92.0,
-    "y": 62.0,
+    "x": 95.33564668769716,
+    "y": 93.68864353312303,
     "unlockConditions": [
       {
         "narrative": "scenario_婆子家",
@@ -63,8 +63,8 @@
   {
     "sceneId": "河边",
     "name": "城外河滩",
-    "x": 52.0,
-    "y": 130.0,
+    "x": 49.49826498422713,
+    "y": 150.01388012618298,
     "unlockConditions": [
       {
         "narrative": "flow_xungou_main",
@@ -76,8 +76,8 @@
   {
     "sceneId": "枯井土地庙",
     "name": "土地庙枯井",
-    "x": 142.0,
-    "y": 38.0,
+    "x": 142.63231554929405,
+    "y": 31.9448297142507,
     "unlockConditions": [
       {
         "narrative": "scenario_枯井",
@@ -96,8 +96,8 @@
   {
     "sceneId": "阎王岭山口",
     "name": "阎王岭山口",
-    "x": 332.0,
-    "y": 36.0,
+    "x": 363.688643533123,
+    "y": 43.50520504731862,
     "unlockConditions": [
       {
         "narrative": "scenario_送货",
@@ -116,8 +116,8 @@
   {
     "sceneId": "义庄",
     "name": "义庄",
-    "x": 252.0,
-    "y": 60.0,
+    "x": 267.8443217665615,
+    "y": 35.81656151419559,
     "unlockConditions": [
       {
         "any": [
@@ -136,8 +136,8 @@
   {
     "sceneId": "城隍庙夜",
     "name": "城隍庙（守夜）",
-    "x": 312.0,
-    "y": 142.0,
+    "x": 344.52255520504735,
+    "y": 114.4809148264984,
     "unlockConditions": [
       {
         "quest": "xg11_shouye",
@@ -148,8 +148,8 @@
   {
     "sceneId": "城门口",
     "name": "城门口",
-    "x": 202.0,
-    "y": 36.0,
+    "x": 215.34258675078868,
+    "y": 29.32870662460568,
     "unlockConditions": [
       {
         "narrative": "flow_xungou_main",
@@ -176,8 +176,8 @@
   {
     "sceneId": "test_room_b",
     "name": "后巷",
-    "x": 139.8,
-    "y": 230.8,
+    "x": 141.46782334384858,
+    "y": 264.99037854889593,
     "unlockConditions": [
       {
         "flag": "legacy_iron_box_flow"
@@ -187,8 +187,8 @@
   {
     "sceneId": "temple",
     "name": "城隍庙（旧）",
-    "x": 412.2,
-    "y": 120.4,
+    "x": 425.5425867507886,
+    "y": 173.77034700315457,
     "unlockConditions": [
       {
         "flag": "legacy_iron_box_flow"
@@ -198,8 +198,8 @@
   {
     "sceneId": "temple_exterior",
     "name": "庙宇",
-    "x": 394.3,
-    "y": 87.2,
+    "x": 433.49384858044175,
+    "y": 72.18958990536278,
     "unlockConditions": [
       {
         "flag": "legacy_iron_box_flow"
@@ -220,8 +220,8 @@
   {
     "sceneId": "mountain_pass",
     "name": "山路",
-    "x": 337.1,
-    "y": 110.9,
+    "x": 355.4460567823343,
+    "y": 162.60252365930597,
     "unlockConditions": [
       {
         "flag": "legacy_iron_box_flow"

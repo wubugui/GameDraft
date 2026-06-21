@@ -11,9 +11,12 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility for Windows fallback runtimes.
+    import tomli as tomllib
 
 from tools.chronicle_sim_v3.llm.errors import LLMConfigError
 from tools.chronicle_sim_v3.llm.types import Prompt

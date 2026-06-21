@@ -4241,6 +4241,85 @@
           }
         }
       ]
+    },
+    {
+      "id": "composition_2",
+      "label": "composition_2",
+      "mainGraph": {
+        "id": "flow_2",
+        "label": "茶馆听书",
+        "ownerType": "flow",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "initial",
+            "meta": {
+              "editor": {
+                "x": 107,
+                "y": 181
+              }
+            }
+          }
+        },
+        "transitions": []
+      },
+      "elements": [
+        {
+          "id": "wrapper_1",
+          "kind": "wrapperGraph",
+          "label": "茶馆自动剧情点",
+          "refId": "",
+          "x": 458,
+          "y": -82,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "hotspot",
+          "ownerId": "teahouse:茶馆_自动事件",
+          "graph": {
+            "id": "wrapper_graph_2",
+            "label": "茶馆自动剧情点",
+            "ownerType": "hotspot",
+            "category": "",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "label": "第一次进入游戏",
+                "meta": {
+                  "editor": {
+                    "x": -5,
+                    "y": -5
+                  }
+                }
+              },
+              "state_1": {
+                "id": "state_1",
+                "label": "常规状态",
+                "meta": {
+                  "editor": {
+                    "x": 455,
+                    "y": -139
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "initial",
+                "to": "state_1",
+                "signal": "__draft__",
+                "priority": 0
+              }
+            ],
+            "ownerId": "teahouse:茶馆_自动事件"
+          }
+        }
+      ]
     }
   ],
   "signals": [

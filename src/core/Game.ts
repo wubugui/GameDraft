@@ -123,6 +123,10 @@ import { warmUpDepthOcclusionGlProgramForDiagnostics } from '../rendering/DepthO
 export interface GameStartOptions {
   devMode?: boolean;
   playCutscene?: string;
+  /** 开发模式下直接进入指定场景（URL `devScene=` / `dev_scene=`） */
+  devScene?: string;
+  /** 开发模式下直接进入指定叙事跳转（URL `narrativeWarp=` / `narrative_warp=`） */
+  narrativeWarp?: string;
   /** 开发模式下直接进入指定水域小游戏实例（由编辑器预览 URL `waterPreview=` 传入） */
   waterPreview?: string;
   /** 开发模式下直接进入指定转盘小游戏实例（URL `sugarWheelPreview=`） */
@@ -1096,6 +1100,8 @@ export class Game {
         options.waterPreview,
         options.sugarWheelPreview,
         options.paperCraftPreview,
+        options.devScene,
+        options.narrativeWarp,
       );
     } else {
       if (this.gameConfig.initialQuest) {
@@ -2081,6 +2087,8 @@ export class Game {
     waterPreview?: string,
     sugarWheelPreview?: string,
     paperCraftPreview?: string,
+    devScene?: string,
+    narrativeWarp?: string,
   ): Promise<void> {
     const DEV_SCENE = 'dev_room';
     await this.sceneManager.loadScene(DEV_SCENE);
@@ -2158,6 +2166,24 @@ export class Game {
     };
     if (playCutscene) {
       setTimeout(() => this.devPlayCutscene(playCutscene), 300);
+    }
+
+    const nw = (narrativeWarp ?? '').trim();
+    if (nw) {
+      setTimeout(() => {
+        void this.enterNarrativeWarp(nw);
+      }, playCutscene ? 900 : 300);
+      return;
+    }
+
+    const ds = (devScene ?? '').trim();
+    if (ds) {
+      if (ds !== DEV_SCENE) {
+        setTimeout(() => {
+          void this.devLoadScene(ds);
+        }, playCutscene ? 900 : 300);
+      }
+      return;
     }
 
     const wp = (waterPreview ?? '').trim();

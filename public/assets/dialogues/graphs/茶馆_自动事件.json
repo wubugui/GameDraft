@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "茶馆_自动事件",
+  "entry": "n_1",
+  "meta": {
+    "title": "茶馆_自动事件"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_1": {
+      "type": "ownerState",
+      "cases": [
+        {
+          "state": "initial",
+          "next": "n_3"
+        },
+        {
+          "state": "state_1",
+          "next": ""
+        }
+      ],
+      "defaultNext": "n_2",
+      "missingWrapperNext": "",
+      "wrapperGraphId": "wrapper_graph_2"
+    },
+    "n_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "错误"
+      },
+      "next": "",
+      "text": "状态机没有状态。"
+    },
+    "n_3": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "说书-李天狗大战旱魃"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "",
+            "sourceType": "",
+            "sourceId": ""
+          }
+        }
+      ],
+      "next": ""
+    }
+  }
+}
