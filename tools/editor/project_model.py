@@ -862,6 +862,33 @@ class ProjectModel(QObject):
             if isinstance(c, dict) and str(c.get("id", "")).strip()
         ]
 
+    def narrative_signal_rows(self) -> list[tuple[str, str]]:
+        """Registered narrative signals as ``(display, id)`` rows for pickers."""
+        if not isinstance(self.narrative_graphs, dict):
+            return []
+        raw = self.narrative_graphs.get("signals")
+        if not isinstance(raw, list):
+            return []
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            sid = str(row.get("id") or "").strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            label = str(row.get("label") or "").strip()
+            desc = str(row.get("description") or "").strip()
+            if label and label != sid:
+                display = f"{sid} - {label}"
+            else:
+                display = sid
+            if desc:
+                display = f"{display} ({desc[:48]})"
+            out.append((display, sid))
+        return out
+
     def all_scene_entity_ids(self) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
         for sid, scene in sorted(self.scenes.items()):

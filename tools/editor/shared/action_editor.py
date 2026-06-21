@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QFormLayout, QFrame, QGroupBox,
     QTextEdit, QApplication, QToolButton, QDialog, QListWidget, QListWidgetItem,
     QDialogButtonBox, QSizePolicy, QInputDialog, QAbstractSpinBox, QMessageBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
@@ -545,6 +546,437 @@ def _cutscene_spawn_id_choices(
                 seen.add(tid)
                 rows.append((tid, tid))
     return rows
+
+
+def _narrative_signal_rows_with_orphan(model, committed: str) -> list[tuple[str, str]]:
+    """Registered narrative signals plus the saved value if it is currently orphaned."""
+    cur = (committed or "").strip()
+    rows = model.narrative_signal_rows() if model else []
+    if not rows:
+        rows = [("（narrative_graphs.signals 为空）", "")]
+    if cur and all(v != cur for _, v in rows):
+        return [(f"{cur} · 未在 signals 注册表登记", cur)] + rows
+    return rows
+
+
+def _iter_narrative_graphs_for_signals(data: dict):
+    comps = data.get("compositions") if isinstance(data, dict) else []
+    if not isinstance(comps, list):
+        return
+    for comp in comps:
+        if not isinstance(comp, dict):
+            continue
+        main = comp.get("mainGraph")
+        if isinstance(main, dict) and str(main.get("id") or "").strip():
+            yield main
+        for el in comp.get("elements") or []:
+            if not isinstance(el, dict):
+                continue
+            graph = el.get("graph")
+            if isinstance(graph, dict) and str(graph.get("id") or "").strip():
+                yield graph
+
+
+def _narrative_derived_signal_ids(data: dict) -> set[str]:
+    out: set[str] = set()
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        gid = str(graph.get("id") or "").strip()
+        states = graph.get("states")
+        if not gid or not isinstance(states, dict):
+            continue
+        for sid, raw in states.items():
+            if isinstance(raw, dict) and bool(raw.get("broadcastOnEnter")):
+                out.add(f"state:{gid}:{sid}")
+    return out
+
+
+def _narrative_listener_counts(data: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        for tr in graph.get("transitions") or []:
+            if not isinstance(tr, dict):
+                continue
+            sig = str(tr.get("signal") or "").strip()
+            if sig:
+                counts[sig] = counts.get(sig, 0) + 1
+    return counts
+
+
+def _rename_narrative_signal_refs(data: dict, old_id: str, new_id: str) -> None:
+    old = (old_id or "").strip()
+    new = (new_id or "").strip()
+    if not old or not new or old == new:
+        return
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        for tr in graph.get("transitions") or []:
+            if isinstance(tr, dict) and str(tr.get("signal") or "").strip() == old:
+                tr["signal"] = new
+    for comp in data.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        for el in comp.get("elements") or []:
+            if not isinstance(el, dict):
+                continue
+            meta = el.get("meta")
+            if not isinstance(meta, dict) or not isinstance(meta.get("emits"), list):
+                continue
+            meta["emits"] = [new if str(sig) == old else sig for sig in meta["emits"]]
+
+
+def _validate_narrative_signals_for_manager(data: dict) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    registered: set[str] = set()
+    seen: set[str] = set()
+    for idx, row in enumerate(data.get("signals") or []):
+        if not isinstance(row, dict):
+            warnings.append(f"signals[{idx}] 不是对象，将被保存流程规范化处理")
+            continue
+        sid = str(row.get("id") or "").strip()
+        if not sid:
+            errors.append(f"signals[{idx}].id 不能为空")
+            continue
+        if sid in seen:
+            errors.append(f"信号 id 重复: {sid}")
+        seen.add(sid)
+        if sid == "__draft__" or sid.startswith("state:"):
+            errors.append(f"作者信号 id 使用了保留/派生命名: {sid}")
+        registered.add(sid)
+
+    derived = _narrative_derived_signal_ids(data)
+    listeners = _narrative_listener_counts(data)
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        gid = str(graph.get("id") or "").strip()
+        for tr in graph.get("transitions") or []:
+            if not isinstance(tr, dict):
+                continue
+            trigger = str(tr.get("trigger") or "").strip()
+            if trigger in ("reactive", "reactiveAll", "reactiveAny"):
+                continue
+            tid = str(tr.get("id") or "?")
+            sig = str(tr.get("signal") or "").strip()
+            if not sig:
+                errors.append(f"Transition {gid}.{tid} 缺少 signal")
+            elif sig == "__draft__":
+                warnings.append(f"Transition {gid}.{tid} 仍在使用草稿信号 __draft__")
+            elif sig.startswith("state:"):
+                if sig not in derived:
+                    errors.append(f"Transition {gid}.{tid} 监听了不存在或未广播的派生信号: {sig}")
+            elif sig not in registered:
+                errors.append(f"Transition {gid}.{tid} 监听了未登记信号: {sig}")
+
+    for sid in sorted(registered):
+        if listeners.get(sid, 0) == 0:
+            warnings.append(f"信号 {sid} 当前没有 Transition 监听")
+    return errors, warnings
+
+
+class NarrativeSignalManagerDialog(QDialog):
+    """Manage narrative author signals and select one for emitNarrativeSignal."""
+
+    def __init__(self, model, current: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("叙事信号管理器")
+        self.setMinimumSize(900, 620)
+        self.resize(980, 680)
+        self._model = model
+        src = model.narrative_graphs if model and isinstance(model.narrative_graphs, dict) else {}
+        self._data = json.loads(json.dumps(src, ensure_ascii=False))
+        self._data.setdefault("signals", [])
+        if not isinstance(self._data["signals"], list):
+            self._data["signals"] = []
+        self._selected = (current or "").strip()
+        self._populating = False
+        self._row_to_signal_index: dict[int, int] = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText("搜索信号 id / label / notes...")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(lambda _t: self._rebuild_table())
+        root.addWidget(self._search)
+
+        self._table = QTableWidget(0, 4, self)
+        self._table.setHorizontalHeaderLabels(["id", "label", "notes", "监听"])
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setAlternatingRowColors(True)
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.itemDoubleClicked.connect(lambda _it: self._select_current())
+        root.addWidget(self._table, 1)
+
+        tools = QHBoxLayout()
+        add_btn = QPushButton("新增", self)
+        del_btn = QPushButton("删除", self)
+        self._select_btn = QPushButton("选用当前信号", self)
+        validate_btn = QPushButton("校验", self)
+        add_btn.clicked.connect(self._add_signal)
+        del_btn.clicked.connect(self._delete_signal)
+        self._select_btn.clicked.connect(self._select_current)
+        validate_btn.clicked.connect(self._refresh_validation)
+        tools.addWidget(add_btn)
+        tools.addWidget(del_btn)
+        tools.addStretch(1)
+        tools.addWidget(validate_btn)
+        tools.addWidget(self._select_btn)
+        root.addLayout(tools)
+
+        self._validation = QTextEdit(self)
+        self._validation.setReadOnly(True)
+        self._validation.setMinimumHeight(120)
+        root.addWidget(self._validation)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        btns.accepted.connect(self._accept_without_select)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+        self._rebuild_table()
+        self._refresh_validation()
+
+    def selected_signal(self) -> str:
+        return self._selected
+
+    def _signals(self) -> list[dict]:
+        raw = self._data.setdefault("signals", [])
+        if not isinstance(raw, list):
+            raw = []
+            self._data["signals"] = raw
+        return raw
+
+    def _current_signal_index(self) -> int | None:
+        row = self._table.currentRow()
+        if row < 0:
+            return None
+        return self._row_to_signal_index.get(row)
+
+    def _matches_query(self, row: dict, query: str) -> bool:
+        if not query:
+            return True
+        text = " ".join(
+            str(row.get(k) or "")
+            for k in ("id", "label", "notes", "description")
+        ).lower()
+        return query.lower() in text
+
+    def _rebuild_table(self) -> None:
+        query = self._search.text().strip()
+        counts = _narrative_listener_counts(self._data)
+        self._populating = True
+        try:
+            self._row_to_signal_index.clear()
+            self._table.setRowCount(0)
+            for sig_index, sig in enumerate(self._signals()):
+                if not isinstance(sig, dict):
+                    continue
+                if not self._matches_query(sig, query):
+                    continue
+                r = self._table.rowCount()
+                self._table.insertRow(r)
+                self._row_to_signal_index[r] = sig_index
+                sid = str(sig.get("id") or "")
+                vals = [
+                    sid,
+                    str(sig.get("label") or ""),
+                    str(sig.get("notes") or sig.get("description") or ""),
+                    str(counts.get(sid.strip(), 0)),
+                ]
+                for c, val in enumerate(vals):
+                    item = QTableWidgetItem(val)
+                    if c == 3:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self._table.setItem(r, c, item)
+                if sid.strip() == self._selected:
+                    self._table.selectRow(r)
+            if self._table.currentRow() < 0 and self._table.rowCount() > 0:
+                self._table.selectRow(0)
+        finally:
+            self._populating = False
+        self._on_selection_changed()
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._populating:
+            return
+        sig_index = self._row_to_signal_index.get(item.row())
+        if sig_index is None:
+            return
+        signals = self._signals()
+        if sig_index < 0 or sig_index >= len(signals) or not isinstance(signals[sig_index], dict):
+            return
+        row = signals[sig_index]
+        old_id = str(row.get("id") or "").strip()
+        text = item.text().strip()
+        if item.column() == 0:
+            row["id"] = text
+            if old_id and text and old_id != text:
+                _rename_narrative_signal_refs(self._data, old_id, text)
+                if self._selected == old_id:
+                    self._selected = text
+        elif item.column() == 1:
+            if text:
+                row["label"] = text
+            else:
+                row.pop("label", None)
+        elif item.column() == 2:
+            row.pop("description", None)
+            if text:
+                row["notes"] = text
+            else:
+                row.pop("notes", None)
+        self._refresh_validation()
+        if item.column() == 0:
+            self._rebuild_table()
+
+    def _on_selection_changed(self) -> None:
+        idx = self._current_signal_index()
+        self._select_btn.setEnabled(idx is not None)
+
+    def _new_unique_signal_id(self) -> str:
+        existing = {
+            str(row.get("id") or "").strip()
+            for row in self._signals()
+            if isinstance(row, dict)
+        }
+        base = "new_signal"
+        if base not in existing:
+            return base
+        i = 2
+        while f"{base}_{i}" in existing:
+            i += 1
+        return f"{base}_{i}"
+
+    def _add_signal(self) -> None:
+        sid = self._new_unique_signal_id()
+        self._signals().append({"id": sid, "label": sid})
+        self._selected = sid
+        self._search.setText("")
+        self._rebuild_table()
+        self._refresh_validation()
+
+    def _delete_signal(self) -> None:
+        idx = self._current_signal_index()
+        if idx is None:
+            return
+        signals = self._signals()
+        if idx < 0 or idx >= len(signals):
+            return
+        sid = str(signals[idx].get("id") or "").strip() if isinstance(signals[idx], dict) else ""
+        if sid and _narrative_listener_counts(self._data).get(sid, 0) > 0:
+            ok = QMessageBox.question(
+                self,
+                "删除信号",
+                f"信号 {sid!r} 正被 Transition 监听。删除后校验会报错，确定删除？",
+            )
+            if ok != QMessageBox.StandardButton.Yes:
+                return
+        del signals[idx]
+        if self._selected == sid:
+            self._selected = ""
+        self._rebuild_table()
+        self._refresh_validation()
+
+    def _refresh_validation(self) -> tuple[list[str], list[str]]:
+        errors, warnings = _validate_narrative_signals_for_manager(self._data)
+        lines: list[str] = []
+        if not errors and not warnings:
+            lines.append("校验通过")
+        else:
+            lines.extend(f"错误: {msg}" for msg in errors)
+            lines.extend(f"警告: {msg}" for msg in warnings)
+        self._validation.setPlainText("\n".join(lines))
+        return errors, warnings
+
+    def _commit_if_valid(self) -> bool:
+        errors, _warnings = self._refresh_validation()
+        if errors:
+            QMessageBox.warning(self, "信号校验未通过", "请先修复错误，再保存信号管理器。")
+            return False
+        if self._model is not None:
+            self._model.narrative_graphs = self._data
+            self._model.mark_dirty("narrative_graphs")
+        return True
+
+    def _select_current(self) -> None:
+        idx = self._current_signal_index()
+        if idx is None:
+            return
+        signals = self._signals()
+        if idx < 0 or idx >= len(signals) or not isinstance(signals[idx], dict):
+            return
+        sid = str(signals[idx].get("id") or "").strip()
+        if not sid:
+            return
+        self._selected = sid
+        if self._commit_if_valid():
+            self.accept()
+
+    def _accept_without_select(self) -> None:
+        if self._commit_if_valid():
+            self.accept()
+
+
+class NarrativeSignalPickerField(QWidget):
+    """Read-only signal field; all edits go through NarrativeSignalManagerDialog."""
+
+    valueChanged = Signal(str)
+
+    def __init__(self, model, committed: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._value = (committed or "").strip()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._line = QLineEdit(self)
+        self._line.setReadOnly(True)
+        self._line.setPlaceholderText("通过信号管理器选择")
+        self._line.setToolTip("不可手写；点「信号管理器…」选择或维护 narrative_graphs.signals。")
+        btn = QPushButton("信号管理器…", self)
+        btn.clicked.connect(self._open_manager)
+        lay.addWidget(self._line, 1)
+        lay.addWidget(btn)
+        self._refresh_line()
+
+    def current_signal(self) -> str:
+        return self._value
+
+    def _display_for_value(self, value: str) -> str:
+        val = (value or "").strip()
+        if not val:
+            return ""
+        for display, sid in _narrative_signal_rows_with_orphan(self._model, val):
+            if sid == val:
+                return display
+        return val
+
+    def _refresh_line(self) -> None:
+        self._line.setText(self._display_for_value(self._value))
+
+    def _open_manager(self) -> None:
+        if self._model is None:
+            QMessageBox.warning(self, "信号管理器", "当前没有工程上下文，无法管理 narrative_graphs.signals。")
+            return
+        dlg = NarrativeSignalManagerDialog(self._model, self._value, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._refresh_line()
+            return
+        new_value = dlg.selected_signal().strip()
+        if new_value != self._value:
+            self._value = new_value
+            self._refresh_line()
+            self.valueChanged.emit(self._value)
+        else:
+            self._refresh_line()
 
 
 class FilterableTypeCombo(QComboBox):
@@ -3568,6 +4000,13 @@ class ActionRow(QWidget):
                     w.addItem(f"(非枚举) {tv}")
                     w.setCurrentIndex(w.count() - 1)
                 w.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            elif act_type == "emitNarrativeSignal" and pname == "signal":
+                cur = str(val) if val is not None else ""
+                w = NarrativeSignalPickerField(self._ctx_model, cur, self)
+                w.setToolTip(
+                    "只能通过信号管理器填写；管理器直接维护 narrative_graphs.signals。"
+                )
+                w.valueChanged.connect(lambda _t: self.changed.emit())
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
                 w.setToolTip(
@@ -4184,6 +4623,8 @@ class ActionRow(QWidget):
                 params[pname] = w.emote_text()
             elif isinstance(w, FilterableTypeCombo):
                 params[pname] = w.committed_type()
+            elif isinstance(w, NarrativeSignalPickerField):
+                params[pname] = w.current_signal()
             elif isinstance(w, IdRefSelector):
                 params[pname] = w.current_id()
             elif isinstance(w, QComboBox):
