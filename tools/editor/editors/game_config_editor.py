@@ -6,6 +6,7 @@ import copy
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel,
     QTableWidget, QHeaderView, QSpinBox, QCheckBox, QMessageBox,
+    QScrollArea, QGroupBox,
 )
 
 from ..project_model import ProjectModel
@@ -26,10 +27,12 @@ def _make_size_row(label: str) -> tuple[QHBoxLayout, QCheckBox, QSpinBox, QSpinB
     w.setRange(0, 7680)
     w.setSuffix(" px")
     w.setEnabled(False)
+    w.setToolTip(f"{label} width in pixels")
     h = QSpinBox()
     h.setRange(0, 4320)
     h.setSuffix(" px")
     h.setEnabled(False)
+    h.setToolTip(f"{label} height in pixels")
     row.addWidget(QLabel("W:"))
     row.addWidget(w)
     row.addWidget(QLabel("H:"))
@@ -45,29 +48,43 @@ class GameConfigEditor(QWidget):
         super().__init__(parent)
         self._model = model
 
-        lay = QVBoxLayout(self)
-        f = compact_form(QFormLayout())
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        lay = QVBoxLayout(content)
+
+        start_box = QGroupBox("启动引用（初始场景/任务/演出）")
+        f = compact_form(QFormLayout(start_box))
 
         self._initial_scene = IdRefSelector(allow_empty=True, editable=True)
         self._initial_scene.set_items([(s, s) for s in model.all_scene_ids()])
+        self._initial_scene.setToolTip("新存档进入的第一个场景")
         f.addRow("initialScene", self._initial_scene)
 
         self._initial_quest = IdRefSelector(allow_empty=True, editable=True)
         self._initial_quest.set_items(model.all_quest_ids())
+        self._initial_quest.setToolTip("新存档自动激活的初始任务")
         f.addRow("initialQuest", self._initial_quest)
 
         self._fallback_scene = IdRefSelector(allow_empty=True, editable=True)
         self._fallback_scene.set_items([(s, s) for s in model.all_scene_ids()])
+        self._fallback_scene.setToolTip("目标场景缺失时回退到的场景")
         f.addRow("fallbackScene", self._fallback_scene)
 
         self._initial_cutscene = IdRefSelector(allow_empty=True, editable=True)
         self._initial_cutscene.set_items(model.all_cutscene_ids())
+        self._initial_cutscene.setToolTip("新游戏开场播放的 cutscene；留空则不写入")
         f.addRow("initialCutscene", self._initial_cutscene)
 
         self._cutscene_flag = FlagKeyPickField(model, None, "", self)
         self._cutscene_flag.setMinimumWidth(200)
+        self._cutscene_flag.setToolTip("记录开场 cutscene 已播放的 flag，避免重复播放")
         f.addRow("initialCutsceneDoneFlag", self._cutscene_flag)
-        lay.addLayout(f)
+        lay.addWidget(start_box)
 
         # -- Display settings ---------------------------------------------------
         disp_section = CollapsibleSection("Display（分辨率/窗口）", start_open=False)
@@ -96,23 +113,34 @@ class GameConfigEditor(QWidget):
         lay.addWidget(disp_section)
 
         # -- Startup flags ------------------------------------------------------
-        lay.addWidget(QLabel("<b>startupFlags</b>"))
+        flags_box = QGroupBox("startupFlags（新存档初始 flag）")
+        flags_box.setToolTip("新游戏开始时预置的 flag 键值，作为初始世界状态")
+        flags_box_lay = QVBoxLayout(flags_box)
         self._flags_table = QTableWidget(0, 2)
         self._flags_table.setHorizontalHeaderLabels(["key", "value"])
         _flags_header = self._flags_table.horizontalHeader()
         _flags_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         _flags_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self._flags_table.setMinimumHeight(70)
-        lay.addWidget(self._flags_table)
+        self._flags_table.setToolTip("逐行登记新存档初始 flag 的 key/value")
+        flags_box_lay.addWidget(self._flags_table)
+        self._flags_empty_hint = QLabel("暂无初始 flag，点击「+ Flag」新增一行。")
+        self._flags_empty_hint.setStyleSheet("color:#888;")
+        self._flags_empty_hint.setWordWrap(True)
+        flags_box_lay.addWidget(self._flags_empty_hint)
         flag_btns = QHBoxLayout()
         add_flag = QPushButton("+ Flag"); add_flag.clicked.connect(self._add_flag)
+        add_flag.setToolTip("新增一条初始 flag（key/value）")
         del_flag = QPushButton("− Flag"); del_flag.clicked.connect(self._del_flag)
+        del_flag.setToolTip("删除当前选中的 flag 行")
         flag_btns.addWidget(add_flag)
         flag_btns.addWidget(del_flag)
         flag_btns.addStretch(1)
-        lay.addLayout(flag_btns)
+        flags_box_lay.addLayout(flag_btns)
+        lay.addWidget(flags_box)
 
         apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("把当前配置写入 game_config 并标脏；保存工程后写入磁盘。")
         apply_btn.clicked.connect(self._apply)
         lay.addWidget(apply_btn)
         lay.addStretch()
@@ -154,6 +182,11 @@ class GameConfigEditor(QWidget):
             self._flags_table.setCellWidget(r, 1, vf)
             vf.set_flag_key(pf.key())
             vf.set_value(v)
+        self._update_flags_empty_hint()
+
+    def _update_flags_empty_hint(self) -> None:
+        """startupFlags 表为空时显示引导提示，否则隐藏（纯视图）。"""
+        self._flags_empty_hint.setVisible(self._flags_table.rowCount() == 0)
 
     def _add_flag(self) -> None:
         r = self._flags_table.rowCount()
@@ -165,11 +198,13 @@ class GameConfigEditor(QWidget):
         self._flags_table.setCellWidget(r, 1, vf)
         vf.set_flag_key(pf.key())
         vf.set_value(True)
+        self._update_flags_empty_hint()
 
     def _del_flag(self) -> None:
         r = self._flags_table.currentRow()
         if r >= 0:
             self._flags_table.removeRow(r)
+        self._update_flags_empty_hint()
 
     def _is_dirty(self) -> bool:
         """把 UI 写进模型的临时副本与现状比较，判断是否有未应用改动。

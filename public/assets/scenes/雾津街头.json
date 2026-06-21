@@ -309,6 +309,25 @@
   ],
   "npcs": [
     {
+      "id": "npc_零工工头",
+      "name": "挑空担的汉子",
+      "x": 620.0,
+      "y": 480.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "寻狗_零工接活",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu"
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
       "id": "npc_庄家来人",
       "name": "庄家来人",
       "x": 760.0,
@@ -323,6 +342,11 @@
         {
           "narrative": "flow_xungou_main",
           "state": "s01_tingshu"
+        },
+        {
+          "flag": "零工背尸_done",
+          "op": "==",
+          "value": true
         }
       ],
       "conditionHidesEntity": true

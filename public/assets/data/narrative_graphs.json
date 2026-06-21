@@ -2174,6 +2174,12 @@
                 },
                 "onEnterActions": [
                   {
+                    "type": "stopSceneAmbient",
+                    "params": {
+                      "fadeMs": 250
+                    }
+                  },
+                  {
                     "type": "playSfx",
                     "params": {
                       "id": "sfx_force_swallowed_thud"
@@ -2206,6 +2212,12 @@
                   }
                 },
                 "onEnterActions": [
+                  {
+                    "type": "setCameraZoom",
+                    "params": {
+                      "zoom": 1.5
+                    }
+                  },
                   {
                     "type": "playSfx",
                     "params": {
@@ -2260,6 +2272,10 @@
                         }
                       ]
                     }
+                  },
+                  {
+                    "type": "restoreSceneCameraZoom",
+                    "params": {}
                   }
                 ]
               },
@@ -3863,14 +3879,7 @@
                 "id": "t_road",
                 "from": "not_started",
                 "to": "road",
-                "trigger": "reactiveAll",
-                "conditions": [
-                  {
-                    "narrative": "scenario_背尸",
-                    "state": "fled"
-                  }
-                ],
-                "signal": "__draft__"
+                "signal": "state:scenario_背尸:fled"
               },
               {
                 "id": "t_house",

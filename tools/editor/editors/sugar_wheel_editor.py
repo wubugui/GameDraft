@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from ..shared import confirm
 from ..shared.action_editor import ActionEditor
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
@@ -255,8 +256,9 @@ class SugarWheelCanvas(QWidget):
         self._view = QGraphicsView(self._scene, self)
         self._view.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self._view.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
-        self._view.setMinimumSize(520, 420)
+        self._view.setMinimumSize(380, 320)  # 画布有 fit/缩放，缩小下限以适配 13"
         self._btn_fit = QPushButton("适应窗口")
+        self._btn_fit.setToolTip("将预览缩放到适应窗口大小")
         self._btn_fit.clicked.connect(self._fit)
 
         self._wheel_item: _SugarWheelMovablePixmap | None = None
@@ -529,13 +531,22 @@ class SugarWheelEditor(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         self._list = QListWidget()
-        self._list.setMinimumWidth(220)
+        self._list.setMinimumWidth(180)  # 三栏预算：实例列表下限收窄
         ll.addWidget(QLabel("转盘实例"))
+        self._list_search = QLineEdit()
+        self._list_search.setPlaceholderText("搜索…")
+        self._list_search.setToolTip("按标题 / id 过滤下方实例列表（仅隐藏不匹配项，不改数据）")
+        self._list_search.setClearButtonEnabled(True)
+        self._list_search.textChanged.connect(self._on_list_search_changed)
+        ll.addWidget(self._list_search)
         ll.addWidget(self._list, stretch=1)
         br = QHBoxLayout()
         self._btn_add = QPushButton("新增")
         self._btn_del = QPushButton("删除")
         self._btn_preview = QPushButton("预览…")
+        self._btn_add.setToolTip("新增一个转盘实例（id 作为文件名）")
+        self._btn_del.setToolTip("删除当前选中的转盘实例")
+        self._btn_preview.setToolTip("在游戏内预览当前转盘实例")
         br.addWidget(self._btn_add)
         br.addWidget(self._btn_del)
         br.addWidget(self._btn_preview)
@@ -549,14 +560,14 @@ class SugarWheelEditor(QWidget):
         right = QScrollArea()
         right.setWidgetResizable(True)
         right.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        right.setMinimumWidth(320)
+        right.setMinimumWidth(280)  # 三栏预算：表单面板下限收窄
         right_inner = QWidget()
         rv = QVBoxLayout(right_inner)
         rv.setContentsMargins(0, 0, 0, 0)
 
         self._label = QLineEdit()
 
-        g_res = QGroupBox("外观与资源")
+        g_res = QGroupBox()
         ff_r = compact_form(QFormLayout(g_res))
         self._bg = CutsceneImagePathRow(model, "", external_copy_subdir="sugar_wheel", path_edit_read_only=True)
         self._bg_fit = QComboBox()
@@ -628,7 +639,7 @@ class SugarWheelEditor(QWidget):
         _sec_res.add_body(g_res)
         rv.addWidget(_sec_res)
 
-        g_sec = QGroupBox("分格与指针校准")
+        g_sec = QGroupBox()
         ff_s = compact_form(QFormLayout(g_sec))
         self._angle = self._double(-360, 360, 0, 2)
         self._sector_phase = self._double(-2, 2, 0, 3)
@@ -646,7 +657,7 @@ class SugarWheelEditor(QWidget):
         _sec_calib.add_body(g_sec)
         rv.addWidget(_sec_calib)
 
-        g_chg = QGroupBox("蓄力曲线")
+        g_chg = QGroupBox()
         ff_h = compact_form(QFormLayout(g_chg))
         self._charge_ms = self._double(100, 15000, 2600, 0)
         self._min_power = self._double(0, 1, 0, 3)
@@ -659,8 +670,9 @@ class SugarWheelEditor(QWidget):
         _sec_chg.add_body(g_chg)
         rv.addWidget(_sec_chg)
 
-        g_phy = QGroupBox("物理停针（运行时）")
-        ff_p = compact_form(QFormLayout(g_phy))
+        g_phy = QGroupBox()
+        g_phy_lay = QVBoxLayout(g_phy)
+        g_phy_lay.setContentsMargins(0, 0, 0, 0)
         self._drag = self._double(0.02, 8, 0.58, 3)
         self._drag_low_thr = self._double(0, 20, 2.2, 3)
         self._drag_low_boost = self._double(0, 15, 2.0, 3)
@@ -702,24 +714,35 @@ class SugarWheelEditor(QWidget):
             "低于该角速度（rad/s）时按比例削弱 weight 势能扭矩，避免临界角速下被偏置「顶着」慢悠悠转。\n"
             "写 0 = 不削弱偏置扭矩。"
         )
-        ff_p.addRow("spinLinearDragPerSec", self._drag)
-        ff_p.addRow("spinDragLowSpeedThresholdRadPerSec", self._drag_low_thr)
-        ff_p.addRow("spinDragLowSpeedBoostPerSec", self._drag_low_boost)
-        ff_p.addRow("spinChargeMinVelocityRadPerSec", self._v_min)
-        ff_p.addRow("spinChargeMaxVelocityRadPerSec", self._v_max)
-        ff_p.addRow("spinChargeMinAccelRadPerSec2", self._a_min)
-        ff_p.addRow("spinChargeMaxAccelRadPerSec2", self._a_max)
-        ff_p.addRow("spinAccelHalfLifeSec", self._a_hl)
-        ff_p.addRow("spinStopSpeedRadPerSec", self._stop_w)
-        ff_p.addRow("spinStopSettleSec", self._stop_settle)
-        ff_p.addRow("spinDryFrictionAccelRadPerSec2", self._dry_fric)
-        ff_p.addRow("spinWeightBiasCreepRefRadPerSec", self._bias_creep)
+        g_phy_drag = QGroupBox("阻力（drag）")
+        ff_p_drag = compact_form(QFormLayout(g_phy_drag))
+        ff_p_drag.addRow("spinLinearDragPerSec", self._drag)
+        ff_p_drag.addRow("spinDragLowSpeedThresholdRadPerSec", self._drag_low_thr)
+        ff_p_drag.addRow("spinDragLowSpeedBoostPerSec", self._drag_low_boost)
+        ff_p_drag.addRow("spinDryFrictionAccelRadPerSec2", self._dry_fric)
+        g_phy_lay.addWidget(g_phy_drag)
+
+        g_phy_charge = QGroupBox("蓄力 → 角速度映射（charge）")
+        ff_p_charge = compact_form(QFormLayout(g_phy_charge))
+        ff_p_charge.addRow("spinChargeMinVelocityRadPerSec", self._v_min)
+        ff_p_charge.addRow("spinChargeMaxVelocityRadPerSec", self._v_max)
+        ff_p_charge.addRow("spinChargeMinAccelRadPerSec2", self._a_min)
+        ff_p_charge.addRow("spinChargeMaxAccelRadPerSec2", self._a_max)
+        ff_p_charge.addRow("spinAccelHalfLifeSec", self._a_hl)
+        ff_p_charge.addRow("spinWeightBiasCreepRefRadPerSec", self._bias_creep)
+        g_phy_lay.addWidget(g_phy_charge)
+
+        g_phy_stop = QGroupBox("停转检测（stop）")
+        ff_p_stop = compact_form(QFormLayout(g_phy_stop))
+        ff_p_stop.addRow("spinStopSpeedRadPerSec", self._stop_w)
+        ff_p_stop.addRow("spinStopSettleSec", self._stop_settle)
+        g_phy_lay.addWidget(g_phy_stop)
         _sec_phy = CollapsibleSection("物理停针（运行时）", start_open=False)
         _sec_phy.add_body(g_phy)
         rv.addWidget(_sec_phy)
 
-        g_pre_ch = QGroupBox("蓄力前：条件与 Action（beforeCharge）")
-        g_pre_ch.setToolTip(
+        g_pre_ch = QGroupBox()
+        _pre_ch_tip = (
             "玩家按住蓄力钮时：先对 beforeChargeCondition 求值（ConditionExpr，与热区同源）；\n"
             "通过则执行 beforeChargePassActions 再进入蓄力；不通过则执行 beforeChargeFailActions 且不蓄力。\n"
             "条件留空表示始终通过。"
@@ -743,10 +766,11 @@ class SugarWheelEditor(QWidget):
         pre_l.addWidget(self._ae_before_charge_pass)
         pre_l.addWidget(self._ae_before_charge_fail)
         _sec_pre_ch = CollapsibleSection("蓄力前：条件与 Action（beforeCharge）", start_open=False)
+        _sec_pre_ch.set_header_tool_tip(_pre_ch_tip)
         _sec_pre_ch.add_body(g_pre_ch)
         rv.addWidget(_sec_pre_ch)
 
-        g_sp = QGroupBox("对白气泡 showSpeech")
+        g_sp = QGroupBox()
         ff_sp = compact_form(QFormLayout(g_sp))
         self._speech_dur = self._double(500, 120000, 3000, 0)
         self._speech_dur.setToolTip("默认气泡停留毫秒（外部调用未传 durationMs 时）。")
@@ -773,7 +797,9 @@ class SugarWheelEditor(QWidget):
         self._speech_table.horizontalHeader().setStretchLastSection(True)
         sb_sp = QHBoxLayout()
         self._btn_add_speech = QPushButton("+锚点")
-        self._btn_del_speech = QPushButton("−锚点")
+        self._btn_del_speech = QPushButton("-锚点")
+        self._btn_add_speech.setToolTip("新增一个气泡锚点行")
+        self._btn_del_speech.setToolTip("删除选中的气泡锚点行")
         sb_sp.addWidget(QLabel("speechAnchors"))
         sb_sp.addStretch()
         sb_sp.addWidget(self._btn_add_speech)
@@ -808,13 +834,17 @@ class SugarWheelEditor(QWidget):
         self._sector_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._sector_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._sector_table.verticalHeader().setVisible(False)
-        self._sector_table.setMinimumHeight(220)
+        self._sector_table.setMinimumHeight(140)  # 表在滚动区内，降低下限省竖向空间
         self._sector_table.horizontalHeader().setStretchLastSection(True)
         sb = QHBoxLayout()
         self._btn_add_sector = QPushButton("+格子")
-        self._btn_del_sector = QPushButton("−格子")
+        self._btn_del_sector = QPushButton("-格子")
         self._btn_up_sector = QPushButton("上移")
         self._btn_down_sector = QPushButton("下移")
+        self._btn_add_sector.setToolTip("新增一格")
+        self._btn_del_sector.setToolTip("删除选中的格子")
+        self._btn_up_sector.setToolTip("将选中格子上移一位")
+        self._btn_down_sector.setToolTip("将选中格子下移一位")
         _sec_lbl = QLabel("格子 sectors")
         _sec_lbl.setToolTip(
             "每行对应盘面上一格。\n「weight」不设=1，视为平地。\n"
@@ -835,11 +865,11 @@ class SugarWheelEditor(QWidget):
         _sec_sectors.add_body(sw)
         rv.addWidget(_sec_sectors)
 
-        self._g_sector_actions = QGroupBox("选中格 · Action（与水族馆实体相同筛选器）")
-        self._g_sector_actions.setToolTip(
+        self._g_sector_actions = QGroupBox()
+        _sector_actions_tip = (
             "在左侧表格选中一行格子后编辑。\n"
             "· actionsOnPointerDrag：idle/查看结果时在盘面上拖指针并松手后执行（命中当前针对的扇区）。\n"
-            "· actionsOnSpinLanding：蓄力开奖停针落在该格后顺序执行，再横幅与 minigame:sugarWheelResult。",
+            "· actionsOnSpinLanding：蓄力开奖停针落在该格后顺序执行，再横幅与 minigame:sugarWheelResult。"
         )
         ga_l = QVBoxLayout(self._g_sector_actions)
         ga_l.setContentsMargins(8, 12, 8, 8)
@@ -851,13 +881,14 @@ class SugarWheelEditor(QWidget):
         ga_l.addWidget(self._ae_sector_drag)
         ga_l.addWidget(self._ae_sector_landing)
         _sec_sector_actions = CollapsibleSection("选中格 · Action（与水族馆实体相同筛选器）", start_open=False)
+        _sec_sector_actions.set_header_tool_tip(_sector_actions_tip)
         _sec_sector_actions.add_body(self._g_sector_actions)
         rv.addWidget(_sec_sector_actions)
         self._bind_wheel_action_speech_role_getter()
 
         # ── 旋转氛围脚本 ──
-        g_atmos = QGroupBox("旋转氛围脚本 atmosphereGroups")
-        g_atmos.setToolTip(
+        g_atmos = QGroupBox()
+        _atmos_tip = (
             "每次抽奖随机选一组；每组四阶段（start / spinning / slowing / stop），\n"
             "每阶段是有序步骤列表。步骤使用固定 opcode。"
         )
@@ -871,6 +902,9 @@ class SugarWheelEditor(QWidget):
         self._btn_add_atmos_group = QPushButton("+组")
         self._btn_del_atmos_group = QPushButton("-组")
         self._btn_dup_atmos_group = QPushButton("复制")
+        self._btn_add_atmos_group.setToolTip("新增一个氛围组")
+        self._btn_del_atmos_group.setToolTip("删除选中的氛围组及其全部步骤")
+        self._btn_dup_atmos_group.setToolTip("复制选中的氛围组")
         atmos_bar.addWidget(QLabel("氛围组"))
         atmos_bar.addStretch()
         atmos_bar.addWidget(self._btn_add_atmos_group)
@@ -896,7 +930,7 @@ class SugarWheelEditor(QWidget):
 
         # ── vars: 池列表 + 池内文案列表 ──
         vars_split = QSplitter(Qt.Orientation.Horizontal)
-        vars_split.setMinimumHeight(140)
+        vars_split.setMinimumHeight(90)  # 降低下限以适配 13"，可拖大
         vars_left = QWidget()
         vll = QVBoxLayout(vars_left)
         vll.setContentsMargins(0, 0, 0, 0)
@@ -906,6 +940,9 @@ class SugarWheelEditor(QWidget):
         self._btn_add_var_pool = QPushButton("+池")
         self._btn_del_var_pool = QPushButton("-池")
         self._btn_rename_var_pool = QPushButton("改名")
+        self._btn_add_var_pool.setToolTip("新增一个文案池")
+        self._btn_del_var_pool.setToolTip("删除选中的文案池")
+        self._btn_rename_var_pool.setToolTip("重命名选中的文案池")
         vars_bar.addWidget(self._btn_add_var_pool)
         vars_bar.addWidget(self._btn_rename_var_pool)
         vars_bar.addWidget(self._btn_del_var_pool)
@@ -921,6 +958,8 @@ class SugarWheelEditor(QWidget):
         lines_bar.addStretch()
         self._btn_add_var_line = QPushButton("+台词")
         self._btn_del_var_line = QPushButton("-台词")
+        self._btn_add_var_line.setToolTip("向当前文案池新增一条台词")
+        self._btn_del_var_line.setToolTip("删除选中的台词")
         lines_bar.addWidget(self._btn_add_var_line)
         lines_bar.addWidget(self._btn_del_var_line)
         vrl.addLayout(lines_bar)
@@ -949,6 +988,10 @@ class SugarWheelEditor(QWidget):
             btn_del = QPushButton("-步骤")
             btn_up = QPushButton("上移")
             btn_down = QPushButton("下移")
+            btn_add.setToolTip("在该阶段新增一个步骤")
+            btn_del.setToolTip("删除选中的步骤")
+            btn_up.setToolTip("将选中步骤上移一位")
+            btn_down.setToolTip("将选中步骤下移一位")
             step_bar.addStretch()
             step_bar.addWidget(btn_add)
             step_bar.addWidget(btn_del)
@@ -979,6 +1022,7 @@ class SugarWheelEditor(QWidget):
         atmos_root.addWidget(self._atmos_phase_tabs)
 
         _sec_atmos = CollapsibleSection("旋转氛围脚本 atmosphereGroups", start_open=False)
+        _sec_atmos.set_header_tool_tip(_atmos_tip)
         _sec_atmos.add_body(g_atmos)
         rv.addWidget(_sec_atmos)
 
@@ -1293,12 +1337,23 @@ class SugarWheelEditor(QWidget):
             if select_id and iid == select_id:
                 sel = self._list.count() - 1
         self._list.blockSignals(False)
+        if getattr(self, "_list_search", None) is not None:
+            self._on_list_search_changed(self._list_search.text())
         if self._list.count() > 0:
             self._list.setCurrentRow(sel)
         else:
             self._current_id = None
             self._doc = None
             self._canvas.refresh(None)
+
+    def _on_list_search_changed(self, text: str) -> None:
+        # 纯视图过滤：只 setHidden，不改/不重排任何数据。
+        q = (text or "").strip().lower()
+        for row in range(self._list.count()):
+            it = self._list.item(row)
+            if it is None:
+                continue
+            it.setHidden(bool(q) and q not in it.text().lower())
 
     def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
         iid = (item_id or "").strip()
@@ -1756,6 +1811,8 @@ class SugarWheelEditor(QWidget):
         sectors = self._sectors()
         if r < 0 or r >= len(sectors):
             return
+        if not confirm.confirm_delete(self, f"扇区「{sectors[r].get('id', '')}」"):
+            return
         sectors.pop(r)
         self._mark_dirty()
         n = len(sectors)
@@ -1914,6 +1971,8 @@ class SugarWheelEditor(QWidget):
         groups = self._atmos_groups()
         if r < 0 or r >= len(groups):
             return
+        if not confirm.confirm_delete(self, "该氛围分组及其全部步骤"):
+            return
         groups.pop(r)
         self._fill_atmos_group_list()
         self._fill_atmos_group_detail()
@@ -2033,6 +2092,8 @@ class SugarWheelEditor(QWidget):
         cur = self._var_pool_list.currentItem()
         if cur is None:
             return
+        if not confirm.confirm_delete(self, f"变量池「{cur.text()}」"):
+            return
         v = self._cur_vars()
         v.pop(cur.text(), None)
         self._loading = True
@@ -2118,6 +2179,50 @@ class SugarWheelEditor(QWidget):
 
     _STEP_OP_CHOICES = ["say", "pick", "wait", "chance", "when_near_sector"]
 
+    def _make_atmos_op_combo(self, pname: str, current: str) -> QComboBox:
+        """op 是闭合枚举(say/pick/wait/chance/when_near_sector),用下拉避免手打错。
+        未知 op 也作为选项保留,不静默改写既有数据。"""
+        cb = QComboBox()
+        choices = ["say", "pick", "wait", "chance", "when_near_sector"]
+        cb.addItems(choices)
+        cur = (current or "say").strip()
+        if cur and cur not in choices:
+            cb.addItem(cur)
+        idx = cb.findText(cur)
+        cb.setCurrentIndex(idx if idx >= 0 else 0)
+        cb.currentIndexChanged.connect(
+            lambda _i, _p=pname: self._pull_atmos_step_from_ui(_p))
+        return cb
+
+    def _atmos_sector_ids(self) -> list[str]:
+        """只读取本实例已定义的格子 id(不触发 setdefault,避免导航时改动数据)。"""
+        doc = self._doc if isinstance(self._doc, dict) else {}
+        raw = doc.get("sectors")
+        if not isinstance(raw, list):
+            return []
+        return [str(x.get("id", "")) for x in raw
+                if isinstance(x, dict) and x.get("id")]
+
+    def _make_atmos_sector_combo(self, pname: str, current: str) -> QComboBox:
+        """sectorId 指向本实例已定义的格子;用下拉避免手打错。
+        空 = 不指定(read 对空值跳过写入);未知 id 也保留为选项,不静默丢弃。"""
+        cb = QComboBox()
+        cb.addItem("")
+        ids = self._atmos_sector_ids()
+        for sid in ids:
+            cb.addItem(sid)
+        cur = (current or "").strip()
+        if cur and cur not in ids:
+            cb.addItem(cur)
+        if not cur:
+            cb.setCurrentIndex(0)
+        else:
+            idx = cb.findText(cur)
+            cb.setCurrentIndex(idx if idx >= 0 else 0)
+        cb.currentIndexChanged.connect(
+            lambda _i, _p=pname: self._pull_atmos_step_from_ui(_p))
+        return cb
+
     def _fill_atmos_step_table(self, pname: str, steps: Any) -> None:
         tbl = self._atmos_step_tables[pname]
         tbl.blockSignals(True)
@@ -2128,7 +2233,7 @@ class SugarWheelEditor(QWidget):
                 for i, s in enumerate(steps):
                     if not isinstance(s, dict):
                         s = {}
-                    tbl.setItem(i, 0, QTableWidgetItem(str(s.get("op", "say"))))
+                    tbl.setCellWidget(i, 0, self._make_atmos_op_combo(pname, str(s.get("op", "say"))))
                     cb = QComboBox()
                     self._fill_atmos_role_combo(cb, str(s.get("role", "")))
                     cb.currentIndexChanged.connect(
@@ -2138,7 +2243,7 @@ class SugarWheelEditor(QWidget):
                     tbl.setItem(i, 2, QTableWidgetItem(pool_or_text))
                     tbl.setItem(i, 3, QTableWidgetItem(str(s.get("sec", "")) if "sec" in s else ""))
                     tbl.setItem(i, 4, QTableWidgetItem(str(s.get("p", "")) if "p" in s else ""))
-                    tbl.setItem(i, 5, QTableWidgetItem(str(s.get("sectorId", ""))))
+                    tbl.setCellWidget(i, 5, self._make_atmos_sector_combo(pname, str(s.get("sectorId", ""))))
                     tbl.setItem(i, 6, QTableWidgetItem(str(s.get("degBuffer", "")) if "degBuffer" in s else ""))
         finally:
             tbl.blockSignals(False)
@@ -2150,13 +2255,15 @@ class SugarWheelEditor(QWidget):
             def _cell(c: int) -> str:
                 it = tbl.item(r, c)
                 return it.text().strip() if it else ""
-            op = _cell(0) or "say"
+            _op_w = tbl.cellWidget(r, 0)
+            op = (_op_w.currentText().strip() if isinstance(_op_w, QComboBox) else _cell(0)) or "say"
             step: dict[str, Any] = {"op": op}
             role = self._role_cell_from_atmos_table(tbl, r)
             pool_or_text = _cell(2)
             sec = _cell(3)
             p = _cell(4)
-            sid = _cell(5)
+            _sid_w = tbl.cellWidget(r, 5)
+            sid = (_sid_w.currentText().strip() if isinstance(_sid_w, QComboBox) else _cell(5))
             deg = _cell(6)
             if op == "say":
                 if role:

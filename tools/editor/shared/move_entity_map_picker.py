@@ -34,6 +34,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QRectF, QPoint, QPointF, Signal, QTimer, QLineF
 
 from ..project_model import ProjectModel
+from .dialog_geometry import remember_dialog_geometry
 from .fonts import MONO_FONT_FAMILY
 
 _MARKER_CAM_PICK = QColor(255, 70, 90, 210)
@@ -345,7 +346,7 @@ class MoveEntityToMapPickerDialog(QDialog):
         sc0 = model.scenes.get(scene_id, {})
         title_nm = sc0.get("name", scene_id)
         self.setWindowTitle(f"移动目标路径 — {scene_id}（{title_nm}）")
-        self.resize(980, 620)
+        self.resize(940, 600)  # 略缩以在 13" 上留边距；可缩放且记忆几何
 
         root = QVBoxLayout(self)
         _intro = QLabel("左键点击地图设置途经点 / 终点；中键平移，滚轮缩放。")
@@ -397,6 +398,7 @@ class MoveEntityToMapPickerDialog(QDialog):
         self._sync_mode_radio()
         QTimer.singleShot(0, self._view.fit_scene)
         self._sync_label()
+        remember_dialog_geometry(self, "move_entity_map_picker")
 
     def _sync_mode_radio(self) -> None:
         self._view.set_pick_mode(

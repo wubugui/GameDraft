@@ -47,6 +47,8 @@ from PySide6.QtCore import (
 )
 
 from ..project_model import ProjectModel
+from ..shared import confirm
+from ..shared.list_affordances import make_list_search_box
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
@@ -2258,7 +2260,7 @@ class ScenePropertyPanel(QScrollArea):
         super().__init__(parent)
         self._model = model
         self.setWidgetResizable(True)
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(280)  # 三栏预算：属性面板下限收窄以适配 13"（仍够放表单）
         self._stack = QStackedWidget()
         # 垂直 Minimum：高度至少为当前页 sizeHint，避免滚动区内与 stretch 争抢时将整页压扁。
         self._stack.setSizePolicy(
@@ -2438,6 +2440,38 @@ class ScenePropertyPanel(QScrollArea):
         vbox.addLayout(row)
         return btn
 
+    def _install_vertex_table_affordances(
+        self, table: QTableWidget, remove_handler, *, label: str = "删除选中顶点",
+    ) -> None:
+        """Add right-click menu + Delete-key removal to a vertex/route table.
+
+        Wired purely to the editor's EXISTING remove handler — no new delete
+        logic, no data path of its own.
+        """
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+        def _on_menu(pos: QPoint) -> None:
+            if table.currentRow() < 0:
+                return
+            menu = QMenu(table)
+            act = QAction(label, menu)
+            act.triggered.connect(remove_handler)
+            menu.addAction(act)
+            menu.exec(table.viewport().mapToGlobal(pos))
+
+        table.customContextMenuRequested.connect(_on_menu)
+
+        original_key_press = table.keyPressEvent
+
+        def _key_press(event) -> None:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                remove_handler()
+                event.accept()
+                return
+            original_key_press(event)
+
+        table.keyPressEvent = _key_press  # type: ignore[method-assign]
+
     def _load_ambient_widgets(self, ambient_ids: list[str]) -> None:
         catalog = list(self._model.all_audio_ids("ambient"))
         want = set(ambient_ids)
@@ -2568,10 +2602,10 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_ambient_list.setToolTip(
             "勾选 audio_config.ambient 中的 id；目录外 id 在下方填写（逗号分隔）。",
         )
-        self._sc_ambient_list.setFixedHeight(110)
+        self._sc_ambient_list.setMaximumHeight(110)  # 上限而非固定，拥挤时可压缩
         self._sc_ambient_list.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Maximum,
         )
         self._sc_ambient_list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
@@ -2591,17 +2625,11 @@ class ScenePropertyPanel(QScrollArea):
         )
         enter_inner = QWidget()
         enter_lay = QVBoxLayout(enter_inner)
-        enter_hint = QLabel(
+        self._sc_on_enter = ActionEditor("onEnter")
+        self._sc_on_enter.setToolTip(
             "在 spawn/相机、音频与 Zone 注册之后执行，早于 HUD 收到的 scene:enter。"
             "适用一次性演出、按场景设标志等。",
         )
-        enter_hint.setWordWrap(True)
-        enter_hint.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        enter_lay.addWidget(enter_hint)
-        self._sc_on_enter = ActionEditor("onEnter")
         self._sc_on_enter.changed.connect(self._emit_props_changed)
         enter_lay.addWidget(self._sc_on_enter)
         enter_g.add_body(enter_inner)
@@ -3021,6 +3049,9 @@ class ScenePropertyPanel(QScrollArea):
         lay.addWidget(hint)
         lw = QListWidget(dlg)
         lw.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        search = make_list_search_box(
+            lw, tooltip="按过场 id 过滤下方列表（仅隐藏不匹配项，不影响已勾选项）。")
+        lay.addWidget(search)
         all_ids = sorted({str(a).strip() for a, _ in self._model.all_cutscene_ids() if str(a).strip()})
         cur = {x for x in current if x}
         for cid in all_ids:
@@ -3166,7 +3197,9 @@ class ScenePropertyPanel(QScrollArea):
         basic_g.add_body(basic_inner)
         lay.addWidget(basic_g)
 
-        cond_g = self._section("触发条件 conditions", start_open=True)
+        cond_g = self._section("触发条件 conditions", start_open=False)
+        cond_g.set_header_tool_tip("默认折叠；已配置条件时自动展开。")
+        self._hs_cond_fold = cond_g
         cond_inner = QWidget()
         cond_l = QVBoxLayout(cond_inner)
         self._hs_cond_hide_entity = QCheckBox("条件不满足时隐藏实体")
@@ -3290,6 +3323,8 @@ class ScenePropertyPanel(QScrollArea):
             2, QHeaderView.ResizeMode.Stretch)
         self._hs_col_table.setMinimumHeight(140)
         self._hs_col_table.itemChanged.connect(self._on_hs_col_cell_changed)
+        self._install_vertex_table_affordances(
+            self._hs_col_table, self._on_hs_col_remove_vertex)
         clay.addWidget(self._hs_col_table)
         col_btns = QHBoxLayout()
         self._hs_col_add = QPushButton("添加顶点")
@@ -3304,7 +3339,9 @@ class ScenePropertyPanel(QScrollArea):
         lay.addWidget(colg)
         self._hs_col_updating = False
 
-        data_g = self._section("按类型的数据（inspect / pickup / transition …）", start_open=True)
+        data_g = self._section("按类型的数据（inspect / pickup / transition …）", start_open=False)
+        data_g.set_header_tool_tip("默认折叠；已配置数据时自动展开。")
+        self._hs_data_fold = data_g
         data_inner = QWidget()
         data_l = QVBoxLayout(data_inner)
         self._hs_data_stack = QStackedWidget()
@@ -3856,6 +3893,10 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_col_fold.set_expanded(has_col)
 
             data = st.get("data", {})
+            _hs_conds = st.get("conditions")
+            self._hs_cond_fold.set_expanded(
+                bool(isinstance(_hs_conds, list) and len(_hs_conds) > 0))
+            self._hs_data_fold.set_expanded(bool(isinstance(data, dict) and data))
             ht = st.get("type", "inspect")
             self._on_hs_type_changed(ht)
             if ht == "inspect":
@@ -4309,6 +4350,8 @@ class ScenePropertyPanel(QScrollArea):
             2, QHeaderView.ResizeMode.Stretch)
         self._npc_col_table.setMinimumHeight(120)
         self._npc_col_table.itemChanged.connect(self._on_npc_col_cell_changed)
+        self._install_vertex_table_affordances(
+            self._npc_col_table, self._on_npc_col_remove_vertex)
         ncc_l.addWidget(self._npc_col_table)
         ncc_btns = QHBoxLayout()
         self._npc_col_add = QPushButton("添加顶点")
@@ -4378,6 +4421,9 @@ class ScenePropertyPanel(QScrollArea):
             2, QHeaderView.ResizeMode.Stretch)
         self._npc_patrol_table.setMinimumHeight(120)
         self._npc_patrol_table.itemChanged.connect(self._on_npc_patrol_table_item_changed)
+        self._install_vertex_table_affordances(
+            self._npc_patrol_table, self._on_npc_patrol_remove_point,
+            label="删除所选路点")
         patrol_outer.addWidget(self._npc_patrol_table)
         pr_btns = QHBoxLayout()
         self._npc_patrol_add_pt = QPushButton("添加路点")
@@ -5068,16 +5114,24 @@ class ScenePropertyPanel(QScrollArea):
         top_g.add_body(top_inner)
         lay.addWidget(top_g)
 
-        poly_g = self._section("polygon 顶点表", start_open=True)
+        poly_g = self._section("polygon 顶点表", start_open=False)
+        self._zn_poly_fold = poly_g
+        poly_g.set_header_tool_tip(
+            "默认折叠；编辑顶点时展开。polygon 顶点（顺序为边界，首尾不重复）。画布操作：拖点 / 拖内部平移 / "
+            "双击边中点附近插点 / Shift+单击顶点删点 / Del 删鼠标悬停顶点 / 右键顶点菜单也可删。")
         poly_inner = QWidget()
         poly_l = QVBoxLayout(poly_inner)
-        poly_label = QLabel(
-            "polygon 顶点（顺序为边界，首尾不重复）。画布：拖点 / 拖内部平移 / "
-            "双击边中点附近插点 / Shift+单击顶点删点 / Del 删鼠标悬停顶点 / 右键顶点菜单也可删。")
+        poly_label = QLabel("顶点顺序即边界，首尾不重复。")
         poly_label.setWordWrap(True)
+        poly_label.setToolTip(
+            "画布操作：拖点 / 拖内部平移 / 双击边中点附近插点 / "
+            "Shift+单击顶点删点 / Del 删鼠标悬停顶点 / 右键顶点菜单也可删。")
         poly_l.addWidget(poly_label)
 
         self._zn_poly_table = QTableWidget(0, 3)
+        self._zn_poly_table.setToolTip(
+            "画布操作：拖点 / 拖内部平移 / 双击边中点附近插点 / "
+            "Shift+单击顶点删点 / Del 删鼠标悬停顶点 / 右键顶点菜单也可删。")
         self._zn_poly_table.setHorizontalHeaderLabels(["#", "x", "y"])
         self._zn_poly_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents)
@@ -5087,6 +5141,8 @@ class ScenePropertyPanel(QScrollArea):
             2, QHeaderView.ResizeMode.Stretch)
         self._zn_poly_table.setMinimumHeight(120)
         self._zn_poly_table.itemChanged.connect(self._on_zone_poly_cell_changed)
+        self._install_vertex_table_affordances(
+            self._zn_poly_table, self._on_zone_poly_remove_vertex)
         poly_l.addWidget(self._zn_poly_table)
 
         btn_row = QHBoxLayout()
@@ -5106,7 +5162,9 @@ class ScenePropertyPanel(QScrollArea):
         poly_g.add_body(poly_inner)
         lay.addWidget(poly_g)
 
-        cond_g = self._section("触发条件 conditions", start_open=True)
+        cond_g = self._section("触发条件 conditions", start_open=False)
+        cond_g.set_header_tool_tip("默认折叠；已配置条件时自动展开。")
+        self._zn_cond_fold = cond_g
         cond_inner_z = QWidget()
         cond_l = QVBoxLayout(cond_inner_z)
         self._zn_cond = ConditionEditor("Conditions")
@@ -5323,6 +5381,9 @@ class ScenePropertyPanel(QScrollArea):
                 or (isinstance(ox, list) and len(ox) > 0)
             )
             self._zn_act_fold.set_expanded(has_act)
+            _zn_conds = st.get("conditions")
+            self._zn_cond_fold.set_expanded(
+                bool(isinstance(_zn_conds, list) and len(_zn_conds) > 0))
 
     def _write_zone_widgets_to_dict(self, zone: dict) -> None:
         zone["id"] = self._zn_id.text().strip()
@@ -5503,11 +5564,13 @@ class SceneEditor(QWidget):
         # InstantPopup opens the menu on any click on the control.
         add_btn = QToolButton()
         add_btn.setText("+ Add Entity")
+        add_btn.setToolTip("向当前场景新增实体（Hotspot / NPC / Zone / 出生点）")
         add_btn.setMenu(add_menu)
         add_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         tb.addWidget(add_btn)
         save_btn = QPushButton("Apply")
+        save_btn.setToolTip("提交右侧属性面板的修改到当前场景；不点则切换其它实体或场景时丢弃这些修改。")
         save_btn.clicked.connect(self._apply_props)
         tb.addWidget(save_btn)
         # 红色"未应用"提示：当前面板有未点 Apply 的 staging 修改时显示；
@@ -5522,11 +5585,31 @@ class SceneEditor(QWidget):
         self._pending_dirty_label.setVisible(False)
         tb.addWidget(self._pending_dirty_label)
         del_btn = QPushButton("Delete")
+        del_btn.setToolTip("删除当前选中的实体")
         del_btn.clicked.connect(self._delete_selected)
         tb.addWidget(del_btn)
         ll.addWidget(tb)
 
-        self._chk_npc_ref = QCheckBox("场景视图：显示 NPC 比例参考框")
+        # canvas zoom controls (do not touch data; operate only on the view)
+        zoom_tb = QToolBar()
+        zoom_in_btn = QToolButton()
+        zoom_in_btn.setText("+")
+        zoom_in_btn.setToolTip("放大画布视图")
+        zoom_in_btn.clicked.connect(self._on_canvas_zoom_in)
+        zoom_tb.addWidget(zoom_in_btn)
+        zoom_out_btn = QToolButton()
+        zoom_out_btn.setText("−")
+        zoom_out_btn.setToolTip("缩小画布视图")
+        zoom_out_btn.clicked.connect(self._on_canvas_zoom_out)
+        zoom_tb.addWidget(zoom_out_btn)
+        zoom_fit_btn = QToolButton()
+        zoom_fit_btn.setText("适配")
+        zoom_fit_btn.setToolTip("将整个场景适配到画布视口（Fit）")
+        zoom_fit_btn.clicked.connect(self._on_canvas_zoom_fit)
+        zoom_tb.addWidget(zoom_fit_btn)
+        ll.addWidget(zoom_tb)
+
+        self._chk_npc_ref = QCheckBox("显示 NPC 比例参考框")
         self._chk_npc_ref.setChecked(True)
         self._chk_npc_ref.setToolTip(
             "在画布左上与右下绘制与角色动画 worldWidth×worldHeight 同尺寸的矩形，"
@@ -5536,7 +5619,7 @@ class SceneEditor(QWidget):
         ll.addWidget(self._chk_npc_ref)
 
         self._chk_block_zone_pick = QCheckBox(
-            "场景视图：禁止点选/拖动 Zone 与 Hotspot/NPC 碰撞多边形")
+            "锁定 Zone / 碰撞多边形点选")
         self._chk_block_zone_pick.setChecked(False)
         self._chk_block_zone_pick.setToolTip(
             "勾选后，独立 Zone 与 Hotspot、NPC 的碰撞多边形在画布上显示为灰色，且无法用鼠标选中、"
@@ -5559,6 +5642,10 @@ class SceneEditor(QWidget):
 
         self._scene_list = QListWidget()
         self._scene_list.currentItemChanged.connect(self._on_scene_selected)
+        self._scene_search = make_list_search_box(
+            self._scene_list,
+            tooltip="按场景 id / 名称过滤下方列表（仅隐藏不匹配项，不改动数据）。")
+        ll.addWidget(self._scene_search)
         ll.addWidget(self._scene_list)
 
         # center: canvas
@@ -5608,7 +5695,7 @@ class SceneEditor(QWidget):
         splitter.addWidget(left)
         splitter.addWidget(self._canvas)
         splitter.addWidget(self._props)
-        splitter.setSizes([180, 800, 350])
+        splitter.setSizes([160, 740, 300])  # 合计 1200，13"(1240) 可容；仍可拖动
         root.addWidget(splitter)
 
         del_sc = QShortcut(QKeySequence.StandardKey.Delete, self)
@@ -6012,6 +6099,8 @@ class SceneEditor(QWidget):
             item = QListWidgetItem(f"{sid}  [{sc.get('name', '')}]")
             item.setData(Qt.ItemDataRole.UserRole, sid)
             self._scene_list.addItem(item)
+        # 重新套用搜索过滤，使 setHidden 与新内容一致
+        self._scene_search.textChanged.emit(self._scene_search.text())
         if self._scene_list.count() > 0 and self._scene_list.currentRow() < 0:
             self._scene_list.setCurrentRow(0)
 
@@ -6086,6 +6175,18 @@ class SceneEditor(QWidget):
                 if isinstance(it, _EditableZonePolygon):
                     it.setSelected(False)
         self._canvas.set_zone_pick_frozen(checked)
+
+    def _on_canvas_zoom_in(self) -> None:
+        # mirror wheelEvent zoom factor; pure view transform, no data change
+        self._canvas._auto_fit_after_layout = False
+        self._canvas.scale(1.15, 1.15)
+
+    def _on_canvas_zoom_out(self) -> None:
+        self._canvas._auto_fit_after_layout = False
+        self._canvas.scale(1 / 1.15, 1 / 1.15)
+
+    def _on_canvas_zoom_fit(self) -> None:
+        self._canvas.fit_all()
 
     def _on_item_selected(self, kind: str, eid: str) -> None:
         if kind not in ("npc", "npc_collision"):
@@ -6728,6 +6829,12 @@ class SceneEditor(QWidget):
             self._try_select_canvas_item("spawn", sk)
         # else 分支（其它面板）：scene rebind 已经清零 dirty，无需再做。
 
+        # transient success feedback (UI only; never affects data)
+        try:
+            self.window().statusBar().showMessage("已应用到内存（尚未 Save All）", 3000)
+        except (AttributeError, RuntimeError):
+            pass
+
     def _require_scene(self) -> dict | None:
         sid = self._current_scene_id
         if not sid:
@@ -6871,6 +6978,13 @@ class SceneEditor(QWidget):
         if kind == "spawn" and eid == "default":
             QMessageBox.information(
                 self, "场景编辑器", "默认出生点不可删除。")
+            return
+        _label = {
+            "npc": "NPC", "npc_collision": "NPC",
+            "hotspot": "热区", "hotspot_collision": "热区",
+            "zone": "Zone", "spawn": "出生点",
+        }.get(kind, "实体")
+        if not confirm.confirm_delete(self, f"{_label}「{eid}」及其全部配置"):
             return
         if kind == "hotspot":
             sc["hotspots"] = [h for h in sc.get("hotspots", []) if h.get("id") != eid]

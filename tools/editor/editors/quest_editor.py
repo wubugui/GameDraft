@@ -5,10 +5,10 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
     QFormLayout, QLineEdit, QComboBox, QPushButton, QLabel,
     QGraphicsView, QScrollArea, QCheckBox, QFrame, QMessageBox,
-    QAbstractItemView,
+    QAbstractItemView, QMenu,
 )
 from PySide6.QtGui import QPainter, QMouseEvent, QFont, QColor
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEvent
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
@@ -18,6 +18,7 @@ from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from .quest_graph_scene import QuestGraphScene
+from .quest_graph_layout_store import QuestGraphLayoutStore
 from .quest_graph_items import QuestGroupItem, QuestNodeItem
 
 
@@ -251,6 +252,17 @@ class _NextQuestsEditor(QWidget):
         bypass.setChecked(bool(edge.get("bypassPreconditions")))
         top_row.addWidget(bypass)
 
+        btn_up = QPushButton("↑")
+        btn_up.setFixedWidth(24)
+        btn_up.setToolTip("上移此边（nextQuests 是有序数组）")
+        btn_up.clicked.connect(lambda checked=False, f=frame: self._move_edge(f, -1))
+        top_row.addWidget(btn_up)
+        btn_down = QPushButton("↓")
+        btn_down.setFixedWidth(24)
+        btn_down.setToolTip("下移此边")
+        btn_down.clicked.connect(lambda checked=False, f=frame: self._move_edge(f, 1))
+        top_row.addWidget(btn_down)
+
         btn_del = QPushButton("x")
         btn_del.setFixedWidth(24)
         btn_del.clicked.connect(lambda checked=False, f=frame, i=idx: self._remove_edge(f, i))
@@ -267,6 +279,27 @@ class _NextQuestsEditor(QWidget):
             "frame": frame, "selector": sel,
             "cond_editor": ce, "bypass": bypass,
         })
+
+    def _read_row(self, rw: dict) -> dict:
+        """读出单行的当前控件状态（保留半填行，不像 to_list 那样丢空目标）。"""
+        edge: dict = {
+            "questId": rw["selector"].current_id(),
+            "conditions": rw["cond_editor"].to_list(),
+        }
+        if rw["bypass"].isChecked():
+            edge["bypassPreconditions"] = True
+        return edge
+
+    def _move_edge(self, frame: QFrame, delta: int) -> None:
+        idx = next((i for i, rw in enumerate(self._row_widgets)
+                    if rw["frame"] is frame), -1)
+        target = idx + delta
+        if idx < 0 or target < 0 or target >= len(self._row_widgets):
+            return
+        edges = [self._read_row(rw) for rw in self._row_widgets]
+        edges[idx], edges[target] = edges[target], edges[idx]
+        self.set_data(edges)  # 从交换后的实时状态重建，保证边内条件/跳过随各自边移动
+        self.changed.emit()
 
     def _add_edge(self) -> None:
         new_edge = {"questId": "", "conditions": []}
@@ -293,6 +326,9 @@ class QuestEditor(QWidget):
         # 防 commit-on-leave 在 apply→_refresh 重建树后重选时再次触发提交（递归/悬挂）。
         self._suppress_tree_commit: bool = False
         self._breadcrumb: list[str] = []
+        # 仅首次填充图（或显式「适应视图」/钻取/返回切层）时自动 fit；普通 apply→_refresh
+        # 不再重置缩放，避免每次保存都把用户调好的视图缩放/平移弹回。
+        self._did_initial_fit: bool = False
 
         root = QHBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
@@ -305,20 +341,34 @@ class QuestEditor(QWidget):
 
         btn_row = QHBoxLayout()
         btn_grp = QPushButton("+ 分组")
+        btn_grp.setToolTip("在当前选中分组下新增一个子分组")
         btn_grp.clicked.connect(self._add_group)
         btn_quest = QPushButton("+ 任务")
+        btn_quest.setToolTip("在当前选中分组下新增一个任务")
         btn_quest.clicked.connect(self._add_quest)
         btn_del = QPushButton("删除")
+        btn_del.setToolTip("删除树中选中的分组或任务（Delete 键亦可）")
         btn_del.clicked.connect(self._delete_selected)
         btn_row.addWidget(btn_grp)
         btn_row.addWidget(btn_quest)
         btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
 
+        self._tree_search = QLineEdit()
+        self._tree_search.setPlaceholderText("搜索…")
+        self._tree_search.setClearButtonEnabled(True)
+        self._tree_search.setToolTip(
+            "按名称 / id 过滤任务结构树（仅隐藏不匹配节点，保留匹配项的上级；不改动数据）")
+        self._tree_search.textChanged.connect(self._filter_tree)
+        ll.addWidget(self._tree_search)
+
         self._tree = _DraggableQuestTree()
         self._tree.setHeaderLabels(["任务结构"])
         self._tree.currentItemChanged.connect(self._on_tree_select)
         self._tree.hierarchy_changed.connect(self._on_tree_drop)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_tree_context_menu)
+        self._tree.installEventFilter(self)
         ll.addWidget(self._tree)
 
         # ---- center: graph view ----
@@ -330,17 +380,25 @@ class QuestEditor(QWidget):
         self._breadcrumb_label.setStyleSheet("padding: 4px; font-weight: bold;")
         cl.addWidget(self._breadcrumb_label)
 
-        self._graph_scene = QuestGraphScene()
+        # 节点坐标侧档 store（编辑器侧，绝不写游戏数据）；project_path 可能在构造后才设。
+        self._layout_store_path = None
+        self._graph_scene = QuestGraphScene(
+            layout_store=QuestGraphLayoutStore(self._model.project_path),
+        )
+        self._layout_store_path = self._model.project_path
         self._graph_view = _QuestGraphView(self._graph_scene)
         cl.addWidget(self._graph_view)
 
         nav_row = QHBoxLayout()
         self._btn_back = QPushButton("返回上层")
+        self._btn_back.setToolTip("返回上一层分组视图")
         self._btn_back.clicked.connect(self._go_back)
         self._btn_back.setEnabled(False)
         self._btn_top = QPushButton("回到顶层")
+        self._btn_top.setToolTip("回到全部分组的顶层视图")
         self._btn_top.clicked.connect(self._go_top)
         self._btn_fit = QPushButton("适应视图")
+        self._btn_fit.setToolTip("缩放并居中以适配全部节点")
         self._btn_fit.clicked.connect(lambda: self._graph_view.fit_all())
         nav_row.addWidget(self._btn_back)
         nav_row.addWidget(self._btn_top)
@@ -395,6 +453,7 @@ class QuestEditor(QWidget):
         gl.addWidget(sec_group_basic)
 
         self._g_apply = QPushButton("应用")
+        self._g_apply.setToolTip("把当前分组表单的改动写回模型")
         self._g_apply.clicked.connect(self._apply_group)
         gl.addWidget(self._g_apply)
 
@@ -461,6 +520,7 @@ class QuestEditor(QWidget):
         ql.addWidget(sec_next)
 
         self._q_apply = QPushButton("应用")
+        self._q_apply.setToolTip("把当前任务表单的改动写回模型")
         self._q_apply.clicked.connect(self._apply_quest)
         ql.addWidget(self._q_apply)
 
@@ -479,7 +539,33 @@ class QuestEditor(QWidget):
         self._q_group.set_items(self._model.all_quest_group_ids())
         self._q_next_editor._model = self._model
 
+    def _snapshot_tree_expansion(self) -> dict:
+        """记录各节点（按其 UserRole 标识）的展开状态，供 rebuild 后恢复。"""
+        snap: dict = {}
+
+        def walk(item: QTreeWidgetItem) -> None:
+            key = item.data(0, Qt.ItemDataRole.UserRole)
+            if key is not None:
+                snap[key] = item.isExpanded()
+            for i in range(item.childCount()):
+                walk(item.child(i))
+
+        for i in range(self._tree.topLevelItemCount()):
+            walk(self._tree.topLevelItem(i))
+        return snap
+
+    def _restore_tree_expansion(self, snap: dict) -> None:
+        def walk(item: QTreeWidgetItem) -> None:
+            key = item.data(0, Qt.ItemDataRole.UserRole)
+            item.setExpanded(snap.get(key, True))  # 新节点默认展开
+            for i in range(item.childCount()):
+                walk(item.child(i))
+
+        for i in range(self._tree.topLevelItemCount()):
+            walk(self._tree.topLevelItem(i))
+
     def _rebuild_tree(self) -> None:
+        _expand_snap = self._snapshot_tree_expansion()
         self._tree.clear()
         group_items: dict[str, QTreeWidgetItem] = {}
         group_map = {g["id"]: g for g in self._model.quest_groups}
@@ -525,9 +611,42 @@ class QuestEditor(QWidget):
                 qi = QTreeWidgetItem(ui, [qlabel])
                 qi.setData(0, Qt.ItemDataRole.UserRole, ("quest", q["id"]))
 
-        self._tree.expandAll()
+        # 保留用户的折叠状态：仅首次构建（无快照）时全展开，之后恢复上次状态。
+        if _expand_snap:
+            self._restore_tree_expansion(_expand_snap)
+        else:
+            self._tree.expandAll()
+        self._filter_tree(self._tree_search.text())
 
-    def _refresh_graph(self) -> None:
+    def _filter_tree(self, text: str) -> None:
+        """纯视图过滤：按文本隐藏不匹配的树节点，但保留含匹配后代的祖先节点可见。
+
+        只调用 setHidden，不增删/重排/改动任何任务或分组数据。
+        """
+        query = (text or "").strip().lower()
+
+        def visit(item: QTreeWidgetItem) -> bool:
+            # 返回 item 自身或任一后代是否匹配；匹配则该 item 保持可见。
+            self_match = query in item.text(0).lower() if query else True
+            child_match = False
+            for i in range(item.childCount()):
+                if visit(item.child(i)):
+                    child_match = True
+            visible = self_match or child_match
+            item.setHidden(bool(query) and not visible)
+            return visible
+
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            visit(root.child(i))
+
+    def _refresh_graph(self, *, fit: bool = False) -> None:
+        # 工程路径变更（加载/切换工程）时重建侧档 store，让坐标读写指向当前工程。
+        if self._model.project_path != self._layout_store_path:
+            self._graph_scene.set_layout_store(
+                QuestGraphLayoutStore(self._model.project_path),
+            )
+            self._layout_store_path = self._model.project_path
         if not self._breadcrumb:
             self._graph_scene.populate_top_level(
                 self._model.quest_groups, self._model.quests,
@@ -548,13 +667,16 @@ class QuestEditor(QWidget):
             )
             self._btn_back.setEnabled(True)
 
-        self._graph_view.fit_all()
+        # 只在显式请求或首次填充时适应视图；普通 apply→_refresh 保留当前缩放/平移。
+        if fit or not self._did_initial_fit:
+            self._graph_view.fit_all()
+            self._did_initial_fit = True
 
     # ======== graph interaction ========
 
     def _on_graph_drilldown(self, group_id: str) -> None:
         self._breadcrumb.append(group_id)
-        self._refresh_graph()
+        self._refresh_graph(fit=True)
 
     def _on_graph_node_selected(self, node_id: str) -> None:
         # 经树选择统一收口：选中对应树节点触发 _on_tree_select，同步面板 + 图高亮 +
@@ -583,11 +705,11 @@ class QuestEditor(QWidget):
     def _go_back(self) -> None:
         if self._breadcrumb:
             self._breadcrumb.pop()
-            self._refresh_graph()
+            self._refresh_graph(fit=True)
 
     def _go_top(self) -> None:
         self._breadcrumb.clear()
-        self._refresh_graph()
+        self._refresh_graph(fit=True)
 
     # ======== tree selection ========
 
@@ -694,9 +816,40 @@ class QuestEditor(QWidget):
         if sel_type == "group":
             self._show_group_props(sel_id)
             self._graph_scene.highlight_node(sel_id)
+            self._g_name.setFocus()
         elif sel_type == "quest":
             self._show_quest_props(sel_id)
             self._graph_scene.highlight_node(sel_id)
+            self._q_title.setFocus()
+
+    def eventFilter(self, obj, event):
+        # Delete 键删除树中选中项，复用既有删除处理（含确认弹窗），不另写删除逻辑。
+        if obj is self._tree and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                if self._selection_type in ("group", "quest") and self._current_selection:
+                    self._delete_selected()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _show_tree_context_menu(self, pos) -> None:
+        item = self._tree.itemAt(pos)
+        if item is not None:
+            self._tree.setCurrentItem(item)
+        menu = QMenu(self._tree)
+        act_grp = menu.addAction("+ 子分组")
+        act_quest = menu.addAction("+ 任务")
+        menu.addSeparator()
+        act_del = menu.addAction("删除")
+        act_del.setEnabled(
+            self._selection_type in ("group", "quest") and bool(self._current_selection)
+        )
+        chosen = menu.exec(self._tree.viewport().mapToGlobal(pos))
+        if chosen is act_grp:
+            self._add_group()
+        elif chosen is act_quest:
+            self._add_quest()
+        elif chosen is act_del:
+            self._delete_selected()
 
     # ======== drag-and-drop ========
 

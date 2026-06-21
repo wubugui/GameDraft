@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QWheelEvent
 
-from .rich_text_field import RichTextLineEdit
+from .rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 # Qt6: ItemDataRole.UserRole
 _USER_ROLE = Qt.ItemDataRole.UserRole
@@ -102,6 +102,7 @@ from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .blend_overlay_preview import BlendOverlayPreviewWidget
 from .collapsible_section import CollapsibleSection
+from .dialog_geometry import remember_dialog_geometry
 from .form_layout import compact_form
 from .image_path_picker import CutsceneImagePathRow
 from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
@@ -112,7 +113,7 @@ ACTION_TYPES = [
     "runActions", "chooseAction", "randomBranch",
     "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
-    "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
+    "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startPressureHold", "playSignalCue", "addFlagValue",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
@@ -166,6 +167,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "playBgm": "memory",
     "stopBgm": "memory",
     "playSfx": "memory",
+    "stopSceneAmbient": "memory",
     "endDay": "save",
     "addDelayedEvent": "save",
     "addArchiveEntry": "save",
@@ -290,6 +292,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "playBgm": [("id", "str"), ("fadeMs", "int")],
     "stopBgm": [("fadeMs", "int")],
     "playSfx": [("id", "str")],
+    "stopSceneAmbient": [("fadeMs", "int")],
     "endDay": [],
     "addArchiveEntry": [("bookType", "str"), ("entryId", "str")],
     "startCutscene": [("id", "str")],
@@ -940,7 +943,8 @@ class ActionTypePickerDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("选择 Action 类型")
-        self.setMinimumSize(760, 560)
+        # 解除"最小=初始"的死锁：保留较小下限让 13" 上可缩，初始仍 760×560，并记忆几何
+        self.setMinimumSize(560, 360)
         self.resize(760, 560)
         self._all_rows: list[tuple[str, str]] = []
         self._selected: str = ""
@@ -963,7 +967,7 @@ class ActionTypePickerDialog(QDialog):
 
         self._list = QListWidget(self)
         self._list.setAlternatingRowColors(True)
-        self._list.setMinimumHeight(400)
+        self._list.setMinimumHeight(240)  # 下限降低，让弹窗在 13" 上能压缩
         root.addWidget(self._list, stretch=1)
 
         btns = QDialogButtonBox(
@@ -973,6 +977,7 @@ class ActionTypePickerDialog(QDialog):
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         root.addWidget(btns)
+        remember_dialog_geometry(self, "action_type_picker")
 
     def set_rows(
         self,
@@ -1268,7 +1273,7 @@ class RuleSlotsParamEditor(QWidget):
         rm.setFixedWidth(24)
         rm.setToolTip("删除")
         bl.addWidget(QLabel("resultText"))
-        tx = QTextEdit()
+        tx = RichTextTextEdit(self._model)
         tx.setMinimumHeight(56)
         tx.setMaximumHeight(140)
         tx.setPlainText(str(data.get("resultText", "")))
@@ -1580,6 +1585,29 @@ class ActionRow(QWidget):
         self._rebuild_params()
 
         self.type_combo.typeCommitted.connect(self._on_type_committed)
+        # 折叠时也能一眼看出该动作的关键参数（M6）：摘要做成只读 tooltip，
+        # 走既有 to_dict()（纯读，不改数据），随编辑/换类型刷新。
+        self.changed.connect(self._update_summary_tooltip)
+        self.type_combo.typeCommitted.connect(
+            lambda *_: self._update_summary_tooltip())
+        self._update_summary_tooltip()
+
+    def _update_summary_tooltip(self) -> None:
+        try:
+            d = self.to_dict()
+        except Exception:
+            return
+        params = d.get("params", {}) or {}
+
+        def _short(v: object) -> str:
+            s = str(v)
+            return s if len(s) <= 24 else s[:23] + "…"
+
+        parts = [f"{k}={_short(v)}" for k, v in params.items()
+                 if not isinstance(v, (list, dict))]
+        typ = str(d.get("type", "") or "")
+        summary = "  ·  ".join(parts)
+        self.setToolTip(f"{typ}\n{summary}" if summary else typ)
 
     def _on_fold_clicked(self) -> None:
         self._collapsed = not self._collapsed

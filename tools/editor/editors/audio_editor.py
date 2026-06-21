@@ -10,7 +10,9 @@ from typing import Callable
 
 
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Qt
+
+from PySide6.QtGui import QKeyEvent
 
 from PySide6.QtWidgets import (
 
@@ -20,7 +22,7 @@ from PySide6.QtWidgets import (
 
     QTableWidgetItem, QHeaderView, QMessageBox,
 
-    QLineEdit,
+    QLineEdit, QMenu,
 
     QFileDialog,
 
@@ -43,6 +45,8 @@ except ImportError:  # 极少数环境未带 QtMultimedia
 from ..project_model import ProjectModel
 
 from ..shared.id_ref_selector import IdRefSelector
+
+from ..shared.list_affordances import make_table_search_box
 
 from ..shared.project_paths import DIR_KIND_RUNTIME_AUDIO, URL_KIND_MEDIA
 
@@ -313,6 +317,16 @@ class _AudioChannelTab(QWidget):
 
         self._table.verticalHeader().setDefaultSectionSize(36)
 
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+        self._table.customContextMenuRequested.connect(self._show_table_menu)
+
+        self._table.installEventFilter(self)
+
+        self._search = make_table_search_box(
+            self._table,
+            tooltip="按音频 id 过滤下方行（仅隐藏不匹配项，不改动数据）。")
+        lay.addWidget(self._search)
         lay.addWidget(self._table)
 
 
@@ -321,9 +335,13 @@ class _AudioChannelTab(QWidget):
 
         add_btn = QPushButton("+ Entry")
 
+        add_btn.setToolTip("新增一行音频条目（先填 id，再「选择文件…」绑定 src）")
+
         add_btn.clicked.connect(self._add)
 
         del_btn = QPushButton("- Entry")
+
+        del_btn.setToolTip("删除当前选中行（Delete 键 / 右键菜单亦可）")
 
         del_btn.clicked.connect(self._delete)
 
@@ -433,6 +451,9 @@ class _AudioChannelTab(QWidget):
 
             self._table.setCellWidget(i, 1, self._make_src_row_widget(src))
 
+        # 重新套用搜索过滤，使 setRowHidden 与新内容一致
+        self._search.textChanged.emit(self._search.text())
+
 
 
     def _add(self) -> None:
@@ -454,6 +475,42 @@ class _AudioChannelTab(QWidget):
         if r >= 0:
 
             self._table.removeRow(r)
+
+
+
+    def _show_table_menu(self, pos) -> None:
+
+        if self._table.rowCount() == 0:
+
+            return
+
+        menu = QMenu(self._table)
+
+        menu.addAction("删除此行", self._delete)
+
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+
+        if (
+
+            obj is self._table
+
+            and isinstance(event, QKeyEvent)
+
+            and event.type() == QKeyEvent.Type.KeyPress
+
+            and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+
+        ):
+
+            self._delete()
+
+            return True
+
+        return super().eventFilter(obj, event)
 
 
 
@@ -481,6 +538,22 @@ class _AudioChannelTab(QWidget):
 
 
 
+# 运行时实际会触发的 system 事件键。权威来源:src/systems/AudioManager.ts 中
+# 所有 playSystemSfx('<key>') 调用。新增运行时事件时同步此表(下拉仍可编辑,
+# 未在表内的旧键不会被丢弃)。
+_SYSTEM_SFX_KEYS: list[str] = [
+    "archiveUpdated", "coinGain", "coinSpend", "cutsceneEnd", "cutsceneStart",
+    "dayEnd", "dayStart", "dialogueAdvance", "dialogueChoice", "dialogueEnd",
+    "dialogueStart", "documentReveal", "encounterChoice", "encounterResult",
+    "encounterStart", "hotspotInteract", "inventoryFull", "itemAcquired",
+    "itemConsumed", "mapTravel", "minigameResult", "questAccepted",
+    "questCompleted", "ruleAcquired", "ruleFragment", "ruleLayer",
+    "ruleUseApply", "sceneTransition", "shopClose", "shopOpen", "uiCancel",
+    "uiConfirm", "uiHover", "uiNotification", "uiPanelClose", "uiPanelOpen",
+    "uiWarning", "zoneRuleAvailable", "zoneRuleUnavailable",
+]
+
+
 class _SystemSfxTab(QWidget):
 
     def __init__(self, model: ProjectModel, parent=None):
@@ -504,15 +577,32 @@ class _SystemSfxTab(QWidget):
 
         self._table.verticalHeader().setDefaultSectionSize(36)
 
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+        self._table.customContextMenuRequested.connect(self._show_table_menu)
+
+        self._table.installEventFilter(self)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setToolTip(
+            "按 system key / sfx id 过滤下方行（仅隐藏不匹配项，不改动数据）。")
+        self._search.textChanged.connect(self._filter_rows)
+        lay.addWidget(self._search)
         lay.addWidget(self._table)
 
         btns = QHBoxLayout()
 
         add_btn = QPushButton("+ Mapping")
 
+        add_btn.setToolTip("新增一条系统事件 → SFX id 映射")
+
         add_btn.clicked.connect(self._add)
 
         del_btn = QPushButton("- Mapping")
+
+        del_btn.setToolTip("删除当前选中行（Delete 键 / 右键菜单亦可）")
 
         del_btn.clicked.connect(self._delete)
 
@@ -532,6 +622,25 @@ class _SystemSfxTab(QWidget):
 
         self._refresh()
 
+
+    def _make_key_selector(self, initial_key: str) -> IdRefSelector:
+        """system 事件键改用可编辑下拉:候选取自运行时枚举,避免手打错;
+        可编辑 + 孤儿前置,既不限制旧键也不静默丢弃既有数据。"""
+        keys = list(_SYSTEM_SFX_KEYS)
+        ik = (initial_key or "").strip()
+        if ik and ik not in keys:
+            keys = [ik] + keys
+        sel = IdRefSelector(self, allow_empty=False, editable=True)
+        sel.set_items(keys)
+        sel.set_current(ik)
+        return sel
+
+    def _key_at(self, row: int) -> str:
+        w = self._table.cellWidget(row, 0)
+        if isinstance(w, IdRefSelector):
+            return w.current_id().strip()
+        it = self._table.item(row, 0)
+        return it.text().strip() if it else ""
 
     def _make_sfx_selector(self, initial_id: str) -> IdRefSelector:
 
@@ -562,9 +671,29 @@ class _SystemSfxTab(QWidget):
 
         for i, (key, sfx_id) in enumerate(entries.items()):
 
-            self._table.setItem(i, 0, QTableWidgetItem(str(key)))
+            self._table.setCellWidget(i, 0, self._make_key_selector(str(key)))
 
             self._table.setCellWidget(i, 1, self._make_sfx_selector(str(sfx_id or "")))
+
+        # 重新套用搜索过滤，使 setRowHidden 与新内容一致
+        self._filter_rows(self._search.text())
+
+
+    def _filter_rows(self, text: str) -> None:
+        """纯视图过滤：仅 setRowHidden 隐藏不匹配行（读 cell-widget 当前文本），不改数据。"""
+        q = text.strip().lower()
+        for r in range(self._table.rowCount()):
+            if not q:
+                self._table.setRowHidden(r, False)
+                continue
+            hit = False
+            for c in (0, 1):
+                w = self._table.cellWidget(r, c)
+                cur = w.current_id() if w is not None else ""
+                if q in (cur or "").lower():
+                    hit = True
+                    break
+            self._table.setRowHidden(r, not hit)
 
 
     def _add(self) -> None:
@@ -573,7 +702,7 @@ class _SystemSfxTab(QWidget):
 
         self._table.insertRow(r)
 
-        self._table.setItem(r, 0, QTableWidgetItem(""))
+        self._table.setCellWidget(r, 0, self._make_key_selector(""))
 
         self._table.setCellWidget(r, 1, self._make_sfx_selector(""))
 
@@ -587,15 +716,47 @@ class _SystemSfxTab(QWidget):
             self._table.removeRow(r)
 
 
+    def _show_table_menu(self, pos) -> None:
+
+        if self._table.rowCount() == 0:
+
+            return
+
+        menu = QMenu(self._table)
+
+        menu.addAction("删除此行", self._delete)
+
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+
+        if (
+
+            obj is self._table
+
+            and isinstance(event, QKeyEvent)
+
+            and event.type() == QKeyEvent.Type.KeyPress
+
+            and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+
+        ):
+
+            self._delete()
+
+            return True
+
+        return super().eventFilter(obj, event)
+
+
     def _apply(self) -> None:
 
         out: dict[str, str] = {}
 
         for i in range(self._table.rowCount()):
 
-            key_item = self._table.item(i, 0)
-
-            key = key_item.text().strip() if key_item else ""
+            key = self._key_at(i)
 
             sel = self._table.cellWidget(i, 1)
 

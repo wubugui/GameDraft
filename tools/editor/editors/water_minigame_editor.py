@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from ..shared import confirm
 from ..shared.action_editor import ActionEditor
 from ..shared.form_layout import compact_form
 from ..shared.hex_color_pick_row import HexColorPickRow
@@ -133,12 +134,14 @@ class WaterMinigameEditor(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         self._inst_list_w = QListWidget()
-        self._inst_list_w.setMinimumWidth(220)
+        self._inst_list_w.setMinimumWidth(180)  # 三栏预算：实例列表下限收窄
         ll.addWidget(QLabel("水域实例"))
         ll.addWidget(self._inst_list_w, stretch=1)
         btn_row = QHBoxLayout()
         self._btn_add_inst = QPushButton("新增")
+        self._btn_add_inst.setToolTip("新增一个水域实例（id 将作为文件名）")
         self._btn_del_inst = QPushButton("删除")
+        self._btn_del_inst.setToolTip("删除当前选中的水域实例")
         self._btn_preview = QPushButton("预览…")
         self._btn_preview.setToolTip("保存后以开发模式启动游戏并直接进入当前实例（URL waterPreview）")
         btn_row.addWidget(self._btn_add_inst)
@@ -161,7 +164,7 @@ class WaterMinigameEditor(QWidget):
 
         inst_scroll = QScrollArea()
         inst_scroll.setWidgetResizable(True)
-        inst_scroll.setMinimumHeight(140)
+        inst_scroll.setMinimumHeight(100)  # 表单可滚，降低下限给下方实体区让位
         inst_host = QWidget()
         inst_form = compact_form(QFormLayout(inst_host))
 
@@ -228,17 +231,37 @@ class WaterMinigameEditor(QWidget):
         ent_outer_l.setContentsMargins(0, 0, 0, 0)
         ent_tool = QHBoxLayout()
         self._btn_add_ent = QPushButton("+实体")
+        self._btn_add_ent.setToolTip("在水域中央新增一个实体")
         self._btn_rm_ent = QPushButton("−实体")
+        self._btn_rm_ent.setToolTip("删除当前选中的实体")
+        self._btn_ent_up = QPushButton("↑")
+        self._btn_ent_up.setToolTip("上移当前实体（调整 entities 数组顺序）")
+        self._btn_ent_up.setMaximumWidth(30)
+        self._btn_ent_down = QPushButton("↓")
+        self._btn_ent_down.setToolTip("下移当前实体（调整 entities 数组顺序）")
+        self._btn_ent_down.setMaximumWidth(30)
         ent_tool.addWidget(QLabel("实体属性"))
         ent_tool.addStretch()
+        ent_tool.addWidget(self._btn_ent_up)
+        ent_tool.addWidget(self._btn_ent_down)
         ent_tool.addWidget(self._btn_add_ent)
         ent_tool.addWidget(self._btn_rm_ent)
         ent_outer_l.addLayout(ent_tool)
 
+        # 实体列表：与画布选择双向同步；上方便于在多实体时快速定位/选择。
+        self._ent_list_w = QListWidget()
+        self._ent_list_w.setMaximumHeight(140)
+        self._ent_list_w.setToolTip("实体列表：单击选中，与画布选择双向同步；Delete 删除")
+        self._ent_list_w.currentRowChanged.connect(self._on_ent_list_row_changed)
+        self._ent_list_w.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._ent_list_w.customContextMenuRequested.connect(self._on_ent_list_context_menu)
+        self._ent_list_w.installEventFilter(self)
+        ent_outer_l.addWidget(self._ent_list_w)
+
         ent_scroll = QScrollArea()
         ent_scroll.setWidgetResizable(True)
-        ent_scroll.setMinimumWidth(300)
-        ent_scroll.setMinimumHeight(240)
+        ent_scroll.setMinimumWidth(260)   # 三栏预算：表单下限收窄
+        ent_scroll.setMinimumHeight(180)  # 可滚，降低下限省竖向空间
         ent_host = QWidget()
         ef = compact_form(QFormLayout(ent_host))
 
@@ -327,13 +350,14 @@ class WaterMinigameEditor(QWidget):
         self._cue_tag_disp = QLineEdit()
         self._cue_tag_disp.setReadOnly(True)
         self._cue_pick = QPushButton("选择 Strings 词条…")
+        self._cue_pick.setToolTip("从 Strings 表中挑选词条，写入 [tag:string:…] 引用")
         ctl.addWidget(self._cue_tag_disp, stretch=1)
         ctl.addWidget(self._cue_pick)
         self._cue_stack.addWidget(self._cue_plain)
         self._cue_stack.addWidget(cue_tag_w)
         self._cue_mode = QComboBox()
         self._cue_mode.addItems(["自定义文案", "Strings 词条引用"])
-        self._cue_mode.setMaximumWidth(120)
+        self._cue_mode.setMaximumWidth(180)  # 模式选择器：上限即可，小屏可缩、大屏不拉满
 
         self._hint_stack = QStackedWidget()
         self._hint_plain = QPlainTextEdit()
@@ -345,27 +369,28 @@ class WaterMinigameEditor(QWidget):
         self._hint_tag_disp = QLineEdit()
         self._hint_tag_disp.setReadOnly(True)
         self._hint_pick = QPushButton("选择 Strings 词条…")
+        self._hint_pick.setToolTip("从 Strings 表中挑选词条，写入 [tag:string:…] 引用")
         htl.addWidget(self._hint_tag_disp, stretch=1)
         htl.addWidget(self._hint_pick)
         self._hint_stack.addWidget(self._hint_plain)
         self._hint_stack.addWidget(hint_tag_w)
         self._hint_mode = QComboBox()
         self._hint_mode.addItems(["自定义文案", "Strings 词条引用"])
-        self._hint_mode.setMaximumWidth(120)
+        self._hint_mode.setMaximumWidth(180)  # 模式选择器：上限即可，小屏可缩、大屏不拉满
 
         cue_box = QWidget()
         cuel = QVBoxLayout(cue_box)
         cuel.setContentsMargins(0, 0, 0, 0)
         cuel.addWidget(self._cue_mode)
         cuel.addWidget(self._cue_stack)
-        cue_box.setMinimumWidth(240)
+        # 去掉宽度下限：cue 编辑区跟随表单列宽伸缩（小屏可缩、大屏占满）
 
         hint_box = QWidget()
         hintl = QVBoxLayout(hint_box)
         hintl.setContentsMargins(0, 0, 0, 0)
         hintl.addWidget(self._hint_mode)
         hintl.addWidget(self._hint_stack)
-        hint_box.setMinimumWidth(240)
+        # 去掉宽度下限：hint 编辑区跟随表单列宽伸缩（小屏可缩、大屏占满）
 
         ef.addRow("实体 id", self._ent_id)
         ef.addRow("category", self._ent_cat)
@@ -437,6 +462,8 @@ class WaterMinigameEditor(QWidget):
 
         self._btn_add_ent.clicked.connect(self._add_entity)
         self._btn_rm_ent.clicked.connect(self._remove_entity)
+        self._btn_ent_up.clicked.connect(self._move_entity_up)
+        self._btn_ent_down.clicked.connect(self._move_entity_down)
 
         self._ent_id.textChanged.connect(self._on_ent_id_changed)
         self._ent_cat.currentTextChanged.connect(self._on_ent_scalar_changed)
@@ -468,6 +495,18 @@ class WaterMinigameEditor(QWidget):
         self._hint_mode.currentIndexChanged.connect(self._on_hint_mode_changed)
         self._hint_plain.textChanged.connect(self._on_hint_plain_changed)
         self._hint_pick.clicked.connect(self._on_hint_pick)
+
+    def eventFilter(self, obj, event):  # noqa: N802 (Qt override)
+        if obj is self._ent_list_w and event.type() == event.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                row = self._ent_list_w.currentRow()
+                if row >= 0:
+                    # 让内部记账对齐可见选中行，再走既有删除逻辑。
+                    if row != self._selected_ent_row:
+                        self._on_canvas_entity_selected(row)
+                    self._remove_entity()
+                    return True
+        return super().eventFilter(obj, event)
 
     def _mark_wm_dirty(self) -> None:
         if self._loading or not self._doc or not self._current_inst_id:
@@ -527,6 +566,9 @@ class WaterMinigameEditor(QWidget):
             self._canvas,
             self._btn_add_ent,
             self._btn_rm_ent,
+            self._btn_ent_up,
+            self._btn_ent_down,
+            self._ent_list_w,
             self._ent_id,
             self._ent_cat,
             self._ent_sprite,
@@ -814,6 +856,19 @@ class WaterMinigameEditor(QWidget):
             ambient=(tim, wth),
         )
 
+    def _rebuild_ent_list(self, selected_row: int) -> None:
+        """重建实体 QListWidget（纯 UI 镜像，不动数据）。"""
+        ents = self._entities_list() if self._doc else []
+        self._ent_list_w.blockSignals(True)
+        self._ent_list_w.clear()
+        for e in ents:
+            eid = str(e.get("id") or "")
+            cat = str(e.get("category") or "")
+            self._ent_list_w.addItem(QListWidgetItem(f"{eid}  [{cat}]"))
+        if 0 <= selected_row < self._ent_list_w.count():
+            self._ent_list_w.setCurrentRow(selected_row)
+        self._ent_list_w.blockSignals(False)
+
     def _reload_entities_canvas(self, select_row: int) -> None:
         ents = self._entities_list()
         if not ents:
@@ -825,6 +880,7 @@ class WaterMinigameEditor(QWidget):
             self._cur_ent = None
             self._refresh_canvas_visual()
             self._fill_entity_form(None)
+            self._rebuild_ent_list(-1)
             return
         row = min(max(select_row, 0), len(ents) - 1)
         old = self._prev_ent_row
@@ -835,6 +891,79 @@ class WaterMinigameEditor(QWidget):
         self._refresh_canvas_visual()
         self._cur_ent = ents[row]
         self._fill_entity_form(self._cur_ent)
+        self._rebuild_ent_list(row)
+
+    def _sync_ent_list_selection(self, row: int) -> None:
+        """仅同步实体列表高亮，不触发其行变更处理（纯 UI）。"""
+        if row == self._ent_list_w.currentRow():
+            return
+        self._ent_list_w.blockSignals(True)
+        if 0 <= row < self._ent_list_w.count():
+            self._ent_list_w.setCurrentRow(row)
+        else:
+            self._ent_list_w.setCurrentRow(-1)
+        self._ent_list_w.blockSignals(False)
+
+    def _on_ent_list_row_changed(self, row: int) -> None:
+        """实体列表被点选：复用画布选择处理，保证与画布双向一致。"""
+        if row < 0:
+            return
+        if row == self._selected_ent_row:
+            return
+        self._on_canvas_entity_selected(row)
+
+    def _on_ent_list_context_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        row = self._ent_list_w.currentRow()
+        if row < 0:
+            return
+        menu = QMenu(self._ent_list_w)
+        act_up = menu.addAction("上移")
+        act_down = menu.addAction("下移")
+        menu.addSeparator()
+        act_del = menu.addAction("删除")
+        chosen = menu.exec(self._ent_list_w.mapToGlobal(pos))
+        if chosen is act_up:
+            self._move_entity_up()
+        elif chosen is act_down:
+            self._move_entity_down()
+        elif chosen is act_del:
+            # 让内部记账对齐可见选中行，再走既有删除逻辑。
+            if row != self._selected_ent_row:
+                self._on_canvas_entity_selected(row)
+            self._remove_entity()
+
+    def _active_ent_row(self) -> int:
+        """当前操作目标行：优先列表里可见的选中行（最贴近用户意图），
+        否则回退到内部记账 _selected_ent_row。"""
+        r = self._ent_list_w.currentRow()
+        if r >= 0:
+            return r
+        return self._selected_ent_row
+
+    def _move_entity_up(self) -> None:
+        cur = self._active_ent_row()
+        self._swap_entity(cur, cur - 1)
+
+    def _move_entity_down(self) -> None:
+        cur = self._active_ent_row()
+        self._swap_entity(cur, cur + 1)
+
+    def _swap_entity(self, a: int, b: int) -> None:
+        if not self._doc:
+            return
+        ents = self._entities_list()
+        if a < 0 or b < 0 or a >= len(ents) or b >= len(ents) or a == b:
+            return
+        # 移动前先把待写动作落回当前实体（按身份记账），避免重排后串台。
+        self._flush_actions_for_entity_row(self._active_ent_row())
+        ents[a], ents[b] = ents[b], ents[a]
+        self._mark_wm_dirty()
+        self._reload_entities_canvas(select_row=b)
+        # 画布重建过程中移除旧选中项会冒出一次 entity_selected(-1)，
+        # 在此重新确立到移动后的目标行，让面板/列表选中跟随移动结果。
+        self._on_canvas_entity_selected(b)
 
     def _on_canvas_entity_selected(self, row: int) -> None:
         old = self._prev_ent_row
@@ -842,6 +971,7 @@ class WaterMinigameEditor(QWidget):
             self._flush_actions_for_entity_row(old)
         self._prev_ent_row = row
         self._selected_ent_row = row
+        self._sync_ent_list_selection(row)
         ents = self._entities_list()
         if row < 0 or row >= len(ents):
             self._cur_ent = None
@@ -1027,15 +1157,28 @@ class WaterMinigameEditor(QWidget):
         ents.append(new_ent)
         self._mark_wm_dirty()
         self._reload_entities_canvas(select_row=len(ents) - 1)
+        self._ent_id.setFocus()
 
     def _remove_entity(self) -> None:
         row = self._selected_ent_row
         ents = self._entities_list()
         if row < 0 or row >= len(ents):
             return
+        if not confirm.confirm_delete(self, f"水域实体「{ents[row].get('id', '')}」"):
+            return
         ents.pop(row)
         self._mark_wm_dirty()
         self._reload_entities_canvas(select_row=min(row, len(ents) - 1))
+
+    def _refresh_ent_list_label(self, row: int) -> None:
+        """更新实体列表对应行的显示文本（纯 UI，不动数据）。"""
+        if row < 0 or row >= self._ent_list_w.count() or not self._cur_ent:
+            return
+        eid = str(self._cur_ent.get("id") or "")
+        cat = str(self._cur_ent.get("category") or "")
+        it = self._ent_list_w.item(row)
+        if it is not None:
+            it.setText(f"{eid}  [{cat}]")
 
     def _on_ent_id_changed(self, text: str) -> None:
         if self._loading or not self._cur_ent:
@@ -1045,6 +1188,7 @@ class WaterMinigameEditor(QWidget):
         r = self._selected_ent_row
         if r >= 0:
             self._canvas.update_marker_visual(r, self._entities_list())
+        self._refresh_ent_list_label(self._selected_ent_row)
 
     def _on_ent_scalar_changed(self, _t: str = "") -> None:
         if self._loading or not self._cur_ent:
@@ -1054,6 +1198,7 @@ class WaterMinigameEditor(QWidget):
         r = self._selected_ent_row
         if r >= 0:
             self._canvas.update_marker_visual(r, self._entities_list())
+        self._refresh_ent_list_label(self._selected_ent_row)
 
     def _on_ent_sprite_changed(self) -> None:
         if self._loading or not self._cur_ent:

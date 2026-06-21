@@ -1,6 +1,10 @@
 {
   "static": [
     {
+      "key": "零工背尸_done",
+      "valueType": "bool"
+    },
+    {
       "key": "Q抓水猴子_禁止离开码头",
       "valueType": "bool"
     },

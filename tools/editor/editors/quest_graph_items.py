@@ -52,6 +52,13 @@ class QuestGroupItem(QGraphicsRectItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setZValue(1)
+        self.setToolTip(
+            f"分组 {group_data['id']}\n{name}\n{quest_count} 个阶段（双击进入）",
+        )
+
+        # 编辑器侧档持久化用：稳定键 + 拖拽结束回调（由 scene 注入）。
+        self.layout_key: str | None = None
+        self.on_moved = None
 
         self._title = QGraphicsTextItem(display, self)
         self._title.setDefaultTextColor(QColor("#FFFFFF"))
@@ -91,6 +98,10 @@ class QuestGroupItem(QGraphicsRectItem):
                 edge.update_path()
         return super().itemChange(change, value)
 
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        _notify_moved(self)
+
 
 class QuestNodeItem(QGraphicsRectItem):
     def __init__(self, quest_data: dict, x: float = 0, y: float = 0):
@@ -113,6 +124,17 @@ class QuestNodeItem(QGraphicsRectItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setZValue(1)
+        tip = f"任务 {qid}"
+        if title:
+            tip += f"\n{title}"
+        qtype = quest_data.get("type")
+        if qtype:
+            tip += f"\n类型：{qtype}"
+        self.setToolTip(tip)
+
+        # 编辑器侧档持久化用：稳定键 + 拖拽结束回调（由 scene 注入）。
+        self.layout_key: str | None = None
+        self.on_moved = None
 
         self._id_text = QGraphicsTextItem(f"[Q] {display_id}", self)
         self._id_text.setDefaultTextColor(QColor("#FFFFFF"))
@@ -150,6 +172,24 @@ class QuestNodeItem(QGraphicsRectItem):
                 edge.update_path()
         return super().itemChange(change, value)
 
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        _notify_moved(self)
+
+
+def _notify_moved(item) -> None:
+    """拖拽结束时把节点新坐标交给 scene 注入的回调（用于侧档持久化）。"""
+    cb = getattr(item, "on_moved", None)
+    key = getattr(item, "layout_key", None)
+    if cb is None or not key:
+        return
+    p = item.pos()
+    try:
+        cb(key, float(p.x()), float(p.y()))
+    except Exception:
+        # 持久化失败绝不影响交互
+        pass
+
 
 class QuestEdgeItem(QGraphicsPathItem):
     def __init__(
@@ -183,6 +223,13 @@ class QuestEdgeItem(QGraphicsPathItem):
         self._label = QGraphicsTextItem(label, self)
         self._label.setDefaultTextColor(color.lighter(140) if not implicit else QColor(160, 160, 180))
         self._label.setFont(QFont(_FONT, 7))
+
+        cond_text = format_conditions(self.conditions)
+        tip_lines = ["前置依赖（隐式）" if implicit else "解锁连边"]
+        tip_lines.append(f"条件：{cond_text}" if cond_text else "条件：无")
+        if bypass:
+            tip_lines.append("bypass：满足条件即可绕过前置")
+        self.setToolTip("\n".join(tip_lines))
 
         src_item.add_edge(self)
         dst_item.add_edge(self)

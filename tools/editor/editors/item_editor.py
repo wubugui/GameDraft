@@ -9,10 +9,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
+from ..shared import confirm
+from ..shared.list_affordances import wire_list_affordances
 from ..shared.condition_editor import ConditionEditor
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.form_layout import compact_form
+from ..shared.collapsible_section import CollapsibleSection
 
 
 class DynDescWidget(QGroupBox):
@@ -70,19 +73,34 @@ class ItemEditor(QWidget):
         btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._delete)
         btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setToolTip("按 id / 名称过滤下方列表（仅隐藏不匹配项，不改动数据）")
+        self._search.textChanged.connect(self._filter_list)
+        ll.addWidget(self._search)
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_select)
+        wire_list_affordances(self._list, self._delete, delete_label="删除物品")
         ll.addWidget(self._list)
+        self._empty_hint = QLabel("暂无物品，点击「+ Item」新增")
+        self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setWordWrap(True)
+        self._empty_hint.setStyleSheet("color: gray; padding: 12px;")
+        self._empty_hint.hide()
+        ll.addWidget(self._empty_hint)
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         detail = QWidget()
         dl = QVBoxLayout(detail)
-        f = compact_form(QFormLayout())
+        basic_box = QGroupBox("基本信息")
+        f = compact_form(QFormLayout(basic_box))
         self._i_id = QLineEdit(); f.addRow("id", self._i_id)
         self._i_name = RichTextLineEdit(self._model)
         self._i_name.setMinimumWidth(240)
         f.addRow("name", self._i_name)
         self._i_type = QComboBox(); self._i_type.addItems(["consumable", "key"])
+        self._i_type.setToolTip("consumable=可消耗品；key=关键道具（通常不可丢弃/堆叠固定）")
         f.addRow("type", self._i_type)
         self._i_desc = RichTextTextEdit(self._model)
         self._i_desc.setMinimumHeight(72)
@@ -90,16 +108,25 @@ class ItemEditor(QWidget):
         self._i_desc.setMinimumWidth(240)
         f.addRow("description", self._i_desc)
         self._i_stack = QSpinBox(); self._i_stack.setRange(1, 999)
+        self._i_stack.setToolTip("单格最大堆叠数量")
         f.addRow("maxStack", self._i_stack)
         self._i_price = QSpinBox(); self._i_price.setRange(0, 99999)
+        self._i_price.setToolTip("商店买入价；为 0 时不写入该字段（视为非卖品）")
         f.addRow("buyPrice", self._i_price)
-        dl.addLayout(f)
+        dl.addWidget(basic_box)
 
-        dl.addWidget(QLabel("<b>Dynamic Descriptions</b>"))
+        dyn_section = CollapsibleSection("Dynamic Descriptions（条件动态描述）", start_open=False)
+        dyn_section.set_header_tool_tip(
+            "按条件覆盖物品描述；从上到下取第一条满足条件的 text，顺序影响优先级。")
+        dyn_inner = QWidget()
+        dyn_inner_lay = QVBoxLayout(dyn_inner)
+        dyn_inner_lay.setContentsMargins(0, 0, 0, 0)
         self._dyn_layout = QVBoxLayout()
-        dl.addLayout(self._dyn_layout)
+        dyn_inner_lay.addLayout(self._dyn_layout)
         add_dyn = QPushButton("+ Dynamic Desc"); add_dyn.clicked.connect(self._add_dyn)
-        dl.addWidget(add_dyn)
+        dyn_inner_lay.addWidget(add_dyn)
+        dyn_section.add_body(dyn_inner)
+        dl.addWidget(dyn_section)
 
         apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply)
         dl.addWidget(apply_btn)
@@ -118,6 +145,15 @@ class ItemEditor(QWidget):
         for it in self._model.items:
             tag = "[K]" if it.get("type") == "key" else "[C]"
             self._list.addItem(f"{tag} {it.get('id', '?')}  {it.get('name', '')}")
+        self._filter_list(self._search.text())
+        self._empty_hint.setVisible(self._list.count() == 0)
+
+    def _filter_list(self, text: str) -> None:
+        """纯视图过滤：仅 setHidden 隐藏不匹配行，不增删/重排/修改任何数据。"""
+        query = (text or "").strip().lower()
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            item.setHidden(bool(query) and query not in item.text().lower())
 
     def _is_dirty(self) -> bool:
         """当前 UI 是否与模型里的该物品有差异（用于切换/保存/关闭时判断是否需提交）。"""
@@ -180,6 +216,7 @@ class ItemEditor(QWidget):
         self._i_stack.setValue(it.get("maxStack", 1))
         self._i_price.setValue(it.get("buyPrice", 0))
         self._rebuild_dyn(it.get("dynamicDescriptions", []))
+        self._i_id.setFocus()
 
     def _rebuild_dyn(self, dyns: list[dict]) -> None:
         for w in self._dyn_widgets:
@@ -292,6 +329,9 @@ class ItemEditor(QWidget):
 
     def _delete(self) -> None:
         if self._current_idx >= 0:
+            it = self._model.items[self._current_idx]
+            if not confirm.confirm_delete(self, f"物品「{it.get('id', '')}」"):
+                return
             self._model.items.pop(self._current_idx)
             self._current_idx = -1
             self._model.mark_dirty("item")

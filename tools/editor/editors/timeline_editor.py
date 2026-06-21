@@ -23,6 +23,7 @@ from PySide6.QtGui import QAction, QFont, QMouseEvent, QDrag
 
 from ..project_model import ProjectModel
 from .. import theme as app_theme
+from ..shared import confirm
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.action_editor import (
@@ -2541,6 +2542,13 @@ class TimelineEditor(QWidget):
 
     def _delete(self) -> None:
         if self._current_idx >= 0:
+            cut = self._model.cutscenes[self._current_idx]
+            steps = cut.get("steps") or cut.get("commands") or []
+            if not confirm.confirm_delete(
+                self, f"过场「{cut.get('id', '')}」",
+                f"包含 {len(steps)} 个步骤,删除后无法恢复。",
+            ):
+                return
             self._model.cutscenes.pop(self._current_idx)
             self._current_idx = -1
             self._model.mark_dirty("cutscene")

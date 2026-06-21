@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..shared.form_layout import compact_form
+from ..shared.list_affordances import make_list_search_box
 from .. import theme as app_theme
 
 try:
@@ -64,7 +65,17 @@ class FilterEditor(QWidget):
         ll.addLayout(row)
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_select)
+        self._search = make_list_search_box(
+            self._list,
+            tooltip="按滤镜 id 过滤下方列表（仅隐藏不匹配项，不改动数据）。")
+        ll.addWidget(self._search)
         ll.addWidget(self._list)
+        self._empty_hint = QLabel("暂无滤镜，点击「+ Filter」新增")
+        self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setWordWrap(True)
+        self._empty_hint.setStyleSheet("color: gray; padding: 12px;")
+        self._empty_hint.hide()
+        ll.addWidget(self._empty_hint)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -216,6 +227,9 @@ class FilterEditor(QWidget):
         for stem in sorted(self._model.filter_defs.keys()):
             self._list.addItem(stem)
         self._list.blockSignals(False)
+        # 重新套用搜索过滤，使 setHidden 与新内容一致
+        self._search.textChanged.emit(self._search.text())
+        self._empty_hint.setVisible(self._list.count() == 0)
 
     def _on_select(self, row: int) -> None:
         if row < 0:

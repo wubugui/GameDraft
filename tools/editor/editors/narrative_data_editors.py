@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QSplitter,
     QScrollArea,
     QFormLayout,
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..scenarios_catalog_validate import validate_scenarios_list
+from ..shared import confirm
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
 from ..shared.flag_key_field import FlagKeyPickField
@@ -440,6 +442,12 @@ class ScenariosCatalogEditor(QWidget):
         self._tbl_exposes.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch)
         self._tbl_exposes.setMinimumHeight(120)
+        self._tbl_exposes.setToolTip("选中行后按 Delete、右键菜单或点「删除所选行」删除。")
+        self._tbl_exposes.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tbl_exposes.customContextMenuRequested.connect(self._exposes_context_menu)
+        _exp_del_sc = QShortcut(QKeySequence(Qt.Key.Key_Delete), self._tbl_exposes)
+        _exp_del_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        _exp_del_sc.activated.connect(self._exposes_del_row)
         exp_l.addWidget(self._tbl_exposes)
         er = QHBoxLayout()
         eb_a = QPushButton("添加行")
@@ -472,16 +480,19 @@ class ScenariosCatalogEditor(QWidget):
         vh.setMinimumWidth(28)
         vh.setMinimumSectionSize(34)
         vh.sectionMoved.connect(self._on_phases_section_moved)
-        ph_hint = QLabel(
+        self._tbl_phases.setToolTip(
             "在单元格内点击也会选中该行（Ctrl 加选、Shift 范围选）；拖曳左侧行号可调整顺序；"
-            "选中后按 Delete 或点「删除所选阶段」删除。",
+            "选中后按 Delete、右键菜单或点「删除所选阶段」删除。",
         )
+        ph_hint = QLabel("提示：拖行号排序，Delete / 右键删除（详见悬停提示）")
         ph_hint.setWordWrap(True)
         ph_hint.setStyleSheet("color: #666; font-size: 12px;")
         ph_l.addWidget(self._tbl_phases)
         _ph_del_sc = QShortcut(QKeySequence(Qt.Key.Key_Delete), self._tbl_phases)
         _ph_del_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         _ph_del_sc.activated.connect(self._phases_del_row)
+        self._tbl_phases.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tbl_phases.customContextMenuRequested.connect(self._phases_context_menu)
         pr = QHBoxLayout()
         pb_a = QPushButton("添加阶段")
         pb_a.clicked.connect(self._phases_add_row)
@@ -1030,6 +1041,10 @@ class ScenariosCatalogEditor(QWidget):
         row = self._sc_list.currentRow()
         if row < 0:
             return
+        sc = self._scenarios_data[row] if row < len(self._scenarios_data) else {}
+        sid = sc.get("id", "") if isinstance(sc, dict) else ""
+        if not confirm.confirm_delete(self, f"剧情场景「{sid}」及其全部阶段/产出/暴露标志"):
+            return
         self._scenarios_data.pop(row)
         self._loading_ui = True
         try:
@@ -1089,6 +1104,22 @@ class ScenariosCatalogEditor(QWidget):
         for r in rows:
             self._tbl_phases.removeRow(r)
         self._on_phases_or_exposes_structure_changed()
+
+    def _phases_context_menu(self, pos) -> None:
+        menu = QMenu(self._tbl_phases)
+        menu.addAction("添加阶段", self._phases_add_row)
+        has_sel = bool(self._tbl_phases.selectedIndexes()) or self._tbl_phases.currentRow() >= 0
+        act_del = menu.addAction("删除所选阶段", self._phases_del_row)
+        act_del.setEnabled(has_sel)
+        menu.exec(self._tbl_phases.viewport().mapToGlobal(pos))
+
+    def _exposes_context_menu(self, pos) -> None:
+        menu = QMenu(self._tbl_exposes)
+        menu.addAction("添加行", self._exposes_add_row)
+        has_sel = bool(self._tbl_exposes.selectedIndexes()) or self._tbl_exposes.currentRow() >= 0
+        act_del = menu.addAction("删除所选行", self._exposes_del_row)
+        act_del.setEnabled(has_sel)
+        menu.exec(self._tbl_exposes.viewport().mapToGlobal(pos))
 
     def _requires_ui_parse_errors(self) -> str | None:
         try:
@@ -1293,7 +1324,9 @@ class DocumentRevealsEditor(QWidget):
         cg.addWidget(self._dr_cond_stack)
         rfl.addWidget(cond_g)
 
-        anim = compact_form(QFormLayout())
+        anim_g = QGroupBox("过渡时序（animation）")
+        anim_g.setToolTip("揭示叠化的时长与延迟（毫秒），与运行时 DocumentRevealManager 一致。")
+        anim = compact_form(QFormLayout(anim_g))
         self._dr_dur = QSpinBox()
         self._dr_dur.setRange(0, 600_000)
         self._dr_dur.setSingleStep(100)
@@ -1306,9 +1339,11 @@ class DocumentRevealsEditor(QWidget):
             sp.valueChanged.connect(self._dr_on_edit)
         anim.addRow("animation.durationMs", self._dr_dur)
         anim.addRow("animation.delayMs", self._dr_delay)
-        rfl.addLayout(anim)
+        rfl.addWidget(anim_g)
 
-        opt = compact_form(QFormLayout())
+        opt_g = QGroupBox("位置与可选字段（清晰图叠放位置 / 可选 flag·overlay）")
+        opt_g.setToolTip("xPercent/yPercent/widthPercent 为清晰图相对底图的百分比位置与宽度；revealedFlag/overlayId 可选。")
+        opt = compact_form(QFormLayout(opt_g))
         self._dr_rflag = FlagKeyPickField(self._model, None, "", rh)
         self._dr_rflag.setToolTip("可选：揭示完成后写入的 flag（与登记表一致）")
         self._dr_rflag.valueChanged.connect(self._dr_on_edit)
@@ -1318,12 +1353,15 @@ class DocumentRevealsEditor(QWidget):
         self._dr_x = QSpinBox()
         self._dr_x.setRange(0, 100)
         self._dr_x.setValue(50)
+        self._dr_x.setToolTip("清晰图中心相对底图的水平位置（0–100%）")
         self._dr_y = QSpinBox()
         self._dr_y.setRange(0, 100)
         self._dr_y.setValue(50)
+        self._dr_y.setToolTip("清晰图中心相对底图的垂直位置（0–100%）")
         self._dr_w = QSpinBox()
         self._dr_w.setRange(1, 100)
         self._dr_w.setValue(40)
+        self._dr_w.setToolTip("清晰图相对底图的宽度（1–100%）")
         for sp in (self._dr_x, self._dr_y, self._dr_w):
             sp.setMaximumWidth(90)
             sp.valueChanged.connect(self._dr_on_edit)
@@ -1332,7 +1370,7 @@ class DocumentRevealsEditor(QWidget):
         opt.addRow("xPercent", self._dr_x)
         opt.addRow("yPercent", self._dr_y)
         opt.addRow("widthPercent", self._dr_w)
-        rfl.addLayout(opt)
+        rfl.addWidget(opt_g)
 
         prev_g = CollapsibleSection(
             "揭示过渡预览（Qt 近似，语义同 blendOverlayImage：模糊图 from → 清晰图 to）",

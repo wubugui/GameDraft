@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QStackedWidget, QToolButton,
 )
 from PySide6.QtGui import QAction, QKeySequence, QActionGroup
-from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize, QSettings
 from PySide6.QtWidgets import QApplication
 
 from . import theme
@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
         self._nav_tree = QTreeWidget()
         self._nav_tree.setHeaderHidden(True)
         self._nav_tree.setRootIsDecorated(True)
-        self._nav_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._nav_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._nav_tree.setMinimumWidth(0)
         self._nav_tree.setSizePolicy(
             QSizePolicy.Policy.Fixed,
@@ -175,6 +175,14 @@ class MainWindow(QMainWindow):
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setSizes([200, 1200])
         self.setCentralWidget(self._splitter)
+        # 跨重启记忆主窗口大小/位置(弹窗外的窗口状态);多显示器/越界由 restoreGeometry 处理。
+        self._settings = QSettings("GameDraft", "Editor")
+        _geo = self._settings.value("mainWindowGeometry")
+        if _geo is not None:
+            try:
+                self.restoreGeometry(_geo)
+            except Exception:
+                pass
         self._stack_index_to_item: dict[int, QTreeWidgetItem] = {}
         self._editor_instances: list = []
         self._editor_labels: list[str] = []
@@ -693,7 +701,9 @@ class MainWindow(QMainWindow):
         pad = 22
         nav_w = col + frame + pad
         nav_w = max(96, min(nav_w, 520))
-        self._nav_tree.setFixedWidth(nav_w)
+        # 用 minimumWidth + splitter 初始尺寸,而非 setFixedWidth:否则分割条拖不动、
+        # 超长标签既被截断又无法拖宽查看(配合 ScrollBarAsNeeded)。
+        self._nav_tree.setMinimumWidth(min(nav_w, 160))
 
         total = max(int(sum(self._splitter.sizes())), int(self.width() or 0), 900)
         right = max(320, total - nav_w)
@@ -759,9 +769,15 @@ class MainWindow(QMainWindow):
             if not self._flush_editors_to_model():
                 return False
             maybe_stamp(clk, "全部 flush 完成，调用 model.save_all")
+            _saved_types = sorted(getattr(self._model, "_dirty", set()))
             self._model.save_all()
             maybe_stamp(clk, "model.save_all 完成")
-            self._status.showMessage("Saved.", 3000)
+            if _saved_types:
+                _shown = "、".join(_saved_types[:6]) + ("…" if len(_saved_types) > 6 else "")
+                self._status.showMessage(
+                    f"已保存 {len(_saved_types)} 类数据：{_shown}", 4000)
+            else:
+                self._status.showMessage("无改动需保存。", 3000)
             return True
         except Exception as e:
             print(f"[SaveAll] 失败: {e!r}", flush=True)
@@ -1146,11 +1162,23 @@ class MainWindow(QMainWindow):
             return
         if not self._save_all():
             return
-        result = subprocess.run(
-            ["cmd", "/c", "npm run build"],
-            cwd=str(self._model.project_path),
-            capture_output=True, text=True,
-        )
+        # 跨平台:Windows 走 cmd /c（npm 是 .cmd），mac/Linux 直接调 npm。
+        if sys.platform == "win32":
+            cmd = ["cmd", "/c", "npm", "run", "build"]
+        else:
+            cmd = ["npm", "run", "build"]
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self._model.project_path),
+                capture_output=True, text=True,
+            )
+        except FileNotFoundError:
+            QMessageBox.critical(
+                self, "Build Error",
+                "未找到 npm，请确认已安装 Node.js 且 npm 在 PATH 中。",
+            )
+            return
         if result.returncode == 0:
             QMessageBox.information(self, "Build", "Build successful!\nOutput: dist/")
         else:
@@ -1298,5 +1326,9 @@ class MainWindow(QMainWindow):
             elif r == QMessageBox.StandardButton.Cancel:
                 event.ignore()
                 return
+        try:
+            self._settings.setValue("mainWindowGeometry", self.saveGeometry())
+        except Exception:
+            pass
         self._stop_game()
         super().closeEvent(event)

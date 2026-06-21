@@ -4,12 +4,14 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QTabWidget, QFormLayout, QLineEdit, QComboBox, QPushButton,
-    QScrollArea, QLabel, QGroupBox, QMessageBox,
+    QScrollArea, QLabel, QGroupBox, QMessageBox, QMenu,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 
 from ..project_model import ProjectModel
+from ..shared import confirm
 from ..shared.form_layout import compact_form
+from ..shared.collapsible_section import CollapsibleSection
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 
@@ -41,12 +43,25 @@ class RuleEditor(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
         btn_row = QHBoxLayout()
-        btn_add = QPushButton("+ Rule"); btn_add.clicked.connect(self._add_rule)
-        btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._del_rule)
+        btn_add = QPushButton("+ Rule")
+        btn_add.setToolTip("新增一条规矩")
+        btn_add.clicked.connect(self._add_rule)
+        btn_del = QPushButton("Delete")
+        btn_del.setToolTip("删除选中的规矩（Delete 键亦可）")
+        btn_del.clicked.connect(self._del_rule)
         btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
+        self._rule_search = QLineEdit()
+        self._rule_search.setPlaceholderText("搜索…")
+        self._rule_search.setToolTip("按 id / 名称过滤下方列表（仅隐藏不匹配项，不改数据）")
+        self._rule_search.setClearButtonEnabled(True)
+        self._rule_search.textChanged.connect(self._on_rule_search_changed)
+        ll.addWidget(self._rule_search)
         self._rule_list = QListWidget()
         self._rule_list.currentRowChanged.connect(self._on_rule_select)
+        self._rule_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._rule_list.customContextMenuRequested.connect(self._show_rule_list_menu)
+        self._rule_list.installEventFilter(self)
         ll.addWidget(self._rule_list, stretch=1)
 
         link_box = QGroupBox("本规矩的碎片（双击跳转编辑）")
@@ -56,9 +71,10 @@ class RuleEditor(QWidget):
         self._rule_frag_list.itemDoubleClicked.connect(self._on_rule_frag_sidebar_activated)
         link_lay.addWidget(self._rule_frag_list)
         btn_frag_row = QHBoxLayout()
-        self._btn_open_frags = QPushButton("在 Fragments 页打开选中")
+        self._btn_open_frags = QPushButton("在 Fragments 页打开")
+        self._btn_open_frags.setToolTip("跳到 Fragments 页并选中上方列表里选中的碎片")
         self._btn_open_frags.clicked.connect(self._open_selected_sidebar_frag_in_tab)
-        self._btn_add_linked_frag = QPushButton("+ 新增关联碎片")
+        self._btn_add_linked_frag = QPushButton("+ 关联碎片")
         self._btn_add_linked_frag.setToolTip("跳到 Fragments 页并新增一条已填好 ruleId 的碎片")
         self._btn_add_linked_frag.clicked.connect(self._add_frag_for_current_rule)
         btn_frag_row.addWidget(self._btn_open_frags)
@@ -77,8 +93,8 @@ class RuleEditor(QWidget):
         f.addRow("category", self._r_cat)
         self._layer_edits: dict[str, tuple[RichTextTextEdit, RichTextLineEdit, QComboBox]] = {}
         for lk, title in (("xiang", "象"), ("li", "理"), ("shu", "术")):
-            gb = QGroupBox(f"层：{title}")
-            gl = compact_form(QFormLayout(gb))
+            body = QWidget()
+            gl = compact_form(QFormLayout(body))
             te = RichTextTextEdit(self._model)
             te.setMaximumHeight(100)
             hi = RichTextLineEdit(self._model)
@@ -88,7 +104,10 @@ class RuleEditor(QWidget):
             gl.addRow("text", te)
             gl.addRow("lockedHint", hi)
             gl.addRow("verified", ver)
-            f.addRow(gb)
+            sec = CollapsibleSection(f"层：{title}", start_open=False)
+            sec.set_header_tool_tip(f"{title} 层文本 / 未解锁提示 / 验证状态")
+            sec.add_body(body)
+            f.addRow(sec)
             self._layer_edits[lk] = (te, hi, ver)
         apply_btn = QPushButton("Apply"); f.addRow(apply_btn)
         apply_btn.clicked.connect(self._apply_rule)
@@ -359,6 +378,8 @@ class RuleEditor(QWidget):
     def _del_rule(self) -> None:
         rules = self._model.rules_data.get("rules", [])
         if 0 <= self._rule_idx < len(rules):
+            if not confirm.confirm_delete(self, f"规矩「{rules[self._rule_idx].get('id', '')}」"):
+                return
             rules.pop(self._rule_idx)
             self._rule_idx = -1
             self._model.mark_dirty("rules")
@@ -380,11 +401,22 @@ class RuleEditor(QWidget):
         btn_row = QHBoxLayout()
         self._btn_add_frag = QPushButton("+ Fragment")
         self._btn_add_frag.clicked.connect(self._add_frag)
-        btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._del_frag)
+        btn_del = QPushButton("Delete")
+        btn_del.setToolTip("删除选中的碎片（Delete 键亦可）")
+        btn_del.clicked.connect(self._del_frag)
         btn_row.addWidget(self._btn_add_frag); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
+        self._frag_search = QLineEdit()
+        self._frag_search.setPlaceholderText("搜索…")
+        self._frag_search.setToolTip("按 id / 文本 / 归属规矩过滤下方列表（仅隐藏不匹配项，不改数据）")
+        self._frag_search.setClearButtonEnabled(True)
+        self._frag_search.textChanged.connect(self._on_frag_search_changed)
+        ll.addWidget(self._frag_search)
         self._frag_list = QListWidget()
         self._frag_list.currentRowChanged.connect(self._on_frag_select)
+        self._frag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._frag_list.customContextMenuRequested.connect(self._show_frag_list_menu)
+        self._frag_list.installEventFilter(self)
         ll.addWidget(self._frag_list)
 
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -469,6 +501,8 @@ class RuleEditor(QWidget):
             it = QListWidgetItem(line)
             it.setData(Qt.ItemDataRole.UserRole, i)
             self._frag_list.addItem(it)
+        if getattr(self, "_frag_search", None) is not None:
+            self._on_frag_search_changed(self._frag_search.text())
 
     def _rule_display_name(self, rule_id: str) -> str:
         if not rule_id:
@@ -558,10 +592,74 @@ class RuleEditor(QWidget):
     def _del_frag(self) -> None:
         frags = self._model.rules_data.get("fragments", [])
         if 0 <= self._frag_idx < len(frags):
+            if not confirm.confirm_delete(self, f"规矩碎片「{frags[self._frag_idx].get('id', '')}」"):
+                return
             frags.pop(self._frag_idx)
             self._frag_idx = -1
             self._model.mark_dirty("rules")
             self._refresh()
+
+    # ---- list affordances (context menu + Delete key) ---------------------
+
+    def eventFilter(self, obj, event):
+        # Delete 键删除选中的规矩 / 碎片，复用既有删除处理（含确认），不另写删除逻辑。
+        if event.type() == QEvent.Type.KeyPress and event.key() in (
+            Qt.Key.Key_Delete, Qt.Key.Key_Backspace,
+        ):
+            if obj is self._rule_list and 0 <= self._rule_idx:
+                self._del_rule()
+                return True
+            if obj is self._frag_list and 0 <= self._frag_idx:
+                self._del_frag()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _on_rule_search_changed(self, text: str) -> None:
+        # 纯视图过滤：只 setHidden，不改/不重排任何数据。
+        q = (text or "").strip().lower()
+        for row in range(self._rule_list.count()):
+            it = self._rule_list.item(row)
+            if it is None:
+                continue
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    def _on_frag_search_changed(self, text: str) -> None:
+        # 纯视图过滤：只 setHidden，不改/不重排任何数据。
+        q = (text or "").strip().lower()
+        for row in range(self._frag_list.count()):
+            it = self._frag_list.item(row)
+            if it is None:
+                continue
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    def _show_rule_list_menu(self, pos) -> None:
+        item = self._rule_list.itemAt(pos)
+        if item is not None:
+            self._rule_list.setCurrentItem(item)
+        menu = QMenu(self._rule_list)
+        act_add = menu.addAction("+ Rule")
+        act_del = menu.addAction("删除")
+        act_del.setEnabled(0 <= self._rule_idx)
+        chosen = menu.exec(self._rule_list.viewport().mapToGlobal(pos))
+        if chosen is act_add:
+            self._add_rule()
+        elif chosen is act_del:
+            self._del_rule()
+
+    def _show_frag_list_menu(self, pos) -> None:
+        item = self._frag_list.itemAt(pos)
+        if item is not None:
+            self._frag_list.setCurrentItem(item)
+        menu = QMenu(self._frag_list)
+        act_add = menu.addAction("+ Fragment")
+        act_add.setEnabled(self._btn_add_frag.isEnabled())
+        act_del = menu.addAction("删除")
+        act_del.setEnabled(0 <= self._frag_idx)
+        chosen = menu.exec(self._frag_list.viewport().mapToGlobal(pos))
+        if chosen is act_add:
+            self._add_frag()
+        elif chosen is act_del:
+            self._del_frag()
 
     def _refresh(self) -> None:
         saved_rule = self._rule_idx
@@ -577,6 +675,9 @@ class RuleEditor(QWidget):
         else:
             self._rule_idx = -1
             self._rule_frag_list.clear()
+
+        if getattr(self, "_rule_search", None) is not None:
+            self._on_rule_search_changed(self._rule_search.text())
 
         self._populate_frag_rule_filter()
         self._refresh_frag_list()

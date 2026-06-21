@@ -410,6 +410,13 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('playBgm', (p) => { void d.audioManager.playBgm(p.id as string, (p.fadeMs as number) ?? 1000); }, ['id', 'fadeMs']);
   executor.register('stopBgm', (p) => { void d.audioManager.stopBgm((p.fadeMs as number) ?? 1000); }, ['fadeMs']);
   executor.register('playSfx', (p) => { void d.audioManager.playSfx(p.id as string); }, ['id']);
+  // 抽空场景环境音（如灵堂"阴风"骤停制造"太安静"的诡异一拍）：留空 id 清掉全部环境层，
+  // 传 id 只停指定一层。复用 AudioManager 既有 clear/removeAmbient，不扩 ActionRegistryDeps。
+  executor.register('stopSceneAmbient', (p) => {
+    const fadeMs = (p.fadeMs as number) ?? 500;
+    if (p.id) { d.audioManager.removeAmbient(p.id as string, fadeMs); }
+    else { d.audioManager.clearAmbient(fadeMs); }
+  }, ['id', 'fadeMs']);
   executor.register('endDay', () => { d.dayManager.endDay(); }, []);
 
   executor.register('addDelayedEvent', (p) => {

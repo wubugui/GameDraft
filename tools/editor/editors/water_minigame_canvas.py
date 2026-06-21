@@ -337,7 +337,9 @@ class WaterCanvasView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, parent: QWidget | None = None) -> None:
         super().__init__(scene, parent)
         self._place_mode = False
-        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        # 默认 NoDrag：左键直接选中/拖移实体（与 scene_editor 画布一致）。
+        # 旧默认 RubberBandDrag 会把左键拖拽吞为框选，与「拖拽=移动实体」冲突易误触。
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform,
         )
@@ -348,9 +350,8 @@ class WaterCanvasView(QGraphicsView):
 
     def set_place_mode(self, on: bool) -> None:
         self._place_mode = on
-        self.setDragMode(
-            QGraphicsView.DragMode.NoDrag if on else QGraphicsView.DragMode.RubberBandDrag,
-        )
+        # 放置模式与普通模式都用 NoDrag：放置时拦截空白点击新建，普通时左键拖移实体。
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setCursor(Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor)
 
     def mousePressEvent(self, event):  # noqa: ANN001
@@ -397,7 +398,7 @@ class WaterMinigameSceneCanvas(QWidget):
 
         self._scene = _WaterBackdropScene(self)
         self._view = WaterCanvasView(self._scene, self)
-        self._view.setMinimumSize(420, 280)
+        self._view.setMinimumSize(380, 240)  # 画布有 fit/缩放，缩小下限以适配 13"
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)

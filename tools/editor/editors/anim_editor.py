@@ -15,6 +15,25 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QMessageBox,
 )
+
+
+def _make_list_search_box(list_widget: QListWidget) -> QLineEdit:
+    """动画包列表上方的纯视图搜索框：按文本逐项 setHidden，不增删/不重排数据。"""
+    box = QLineEdit()
+    box.setPlaceholderText("搜索…")
+    box.setClearButtonEnabled(True)
+    box.setToolTip("按包 ID 过滤下方动画包列表（仅隐藏不匹配项）。")
+
+    def _filter(text: str) -> None:
+        q = text.strip().lower()
+        for i in range(list_widget.count()):
+            it = list_widget.item(i)
+            if it is None:
+                continue
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    box.textChanged.connect(_filter)
+    return box
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt, QRect, QElapsedTimer, QTimer
 
@@ -104,8 +123,14 @@ class AnimEditor(QWidget):
         row_tools.addStretch()
         ll.addLayout(row_tools)
         self._list = QListWidget()
+        self._search_box = _make_list_search_box(self._list)
+        ll.addWidget(self._search_box)
         self._list.currentTextChanged.connect(self._on_select)
         ll.addWidget(self._list)
+        self._empty_hint = QLabel("暂无动画包：用「视频工具…」导出，再点「重载动画」")
+        self._empty_hint.setStyleSheet("color: #888;")
+        self._empty_hint.setWordWrap(True)
+        ll.addWidget(self._empty_hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -269,6 +294,7 @@ class AnimEditor(QWidget):
         for k in sorted(self._model.animations.keys()):
             self._list.addItem(k)
         self._list.blockSignals(False)
+        self._sync_list_chrome()
         if keep and keep in self._model.animations:
             self._select_stem(keep)
             self._on_select(keep)
@@ -344,8 +370,15 @@ class AnimEditor(QWidget):
         self._list.clear()
         for k in sorted(self._model.animations.keys()):
             self._list.addItem(k)
+        self._sync_list_chrome()
         if keep and keep in self._model.animations:
             self._select_stem(keep)
+
+    def _sync_list_chrome(self) -> None:
+        """刷新列表后同步空态提示与当前搜索过滤（纯视图，不改数据）。"""
+        self._empty_hint.setVisible(self._list.count() == 0)
+        # 重新套用搜索框过滤，使 setHidden 与新内容一致
+        self._search_box.textChanged.emit(self._search_box.text())
 
     def _select_stem(self, stem: str) -> None:
         for i in range(self._list.count()):

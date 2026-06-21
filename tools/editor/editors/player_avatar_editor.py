@@ -78,6 +78,10 @@ class PlayerAvatarEditor(QWidget):
         pack_form = compact_form(QFormLayout(pack_box))
         self._bundle_combo = QComboBox()
         self._bundle_combo.setMinimumWidth(200)
+        self._bundle_combo.setToolTip(
+            "选择工程内已导出的动画包；选定后自动填充下方 animManifest URL。"
+            "选「仅手动填写 URL」可直接编辑路径。"
+        )
         self._bundle_combo.currentIndexChanged.connect(self._on_bundle_changed)
         pack_form.addRow("工程内动画包", self._bundle_combo)
 
@@ -85,6 +89,10 @@ class PlayerAvatarEditor(QWidget):
         self._manifest_edit = QLineEdit()
         self._manifest_edit.setPlaceholderText(_DEFAULT_MANIFEST)
         self._manifest_edit.setMinimumWidth(240)
+        self._manifest_edit.setToolTip(
+            "写入 playerAvatar.animManifest 的 anim.json URL；"
+            "形如 /resources/runtime/animation/<包名>/anim.json。"
+        )
         man_row.addWidget(self._manifest_edit, 1)
         reset_m = QPushButton("按包名填充路径")
         reset_m.setToolTip(f"写入 {_MANIFEST_RE.pattern} 形式的标准 URL")
@@ -116,7 +124,8 @@ class PlayerAvatarEditor(QWidget):
         lay.addWidget(map_box)
 
         btn_row = QHBoxLayout()
-        apply_btn = QPushButton("写入 game_config（Apply）")
+        apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("把上方动画包与三态映射写入 game_config.playerAvatar 并标脏；保存工程后写入磁盘。")
         apply_btn.clicked.connect(self._apply)
         btn_row.addWidget(apply_btn)
         reload_anim = QPushButton("从磁盘重载动画列表")

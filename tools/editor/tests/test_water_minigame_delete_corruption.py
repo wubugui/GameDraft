@@ -9,6 +9,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication
 
@@ -24,6 +25,10 @@ class WaterMinigameDeleteCorruptionTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self._editors: list[WaterMinigameEditor] = []
+        # 删除已加确认弹窗;测试里默认确认删除。
+        p = patch("tools.editor.shared.confirm.confirm_delete", return_value=True)
+        p.start()
+        self.addCleanup(p.stop)
 
     def tearDown(self) -> None:
         for ed in self._editors:

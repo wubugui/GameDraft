@@ -7,15 +7,16 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QPushButton, QDoubleSpinBox, QScrollArea,
     QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsTextItem,
-    QGraphicsLineItem, QGraphicsPolygonItem, QGraphicsItem,
+    QGraphicsLineItem, QGraphicsPolygonItem, QGraphicsItem, QMenu,
 )
 from PySide6.QtGui import (
     QPen, QBrush, QColor, QFont, QPainter, QWheelEvent, QPolygonF,
-    QMouseEvent,
+    QMouseEvent, QKeyEvent,
 )
 from PySide6.QtCore import Qt, QPoint, QPointF
 
 from ..project_model import ProjectModel
+from ..shared import confirm
 from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit
@@ -185,14 +186,19 @@ class MapEditor(QWidget):
         ll.setContentsMargins(0, 0, 0, 0)
         btn_row = QHBoxLayout()
         btn_add = QPushButton("+ Node")
+        btn_add.setToolTip("新增一个地图节点（默认放在 x=100, y=100）")
         btn_add.clicked.connect(self._add)
         btn_del = QPushButton("Delete")
+        btn_del.setToolTip("删除当前选中节点（Delete 键 / 右键菜单亦可）")
         btn_del.clicked.connect(self._delete)
         btn_row.addWidget(btn_add)
         btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_select)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._show_node_menu)
+        self._list.installEventFilter(self)
         ll.addWidget(self._list)
 
         center = QWidget()
@@ -222,10 +228,12 @@ class MapEditor(QWidget):
         self._m_x = QDoubleSpinBox()
         self._m_x.setRange(-9999, 9999)
         self._m_x.setDecimals(4)
+        self._m_x.setToolTip("节点在地图上的逻辑 X 坐标（地图单位）；也可直接在画布上拖动节点")
         f.addRow("x", self._m_x)
         self._m_y = QDoubleSpinBox()
         self._m_y.setRange(-9999, 9999)
         self._m_y.setDecimals(4)
+        self._m_y.setToolTip("节点在地图上的逻辑 Y 坐标（地图单位）；也可直接在画布上拖动节点")
         f.addRow("y", self._m_y)
         self._m_cond = ConditionEditor("unlockConditions")
 
@@ -570,7 +578,31 @@ class MapEditor(QWidget):
 
     def _delete(self) -> None:
         if self._current_idx >= 0:
+            n = self._model.map_nodes[self._current_idx]
+            if not confirm.confirm_delete(
+                self, f"地图节点「{n.get('sceneId', '')}」",
+                "其它节点指向该场景的过渡连线将悬空。",
+            ):
+                return
             self._model.map_nodes.pop(self._current_idx)
             self._current_idx = -1
             self._model.mark_dirty("map")
             self._refresh()
+
+    def _show_node_menu(self, pos) -> None:
+        if self._current_idx < 0:
+            return
+        menu = QMenu(self._list)
+        menu.addAction("删除节点", self._delete)
+        menu.exec(self._list.viewport().mapToGlobal(pos))
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        if (
+            obj is self._list
+            and isinstance(event, QKeyEvent)
+            and event.type() == QKeyEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Delete
+        ):
+            self._delete()
+            return True
+        return super().eventFilter(obj, event)

@@ -59,6 +59,23 @@
         "name": "旁白"
       },
       "text": "瘫坐在地上喘气的工夫，鼻尖掠过一缕味儿——浆洗棉布、线头，和一点……廉价香料。",
+      "next": "n_chant"
+    },
+    "n_chant": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "凉是凉的，沉是沉的，该是什么——",
+      "next": "n_chant2"
+    },
+    "n_chant2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "那句背了八百回、念顺了的话，卡在了喉咙里。这一具，哪样都不对。",
       "next": "n_cue"
     },
     "n_cue": {

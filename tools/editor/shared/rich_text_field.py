@@ -241,6 +241,7 @@ class RichTextLineEdit(QWidget):
         self._edit.textChanged.connect(self.textChanged.emit)
         btn = QPushButton("引用")
         btn.setMaximumWidth(44)
+        btn.setToolTip("插入项目引用 [tag:…]（勿手打）")
         btn.clicked.connect(self._insert_ref)
         row.addWidget(self._edit, 1)
         row.addWidget(btn)

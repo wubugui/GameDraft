@@ -5,8 +5,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget,
     QLineEdit, QPushButton, QLabel,
     QScrollArea, QMessageBox, QInputDialog, QComboBox,
-    QAbstractItemView, QFrame,
+    QAbstractItemView, QFrame, QMenu,
 )
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtCore import Qt, Signal, QTimer
 
 from ..project_model import ProjectModel
@@ -67,14 +68,20 @@ class FlagRegistryEditor(QWidget):
         self._static_list = QListWidget()
         self._static_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._static_list.setSortingEnabled(True)
+        self._static_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._static_list.customContextMenuRequested.connect(self._show_static_menu)
+        self._static_list.installEventFilter(self)
         lay.addWidget(self._static_list, stretch=1)
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("+ Add Flag")
+        add_btn.setToolTip("新增一个静态 flag（默认 bool 类型）")
         add_btn.clicked.connect(self._add_static)
         rename_btn = QPushButton("Rename")
+        rename_btn.setToolTip("重命名选中的单个 flag key")
         rename_btn.clicked.connect(self._rename_static)
         del_btn = QPushButton("Delete")
+        del_btn.setToolTip("删除选中的 flag（支持多选；Delete 键 / 右键菜单亦可）")
         del_btn.clicked.connect(self._delete_static)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(rename_btn)
@@ -85,6 +92,7 @@ class FlagRegistryEditor(QWidget):
         type_row.addWidget(QLabel("选中项值类型:"))
         self._static_type_combo = QComboBox()
         self._static_type_combo.addItems(["bool", "float", "string"])
+        self._static_type_combo.setToolTip("该 flag 在运行时的存储类型；仅选中单个 flag 时可改")
         self._static_type_combo.currentTextChanged.connect(self._on_static_type_edited)
         type_row.addWidget(self._static_type_combo, stretch=1)
         lay.addLayout(type_row)
@@ -228,6 +236,25 @@ class FlagRegistryEditor(QWidget):
         self._model.mark_dirty("flag_registry")
         self._refresh_static()
 
+    def _show_static_menu(self, pos) -> None:
+        if not self._static_list.selectedItems():
+            return
+        menu = QMenu(self._static_list)
+        menu.addAction("Rename", self._rename_static)
+        menu.addAction("Delete", self._delete_static)
+        menu.exec(self._static_list.viewport().mapToGlobal(pos))
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        if (
+            obj is self._static_list
+            and isinstance(event, QKeyEvent)
+            and event.type() == QKeyEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Delete
+        ):
+            self._delete_static()
+            return True
+        return super().eventFilter(obj, event)
+
     # ---- patterns panel ---------------------------------------------------
 
     def _build_patterns_panel(self) -> QWidget:
@@ -348,6 +375,7 @@ class _PatternRow(QFrame):
 
         del_btn = QPushButton("-")
         del_btn.setFixedWidth(28)
+        del_btn.setToolTip("删除此 pattern")
         del_btn.clicked.connect(lambda: self.removed.emit(self))
 
         lay.addWidget(QLabel("id:"))

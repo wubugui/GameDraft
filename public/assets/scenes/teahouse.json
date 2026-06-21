@@ -95,7 +95,7 @@
       "conditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s02_beishi"
+          "state": "s02b_meng"
         }
       ],
       "conditionHidesEntity": true,

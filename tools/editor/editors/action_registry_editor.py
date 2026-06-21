@@ -239,7 +239,7 @@ class ActionRegistryEditor(QWidget):
 
         splitter.addWidget(left)
         splitter.addWidget(right)
-        splitter.setSizes([700, 400])
+        splitter.setSizes([600, 380])  # 合计≈980，嵌入面板(~1050)可容；可拖动
         root.addWidget(splitter)
 
         self._model.data_changed.connect(self._mark_needs_refresh)

@@ -14,6 +14,7 @@ from ..flag_registry import ids_for_registry_pattern_source
 from ..flag_registry import normalize_registry_value_type
 from ..flag_registry import registry_value_type_for_key
 from ..editors.flag_registry_editor import FlagRegistryEditor
+from .dialog_geometry import remember_dialog_geometry
 
 
 def _flag_value_type_label(vt: str | None) -> str:
@@ -37,7 +38,8 @@ class FlagPickerDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("选择或登记 flag")
-        self.resize(1000, 720)
+        # 默认更小以适配 13"，并记忆用户拉伸后的几何（小屏可缩、大屏可放大）
+        self.resize(920, 640)
         self.setModal(True)
         self._model = model
         self._scene_id = scene_id
@@ -114,6 +116,7 @@ class FlagPickerDialog(QDialog):
         root.addWidget(bb)
 
         self._rebuild_tree()
+        remember_dialog_geometry(self, "flag_picker")
 
     def selected_key(self) -> str:
         return self._selected_key

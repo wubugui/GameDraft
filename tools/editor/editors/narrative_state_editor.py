@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover - depends on local Qt install
     _NarrativeWebView = None  # type: ignore[assignment,misc]
 
 from ..project_model import ProjectModel
+from ..shared.dialog_geometry import remember_dialog_geometry
 from .narrative_anchor_codec import transition_anchor_id
 
 
@@ -477,7 +478,7 @@ class NarrativeEditorBridge(QObject):
         dialog = QDialog(parent)
         title = (label or "Actions").strip() or "Actions"
         dialog.setWindowTitle(title)
-        dialog.resize(860, 720)
+        dialog.resize(820, 640)  # 略缩以适配 13"，并记忆几何
 
         layout = QVBoxLayout(dialog)
         editor = ActionEditor(title, dialog)
@@ -492,6 +493,7 @@ class NarrativeEditorBridge(QObject):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
+        remember_dialog_geometry(dialog, "narrative_action_editor")
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return json.dumps({"ok": False, "reason": "cancelled"}, ensure_ascii=False)

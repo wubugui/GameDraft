@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QGroupBox, QSpinBox, QMessageBox, QToolButton,
     QMenu, QSizePolicy, QFrame, QStyle, QLabel,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
@@ -55,6 +55,7 @@ class _CollapsibleSection(QWidget):
         self._toggle.setChecked(False)
         self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._toggle.setToolTip(f"展开/折叠「{title}」子区块")
         self._toggle.toggled.connect(self._on_toggled)
         lay.addWidget(self._toggle)
         self._inner = inner
@@ -221,11 +222,13 @@ class OptionWidget(QFrame):
         self._type = QComboBox()
         self._type.addItems(list(_OPTION_TYPES))
         self._type.setEditable(False)
+        self._type.setToolTip("选项类别：general 普通 / rule 需规矩 / special 特殊")
         t = data.get("type", "general")
         if t in _OPTION_TYPES:
             self._type.setCurrentText(t)
         f.addRow("type", self._type)
         self._rule = IdRefSelector(allow_empty=True, editable=True)
+        self._rule.setToolTip("选择此选项所需的规矩 id（可空）")
         self._rule.set_items(model.all_rule_ids())
         self._rule.set_current(data.get("requiredRuleId", ""))
         self._rule.setSizePolicy(
@@ -237,8 +240,11 @@ class OptionWidget(QFrame):
         f.addRow(_rl_label)
         rl_row = QHBoxLayout()
         self._rl_xiang = QCheckBox("象")
+        self._rl_xiang.setToolTip("勾选 = 须已解锁该规矩的「象」层")
         self._rl_li = QCheckBox("理")
+        self._rl_li.setToolTip("勾选 = 须已解锁该规矩的「理」层")
         self._rl_shu = QCheckBox("术")
+        self._rl_shu.setToolTip("勾选 = 须已解锁该规矩的「术」层")
         rl_raw = data.get("requiredRuleLayers") or []
         rl_set = set(rl_raw) if isinstance(rl_raw, list) else set()
         self._rl_xiang.setChecked("xiang" in rl_set)
@@ -376,10 +382,24 @@ class EncounterEditor(QWidget):
         btn_row.addWidget(btn_add)
         btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setToolTip("按 id 过滤遭遇列表（仅隐藏不匹配行，不改数据）")
+        self._search.textChanged.connect(self._on_search_changed)
+        ll.addWidget(self._search)
         self._list = QListWidget()
+        self._list.setToolTip("遭遇列表（按 Delete 删除选中项）")
         self._list.selectionModel().currentChanged.connect(
             self._on_selection_current_changed)
+        self._list.installEventFilter(self)
         ll.addWidget(self._list, stretch=1)
+        self._empty_hint = QLabel("暂无遭遇，点击「+ Encounter」新增")
+        self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setWordWrap(True)
+        self._empty_hint.setStyleSheet("color: gray;")
+        self._empty_hint.setVisible(False)
+        ll.addWidget(self._empty_hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -610,6 +630,15 @@ class EncounterEditor(QWidget):
         finally:
             self._loading_ui = False
 
+    def _on_search_changed(self, text: str) -> None:
+        q = text.strip().lower()
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    def _update_empty_hint(self) -> None:
+        self._empty_hint.setVisible(self._list.count() == 0)
+
     def _refresh(self, select_id: str | None) -> None:
         self._list.selectionModel().blockSignals(True)
         try:
@@ -632,6 +661,8 @@ class EncounterEditor(QWidget):
                 self._list.setCurrentRow(-1)
         finally:
             self._list.selectionModel().blockSignals(False)
+        self._on_search_changed(self._search.text())
+        self._update_empty_hint()
         self._load_row(row)
 
     def _rebuild_options(self, options: list[dict]) -> None:
@@ -842,6 +873,14 @@ class EncounterEditor(QWidget):
             nxt = self._model.encounters[min(idx, len(self._model.encounters) - 1)]
             next_id = str(nxt.get("id", "")).strip() or None
         self._refresh(select_id=next_id)
+
+    def eventFilter(self, obj, event):  # noqa: N802 (Qt override)
+        if obj is self._list and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                if self._current_idx >= 0:
+                    self._delete()
+                    return True
+        return super().eventFilter(obj, event)
 
     def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
         for i, enc in enumerate(self._model.encounters):

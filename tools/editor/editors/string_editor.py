@@ -27,6 +27,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 
 from ..project_model import ProjectModel
+from ..shared import confirm
 from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextTextEdit
 
@@ -68,6 +69,7 @@ class StringEditor(QWidget):
         top = QHBoxLayout()
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search keys / values...")
+        self._search.setToolTip("按键名或值文本过滤树；命中节点会自动展开")
         self._search.textChanged.connect(self._filter)
         top.addWidget(self._search)
         cat_btn = QPushButton("新分类")
@@ -78,7 +80,12 @@ class StringEditor(QWidget):
         key_btn.setToolTip("在当前选中的分类下新增一条键（默认字符串类型）")
         key_btn.clicked.connect(self._add_key_under_category)
         top.addWidget(key_btn)
+        del_btn = QPushButton("删除")
+        del_btn.setToolTip("删除当前选中的分类或键（Delete 键 / 右键菜单亦可）")
+        del_btn.clicked.connect(self._delete_selected_node)
+        top.addWidget(del_btn)
         apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("把整棵字符串树提交回模型（校验通过后写入）")
         apply_btn.clicked.connect(self._apply)
         top.addWidget(apply_btn)
         lay.addLayout(top)
@@ -91,6 +98,9 @@ class StringEditor(QWidget):
         self._tree.setAlternatingRowColors(True)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.currentItemChanged.connect(self._on_tree_selection)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_tree_menu)
+        self._tree.installEventFilter(self)
         split.addWidget(self._tree)
 
         detail = QWidget()
@@ -344,6 +354,56 @@ class StringEditor(QWidget):
         self._tree.setCurrentItem(leaf)
         self._tree.scrollToItem(leaf)
         self._filter(self._search.text().lower())
+
+    def _delete_selected_node(self) -> None:
+        it = self._tree.currentItem()
+        if it is None:
+            QMessageBox.information(self, "删除", "请先在树中选中要删除的分类或键。")
+            return
+        kind = self._node_kind(it)
+        key = it.text(0).strip() or "?"
+        if kind == "group" and it.childCount() > 0:
+            what = f"分类「{key}」及其下 {it.childCount()} 条键"
+        elif kind == "group":
+            what = f"空分类「{key}」"
+        else:
+            what = f"键「{key}」"
+        if not confirm.confirm_delete(self, what):
+            return
+        parent = it.parent()
+        if parent is None:
+            self._tree.takeTopLevelItem(self._tree.indexOfTopLevelItem(it))
+        else:
+            parent.removeChild(it)
+        # 树是 strings 的真源，删除后 _is_dirty 比较即可检测；mark_dirty 让 Save All 立即感知。
+        self._model.mark_dirty("strings")
+
+    def _show_tree_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QMenu
+        it = self._tree.itemAt(pos)
+        if it is not None:
+            self._tree.setCurrentItem(it)
+        menu = QMenu(self._tree)
+        cur = self._tree.currentItem()
+        if cur is not None and self._node_kind(cur) == "group":
+            menu.addAction("在此分类下新增键", self._add_key_under_category)
+        menu.addAction("新增顶层分类", self._add_top_level_category)
+        if cur is not None:
+            menu.addSeparator()
+            menu.addAction("删除此节点", self._delete_selected_node)
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        from PySide6.QtGui import QKeyEvent
+        if (
+            obj is self._tree
+            and isinstance(event, QKeyEvent)
+            and event.type() == QKeyEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+        ):
+            self._delete_selected_node()
+            return True
+        return super().eventFilter(obj, event)
 
     def _refresh(self) -> None:
         self._syncing = True

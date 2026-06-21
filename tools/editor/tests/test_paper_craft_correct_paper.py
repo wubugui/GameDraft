@@ -61,6 +61,24 @@ class PaperCraftCorrectPaperTests(unittest.TestCase):
             editor._write_order()
             self.assertEqual(editor._order["correctPaper"], "red")
 
+    def test_tint_editable_and_feedback_format_preserved(self) -> None:
+        # H2: tint 可编辑; H1: 反馈字段可编辑且只在用户改动该字段时写回(格式保真)。
+        with TemporaryDirectory() as td:
+            editor, _ = self._editor(Path(td) / "p")
+            editor._order = {
+                "id": "o", "title": "t", "paperOptions": [{"id": "white", "label": "白", "tint": "#f3ead7"}],
+                "onSuccessActions": [{"type": "playSfx", "id": "a"}],  # 故意非规范(无 params)
+            }
+            editor._refresh_order_fields()
+            editor.paper_combo.setCurrentIndex(editor.paper_combo.count() - 1)
+            editor._select_paper()
+            self.assertEqual(editor.paper_tint.hex(), "#f3ead7", "tint 应载入取色器")
+            # 仅改标题: onSuccessActions 不得被规范化改写
+            editor.order_title.setText("改了标题")
+            editor._write_order()
+            self.assertEqual(editor._order["onSuccessActions"], [{"type": "playSfx", "id": "a"}],
+                             "未触动反馈字段时,动作数组格式必须原样保留")
+
 
 if __name__ == "__main__":
     unittest.main()

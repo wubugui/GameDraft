@@ -58,6 +58,7 @@ class _OneRow(QWidget):
         self._id_edit = QLineEdit(short_id)
         self._id_edit.setPlaceholderText("如：码头告示")
         self._id_edit.setMinimumWidth(110)
+        self._id_edit.setToolTip("动作 image 参数引用的短 id，需全表唯一")
         lay.addWidget(self._id_edit)
         lay.addWidget(QLabel("图片"), alignment=Qt.AlignmentFlag.AlignRight)
         self._path_row = CutsceneImagePathRow(
@@ -69,6 +70,7 @@ class _OneRow(QWidget):
         lay.addWidget(self._path_row, stretch=1)
         self._del = QPushButton("删除")
         self._del.setFixedWidth(56)
+        self._del.setToolTip("删除此条短 id 映射")
         lay.addWidget(self._del)
         self._delete_handler: Callable[[], None] | None = None
         self._del.clicked.connect(self._on_delete_clicked)
@@ -109,6 +111,19 @@ class OverlayImagesEditor(QWidget):
         self._status.setWordWrap(True)
         root.addWidget(self._status)
 
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setToolTip("按短 id 过滤下方行（仅隐藏不匹配的行，不改动数据）")
+        self._search.textChanged.connect(self._apply_filter)
+        root.addWidget(self._search)
+
+        self._empty_hint = QLabel("暂无条目，点击「添加一行」新增「短 id → 图片路径」映射。")
+        self._empty_hint.setStyleSheet("color:#888;")
+        self._empty_hint.setWordWrap(True)
+        self._empty_hint.setVisible(False)
+        root.addWidget(self._empty_hint)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         self._rows_host = QWidget()
@@ -119,9 +134,10 @@ class OverlayImagesEditor(QWidget):
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("添加一行")
+        add_btn.setToolTip("新增一条空白的「短 id → 图片路径」映射")
         add_btn.clicked.connect(self._add_empty_row)
-        apply_btn = QPushButton("Apply（写入内存并标脏）")
-        apply_btn.setToolTip("写入 ProjectModel.overlay_images；保存工程时写入 overlay_images.json")
+        apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("写入内存并标脏：写入 ProjectModel.overlay_images；保存工程时写入 overlay_images.json")
         apply_btn.clicked.connect(self._apply)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(apply_btn)
@@ -143,11 +159,29 @@ class OverlayImagesEditor(QWidget):
         ov = getattr(self._model, "overlay_images", None) or {}
         if not isinstance(ov, dict):
             ov = {}
-        # 稳定顺序：按 id 排序
-        for k in sorted(ov.keys(), key=lambda x: str(x)):
+        # 保留模型(=磁盘文件)的既有键序，避免「打开即重排」改动导出 JSON 的键顺序。
+        for k in ov.keys():
             v = ov.get(k)
             self._append_row(str(k), str(v) if v is not None else "")
         self._check_duplicate_hint()
+        self._apply_filter()
+        self._update_empty_hint()
+
+    def _update_empty_hint(self) -> None:
+        """无任何行时显示引导提示，否则隐藏。"""
+        if hasattr(self, "_empty_hint"):
+            self._empty_hint.setVisible(not self._row_widgets)
+
+    def _apply_filter(self) -> None:
+        """按短 id 文本过滤：仅 setHidden，不改动任何数据。"""
+        if not hasattr(self, "_search"):
+            return
+        q = self._search.text().strip().lower()
+        for w in self._row_widgets:
+            if not q:
+                w.setHidden(False)
+            else:
+                w.setHidden(q not in (w.id_text() or "").lower())
 
     def _append_row(self, short_id: str, path: str) -> None:
         row = _OneRow(self._model, short_id, path)
@@ -157,6 +191,7 @@ class OverlayImagesEditor(QWidget):
         idx = len(self._row_widgets) - 1
         row.set_delete_handler(lambda _checked=False, i=idx: self._remove_row_at(i))
         row._id_edit.textChanged.connect(self._check_duplicate_hint)
+        row._id_edit.textChanged.connect(self._apply_filter)
 
     def _remove_row_at(self, index: int) -> None:
         if index < 0 or index >= len(self._row_widgets):
@@ -169,10 +204,14 @@ class OverlayImagesEditor(QWidget):
         for i, rw in enumerate(self._row_widgets):
             rw.set_delete_handler(lambda _c=False, ii=i: self._remove_row_at(ii))
         self._check_duplicate_hint()
+        self._apply_filter()
+        self._update_empty_hint()
 
     def _add_empty_row(self) -> None:
         self._append_row("", "")
         self._check_duplicate_hint()
+        self._apply_filter()
+        self._update_empty_hint()
 
     def _collect_rows(self) -> list[tuple[str, str]]:
         return [(w.id_text(), w.path_text()) for w in self._row_widgets]

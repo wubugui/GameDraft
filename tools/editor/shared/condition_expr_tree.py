@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
+from .id_ref_selector import IdRefSelector
 from .rich_text_field import RichTextLineEdit
 from .form_layout import compact_form
 
@@ -247,9 +248,11 @@ class ConditionExprNodeEditor(QWidget):
         elif kind == "quest":
             qw = QWidget()
             qf = compact_form(QFormLayout(qw))
-            self._q_id = QLineEdit()
-            self._q_id.setPlaceholderText("quest id")
-            self._q_id.textChanged.connect(lambda: self.changed.emit())
+            self._q_id = IdRefSelector(allow_empty=True, editable=False, click_opens_popup=True)
+            _qm = self._model()
+            if _qm is not None and hasattr(_qm, "all_quest_ids"):
+                self._q_id.set_items(list(_qm.all_quest_ids()))
+            self._q_id.value_changed.connect(lambda *_: self.changed.emit())
             self._q_st = QComboBox()
             for qs in _QUEST_STATUSES:
                 self._q_st.addItem(qs, qs)
@@ -540,7 +543,18 @@ class ConditionExprNodeEditor(QWidget):
                 self._sync_flag_value_widgets_visibility()
                 self._flag_val_reg.set_value(v)
         elif k == "quest" and self._q_id and self._q_st:
-            self._q_id.setText(str(data.get("quest", "")))
+            _qid = str(data.get("quest", ""))
+            _qm = self._model()
+            _items = (
+                list(_qm.all_quest_ids())
+                if (_qm is not None and hasattr(_qm, "all_quest_ids"))
+                else []
+            )
+            _ids = [i[0] if isinstance(i, (list, tuple)) else i for i in _items]
+            if _qid and _qid not in _ids:
+                _items.append((_qid, _qid))  # 保留指向已删/未知任务的既有值,不静默丢失
+            self._q_id.set_items(_items)
+            self._q_id.set_current(_qid)
             qs = str(data.get("questStatus", data.get("status", "Completed")))
             iqs = self._q_st.findData(qs)
             if iqs < 0:
@@ -642,7 +656,7 @@ class ConditionExprNodeEditor(QWidget):
                     result["value"] = float(v)
             return result
         if k == "quest" and self._q_id and self._q_st:
-            qid = self._q_id.text().strip()
+            qid = self._q_id.current_id().strip()
             if not qid:
                 return {}
             qs = self._q_st.currentData()

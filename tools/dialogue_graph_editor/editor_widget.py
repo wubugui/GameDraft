@@ -308,15 +308,18 @@ class DialogueGraphEditorWidget(QWidget):
         hb.addWidget(self._btn_dup)
         nv.addLayout(hb)
 
-        flow_hint = QLabel(
+        _flow_hint_detail = (
             "流程图（OdenGraphQt）：输出端口拖线到目标节点的「in」· 滚轮缩放 · 中键/右键平移 · "
             "F 适应整图 · A /「自动布局」按图 entry 做 BFS 分层（避开已有分组框占位）· "
             "空白处右键可「新建分组框」；节点中心在框内即归入该组 · "
             "布局写入 resources/editor_projects/editor_data/dialogue_flow_layout.json · "
             "依赖由 ./dev.sh install-deps 安装"
         )
+        flow_hint = QLabel("流程图：端口拖线连节点 · 滚轮缩放 · 中键平移 · F 适应 · A 自动布局（详见悬停提示）")
         flow_hint.setWordWrap(True)
         flow_hint.setStyleSheet("color: #888; font-size: 11px;")
+        flow_hint.setToolTip(_flow_hint_detail)
+        self._flow_view.setToolTip(_flow_hint_detail)
         flow_top = QWidget()
         ft_l = QVBoxLayout(flow_top)
         ft_l.setContentsMargins(0, 0, 0, 0)

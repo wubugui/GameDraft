@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QGraphicsScene
 from PySide6.QtCore import Signal
 
 from .quest_graph_items import QuestGroupItem, QuestNodeItem, QuestEdgeItem
+from .quest_graph_layout_store import QuestGraphLayoutStore
 
 _QUEST_STATUS_RE = re.compile(r"^quest_(.+)_status$")
 
@@ -72,17 +73,51 @@ class QuestGraphScene(QGraphicsScene):
     edge_selected = Signal(str, str)
     nothing_selected = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, layout_store: QuestGraphLayoutStore | None = None):
         super().__init__(parent)
         self._node_items: dict[str, QuestGroupItem | QuestNodeItem] = {}
         self._edge_items: list[QuestEdgeItem] = []
         self._current_mode: str = "top"
+        # 编辑器侧档：节点手动坐标持久化（绝不写游戏数据）。缺省给一个无工程的空 store。
+        self._layout_store: QuestGraphLayoutStore = (
+            layout_store if layout_store is not None else QuestGraphLayoutStore(None)
+        )
+        # 当前视图的「分组前缀」，群视图为分组 id，顶层为 ""。
+        self._scope_group: str = ""
+
+    def set_layout_store(self, store: QuestGraphLayoutStore) -> None:
+        self._layout_store = store
+
+    # ---- 侧档键命名 -------------------------------------------------------
+    @staticmethod
+    def _top_key(node_id: str) -> str:
+        return f"top::{node_id}"
+
+    def _group_key(self, node_id: str) -> str:
+        return f"grp::{self._scope_group}::{node_id}"
+
+    def _attach_layout(self, item, key: str) -> None:
+        """给节点装上侧档键 + 拖拽结束回调，并用已保存坐标覆盖自动布局。"""
+        item.layout_key = key
+        item.on_moved = self._on_node_moved
+        saved = self._layout_store.get(key)
+        if saved is not None:
+            item.setPos(saved[0], saved[1])
+
+    def _on_node_moved(self, key: str, x: float, y: float) -> None:
+        valid = {
+            getattr(it, "layout_key", None)
+            for it in self._node_items.values()
+        }
+        valid.discard(None)
+        self._layout_store.set(key, x, y, valid_keys=valid)
 
     def populate_top_level(self, groups: list[dict], quests: list[dict]) -> None:
         self.clear()
         self._node_items.clear()
         self._edge_items.clear()
         self._current_mode = "top"
+        self._scope_group = ""
 
         group_quest_count: dict[str, int] = defaultdict(int)
         for q in quests:
@@ -121,6 +156,7 @@ class QuestGraphScene(QGraphicsScene):
                 count += group_quest_count.get(cg["id"], 0)
             x, y = positions.get(gid, (0, 0))
             item = QuestGroupItem(g, count, x, y)
+            self._attach_layout(item, self._top_key(gid))
             self._node_items[gid] = item
             self.addItem(item)
 
@@ -154,6 +190,7 @@ class QuestGraphScene(QGraphicsScene):
         self._node_items.clear()
         self._edge_items.clear()
         self._current_mode = "group"
+        self._scope_group = group_id
 
         group_quests = [q for q in quests if q.get("group") == group_id]
         child_groups = [g for g in groups if g.get("parentGroup") == group_id]
@@ -180,6 +217,7 @@ class QuestGraphScene(QGraphicsScene):
             qid = q["id"]
             x, y = positions.get(qid, (0, 0))
             item = QuestNodeItem(q, x, y)
+            self._attach_layout(item, self._group_key(qid))
             self._node_items[qid] = item
             self.addItem(item)
 
@@ -194,6 +232,7 @@ class QuestGraphScene(QGraphicsScene):
             count = sum(1 for qq in quests if qq.get("group") == cgid)
             cx, cy = cg_positions.get(cgid, (0, 0))
             item = QuestGroupItem(cg, count, max_x + cx, cy)
+            self._attach_layout(item, self._group_key(cgid))
             self._node_items[cgid] = item
             self.addItem(item)
 

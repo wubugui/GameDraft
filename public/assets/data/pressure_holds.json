@@ -2,7 +2,7 @@
   {
     "id": "carry_bride_corpse",
     "prompt": "按住——过肩、搭手，把她架起来",
-    "fillSeconds": 2.6,
+    "fillSeconds": 3.2,
     "decayPerSecond": 0.9,
     "holdSfx": "sfx_hold_pressure_loop",
     "barColor": "#6e1f1f",
@@ -34,6 +34,37 @@
             }
           }
         ]
+      }
+    ]
+  },
+  {
+    "id": "carry_ordinary_corpse",
+    "prompt": "按住——过肩、搭手，扛起来",
+    "fillSeconds": 1.4,
+    "decayPerSecond": 0.4,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#4a4438",
+    "onComplete": [
+      {
+        "type": "giveCurrency",
+        "params": {
+          "amount": 5
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身往肩上一沉，稳稳的。凉是凉的，沉是沉的，该是什么样就什么样。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "得，五文到手。下一个。"
+            }
+          ]
+        }
       }
     ]
   },

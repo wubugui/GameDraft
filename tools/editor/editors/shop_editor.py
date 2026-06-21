@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ..project_model import ProjectModel
+from ..shared import confirm
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.form_layout import compact_form
@@ -30,9 +31,21 @@ class ShopEditor(QWidget):
         btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._delete)
         btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setToolTip("按 id / 名称过滤商店列表（仅隐藏不匹配行，不改数据）")
+        self._search.textChanged.connect(self._on_search_changed)
+        ll.addWidget(self._search)
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_select)
         ll.addWidget(self._list)
+        self._empty_hint = QLabel("暂无商店，点击「+ Shop」新增")
+        self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setWordWrap(True)
+        self._empty_hint.setStyleSheet("color: gray;")
+        self._empty_hint.setVisible(False)
+        ll.addWidget(self._empty_hint)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -51,7 +64,7 @@ class ShopEditor(QWidget):
         rl.addWidget(self._table)
         item_btns = QHBoxLayout()
         add_item = QPushButton("+ Item"); add_item.clicked.connect(self._add_item)
-        del_item = QPushButton("- Item"); del_item.clicked.connect(self._del_item)
+        del_item = QPushButton("− Item"); del_item.clicked.connect(self._del_item)
         move_up = QPushButton("Move Up"); move_up.clicked.connect(self._move_up)
         move_down = QPushButton("Move Down"); move_down.clicked.connect(self._move_down)
         item_btns.addWidget(add_item); item_btns.addWidget(del_item)
@@ -73,10 +86,31 @@ class ShopEditor(QWidget):
         w.set_current(item_id or "")
         return w
 
+    def _make_price_spin(self, value: int) -> QSpinBox:
+        sp = QSpinBox()
+        sp.setRange(0, 999999)
+        sp.setValue(int(value or 0))
+        return sp
+
+    def _price_at(self, row: int) -> int:
+        w = self._table.cellWidget(row, 1)
+        return int(w.value()) if isinstance(w, QSpinBox) else 0
+
+    def _on_search_changed(self, text: str) -> None:
+        q = text.strip().lower()
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    def _update_empty_hint(self) -> None:
+        self._empty_hint.setVisible(self._list.count() == 0)
+
     def _refresh(self) -> None:
         self._list.clear()
         for s in self._model.shops:
             self._list.addItem(f"{s.get('id', '?')}  [{s.get('name', '')}]")
+        self._on_search_changed(self._search.text())
+        self._update_empty_hint()
 
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.shops):
@@ -93,13 +127,13 @@ class ShopEditor(QWidget):
         self._table.setRowCount(len(items))
         for i, si in enumerate(items):
             self._table.setCellWidget(i, 0, self._make_item_pick(si.get("itemId", "")))
-            self._table.setItem(i, 1, QTableWidgetItem(str(si.get("price", 0))))
+            self._table.setCellWidget(i, 1, self._make_price_spin(int(si.get("price", 0) or 0)))
 
     def _add_item(self) -> None:
         r = self._table.rowCount()
         self._table.insertRow(r)
         self._table.setCellWidget(r, 0, self._make_item_pick(""))
-        self._table.setItem(r, 1, QTableWidgetItem("0"))
+        self._table.setCellWidget(r, 1, self._make_price_spin(0))
 
     def _del_item(self) -> None:
         r = self._table.currentRow()
@@ -116,9 +150,8 @@ class ShopEditor(QWidget):
         rows: list[tuple[str, str]] = []
         for i in range(self._table.rowCount()):
             iid_w = self._table.cellWidget(i, 0)
-            price = self._table.item(i, 1)
             iid = iid_w.current_id() if isinstance(iid_w, IdRefSelector) else ""
-            rows.append((iid, price.text() if price else "0"))
+            rows.append((iid, str(self._price_at(i))))
         return rows
 
     def _repopulate(self, rows: list[tuple[str, str]]) -> None:
@@ -126,7 +159,11 @@ class ShopEditor(QWidget):
         self._table.setRowCount(len(rows))
         for i, (iid, price_text) in enumerate(rows):
             self._table.setCellWidget(i, 0, self._make_item_pick(iid))
-            self._table.setItem(i, 1, QTableWidgetItem(price_text))
+            try:
+                _pv = int(price_text)
+            except (TypeError, ValueError):
+                _pv = 0
+            self._table.setCellWidget(i, 1, self._make_price_spin(_pv))
 
     def _move_row(self, delta: int) -> None:
         r = self._table.currentRow()
@@ -149,17 +186,11 @@ class ShopEditor(QWidget):
         items: list[dict] = []
         for i in range(self._table.rowCount()):
             iid_w = self._table.cellWidget(i, 0)
-            price = self._table.item(i, 1)
             if isinstance(iid_w, IdRefSelector):
                 raw_id = iid_w.current_id().strip()
                 if not raw_id:
                     continue
-                si: dict = {"itemId": raw_id}
-                try:
-                    si["price"] = int(price.text()) if price else 0
-                except ValueError:
-                    si["price"] = 0
-                items.append(si)
+                items.append({"itemId": raw_id, "price": self._price_at(i)})
         return items
 
     def _is_dirty(self) -> bool:
@@ -215,6 +246,9 @@ class ShopEditor(QWidget):
 
     def _delete(self) -> None:
         if self._current_idx >= 0:
+            s = self._model.shops[self._current_idx]
+            if not confirm.confirm_delete(self, f"商店「{s.get('id', '')}」及其整张商品表"):
+                return
             self._model.shops.pop(self._current_idx)
             self._current_idx = -1
             self._model.mark_dirty("shop")
