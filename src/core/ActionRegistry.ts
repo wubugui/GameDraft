@@ -33,6 +33,7 @@ import type { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheel
 import type { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
 import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import type { SignalCueManager } from '../systems/SignalCueManager';
+import type { HealthSystem } from '../systems/HealthSystem';
 import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
@@ -201,6 +202,7 @@ export interface ActionRegistryDeps {
   paperCraftMinigameManager: PaperCraftMinigameManager;
   pressureHoldManager: PressureHoldManager;
   signalCueManager: SignalCueManager;
+  healthSystem: HealthSystem;
 }
 
 function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
@@ -483,6 +485,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     await d.signalCueManager.play(id);
   }, ['id']);
+
+  // 死亡系绳 / 系统级血量（HealthSystem）：扣血到濒死会被系绳拦截、玩家不真死
+  executor.register('damagePlayer', async (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    await d.healthSystem.damage(amount);
+  }, ['amount']);
+  executor.register('healPlayer', (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    d.healthSystem.heal(amount);
+  }, ['amount']);
 
   executor.register('startSugarWheelMinigame', async (p) => {
     const id = String(p.id ?? '').trim();

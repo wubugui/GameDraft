@@ -80,5 +80,24 @@
       { "type": "waitMs", "params": { "durationMs": 2200 } },
       { "type": "hideOverlayImage", "params": { "id": "axiu_lamp_cue" } }
     ]
+  },
+  {
+    "id": "signal_death_tether",
+    "description": "死亡系绳·濒死拽回：血将归零那一刻，香粉味陡然满屏浓起＋半句跑调小调，那股冷东西盲目把他从死里拽住（来自他兜里那个旧帕子包/空香粉盒）。冷·无倾向·非守护——只是不让揣着帕子包的人撒手。⚠️ overlay 暖调待美术重定为冷/中性调。",
+    "actions": [
+      {
+        "type": "showOverlayImage",
+        "params": {
+          "id": "axiu_cue",
+          "image": "axiu_cue",
+          "xPercent": 50,
+          "yPercent": 50,
+          "widthPercent": 100
+        }
+      },
+      { "type": "playSfx", "params": { "id": "sfx_axiu_faint_hum" } },
+      { "type": "waitMs", "params": { "durationMs": 2600 } },
+      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+    ]
   }
 ]

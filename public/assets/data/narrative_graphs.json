@@ -560,17 +560,6 @@
               }
             }
           },
-          "s07_kujing": {
-            "id": "s07_kujing",
-            "label": "枯井狗脸完成",
-            "broadcastOnEnter": true,
-            "meta": {
-              "editor": {
-                "x": 1844,
-                "y": 24
-              }
-            }
-          },
           "s08_xiangdao": {
             "id": "s08_xiangdao",
             "label": "决定装道士",
@@ -589,17 +578,6 @@
             "meta": {
               "editor": {
                 "x": 2364,
-                "y": 24
-              }
-            }
-          },
-          "s10_yizhuang": {
-            "id": "s10_yizhuang",
-            "label": "义庄镇尸完成",
-            "broadcastOnEnter": true,
-            "meta": {
-              "editor": {
-                "x": 2624,
                 "y": 24
               }
             }
@@ -671,14 +649,8 @@
             "signal": "state:scenario_码头:resolved"
           },
           {
-            "id": "t_s07_kujing",
-            "from": "s06_laoxiang",
-            "to": "s07_kujing",
-            "signal": "state:scenario_枯井:fled"
-          },
-          {
             "id": "t_s08_xiangdao",
-            "from": "s07_kujing",
+            "from": "s06_laoxiang",
             "to": "s08_xiangdao",
             "signal": "state:scenario_向导:outfitted"
           },
@@ -689,14 +661,8 @@
             "signal": "state:scenario_送货:returned"
           },
           {
-            "id": "t_s10_yizhuang",
-            "from": "s09_songhuo",
-            "to": "s10_yizhuang",
-            "signal": "state:scenario_义庄镇尸:all_done"
-          },
-          {
             "id": "t_s11_zhaomu",
-            "from": "s10_yizhuang",
+            "from": "s09_songhuo",
             "to": "s11_zhaomu",
             "signal": "state:scenario_招募:recruited"
           },
@@ -1902,6 +1868,12 @@
                           "text": "（手别抖。手别抖！！）"
                         }
                       ]
+                    }
+                  },
+                  {
+                    "type": "damagePlayer",
+                    "params": {
+                      "amount": 9999
                     }
                   },
                   {

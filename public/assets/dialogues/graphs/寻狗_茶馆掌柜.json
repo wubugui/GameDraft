@@ -13,7 +13,7 @@
           "conditions": [
             {
               "narrative": "flow_xungou_main",
-              "state": "s07_kujing"
+              "state": "s06_laoxiang"
             }
           ],
           "next": "xd_1"

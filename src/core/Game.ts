@@ -31,6 +31,7 @@ import { ActionChoiceUI } from '../ui/ActionChoiceUI';
 import { PressureHoldUI } from '../ui/PressureHoldUI';
 import { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import { SignalCueManager } from '../systems/SignalCueManager';
+import { HealthSystem } from '../systems/HealthSystem';
 import { HUD } from '../ui/HUD';
 import { NotificationUI } from '../ui/NotificationUI';
 import { QuestPanelUI } from '../ui/QuestPanelUI';
@@ -86,6 +87,13 @@ import { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinig
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { IEntityShadingFilter } from '../rendering/EntityLightingFilter';
 import { resolveLightEnv, type ResolvedLightEnv } from '../rendering/lightEnv';
+import {
+  prepareLightCurve,
+  projectToCurveT,
+  interpolateLightEnv,
+  copyResolvedInto,
+  type PreparedLightCurve,
+} from '../rendering/lightEnvCurve';
 import { buildIrradianceProbe } from '../rendering/irradianceProbe';
 import { PlanarEntityShadow } from '../rendering/EntityShadow';
 import { DeferredEntityShadow } from '../rendering/DeferredEntityShadow';
@@ -232,6 +240,7 @@ export class Game {
   private paperCraftMinigameManager: PaperCraftMinigameManager;
   private pressureHoldManager: PressureHoldManager;
   private signalCueManager: SignalCueManager;
+  private healthSystem: HealthSystem;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: IEntityShadingFilter | null = null;
@@ -240,6 +249,8 @@ export class Game {
   private currentProbe: RenderTexture | null = null;
   /** 当前场景解析后的光照环境（驱动阴影） */
   private currentLightEnv: ResolvedLightEnv | null = null;
+  /** 当前场景的光照环境曲线（预处理累计弧长）；null=无曲线，按静态 lightEnv 走（零影响） */
+  private currentLightCurve: PreparedLightCurve | null = null;
   /** 阴影方向/长度来源（今天=全局 LightEnv 均匀场；将来可换成场景灯光方向场） */
   private currentShadowField: ShadowProjectionField | null = null;
   /** 玩家/各 NPC 的投影阴影（key: 'player' / npc.id） */
@@ -344,6 +355,7 @@ export class Game {
     this.paperCraftMinigameManager = new PaperCraftMinigameManager();
     this.pressureHoldManager = new PressureHoldManager(this.actionExecutor);
     this.signalCueManager = new SignalCueManager(this.actionExecutor);
+    this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
@@ -369,6 +381,7 @@ export class Game {
       { name: 'paperCraftMinigameManager', system: this.paperCraftMinigameManager },
       { name: 'pressureHoldManager', system: this.pressureHoldManager },
       { name: 'signalCueManager', system: this.signalCueManager },
+      { name: 'healthSystem', system: this.healthSystem },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'zoneSystem', system: this.zoneSystem },
@@ -857,6 +870,7 @@ export class Game {
       paperCraftMinigameManager: this.paperCraftMinigameManager,
       pressureHoldManager: this.pressureHoldManager,
       signalCueManager: this.signalCueManager,
+      healthSystem: this.healthSystem,
     });
 
     this.pressureHoldManager.bindRuntime({
@@ -1590,6 +1604,7 @@ export class Game {
         this.currentProbe = null;
       }
       this.currentLightEnv = null;
+      this.currentLightCurve = null;
       this.currentShadowField = null;
     });
 
@@ -1628,6 +1643,7 @@ export class Game {
       this.currentProbe = null;
     }
     this.currentLightEnv = null;
+    this.currentLightCurve = null;
     this.currentShadowField = null;
 
     const cfg = this.gameConfig.entityLighting;
@@ -1638,6 +1654,9 @@ export class Game {
 
     const env = resolveLightEnv(sceneData.lightEnv, cfg);
     this.currentLightEnv = env;
+    // 光照环境曲线：有(≥2点)则预处理累计弧长,并用 spawn 处投影值初始化 env(首帧滤镜烘焙正确;逐帧再覆盖)
+    this.currentLightCurve = prepareLightCurve(sceneData.lightEnvCurve);
+    if (this.currentLightCurve) this.resolveLightCurveInto(this.player.x, this.player.y, env);
     this.currentShadowField = new UniformShadowField(env);
 
     let probeSource = null;
@@ -1696,6 +1715,36 @@ export class Game {
   private applyShadowModeChange(): void {
     this.rebuildEntityShadows();
     this.applyShadowAndAO();
+  }
+
+  /** 把光照环境曲线在世界点 (px,py) 处的插值结果原地写入 env（保持对象身份，供持引用者逐帧读取）。 */
+  private resolveLightCurveInto(px: number, py: number, env: ResolvedLightEnv): void {
+    const curve = this.currentLightCurve;
+    if (!curve) return;
+    const t = projectToCurveT(curve, px, py);
+    const partial = interpolateLightEnv(curve, t);
+    const resolved = resolveLightEnv(partial, this.gameConfig.entityLighting);
+    copyResolvedInto(env, resolved);
+  }
+
+  /**
+   * 每帧：若有光照环境曲线，按玩家投影位置插值并把新环境推给阴影/滤镜。
+   * 无曲线时单次 null 检查即返回 —— 对现有场景零影响。
+   */
+  private updateLightEnvFromCurve(): void {
+    const env = this.currentLightEnv;
+    if (!this.currentLightCurve || !env) return;          // 无曲线/无环境=零影响
+    if (this.debugPanelUI?.isOpen) return;                // F2 光照调试期间让出控制权（避免被逐帧覆盖）
+    const prevMode = env.shadow.mode;
+    this.resolveLightCurveInto(this.player.x, this.player.y, env);
+    // key/ambient 颜色强度、tone/AO 走滤镜 setter 广播（覆盖构造时烘焙值）；
+    // 阴影方向/长度/暗度等由 updateEntityShadows 逐帧从 env 读取，无需额外推送。
+    this.sceneDepthSystem.applyKeyAmbient(
+      env.key.color, env.key.intensity, env.ambient.color, env.ambient.intensity,
+    );
+    this.applyShadowAndAO();
+    // 仅当 shadow.mode 真正变化（跨关键帧切 real/planar/off）才重建阴影实例（罕见）
+    if (env.shadow.mode !== prevMode) this.rebuildEntityShadows();
   }
 
   /** 每帧更新投影阴影（位置/剪影/朝向跟随实体）。 */
@@ -3333,6 +3382,7 @@ export class Game {
       }
     }
 
+    this.updateLightEnvFromCurve();
     this.updateEntityShadows();
 
     this.renderer.sortEntityLayer(this.player.x, this.player.y);

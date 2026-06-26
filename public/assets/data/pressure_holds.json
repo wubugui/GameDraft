@@ -139,6 +139,12 @@
     ],
     "onAborted": [
       {
+        "type": "damagePlayer",
+        "params": {
+          "amount": 9999
+        }
+      },
+      {
         "type": "emitNarrativeSignal",
         "params": {
           "sourceType": "minigame",

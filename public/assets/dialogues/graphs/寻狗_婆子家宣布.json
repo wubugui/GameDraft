@@ -21,7 +21,7 @@
         "kind": "player"
       },
       "text": "（板着脸，声音压得又沉又慢）「行了。——压住了。」",
-      "next": "n_cue"
+      "next": "n3"
     },
     "n3": {
       "type": "line",

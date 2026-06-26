@@ -298,7 +298,7 @@
     "rewards": [],
     "nextQuests": [
       {
-        "questId": "xg07_kujing",
+        "questId": "xg08_xiangdao",
         "conditions": []
       }
     ]
@@ -306,24 +306,26 @@
   {
     "id": "xg07_kujing",
     "group": "xungou",
-    "type": "main",
+    "type": "side",
+    "sideType": "commission",
     "title": "枯井里的「狗」",
     "description": "土地庙后枯井掉了条狗，叫了两天两夜，夜里像小孩哭。给几个钱，问谁能捞上来。",
-    "preconditions": [],
+    "preconditions": [
+      {
+        "narrative": "scenario_枯井",
+        "state": "hired",
+        "reached": true
+      }
+    ],
     "completionConditions": [
       {
-        "narrative": "flow_xungou_main",
-        "state": "s07_kujing",
+        "narrative": "scenario_枯井",
+        "state": "fled",
         "reached": true
       }
     ],
     "rewards": [],
-    "nextQuests": [
-      {
-        "questId": "xg08_xiangdao",
-        "conditions": []
-      }
-    ]
+    "nextQuests": []
   },
   {
     "id": "xg08_xiangdao",
@@ -364,17 +366,17 @@
     "rewards": [],
     "nextQuests": [
       {
-        "questId": "xg10_yizhuang",
+        "questId": "xg10_zhaomu",
         "conditions": []
       }
     ]
   },
   {
-    "id": "xg10_yizhuang",
+    "id": "xg10_zhaomu",
     "group": "xungou",
     "type": "main",
-    "title": "义庄的两具尸",
-    "description": "义庄管事脸色发白来寻你：两具尸在地上扭着、揪着、互相压。守夜的吓跑了，正经先生请不起。",
+    "title": "克拉拉的定钱",
+    "description": "从阎王岭回到城里，街角灯下那洋女人克拉拉候着你。她要进神仙顶，开价三十块大洋、先付十块定钱，要你做向导。",
     "preconditions": [],
     "completionConditions": [
       {
@@ -394,6 +396,30 @@
         "conditions": []
       }
     ]
+  },
+  {
+    "id": "xg10_yizhuang",
+    "group": "xungou",
+    "type": "side",
+    "sideType": "commission",
+    "title": "义庄的两具尸",
+    "description": "义庄管事脸色发白来寻你：两具尸在地上扭着、揪着、互相压。守夜的吓跑了，正经先生请不起。",
+    "preconditions": [
+      {
+        "narrative": "scenario_义庄镇尸",
+        "state": "entered",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "scenario_义庄镇尸",
+        "state": "all_done",
+        "reached": true
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
   },
   {
     "id": "xg11_shouye",

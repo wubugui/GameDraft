@@ -15,6 +15,10 @@ export class HUD {
   private questText: Text;
   private questBg: Graphics;
 
+  private healthTrack: Graphics;
+  private healthFill: Graphics;
+  private healthText: Text;
+
   private ruleHintBg: Graphics;
   private ruleHintText: Text;
   private hasRuleSlots: boolean = false;
@@ -27,6 +31,9 @@ export class HUD {
   private currencyCb: (p: { newTotal: number }) => void;
   private questAcceptedCb: (p: { title: string }) => void;
   private questCompletedCb: (p: { title: string }) => void;
+  private healthCb: (p: { current: number; max: number }) => void;
+  private healthCurrent: number = 100;
+  private healthMax: number = 100;
   private zoneEnterCb: () => void;
   private zoneExitCb: () => void;
 
@@ -51,6 +58,28 @@ export class HUD {
     this.coinText.x = 20;
     this.coinText.y = 15;
     this.container.addChild(this.coinText);
+
+    // 血条（死亡系绳：濒死被信号拽回、永不真死）——铜钱下方常驻
+    this.healthTrack = new Graphics();
+    this.healthTrack.roundRect(0, 0, 120, 12, 3);
+    this.healthTrack.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
+    this.healthTrack.x = 10;
+    this.healthTrack.y = 44;
+    this.container.addChild(this.healthTrack);
+
+    this.healthFill = new Graphics();
+    this.healthFill.x = 11;
+    this.healthFill.y = 45;
+    this.container.addChild(this.healthFill);
+
+    this.healthText = new Text({
+      text: '',
+      style: { fontSize: 11, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui },
+    });
+    this.healthText.x = 136;
+    this.healthText.y = 43;
+    this.container.addChild(this.healthText);
+    this.renderHealth();
 
     this.questBg = new Graphics();
     this.questBg.roundRect(0, 0, 220, 28, UITheme.panel.borderRadiusSmall);
@@ -119,6 +148,11 @@ export class HUD {
     };
     this.zoneEnterCb = () => { this.updateRuleHint(true); };
     this.zoneExitCb = () => { this.updateRuleHint(false); };
+    this.healthCb = (p) => {
+      this.healthCurrent = p.current;
+      this.healthMax = p.max;
+      this.renderHealth();
+    };
 
     this.eventBus.on('scene:enter', this.sceneEnterCb);
     this.eventBus.on('currency:changed', this.currencyCb);
@@ -126,6 +160,7 @@ export class HUD {
     this.eventBus.on('quest:completed', this.questCompletedCb);
     this.eventBus.on('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.on('zone:ruleUnavailable', this.zoneExitCb);
+    this.eventBus.on('player:healthChanged', this.healthCb);
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -181,6 +216,19 @@ export class HUD {
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
   }
 
+  private renderHealth(): void {
+    const W = 120;
+    const ratio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
+    const critical = ratio <= 0.33;
+    this.healthFill.clear();
+    if (ratio > 0) {
+      this.healthFill.roundRect(0, 0, Math.max(2, (W - 2) * ratio), 10, 2);
+      this.healthFill.fill({ color: critical ? 0xe23b3b : 0x9e3030, alpha: 0.95 });
+    }
+    this.healthText.text = `${Math.round(this.healthCurrent)}/${Math.round(this.healthMax)}`;
+    this.healthText.style.fill = critical ? 0xe23b3b : UITheme.colors.subtle;
+  }
+
   destroy(): void {
     window.removeEventListener('resize', this.onResizeBound);
     this.eventBus.off('scene:enter', this.sceneEnterCb);
@@ -189,6 +237,7 @@ export class HUD {
     this.eventBus.off('quest:completed', this.questCompletedCb);
     this.eventBus.off('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.off('zone:ruleUnavailable', this.zoneExitCb);
+    this.eventBus.off('player:healthChanged', this.healthCb);
     if (this.container.parent) {
       this.container.parent.removeChild(this.container);
     }

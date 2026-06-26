@@ -33,7 +33,7 @@ function flush(): Promise<void> {
 }
 
 describe('寻狗记Demo 主线编排（真实数据）', () => {
-  it('从听书到出城黑屏：全信号序列推进 13 个里程碑（含①.5梦）', async () => {
+  it('从听书到出城黑屏：全信号序列推进 11 个主线里程碑（枯井/义庄已降支线，含①.5梦）', async () => {
     const { narrative } = makeRuntime();
     const emit = async (sourceType: string, sourceId: string, signal: string) => {
       narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
@@ -111,13 +111,14 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     await emit('dialogue', '寻狗_码头选择', 'dock_resolved');
     flowAt('s06_laoxiang');
 
-    // ⑦ 枯井
+    // ⑦ 枯井（已降为可选支线：信号可发、scenario 自行推进，但不再推动主线）
     await emit('dialogue', '寻狗_枯井街坊', 'kujing_hired');
     await emit('zone', '枯井土地庙:z_井边哭声', 'kujing_intro_entered');
     await emit('dialogue', '寻狗_枯井往下看', 'kujing_looked');
     await emit('dialogue', '寻狗_枯井往下看', 'kujing_stared');
     await emit('dialogue', '寻狗_枯井往下看', 'kujing_fled');
-    flowAt('s07_kujing');
+    beatAt('scenario_枯井', 'fled');
+    flowAt('s06_laoxiang'); // 枯井是支线，主线仍停在码头
 
     // ⑧ 向导+行头
     await emit('dialogue', '寻狗_向导传闻', 'xiangdao_notice_read');
@@ -153,7 +154,7 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     beatAt('scenario_送货', 'returned');
     flowAt('s09_songhuo');
 
-    // ⑩ 义庄镇尸：进门 + 四步任意顺序（reactive：动手→任2步反扑→4步齐）
+    // ⑩ 义庄镇尸（已降为可选支线：四步可跑完，但不推主线）：进门 + 四步任意顺序
     await emit('zone', '义庄:z_义庄进门', 'yizhuang_intro_entered');
     beatAt('scenario_义庄镇尸', 'entered');
     await emit('dialogue', '寻狗_镇尸_墨斗', 'zhenshi_ink_done');
@@ -169,9 +170,9 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     await flush();
     await flush();
     beatAt('scenario_义庄镇尸', 'all_done');
-    flowAt('s10_yizhuang');
+    flowAt('s09_songhuo'); // 义庄已降支线，主线仍在送货完成
 
-    // ⑩尾 招募 / ⑪ 守夜支线 / ⑫ 终幕
+    // ⑩尾 招募（送货回城后直接触发，不再经义庄）/ ⑪ 守夜支线 / ⑫ 终幕
     await emit('dialogue', '寻狗_克拉拉招募', 'zhaomu_recruited');
     flowAt('s11_zhaomu');
 
@@ -185,7 +186,7 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     flowAt('s12_chufa');
 
     // reached 历史完整（任务面板/档案门控依赖）
-    for (const s of ['s01_tingshu', 's02b_meng', 's04_pozi', 's07_kujing', 's10_yizhuang', 's12_chufa']) {
+    for (const s of ['s01_tingshu', 's02b_meng', 's04_pozi', 's12_chufa']) {
       expect(narrative.hasReachedState(FLOW, s)).toBe(true);
     }
   });

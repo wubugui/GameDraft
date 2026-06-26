@@ -11,7 +11,7 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "flow_xungou_main", "state": "s10_yizhuang", "reached": true }
+            { "narrative": "scenario_义庄镇尸", "state": "all_done", "reached": true }
           ],
           "next": "done_1"
         }

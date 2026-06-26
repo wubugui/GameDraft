@@ -1,6 +1,14 @@
 {
   "static": [
     {
+      "key": "player_health",
+      "valueType": "float"
+    },
+    {
+      "key": "player_max_health",
+      "valueType": "float"
+    },
+    {
       "key": "零工背尸_done",
       "valueType": "bool"
     },

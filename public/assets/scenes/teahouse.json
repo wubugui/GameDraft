@@ -10,7 +10,7 @@
   "playerRunSpeed": 180.0,
   "backgrounds": [
     {
-      "image": "background.png",
+      "image": "background_hires_v2.png",
       "x": 0,
       "y": 0
     }
@@ -81,7 +81,7 @@
       ],
       "label": "出门",
       "data": {
-        "targetScene": "test_room_a",
+        "targetScene": "雾津街头",
         "targetSpawnPoint": "from_teahouse"
       }
     },
@@ -113,7 +113,7 @@
       "conditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s07_kujing"
+          "state": "s06_laoxiang"
         },
         {
           "narrative": "scenario_向导",

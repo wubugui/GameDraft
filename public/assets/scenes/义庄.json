@@ -9,7 +9,7 @@
   },
   "backgrounds": [
     {
-      "image": "background.png",
+      "image": "background_hires_v1.png",
       "x": 0,
       "y": 0
     }
@@ -122,8 +122,8 @@
         },
         {
           "not": {
-            "narrative": "flow_xungou_main",
-            "state": "s10_yizhuang",
+            "narrative": "scenario_义庄镇尸",
+            "state": "all_done",
             "reached": true
           }
         }
@@ -151,8 +151,8 @@
         },
         {
           "not": {
-            "narrative": "flow_xungou_main",
-            "state": "s10_yizhuang",
+            "narrative": "scenario_义庄镇尸",
+            "state": "all_done",
             "reached": true
           }
         }
@@ -180,8 +180,8 @@
         },
         {
           "not": {
-            "narrative": "flow_xungou_main",
-            "state": "s10_yizhuang",
+            "narrative": "scenario_义庄镇尸",
+            "state": "all_done",
             "reached": true
           }
         }
@@ -209,8 +209,8 @@
         },
         {
           "not": {
-            "narrative": "flow_xungou_main",
-            "state": "s10_yizhuang",
+            "narrative": "scenario_义庄镇尸",
+            "state": "all_done",
             "reached": true
           }
         }
@@ -255,26 +255,6 @@
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_管事义庄内",
       "dialogueCameraZoom": 1.45
-    },
-    {
-      "id": "npc_克拉拉",
-      "name": "克拉拉",
-      "x": 1000.0,
-      "y": 520.0,
-      "interactionRange": 70.0,
-      "animFile": "/resources/runtime/animation/克拉拉_anim/anim.json",
-      "initialAnimState": "克拉拉_走路",
-      "initialFacing": "left",
-      "dialogueGraphId": "寻狗_克拉拉招募",
-      "dialogueCameraZoom": 1.5,
-      "conditions": [
-        {
-          "narrative": "flow_xungou_main",
-          "state": "s10_yizhuang",
-          "reached": true
-        }
-      ],
-      "conditionHidesEntity": true
     }
   ]
 }

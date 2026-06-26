@@ -9,7 +9,7 @@
   },
   "backgrounds": [
     {
-      "image": "background.png",
+      "image": "background_hires_v2.png",
       "x": 0,
       "y": 0
     }
@@ -142,7 +142,7 @@
       "conditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s07_kujing"
+          "state": "s06_laoxiang"
         },
         {
           "narrative": "scenario_向导",
@@ -288,16 +288,9 @@
       "interactionRange": 60.0,
       "conditions": [
         {
-          "any": [
-            {
-              "narrative": "flow_xungou_main",
-              "state": "s09_songhuo"
-            },
-            {
-              "narrative": "flow_xungou_main",
-              "state": "s10_yizhuang"
-            }
-          ]
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true,
@@ -422,7 +415,28 @@
       "conditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s09_songhuo"
+          "state": "s09_songhuo",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_克拉拉",
+      "name": "克拉拉",
+      "x": 960.0,
+      "y": 500.0,
+      "interactionRange": 70.0,
+      "animFile": "/resources/runtime/animation/克拉拉_anim/anim.json",
+      "initialAnimState": "克拉拉_走路",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_克拉拉招募",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "returned",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true

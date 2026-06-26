@@ -40,14 +40,6 @@
           "params": {
             "id": "说书-李天狗大战旱魃"
           }
-        },
-        {
-          "type": "emitNarrativeSignal",
-          "params": {
-            "signal": "",
-            "sourceType": "",
-            "sourceId": ""
-          }
         }
       ],
       "next": ""

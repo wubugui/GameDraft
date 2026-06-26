@@ -120,16 +120,9 @@
     "y": 35.81656151419559,
     "unlockConditions": [
       {
-        "any": [
-          {
-            "narrative": "flow_xungou_main",
-            "state": "s09_songhuo"
-          },
-          {
-            "narrative": "flow_xungou_main",
-            "state": "s10_yizhuang"
-          }
-        ]
+        "narrative": "flow_xungou_main",
+        "state": "s09_songhuo",
+        "reached": true
       }
     ]
   },
