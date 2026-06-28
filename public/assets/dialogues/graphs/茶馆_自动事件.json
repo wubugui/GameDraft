@@ -36,6 +36,12 @@
       "type": "runActions",
       "actions": [
         {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "teahouse_opening_played"
+          }
+        },
+        {
           "type": "startCutscene",
           "params": {
             "id": "说书-李天狗大战旱魃"

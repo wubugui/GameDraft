@@ -4383,7 +4383,7 @@
                 "id": "t_1",
                 "from": "initial",
                 "to": "state_1",
-                "signal": "__draft__",
+                "signal": "teahouse_opening_played",
                 "priority": 0
               }
             ],
@@ -4717,6 +4717,10 @@
     {
       "id": "songhuo_litiangou_rescue",
       "label": "送货·李天狗接管救场"
+    },
+    {
+      "id": "teahouse_opening_played",
+      "label": "茶馆·开场说书已播"
     }
   ]
 }
