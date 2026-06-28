@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QSignalBlocker, Signal
+from PySide6.QtCore import Qt, QSize, QSignalBlocker, Signal, QEvent, QMimeData
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -29,6 +29,7 @@ from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_
 
 
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff)"
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 
 
 def aspect_size(original_w: int, original_h: int, *, width: int | None = None, height: int | None = None) -> tuple[int, int]:
@@ -39,6 +40,16 @@ def aspect_size(original_w: int, original_h: int, *, width: int | None = None, h
     if height is not None and height > 0:
         return max(1, round(int(height) * original_w / original_h)), max(1, int(height))
     return original_w, original_h
+
+
+def image_path_from_mime(mime: QMimeData) -> Path | None:
+    for url in mime.urls():
+        if not url.isLocalFile():
+            continue
+        path = Path(url.toLocalFile())
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
+            return path
+    return None
 
 
 class PreviewLabel(QLabel):
@@ -186,9 +197,37 @@ class ImageResizerWindow(QMainWindow):
         root.addWidget(controls, 0)
         root.addWidget(self._scroll, 1)
 
+        self._install_drop_target(self)
+        self._install_drop_target(central)
+        self._install_drop_target(controls)
+        self._install_drop_target(self._scroll)
+        self._install_drop_target(self._scroll.viewport())
+        self._install_drop_target(self._preview)
+
         self._set_controls_enabled(False)
         if image_path is not None:
             self.load_image(image_path)
+        else:
+            self._refresh_preview()
+
+    def _install_drop_target(self, widget: QWidget) -> None:
+        widget.setAcceptDrops(True)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # type: ignore[override]
+        event_type = event.type()
+        if event_type in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            path = image_path_from_mime(event.mimeData())
+            if path is not None:
+                event.acceptProposedAction()
+                return True
+        elif event_type == QEvent.Type.Drop:
+            path = image_path_from_mime(event.mimeData())
+            if path is not None:
+                self.load_image(path)
+                event.acceptProposedAction()
+                return True
+        return super().eventFilter(watched, event)
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         for w in (
@@ -282,7 +321,7 @@ class ImageResizerWindow(QMainWindow):
     def _refresh_preview(self) -> None:
         if self._source_image.isNull():
             self._preview.clear()
-            self._preview.setText("未选择图片")
+            self._preview.setText("拖入图片或点击打开")
             self._preview.setFixedSize(480, 320)
             self._target_info.setText("-")
             return
