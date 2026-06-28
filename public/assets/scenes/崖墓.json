@@ -1,5 +1,5 @@
 {
-  "id": "庄家灵堂",
+  "id": "崖墓",
   "name": "临江崖墓",
   "worldWidth": 1376.0,
   "worldHeight": 768.0,
@@ -33,7 +33,7 @@
   },
   "zones": [
     {
-      "id": "z_灵堂进场",
+      "id": "z_崖墓进场",
       "polygon": [
         {
           "x": 380.0,
@@ -63,8 +63,8 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "zone",
-            "sourceId": "庄家灵堂:z_灵堂进场",
-            "signal": "lingtang_intro_entered"
+            "sourceId": "崖墓:z_崖墓进场",
+            "signal": "yamu_intro_entered"
           }
         }
       ]
@@ -170,7 +170,7 @@
       }
     },
     {
-      "id": "T_出灵堂",
+      "id": "T_出崖墓",
       "type": "transition",
       "label": "出去",
       "x": 700.0,

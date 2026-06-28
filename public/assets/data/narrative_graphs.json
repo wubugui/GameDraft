@@ -1095,13 +1095,13 @@
         {
           "id": "zone_01",
           "kind": "zoneBlackbox",
-          "label": "庄家灵堂:z_灵堂进场",
-          "refId": "庄家灵堂:z_灵堂进场",
+          "label": "崖墓:z_崖墓进场",
+          "refId": "崖墓:z_崖墓进场",
           "x": 24,
           "y": -360,
           "meta": {
             "emits": [
-              "lingtang_intro_entered"
+              "yamu_intro_entered"
             ],
             "reads": [],
             "commands": []
@@ -2129,8 +2129,8 @@
                   }
                 ]
               },
-              "at_lingtang": {
-                "id": "at_lingtang",
+              "at_yamu": {
+                "id": "at_yamu",
                 "label": "进了崖墓（近尸）",
                 "meta": {
                   "editor": {
@@ -2142,7 +2142,7 @@
                   {
                     "type": "startCutscene",
                     "params": {
-                      "id": "寻狗_灵堂进场"
+                      "id": "寻狗_崖墓进场"
                     }
                   }
                 ]
@@ -2303,12 +2303,12 @@
               {
                 "id": "t_at",
                 "from": "hired",
-                "to": "at_lingtang",
-                "signal": "lingtang_intro_entered"
+                "to": "at_yamu",
+                "signal": "yamu_intro_entered"
               },
               {
                 "id": "t_try1",
-                "from": "at_lingtang",
+                "from": "at_yamu",
                 "to": "try1_swallowed",
                 "signal": "beishi_try1"
               },
@@ -4415,8 +4415,8 @@
       "label": "ring_returned"
     },
     {
-      "id": "lingtang_intro_entered",
-      "label": "进灵堂（区域）"
+      "id": "yamu_intro_entered",
+      "label": "进崖墓（区域）"
     },
     {
       "id": "pozi_intro_entered",

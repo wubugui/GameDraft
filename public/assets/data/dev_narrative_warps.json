@@ -4,7 +4,7 @@
     { "id": "听书", "label": "1 · 听书（茶馆·说书人）", "scene": "teahouse",
       "flowGraph": "flow_xungou_main", "flowState": "initial",
       "set": [{ "graph": "scenario_听书", "state": "listening" }] },
-    { "id": "背尸", "label": "2 · 背尸（庄家灵堂）", "scene": "庄家灵堂",
+    { "id": "背尸", "label": "2 · 背尸（崖墓）", "scene": "崖墓",
       "flowGraph": "flow_xungou_main", "flowState": "s01_tingshu",
       "set": [{ "graph": "scenario_背尸", "state": "hired" }] },
     { "id": "梦待死之礼", "label": "3 · 梦待死之礼（雾津街头）", "scene": "雾津街头",

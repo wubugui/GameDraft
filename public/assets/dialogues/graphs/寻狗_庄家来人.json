@@ -140,7 +140,7 @@
         {
           "type": "switchScene",
           "params": {
-            "targetScene": "庄家灵堂",
+            "targetScene": "崖墓",
             "targetSpawnPoint": "entry"
           }
         }

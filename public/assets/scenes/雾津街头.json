@@ -176,9 +176,9 @@
       }
     },
     {
-      "id": "T_去庄家灵堂",
+      "id": "T_去崖墓",
       "type": "transition",
-      "label": "去庄家（灵堂）",
+      "label": "上崖墓",
       "x": 1010.0,
       "y": 250.0,
       "interactionRange": 60.0,
@@ -198,7 +198,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "targetScene": "庄家灵堂",
+        "targetScene": "崖墓",
         "targetSpawnPoint": "entry"
       }
     },

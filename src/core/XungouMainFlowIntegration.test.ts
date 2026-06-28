@@ -54,16 +54,16 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     beatAt('scenario_听书', 'kicked_out');
     flowAt('s01_tingshu');
 
-    // ① 背尸：接活→进灵堂→两次发力→香粉→逃
+    // ① 背尸：接活→进崖墓→两次发力→香粉→逃
     await emit('dialogue', '寻狗_庄家来人', 'beishi_hired');
     beatAt('scenario_背尸', 'hired');
-    await emit('zone', '庄家灵堂:z_灵堂进场', 'lingtang_intro_entered');
-    beatAt('scenario_背尸', 'at_lingtang');
+    await emit('zone', '崖墓:z_崖墓进场', 'yamu_intro_entered');
+    beatAt('scenario_背尸', 'at_yamu');
     await emit('minigame', 'carry_bride_corpse', 'beishi_try1');
     await emit('minigame', 'carry_bride_corpse', 'beishi_try2');
     beatAt('scenario_背尸', 'try2_face');
     await emit('dialogue', '寻狗_背尸', 'beishi_scent');
-    await emit('dialogue', '寻狗_背尸', 'beishi_fled');
+    await emit('dialogue', '寻狗_鬼打墙', 'beishi_fled');
     beatAt('scenario_背尸', 'fled');
     flowAt('s02_beishi');
 
