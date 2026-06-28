@@ -7,8 +7,8 @@ from typing import Any
 
 from tools.editor.shared.project_paths import ProjectPaths
 
-_ENTITY_WRAPPER_OWNER_TYPES = frozenset({"npc", "hotspot", "zone", "quest"})
-_CONTEXT_READABLE_OWNER_TYPES = frozenset({"flow", "scenario"})
+_ENTITY_WRAPPER_OWNER_TYPES = frozenset({"npc", "hotspot", "zone", "quest", "scene"})
+_CONTEXT_READABLE_OWNER_TYPES = frozenset({"flow", "scenario", "scene"})
 _FORBIDDEN_CONTEXT_OWNER_TYPES = frozenset({"npc", "hotspot", "zone", "quest", "dialogue"})
 
 
@@ -31,6 +31,18 @@ def load_narrative_graphs(project_root: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _collect_start_dialogue_actions(node: Any, found: list[dict[str, Any]]) -> None:
+    """递归收集任意嵌套结构里的 startDialogueGraph action（onEnter 含 runActions 等容器）。"""
+    if isinstance(node, dict):
+        if str(node.get("type", "")).strip() == "startDialogueGraph":
+            found.append(node)
+        for value in node.values():
+            _collect_start_dialogue_actions(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_start_dialogue_actions(item, found)
 
 
 def dialogue_owner_refs_from_scenes(scenes: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
@@ -73,6 +85,26 @@ def dialogue_owner_refs_from_scenes(scenes: dict[str, Any]) -> dict[str, list[di
             if dialogue_id and hotspot_id:
                 add(dialogue_id, "hotspot", hotspot_id, f"hotspot:{scene_id}:{hotspot_id}")
                 add(dialogue_id, "hotspot", f"{scene_id}:{hotspot_id}", f"hotspot:{scene_id}:{hotspot_id}")
+        # 场景 onEnter 里 startDialogueGraph 播的对话图：owner 优先级与运行时一致
+        # （显式 ownerType/ownerId > npcId > 场景隐式 owner）。仅扫场景根 onEnter，
+        # 与运行时 sceneEnterRunner 注入的 ambient scene owner 窗口对齐。
+        on_enter_actions: list[dict[str, Any]] = []
+        _collect_start_dialogue_actions(scene.get("onEnter", []), on_enter_actions)
+        for act in on_enter_actions:
+            params = act.get("params") if isinstance(act.get("params"), dict) else {}
+            dlg = str(params.get("graphId", "")).strip()
+            if not dlg:
+                continue
+            o_type = str(params.get("ownerType", "")).strip()
+            o_id = str(params.get("ownerId", "")).strip()
+            npc_id = str(params.get("npcId", "")).strip()
+            if o_type and o_id:
+                add(dlg, o_type, o_id, f"scene:{scene_id}:onEnter")
+            elif npc_id:
+                add(dlg, "npc", npc_id, f"scene:{scene_id}:onEnter:npc:{npc_id}")
+                add(dlg, "npc", f"{scene_id}:{npc_id}", f"scene:{scene_id}:onEnter:npc:{npc_id}")
+            else:
+                add(dlg, "scene", scene_id, f"scene:{scene_id}:onEnter")
     return out
 
 
@@ -156,7 +188,7 @@ def resolve_owner_wrapper_states(
             "stateIds": [],
             "wrappers": [],
             "ambiguous": False,
-            "message": "未找到引用该对话图的 NPC/Hotspot",
+            "message": "未找到引用该对话图的 NPC/Hotspot/场景 onEnter",
         }
     matches = _owner_state_wrapper_matches(narrative, refs)
     if not matches:
