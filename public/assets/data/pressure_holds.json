@@ -1,7 +1,7 @@
 [
   {
     "id": "carry_bride_corpse",
-    "prompt": "按住——过肩、搭手，把她架起来",
+    "prompt": "按住——过肩、搭手，把尸架起来",
     "fillSeconds": 3.2,
     "decayPerSecond": 0.9,
     "holdSfx": "sfx_hold_pressure_loop",
@@ -139,10 +139,8 @@
     ],
     "onAborted": [
       {
-        "type": "damagePlayer",
-        "params": {
-          "amount": 9999
-        }
+        "type": "triggerDeathTether",
+        "params": {}
       },
       {
         "type": "emitNarrativeSignal",
@@ -177,5 +175,81 @@
     "fillSeconds": 1.5,
     "decayPerSecond": 0.7,
     "barColor": "#3a3a52"
+  },
+  {
+    "id": "guidaoqiang_escape",
+    "prompt": "闷头往崖下走——别停、别回头",
+    "releaseHint": "脚下一软，又绕回原地了！",
+    "fillSeconds": 7,
+    "decayPerSecond": 1.0,
+    "holdSfx": "sfx_guidaoqiang_loop",
+    "barColor": "#3a3320",
+    "interrupts": [
+      {
+        "atRatio": 0.4,
+        "resetToRatio": 0.3,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "走着走着，又回到崖墓口那块碑石跟前。先前撒的、丢的，原封回到脚边。"
+                },
+                {
+                  "speaker": "{{player}}",
+                  "text": "……啷个又绕回来了？"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "atRatio": 0.75,
+        "resetToRatio": 0.58,
+        "actions": [
+          {
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_guidaoqiang_corpse_breath"
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "脱鞋反穿、撒泡尿、糙米、桃木、求爹爹告奶奶……背尸老手那点家底全使了一遍，路还是绕回原地。"
+                },
+                {
+                  "speaker": "",
+                  "text": "背上那尸，贴着他后颈，半个字半个字地，开了口。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "{{player}}",
+              "text": "工钱……工钱个屁！！"
+            },
+            {
+              "speaker": "",
+              "text": "他豁出去连滚带爬往崖下冲——鬼打墙那一下松了口，崖路总算往下通。"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

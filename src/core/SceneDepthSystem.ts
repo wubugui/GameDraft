@@ -1,6 +1,6 @@
 import { Texture, type TextureSource } from 'pixi.js';
 import type { AssetManager } from './AssetManager';
-import type { SceneDepthConfig, IGameSystem, GameContext } from '../data/types';
+import type { SceneDepthConfig, IGameSystem, GameContext, RgbColor } from '../data/types';
 import { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import {
   EntityLightingFilter,
@@ -379,6 +379,19 @@ export class SceneDepthSystem implements IGameSystem {
         for (const f of this.filters) {
             f.setTone?.(tone);
             f.setAO?.(aoContact, aoForm);
+        }
+    }
+
+    /** 把 key/ambient 颜色与强度广播到所有光照滤镜（供光环境曲线逐帧动画；构造时已设，此处覆盖） */
+    applyKeyAmbient(
+        keyColor: RgbColor,
+        keyIntensity: number,
+        ambientColor: RgbColor,
+        ambientIntensity: number,
+    ): void {
+        for (const f of this.filters) {
+            f.setKeyLight?.(keyColor, keyIntensity);
+            f.setAmbient?.(ambientColor, ambientIntensity);
         }
     }
 

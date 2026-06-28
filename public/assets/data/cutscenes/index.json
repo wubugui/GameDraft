@@ -205,7 +205,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "一个挑着担子的汉子出现在街口。看他那担子上的东西，倒都是些驱邪辟邪的玩意儿。"
+        "text": "一个挑着担子的汉子出现在街口。看他那担子上的东西，倒都是些驱邪辟邪的物件。"
       },
       {
         "kind": "present",
@@ -383,13 +383,13 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "???",
-        "text": "小子，你就是关二狗？"
+        "text": "后生，你就是关二狗？"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "你谁啊？找我有事？"
+        "text": "你哪个？找老子做啥子？"
       },
       {
         "kind": "present",
@@ -621,20 +621,9 @@
       },
       {
         "kind": "present",
-        "type": "showImg",
-        "id": "ghost_bride_memory",
-        "image": "/resources/runtime/images/illustrations/ghost_bride_flashback.png"
-      },
-      {
-        "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "你半梦半醒间，又梦见两个月前替人背阴婚新娘的那一夜。她压得你喘不过气，你和那张惨白的脸贴得太近，近得像要把魂也看出来。"
-      },
-      {
-        "kind": "present",
-        "type": "hideImg",
-        "id": "ghost_bride_memory"
+        "text": "你半梦半醒，又想起昨晚那趟活路——崖墓里头七没过的那具尸，沉得不讲道理，崖路绕啊绕啊绕不出去。那股廉价香粉味，现在还没散。"
       },
       {
         "kind": "present",
@@ -674,13 +663,13 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "梁上的那张脸，和你记忆里那具阴婚新娘的脸，像隔着两个月的晦气忽然重叠在了一起。"
+        "text": "梁上的那张脸，和你记忆里那具崖墓尸的脸，像隔着两个月的晦气忽然重叠在了一起。"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "……怎么会是她？"
+        "text": "……啷个会是它？"
       },
       {
         "kind": "present",
@@ -1678,7 +1667,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "脚帮的",
-        "text": "「人家念两句，院里的邪祟自个儿就退了——价钱还公道！」"
+        "text": "「人家念两句，院里的邪祟自家就退了——价钱还公道得很！」"
       },
       {
         "kind": "present",
@@ -1690,7 +1679,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "名声滚起来了。滚得连关二狗自己都开始信：俺兴许真有两下子？"
+        "text": "名声滚起来了。滚得连关二狗自己都开始信：老子兴许真有两下子？"
       },
       {
         "kind": "present",
@@ -1751,7 +1740,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "（传成什么样的都有。……行吧，就当是真的。贫道——出发了。）"
+        "text": "（传成啥子样的都有。……要得，就当是真的。老子这个『道长』——切了。）"
       },
       {
         "kind": "present",
@@ -1806,19 +1795,19 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "脚夫甲",
-        "text": "哟，这不是「李天狗那一脉」么。揣个皮纸鬼鬼祟祟的，又接了什么邪门活计？"
+        "text": "哟，这不是「李天狗那一脉」迈。揣张皮纸鬼鬼祟祟的，又接了啥子邪门活路？"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "跑腿。正经跑腿。（笑骂两句，混了过去。）"
+        "text": "跑腿。正经跑腿。（笑骂两句，混了过切。）"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "脚夫乙",
-        "text": "对了先生，往岭上走有句老话——山里要是有人喊你名字，一声一声，像个熟人，千万、千万别应。"
+        "text": "对了先生，往岭上走有句老话——山里头要是有人喊你名字，一声一声，像个熟人，千万、千万莫应。"
       },
       {
         "kind": "present",
@@ -1876,7 +1865,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "（跑。现在跑还来得及。）（……跑了，「李天狗那一脉」明儿就成笑话。）"
+        "text": "（跑。现在跑还来得及。）（……跑了，「李天狗那一脉」明天就成笑话。）"
       },
       {
         "kind": "present",
@@ -1952,7 +1941,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "（成了？……是俺哪一样使对了？米？线？石子？剪子？）"
+        "text": "（成了？……是老子哪一样使对了？米？线？石子？剪子？）"
       },
       {
         "kind": "present",
@@ -2034,13 +2023,13 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "灵堂阴冷。白烛的火苗压得很低，像也不愿多看。"
+        "text": "崖洞里阴冷。陪葬的烛火压得很低，像也不愿多看。"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "板上停着一具穿大红嫁衣的女尸——脸惨白。该塌的没塌，该烂的没烂。"
+        "text": "凿台上停着一具尸——面色铅灰，手脚还平展。该塌的没塌，该烂的没烂。"
       },
       {
         "kind": "action",
@@ -2053,13 +2042,13 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "（停了多日的尸……跟才刚停下似的。）"
+        "text": "（停了好多天的尸……像才刚停下来一样。）"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "庄家的人不知什么时候已经退到了门外。门口的风灯晃了一下。"
+        "text": "雇主不知什么时候已经退到了洞口。洞口的风灯晃了一下。"
       },
       {
         "kind": "present",

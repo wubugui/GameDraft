@@ -1,6 +1,6 @@
 {
   "id": "庄家灵堂",
-  "name": "庄家灵堂",
+  "name": "临江崖墓",
   "worldWidth": 1376.0,
   "worldHeight": 768.0,
   "camera": {
@@ -9,7 +9,7 @@
   },
   "backgrounds": [
     {
-      "image": "background.png",
+      "image": "background_cliff_tomb_day_hires_v1.png",
       "x": 0,
       "y": 0
     }
@@ -25,6 +25,10 @@
     "entry": {
       "x": 700.0,
       "y": 640.0
+    },
+    "崖墓口": {
+      "x": 700.0,
+      "y": 380.0
     }
   },
   "zones": [
@@ -64,18 +68,69 @@
           }
         }
       ]
+    },
+    {
+      "id": "z_鬼打墙",
+      "polygon": [
+        {
+          "x": 300.0,
+          "y": 690.0
+        },
+        {
+          "x": 1080.0,
+          "y": 690.0
+        },
+        {
+          "x": 1080.0,
+          "y": 762.0
+        },
+        {
+          "x": 300.0,
+          "y": 762.0
+        }
+      ],
+      "conditions": [
+        {
+          "flag": "beishi_carrying",
+          "value": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_背尸",
+            "state": "fled",
+            "reached": true
+          }
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_鬼打墙"
+          }
+        }
+      ]
     }
   ],
   "hotspots": [
     {
       "id": "hs_女尸",
       "type": "inspect",
-      "label": "停在板上的女尸",
+      "label": "崖墓里那具尸",
       "x": 640.0,
       "y": 390.0,
       "interactionRange": 80.0,
+      "conditions": [
+        {
+          "not": {
+            "flag": "beishi_carrying",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
       "displayImage": {
-        "image": "/resources/runtime/images/corpses/demo/bride_fullbody.png",
+        "image": "/resources/runtime/images/corpses/demo/cliff_tomb_preserved_corpse_v1.png",
         "worldWidth": 300.0,
         "worldHeight": 170.0,
         "spriteSort": "back"
@@ -106,12 +161,12 @@
     {
       "id": "hs_供桌",
       "type": "inspect",
-      "label": "灵前供桌",
+      "label": "崖墓壁龛",
       "x": 620.0,
       "y": 215.0,
       "interactionRange": 64.0,
       "data": {
-        "text": "白烛烧了半截，香灰积了厚厚一层。供果摆得齐整，没人敢动。红布底下压着八字帖——这是桩阴婚。"
+        "graphId": "寻狗_崖墓壁龛"
       }
     },
     {
@@ -121,6 +176,15 @@
       "x": 700.0,
       "y": 720.0,
       "interactionRange": 56.0,
+      "conditions": [
+        {
+          "not": {
+            "flag": "beishi_carrying",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_event"

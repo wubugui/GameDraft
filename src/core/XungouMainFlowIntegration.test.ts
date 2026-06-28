@@ -151,6 +151,10 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
     await emit('minigame', 'forest_name_call', 'songhuo_survived');
     beatAt('scenario_送货', 'survived');
     await emit('dialogue', '寻狗_看进山路', 'songhuo_returned');
+    beatAt('scenario_送货', 'litiangou_peril');
+    await emit('scenario', '寻狗_送货', 'songhuo_litiangou_rescue');
+    beatAt('scenario_送货', 'litiangou_rescue');
+    await emit('scenario', '寻狗_送货', 'songhuo_returned');
     beatAt('scenario_送货', 'returned');
     flowAt('s09_songhuo');
 
@@ -255,6 +259,10 @@ describe('林中喊名 两段式分支（真实数据）', () => {
     await emit('minigame', 'forest_name_call', 'songhuo_survived');
     expect(narrative.getActiveState('scenario_送货')).toBe('survived');
     await emit('dialogue', '寻狗_看进山路', 'songhuo_returned');
+    expect(narrative.getActiveState('scenario_送货')).toBe('litiangou_peril');
+    await emit('scenario', '寻狗_送货', 'songhuo_litiangou_rescue');
+    expect(narrative.getActiveState('scenario_送货')).toBe('litiangou_rescue');
+    await emit('scenario', '寻狗_送货', 'songhuo_returned');
     expect(narrative.getActiveState('scenario_送货')).toBe('returned');
     expect(narrative.hasReachedState('scenario_送货', 'answered')).toBe(false);
   });
@@ -266,6 +274,10 @@ describe('林中喊名 两段式分支（真实数据）', () => {
     await emit('minigame', 'forest_escape_run', 'hanming_escaped');
     expect(narrative.getActiveState('scenario_送货')).toBe('escaped');
     await emit('dialogue', '寻狗_看进山路', 'songhuo_returned');
+    expect(narrative.getActiveState('scenario_送货')).toBe('litiangou_peril');
+    await emit('scenario', '寻狗_送货', 'songhuo_litiangou_rescue');
+    expect(narrative.getActiveState('scenario_送货')).toBe('litiangou_rescue');
+    await emit('scenario', '寻狗_送货', 'songhuo_returned');
     expect(narrative.getActiveState('scenario_送货')).toBe('returned');
     // 创伤留痕：reached 历史可供 ⑫ 终幕回放/外围文本取变体
     expect(narrative.hasReachedState('scenario_送货', 'answered')).toBe(true);

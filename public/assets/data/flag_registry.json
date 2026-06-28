@@ -9,6 +9,26 @@
       "valueType": "float"
     },
     {
+      "key": "current_smell",
+      "valueType": "string"
+    },
+    {
+      "key": "smell_intensity",
+      "valueType": "float"
+    },
+    {
+      "key": "got_xingtou_daopao",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_luopan",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_taomu",
+      "valueType": "bool"
+    },
+    {
       "key": "零工背尸_done",
       "valueType": "bool"
     },
@@ -238,6 +258,22 @@
     },
     {
       "key": "xg_prologue_started",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_litiangou",
+      "valueType": "bool"
+    },
+    {
+      "key": "beishi_carrying",
+      "valueType": "bool"
+    },
+    {
+      "key": "guidaoqiang_loops",
+      "valueType": "float"
+    },
+    {
+      "key": "forest.tether_suppressed",
       "valueType": "bool"
     }
   ],

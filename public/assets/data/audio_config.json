@@ -106,6 +106,12 @@
     "sfx_hold_pressure_loop": {
       "src": "/resources/runtime/audio/demo/sfx_hold_pressure_loop.wav"
     },
+    "sfx_guidaoqiang_loop": {
+      "src": "/resources/runtime/audio/demo/sfx_guidaoqiang_loop.wav"
+    },
+    "sfx_guidaoqiang_corpse_breath": {
+      "src": "/resources/runtime/audio/demo/sfx_guidaoqiang_corpse_breath.wav"
+    },
     "sfx_ui_paper_tick": {
       "src": "/resources/runtime/audio/demo/sfx_ui_paper_tick.wav"
     },

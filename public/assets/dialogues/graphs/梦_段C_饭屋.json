@@ -56,6 +56,12 @@
               }
             ]
           }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "dream_ritual_rice"
+          }
         }
       ],
       "next": "n9"
@@ -149,6 +155,16 @@
     "n_realize": {
       "type": "runActions",
       "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "dream_ritual_rice",
+            "image": "dream_ritual_rice_bowl_hires",
+            "xPercent": 50,
+            "yPercent": 48,
+            "widthPercent": 78
+          }
+        },
         {
           "type": "waitMs",
           "params": {

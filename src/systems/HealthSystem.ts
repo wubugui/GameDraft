@@ -98,6 +98,27 @@ export class HealthSystem implements IGameSystem {
     this.emitChanged();
   }
 
+  /**
+   * 编排层直接置数（离死之距原始值）。clamp 到 [0, maxHealth]、同步 flag、广播变更
+   * （三把阳火即时反应）。**不触发死亡系绳**——系绳留给 `damage()` 的玩法扣血路径。
+   * reset/set/inc/dec 四个 action 都经此落地。
+   */
+  setHealth(value: number): void {
+    const v = Number.isFinite(value) ? value : this.currentHealth;
+    this.currentHealth = Math.max(0, Math.min(this.maxHealth, v));
+    this.syncFlags();
+    this.emitChanged();
+  }
+
+  /**
+   * 显式触发死亡系绳（濒死被拽回）。供编排层 `triggerDeathTether` action 用，
+   * 替代旧的 `damagePlayer{9999}` 魔法数硬凑——意图即"该死那一拍、念气把人薅回"。
+   * 重入由内部 `tethering` 守卫挡掉。
+   */
+  tether(): void {
+    void this.triggerDeathTether();
+  }
+
   private async triggerDeathTether(): Promise<void> {
     if (this.tethering) return;
     this.tethering = true;
@@ -106,6 +127,13 @@ export class HealthSystem implements IGameSystem {
     this.currentHealth = 0;
     this.syncFlags();
     this.emitChanged();
+
+    // 外部接管口子（L2）：forest.tether_suppressed = true 时李天狗脚本已接手救场，
+    // 跳过阿秀信号与自动回血，HP 交由外部 healPlayer 恢复。
+    if (this.flagStore.get('forest.tether_suppressed') === true) {
+      this.tethering = false;
+      return;
+    }
 
     try {
       const actions: ActionDef[] = [

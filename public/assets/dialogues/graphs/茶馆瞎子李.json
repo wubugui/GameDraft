@@ -15,13 +15,13 @@
     "too_early": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "老张那段还没摆完呢。你小子耳朵都没竖起来，就先往我这儿凑，能学成个什么？",
+      "text": "老张那段都还没摆完。你娃耳朵都没竖起来，就先往我这点凑，学得成个啥子？",
       "next": "end1"
     },
     "first_1": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "茶就免了，有事说事。",
+      "text": "茶就免了，有啥子事说啥子事。",
       "next": "first_flags"
     },
     "first_flags": {
@@ -36,7 +36,7 @@
       "type": "choice",
       "options": [
         { "id": "learn", "text": "李先生，我想拜你为师，学算命", "next": "learn_1" },
-        { "id": "help", "text": "没事，我就来扶你坐坐", "next": "help_1" }
+        { "id": "help", "text": "没得啥子事，我就来扶你坐一哈", "next": "help_1" }
       ]
     },
     "learn_1": {
@@ -48,32 +48,32 @@
     "learn_2": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "你是想拯救苍生于水火，还是看中这碗饭好吃？",
+      "text": "你是想拯救苍生于水火，还是看上了这碗饭好吃？",
       "next": "motive_ch"
     },
     "motive_ch": {
       "type": "choice",
       "options": [
-        { "id": "honest", "text": "自然是想学门吃饭的手艺", "next": "honest_open" },
+        { "id": "honest", "text": "肯定是想学门混饭吃的手艺撒", "next": "honest_open" },
         { "id": "false", "text": "救人于危难，济世于乱时", "next": "false_1" }
       ]
     },
     "false_1": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "放屁。你关二狗要真有这份心，城里早给你立长生牌位了。",
+      "text": "放屁。你关二狗要真有这份心，城里头早给你立长生牌位了。",
       "next": "false_2"
     },
     "false_2": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "直说吧，你就是觉得这门手艺不费本钱，嘴皮子一翻就能混口饭。",
+      "text": "直说嘛，你就是觉得这门手艺不费本钱，嘴巴皮一翻就能混口饭。",
       "next": "honest_open"
     },
     "honest_open": {
       "type": "line",
       "speaker": { "kind": "player" },
-      "text": "李先生明鉴。我就是想混口比跑腿更体面的饭吃。",
+      "text": "啥子都瞒不过李先生。我就是想混口比跑腿体面点的饭吃。",
       "next": "honest_2"
     },
     "honest_2": {
@@ -85,7 +85,7 @@
     "honest_3": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "命不是谁都能算的。光靠嘴皮子，那叫坑蒙拐骗，不叫本事。",
+      "text": "命不是哪个都算得来的。光靠嘴巴皮，那叫坑蒙拐骗，不叫本事。",
       "next": "honest_4"
     },
     "honest_4": {
@@ -107,26 +107,26 @@
     "honest_5": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "这个盒子你拿着，七天之内不许打开。若七天之后它还是好好的，就在最后一晚带着它去渝都卫水库桥下找我。",
+      "text": "这个盒子你拿到，七天之内不许打开。要是七天之后它还是好好的，就在最后一晚带起它切渝都卫水库桥脚下来找我。",
       "next": "warn_ch"
     },
     "warn_ch": {
       "type": "choice",
       "options": [
-        { "id": "w1", "text": "这差事就这么简单？", "next": "ask_warn" },
-        { "id": "w2", "text": "为什么不能打开", "next": "ask_warn_b" }
+        { "id": "w1", "text": "这差事就恁个简单？", "next": "ask_warn" },
+        { "id": "w2", "text": "为啥子不能打开", "next": "ask_warn_b" }
       ]
     },
     "ask_warn": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "简单不简单，要看你手贱不手贱。",
+      "text": "简单不简单，要看你手贱不贱。",
       "next": "ask_warn_b"
     },
     "ask_warn_b": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "你开开试试，出了大事我可不管。",
+      "text": "你打开试一哈，出了大事我可不管。",
       "next": "ask_warn_c"
     },
     "ask_warn_c": {
@@ -138,13 +138,13 @@
     "ask_warn_d": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "记住了，七天，莫开。到时候桥下见我。",
+      "text": "记到起，七天，莫开。到时候桥脚下来见我。",
       "next": "end1"
     },
     "help_1": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "人扶到了，嘴里的话还没落地。你有求于我，脸上都写着呢。",
+      "text": "人扶到了，嘴里头的话还没落地。你有事求我，脸上都写起的。",
       "next": "end1"
     },
     "after_box_1": {
@@ -156,20 +156,20 @@
     "after_ch": {
       "type": "choice",
       "options": [
-        { "id": "a1", "text": "在。你这玩意儿到底装了什么", "next": "after_a1" },
-        { "id": "a2", "text": "我记着呢，七天不能开", "next": "after_a2" }
+        { "id": "a1", "text": "在。你这东西到底装了啥子", "next": "after_a1" },
+        { "id": "a2", "text": "我记到起的，七天不能开", "next": "after_a2" }
       ]
     },
     "after_a1": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "你若忍得住，七天后自然知道。忍不住，现在就能坏事。",
+      "text": "你要忍得住，七天后自然晓得。忍不住，现在就能坏事。",
       "next": "end1"
     },
     "after_a2": {
       "type": "line",
       "speaker": { "kind": "literal", "name": "瞎子李" },
-      "text": "记着就好。别跟自己的命开玩笑。",
+      "text": "记到起就好。莫跟自己的命开玩笑。",
       "next": "end1"
     },
     "end1": { "type": "end" }

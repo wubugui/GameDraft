@@ -162,6 +162,28 @@ export interface SceneLightEnv {
   ao?: SceneAoParams;
 }
 
+/**
+ * 光照环境曲线控制点：世界坐标 (x,y) + 一份「部分」光照关键帧。
+ * env 各字段全部可缺省；缺省字段在插值后由 resolveLightEnv 回落到全局默认/内置基线。
+ */
+export interface LightEnvCurvePoint {
+  /** 世界坐标 X */
+  x: number;
+  /** 世界坐标 Y（与 Player/NPC 的 y 同义，脚底锚点） */
+  y: number;
+  /** 该控制点处的光照关键帧（与 SceneLightEnv 同构，所有字段可缺省） */
+  env: SceneLightEnv;
+}
+
+/**
+ * 逐场景「光照环境曲线」：一条世界空间折线，运行时把玩家位置投影到折线上得弧长参数 t，
+ * 再按 t 在相邻关键帧之间插值出当前 SceneLightEnv，喂给 resolveLightEnv。
+ * 至少 2 个点才生效；缺省或 <2 点时整条曲线被忽略，回落到 scene.lightEnv（现状不变）。
+ */
+export interface LightEnvCurveDef {
+  points: LightEnvCurvePoint[];
+}
+
 export interface SceneData {
   id: string;
   name: string;
@@ -182,6 +204,8 @@ export interface SceneData {
   depthConfig?: SceneDepthConfig;
   /** 光照环境（逐 entity 阴影/色调/AO）；缺省回落到全局默认 */
   lightEnv?: SceneLightEnv;
+  /** 光照环境曲线：玩家位置投影到折线后插值切换光照关键帧；缺省=用静态 lightEnv（现状不变） */
+  lightEnvCurve?: LightEnvCurveDef;
   /** 相机配置 */
   camera?: SceneCameraConfig;
   /** 世界整体缩放（用于背景图分辨率不够时整体缩小），默认1 */

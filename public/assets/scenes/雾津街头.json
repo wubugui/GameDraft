@@ -141,12 +141,16 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "flow_xungou_main",
-          "state": "s06_laoxiang"
+          "narrative": "scenario_向导",
+          "state": "noticed",
+          "reached": true
         },
         {
-          "narrative": "scenario_向导",
-          "state": "noticed"
+          "not": {
+            "narrative": "scenario_向导",
+            "state": "outfitted",
+            "reached": true
+          }
         }
       ],
       "conditionHidesEntity": true,
@@ -297,6 +301,81 @@
       "data": {
         "targetScene": "义庄",
         "targetSpawnPoint": "entry"
+      }
+    },
+    {
+      "id": "hs_当铺道袍",
+      "type": "inspect",
+      "label": "街角当铺 · 赊件旧道袍",
+      "x": 240.0,
+      "y": 280.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_向导",
+          "state": "watched",
+          "reached": true
+        },
+        {
+          "not": {
+            "flag": "got_xingtou_daopao",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_淘道袍"
+      }
+    },
+    {
+      "id": "hs_庙会罗盘",
+      "type": "inspect",
+      "label": "庙会摊 · 踅摸个罗盘",
+      "x": 470.0,
+      "y": 640.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_向导",
+          "state": "watched",
+          "reached": true
+        },
+        {
+          "not": {
+            "flag": "got_xingtou_luopan",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_淘罗盘"
+      }
+    },
+    {
+      "id": "hs_城东桃木",
+      "type": "inspect",
+      "label": "城东先生处 · 顺把桃木剑",
+      "x": 1130.0,
+      "y": 410.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_向导",
+          "state": "watched",
+          "reached": true
+        },
+        {
+          "not": {
+            "flag": "got_xingtou_taomu",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_淘桃木"
       }
     }
   ],

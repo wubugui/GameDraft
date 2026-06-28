@@ -191,6 +191,12 @@
           "params": {
             "durationMs": 900
           }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "dream_face_paper"
+          }
         }
       ],
       "next": "d_end"
@@ -230,6 +236,16 @@
           "type": "waitMs",
           "params": {
             "durationMs": 700
+          }
+        },
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "dream_face_paper",
+            "image": "dream_face_paper_breath_hires",
+            "xPercent": 50,
+            "yPercent": 48,
+            "widthPercent": 82
           }
         },
         {

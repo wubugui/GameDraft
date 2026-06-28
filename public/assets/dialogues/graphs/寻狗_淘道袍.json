@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_淘道袍",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·淘行头：当铺赊旧道袍"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "got_xingtou_daopao",
+              "value": true
+            }
+          ],
+          "next": "have"
+        }
+      ],
+      "defaultNext": "get"
+    },
+    "get": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "daopao",
+            "count": 1
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "got_xingtou_daopao",
+            "value": true
+          }
+        }
+      ],
+      "next": "line"
+    },
+    "line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "当铺角落一件洗得发白的旧道袍，掌柜的懒得收，赊给他了。穿身上空荡荡的——可远看，有那么点意思。",
+      "next": "end1"
+    },
+    "have": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "道袍弄到手咯，不淘了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_淘桃木",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·淘行头：城东顺桃木剑讹符纸"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "got_xingtou_taomu",
+              "value": true
+            }
+          ],
+          "next": "have"
+        }
+      ],
+      "defaultNext": "get"
+    },
+    "get": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "taomu_sword",
+            "count": 1
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "talisman",
+            "count": 2
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "got_xingtou_taomu",
+            "value": true
+          }
+        }
+      ],
+      "next": "line"
+    },
+    "line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "桃木剑是从城东先生那里顺的，轻得像烧火棍；符纸讹了两张——歪是歪，红是红，唬人够了。",
+      "next": "end1"
+    },
+    "have": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "桃木剑、符纸都齐咯，不淘了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

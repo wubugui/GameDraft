@@ -20,7 +20,24 @@
           "next": "done_1"
         }
       ],
-      "defaultNext": "n1"
+      "defaultNext": "apply_taoist_avatar"
+    },
+    "apply_taoist_avatar": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setPlayerAvatar",
+          "params": {
+            "animManifest": "/resources/runtime/animation/player_taoist_anim_v1/anim.json",
+            "stateMap": {
+              "idle": "hero_stand",
+              "walk": "hero_walk",
+              "run": "hero_run_new"
+            }
+          }
+        }
+      ],
+      "next": "n1"
     },
     "done_1": {
       "type": "line",
@@ -28,7 +45,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "雾还压着那条路。故事到这儿——才刚开头。",
+      "text": "雾还压着那条路。故事到这点——才刚开头。",
       "next": "end1"
     },
     "n1": {
@@ -46,7 +63,30 @@
         "kind": "literal",
         "name": "克拉拉"
       },
-      "text": "（上下打量了一遍那身凑合的道袍，在本子上记了一笔，什么也没说）行李齐了。Guan 先生，可以出发了吗？",
+      "text": "（上下打量了一遍那身凑合的道袍，在本子上记了一笔，什么也没说）行李齐了。Guan 先生，可以出发了吗？此行经桃溪一带——那里，Guan 先生去过吗？",
+      "next": "sw_met_ltg"
+    },
+    "sw_met_ltg": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "met_litiangou",
+              "value": true
+            }
+          ],
+          "next": "n_ltg_hook"
+        }
+      ],
+      "defaultNext": "c1"
+    },
+    "n_ltg_hook": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "桃溪嗦？老子熟得很！前几天还有个怪道士，专门来向老子打听那一带的事——那个地方，老子门清！",
       "next": "c1"
     },
     "c1": {
@@ -54,12 +94,12 @@
       "options": [
         {
           "id": "zou",
-          "text": "「走。」（贫道走在前头——稳住，腔调稳住）",
+          "text": "「走。」（老子走在前头——莫慌，腔调要稳起）",
           "next": "n3"
         },
         {
           "id": "deng",
-          "text": "「等等。」（最后看一眼雾津城……行了，走。）",
+          "text": "「等哈。」（最后望一眼雾津城……要得，走。）",
           "next": "n3b"
         }
       ]

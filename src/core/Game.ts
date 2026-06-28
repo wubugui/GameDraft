@@ -32,6 +32,7 @@ import { PressureHoldUI } from '../ui/PressureHoldUI';
 import { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
+import { SmellSystem } from '../systems/SmellSystem';
 import { HUD } from '../ui/HUD';
 import { NotificationUI } from '../ui/NotificationUI';
 import { QuestPanelUI } from '../ui/QuestPanelUI';
@@ -241,6 +242,7 @@ export class Game {
   private pressureHoldManager: PressureHoldManager;
   private signalCueManager: SignalCueManager;
   private healthSystem: HealthSystem;
+  private smellSystem: SmellSystem;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: IEntityShadingFilter | null = null;
@@ -356,6 +358,7 @@ export class Game {
     this.pressureHoldManager = new PressureHoldManager(this.actionExecutor);
     this.signalCueManager = new SignalCueManager(this.actionExecutor);
     this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
+    this.smellSystem = new SmellSystem(this.eventBus, this.flagStore);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
@@ -382,6 +385,7 @@ export class Game {
       { name: 'pressureHoldManager', system: this.pressureHoldManager },
       { name: 'signalCueManager', system: this.signalCueManager },
       { name: 'healthSystem', system: this.healthSystem },
+      { name: 'smellSystem', system: this.smellSystem },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'zoneSystem', system: this.zoneSystem },
@@ -871,6 +875,7 @@ export class Game {
       pressureHoldManager: this.pressureHoldManager,
       signalCueManager: this.signalCueManager,
       healthSystem: this.healthSystem,
+      smellSystem: this.smellSystem,
     });
 
     this.pressureHoldManager.bindRuntime({

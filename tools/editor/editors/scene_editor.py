@@ -57,6 +57,7 @@ from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runti
 from ..shared.move_entity_map_picker import WorldPointPickView, resolve_world_size_for_scene_json
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
+from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.project_paths import ProjectPaths
 from ..shared.fonts import MONO_FONT_FAMILY
 
@@ -224,6 +225,8 @@ _NPC_SCENE_ANIM_PREVIEW_Z = -10.0
 # 巡逻折线：高于精灵预览、高于 NPC 控制点，shape 仅顶点以便线段处点选 NPC
 _PATROL_LINE_COLOR = QColor(0, 200, 220, 220)
 _PATROL_OVERLAY_Z = 2.0
+_LIGHTCURVE_LINE_COLOR = QColor(255, 196, 64, 230)  # 暖金,区别于巡逻的青色
+_LIGHTCURVE_OVERLAY_Z = 2.5
 
 
 def _anim_bundle_key_from_manifest_url(url: str) -> str:
@@ -1144,6 +1147,304 @@ class _NpcPatrolPolyline(QGraphicsObject):
         super().hoverLeaveEvent(event)
 
 
+class _LightCurvePolyline(QGraphicsObject):
+    """光环境曲线开放折线(画布直编):拖顶点 / 双击边插点 / 右键删点。
+
+    与巡逻折线同构,但每个顶点**携带 env**(光照关键帧):插点时复制邻点 env,
+    commit 时把含 env 的完整点列回传,使画布编辑不丢关键帧。
+    """
+
+    HANDLE_WORLD_R = 14.0
+
+    def __init__(self, canvas: "SceneCanvas", points: list[dict]):
+        super().__init__()
+        self._canvas = canvas
+        self._points: list[dict] = [
+            {"x": float(p.get("x", 0)), "y": float(p.get("y", 0)),
+             "env": copy.deepcopy(p.get("env")) if isinstance(p.get("env"), dict) else {}}
+            for p in points
+        ]
+        self.setFlags(
+            self.GraphicsItemFlag.ItemIsSelectable
+            | self.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setZValue(_LIGHTCURVE_OVERLAY_Z)
+        self._drag_vertex: int | None = None
+        self._last_scene: QPointF | None = None
+        self._hover_vertex: int | None = None
+        self._selected: int = -1
+        self._ref_width: float = 150.0  # 代表性角色世界宽度,用于接触阴影椭圆尺寸预览
+
+    def set_ref_width(self, w: float) -> None:
+        if w and w > 0 and abs(w - self._ref_width) > 1e-6:
+            self._ref_width = float(w)
+            self.prepareGeometryChange()  # 接触椭圆尺寸/包围盒随之变
+            self.update()
+
+    def set_selected(self, i: int) -> None:
+        if i != self._selected:
+            self._selected = i
+            self.prepareGeometryChange()  # 选中点 gizmo 更大,包围盒可能变
+            self.update()
+
+    @staticmethod
+    def _qcol(c: object, default: tuple = (255, 255, 255)) -> QColor:
+        if isinstance(c, (list, tuple)) and len(c) >= 3:
+            def f(v: object) -> int:
+                try:
+                    return max(0, min(255, int(round(max(0.0, min(1.0, float(v))) * 255))))
+                except (TypeError, ValueError):
+                    return 255
+            return QColor(f(c[0]), f(c[1]), f(c[2]))
+        return QColor(*default)
+
+    def set_points_from_model(self, points: list) -> None:
+        self._points = []
+        for p in points:
+            if isinstance(p, dict):
+                self._points.append({
+                    "x": round(float(p.get("x", 0)), 2),
+                    "y": round(float(p.get("y", 0)), 2),
+                    "env": copy.deepcopy(p.get("env")) if isinstance(p.get("env"), dict) else {},
+                })
+        self.prepareGeometryChange()
+        self.update()
+
+    def points_to_model(self) -> list[dict]:
+        return [
+            {"x": round(p["x"], 2), "y": round(p["y"], 2), "env": copy.deepcopy(p["env"])}
+            for p in self._points
+        ]
+
+    def boundingRect(self) -> QRectF:
+        if len(self._points) < 1:
+            return QRectF()
+        xs = [p["x"] for p in self._points]
+        ys = [p["y"] for p in self._points]
+        m = self.HANDLE_WORLD_R * 7.5  # 方向箭头/影迹的最大伸出
+        for p in self._points:                                  # 还要容纳接触阴影椭圆(随 contactSize)
+            e = p.get("env") if isinstance(p.get("env"), dict) else {}
+            shd = e.get("shadow") if isinstance(e.get("shadow"), dict) else {}
+            cs = float(shd.get("contactSize", 1.0) or 1.0)
+            m = max(m, self._ref_width * 0.65 * cs)
+        m += 4
+        return QRectF(
+            min(xs) - m, min(ys) - m,
+            max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m,
+        )
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        r = self.HANDLE_WORLD_R
+        for p in self._points:
+            path.addEllipse(QPointF(p["x"], p["y"]), r, r)
+        return path
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        del option, widget
+        painter.save()
+        n = len(self._points)
+        if n >= 2:
+            painter.setPen(QPen(_LIGHTCURVE_LINE_COLOR.darker(110), 0, Qt.PenStyle.SolidLine))
+            painter.setBrush(QBrush(Qt.GlobalColor.transparent))
+            for i in range(n - 1):
+                a, b = self._points[i], self._points[i + 1]
+                painter.drawLine(QPointF(a["x"], a["y"]), QPointF(b["x"], b["y"]))
+        for i, p in enumerate(self._points):
+            self._paint_light_gizmo(painter, i, p, selected=(i == self._selected))
+        painter.restore()
+
+    def _paint_light_gizmo(self, painter: QPainter, i: int, p: dict, *, selected: bool) -> None:
+        """在控制点处画该关键帧光照的可视化:主光方向箭头+颜色、环境光环、影迹(方向/长度/暗度)。"""
+        e = p.get("env") if isinstance(p.get("env"), dict) else {}
+        key = e.get("key", {}) if isinstance(e.get("key"), dict) else {}
+        sh = e.get("shadow", {}) if isinstance(e.get("shadow"), dict) else {}
+        amb = e.get("ambient", {}) if isinstance(e.get("ambient"), dict) else {}
+        az = float(key.get("azimuthDeg", 125) or 125)
+        el = max(8.0, min(85.0, float(key.get("elevationDeg", 55) or 55)))
+        inten = float(key.get("intensity", 1.0) or 1.0)
+        kcol = self._qcol(key.get("color"), (255, 247, 235))
+        acol = self._qcol(amb.get("color"), (140, 153, 184))
+        dark = max(0.0, min(1.0, float(sh.get("darkness", 0.4) or 0.4)))
+        a = math.radians(az)
+        # 光来向。与运行时一致:azimuth 在「世界 y 向下」帧度量(影迹 = 光来向反向),
+        # 即 EntityShadow 的 offX/offY=cos/sin(az+180)。故此处 sin 不取负,否则会与运行时上下镜像(看着像差 90°)。
+        cx, cy = math.cos(a), math.sin(a)
+        cot = math.cos(math.radians(el)) / max(math.sin(math.radians(el)), 1e-3)
+        lenf = max(0.3, min(1.6, cot))                # 与 resolveLightEnv 同的影长系数
+        R = self.HANDLE_WORLD_R
+        scale = 1.35 if selected else 0.85
+        px, py = p["x"], p["y"]
+        # 影迹:从点沿光的反方向,长度=影长系数,暗度=alpha
+        sxL = R * (2.4 + 2.2 * lenf) * scale
+        spen = QPen(QColor(8, 8, 14, int(70 + 150 * dark)), R * (0.55 if selected else 0.34))
+        spen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(spen)
+        painter.setBrush(QBrush(Qt.GlobalColor.transparent))
+        painter.drawLine(QPointF(px, py), QPointF(px - cx * sxL, py - cy * sxL))
+        # 接触阴影范围:脚下椭圆,半轴 = 角色宽×(0.65,0.30)×contactSize,暗度=contact(与 EntityShadow 同公式)
+        cs = float(sh.get("contactSize", 1.0) or 1.0)
+        con = max(0.0, min(1.0, float(sh.get("contact", 0.45) or 0.45)))
+        if cs > 0 and con > 0:
+            rx = self._ref_width * 0.65 * cs
+            ry = self._ref_width * 0.30 * cs
+            fill_a = int((45 + 150 * con) if selected else (18 + 70 * con))
+            painter.setBrush(QBrush(QColor(0, 0, 0, fill_a)))
+            painter.setPen(QPen(QColor(20, 24, 32, 200), R * 0.12, Qt.PenStyle.DashLine))
+            painter.drawEllipse(QPointF(px, py), rx, ry)
+        # 主光箭头:从光来向指向控制点,颜色=主光色,强度→不透明度
+        arrowL = R * (2.6 + 1.4 * lenf) * scale
+        kc = QColor(kcol)
+        kc.setAlpha(int(max(70, min(255, 110 + 80 * min(inten, 2.0)))))
+        apen = QPen(kc, R * (0.42 if selected else 0.26))
+        apen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(apen)
+        tailx, taily = px + cx * arrowL, py + cy * arrowL
+        painter.drawLine(QPointF(tailx, taily), QPointF(px, py))
+        ah = R * 0.7 * scale
+        # 箭头头部(指向 px,py)
+        head_a1 = math.atan2(py - taily, px - tailx)
+        for off in (2.6, -2.6):
+            hx = px - math.cos(head_a1 + off) * ah
+            hy = py - math.sin(head_a1 + off) * ah
+            painter.drawLine(QPointF(px, py), QPointF(hx, hy))
+        # 主光色圆盘(半径随强度)+ 环境光环
+        disc = R * (0.42 + 0.16 * min(inten, 2.0)) * (1.25 if selected else 1.0)
+        painter.setPen(QPen(QColor(255, 255, 255, 230) if selected else QColor(120, 80, 0), 0))
+        painter.setBrush(QBrush(kcol))
+        painter.drawEllipse(QPointF(px, py), disc, disc)
+        ring = QPen(acol, R * 0.2)
+        painter.setPen(ring)
+        painter.setBrush(QBrush(Qt.GlobalColor.transparent))
+        rr = disc + R * 0.4
+        painter.drawEllipse(QPointF(px, py), rr, rr)
+        # 拖拽/悬停高亮外圈
+        if self._hover_vertex == i or self._drag_vertex == i:
+            painter.setPen(QPen(QColor(255, 168, 48), R * 0.22))
+            painter.setBrush(QBrush(Qt.GlobalColor.transparent))
+            painter.drawEllipse(QPointF(px, py), rr + R * 0.3, rr + R * 0.3)
+        # 编号 + (选中时)读数
+        painter.setPen(QPen(Qt.GlobalColor.white))
+        painter.setFont(QFont(MONO_FONT_FAMILY, 9 if selected else 7))
+        painter.drawText(QPointF(px + rr + 3, py + 4), str(i))
+        if selected:
+            painter.setFont(QFont(MONO_FONT_FAMILY, 7))
+            painter.setPen(QPen(QColor(255, 230, 170)))
+            painter.drawText(
+                QPointF(px + rr + 3, py + 16),
+                f"az{az:.0f} el{el:.0f} I{inten:.2f} dk{dark:.2f}",
+            )
+
+    def _vertex_at_scene(self, scene_pos: QPointF) -> int | None:
+        x, y = scene_pos.x(), scene_pos.y()
+        r2 = self.HANDLE_WORLD_R ** 2
+        for i, p in enumerate(self._points):
+            dx, dy = p["x"] - x, p["y"] - y
+            if dx * dx + dy * dy <= r2:
+                return i
+        return None
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        sp = event.scenePos()
+        vi = self._vertex_at_scene(sp)
+        if vi is not None:
+            self._drag_vertex = vi
+            self._last_scene = QPointF(sp)
+            sc = self.scene()
+            if sc is not None:
+                sc.clearSelection()
+            self.setSelected(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._drag_vertex is not None and self._last_scene is not None:
+            sp = event.scenePos()
+            dx = sp.x() - self._last_scene.x()
+            dy = sp.y() - self._last_scene.y()
+            self._points[self._drag_vertex]["x"] += dx
+            self._points[self._drag_vertex]["y"] += dy
+            self._last_scene = QPointF(sp)
+            self.prepareGeometryChange()
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_vertex is not None:
+            self._drag_vertex = None
+            self._last_scene = None
+            self._canvas._emit_lightcurve_committed(self.points_to_model())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+        sp = event.scenePos()
+        if self._vertex_at_scene(sp) is not None:
+            super().mouseDoubleClickEvent(event)
+            return
+        x, y = sp.x(), sp.y()
+        n = len(self._points)
+        best_i, best_d2 = -1, 1e18
+        for i in range(max(0, n - 1)):
+            a, b = self._points[i], self._points[i + 1]
+            abx, aby = b["x"] - a["x"], b["y"] - a["y"]
+            denom = abx * abx + aby * aby + 1e-12
+            t = max(0, min(1, ((x - a["x"]) * abx + (y - a["y"]) * aby) / denom))
+            px, py = a["x"] + t * abx, a["y"] + t * aby
+            d2 = (x - px) ** 2 + (y - py) ** 2
+            if d2 < best_d2:
+                best_d2, best_i = d2, i
+        thr = (self.HANDLE_WORLD_R * 2.2) ** 2
+        if best_i >= 0 and best_d2 < thr:
+            a, b = self._points[best_i], self._points[best_i + 1]
+            mx, my = (a["x"] + b["x"]) * 0.5, (a["y"] + b["y"]) * 0.5
+            self._points.insert(best_i + 1, {"x": mx, "y": my, "env": copy.deepcopy(a["env"])})
+        elif n == 0 or (n >= 1 and best_i < 0):
+            # 空曲线/单点时双击空白处直接追加一个点(env 复制末点或留空)
+            env = copy.deepcopy(self._points[-1]["env"]) if self._points else {}
+            self._points.append({"x": x, "y": y, "env": env})
+        self.prepareGeometryChange()
+        self.update()
+        self._canvas._emit_lightcurve_committed(self.points_to_model())
+        event.accept()
+
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        vi = self._vertex_at_scene(event.scenePos())
+        if vi is not None:
+            menu = QMenu()
+            act = menu.addAction("删除此控制点")
+            chosen = menu.exec(event.screenPos())
+            if chosen == act:
+                del self._points[vi]
+                self.prepareGeometryChange()
+                self.update()
+                self._canvas._emit_lightcurve_committed(self.points_to_model())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
+
+    def hoverMoveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self._hover_vertex = self._vertex_at_scene(event.scenePos())
+        self.update()
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self._hover_vertex = None
+        self.update()
+        super().hoverLeaveEvent(event)
+
+
 # ---------------------------------------------------------------------------
 # Canvas view  (coordinate system = world units)
 # ---------------------------------------------------------------------------
@@ -1161,6 +1462,8 @@ class SceneCanvas(QGraphicsView):
     item_npc_collision_polygon_committed = Signal(str, object)
     # npc_id, route: list[{"x","y"}, ...]
     item_npc_patrol_route_committed = Signal(str, object)
+    # 光环境曲线在画布上拖动/插点/删点后提交完整点列(含 env)
+    item_lightcurve_committed = Signal(object)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
     context_add_entity = Signal(str, float, float)
 
@@ -1185,6 +1488,7 @@ class SceneCanvas(QGraphicsView):
         self._npc_ref_items: list[QGraphicsItem] = []
         self._npc_ref_visible: bool = True
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
+        self._lightcurve_overlay: _LightCurvePolyline | None = None
         self._world_w: float = 800
         self._world_h: float = 600
         self._project_model: ProjectModel | None = None
@@ -1218,6 +1522,7 @@ class SceneCanvas(QGraphicsView):
         self._bg_item = None
         self._entity_items.clear()
         self._patrol_overlays.clear()
+        self._lightcurve_overlay = None
 
     def _restore_pick_z_order(self) -> None:
         if not self._saved_item_z:
@@ -1480,6 +1785,45 @@ class SceneCanvas(QGraphicsView):
         self, npc_id: str, route: list,
     ) -> None:
         self.item_npc_patrol_route_committed.emit(npc_id, route)
+
+    # ---- 光环境曲线画布 overlay ----
+    def _emit_lightcurve_committed(self, points: list) -> None:
+        self.item_lightcurve_committed.emit(points)
+
+    def set_lightcurve_overlay(
+        self, points: list | None, selected: int = -1, ref_width: float = 0.0,
+    ) -> None:
+        """显示/更新光环境曲线折线；points 为 None 或空则移除。就地更新优先,避免高频析构。"""
+        pts = [p for p in (points or []) if isinstance(p, dict)]
+        if not pts:
+            self.remove_lightcurve_overlay()
+            return
+        ov = self._lightcurve_overlay
+        if isinstance(ov, _LightCurvePolyline) and ov.scene() is self._gfx:
+            if ref_width > 0:
+                ov.set_ref_width(ref_width)
+            ov.set_points_from_model(pts)
+            ov.set_selected(selected)
+            return
+        self.remove_lightcurve_overlay()
+        item = _LightCurvePolyline(self, pts)
+        if ref_width > 0:
+            item.set_ref_width(ref_width)
+        item.set_selected(selected)
+        self._gfx.addItem(item)
+        self._lightcurve_overlay = item
+
+    def remove_lightcurve_overlay(self) -> None:
+        it = self._lightcurve_overlay
+        self._lightcurve_overlay = None
+        if it is None:
+            return
+        try:
+            it.setSelected(False)
+        except RuntimeError:
+            return
+        if it.scene() is self._gfx:
+            self._gfx.removeItem(it)
 
     def set_npc_patrol_overlay(
         self, npc_id: str, route: list | None,
@@ -2230,6 +2574,228 @@ class SceneEntityPositionPickerDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# 光照环境曲线（lightEnvCurve）
+# ---------------------------------------------------------------------------
+
+# 关键帧缺省值，镜像 src/rendering/lightEnv.ts 的 BASELINE；编辑器写「完整」关键帧。
+_LC_BASELINE_ENV: dict = {
+    "key": {"azimuthDeg": 125.0, "elevationDeg": 55.0, "color": [1.0, 0.97, 0.92], "intensity": 1.0},
+    "ambient": {"color": [0.55, 0.6, 0.72], "intensity": 1.0},
+    "shadow": {
+        "mode": "real", "enabled": True, "darkness": 0.4, "softness": 1.0,
+        "contact": 0.5, "contactSize": 1.0, "drape": 0.6, "drapeEnabled": True,
+        "softSamples": 1, "softRadius": 0.05, "billboard": "light",
+    },
+    "toneStrength": 0.45, "toneEnabled": True,
+    "ao": {"contact": 0.45, "form": 0.25},
+}
+
+
+def _rgb01_to_hex(c: object) -> str:
+    """光照颜色 [r,g,b]（0..1，可超 1 的 HDR 在编辑器内夹到 1）→ #rrggbb。"""
+    if not isinstance(c, (list, tuple)) or len(c) < 3:
+        return "#ffffff"
+    def ch(v: object) -> int:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            f = 1.0
+        return max(0, min(255, round(max(0.0, min(1.0, f)) * 255)))
+    return f"#{ch(c[0]):02x}{ch(c[1]):02x}{ch(c[2]):02x}"
+
+
+def _hex_to_rgb01(hx: str) -> list[float]:
+    col = QColor(hx if hx.startswith("#") else f"#{hx}")
+    if not col.isValid():
+        return [1.0, 1.0, 1.0]
+    return [round(col.red() / 255, 3), round(col.green() / 255, 3), round(col.blue() / 255, 3)]
+
+
+def _spin(lo: float, hi: float, step: float, decimals: int) -> QDoubleSpinBox:
+    s = QDoubleSpinBox()
+    s.setRange(lo, hi)
+    s.setSingleStep(step)
+    s.setDecimals(decimals)
+    s.setMaximumWidth(90)
+    return s
+
+
+class _LightEnvKeyframeEditor(QWidget):
+    """单关键帧光照环境编辑器：key/ambient/shadow/tone/ao 全字段，写「完整」env。
+
+    阴影 length/skewX 故意不暴露——运行时由 elevation/azimuth 推导（keying 方位/仰角即动画）。
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._updating = False
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
+
+        # —— 主光 key ——
+        kbox = QWidget()
+        kform = compact_form(QFormLayout(kbox))
+        self.key_az = _spin(0, 360, 1, 1)
+        self.key_el = _spin(0, 90, 1, 1)
+        self.key_color = HexColorPickRow("#ffffff", title="主光颜色 key.color")
+        self.key_int = _spin(0, 4, 0.05, 3)
+        kform.addRow("主光方位°(来向)", self.key_az)
+        kform.addRow("主光仰角°", self.key_el)
+        kform.addRow("主光颜色", self.key_color)
+        kform.addRow("主光强度", self.key_int)
+        root.addWidget(QLabel("主光 key"))
+        root.addWidget(kbox)
+
+        # —— 环境光 ambient ——
+        abox = QWidget()
+        aform = compact_form(QFormLayout(abox))
+        self.amb_color = HexColorPickRow("#8c99b8", title="环境光颜色 ambient.color")
+        self.amb_int = _spin(0, 4, 0.05, 3)
+        aform.addRow("环境光颜色", self.amb_color)
+        aform.addRow("环境光强度", self.amb_int)
+        root.addWidget(QLabel("环境光 ambient"))
+        root.addWidget(abox)
+
+        # —— 色调 + AO ——
+        tbox = QWidget()
+        tform = compact_form(QFormLayout(tbox))
+        self.tone_strength = _spin(0, 1, 0.02, 3)
+        self.tone_enabled = QCheckBox("色调融入 toneEnabled")
+        self.ao_contact = _spin(0, 1, 0.02, 3)
+        self.ao_form = _spin(0, 1, 0.02, 3)
+        tform.addRow("色调强度 toneStrength", self.tone_strength)
+        tform.addRow("", self.tone_enabled)
+        tform.addRow("AO 接触 contact", self.ao_contact)
+        tform.addRow("AO 形体 form", self.ao_form)
+        root.addWidget(QLabel("色调 / AO"))
+        root.addWidget(tbox)
+
+        # —— 阴影 shadow（默认折叠）——
+        sh_fold = CollapsibleSection("阴影 shadow（length/skew 由方位/仰角自动推导）", start_open=False)
+        sbox = QWidget()
+        sform = compact_form(QFormLayout(sbox))
+        self.sh_mode = FilterableTypeCombo.from_flat_strings(["real", "planar", "off"], self, select_only=True)
+        self.sh_enabled = QCheckBox("启用阴影 enabled")
+        self.sh_darkness = _spin(0, 1, 0.02, 3)
+        self.sh_softness = _spin(0, 4, 0.05, 3)
+        self.sh_contact = _spin(0, 1, 0.02, 3)
+        self.sh_contact_size = _spin(0.1, 3, 0.05, 3)
+        self.sh_drape = _spin(0, 3, 0.05, 3)
+        self.sh_drape_enabled = QCheckBox("贴地披覆 drapeEnabled")
+        self.sh_soft_samples = QSpinBox()
+        self.sh_soft_samples.setRange(1, 16)
+        self.sh_soft_samples.setMaximumWidth(90)
+        self.sh_soft_radius = _spin(0, 1, 0.01, 3)
+        self.sh_billboard = FilterableTypeCombo.from_flat_strings(["light", "camera"], self, select_only=True)
+        sform.addRow("模式 mode", self.sh_mode)
+        sform.addRow("", self.sh_enabled)
+        sform.addRow("暗度 darkness", self.sh_darkness)
+        sform.addRow("柔和 softness", self.sh_softness)
+        sform.addRow("接触 contact", self.sh_contact)
+        sform.addRow("接触尺寸 contactSize", self.sh_contact_size)
+        sform.addRow("披覆 drape", self.sh_drape)
+        sform.addRow("", self.sh_drape_enabled)
+        sform.addRow("软采样 softSamples", self.sh_soft_samples)
+        sform.addRow("软半径 softRadius", self.sh_soft_radius)
+        sform.addRow("billboard", self.sh_billboard)
+        sh_fold.add_body(sbox)
+        root.addWidget(sh_fold)
+
+        # 统一接变更信号
+        for sp in (self.key_az, self.key_el, self.key_int, self.amb_int, self.tone_strength,
+                   self.ao_contact, self.ao_form, self.sh_darkness, self.sh_softness,
+                   self.sh_contact, self.sh_contact_size, self.sh_drape, self.sh_soft_radius):
+            sp.valueChanged.connect(self._on_any)
+        self.sh_soft_samples.valueChanged.connect(self._on_any)
+        for cb in (self.tone_enabled, self.sh_enabled, self.sh_drape_enabled):
+            cb.stateChanged.connect(self._on_any)
+        for combo in (self.sh_mode, self.sh_billboard):
+            combo.currentIndexChanged.connect(self._on_any)
+        for col in (self.key_color, self.amb_color):
+            col.changed.connect(self._on_any)
+
+    def _on_any(self, *_a: object) -> None:
+        if self._updating:
+            return
+        self.changed.emit()
+
+    def set_env(self, env: dict | None) -> None:
+        """以 BASELINE 为底合并 env（部分关键帧补全），填入控件。"""
+        self._updating = True
+        try:
+            e = copy.deepcopy(_LC_BASELINE_ENV)
+            src = env if isinstance(env, dict) else {}
+            for grp in ("key", "ambient", "shadow", "ao"):
+                if isinstance(src.get(grp), dict):
+                    e[grp].update(src[grp])
+            if "toneStrength" in src:
+                e["toneStrength"] = src["toneStrength"]
+            if "toneEnabled" in src:
+                e["toneEnabled"] = src["toneEnabled"]
+            k, a, sh = e["key"], e["ambient"], e["shadow"]
+            self.key_az.setValue(float(k.get("azimuthDeg", 125)))
+            self.key_el.setValue(float(k.get("elevationDeg", 55)))
+            self.key_color.set_hex(_rgb01_to_hex(k.get("color")))
+            self.key_int.setValue(float(k.get("intensity", 1)))
+            self.amb_color.set_hex(_rgb01_to_hex(a.get("color")))
+            self.amb_int.setValue(float(a.get("intensity", 1)))
+            self.tone_strength.setValue(float(e.get("toneStrength", 0.45)))
+            self.tone_enabled.setChecked(bool(e.get("toneEnabled", True)))
+            self.ao_contact.setValue(float(e["ao"].get("contact", 0.45)))
+            self.ao_form.setValue(float(e["ao"].get("form", 0.25)))
+            self.sh_mode.set_committed_type(str(sh.get("mode", "real")))
+            self.sh_enabled.setChecked(bool(sh.get("enabled", True)))
+            self.sh_darkness.setValue(float(sh.get("darkness", 0.4)))
+            self.sh_softness.setValue(float(sh.get("softness", 1.0)))
+            self.sh_contact.setValue(float(sh.get("contact", 0.5)))
+            self.sh_contact_size.setValue(float(sh.get("contactSize", 1.0)))
+            self.sh_drape.setValue(float(sh.get("drape", 0.6)))
+            self.sh_drape_enabled.setChecked(bool(sh.get("drapeEnabled", True)))
+            self.sh_soft_samples.setValue(int(sh.get("softSamples", 1)))
+            self.sh_soft_radius.setValue(float(sh.get("softRadius", 0.05)))
+            self.sh_billboard.set_committed_type(str(sh.get("billboard", "light")))
+        finally:
+            self._updating = False
+
+    def get_env(self) -> dict:
+        """读出「完整」env（键序固定，保证编辑器往返稳定）。"""
+        return {
+            "key": {
+                "azimuthDeg": round(self.key_az.value(), 3),
+                "elevationDeg": round(self.key_el.value(), 3),
+                "color": _hex_to_rgb01(self.key_color.hex()),
+                "intensity": round(self.key_int.value(), 3),
+            },
+            "ambient": {
+                "color": _hex_to_rgb01(self.amb_color.hex()),
+                "intensity": round(self.amb_int.value(), 3),
+            },
+            "shadow": {
+                "mode": self.sh_mode.committed_type() or "real",
+                "enabled": bool(self.sh_enabled.isChecked()),
+                "darkness": round(self.sh_darkness.value(), 3),
+                "softness": round(self.sh_softness.value(), 3),
+                "contact": round(self.sh_contact.value(), 3),
+                "contactSize": round(self.sh_contact_size.value(), 3),
+                "drape": round(self.sh_drape.value(), 3),
+                "drapeEnabled": bool(self.sh_drape_enabled.isChecked()),
+                "softSamples": int(self.sh_soft_samples.value()),
+                "softRadius": round(self.sh_soft_radius.value(), 3),
+                "billboard": self.sh_billboard.committed_type() or "light",
+            },
+            "toneStrength": round(self.tone_strength.value(), 3),
+            "toneEnabled": bool(self.tone_enabled.isChecked()),
+            "ao": {
+                "contact": round(self.ao_contact.value(), 3),
+                "form": round(self.ao_form.value(), 3),
+            },
+        }
+
+
+# ---------------------------------------------------------------------------
 # Property panel
 # ---------------------------------------------------------------------------
 
@@ -2251,6 +2817,8 @@ class ScenePropertyPanel(QScrollArea):
     delete_current_entity_requested = Signal()
     # 巡逻折线显示/数据变更后刷新画布 overlay
     npc_patrol_overlay_refresh_requested = Signal()
+    # 光环境曲线数据变化→请求画布重建 overlay
+    lightcurve_overlay_refresh_requested = Signal()
     # npc_id, enabled — 仅编辑器内沿路径预览精灵
     npc_patrol_preview_changed = Signal(str, bool)
     # 当前面板存在未 Apply 的 staging 修改（True）或已与 source 一致（False）
@@ -2315,6 +2883,10 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_poly_updating: bool = False
         self._npc_patrol_table_updating: bool = False
         self._npc_col_updating: bool = False
+        # 光环境曲线：单一真相源(每项 {x,y,env})，表格只读展示 x/y，env 走逐帧编辑器
+        self._sc_lightcurve_points: list[dict] = []
+        self._lc_selected: int = -1
+        self._lc_table_updating: bool = False
         self._props_changed_suppressed: int = 0
         self._emit_changed_signal = self.changed.emit
         # auto-discard 语义下的"未应用 staging"标记：任何用户编辑路径置 True，
@@ -2636,6 +3208,58 @@ class ScenePropertyPanel(QScrollArea):
         outer.addWidget(enter_g)
         self._sc_on_enter_fold = enter_g
 
+        lc_g = CollapsibleSection(
+            "光环境曲线 lightEnvCurve（玩家位置插值光照）", start_open=False)
+        lc_g.set_header_tool_tip(
+            "一条世界折线；运行时把玩家位置投影到线上,按弧长在相邻关键帧间插值光照。"
+            "≥2 个控制点才生效;为空=用静态 lightEnv（现状不变）。")
+        lc_inner = QWidget()
+        lc_lay = QVBoxLayout(lc_inner)
+        lc_hint = QLabel(
+            "控制点(暖金)直接在画布上编辑,和巡逻路线一样：拖顶点移动 / 双击线段插点 / "
+            "右键顶点删除。下表选中一行编辑其光照关键帧。")
+        lc_hint.setWordWrap(True)
+        lc_lay.addWidget(lc_hint)
+        self._lc_table = QTableWidget(0, 3)
+        self._lc_table.setHorizontalHeaderLabels(["#", "x", "y"])
+        self._lc_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents)
+        self._lc_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self._lc_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch)
+        self._lc_table.setMinimumHeight(110)
+        self._lc_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._lc_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self._lc_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        self._lc_table.itemSelectionChanged.connect(self._on_lc_row_selected)
+        self._install_vertex_table_affordances(
+            self._lc_table, self._on_lc_remove_point, label="删除选中控制点")
+        lc_lay.addWidget(self._lc_table)
+        lc_btns = QHBoxLayout()
+        self._lc_add = QPushButton("添加点")
+        self._lc_add.setToolTip("在末点附近追加一个控制点,再到画布上拖到目标位置")
+        self._lc_add.clicked.connect(self._on_lc_add_point)
+        self._lc_up = QPushButton("上移")
+        self._lc_up.clicked.connect(lambda: self._on_lc_move(-1))
+        self._lc_down = QPushButton("下移")
+        self._lc_down.clicked.connect(lambda: self._on_lc_move(1))
+        self._lc_del = QPushButton("删除")
+        self._lc_del.clicked.connect(self._on_lc_remove_point)
+        for b in (self._lc_add, self._lc_up, self._lc_down, self._lc_del):
+            lc_btns.addWidget(b)
+        lc_btns.addStretch(1)
+        lc_lay.addLayout(lc_btns)
+        lc_lay.addWidget(QLabel("选中控制点的光照关键帧："))
+        self._lc_env_editor = _LightEnvKeyframeEditor()
+        self._lc_env_editor.changed.connect(self._on_lc_env_changed)
+        lc_lay.addWidget(self._lc_env_editor)
+        lc_g.add_body(lc_inner)
+        outer.addWidget(lc_g)
+        self._sc_lightcurve_fold = lc_g
+
         outer.addStretch(1)
         return w
 
@@ -2752,6 +3376,7 @@ class ScenePropertyPanel(QScrollArea):
                 raw_oe = []
             self._sc_on_enter.set_data(raw_oe)
             self._sc_on_enter_fold.set_expanded(bool(raw_oe))
+            self._load_lightcurve(st)
 
     def _on_depth_fields_changed(self, _v: float) -> None:
         if not self._sc_depth_tol.isEnabled():
@@ -2967,7 +3592,144 @@ class ScenePropertyPanel(QScrollArea):
             sc["onEnter"] = oe
         elif "onEnter" in sc:
             del sc["onEnter"]
+        lc_pts = [
+            {"x": round(float(p.get("x", 0)), 2), "y": round(float(p.get("y", 0)), 2),
+             "env": copy.deepcopy(p.get("env")) if isinstance(p.get("env"), dict) else {}}
+            for p in self._sc_lightcurve_points
+        ]
+        if lc_pts:
+            sc["lightEnvCurve"] = {"points": lc_pts}
+        elif "lightEnvCurve" in sc:
+            del sc["lightEnvCurve"]
         self._emit_props_changed()
+
+    # ---- 光环境曲线 lightEnvCurve --------------------------------------
+    def _fill_lc_table(self, *, select_row: int = -1) -> None:
+        self._lc_table_updating = True
+        try:
+            self._lc_table.blockSignals(True)
+            self._lc_table.setRowCount(0)
+            for i, p in enumerate(self._sc_lightcurve_points):
+                r = self._lc_table.rowCount()
+                self._lc_table.insertRow(r)
+                for col, txt in (
+                    (0, str(i)),
+                    (1, f"{float(p.get('x', 0)):.2f}"),
+                    (2, f"{float(p.get('y', 0)):.2f}"),
+                ):
+                    it = QTableWidgetItem(txt)
+                    it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self._lc_table.setItem(r, col, it)
+            self._lc_table.blockSignals(False)
+            n = len(self._sc_lightcurve_points)
+            if n > 0:
+                tgt = select_row if 0 <= select_row < n else min(max(self._lc_selected, 0), n - 1)
+                self._lc_table.selectRow(tgt)
+        finally:
+            self._lc_table_updating = False
+        self._on_lc_row_selected()
+
+    def _on_lc_row_selected(self) -> None:
+        if self._lc_table_updating:
+            return
+        row = self._lc_table.currentRow()
+        n = len(self._sc_lightcurve_points)
+        self._lc_selected = row
+        has = 0 <= row < n
+        self._lc_env_editor.setEnabled(has)
+        self._lc_del.setEnabled(has)
+        self._lc_up.setEnabled(has and row > 0)
+        self._lc_down.setEnabled(has and row < n - 1)
+        if has:
+            self._lc_env_editor.set_env(self._sc_lightcurve_points[row].get("env"))
+        # 让画布 gizmo 高亮跟随选中行
+        self.lightcurve_overlay_refresh_requested.emit()
+
+    def _on_lc_env_changed(self) -> None:
+        row = self._lc_selected
+        if not (0 <= row < len(self._sc_lightcurve_points)):
+            return
+        self._sc_lightcurve_points[row]["env"] = self._lc_env_editor.get_env()
+        self._emit_props_changed()
+        # 同步给画布 overlay 的 env 副本(避免之后拖拽提交时用旧 env 覆盖)
+        self.lightcurve_overlay_refresh_requested.emit()
+
+    def _on_lc_add_point(self) -> None:
+        st = self._staging_scene or {}
+        ww = float(st.get("worldWidth", 0) or 0)
+        wh = float(st.get("worldHeight", 0) or 0)
+        if self._sc_lightcurve_points:
+            last = self._sc_lightcurve_points[-1]
+            nx, ny = float(last["x"]) + 60.0, float(last["y"])
+            env = (copy.deepcopy(last["env"]) if isinstance(last.get("env"), dict) and last["env"]
+                   else copy.deepcopy(_LC_BASELINE_ENV))
+        else:
+            nx, ny = (ww / 2 if ww > 0 else 400.0), (wh / 2 if wh > 0 else 300.0)
+            env = copy.deepcopy(_LC_BASELINE_ENV)
+        if ww > 0:
+            nx = max(0.0, min(ww, nx))
+        if wh > 0:
+            ny = max(0.0, min(wh, ny))
+        self._sc_lightcurve_points.append({"x": round(nx, 2), "y": round(ny, 2), "env": env})
+        self._emit_props_changed()
+        self._fill_lc_table(select_row=len(self._sc_lightcurve_points) - 1)
+        self.lightcurve_overlay_refresh_requested.emit()
+
+    def _on_lc_remove_point(self) -> None:
+        row = self._lc_selected
+        if not (0 <= row < len(self._sc_lightcurve_points)):
+            return
+        del self._sc_lightcurve_points[row]
+        self._emit_props_changed()
+        self._fill_lc_table(select_row=min(row, len(self._sc_lightcurve_points) - 1))
+        self.lightcurve_overlay_refresh_requested.emit()
+
+    def _on_lc_move(self, delta: int) -> None:
+        row = self._lc_selected
+        n = len(self._sc_lightcurve_points)
+        j = row + delta
+        if not (0 <= row < n and 0 <= j < n):
+            return
+        pts = self._sc_lightcurve_points
+        pts[row], pts[j] = pts[j], pts[row]
+        self._emit_props_changed()
+        self._fill_lc_table(select_row=j)
+        self.lightcurve_overlay_refresh_requested.emit()
+
+    def apply_lightcurve_committed(self, points: object) -> None:
+        """画布 overlay 拖/插/删后回写到面板单一真相源,刷新表+脏标记(overlay 已最新,不回发刷新)。"""
+        if not isinstance(points, list):
+            return
+        norm: list[dict] = []
+        for p in points:
+            if isinstance(p, dict):
+                norm.append({
+                    "x": round(float(p.get("x", 0)), 2),
+                    "y": round(float(p.get("y", 0)), 2),
+                    "env": copy.deepcopy(p["env"]) if isinstance(p.get("env"), dict) else {},
+                })
+        self._sc_lightcurve_points = norm
+        self._emit_props_changed()
+        sel = self._lc_selected if 0 <= self._lc_selected < len(norm) else (0 if norm else -1)
+        self._fill_lc_table(select_row=sel)
+
+    def _load_lightcurve(self, st: dict) -> None:
+        lec = st.get("lightEnvCurve")
+        pts: list[dict] = []
+        if isinstance(lec, dict) and isinstance(lec.get("points"), list):
+            for raw in lec["points"]:
+                if not isinstance(raw, dict):
+                    continue
+                pts.append({
+                    "x": float(raw.get("x", 0) or 0),
+                    "y": float(raw.get("y", 0) or 0),
+                    "env": copy.deepcopy(raw["env"]) if isinstance(raw.get("env"), dict) else {},
+                })
+        self._sc_lightcurve_points = pts
+        self._lc_selected = -1
+        self._sc_lightcurve_fold.set_expanded(bool(pts))
+        self._fill_lc_table(select_row=0 if pts else -1)
+        self.lightcurve_overlay_refresh_requested.emit()
 
     def commit_scene_staging_to_source(self) -> None:
         """Apply：把场景 staging 中非列表字段提交回模型（含 spawnPoint/spawnPoints）。"""
@@ -5544,6 +6306,10 @@ class SceneEditor(QWidget):
         self._patrol_overlay_refresh_timer.setSingleShot(True)
         self._patrol_overlay_refresh_timer.timeout.connect(
             self._apply_npc_patrol_overlay_refresh)
+        self._lightcurve_overlay_refresh_timer = QTimer(self)
+        self._lightcurve_overlay_refresh_timer.setSingleShot(True)
+        self._lightcurve_overlay_refresh_timer.timeout.connect(
+            self._apply_lightcurve_overlay_refresh)
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -5679,6 +6445,8 @@ class SceneEditor(QWidget):
         self._props.delete_current_entity_requested.connect(self._delete_selected)
         self._props.npc_patrol_overlay_refresh_requested.connect(
             self._refresh_npc_patrol_overlay)
+        self._props.lightcurve_overlay_refresh_requested.connect(
+            self._refresh_lightcurve_overlay)
         self._props.npc_patrol_preview_changed.connect(
             self._on_npc_patrol_preview_changed)
         # QueuedConnection：避免在按钮 click 槽里同步触发 toolbar setVisible
@@ -5691,6 +6459,8 @@ class SceneEditor(QWidget):
             )
         self._canvas.item_npc_patrol_route_committed.connect(
             self._on_npc_patrol_route_committed)
+        self._canvas.item_lightcurve_committed.connect(
+            self._on_lightcurve_committed)
 
         splitter.addWidget(left)
         splitter.addWidget(self._canvas)
@@ -5747,6 +6517,25 @@ class SceneEditor(QWidget):
         self._scene_npc_runtimes.clear()
         self._patrol_preview_ids.clear()
         self._patrol_preview_state.clear()
+
+    def _refresh_lightcurve_overlay(self) -> None:
+        self._lightcurve_overlay_refresh_timer.start(0)
+
+    def _apply_lightcurve_overlay_refresh(self) -> None:
+        """把当前场景的光环境曲线点列同步到画布 overlay（任何属性页下都显示,便于随时拖动）。"""
+        data = self._props._sc_lightcurve_points
+        pts: list | None = None
+        if isinstance(data, list) and data:
+            pts = [
+                {"x": d.get("x", 0), "y": d.get("y", 0), "env": d.get("env", {})}
+                for d in data if isinstance(d, dict)
+            ]
+        rw, _rh = _npc_reference_world_size(self._model)  # 代表性角色宽,使接触椭圆与实际站位一致
+        self._canvas.set_lightcurve_overlay(
+            pts, selected=self._props._lc_selected, ref_width=rw)
+
+    def _on_lightcurve_committed(self, points: object) -> None:
+        self._props.apply_lightcurve_committed(points)
 
     def _refresh_npc_patrol_overlay(self) -> None:
         self._patrol_overlay_refresh_timer.start(0)

@@ -197,8 +197,8 @@
     "id": "xg02_beishi",
     "group": "xungou",
     "type": "main",
-    "title": "背庄家尸",
-    "description": "庄家的人寻来找「背尸的」。旁人一听阴婚纷纷后退，可工钱已经勾住了你的脚。",
+    "title": "夜背崖墓尸",
+    "description": "面生的雇主寻来找「背尸的」。那具尸恶名在外，正经班子全推了，可工钱已经勾住了你的脚。",
     "preconditions": [],
     "completionConditions": [
       {
@@ -242,7 +242,7 @@
     "group": "xungou",
     "type": "main",
     "title": "第一单：婆子家的动静",
-    "description": "一个婆子找上门，说院里夜夜有动静，钱已经拍在桌上。这是第一个主动找上门的活儿。",
+    "description": "一个婆子找上门，说院里夜夜有动静，钱已经拍在桌上。这是头一个主动找上门的活路。",
     "preconditions": [],
     "completionConditions": [
       {
@@ -264,7 +264,7 @@
     "group": "xungou",
     "type": "main",
     "title": "连夜回城",
-    "description": "活儿办完了，钱也到手了。趁天没亮透，从河滩绕回城去。",
+    "description": "活路办完了，钱也到手了。趁天没亮透，从河滩绕回城去。",
     "preconditions": [],
     "completionConditions": [
       {

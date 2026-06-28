@@ -9,7 +9,7 @@
   "worldHeight": 768.0,
   "backgrounds": [
     {
-      "image": "background.png",
+      "image": "background_hires_v1.png",
       "x": 0,
       "y": 0
     }

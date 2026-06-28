@@ -3,7 +3,7 @@
   "id": "寻狗_背尸",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·背庄家尸（教学：背尸力学 / V2：帕子包·坠潭·死亡系绳）"
+    "title": "寻狗Demo·夜背崖墓尸（背尸力学 + 香粉 + 不唱魂 → 交控权走鬼打墙）"
   },
   "nodes": {
     "root": {
@@ -18,6 +18,15 @@
             }
           ],
           "next": "done_1"
+        },
+        {
+          "conditions": [
+            {
+              "flag": "beishi_carrying",
+              "value": true
+            }
+          ],
+          "next": "done_carry"
         }
       ],
       "defaultNext": "n1"
@@ -28,7 +37,15 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "不看了。这辈子都不想再看。",
+      "text": "不看了。这辈子都不想再上那座崖墓。",
+      "next": "end1"
+    },
+    "done_carry": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（尸都背身上了，还看啥子……找路下崖嘛。）",
       "next": "end1"
     },
     "n1": {
@@ -37,71 +54,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "大红嫁衣在烛光底下红得发黑。关二狗啐了口唾沫搓搓手——上前，过肩，搭手。背尸的老把式，闭着眼都不会错。",
-      "next": "n_hold"
-    },
-    "n_hold": {
-      "type": "runActions",
-      "actions": [
-        {
-          "type": "startPressureHold",
-          "params": {
-            "id": "carry_bride_corpse"
-          }
-        }
-      ],
-      "next": "n2"
-    },
-    "n2": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "瘫坐在地上喘气的工夫，越缓越觉出不对——这一具，跟他背过的八百具，哪一具都不一样。",
-      "next": "n_chant"
-    },
-    "n_chant": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "text": "凉是凉的，沉是沉的，该是什么——",
-      "next": "n_chant2"
-    },
-    "n_chant2": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "那句背了八百回、念顺了的话，卡在了喉咙里。这一具，哪样都不对。",
-      "next": "n4"
-    },
-    "n4": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "凉透骨。重得邪门。停了多日像才刚停下。这尸，哪样都不对劲。头皮一层一层麻上来。",
-      "next": "n5"
-    },
-    "n5": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "text": "工钱……工钱个屁！！",
-      "next": "n6"
-    },
-    "n6": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "他连滚带爬夺门而出。没敢回城——顺着官道，闷头往黑里跑。",
+      "text": "夜里。临江绝壁上一座崖墓，头七还没过，雇主却要把里头那具尸背下去送义庄。关二狗心头打鼓，可工钱在前——他哦了两句，摸黑上了崖。墓室里那具尸停着，蒙着布。",
       "next": "n_pouch"
     },
     "n_pouch": {
@@ -110,7 +63,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "跑出二里地，道旁枯草里露着个旧帕子包，鼓鼓囊囊像裹着值钱货。鬼使神差，他贪心一把抄进怀里——破是破，没舍得扔。",
+      "text": "尸边上随葬一个旧帕子包，鼓鼓囊囊像裹着值钱货。扒尸捡物的老手，他贪心一把抄进怀里——破是破，没舍得扔。",
       "next": "n_pouch_give"
     },
     "n_pouch_give": {
@@ -132,7 +85,45 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "揣上那一刻，一缕味儿浮起来——浆洗棉布、线头，和一点……廉价香粉。不知打哪儿来，散不掉。",
+      "text": "揣上那一刻，一缕味浮起来——浆洗棉布、线头，和一点……廉价香粉。不晓得打哪点来，散不掉。他啐口唾沫搓搓手，上前过肩搭手，架起那具尸。",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_bride_corpse"
+          }
+        }
+      ],
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "刚架上肩，他就越背越觉出不对——这一具，跟他背过的八百具哪一具都不一样。心头刚念一句“咋个这么沉”，那尸登时沉得像背了座山。",
+      "next": "n_chant"
+    },
+    "n_chant": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "凉是凉的，沉是沉的，该是啥子——",
+      "next": "n_chant2"
+    },
+    "n_chant2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "那句背了八百回、念顺了的话，卡在了喉咙里。凉透骨、重得邪门，停了多日像才刚停下。这尸，哪样都不对劲。头皮一层一层麻上来。",
       "next": "n_cue"
     },
     "n_cue": {
@@ -147,71 +138,27 @@
           }
         }
       ],
-      "next": "n3"
+      "next": "n_carry_flag"
     },
-    "n3": {
+    "n_carry_flag": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "beishi_carrying",
+            "value": true
+          }
+        }
+      ],
+      "next": "n_descend"
+    },
+    "n_descend": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "尸臭俺闻过八百回。这味儿——不是。怎么揣上这破包，倒跟上俺了？",
-      "next": "n_drown"
-    },
-    "n_drown": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "他越跑越急，脚下猛一空——一头栽进路边深潭。冷水灌进鼻子、耳朵，天光一寸寸缩小。就在要沉到底的当口——",
-      "next": "n_drown_act"
-    },
-    "n_drown_act": {
-      "type": "runActions",
-      "actions": [
-        {
-          "type": "damagePlayer",
-          "params": {
-            "amount": 9999
-          }
-        }
-      ],
-      "next": "n_drown2"
-    },
-    "n_drown2": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "一股看不见的劲，从怀里那个包里漫出来，把他从水底硬生生拽了回来。他呛着水爬上岸，趴在泥里，半条命——身上那缕香粉味，没散。",
-      "next": "n_flag"
-    },
-    "n_flag": {
-      "type": "runActions",
-      "actions": [
-        {
-          "type": "emitNarrativeSignal",
-          "params": {
-            "sourceType": "dialogue",
-            "sourceId": "寻狗_背尸",
-            "signal": "beishi_fled"
-          }
-        },
-        {
-          "type": "fadeWorldToBlack",
-          "params": {
-            "durationMs": 900
-          }
-        },
-        {
-          "type": "switchScene",
-          "params": {
-            "targetScene": "雾津街头",
-            "targetSpawnPoint": "from_event"
-          }
-        }
-      ],
+      "text": "（莫管它邪门不邪门，工钱在前。背起就走——下崖那截窄道，自己摸黑下去。）",
       "next": "end1"
     },
     "end1": {

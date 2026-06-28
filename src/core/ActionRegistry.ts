@@ -34,6 +34,7 @@ import type { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraft
 import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
+import type { SmellSystem } from '../systems/SmellSystem';
 import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
@@ -203,6 +204,7 @@ export interface ActionRegistryDeps {
   pressureHoldManager: PressureHoldManager;
   signalCueManager: SignalCueManager;
   healthSystem: HealthSystem;
+  smellSystem: SmellSystem;
 }
 
 function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
@@ -486,7 +488,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     await d.signalCueManager.play(id);
   }, ['id']);
 
-  // 死亡系绳 / 系统级血量（HealthSystem）：扣血到濒死会被系绳拦截、玩家不真死
+  // 【legacy】damagePlayer/healPlayer：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）
+  //  + triggerDeathTether（系绳）；这两个仍注册以兼容历史，已从编辑器内容下拉移除（见 LEGACY_ACTION_TYPES）。
   executor.register('damagePlayer', async (p) => {
     const amount = Number(p.amount ?? 0);
     if (!Number.isFinite(amount) || amount <= 0) return;
@@ -497,6 +500,38 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (!Number.isFinite(amount) || amount <= 0) return;
     d.healthSystem.heal(amount);
   }, ['amount']);
+  // 离死之距（HealthSystem 数值）的编排层控制：reset/set/inc/dec
+  // ——原始置数（clamp [0,max]、即时反应到三把阳火），不触发系绳（系绳走 damagePlayer 路径）。
+  executor.register('resetHealth', () => {
+    d.healthSystem.setHealth(d.healthSystem.getMaxHealth());
+  }, []);
+  executor.register('setHealth', (p) => {
+    const amount = Number(p.amount);
+    if (!Number.isFinite(amount)) return;
+    d.healthSystem.setHealth(amount);
+  }, ['amount']);
+  executor.register('incHealth', (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount)) return;
+    d.healthSystem.setHealth(d.healthSystem.getHealth() + amount);
+  }, ['amount']);
+  executor.register('decHealth', (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount)) return;
+    d.healthSystem.setHealth(d.healthSystem.getHealth() - amount);
+  }, ['amount']);
+  // 显式触发死亡系绳（濒死被拽回）——替代旧的 damagePlayer{9999} 魔法数硬凑。
+  executor.register('triggerDeathTether', () => {
+    d.healthSystem.tether();
+  }, []);
+  // 气味系统（SmellSystem）：编排层设/清当前主导气味，HUD 的"气味烟"随之变。
+  // scent = 气味 id（corpse/yin/incense/blood/mold/powder…，HUD 词库），intensity = 强度 0–100。
+  executor.register('setSmell', (p) => {
+    d.smellSystem.setSmell(String(p.scent ?? ''), p.intensity === undefined ? undefined : Number(p.intensity));
+  }, ['scent', 'intensity']);
+  executor.register('clearSmell', () => {
+    d.smellSystem.clearSmell();
+  }, []);
 
   executor.register('startSugarWheelMinigame', async (p) => {
     const id = String(p.id ?? '').trim();

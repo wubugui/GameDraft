@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_城隍庙供桌",
+  "entry": "root",
+  "meta": {
+    "title": "城隍庙供桌·察看"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一只熟鸡压着纸，一碗倒头饭直挺挺插着筷子。香是新的，烟笔直往上走——今夜没风，可灯苗一直在晃。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

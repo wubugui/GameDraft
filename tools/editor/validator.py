@@ -407,6 +407,47 @@ def validate(model: ProjectModel) -> list[Issue]:
                     f"Zone '{zid}' 为 standard，floorOffsetBoost 无效，可删除",
                 ))
 
+        # 光环境曲线 lightEnvCurve（玩家位置插值光照）
+        lec = sc.get("lightEnvCurve")
+        if lec is not None:
+            pts = lec.get("points") if isinstance(lec, dict) else None
+            if not isinstance(pts, list) or len(pts) < 2:
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    "lightEnvCurve 需要 points 数组且至少 2 个控制点才会生效",
+                ))
+            else:
+                modes: set = set()
+                for pi, pt in enumerate(pts):
+                    if not isinstance(pt, dict):
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"lightEnvCurve.points[{pi}] 须为对象",
+                        ))
+                        continue
+                    for coord in ("x", "y"):
+                        if not isinstance(pt.get(coord), (int, float)):
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"lightEnvCurve.points[{pi}].{coord} 须为数值",
+                            ))
+                    env = pt.get("env")
+                    if env is not None and not isinstance(env, dict):
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"lightEnvCurve.points[{pi}].env 须为对象",
+                        ))
+                    elif isinstance(env, dict):
+                        sh = env.get("shadow")
+                        if isinstance(sh, dict) and "mode" in sh:
+                            modes.add(sh.get("mode"))
+                if len(modes) > 1:
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"lightEnvCurve 各关键帧 shadow.mode 不一致 {sorted(modes)}；"
+                        "运行时跨关键帧切模式会重建阴影实例，建议保持一致",
+                    ))
+
     # --- quest groups ---
     quest_group_ids = {g["id"] for g in model.quest_groups}
     for g in model.quest_groups:

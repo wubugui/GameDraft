@@ -117,7 +117,8 @@ ACTION_TYPES = [
     "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startPressureHold", "playSignalCue", "addFlagValue",
-    "damagePlayer", "healPlayer",
+    "damagePlayer", "healPlayer", "resetHealth", "setHealth", "incHealth", "decHealth", "triggerDeathTether",
+    "setSmell", "clearSmell",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
     "sugarWheelResetPointer",
     "debugAlertActionParams",
@@ -141,7 +142,10 @@ ACTION_TYPES = [
 ]
 
 DEBUG_ONLY_ACTION_TYPES = {"setNarrativeState"}
-CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TYPES]
+# Legacy：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）+ triggerDeathTether（系绳）。
+# 仍保留在 ACTION_TYPES（兼容历史数据、校验通过、运行时可用），但从编辑器内容下拉中移除。
+LEGACY_ACTION_TYPES = {"damagePlayer", "healPlayer"}
+CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TYPES and t not in LEGACY_ACTION_TYPES]
 
 # 编辑器用：会改动存档/可持久化数据 vs 以运行时演出与瞬时状态为主（与实现细节若有出入以策划理解为准，见文档注释）。
 # "save" = 常关联存档、任务、背包、flag、持久化 override 等；"memory" = 多为镜头、UI、过场、等待、切场景、音效等
@@ -179,6 +183,13 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "playSignalCue": "memory",
     "damagePlayer": "save",
     "healPlayer": "save",
+    "resetHealth": "save",
+    "setHealth": "save",
+    "incHealth": "save",
+    "decHealth": "save",
+    "triggerDeathTether": "save",
+    "setSmell": "save",
+    "clearSmell": "save",
     "startWaterMinigame": "memory",
     "startSugarWheelMinigame": "memory",
     "startPaperCraftMinigame": "memory",
@@ -286,6 +297,13 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "playSignalCue": [("id", "str")],
     "damagePlayer": [("amount", "int")],
     "healPlayer": [("amount", "int")],
+    "resetHealth": [],
+    "setHealth": [("amount", "int")],
+    "incHealth": [("amount", "int")],
+    "decHealth": [("amount", "int")],
+    "triggerDeathTether": [],
+    "setSmell": [("scent", "str"), ("intensity", "int")],
+    "clearSmell": [],
     "giveItem": [("id", "str"), ("count", "int")],
     "removeItem": [("id", "str"), ("count", "int")],
     "giveCurrency": [("amount", "int")],

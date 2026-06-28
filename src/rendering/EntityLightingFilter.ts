@@ -1,5 +1,5 @@
 import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
-import type { SceneDepthConfig } from '../data/types';
+import type { RgbColor, SceneDepthConfig } from '../data/types';
 import type { ResolvedLightEnv } from './lightEnv';
 
 /**
@@ -25,6 +25,10 @@ export interface IEntityShadingFilter extends Filter {
   setTone?(v: number): void;
   /** 仅 EntityLightingFilter:sprite 空间 AO(按模式钳 contact) */
   setAO?(contact: number, form: number): void;
+  /** 仅 EntityLightingFilter:key 光颜色/强度(供光环境曲线逐帧动画) */
+  setKeyLight?(color: RgbColor, intensity: number): void;
+  /** 仅 EntityLightingFilter:环境光颜色/强度(供光环境曲线逐帧动画) */
+  setAmbient?(color: RgbColor, intensity: number): void;
 }
 
 const VERT = /* glsl */ `
@@ -298,6 +302,26 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
     if (u) {
       u['uAOContact'] = Math.max(0, Math.min(1, contact));
       u['uAOForm'] = Math.max(0, Math.min(1, form));
+    }
+  }
+
+  /** key 光颜色/强度（构造时已设；光环境曲线运行时逐帧覆盖） */
+  setKeyLight(color: RgbColor, intensity: number): void {
+    const u = this._lu;
+    if (u) {
+      const a = u['uKeyColor'] as Float32Array;
+      a[0] = color[0]; a[1] = color[1]; a[2] = color[2];
+      u['uKeyIntensity'] = intensity;
+    }
+  }
+
+  /** 环境光颜色/强度（构造时已设；光环境曲线运行时逐帧覆盖） */
+  setAmbient(color: RgbColor, intensity: number): void {
+    const u = this._lu;
+    if (u) {
+      const a = u['uAmbientColor'] as Float32Array;
+      a[0] = color[0]; a[1] = color[1]; a[2] = color[2];
+      u['uAmbientIntensity'] = intensity;
     }
   }
 

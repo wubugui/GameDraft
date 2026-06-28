@@ -1,0 +1,37 @@
+{
+  "id": "深潭绝地",
+  "name": "深潭绝地",
+  "worldWidth": 2000,
+  "worldHeight": 1124,
+  "camera": {
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background_v5.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "amb_night_forest_loop",
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 790,
+    "y": 765
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 790,
+      "y": 765
+    },
+    "pool_edge": {
+      "x": 1030,
+      "y": 555
+    }
+  },
+  "zones": [],
+  "hotspots": []
+}

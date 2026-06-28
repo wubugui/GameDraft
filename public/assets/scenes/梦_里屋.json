@@ -8,7 +8,7 @@
   },
   "backgrounds": [
     {
-      "image": "background.png",
+      "image": "background_hires_v1.png",
       "x": 0,
       "y": 0
     }
@@ -64,9 +64,7 @@
       "x": 483,
       "y": 410,
       "interactionRange": 45,
-      "data": {
-        "text": "脚边点着一盏豆大的灯。"
-      },
+      "data": {},
       "displayImage": {
         "image": "/resources/runtime/images/illustrations/dream_foot_lamp.png",
         "worldWidth": 35,
@@ -80,9 +78,7 @@
       "x": 798,
       "y": 176,
       "interactionRange": 45,
-      "data": {
-        "text": "院里有人在烧纸，火光透窗，一明一灭。"
-      }
+      "data": {}
     }
   ],
   "zones": [

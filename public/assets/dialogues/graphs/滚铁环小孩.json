@@ -39,7 +39,7 @@
           "speaker": {
             "kind": "player"
           },
-          "text": "列死麻批娃儿才混哦~好，还给你还给你。"
+          "text": "勒死麻批娃儿才混哦~好，还给你还给你。"
         },
         {
           "speaker": {
@@ -55,7 +55,7 @@
           "text": "不理你......"
         }
       ],
-      "text": "列死麻批娃儿才混哦~好，还给你还给你。"
+      "text": "勒死麻批娃儿才混哦~好，还给你还给你。"
     },
     "return_ring_actions": {
       "type": "runActions",
@@ -100,7 +100,7 @@
         "kind": "npc"
       },
       "next": "end1",
-      "text": "谢谢你帮我把铁环找回来！"
+      "text": "谢谢你帮我把铁环捡回来嘛！"
     },
     "before_evt_1": {
       "type": "line",
@@ -116,7 +116,7 @@
         "kind": "npc"
       },
       "next": "before_evt_3",
-      "text": "你谁啊？不给......"
+      "text": "你哪个嘛？不给......"
     },
     "before_evt_3": {
       "type": "line",
@@ -181,7 +181,7 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "小娃儿，这玩意儿你滚了一天怕该歇歇了。\n让老子滚一滚撒。",
+      "text": "小娃儿，这圈圈你滚了一天，也该刹一脚歇哈了。\n让老子滚一哈撒。",
       "next": "opt_ask_2"
     },
     "opt_ask_2": {
@@ -223,7 +223,7 @@
         "name": "旁白"
       },
       "next": "opt_ask_resolve",
-      "text": "（小孩儿丢下铁环跑了......）"
+      "text": "（小孩丢下铁环跑了......）"
     },
     "opt_ask_resolve": {
       "type": "runActions",
@@ -301,7 +301,7 @@
         "name": "旁白"
       },
       "next": "opt_snatch_actions",
-      "text": "你伸手一把夺过铁环，恶狠狠地向小孩儿呸了一口。"
+      "text": "你伸手一把夺过铁环，恶狠狠地向小孩呸了一口。"
     },
     "opt_snatch_actions": {
       "type": "runActions",
@@ -317,7 +317,7 @@
           "type": "appendFlag",
           "params": {
             "key": "书籍_风物志_铁环标注",
-            "text": "你从小孩那儿抢了一个铁环。"
+            "text": "你从小孩手头抢了一个铁环。"
           }
         },
         {

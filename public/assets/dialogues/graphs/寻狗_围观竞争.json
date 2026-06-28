@@ -3,7 +3,7 @@
   "id": "寻狗_围观竞争",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·围观竞争对手 + 决定置办行头"
+    "title": "寻狗Demo·围观竞争 + 自由置办行头（满城淘：当铺/庙会/城东，凑齐回人堆披上）"
   },
   "nodes": {
     "root": {
@@ -12,24 +12,37 @@
         {
           "conditions": [
             {
-              "narrative": "flow_xungou_main",
-              "state": "s08_xiangdao",
+              "narrative": "scenario_向导",
+              "state": "watched",
+              "reached": true
+            },
+            {
+              "flag": "got_xingtou_daopao",
+              "value": true
+            },
+            {
+              "flag": "got_xingtou_luopan",
+              "value": true
+            },
+            {
+              "flag": "got_xingtou_taomu",
+              "value": true
+            }
+          ],
+          "next": "dress_intro"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_向导",
+              "state": "watched",
               "reached": true
             }
           ],
-          "next": "done_1"
+          "next": "nudge"
         }
       ],
       "defaultNext": "n1"
-    },
-    "done_1": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "人堆还没散。让他们抢去吧——他有他的路数。",
-      "next": "end1"
     },
     "n1": {
       "type": "line",
@@ -46,7 +59,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "有个白胡子老道，行头是真齐整：拂尘、法印、八卦镜，一样不少。开价也真齐整——贵得洋人都皱眉。",
+      "text": "有个白胡子老道，行头倒是真齐整：拂尘、法印、八卦镜，一样不少。开价也真齐整——贵得洋人都皱起眉头。",
       "next": "n3"
     },
     "n3": {
@@ -54,31 +67,7 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（行头……是了，行头。人靠衣装，神靠金装——「李天狗那一脉」，也得有身皮。）",
-      "next": "c1"
-    },
-    "c1": {
-      "type": "choice",
-      "options": [
-        {
-          "id": "ban",
-          "text": "〔置办行头〕把攒下的钱全掏出来",
-          "next": "m1"
-        },
-        {
-          "id": "ban2",
-          "text": "〔置办行头〕先数数钱……再全掏出来",
-          "next": "m0"
-        }
-      ]
-    },
-    "m0": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "数了两遍。两遍都不够。……数第三遍也不会够的，二狗。",
+      "text": "（行头……对头，就是行头。可这一身皮，老子一文钱凑不齐——只能满城去淘：买的、赊的、骗的、顺的，一件一件弄。）",
       "next": "m1"
     },
     "m1": {
@@ -93,6 +82,31 @@
           }
         }
       ],
+      "next": "n_point"
+    },
+    "n_point": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（当铺赊件道袍、庙会摊上踅摸个罗盘、城东先生那儿顺把桃木剑——满城转一圈，凑齐了再回这人堆里披上。）",
+      "next": "end1"
+    },
+    "nudge": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（这副样子披出去，老道们能笑掉大牙。还差几件——当铺的道袍、庙会的罗盘、城东的桃木剑，再去淘。）",
+      "next": "end1"
+    },
+    "dress_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "行头总算凑齐了。他挤回那门庭若市的人堆，把这身凑起来的皮，往身上一披。",
       "next": "m2"
     },
     "m2": {
@@ -115,7 +129,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "旧道袍洗得发白，符是城东先生画的（歪的），桃木剑轻得像烧火棍。镜子里那个人——远看，还真有那么点意思。",
+      "text": "旧道袍、锈罗盘、烧火棍似的桃木剑、两张歪符——一身凑起来的“道士皮”。往人堆里一站，远看，还真有那么点意思。",
       "next": "n6"
     },
     "n6": {
@@ -123,7 +137,7 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "李天狗那一脉的关二狗，见过诸位。……嗯，腔调还得练。",
+      "text": "李天狗那一脉的关二狗，见过诸位。……嗯，这腔调还得多练几哈。",
       "next": "end1"
     },
     "end1": {

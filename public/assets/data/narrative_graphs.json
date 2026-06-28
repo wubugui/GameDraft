@@ -496,7 +496,7 @@
           },
           "s02_beishi": {
             "id": "s02_beishi",
-            "label": "背庄家尸完成",
+            "label": "背崖墓尸完成",
             "broadcastOnEnter": true,
             "meta": {
               "editor": {
@@ -706,12 +706,26 @@
           "y": -140,
           "meta": {
             "emits": [
-              "beishi_scent",
-              "beishi_fled"
+              "beishi_scent"
             ],
             "reads": [
               "flow_xungou_main"
             ],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_guidaoqiang",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_鬼打墙",
+          "refId": "寻狗_鬼打墙",
+          "x": 264,
+          "y": -40,
+          "meta": {
+            "emits": [
+              "beishi_fled"
+            ],
+            "reads": [],
             "commands": []
           }
         },
@@ -1476,7 +1490,7 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "活儿很简单：独自在庙里守半夜。庙里停着一具无名女尸，没人认领。"
+                          "text": "活路很简单：独自在庙里守半夜。庙里停着一具无名女尸，没人认领。"
                         },
                         {
                           "speaker": "",
@@ -1832,7 +1846,7 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "地上那两具，扭着的劲儿……好像滞了一滞。是错觉吗？"
+                          "text": "地上那两具，扭着的劲……好像滞了一滞。是不是看花眼了？"
                         }
                       ]
                     }
@@ -1871,10 +1885,8 @@
                     }
                   },
                   {
-                    "type": "damagePlayer",
-                    "params": {
-                      "amount": 9999
-                    }
+                    "type": "triggerDeathTether",
+                    "params": {}
                   },
                   {
                     "type": "playSfx",
@@ -2068,7 +2080,7 @@
         {
           "id": "el_scenario_背尸",
           "kind": "wrapperGraph",
-          "label": "背庄家尸（场景①·完整节拍）",
+          "label": "背崖墓尸（场景①·完整节拍）",
           "ownerType": "scenario",
           "ownerId": "寻狗_背尸",
           "x": 24,
@@ -2082,7 +2094,7 @@
             "id": "scenario_背尸",
             "ownerType": "scenario",
             "ownerId": "寻狗_背尸",
-            "label": "背庄家尸",
+            "label": "背崖墓尸",
             "initialState": "not_started",
             "entryState": "not_started",
             "exitStates": [
@@ -2119,7 +2131,7 @@
               },
               "at_lingtang": {
                 "id": "at_lingtang",
-                "label": "进了灵堂（红嫁衣压场）",
+                "label": "进了崖墓（近尸）",
                 "meta": {
                   "editor": {
                     "x": 724,
@@ -2561,7 +2573,7 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "进门前，关二狗在院外站了一会儿——这是背尸行里学的：先看人，再看屋。"
+                          "text": "进门前，关二狗在院外站了一哈——这是背尸行里学来的：先看人，再看屋。"
                         },
                         {
                           "speaker": "",
@@ -2977,7 +2989,7 @@
                         },
                         {
                           "speaker": "",
-                          "text": "白天听是狗叫。这会儿天擦黑，听着——像个小孩在井底哭。"
+                          "text": "白天听是狗叫。这阵天擦黑，听着——像个小孩在井底哭。"
                         },
                         {
                           "speaker": "{{player}}",
@@ -3073,7 +3085,7 @@
         {
           "id": "el_scenario_向导",
           "kind": "wrapperGraph",
-          "label": "向导传闻+置办行头（场景⑧）",
+          "label": "门庭若市·自由活动·置办行头（⑦）",
           "ownerType": "scenario",
           "ownerId": "寻狗_向导",
           "x": 24,
@@ -3087,7 +3099,7 @@
             "id": "scenario_向导",
             "ownerType": "scenario",
             "ownerId": "寻狗_向导",
-            "label": "向导传闻+置办行头（场景⑧）",
+            "label": "门庭若市·自由活动·置办行头（⑦）",
             "initialState": "not_started",
             "entryState": "not_started",
             "exitStates": [
@@ -3267,11 +3279,11 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "第一个画X的地方到了。他朝大队喊了声「俺去撒泡尿」，几十步外，林子黑沉沉地立着。"
+                          "text": "第一个画X的地方到了。他朝大队喊了声「老子去屙泡尿」，几十步外，林子黑沉沉地立着。"
                         },
                         {
                           "speaker": "{{player}}",
-                          "text": "（喊呗。几个铜板呢。）「李长生——」"
+                          "text": "（喊就喊嘛。几个铜板的事。）「李长生——」"
                         },
                         {
                           "speaker": "",
@@ -3314,7 +3326,7 @@
                         },
                         {
                           "speaker": "脚夫乙",
-                          "text": "马屠户追他婆娘进了岭，迷了三天。出来人就疯了，操刀砍自家儿子。铺子门板上的血道子，到今儿没人敢擦。"
+                          "text": "马屠户追他婆娘进了岭，迷了三天。出来人就疯了，操刀砍自家儿子。铺子门板上的血道子，到如今没得人敢擦。"
                         },
                         {
                           "speaker": "",
@@ -3492,6 +3504,81 @@
                 },
                 "label": "下山回城灌酒（beat完成）",
                 "broadcastOnEnter": true
+              },
+              "litiangou_peril": {
+                "id": "litiangou_peril",
+                "meta": {
+                  "editor": {
+                    "x": 2970,
+                    "y": 80
+                  }
+                },
+                "label": "出山口·命悬一线（系绳第一次失灵）",
+                "onEnterActions": [
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "半个身子没进雾里——脱了力，腿肚子不听使唤，眼看完。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "香粉味照例陡然冒头，“该被拽回来了”——"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "可这一回，一股更冲更“正”的气息当头压下，香粉味没起来就灭了。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "他是真往黑里去了。"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "sourceType": "scenario",
+                      "sourceId": "寻狗_送货",
+                      "signal": "songhuo_litiangou_rescue"
+                    }
+                  }
+                ]
+              },
+              "litiangou_rescue": {
+                "id": "litiangou_rescue",
+                "meta": {
+                  "editor": {
+                    "x": 3180,
+                    "y": 80
+                  }
+                },
+                "label": "李天狗救场（寻狗_李天狗对话）",
+                "onEnterActions": [
+                  {
+                    "type": "incHealth",
+                    "params": {
+                      "amount": 100
+                    }
+                  },
+                  {
+                    "type": "startDialogueGraph",
+                    "params": {
+                      "graphId": "寻狗_李天狗"
+                    }
+                  },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "sourceType": "scenario",
+                      "sourceId": "寻狗_送货",
+                      "signal": "songhuo_returned"
+                    }
+                  }
+                ]
               }
             },
             "transitions": [
@@ -3582,12 +3669,24 @@
               {
                 "id": "t_return_held",
                 "from": "survived",
-                "to": "returned",
+                "to": "litiangou_peril",
                 "signal": "songhuo_returned"
               },
               {
                 "id": "t_return_answered",
                 "from": "escaped",
+                "to": "litiangou_peril",
+                "signal": "songhuo_returned"
+              },
+              {
+                "id": "t_peril_rescue",
+                "from": "litiangou_peril",
+                "to": "litiangou_rescue",
+                "signal": "songhuo_litiangou_rescue"
+              },
+              {
+                "id": "t_rescue_return",
+                "from": "litiangou_rescue",
                 "to": "returned",
                 "signal": "songhuo_returned"
               }
@@ -4614,6 +4713,10 @@
     {
       "id": "chufa_departed",
       "label": "终幕·出城进雾"
+    },
+    {
+      "id": "songhuo_litiangou_rescue",
+      "label": "送货·李天狗接管救场"
     }
   ]
 }
