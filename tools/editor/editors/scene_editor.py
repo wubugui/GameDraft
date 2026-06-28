@@ -10,6 +10,7 @@ import copy
 import json
 import math
 import os
+import re
 import time
 from contextlib import contextmanager
 from collections.abc import Iterator
@@ -23,13 +24,13 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGroupBox, QFormLayout, QLineEdit, QDoubleSpinBox,
     QSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QScrollArea,
     QStackedWidget, QToolBar, QMenu, QGraphicsTextItem,
-    QToolButton, QMessageBox, QDialog, QDialogButtonBox, QAbstractItemView,
+    QToolButton, QMessageBox, QInputDialog, QFileDialog, QDialog, QDialogButtonBox, QAbstractItemView,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
     QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
     QRadioButton, QButtonGroup,
 )
 from PySide6.QtGui import (
-    QPixmap, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
+    QPixmap, QImage, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
     QImageReader,
     QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
     QShortcut, QKeySequence, QPainterPath,
@@ -2823,6 +2824,8 @@ class ScenePropertyPanel(QScrollArea):
     npc_patrol_preview_changed = Signal(str, bool)
     # 当前面板存在未 Apply 的 staging 修改（True）或已与 source 一致（False）
     pending_dirty_changed = Signal(bool)
+    # 背景图已导入/更换（已落盘 + 写入场景数据）→ 请求画布重载背景
+    scene_background_changed = Signal()
 
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -3127,6 +3130,31 @@ class ScenePropertyPanel(QScrollArea):
         basic.add_body(basic_inner)
         outer.addWidget(basic)
 
+        bg_g = self._section("背景图", start_open=True)
+        bg_inner = QWidget()
+        bg_lay = QVBoxLayout(bg_inner)
+        self._sc_bg_label = QLabel("未设置")
+        self._sc_bg_label.setWordWrap(True)
+        self._sc_bg_label.setToolTip(
+            "当前场景背景图（backgrounds[0].image）；导入后统一存为本场景 runtime 目录下的 background.png。")
+        bg_lay.addWidget(self._sc_bg_label)
+        bg_btns = QHBoxLayout()
+        self._sc_bg_import = QPushButton("导入 / 更换背景图…")
+        self._sc_bg_import.setToolTip(
+            "选择一张图片，转存为本场景 runtime/scenes/<id>/background.png 并设为背景；"
+            "首次导入会按图片像素尺寸自动填入世界宽高（可再手改）。")
+        self._sc_bg_import.clicked.connect(self._on_import_background)
+        bg_btns.addWidget(self._sc_bg_import)
+        self._sc_bg_derive_size = QPushButton("按背景图推导尺寸")
+        self._sc_bg_derive_size.setToolTip(
+            "用当前背景图的像素宽高重设 worldWidth / worldHeight（锁定宽高比时按图片比例）。")
+        self._sc_bg_derive_size.clicked.connect(self._on_derive_world_size_from_bg)
+        bg_btns.addWidget(self._sc_bg_derive_size)
+        bg_btns.addStretch(1)
+        bg_lay.addLayout(bg_btns)
+        bg_g.add_body(bg_inner)
+        outer.addWidget(bg_g)
+
         depth_box = CollapsibleSection("depthConfig（2D 遮挡深度）", start_open=False)
         depth_box.set_header_tool_tip(
             "默认折叠；与 Scene Depth Editor 导出一致，此处仅微调 tolerance / floor_offset",
@@ -3333,6 +3361,7 @@ class ScenePropertyPanel(QScrollArea):
                 self._sc_width.blockSignals(False)
                 self._sc_height.blockSignals(False)
             self._updating_world_dims = False
+            self._update_bg_label_from(st)
             self._sc_bgm.set_items([(a, a) for a in self._model.all_audio_ids("bgm")])
             self._sc_bgm.set_current(str(st.get("bgm", "") or ""))
             self._sc_filter.set_items(self._model.all_filter_ids())
@@ -3425,6 +3454,96 @@ class ScenePropertyPanel(QScrollArea):
         finally:
             self._sc_width.blockSignals(False)
         self._updating_world_dims = False
+        self._emit_props_changed()
+
+    # ---- 背景图 backgrounds[0] -----------------------------------------
+    def _update_bg_label_from(self, sc: dict) -> None:
+        bgs = sc.get("backgrounds")
+        img = ""
+        if isinstance(bgs, list) and bgs and isinstance(bgs[0], dict):
+            img = str(bgs[0].get("image", "") or "").strip()
+        self._sc_bg_label.setText(img or "未设置")
+        self._sc_bg_derive_size.setEnabled(bool(img))
+
+    def _set_world_dims_widgets(self, ww: float, wh: float) -> None:
+        """直接设世界宽高 widgets（抑制锁宽高比联动），并更新比例缓存。"""
+        if ww > 0 and wh > 0:
+            self._world_aspect_ratio_hw = wh / ww
+        self._updating_world_dims = True
+        self._sc_width.blockSignals(True)
+        self._sc_height.blockSignals(True)
+        try:
+            self._sc_width.setValue(round(ww, 2))
+            self._sc_height.setValue(round(wh, 2))
+        finally:
+            self._sc_width.blockSignals(False)
+            self._sc_height.blockSignals(False)
+        self._updating_world_dims = False
+
+    def _on_import_background(self) -> None:
+        sid = (self._editing_scene_id or "").strip()
+        if not sid:
+            QMessageBox.information(self, "导入背景图", "请先选择或新建一个场景。")
+            return
+        src, _ = QFileDialog.getOpenFileName(
+            self, "选择背景图片", "",
+            "图片 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*.*)")
+        if not src:
+            return
+        img = QImage(src)
+        if img.isNull():
+            QMessageBox.warning(self, "导入背景图", f"无法读取图片：\n{src}")
+            return
+        try:
+            dst_dir = self._model.paths.scene_runtime_dir(sid)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "导入背景图", f"无法解析场景资源目录：{exc}")
+            return
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst = dst_dir / "background.png"
+        if not img.save(str(dst), "PNG"):
+            QMessageBox.warning(self, "导入背景图", f"保存失败：\n{dst}")
+            return
+
+        iw, ih = img.width(), img.height()
+        # 把 backgrounds[0].image 标准化为 background.png（保留既有 x/y/z）。
+        for tgt in (self._staging_scene, self._source_scene):
+            if tgt is None:
+                continue
+            bgs = tgt.get("backgrounds")
+            first = bgs[0] if isinstance(bgs, list) and bgs and isinstance(bgs[0], dict) else {}
+            new_bg = dict(first)
+            new_bg["image"] = "background.png"
+            new_bg.setdefault("x", 0)
+            new_bg.setdefault("y", 0)
+            tgt["backgrounds"] = [new_bg]
+
+        # 首次导入（世界尺寸尚未设定）按图片像素尺寸填入。
+        if self._sc_width.value() <= 0 or self._sc_height.value() <= 0:
+            self._set_world_dims_widgets(float(iw), float(ih))
+            for tgt in (self._staging_scene, self._source_scene):
+                if tgt is not None:
+                    tgt["worldWidth"] = float(iw)
+                    tgt["worldHeight"] = float(ih)
+
+        self._update_bg_label_from(self._staging_scene or {})
+        if sid:
+            self._model.mark_dirty("scene", sid)
+        self._emit_props_changed()
+        self.scene_background_changed.emit()
+
+    def _on_derive_world_size_from_bg(self) -> None:
+        sid = (self._editing_scene_id or "").strip()
+        sc = self._staging_scene or {}
+        img_path = _scene_background_disk_path(self._model, sid, sc)
+        if img_path is None or not img_path.exists():
+            QMessageBox.information(self, "推导尺寸", "当前场景还没有背景图。")
+            return
+        pm = QPixmap(str(img_path))
+        if pm.isNull() or pm.width() <= 0:
+            QMessageBox.warning(self, "推导尺寸", "背景图读取失败。")
+            return
+        self._set_world_dims_widgets(float(pm.width()), float(pm.height()))
         self._emit_props_changed()
 
     def flush_active_panel_widgets_to_staging(
@@ -6406,6 +6525,14 @@ class SceneEditor(QWidget):
         self._combo_cutscene_ctx.typeCommitted.connect(self._on_cutscene_edit_context_changed)
         ll.addWidget(self._combo_cutscene_ctx)
 
+        self._btn_new_scene = QPushButton("+ 新建场景")
+        self._btn_new_scene.setToolTip(
+            "创建一个新的空场景（最小骨架：id / name / 出生点）。"
+            "背景图与世界尺寸随后在右侧场景属性面板配置；深度/碰撞为可选附加层，"
+            "需要时再用 Scene Depth Editor 处理。")
+        self._btn_new_scene.clicked.connect(self._new_scene)
+        ll.addWidget(self._btn_new_scene)
+
         self._scene_list = QListWidget()
         self._scene_list.currentItemChanged.connect(self._on_scene_selected)
         self._scene_search = make_list_search_box(
@@ -6439,6 +6566,8 @@ class SceneEditor(QWidget):
             self._on_props_npc_collision_polygon_changed)
         self._props.hotspot_visual_refresh_requested.connect(
             self._on_hotspot_visual_refresh_requested)
+        self._props.scene_background_changed.connect(
+            self._on_scene_background_changed)
         self._props.npc_scene_anim_refresh_requested.connect(
             self._on_npc_scene_anim_refresh_requested)
         self._props.npc_xy_live_changed.connect(self._on_npc_xy_live_changed)
@@ -6880,6 +7009,59 @@ class SceneEditor(QWidget):
         if npc_id not in self._patrol_preview_ids:
             rt.draw_at(float(n.get("x", 0)), float(n.get("y", 0)))
             self._canvas.viewport().update()
+
+    def _new_scene(self) -> None:
+        sid, ok = QInputDialog.getText(
+            self, "新建场景", "场景 id（仅字母 / 数字 / 下划线 / 连字符）：")
+        if not ok:
+            return
+        sid = (sid or "").strip()
+        if not sid:
+            return
+        if not re.match(r"^[A-Za-z0-9_\-]+$", sid):
+            QMessageBox.warning(
+                self, "新建场景",
+                f"非法场景 id：{sid!r}\n仅允许字母、数字、下划线、连字符。")
+            return
+        if sid in self._model.scenes:
+            QMessageBox.warning(self, "新建场景", f"场景 id 已存在：{sid}")
+            return
+        name, ok = QInputDialog.getText(
+            self, "新建场景", "场景显示名（留空则用 id）：", text=sid)
+        if not ok:
+            return
+        name = (name or "").strip() or sid
+
+        # 最小合法骨架：world 尺寸留 0（导入背景后按图推导）、背景空、给个出生点占位。
+        self._model.scenes[sid] = {
+            "id": sid,
+            "name": name,
+            "worldWidth": 0,
+            "worldHeight": 0,
+            "backgrounds": [],
+            "spawnPoint": {"x": 400.0, "y": 400.0},
+            "hotspots": [],
+            "npcs": [],
+            "zones": [],
+        }
+        # 预建运行时媒体目录，背景导入时落到这里。
+        try:
+            self._model.paths.scene_runtime_dir(sid).mkdir(parents=True, exist_ok=True)
+        except (OSError, ValueError):
+            pass
+        self._model.mark_dirty("scene", sid)
+
+        # 清空搜索，保证新场景在列表中可见再选中。
+        try:
+            self._scene_search.clear()
+        except (AttributeError, RuntimeError):
+            pass
+        self._refresh_scene_list()
+        for i in range(self._scene_list.count()):
+            it = self._scene_list.item(i)
+            if it is not None and it.data(Qt.ItemDataRole.UserRole) == sid:
+                self._scene_list.setCurrentItem(it)
+                break
 
     def _refresh_scene_list(self) -> None:
         self._scene_list.clear()
@@ -7345,6 +7527,14 @@ class SceneEditor(QWidget):
             if isinstance(n, dict) and str(n.get("id", "")) == str(eid):
                 return n
         return None
+
+    def _on_scene_background_changed(self) -> None:
+        """面板导入/更换背景图后（已落盘 + 写入 source）重载画布背景与世界尺寸。"""
+        sid = self._current_scene_id or ""
+        sc = self._model.scenes.get(sid)
+        if sc is None:
+            return
+        self._refresh_scene_canvas_viewport_after_commit(sc, sid)
 
     def _refresh_scene_canvas_viewport_after_commit(self, sc: dict, scene_id: str) -> None:
         img_path = _scene_background_disk_path(self._model, scene_id, sc)
