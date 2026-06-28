@@ -245,7 +245,10 @@ def _validate_owner_context_state_nodes(
             known: set[str] = set()
             validate_case_states = True
 
-            if selected_wrapper:
+            if selected_wrapper.startswith("@"):
+                # 相对 token（@owner / @scene）运行时解析，无法静态校验 case state
+                validate_case_states = False
+            elif selected_wrapper:
                 target_graph = selected_wrapper
                 selected_wrapper_info = wrapper_map.get(selected_wrapper)
                 if selected_wrapper_info is not None:
@@ -318,6 +321,9 @@ def _validate_owner_context_state_nodes(
                     errors.append(f"节点 {nid} ownerState case {i}: state {sid!r} 不存在于 wrapper {graph_id}")
         elif t == "contextState":
             gid = str(raw.get("graphId", "") or "").strip()
+            if gid.startswith("@"):
+                # 相对 token（@owner / @scene）运行时解析，跳过 graphId/state 存在性校验
+                continue
             if project_root is None:
                 if gid:
                     warnings.append(f"节点 {nid}: 无法校验 contextState graphId（缺少项目上下文）")
