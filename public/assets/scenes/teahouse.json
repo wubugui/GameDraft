@@ -10,7 +10,7 @@
   "playerRunSpeed": 180.0,
   "backgrounds": [
     {
-      "image": "background_hires_v2.png",
+      "image": "background.png",
       "x": 0,
       "y": 0
     }
@@ -136,7 +136,13 @@
         "graphId": "茶馆_自动事件"
       },
       "castShadow": false,
-      "autoTrigger": true
+      "autoTrigger": true,
+      "conditions": [
+        {
+          "flag": "picked_up_old_box"
+        }
+      ],
+      "conditionHidesEntity": true
     }
   ],
   "npcs": [
@@ -244,5 +250,13 @@
       "grid_height": 123,
       "height_offset": 0.03
     }
-  }
+  },
+  "onEnter": [
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "茶馆_自动事件"
+      }
+    }
+  ]
 }

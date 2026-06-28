@@ -265,6 +265,7 @@ class MainWindow(QMainWindow):
         self._act(ext, "Dialogue Graph Editor", self._launch_dialogue_graph_editor_external)
         self._act(ext, "Scene Depth Editor", self._launch_scene_depth_editor_external)
         self._act(ext, "Filter Tool", self._launch_filter_tool_external)
+        self._act(ext, "Image Resizer", self._launch_image_resizer_external)
         self._act(ext, "Copy Manager", self._launch_copy_manager_external)
         self._act(ext, "Video to Atlas", self._launch_video_to_atlas_external)
         self._act(ext, "Production Workbench", self._launch_production_workbench_external)
@@ -506,6 +507,14 @@ class MainWindow(QMainWindow):
 
     def _launch_filter_tool_external(self) -> None:
         self._launch_external_tool("tools.filter_tool", [], "Filter Tool")
+
+    def _launch_image_resizer_external(self) -> None:
+        self._launch_external_tool(
+            "tools.image_resizer",
+            [],
+            "Image Resizer",
+            root=self._external_tool_cwd(),
+        )
 
     def _launch_copy_manager_external(self) -> None:
         self._launch_external_tool("tools.copy_manager", [], "Copy Manager")

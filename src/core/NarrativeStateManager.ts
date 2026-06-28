@@ -19,6 +19,7 @@ export type NarrativeOwnerType =
   | 'zone'
   | 'quest'
   | 'scenario'
+  | 'scene'
   | 'dialogue'
   | 'minigame'
   | 'cutscene'

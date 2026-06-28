@@ -15,15 +15,21 @@ function baseContext(active = true, multiOwner = false): { eventBus: EventBus; f
       if (graphId === 'flow') return active ? 'ready' : 'other';
       if (graphId === 'npc_ringboy_a') return active ? 'after_event' : 'before_event';
       if (graphId === 'npc_ringboy_b') return active ? 'ring_taken' : 'before_event';
+      if (graphId === 'scene_wrapper') return active ? 'scene_open' : 'scene_closed';
       return 'other';
     },
     isStateActive: (graphId: string, stateId: string) => graphId === 'flow' && stateId === 'ready' && active,
     getGraph: (graphId: string) => {
-      if (graphId === 'npc_ringboy_a' || graphId === 'npc_ringboy_b') return { id: graphId };
+      if (graphId === 'npc_ringboy_a' || graphId === 'npc_ringboy_b' || graphId === 'scene_wrapper') return { id: graphId };
       return undefined;
     },
     getGraphIdsByOwner: (ownerType: string, ownerId: string) =>
       ownerType === 'npc' && ownerId === 'npc_ringboy' ? ownerGraphIds : [],
+    getPrimaryGraphByOwner: (ownerType: string, ownerId: string) => {
+      if (ownerType === 'npc' && ownerId === 'npc_ringboy' && ownerGraphIds.length === 1) return { id: ownerGraphIds[0] };
+      if (ownerType === 'scene' && ownerId === 'scene_test') return { id: 'scene_wrapper' };
+      return undefined;
+    },
     getPrimaryActiveStateByOwner: (ownerType: string, ownerId: string) =>
       ownerType === 'npc' && ownerId === 'npc_ringboy' && active && ownerGraphIds.length === 1
         ? 'after_event'
@@ -41,6 +47,7 @@ function baseContext(active = true, multiOwner = false): { eventBus: EventBus; f
         getLineLifecycleState: () => 'inactive',
       } as any,
       narrativeState,
+      currentSceneId: 'scene_test',
     },
   };
 }
@@ -293,6 +300,57 @@ describe('narrative condition context injection', () => {
     miss.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
     await miss.manager.startDialogueGraph({ graphId: 'ctx', npcName: 'NPC' });
     expect(text).toBe('flow-miss');
+  });
+
+  it('resolves @owner switch condition to the dialogue owner wrapper', async () => {
+    const switchGraph = {
+      id: 'owner_token',
+      entry: 'switch',
+      nodes: {
+        switch: {
+          type: 'switch',
+          defaultNext: 'fallback',
+          cases: [{ condition: { narrative: '@owner', state: 'after_event' }, next: 'hit' }],
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'owner-hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'owner-miss', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const runtime = graphDialogue(true, switchGraph);
+    let text = '';
+    runtime.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
+    await runtime.manager.startDialogueGraph({ graphId: 'owner_token', npcName: 'NPC', npcId: 'npc_ringboy' });
+    expect(text).toBe('owner-hit');
+  });
+
+  it('resolves @scene switch condition to the current scene wrapper (onEnter owner inheritance)', async () => {
+    const switchGraph = {
+      id: 'scene_token',
+      entry: 'switch',
+      nodes: {
+        switch: {
+          type: 'switch',
+          defaultNext: 'fallback',
+          cases: [{ condition: { narrative: '@scene', state: 'scene_open' }, next: 'hit' }],
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'scene-hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'scene-miss', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    // 模拟 onEnter：以场景为 owner 启动（无 npcId），@scene 解析为 scene_test 的 wrapper。
+    const hit = graphDialogue(true, switchGraph);
+    let text = '';
+    hit.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
+    await hit.manager.startDialogueGraph({ graphId: 'scene_token', npcName: 'NPC', ownerType: 'scene', ownerId: 'scene_test' });
+    expect(text).toBe('scene-hit');
+
+    const miss = graphDialogue(false, switchGraph);
+    let missText = '';
+    miss.eventBus.on('dialogue:line', (payload) => { missText = payload?.text ?? ''; });
+    await miss.manager.startDialogueGraph({ graphId: 'scene_token', npcName: 'NPC', ownerType: 'scene', ownerId: 'scene_test' });
+    expect(missText).toBe('scene-miss');
   });
 
   it('lets document reveal conditions read narrative state', async () => {

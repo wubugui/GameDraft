@@ -25,6 +25,7 @@ import {
   evaluateConditionExprWithTrace,
   evaluatePreconditionsWithTrace,
   formatConditionTrace,
+  resolveNarrativeGraphRef,
   type ConditionEvalContext,
   type ConditionTrace,
 } from './graphDialogue/evaluateGraphCondition';
@@ -188,12 +189,19 @@ export class GraphDialogueManager implements IGameSystem {
 
   private conditionCtx(): ConditionEvalContext {
     const injected = this.conditionCtxFactory?.();
-    if (injected) return injected;
+    // 对话内的 `@owner` 应指当前对话 owner（NPC/热区/场景），覆盖注入 ctx 里的场景级 currentOwner。
+    const ownerType = this.ownerType.trim();
+    const ownerId = this.ownerId.trim();
+    const currentOwner = ownerType && ownerId ? { ownerType, ownerId } : undefined;
+    if (injected) {
+      return currentOwner ? { ...injected, currentOwner } : injected;
+    }
     return {
       flagStore: this.flagStore,
       questManager: this.questManager,
       scenarioState: this.scenarioState,
       resolveConditionLiteral: (raw) => this.r(raw),
+      currentOwner,
     };
   }
 
@@ -871,12 +879,14 @@ export class GraphDialogueManager implements IGameSystem {
     const fallback = node.missingWrapperNext?.trim() || node.defaultNext;
     const ownerType = this.ownerType.trim();
     const ownerId = this.ownerId.trim();
-    const wrapperGraphId = node.wrapperGraphId?.trim() ?? '';
+    const ctx = this.conditionCtx();
+    // wrapperGraphId 支持 `@owner` / `@scene` 相对 token（解析失败回退到下方按 owner 解算）。
+    const wrapperGraphId = resolveNarrativeGraphRef(node.wrapperGraphId?.trim() ?? '', ctx);
     if (!ownerType || !ownerId) {
       console.warn(`GraphDialogueManager: ownerState ${this.currentNodeId} has no dialogue owner context`);
       return fallback;
     }
-    const narrative = this.conditionCtx().narrativeState;
+    const narrative = ctx.narrativeState;
     let active: string | undefined;
     if (wrapperGraphId) {
       const graph = narrative?.getGraph?.(wrapperGraphId);
@@ -917,12 +927,14 @@ export class GraphDialogueManager implements IGameSystem {
   }
 
   private evalContextState(node: Extract<DialogueGraphNodeDef, { type: 'contextState' }>): string {
-    const graphId = node.graphId?.trim();
+    const ctx = this.conditionCtx();
+    // graphId 支持 `@owner` / `@scene` 相对 token。
+    const graphId = resolveNarrativeGraphRef(node.graphId?.trim() ?? '', ctx);
     if (!graphId) {
       console.warn(`GraphDialogueManager: contextState ${this.currentNodeId} missing graphId`);
       return node.defaultNext;
     }
-    const active = this.conditionCtx().narrativeState?.getActiveState?.(graphId);
+    const active = ctx.narrativeState?.getActiveState?.(graphId);
     if (!active) {
       console.warn(`GraphDialogueManager: contextState ${this.currentNodeId} cannot read active state for ${graphId}`);
       return node.defaultNext;

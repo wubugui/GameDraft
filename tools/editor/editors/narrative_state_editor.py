@@ -994,6 +994,7 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
     return {
         "dialogueGraphIds": model.all_dialogue_graph_ids(),
         "scenarioIds": model.scenario_ids_ordered(),
+        "sceneIds": model.all_scene_ids(),
         "questIds": [x[0] for x in model.all_quest_ids()],
         "sceneEntityRefs": sorted(set(scene_refs)),
         "sceneNpcRefs": sorted(set(scene_npc_refs)),
@@ -1298,6 +1299,7 @@ WRAPPER_OWNER_CATALOG_KEYS = {
     "minigame": "minigameIds",
     "cutscene": "cutsceneIds",
     "scenario": "scenarioIds",
+    "scene": "sceneIds",
 }
 WRAPPER_OWNER_NAVIGATION = {
     "npc": "npc",
@@ -1308,6 +1310,7 @@ WRAPPER_OWNER_NAVIGATION = {
     "minigame": "minigame",
     "cutscene": "cutscene",
     "scenario": "scenario",
+    "scene": "scene",
 }
 _SCENE_OWNER_SOURCE_TYPES = {
     "npc": "scene_npc",

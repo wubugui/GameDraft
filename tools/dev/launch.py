@@ -17,6 +17,7 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "editor": ("tools.editor", []),
     "asset-browser": ("tools.asset_browser.main", []),
     "asset-ingest": ("tools.asset_ingest.main", []),
+    "image-resizer": ("tools.image_resizer", []),
     "dialogue-graph": ("tools.dialogue_graph_editor", []),
     "workbench": ("tools.production_workbench", []),
     "chronicle-sim-v2": ("tools.chronicle_sim_v2", []),

@@ -368,7 +368,7 @@ function validateGraph(
   }
 }
 
-const validWrapperOwnerTypes = new Set(['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'system']);
+const validWrapperOwnerTypes = new Set(['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'scene', 'system']);
 
 function validateTransitionSignal(
   ownerGraphId: string,
@@ -714,6 +714,8 @@ function validateConditionExpr(
       addIssue(issues, 'error', 'condition.shape', `${owner}: narrative condition requires state`, path, owner, target);
       return false;
     }
+    // 相对 token（@owner / @scene）在运行时解析，跳过静态 graphId/state 存在性检查。
+    if (graphId.startsWith('@')) return true;
     const graph = graphIndex.graphs.get(graphId);
     if (!graph) {
       addIssue(issues, 'error', 'condition.narrative.graphMissing', `${owner}: narrative graph does not exist: ${graphId}`, `${path}.narrative`, owner, target);

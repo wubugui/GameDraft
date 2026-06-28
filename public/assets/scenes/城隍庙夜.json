@@ -9,7 +9,7 @@
   },
   "backgrounds": [
     {
-      "image": "background_hires_v1.png",
+      "image": "background.png",
       "x": 0,
       "y": 0
     }
@@ -72,8 +72,8 @@
       "id": "hs_无名女尸",
       "type": "inspect",
       "label": "停着的无名女尸",
-      "x": 640.0,
-      "y": 440.0,
+      "x": 718.4,
+      "y": 596.9,
       "interactionRange": 80.0,
       "displayImage": {
         "image": "/resources/runtime/images/corpses/demo/chenghuang_unknown_woman.png",

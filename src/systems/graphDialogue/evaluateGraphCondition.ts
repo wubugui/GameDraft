@@ -46,6 +46,33 @@ export interface ConditionEvalContext {
    * 未注入则按字面量字符串与当前 Flag 值比较。
    */
   resolveConditionLiteral?: (raw: string) => string;
+  /** 当前叙事 owner：供 narrative 叶子的 `@owner` token 解析为该 owner 的主 wrapper 图。 */
+  currentOwner?: { ownerType: string; ownerId: string };
+  /** 当前场景 id：供 narrative 叶子的 `@scene` token 解析为 `scene:<id>` wrapper 图。 */
+  currentSceneId?: string;
+}
+
+/**
+ * narrative 叶子的 `narrative` 字段支持相对 token：
+ * - `@owner` → 当前 owner（{@link ConditionEvalContext.currentOwner}）的主 wrapper graphId
+ * - `@scene` → 当前场景（{@link ConditionEvalContext.currentSceneId}）的 `scene` wrapper graphId
+ * 普通字符串原样返回。解析失败返回空串（调用方按"缺图"优雅处理）。
+ */
+export function resolveNarrativeGraphRef(token: string, ctx: ConditionEvalContext): string {
+  const raw = String(token ?? '').trim();
+  if (!raw.startsWith('@')) return raw;
+  const ns = ctx.narrativeState;
+  if (raw === '@owner') {
+    const owner = ctx.currentOwner;
+    if (!owner?.ownerType || !owner?.ownerId || !ns?.getPrimaryGraphByOwner) return '';
+    return ns.getPrimaryGraphByOwner(owner.ownerType, owner.ownerId)?.id ?? '';
+  }
+  if (raw === '@scene') {
+    const sceneId = String(ctx.currentSceneId ?? '').trim();
+    if (!sceneId || !ns?.getPrimaryGraphByOwner) return '';
+    return ns.getPrimaryGraphByOwner('scene', sceneId)?.id ?? '';
+  }
+  return '';
 }
 
 function isConditionLeaf(x: ConditionExpr): x is Condition {
@@ -153,7 +180,7 @@ export function evaluateConditionExpr(
   }
 
   if (isNarrativeStateLeaf(expr)) {
-    const graphId = expr.narrative.trim();
+    const graphId = resolveNarrativeGraphRef(expr.narrative, ctx);
     const stateId = expr.state.trim();
     if (!graphId || !stateId || !ctx.narrativeState) return false;
     if ((expr as { reached?: unknown }).reached === true) {
@@ -260,11 +287,12 @@ export function evaluateConditionExprWithTrace(
   }
 
   if (isNarrativeStateLeaf(expr)) {
-    const graphId = expr.narrative.trim();
+    const graphId = resolveNarrativeGraphRef(expr.narrative, ctx);
     const stateId = expr.state.trim();
     const got = graphId ? ctx.narrativeState?.getActiveState(graphId) : undefined;
     const ok = Boolean(graphId && stateId && got === stateId);
-    const label = `narrative「${expr.narrative}」期望=${stateId || '—'}实际=${got ?? '—'}`;
+    const ref = expr.narrative.trim().startsWith('@') ? `${expr.narrative.trim()}→${graphId || '—'}` : expr.narrative;
+    const label = `narrative「${ref}」期望=${stateId || '—'}实际=${got ?? '—'}`;
     return { result: ok, trace: { kind: 'narrative', result: ok, label } };
   }
 

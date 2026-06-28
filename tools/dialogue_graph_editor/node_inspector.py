@@ -2493,6 +2493,9 @@ class NodeInspector(QWidget):
         gid_cb = QComboBox(self._body)
         gid_cb.setEditable(True)
         gid_cb.addItem("")
+        # 相对 token：运行时按当前 owner/场景解析（@owner=当前对话 owner 主 wrapper，@scene=本场景 wrapper）
+        gid_cb.addItem("@owner（当前 owner 的主 wrapper）", "@owner")
+        gid_cb.addItem("@scene（本场景 wrapper）", "@scene")
         for g in graphs:
             gid = str(g.get("graphId", "") or "")
             gid_cb.addItem(str(g.get("label", "") or gid), gid)
@@ -2551,7 +2554,7 @@ class NodeInspector(QWidget):
                     cb.setCurrentText(cur)
                 finally:
                     cb.blockSignals(False)
-            if gid and not is_context_graph_allowed(self._project_root, gid):
+            if gid and not gid.startswith("@") and not is_context_graph_allowed(self._project_root, gid):
                 hint.setStyleSheet("color: #c62828;")
             else:
                 hint.setStyleSheet("")

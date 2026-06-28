@@ -482,6 +482,88 @@ class OwnerContextNodeTests(unittest.TestCase):
             self.assertEqual(node["wrapperGraphId"], "npc_ringboy_main")
         inspector.deleteLater()
 
+    def test_scene_on_enter_dialogue_derives_scene_owner(self) -> None:
+        from tools.editor.shared.narrative_catalog import dialogue_owner_refs_from_scenes
+
+        scenes = {
+            "scene_a": {
+                "npcs": [],
+                "hotspots": [],
+                "onEnter": [
+                    # 无 owner / 无 npcId → 继承场景 owner
+                    {"type": "startDialogueGraph", "params": {"graphId": "dlg_scene"}},
+                    # 显式 npcId → npc owner
+                    {"type": "startDialogueGraph", "params": {"graphId": "dlg_npc", "npcId": "npc_x"}},
+                    # 显式 ownerType/ownerId → 原样
+                    {"type": "startDialogueGraph", "params": {"graphId": "dlg_explicit", "ownerType": "quest", "ownerId": "q1"}},
+                    # 嵌套在 runActions 内 → 仍计入场景 owner
+                    {"type": "runActions", "params": {"actions": [
+                        {"type": "startDialogueGraph", "params": {"graphId": "dlg_nested"}},
+                    ]}},
+                ],
+            },
+        }
+        refs = dialogue_owner_refs_from_scenes(scenes)
+
+        def owner_pairs(dlg: str) -> set[tuple[str, str]]:
+            return {(r["ownerType"], r["ownerId"]) for r in refs.get(dlg, [])}
+
+        self.assertIn(("scene", "scene_a"), owner_pairs("dlg_scene"))
+        self.assertIn(("npc", "npc_x"), owner_pairs("dlg_npc"))
+        self.assertIn(("quest", "q1"), owner_pairs("dlg_explicit"))
+        self.assertIn(("scene", "scene_a"), owner_pairs("dlg_nested"))
+
+    def test_owner_state_token_wrapper_graph_id_skips_static_case_validation(self) -> None:
+        data = {
+            "schemaVersion": 1,
+            "id": "dlg_x",
+            "entry": "root",
+            "nodes": {
+                "root": {
+                    "type": "ownerState",
+                    "wrapperGraphId": "@scene",
+                    "cases": [{"state": "any_runtime_state", "next": "end"}],
+                    "defaultNext": "end",
+                    "missingWrapperNext": "end",
+                },
+                "end": {"type": "end"},
+            },
+        }
+        with patch("tools.editor.shared.narrative_catalog.resolve_owner_wrapper_states") as resolver:
+            resolver.return_value = {
+                "stateIds": ["before_event"],
+                "wrappers": [{"graphId": "scene_wrapper", "stateIds": ["before_event"]}],
+                "ambiguous": False,
+                "message": "ok",
+            }
+            errors, warnings = validate_graph_tiered(
+                data,
+                project_root=Path(__file__).resolve().parents[3],
+                project_model=object(),
+            )
+        # 相对 token 运行时解析：不应因 case state 不在 wrapper 而报错
+        self.assertFalse(any("不存在于 wrapper" in e for e in errors))
+        self.assertFalse(any("指向不存在的 wrapper graph" in e for e in errors))
+
+    def test_context_state_token_graph_id_skips_static_validation(self) -> None:
+        data = {
+            "schemaVersion": 1,
+            "id": "t",
+            "entry": "root",
+            "nodes": {
+                "root": {
+                    "type": "contextState",
+                    "graphId": "@owner",
+                    "cases": [{"state": "any_runtime_state", "next": "end"}],
+                    "defaultNext": "end",
+                },
+                "end": {"type": "end"},
+            },
+        }
+        errors, _ = validate_graph_tiered(data, project_root=Path(__file__).resolve().parents[3])
+        self.assertFalse(any("不允许读取" in e for e in errors))
+        self.assertFalse(any("不存在于图" in e for e in errors))
+
     def test_rejects_set_narrative_state_in_run_actions(self) -> None:
         data = {
             "schemaVersion": 1,

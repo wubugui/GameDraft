@@ -1,14 +1,14 @@
 {
   "id": "梦_农家院",
   "name": "梦·农家院",
-  "worldWidth": 1376,
+  "worldWidth": 1376.0,
   "camera": {
     "zoom": 1.2,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
     {
-      "image": "background_hires_v1.png",
+      "image": "background.png",
       "x": 0,
       "y": 0
     }
@@ -45,9 +45,9 @@
     {
       "id": "npc_dream_old_man",
       "name": "老头",
-      "x": 771,
-      "y": 246,
-      "interactionRange": 70,
+      "x": 863.7,
+      "y": 398.7,
+      "interactionRange": 70.0,
       "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
@@ -55,9 +55,9 @@
     {
       "id": "npc_dream_old_woman",
       "name": "老妇人",
-      "x": 660,
-      "y": 246,
-      "interactionRange": 70,
+      "x": 703.2,
+      "y": 330.0,
+      "interactionRange": 70.0,
       "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
@@ -68,12 +68,10 @@
       "id": "hs_院门",
       "type": "inspect",
       "label": "敞开的院门",
-      "x": 716,
-      "y": 243,
-      "interactionRange": 70,
-      "data": {
-        "text": "门没等他敲就开了，灯光从里头涌出来。"
-      }
+      "x": 855.2,
+      "y": 198.7,
+      "interactionRange": 70.0,
+      "data": {}
     }
   ],
   "zones": [
@@ -81,20 +79,24 @@
       "id": "z_进屋",
       "polygon": [
         {
-          "x": 633,
-          "y": 200
+          "x": 753.1,
+          "y": 208.7
         },
         {
-          "x": 798,
-          "y": 200
+          "x": 918.1,
+          "y": 208.7
         },
         {
-          "x": 798,
-          "y": 292
+          "x": 918.1,
+          "y": 300.7
         },
         {
-          "x": 633,
-          "y": 292
+          "x": 753.1,
+          "y": 300.7
+        },
+        {
+          "x": 753.1,
+          "y": 254.7
         }
       ],
       "onEnter": [
@@ -108,7 +110,7 @@
           "type": "switchScene",
           "params": {
             "targetScene": "梦_饭屋",
-            "targetSpawnPoint": "from_courtyard"
+            "targetSpawnPoint": ""
           }
         }
       ]

@@ -9,7 +9,7 @@
   },
   "backgrounds": [
     {
-      "image": "background_cliff_tomb_day_hires_v1.png",
+      "image": "background.png",
       "x": 0,
       "y": 0
     }
@@ -117,22 +117,21 @@
       "id": "hs_女尸",
       "type": "inspect",
       "label": "崖墓里那具尸",
-      "x": 640.0,
-      "y": 390.0,
+      "x": 649.6,
+      "y": 337.7,
       "interactionRange": 80.0,
       "conditions": [
         {
           "not": {
-            "flag": "beishi_carrying",
-            "value": true
+            "flag": "beishi_carrying"
           }
         }
       ],
       "conditionHidesEntity": true,
       "displayImage": {
         "image": "/resources/runtime/images/corpses/demo/cliff_tomb_preserved_corpse_v1.png",
-        "worldWidth": 300.0,
-        "worldHeight": 170.0,
+        "worldWidth": 125.7,
+        "worldHeight": 71.8,
         "spriteSort": "back"
       },
       "collisionPolygon": [

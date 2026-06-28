@@ -2,6 +2,7 @@ import { Assets, Texture, type Filter } from 'pixi.js';
 import { Howl } from 'howler';
 import type { SceneData, SceneDataRaw } from '../data/types';
 import { resolveAssetPath } from './assetPath';
+import { reportDevError, describeError } from './devErrorOverlay';
 import { filterJsonUrl, sceneJsonUrl } from './projectPaths';
 import { createFilterFromDef } from '../rendering/filter/FilterLoader';
 import type { FilterDef } from '../rendering/filter/types';
@@ -56,6 +57,7 @@ interface CacheBucket<T = unknown> {
 }
 
 const MB = 1024 * 1024;
+const SAFE_MAX_TEXTURE_SIZE = 2048;
 
 const DEFAULT_LIMITS: Record<AssetType, { bytes?: number; entries?: number }> = {
   json: { bytes: 32 * MB },
@@ -92,6 +94,13 @@ function jsonBytes(value: unknown): number {
 
 function textureBytes(texture: Texture): number {
   return Math.max(1, texture.width) * Math.max(1, texture.height) * 4;
+}
+
+function assertSafeTextureSize(texture: Texture, key: string): void {
+  if (texture.width <= SAFE_MAX_TEXTURE_SIZE && texture.height <= SAFE_MAX_TEXTURE_SIZE) return;
+  throw new Error(
+    `texture exceeds safe max ${SAFE_MAX_TEXTURE_SIZE}px: ${key} (${texture.width}x${texture.height})`,
+  );
 }
 
 function bitmapBytes(bitmap: ImageBitmap): number {
@@ -176,6 +185,7 @@ export class AssetManager {
         bucket.inflight.delete(key);
         bucket.errors.set(key, e);
         bucket.stats.errors++;
+        reportDevError(`[${type}] 加载失败: ${key}\n${describeError(e)}`);
         throw e;
       });
     bucket.inflight.set(key, p);
@@ -210,6 +220,10 @@ export class AssetManager {
   }
 
   private disposeEntry(entry: CacheEntry): void {
+    if (entry.type === 'texture') {
+      const texture = entry.value as Texture;
+      texture.source?.unload();
+    }
     if (entry.type === 'audio') {
       (entry.value as Howl).unload();
     }
@@ -230,7 +244,11 @@ export class AssetManager {
     return this.loadIntoBucket<Texture>(
       'texture',
       resolved,
-      () => Assets.load<Texture>(resolved),
+      async () => {
+        const texture = await Assets.load<Texture>(resolved);
+        assertSafeTextureSize(texture, resolved);
+        return texture;
+      },
       textureBytes,
     );
   }
@@ -466,6 +484,18 @@ export class AssetManager {
   async loadSceneData(sceneId: string): Promise<SceneData> {
     const cached = await this.loadJson<SceneDataRaw>(sceneJsonUrl(sceneId));
     const raw = JSON.parse(JSON.stringify(cached)) as SceneDataRaw;
+
+    // 背景图文件名强约束：场景主背景只能叫 background.png。名字不对直接报错、不加载，
+    // 避免带着错误资源引用半死不活地跑（编辑器导入背景时统一迁入并命名为 background.png）。
+    if (raw.backgrounds && raw.backgrounds.length > 0) {
+      const primaryImage = raw.backgrounds[0]?.image;
+      if (primaryImage !== 'background.png') {
+        throw new Error(
+          `场景 "${sceneId}" 的背景图文件名必须是 background.png，实际为 "${primaryImage}"。` +
+          `请在编辑器中重新导入背景图。`,
+        );
+      }
+    }
 
     if (raw.backgrounds) {
       for (const layer of raw.backgrounds) {

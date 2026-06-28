@@ -57,6 +57,17 @@ def validate(model: ProjectModel) -> list[Issue]:
 
     # --- scenes ---
     for sid, sc in model.scenes.items():
+        # 背景图文件名强约束：场景主背景只能叫 background.png（编辑器导入时统一迁入并命名）。
+        # 名字不对运行时直接 throw 不加载，这里作为作者期硬错误提前拦截。
+        bgs = sc.get("backgrounds")
+        if isinstance(bgs, list) and bgs and isinstance(bgs[0], dict):
+            bg0_img = str(bgs[0].get("image", "") or "")
+            if bg0_img != "background.png":
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"背景图文件名必须是 background.png，实际为 {bg0_img!r}；"
+                    f"请在场景编辑器重新导入背景图。",
+                ))
         for hs in sc.get("hotspots", []):
             hid = str(hs.get("id", "")) or "?"
             di = hs.get("displayImage")
@@ -1726,6 +1737,13 @@ def _scan_condition_expr(
                 "error", data_type, item_id,
                 "narrative 条件需要非空 narrative（图 id）与 state",
             ))
+        elif gid.startswith("@"):
+            # 相对 token（@owner / @scene）运行时解析，跳过 graphId/state 存在性检查
+            if gid not in ("@owner", "@scene"):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"narrative 条件相对 token {gid!r} 未知（仅支持 @owner / @scene）",
+                ))
         elif gid not in graphs:
             issues.append(Issue(
                 "error", data_type, item_id,

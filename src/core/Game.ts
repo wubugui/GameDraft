@@ -257,6 +257,12 @@ export class Game {
   private currentShadowField: ShadowProjectionField | null = null;
   /** 玩家/各 NPC 的投影阴影（key: 'player' / npc.id） */
   private entityShadows = new Map<string, IEntityShadow>();
+  /**
+   * 场景 onEnter 执行期间的隐式叙事 owner（`scene:<场景id>`）。
+   * 供 onEnter 里未显式指定 owner 的 startDialogueGraph 与条件 `@owner` 继承当前场景。
+   * 仅在 sceneEnterRunner 执行窗口内非空。
+   */
+  private ambientNarrativeOwner: { ownerType: string; ownerId: string } | null = null;
 
   /** null = 跟随 game_config.entityPixelDensityMatch；非 null 为调试强制开/关 */
   private entityPixelDensityMatchDebugOverride: boolean | null = null;
@@ -721,6 +727,10 @@ export class Game {
       scenarioState: this.scenarioStateManager,
       narrativeState: this.narrativeStateManager,
       resolveConditionLiteral: (raw) => this.resolveDisplayText(raw),
+      // `@scene` 解析为当前场景 wrapper；`@owner` 在 onEnter 期间继承场景 owner
+      // （对话内由 GraphDialogueManager.conditionCtx 覆盖为对话 owner）。
+      currentSceneId: this.sceneManager.currentSceneData?.id ?? undefined,
+      currentOwner: this.ambientNarrativeOwner ?? undefined,
     });
     this.flagStore.setConditionEvalContextFactory(mkCondCtx);
     this.questManager.setConditionEvalContextFactory(mkCondCtx);
@@ -807,8 +817,11 @@ export class Game {
             const npc = this.sceneManager.getNpcById(npcIdTrim);
             if (npc) npcName = npc.def.name;
           }
-          const ownerTypeTrim = ownerType?.trim() || (npcIdTrim ? 'npc' : '');
-          const ownerIdTrim = ownerId?.trim() || npcIdTrim || '';
+          // owner 优先级：显式参数 > npcId（NPC 上下文）> onEnter 期间的隐式场景 owner。
+          const ambient = this.ambientNarrativeOwner;
+          const ownerTypeTrim =
+            ownerType?.trim() || (npcIdTrim ? 'npc' : '') || (ambient?.ownerType ?? '');
+          const ownerIdTrim = ownerId?.trim() || npcIdTrim || (ambient?.ownerId ?? '');
           await this.graphDialogueManager.startDialogueGraph({
             graphId,
             entry,
@@ -1613,7 +1626,15 @@ export class Game {
       this.currentShadowField = null;
     });
 
-    this.sceneManager.setSceneEnterRunner((actions) => this.actionExecutor.executeBatchAwait(actions));
+    this.sceneManager.setSceneEnterRunner(async (actions) => {
+      const sceneId = this.sceneManager.currentSceneData?.id ?? '';
+      this.ambientNarrativeOwner = sceneId ? { ownerType: 'scene', ownerId: sceneId } : null;
+      try {
+        await this.actionExecutor.executeBatchAwait(actions);
+      } finally {
+        this.ambientNarrativeOwner = null;
+      }
+    });
   }
 
   /** 深度图、热区与 NPC 多边形碰撞合并（已拾取/失效的热区不参与；不可见 NPC 不参与） */
