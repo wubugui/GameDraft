@@ -1177,6 +1177,18 @@ export interface ZoneActionContext {
 /** standard：进出停留与规矩等；depth_floor：仅参与深度遮挡，脚底在区内时叠加 floorOffsetBoost */
 export type ZoneKind = 'standard' | 'depth_floor';
 
+/**
+ * 区域气味：玩家进入该 zone 时自动让 SmellSystem 的 **zone 层**呈现此气味，离开自动撤回。
+ * 仅声明数据，由 SmellSystem 监听 zone:enter/zone:exit 驱动（zone 层优先级低于 action 层）。
+ * scent = smell_profiles.json 的 profile id；intensity 0–100（省略默认 60）；dir -1..1；flicker 波动。
+ */
+export interface ZoneSmellConfig {
+  scent: string;
+  intensity?: number;
+  dir?: number;
+  flicker?: boolean;
+}
+
 export interface ZoneDef {
   id: string;
   /** 缺省为 standard（与未写字段的老数据兼容） */
@@ -1193,6 +1205,8 @@ export interface ZoneDef {
   /** 玩家在区域内时每帧执行的 Action（慎用非幂等 action）。 */
   onStay?: ActionDef[];
   onExit?: ActionDef[];
+  /** 进入本区自动呈现的环境气味（zone 层；离开自动撤回；被 action 层 setSmell 压过）。 */
+  smell?: ZoneSmellConfig;
 }
 
 export interface ZoneRuleSlot {

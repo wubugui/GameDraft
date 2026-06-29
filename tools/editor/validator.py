@@ -418,6 +418,27 @@ def validate(model: ProjectModel) -> list[Issue]:
                     f"Zone '{zid}' 为 standard，floorOffsetBoost 无效，可删除",
                 ))
 
+            smell = zone.get("smell")
+            if smell is not None:
+                if not isinstance(smell, dict) or not str(smell.get("scent") or "").strip():
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"Zone '{zid}' smell 须为含非空 scent 的对象（或删除该字段）",
+                    ))
+                else:
+                    scent_id = str(smell.get("scent")).strip()
+                    known_smells = {s for s, _ in model.all_smell_profile_ids()}
+                    if known_smells and scent_id not in known_smells:
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"Zone '{zid}' smell.scent {scent_id!r} 不在 smell_profiles.json 的 profiles 中",
+                        ))
+                    if zk == "depth_floor":
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"Zone '{zid}' 为 depth_floor，smell 不会触发（区域逻辑已跳过）",
+                        ))
+
         # 光环境曲线 lightEnvCurve（玩家位置插值光照）
         lec = sc.get("lightEnvCurve")
         if lec is not None:

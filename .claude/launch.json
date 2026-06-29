@@ -9,6 +9,13 @@
       "autoPort": false
     },
     {
+      "name": "game-dev-5174",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5174", "--strictPort"],
+      "port": 5174,
+      "autoPort": false
+    },
+    {
       "name": "tool-test",
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8099"],

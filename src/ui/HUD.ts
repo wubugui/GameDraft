@@ -1,10 +1,11 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { SmellIndicatorRenderer, type SmellProfilesRaw, type SmellRenderState, type SmellFormParams } from './smell/SmellIndicatorRenderer';
 import { UITheme } from './UITheme';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 
-/** 0xRRGGBB 线性插值（暖橙↔青冷的阳火调色用）。 */
+/** 0xRRGGBB 线性插值（油灯琥珀↔冷灰青的阳火调色用）。 */
 function lerpColor(a: number, b: number, t: number): number {
   t = Math.max(0, Math.min(1, t));
   const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
@@ -12,16 +13,8 @@ function lerpColor(a: number, b: number, t: number): number {
   return ((Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t));
 }
 
-/** 气味词库：颜色=味种、rise/sway/jitter=飘法性格、heavy=沉、wrong=飘法违反物理（香粉味专属）。 */
-interface ScentDef { name: string; color: number; rise: number; sway: number; swayFreq: number; jitter: number; heavy?: boolean; wrong?: boolean }
-const SCENTS: Record<string, ScentDef> = {
-  corpse:  { name: '尸臭',    color: 0x8a9a5a, rise: 0.30, sway: 4, swayFreq: 1.0, jitter: 0.15, heavy: true }, // 灰绿浊·沉坠
-  yin:     { name: '阴腥',    color: 0x6f93a6, rise: 0.55, sway: 7, swayFreq: 2.6, jitter: 0.7 },               // 青冷·飘忽发抖
-  incense: { name: '香火',    color: 0xd6a24e, rise: 0.85, sway: 2, swayFreq: 0.7, jitter: 0.05 },              // 暖橙·袅袅直上
-  blood:   { name: '血腥',    color: 0x9a3a3a, rise: 0.40, sway: 3, swayFreq: 1.6, jitter: 0.25 },              // 暗红·低冲
-  mold:    { name: '霉·土腥', color: 0x8f7d59, rise: 0.22, sway: 2, swayFreq: 0.8, jitter: 0.05, heavy: true }, // 灰褐·闷在低处
-  powder:  { name: '香粉味',  color: 0xcdb8cf, rise: 0.50, sway: 8, swayFreq: 3.0, jitter: 0.8, wrong: true },  // 冷粉白透青·飘得不对劲
-};
+const FLAME_RATIO_EASE_PER_SECOND = 12;
+const FLAME_RATIO_SNAP_EPSILON = 0.001;
 
 export class HUD {
   private renderer: Renderer;
@@ -41,16 +34,15 @@ export class HUD {
   private flameRafId: number | null = null;
   private flameLastT: number = 0;
   private flameTime: number = 0;
-  private flamePop: number = 0;
+  private flameTargetRatio: number = 1;
+  private flameDisplayRatio: number = 1;
 
-  // 气味系统：HUD 层一缕活的"气味烟"（三把火的姊妹元件），由 SmellSystem 经 player:smellChanged 驱动。
-  private smellLayer: Container;
-  private smellPuffs: Graphics[] = [];
-  private smellPhase: number[] = [];
-  private smellTime: number = 0;
-  private smellScentId: string = '';
-  private smellIntensity: number = 0;
-  private smellCb: (p: { scent: string; intensity: number }) => void;
+  // 气味系统（方案 E·双层·基线+浮现）：HUD 层常驻气味指示器，由 SmellSystem 经 player:smellChanged 驱动。
+  // 渲染器在 setSmellProfiles（Game 异步加载 smell_profiles.json 后）创建。
+  private smellRenderer: SmellIndicatorRenderer | null = null;
+  private smellLast: SmellRenderState = { scent: '', intensity: 0, dir: 0, flicker: false };
+  private smellCb: (p: { scent?: string; intensity?: number; dir?: number; flicker?: boolean }) => void;
+  private sniffCb: () => void;
 
   private ruleHintBg: Graphics;
   private ruleHintText: Text;
@@ -65,8 +57,11 @@ export class HUD {
   private questAcceptedCb: (p: { title: string }) => void;
   private questCompletedCb: (p: { title: string }) => void;
   private healthCb: (p: { current: number; max: number }) => void;
+  private healthDebugOverrideCb: (p: { enabled?: boolean; value?: number; ratio?: number }) => void;
   private healthCurrent: number = 100;
   private healthMax: number = 100;
+  private healthDebugOverrideEnabled = false;
+  private healthDebugOverrideRatio = 1;
   private zoneEnterCb: () => void;
   private zoneExitCb: () => void;
 
@@ -105,18 +100,6 @@ export class HUD {
       this.flameLayer.addChild(g);
       this.flames.push(g);
       this.flamePhase.push(i * 2.1 + 0.7);
-    }
-
-    // 气味烟（三把火右侧）：一缕由 7 个升腾雾团组成的烟，颜色/飘法随当前气味变。
-    this.smellLayer = new Container();
-    this.smellLayer.x = 96;
-    this.smellLayer.y = 70;
-    this.container.addChild(this.smellLayer);
-    for (let i = 0; i < 7; i++) {
-      const g = new Graphics();
-      this.smellLayer.addChild(g);
-      this.smellPuffs.push(g);
-      this.smellPhase.push(i / 7);
     }
 
     this.startFlameLoop();
@@ -189,14 +172,24 @@ export class HUD {
     this.zoneEnterCb = () => { this.updateRuleHint(true); };
     this.zoneExitCb = () => { this.updateRuleHint(false); };
     this.healthCb = (p) => {
-      if (p.current > this.healthCurrent + 8) this.flamePop = 1; // 系绳复燃那一"啵"
       this.healthCurrent = p.current;
       this.healthMax = p.max;
     };
-    this.smellCb = (p) => {
-      this.smellScentId = p.scent || '';
-      this.smellIntensity = Number.isFinite(p.intensity) ? p.intensity : 0;
+    this.healthDebugOverrideCb = (p) => {
+      const raw = Number(p?.value ?? p?.ratio ?? this.healthDebugOverrideRatio);
+      if (Number.isFinite(raw)) this.healthDebugOverrideRatio = Math.max(0, Math.min(1, raw));
+      this.healthDebugOverrideEnabled = p?.enabled === true;
     };
+    this.smellCb = (p) => {
+      this.smellLast = {
+        scent: p.scent || '',
+        intensity: Number.isFinite(p.intensity) ? (p.intensity as number) : 0,
+        dir: Number.isFinite(p.dir) ? (p.dir as number) : 0,
+        flicker: !!p.flicker,
+      };
+      this.smellRenderer?.setState(this.smellLast);
+    };
+    this.sniffCb = () => { this.smellRenderer?.pulseBoost(); };
 
     this.eventBus.on('scene:enter', this.sceneEnterCb);
     this.eventBus.on('currency:changed', this.currencyCb);
@@ -205,7 +198,9 @@ export class HUD {
     this.eventBus.on('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.on('zone:ruleUnavailable', this.zoneExitCb);
     this.eventBus.on('player:healthChanged', this.healthCb);
+    this.eventBus.on('debug:hudHealthOverrideChanged', this.healthDebugOverrideCb);
     this.eventBus.on('player:smellChanged', this.smellCb);
+    this.eventBus.on('player:smellSniff', this.sniffCb);
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -277,84 +272,94 @@ export class HUD {
   }
 
   private stepFlames(dt: number): void {
-    const ratio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
-    if (this.flamePop > 0) this.flamePop = Math.max(0, this.flamePop - dt * 2.6);
+    const healthRatio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
+    this.flameTargetRatio = this.healthDebugOverrideEnabled ? this.healthDebugOverrideRatio : healthRatio;
+    const ratioDelta = this.flameTargetRatio - this.flameDisplayRatio;
+    const ease = 1 - Math.exp(-dt * FLAME_RATIO_EASE_PER_SECOND);
+    this.flameDisplayRatio += ratioDelta * ease;
+    if (Math.abs(this.flameTargetRatio - this.flameDisplayRatio) < FLAME_RATIO_SNAP_EPSILON) {
+      this.flameDisplayRatio = this.flameTargetRatio;
+    }
+    const ratio = this.flameDisplayRatio;
     for (let i = 0; i < this.flames.length; i++) {
       // 每簇火的强度：从右往左熄，flame0（最左）最后灭 = 那颗残星
       const inten = Math.max(0, Math.min(1, ratio * 3 - i));
-      this.drawFlame(this.flames[i], inten, this.flamePhase[i]);
+      this.drawFlame(this.flames[i], inten, this.flamePhase[i], ratio);
     }
   }
 
-  /** 一簇活的阳火：旺时暖橙、饱满、稳跳；近死时青冷、矮细、被风吹歪、明灭挣扎。 */
-  private drawFlame(g: Graphics, inten: number, phase: number): void {
+  /** 一簇活的阳火：更接近暗场里的烛火/纸火，旺时旧琥珀，近死时灰青冷白、细瘦偏斜。 */
+  private drawFlame(g: Graphics, inten: number, phase: number, ratio: number): void {
     g.clear();
     if (inten <= 0.015) return; // 灭
     const t = this.flameTime;
     const dying = 1 - inten; // 越接近死越大
-    // 抖动：越弱越快越乱
-    const flickFreq = 7 + dying * 16;
-    const flickAmp = 0.14 + dying * 0.5;
-    const flick = 1 + Math.sin(t * flickFreq + phase) * flickAmp + Math.sin(t * flickFreq * 1.7 + phase * 1.3) * flickAmp * 0.4;
+    const unrest = Math.max(dying, (1 - ratio) * 0.78);
+    // 抖动：越弱越乱，但节奏不随强度加速（方便 HUD debug ratio 扫描）。
+    const flickFreq = 9;
+    const flickAmp = 0.04 + unrest * 0.46;
+    const flick = 0.96 + Math.sin(t * flickFreq + phase) * flickAmp + Math.sin(t * flickFreq * 1.7 + phase * 1.3) * flickAmp * 0.28;
     // 残星明灭：低强度时 alpha 忽断忽续
-    const wink = inten < 0.32 ? 0.35 + 0.65 * Math.abs(Math.sin(t * (5 + dying * 9) + phase * 2)) : 1;
-    // 被看不见的风吹：越弱越歪
-    const tipSway = Math.sin(t * (1.6 + dying * 2.2) + phase) * (1 + dying * 5.5);
-    const pop = 1 + this.flamePop * 0.6; // 系绳复燃"啵"
-    const eff = Math.max(inten, 0.16); // 残星给一点地板，留住将灭的余烬
-    const h = Math.max(2, 22 * eff * flick * pop);
-    const w = (3 + 4 * inten) * pop;
-    const alpha = (0.6 + 0.35 * inten) * wink;
-    const col = lerpColor(0x5a96aa, 0xffaa3c, inten);   // 青冷 → 暖橙
-    const core = lerpColor(0xa8d4de, 0xfff0c0, inten);  // 内焰核
-    const tipX = tipSway, tipY = -h;
-    // 外焰
+    const wink = inten < 0.32 ? 0.28 + 0.72 * Math.abs(Math.sin(t * 7 + phase * 2)) : 1;
+    // 被看不见的风吹：越弱越歪，但摆动速度固定。
+    const tipSway = Math.sin(t * 2.2 + phase) * (0.12 + unrest * 4.9);
+    const eff = Math.max(inten, 0.13); // 残星给一点地板，留住将灭的余烬
+    const h = Math.max(2.2, 20 * eff * flick);
+    const w = 2.3 + 3.8 * inten;
+    const alpha = (0.5 + 0.34 * inten) * wink;
+    const edgeNoise = Math.sin(t * 5.1 + phase * 1.7) * (0.04 + unrest * 0.92);
+    const tipX = tipSway + edgeNoise;
+    const tipY = -h;
+
+    // 低饱和的烟晕：和场景里的油灯光一致，避免 UI 火焰显得太现代。
+    const halo = lerpColor(0x233235, 0x6a4526, inten);
+    g.ellipse(tipSway * 0.16, -h * 0.34, w * (1.15 + inten * 0.35), h * 0.42);
+    g.fill({ color: halo, alpha: alpha * (0.13 + inten * 0.05) });
+
+    // 外焰：不规则纸烛轮廓，冷时灰青，旺时旧琥珀。
+    const col = lerpColor(0x5f746b, 0xb97836, inten);
     g.moveTo(tipX, tipY);
-    g.bezierCurveTo(-w, -h * 0.42, -w, 0, 0, 0);
-    g.bezierCurveTo(w, 0, w, -h * 0.42, tipX, tipY);
+    g.bezierCurveTo(-w * 0.96 - edgeNoise * 0.2, -h * 0.62, -w * 0.72, -h * 0.18, -w * 0.16, 0);
+    g.bezierCurveTo(w * 0.08, h * 0.05, w * 0.78, -h * 0.08, w * 0.58 + edgeNoise * 0.25, -h * 0.38);
+    g.bezierCurveTo(w * 0.45, -h * 0.68, tipX + w * 0.24, -h * 0.84, tipX, tipY);
     g.fill({ color: col, alpha });
-    // 内焰核（亮、短）
-    const ch = h * 0.55, cw = w * 0.48, ctx = tipSway * 0.6;
+
+    // 内焰核：细而暖，保留一点烛芯白，不再做纯亮黄。
+    const core = lerpColor(0x9fb7aa, 0xe7c78d, inten);
+    const ch = h * (0.48 + inten * 0.1), cw = w * (0.28 + inten * 0.08), ctx = tipSway * 0.48;
     g.moveTo(ctx, -ch);
-    g.bezierCurveTo(-cw, -ch * 0.42, -cw, 0, 0, 0);
-    g.bezierCurveTo(cw, 0, cw, -ch * 0.42, ctx, -ch);
-    g.fill({ color: core, alpha: alpha * 0.85 });
+    g.bezierCurveTo(-cw, -ch * 0.45, -cw * 0.8, -h * 0.08, -cw * 0.18, -h * 0.01);
+    g.bezierCurveTo(cw * 0.78, -h * 0.08, cw * 0.72, -ch * 0.45, ctx, -ch);
+    g.fill({ color: core, alpha: alpha * (0.72 + inten * 0.1) });
+
+    // 烛芯/余烬：小黑线压住底部，让 HUD 火不漂成普通粒子特效。
+    g.moveTo(0, -1.4);
+    g.lineTo(0, 2.4);
+    g.stroke({ color: 0x211711, width: 0.75, alpha: 0.62 * alpha });
+    g.circle(0, 1.6, Math.max(0.9, w * 0.16));
+    g.fill({ color: lerpColor(0x35504b, 0x7d4a22, inten), alpha: 0.44 * alpha });
   }
 
-  private stepSmell(_dt: number): void {
-    this.smellTime += _dt;
-    const scent = SCENTS[this.smellScentId];
-    const inten = Math.max(0, Math.min(1, this.smellIntensity / 100));
-    if (!scent || inten <= 0.01) {
-      for (const g of this.smellPuffs) g.clear();
-      return;
-    }
-    this.drawSmell(scent, inten);
+  private stepSmell(dt: number): void {
+    this.smellRenderer?.update(dt);
   }
 
-  /** 一缕活的气味烟：7 个升腾雾团，颜色=味种、飘法=性格（heavy 沉、wrong 打旋不对劲=香粉味）。 */
-  private drawSmell(scent: ScentDef, inten: number): void {
-    const TAU = Math.PI * 2, t = this.smellTime, riseH = 36;
-    for (let i = 0; i < this.smellPuffs.length; i++) {
-      const g = this.smellPuffs[i];
-      g.clear();
-      if (inten <= 0.02) continue;
-      const phase = this.smellPhase[i];
-      const life = (((t * scent.rise + phase) % 1) + 1) % 1; // 0=底部刚生，1=顶部散尽
-      let x = Math.sin(t * scent.swayFreq + phase * TAU) * scent.sway * (0.3 + life * 0.7);
-      x += Math.sin(t * 13 + phase * 31) * scent.jitter * 3;
-      let y = -life * riseH * (scent.heavy ? 0.55 : 1);
-      if (scent.wrong) { // 香粉味：打旋、逆物理，飘得不对劲
-        x += Math.cos(t * 2.2 + phase * TAU) * scent.sway * 0.7;
-        y -= Math.sin(t * 1.8 + phase * TAU) * 3;
-      }
-      const r = (2.2 + life * 4.5) * (0.6 + 0.4 * inten);
-      const a = inten * 0.5 * (1 - life) * Math.min(1, life * 8); // 底浓顶散、生时淡入
-      g.circle(x, y, r * 1.5);
-      g.fill({ color: scent.color, alpha: a * 0.35 });
-      g.circle(x, y, r);
-      g.fill({ color: scent.color, alpha: a });
-    }
+  /** 由 Game 异步加载 smell_profiles.json 后调用：建/重建气味指示器渲染器（方案 E·双层·基线+浮现）。
+   *  位置：三把火（16,70 起、组中心约 x:34）**正下方**、居中同宽；方案 E 是竖向（高>>宽），气缕从基线往上升。 */
+  setSmellProfiles(data: SmellProfilesRaw): void {
+    if (this.smellRenderer) this.smellRenderer.destroy();
+    this.smellRenderer = new SmellIndicatorRenderer(this.container, data, { x: 34, y: 160 });
+    this.smellRenderer.setState(this.smellLast);
+  }
+
+  /** F2 调试：读当前烟形参数；渲染器未就绪返回 null。 */
+  getSmellForm(): SmellFormParams | null {
+    return this.smellRenderer?.getForm() ?? null;
+  }
+
+  /** F2 调试：实时改一个烟形参数（只影响显示，不写盘）。 */
+  setSmellFormParam(key: keyof SmellFormParams, value: number): void {
+    this.smellRenderer?.setFormParam(key, value);
   }
 
   destroy(): void {
@@ -367,7 +372,9 @@ export class HUD {
     this.eventBus.off('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.off('zone:ruleUnavailable', this.zoneExitCb);
     this.eventBus.off('player:healthChanged', this.healthCb);
+    this.eventBus.off('debug:hudHealthOverrideChanged', this.healthDebugOverrideCb);
     this.eventBus.off('player:smellChanged', this.smellCb);
+    this.eventBus.off('player:smellSniff', this.sniffCb);
     if (this.container.parent) {
       this.container.parent.removeChild(this.container);
     }

@@ -188,6 +188,21 @@
   max-width: 100%;
 }
 
+.debug-dock__check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+  color: #c5d0e0;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.debug-dock__check-row input[type='checkbox'] {
+  cursor: pointer;
+  accent-color: #8ab4ff;
+}
+
 .debug-dock__slider-value {
   flex: 0 0 auto;
   min-width: 2.75rem;

@@ -34,6 +34,7 @@ import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
 import { SmellSystem } from '../systems/SmellSystem';
 import { HUD } from '../ui/HUD';
+import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
 import { NotificationUI } from '../ui/NotificationUI';
 import { QuestPanelUI } from '../ui/QuestPanelUI';
 import { InventoryUI } from '../ui/InventoryUI';
@@ -243,6 +244,7 @@ export class Game {
   private signalCueManager: SignalCueManager;
   private healthSystem: HealthSystem;
   private smellSystem: SmellSystem;
+  private smellProfilesData: SmellProfilesRaw | null = null;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: IEntityShadingFilter | null = null;
@@ -684,6 +686,17 @@ export class Game {
           ? this.sceneDepthSystem.floorOffset
           : undefined,
         floorOffsetFromScene: this.sceneDepthSystem.currentConfig?.floor_offset,
+        smell: (() => {
+          const ds = this.smellSystem.getDebugState();
+          return {
+            source: ds.source,
+            actionScent: ds.action.scent,
+            actionIntensity: ds.action.intensity,
+            zoneScent: ds.zone.scent,
+            zoneIntensity: ds.zone.intensity,
+            effectiveScent: ds.effective.scent,
+          };
+        })(),
       }),
       this.inputManager,
     );
@@ -1093,11 +1106,23 @@ export class Game {
       nudgeEntityShadowContactSize: (d) => this.nudgeEntityShadowContactSizeDebug(d),
       nudgeEntityShadowSoftSamples: (d) => this.nudgeEntityShadowSoftSamplesDebug(d),
       toggleEntityShadowEnabled: () => this.toggleEntityShadowEnabledDebug(),
+      smellDebug: {
+        listProfiles: () =>
+          Object.entries(this.smellProfilesData?.profiles ?? {}).map(([id, p]) => ({ id, name: p.name || id })),
+        set: (scent, intensity, dir, flicker) => this.smellSystem.setSmell(scent, intensity, dir, flicker),
+        clear: () => this.smellSystem.clearSmell(),
+        setZone: (scent, intensity, dir, flicker) => this.smellSystem.setZoneSmell(scent, intensity, dir, flicker),
+        clearZone: () => this.smellSystem.clearZoneSmell(),
+        sniff: () => this.smellSystem.sniff(),
+        getForm: () => this.hud?.getSmellForm() ?? null,
+        setFormParam: (key, value) => this.hud?.setSmellFormParam(key, value),
+      },
     });
     this.debugTools.init();
 
     await Promise.all([
       this.loadFlagRegistry(),
+      this.loadSmellProfiles(),
       this.inventoryManager.loadDefs(),
       this.rulesManager.loadDefs(),
       this.questManager.loadDefs(),
@@ -1125,6 +1150,49 @@ export class Game {
     await this.setupPlayer({ deferAvatar: this.isDevMode });
     this.setupRuntimeDebugSnapshotPublishing();
     this.setupRuntimeCommandPolling();
+    // 气味调试 hook（平时关；URL 加 ?smellDebug 开启）：console 里 __smell(scent,intensity,dir,flicker) /
+    // __smellSniff() / __smellStep(n) 驱动 HUD 气味指示器看效果。隐藏页 rAF 被节流时 __smell 会强制步进给截图用。
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('smellDebug')) {
+      const w = window as unknown as Record<string, unknown>;
+      const stepHud = (n: number) => {
+        if (!document.hidden) return; // 可见页：让 HUD 自带 rAF 自然播动画（flash/coil/fade）；只在隐藏页强制步进给截图用
+        const r = (this.hud as unknown as { smellRenderer?: { update: (dt: number) => void } }).smellRenderer;
+        if (r) for (let i = 0; i < (n || 30); i++) r.update(0.05);
+        try { (this.renderer as unknown as { app?: { render?: () => void } }).app?.render?.(); } catch { /* 隐藏页强制重绘 canvas */ }
+      };
+      w.__smell = (scent: string, intensity?: number, dir?: number, flicker?: boolean, steps?: number) => {
+        this.smellSystem.setSmell(scent, intensity, dir, flicker);
+        stepHud(steps ?? 30);
+      };
+      w.__smellSniff = (steps?: number) => { this.smellSystem.sniff(); stepHud(steps ?? 16); };
+      w.__smellStep = (n: number) => stepHud(n);
+      w.__smellInfo = () => {
+        const r = this.hud as unknown as {
+          smellRenderer?: { layer?: { x: number; y: number; visible: boolean; children: { length: number } };
+            wispSprites?: { visible: boolean; alpha: number }[]; baseSprites?: { visible: boolean }[];
+            renderScent?: string; fade?: number };
+        };
+        const sr = r.smellRenderer;
+        if (!sr) return { renderer: null };
+        return {
+          layerX: sr.layer?.x, layerY: sr.layer?.y, layerVisible: sr.layer?.visible,
+          children: sr.layer?.children?.length,
+          wispVisible: (sr.wispSprites || []).filter((s) => s.visible && s.alpha > 0.003).length,
+          baseVisible: (sr.baseSprites || []).filter((s) => s.visible).length,
+          renderScent: sr.renderScent, fade: sr.fade,
+        };
+      };
+      // 验证 zone:enter/zone:exit → SmellSystem zone 层（不需真走进区域）。
+      w.__smellZoneEnter = (scent: string, intensity?: number, dir?: number, flicker?: boolean, steps?: number) => {
+        this.eventBus.emit('zone:enter', { zoneId: '__debugzone__', zone: { id: '__debugzone__', smell: { scent, intensity, dir, flicker } } });
+        stepHud(steps ?? 30);
+      };
+      w.__smellZoneExit = (steps?: number) => {
+        this.eventBus.emit('zone:exit', { zoneId: '__debugzone__' });
+        stepHud(steps ?? 30);
+      };
+      w.__smellSource = () => this.smellSystem.getDebugState();
+    }
 
     if (this.isDevMode) {
       await this.startDevMode(
@@ -1241,6 +1309,17 @@ export class Game {
       this.flagStore.configureRegistry(reg);
     } catch {
       this.flagStore.configureRegistry(null);
+    }
+  }
+
+  /** 气味 profiles（方案 E·气味指示器的数据源）→ 交给 HUD 建渲染器。失败则降级无气味指示器。 */
+  private async loadSmellProfiles(): Promise<void> {
+    try {
+      const data = await this.assetManager.loadJson<SmellProfilesRaw>(TEXT_URLS.smellProfiles);
+      this.smellProfilesData = data;
+      this.hud?.setSmellProfiles(data);
+    } catch {
+      /* 无 profiles：HUD 气味指示器不显示，不影响其它 */
     }
   }
 
@@ -3272,6 +3351,8 @@ export class Game {
     if (this.stateController.currentState === GameState.Exploring) {
       this.updatePlayerNav();
       this.player.update(dt);
+      // 「嗅」键（KeyQ）：主动闻一下当前气味，HUD 气缕短暂拔高变清。
+      if (this.inputManager.wasKeyJustPressed('KeyQ')) this.smellSystem.sniff();
       this.interactionSystem.update(dt);
       this.zoneSystem.update(dt);
       for (const npc of this.sceneManager.getCurrentNpcs()) {

@@ -6137,6 +6137,36 @@ class ScenePropertyPanel(QScrollArea):
         act_g.add_body(act_inner)
         self._zn_act_fold = act_g
         lay.addWidget(act_g)
+
+        smell_g = self._section("区域气味（进入本区呈现·zone 层）", start_open=False)
+        self._zn_smell_fold = smell_g
+        smell_inner = QWidget()
+        smell_form = compact_form(QFormLayout(smell_inner))
+        # scent 从 smell_profiles.json 下拉（进 load 时按 model 填充候选）；空=本区不配气味。
+        self._zn_smell_scent = FilterableTypeCombo([], self, select_only=True)
+        self._zn_smell_scent.setToolTip(
+            "玩家进入本区自动呈现的环境气味（zone 层；离区自动撤回；被剧情 setSmell 的 action 层压过）。"
+            "选「无」=本区不配气味。")
+        self._zn_smell_scent.typeCommitted.connect(lambda _t: self._emit_props_changed())
+        smell_form.addRow("气味 scent", self._zn_smell_scent)
+        self._zn_smell_intensity = QSpinBox()
+        self._zn_smell_intensity.setRange(0, 100)
+        self._zn_smell_intensity.setValue(60)
+        self._zn_smell_intensity.valueChanged.connect(lambda _v: self._emit_props_changed())
+        smell_form.addRow("浓度 intensity", self._zn_smell_intensity)
+        self._zn_smell_dir = QDoubleSpinBox()
+        self._zn_smell_dir.setRange(-1.0, 1.0)
+        self._zn_smell_dir.setSingleStep(0.1)
+        self._zn_smell_dir.setDecimals(2)
+        self._zn_smell_dir.setToolTip("方位偏向 -1..1（0=居中；气缕拖向来源那侧）。")
+        self._zn_smell_dir.valueChanged.connect(lambda _v: self._emit_props_changed())
+        smell_form.addRow("方位偏向 dir", self._zn_smell_dir)
+        self._zn_smell_flicker = QCheckBox("波动 flicker（不稳的味在 HUD 上明灭跳）")
+        self._zn_smell_flicker.toggled.connect(lambda _v: self._emit_props_changed())
+        smell_form.addRow("", self._zn_smell_flicker)
+        smell_g.add_body(smell_inner)
+        lay.addWidget(smell_g)
+
         lay.addStretch(1)
         self._append_entity_delete_footer(lay)
         return w
@@ -6147,6 +6177,8 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_boost.setEnabled(is_depth)
         for ae in (self._zn_enter, self._zn_stay, self._zn_exit):
             ae.setEnabled(not is_depth)
+        # depth_floor 仅参与遮挡、无进出触发，气味无意义 → 禁用气味区
+        self._zn_smell_fold.setEnabled(not is_depth)
 
     def _on_zone_kind_changed(self, _idx: int) -> None:
         self._apply_zone_kind_ui()
@@ -6320,6 +6352,22 @@ class ScenePropertyPanel(QScrollArea):
                 self._zn_boost.setValue(float(st.get("floorOffsetBoost", 0)))
             except (TypeError, ValueError):
                 self._zn_boost.setValue(0.0)
+            sm = st.get("smell") if isinstance(st.get("smell"), dict) else {}
+            self._zn_smell_scent.set_entries(
+                [("（无 zone 气味）", "")]
+                + [(name, sid) for sid, name in (self._model.all_smell_profile_ids() if self._model else [])]
+            )
+            self._zn_smell_scent.set_committed_type(str(sm.get("scent") or ""))
+            try:
+                self._zn_smell_intensity.setValue(int(sm.get("intensity", 60)))
+            except (TypeError, ValueError):
+                self._zn_smell_intensity.setValue(60)
+            try:
+                self._zn_smell_dir.setValue(float(sm.get("dir", 0)))
+            except (TypeError, ValueError):
+                self._zn_smell_dir.setValue(0.0)
+            self._zn_smell_flicker.setChecked(bool(sm.get("flicker", False)))
+            self._zn_smell_fold.set_expanded(bool(sm.get("scent")))
             self._apply_zone_kind_ui()
             oe = st.get("onEnter") or []
             oy = st.get("onStay") or []
@@ -6345,7 +6393,7 @@ class ScenePropertyPanel(QScrollArea):
         if kind == "depth_floor":
             zone["zoneKind"] = "depth_floor"
             zone["floorOffsetBoost"] = self._zn_boost.value()
-            for k in ("onEnter", "onStay", "onExit"):
+            for k in ("onEnter", "onStay", "onExit", "smell"):
                 zone.pop(k, None)
         else:
             zone.pop("zoneKind", None)
@@ -6365,6 +6413,17 @@ class ScenePropertyPanel(QScrollArea):
                 zone["onExit"] = ox
             elif "onExit" in zone:
                 del zone["onExit"]
+            scent = self._zn_smell_scent.committed_type().strip()
+            if scent:
+                sm: dict = {"scent": scent, "intensity": int(self._zn_smell_intensity.value())}
+                dval = round(float(self._zn_smell_dir.value()), 3)
+                if dval != 0:
+                    sm["dir"] = dval
+                if self._zn_smell_flicker.isChecked():
+                    sm["flicker"] = True
+                zone["smell"] = sm
+            elif "smell" in zone:
+                del zone["smell"]
         c = self._zn_cond.to_list()
         if c:
             zone["conditions"] = c

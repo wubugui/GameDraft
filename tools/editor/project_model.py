@@ -158,6 +158,7 @@ class ProjectModel(QObject):
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
         self.signal_cues = self._load(dp / "signal_cues.json", [])
+        self.smell_profiles = self._load(dp / "smell_profiles.json", {})
 
         self.animations = {}
         anim_root = self.animation_bundles_path
@@ -774,6 +775,17 @@ class ProjectModel(QObject):
                 continue
             label = str(row.get("label") or "").strip()
             out.append((iid, label or iid))
+        return out
+
+    def all_smell_profile_ids(self) -> list[tuple[str, str]]:
+        """`(id, name)`：smell_profiles.json 的 profiles 词条（供 setSmell.scent 下拉）。"""
+        data = self.smell_profiles if isinstance(self.smell_profiles, dict) else {}
+        profs = data.get("profiles", {})
+        out: list[tuple[str, str]] = []
+        if isinstance(profs, dict):
+            for pid, p in profs.items():
+                name = (p.get("name") if isinstance(p, dict) else "") or pid
+                out.append((str(pid), str(name)))
         return out
 
     def all_filter_ids(self) -> list[str]:

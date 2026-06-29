@@ -28,6 +28,7 @@ export const TEXT_URLS = {
   cutscenesIndex: '/assets/data/cutscenes/index.json',
   gameConfig: '/assets/data/game_config.json',
   flagRegistry: '/assets/data/flag_registry.json',
+  smellProfiles: '/assets/data/smell_profiles.json',
   overlayImages: '/assets/data/overlay_images.json',
   scenarios: '/assets/data/scenarios.json',
   documentReveals: '/assets/data/document_reveals.json',

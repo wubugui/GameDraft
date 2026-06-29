@@ -17,6 +17,14 @@
       "valueType": "float"
     },
     {
+      "key": "current_smell_dir",
+      "valueType": "float"
+    },
+    {
+      "key": "current_smell_flicker",
+      "valueType": "bool"
+    },
+    {
       "key": "got_xingtou_daopao",
       "valueType": "bool"
     },

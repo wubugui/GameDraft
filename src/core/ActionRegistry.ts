@@ -525,12 +525,22 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.healthSystem.tether();
   }, []);
   // 气味系统（SmellSystem）：编排层设/清当前主导气味，HUD 的"气味烟"随之变。
-  // scent = 气味 id（corpse/yin/incense/blood/mold/powder…，HUD 词库），intensity = 强度 0–100。
+  // scent = 气味 id（corpse/yin/incense/blood/mold/powder…，见 smell_profiles.json），
+  // intensity = 强度 0–100；dir = 方位偏向 -1..1（0=居中，气缕拖向来源侧）；flicker = 波动（不稳的味明灭跳）。
   executor.register('setSmell', (p) => {
-    d.smellSystem.setSmell(String(p.scent ?? ''), p.intensity === undefined ? undefined : Number(p.intensity));
-  }, ['scent', 'intensity']);
+    d.smellSystem.setSmell(
+      String(p.scent ?? ''),
+      p.intensity === undefined ? undefined : Number(p.intensity),
+      p.dir === undefined ? undefined : Number(p.dir),
+      p.flicker === undefined ? undefined : Boolean(p.flicker),
+    );
+  }, ['scent', 'intensity', 'dir', 'flicker']);
   executor.register('clearSmell', () => {
     d.smellSystem.clearSmell();
+  }, []);
+  // 主动嗅一下：当前气缕短暂拔高变清（视觉脉冲，几秒自行回落）。
+  executor.register('sniff', () => {
+    d.smellSystem.sniff();
   }, []);
 
   executor.register('startSugarWheelMinigame', async (p) => {

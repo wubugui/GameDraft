@@ -42,15 +42,26 @@ type TabId =
   | typeof TAB_FLAGS
   | typeof TAB_LOG;
 
-export class DebugPanelUI implements IDebugPanelAPI {
-  private systemInfoProvider?: () => {
-    fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
-    /** 深度遮挡启用时：当前运行时的 floor_offset（可被 Action 等改写） */
-    floorOffsetRuntime?: number;
-    /** 当前场景 depthConfig 中的原始 floor_offset；无配置时为 undefined */
-    floorOffsetFromScene?: number;
-    depthOcclusionEnabled?: boolean;
+/** 系统页实时信息（F2「系统」标签）。 */
+interface SystemInfo {
+  fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
+  /** 深度遮挡启用时：当前运行时的 floor_offset（可被 Action 等改写） */
+  floorOffsetRuntime?: number;
+  /** 当前场景 depthConfig 中的原始 floor_offset；无配置时为 undefined */
+  floorOffsetFromScene?: number;
+  depthOcclusionEnabled?: boolean;
+  /** 当前生效气味 + 两层来源（标记 action / zone 谁在生效）。 */
+  smell?: {
+    source: 'action' | 'zone' | 'none';
+    actionScent: string; actionIntensity: number;
+    zoneScent: string; zoneIntensity: number;
+    effectiveScent: string;
   };
+}
+type SystemInfoProvider = () => SystemInfo;
+
+export class DebugPanelUI implements IDebugPanelAPI {
+  private systemInfoProvider?: SystemInfoProvider;
   private sections = new Map<string, () => DebugSectionContent>();
   private logLines: string[] = [];
   private _isOpen = false;
@@ -72,10 +83,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private readonly inputManager?: InputManager;
 
   constructor(
-    systemInfoProvider?: () => {
-      fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
-      floorOffsetRuntime?: number; floorOffsetFromScene?: number; depthOcclusionEnabled?: boolean;
-    },
+    systemInfoProvider?: SystemInfoProvider,
     inputManager?: InputManager,
   ) {
     this.systemInfoProvider = systemInfoProvider;
@@ -223,10 +231,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     if (this._isOpen) this.render();
   }
 
-  setSystemInfoProvider(provider: () => {
-    fps?: number; sceneId?: string; state?: string; worldWidth?: number; worldHeight?: number;
-    floorOffsetRuntime?: number; floorOffsetFromScene?: number; depthOcclusionEnabled?: boolean;
-  }): void {
+  setSystemInfoProvider(provider: SystemInfoProvider): void {
     this.systemInfoProvider = provider;
     if (this._isOpen) {
       this.render();
@@ -335,6 +340,18 @@ export class DebugPanelUI implements IDebugPanelAPI {
       );
     } else {
       lines.push('floor_offset: （当前场景未启用深度遮挡）');
+    }
+    if (info.smell) {
+      const sm = info.smell;
+      const srcLabel = sm.source === 'action' ? 'action（生效）' : sm.source === 'zone' ? 'zone（生效）' : '无味';
+      lines.push('—— 气味 ——');
+      lines.push(`生效来源: ${srcLabel}`);
+      const aStr = sm.actionScent ? `${sm.actionScent}(${sm.actionIntensity})` : '—';
+      const zStr = sm.zoneScent ? `${sm.zoneScent}(${sm.zoneIntensity})` : '—';
+      const aMark = sm.source === 'action' ? ' ←生效' : '';
+      const zMark = sm.source === 'zone' ? ' ←生效' : (sm.actionScent && sm.zoneScent ? '（被 action 压住）' : '');
+      lines.push(`  action 层: ${aStr}${aMark}`);
+      lines.push(`  zone 层:   ${zStr}${zMark}`);
     }
     const text = lines.length === 0 ? '（暂无）' : lines.join('\n');
 

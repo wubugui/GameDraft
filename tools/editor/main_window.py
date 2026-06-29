@@ -642,6 +642,7 @@ class MainWindow(QMainWindow):
         from .editors.sugar_wheel_editor import SugarWheelEditor
         from .editors.paper_craft_editor import PaperCraftEditor
         from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
+        from .editors.smell_profile_editor import SmellProfileEditor
 
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
@@ -670,6 +671,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "资源与本地化"], "玩家化身", PlayerAvatarEditor),
             (["数据编辑", "资源与本地化"], "叠图 ID", OverlayImagesEditor),
             (["数据编辑", "资源与本地化"], "文档揭示", DocumentRevealsEditor),
+            (["数据编辑", "资源与本地化"], "气味Profile", SmellProfileEditor),
             (["数据编辑", "工程与全局"], "Config", GameConfigEditor),
             (["运行与预览"], "Game", _GAME_BROWSER_SENTINEL),
         ]

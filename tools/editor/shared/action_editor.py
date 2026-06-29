@@ -118,7 +118,7 @@ ACTION_TYPES = [
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startPressureHold", "playSignalCue", "addFlagValue",
     "damagePlayer", "healPlayer", "resetHealth", "setHealth", "incHealth", "decHealth", "triggerDeathTether",
-    "setSmell", "clearSmell",
+    "setSmell", "clearSmell", "sniff",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
     "sugarWheelResetPointer",
     "debugAlertActionParams",
@@ -190,6 +190,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "triggerDeathTether": "save",
     "setSmell": "save",
     "clearSmell": "save",
+    "sniff": "save",
     "startWaterMinigame": "memory",
     "startSugarWheelMinigame": "memory",
     "startPaperCraftMinigame": "memory",
@@ -302,8 +303,9 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "incHealth": [("amount", "int")],
     "decHealth": [("amount", "int")],
     "triggerDeathTether": [],
-    "setSmell": [("scent", "str"), ("intensity", "int")],
+    "setSmell": [("scent", "str"), ("intensity", "int"), ("dir", "float"), ("flicker", "bool")],
     "clearSmell": [],
+    "sniff": [],
     "giveItem": [("id", "str"), ("count", "int")],
     "removeItem": [("id", "str"), ("count", "int")],
     "giveCurrency": [("amount", "int")],
@@ -2528,6 +2530,7 @@ class ActionRow(QWidget):
         strict_pick = kind in (
             "actor", "emote_target", "npc_only",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
+            "smell",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -2568,6 +2571,8 @@ class ActionRow(QWidget):
             pairs = m.all_sugar_wheel_minigame_ids() if m else []
         elif kind == "paper_craft_minigame":
             pairs = m.all_paper_craft_minigame_ids() if m else []
+        elif kind == "smell":
+            pairs = m.all_smell_profile_ids() if m else []
         else:
             pairs = []
 
@@ -2592,6 +2597,7 @@ class ActionRow(QWidget):
             "water_minigame": "仅下拉选择；列表来自 water_minigames/index.json。",
             "sugar_wheel_minigame": "仅下拉选择；列表来自 sugar_wheel/index.json。",
             "paper_craft_minigame": "仅下拉选择；列表来自 paper_craft/index.json。",
+            "smell": "仅下拉选择；列表来自 smell_profiles.json 的 profiles（香火/阴腥/尸臭/血腥/霉/香粉…）。留空=回落正常态。",
         }.get(kind)
         if tip:
             w.setToolTip(tip)
@@ -3973,6 +3979,8 @@ class ActionRow(QWidget):
                 w = self._make_selector("scene", str(val) if val is not None else "")
             elif act_type in ("switchScene", "changeScene") and pname == "targetSpawnPoint":
                 w = self._make_selector("spawn", str(val) if val is not None else "")
+            elif act_type == "setSmell" and pname == "scent":
+                w = self._make_selector("smell", str(val) if val is not None else "")
             elif act_type == "giveItem" and pname == "id":
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "removeItem" and pname == "id":
