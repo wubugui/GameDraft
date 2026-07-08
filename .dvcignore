@@ -1,3 +1,6 @@
 # Add patterns of files dvc should ignore, which could improve
 # the performance. Learn more at
 # https://dvc.org/doc/user-guide/dvcignore
+
+# 本地资产备份目录：不作为 DVC 输入/输出扫描
+asset-backups/
