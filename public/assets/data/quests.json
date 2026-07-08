@@ -455,5 +455,28 @@
     ],
     "rewards": [],
     "nextQuests": []
+  },
+  {
+    "id": "背尸-淹尸送义庄",
+    "group": "背尸零活",
+    "type": "side",
+    "title": "拉个泡涨的去义庄",
+    "description": "河头捞起个泡涨的淹死人，官面验过没人认。工头出八文：从码头巷口背去义庄，交给管事。",
+    "preconditions": [
+      {
+        "narrative": "flow_背尸_淹尸活",
+        "state": "accepted",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_背尸_淹尸活",
+        "state": "delivered",
+        "reached": true
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
   }
 ]

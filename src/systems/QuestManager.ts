@@ -276,6 +276,15 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
       this.questStatus.set(id, s as QuestStatus);
       this.syncFlag(id);
     }
+    // 读档后重建 HUD 任务追踪：对活跃任务补发 quest:accepted。接取顺序未随档存储
+    // （questStatus 在 loadDefs 时按 quests.json 数据序播种，序列化即该序），故按数据序补发，
+    // HUD 以最后一条为当前追踪。payload.restored=true 供副作用消费者（音效等）识别忽略；
+    // 不补发 notification:show，读档瞬间不弹假任务通知。
+    for (const [id, s] of this.questStatus) {
+      if (s !== QuestStatus.Active) continue;
+      const title = this.questDefs.get(id)?.title ?? id;
+      this.eventBus.emit('quest:accepted', { questId: id, title, restored: true });
+    }
   }
 
   destroy(): void {

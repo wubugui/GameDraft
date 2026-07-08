@@ -1,5 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
+import { canvasPointFromEvent } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { IRulesDataProvider, RuleLayerKey } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -28,6 +30,7 @@ export class RulesPanelUI {
   private contentH = 0;
   private content: Container | null = null;
   private panelInnerH = 0;
+  private panelRect: { x: number; y: number; w: number; h: number } | null = null;
   private onWheelBound: (e: WheelEvent) => void;
   private onScrollKeyBound: (e: KeyboardEvent) => void;
   private resolveDisplay: ((s: string) => string) | null = null;
@@ -329,6 +332,7 @@ export class RulesPanelUI {
     this.scrollOffset = Math.min(this.scrollOffset, maxScroll);
     const px = (sw - panelW) / 2;
     const py = (sh - panelH) / 2;
+    this.panelRect = { x: px, y: py, w: panelW, h: panelH };
 
     const overlay = new Graphics();
     overlay.rect(0, 0, sw, sh);
@@ -336,10 +340,7 @@ export class RulesPanelUI {
     this.container.addChild(overlay);
 
     const panel = new Graphics();
-    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    panel.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    panel.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(panel, px, py, panelW, panelH, SKINS.panel);
     this.container.addChild(panel);
 
     const title = new Text({
@@ -375,6 +376,11 @@ export class RulesPanelUI {
   }
 
   private onWheel(e: WheelEvent): void {
+    // 只劫持面板矩形内、且来自游戏画布的滚轮；否则放行（DOM 调试侧栏等仍可正常滚动）
+    const pt = canvasPointFromEvent(this.renderer, e);
+    const r = this.panelRect;
+    if (!pt || !r) return;
+    if (pt.x < r.x || pt.x > r.x + r.w || pt.y < r.y || pt.y > r.y + r.h) return;
     e.preventDefault();
     const maxScroll = Math.max(0, this.contentH - this.panelInnerH);
     this.scrollOffset = Math.max(0, Math.min(maxScroll, this.scrollOffset + (e.deltaY > 0 ? 30 : -30)));

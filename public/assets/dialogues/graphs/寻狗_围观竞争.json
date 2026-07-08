@@ -68,7 +68,10 @@
         "kind": "player"
       },
       "text": "（行头……对头，就是行头。可这一身皮，老子一文钱凑不齐——只能满城去淘：买的、赊的、骗的、顺的，一件一件弄。）",
-      "next": "m1"
+      "next": "m1",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "m1": {
       "type": "runActions",
@@ -90,7 +93,10 @@
         "kind": "player"
       },
       "text": "（当铺赊件道袍、庙会摊上踅摸个罗盘、城东先生那儿顺把桃木剑——满城转一圈，凑齐了再回这人堆里披上。）",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "nudge": {
       "type": "line",
@@ -98,7 +104,10 @@
         "kind": "player"
       },
       "text": "（这副样子披出去，老道们能笑掉大牙。还差几件——当铺的道袍、庙会的罗盘、城东的桃木剑，再去淘。）",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "dress_intro": {
       "type": "line",
@@ -138,7 +147,10 @@
         "kind": "player"
       },
       "text": "李天狗那一脉的关二狗，见过诸位。……嗯，这腔调还得多练几哈。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "end1": {
       "type": "end"

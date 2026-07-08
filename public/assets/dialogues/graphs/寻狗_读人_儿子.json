@@ -45,7 +45,10 @@
         "kind": "player"
       },
       "text": "（这院坝里头的「动静」，多半跟这崽儿脱不到爪爪。……管他锤子，钱照收，戏照做。）",
-      "next": "n_flag"
+      "next": "n_flag",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_flag": {
       "type": "runActions",

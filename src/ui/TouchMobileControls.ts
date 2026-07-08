@@ -1,6 +1,7 @@
 import './touch-mobile-controls.css';
 import type { InputManager } from '../core/InputManager';
 import type { GameStateController } from '../core/GameStateController';
+import type { StringsProvider } from '../core/StringsProvider';
 import { GameState } from '../data/types';
 
 type Dir = 'u' | 'd' | 'l' | 'r';
@@ -50,6 +51,7 @@ export class TouchMobileControls {
     stateController: GameStateController,
     getGameState: () => GameState,
     mountEl: HTMLElement,
+    strings: StringsProvider,
   ) {
     this.inputManager = inputManager;
     this.stateController = stateController;
@@ -62,17 +64,20 @@ export class TouchMobileControls {
     const menu = document.createElement('div');
     menu.className = 'touch-mc-menu touch-mc-explore-only';
     const menuDefs: { id: string; label: string }[] = [
-      { id: 'quest', label: '任务' },
-      { id: 'inventory', label: '背包' },
-      { id: 'rules', label: '规矩' },
-      { id: 'dialogueLog', label: '日志' },
-      { id: 'bookshelf', label: '书架' },
-      { id: 'map', label: '地图' },
-      { id: 'ruleUse', label: '规则牌' },
-      { id: 'shop', label: '商店' },
-      { id: 'menu', label: '菜单' },
-      { id: 'debug', label: '调试' },
+      { id: 'quest', label: strings.get('touchControls', 'quest') },
+      { id: 'inventory', label: strings.get('touchControls', 'inventory') },
+      { id: 'rules', label: strings.get('touchControls', 'rules') },
+      { id: 'dialogueLog', label: strings.get('touchControls', 'dialogueLog') },
+      { id: 'bookshelf', label: strings.get('touchControls', 'bookshelf') },
+      { id: 'map', label: strings.get('touchControls', 'map') },
+      { id: 'ruleUse', label: strings.get('touchControls', 'ruleUse') },
+      { id: 'shop', label: strings.get('touchControls', 'shop') },
+      { id: 'menu', label: strings.get('touchControls', 'menu') },
     ];
+    // F2 调试面板属于开发工具，生产构建不给玩家渲染这个入口
+    if (import.meta.env.DEV) {
+      menuDefs.push({ id: 'debug', label: strings.get('touchControls', 'debug') });
+    }
     for (const { id, label } of menuDefs) {
       menu.appendChild(this.makePanelToggleBtn(id, label));
     }
@@ -82,19 +87,19 @@ export class TouchMobileControls {
 
     const rowUp = document.createElement('div');
     rowUp.className = 'touch-mc-row';
-    rowUp.appendChild(this.makeDirBtn('u', '上'));
+    rowUp.appendChild(this.makeDirBtn('u', strings.get('touchControls', 'up')));
 
     const rowMid = document.createElement('div');
     rowMid.className = 'touch-mc-row';
-    rowMid.appendChild(this.makeDirBtn('l', '左'));
+    rowMid.appendChild(this.makeDirBtn('l', strings.get('touchControls', 'left')));
     const spacer = document.createElement('div');
     spacer.className = 'touch-mc-spacer';
     rowMid.appendChild(spacer);
-    rowMid.appendChild(this.makeDirBtn('r', '右'));
+    rowMid.appendChild(this.makeDirBtn('r', strings.get('touchControls', 'right')));
 
     const rowDn = document.createElement('div');
     rowDn.className = 'touch-mc-row';
-    rowDn.appendChild(this.makeDirBtn('d', '下'));
+    rowDn.appendChild(this.makeDirBtn('d', strings.get('touchControls', 'down')));
 
     dpad.appendChild(rowUp);
     dpad.appendChild(rowMid);
@@ -106,7 +111,7 @@ export class TouchMobileControls {
     const runBtn = document.createElement('button');
     runBtn.type = 'button';
     runBtn.className = 'touch-mc-btn touch-mc-wide';
-    runBtn.textContent = '跑';
+    runBtn.textContent = strings.get('touchControls', 'run');
     runBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       try {
@@ -139,7 +144,7 @@ export class TouchMobileControls {
     const useBtn = document.createElement('button');
     useBtn.type = 'button';
     useBtn.className = 'touch-mc-btn touch-mc-wide';
-    useBtn.textContent = '互动';
+    useBtn.textContent = strings.get('touchControls', 'interact');
     useBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       this.inputManager.injectKeyJustPressed('KeyE');
@@ -153,7 +158,7 @@ export class TouchMobileControls {
     const backBtn = document.createElement('button');
     backBtn.type = 'button';
     backBtn.className = 'touch-mc-btn touch-mc-wide';
-    backBtn.textContent = '返回';
+    backBtn.textContent = strings.get('touchControls', 'back');
     backBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       this.stateController.triggerEscapeFromTouch();

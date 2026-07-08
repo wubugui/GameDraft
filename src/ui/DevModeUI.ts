@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 
 export interface DevModeCallbacks {
   getCutsceneIds(): string[];
@@ -107,9 +108,7 @@ export class DevModeUI {
     this.container.addChild(overlay);
 
     const panel = new Graphics();
-    panel.roundRect(panelX, panelY, panelW, panelH, UITheme.panel.borderRadius);
-    panel.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    panel.stroke({ color: UITheme.colors.panelBorder, width: UITheme.panel.borderWidth });
+    drawPanelBase(panel, panelX, panelY, panelW, panelH, SKINS.panel);
     this.container.addChild(panel);
 
     const title = new Text({
@@ -337,7 +336,8 @@ export class DevModeUI {
       }
       if (!this._isOpen || this.section !== 'scene' || !this.contentContainer) return;
 
-      this.contentContainer.removeChildren();
+      const removed = this.contentContainer.removeChildren();
+      for (const child of removed) child.destroy({ children: true });
       let cy = 0;
 
       if (entries.length === 0) {

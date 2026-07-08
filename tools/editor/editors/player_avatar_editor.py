@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..project_model import ProjectModel
 from ..shared.form_layout import compact_form
+from ..shared.portrait_catalog import load_portrait_sets
 
 _DEFAULT_MANIFEST = "/resources/runtime/animation/player_anim/anim.json"
 _IDENTITY = "（与逻辑名相同，不映射）"
@@ -99,6 +100,15 @@ class PlayerAvatarEditor(QWidget):
         reset_m.clicked.connect(self._fill_manifest_from_bundle)
         man_row.addWidget(reset_m)
         pack_form.addRow("animManifest URL", man_row)
+
+        self._portrait_combo = QComboBox()
+        self._portrait_combo.setMinimumWidth(200)
+        self._portrait_combo.setToolTip(
+            "对话头像立绘集（resources/runtime/images/dialogue_portraits/<slug>/）。\n"
+            "留空 = 按动画包目录名同名推导（如 player_taoist_anim）。\n"
+            "图对话行头像选「跟随说话人」时，主角行按此解析；setPlayerAvatar 换装可覆盖。"
+        )
+        pack_form.addRow("portraitSlug（对话头像）", self._portrait_combo)
 
         lay.addWidget(pack_box)
 
@@ -246,6 +256,26 @@ class PlayerAvatarEditor(QWidget):
                 cb.setCurrentIndex(0)
             cb.blockSignals(False)
 
+    def _populate_portrait_combo(self) -> None:
+        cfg = self._model.game_config.get("playerAvatar") or {}
+        cur = str(cfg.get("portraitSlug") or "").strip()
+        self._portrait_combo.blockSignals(True)
+        self._portrait_combo.clear()
+        self._portrait_combo.addItem("（按动画包同名推导）", "")
+        sets = (
+            load_portrait_sets(self._model.project_path)
+            if self._model.project_path is not None
+            else []
+        )
+        for s in sets:
+            self._portrait_combo.addItem(s, s)
+        if cur and self._portrait_combo.findData(cur) < 0:
+            # 数据里带了磁盘上不存在的立绘集：保留可见，不静默清掉
+            self._portrait_combo.addItem(f"{cur}（缺集）", cur)
+        idx = self._portrait_combo.findData(cur)
+        self._portrait_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._portrait_combo.blockSignals(False)
+
     def _load_from_model(self) -> None:
         cfg = self._model.game_config.get("playerAvatar")
         if not isinstance(cfg, dict):
@@ -268,6 +298,7 @@ class PlayerAvatarEditor(QWidget):
         self._bundle_combo.blockSignals(False)
 
         self._repopulate_clip_combos()
+        self._populate_portrait_combo()
 
     def _apply(self) -> None:
         man = self._manifest_edit.text().strip() or _DEFAULT_MANIFEST
@@ -277,9 +308,21 @@ class PlayerAvatarEditor(QWidget):
             if clip and clip != _IDENTITY_DATA:
                 state_map[logical] = clip
 
-        pa: dict[str, Any] = {"animManifest": man}
+        old = self._model.game_config.get("playerAvatar")
+        # 保留未知子键（未来字段），只更新本面板管理的两个键
+        pa: dict[str, Any] = dict(old) if isinstance(old, dict) else {}
+        pa["animManifest"] = man
         if state_map:
             pa["stateMap"] = state_map
+        else:
+            pa.pop("stateMap", None)
+        slug = str(self._portrait_combo.currentData() or "").strip()
+        if slug:
+            pa["portraitSlug"] = slug
+        else:
+            pa.pop("portraitSlug", None)
+        if pa == old:
+            return  # 无实质变化：不写不标脏（否则每次 Save All 都重写 game_config）
         self._model.game_config["playerAvatar"] = pa
         self._model.mark_dirty("config")
         self._status_message("已更新 playerAvatar")

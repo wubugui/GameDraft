@@ -127,16 +127,10 @@ export interface SceneShadowParams {
   softness?: number;
   /** 阴影长度相对角色高度的倍率，缺省由仰角推导 */
   length?: number;
-  /** 额外水平倾斜（弧度），缺省由方位角推导 */
-  skewX?: number;
   /** 脚底接触阴影（地面 omni 暗斑）强度 0..1，让角色"坐进"地面；0=关闭 */
   contact?: number;
   /** 接触暗斑大小倍率，默认 1 */
   contactSize?: number;
-  /** depth-drape 强度：阴影剪影沿深度场爬上抬升表面（石头/台阶立面）；0=纯平地投影；约 1 为按 floor 模型物理推导 */
-  drape?: number;
-  /** depth-drape 开关（便于对比开/关效果），默认 true */
-  drapeEnabled?: boolean;
 }
 
 /** Ambient Occlusion（shader 内逐像素）参数 */
@@ -216,7 +210,8 @@ export interface SceneData {
   playerRunSpeed?: number;
   /**
    * 每次成功加载本场景时顺序执行一次（与 Zone 的 onEnter 无关）。
-   * 在 spawn/相机/音频/Zone 注册与深度加载完成之后、`scene:enter` 事件之前触发。
+   * 时机：场景资源装载、实体滤镜/光照就绪（`scene:ready`）并揭幕（切场过渡遮罩淡出）**之后**触发。
+   * 因此这里发起的成段演出（过场/对话）落在**可见**场景之上，不会被加载遮罩盖住，长演出也不阻塞揭幕。
    */
   onEnter?: ActionDef[];
 }
@@ -257,6 +252,11 @@ export interface HotspotDef {
   type: HotspotType;
   x: number;
   y: number;
+  /**
+   * 位面归属（见 `systems/plane/types.ts` PlaneDef）：缺省 = 实体存在于**所有**位面；
+   * 有值时仅当激活位面包含于该列表时实体启用（由 PlaneReconciler 经派生基底通道驱动）。
+   */
+  planes?: string[];
   /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
   cutsceneIds?: string[];
   /**
@@ -339,6 +339,21 @@ export type DialogueGraphSpeaker =
   | { kind: 'literal'; name: string }
   | { kind: 'sceneNpc'; npcId: string };
 
+/**
+ * 对话行头像引用（可选）：由编辑器可视化选择器写入，运行时按
+ * `resources/runtime/images/dialogue_portraits/<slug>/<slug>_<emotion>.png` 直接加载。
+ * `slug` = 立绘集目录（多数等于 NPC 的 animFile bundle id），`emotion` = 9 表情之一
+ * （calm/angry/fear/cry/sad/empty_eyes/smirk/laugh/zombified）。不设 portrait 则该行不显头像。
+ *
+ * `slug` 可缺省 =「跟随说话 NPC」：运行时按说话人（kind:'npc'/'sceneNpc'）解析到场景 NPC 的
+ * `NpcDef.portraitSlug`；说话人不是 NPC 或该 NPC 未配置 portraitSlug 时该行不显头像。
+ * 共享图（同一图挂不同 NPC）用此写法自动跟人换脸。
+ */
+export interface DialoguePortraitRef {
+  slug?: string;
+  emotion: string;
+}
+
 /** 任务状态叶子（与 JSON 中 questStatus / status 兼容） */
 export type QuestConditionLeaf = {
   quest: string;
@@ -396,6 +411,8 @@ export interface DialogueLinePayload {
   speaker: DialogueGraphSpeaker;
   text?: string;
   textKey?: string;
+  /** 可选头像（编辑器可视化选择器写入）；不设则该拍不显头像 */
+  portrait?: DialoguePortraitRef;
 }
 
 export interface GraphChoiceOptionDef {
@@ -421,6 +438,8 @@ export type DialogueGraphNodeDef =
       speaker: DialogueGraphSpeaker;
       text?: string;
       textKey?: string;
+      /** 可选头像（首拍/单拍用；多拍各拍在 lines[].portrait 上） */
+      portrait?: DialoguePortraitRef;
       /** 多拍连续对白（每拍仍需点击继续）；若存在则按顺序播放，且首拍应与 speaker/text/textKey 一致（可由编辑器镜像） */
       lines?: DialogueLinePayload[];
       next: string;
@@ -542,11 +561,42 @@ export interface ScenarioCatalogFile {
   scenarios: ScenarioCatalogEntry[];
 }
 
+/**
+ * 角色注册表条目（`assets/data/character_registry.json`）：把「同一角色跨场景重复配置」
+ * 的身份数据（名字 / 动画包 / 对话头像）收敛到一处，场景 NpcDef 用 `characterId` 引用。
+ * NpcDef 仍可就地覆盖任一字段（按摆放特例）。运行时在 SceneManager.instantiateNpc 合并：
+ * 优先级 = NpcDef 自带字段 > 本注册表默认 >（portraitSlug 缺省再按 animFile 包名推导）。
+ */
+export interface CharacterDef {
+  /** 稳定角色 id（NpcDef.characterId 引用它） */
+  id: string;
+  /** 显示名 */
+  name?: string;
+  /** 动画包 anim.json URL */
+  animFile?: string;
+  /** 对话头像立绘集目录名；缺省按 animFile 包名同名推导 */
+  portraitSlug?: string;
+}
+
+export interface CharacterRegistryFile {
+  characters: CharacterDef[];
+}
+
 export interface NpcDef {
   id: string;
+  /**
+   * 引用 character_registry.json 的角色 id：名字/动画包/头像从该角色继承，
+   * 本 NpcDef 就地写的同名字段覆盖之。缺省=独立 NPC（名字/动画等全部就地定义，旧数据不变）。
+   */
+  characterId?: string;
   name: string;
   x: number;
   y: number;
+  /**
+   * 位面归属（见 `systems/plane/types.ts` PlaneDef）：缺省 = 实体存在于**所有**位面；
+   * 有值时仅当激活位面包含于该列表时实体可见（由 PlaneReconciler 经派生基底通道驱动）。
+   */
+  planes?: string[];
   /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
   cutsceneIds?: string[];
   /**
@@ -580,6 +630,11 @@ export interface NpcDef {
   conditionHidesEntity?: boolean;
   /** 动画包清单路径，如 `/resources/runtime/animation/<包目录名>/anim.json`；图集由清单内 spritesheet 相对该目录解析 */
   animFile?: string;
+  /**
+   * 对话头像立绘集目录名（`resources/runtime/images/dialogue_portraits/<slug>/`）。
+   * 图对话行 portrait 省略 slug（「跟随说话 NPC」）时按此解析；未配置则该行不显头像。
+   */
+  portraitSlug?: string;
   /** 进入场景时播放的状态名；缺省时优先 idle，否则取 states 中第一个 */
   initialAnimState?: string;
   /**
@@ -598,6 +653,12 @@ export interface NpcDef {
   collisionPolygonLocal?: boolean;
   /** 投射阴影 + 接触 AO 开关（合并）；缺省视为 true。false 时该 NPC 不投影也无接触 AO。 */
   castShadow?: boolean;
+  /**
+   * 为 true 时该 NPC 不附加逐 entity 光照 / 深度遮挡滤镜，渲染原始贴图像素（仍受全局场景色彩滤镜影响）。
+   * 用于「从背景抠出、贴回原位做循环动画」的装饰实体：这类贴图本就取自已烤好光照的背景，
+   * 再叠一层逐 entity 光照会与背景色调不符、露出方框接缝。缺省视为 false（正常受光）。
+   */
+  renderRaw?: boolean;
 }
 
 export type CutsceneBindableEntityDef = Pick<NpcDef | HotspotDef, 'cutsceneIds' | 'cutsceneOnly'>;
@@ -872,6 +933,36 @@ export interface DialogueLine {
   speaker: string;
   text: string;
   tags: string[];
+  /** 可选头像（运行时随行下发给 DialogueUI）；不设则不显头像 */
+  portrait?: DialoguePortraitRef;
+  /** 说话人对应的世界实体（说话中「…」气泡定位用）；旁白/literal 无 */
+  speakerEntity?: { kind: 'npc'; npcId: string } | { kind: 'player' };
+  /** 本行所属对话是否压暗场景（startDialogueGraph 动作可选项 dimBackground；默认不压） */
+  dim?: boolean;
+}
+
+/** `dialogue:start` / `dialogue:end` 事件来源：脚本台词（DialogueManager）或图对话（GraphDialogueManager） */
+export type DialogueSessionSource = 'scripted' | 'graph';
+
+/** `dialogue:start` 事件负载 */
+export interface DialogueStartPayload {
+  npcName: string;
+  source: DialogueSessionSource;
+  /** 仅 graph：本次开图的 graphId（路径名） */
+  graphId?: string;
+}
+
+/**
+ * `dialogue:end` 事件负载。R5/R6 根因收敛：`dialogue:end` 曾同时承担
+ * 「脚本台词结束 / 图对话结束 / 状态恢复」三义，嵌套与链式场景必然误判。
+ * 消费者据 `source` + 下列标记判断是否为**最外层**会话结束：
+ * - `willContinue`（仅 graph）：deferred 链上还有图将立即接续，此 end 非最外层；
+ * - `nestedInGraph`（仅 scripted）：本段脚本台词嵌套在仍活跃的图对话 runActions 内。
+ */
+export interface DialogueEndPayload {
+  source: DialogueSessionSource;
+  willContinue?: boolean;
+  nestedInGraph?: boolean;
 }
 
 export interface DialogueChoice {
@@ -947,11 +1038,13 @@ export type EmoteBubbleOffsetOpts = {
 
 /** 演出气泡提供者接口，用于 CutsceneManager 解耦对 EmoteBubbleManager 的直接依赖 */
 export interface IEmoteBubbleProvider {
+  /** owner：归属方标记（如 'cutscene'），供 cleanupByOwner 定向清理，不误伤世界侧气泡 */
   showAndWait(
     anchor: IEmoteBubbleAnchor,
     emote: string,
     durationMs?: number,
     opts?: EmoteBubbleOffsetOpts,
+    owner?: string,
   ): Promise<void>;
   /**
    * 不按时长自动消失（与 showAndWait 不同）；返回的函数在适当时机调用以移除气泡，
@@ -961,7 +1054,10 @@ export interface IEmoteBubbleProvider {
     anchor: IEmoteBubbleAnchor,
     emote: string,
     opts?: EmoteBubbleOffsetOpts,
+    owner?: string,
   ): () => void;
+  /** 只清指定归属方（show/showSticky 传入的 owner）的气泡；过场收尾不得误杀世界侧气泡 */
+  cleanupByOwner(owner: string): void;
   cleanup(): void;
 }
 
@@ -986,12 +1082,117 @@ export interface ActionStep {
  * 二者齐备时优先于 `position`；否则沿用 `position`（top/center/bottom 或 0–1 比例）。
  * 另可选用 `subtitleEmote`：`{ target, emote, duration?, anchorOffsetX?, anchorOffsetY? }`（target/emote/偏移解析同 showEmoteAndWait / showSpeechBubbleAndWait），
  * `target`+`emote` 均非空时在字幕展示期间显示头顶表情气泡；**气泡随字幕存在至玩家点击关闭字幕**（`duration` 仅作数据兼容，不参与结束时机）。
+ * 另可选用 `subtitleVoice`：`"sfx_id"` 或 `{ id: "sfx_id", volume?: 0..1 }`，id 来自 `audio_config.sfx`；
+ * 声音随字幕存在，玩家点击推进或跳过过场时会立即停止并释放该条字幕的播放实例。
+ * 另可选用 `subtitleAutoAdvance`：`"voice"`=配音**自然播完**后自动推进（配音缺失 / 加载失败 / 手动停止
+ * 不触发，退化为等待点击）；正数=展示该毫秒数后自动推进。两种模式下玩家点击仍可提前推进；缺省=等待点击。
  * 单独 Action `showEmoteAndWait` / `showSpeechBubbleAndWait` 仍完全由 `duration` 控制消失与 await。
+ * `showImg` 另可选用 `kenBurns`（见 CutsceneKenBurns）：全屏插画缓推缓移，不阻塞后续步骤；
+ * 另可选用 `zIndex`（数值，越大越靠前，缺省 0）：多层视差合成时决定叠层顺序，电影黑边恒 10000 之下。
+ * `showImg` 的 `id` 可选：写了 → 手动管理（hideImg / 同 id 替换）；不写 → 挂到匿名镜头位
+ * （CUTSCENE_ANON_SHOT_ID），被下一个 parallaxScene / 匿名 showImg 自动顶掉，过场结束兜底销毁。
+ * `animLayer`：把 fx_build 网格图集（anim.json + atlas）当一层【循环动画】叠层，用于飘雾/余烬/尘埃/辉光丰富画面。
+ * 字段：`animFile`（anim.json 路径）、`id`（句柄，与 hideImg 共用）、可选 `state`（缺省 idle）、`xPercent`/`yPercent`/`widthPercent`
+ * （给 widthPercent 走百分比定位，否则 cover 铺满）、`alpha`、`zIndex`。fire-and-forget，不阻塞后续步骤。
+ * `parallaxScene`：播放一个多层多关键帧 parallax 场景（见 ParallaxSceneDef）。字段：`id`（从 parallax_scenes.json 检索）
+ * 或内联 `scene`；可选 `handle`：写了 → 手动管理（hideImg(handle) / 同 handle 换场景）；不写 → 匿名镜头位
+ * 自动托管（同 showImg 缺省 id 语义）。fire-and-forget，不阻塞后续步骤。
  */
 export interface PresentStep {
   kind: 'present';
   type: string;
   [key: string]: unknown;
+}
+
+/**
+ * showImg 的 Ken Burns 缓推缓移参数——图片显示后立即开始匀速漂移，
+ * fire-and-forget（不阻塞步骤推进），到 durationMs 停在终点；hideImg / 同 id 换图 / 跳过即停。
+ * - fromScale/toScale：在「cover 铺满」基础上的额外缩放倍数，运行时下夹到 1（保证始终盖满屏幕）；
+ * - fromX/fromY/toX/toY：图片中心相对屏幕中心的偏移，单位为屏幕宽/高的百分比（常用 -5..5），
+ *   每帧按当前缩放余量夹紧，永不露出底层；
+ * - durationMs：漂移时长，缺省 12000。
+ */
+export interface CutsceneKenBurns {
+  fromScale?: number;
+  toScale?: number;
+  fromX?: number;
+  fromY?: number;
+  toX?: number;
+  toY?: number;
+  durationMs?: number;
+}
+
+/**
+ * Parallax 场景（present:parallaxScene）——多层图片各自独立按多关键帧运动，做视差/演出。
+ * 坐标系：授权画布 `widthRef × heightRef` 像素；运行时把整块画布按 cover 映射到屏幕
+ * （k = max(sw/widthRef, sh/heightRef)，居中，多余裁掉），保证与编辑器所见一致。
+ * 数据存 `assets/data/parallax_scenes.json`（数组，按 id 检索），或 present 步内联 `scene`。
+ */
+export interface ParallaxKeyframe {
+  /** 距场景开始的毫秒数（同层内按此升序） */
+  atMs: number;
+  /** 图层中心 X（授权画布 px） */
+  x: number;
+  /** 图层中心 Y（授权画布 px） */
+  y: number;
+  /** 相对图片原始像素尺寸的缩放，缺省 1 */
+  scale?: number;
+  /** 旋转角度（度，顺时针），缺省 0 */
+  rotation?: number;
+  /** 不透明度 0..1，缺省 1 */
+  alpha?: number;
+}
+
+export interface ParallaxLayerDef {
+  /** 图层句柄（场景内唯一） */
+  id: string;
+  /** 图片资源路径（可为透明 PNG 抠像层） */
+  image: string;
+  /** 叠层顺序，越大越靠前，缺省 0 */
+  zIndex?: number;
+  /** ≥1 个关键帧（按 atMs 升序）；仅 1 帧 = 静止 */
+  keyframes: ParallaxKeyframe[];
+  /** 关键帧间插值缓动，缺省 linear */
+  easing?: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
+  /** 是否循环关键帧时间轴，缺省 false（停在末帧） */
+  loop?: boolean;
+  /** 编辑器「推摄像机」元数据：该层视差强度。运行时忽略（只播 keyframes）。 */
+  depth?: number;
+  /**
+   * 编辑器「推摄像机」元数据：该层「自身运动」原始关键帧。相机开启时 keyframes 是
+   * 「相机 × 自身运动」烘焙结果（运行时播这个），sourceKeyframes 保留自身运动供编辑器再编辑。
+   * **运行时忽略。**
+   */
+  sourceKeyframes?: ParallaxKeyframe[];
+  /** 编辑器「推摄像机」元数据：自身运动的缓动。运行时忽略。 */
+  sourceEasing?: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
+}
+
+/** 「推摄像机」编辑器专用元数据：镜头运动关键帧。运行时完全忽略——保存时已烘焙进各层 keyframes。 */
+export interface ParallaxCameraKey {
+  atMs: number;
+  panX: number;
+  panY: number;
+  zoom: number;
+  roll: number;
+}
+
+export interface ParallaxSceneDef {
+  id: string;
+  /** 授权画布宽（px），如 1672 */
+  widthRef: number;
+  /** 授权画布高（px），如 941 */
+  heightRef: number;
+  layers: ParallaxLayerDef[];
+  /**
+   * 编辑器「推摄像机」元数据（可选）：配置期的虚拟镜头运动，保存时按每层 depth 烘焙成
+   * 各层 keyframes。**运行时完全忽略此字段**，只播 layers[].keyframes。仅供 parallax
+   * 编辑器把镜头读回来再编辑。
+   */
+  camera?: {
+    enabled: boolean;
+    keyframes: ParallaxCameraKey[];
+  };
 }
 
 /**
@@ -1022,6 +1223,14 @@ export interface NewCutsceneDef {
  */
 export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set(cutsceneActionAllowlist);
 
+/**
+ * 过场匿名镜头位句柄：`showImg` 不写 `id`、`parallaxScene` 不写 `handle` 时共用此内部槽位，
+ * 由系统自动托管——任何新 `parallaxScene`（含具名）或新的匿名 `showImg` 挂载时自动顶掉，
+ * 过场 cleanup 兜底销毁；显式写了 id/handle 的图层则完全手动管理（hideImg / 同名替换）。
+ * `hideImg` 不写 `id` 时同样指向此槽位（可手动清匿名镜头）。
+ */
+export const CUTSCENE_ANON_SHOT_ID = '__anonShot';
+
 // ============================================================
 // 存档数据
 // ============================================================
@@ -1045,7 +1254,6 @@ export interface CharacterEntry {
   title: string;
   impressions: { text: string; conditions: ConditionExpr[] }[];
   knownInfo: { text: string; conditions: ConditionExpr[] }[];
-  unlockConditions: ConditionExpr[];
   /** 玩家第一次在档案中点开该人物时执行（仅一次，记入存档） */
   firstViewActions?: ActionDef[];
 }
@@ -1163,6 +1371,19 @@ export interface MapNodeDef {
   x: number;
   y: number;
   unlockConditions: ConditionExpr[];
+  /** Hide this node from the player map without removing it from editor/dev scene lists. */
+  runtimeVisible?: boolean;
+  /** Editor/dev-only map node. Runtime map rendering skips it unless it is the current scene. */
+  devOnly?: boolean;
+  /** Locked runtime display policy. Defaults to hidden to avoid a screen full of "???". */
+  lockedDisplay?: 'hidden' | 'hint' | 'secret';
+  category?: string;
+  importance?: number;
+}
+
+export interface MapConfigFile {
+  backgroundImage?: string;
+  nodes: MapNodeDef[];
 }
 
 // ============================================================
@@ -1191,6 +1412,11 @@ export interface ZoneSmellConfig {
 
 export interface ZoneDef {
   id: string;
+  /**
+   * 位面归属（见 `systems/plane/types.ts` PlaneDef）：缺省 = zone 存在于**所有**位面；
+   * 有值时仅当激活位面包含于该列表时才注册进 ZoneSystem（切位面后由刷新入口重注册）。
+   */
+  planes?: string[];
   /** 缺省为 standard（与未写字段的老数据兼容） */
   zoneKind?: ZoneKind;
   /**
@@ -1230,6 +1456,12 @@ export interface PlayerAvatarConfig {
    * 游戏内 Player 固定使用 idle / walk / run 三种逻辑名。
    */
   stateMap?: Record<string, string>;
+  /**
+   * 主角对话头像立绘集（与 NpcDef.portraitSlug 同语义）：头像跟随「当前生效的装扮配置」走。
+   * 缺省按 animManifest 的动画包目录名同名推导（如 player_carry_corpse_anim）。
+   * setPlayerAvatar 切装扮时可用同名参数携带新配置的立绘集。
+   */
+  portraitSlug?: string;
 }
 
 export interface GameConfig {
@@ -1256,6 +1488,17 @@ export interface GameConfig {
   entityPixelDensityMatchBlurScale?: number;
   /** 逐 entity 光照（阴影 + 色调融入 + AO）配置，关闭时完全走旧渲染管线 */
   entityLighting?: EntityLightingConfig;
+  /**
+   * 血量/死亡系绳配置覆盖。字段与 `systems/HealthSystem.HealthConfig` 一致——
+   * data 层不得反向 import systems（律1），此处为结构复制；两处字段改动必须同步。
+   */
+  health?: {
+    maxHealth?: number;
+    deathThreshold?: number;
+    restoreFloor?: number;
+    tetherCueId?: string;
+    tetherSuppressFlagKey?: string;
+  };
 }
 
 /** 逐 entity 光照全局配置 */
@@ -1342,8 +1585,43 @@ export interface IAudioSettingsProvider {
   setVolume(channel: 'bgm' | 'sfx' | 'ambient', vol: number): void;
 }
 
+/** 一次性短音频的调用方句柄：stop() 停止当前实例（不 unload 共享缓存 Howl）。 */
+export interface AudioPlaybackHandle {
+  stop(): void;
+}
+
+export interface TransientSfxOptions {
+  volume?: number;
+  /**
+   * 仅在音频**自然播完**时回调一次；手动 stop / 加载失败 / 未知 id 均不触发
+   * （调用方据此把"跟随配音结束"安全退化为等待点击，而非闪切）。
+   */
+  onEnd?: () => void;
+}
+
+/**
+ * 过场字幕配音所需的窄能力接口：CutsceneManager 只依赖此接口而非整个 AudioManager，
+ * 保持同层 system 解耦（不互持具体实例引用）。AudioManager 结构上满足此接口。
+ */
+export interface ICutsceneAudioPlayer {
+  playTransientSfx(id: string, options?: TransientSfxOptions): AudioPlaybackHandle | null;
+  /**
+   * 过场开始时开启「一次性音效捕获」：其后经 action(playSfx/playSignalCue) 起的 SFX 会被登记。
+   * 过场收尾（cleanup）调 endCutsceneSfxCapture：中断路径 stopPlaying=true 停掉尚在响的尾音，
+   * 自然播完 stopPlaying=false 让末拍音效按编排收尾。
+   */
+  beginCutsceneSfxCapture(): void;
+  endCutsceneSfxCapture(stopPlaying: boolean): void;
+  /** 过场前音频基线快照：当前 BGM id（无则 null）与活跃环境层 id 列表，供同场景过场结束后还原。 */
+  getCurrentBgmId(): string | null;
+  getActiveAmbientIds(): string[];
+  /** 把音频还原到过场前基线：BGM 切回 bgmId（null=停），并补回 ambientIds（幂等，未变即 no-op）。 */
+  restoreAudioBaseline(bgmId: string | null, ambientIds: string[]): void;
+}
+
 export interface ISaveDataProvider {
-  save(slot: number): void;
+  /** 返回是否成功写入（localStorage 失败 / canSave 拒绝时 false），UI 按成败分支提示 */
+  save(slot: number): boolean;
   load(slot: number): Promise<boolean>;
   getSlotMeta(slot: number): SaveSlotMeta | null;
   hasSave(slot: number): boolean;

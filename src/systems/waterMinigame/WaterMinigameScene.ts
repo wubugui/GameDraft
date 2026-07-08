@@ -3,9 +3,12 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { ActionDef } from '../../data/types';
 import type { Renderer } from '../../rendering/Renderer';
 import type { WaterMinigameInstance, WaterEntityDef, WaterShoreBankDef } from './types';
+import { MinigameActionPlaybackGate } from '../minigameSession';
 import { WaterEntity, loadEntityTexture, type WaterAmbient } from './WaterEntity';
 import { WaterPullPanel, type PullPanelResult } from './WaterPullPanel';
 import { WaterShaderFilter } from './WaterShaderFilter';
+import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
+import { fillToken } from '../../utils/fillTemplate';
 import type { Application } from 'pixi.js';
 import {
   Container,
@@ -62,6 +65,8 @@ export class WaterMinigameScene {
   private assetManager: AssetManager;
   /** Manager 注入：空格（会话监听）或全局鼠标按下，拉扯阶段用作提拉 */
   private getKeyHold: () => boolean;
+  /** onPick / onPullSuccess 等 Action 批播放通道：锁输入 + 批后恢复 Minigame 状态（B13）。 */
+  private readonly actionGate: MinigameActionPlaybackGate;
 
   constructor(
     renderer: Renderer,
@@ -71,6 +76,7 @@ export class WaterMinigameScene {
     getKeyHold: () => boolean,
     onFinish: (reason: 'abort') => void,
     onConsumed?: (instanceId: string, entityId: string) => void,
+    restoreMinigameStateAfterAction?: () => void,
   ) {
     this.renderer = renderer;
     this.app = renderer.app;
@@ -80,6 +86,14 @@ export class WaterMinigameScene {
     this.getKeyHold = getKeyHold;
     this.onFinish = onFinish;
     this.onConsumed = onConsumed ?? null;
+
+    this.actionGate = new MinigameActionPlaybackGate(
+      (acts) => this.actionExecutor.executeBatchAwait(acts),
+      {
+        onLockChanged: (locked) => this.setInputLocked(locked),
+        restoreMinigameState: restoreMinigameStateAfterAction,
+      },
+    );
 
     this.root = new Container();
     this.bg = new Graphics();
@@ -387,6 +401,7 @@ export class WaterMinigameScene {
 
   private onUnderwaterPointerTap(ev: FederatedPointerEvent): void {
     if (this.phase !== 'search') return;
+    if (this.actionGate.locked) return;
     const cw = this.cursorWorld({ x: ev.global.x, y: ev.global.y });
     const bw = this.instance.bounds.width;
     const bh = this.instance.bounds.height;
@@ -419,9 +434,18 @@ export class WaterMinigameScene {
     }
   }
 
+  /** Manager 侧 Esc 在动作播放期间让路（与转盘一致）。 */
+  isActionsPlaybackLocked(): boolean {
+    return this.actionGate.locked;
+  }
+
+  /** 动作播放期间整棵场景树不接输入（eventMode 'none' 对子树同样生效）。 */
+  private setInputLocked(locked: boolean): void {
+    this.root.eventMode = locked ? 'none' : 'passive';
+  }
+
   private async runActions(actions: ActionDef[] | undefined): Promise<void> {
-    if (!actions?.length) return;
-    await this.actionExecutor.executeBatchAwait(actions);
+    await this.actionGate.run(actions);
   }
 
   private showFeedback(msg: string): void {
@@ -467,9 +491,7 @@ export class WaterMinigameScene {
     const w = innerW + padX * 2;
     const h = padY * 2 + title.height + gap + sub.height;
     const bg = new Graphics();
-    bg.roundRect(0, 0, w, h, 8);
-    bg.fill({ color: 0x1e293b, alpha: 0.94 });
-    bg.stroke({ color: 0x64748b, width: 1 });
+    drawPanelBase(bg, 0, 0, w, h, SKINS.chip);
     title.position.set(padX, padY);
     sub.position.set(padX, padY + title.height + gap);
     const wrap = new Container();
@@ -495,17 +517,30 @@ export class WaterMinigameScene {
 
   private onEntityTap(ent: WaterEntity, _ev: FederatedPointerEvent): void {
     if (this.phase !== 'search') return;
+    // R21：动作链执行期间实体不可再点（输入锁之外的兜底，防事件时序穿透）
+    if (this.actionGate.locked) return;
     const d = ent.def;
 
     if (d.category === 'grass') {
-      void this.showFeedback(this.resolveText(d.hint ?? '[水草] 指尖掠过一根飘摇的水草……'));
+      void this.showFeedback(this.resolveText(d.hint ?? '[tag:string:waterMinigame:grassDefault]'));
       return;
     }
 
     if (d.category === 'floating') {
       void (async () => {
         await this.runActions(d.onPick);
-        void this.showFeedback(this.resolveText(`[捞起] ${d.cue ?? d.id}`));
+        // R21：consumeOnSuccess 的漂浮物捞取后即消费（隐藏 + 跨局记账，与拉扯成功同路径），防无限刷
+        if (d.consumeOnSuccess) {
+          ent.container.visible = false;
+          this.onConsumed?.(this.instance.id, d.id);
+        }
+        void this.showFeedback(
+          fillToken(
+            this.resolveText('[tag:string:waterMinigame:pickPrefix]'),
+            '{cue}',
+            this.resolveText(d.cue ?? d.id),
+          ),
+        );
       })();
       return;
     }
@@ -515,7 +550,7 @@ export class WaterMinigameScene {
       return;
     }
 
-    void this.showFeedback(this.resolveText(d.hint ?? '……没有什么能抓的。'));
+    void this.showFeedback(this.resolveText(d.hint ?? '[tag:string:waterMinigame:nothingToGrab]'));
   }
 
   private startPull(ent: WaterEntity): void {
@@ -559,18 +594,24 @@ export class WaterMinigameScene {
         ent.container.visible = false;
         this.onConsumed?.(this.instance.id, ent.def.id);
       }
-      void this.showFeedback(this.resolveText(`[成功] ${ent.def.cue ?? ent.def.id}`));
+      void this.showFeedback(
+        fillToken(
+          this.resolveText('[tag:string:waterMinigame:pullSuccessPrefix]'),
+          '{cue}',
+          this.resolveText(ent.def.cue ?? ent.def.id),
+        ),
+      );
       return;
     }
 
     await this.runActions(ent.def.onPullFail);
     if (r === 'fail_escape') {
-      void this.showFeedback(this.resolveText('[挣脱] 它一摆尾不见了。'));
+      void this.showFeedback(this.resolveText('[tag:string:waterMinigame:pullEscape]'));
       ent.container.visible = false;
     } else if (r === 'fail_snap') {
-      void this.showFeedback(this.resolveText('[线断] 绳结一紧，断了。'));
+      void this.showFeedback(this.resolveText('[tag:string:waterMinigame:pullSnap]'));
     } else {
-      void this.showFeedback(this.resolveText('[咬伤] 水里有什么狠咬了一口！'));
+      void this.showFeedback(this.resolveText('[tag:string:waterMinigame:pullBite]'));
     }
   }
 
@@ -644,7 +685,8 @@ export class WaterMinigameScene {
     }
     this.shoreSprites = [];
     for (const e of this.entities) {
-      e.sprite.removeAllListeners();
+      // 含参数编码 Filter 的显式释放（L5）；容器随下方 root.destroy 一并销毁
+      e.destroy();
     }
     this.entities = [];
     try {

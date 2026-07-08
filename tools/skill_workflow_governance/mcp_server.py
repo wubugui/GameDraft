@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+TOOL_ROOT = Path(__file__).resolve().parent
+if str(TOOL_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOL_ROOT))
+
+from skill_workflow_governance.mcp_server import main  # noqa: E402
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

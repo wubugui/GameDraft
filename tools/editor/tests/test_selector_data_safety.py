@@ -66,33 +66,42 @@ class SelectorDataSafetyTests(unittest.TestCase):
             self.assertNotIn("holdSfx", m.pressure_holds[1],
                              "空 holdSfx 不得写出空键")
 
-    def test_sugar_atmos_op_combo_orphan_and_roundtrip(self) -> None:
-        from tools.editor.editors.sugar_wheel_editor import SugarWheelEditor
-        with TemporaryDirectory() as td:
-            m = self._model(Path(td) / "p")
-            ed = SugarWheelEditor(m)
-            # 已知枚举值往返
-            cb = ed._make_atmos_op_combo("ph", "when_near_sector")
-            self.assertIsInstance(cb, QComboBox)
-            self.assertEqual(cb.currentText(), "when_near_sector")
-            # 未知 op 也保留为可选项
-            cb2 = ed._make_atmos_op_combo("ph", "legacy_op")
-            self.assertEqual(cb2.currentText(), "legacy_op")
+    def test_sugar_atmos_unknown_op_preserved(self) -> None:
+        """氛围指令编辑器：未知 op 及其字段原样保留，已知 op 正常往返。"""
+        from tools.editor.editors.atmosphere_script_editor import AtmosphereScriptEditor
+        ed = AtmosphereScriptEditor(
+            roles_getter=lambda: [("", "")], sectors_getter=lambda: [], pools_getter=lambda: [])
+        try:
+            ed.set_data([
+                {"op": "wait", "sec": 0.5},
+                {"op": "legacy_op", "foo": 1, "bar": "x"},  # 未知 op
+            ])
+            out = ed.to_list()
+            self.assertEqual(out[0]["op"], "wait")
+            self.assertEqual(out[1]["op"], "legacy_op", "未知 op 须保留")
+            self.assertEqual(out[1].get("foo"), 1, "未知 op 的字段须原样保留")
+            self.assertEqual(out[1].get("bar"), "x")
+        finally:
+            ed.deleteLater()
 
-    def test_sugar_atmos_sector_combo_orphan_and_empty(self) -> None:
-        from tools.editor.editors.sugar_wheel_editor import SugarWheelEditor
-        with TemporaryDirectory() as td:
-            m = self._model(Path(td) / "p")
-            ed = SugarWheelEditor(m)
-            ed._doc = {"id": "sw", "sectors": [{"id": "s0"}, {"id": "s1"}]}
-            # 空 = 不指定
-            self.assertEqual(ed._make_atmos_sector_combo("ph", "").currentText(), "")
-            # 已存在的格子
-            self.assertEqual(ed._make_atmos_sector_combo("ph", "s1").currentText(), "s1")
-            # 未知 sectorId 仍保留
-            self.assertEqual(
-                ed._make_atmos_sector_combo("ph", "ghost_sector").currentText(),
-                "ghost_sector")
+    def test_sugar_atmos_sector_orphan_and_empty(self) -> None:
+        """when_near_sector 的 sectorId：空=不写键、已知保留、未知孤儿不丢。"""
+        from tools.editor.editors.atmosphere_script_editor import AtmosphereScriptEditor
+        ed = AtmosphereScriptEditor(
+            roles_getter=lambda: [("", "")],
+            sectors_getter=lambda: ["s0", "s1"], pools_getter=lambda: [])
+        try:
+            ed.set_data([
+                {"op": "when_near_sector", "degBuffer": 10},                  # 空 sectorId
+                {"op": "when_near_sector", "sectorId": "s1", "degBuffer": 10},  # 已知
+                {"op": "when_near_sector", "sectorId": "ghost", "degBuffer": 10},  # 未知孤儿
+            ])
+            out = ed.to_list()
+            self.assertNotIn("sectorId", out[0], "空 sectorId 不写空键")
+            self.assertEqual(out[1].get("sectorId"), "s1")
+            self.assertEqual(out[2].get("sectorId"), "ghost", "未知 sectorId 须保留")
+        finally:
+            ed.deleteLater()
 
 
 if __name__ == "__main__":

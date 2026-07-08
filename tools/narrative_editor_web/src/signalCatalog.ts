@@ -83,6 +83,30 @@ export function buildSignalCatalog(
     }
   }
 
+  // blackbox 声明的 emits：element 只在 meta.emits 里"声明"它会发出某信号（真正发出发生在其
+  // 引用的对话/资产内容里，目录构建阶段读不到）。目录必须收录这些声明，否则该信号既进不了信号选择
+  // 弹窗、监听它的 transition 又会被判成悬空断链。未被注册为作者信号时补一条 editable:false 的条目
+  // （无 data.signals 行可改名/删除）。放在监听推断之前，让"仅声明"的信号带上明确 label。
+  for (const comp of data.compositions ?? []) {
+    for (const el of comp.elements ?? []) {
+      const emits = el.meta?.emits;
+      if (!Array.isArray(emits)) continue;
+      for (const raw of emits) {
+        const id = String(raw ?? '').trim();
+        if (!id || entries.has(id)) continue;
+        const label = String(el.label ?? el.id ?? '').trim();
+        entries.set(id, {
+          id,
+          kind: isDerivedStateSignal(id) ? 'derived' : 'author',
+          label: label ? `来自 blackbox ${label} 声明` : '来自 blackbox 声明',
+          listeners: listeners.get(id)?.length ?? 0,
+          emitters: emitterRefsById?.get(id)?.length ?? 0,
+          editable: false,
+        });
+      }
+    }
+  }
+
   for (const [id, refs] of listeners) {
     if (entries.has(id)) continue;
     entries.set(id, {
@@ -128,6 +152,21 @@ export function createAuthorSignal(data: NarrativeGraphsFileDef, id: string, lab
   data.signals.push(entry);
 }
 
+/** 递归更新 emitNarrativeSignal 动作里 params.signal 的引用（动作可嵌套，故递归）。 */
+function replaceEmitSignalInActions(value: unknown, from: string, to: string): void {
+  if (Array.isArray(value)) {
+    for (const item of value) replaceEmitSignalInActions(item, from, to);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  const obj = value as Record<string, unknown>;
+  if (obj.type === 'emitNarrativeSignal' && obj.params && typeof obj.params === 'object' && !Array.isArray(obj.params)) {
+    const params = obj.params as Record<string, unknown>;
+    if (String(params.signal ?? '').trim() === from) params.signal = to;
+  }
+  for (const v of Object.values(obj)) replaceEmitSignalInActions(v, from, to);
+}
+
 export function renameAuthorSignal(data: NarrativeGraphsFileDef, oldId: string, newId: string): void {
   const from = String(oldId ?? '').trim();
   const to = String(newId ?? '').trim();
@@ -141,6 +180,12 @@ export function renameAuthorSignal(data: NarrativeGraphsFileDef, oldId: string, 
   for (const { graph } of collectGraphs(data)) {
     for (const t of graph.transitions ?? []) {
       if (t.signal === from) t.signal = to;
+    }
+    // 信号改名必须级联到 emitNarrativeSignal 动作参数，否则发射端仍用旧名 → 运行时永不触发
+    // 该迁移（与 renameStateInGraph 级联条件/命令/信号引用同理，之前只漏了这一处）。
+    for (const state of Object.values(graph.states ?? {})) {
+      replaceEmitSignalInActions(state.onEnterActions, from, to);
+      replaceEmitSignalInActions(state.onExitActions, from, to);
     }
   }
   for (const comp of data.compositions ?? []) {

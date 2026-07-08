@@ -7,8 +7,9 @@ import {
   type IEntityShadingFilter,
 } from '../rendering/EntityLightingFilter';
 import type { ResolvedLightEnv } from '../rendering/lightEnv';
-import type { ShadowSceneContext } from '../rendering/entityShadowTypes';
+import type { ShadowSceneContext, IEntityShadow } from '../rendering/entityShadowTypes';
 import { depthLog, depthError } from './depthLog';
+import { sceneRuntimeAssetUrl } from './projectPaths';
 
 const T = 'DepthSystem';
 
@@ -20,11 +21,9 @@ export class SceneDepthSystem implements IGameSystem {
     private collisionTexture: Texture | null = null;
     private collisionW = 0;
     private collisionH = 0;
-    // 深度图 CPU 像素（RGBA），供阴影 depth-drape 逐顶点在 CPU 采样位移（顶点纹理采样在 Pixi 自定义 shader 不可靠）
-    private depthPixels: Uint8ClampedArray | null = null;
-    private depthPxW = 0;
-    private depthPxH = 0;
     private filters: IEntityShadingFilter[] = [];
+    /** 已建阴影实例（由 Game 在创建/销毁时注册/注销）：深度调参 setter 广播到此，避免只有滤镜生效而阴影读旧值 */
+    private shadows = new Set<IEntityShadow>();
 
     /** 逐 entity 光照（阴影/色调/AO）：与深度遮挡解耦，可在无 depthConfig 的场景独立启用 */
     private lightingEnabled = false;
@@ -56,12 +55,14 @@ export class SceneDepthSystem implements IGameSystem {
     set depthTolerance(v: number) {
         this._depthTolerance = v;
         for (const f of this.filters) f.setTolerance(v);
+        this.broadcastDepthParamsToShadows();
     }
 
     get floorOffset(): number { return this._floorOffset; }
     set floorOffset(v: number) {
         this._floorOffset = v;
         for (const f of this.filters) f.setFloorOffset(v);
+        this.broadcastDepthParamsToShadows();
     }
 
     /** 深度遮挡半透明混合系数（调试）：遮挡像素 alpha *= factor，0 为硬裁切 */
@@ -70,6 +71,23 @@ export class SceneDepthSystem implements IGameSystem {
         const c = Math.min(1, Math.max(0, Number(v) || 0));
         this._occlusionBlendFactor = c;
         for (const f of this.filters) f.setOcclusionBlendFactor(c);
+        this.broadcastDepthParamsToShadows();
+    }
+
+    /** 注册阴影实例进调参广播列表；注册即同步一次当前值（阴影构造时烘焙的是快照） */
+    registerShadow(sh: IEntityShadow): void {
+        this.shadows.add(sh);
+        sh.setDepthParams?.(this._depthTolerance, this._floorOffset, this._occlusionBlendFactor);
+    }
+
+    unregisterShadow(sh: IEntityShadow): void {
+        this.shadows.delete(sh);
+    }
+
+    private broadcastDepthParamsToShadows(): void {
+        for (const sh of this.shadows) {
+            sh.setDepthParams?.(this._depthTolerance, this._floorOffset, this._occlusionBlendFactor);
+        }
     }
 
     init(_ctx: GameContext): void {}
@@ -107,26 +125,11 @@ export class SceneDepthSystem implements IGameSystem {
         this.worldToPixelX = worldToPixelX;
         this.worldToPixelY = worldToPixelY;
 
-        const basePath = `resources/runtime/scenes/${sceneId}/`;
-
         try {
-            const p = basePath + depthConfig.depth_map;
+            const p = sceneRuntimeAssetUrl(sceneId, depthConfig.depth_map);
             depthLog(T, 'loading depth texture:', p);
             this.depthTexture = await assetManager.loadTexture(p);
             depthLog(T, 'depth texture OK:', this.depthTexture.width, 'x', this.depthTexture.height);
-            // 额外解码深度图 CPU 像素（供阴影 depth-drape）
-            try {
-                const bm = await assetManager.loadBitmap(p);
-                const cv = new OffscreenCanvas(bm.width, bm.height);
-                const c2d = cv.getContext('2d')!;
-                c2d.drawImage(bm, 0, 0);
-                this.depthPixels = c2d.getImageData(0, 0, bm.width, bm.height).data;
-                this.depthPxW = bm.width;
-                this.depthPxH = bm.height;
-            } catch (e2) {
-                depthError(T, 'depth pixels decode FAILED', e2);
-                this.depthPixels = null;
-            }
         } catch (e) {
             depthError(T, 'depth texture FAILED', e);
             this.enabled = false;
@@ -135,7 +138,7 @@ export class SceneDepthSystem implements IGameSystem {
 
         if (depthConfig.collision_map) {
             try {
-                const cp = basePath + depthConfig.collision_map;
+                const cp = sceneRuntimeAssetUrl(sceneId, depthConfig.collision_map);
                 depthLog(T, 'loading collision:', cp);
                 await this.loadCollisionBitmap(cp, assetManager);
                 depthLog(T, 'collision OK:', this.collisionW, 'x', this.collisionH, 'non-zero:', this.collisionData ? Array.from(this.collisionData.slice(0, 20)).filter(v => v > 0).length : 0);
@@ -194,11 +197,11 @@ export class SceneDepthSystem implements IGameSystem {
         this.collisionData = null;
         this.collisionTexture = null;
         this.collisionW = 0; this.collisionH = 0;
-        this.depthPixels = null;
-        this.depthPxW = 0; this.depthPxH = 0;
         this.config = null;
         this.enabled = false;
         this.filters = [];
+        // 阴影实例由 Game 负责注销；此处兜底清空，防跨场景残留引用
+        this.shadows.clear();
         this.worldToPixelX = 1;
         this.worldToPixelY = 1;
         this.lightingEnabled = false;
@@ -236,7 +239,7 @@ export class SceneDepthSystem implements IGameSystem {
     }
 
     /**
-     * 阴影系统上下文（深度图GPU + 碰撞图GPU + 深度CPU像素 + 完整9元M + 网格/floor/深度映射参数）。
+     * 阴影系统上下文（深度图GPU + 碰撞图GPU + 完整9元M + 网格/floor/深度映射参数）。
      * planar 与 real(deferred) 阴影共用,各取所需。无 depthConfig/深度纹理时返回 null。
      */
     getShadowSceneContext(): ShadowSceneContext | null {
@@ -245,9 +248,6 @@ export class SceneDepthSystem implements IGameSystem {
         return {
             depthTexture: this.depthTexture,
             collisionTexture: this.collisionTexture,
-            depthPixels: this.depthPixels,
-            depthPxW: this.depthPxW,
-            depthPxH: this.depthPxH,
             sceneW: this.sceneW,
             sceneH: this.sceneH,
             worldToPixelX: this.worldToPixelX,
@@ -395,16 +395,13 @@ export class SceneDepthSystem implements IGameSystem {
         }
     }
 
-    private _logCounter = 0;
+    private _lastFootLogMs = -Infinity;
 
     updatePerFrame(worldContainerX: number, worldContainerY: number, projectionScale: number): void {
         if (!this.isActive) return;
         for (const f of this.filters) {
             f.setWorldContainerPos(worldContainerX, worldContainerY);
             f.setProjectionScale(projectionScale);
-        }
-        if (this._logCounter % 300 === 0) {
-            depthLog(T, 'perFrame wcPos:', worldContainerX.toFixed(1), worldContainerY.toFixed(1));
         }
     }
 
@@ -422,7 +419,10 @@ export class SceneDepthSystem implements IGameSystem {
         filter.setEntityFootY(footWorldY);
         filter.setEntityFootX?.(footWorldX);
         filter.setFloorOffsetExtra(floorOffsetExtra);
-        if (this._logCounter % 300 === 0) {
+        // 按时间节流：按调用数取模在多实体场景下频率随实体数放大，会刷屏。
+        const now = performance.now();
+        if (now - this._lastFootLogMs >= 5000) {
+            this._lastFootLogMs = now;
             const floorA = this.config?.shader.floor_depth_A ?? 0;
             const floorB = this.config?.shader.floor_depth_B ?? 0;
             const syTex = footWorldY * this.worldToPixelY;
@@ -432,9 +432,6 @@ export class SceneDepthSystem implements IGameSystem {
                 'foot:', footWorldX.toFixed(2), footWorldY.toFixed(2),
                 'syTex:', syTex.toFixed(2), 'd_base:', dBase.toFixed(4),
             );
-            this._logCounter++;
-        } else {
-            this._logCounter++;
         }
     }
 

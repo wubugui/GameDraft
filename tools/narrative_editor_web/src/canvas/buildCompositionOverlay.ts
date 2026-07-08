@@ -45,6 +45,26 @@ function showProjection(canvasMode: CanvasMode): boolean {
   return canvasMode === 'wiring' || canvasMode === 'debug';
 }
 
+/**
+ * 投影端点浮标节点。合成组合主视图与图独占视图各有一份完全相同的锚点节点构造
+ * （仅端点解析方式不同），抽出为单一来源，避免网格/样式在两处漂移。
+ */
+export function buildProjectionAnchorNode(endpoint: string, index: number): CanvasNode {
+  return {
+    id: endpoint,
+    type: 'projectionAnchor',
+    position: { x: 760 + (index % 2) * 210, y: 120 + Math.floor(index / 2) * 96 },
+    draggable: false,
+    deletable: false,
+    data: {
+      label: projectionEndpointLabel(endpoint),
+      subtitle: '投影端点',
+      kind: 'projectionAnchor',
+      detail: endpoint,
+    },
+  };
+}
+
 function scenarioBoundaryKind(graph: NarrativeGraphDef, stateId: string): 'entry' | 'exit' | 'entryExit' | undefined {
   if (graph.ownerType !== 'scenario' && !graph.entryState && !graph.exitStates?.length) return undefined;
   const isEntry = graph.entryState === stateId;
@@ -119,15 +139,17 @@ export function visibleProjectionEdgesForComposition(
   });
 }
 
-function toProjectionEdge(
+/**
+ * 由「已解析好的 source/target 端点」构造一条投影 CanvasEdge。
+ * 合成主视图（toProjectionEdge）与图独占视图（buildExclusiveProjection）此前各写一份完全相同的
+ * 边构造 + edgeColor，抽为单一来源；两者只是端点解析方式不同，解析后交给它统一产出。
+ */
+export function buildProjectionCanvasEdge(
   edge: ProjectionEdgeDef,
-  kind: 'trigger' | 'read' | 'stateCommand',
-  comp: NarrativeCompositionDef,
-  expandedElementIds: string[],
+  kind: string,
+  source: string,
+  target: string,
 ): CanvasEdge {
-  const color = edgeColor(kind);
-  const source = resolveProjectionCanvasEndpoint(edge.source, comp, expandedElementIds);
-  const target = resolveProjectionCanvasEndpoint(edge.target, comp, expandedElementIds);
   return {
     id: `projection:${edge.id}`,
     source,
@@ -138,9 +160,23 @@ function toProjectionEdge(
     deletable: false,
     interactionWidth: 12,
     zIndex: 0,
-    markerEnd: { type: MarkerType.ArrowClosed, color },
+    markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor(kind) },
     data: { edgeKind: kind, label: edge.label, detail: edge.detail ?? edge.id },
   };
+}
+
+function toProjectionEdge(
+  edge: ProjectionEdgeDef,
+  kind: 'trigger' | 'read' | 'stateCommand',
+  comp: NarrativeCompositionDef,
+  expandedElementIds: string[],
+): CanvasEdge {
+  return buildProjectionCanvasEdge(
+    edge,
+    kind,
+    resolveProjectionCanvasEndpoint(edge.source, comp, expandedElementIds),
+    resolveProjectionCanvasEndpoint(edge.target, comp, expandedElementIds),
+  );
 }
 
 function buildElementOverlayNodes(
@@ -267,20 +303,7 @@ export function buildCompositionOverlay(input: CompositionOverlayInput): { nodes
       if (knownIds.has(endpoint)) continue;
       if (endpoint.startsWith('transition-anchor:')) continue;
       knownIds.add(endpoint);
-      const index = anchors.length;
-      anchors.push({
-        id: endpoint,
-        type: 'projectionAnchor',
-        position: { x: 760 + (index % 2) * 210, y: 120 + Math.floor(index / 2) * 96 },
-        draggable: false,
-        deletable: false,
-        data: {
-          label: projectionEndpointLabel(endpoint),
-          subtitle: '投影端点',
-          kind: 'projectionAnchor',
-          detail: endpoint,
-        },
-      });
+      anchors.push(buildProjectionAnchorNode(endpoint, anchors.length));
     }
   }
 

@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "templates": [
+    {
+      "id": "beishi_carry_archetype",
+      "label": "背尸零活模板",
+      "description": "接活→码头巷口验尸上肩(进背尸位面:漂移/禁跑/禁捡/掉阳气/路线锁)→送义庄交尸(给钱+授规矩)。填 taskId 派生一单新的背尸任务;信号全以 {{taskId}} 前缀,盖章后天然不与别的任务撞名。",
+      "params": [
+        {
+          "name": "taskId",
+          "type": "identifier",
+          "label": "任务ID（信号/图/作曲前缀）",
+          "required": true,
+          "note": "如「枯尸活」「吊尸活」;会用作 flow_{taskId}、{taskId}__accepted 等前缀"
+        },
+        {
+          "name": "compositionLabel",
+          "type": "text",
+          "label": "作曲显示名",
+          "required": true,
+          "default": "背尸·新单"
+        },
+        {
+          "name": "compositionDescription",
+          "type": "text",
+          "label": "作曲说明",
+          "default": "背尸日常一单:接活→上肩(背尸位面)→交尸。"
+        },
+        {
+          "name": "plane",
+          "type": "planeRef",
+          "label": "上肩后进入的位面",
+          "required": true,
+          "default": "背尸"
+        },
+        {
+          "name": "shoulderMinigame",
+          "type": "minigameRef",
+          "label": "上肩小游戏",
+          "required": true,
+          "default": "carry_drowned_corpse"
+        },
+        {
+          "name": "acceptDialogue",
+          "type": "dialogueRef",
+          "label": "接活对话图",
+          "required": true,
+          "note": "缺失可勾选自动生成空白桩（烘进 {taskId}__accepted emit 动作）"
+        },
+        {
+          "name": "deliverDialogue",
+          "type": "dialogueRef",
+          "label": "交尸对话图",
+          "required": true,
+          "note": "缺失可勾选自动生成空白桩（烘进 {taskId}__delivered emit 动作）"
+        },
+        {
+          "name": "questGroup",
+          "type": "text",
+          "label": "任务分组",
+          "default": "背尸零活"
+        },
+        {
+          "name": "questTitle",
+          "type": "text",
+          "label": "任务标题",
+          "required": true,
+          "default": "背一具去义庄"
+        },
+        {
+          "name": "questDescription",
+          "type": "text",
+          "label": "任务描述",
+          "default": "工头派的背尸零活:从码头巷口背去义庄,交给管事。"
+        }
+      ],
+      "signals": [
+        {
+          "id": "{{taskId}}__accepted",
+          "label": "{{compositionLabel}}·接活"
+        },
+        {
+          "id": "{{taskId}}__shouldered",
+          "label": "{{compositionLabel}}·上肩"
+        },
+        {
+          "id": "{{taskId}}__delivered",
+          "label": "{{compositionLabel}}·送达义庄"
+        }
+      ],
+      "composition": {
+        "id": "beishi_{{taskId}}_flow",
+        "label": "{{compositionLabel}}",
+        "description": "{{compositionDescription}}",
+        "mainGraph": {
+          "id": "flow_{{taskId}}",
+          "ownerType": "flow",
+          "ownerId": "{{taskId}}",
+          "label": "{{compositionLabel}}",
+          "initialState": "initial",
+          "states": {
+            "initial": {
+              "id": "initial",
+              "label": "未接",
+              "meta": {
+                "editor": {
+                  "x": -31,
+                  "y": 37
+                }
+              }
+            },
+            "accepted": {
+              "id": "accepted",
+              "label": "已接活",
+              "meta": {
+                "editor": {
+                  "x": 301,
+                  "y": 89
+                }
+              }
+            },
+            "carrying": {
+              "id": "carrying",
+              "label": "已上肩（背尸位面）",
+              "activePlane": "{{plane}}",
+              "meta": {
+                "editor": {
+                  "x": 667,
+                  "y": 110
+                }
+              }
+            },
+            "delivered": {
+              "id": "delivered",
+              "label": "已交付",
+              "meta": {
+                "editor": {
+                  "x": 920,
+                  "y": -13
+                }
+              },
+              "onEnterActions": [
+                {
+                  "type": "resetPlayerAvatar",
+                  "params": {}
+                }
+              ]
+            }
+          },
+          "transitions": [
+            {
+              "id": "t_accept",
+              "from": "initial",
+              "to": "accepted",
+              "signal": "{{taskId}}__accepted"
+            },
+            {
+              "id": "t_shoulder",
+              "from": "accepted",
+              "to": "carrying",
+              "signal": "{{taskId}}__shouldered"
+            },
+            {
+              "id": "t_deliver",
+              "from": "carrying",
+              "to": "delivered",
+              "signal": "{{taskId}}__delivered"
+            }
+          ]
+        },
+        "elements": [
+          {
+            "id": "dlg_accept",
+            "kind": "dialogueBlackbox",
+            "label": "工头派活",
+            "refId": "{{acceptDialogue}}",
+            "x": 32,
+            "y": -115,
+            "meta": {
+              "emits": [
+                "{{taskId}}__accepted"
+              ],
+              "reads": [],
+              "commands": []
+            }
+          },
+          {
+            "id": "mg_shoulder",
+            "kind": "minigameBlackbox",
+            "label": "上肩长按",
+            "refId": "{{shoulderMinigame}}",
+            "x": 345,
+            "y": -146,
+            "meta": {
+              "emits": [
+                "{{taskId}}__shouldered"
+              ],
+              "reads": [],
+              "commands": []
+            }
+          },
+          {
+            "id": "dlg_deliver",
+            "kind": "dialogueBlackbox",
+            "label": "义庄交尸",
+            "refId": "{{deliverDialogue}}",
+            "x": 622,
+            "y": -139,
+            "meta": {
+              "emits": [
+                "{{taskId}}__delivered"
+              ],
+              "reads": [],
+              "commands": []
+            }
+          }
+        ]
+      },
+      "quest": {
+        "id": "背尸-{{taskId}}",
+        "group": "{{questGroup}}",
+        "type": "side",
+        "title": "{{questTitle}}",
+        "description": "{{questDescription}}",
+        "preconditions": [
+          {
+            "narrative": "flow_{{taskId}}",
+            "state": "accepted",
+            "reached": true
+          }
+        ],
+        "completionConditions": [
+          {
+            "narrative": "flow_{{taskId}}",
+            "state": "delivered",
+            "reached": true
+          }
+        ],
+        "rewards": [],
+        "nextQuests": []
+      },
+      "dialogueStubs": [
+        {
+          "id": "{{acceptDialogue}}",
+          "title": "{{compositionLabel}}·工头派活",
+          "emitSignal": "{{taskId}}__accepted"
+        },
+        {
+          "id": "{{deliverDialogue}}",
+          "title": "{{compositionLabel}}·义庄交尸",
+          "emitSignal": "{{taskId}}__delivered"
+        }
+      ],
+      "requiredEntities": [
+        {
+          "kind": "hotspot",
+          "note": "码头巷口的尸体热点：条件 narrative flow_{{taskId}} state accepted，上肩后 startPressureHold {{shoulderMinigame}}"
+        },
+        {
+          "kind": "zone",
+          "note": "背尸位面独占的水汽/危险 zone（planes:[{{plane}}]），沿路线编排"
+        },
+        {
+          "kind": "hotspot/npc",
+          "note": "义庄管事（交尸对话 {{deliverDialogue}}）+ 常态/背尸两版出口对（planes 路线锁）"
+        }
+      ]
+    }
+  ]
+}

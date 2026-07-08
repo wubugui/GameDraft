@@ -573,7 +573,8 @@
           }
         ],
         "speed": 60
-      }
+      },
+      "portraitSlug": "constable_spear"
     },
     {
       "id": "new_npc_2",
@@ -627,7 +628,8 @@
         ],
         "speed": 60
       },
-      "initialFacing": "left"
+      "initialFacing": "left",
+      "portraitSlug": "clara"
     },
     {
       "id": "new_npc_4",
@@ -881,7 +883,8 @@
         ],
         "speed": 42,
         "moveAnimState": "官兵刀_走路"
-      }
+      },
+      "portraitSlug": "constable_blade"
     },
     {
       "id": "wujin_constable_resting",
@@ -893,7 +896,8 @@
       "initialAnimState": "官兵刀_站立",
       "initialFacing": "left",
       "dialogueGraphId": "街巷_市井闲谈",
-      "dialogueGraphEntry": "constable_resting"
+      "dialogueGraphEntry": "constable_resting",
+      "portraitSlug": "constable_blade"
     },
     {
       "id": "wujin_foreign_lady",
@@ -901,7 +905,7 @@
       "x": 3344.0,
       "y": 1888.0,
       "interactionRange": 60.0,
-      "animFile": "/resources/runtime/animation/npc_yangren_anim/anim.json",
+      "animFile": "/resources/runtime/animation/npc_li_tiangou_anim/anim.json",
       "initialAnimState": "idle",
       "dialogueGraphId": "街巷_市井闲谈",
       "dialogueGraphEntry": "foreign_lady",
@@ -922,7 +926,8 @@
         ],
         "speed": 34,
         "moveAnimState": "walk"
-      }
+      },
+      "portraitSlug": "npc_yangren_anim"
     },
     {
       "id": "wujin_foreign_cargo_hand",
@@ -947,7 +952,8 @@
         ],
         "speed": 28,
         "moveAnimState": "埃德加_走路"
-      }
+      },
+      "portraitSlug": "edgar"
     },
     {
       "id": "wujin_incense_granny",

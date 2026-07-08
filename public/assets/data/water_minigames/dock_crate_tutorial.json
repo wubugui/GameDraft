@@ -125,6 +125,8 @@
         "y": 280
       },
       "depth": 0.48,
+      "displaySize": 68,
+      "hitRadius": 42,
       "motion": {
         "path": "patrol",
         "speed": 0.55

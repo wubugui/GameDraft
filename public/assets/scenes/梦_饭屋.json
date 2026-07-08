@@ -37,21 +37,19 @@
   "npcs": [
     {
       "id": "npc_dream_old_man",
-      "name": "老头",
+      "characterId": "dream_old_man",
       "x": 282.0,
       "y": 270.6,
       "interactionRange": 55.0,
-      "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
     },
     {
       "id": "npc_dream_old_woman",
-      "name": "老妇人",
+      "characterId": "dream_old_woman",
       "x": 408.5,
       "y": 348.9,
       "interactionRange": 55.0,
-      "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left"
     }

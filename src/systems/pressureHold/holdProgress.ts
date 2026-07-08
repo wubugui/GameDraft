@@ -81,3 +81,27 @@ export function validateInterruptRatios(ratios: number[]): number[] {
   }
   return sorted;
 }
+
+/**
+ * 校验完整 interrupt 链（B14）：除 atRatio 规则外，非 abort 中断的 resetToRatio
+ * 必须低于下一停点（下一 atRatio，末段为 1）——否则 runFlow 会以
+ * startRatio ≥ stopRatio 构造 HoldProgress，在运行期（监听已挂上后）抛错泄漏。
+ * 坏数据应在加载期被此处拒绝，而不是等到玩家按住时才炸。
+ */
+export function validateInterruptChain(
+  interrupts: { atRatio: number; resetToRatio?: number; abort?: boolean }[],
+): void {
+  const sorted = [...interrupts].sort((a, b) => a.atRatio - b.atRatio);
+  validateInterruptRatios(sorted.map((i) => i.atRatio));
+  for (let i = 0; i < sorted.length; i++) {
+    const cur = sorted[i];
+    if (cur.abort) continue; // abort 中断到此收场，resetToRatio 不再被消费
+    const reset = clamp01(cur.resetToRatio ?? 0);
+    const nextStop = i + 1 < sorted.length ? sorted[i + 1].atRatio : 1;
+    if (!(reset < nextStop)) {
+      throw new Error(
+        `pressure hold interrupt resetToRatio(${cur.resetToRatio}) 不得 ≥ 下一停点(${nextStop})`,
+      );
+    }
+  }
+}

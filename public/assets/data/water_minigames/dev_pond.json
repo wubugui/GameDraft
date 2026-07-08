@@ -40,6 +40,7 @@
         "y": 71
       },
       "depth": 0.05,
+      "consumeOnSuccess": true,
       "motion": {
         "path": "drift",
         "speed": 0.06
@@ -157,6 +158,8 @@
         "y": 340
       },
       "depth": 0.55,
+      "displaySize": 68,
+      "hitRadius": 42,
       "motion": {
         "path": "drift",
         "speed": 0.45

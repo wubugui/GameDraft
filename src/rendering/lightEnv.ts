@@ -14,8 +14,8 @@ export interface ResolvedLightEnv {
   ambient: { color: RgbColor; intensity: number };
   shadow: {
     mode: ShadowMode;
-    enabled: boolean; darkness: number; softness: number; length: number; skewX: number;
-    contact: number; contactSize: number; drape: number; drapeEnabled: boolean;
+    enabled: boolean; darkness: number; softness: number; length: number;
+    contact: number; contactSize: number;
     softSamples: number; softRadius: number; billboard: 'light' | 'camera';
   };
   toneStrength: number;
@@ -30,8 +30,9 @@ const BASELINE: ResolvedLightEnv = {
   ambient: { color: [0.55, 0.6, 0.72], intensity: 1.0 },
   shadow: {
     mode: 'real',
-    enabled: true, darkness: 0.4, softness: 1.0, length: 0, skewX: 0,
-    contact: 0.5, contactSize: 1.0, drape: 0.6, drapeEnabled: true,
+    // length 为占位：resolveLightEnv 末端统一按「显式值 > 最终 elevation 推导」定值
+    enabled: true, darkness: 0.4, softness: 1.0, length: 0,
+    contact: 0.5, contactSize: 1.0,
     softSamples: 1, softRadius: 0.05, billboard: 'light',
   },
   toneStrength: 0.45,
@@ -43,6 +44,11 @@ const DEG2RAD = Math.PI / 180;
 
 function num(v: number | undefined, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+/** 显式数值：合法有限数返回本值，否则 undefined（供跨层「显式值优先」判定） */
+function explicitNum(v: number | undefined): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
 function color(v: RgbColor | undefined, fallback: RgbColor): RgbColor {
@@ -61,24 +67,11 @@ function lengthFromElevation(elevDeg: number): number {
   return Math.max(0.3, Math.min(1.6, cot));
 }
 
-/**
- * 由方位角推导阴影水平倾斜（弧度）。光来向的水平分量为 cos(az)，阴影朝反方向倾，
- * 故 skewX 取 -cos(az) 乘一个适中系数。仰角越低，水平投影越夸张，故再乘 length 的温和函数。
- */
-function skewFromKey(azDeg: number, length: number): number {
-  const az = azDeg * DEG2RAD;
-  const horiz = -Math.cos(az); // [-1,1]
-  const lenBoost = 0.5 + 0.5 * Math.min(1, length); // 0.65~1.3 区间
-  return Math.max(-1.1, Math.min(1.1, horiz * 0.6 * lenBoost));
-}
-
 /** 合并三层（base < global < scene），返回全字段具体的解析结果。 */
 function mergeOne(base: ResolvedLightEnv, src: SceneLightEnv | undefined): ResolvedLightEnv {
   if (!src) return base;
   const azimuthDeg = num(src.key?.azimuthDeg, base.key.azimuthDeg);
   const elevationDeg = num(src.key?.elevationDeg, base.key.elevationDeg);
-  const length = num(src.shadow?.length, lengthFromElevation(elevationDeg));
-  const skewX = num(src.shadow?.skewX, skewFromKey(azimuthDeg, length));
   return {
     key: {
       azimuthDeg,
@@ -95,12 +88,11 @@ function mergeOne(base: ResolvedLightEnv, src: SceneLightEnv | undefined): Resol
       enabled: src.shadow?.enabled ?? base.shadow.enabled,
       darkness: Math.max(0, Math.min(1, num(src.shadow?.darkness, base.shadow.darkness))),
       softness: Math.max(0, num(src.shadow?.softness, base.shadow.softness)),
-      length,
-      skewX,
+      // length 在此仅逐层继承显式值（不按本层 elevation 重算，避免丢上一层显式配置）；
+      // 整条链都无显式值时由 resolveLightEnv 末端按最终 elevation 推导
+      length: num(src.shadow?.length, base.shadow.length),
       contact: Math.max(0, Math.min(1, num(src.shadow?.contact, base.shadow.contact))),
       contactSize: Math.max(0.1, num(src.shadow?.contactSize, base.shadow.contactSize)),
-      drape: Math.max(0, num(src.shadow?.drape, base.shadow.drape)),
-      drapeEnabled: src.shadow?.drapeEnabled ?? base.shadow.drapeEnabled,
       softSamples: Math.max(1, Math.min(16, Math.round(num(src.shadow?.softSamples, base.shadow.softSamples)))),
       softRadius: Math.max(0, num(src.shadow?.softRadius, base.shadow.softRadius)),
       billboard: src.shadow?.billboard ?? base.shadow.billboard,
@@ -117,25 +109,31 @@ function mergeOne(base: ResolvedLightEnv, src: SceneLightEnv | undefined): Resol
 /**
  * 解析当前场景的光照环境。
  * @param sceneEnv  场景 JSON 的 lightEnv（可空）
- * @param globalDefault game_config.entityLighting.defaultLightEnv（可空）
+ * @param globalCfg game_config.entityLighting（含 defaultLightEnv，可空）
  */
 export function resolveLightEnv(
   sceneEnv: SceneLightEnv | undefined,
   globalCfg: EntityLightingConfig | undefined,
 ): ResolvedLightEnv {
-  // 先把内置基线的 length/skew 补全（基线本身 azimuth/elev 已定）
+  // 基线须逐层克隆：mergeOne(src 为空) 原样返回 base，而返回值会被调用方原地改写
+  //（F2 调试 / copyResolvedInto），不克隆会污染模块级 BASELINE。
   const base: ResolvedLightEnv = {
-    ...BASELINE,
-    shadow: {
-      ...BASELINE.shadow,
-      length: lengthFromElevation(BASELINE.key.elevationDeg),
-      skewX: skewFromKey(BASELINE.key.azimuthDeg, lengthFromElevation(BASELINE.key.elevationDeg)),
-    },
+    key: { ...BASELINE.key },
+    ambient: { ...BASELINE.ambient },
+    shadow: { ...BASELINE.shadow },
+    toneStrength: BASELINE.toneStrength,
+    toneEnabled: BASELINE.toneEnabled,
+    ao: { ...BASELINE.ao },
   };
   const withGlobal = mergeOne(base, globalCfg?.defaultLightEnv);
   const resolved = mergeOne(withGlobal, sceneEnv);
   // mode / tone 与 shadowMode 解耦：场景覆盖 > 全局 entityLighting 顶层 > 合并结果
   resolved.shadow.mode = sceneEnv?.shadow?.mode ?? globalCfg?.shadowMode ?? resolved.shadow.mode;
   resolved.toneEnabled = sceneEnv?.toneEnabled ?? globalCfg?.toneEnabled ?? resolved.toneEnabled;
+  // length：显式值沿链取最近一层（scene > global）；整条链都未显式配置时才由最终 elevation 推导，
+  // 保证「场景只改仰角」的既有行为不变，同时不丢上层显式 length。
+  const explicitLength = explicitNum(sceneEnv?.shadow?.length)
+    ?? explicitNum(globalCfg?.defaultLightEnv?.shadow?.length);
+  resolved.shadow.length = explicitLength ?? lengthFromElevation(resolved.key.elevationDeg);
   return resolved;
 }

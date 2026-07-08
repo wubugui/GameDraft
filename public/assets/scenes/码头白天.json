@@ -76,7 +76,7 @@
       "x": 1689.0,
       "y": 837.8,
       "interactionRange": 50.0,
-      "animFile": "/resources/runtime/animation/npc_yangren_anim/anim.json",
+      "animFile": "/resources/runtime/animation/npc_li_tiangou_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
       "collisionPolygon": [

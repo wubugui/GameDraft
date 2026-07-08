@@ -38,6 +38,8 @@ class ConditionRow(QWidget):
         super().__init__(parent)
         self._model = model
         self._scene_id = scene_id
+        # 原始条目快照：未改动时按原形状回写（显式 op:"=="/value:true 不丢、int 不漂 float）
+        self._orig: dict | None = dict(data) if isinstance(data, dict) else None
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
@@ -92,18 +94,28 @@ class ConditionRow(QWidget):
             return {}
         result: dict = {"flag": fk}
         op = self.op_combo.currentText()
+        orig = self._orig if isinstance(self._orig, dict) else None
+        same_flag = bool(orig) and orig.get("flag") == fk
         if op != "==":
             result["op"] = op
+        elif same_flag and orig.get("op") == "==":
+            result["op"] = "=="  # 原数据显式写了 op:"=="，保真不删键
         v = self._val.get_value()
+        if (
+            same_flag
+            and "value" not in orig
+            and v is True
+            and op == (orig.get("op") or "==")
+        ):
+            return result  # 原本就无 value 键（缺省 true），保持缺省
         if isinstance(v, bool):
-            if op == "==" and v is True:
-                pass
+            if op == "==" and v is True and not (same_flag and "value" in orig):
+                pass  # 新写的 ==true 维持省略习惯
             else:
                 result["value"] = v
-        elif isinstance(v, str):
-            result["value"] = v
         else:
-            result["value"] = float(v)
+            # 不做 float() 强转：FlagValueEdit 原值保留（int 保 int、raw 保原类型）
+            result["value"] = v
         return result
 
 
@@ -177,6 +189,7 @@ class ConditionEditor(QWidget):
         self._extra_json.setMinimumHeight(80)
         self._extra_json.setMaximumHeight(320)
         self._extra_json.textChanged.connect(self.changed.emit)
+        self._extra_json.textChanged.connect(self._sync_expert_gate)
         expert = CollapsibleSection("专家兜底：原始 ConditionExpr（通常不用）", start_open=False)
         expert.set_header_tool_tip(
             "遇到未来新增条件类型且树暂未支持时可临时粘贴；"
@@ -262,7 +275,12 @@ class ConditionEditor(QWidget):
         return set(c.keys()) <= {"flag", "op", "value"}
 
     def set_data(self, conditions: list[dict]) -> None:
+        import copy
+
         self._clear()
+        # 原始数组快照：内容未被实际编辑时 to_list 逐字返回它，
+        # 保住原始形状/顺序（不做 flag 行前置、不把多叶包成 {"all":[…]}）。
+        self._orig_conditions = copy.deepcopy(list(conditions))
         rest: list[dict] = []
         for c in conditions:
             if isinstance(c, dict) and self._is_flag_leaf(c):
@@ -275,19 +293,43 @@ class ConditionEditor(QWidget):
             self._extra_json.clear()
         else:
             self._tree_root.set_expr(None)
+        self._sync_expert_gate()
+
+    def _canonical_parts(self) -> tuple[list[dict], object]:
+        flags = [d for d in (r.to_dict() for r in self._rows) if d.get("flag")]
+        te = self._tree_root.get_expr()
+        return flags, te
+
+    def _matches_orig(self, flags_now: list[dict], tree_now: object) -> bool:
+        orig = getattr(self, "_orig_conditions", None)
+        if orig is None:
+            return False
+        if self._extra_json.toPlainText().strip():
+            return False
+        orig_flags = [c for c in orig if isinstance(c, dict) and self._is_flag_leaf(c)]
+        orig_rest = [c for c in orig if isinstance(c, dict) and not self._is_flag_leaf(c)]
+        if orig_rest:
+            expected_tree: object = orig_rest[0] if len(orig_rest) == 1 else {"all": orig_rest}
+        else:
+            expected_tree = None
+        return flags_now == orig_flags and tree_now == expected_tree
 
     def to_list(self) -> list[dict]:
-        out: list[dict] = [r.to_dict() for r in self._rows if r.to_dict().get("flag")]
-        te = self._tree_root.get_expr()
+        import copy
+
+        flags_now, te = self._canonical_parts()
+        if self._matches_orig(flags_now, te):
+            return copy.deepcopy(self._orig_conditions)
+        out: list[dict] = list(flags_now)
         if te is not None:
             out.append(te)
-            return out
         raw = self._extra_json.toPlainText().strip()
         if not raw:
             return out
         try:
             obj = json.loads(raw)
         except json.JSONDecodeError:
+            # 非法 JSON 不静默丢：保留在框里并标红（_sync_expert_gate），不进导出
             return out
         if isinstance(obj, list):
             for item in obj:
@@ -297,7 +339,24 @@ class ConditionEditor(QWidget):
             out.append(obj)
         return out
 
+    def _sync_expert_gate(self) -> None:
+        """专家兜底框状态：非法 JSON 标红提示；内容永不静默丢弃（树激活时也并入导出）。"""
+        raw = self._extra_json.toPlainText().strip()
+        bad = False
+        if raw:
+            try:
+                json.loads(raw)
+            except json.JSONDecodeError:
+                bad = True
+        self._extra_json.setStyleSheet(
+            "QPlainTextEdit { border: 1px solid #c0392b; }" if bad else ""
+        )
+        self._extra_json.setToolTip(
+            "JSON 无法解析——此内容不会进入导出，请修正。" if bad else "",
+        )
+
     def _clear(self) -> None:
+        self._orig_conditions = None
         self._tree_root.set_expr(None)
         self._extra_json.blockSignals(True)
         self._extra_json.clear()

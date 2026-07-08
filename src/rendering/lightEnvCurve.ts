@@ -126,7 +126,7 @@ function compact<T extends object>(o: T): T {
 /**
  * 在 t01 处插值出一份部分 SceneLightEnv。
  * 连续量（key 方位/仰角/颜色/强度、ambient、shadow 数值、toneStrength、ao）平滑插值；
- * 离散量（shadow.mode/enabled/billboard/drapeEnabled、toneEnabled）取最近关键帧。
+ * 离散量（shadow.mode/enabled/billboard、toneEnabled）取最近关键帧。
  */
 export function interpolateLightEnv(curve: PreparedLightCurve, t01: number): SceneLightEnv {
   const { points, cum, total } = curve;
@@ -158,11 +158,8 @@ export function interpolateLightEnv(curve: PreparedLightCurve, t01: number): Sce
     darkness: blendNum(a.shadow?.darkness, b.shadow?.darkness, u),
     softness: blendNum(a.shadow?.softness, b.shadow?.softness, u),
     length: blendNum(a.shadow?.length, b.shadow?.length, u),
-    skewX: blendNum(a.shadow?.skewX, b.shadow?.skewX, u),
     contact: blendNum(a.shadow?.contact, b.shadow?.contact, u),
     contactSize: blendNum(a.shadow?.contactSize, b.shadow?.contactSize, u),
-    drape: blendNum(a.shadow?.drape, b.shadow?.drape, u),
-    drapeEnabled: pick(a.shadow?.drapeEnabled, b.shadow?.drapeEnabled, u),
     softSamples: blendNum(a.shadow?.softSamples, b.shadow?.softSamples, u),
     softRadius: blendNum(a.shadow?.softRadius, b.shadow?.softRadius, u),
     billboard: pick(a.shadow?.billboard, b.shadow?.billboard, u),
@@ -200,11 +197,8 @@ export function copyResolvedInto(dst: ResolvedLightEnv, src: ResolvedLightEnv): 
   dst.shadow.darkness = src.shadow.darkness;
   dst.shadow.softness = src.shadow.softness;
   dst.shadow.length = src.shadow.length;
-  dst.shadow.skewX = src.shadow.skewX;
   dst.shadow.contact = src.shadow.contact;
   dst.shadow.contactSize = src.shadow.contactSize;
-  dst.shadow.drape = src.shadow.drape;
-  dst.shadow.drapeEnabled = src.shadow.drapeEnabled;
   dst.shadow.softSamples = src.shadow.softSamples;
   dst.shadow.softRadius = src.shadow.softRadius;
   dst.shadow.billboard = src.shadow.billboard;

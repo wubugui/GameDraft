@@ -794,6 +794,14 @@ def scale_bgra_uniform(bgra: np.ndarray, scale: float) -> np.ndarray:
     return cv2.resize(np.ascontiguousarray(bgra), (nw, nh), interpolation=interp)
 
 
+def _dump_json_text(data: dict[str, Any]) -> str:
+    """与 GameDraft 主编辑器 file_io 一致：UTF-8、2 空格缩进、中文不转义、保留键序、末尾换行。
+
+    旧实现不写末尾换行，与仓库内 anim.json/atlas.meta.json 既有约定不符，会导致再导出产生 1 字节 diff。
+    """
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
 def save_outputs(
     atlas: Image.Image,
     meta: dict[str, Any],
@@ -805,6 +813,6 @@ def save_outputs(
     out_png.parent.mkdir(parents=True, exist_ok=True)
     atlas.save(out_png, format="PNG")
     if out_meta_json is not None:
-        out_meta_json.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_meta_json.write_text(_dump_json_text(meta), encoding="utf-8")
     if gamedraft is not None and out_anim_json is not None:
-        out_anim_json.write_text(json.dumps(gamedraft, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_anim_json.write_text(_dump_json_text(gamedraft), encoding="utf-8")

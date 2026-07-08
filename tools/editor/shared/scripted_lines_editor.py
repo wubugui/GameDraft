@@ -14,6 +14,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QFontMetrics
 
 from .cutscene_dialogue_speaker_row import build_speaker_line_with_inserts
+from .portrait_ref_field import PortraitRefField
 from .rich_text_field import RichTextTextEdit
 
 
@@ -135,7 +136,11 @@ class ScriptedLinesEditor(QWidget):
         tx.setMinimumHeight(48)
         tx.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         bl.addWidget(tx_wrap)
-        rec = {"box": box, "speaker": sp, "text": tx, "btn_up": up, "btn_down": dn}
+        proot = getattr(m, "project_path", None) if m else None
+        portrait = PortraitRefField(proot, data.get("portrait") if isinstance(data, dict) else None)
+        portrait.changed.connect(self.changed.emit)
+        bl.addWidget(portrait)
+        rec = {"box": box, "speaker": sp, "text": tx, "portrait": portrait, "btn_up": up, "btn_down": dn}
         rm.clicked.connect(lambda: self._remove_row(rec))
         up.clicked.connect(lambda: self._move_row(rec, -1))
         dn.clicked.connect(lambda: self._move_row(rec, 1))
@@ -156,8 +161,12 @@ class ScriptedLinesEditor(QWidget):
                 continue
             spw = r["speaker"]
             sp_txt = spw.text().strip() if hasattr(spw, "text") else ""
-            out.append({
+            rec: dict = {
                 "speaker": sp_txt,
                 "text": t,
-            })
+            }
+            por = r["portrait"].to_ref()
+            if por:
+                rec["portrait"] = por
+            out.append(rec)
         return out

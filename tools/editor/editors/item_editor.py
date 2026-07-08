@@ -297,7 +297,33 @@ class ItemEditor(QWidget):
         if self._current_idx < 0:
             return
         it = self._model.items[self._current_idx]
-        it["id"] = self._i_id.text().strip()
+        _prev_iid = str(it.get("id", "")).strip()
+        _new_iid = self._i_id.text().strip()
+        if not _new_iid:
+            _new_iid = _prev_iid  # 空 id 不接受：保留原 id
+        elif _new_iid != _prev_iid and any(
+            o is not it and str(o.get("id", "")).strip() == _new_iid
+            for o in self._model.items
+        ):
+            QMessageBox.warning(
+                self, "物品 id",
+                f"id「{_new_iid}」与其它物品重复，已保留原 id「{_prev_iid}」。")
+            _new_iid = _prev_iid
+        it["id"] = _new_iid
+        # 改名级联：商店货架 itemId、遭遇 consumeItems 跟随（审查 P2-24：
+        # 旧实现改 id 后引用悬垂，商店购买/消耗静默失效）
+        if _prev_iid and _new_iid != _prev_iid:
+            for sh in self._model.shops:
+                for row_ in (sh.get("items") or []):
+                    if isinstance(row_, dict) and str(row_.get("itemId", "")).strip() == _prev_iid:
+                        row_["itemId"] = _new_iid
+                        self._model.mark_dirty("shop")
+            for enc in self._model.encounters:
+                for opt in (enc.get("options") or []):
+                    for ci in (opt.get("consumeItems") or []) if isinstance(opt, dict) else []:
+                        if isinstance(ci, dict) and str(ci.get("id", "")).strip() == _prev_iid:
+                            ci["id"] = _new_iid
+                            self._model.mark_dirty("encounter")
         it["name"] = self._i_name.text()
         it["type"] = self._i_type.currentText()
         it["description"] = self._i_desc.toPlainText()
@@ -320,8 +346,12 @@ class ItemEditor(QWidget):
             iw.setText(f"{tag} {it.get('id', '?')}  {it.get('name', '')}")
 
     def _add(self) -> None:
+        taken = {str(i.get("id", "")) for i in self._model.items}
+        n = 0
+        while f"item_{n}" in taken:
+            n += 1
         self._model.items.append({
-            "id": f"item_{len(self._model.items)}", "name": "New Item",
+            "id": f"item_{n}", "name": "New Item",
             "type": "consumable", "description": "", "maxStack": 1,
         })
         self._model.mark_dirty("item")

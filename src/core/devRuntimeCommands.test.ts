@@ -107,6 +107,8 @@ function deps() {
       playerMoveTo: (x: number, y: number) => { calls.push(`playerMoveTo:${x},${y}`); },
       playerTap: () => { calls.push('playerTap'); },
       setPlayerCollisions: (enabled: boolean) => { calls.push(`setPlayerCollisions:${enabled}`); },
+      activatePlane: (planeId: string) => { calls.push(`activatePlane:${planeId}`); return true; },
+      deactivatePlane: () => { calls.push('deactivatePlane'); },
     },
   };
 }

@@ -534,6 +534,46 @@ describe('editorModel', () => {
     expect(compositionId).toBe('comp');
   });
 
+  it('resolveValidationIssueFocus focuses a dotted state id with a field suffix (path tail not truncated)', () => {
+    const data = normalizeFile({
+      schemaVersion: 3,
+      signals: [],
+      compositions: [{
+        id: 'comp',
+        mainGraph: {
+          id: 'flow',
+          ownerType: 'flow',
+          initialState: 'a',
+          states: { a: { id: 'a' }, 's.1': { id: 's.1' } },
+          transitions: [],
+        },
+        elements: [],
+      }],
+    });
+    // state id 含 '.' 且 path 尾串带字段后缀——旧 `([^.[\]]+)` 会截成 's' 导致聚焦失败。
+    const result = resolveValidationIssueFocus(
+      {
+        severity: 'error',
+        code: 'state.onEnterActions',
+        message: 'bad',
+        path: 'compositions[0].mainGraph.states.s.1.onEnterActions[0]',
+      },
+      data,
+    );
+    expect(result?.selectedId).toBe('state:s.1');
+    expect(result?.nodeIds).toContain('state:s.1');
+  });
+
+  it('normalizeFile keeps duplicate author signals (validation flags them) but drops empty/reserved', () => {
+    const data = normalizeFile({
+      schemaVersion: 3,
+      signals: [{ id: 'go' }, { id: 'go', label: 'dup' }, { id: '' }, { id: '__draft__' }],
+      compositions: [],
+    } as unknown as Parameters<typeof normalizeFile>[0]);
+    // 重复 id 不再静默丢弃（保留交给 signal.id.duplicate 校验）；空 id / 保留字前缀仍剔除。
+    expect(data.signals?.map((s) => s.id)).toEqual(['go', 'go']);
+  });
+
   it('focusValidationIssue opens exclusive subgraph editor for element transitions', () => {
     const data = normalizeFile({
       schemaVersion: 3,

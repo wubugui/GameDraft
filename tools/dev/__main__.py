@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Tool launchers (each forwards unknown args to the tool, supports --check).
     from tools.dev.launch import TOOL_MODULES
 
-    for name in [*TOOL_MODULES.keys(), "chronicle-week"]:
+    for name in [*TOOL_MODULES.keys(), "chronicle-week", "agent-canvas-os", "acos-agent"]:
         tp = sub.add_parser(name, help=f"Launch {name}")
         tp.add_argument("--check", action="store_true")
         if name == "console":
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             return game.start(proxy=args.proxy, check=args.check)
         return game.stop()
 
-    from tools.dev.launch import TOOL_MODULES, run_chronicle_week, run_tool
+    from tools.dev.launch import TOOL_MODULES, run_acos_agent, run_agent_canvas_os, run_chronicle_week, run_tool
 
     if task == "console":
         extra = []
@@ -126,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
         extra = [a for a in getattr(args, "extra", []) if a != "--"]
     if task == "chronicle-week":
         return run_chronicle_week(extra, check=args.check)
+    if task == "agent-canvas-os":
+        return run_agent_canvas_os(check=args.check)
+    if task == "acos-agent":
+        return run_acos_agent(check=args.check)
     if task in TOOL_MODULES:
         return run_tool(task, extra, check=args.check)
 

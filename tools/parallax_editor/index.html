@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parallax 场景编辑器</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #14161a; color: #e6e6e6;
+      font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #app { display: grid; grid-template-columns: 1fr 340px; grid-template-rows: 1fr 132px;
+      grid-template-areas: "stage side" "timeline side"; height: 100vh; gap: 1px; background: #000; }
+    #stage-wrap { grid-area: stage; position: relative; overflow: hidden; background:
+      repeating-conic-gradient(#1c1f24 0% 25%, #23262c 0% 50%) 50% / 28px 28px; }
+    #stage-wrap canvas { display: block; }
+    #hud { position: absolute; left: 8px; top: 8px; font-size: 11px; color: #9aa; pointer-events: none;
+      background: rgba(0,0,0,.5); padding: 3px 7px; border-radius: 4px; white-space: pre; }
+    #side { grid-area: side; background: #1a1d22; overflow-y: auto; padding: 10px; }
+    #timeline { grid-area: timeline; background: #1a1d22; padding: 8px 12px; border-top: 1px solid #2a2e35; }
+    h3 { margin: 12px 0 6px; font-size: 12px; color: #ffcf7a; border-bottom: 1px solid #2a2e35; padding-bottom: 3px; }
+    .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    .row label { color: #9aa; min-width: 58px; font-size: 11px; }
+    input, select, button, textarea { font: inherit; background: #22262d; color: #e6e6e6;
+      border: 1px solid #333a44; border-radius: 4px; padding: 3px 6px; }
+    input[type=number] { width: 68px; }
+    input[type=text] { flex: 1; min-width: 0; }
+    button { cursor: pointer; }
+    button:hover { background: #2c323b; }
+    button.primary { background: #3a5a9a; border-color: #4a6fb5; }
+    button.primary.dirty { background: #8a5a1a; border-color: #c98a3a; }
+    button.danger { background: #6a2a2a; border-color: #8a3a3a; }
+    button.sm { padding: 1px 6px; font-size: 11px; }
+    .list { border: 1px solid #2a2e35; border-radius: 4px; max-height: 150px; overflow-y: auto; }
+    .item { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; border-bottom: 1px solid #23262c; }
+    .item:hover { background: #22262d; }
+    .item.sel { background: #2d3a52; }
+    .item .zi { color: #7a8; font-size: 10px; min-width: 22px; }
+    .item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+    #kf-track { position: relative; height: 26px; background: #12141a; border: 1px solid #2a2e35; border-radius: 4px; margin-top: 4px; }
+    .kf-mark { position: absolute; top: 3px; width: 10px; height: 18px; margin-left: -5px; background: #ffcf7a;
+      border-radius: 2px; cursor: pointer; border: 1px solid #7a5a20; }
+    .kf-mark.sel { background: #ff7a7a; border-color: #a44; }
+    #playhead { position: absolute; top: 0; width: 2px; height: 100%; background: #4a9; pointer-events: none; }
+    #cam-track { position: relative; height: 26px; background: #12141a; border: 1px solid #2a2e35; border-radius: 4px; margin-top: 4px; }
+    .cam-mark { position: absolute; top: 3px; width: 10px; height: 18px; margin-left: -5px; background: #6fb0ff;
+      border-radius: 2px; cursor: pointer; border: 1px solid #2a5a8a; }
+    .cam-mark.sel { background: #ff7a7a; border-color: #a44; }
+    #cam-playhead { position: absolute; top: 0; width: 2px; height: 100%; background: #4a9; pointer-events: none; }
+    textarea { width: 100%; height: 90px; font-family: ui-monospace, monospace; font-size: 11px; resize: vertical; }
+    .muted { color: #778; font-size: 11px; }
+    .tag { font-size: 10px; color: #8a9; }
+    #toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: #2a3a2a;
+      border: 1px solid #4a6a4a; padding: 6px 14px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="stage-wrap"><div id="pixi"></div><div id="hud"></div></div>
+    <div id="side">
+      <h3>场景 Scene</h3>
+      <div class="row"><label>场景</label>
+        <select id="scene-select"></select>
+        <button class="sm" id="scene-new">＋新建</button>
+      </div>
+      <div class="row"><label>id</label><input type="text" id="scene-id" /></div>
+      <div class="row"><label>画布宽</label><input type="number" id="scene-w" />
+        <label>高</label><input type="number" id="scene-h" /></div>
+
+      <h3>图层 Layers <span class="tag">(上=后层/下=前层，越下越靠前)</span></h3>
+      <div class="list" id="layer-list"></div>
+      <div class="row" style="margin-top:5px">
+        <button class="sm" id="layer-add">＋加图层</button>
+        <button class="sm" id="layer-up">▲</button>
+        <button class="sm" id="layer-down">▼</button>
+        <button class="sm danger" id="layer-del">删除</button>
+      </div>
+
+      <div id="layer-props" style="display:none">
+        <h3>选中图层</h3>
+        <div class="row"><label>id</label><input type="text" id="l-id" /></div>
+        <div class="row"><label>图片</label><select id="l-image"></select></div>
+        <div class="row"><label>zIndex</label><input type="number" id="l-z" />
+          <label>缓动</label>
+          <select id="l-ease"><option>linear</option><option>easeIn</option><option>easeOut</option><option>easeInOut</option></select>
+        </div>
+        <div class="row"><label>循环</label><input type="checkbox" id="l-loop" /><span class="muted">循环关键帧时间轴</span></div>
+        <div class="row"><label>景深</label><input type="number" id="l-depth" step="0.05" min="0" max="2" />
+          <span class="muted">视差强度：越大越近、推摄像机时动越多（缺省按 zIndex 自动）</span></div>
+
+        <h3>关键帧 Keyframes</h3>
+        <div id="kf-track"><div id="playhead"></div></div>
+        <div class="row" style="margin-top:5px">
+          <button class="sm primary" id="kf-add">＋在当前时间加帧</button>
+          <button class="sm danger" id="kf-del">删除选中帧</button>
+        </div>
+        <div id="kf-props" style="display:none">
+          <div class="row"><label>时间ms</label><input type="number" id="k-t" step="100" /></div>
+          <div class="row"><label>x</label><input type="number" id="k-x" />
+            <label>y</label><input type="number" id="k-y" /></div>
+          <div class="row"><label>缩放</label><input type="number" id="k-s" step="0.01" />
+            <label>旋转°</label><input type="number" id="k-r" step="1" /></div>
+          <div class="row"><label>透明度</label><input type="number" id="k-a" step="0.05" min="0" max="1" /></div>
+        </div>
+      </div>
+
+      <h3>推摄像机 Camera <span class="tag">(配镜头运动，保存时烘焙进各层)</span></h3>
+      <div class="row"><label>启用</label><input type="checkbox" id="cam-enable" />
+        <span class="muted">开启后画布按「镜头运动 × 每层景深」实时预览；保存时全部烘焙成每层关键帧</span></div>
+      <div id="cam-body" style="display:none">
+        <div id="cam-track"><div id="cam-playhead"></div></div>
+        <div class="row" style="margin-top:5px">
+          <button class="sm primary" id="cam-kf-add">＋当前时间加镜头帧</button>
+          <button class="sm danger" id="cam-kf-del">删除选中镜头帧</button>
+        </div>
+        <div id="cam-kf-props" style="display:none">
+          <div class="row"><label>时间ms</label><input type="number" id="cam-t" step="100" /></div>
+          <div class="row"><label>推近</label><input type="number" id="cam-zoom" step="0.01" min="0.2" />
+            <span class="muted">1=不推，&gt;1 推近，&lt;1 拉远</span></div>
+          <div class="row"><label>平移X</label><input type="number" id="cam-px" step="5" />
+            <label>Y</label><input type="number" id="cam-py" step="5" /></div>
+          <div class="row"><label>旋转°</label><input type="number" id="cam-roll" step="0.5" /></div>
+        </div>
+        <div class="muted" style="margin-top:4px">镜头叠加在各层「自身运动」之上（近层动得多）；保存时按每层景深烘焙成各层关键帧，自身运动另存供再编辑。</div>
+      </div>
+
+      <h3>电影黑边预览 Movie Bar <span class="tag">(只是编辑预览，不写进 JSON)</span></h3>
+      <div class="row"><label>显示</label><input type="checkbox" id="mb-on" />
+        <label>高度%</label><input type="number" id="mb-pct" step="0.01" min="0" max="0.45" style="width:70px" />
+        <span class="muted">单边占比，同运行时 showMovieBar；运行时黑边常盖住画面上下</span></div>
+
+      <h3>导出 / 保存</h3>
+      <div class="row">
+        <button class="primary" id="btn-save">保存到 parallax_scenes.json</button>
+      </div>
+      <div class="row"><button class="sm" id="btn-copy">复制 JSON</button>
+        <span class="muted">present 步：{"type":"parallaxScene","id":"…"}</span></div>
+      <textarea id="json-out" readonly></textarea>
+    </div>
+    <div id="timeline">
+      <div class="row">
+        <button id="tl-play">▶ 播放</button>
+        <button class="sm" id="tl-stop">■</button>
+        <span class="muted" id="tl-time">0 / 0 ms</span>
+        <label style="margin-left:auto">总时长</label><input type="number" id="tl-max" step="500" style="width:80px" />
+      </div>
+      <input type="range" id="tl-scrub" min="0" max="14000" value="0" style="width:100%; margin-top:8px" />
+      <div class="muted" style="margin-top:4px">拖拽画布上的元素 = 在当前时间给它打/改一个关键帧（位置）。数值面板可精调每帧位置/缩放/旋转/透明度。</div>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

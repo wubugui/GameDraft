@@ -12,6 +12,15 @@
         {
           "conditions": [
             {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ],
+          "next": "beishi_busy"
+        },
+        {
+          "conditions": [
+            {
               "narrative": "scenario_婆子家",
               "state": "paid",
               "reached": true
@@ -28,7 +37,10 @@
         "kind": "npc"
       },
       "text": "小先生的恩，老婆子记到起的。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n1": {
       "type": "line",
@@ -36,7 +48,10 @@
         "kind": "npc"
       },
       "text": "可算寻到你了！你就是……李天狗那一脉的小先生迈？",
-      "next": "n2"
+      "next": "n2",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "n2": {
       "type": "line",
@@ -44,7 +59,10 @@
         "kind": "player"
       },
       "text": "（李天狗那一脉？……哦。说的我。）正是。",
-      "next": "n3"
+      "next": "n3",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n3": {
       "type": "line",
@@ -52,7 +70,10 @@
         "kind": "npc"
       },
       "text": "我屋头院坝头，夜夜都有响动！鸡也不下蛋了，狗叫到大半夜——钱，老婆子拍这点了！你总要给我看哈嘛！",
-      "next": "c1"
+      "next": "c1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "c1": {
       "type": "choice",
@@ -75,7 +96,10 @@
         "kind": "npc"
       },
       "text": "（一咬牙）再加十文！真的不能再多了，小先生！",
-      "next": "c_tai_pay"
+      "next": "c_tai_pay",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "c_tai_pay": {
       "type": "runActions",
@@ -95,7 +119,10 @@
         "kind": "npc"
       },
       "text": "哎！哎！小先生这边走嘛——",
-      "next": "n4"
+      "next": "n4",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n4": {
       "type": "line",
@@ -129,6 +156,14 @@
     },
     "end1": {
       "type": "end"
+    },
+    "beishi_busy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "哎哟你背个死人子站到我跟前做啥子嘛！快送切快送切，回头再说！",
+      "next": "end1"
     }
   }
 }

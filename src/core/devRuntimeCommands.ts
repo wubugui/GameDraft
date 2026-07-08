@@ -69,7 +69,9 @@ export type RuntimeCommand =
   | { id?: unknown; type: 'playerChoose'; index?: unknown; reason?: unknown }
   | { id?: unknown; type: 'playerMoveTo'; x?: unknown; y?: unknown; reason?: unknown }
   | { id?: unknown; type: 'playerTap'; reason?: unknown }
-  | { id?: unknown; type: 'setPlayerCollisions'; enabled?: unknown; reason?: unknown };
+  | { id?: unknown; type: 'setPlayerCollisions'; enabled?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'activatePlane'; planeId?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'deactivatePlane'; reason?: unknown };
 
 export type RuntimeCommandResult = {
   id: string;
@@ -123,6 +125,10 @@ export type RuntimeCommandDeps = {
   playerTap(): void;
   // 测试用环境开关：关碰撞让玩家直线走到任意 NPC（不推任何叙事状态，非作弊）
   setPlayerCollisions(enabled: boolean): void;
+  // 位面（PlaneReconciler）：手动覆盖激活位面 / 清覆盖回叙事点名（与同名 action 同语义）。
+  // activatePlane 返回是否生效（false = id 空/未注册被拒），命令结果据此如实回报。
+  activatePlane(planeId: string): boolean;
+  deactivatePlane(): void;
 };
 
 export async function applyDevRuntimeCommand(
@@ -360,6 +366,20 @@ export async function applyDevRuntimeCommand(
         deps.setPlayerCollisions(enabled);
         await deps.captureSnapshot('runtime-command:setPlayerCollisions');
         return ok(id, type, `player collisions ${enabled ? 'enabled' : 'disabled (noclip)'}`);
+      }
+      case 'activatePlane': {
+        const planeId = requiredString(command.planeId, 'planeId');
+        const applied = deps.activatePlane(planeId);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:activatePlane');
+        if (!applied) {
+          return { id, type, ok: false, message: `plane rejected（未注册/无效 id）: ${planeId}` };
+        }
+        return ok(id, type, `plane manual override set: ${planeId}`);
+      }
+      case 'deactivatePlane': {
+        deps.deactivatePlane();
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:deactivatePlane');
+        return ok(id, type, 'plane manual override cleared');
       }
       default:
         return {

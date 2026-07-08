@@ -1,0 +1,23 @@
+[
+  {
+    "id": "normal",
+    "label": "常态"
+  },
+  {
+    "id": "背尸",
+    "label": "背尸位面",
+    "movement": {
+      "driftX": -28,
+      "driftY": 0,
+      "speedScale": 0.62,
+      "allowRun": false
+    },
+    "interaction": {
+      "canPickup": false
+    },
+    "camera": {
+      "zoom": 1.25
+    },
+    "healthDrainPerSec": 0.35
+  }
+]

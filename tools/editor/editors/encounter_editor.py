@@ -415,9 +415,10 @@ class EncounterEditor(QWidget):
         _idl = QHBoxLayout(self._e_id_row)
         _idl.setContentsMargins(0, 0, 0, 0)
         self._e_id_sel = IdRefSelector(
-            self._e_id_row, allow_empty=False, editable=False, click_opens_popup=True)
+            self._e_id_row, allow_empty=False, editable=True, click_opens_popup=True)
         self._e_id_sel.setToolTip(
-            "从下拉选择遭遇 id；须与热区 encounterId、全表唯一一致。",
+            "遭遇自身 id：可手打语义化 id（如 old_box_encounter）或从下拉选备选；"
+            "Apply 时查空/查重，改名会自动联动场景热区的 encounterId。",
         )
         self._e_id_new = QPushButton("生成唯一 id")
         self._e_id_new.setToolTip("分配当前表中未占用的 id")
@@ -521,15 +522,9 @@ class EncounterEditor(QWidget):
     def _on_gen_encounter_id(self) -> None:
         if self._loading_ui or self._current_idx < 0:
             return
+        # 只更新选择器显示，经 Apply 门写回（旧实现直写模型+快照，绕过校验与联动）
         new_id = self._suggest_unique_encounter_id()
-        row = self._current_idx
-        self._model.encounters[row]["id"] = new_id
-        self._model.mark_dirty("encounter")
-        self._sync_id_selector_for_row(row)
-        lw = self._list.item(row)
-        if lw is not None:
-            lw.setText(new_id)
-        self._take_snapshot_from_model_row(row)
+        self._e_id_sel.set_current(new_id)
 
     def _enc_from_ui(self) -> dict:
         eid = self._e_id_sel.current_id().strip()
@@ -785,7 +780,20 @@ class EncounterEditor(QWidget):
             return False
         enc = self._model.encounters[self._current_idx]
         row_saved = self._current_idx
-        enc["id"] = self._e_id_sel.current_id().strip()
+        _prev_eid = str(enc.get("id", "")).strip()
+        _new_eid = self._e_id_sel.current_id().strip()
+        enc["id"] = _new_eid
+        # 改名级联：场景热区 data.encounterId 跟随，否则遭遇引用悬垂（审查 P2-24）
+        if _prev_eid and _new_eid and _prev_eid != _new_eid:
+            for _sid, _sc in (self._model.scenes or {}).items():
+                _changed = False
+                for _hs in (_sc.get("hotspots") or []):
+                    _d = _hs.get("data") if isinstance(_hs, dict) else None
+                    if isinstance(_d, dict) and str(_d.get("encounterId", "")).strip() == _prev_eid:
+                        _d["encounterId"] = _new_eid
+                        _changed = True
+                if _changed:
+                    self._model.mark_dirty("scene", _sid)
         enc["narrative"] = self._e_narr.toPlainText()
         enc["options"] = [ow.to_dict() for ow in self._opt_widgets]
         self._model.mark_dirty("encounter")
@@ -843,6 +851,13 @@ class EncounterEditor(QWidget):
         return True  # discard：用户明确放弃
 
     def _add(self) -> None:
+        # 新增前处理当前未应用编辑：与切行路径同一套三选一，绕过即静默丢（审查 P1-3）
+        if self._current_idx >= 0 and self._is_dirty():
+            choice = self._prompt_save_discard()
+            if choice == "cancel":
+                return
+            if choice == "save" and not self._apply_impl():
+                return
         new_id = self._suggest_unique_encounter_id()
         self._model.encounters.append({
             "id": new_id,

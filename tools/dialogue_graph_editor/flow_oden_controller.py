@@ -31,6 +31,7 @@ from OdenGraphQt.qgraphics.node_abstract import AbstractNodeItem
 from OdenGraphQt.widgets.viewer import NodeViewer
 
 from .graph_document import extract_flow_edges_detailed
+from .editor_group_geometry import frame_node_name, parse_frame_gid
 
 _oden_nodegraph_pyside6_patch_done = False
 
@@ -250,10 +251,9 @@ def gameplay_ids_for_context_menu(
     if isinstance(node, DialogueFlowNode):
         return (node.name(), None, None, True)
     if isinstance(node, BackdropNode):
-        nm = node.name()
-        pfx = "__editor_grp_"
-        if nm.startswith(pfx):
-            return (None, nm[len(pfx) :], None, True)
+        gid = parse_frame_gid(node.name())
+        if gid is not None:
+            return (None, gid, None, True)
         return (None, None, None, False)
     return (None, None, None, False)
 
@@ -315,8 +315,12 @@ class DialogueFlowOdenController(QObject):
         vw = self._graph.viewer()
         vw.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         vw.customContextMenuRequested.connect(self._viewer_context_menu)
-        QShortcut(QKeySequence("F"), vw, activated=self.fit_all)
-        QShortcut(QKeySequence("A"), vw, activated=self._emit_auto_layout_request)
+        # F/A 都限定在画布 subtree 内响应（旧实现默认 WindowShortcut，焦点在节点列表/
+        # 按钮时误按 A 会整图重排并立即写盘、无确认无撤销，审查 P3-3）
+        sc_fit = QShortcut(QKeySequence("F"), vw, activated=self.fit_all)
+        sc_fit.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc_auto = QShortcut(QKeySequence("A"), vw, activated=self._emit_auto_layout_request)
+        sc_auto.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         sc_del = QShortcut(QKeySequence(Qt.Key.Key_Delete), vw, activated=self._emit_delete_key)
         # 仅当焦点在画布（含 viewport） subtree 内时响应，避免与窗口内其它控件的 Delete 冲突
         sc_del.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -368,6 +372,27 @@ class DialogueFlowOdenController(QObject):
     def set_editor_frame_drag_end_callback(self, cb: Callable[[], None] | None) -> None:
         """分组框拖动结束（mouse release）后调用，用于按几何重算 nodeGroups。"""
         self._editor_frame_drag_end_cb = cb
+
+    def measure_node_render_sizes(self) -> dict[str, tuple[float, float]]:
+        """采集画布上各对话节点的真实渲染宽高（供宽度感知自动布局用真值而非估算）。"""
+        sizes: dict[str, tuple[float, float]] = {}
+        try:
+            for n in self._graph.all_nodes():
+                if not isinstance(n, DialogueFlowNode):
+                    continue
+                v = getattr(n, "view", None)
+                if v is None:
+                    continue
+                try:
+                    w = float(getattr(v, "width", 0.0))
+                    h = float(getattr(v, "height", 0.0))
+                except (TypeError, ValueError):
+                    continue
+                if w > 1.0 and h > 1.0:
+                    sizes[n.name()] = (w, h)
+        except Exception:
+            return {}
+        return sizes
 
     def sync_layout_dicts_from_graph(self) -> None:
         """把当前画布上节点的 scene 坐标写回策划 layout 字典。
@@ -428,55 +453,41 @@ class DialogueFlowOdenController(QObject):
         ids = self.selected_flow_node_ids()
         return ids[0] if ids else None
 
-    def selected_flow_node_ids(self) -> list[str]:
-        """画布上当前选中的全部对话节点 id（非幽灵），按 id 排序。"""
+    def _selected_ids_by(self, node_cls: type, extract) -> list[str]:
+        """选中节点 id 通用扫描：先 ``selected_nodes()``，为空再回退 ``view.isSelected()``
+        全扫（个别 Oden 版本/状态下二者不一致）。``extract(node)`` 取出该类节点的 id 字段。"""
         out: list[str] = []
         try:
             for n in self._graph.selected_nodes():
-                if isinstance(n, DialogueFlowNode):
-                    out.append(n.name())
+                if isinstance(n, node_cls):
+                    v = (extract(n) or "").strip()
+                    if v:
+                        out.append(v)
         except Exception:
             out = []
         if not out:
             try:
                 for n in self._graph.all_nodes():
-                    if not isinstance(n, DialogueFlowNode):
+                    if not isinstance(n, node_cls):
                         continue
                     try:
                         if n.view.isSelected():
-                            out.append(n.name())
+                            v = (extract(n) or "").strip()
+                            if v:
+                                out.append(v)
                     except Exception:
                         continue
             except Exception:
                 pass
         return sorted(set(out))
 
+    def selected_flow_node_ids(self) -> list[str]:
+        """画布上当前选中的全部对话节点 id（非幽灵），按 id 排序。"""
+        return self._selected_ids_by(DialogueFlowNode, lambda n: n.name())
+
     def selected_ghost_missing_ids(self) -> list[str]:
-        """画布上当前选中的幽灵节点对应的缺失目标 id（JSON 中不存在的节点 id）。"""
-        out: list[str] = []
-        try:
-            for n in self._graph.selected_nodes():
-                if isinstance(n, DialogueGhostNode):
-                    mid = (n.missing_id or "").strip()
-                    if mid:
-                        out.append(mid)
-        except Exception:
-            out = []
-        if not out:
-            try:
-                for n in self._graph.all_nodes():
-                    if not isinstance(n, DialogueGhostNode):
-                        continue
-                    try:
-                        if n.view.isSelected():
-                            mid = (n.missing_id or "").strip()
-                            if mid:
-                                out.append(mid)
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-        return sorted(set(out))
+        """画布上当前选中的幽灵节点对应的缺失目标 id（JSON 中不存在的节点 id），按 id 排序。"""
+        return self._selected_ids_by(DialogueGhostNode, lambda n: n.missing_id)
 
     def _strip_orphan_scene_items_and_clear_model(self) -> None:
         """delete_nodes 后兜底：去掉仍留在场景中的节点/连线项并清空 model，避免重建叠出「死节点」。"""
@@ -495,6 +506,33 @@ class DialogueFlowOdenController(QObject):
         if n is None:
             return
         self._graph.viewer().zoom_to_nodes([n.view])
+
+    def update_node_visual(
+        self,
+        nid: str,
+        raw: dict[str, Any],
+        *,
+        is_entry: bool,
+        diag_tag: str | None = None,
+        group_rgba: tuple[int, int, int, int] | None = None,
+    ) -> bool:
+        """原地视觉更新一个已存在节点（颜色/标签/端口标题/tooltip），不动端口与连线。
+
+        返回 False 表示端口签名已变（增删分支/改类型）或节点不存在，调用方需回退整图重建。
+        这条路径是"编辑节点正文/选项文字"等高频场景避免整图删-建闪烁的关键。
+        """
+        node = self._graph.get_node_by_name(nid)
+        if not isinstance(node, DialogueFlowNode):
+            return False
+        if node.output_port_signature(raw) != node.current_output_port_names():
+            return False
+        try:
+            node.apply_dialogue_visual(
+                raw, is_entry=is_entry, diag_tag=diag_tag, group_rgba=group_rgba
+            )
+        except Exception:
+            return False
+        return True
 
     def rebuild(
         self,
@@ -531,6 +569,14 @@ class DialogueFlowOdenController(QObject):
                 if d and d not in nodes:
                     missing_targets.add(d)
 
+            # 幽灵默认位置：放到「指向它的源节点」右侧，而非固定左列，减少长连线横穿画布。
+            # 取 id 最小的源节点作锚（确定性）；已持久化的 ghost_positions 仍优先。
+            ghost_anchor: dict[str, tuple[float, float]] = {}
+            for s, d, *_rest in sorted(extract_flow_edges_detailed(nodes)):
+                if d in missing_targets and s in nodes and d not in ghost_anchor:
+                    sx, sy = positions.get(s, (0.0, 0.0))
+                    ghost_anchor[d] = (float(sx) + 320.0, float(sy))
+
             flow_ty = DialogueFlowNode.type_
             ghost_ty = DialogueGhostNode.type_
 
@@ -555,7 +601,8 @@ class DialogueFlowOdenController(QObject):
                 )
 
             for i, gid in enumerate(sorted(missing_targets)):
-                gx, gy = ghost_positions.get(gid, (420.0, 30.0 + i * 72.0))
+                _fallback = ghost_anchor.get(gid, (420.0, 30.0 + i * 72.0))
+                gx, gy = ghost_positions.get(gid, _fallback)
                 gn = self._graph.create_node(
                     ghost_ty,
                     name=f"? {gid}",
@@ -623,7 +670,7 @@ class DialogueFlowOdenController(QObject):
             h = max(80.0, h)
             bd = self._graph.create_node(
                 bd_type,
-                name=f"__editor_grp_{gid}",
+                name=frame_node_name(gid),
                 pos=[x, y],
                 selected=False,
                 color=color,
@@ -718,11 +765,9 @@ class DialogueFlowOdenController(QObject):
         for n in self._graph.all_nodes():
             if not isinstance(n, BackdropNode):
                 continue
-            nm = n.name()
-            pfx = "__editor_grp_"
-            if not nm.startswith(pfx):
+            gid = parse_frame_gid(n.name())
+            if gid is None:
                 continue
-            gid = nm[len(pfx) :]
             x, y = n.pos()
             w, h = n.size()
             out[gid] = {

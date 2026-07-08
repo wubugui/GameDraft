@@ -112,6 +112,13 @@ def validate_scenarios_list(
         eat = str(e.get("exposeAfterPhase", "")).strip()
         if eat and eat not in phases:
             return f"{sid!r} 的 exposeAfterPhase {eat!r} 不在 phases 中"
+        exposes_val = e.get("exposes")
+        if isinstance(exposes_val, dict) and exposes_val and not eat:
+            return (
+                f"{sid!r} 配了 exposes 但未设 exposeAfterPhase："
+                "运行时只在 exposeAfterPhase 指定的 phase 变为 done 时写入这些 flag，"
+                "当前配置永不触发；请设置 exposeAfterPhase 或清空 exposes"
+            )
         pset = {str(k) for k in phases.keys()}
         adj: dict[str, list[str]] = {}
         skip_cycle = False

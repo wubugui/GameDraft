@@ -1,6 +1,8 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import { buildRichContent } from './RichContent';
+import { canvasPointFromEvent } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { IArchiveDataProvider } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -73,10 +75,7 @@ export class DocumentBoxUI {
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
-    bg.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, px, py, PANEL_W, PANEL_H, SKINS.panel);
     this.container.addChild(bg);
 
     const title = new Text({
@@ -188,8 +187,10 @@ export class DocumentBoxUI {
   }
 
   private onWheel(e: WheelEvent): void {
+    const pt = canvasPointFromEvent(this.renderer, e);
+    if (!pt) return;
     e.preventDefault();
-    const mouseInContentArea = e.clientX > this.panelX + CONTENT_X_OFFSET;
+    const mouseInContentArea = pt.x > this.panelX + CONTENT_X_OFFSET;
 
     if (mouseInContentArea && this.contentContainer) {
       const maxScroll = Math.max(0, this.contentTotalH - CONTENT_AREA_H);

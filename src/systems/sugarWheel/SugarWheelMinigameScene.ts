@@ -3,6 +3,7 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { Renderer } from '../../rendering/Renderer';
 import type { ActionDef, ConditionExpr } from '../../data/types';
 import { UITheme } from '../../ui/UITheme';
+import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
 import type {
   SugarWheelAtmospherePhaseName,
   SugarWheelInstance,
@@ -11,6 +12,8 @@ import type {
   SugarWheelSpeechAnchor,
 } from './types';
 import { SugarWheelAtmosphereScheduler, type SugarWheelAtmosphereHost } from './sugarWheelAtmosphere';
+import { MinigameActionPlaybackGate } from '../minigameSession';
+import { fillToken } from '../../utils/fillTemplate';
 import {
   TAU,
   advanceSugarWheelSpinStep,
@@ -60,7 +63,6 @@ export class SugarWheelMinigameScene {
   private readonly onResult: (result: SugarWheelResult) => void;
   private readonly onClose: () => void;
   private readonly playSfx?: (id: string) => void;
-  private readonly restoreMinigameStateAfterAction?: () => void;
 
   private instance!: SugarWheelInstance;
   private bg: Graphics;
@@ -131,8 +133,8 @@ export class SugarWheelMinigameScene {
 
   private atmosphereScheduler: SugarWheelAtmosphereScheduler;
   private lastAtmospherePhase: SugarWheelAtmospherePhaseName | null = null;
-  /** `executeBatchAwait` 执行策划 Action 链时递增；>0 时屏蔽一切玩家输入（指针/蓄力/UI/关闭）。 */
-  private actionsPlaybackDepth = 0;
+  /** 局内 Action 批播放通道：锁输入 + 批后恢复 Minigame 状态（公共实现见 minigameSession）。 */
+  private readonly actionGate: MinigameActionPlaybackGate;
   /** 旧版全屏输入层保留为子节点占位；局内 action 期间不再启用，避免遮挡对话/选择等全局 Action UI。 */
   private actionInputShield: Graphics;
   /** F2 调试面板日志（由 Game/sugarWheelManager 注入，不写 console）。 */
@@ -167,7 +169,6 @@ export class SugarWheelMinigameScene {
     this.playSfx = playSfx;
     this.debugSugarLog = debugSugarLog;
     this.evaluateBeforeChargeCondition = evaluateBeforeChargeCondition;
-    this.restoreMinigameStateAfterAction = restoreMinigameStateAfterAction;
 
     const atmosHost: SugarWheelAtmosphereHost = {
       showSpeech: (role, text, dur) => this.showSpeech(role, text, dur),
@@ -176,6 +177,14 @@ export class SugarWheelMinigameScene {
       getInstance: () => this.instance,
     };
     this.atmosphereScheduler = new SugarWheelAtmosphereScheduler(atmosHost);
+
+    this.actionGate = new MinigameActionPlaybackGate(
+      (acts) => this.actionExecutor.executeBatchAwait(acts),
+      {
+        onLockChanged: (locked) => this.onActionsLockChanged(locked),
+        restoreMinigameState: restoreMinigameStateAfterAction,
+      },
+    );
 
     this.geomDebugGfx = new Graphics();
     this.geomDebugGfx.eventMode = 'none';
@@ -245,8 +254,11 @@ export class SugarWheelMinigameScene {
     this.resultBanner.addChild(this.resultBannerBg);
     this.resultBanner.addChild(this.resultBannerText);
 
+    // 生产 hint 不提调试键；开发构建才附加 D 键引导（与 Manager 侧 KeyD 的 DEV 门控对应）
     this.hintText = new Text({
-      text: this.resolveText('拖动指针选起点 · 按住蓄力钮蓄力 · Esc 关闭 · D 调试(几何+气泡测试)'),
+      text:
+        this.resolveText('[tag:string:sugarWheel:hint]')
+        + (import.meta.env.DEV ? ' · D 调试(几何+气泡测试)' : ''),
       style: {
         fontSize: 13,
         fill: UITheme.colors.subtle,
@@ -271,7 +283,7 @@ export class SugarWheelMinigameScene {
     this.confirmShade.on('pointertap', (ev: FederatedPointerEvent) => ev.stopPropagation());
     this.confirmPanel = new Graphics();
     this.confirmText = new Text({
-      text: this.resolveText('确定要关闭转盘吗？'),
+      text: this.resolveText('[tag:string:sugarWheel:confirmClose]'),
       style: {
         fontSize: 18,
         fill: UITheme.colors.body,
@@ -281,8 +293,8 @@ export class SugarWheelMinigameScene {
       },
     });
     this.confirmText.anchor.set(0.5, 0.5);
-    this.confirmYesButton = this.makeButton(this.resolveText('关闭'), () => this.acceptClose(), 132, 40);
-    this.confirmNoButton = this.makeButton(this.resolveText('取消'), () => this.dismissClose(), 132, 40);
+    this.confirmYesButton = this.makeButton(this.resolveText('[tag:string:sugarWheel:confirmYes]'), () => this.acceptClose(), 132, 40);
+    this.confirmNoButton = this.makeButton(this.resolveText('[tag:string:sugarWheel:confirmNo]'), () => this.dismissClose(), 132, 40);
     this.confirmLayer.addChild(this.confirmShade);
     this.confirmLayer.addChild(this.confirmPanel);
     this.confirmLayer.addChild(this.confirmText);
@@ -339,7 +351,7 @@ export class SugarWheelMinigameScene {
 
   /** Action 批处理播放中：小游戏层应对 Esc/D 等全局快捷键忽略（由 Manager 查询）。 */
   isActionsPlaybackLocked(): boolean {
-    return this.actionsPlaybackDepth > 0;
+    return this.actionGate.locked;
   }
 
   private sugarDbg(msg: string): void {
@@ -392,41 +404,20 @@ export class SugarWheelMinigameScene {
     this.closeIconButton.cursor = 'pointer';
   }
 
-  private pushActionsPlaybackLock(): void {
-    const prev = this.actionsPlaybackDepth;
-    this.actionsPlaybackDepth++;
-    if (prev !== 0) return;
-    this.endPointerDrag(undefined, false);
+  private onActionsLockChanged(locked: boolean): void {
+    if (locked) this.endPointerDrag(undefined, false);
     this.actionInputShield.visible = false;
     this.actionInputShield.clear();
     this.refreshWheelLayerInteractivity();
   }
 
-  private popActionsPlaybackLock(): void {
-    if (this.actionsPlaybackDepth <= 0) return;
-    this.actionsPlaybackDepth--;
-    if (this.actionsPlaybackDepth === 0) {
-      this.actionInputShield.visible = false;
-      this.actionInputShield.clear();
-      this.refreshWheelLayerInteractivity();
-    }
-  }
-
-  /** 转盘内 ActionExecutor 批量执行前后的输入锁；不支持空数组（调用方跳过）。 */
+  /** 转盘内 ActionExecutor 批量执行前后的输入锁；空数组直接返回。 */
   private async runSugarWheelActionBatch(actions: ActionDef[]): Promise<void> {
-    if (actions.length === 0) return;
-    this.pushActionsPlaybackLock();
-    try {
-      await this.actionExecutor.executeBatchAwait(actions);
-    } finally {
-      this.popActionsPlaybackLock();
-      this.restoreMinigameStateAfterAction?.();
-    }
+    await this.actionGate.run(actions);
   }
 
   async load(instance: SugarWheelInstance): Promise<void> {
     this.instance = instance;
-    this.actionsPlaybackDepth = 0;
     this.actionInputShield.visible = false;
     this.wheelLayer.eventMode = 'static';
     this.phase = 'idle';
@@ -496,7 +487,7 @@ export class SugarWheelMinigameScene {
 
   private makeButton(
     labelText: string,
-    onTap?: () => void,
+    onTap: () => void,
     width = 148,
     height = 40,
   ): Container {
@@ -515,27 +506,10 @@ export class SugarWheelMinigameScene {
     c.addChild(label);
     c.eventMode = 'static';
     c.cursor = 'pointer';
-    if (onTap) {
-      c.on('pointertap', (ev: FederatedPointerEvent) => {
-        ev.stopPropagation();
-        onTap();
-      });
-    } else {
-      c.on('pointerdown', (ev: FederatedPointerEvent) => {
-        ev.stopPropagation();
-        this.markChargePointerDown();
-      });
-      c.on('pointerup', (ev: FederatedPointerEvent) => {
-        ev.stopPropagation();
-        this.markChargePointerReleased();
-      });
-      c.on('pointerupoutside', () => {
-        this.markChargePointerReleased();
-      });
-      c.on('pointercancel', () => {
-        this.markChargePointerCanceled();
-      });
-    }
+    c.on('pointertap', (ev: FederatedPointerEvent) => {
+      ev.stopPropagation();
+      onTap();
+    });
     c.on('pointerover', () => this.paintButton(bg, width, height, true));
     c.on('pointerout', () => this.paintButton(bg, width, height, false));
     this.paintButton(bg, width, height, false);
@@ -549,7 +523,7 @@ export class SugarWheelMinigameScene {
     const c = new Container();
     const bg = new Graphics();
     const label = new Text({
-      text: this.resolveText('蓄'),
+      text: this.resolveText('[tag:string:sugarWheel:chargeGlyph]'),
       style: {
         fontSize: 17,
         fill: UITheme.colors.buttonText,
@@ -747,9 +721,7 @@ export class SugarWheelMinigameScene {
 
     this.speechDebugLayer.position.set(panelX, panelY);
     this.speechDebugBg.clear();
-    this.speechDebugBg.roundRect(0, 0, panelW, panelH, 8);
-    this.speechDebugBg.fill({ color: 0x0e0e18, alpha: 0.92 });
-    this.speechDebugBg.stroke({ color: UITheme.colors.goldDim, width: 1 });
+    drawPanelBase(this.speechDebugBg, 0, 0, panelW, panelH, SKINS.panelAlt);
 
     this.speechDebugTitle.position.set(pad, pad);
     this.speechDebugButtonArea.position.set(pad, pad + titleH + 4);
@@ -872,9 +844,7 @@ export class SugarWheelMinigameScene {
     const tw = Math.min(bw - padX * 2, Math.max(this.resultBannerText.width, 1));
     const rw = Math.min(bw, tw + padX * 2);
     this.resultBannerBg.clear();
-    this.resultBannerBg.roundRect(-rw / 2, -bh / 2, rw, bh, 10);
-    this.resultBannerBg.fill({ color: 0x1a0e08, alpha: 0.88 });
-    this.resultBannerBg.stroke({ color: UITheme.colors.gold, width: 2 });
+    drawPanelBase(this.resultBannerBg, -rw / 2, -bh / 2, rw, bh, SKINS.panelAlt, { border: UITheme.colors.gold });
   }
 
   private clearResultBannerImmediate(): void {
@@ -884,7 +854,11 @@ export class SugarWheelMinigameScene {
   }
 
   private startResultBannerAnim(label: string): void {
-    this.resultBannerText.text = this.resolveText(`抽中了：${label}`);
+    this.resultBannerText.text = fillToken(
+      this.resolveText('[tag:string:sugarWheel:resultBanner]'),
+      '{label}',
+      this.resolveText(label),
+    );
     this.resultBanner.visible = true;
     this.resultBannerAnim = { phase: 'pop', t0: performance.now() };
     const sw = this.renderer.screenWidth;
@@ -938,9 +912,7 @@ export class SugarWheelMinigameScene {
     const dlgX = (sw - dlgW) / 2;
     const dlgY = (sh - dlgH) / 2;
     this.confirmPanel.clear();
-    this.confirmPanel.roundRect(dlgX, dlgY, dlgW, dlgH, UITheme.panel.borderRadius);
-    this.confirmPanel.fill({ color: UITheme.colors.panelBgAlt, alpha: 0.96 });
-    this.confirmPanel.stroke({ color: UITheme.colors.panelBorder, width: UITheme.panel.borderWidth });
+    drawPanelBase(this.confirmPanel, dlgX, dlgY, dlgW, dlgH, SKINS.panelAlt);
 
     this.confirmText.position.set(dlgX + dlgW / 2, dlgY + 60);
 
@@ -1158,9 +1130,22 @@ export class SugarWheelMinigameScene {
   private requestClose(): void {
     if (this.isActionsPlaybackLocked()) return;
     if (this.confirmVisible) return;
-    if (this.phase === 'charging') this.releaseCharge();
+    // 关闭 = 放弃本次蓄力：不发射、不执行 beforeChargePassActions（不扣抽奖消耗）。
+    // 旧行为是先 releaseCharge 发射再弹确认，玩家按 Esc 反而被强制抽一次。
+    if (this.phase === 'charging') this.cancelCharge();
     this.confirmVisible = true;
     this.confirmLayer.visible = true;
+  }
+
+  /** 取消进行中的蓄力（不发射、不走 pass Actions），回到 idle。 */
+  private cancelCharge(): void {
+    if (this.phase !== 'charging') return;
+    this.phase = 'idle';
+    this.chargeElapsed = 0;
+    this.pendingChargePassActions = null;
+    this.chargePressRequested = false;
+    this.chargeReleaseRequested = false;
+    this.layout();
   }
 
   private acceptClose(): void {
@@ -1184,7 +1169,8 @@ export class SugarWheelMinigameScene {
     if (this.phase === 'charging') {
       this.chargeElapsed += dt;
       this.processChargeRelease();
-      this.layout();
+      // F6：蓄力期间每帧只需重画蓄力环（随功率变化），不整面板重建
+      this.paintArcChargeRing();
       return;
     }
 

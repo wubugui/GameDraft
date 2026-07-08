@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActionExecutor } from './ActionExecutor';
 import { EventBus } from './EventBus';
 import { FlagStore } from './FlagStore';
-import { compileNarrativeGraphs, NarrativeStateManager, type NarrativeGraphsFile } from './NarrativeStateManager';
+import { compileNarrativeGraphs, NarrativeStateManager, type NarrativeGraph, type NarrativeGraphsFile } from './NarrativeStateManager';
 import narrativeGraphsData from '../../public/assets/data/narrative_graphs.json';
 
 function makeRuntime() {
@@ -87,6 +87,47 @@ describe('NarrativeStateManager', () => {
     legacy.deserialize({ activeStates: { g: 'c' } });
     expect(legacy.hasReachedState('g', 'c')).toBe(true);
     expect(legacy.hasReachedState('g', 'a')).toBe(true);
+  });
+
+  it('resets live progress before restoring an older save (deserialize does not leak future states)', async () => {
+    const graphs: NarrativeGraph[] = [{
+      id: 'g',
+      ownerType: 'flow' as const,
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 't1', from: 'a', to: 'b', signal: 'go1' },
+        { id: 't2', from: 'b', to: 'c', signal: 'go2' },
+      ],
+    }, {
+      id: 'other',
+      ownerType: 'flow' as const,
+      initialState: 'x',
+      states: { x: { id: 'x' }, y: { id: 'y' } },
+      transitions: [{ id: 't', from: 'x', to: 'y', signal: 'go1' }],
+    }];
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs(graphs);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'go1' });
+    await flush();
+    // 早期存档：g 停在 b，other 尚未进档（模拟旧档缺图）
+    const earlySave = JSON.parse(JSON.stringify(narrative.serialize()));
+    delete earlySave.activeStates.other;
+    delete earlySave.reachedStates.other;
+
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'go2' });
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('c');
+    expect(narrative.getActiveState('other')).toBe('y');
+
+    // 会中读更早的档：本会话越过的 c 不得残留为「到达过」，未入档的图回到 initialState
+    narrative.deserialize(earlySave);
+    expect(narrative.getActiveState('g')).toBe('b');
+    expect(narrative.hasReachedState('g', 'b')).toBe(true);
+    expect(narrative.hasReachedState('g', 'c')).toBe(false);
+    expect(narrative.getActiveState('other')).toBe('x');
+    expect(narrative.hasReachedState('other', 'y')).toBe(false);
+    expect(narrative.hasReachedState('other', 'x')).toBe(true);
   });
 
   it('matches transitions by active state, trigger key, priority, and conditions', async () => {
@@ -438,7 +479,7 @@ describe('NarrativeStateManager', () => {
     expect(JSON.stringify(snapshot)).toContain('transition.crossGraphEndpoint.unsupported');
   });
 
-  it('rejects duplicate graph ids during registration', () => {
+  it('skips a duplicate graph id gracefully and records an error issue (no hard crash)', () => {
     const { narrative } = makeRuntime();
     const graph = {
       id: 'dup',
@@ -447,7 +488,11 @@ describe('NarrativeStateManager', () => {
       states: { a: { id: 'a' } },
       transitions: [],
     };
-    expect(() => narrative.registerGraphs([graph, { ...graph }])).toThrow(/duplicate graph id/);
+    // 编辑器保存校验已阻止重复 id；运行时遇到重复 id 应优雅降级（保留先注册的、跳过重复、
+    // 记录 error 供暴露），而非在启动时 throw 崩掉整套叙事系统。
+    expect(() => narrative.registerGraphs([graph, { ...graph }])).not.toThrow();
+    expect(narrative.getActiveState('dup')).toBe('a');
+    expect(JSON.stringify(narrative.debugSnapshot())).toContain('graph.id.duplicate');
   });
 
   it('lets nested state commands await their actual application', async () => {
@@ -718,11 +763,40 @@ describe('NarrativeStateManager', () => {
     await flush();
     expect(narrative.getActiveState('flow')).toBe('waiting');
 
-    // Now set the missing flag and trigger a state change to re-evaluate
+    // flag:changed 直接唤醒 reactive 重评，无需再发一个无关信号
     flagStore.set('quest_b', true);
-    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'wake' });
     await flush();
     expect(narrative.getActiveState('flow')).toBe('done');
+  });
+
+  it('re-evaluates reactive transitions after deserialize (no extra signal needed)', async () => {
+    const graphs = [{
+      id: 'g',
+      ownerType: 'flow' as const,
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' }, c: { id: 'c' } },
+      transitions: [
+        { id: 'go', from: 'a', to: 'b', signal: 'go' },
+        {
+          id: 'auto',
+          from: 'b',
+          to: 'c',
+          signal: '__draft__',
+          trigger: 'reactiveAll' as const,
+          conditions: [{ flag: 'ready', value: true }],
+        },
+      ],
+    }];
+    const { flagStore, narrative } = makeRuntime();
+    narrative.registerGraphs(graphs);
+    // ready 先置真：此刻 active=a，b→c 的 reactive 不该触发
+    flagStore.set('ready', true);
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('a');
+    // 读档把图恢复到 b：deserialize 后应立即重评 reactive，b→c 自动补走
+    narrative.deserialize({ activeStates: { g: 'b' } });
+    await flush();
+    expect(narrative.getActiveState('g')).toBe('c');
   });
 
   it('reactiveAny fires when any condition is met', async () => {

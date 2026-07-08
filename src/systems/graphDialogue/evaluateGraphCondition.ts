@@ -141,6 +141,62 @@ function applyResolvedFlagConditionValue(c: Condition, ctx: ConditionEvalContext
   return { ...c, value: resolved };
 }
 
+// ============================================================
+// 叶子求值单一实现：trace / 非 trace 两版共用，杜绝语义漂移
+//（trace 版只在其上组装 label；结果一律取自下面这组函数）。
+// 非 trace 路径是每帧热路径：本组函数不得引入每次求值的字符串/对象分配。
+// ============================================================
+
+function evalScenarioLeaf(
+  expr: { scenario: string; phase: string; status: string; outcome?: string | number | boolean | null },
+  ctx: ConditionEvalContext,
+): boolean {
+  if (!ctx.scenarioState.phaseStatusEquals(expr.scenario, expr.phase, expr.status)) return false;
+  if (expr.outcome !== undefined && expr.outcome !== null) {
+    return ctx.scenarioState.getScenarioPhase(expr.scenario, expr.phase)?.outcome === expr.outcome;
+  }
+  return true;
+}
+
+function evalScenarioLineLeaf(expr: ScenarioLineConditionLeaf, ctx: ConditionEvalContext): boolean {
+  const sid = expr.scenarioLine.trim();
+  return sid ? ctx.scenarioState.getLineLifecycleState(sid) === expr.lineStatus : false;
+}
+
+/** graphId / stateId 由调用方解析（trace 版还要用它们拼 label，避免重复解析）。 */
+function evalNarrativeLeaf(
+  graphId: string,
+  stateId: string,
+  reached: boolean,
+  ctx: ConditionEvalContext,
+): boolean {
+  const ns = ctx.narrativeState;
+  if (!graphId || !stateId || !ns) return false;
+  if (reached) {
+    if (typeof ns.hasReachedState === 'function') {
+      return ns.hasReachedState(graphId, stateId);
+    }
+    return ns.isStateActive(graphId, stateId);
+  }
+  return ns.isStateActive(graphId, stateId);
+}
+
+function narrativeLeafReached(expr: ConditionExpr): boolean {
+  return (expr as { reached?: unknown }).reached === true;
+}
+
+function evalQuestLeaf(quest: string, qsRaw: unknown, ctx: ConditionEvalContext): boolean {
+  if (typeof qsRaw !== 'string') return false;
+  const want = questStatusMap[qsRaw];
+  if (want === undefined) return false;
+  return ctx.questManager.getStatus(quest) === want;
+}
+
+function evalFlagLeaf(expr: Condition, ctx: ConditionEvalContext): boolean {
+  const c = applyResolvedFlagConditionValue(expr, ctx);
+  return ctx.flagStore.evalPureFlagConjunction([c]);
+}
+
 /**
  * 统一条件求值：图对话、文档揭示等共用。
  */
@@ -165,46 +221,26 @@ export function evaluateConditionExpr(
   }
 
   if (isScenarioLeaf(expr)) {
-    if (!ctx.scenarioState.phaseStatusEquals(expr.scenario, expr.phase, expr.status)) return false;
-    if (expr.outcome !== undefined && expr.outcome !== null) {
-      const got = ctx.scenarioState.getScenarioPhase(expr.scenario, expr.phase)?.outcome;
-      return got === expr.outcome;
-    }
-    return true;
+    return evalScenarioLeaf(expr, ctx);
   }
 
   if (isScenarioLineLeaf(expr)) {
-    const want = expr.lineStatus;
-    const sid = expr.scenarioLine.trim();
-    return sid ? ctx.scenarioState.getLineLifecycleState(sid) === want : false;
+    return evalScenarioLineLeaf(expr, ctx);
   }
 
   if (isNarrativeStateLeaf(expr)) {
     const graphId = resolveNarrativeGraphRef(expr.narrative, ctx);
     const stateId = expr.state.trim();
-    if (!graphId || !stateId || !ctx.narrativeState) return false;
-    if ((expr as { reached?: unknown }).reached === true) {
-      const ns = ctx.narrativeState;
-      if (typeof ns.hasReachedState === 'function') {
-        return ns.hasReachedState(graphId, stateId);
-      }
-      return ns.isStateActive(graphId, stateId);
-    }
-    return ctx.narrativeState.isStateActive(graphId, stateId);
+    return evalNarrativeLeaf(graphId, stateId, narrativeLeafReached(expr), ctx);
   }
 
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
-    const qsRaw = m.questStatus ?? m.status;
-    if (typeof qsRaw !== 'string') return false;
-    const want = questStatusMap[qsRaw];
-    if (want === undefined) return false;
-    return ctx.questManager.getStatus(m.quest) === want;
+    return evalQuestLeaf(m.quest, m.questStatus ?? m.status, ctx);
   }
 
   if (isConditionLeaf(expr)) {
-    const c = applyResolvedFlagConditionValue(expr as Condition, ctx);
-    return ctx.flagStore.evalPureFlagConjunction([c]);
+    return evalFlagLeaf(expr as Condition, ctx);
   }
 
   console.warn('evaluateConditionExpr: unrecognized shape', expr);
@@ -256,65 +292,59 @@ export function evaluateConditionExprWithTrace(
   }
 
   if (isScenarioLeaf(expr)) {
+    const ok = evalScenarioLeaf(expr, ctx);
     const cur = ctx.scenarioState.getScenarioPhase(expr.scenario, expr.phase);
     const actualStatus = cur?.status;
-    const statusOk = ctx.scenarioState.phaseStatusEquals(expr.scenario, expr.phase, expr.status);
     let label = `scenario「${expr.scenario}」·「${expr.phase}」期望 status=${expr.status}`;
     if (actualStatus === undefined) {
       label += '（当前无记录，按 pending 比较）';
     } else {
       label += `，实际 status=${actualStatus}`;
     }
-    if (!statusOk) {
-      return { result: false, trace: { kind: 'scenario', result: false, label } };
-    }
     if (expr.outcome !== undefined && expr.outcome !== null) {
-      const got = cur?.outcome;
-      const oOk = got === expr.outcome;
-      label += `；期望 outcome=${JSON.stringify(expr.outcome)}实际=${JSON.stringify(got)}`;
-      return { result: oOk, trace: { kind: 'scenario', result: oOk, label } };
+      label += `；期望 outcome=${JSON.stringify(expr.outcome)}实际=${JSON.stringify(cur?.outcome)}`;
     }
-    return { result: true, trace: { kind: 'scenario', result: true, label } };
+    return { result: ok, trace: { kind: 'scenario', result: ok, label } };
   }
 
   if (isScenarioLineLeaf(expr)) {
-    const want = expr.lineStatus;
+    const ok = evalScenarioLineLeaf(expr, ctx);
     const sid = expr.scenarioLine.trim();
     const got = sid ? ctx.scenarioState.getLineLifecycleState(sid) : 'inactive';
-    const ok = Boolean(sid) && got === want;
-    const label = `scenarioLine「${expr.scenarioLine}」期望=${want}实际=${got}`;
+    const label = `scenarioLine「${expr.scenarioLine}」期望=${expr.lineStatus}实际=${got}`;
     return { result: ok, trace: { kind: 'scenarioLine', result: ok, label } };
   }
 
   if (isNarrativeStateLeaf(expr)) {
     const graphId = resolveNarrativeGraphRef(expr.narrative, ctx);
     const stateId = expr.state.trim();
+    const reached = narrativeLeafReached(expr);
+    const ok = evalNarrativeLeaf(graphId, stateId, reached, ctx);
     const got = graphId ? ctx.narrativeState?.getActiveState(graphId) : undefined;
-    const ok = Boolean(graphId && stateId && got === stateId);
     const ref = expr.narrative.trim().startsWith('@') ? `${expr.narrative.trim()}→${graphId || '—'}` : expr.narrative;
-    const label = `narrative「${ref}」期望=${stateId || '—'}实际=${got ?? '—'}`;
+    const label = reached
+      ? `narrative「${ref}」期望 reached=${stateId || '—'}，当前=${got ?? '—'}`
+      : `narrative「${ref}」期望=${stateId || '—'}实际=${got ?? '—'}`;
     return { result: ok, trace: { kind: 'narrative', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
     const qsRaw = m.questStatus ?? m.status;
+    const ok = evalQuestLeaf(m.quest, qsRaw, ctx);
     const want = typeof qsRaw === 'string' ? questStatusMap[qsRaw] : undefined;
     const got = ctx.questManager.getStatus(m.quest);
-    let ok = false;
     let label = `quest「${m.quest}」`;
     if (want === undefined) {
       label += `：无效状态字段 ${JSON.stringify(qsRaw)}`;
     } else {
-      ok = got === want;
       label += `：期望 ${qsRaw}，实际 ${QuestStatus[got]}`;
     }
     return { result: ok, trace: { kind: 'quest', result: ok, label } };
   }
 
   if (isConditionLeaf(expr)) {
-    const c = applyResolvedFlagConditionValue(expr as Condition, ctx);
-    const ok = ctx.flagStore.evalPureFlagConjunction([c]);
+    const ok = evalFlagLeaf(expr as Condition, ctx);
     const orig = expr as Condition;
     const parts = [orig.flag, orig.op ?? '==', JSON.stringify(orig.value)];
     const label = `flag ${parts.join(' ')}`;

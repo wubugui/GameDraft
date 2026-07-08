@@ -15,7 +15,7 @@
 
 ### 动作 `ActionEditor`(`tools/editor/shared/action_editor.py`)
 - 挂载点:任务 `acceptActions`/`rewards`、遭遇 `resultActions`/`rewards`、热区 inspect `data.actions`、区域 `onEnter/onStay/onExit`、场景级 `onEnter`、图对话 `runActions`、档案 `firstViewActions`、cutscene action 步、pressure_holds `onComplete`/interrupts、signal_cues `actions`、小游戏 onPick/onPull* 等。
-- 类型总数 89(`ACTION_TYPES`);权威清单以 `ACTION_TYPES` 为准,不要照抄架构文档旧表。
+- 类型总数 102(`ACTION_TYPES`,含位面 `activatePlane`/`deactivatePlane`——逃生舱,任务主路径用叙事状态 activePlane 点名);权威清单以 `ACTION_TYPES` 为准,不要照抄架构文档旧表。
 - 唯一 DEBUG-only:`setNarrativeState`(普通内容不可新建,改用 narrative 图)。
 - **能嵌套子动作**(可无限层):`runActions`、`chooseAction`(每选项)、`randomBranch`(aboveActions/belowActions)、`addDelayedEvent`、`enableRuleOffers`(每槽 resultActions)。
 - **有专用复杂表单**的(约 20 个):`setPlayerAvatar`、`setEntityField`、`setSceneEntityPosition`、`moveEntityTo`、`setHotspotDisplayImage`、`showOverlayImage`/`blendOverlayImage`、`setScenarioPhase`、`startDialogueGraph`、`playScriptedDialogue` 等;大量 id 字段是下拉选择器(scene/item/rule/quest/encounter/cutscene/audio/actor…)。
@@ -34,6 +34,8 @@
 ---
 
 ## 场景 / 世界(`scene_editor.py`)
+
+> 位面归属:hotspot/NPC/zone 详情面板均有「位面归属」行(多选自 planes.json,缺省=存在于所有位面;含保值孤儿项)。
 
 | 实体 | 可编辑字段 | 操作 |
 |---|---|---|
@@ -70,7 +72,7 @@
 ## Cutscene 过场(`timeline_editor.py`)
 
 - 顶层:id / targetScene / targetSpawnPoint / targetX / targetY / restoreState(旧 `commands` 被 pop)。
-- 15 种 present:fadeToBlack / fadeIn / flashWhite / waitTime / waitClick / showTitle / showDialogue(speaker+text+scriptedNpcId) / showImg(id+image) / hideImg / showMovieBar / hideMovieBar / showSubtitle(classic position 或 movie band+align+可选 emote) / cameraMove(x/y/duration,可地图点选) / cameraZoom(scale/duration) / showCharacter(visible)。
+- 15 种 present:fadeToBlack / fadeIn / flashWhite / waitTime / waitClick / showTitle / showDialogue(speaker+text+scriptedNpcId) / showImg(id+image) / hideImg / showMovieBar / hideMovieBar / showSubtitle(classic position 或 movie band+align+可选 subtitleVoice/subtitleEmote) / cameraMove(x/y/duration,可地图点选) / cameraZoom(scale/duration) / showCharacter(visible)。
 - action 步:type 来自 33 项白名单(`src/data/cutscene_action_allowlist.json`),白名单外+改存档的被拒。
 - parallel:tracks[] 可嵌套 present/action/parallel。
 - 步骤增删、折叠大纲拖拽重排。
@@ -80,7 +82,7 @@
 
 ## 叙事图 narrative_graphs(Web `tools/narrative_editor_web/`)
 
-- compositions(mainGraph + elements:wrapperGraph/scenarioSubgraph/各 blackbox)、states(label/description/initial/broadcastOnEnter/onEnterActions/onExitActions)、transitions(trigger signal/reactive*/conditions/priority;from/to 须画布连线)、signals(作者信号 id/label/notes;派生信号自动生成)。
+- compositions(mainGraph + elements:wrapperGraph/scenarioSubgraph/各 blackbox)、states(label/description/initial/broadcastOnEnter/**activePlane 位面点名下拉**/onEnterActions/onExitActions)、transitions(trigger signal/reactive*/conditions/priority;from/to 须画布连线)、signals(作者信号 id/label/notes;派生信号自动生成)。
 - 动作经原生 ActionEditor;条件经 ConditionBuilder。
 - 危险区:transition from/to 只读(画布改);旧跨图端点不可编辑;state.meta 无 UI。
 
@@ -98,6 +100,7 @@
 
 | 面板 | 文件 | 可编辑字段(节选) | 操作 / 危险区 |
 |---|---|---|---|
+| **位面** `plane_editor` | planes.json | id/label/movement(driftX/driftY/speedScale/allowRun)/interaction(canPickup/canInteractHotspots/canTalkNpcs)/camera.zoom/healthDrainPerSec/lighting(专家 JSON) | 增删;**normal 拒删、id 只读**;数值往返保真(6 位小数) |
 | **任务** `quest_editor` | quests.json + questGroups.json | 任务:id/group/type/sideType/title/description/preconditions/completionConditions/acceptActions/rewards/nextQuests(边:目标+bypassPreconditions+条件);分组:id/name/type/parentGroup | 增删、拖拽改父子(带环检测)、无复制;**删 nextQuestId(deprecated)** |
 | **遭遇** `encounter_editor` | encounters.json | id/narrative/options(text/type/requiredRuleId/requiredRuleLayers 象理术/conditions/consumeItems/resultActions/resultText) | 增删、选项上下移、生成唯一 id |
 | **规矩** `rule_editor` | rules.json | 规矩:id/name/incompleteName/category/三层(text/lockedHint/verified);碎片:id/text/ruleId(只读)/layer/source | 增删;**删旧 verified/description/source...**;空层回填 |
@@ -122,9 +125,9 @@
 | **action_registry** | (无文件) | 只读汇总视图 | — |
 | **pressure_holds** | pressure_holds.json | id/prompt/releaseHint/fillSeconds/decayPerSecond/holdSfx/barColor/interrupts(atRatio/resetToRatio/abort+ActionEditor)/onComplete | barColor/holdSfx 裸输入 |
 | **signal_cues** | signal_cues.json | id/description/actions | — |
-| **水域小游戏** | water_minigames/index+实例 | label/spotId/surface(location/time/weather)/bounds/waterBottom/entities(category/sprite/pos/depth/motion/pull/valueTier/cue/hint/onPick/onPullSuccess/onPullFail);**有画布** | 盲区:shoreForeground/depthOsc/glow/motion.jitter |
+| **水域小游戏** | water_minigames/index+实例 | label/spotId/surface(location/time/weather)/bounds/waterBottom/entities(category/sprite/pos/depth/displaySize/hitRadius/motion/pull/valueTier/cue/hint/onPick/onPullSuccess/onPullFail);**有画布** | displaySize/hitRadius 留空=按品类默认(不写键) |
 | **转盘小游戏** | sugar_wheel/index+实例 | 外观资源/分格指针校准/蓄力曲线/物理停针(12 项)/beforeCharge(条件+动作)/speechAnchors/sectors(actions)/atmosphereGroups;**有画布** | speechMaxVisible 被删;payload 须合法 JSON |
-| **扎纸小游戏** | paper_craft/index+实例 | 订单/部件/槽位/纸色/收尾的 label/score/坐标/标签;**无画布** | **不能增删任何实体**;盲区:backgroundImage/targetHint/finishQuestion/onSuccess·Warn·BadActions/part.image/paper.tint |
+| **扎纸小游戏** | paper_craft/index+实例 | 实例 label/backgroundImage;订单 title/desc/correctPaper/合格分/警告分/targetHint/finishQuestion/onSuccess·Warn·BadActions;部件 label/score/tags/image;槽位 label/可选/坐标/accepts;纸色 label/score/tint/tags;收尾 label/score/tags。实例/订单及各子集合均可增删·重排;**槽位有画布** | 盲区:几乎无(高级字段已补齐) |
 
 **小游戏通用**:`index.json` 登记 `{id,label,file}` + 各实例独立文件;实例内 `id` 必须 == index 行 id;删实例不清理盘上旧 `<id>.json`(需手动清/走 DVC)。
 

@@ -55,7 +55,10 @@
       "data": {
         "targetScene": "teahouse",
         "targetSpawnPoint": "from_street"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去码头",
@@ -67,7 +70,10 @@
       "data": {
         "targetScene": "码头白天",
         "targetSpawnPoint": "spawn_0"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_出城",
@@ -87,7 +93,10 @@
       "data": {
         "targetScene": "河边",
         "targetSpawnPoint": "从城里"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去城隍庙",
@@ -106,7 +115,10 @@
       "data": {
         "targetScene": "城隍庙夜",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去城门",
@@ -130,7 +142,10 @@
       "data": {
         "targetScene": "城门口",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_围观人群",
@@ -200,7 +215,10 @@
       "data": {
         "targetScene": "崖墓",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去婆子家院",
@@ -227,7 +245,10 @@
       "data": {
         "targetScene": "婆子家院",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去土地庙",
@@ -254,7 +275,10 @@
       "data": {
         "targetScene": "枯井土地庙",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去阎王岭",
@@ -281,7 +305,10 @@
       "data": {
         "targetScene": "阎王岭山口",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去义庄",
@@ -292,9 +319,17 @@
       "interactionRange": 60.0,
       "conditions": [
         {
-          "narrative": "flow_xungou_main",
-          "state": "s09_songhuo",
-          "reached": true
+          "any": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s09_songhuo",
+              "reached": true
+            },
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ]
         }
       ],
       "conditionHidesEntity": true,
@@ -377,6 +412,132 @@
       "data": {
         "graphId": "寻狗_淘桃木"
       }
+    },
+    {
+      "id": "hs_纸扎日工",
+      "type": "inspect",
+      "label": "雾津纸扎铺 · 接桩糊纸人日工",
+      "x": 700.0,
+      "y": 580.0,
+      "interactionRange": 60.0,
+      "data": {
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "纸扎铺掌柜",
+                  "text": "搭把手不嘛？铺子接了桩白事活路，糊几个随葬纸人，按件给钱。手脚麻利点，莫把忌讳犯了。"
+                }
+              ]
+            }
+          },
+          {
+            "type": "chooseAction",
+            "params": {
+              "prompt": "接这桩糊纸人的日工不？",
+              "allowCancel": true,
+              "options": [
+                {
+                  "text": "接（按件算钱）",
+                  "actions": [
+                    {
+                      "type": "startPaperCraftMinigame",
+                      "params": {
+                        "id": "wujin_paper_servant_daywork"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "text": "莫得空，先走",
+                  "actions": []
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "hs_淹尸",
+      "type": "inspect",
+      "label": "苇席底下泡涨的尸",
+      "x": 200.0,
+      "y": 555.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "narrative": "flow_背尸_淹尸活",
+          "state": "accepted"
+        }
+      ],
+      "displayImage": {
+        "image": "/resources/runtime/images/corpses/back_carry/waterlogged_corpse.png",
+        "worldWidth": 140.0,
+        "worldHeight": 70.0
+      },
+      "data": {
+        "actions": [
+          {
+            "type": "sniff",
+            "params": {}
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "掀开苇席一角：脸泡得发白发胀，衣裳还往外渗水。凑近一闻——臭是臭得淡，腥倒腥得很，一股子河底的凉气。"
+                },
+                {
+                  "speaker": "{{player}}",
+                  "text": "捞起没两天，还算新鲜。就是这水腥味……冲得很。"
+                }
+              ]
+            }
+          },
+          {
+            "type": "chooseAction",
+            "params": {
+              "prompt": "过肩搭手，背起来？",
+              "allowCancel": true,
+              "options": [
+                {
+                  "text": "背。八文钱的活，莫磨蹭。",
+                  "actions": [
+                    {
+                      "type": "startPressureHold",
+                      "params": {
+                        "id": "carry_drowned_corpse"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "text": "再缓缓，先看看再说。",
+                  "actions": [
+                    {
+                      "type": "playScriptedDialogue",
+                      "params": {
+                        "lines": [
+                          {
+                            "speaker": "{{player}}",
+                            "text": "日头毒了要出味……缓归缓，莫缓过头。"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "conditionHidesEntity": true
     }
   ],
   "npcs": [
@@ -393,8 +554,17 @@
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
-          "narrative": "flow_xungou_main",
-          "state": "s01_tingshu"
+          "any": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s01_tingshu"
+            },
+            {
+              "flag": "零工背尸_done",
+              "op": "==",
+              "value": true
+            }
+          ]
         }
       ],
       "conditionHidesEntity": true
@@ -502,11 +672,10 @@
     },
     {
       "id": "npc_克拉拉",
-      "name": "克拉拉",
+      "characterId": "clara",
       "x": 960.0,
       "y": 500.0,
       "interactionRange": 70.0,
-      "animFile": "/resources/runtime/animation/克拉拉_anim/anim.json",
       "initialAnimState": "克拉拉_走路",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_克拉拉招募",
@@ -564,6 +733,156 @@
           "type": "switchScene",
           "params": {
             "targetScene": "梦_夜路"
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_淹尸_水腥",
+      "polygon": [
+        {
+          "x": 100.0,
+          "y": 470.0
+        },
+        {
+          "x": 340.0,
+          "y": 470.0
+        },
+        {
+          "x": 340.0,
+          "y": 660.0
+        },
+        {
+          "x": 100.0,
+          "y": 660.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_背尸_淹尸活",
+          "state": "accepted"
+        }
+      ],
+      "smell": {
+        "scent": "corpse",
+        "intensity": 42
+      }
+    },
+    {
+      "id": "z_背尸_水汽_远",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 40.0,
+          "y": 400.0
+        },
+        {
+          "x": 720.0,
+          "y": 400.0
+        },
+        {
+          "x": 720.0,
+          "y": 768.0
+        },
+        {
+          "x": 40.0,
+          "y": 768.0
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 32,
+        "dir": -0.6
+      }
+    },
+    {
+      "id": "z_背尸_水汽_近",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 40.0,
+          "y": 500.0
+        },
+        {
+          "x": 520.0,
+          "y": 500.0
+        },
+        {
+          "x": 520.0,
+          "y": 768.0
+        },
+        {
+          "x": 40.0,
+          "y": 768.0
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 58,
+        "dir": -0.75
+      }
+    },
+    {
+      "id": "z_背尸_水汽_淹",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 40.0,
+          "y": 580.0
+        },
+        {
+          "x": 360.0,
+          "y": 580.0
+        },
+        {
+          "x": 360.0,
+          "y": 748.0
+        },
+        {
+          "x": 40.0,
+          "y": 748.0
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 85,
+        "dir": -0.9,
+        "flicker": true
+      },
+      "onEnter": [
+        {
+          "type": "damagePlayer",
+          "params": {
+            "amount": 5
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "一脚踩到水洼边，背上那身子陡然一沉，凉气顺着脊梁骨往上爬。"
+              },
+              {
+                "speaker": "{{player}}",
+                "text": "啧——水汽勾水汽。离水远点，离水远点。"
+              }
+            ]
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "damagePlayer",
+          "params": {
+            "amount": 2
           }
         }
       ]

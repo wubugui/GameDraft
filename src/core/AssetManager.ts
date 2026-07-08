@@ -3,7 +3,7 @@ import { Howl } from 'howler';
 import type { SceneData, SceneDataRaw } from '../data/types';
 import { resolveAssetPath } from './assetPath';
 import { reportDevError, describeError } from './devErrorOverlay';
-import { filterJsonUrl, sceneJsonUrl } from './projectPaths';
+import { filterJsonUrl, sceneJsonUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { createFilterFromDef } from '../rendering/filter/FilterLoader';
 import type { FilterDef } from '../rendering/filter/types';
 
@@ -107,6 +107,15 @@ function bitmapBytes(bitmap: ImageBitmap): number {
   return Math.max(1, bitmap.width) * Math.max(1, bitmap.height) * 4;
 }
 
+function audioBytes(howl: Howl): number {
+  // Web Audio 路径下 Howler 会把整段音频解码成 PCM 常驻内存。真实声道数/采样率/位深拿不到，
+  // 按 44.1kHz × 双声道 × 16bit 估算量级（好过一律按固定 1MB 计使 64MB 上限≙64 条）；
+  // duration 尚不可用（HTML5 流式或未就绪）时退回 1MB。
+  const dur = howl.duration();
+  if (!Number.isFinite(dur) || dur <= 0) return MB;
+  return Math.max(1, Math.round(dur * 44100 * 2 * 2));
+}
+
 export class AssetManager {
   private buckets: Record<AssetType, CacheBucket> = {
     json: createBucket('json'),
@@ -155,10 +164,15 @@ export class AssetManager {
     loader: () => Promise<T>,
     sizeOf: (value: T) => number,
   ): Promise<T> {
-    const cached = this.getFromBucket<T>(type, key);
-    if (cached) return cached;
-
     const bucket = this.buckets[type] as CacheBucket<T>;
+    // 命中判断看条目存在性而非值真假：空字符串/0/false 等合法 falsy 缓存值不能被当成未命中重复加载
+    const cachedEntry = bucket.entries.get(key);
+    if (cachedEntry) {
+      bucket.stats.hits++;
+      return this.touch(bucket, cachedEntry);
+    }
+    bucket.stats.misses++;
+
     const inflight = bucket.inflight.get(key);
     if (inflight) return inflight;
 
@@ -202,11 +216,23 @@ export class AssetManager {
 
     while (overLimits()) {
       let victim: CacheEntry | null = null;
+      let skippedPlaying = false;
       for (const entry of bucket.entries.values()) {
         if (entry.pins.size > 0) continue;
+        // 正在发声的 Howl 不可淘汰：unload() 会把可听声音硬切掉；跳过本轮候选
+        if (entry.type === 'audio' && (entry.value as Howl).playing()) {
+          skippedPlaying = true;
+          continue;
+        }
         if (!victim || entry.lastUsed < victim.lastUsed) victim = entry;
       }
-      if (!victim) break;
+      if (!victim) {
+        // 全部候选都在播/被 pin 时容忍暂时超限（等停播后下次 evict 再收），避免死循环
+        if (skippedPlaying) {
+          console.warn(`AssetManager: ${type} 缓存超限，但剩余条目均在播放或被 pin，本轮不淘汰`);
+        }
+        break;
+      }
       this.disposeEntry(victim);
       bucket.entries.delete(victim.key);
       bucket.stats.evictions++;
@@ -328,7 +354,7 @@ export class AssetManager {
           onloaderror: (_id, error) => reject(error),
         });
       }),
-      () => MB,
+      audioBytes,
     );
   }
 
@@ -471,9 +497,10 @@ export class AssetManager {
     if (!type) this.scopeRefs.clear();
   }
 
+  /** 场景媒体路径统一委托 projectPaths（单一实现源）；空引用原样返回、由上层按缺资源处理。 */
   resolveSceneAssetPath(sceneId: string, imagePath: string): string {
-    if (!imagePath || imagePath.startsWith('/') || imagePath.startsWith('resources/')) return imagePath;
-    return `resources/runtime/scenes/${sceneId}/${imagePath}`;
+    if (!imagePath) return imagePath;
+    return sceneRuntimeAssetUrl(sceneId, imagePath);
   }
 
   /**

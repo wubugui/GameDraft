@@ -24,6 +24,7 @@ import type {
   NpcDef,
 } from '../data/types';
 import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
+import { applyCharacterDefaults, type CharacterRegistry } from '../data/characterRegistry';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from '../core/assetPath';
@@ -64,8 +65,34 @@ export class SceneManager implements IGameSystem {
   private sceneMemory: Map<string, SceneMemory> = new Map();
   private cutsceneStaging: CutsceneStaging | null = null;
 
+  /** 角色注册表（character_registry.json）：instantiateNpc 合并 name/animFile/portraitSlug 默认。由 Game 装配期注入。 */
+  private characterRegistry: CharacterRegistry = {};
+  setCharacterRegistry(reg: CharacterRegistry): void {
+    this.characterRegistry = reg;
+  }
+
   /** 当前游戏会话内禁用的 standard zone id（按 sceneId 分桶，不写档）；depth_floor 不可在此关闭 */
   private zoneSessionDisabled: Map<string, Set<string>> = new Map();
+
+  /**
+   * 会话级隐藏的实体 id（按 sceneId 分桶，不写档）。与实体实例上的 override 通道成对：
+   * 桶保证过场重建 / 重进场景（同会话）时覆盖不丢，实例重建时从桶恢复。
+   * 持久显隐仍走 sceneMemory.entityOverrides.enabled（persist* Action），语义不变。
+   */
+  private entitySessionOverrides: Map<string, { npcs: Set<string>; hotspots: Set<string> }> = new Map();
+
+  /** 场景世代号：unloadScene 自增。跨 await 持有实体/场景引用的流程以此判废，防并发卸载竞态产生孤儿容器 */
+  private sceneEpoch = 0;
+
+  /** >0 表示正在执行场景根 onEnter 动作批（重入 switchScene 检测用） */
+  private sceneEnterBatchDepth = 0;
+
+  /** onEnter 批内发起的切换请求（fire-and-forget 登记，当前加载完成后 drain） */
+  private pendingReentrantSwitch: {
+    targetSceneId: string;
+    spawnPointId?: string;
+    cameraPosition?: { x: number; y: number };
+  } | null = null;
 
   /** 切场景淡入淡出根节点（黑底 + 可选加载进度条） */
   private transitionOverlay: Container | null = null;
@@ -80,6 +107,9 @@ export class SceneManager implements IGameSystem {
 
   /** 当前播放或过场预览绑定的 cutscene id；用于筛选 cutsceneOnly 实体。 */
   private activeCutsceneBindingId: string | null = null;
+
+  /** 由 Game 注入：当前激活位面 id（PlaneReconciler 派生）；未注入时按 'normal'。 */
+  private activePlaneGetter: (() => string) | null = null;
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
@@ -209,38 +239,119 @@ export class SceneManager implements IGameSystem {
     return this.activeCutsceneBindingId;
   }
 
-  /** 根据 cutsceneOnly/shared/普通实体语义刷新当前已加载实体显隐。 */
-  private refreshCutsceneBoundEntityVisibility(): void {
-    const active = this.activeCutsceneBindingId?.trim() || null;
-    const sceneId = this.currentScene?.id ?? '';
+  setActivePlaneGetter(fn: (() => string) | null): void {
+    this.activePlaneGetter = fn;
+  }
 
+  /** 实体/zone 是否归属当前激活位面：缺省（无 planes 字段）= 存在于所有位面。 */
+  private entityInPlane(def: { planes?: string[] }): boolean {
+    const planes = def.planes;
+    if (!Array.isArray(planes) || planes.length === 0) return true;
+    const active = this.activePlaneGetter?.() ?? 'normal';
+    return planes.includes(active);
+  }
+
+  /**
+   * 位面归属判定公开口（与内部 entityInPlane 同口径）。给绕过 ZoneSystem 的
+   * zone 消费者用——如 Game.tick 的 depth_floor 偏移直读 sceneData.zones，
+   * 不经 shouldRegisterZoneWithZoneSystem 的位面过滤。
+   */
+  isEntityInActivePlane(def: { planes?: string[] }): boolean {
+    return this.entityInPlane(def);
+  }
+
+  /**
+   * 根据 cutsceneOnly/shared/普通实体 + 位面归属语义刷新当前已加载实体显隐。
+   * 判定委托 getHotspotBaseEnabledForInteraction / getNpcBaseVisibleForInteraction
+   * （派生基底的唯一真源），保证与 InteractionSystem 每帧回写口径一致、不漂移。
+   */
+  private refreshCutsceneBoundEntityVisibility(): void {
     for (const h of this.currentHotspots) {
-      if (isCutsceneOnlyEntity(h.def)) {
-        h.setEnabled(isEntityBoundToCutscene(h.def, active));
-      } else {
-        const snap = sceneId ? this.getEntityRuntimeOverrideForDef(sceneId, 'hotspot', h.def.id, h.def) : undefined;
-        if (typeof snap?.enabled === 'boolean') h.setEnabled(snap.enabled);
-      }
+      h.setDerivedBaseEnabled(this.getHotspotBaseEnabledForInteraction(h));
     }
 
     for (const n of this.currentNpcs) {
-      if (isCutsceneOnlyEntity(n.def)) {
-        n.setVisible(isEntityBoundToCutscene(n.def, active));
-      } else {
-        const snap = sceneId ? this.getEntityRuntimeOverrideForDef(sceneId, 'npc', n.def.id, n.def) : undefined;
-        if (snap && typeof snap.enabled === 'boolean') {
-          n.setVisible(snap.enabled);
-        } else {
-          n.setVisible(true);
+      n.setDerivedBaseVisible(this.getNpcBaseVisibleForInteraction(n));
+    }
+  }
+
+  /** 切位面后的统一刷新（实体+zone）。zone 侧有动作副作用约束，见 refreshZonesForPlaneChange。 */
+  refreshForPlaneChange(sceneId: string): void {
+    this.refreshEntitiesForPlaneChange(sceneId);
+    this.refreshZonesForPlaneChange(sceneId);
+  }
+
+  /** 切位面·实体侧：批量重贴派生基底显隐。纯显隐无动作副作用，任何 GameState 下可调。 */
+  refreshEntitiesForPlaneChange(sceneId: string): void {
+    const sid = sceneId.trim();
+    if (!sid || this.currentScene?.id !== sid) return;
+    this.refreshCutsceneBoundEntityVisibility();
+  }
+
+  /**
+   * 切位面·zone 侧：按位面归属重注册 zones（ZoneSystem.setZones 差分更新，因位面消失的
+   * zone 正常走 exitZone/onExit）。调用方（PlaneReconciler）保证仅在 Exploring 态调用——
+   * 过场策略栈会吞掉 onExit 里的改存档动作且不补发。仅对当前已加载场景生效。
+   */
+  refreshZonesForPlaneChange(sceneId: string): void {
+    const sid = sceneId.trim();
+    if (!sid || this.currentScene?.id !== sid) return;
+    this.refreshZonesAfterRuntimeChange(sid);
+  }
+
+  /**
+   * 供 Action（setEntityEnabled）接线：会话级实体显隐（不写档）。
+   * enabled=false 写 override 通道并即时应用到活实例；enabled=true 清除覆盖，
+   * 显隐回落到派生基底（sceneMemory / 过场绑定 / 条件）决定。
+   */
+  setEntitySessionEnabled(kind: SceneEntityKind, entityId: string, enabled: boolean): boolean {
+    const sceneId = this.currentScene?.id;
+    const id = entityId.trim();
+    if (!sceneId || !id) {
+      console.warn('SceneManager.setEntitySessionEnabled: 无当前场景或空 entityId');
+      return false;
+    }
+    let bucket = this.entitySessionOverrides.get(sceneId);
+    if (enabled) {
+      if (bucket) {
+        bucket[kind === 'npc' ? 'npcs' : 'hotspots'].delete(id);
+        if (bucket.npcs.size === 0 && bucket.hotspots.size === 0) {
+          this.entitySessionOverrides.delete(sceneId);
         }
       }
+    } else {
+      if (!bucket) {
+        bucket = { npcs: new Set(), hotspots: new Set() };
+        this.entitySessionOverrides.set(sceneId, bucket);
+      }
+      bucket[kind === 'npc' ? 'npcs' : 'hotspots'].add(id);
+    }
+    const override = enabled ? null : false;
+    if (kind === 'npc') {
+      this.currentNpcs.find((n) => n.def.id === id)?.setSessionEnabledOverride(override);
+    } else {
+      this.currentHotspots.find((h) => h.def.id === id)?.setSessionEnabledOverride(override);
+    }
+    return true;
+  }
+
+  /** 实体实例化时从会话桶恢复运行态覆盖（不入档；重进场景/过场重建同会话内保持）。 */
+  private applySessionOverrideOnInstantiate(kind: SceneEntityKind, entity: Hotspot | Npc): void {
+    const sceneId = this.currentScene?.id;
+    if (!sceneId) return;
+    const bucket = this.entitySessionOverrides.get(sceneId);
+    if (!bucket) return;
+    const hidden = kind === 'npc' ? bucket.npcs : bucket.hotspots;
+    if (hidden.has(entity.def.id)) {
+      entity.setSessionEnabledOverride(false);
     }
   }
 
   /**
-   * InteractionSystem 中与过场绑定、sceneMemory.enabled 一致的基础显隐（不含触发条件图层）。
+   * InteractionSystem 中与位面归属、过场绑定、sceneMemory.enabled 一致的基础显隐（不含触发条件图层）。
    */
   getHotspotBaseEnabledForInteraction(hotspot: Hotspot): boolean {
+    if (!this.entityInPlane(hotspot.def)) return false;
     const active = this.activeCutsceneBindingId?.trim() || null;
     const sceneId = this.currentScene?.id ?? '';
     if (isCutsceneOnlyEntity(hotspot.def)) {
@@ -255,6 +366,7 @@ export class SceneManager implements IGameSystem {
 
   /** 与 {@link getHotspotBaseEnabledForInteraction} 对偶，用于 NPC container.visible 基底。 */
   getNpcBaseVisibleForInteraction(npc: Npc): boolean {
+    if (!this.entityInPlane(npc.def)) return false;
     const active = this.activeCutsceneBindingId?.trim() || null;
     const sceneId = this.currentScene?.id ?? '';
     if (isCutsceneOnlyEntity(npc.def)) {
@@ -357,6 +469,7 @@ export class SceneManager implements IGameSystem {
   }
 
   private shouldRegisterZoneWithZoneSystem(sceneId: string, z: ZoneDef): boolean {
+    if (!this.entityInPlane(z)) return false;
     if (z.zoneKind === 'depth_floor') return true;
     const sid = sceneId.trim();
     const zid = z.id.trim();
@@ -432,8 +545,11 @@ export class SceneManager implements IGameSystem {
     const scene = this.currentScene;
     if (!scene) return;
     const sceneId = scene.id;
+    // instantiate 的 await 间隙可能与并发卸载/切场竞态：世代号变化即中止并销毁刚建的孤儿实例
+    const epoch = this.sceneEpoch;
+    const rebuiltHotspotIds: string[] = [];
+    const rebuiltNpcIds: string[] = [];
 
-    const allDefs: { kind: 'hotspot'; def: HotspotDef }[] | { kind: 'npc'; def: NpcDef }[] = [];
     if (scene.hotspots) {
       for (const def of scene.hotspots) {
         if (!isEntityBoundToCutscene(def, cutsceneId)) continue;
@@ -449,7 +565,9 @@ export class SceneManager implements IGameSystem {
         // re-instantiate with cutscene context
         const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'cutscene');
         const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
-        this.currentHotspots.push(hotspot);
+        if (this.commitRebuiltEntityOrDiscard(hotspot, epoch, this.currentHotspots, rebuiltHotspotIds, def.id)) {
+          return;
+        }
       }
     }
     if (scene.npcs) {
@@ -467,10 +585,13 @@ export class SceneManager implements IGameSystem {
         // re-instantiate with cutscene context
         const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'cutscene') as NpcRuntimeOverride | undefined;
         const npc = await this.instantiateNpc(npcDef, snap);
-        this.currentNpcs.push(npc);
+        if (this.commitRebuiltEntityOrDiscard(npc, epoch, this.currentNpcs, rebuiltNpcIds, npcDef.id)) {
+          return;
+        }
       }
     }
     this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
+    this.emitEntitiesRebuilt(cutsceneId, 'enter', rebuiltHotspotIds, rebuiltNpcIds);
   }
 
   async exitCutsceneInstancesForCurrent(cutsceneId: string): Promise<void> {
@@ -478,6 +599,9 @@ export class SceneManager implements IGameSystem {
     if (!scene) return;
     const sceneId = scene.id;
     const committedMemory = this.getCommittedMemory(sceneId);
+    const epoch = this.sceneEpoch;
+    const rebuiltHotspotIds: string[] = [];
+    const rebuiltNpcIds: string[] = [];
 
     if (scene.hotspots) {
       for (const def of scene.hotspots) {
@@ -497,7 +621,9 @@ export class SceneManager implements IGameSystem {
           const ovr = this.getRuntimeOverrideForContext(sceneId, 'hotspot', def.id, def, 'outer');
           if (ovr?.enabled === false) continue;
           const hotspot = await this.instantiateHotspot(def, ovr as HotspotRuntimeOverride | undefined);
-          this.currentHotspots.push(hotspot);
+          if (this.commitRebuiltEntityOrDiscard(hotspot, epoch, this.currentHotspots, rebuiltHotspotIds, def.id)) {
+            return;
+          }
         }
       }
     }
@@ -517,11 +643,50 @@ export class SceneManager implements IGameSystem {
         if (!isCutsceneOnlyEntity(npcDef)) {
           const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'outer') as NpcRuntimeOverride | undefined;
           const npc = await this.instantiateNpc(npcDef, snap);
-          this.currentNpcs.push(npc);
+          if (this.commitRebuiltEntityOrDiscard(npc, epoch, this.currentNpcs, rebuiltNpcIds, npcDef.id)) {
+            return;
+          }
         }
       }
     }
     this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
+    this.emitEntitiesRebuilt(cutsceneId, 'exit', rebuiltHotspotIds, rebuiltNpcIds);
+  }
+
+  /**
+   * 实例化 await 后统一的世代守卫：若 sceneEpoch 已变（并发卸载/切场），
+   * 销毁刚建的孤儿实例并返回 true（调用方据此 return 中止整个重建）；
+   * 否则将实例登记进 sink + idSink 并返回 false（继续重建）。
+   * 收拢四处（hotspot/npc × enter/exit）逐字复制的守卫，语义完全一致。
+   */
+  private commitRebuiltEntityOrDiscard<T extends { destroy(): void }>(
+    entity: T,
+    epoch: number,
+    sink: T[],
+    idSink: string[],
+    id: string,
+  ): boolean {
+    if (this.sceneEpoch !== epoch) {
+      entity.destroy();
+      return true;
+    }
+    sink.push(entity);
+    idSink.push(id);
+    return false;
+  }
+
+  /**
+   * 过场进入/退出重建实体后广播，供 Game 重挂深度滤镜/像素密度/巡逻
+   * （重建的是全新实例，scene:ready 时附加的滤镜与巡逻协程都随旧实例销毁了）。
+   */
+  private emitEntitiesRebuilt(
+    cutsceneId: string,
+    phase: 'enter' | 'exit',
+    hotspotIds: string[],
+    npcIds: string[],
+  ): void {
+    if (hotspotIds.length === 0 && npcIds.length === 0) return;
+    this.eventBus.emit('scene:entitiesRebuilt', { cutsceneId, phase, hotspotIds, npcIds });
   }
 
   isCutsceneStagingActive(): boolean {
@@ -773,6 +938,7 @@ export class SceneManager implements IGameSystem {
   private async instantiateHotspot(def: HotspotDef, overrides: HotspotRuntimeOverride | undefined): Promise<Hotspot> {
     const defToUse = applyHotspotRuntimeOverride(def, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
     const hotspot = new Hotspot(defToUse);
+    this.applySessionOverrideOnInstantiate('hotspot', hotspot);
     this.renderer.entityLayer.addChild(hotspot.container);
     const di = defToUse.displayImage;
     if (di?.image && di.worldWidth > 0 && di.worldHeight > 0) {
@@ -787,8 +953,11 @@ export class SceneManager implements IGameSystem {
   }
 
   private async instantiateNpc(npcDef: NpcDef, overrides: NpcRuntimeOverride | undefined): Promise<Npc> {
-    const defToUse = applyNpcRuntimeOverride(npcDef, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
+    // 合并顺序：角色注册表默认（base）→ 运行时字段覆盖（session/sceneMemory，最高优先）
+    const withChar = applyCharacterDefaults(npcDef, this.characterRegistry);
+    const defToUse = applyNpcRuntimeOverride(withChar, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
     const npc = new Npc(defToUse);
+    this.applySessionOverrideOnInstantiate('npc', npc);
     if (defToUse.animFile) {
       try {
         const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
@@ -892,7 +1061,10 @@ export class SceneManager implements IGameSystem {
         npcDef,
         boundToActive ? 'cutscene' : 'outer',
       ) as NpcRuntimeOverride | undefined;
-      const defToUse = applyNpcRuntimeOverride(npcDef, snap as Record<string, SceneEntityRuntimeValue> | undefined);
+      const defToUse = applyNpcRuntimeOverride(
+        applyCharacterDefaults(npcDef, this.characterRegistry),
+        snap as Record<string, SceneEntityRuntimeValue> | undefined,
+      );
       if (!defToUse.animFile) continue;
       add({ type: 'json', path: defToUse.animFile, label: `NPC 动画清单: ${npcDef.id}` });
       try {
@@ -936,6 +1108,12 @@ export class SceneManager implements IGameSystem {
     cameraPosition?: { x: number; y: number },
     fromSceneId?: string | null,
     onLoadProgress?: (ratio01: number, debugLabel: string) => void,
+    /**
+     * 揭幕回调：场景资源装载、实体滤镜/光照就绪（scene:ready）之后、**onEnter 之前**调用，
+     * 用于撤掉切场过渡遮罩把场景显示出来。传入者（switchScene）借此保证 onEnter 里的成段演出
+     * 落在可见场景之上、且长演出不再把揭幕与进度收尾扣为人质。不传（初始进场/重载）= 无遮罩，跳过。
+     */
+    onReveal?: () => Promise<void>,
   ): Promise<void> {
     onLoadProgress?.(0, `场景 JSON · ${sceneId}`);
     const sceneData = await this.assetManager.loadSceneData(sceneId);
@@ -966,8 +1144,8 @@ export class SceneManager implements IGameSystem {
       );
       const depthBonus = this.depthLoader ? 1 : 0;
       const filterBonus = sceneData.filterId ? 1 : 0;
-      const enterBonus = !!(sceneData.onEnter?.length && this.sceneEnterRunner) ? 1 : 0;
-      totalSteps = 1 + manifest.refs.length + bgLayers + hsN + npcN + depthBonus + filterBonus + enterBonus;
+      // onEnter 不再计入加载进度：它在进度打满、场景揭幕之后才跑（见 loadScene 尾部）。
+      totalSteps = 1 + manifest.refs.length + bgLayers + hsN + npcN + depthBonus + filterBonus;
       if (totalSteps < 1) totalSteps = 1;
       advance(`JSON ✓ · ${sceneData.name ?? sceneId}`);
     }
@@ -1098,23 +1276,45 @@ export class SceneManager implements IGameSystem {
       this.renderer.clearWorldFilter();
     }
 
-    const rootEnter = sceneData.onEnter;
-    if (rootEnter?.length && this.sceneEnterRunner) {
-      report(`场景 onEnter · ${rootEnter.length} 条`);
-      try {
-        await this.sceneEnterRunner(rootEnter);
-      } catch (e) {
-        console.warn('SceneManager: 场景根 onEnter 动作执行失败', e);
-      }
-      advance(`onEnter ✓`);
-    }
-
     if (onLoadProgress) {
       onLoadProgress(1, `就绪 · ${sceneId}`);
     }
 
+    // scene:ready 会给玩家/NPC/热点挂上深度遮挡与光照滤镜、启动巡逻——必须在**揭幕之前**完成，
+    // 揭出来的场景才是完整表现。scene:enter 供 HUD/地图等复位。二者与 onEnter 解耦、先于 onEnter。
     this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fromSceneId ?? null, sceneName: sceneData.name });
     this.eventBus.emit('scene:ready');
+
+    // 揭幕：撤掉切场过渡遮罩，把已就绪的场景显示出来，**再**跑 onEnter。这样 onEnter 里的
+    // 成段演出（过场/对话）落在可见场景之上、而非被加载遮罩盖住；长演出也不再把揭幕/进度收尾扣住。
+    if (onReveal) {
+      try {
+        await onReveal();
+      } catch (e) {
+        console.warn('SceneManager: 场景揭幕失败', e);
+      }
+    }
+
+    // onEnter 语义 = 场景已进入且呈现完成之后的一次性脚本逻辑（置 flag / 发信号 / 起演出）。
+    const rootEnter = sceneData.onEnter;
+    if (rootEnter?.length && this.sceneEnterRunner) {
+      // 批内的 changeScene 由 switchScene 识别为重入（见 sceneEnterBatchDepth）：
+      // 只登记不排队自等——排队会造成「当前 job 等 onEnter、onEnter 等队尾新 job」的环形死锁
+      this.sceneEnterBatchDepth++;
+      try {
+        await this.sceneEnterRunner(rootEnter);
+      } catch (e) {
+        console.warn('SceneManager: 场景根 onEnter 动作执行失败', e);
+      } finally {
+        this.sceneEnterBatchDepth--;
+      }
+    }
+
+    // 直接 loadScene（初始进场等，不经 switchScene）路径：onEnter 内登记的切换在此 drain；
+    // switchScene 路径由外层 job 完成后统一 drain（此时 isSwitching 为 true，跳过）。
+    if (!this.isSwitching) {
+      this.consumePendingReentrantSwitch();
+    }
   }
 
   /** 对 **已加载** 的 sceneData 应用 spawn / spawnPoints / cameraPosition（语义与 loadScene 末尾一致） */
@@ -1135,6 +1335,7 @@ export class SceneManager implements IGameSystem {
   }
 
   unloadScene(): void {
+    this.sceneEpoch++;
     this.eventBus.emit('scene:beforeUnload');
     this.interactionSetter?.([], []);
     if (this.currentSceneScopeId) {
@@ -1167,6 +1368,20 @@ export class SceneManager implements IGameSystem {
   }
 
   async switchScene(targetSceneId: string, spawnPointId?: string, cameraPosition?: { x: number; y: number }): Promise<void> {
+    if (this.sceneEnterBatchDepth > 0) {
+      // 场景根 onEnter 批内的 changeScene（重入）：排队自等会环形死锁——当前加载 job 正 await
+      // 本批动作，本批若再 await 队尾的新 job 即互相等待、永久黑屏。改为登记后立即返回
+      // （fire-and-forget）：onEnter 批内 changeScene 之后的动作仍在旧场景跑完，当前加载
+      // 完成后自动执行登记的切换。连锁多次（B 的 onEnter 又 changeScene C）逐层 drain，同样安全。
+      if (this.pendingReentrantSwitch) {
+        console.warn(
+          `SceneManager: onEnter 批内多次 changeScene，丢弃 "${this.pendingReentrantSwitch.targetSceneId}"、保留 "${targetSceneId}"`,
+        );
+      }
+      this.pendingReentrantSwitch = { targetSceneId, spawnPointId, cameraPosition };
+      return;
+    }
+
     const job = async (): Promise<void> => {
       const tid = targetSceneId.trim();
       if (!tid) {
@@ -1203,11 +1418,39 @@ export class SceneManager implements IGameSystem {
 
         const fromSceneId = this.currentScene?.id ?? null;
         this.unloadScene();
-        await this.loadScene(tid, spawnPointId, cameraPosition, fromSceneId, (r, label) => {
-          this.setTransitionOverlayProgress(r, label);
-        });
-
-        await this.fadeIn(300);
+        // 揭幕（fadeIn 撤黑幕）作为 onReveal 交给 loadScene 在 scene:ready 之后、onEnter 之前执行，
+        // 使 onEnter 的成段演出显示在可见场景上；故此处 job 尾部不再另行 fadeIn。
+        const reveal = (): Promise<void> => this.fadeIn(300);
+        try {
+          await this.loadScene(tid, spawnPointId, cameraPosition, fromSceneId, (r, label) => {
+            this.setTransitionOverlayProgress(r, label);
+          }, reveal);
+        } catch (e) {
+          console.error(`SceneManager: 加载场景 "${tid}" 失败`, e);
+          // 清掉半装载的实体/背景，再尝试回载前一场景（其资源通常已在缓存）
+          this.unloadScene();
+          let recovered = false;
+          if (fromSceneId) {
+            try {
+              await this.loadScene(fromSceneId, undefined, undefined, tid, (r, label) => {
+                this.setTransitionOverlayProgress(r, label);
+              }, reveal);
+              recovered = true;
+            } catch (e2) {
+              console.error(`SceneManager: 回载前一场景 "${fromSceneId}" 亦失败`, e2);
+            }
+          }
+          // 引擎级故障提示：此时数据/文案通道本身可能就是故障源，不走 [tag] 文案
+          this.eventBus.emit('notification:show', {
+            text: recovered ? `无法进入「${tid}」，已退回原场景` : `场景「${tid}」加载失败`,
+            type: 'warning',
+          });
+          if (!recovered) {
+            // 双双失败：至少不留 alpha=1 的黑幕锁死画面
+            this.removeTransitionOverlay();
+            return;
+          }
+        }
       } finally {
         this.isSwitching = false;
       }
@@ -1217,44 +1460,49 @@ export class SceneManager implements IGameSystem {
     this.sceneSwitchTail = p.catch((e) => {
       console.warn('SceneManager: switchScene failed', e);
     });
-    await p;
+    try {
+      await p;
+    } finally {
+      // onEnter 批内登记的切换在当前 job 结束后执行（无论成败）
+      this.consumePendingReentrantSwitch();
+    }
+  }
+
+  /** 执行 onEnter 批内登记的切换请求（fire-and-forget；原调用方早已返回，失败仅日志）。 */
+  private consumePendingReentrantSwitch(): void {
+    const req = this.pendingReentrantSwitch;
+    if (!req) return;
+    this.pendingReentrantSwitch = null;
+    void this.switchScene(req.targetSceneId, req.spawnPointId, req.cameraPosition).catch((e) => {
+      console.warn('SceneManager: 延后的 onEnter changeScene 失败', e);
+    });
   }
 
 
+  /**
+   * 当前场景运行态（拾取/巡查/实体覆盖）都在发生时即写入 sceneMemory（见
+   * markHotspotPickedUp / markHotspotInspected / setEntityRuntimeField），本方法只确保
+   * 内存桶存在——可随时安全调用（切场景、存档 serialize 前都会调）。
+   * 不再从实体 `!active` 反推拾取：那会把条件隐藏 / 会话隐藏的 pickup 误记为已拾取。
+   */
   private saveCurrentSceneMemory(): void {
     if (!this.currentScene) return;
     if (this.cutsceneStaging) return;
-
-    const inspected: string[] = [];
-    const pickedUp: string[] = [];
-
-    for (const hotspot of this.currentHotspots) {
-      if (!hotspot.active && hotspot.def.type === 'pickup') {
-        pickedUp.push(hotspot.def.id);
-      }
-    }
-
-    const existing = this.getCommittedMemory(this.currentScene.id);
-    if (existing) {
-      for (const id of existing.inspectedHotspots) {
-        if (!inspected.includes(id)) inspected.push(id);
-      }
-      for (const id of existing.pickedUpHotspots) {
-        if (!pickedUp.includes(id)) pickedUp.push(id);
-      }
-    }
-
-    this.sceneMemory.set(this.currentScene.id, {
-      inspectedHotspots: inspected,
-      pickedUpHotspots: pickedUp,
-      entityOverrides: existing?.entityOverrides ?? this.emptyEntityOverrides(),
-    });
+    this.ensureSceneMemory(this.currentScene.id);
   }
 
   private markHotspotPickedUp(hotspotId: string): void {
     const hotspot = this.currentHotspots.find(h => h.def.id === hotspotId);
-    if (hotspot) {
-      hotspot.setInactive();
+    hotspot?.markPickedUp();
+    // 拾取立刻入 sceneMemory（不等切场景反推）。与旧推断口径一致：只有 pickup 型入档；
+    // encounter 型热点的 `hotspot:pickup:done` 自消费仅置实例运行态位——当次场景访问内
+    // 失活，重进场景（或过场重建）后可再次触发，且不进存档。
+    const def = hotspot?.def ?? this.currentScene?.hotspots?.find(h => h.id === hotspotId);
+    if (def?.type !== 'pickup') return;
+    if (!this.currentScene) return;
+    const mem = this.getWritableMemory(this.currentScene.id);
+    if (mem && !mem.pickedUpHotspots.includes(hotspotId)) {
+      mem.pickedUpHotspots.push(hotspotId);
     }
   }
 
@@ -1298,22 +1546,26 @@ export class SceneManager implements IGameSystem {
     const bx = 100 + (sw - barW) / 2;
     const by = 100 + Math.round(sh * 0.88);
 
-    const debugLabel = new Text({
-      text: '',
-      style: {
-        fontFamily: 'system-ui, Segoe UI, sans-serif',
-        fontSize: 10,
-        fill: 0xa8b8cf,
-        wordWrap: true,
-        wordWrapWidth: barW,
-        lineHeight: 12,
-      },
-    });
-    debugLabel.anchor.set(0, 1);
-    debugLabel.x = bx;
-    debugLabel.y = by - 8;
-    root.addChild(debugLabel);
-    this.transitionDebugLabel = debugLabel;
+    // 切场进度上的资源级调试文案只在 DEV 构建可见（T4）；生产不建该 Text，
+    // setTransitionOverlayProgress 对 null 标签自然跳过
+    if (import.meta.env.DEV) {
+      const debugLabel = new Text({
+        text: '',
+        style: {
+          fontFamily: 'system-ui, Segoe UI, sans-serif',
+          fontSize: 10,
+          fill: 0xa8b8cf,
+          wordWrap: true,
+          wordWrapWidth: barW,
+          lineHeight: 12,
+        },
+      });
+      debugLabel.anchor.set(0, 1);
+      debugLabel.x = bx;
+      debugLabel.y = by - 8;
+      root.addChild(debugLabel);
+      this.transitionDebugLabel = debugLabel;
+    }
 
     const rad = Math.min(5, barH / 2);
     const track = new Graphics();
@@ -1392,6 +1644,8 @@ export class SceneManager implements IGameSystem {
   }
 
   serialize(): object {
+    // 存档前 flush 当前场景运行态（幂等；运行态本身已即时入 memory，此处兜底建桶）
+    this.saveCurrentSceneMemory();
     const data: Record<
       string,
       {
@@ -1424,6 +1678,9 @@ export class SceneManager implements IGameSystem {
     >;
   }): void {
     this.sceneMemory.clear();
+    // 读档=新时间线：会话级（不入档）的 zone 禁用与实体隐藏覆盖全部作废
+    this.zoneSessionDisabled.clear();
+    this.entitySessionOverrides.clear();
     for (const [sceneId, mem] of Object.entries(data.memory)) {
       const base = mem.entityOverrides ?? this.emptyEntityOverrides();
       const entityOverrides: SceneEntityRuntimeOverrides = {
@@ -1454,6 +1711,8 @@ export class SceneManager implements IGameSystem {
     cancelAnimationFrame(this.animRafId);
     this.animRafId = 0;
     this.zoneSessionDisabled.clear();
+    this.entitySessionOverrides.clear();
+    this.pendingReentrantSwitch = null;
     this.eventBus.off('hotspot:pickup:done', this.onHotspotPickup);
     this.eventBus.off('hotspot:inspected', this.onHotspotInspected);
     this.unloadScene();

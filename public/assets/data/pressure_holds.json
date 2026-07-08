@@ -69,6 +69,84 @@
     ]
   },
   {
+    "id": "carry_drowned_corpse",
+    "prompt": "按住——过肩、搭手，把泡胀的尸架起来",
+    "fillSeconds": 2.4,
+    "decayPerSecond": 0.8,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#3d5a66",
+    "interrupts": [
+      {
+        "atRatio": 0.55,
+        "resetToRatio": 0.35,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "手一搭上去，那身子猛地往水那头坠了一下——像有根湿绳子在底下拽。"
+                },
+                {
+                  "speaker": "{{player}}",
+                  "text": "邪门……泡都泡涨了，咋个还往那头坠葛。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      {
+        "type": "setPlayerAvatar",
+        "params": {
+          "bundleId": "player_carry_corpse_anim",
+          "stateMap": {
+            "idle": "carry_idle",
+            "walk": "carry_walk",
+            "run": "carry_heavy_walk"
+          }
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_drowned_corpse",
+          "signal": "beishi_yan_shouldered"
+        }
+      },
+      {
+        "type": "setSmell",
+        "params": {
+          "scent": "corpse",
+          "intensity": 78
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身上肩，凉是凉的，沉是沉的——就是这股水腥气，扑了个满鼻，贴着后颈散不开。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "莫看，莫想。义庄，快点切。"
+            }
+          ]
+        }
+      },
+      {
+        "type": "clearSmell",
+        "params": {}
+      }
+    ]
+  },
+  {
     "id": "forest_name_call",
     "prompt": "咬住牙，闷头赶路——千万别应声",
     "releaseHint": "差点应了声！",

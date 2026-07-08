@@ -4349,7 +4349,7 @@
             "commands": []
           },
           "ownerType": "hotspot",
-          "ownerId": "teahouse:茶馆_自动事件",
+          "ownerId": "茶馆_自动事件",
           "graph": {
             "id": "wrapper_graph_2",
             "label": "茶馆自动剧情点",
@@ -4387,7 +4387,135 @@
                 "priority": 0
               }
             ],
-            "ownerId": "teahouse:茶馆_自动事件"
+            "ownerId": "茶馆_自动事件"
+          }
+        }
+      ]
+    },
+    {
+      "id": "beishi_daily_flow",
+      "label": "背尸零活 · 淹尸送义庄",
+      "description": "背尸日常首单(位面基建首个内容客户端):工头派活→码头巷口验尸上肩(进背尸位面:漂移/禁跑/禁捡/掉阳气/路线锁)→送义庄交尸(给钱+授规矩)。",
+      "mainGraph": {
+        "id": "flow_背尸_淹尸活",
+        "ownerType": "flow",
+        "ownerId": "背尸淹尸活",
+        "label": "背尸·淹尸活",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "未接",
+            "meta": {
+              "editor": {
+                "x": -31,
+                "y": 37
+              }
+            }
+          },
+          "accepted": {
+            "id": "accepted",
+            "label": "已接活",
+            "meta": {
+              "editor": {
+                "x": 301,
+                "y": 89
+              }
+            }
+          },
+          "carrying": {
+            "id": "carrying",
+            "label": "已上肩（背尸位面）",
+            "activePlane": "背尸",
+            "meta": {
+              "editor": {
+                "x": 667,
+                "y": 110
+              }
+            }
+          },
+          "delivered": {
+            "id": "delivered",
+            "label": "已交付",
+            "meta": {
+              "editor": {
+                "x": 920,
+                "y": -13
+              }
+            },
+            "onEnterActions": [
+              {
+                "type": "resetPlayerAvatar",
+                "params": {}
+              }
+            ]
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_accept",
+            "from": "initial",
+            "to": "accepted",
+            "signal": "beishi_yan_accepted"
+          },
+          {
+            "id": "t_shoulder",
+            "from": "accepted",
+            "to": "carrying",
+            "signal": "beishi_yan_shouldered"
+          },
+          {
+            "id": "t_deliver",
+            "from": "carrying",
+            "to": "delivered",
+            "signal": "beishi_yan_delivered"
+          }
+        ]
+      },
+      "elements": [
+        {
+          "id": "dlg_beishi_jiehuo",
+          "kind": "dialogueBlackbox",
+          "label": "工头派活",
+          "refId": "寻狗_零工接活",
+          "x": 32,
+          "y": -115,
+          "meta": {
+            "emits": [
+              "beishi_yan_accepted"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_beishi_shoulder",
+          "kind": "minigameBlackbox",
+          "label": "上肩长按",
+          "refId": "carry_drowned_corpse",
+          "x": 345,
+          "y": -146,
+          "meta": {
+            "emits": [
+              "beishi_yan_shouldered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_beishi_jiaoshi",
+          "kind": "dialogueBlackbox",
+          "label": "义庄交尸",
+          "refId": "寻狗_管事义庄内",
+          "x": 622,
+          "y": -139,
+          "meta": {
+            "emits": [
+              "beishi_yan_delivered"
+            ],
+            "reads": [],
+            "commands": []
           }
         }
       ]
@@ -4721,6 +4849,18 @@
     {
       "id": "teahouse_opening_played",
       "label": "茶馆·开场说书已播"
+    },
+    {
+      "id": "beishi_yan_accepted",
+      "label": "背尸零活·接下淹尸活"
+    },
+    {
+      "id": "beishi_yan_shouldered",
+      "label": "背尸零活·淹尸上肩"
+    },
+    {
+      "id": "beishi_yan_delivered",
+      "label": "背尸零活·淹尸送达义庄"
     }
   ]
 }

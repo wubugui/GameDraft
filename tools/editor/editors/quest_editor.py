@@ -39,6 +39,8 @@ class _QuestGraphView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.SmartViewportUpdate)
+        # 内容比视口小时靠左上,不在大画布里居中漂浮(去居中)。
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.setBackgroundBrush(QColor(30, 30, 36))
 
     def _find_node(self, pos):
@@ -759,17 +761,22 @@ class QuestEditor(QWidget):
             return False
         return False
 
-    def _commit_current_selection(self) -> None:
+    def _commit_current_selection(self) -> bool:
         if self._selection_type == "group":
-            self._apply_group()
-        elif self._selection_type == "quest":
-            self._apply_quest()
+            return self._apply_group()
+        if self._selection_type == "quest":
+            return self._apply_quest()
+        return True
 
     def flush_to_model(self) -> bool:
-        """Save All 钩子：未应用编辑在保存前提交，避免静默丢弃。"""
+        """Save All 钩子：未应用编辑在保存前提交；校验失败时返回 False 中止保存，
+        不再"弹完警告照样返回 True 让保存流程以为已写入"（审查 P2-27）。"""
         if self._is_dirty():
-            self._commit_current_selection()
+            return self._commit_current_selection()
         return True
+
+    def pop_flush_error(self) -> str:
+        return "任务/分组的未应用编辑校验未通过（id 为空或重复），请先在 Quest 页修正。"
 
     def confirm_close(self, parent=None) -> bool:
         if not self._is_dirty():
@@ -783,7 +790,8 @@ class QuestEditor(QWidget):
         if r == QMessageBox.StandardButton.Cancel:
             return False
         if r == QMessageBox.StandardButton.Save:
-            self._commit_current_selection()
+            if not self._commit_current_selection():
+                return False  # 校验失败：留在编辑器里修
         return True
 
     def _on_tree_select(self, current: QTreeWidgetItem | None, _prev) -> None:
@@ -800,7 +808,18 @@ class QuestEditor(QWidget):
                 and self._selection_type and self._current_selection
                 and (self._selection_type, self._current_selection) != (sel_type, sel_id)
                 and self._is_dirty()):
-            self._commit_current_selection()
+            if not self._commit_current_selection():
+                # 校验失败：回到原节点，未保存编辑留在表单里（不静默覆盖丢弃）
+                it_old = self._find_tree_item(
+                    self._tree.invisibleRootItem(),
+                    self._selection_type, self._current_selection)
+                if it_old is not None:
+                    self._suppress_tree_commit = True
+                    try:
+                        self._tree.setCurrentItem(it_old)
+                    finally:
+                        self._suppress_tree_commit = False
+                return
             it = self._find_tree_item(self._tree.invisibleRootItem(), sel_type, sel_id)
             if it is not None:
                 self._suppress_tree_commit = True
@@ -895,6 +914,13 @@ class QuestEditor(QWidget):
                 self._model.mark_dirty("questGroup")
 
         self._refresh()
+        # 拖拽直写模型：若被拖对象正是右侧表单显示的对象，须立刻从模型重载表单——
+        # 否则表单残留旧 group/parentGroup，下一次 commit-on-leave 会把拖拽结果
+        # 静默改回去（审查 P1-12/P1-13 拖拽回滚）。
+        if self._selection_type == "quest" and self._current_selection == src_id:
+            self._show_quest_props(src_id)
+        elif self._selection_type == "group" and self._current_selection == src_id:
+            self._show_group_props(src_id)
 
     def _would_create_cycle(self, src_id: str, dst_id: str) -> bool:
         visited: set[str] = {src_id}
@@ -922,9 +948,11 @@ class QuestEditor(QWidget):
         self._g_id.setText(g.get("id", ""))
         self._g_name.setText(g.get("name", ""))
         self._g_type.setCurrentText(g.get("type", "main"))
+        _excluded = self._collect_descendant_groups(gid)
+        _excluded.add(gid)
         self._g_parent.set_items(
             [(gg["id"], gg.get("name", gg["id"]))
-             for gg in self._model.quest_groups if gg["id"] != gid]
+             for gg in self._model.quest_groups if gg["id"] not in _excluded]
         )
         self._g_parent.set_current(g.get("parentGroup", ""))
 
@@ -956,12 +984,18 @@ class QuestEditor(QWidget):
 
     # ======== apply ========
 
-    def _apply_group(self) -> None:
+    def _apply_group(self) -> bool:
         gid = self._current_selection
         g = next((g for g in self._model.quest_groups if g["id"] == gid), None)
         if not g:
-            return
+            return True
         new_id = self._g_id.text().strip()
+        if not new_id:
+            QMessageBox.warning(self, "分组 id", "分组 id 不能为空。")
+            return False
+        if any(gg is not g and gg.get("id") == new_id for gg in self._model.quest_groups):
+            QMessageBox.warning(self, "分组 id", f"分组 id 与其它分组重复：{new_id}")
+            return False
         if new_id != gid:
             for q in self._model.quests:
                 if q.get("group") == gid:
@@ -974,19 +1008,33 @@ class QuestEditor(QWidget):
         g["type"] = self._g_type.currentText()
         pg = self._g_parent.current_id()
         if pg:
-            g["parentGroup"] = pg
+            # 成环防护：属性面板路径与拖拽路径同一套校验（审查 P1-13：
+            # 成环后整条环从树/图消失且带环落盘、不可再选中修复）
+            if pg == new_id or self._would_create_cycle(new_id, pg):
+                QMessageBox.warning(
+                    self, "父分组",
+                    "不能把分组挂到自身或其子孙分组下，已保留原父分组。")
+            else:
+                g["parentGroup"] = pg
         elif "parentGroup" in g:
             del g["parentGroup"]
         self._current_selection = new_id
         self._model.mark_dirty("questGroup")
         self._refresh()
+        return True
 
-    def _apply_quest(self) -> None:
+    def _apply_quest(self) -> bool:
         qid = self._current_selection
         q = next((q for q in self._model.quests if q["id"] == qid), None)
         if not q:
-            return
+            return True
         new_id = self._q_id.text().strip()
+        if not new_id:
+            QMessageBox.warning(self, "任务 id", "任务 id 不能为空。")
+            return False
+        if any(qq is not q and qq.get("id") == new_id for qq in self._model.quests):
+            QMessageBox.warning(self, "任务 id", f"任务 id 与其它任务重复：{new_id}")
+            return False
         if new_id != qid:
             for qq in self._model.quests:
                 for edge in qq.get("nextQuests", []):
@@ -1012,6 +1060,7 @@ class QuestEditor(QWidget):
         self._current_selection = new_id
         self._model.mark_dirty("quest")
         self._refresh()
+        return True
 
     # ======== add / delete ========
 
@@ -1026,12 +1075,21 @@ class QuestEditor(QWidget):
                 return q.get("group", "")
         return ""
 
+    @staticmethod
+    def _unique_new_id(prefix: str, existing_ids) -> str:
+        taken = {str(i) for i in existing_ids}
+        n = 0
+        while f"{prefix}_{n}" in taken:
+            n += 1
+        return f"{prefix}_{n}"
+
     def _add_group(self) -> None:
-        idx = len(self._model.quest_groups)
         parent_id = self._selected_group_id()
+        new_gid = self._unique_new_id(
+            "group", (g.get("id", "") for g in self._model.quest_groups))
         new_g: dict = {
-            "id": f"group_{idx}",
-            "name": f"新分组_{idx}",
+            "id": new_gid,
+            "name": f"新分组_{new_gid.rsplit('_', 1)[-1]}",
             "type": "main",
         }
         if parent_id:
@@ -1041,13 +1099,13 @@ class QuestEditor(QWidget):
         self._refresh()
 
     def _add_quest(self) -> None:
-        idx = len(self._model.quests)
         group_id = self._selected_group_id()
         if not group_id and self._model.quest_groups:
             group_id = self._model.quest_groups[0]["id"]
 
         new_q: dict = {
-            "id": f"quest_{idx}",
+            "id": self._unique_new_id(
+                "quest", (q.get("id", "") for q in self._model.quests)),
             "group": group_id,
             "type": "main",
             "title": "新任务",
@@ -1089,9 +1147,20 @@ class QuestEditor(QWidget):
         all_gids = self._collect_descendant_groups(gid)
         all_gids.add(gid)
 
+        deleted_qids = {
+            q.get("id") for q in self._model.quests if q.get("group") in all_gids
+        }
         self._model.quests = [
             q for q in self._model.quests if q.get("group") not in all_gids
         ]
+        # 清其它任务指向被删任务的 nextQuests 悬垂边（与 _delete_quest 行为对齐，审查 P1-14）
+        for q in self._model.quests:
+            edges = q.get("nextQuests")
+            if isinstance(edges, list):
+                kept = [e for e in edges
+                        if not (isinstance(e, dict) and e.get("questId") in deleted_qids)]
+                if len(kept) != len(edges):
+                    q["nextQuests"] = kept
         self._model.quest_groups = [
             g for g in self._model.quest_groups if g["id"] not in all_gids
         ]

@@ -56,6 +56,11 @@
         {
           "narrative": "scenario_义庄镇尸",
           "state": "not_entered"
+        },
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
+          "reached": true
         }
       ],
       "onEnter": [
@@ -68,6 +73,31 @@
           }
         }
       ]
+    },
+    {
+      "id": "z_义庄_香火",
+      "polygon": [
+        {
+          "x": 0.0,
+          "y": 0.0
+        },
+        {
+          "x": 1000.0,
+          "y": 0.0
+        },
+        {
+          "x": 1000.0,
+          "y": 760.0
+        },
+        {
+          "x": 0.0,
+          "y": 760.0
+        }
+      ],
+      "smell": {
+        "scent": "incense",
+        "intensity": 38
+      }
     }
   ],
   "hotspots": [
@@ -105,7 +135,15 @@
       "collisionPolygonLocal": true,
       "data": {
         "graphId": "寻狗_看两尸"
-      }
+      },
+      "conditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true
     },
     {
       "id": "hs_镇尸_撒米",
@@ -227,12 +265,18 @@
       "id": "hs_停尸凳",
       "type": "inspect",
       "label": "空了的停尸凳",
-      "x": 300.0,
+      "x": 300.6,
       "y": 300.0,
       "interactionRange": 70.0,
-      "data": {
-        "text": "两条停尸凳，凳上的草席还压着人形的印子。尸是自己下来的——这个念头一冒出来，关二狗后脖颈就一阵发麻。"
-      }
+      "data": {},
+      "conditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true
     },
     {
       "id": "T_出义庄",

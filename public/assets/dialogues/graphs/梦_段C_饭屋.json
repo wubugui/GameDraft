@@ -30,7 +30,10 @@
         "kind": "player"
       },
       "text": "（饿。饿得前胸贴后背。老两口在旁边看着他，和善地，等。）",
-      "next": "n_eat"
+      "next": "n_eat",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n_eat": {
       "type": "runActions",
@@ -99,7 +102,10 @@
         "kind": "player"
       },
       "text": "（……样式真旧。）",
-      "next": "n_clothed"
+      "next": "n_clothed",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_clothed": {
       "type": "runActions",

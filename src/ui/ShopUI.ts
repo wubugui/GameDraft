@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IInventoryDataProvider, ShopDef } from '../data/types';
@@ -21,7 +22,6 @@ export class ShopUI {
   private _isOpen = false;
   private currentShop: ShopDef | null = null;
   private shopDefs: Map<string, ShopDef> = new Map();
-  private rebuildTimerId: ReturnType<typeof setTimeout> | null = null;
   private resolveDisplay: ((s: string) => string) | null = null;
 
   constructor(renderer: Renderer, eventBus: EventBus, inventoryData: IInventoryDataProvider, strings: StringsProvider, assetManager: AssetManager) {
@@ -86,10 +86,7 @@ export class ShopUI {
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, panelH, UITheme.panel.borderRadius);
-    bg.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    bg.roundRect(px, py, PANEL_W, panelH, UITheme.panel.borderRadius);
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, px, py, PANEL_W, panelH, SKINS.panel);
     this.container.addChild(bg);
 
     const shopTitle = this.resolveDisplay
@@ -121,8 +118,7 @@ export class ShopUI {
       const canBuy = coins >= price;
 
       const row = new Graphics();
-      row.roundRect(px + PADDING, py + cy, PANEL_W - PADDING * 2, ITEM_H - 4, UITheme.panel.borderRadiusSmall);
-      row.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.rowBgLight });
+      drawPanelBase(row, px + PADDING, py + cy, PANEL_W - PADDING * 2, ITEM_H - 4, SKINS.row);
       this.container.addChild(row);
 
       const nameT = new Text({
@@ -177,12 +173,10 @@ export class ShopUI {
   }
 
   private doPurchase(itemId: string, price: number): void {
+    // 购买链路全同步（EventBus 同步派发 → shopPurchase handler 同步扣钱/加物品），
+    // emit 返回时余额/背包已定，立即重建即可反映结果（含失败路径的余额不变）。
     this.eventBus.emit('shop:purchase', { itemId, price });
-    if (this.rebuildTimerId !== null) clearTimeout(this.rebuildTimerId);
-    this.rebuildTimerId = setTimeout(() => {
-      this.rebuildTimerId = null;
-      this.build();
-    }, 50);
+    this.build();
   }
 
   private destroyUI(): void {
@@ -194,10 +188,6 @@ export class ShopUI {
   }
 
   destroy(): void {
-    if (this.rebuildTimerId !== null) {
-      clearTimeout(this.rebuildTimerId);
-      this.rebuildTimerId = null;
-    }
     this.destroyUI();
     this.shopDefs.clear();
   }

@@ -5,7 +5,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .file_io import read_json
 from .shared.cutscene_action_allowlist_io import cutscene_action_allowlist_frozenset
@@ -37,6 +37,24 @@ def _entity_cutscene_bindings(ent: dict) -> list[str]:
     return out
 
 
+def _anim_bundle_id_from_ref(raw: object) -> str:
+    """把 NPC.animFile 归一为动画包目录名（id）。
+
+    现有数据里 animFile 多为完整 manifest URL ``/resources/runtime/animation/<id>/anim.json``，
+    少数可能直接是裸 id。两种都解析出 ``<id>``；其它形态返回空串（不误报）。
+    与 :meth:`ProjectModel.animation_state_names_for_manifest` 的取段方式保持一致。
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    marker = "/resources/runtime/animation/"
+    if s.startswith(marker):
+        return s[len(marker):].split("/", 1)[0]
+    if "/" not in s:  # 裸 id
+        return s
+    return ""
+
+
 def validate(model: ProjectModel) -> list[Issue]:
     issues: list[Issue] = []
     from .shared.ref_validator import validate_all_embedded_refs
@@ -44,13 +62,18 @@ def validate(model: ProjectModel) -> list[Issue]:
     for i, msg in enumerate(validate_all_embedded_refs(model)):
         issues.append(Issue("error", "embeddedRef", f"#{i}", msg))
     scene_ids = set(model.all_scene_ids())
-    item_ids = {it["id"] for it in model.items}
-    quest_ids = {q["id"] for q in model.quests}
-    encounter_ids = {e["id"] for e in model.encounters}
-    rule_ids = {r["id"] for r in model.rules_data.get("rules", [])}
-    frag_ids = {f["id"] for f in model.rules_data.get("fragments", [])}
-    cutscene_ids = {c["id"] for c in model.cutscenes}
-    shop_ids = {s["id"] for s in model.shops}
+    # 用 .get 而非 it["id"]：任一条目缺 id 不该让整个 validate() KeyError 崩溃、
+    # 用一条格式错误掩盖其余全部校验（审查 P2-34）。缺 id 由各自去重/结构校验单独报。
+    def _ids(rows) -> set:
+        return {r["id"] for r in rows if isinstance(r, dict) and "id" in r}
+
+    item_ids = _ids(model.items)
+    quest_ids = _ids(model.quests)
+    encounter_ids = _ids(model.encounters)
+    rule_ids = _ids(model.rules_data.get("rules", []))
+    frag_ids = _ids(model.rules_data.get("fragments", []))
+    cutscene_ids = _ids(model.cutscenes)
+    shop_ids = _ids(model.shops)
     filter_ids = set(model.all_filter_ids())
 
     _validate_scenarios_catalog(model, issues)
@@ -255,6 +278,43 @@ def validate(model: ProjectModel) -> list[Issue]:
                     "error", "scene", sid,
                     f"NPC '{npc.get('id')}' initialFacing 须为 'left' 或 'right'",
                 ))
+            anim_bundle = _anim_bundle_id_from_ref(npc.get("animFile"))
+            if anim_bundle and anim_bundle not in model.animations:
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"NPC '{nid}' animFile 指向 '{anim_bundle}'，但无对应动画包目录 "
+                    f"public/resources/runtime/animation/{anim_bundle}/anim.json"
+                    "（改名/删除导致的孤儿引用？）",
+                ))
+            cref = npc.get("characterId")
+            if cref is not None:
+                cid = str(cref).strip()
+                if not cid:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"NPC '{nid}' characterId 须为非空字符串（或删除该键）",
+                    ))
+                elif cid not in getattr(model, "character_registry", {}):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"NPC '{nid}' characterId 指向 {cid!r}，但 character_registry.json 中无此角色",
+                    ))
+            pslug = npc.get("portraitSlug")
+            if pslug is not None:
+                if not isinstance(pslug, str) or not pslug.strip():
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"NPC '{nid}' portraitSlug 须为非空字符串（或删除该键）",
+                    ))
+                elif model.project_path is not None and not (
+                    model.project_path / "public" / "resources" / "runtime" / "images"
+                    / "dialogue_portraits" / pslug.strip()
+                ).is_dir():
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"NPC '{nid}' portraitSlug 指向 '{pslug.strip()}'，但无对应立绘集目录 "
+                        f"public/resources/runtime/images/dialogue_portraits/{pslug.strip()}/",
+                    ))
             dcz = npc.get("dialogueCameraZoom")
             if dcz is not None:
                 try:
@@ -643,6 +703,7 @@ def validate(model: ProjectModel) -> list[Issue]:
                             f"initialCutscene '{cfg['initialCutscene']}' not found"))
 
     _validate_overlay_images(model, issues)
+    _validate_parallax_scenes(model, issues)
 
     _validate_flags(model, issues)
 
@@ -650,13 +711,17 @@ def validate(model: ProjectModel) -> list[Issue]:
 
     _validate_pressure_holds(model, issues)
     _validate_signal_cues(model, issues)
+    _validate_water_minigames(model, issues)
+    _validate_paper_craft(model, issues)
     _validate_narrative(model, issues)
+    _validate_planes(model, issues)
+    _validate_narrative_templates(model, issues)
 
     return issues
 
 
 def _iter_narrative_graphs(model: ProjectModel):
-    """遍历 narrative_graphs.json 内的所有图（mainGraph + wrapper 子图）。"""
+    """遍历 narrative_graphs.json 内的所有图（mainGraph + 元素内嵌子图）。"""
     data = model.narrative_graphs
     if not isinstance(data, dict):
         return
@@ -667,7 +732,10 @@ def _iter_narrative_graphs(model: ProjectModel):
         if isinstance(main, dict) and main.get("id"):
             yield main
         for el in comp.get("elements") or []:
-            if isinstance(el, dict) and el.get("kind") == "wrapperGraph":
+            # 任何带内嵌 graph 的元素都遍历（wrapperGraph / scenarioSubgraph / 未来新增），
+            # 与运行时编译口径一致——只认 wrapperGraph 会漏 scenarioSubgraph 里的状态，
+            # activePlane 等状态级校验出盲区。
+            if isinstance(el, dict):
                 g = el.get("graph")
                 if isinstance(g, dict) and g.get("id"):
                     yield g
@@ -824,6 +892,184 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                 ))
 
 
+_PLANE_KNOWN_TOP_KEYS = frozenset((
+    "id", "label", "movement", "interaction", "camera", "lighting", "healthDrainPerSec",
+))
+_PLANE_MOVEMENT_NUM_KEYS = ("driftX", "driftY", "speedScale")
+_PLANE_INTERACTION_KEYS = ("canPickup", "canInteractHotspots", "canTalkNpcs")
+
+
+def _plane_id_set(model: ProjectModel) -> set[str]:
+    return {
+        str(p.get("id") or "").strip()
+        for p in model.planes
+        if isinstance(p, dict) and str(p.get("id") or "").strip()
+    }
+
+
+def _validate_narrative_templates(model: ProjectModel, issues: list[Issue]) -> None:
+    """narrative_templates.json（编辑器专用模板，运行时永不加载）占位符感知校验。
+
+    ``{{...}}`` 认作合法洞、不当坏引用；声明了没用到 / 用了没声明 = warning；缺 id / 缺
+    composition / id 重复 = error。骨架里的引用大多是占位符，故不做跨文件存在性检查——
+    真正的存在性由盖章期（stamp）撞名检测与盖章后的 narrative_graphs 校验兜底。
+    """
+    data = getattr(model, "narrative_templates", None)
+    if not isinstance(data, dict) or not (data.get("templates") or []):
+        return
+    try:
+        from .shared.narrative_templates import validate_templates_file
+    except Exception:  # pragma: no cover - defensive
+        return
+    for row in validate_templates_file(data):
+        sev = "error" if row.get("severity") == "error" else "warning"
+        item = str(row.get("itemId") or "narrative_templates")
+        issues.append(Issue(sev, "narrative_template", item, str(row.get("message") or row.get("code"))))
+
+
+def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
+    """planes.json（PlaneDef[]）结构 + 实体 planes / 叙事 activePlane 引用存在性。
+
+    契约（src/systems/plane/types.ts）：id 非空唯一；movement/interaction/camera/lighting
+    为对象；未知顶层键 warning。实体归属引用不存在的位面 = error；跨图多于一个声明
+    activePlane 的图 = warning（运行时后进者胜为兜底）。
+    """
+    seen: set[str] = set()
+    for p in model.planes:
+        if not isinstance(p, dict):
+            issues.append(Issue("error", "plane", "?", "条目须为对象（PlaneDef）"))
+            continue
+        pid = str(p.get("id") or "").strip()
+        if not pid:
+            issues.append(Issue("error", "plane", "?", "缺少 id"))
+            continue
+        if pid in seen:
+            issues.append(Issue("error", "plane", pid, f"id 重复: {pid!r}"))
+        seen.add(pid)
+        label = p.get("label")
+        if label is not None and not isinstance(label, str):
+            issues.append(Issue("error", "plane", pid, "label 须为字符串"))
+        mv = p.get("movement")
+        if mv is not None:
+            if not isinstance(mv, dict):
+                issues.append(Issue("error", "plane", pid, "movement 须为对象"))
+            else:
+                for key in _PLANE_MOVEMENT_NUM_KEYS:
+                    v = mv.get(key)
+                    if v is None:
+                        continue
+                    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)):
+                        issues.append(Issue("error", "plane", pid, f"movement.{key} 须为有限数值"))
+                ar = mv.get("allowRun")
+                if ar is not None and not isinstance(ar, bool):
+                    issues.append(Issue("error", "plane", pid, "movement.allowRun 须为布尔"))
+        it = p.get("interaction")
+        if it is not None:
+            if not isinstance(it, dict):
+                issues.append(Issue("error", "plane", pid, "interaction 须为对象"))
+            else:
+                for key in _PLANE_INTERACTION_KEYS:
+                    v = it.get(key)
+                    if v is not None and not isinstance(v, bool):
+                        issues.append(Issue("error", "plane", pid, f"interaction.{key} 须为布尔"))
+        cam = p.get("camera")
+        if cam is not None:
+            if not isinstance(cam, dict):
+                issues.append(Issue("error", "plane", pid, "camera 须为对象"))
+            else:
+                z = cam.get("zoom")
+                if z is not None and (
+                    isinstance(z, bool) or not isinstance(z, (int, float))
+                    or not math.isfinite(float(z)) or float(z) <= 0
+                ):
+                    issues.append(Issue("error", "plane", pid, "camera.zoom 须为正有限数"))
+        lt = p.get("lighting")
+        if lt is not None and not isinstance(lt, dict):
+            issues.append(Issue("error", "plane", pid, "lighting 须为对象（partial SceneLightEnv）"))
+        hd = p.get("healthDrainPerSec")
+        if hd is not None and (
+            isinstance(hd, bool) or not isinstance(hd, (int, float))
+            or not math.isfinite(float(hd)) or float(hd) < 0
+        ):
+            issues.append(Issue("error", "plane", pid, "healthDrainPerSec 须为非负有限数"))
+        for key in p.keys():
+            if key not in _PLANE_KNOWN_TOP_KEYS:
+                issues.append(Issue(
+                    "warning", "plane", pid,
+                    f"未知顶层键 {key!r}（PlaneDef 之外的字段，运行时不消费）",
+                ))
+    if model.planes and "normal" not in seen:
+        issues.append(Issue(
+            "warning", "plane", "planes",
+            "planes.json 缺少 id='normal' 的常态位面（契约：normal 为开局默认激活位面）",
+        ))
+
+    known = _plane_id_set(model)
+
+    # --- 实体归属 planes 引用存在性（hotspot / npc / zone）---
+    for sid, sc in model.scenes.items():
+        if not isinstance(sc, dict):
+            continue
+        for key in ("hotspots", "npcs", "zones"):
+            for ent in sc.get(key) or []:
+                if not isinstance(ent, dict) or "planes" not in ent:
+                    continue
+                eid = str(ent.get("id") or "?")
+                raw = ent.get("planes")
+                if not isinstance(raw, list):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"{key[:-1]} '{eid}' 的 planes 须为字符串数组",
+                    ))
+                    continue
+                for ref in raw:
+                    ref_s = str(ref or "").strip()
+                    if not ref_s:
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"{key[:-1]} '{eid}' 的 planes 含空 id",
+                        ))
+                    elif ref_s not in known:
+                        issues.append(Issue(
+                            "error", "scene", sid,
+                            f"{key[:-1]} '{eid}' 归属的位面 {ref_s!r} 不在 planes.json 中",
+                        ))
+
+    # --- 叙事状态 activePlane 引用存在性 + 跨图多图声明 warning ---
+    declaring_graphs: list[str] = []
+    for g in _iter_narrative_graphs(model):
+        gid = str(g["id"])
+        states = g.get("states")
+        if not isinstance(states, dict):
+            continue
+        declares = False
+        for stid, st in states.items():
+            if not isinstance(st, dict) or "activePlane" not in st:
+                continue
+            ap = st.get("activePlane")
+            if not isinstance(ap, str) or not ap.strip():
+                issues.append(Issue(
+                    "error", "narrative", gid,
+                    f"状态 {stid!r} 的 activePlane 须为非空字符串",
+                ))
+                continue
+            declares = True
+            if ap.strip() not in known:
+                issues.append(Issue(
+                    "error", "narrative", gid,
+                    f"状态 {stid!r} 点名的位面 {ap.strip()!r} 不在 planes.json 中",
+                ))
+        if declares:
+            declaring_graphs.append(gid)
+    if len(declaring_graphs) > 1:
+        issues.append(Issue(
+            "warning", "narrative", "planes",
+            "多于一个叙事图声明 activePlane（"
+            + ", ".join(sorted(declaring_graphs))
+            + "）；跨图同时点名时运行时按后进者胜兜底，建议一位面一图",
+        ))
+
+
 def _validate_pressure_holds(model: ProjectModel, issues: list[Issue]) -> None:
     """pressure_holds.json：结构 + 内嵌 Action 校验（id 唯一、fillSeconds 正数、atRatio 严格递增）。"""
     seen: set[str] = set()
@@ -905,6 +1151,90 @@ def _validate_signal_cues(model: ProjectModel, issues: list[Issue]) -> None:
         _walk_action_defs(model, issues, actions, "signal_cue", cid, None)
 
 
+def _validate_water_minigames(model: ProjectModel, issues: list[Issue]) -> None:
+    """water_minigames 各实例的实体动作一致性（对齐其它数据类型的 _walk_action_defs）。
+
+    cue/hint 与动作参数里的 [tag:…] 已由 ref_validator.validate_all_embedded_refs 统一覆盖；
+    此处补它够不到的「动作类型是否登记 / 裸 id 参数引用（giveItem.id、startCutscene.id…）」，
+    免得 onPick/onPullSuccess/onPullFail 里的坏引用一路漏到运行时才暴露。
+    """
+    bag = getattr(model, "water_minigames_instances", None)
+    if not isinstance(bag, dict):
+        return
+    for iid, doc in bag.items():
+        if not isinstance(doc, dict):
+            continue
+        ents = doc.get("entities")
+        if not isinstance(ents, list):
+            continue
+        for ent in ents:
+            if not isinstance(ent, dict):
+                continue
+            eid = str(ent.get("id") or "").strip() or "?"
+            ctx = f"{iid}:{eid}"
+            for hook in ("onPick", "onPullSuccess", "onPullFail"):
+                acts = ent.get(hook)
+                if isinstance(acts, list):
+                    _walk_action_defs(model, issues, acts, "water_minigame", ctx, None)
+
+
+def _validate_paper_craft(model: ProjectModel, issues: list[Issue]) -> None:
+    """paper_craft 各实例/订单的结构一致性（编辑器保存抓不到的跨字段引用）：
+    槽位 accepts 引用的部件须存在、correctPaper 须指向已声明纸色、三档结果动作
+    （onSuccess/Warn/Bad）的动作类型与裸 id 参数引用须合法——免得坏引用漏到运行时。"""
+    bag = getattr(model, "paper_craft_instances", None)
+    if not isinstance(bag, dict):
+        return
+    for iid, doc in bag.items():
+        if not isinstance(doc, dict):
+            continue
+        orders = doc.get("orders")
+        if not isinstance(orders, list):
+            continue
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            oid = str(order.get("id") or "").strip() or "?"
+            ctx = f"{iid}:{oid}"
+            for opt_key in ("paperOptions", "finishOptions"):
+                rows = order.get(opt_key)
+                if not isinstance(rows, list) or not rows:
+                    issues.append(Issue(
+                        "error", "paper_craft", ctx,
+                        f"{opt_key} 为空：运行时加载即拒（PaperCraftMinigameScene 要求每张订单至少 1 条）",
+                    ))
+            part_ids = {
+                str(p.get("id") or "").strip()
+                for p in (order.get("parts") or [])
+                if isinstance(p, dict) and p.get("id")
+            }
+            paper_ids = {
+                str(p.get("id") or "").strip()
+                for p in (order.get("paperOptions") or [])
+                if isinstance(p, dict) and p.get("id")
+            }
+            for slot in (order.get("slots") or []):
+                if not isinstance(slot, dict):
+                    continue
+                slabel = str(slot.get("id") or slot.get("label") or "?")
+                for pid in (slot.get("accepts") or []):
+                    if str(pid) not in part_ids:
+                        issues.append(Issue(
+                            "warning", "paper_craft", ctx,
+                            f"槽位 {slabel!r} 的 accepts 引用了不存在的部件 id {pid!r}",
+                        ))
+            cp = str(order.get("correctPaper") or "").strip()
+            if cp and cp not in paper_ids:
+                issues.append(Issue(
+                    "warning", "paper_craft", ctx,
+                    f"correctPaper {cp!r} 不在该订单 paperOptions 中",
+                ))
+            for hook in ("onSuccessActions", "onWarnActions", "onBadActions"):
+                acts = order.get(hook)
+                if isinstance(acts, list):
+                    _walk_action_defs(model, issues, acts, "paper_craft", ctx, None)
+
+
 def _validate_overlay_images(model: ProjectModel, issues: list[Issue]) -> None:
     ov = getattr(model, "overlay_images", None)
     if not isinstance(ov, dict):
@@ -928,6 +1258,253 @@ def _validate_overlay_images(model: ProjectModel, issues: list[Issue]) -> None:
                 "warning", "overlay_images", ks,
                 f"短 id「{ks}」的路径建议以 / 开头（/assets/...），当前：{ps[:80]}",
             ))
+
+
+_PARALLAX_EASINGS = frozenset({"linear", "easeIn", "easeOut", "easeInOut"})
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _validate_one_parallax_scene(
+    scene: dict, issues: list[Issue], data_type: str, item_id: str, *, where: str,
+) -> None:
+    """校验单个 parallax 场景结构（注册表条目或 cutscene 内联 scene 共用）。
+
+    与运行时 CutsceneRenderer.showParallaxScene / sampleParallaxKeyframe 的读取假设对齐：
+    layers 非空、每层有 image + ≥1 关键帧、关键帧 atMs/x/y 为数值且按时间非递减。
+    """
+    for k in ("widthRef", "heightRef"):
+        v = scene.get(k)
+        if not _is_num(v) or v <= 0:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{where} 的 {k} 应为正数（参考画布尺寸，运行时按 cover 映射），实为 {v!r}",
+            ))
+    layers = scene.get("layers")
+    if not isinstance(layers, list) or not layers:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"{where} 缺少非空 layers（至少一层才能显示）",
+        ))
+        return
+    seen_layer_ids: set[str] = set()
+    for li, layer in enumerate(layers):
+        if not isinstance(layer, dict):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{where} layers[{li}] 不是对象",
+            ))
+            continue
+        lid = str(layer.get("id") or "").strip()
+        lwhere = f"{where} 层 {lid or f'#{li}'}"
+        if not lid:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{where} layers[{li}] 缺 id（hideImg/句柄配对时不可寻址）",
+            ))
+        elif lid in seen_layer_ids:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{where} 存在重复层 id {lid!r}（运行时按 id 建 Map，重复会互相覆盖）",
+            ))
+        else:
+            seen_layer_ids.add(lid)
+        img = str(layer.get("image") or "").strip()
+        if not img:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{lwhere} 缺 image（图层贴图路径；文件存在性由素材审计另查）",
+            ))
+        ez = layer.get("easing")
+        if ez is not None and ez not in _PARALLAX_EASINGS:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{lwhere} 的 easing {ez!r} 非法（仅 {sorted(_PARALLAX_EASINGS)}）",
+            ))
+        if "zIndex" in layer and not _is_num(layer.get("zIndex")):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{lwhere} 的 zIndex 应为数值，实为 {layer.get('zIndex')!r}",
+            ))
+        # depth/baseScale 是「推摄像机」编辑元数据（运行时忽略），有则须为数值。
+        for k in ("depth", "baseScale"):
+            if k in layer and not _is_num(layer.get(k)):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{lwhere} 的 {k} 应为数值（推摄像机烘焙元数据），实为 {layer.get(k)!r}",
+                ))
+        # sourceKeyframes/sourceEasing 是相机模式下保留的「自身运动」（运行时忽略）。
+        sk = layer.get("sourceKeyframes")
+        if sk is not None and not isinstance(sk, list):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{lwhere} 的 sourceKeyframes 应为数组（自身运动原始帧），实为 {sk!r}",
+            ))
+        se = layer.get("sourceEasing")
+        if se is not None and se not in _PARALLAX_EASINGS:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{lwhere} 的 sourceEasing {se!r} 非法（仅 {sorted(_PARALLAX_EASINGS)}）",
+            ))
+        kfs = layer.get("keyframes")
+        if not isinstance(kfs, list) or not kfs:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{lwhere} 缺少非空 keyframes（至少一帧确定位置）",
+            ))
+            continue
+        prev_ms: float | None = None
+        for ki, kf in enumerate(kfs):
+            if not isinstance(kf, dict):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{lwhere} keyframes[{ki}] 不是对象",
+                ))
+                continue
+            for k in ("atMs", "x", "y"):
+                if not _is_num(kf.get(k)):
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"{lwhere} keyframes[{ki}].{k} 应为数值，实为 {kf.get(k)!r}",
+                    ))
+            for k in ("scale", "rotation", "alpha"):
+                if k in kf and not _is_num(kf.get(k)):
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"{lwhere} keyframes[{ki}].{k} 应为数值，实为 {kf.get(k)!r}",
+                    ))
+            ams = kf.get("atMs")
+            if _is_num(ams):
+                if prev_ms is not None and ams < prev_ms:
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"{lwhere} keyframes[{ki}] 的 atMs={ams} 小于前一帧 {prev_ms}"
+                        f"（运行时按顺序线性插值，乱序会得到意外轨迹）",
+                    ))
+                prev_ms = ams
+
+    # camera 是「推摄像机」的编辑器专用元数据：运行时完全忽略（只播 layers[].keyframes），
+    # 但结构错了要提醒，别写出编辑器读不回来的脏数据。
+    cam = scene.get("camera")
+    if cam is not None:
+        if not isinstance(cam, dict):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{where} 的 camera 应为对象（推摄像机元数据），实为 {cam!r}",
+            ))
+        else:
+            if "enabled" in cam and not isinstance(cam.get("enabled"), bool):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{where} camera.enabled 应为布尔，实为 {cam.get('enabled')!r}",
+                ))
+            cks = cam.get("keyframes")
+            if cks is not None and not isinstance(cks, list):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{where} camera.keyframes 应为数组",
+                ))
+            elif isinstance(cks, list):
+                for ci, ck in enumerate(cks):
+                    if not isinstance(ck, dict):
+                        issues.append(Issue(
+                            "error", data_type, item_id,
+                            f"{where} camera.keyframes[{ci}] 不是对象",
+                        ))
+                        continue
+                    if not _is_num(ck.get("atMs")):
+                        issues.append(Issue(
+                            "error", data_type, item_id,
+                            f"{where} camera.keyframes[{ci}].atMs 应为数值，实为 {ck.get('atMs')!r}",
+                        ))
+                    for k in ("panX", "panY", "zoom", "roll"):
+                        if k in ck and not _is_num(ck.get(k)):
+                            issues.append(Issue(
+                                "error", data_type, item_id,
+                                f"{where} camera.keyframes[{ci}].{k} 应为数值，实为 {ck.get(k)!r}",
+                            ))
+
+
+def _validate_parallax_scenes(model: ProjectModel, issues: list[Issue]) -> None:
+    """parallax_scenes.json（parallax Web 编辑器产物）注册表校验：id 唯一 + 逐场景结构。"""
+    scenes = getattr(model, "parallax_scenes", None)
+    if not scenes:
+        return
+    if not isinstance(scenes, list):
+        issues.append(Issue(
+            "error", "parallax", "parallax_scenes",
+            "parallax_scenes.json 顶层必须是数组",
+        ))
+        return
+    seen: set[str] = set()
+    for idx, scene in enumerate(scenes):
+        if not isinstance(scene, dict):
+            issues.append(Issue(
+                "error", "parallax", "parallax_scenes",
+                f"parallax_scenes[{idx}] 不是对象",
+            ))
+            continue
+        sid = str(scene.get("id") or "").strip()
+        if not sid:
+            issues.append(Issue(
+                "error", "parallax", "parallax_scenes",
+                f"parallax_scenes[{idx}] 缺 id",
+            ))
+            continue
+        if sid in seen:
+            issues.append(Issue(
+                "error", "parallax", sid,
+                f"重复的 parallax 场景 id {sid!r}（present:parallaxScene 按 id 取，重复会拿错）",
+            ))
+        seen.add(sid)
+        _validate_one_parallax_scene(
+            scene, issues, "parallax", sid, where=f"场景 {sid!r}",
+        )
+
+
+_SETFLAG_WHITELIST_CACHE: frozenset[str] | None = None
+_SETFLAG_WHITELIST_LOADED = False
+
+
+def _setflag_whitelist() -> frozenset[str] | None:
+    """内容侧 setFlag/appendFlag key 白名单（tools/editor/setflag_whitelist.json）。
+
+    返回 None = 文件缺失/损坏（规则失效，宁缺毋滥不误报）。规则背景：任务逻辑改状态
+    的唯一通道是 emitNarrativeSignal→叙事图，内容 JSON 里的裸 setFlag 限白名单。
+    """
+    global _SETFLAG_WHITELIST_CACHE, _SETFLAG_WHITELIST_LOADED
+    if _SETFLAG_WHITELIST_LOADED:
+        return _SETFLAG_WHITELIST_CACHE
+    _SETFLAG_WHITELIST_LOADED = True
+    from pathlib import Path
+    path = Path(__file__).resolve().parent / "setflag_whitelist.json"
+    try:
+        data = read_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        _SETFLAG_WHITELIST_CACHE = None
+        return None
+    keys = data.get("keys") if isinstance(data, dict) else None
+    if not isinstance(keys, list):
+        _SETFLAG_WHITELIST_CACHE = None
+        return None
+    _SETFLAG_WHITELIST_CACHE = frozenset(
+        str(k).strip() for k in keys if str(k).strip()
+    )
+    return _SETFLAG_WHITELIST_CACHE
+
+
+def _setflag_whitelist_issue(issues: list[Issue], action_type: str, key: str,
+                             data_type: str, item_id: str) -> None:
+    wl = _setflag_whitelist()
+    if wl is None or key in wl:
+        return
+    issues.append(Issue(
+        "warning", data_type, item_id,
+        f"{action_type} key {key!r} 不在 setFlag 白名单（tools/editor/setflag_whitelist.json）中；"
+        f"任务逻辑请走 emitNarrativeSignal→叙事图，确需新 flag 先登记白名单",
+    ))
 
 
 def _flag_issue(model: ProjectModel, issues: list[Issue], key: str,
@@ -1120,6 +1697,17 @@ def _append_action_param_ref_issues(
             issues.append(Issue(
                 "warning", data_type, item_id,
                 f"playSignalCue id {cid!r} 不在 signal_cues.json 中",
+            ))
+
+    if t == "activatePlane":
+        pid = str(p.get("id") or "").strip()
+        known = _plane_id_set(model)
+        if not pid:
+            issues.append(Issue("error", data_type, item_id, "activatePlane 缺少 id"))
+        elif pid not in known:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"activatePlane id {pid!r} 不在 planes.json 中",
             ))
 
     if t == "startDialogueGraph":
@@ -1366,6 +1954,16 @@ def _append_action_param_ref_issues(
                         "warning", data_type, item_id,
                         f"setEntityField {kind}.{field} state {value!r} 不在 {eid!r} 的 anim.json states 中",
                     ))
+            if meta.get("picker") == "portraitSlug" and isinstance(value, str) and value:
+                if model.project_path is not None and not (
+                    model.project_path / "public" / "resources" / "runtime" / "images"
+                    / "dialogue_portraits" / value.strip()
+                ).is_dir():
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"setEntityField {kind}.{field} 指向 {value!r}，但无对应立绘集目录 "
+                        f"public/resources/runtime/images/dialogue_portraits/{value.strip()}/",
+                    ))
 
     if t == "setSceneEntityPosition":
         sid = str(p.get("sceneId") or "").strip()
@@ -1414,13 +2012,18 @@ def _append_action_param_ref_issues(
                     f"setSceneEntityPosition 的 {key} 须为有限数",
                 ))
 
-    if t in ("hideOverlayImage", "showOverlayImage", "blendOverlayImage"):
-        oid = str(p.get("id") or "").strip()
-        if oid and overlay_keys and oid not in overlay_keys:
-            issues.append(Issue(
-                "warning", data_type, item_id,
-                f"{t} id {oid!r} 不在 overlay_images.json 的键中",
-            ))
+    if t in ("showOverlayImage", "blendOverlayImage"):
+        # 引用 overlay_images.json 的是图片参数(image / fromImage / toImage),
+        # 不是 id(id 仅为叠图层句柄,供 hideOverlayImage 寻址,可任意命名)。
+        # 仅当填的是短 id(非 / 开头的完整路径)时才比对登记表。
+        img_params = ("image",) if t == "showOverlayImage" else ("fromImage", "toImage")
+        for ip in img_params:
+            iv = str(p.get(ip) or "").strip()
+            if iv and not iv.startswith("/") and overlay_keys and iv not in overlay_keys:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} 的 {ip} {iv!r} 不在 overlay_images.json 的键中",
+                ))
 
     if t == "faceEntity":
         d = str(p.get("direction") or "").strip()
@@ -1788,12 +2391,42 @@ def _scan_condition_expr(
     ))
 
 
+def _collect_dialogue_graph_entry_overrides(model: ProjectModel) -> dict[str, set[str]]:
+    """图 id → 该图被 NPC 用 dialogueGraphEntry 指定的备用入口节点集合。
+
+    多入口共享图（如市井闲谈被十几个 NPC 各自从不同节点进入）的可达性必须把这些
+    override 入口也当根，否则会误报「流程孤儿」（审查 P1-33；运行时
+    GraphDialogueManager 明确支持 params.entry 覆盖入口）。"""
+    overrides: dict[str, set[str]] = {}
+    for sc in (getattr(model, "scenes", {}) or {}).values():
+        if not isinstance(sc, dict):
+            continue
+        for npc in sc.get("npcs") or []:
+            if not isinstance(npc, dict):
+                continue
+            gid = str(npc.get("dialogueGraphId", "") or "").strip()
+            dge = str(npc.get("dialogueGraphEntry", "") or "").strip()
+            if gid and dge:
+                overrides.setdefault(gid, set()).add(dge)
+        # 热区也可能带 dialogueGraphId/Entry
+        for hs in sc.get("hotspots") or []:
+            if not isinstance(hs, dict):
+                continue
+            data = hs.get("data") if isinstance(hs.get("data"), dict) else {}
+            gid = str(data.get("dialogueGraphId", "") or "").strip()
+            dge = str(data.get("dialogueGraphEntry", "") or "").strip()
+            if gid and dge:
+                overrides.setdefault(gid, set()).add(dge)
+    return overrides
+
+
 def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
     gd = model.dialogues_path / "graphs"
     if not gd.is_dir():
         return
     scen = _scenario_definitions(model)
     quest_ids = {str(q.get("id", "")) for q in model.quests if q.get("id")}
+    entry_overrides = _collect_dialogue_graph_entry_overrides(model)
     for path in sorted(gd.glob("*.json")):
         stem = path.stem
         try:
@@ -1875,6 +2508,58 @@ def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
                     "dialogueGraph", ctx, None,
                 )
 
+        # 连边 / 入口 / 流程孤儿完整性：过去仅编辑器保存时 validate_graph_tiered 校验，
+        # 全量校验漏检，悬空 next / 孤儿要打开编辑器才暴露。这里用同一套（无 Qt 依赖）helper 补齐。
+        from tools.dialogue_graph_editor.graph_document import (
+            extract_flow_edges,
+            nodes_reachable_from_entry,
+            validate_owner_context_state,
+        )
+
+        # ownerState / contextState 的 wrapper / state 存在性：过去只在编辑器保存时随
+        # validate_graph_tiered 校验，全量校验漏检（拼错 state / contextState graphId 非法
+        # 要打开那张图才暴露）。这里用同一套分层校验补齐（需项目上下文解析 wrapper 与图状态）。
+        oc_errors, oc_warnings = validate_owner_context_state(
+            gdata, project_root=model.project_path, project_model=model
+        )
+        for _msg in oc_errors:
+            issues.append(Issue("error", "dialogueGraph", stem, _msg))
+        for _msg in oc_warnings:
+            issues.append(Issue("warning", "dialogueGraph", stem, _msg))
+
+        entry = str(gdata.get("entry", "") or "").strip()
+        if entry and entry not in nodes:
+            issues.append(Issue(
+                "error", "dialogueGraph", stem,
+                f"entry {entry!r} 指向不存在的节点",
+            ))
+        for src, tgt, label in extract_flow_edges(nodes):
+            if tgt and tgt not in nodes:
+                issues.append(Issue(
+                    "error", "dialogueGraph", f"{stem}:{src}",
+                    f"连线 {label!r} 指向不存在的节点 {tgt!r}",
+                ))
+        if entry and entry in nodes:
+            # 备用入口（NPC/热区的 dialogueGraphEntry 覆盖）也算根，避免多入口共享图误报
+            roots = {entry} | {e for e in entry_overrides.get(stem, set()) if e in nodes}
+            gid_meta = str((meta or {}).get("id") or "").strip() if isinstance(meta, dict) else ""
+            gid_self = str(gdata.get("id") or "").strip()
+            for alt_key in (gid_meta, gid_self):
+                if alt_key:
+                    roots |= {e for e in entry_overrides.get(alt_key, set()) if e in nodes}
+            reachable: set[str] = set()
+            for r in roots:
+                reachable |= nodes_reachable_from_entry(nodes, r)
+            orphans = sorted(nid for nid in nodes if nid not in reachable)
+            if orphans:
+                preview = ", ".join(orphans[:10])
+                more = "…" if len(orphans) > 10 else ""
+                issues.append(Issue(
+                    "warning", "dialogueGraph", stem,
+                    f"{len(orphans)} 个节点无法从 entry={entry!r}（含备用入口）沿连线到达"
+                    f"（流程孤儿）: {preview}{more}",
+                ))
+
 
 def _walk_action_defs(
     model: ProjectModel, issues: list[Issue], actions: list,
@@ -1903,9 +2588,11 @@ def _walk_action_defs(
         p = act.get("params") or {}
         if t == "setFlag" and p.get("key"):
             _flag_issue(model, issues, str(p["key"]), data_type, item_id, scene_id)
+            _setflag_whitelist_issue(issues, "setFlag", str(p["key"]).strip(), data_type, item_id)
         elif t == "appendFlag" and p.get("key"):
             fk = str(p["key"])
             _flag_issue(model, issues, fk, data_type, item_id, scene_id)
+            _setflag_whitelist_issue(issues, "appendFlag", fk.strip(), data_type, item_id)
             from .flag_registry import registry_value_type_for_key
             rvt = registry_value_type_for_key(fk, model.flag_registry)
             if rvt != "string":
@@ -2122,7 +2809,7 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
 
     for ch in model.archive_characters:
         cid = str(ch.get("id", ""))
-        _walk_conditions(model, issues, ch.get("unlockConditions"), "archive", cid, None)
+        # 人物解锁只走 addArchiveEntry，无 unlockConditions 可校验；仅走分段显示条件 + 首阅动作。
         for imp in ch.get("impressions", []) or []:
             _walk_conditions(model, issues, imp.get("conditions"), "archive", cid, None)
         for ki in ch.get("knownInfo", []) or []:
@@ -2155,6 +2842,14 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
                 if not isinstance(ent, dict):
                     continue
                 eid = str(ent.get("id", "")).strip() or "?"
+                if not any(
+                    str(ent.get(k, "")).strip()
+                    for k in ("title", "content", "annotation", "illustration")
+                ):
+                    issues.append(Issue(
+                        "warning", "archive", f"{bid}/entry/{eid}",
+                        "书页子条目无任何可显示内容（标题/正文/按语/插图全空），运行时不可见",
+                    ))
                 _walk_conditions(
                     model, issues, ent.get("discoverConditions"),
                     "archive", f"{bid}/entry/{eid}", None,
@@ -2163,6 +2858,29 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
                     model, issues, ent.get("firstViewActions"),
                     "archive", f"{bid}/entry/{eid}", None,
                 )
+
+    # --- archive 顶层 id 去重：运行时按 id 建 Map（last-wins），重复 id 会让一条档案凭空消失 ---
+    def _check_archive_dup_ids(items, label: str) -> None:
+        seen: set[str] = set()
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            iid = str(it.get("id", "")).strip()
+            if not iid:
+                issues.append(Issue("warning", "archive", "?", f"{label}缺少 id"))
+                continue
+            if iid in seen:
+                issues.append(Issue(
+                    "error", "archive", iid, f"重复的{label} id {iid!r}"))
+            seen.add(iid)
+
+    _check_archive_dup_ids(model.archive_characters, "人物档案")
+    _lore_dup = model.archive_lore
+    if isinstance(_lore_dup, dict):
+        _lore_dup = _lore_dup.get("entries", [])
+    _check_archive_dup_ids(_lore_dup, "传说条目")
+    _check_archive_dup_ids(model.archive_documents, "文档档案")
+    _check_archive_dup_ids(model.archive_books, "书籍")
 
     cfg = model.game_config
     done_flag = cfg.get("initialCutsceneDoneFlag")
@@ -2184,6 +2902,42 @@ _CUTSCENE_STAGING_SAVE_ACTIONS = frozenset([
     "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "setEntityField", "setSceneEntityPosition", "setHotspotDisplayImage",
 ])
+
+# 与运行时 CutsceneManager.executePresent 的 switch 分支、编辑器 timeline_editor.PRESENT_TYPES 同源；
+# 三处须保持一致（新增 present 类型时同步）。
+_CUTSCENE_PRESENT_TYPES = frozenset([
+    "fadeToBlack", "fadeIn", "flashWhite", "waitTime", "waitClick",
+    "showTitle", "showDialogue", "showImg", "hideImg", "animLayer",
+    "showMovieBar", "hideMovieBar", "showSubtitle",
+    "cameraMove", "cameraZoom", "showCharacter",
+    "parallaxScene",
+])
+
+
+def _cutscene_has_show_movie_bar(steps: list) -> bool:
+    """整棵步骤树（含并行子轨）是否出现过 showMovieBar。"""
+    for step in steps or []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("kind") == "present" and step.get("type") == "showMovieBar":
+            return True
+        if step.get("kind") == "parallel" and _cutscene_has_show_movie_bar(step.get("tracks") or []):
+            return True
+    return False
+
+
+def _cutscene_subtitle_voice_id(step: dict) -> str:
+    raw = step.get("subtitleVoice")
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        sid = raw.get("id")
+        if isinstance(sid, str):
+            return sid.strip()
+        sid = raw.get("sfxId")
+        if isinstance(sid, str):
+            return sid.strip()
+    return ""
 
 
 def _walk_cutscene_action_param_refs(
@@ -2210,12 +2964,21 @@ def _walk_cutscene_action_param_refs(
 
 def _validate_cutscene_steps(
     model: ProjectModel, steps: list, cid: str, issues: list[Issue],
+    *, cutscene_movie_bar: bool | None = None, scan_param_refs: bool = True,
 ) -> None:
     from .shared.action_editor import ACTION_PERSISTENCE, ACTION_TYPES
     allowed_types = set(ACTION_TYPES)
 
-    temp_actor_ids = frozenset(_cutscene_temp_actor_ids_in_steps(steps))
-    _walk_cutscene_action_param_refs(model, issues, steps, cid, temp_actor_ids)
+    # 顶层调用时整树扫一次是否出现过 showMovieBar，供 movie 版式字幕校验（向并行子轨透传）。
+    if cutscene_movie_bar is None:
+        cutscene_movie_bar = _cutscene_has_show_movie_bar(steps)
+
+    # 参数引用只在顶层扫一次：_walk_cutscene_action_param_refs 本身已递归进 parallel 子轨，
+    # 且 temp_actor_ids 从整棵树采集（含外层 spawn）。并行子轨的递归 _validate_cutscene_steps
+    # 不得重扫——否则外层 spawn 的临时演员在子轨内被误报「无法解析」+ 参数告警翻倍（审查 P1-34）。
+    if scan_param_refs:
+        temp_actor_ids = frozenset(_cutscene_temp_actor_ids_in_steps(steps))
+        _walk_cutscene_action_param_refs(model, issues, steps, cid, temp_actor_ids)
 
     for i, step in enumerate(steps):
         if not isinstance(step, dict):
@@ -2248,7 +3011,151 @@ def _validate_cutscene_steps(
                     ))
 
         elif kind == "present":
-            pass
+            t = str(step.get("type", ""))
+            if t and t not in _CUTSCENE_PRESENT_TYPES:
+                issues.append(Issue(
+                    "error", "cutscene", cid,
+                    f"step #{i+1} 未知 present type {t!r}（运行时 CutsceneManager 会静默跳过）",
+                ))
+            if t == "showImg" and not str(step.get("image") or "").strip():
+                issues.append(Issue(
+                    "warning", "cutscene", cid,
+                    f"step #{i+1} showImg 缺 image（运行时将加载空路径）",
+                ))
+            if t == "animLayer":
+                af = str(step.get("animFile") or "").strip()
+                if not af:
+                    issues.append(Issue(
+                        "error", "cutscene", cid,
+                        f"step #{i+1} animLayer 缺 animFile（anim.json 路径）",
+                    ))
+                elif not af.endswith("anim.json"):
+                    issues.append(Issue(
+                        "warning", "cutscene", cid,
+                        f"step #{i+1} animLayer 的 animFile 通常指向 …/anim.json，实为 {af!r}",
+                    ))
+                for k in ("xPercent", "yPercent", "widthPercent", "alpha", "zIndex"):
+                    if k in step:
+                        v = step.get(k)
+                        if not isinstance(v, (int, float)) or isinstance(v, bool):
+                            issues.append(Issue(
+                                "error", "cutscene", cid,
+                                f"step #{i+1} animLayer.{k} 应为数值，实为 {v!r}",
+                            ))
+            if t == "parallaxScene":
+                inline = step.get("scene")
+                ref = str(step.get("id") or "").strip()
+                if isinstance(inline, dict):
+                    # 内联场景：就地按 parallax_scenes 同一套结构校验（复用注册表校验器）。
+                    _validate_one_parallax_scene(
+                        inline, issues, "cutscene", cid,
+                        where=f"step #{i+1} parallaxScene.scene",
+                    )
+                elif ref:
+                    known = {
+                        str(s.get("id") or "").strip()
+                        for s in (getattr(model, "parallax_scenes", None) or [])
+                        if isinstance(s, dict)
+                    }
+                    if ref not in known:
+                        issues.append(Issue(
+                            "error", "cutscene", cid,
+                            f"step #{i+1} parallaxScene id {ref!r} 不在 parallax_scenes.json 中"
+                            f"（运行时找不到场景会静默跳过该步）",
+                        ))
+                else:
+                    issues.append(Issue(
+                        "error", "cutscene", cid,
+                        f"step #{i+1} parallaxScene 需给 id（引用 parallax_scenes.json）"
+                        f"或内联 scene 对象",
+                    ))
+                if "handle" in step and not isinstance(step.get("handle"), str):
+                    issues.append(Issue(
+                        "error", "cutscene", cid,
+                        f"step #{i+1} parallaxScene 的 handle 应为字符串（叠层句柄；缺省=匿名镜头位，"
+                        f"被下一个 parallaxScene / 匿名 showImg 自动顶掉；写了则需 hideImg 手动收）",
+                    ))
+            if t == "showImg" and "zIndex" in step:
+                zi = step.get("zIndex")
+                if not isinstance(zi, (int, float)) or isinstance(zi, bool):
+                    issues.append(Issue(
+                        "error", "cutscene", cid,
+                        f"step #{i+1} showImg 的 zIndex 应为数值，实为 {zi!r}",
+                    ))
+                elif zi >= 10000:
+                    issues.append(Issue(
+                        "warning", "cutscene", cid,
+                        f"step #{i+1} showImg zIndex={zi} ≥ 10000（会盖过电影黑边，通常不该这样）",
+                    ))
+            if t == "showImg" and "kenBurns" in step:
+                kb = step.get("kenBurns")
+                if not isinstance(kb, dict):
+                    issues.append(Issue(
+                        "error", "cutscene", cid,
+                        f"step #{i+1} showImg 的 kenBurns 应为对象（运行时非对象会被忽略）",
+                    ))
+                else:
+                    _KB_KEYS = {"fromScale", "toScale", "fromX", "fromY", "toX", "toY", "durationMs"}
+                    for k, v in kb.items():
+                        if k not in _KB_KEYS:
+                            issues.append(Issue(
+                                "warning", "cutscene", cid,
+                                f"step #{i+1} kenBurns 含未知键 {k!r}（运行时忽略；已知键：{sorted(_KB_KEYS)}）",
+                            ))
+                        elif not isinstance(v, (int, float)) or isinstance(v, bool):
+                            issues.append(Issue(
+                                "error", "cutscene", cid,
+                                f"step #{i+1} kenBurns.{k} 应为数值，实为 {v!r}",
+                            ))
+                    for k in ("fromScale", "toScale"):
+                        v = kb.get(k)
+                        if isinstance(v, (int, float)) and not isinstance(v, bool) and v < 1:
+                            issues.append(Issue(
+                                "warning", "cutscene", cid,
+                                f"step #{i+1} kenBurns.{k}={v} 小于 1（运行时会夹到 1，等于没推）",
+                            ))
+                    dur = kb.get("durationMs")
+                    if isinstance(dur, (int, float)) and not isinstance(dur, bool) and dur <= 0:
+                        issues.append(Issue(
+                            "warning", "cutscene", cid,
+                            f"step #{i+1} kenBurns.durationMs={dur} 非正数（运行时按 12000 处理）",
+                        ))
+                    if not kb:
+                        issues.append(Issue(
+                            "warning", "cutscene", cid,
+                            f"step #{i+1} kenBurns 为空对象，等于未启用（可删掉该键）",
+                        ))
+            if t == "showSubtitle":
+                band = str(step.get("subtitleBand") or "").strip()
+                align = str(step.get("subtitleAlign") or "").strip()
+                if (band or align) and not cutscene_movie_bar:
+                    issues.append(Issue(
+                        "warning", "cutscene", cid,
+                        f"step #{i+1} 字幕用了相对黑边版式（subtitleBand/Align），"
+                        f"但本过场没有 showMovieBar，运行时黑边不存在",
+                    ))
+                voice_id = _cutscene_subtitle_voice_id(step)
+                if voice_id and voice_id not in (model.audio_config.get("sfx") or {}):
+                    issues.append(Issue(
+                        "warning", "cutscene", cid,
+                        f"step #{i+1} subtitleVoice {voice_id!r} 不在 audio_config.sfx 中",
+                    ))
+                if "subtitleAutoAdvance" in step:
+                    aa = step.get("subtitleAutoAdvance")
+                    aa_is_voice = aa == "voice"
+                    aa_is_ms = isinstance(aa, (int, float)) and not isinstance(aa, bool) and aa > 0
+                    if not (aa_is_voice or aa_is_ms):
+                        issues.append(Issue(
+                            "error", "cutscene", cid,
+                            f"step #{i+1} subtitleAutoAdvance 应为 \"voice\" 或正毫秒数，实为 {aa!r}"
+                            f"（运行时非法值退化为等待点击）",
+                        ))
+                    if aa_is_voice and not voice_id:
+                        issues.append(Issue(
+                            "warning", "cutscene", cid,
+                            f"step #{i+1} subtitleAutoAdvance=\"voice\" 但未配置 subtitleVoice"
+                            f"（运行时退化为等待点击）",
+                        ))
 
         elif kind == "parallel":
             tr = step.get("tracks") or []
@@ -2257,7 +3164,9 @@ def _validate_cutscene_steps(
                     "warning", "cutscene", cid,
                     f"step #{i+1} parallel 的 tracks 为空（运行时该步将立即结束，确认是否占位遗漏）",
                 ))
-            _validate_cutscene_steps(model, tr, cid, issues)
+            _validate_cutscene_steps(
+                model, tr, cid, issues, cutscene_movie_bar=cutscene_movie_bar,
+                scan_param_refs=False)
 
         elif kind:
             issues.append(Issue(

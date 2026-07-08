@@ -115,12 +115,21 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   }
 
   addCoins(amount: number): void {
+    /** B7：非有限金额拒绝写入——NaN 一旦混进 coins 会随存档扩散（`NaN < x` 恒 false 等） */
+    if (typeof amount !== 'number' || !Number.isFinite(amount)) {
+      console.warn(`InventoryManager.addCoins: 非法金额 ${String(amount)}，已拒绝`);
+      return;
+    }
     this.coins += amount;
     this.flagStore.set('coins', this.coins);
     this.eventBus.emit('currency:changed', { amount, newTotal: this.coins });
   }
 
   removeCoins(amount: number): boolean {
+    if (typeof amount !== 'number' || !Number.isFinite(amount)) {
+      console.warn(`InventoryManager.removeCoins: 非法金额 ${String(amount)}，已拒绝`);
+      return false;
+    }
     if (this.coins < amount) return false;
     this.coins -= amount;
     this.flagStore.set('coins', this.coins);
@@ -177,6 +186,9 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
     }
     this.coins = data.coins ?? 0;
     this.flagStore.set('coins', this.coins);
+    // 读档后刷新 HUD 铜钱显示。amount=0 表示非增减、仅对账——音效消费者按 amount 正负播币声，
+    // 0 不会触发；restored=true 供其它副作用消费者识别忽略。
+    this.eventBus.emit('currency:changed', { amount: 0, newTotal: this.coins, restored: true });
   }
 
   destroy(): void {

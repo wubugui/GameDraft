@@ -42,11 +42,10 @@
   "npcs": [
     {
       "id": "npc_埃德加",
-      "name": "埃德加",
+      "characterId": "edgar",
       "x": 1017.44,
       "y": 683.14,
       "interactionRange": 101.74,
-      "animFile": "/resources/runtime/animation/埃德加_anim/anim.json",
       "initialAnimState": "埃德加_走路",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_城门汇合",
@@ -54,11 +53,10 @@
     },
     {
       "id": "npc_克拉拉城门",
-      "name": "克拉拉",
+      "characterId": "clara",
       "x": 1133.72,
       "y": 726.74,
       "interactionRange": 101.74,
-      "animFile": "/resources/runtime/animation/克拉拉_anim/anim.json",
       "initialAnimState": "克拉拉_走路",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_城门汇合",

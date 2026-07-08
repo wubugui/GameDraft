@@ -88,6 +88,11 @@ export class EncounterManager implements IGameSystem {
     }
   }
 
+  /** 只读查询：遭遇 def 是否已加载（供 ActionRegistry 先验证再 setState，R13）。 */
+  hasEncounter(encounterId: string): boolean {
+    return this.encounterDefs.has(encounterId);
+  }
+
   startEncounter(encounterId: string): void {
     const def = this.encounterDefs.get(encounterId);
     if (!def) {
@@ -190,6 +195,17 @@ export class EncounterManager implements IGameSystem {
         resultActions: opt.resultActions,
         resultText: opt.resultText ? this.r(opt.resultText) : opt.resultText,
       });
+    }
+
+    if (this.currentOptions.length === 0) {
+      // 选项被条件/规矩门槛过滤殆尽：不发空数组让 UI 干等（选项相无 Esc/离开出口，唯一恢复
+      // 路径 encounter:resultDone 永不到来）。记 error 后走正常 endEncounter 收束——
+      // encounter:end 发出，EventBridge 恢复 Exploring、EncounterUI 关闭。
+      console.error(
+        `EncounterManager: encounter "${this.currentEncounter.id}" 过滤后选项集为空，自动收束（检查各选项 conditions / requiredRuleId 配置）`,
+      );
+      this.endEncounter();
+      return;
     }
 
     this.eventBus.emit('encounter:options', { options: this.currentOptions });

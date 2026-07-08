@@ -18,9 +18,8 @@ from PySide6.QtWidgets import (
     QSizePolicy, QWidget, QStyle, QSplitter, QTreeWidget,
     QTreeWidgetItem, QStackedWidget, QToolButton,
 )
-from PySide6.QtGui import QAction, QKeySequence, QActionGroup
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize, QSettings
-from PySide6.QtWidgets import QApplication
 
 from . import theme
 from .project_model import ProjectModel
@@ -37,17 +36,21 @@ _VITE_DEV_URL_RE = re.compile(
 SOURCE_NAVIGATION_TABS = {
     "quest": "Quest",
     "encounter": "Encounter",
+    "scene": "Scene",
     "scene_npc": "Scene",
     "scene_hotspot": "Scene",
     "scene_zone": "Scene",
     "scene_zone_rule": "Scene",
+    "plane": "位面",
 }
 
 SOURCE_NAVIGATION_SELECTORS = {
+    "scene": "select_scene_by_id",
     "scene_npc": "select_npc_by_id",
     "scene_hotspot": "select_hotspot_by_id",
     "scene_zone": "select_zone_by_id",
     "scene_zone_rule": "select_zone_by_id",
+    "plane": "select_by_id",
 }
 
 
@@ -154,6 +157,23 @@ class _StackPageHost(QWidget):
 
 
 class MainWindow(QMainWindow):
+    def _stack_index_of_page(self, page: QWidget | None) -> int:
+        """页都包在 _StackPageHost 里，QStackedWidget.indexOf 对孙子控件恒返 -1——
+        必须逐页解包比较（审查 P1-29：F5 不再自动切「运行与预览」页的根因）。"""
+        if page is None:
+            return -1
+        for i in range(self._stack.count()):
+            w = self._stack.widget(i)
+            if w is page:
+                return i
+            if isinstance(w, _StackPageHost):
+                lay = w.layout()
+                if lay is not None and lay.count() > 0:
+                    item = lay.itemAt(0)
+                    if item is not None and item.widget() is page:
+                        return i
+        return -1
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("GameDraft Editor")
@@ -182,6 +202,8 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
         )
         self._stack = QStackedWidget()
+        # 切页时让激活的编辑器重拉跨域引用候选(别处新增的 item/encounter/filter 等)。
+        self._stack.currentChanged.connect(self._on_stack_page_changed)
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.addWidget(self._nav_tree)
         self._splitter.addWidget(self._stack)
@@ -269,38 +291,18 @@ class MainWindow(QMainWindow):
         self._act(ext, "Copy Manager", self._launch_copy_manager_external)
         self._act(ext, "Video to Atlas", self._launch_video_to_atlas_external)
         self._act(ext, "Production Workbench", self._launch_production_workbench_external)
+        self._act(ext, "Parallax 场景编辑器", self._launch_parallax_editor_external)
 
         view_menu = mb.addMenu("View")
-        ag_theme = QActionGroup(self)
-        self._act_theme_light = QAction("浅色主题", self, checkable=True)
-        self._act_theme_dark = QAction("黑色主题", self, checkable=True)
-        self._act_theme_modern = QAction("现代清爽 (类 VS Code)", self, checkable=True)
-        ag_theme.addAction(self._act_theme_light)
-        ag_theme.addAction(self._act_theme_dark)
-        ag_theme.addAction(self._act_theme_modern)
-        self._act_theme_light.triggered.connect(
-            lambda: self._apply_ui_theme(theme.THEME_LIGHT))
-        self._act_theme_dark.triggered.connect(
-            lambda: self._apply_ui_theme(theme.THEME_DARK))
-        self._act_theme_modern.triggered.connect(
-            lambda: self._apply_ui_theme(theme.THEME_MODERN))
-        view_menu.addAction(self._act_theme_light)
-        view_menu.addAction(self._act_theme_dark)
-        view_menu.addAction(self._act_theme_modern)
-        tid = theme.current_theme_id()
-        self._act_theme_light.setChecked(tid == theme.THEME_LIGHT)
-        self._act_theme_dark.setChecked(tid == theme.THEME_DARK)
-        self._act_theme_modern.setChecked(tid == theme.THEME_MODERN)
+        self._act(view_menu, "编辑器设置…", self._open_editor_settings, "Ctrl+,")
 
-    def _apply_ui_theme(self, theme_id: str) -> None:
-        app = QApplication.instance()
-        if app is None:
-            return
-        theme.apply_application_theme(app, theme_id)
-        theme.settings_save_theme(theme_id)
-        self._act_theme_light.setChecked(theme_id == theme.THEME_LIGHT)
-        self._act_theme_dark.setChecked(theme_id == theme.THEME_DARK)
-        self._act_theme_modern.setChecked(theme_id == theme.THEME_MODERN)
+    def _open_editor_settings(self) -> None:
+        from .editors.settings_dialog import EditorSettingsDialog
+
+        EditorSettingsDialog(self).exec()
+
+    def on_appearance_changed(self) -> None:
+        """主题/字体被设置对话框改动后,刷新图形视图与各编辑器。"""
         self._sync_theme_to_editors()
 
     def _sync_theme_to_editors(self) -> None:
@@ -542,6 +544,20 @@ class MainWindow(QMainWindow):
             root=root,
         )
 
+    def _launch_parallax_editor_external(self) -> None:
+        """Parallax 视差场景编辑器：另起 Vite dev(端口 5205)+开浏览器；已在跑则复用。
+
+        与 anim_preview 同款：Vite 服务的是编辑器自身仓库的 public/（图片扫描 +
+        parallax_scenes.json 读写都在此仓库），且 `-m tools.parallax_editor` 需要 tools
+        包可导入，故 cwd 固定用编辑器仓库根，而非用户当前打开的工程目录。
+        """
+        self._launch_external_tool(
+            "tools.parallax_editor",
+            [],
+            "Parallax Editor",
+            root=self._editor_package_parents(),
+        )
+
     def _clear_editor_stack(self) -> None:
         while self._stack.count():
             w = self._stack.widget(0)
@@ -607,6 +623,19 @@ class MainWindow(QMainWindow):
         finally:
             self._nav_tree.blockSignals(False)
 
+    def _on_stack_page_changed(self, index: int) -> None:
+        """切到某编辑器页时,让它重拉跨域引用候选(保留各自当前选中值)。
+
+        _editor_instances 与 stack 前缀对齐(Game 浏览页在末尾且不入该列表),
+        故按 index 取实例;hook 缺省时跳过。重拉走各编辑器 reload_refs_from_model,
+        只刷新引用下拉,不重置表单字段。
+        """
+        if 0 <= index < len(self._editor_instances):
+            inst = self._editor_instances[index]
+            fn = getattr(inst, "reload_refs_from_model", None)
+            if callable(fn):
+                fn()
+
     def _populate_tabs(self) -> None:
         self._clear_editor_stack()
         self._nav_tree.clear()
@@ -626,6 +655,7 @@ class MainWindow(QMainWindow):
         from .editors.audio_editor import AudioEditor
         from .editors.anim_editor import AnimEditor
         from .editors.string_editor import StringEditor
+        from .editors.character_registry_editor import CharacterRegistryEditor
         from .editors.game_config_editor import GameConfigEditor
         from .editors.player_avatar_editor import PlayerAvatarEditor
         from .editors.flag_registry_editor import FlagRegistryEditor
@@ -643,13 +673,16 @@ class MainWindow(QMainWindow):
         from .editors.paper_craft_editor import PaperCraftEditor
         from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
         from .editors.smell_profile_editor import SmellProfileEditor
+        from .editors.plane_editor import PlaneEditor
 
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
+            (["物理世界"], "角色", CharacterRegistryEditor),
             (["物理世界"], "Map", MapEditor),
             (["数据编辑", "叙事编排"], "过场", TimelineEditor),
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
             (["数据编辑", "叙事编排"], "叙事状态机", NarrativeStateEditor),
+            (["数据编辑", "叙事编排"], "位面", PlaneEditor),
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
             (["数据编辑", "叙事编排"], "临场长按", PressureHoldEditor),
             (["数据编辑", "叙事编排"], "信号Cue", SignalCueEditor),
@@ -855,7 +888,7 @@ class MainWindow(QMainWindow):
                 self._status.showMessage("开发服务器正在启动；就绪后会自动打开预览。", 5000)
                 if self._game_browser is not None:
                     self._game_browser.show_message("Starting dev server…")
-                    idx = self._stack.indexOf(self._game_browser)
+                    idx = self._stack_index_of_page(self._game_browser)
                     if idx >= 0:
                         self._show_stack_page(idx)
             return
@@ -907,7 +940,7 @@ class MainWindow(QMainWindow):
         )
         if open_when_ready and self._game_browser is not None:
             self._game_browser.show_message("Starting dev server…")
-            idx = self._stack.indexOf(self._game_browser)
+            idx = self._stack_index_of_page(self._game_browser)
             if idx >= 0:
                 self._show_stack_page(idx)
         self._game_ready_timer.start(60_000)
@@ -967,7 +1000,7 @@ class MainWindow(QMainWindow):
                 "Game is running in a separate window.\n"
                 "Press F5 to reopen if closed.",
             )
-            idx = self._stack.indexOf(self._game_browser)
+            idx = self._stack_index_of_page(self._game_browser)
             if idx >= 0:
                 self._show_stack_page(idx)
 
@@ -1187,31 +1220,52 @@ class MainWindow(QMainWindow):
             self._status.showMessage("Game stopped.", 3000)
 
     def _build_game(self) -> None:
+        """异步 QProcess 构建：不再同步 subprocess.run 冻结整个编辑器；
+        并与 dev server 一致走 _npm_run_command + PATH 补全（Dock/Finder 启动也找得到 npm）。"""
         if self._model.project_path is None:
             return
         if not self._save_all():
             return
-        # 跨平台:Windows 走 cmd /c（npm 是 .cmd），mac/Linux 直接调 npm。
-        if sys.platform == "win32":
-            cmd = ["cmd", "/c", "npm", "run", "build"]
-        else:
-            cmd = ["npm", "run", "build"]
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(self._model.project_path),
-                capture_output=True, text=True,
-            )
-        except FileNotFoundError:
-            QMessageBox.critical(
+        if getattr(self, "_build_proc", None) is not None:
+            QMessageBox.information(self, "Build", "已有构建在进行中。")
+            return
+        program, args = _npm_run_command("run", "build")
+        proc = QProcess(self)
+        proc.setWorkingDirectory(str(self._model.project_path))
+        proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        env = QProcessEnvironment.systemEnvironment()
+        _augment_env_for_nodejs(env)
+        proc.setProcessEnvironment(env)
+        self._build_log = ""
+
+        def _on_out() -> None:
+            self._build_log += bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+
+        def _on_done(code: int, _status: QProcess.ExitStatus) -> None:
+            _on_out()
+            self._build_proc = None
+            self._status.showMessage("", 1)
+            if code == 0:
+                QMessageBox.information(self, "Build", "Build successful!\nOutput: dist/")
+            else:
+                tail = "\n".join(self._build_log.splitlines()[-40:])
+                QMessageBox.critical(self, "Build Error", tail or f"npm run build 退出码 {code}")
+
+        proc.readyReadStandardOutput.connect(_on_out)
+        proc.finished.connect(_on_done)
+        proc.errorOccurred.connect(
+            lambda _e: QMessageBox.critical(
                 self, "Build Error",
                 "未找到 npm，请确认已安装 Node.js 且 npm 在 PATH 中。",
-            )
+            ) if proc.error() == QProcess.ProcessError.FailedToStart else None,
+        )
+        proc.start(program, args)
+        if not proc.waitForStarted(4000):
+            self._build_proc = None
+            proc.deleteLater()
             return
-        if result.returncode == 0:
-            QMessageBox.information(self, "Build", "Build successful!\nOutput: dist/")
-        else:
-            QMessageBox.critical(self, "Build Error", result.stderr or result.stdout)
+        self._build_proc = proc
+        self._status.showMessage("正在后台构建（npm run build）…", 10000)
 
     # ---- validation -------------------------------------------------------
 
@@ -1317,6 +1371,21 @@ class MainWindow(QMainWindow):
                     select(cid)
                 return
 
+    def navigate_to_plane(self, plane_id: str) -> None:
+        """切换到「位面」页并选中指定 planeId（叙事状态 state.activePlane 跳转落点）。"""
+        from .editors.plane_editor import PlaneEditor
+
+        pid = (plane_id or "").strip()
+        if not pid:
+            return
+        for i, ed in enumerate(self._editor_instances):
+            if isinstance(ed, PlaneEditor):
+                self._show_stack_page(i)
+                select = getattr(ed, "select_by_id", None)
+                if callable(select):
+                    select(pid)
+                return
+
     def _on_navigate_to_source(self, source_type: str, source_id: str, scene_id: str) -> None:
         if source_type == "dialogue_graph":
             self.navigate_to_dialogue_graph(source_id)
@@ -1340,6 +1409,21 @@ class MainWindow(QMainWindow):
         if not self._confirm_pending_editor_changes():
             event.ignore()
             return
+        # 先把各面板未应用的编辑 flush 进模型再判 dirty——否则"改了字段没 Ctrl+S 直接关窗"
+        # 会绕过下面的保存询问被静默丢弃（审查 P1-5）。各 flush 均已条件化：零编辑时不产生伪脏。
+        try:
+            if not self._flush_editors_to_model():
+                event.ignore()
+                return
+        except Exception as e:
+            r = QMessageBox.question(
+                self, "未保存的编辑无法提交",
+                f"{e}\n\n仍要关闭并丢弃这些编辑吗？",
+                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            )
+            if r != QMessageBox.StandardButton.Discard:
+                event.ignore()
+                return
         if self._model.is_dirty:
             r = QMessageBox.question(
                 self, "Unsaved Changes",

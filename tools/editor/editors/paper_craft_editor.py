@@ -23,6 +23,7 @@ from ..shared.action_editor import ActionEditor
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
 from ..shared.hex_color_pick_row import HexColorPickRow
+from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 
@@ -131,6 +132,27 @@ class PaperCraftEditor(QWidget):
         right = QVBoxLayout()
         body.addLayout(right, 1)
 
+        # 实例级字段：显示名 + 可选纸人底图（此前 GUI 无法编辑，只能手改 JSON）。
+        inst_box = QGroupBox("实例设置")
+        inst_form = compact_form(QFormLayout(inst_box))
+        self.instance_label_edit = QLineEdit()
+        self.instance_label_edit.setMaximumWidth(240)  # 短标题：上限而非下限，小屏可缩
+        self.instance_label_edit.setToolTip(
+            "实例显示名（同步写入 index 与实例文件；运行时小游戏列表据此显示）"
+        )
+        self.instance_label_edit.editingFinished.connect(self._write_instance_meta)
+        self.instance_bg = CutsceneImagePathRow(
+            self._model, "", external_copy_subdir="paper_craft",
+        )
+        self.instance_bg.setToolTip(
+            "可选：纸人底图。留空则用中性背板。运行时作半透明背景，"
+            "编辑器槽位画布也据此显示底图。"
+        )
+        self.instance_bg.changed.connect(self._write_instance_meta)
+        inst_form.addRow("名称", self.instance_label_edit)
+        inst_form.addRow("底图", self.instance_bg)
+        left.addWidget(inst_box)
+
         order_box = QGroupBox("订单")
         order_form = compact_form(QFormLayout(order_box))
         self.order_combo = self._make_list(
@@ -209,10 +231,19 @@ class PaperCraftEditor(QWidget):
         self.part_tags.setPlaceholderText("逗号分隔，如：点眼犯忌, 红白相冲")
         self.part_tags.setMaximumWidth(240)  # 上限而非下限，小屏可缩
         self.part_tags.editingFinished.connect(self._write_part)
+        self.part_image = CutsceneImagePathRow(
+            self._model, "", external_copy_subdir="paper_craft",
+        )
+        self.part_image.setToolTip(
+            "可选：部件图片。留空则运行时按部件 id 取 "
+            "minigames/paper_craft/parts/<id>.png。"
+        )
+        self.part_image.changed.connect(self._write_part)
         part_form.addRow("部件列表", self._list_with_tools(self.part_combo))
         part_form.addRow("显示名", self.part_label)
         part_form.addRow("分数", self.part_score)
         part_form.addRow("结果标签", self.part_tags)
+        part_form.addRow("图片", self.part_image)
         left.addWidget(part_box)
 
         slot_box = QGroupBox("槽位")
@@ -276,10 +307,15 @@ class PaperCraftEditor(QWidget):
         self.paper_score.valueChanged.connect(self._write_paper)
         self.paper_tint = HexColorPickRow("#cccccc", title="纸色 tint")
         self.paper_tint.changed.connect(self._write_paper)
+        self.paper_tags = QLineEdit()
+        self.paper_tags.setPlaceholderText("逗号分隔，如：红白相冲, 纸色不合")
+        self.paper_tags.setMaximumWidth(240)  # 上限而非下限，小屏可缩
+        self.paper_tags.editingFinished.connect(self._write_paper)
         paper_form.addRow("纸色列表", self._list_with_tools(self.paper_combo))
         paper_form.addRow("显示名", self.paper_label)
         paper_form.addRow("分数", self.paper_score)
         paper_form.addRow("色值 tint", self.paper_tint)
+        paper_form.addRow("结果标签", self.paper_tags)
         right.addWidget(paper_box)
 
         finish_box = QGroupBox("收尾")
@@ -504,6 +540,10 @@ class PaperCraftEditor(QWidget):
         iid = self._current_instance_id()
         self._doc = self._model.paper_craft_instances.get(str(iid)) if iid else None
         self._syncing = True
+        self.instance_label_edit.setText(str((self._doc or {}).get("label") or ""))
+        self.instance_bg.set_path(str((self._doc or {}).get("backgroundImage") or ""))
+        self.instance_label_edit.setEnabled(self._doc is not None)
+        self.instance_bg.setEnabled(self._doc is not None)
         self.order_combo.clear()
         for order in (self._doc or {}).get("orders", []):
             if isinstance(order, dict):
@@ -513,6 +553,30 @@ class PaperCraftEditor(QWidget):
             self.order_combo.setCurrentIndex(0)
         else:
             self._select_order()
+
+    def _write_instance_meta(self) -> None:
+        """写回实例显示名与底图：label 同步 index 行 + 实例文件 + 左侧列表显示文本；
+        backgroundImage 仅在有值或键已存在时写（不给从无此键的实例凭空加键），并刷新画布底图。"""
+        if self._syncing or self._doc is None:
+            return
+        iid = self._current_instance_id()
+        if not iid:
+            return
+        label = self.instance_label_edit.text()
+        self._doc["label"] = label
+        # 运行时小游戏列表读 index 的 label，需与实例文件保持一致。
+        for row in self._model.paper_craft_index:
+            if isinstance(row, dict) and str(row.get("id") or "") == iid:
+                row["label"] = label
+                break
+        it = self.instance_list.currentItem()
+        if it is not None:
+            it.setText(f"{label}  [{iid}]")
+        bg = self.instance_bg.path().strip()
+        if bg or "backgroundImage" in self._doc:
+            self._doc["backgroundImage"] = bg
+        self._refresh_slot_canvas()
+        self._mark_dirty()
 
     def _select_order(self) -> None:
         if self._syncing:
@@ -538,8 +602,9 @@ class PaperCraftEditor(QWidget):
             "correctPaper": "",
             "successScore": 76,
             "warnScore": 50,
-            "paperOptions": [],
-            "finishOptions": [],
+            # 运行时要求两组选项非空（缺失加载即拒），保存侧也会拦；播种一条 stub 起步。
+            "paperOptions": [{"id": "paper_1", "label": "新纸色", "tint": "#cccccc", "score": 0}],
+            "finishOptions": [{"id": "finish_1", "label": "新收尾", "score": 0, "tags": []}],
             "slots": [],
             "parts": [],
         })
@@ -659,19 +724,27 @@ class PaperCraftEditor(QWidget):
 
     def _select_part(self) -> None:
         self._part = self._pick_from("parts", self.part_combo.currentIndex())
+        _prev_sync = self._syncing  # 嵌套调用不得提前解锁外层（审查 P2-22）
         self._syncing = True
         p = self._part or {}
         self.part_label.setText(str(p.get("label") or ""))
         self.part_score.setValue(int(p.get("score") or 0))
         self.part_tags.setText(", ".join(str(x) for x in p.get("tags", []) if x))
-        self._syncing = False
+        self.part_image.set_path(str(p.get("image") or ""))
+        self._syncing = _prev_sync
 
     def _write_part(self) -> None:
         if self._syncing or not self._part:
             return
         self._part["label"] = self.part_label.text()
         self._part["score"] = self.part_score.value()
-        self._part["tags"] = self._split_tags(self.part_tags.text())
+        _ptags = self._split_tags(self.part_tags.text())
+        if _ptags or "tags" in self._part:
+            self._part["tags"] = _ptags
+        # image：仅在有值或键已存在时写，避免给本无此键的部件凭空加 "image": ""。
+        img = self.part_image.path().strip()
+        if img or "image" in self._part:
+            self._part["image"] = img
         self._mark_dirty()
 
     def _order_list(self, key: str) -> list | None:
@@ -746,6 +819,7 @@ class PaperCraftEditor(QWidget):
 
     def _select_slot(self) -> None:
         self._slot = self._pick_from("slots", self.slot_combo.currentIndex())
+        _prev_sync = self._syncing  # 嵌套调用不得提前解锁外层（审查 P2-22）
         self._syncing = True
         s = self._slot or {}
         self.slot_label.setText(str(s.get("label") or ""))
@@ -756,7 +830,7 @@ class PaperCraftEditor(QWidget):
         self.slot_h.setValue(int(s.get("height") or 0))
         self._refresh_accepts_list()
         self.slot_canvas.set_selected_row(self.slot_combo.currentIndex())
-        self._syncing = False
+        self._syncing = _prev_sync
 
     def _slots_for_canvas(self) -> list[dict]:
         rows = (self._order or {}).get("slots")
@@ -826,7 +900,10 @@ class PaperCraftEditor(QWidget):
         if self._syncing or not self._slot:
             return
         self._slot["label"] = self.slot_label.text()
-        self._slot["optional"] = self.slot_optional.isChecked()
+        # optional：仅在勾选或键已存在时写，避免给本无此键的槽位凭空加 "optional": false
+        # （与同文件 part.image / paper.tags 的守门范式一致，审查 P3）
+        if self.slot_optional.isChecked() or "optional" in self._slot:
+            self._slot["optional"] = self.slot_optional.isChecked()
         self._slot["x"] = self.slot_x.value()
         self._slot["y"] = self.slot_y.value()
         self._slot["width"] = self.slot_w.value()
@@ -879,14 +956,34 @@ class PaperCraftEditor(QWidget):
         self._slot["accepts"] = ids
         self._mark_dirty()
 
+    def _refresh_correct_paper_combo(self) -> None:
+        """纸色列表变化后就地刷新 correctPaper 候选（审查 P2-25：旧实现只在重选订单时
+        重建，新纸色选不到、删除后残留 stale 项）。保持当前选择；悬垂落「（未设置）」。"""
+        o = self._order or {}
+        cur = str(o.get("correctPaper") or "")
+        cb = self.correct_paper_combo
+        cb.blockSignals(True)
+        try:
+            cb.clear()
+            cb.addItem("（未设置）", "")
+            for p_ in o.get("paperOptions", []):
+                if isinstance(p_, dict):
+                    cb.addItem(str(p_.get("label") or p_.get("id") or ""), str(p_.get("id") or ""))
+            i = cb.findData(cur)
+            cb.setCurrentIndex(i if i >= 0 else 0)
+        finally:
+            cb.blockSignals(False)
+
     def _select_paper(self) -> None:
         self._paper = self._pick_from("paperOptions", self.paper_combo.currentIndex())
+        _prev_sync = self._syncing  # 嵌套调用不得提前解锁外层（审查 P2-22）
         self._syncing = True
         p = self._paper or {}
         self.paper_label.setText(str(p.get("label") or ""))
         self.paper_score.setValue(int(p.get("score") or 0))
         self.paper_tint.set_hex(str(p.get("tint") or "#cccccc"))
-        self._syncing = False
+        self.paper_tags.setText(", ".join(str(x) for x in p.get("tags", []) if x))
+        self._syncing = _prev_sync
 
     def _write_paper(self) -> None:
         if self._syncing or not self._paper:
@@ -894,6 +991,10 @@ class PaperCraftEditor(QWidget):
         self._paper["label"] = self.paper_label.text()
         self._paper["score"] = self.paper_score.value()
         self._paper["tint"] = self.paper_tint.hex().strip()
+        # tags：仅在有值或键已存在时写，避免给本无此键的纸色凭空加 "tags": []。
+        tags = self._split_tags(self.paper_tags.text())
+        if tags or "tags" in self._paper:
+            self._paper["tags"] = tags
         self._mark_dirty()
 
     def _add_paper(self) -> None:
@@ -907,6 +1008,7 @@ class PaperCraftEditor(QWidget):
             "score": 0,
         })
         self._refill_order_list(self.paper_combo, "paperOptions", len(rows) - 1, self._select_paper)
+        self._refresh_correct_paper_combo()
         self._mark_dirty()
 
     def _remove_paper(self) -> None:
@@ -922,23 +1024,27 @@ class PaperCraftEditor(QWidget):
         self._refill_order_list(
             self.paper_combo, "paperOptions", min(idx, len(rows) - 1), self._select_paper
         )
+        self._refresh_correct_paper_combo()
         self._mark_dirty()
 
     def _select_finish(self) -> None:
         self._finish = self._pick_from("finishOptions", self.finish_combo.currentIndex())
+        _prev_sync = self._syncing  # 嵌套调用不得提前解锁外层（审查 P2-22）
         self._syncing = True
         f = self._finish or {}
         self.finish_label.setText(str(f.get("label") or ""))
         self.finish_score.setValue(int(f.get("score") or 0))
         self.finish_tags.setText(", ".join(str(x) for x in f.get("tags", []) if x))
-        self._syncing = False
+        self._syncing = _prev_sync
 
     def _write_finish(self) -> None:
         if self._syncing or not self._finish:
             return
         self._finish["label"] = self.finish_label.text()
         self._finish["score"] = self.finish_score.value()
-        self._finish["tags"] = self._split_tags(self.finish_tags.text())
+        _ftags = self._split_tags(self.finish_tags.text())
+        if _ftags or "tags" in self._finish:
+            self._finish["tags"] = _ftags
         self._mark_dirty()
 
     def _add_finish(self) -> None:

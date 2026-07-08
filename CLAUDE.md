@@ -3,6 +3,25 @@
 > 本文件每次会话自动载入。**开工先按 §0 判定任务类型，再遵守对应那一套规则。**
 > **列举型内容以代码为准**：架构文档（`docs/游戏架构设计文档.md`）的清单会漂移——Action 清单查 `tools/editor/shared/action_editor.py` 的 `ACTION_TYPES`，游戏状态查 `src/data/types.ts` 的 `GameState`，条件叶子查 `src/systems/graphDialogue/evaluateGraphCondition.ts`。不要照抄文档里的表。
 
+## §G Skill / Workflow 治理台入口
+
+做 skill / workflow 治理、治理包拆分、Codex / Claude agent 任务分发时，不要靠 dashboard 截图或页面肉眼信息判断。先刷新并读取结构化上下文：
+
+```bash
+python3 -B tools/skill_workflow_governance/govern.py audit
+```
+
+优先引用这些入口：
+
+- `tools/skill_workflow_governance/out/agent-context-current.md`：给 Codex / Claude 直接读取的便携上下文包。
+- `tools/skill_workflow_governance/out/registry.json`：完整机器可读审计状态。
+- `governance://hub`：连接治理 MCP server 后的 Host 快照。
+- `governance://dashboard/elements`：页面所有可引用元素的索引。
+- `governance://workpacks` / `governance://issues` / `governance://artifacts`：结构化治理资源。
+- `governance://workpack/<id>` / `governance://issue/<id>` / `governance://artifact/<id>` / `governance://tool/<name>` / `governance://prompt/<name>` / `governance://source/<path>`：单个页面元素。
+
+支持 MCP 的客户端可按 `tools/skill_workflow_governance/README.md` 配置 `gamedraft-governance` server。只读治理分析不改文件；执行修复时只改被选治理包/证据指向的文件，完成后必须重新 audit。
+
 ## §0 先分类，再动手
 
 判断这次改动会不会改变玩家可见的规则 / 结果 / 资源流 / 进度 / 玩法体验，据此选规则：

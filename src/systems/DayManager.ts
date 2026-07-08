@@ -19,6 +19,9 @@ export class DayManager implements IGameSystem {
   }
 
   init(_ctx: GameContext): void {
+    // 律8：重 init 行为与首次一致——运行态回到初始天（读档由 deserialize 覆盖，不受影响）
+    this._currentDay = 1;
+    this.delayedEvents = [];
     this.syncFlag();
   }
   update(_dt: number): void {}
@@ -81,6 +84,7 @@ export class DayManager implements IGameSystem {
   }
 
   destroy(): void {
+    this._currentDay = 1;
     this.delayedEvents = [];
   }
 }

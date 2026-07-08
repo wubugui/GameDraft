@@ -104,6 +104,18 @@
           "verified": "questionable"
         }
       }
+    },
+    {
+      "id": "rule_drowned_corpse",
+      "name": "淹死的，水汽重",
+      "incompleteName": "关于淹死人的门道",
+      "category": "jargon",
+      "layers": {
+        "xiang": {
+          "text": "义庄管事顺嘴点的：淹死的泡过水，水汽阴沉，上了肩就往水那头坠。背着走道莫沿水边——水汽勾水汽，越走越沉。",
+          "verified": "effective"
+        }
+      }
     }
   ],
   "fragments": [

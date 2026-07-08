@@ -4,7 +4,7 @@ import type { GameStateController } from './GameStateController';
 import type { DialogueManager } from '../systems/DialogueManager';
 import type { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import type { EncounterManager } from '../systems/EncounterManager';
-import type { ActionDef } from '../data/types';
+import type { ActionDef, DialogueEndPayload } from '../data/types';
 import { GameState } from '../data/types';
 import { FlagKeys } from './FlagKeys';
 
@@ -23,6 +23,9 @@ export class EventBridge {
   private eventBus: EventBus;
   private deps: EventBridgeDeps;
   private boundCallbacks: { event: string; fn: (...args: any[]) => void }[] = [];
+  /** 本次页面生命周期内是否已开过局（首次「新游戏」或从游戏内返回主菜单都算）。
+   *  开过局后内存里全是旧局状态，「新游戏」必须整页重启才能零残留（R20）。 */
+  private hasStartedSession = false;
 
   constructor(eventBus: EventBus, deps: EventBridgeDeps) {
     this.eventBus = eventBus;
@@ -46,17 +49,28 @@ export class EventBridge {
       else if (graphDialogueManager.isActive) graphDialogueManager.endDialogue();
     });
     this.listen('dialogue:choiceSelected', (p: { index: number }) => {
+      // ui:confirm/ui:cancel 映射约定（B4）：对话/遭遇选项点选=确认音（此处发）；
+      // Esc 关面板=取消音（GameStateController 发）；打开面板不算确认，不发。
+      this.eventBus.emit('ui:confirm', {});
       const run = dialogueManager.isActive
         ? dialogueManager.chooseOption(p.index)
         : graphDialogueManager.chooseOption(p.index);
       void run.catch((e) => console.warn('Dialogue chooseOption failed', e));
     });
-    this.listen('dialogue:end', () => {
-      if (!graphDialogueManager.isActive) stateController.setState(GameState.Exploring);
+    this.listen('dialogue:end', (p?: DialogueEndPayload) => {
+      /** 状态恢复只认**最外层**对话结束（R5/R6 根因收敛）：
+       *  - 嵌套 playScriptedDialogue 结束时任一管理器仍 active → 不恢复；
+       *  - 图对话 deferred 链式接续（willContinue）→ 下一张图即将开播，不恢复——
+       *    链条全部接续失败时 GraphDialogueManager 会补发一次 willContinue=false 的最终 end。 */
+      if (dialogueManager.isActive || graphDialogueManager.isActive) return;
+      if (p?.willContinue === true) return;
+      stateController.setState(GameState.Exploring);
     });
 
     this.listen('encounter:narrativeDone', () => encounterManager.generateOptions());
     this.listen('encounter:choiceSelected', (p: { index: number }) => {
+      // 同 dialogue:choiceSelected：选项点选=ui:confirm（B4 映射约定）
+      this.eventBus.emit('ui:confirm', {});
       void encounterManager.chooseOption(p.index).catch((e) => {
         console.warn('EventBridge: encounter chooseOption failed', e);
       });
@@ -81,9 +95,10 @@ export class EventBridge {
     this.listen('shop:closed', () => stateController.setState(GameState.Exploring));
 
     this.listen('map:travel', async (p: { sceneId: string }) => {
-      // 地图面板点选传送：MapUI.close() 只拆 UI、不恢复状态机，state 仍停在 UIOverlay
-      // 且 overlayReturnStack 仍压着 [Exploring]。先退回覆盖层状态（回到 Exploring）再切场景，
-      // 否则 switchScene 完成后会按“进入时的 prev=UIOverlay”恢复，导致快速旅行后卡在 UIOverlay。
+      // 保留手工恢复（特殊时序，不可换成 closePanel('map')）：MapUI 在自己的 pointerdown 里
+      // 已同步 close() 拆掉 UI（closePanel 对已关面板是幂等 no-op，不会弹栈），且恢复必须发生在
+      // switchScene **之前**——否则 switchScene 完成后会按“进入时的 prev=UIOverlay”恢复，
+      // 快速旅行后卡在 UIOverlay。restorePreviousState 弹掉 KeyM 打开时压的那层栈，栈保持平衡。
       if (stateController.currentState === GameState.UIOverlay) {
         stateController.restorePreviousState();
       }
@@ -97,10 +112,28 @@ export class EventBridge {
       }
     });
 
-    this.listen('menu:newGame', () => { menuUI.close(); stateController.setState(GameState.Exploring); });
-    this.listen('menu:returnToMain', () => { stateController.setState(GameState.MainMenu); menuUI.openMainMenu(); });
-    // 暂停菜单「继续」：MenuUI.close() 只关 UI，不动状态机。此处把游戏状态从 UIOverlay 恢复，
-    // 否则点「继续」后会卡在 UIOverlay（玩家冻结、Esc 也无效）。与 Esc 关闭暂停菜单的恢复语义一致。
+    this.listen('menu:newGame', () => {
+      if (this.hasStartedSession) {
+        // R20：开过局后 flag/背包/任务/叙事全是旧局残留，原地重置无法证明完备
+        // （需全系统 destroy→init→内容重播种）。整页重启走与首次启动完全相同的引导路径，零残留。
+        this.restartPageForNewGame();
+        return;
+      }
+      // 首次开局：世界已在启动引导中就绪且从未被玩过，直接放行（与旧行为一致）
+      this.hasStartedSession = true;
+      menuUI.close();
+      stateController.setState(GameState.Exploring);
+    });
+    this.listen('menu:returnToMain', () => {
+      // 能从游戏内回主菜单，说明本页已开过局：之后再点「新游戏」必须整页重启
+      this.hasStartedSession = true;
+      stateController.setState(GameState.MainMenu);
+      menuUI.openMainMenu();
+    });
+    // 保留手工恢复（特殊时序，不可换成 closePanel('menu')）：暂停菜单经 escapeFallback →
+    // stateController.togglePanel('menu') 打开（η2a/η2b 收敛后有压栈），但「继续」按钮先自
+    // close() 再发事件——closePanel 对已关面板幂等 no-op、不弹栈。此处 restorePreviousState
+    // 弹掉 togglePanel 压的那层栈恢复状态，与 Esc 关闭暂停菜单的弹栈语义一致、栈保持平衡。
     this.listen('menu:resume', () => {
       if (stateController.currentState === GameState.UIOverlay) {
         stateController.restorePreviousState();
@@ -110,6 +143,9 @@ export class EventBridge {
     this.listen('scene:enter', (p: { sceneId: string }) => mapUI.setCurrentScene(p.sceneId));
 
     this.listen('ruleUse:apply', async (p: { ruleId: string; actions: ActionDef[]; resultText?: string }) => {
+      // R11：无论有无 resultText，状态恢复都在这一步完成——closePanel 统一关面板 + 弹栈
+      // 恢复（RuleUseUI 不再自关）。此后有 resultText 才另起一段 UIOverlay 包裹展示。
+      stateController.closePanel('ruleUse');
       try {
         await actionExecutor.executeBatchAwait(p.actions);
       } catch (e) {
@@ -119,9 +155,35 @@ export class EventBridge {
       if (p.resultText) {
         stateController.setState(GameState.UIOverlay);
         await inspectBox.show(p.resultText);
-        stateController.setState(GameState.Exploring);
+        // 结算动作/展示期间可能已被对话、切场等推进到别的状态，仅在仍是 UIOverlay 时才复位
+        if (stateController.currentState === GameState.UIOverlay) {
+          stateController.setState(GameState.Exploring);
+        }
       }
     });
+  }
+
+  /** R20：整页重启前净化一次性引导参数（过场直启/场景传送/各小游戏预览），
+   *  否则 reload 会再次进这些调试入口而不是正常开局；`mode=dev` 是会话级模式，保留。 */
+  private restartPageForNewGame(): void {
+    try {
+      const url = new URL(window.location.href);
+      const oneShotParams = [
+        'play_cutscene',
+        'devScene',
+        'dev_scene',
+        'narrativeWarp',
+        'narrative_warp',
+        'waterPreview',
+        'sugarWheelPreview',
+        'paperCraftPreview',
+      ];
+      for (const key of oneShotParams) url.searchParams.delete(key);
+      window.history.replaceState(null, '', url.toString());
+    } catch (e) {
+      console.warn('EventBridge: 新游戏重启前清理 URL 参数失败，按原 URL 重启', e);
+    }
+    window.location.reload();
   }
 
   private listen(event: string, fn: (...args: any[]) => void): void {

@@ -92,17 +92,34 @@ export class GameStateController {
     }
   }
 
+  /**
+   * 统一的面板关闭通道：关 UI + （覆盖层面板）弹栈恢复状态。
+   * 面板自关（选中即关、按钮关闭等）也必须收敛到这里，不得只调 panel.close()——
+   * 那样状态会滞留 UIOverlay 且压栈不平衡（R11/D3 软锁根因）。对已关闭面板幂等 no-op。
+   *
+   * opts.silent=true 时不发 `ui:panelClose`（关闭音）。用于 Esc 取消路径：
+   * 那里由调用方紧接着发 `ui:cancel`（取消音），若这里再发 panelClose 会同帧双响。
+   * 快捷键关面板等其它路径不传 silent，仍发 panelClose。
+   */
+  closePanel(name: string, opts?: { silent?: boolean }): void {
+    const entry = this.panels.get(name);
+    if (!entry || !entry.panel.isOpen) return;
+    entry.panel.close();
+    if (!opts?.silent) {
+      this.eventBus?.emit('ui:panelClose', { name });
+    }
+    if (entry.overlaysGameState) {
+      const restored = this.overlayReturnStack.pop();
+      this._currentState = restored ?? GameState.Exploring;
+    }
+  }
+
   togglePanel(name: string): void {
     const entry = this.panels.get(name);
     if (!entry) return;
 
     if (entry.panel.isOpen) {
-      entry.panel.close();
-      this.eventBus?.emit('ui:panelClose', { name });
-      if (entry.overlaysGameState) {
-        const restored = this.overlayReturnStack.pop();
-        this._currentState = restored ?? GameState.Exploring;
-      }
+      this.closePanel(name);
       return;
     }
 
@@ -135,7 +152,10 @@ export class GameStateController {
         return;
       }
       if (e.code === 'Escape') {
-        this.handleEscape();
+        // debug 坞已开时 Esc 关它本身，而非经 handleEscape（后者会优先关 overlay 面板，
+        // debug 与 overlay 同开时导致误关 overlay）。debug 是 overlaysGameState:false /
+        // alwaysOpenable，togglePanel 对它就是纯关闭、不压/弹 overlayReturnStack。
+        this.togglePanel('debug');
         return;
       }
       return;
@@ -158,21 +178,21 @@ export class GameStateController {
   }
 
   private handleEscape(): void {
+    // ui:confirm/ui:cancel 映射约定（B4）：Esc 关闭面板=取消音（此处发）；对话/遭遇选项
+    // 点选=确认音（EventBridge 发）；打开面板不算确认，不发。
     if (this._currentState === GameState.UIOverlay) {
-      for (const [, entry] of Array.from(this.panels.entries()).reverse()) {
+      for (const [name, entry] of Array.from(this.panels.entries()).reverse()) {
         if (entry.panel.isOpen && entry.overlaysGameState) {
-          entry.panel.close();
-          this.eventBus?.emit('ui:panelClose');
-          const restored = this.overlayReturnStack.pop();
-          this._currentState = restored ?? GameState.Exploring;
+          this.closePanel(name, { silent: true });
+          this.eventBus?.emit('ui:cancel', { name });
           return;
         }
       }
     }
-    for (const [, entry] of Array.from(this.panels.entries()).reverse()) {
+    for (const [name, entry] of Array.from(this.panels.entries()).reverse()) {
       if (entry.panel.isOpen && !entry.overlaysGameState) {
-        entry.panel.close();
-        this.eventBus?.emit('ui:panelClose');
+        this.closePanel(name, { silent: true });
+        this.eventBus?.emit('ui:cancel', { name });
         return;
       }
     }

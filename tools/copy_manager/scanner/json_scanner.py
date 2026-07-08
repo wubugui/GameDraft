@@ -42,6 +42,11 @@ class JsonScanner(BaseScanner):
 
             # Determine if it's a dict (like rules.json) or array (like quests.json)
             if isinstance(data, dict):
+                if file_rel.endswith("public/assets/data/map_config.json") and isinstance(data.get("nodes"), list):
+                    entries.extend(self._scan_array(
+                        data["nodes"], rel_path, file_rel, project_root, rule,
+                        array_key=rule.category
+                    ))
                 # For rules.json: top-level keys like "rules", "fragments" are arrays
                 if "rules" in data and isinstance(data["rules"], list):
                     entries.extend(self._scan_array(

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>动画预览 · Anim Preview</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2b; --panel2: #1f2838; --line: #2b3547;
+    --fg: #e6ebf2; --mut: #8a97ab; --acc: #4f9dff; --acc2: #34d399; --warn: #f59e0b; --err:#f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 13px/1.45 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  #app { display: grid; grid-template-columns: 240px 1fr 320px; height: 100vh; }
+  .col { overflow: auto; height: 100vh; }
+  #left { background: var(--panel); border-right: 1px solid var(--line); }
+  #center { display: grid; grid-template-rows: minmax(0, 1fr) auto; background: #0b0f17;
+    min-width: 0; height: 100vh; min-height: 0; overflow: hidden; }
+  #right { background: var(--panel); border-left: 1px solid var(--line); padding: 10px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--mut);
+    margin: 12px 10px 6px; font-weight: 700; }
+  #search { width: calc(100% - 20px); margin: 10px; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--fg); }
+  .char { padding: 7px 12px; cursor: pointer; border-left: 3px solid transparent; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .char:hover { background: var(--panel2); }
+  .char.sel { background: #223049; border-left-color: var(--acc); }
+  .char .sub { color: var(--mut); font-size: 11px; }
+  .char.bad { color: var(--err); }
+  /* stage */
+  #stageWrap { position: relative; min-height: 0; min-width: 0; overflow: hidden; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #stageInfo { position: absolute; left: 8px; top: 8px; font-size: 11px; color: var(--mut);
+    background: rgba(0,0,0,.4); padding: 3px 7px; border-radius: 5px; pointer-events: none; }
+  /* transport */
+  #transport { border-top: 1px solid var(--line); background: var(--panel); padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 7px; min-height: 0; }
+  .states { display: flex; flex-wrap: nowrap; gap: 5px; overflow-x: auto; padding-bottom: 3px; }
+  .states::-webkit-scrollbar { height: 6px; } .states::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .state { flex: 0 0 auto; }
+  .state { padding: 4px 10px; border-radius: 14px; border: 1px solid var(--line); cursor: pointer;
+    background: var(--panel2); color: var(--fg); font-size: 12px; }
+  .state.sel { background: var(--acc); border-color: var(--acc); color: #07203f; font-weight: 700; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  button.t { background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  button.t:hover { background: #29344a; }
+  button.t.on { background: var(--acc2); color: #04231a; border-color: var(--acc2); }
+  input[type=range] { accent-color: var(--acc); }
+  #timeline { flex: 1; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  label.ctl { color: var(--mut); font-size: 11px; display: inline-flex; align-items: center; gap: 5px; }
+  /* right info */
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 2px 0; }
+  .kv .k { color: var(--mut); } .kv .v { text-align: right; }
+  .card { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; margin-bottom: 10px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; }
+  .ok { background: #12321f; color: var(--acc2); } .no { background: #3a1620; color: var(--err); }
+  table.frames { width: 100%; border-collapse: collapse; font-size: 11px; }
+  table.frames th, table.frames td { padding: 2px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+  table.frames th:first-child, table.frames td:first-child { text-align: left; }
+  .seg { display: flex; gap: 4px; } .seg button { flex: 1; }
+  select.t { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  #toast { position: fixed; right: 12px; bottom: 12px; background: var(--panel2); border: 1px solid var(--line);
+    padding: 8px 12px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="left" class="col">
+    <input id="search" placeholder="搜索角色…" />
+    <h2>角色 <span id="charCount" class="mono"></span></h2>
+    <div id="charList"></div>
+  </div>
+
+  <div id="center">
+    <div id="stageWrap">
+      <div id="stage"></div>
+      <div id="stageInfo"></div>
+    </div>
+    <div id="transport">
+      <div class="states" id="stateList"></div>
+      <div class="row">
+        <label class="ctl" style="font-weight:700;color:var(--fg)">状态 <select class="t" id="stateSel" style="min-width:120px"></select></label>
+        <button class="t" id="btnPlay">⏸ 暂停</button>
+        <button class="t" id="btnLoop">🔁 循环</button>
+        <div class="seg"><button class="t" id="btnPrev">◀ 帧</button><button class="t" id="btnNext">帧 ▶</button></div>
+        <input type="range" id="timeline" min="0" max="0" value="0" step="1" />
+        <span class="mono" id="frameLabel">0/0</span>
+      </div>
+      <div class="row">
+        <label class="ctl">速度 <input type="range" id="speed" min="0.1" max="4" step="0.1" value="1" /><span class="mono" id="speedV">1.0×</span></label>
+        <label class="ctl">帧率 <input type="number" id="fps" min="1" max="60" step="1" style="width:52px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:2px 4px" /></label>
+        <label class="ctl">缩放 <input type="range" id="zoom" min="0.05" max="6" step="0.01" value="1" /></label>
+        <button class="t" id="btnFit">适配</button>
+        <button class="t" id="btnFacing">↔ 朝向</button>
+      </div>
+      <div class="row">
+        <label class="ctl">背景 <select class="t" id="bg">
+          <option value="checker">棋盘</option><option value="transparent">透明(黑)</option>
+          <option value="grey">中性灰</option><option value="sceneColor">场景色</option>
+          <option value="scene">场景(实际比例)</option></select></label>
+        <select class="t" id="sceneBg" style="display:none;max-width:200px"></select>
+        <label class="ctl"><input type="checkbox" id="pdm" /> 像素密度低通</label>
+        <label class="ctl">背景密度 <input type="number" id="dbg" value="1.0" step="0.1" min="0.1" style="width:56px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:2px 4px" /></label>
+        <label class="ctl"><input type="checkbox" id="ovAnchor" checked /> 锚点</label>
+        <label class="ctl"><input type="checkbox" id="ovCell" /> 格框</label>
+      </div>
+      <div class="row">
+        <label class="ctl"><input type="checkbox" id="onion" /> 洋葱皮</label>
+        <label class="ctl">帧数 <input type="number" id="onionN" value="2" min="1" max="6" style="width:44px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:2px 4px" /></label>
+        <button class="t" id="btnAtlas">🗺 图集检视</button>
+        <button class="t" id="btnGif">🎞 导出 GIF</button>
+        <label class="ctl"><input type="checkbox" id="cmp" /> 对比</label>
+        <select class="t" id="cmpChar" style="display:none"></select>
+        <select class="t" id="cmpState" style="display:none"></select>
+        <button class="t" id="btnLight" style="margin-left:auto">💡 光照/阴影</button>
+      </div>
+    </div>
+  </div>
+  <div id="atlasModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10;overflow:auto;padding:20px">
+    <div class="row" style="margin-bottom:8px"><b>图集检视</b><span id="atlasMeta" class="mono" style="color:var(--mut)"></span><button class="t" id="atlasClose" style="margin-left:auto">✕ 关闭</button></div>
+    <canvas id="atlasCanvas" style="border:1px solid var(--line);image-rendering:pixelated"></canvas>
+  </div>
+
+  <div id="lightModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:20;align-items:center;justify-content:center">
+    <div style="width:300px;max-height:86vh;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
+      <div class="row" style="margin-bottom:8px"><b>💡 光照 / 阴影</b><button class="t" id="lightClose" style="margin-left:auto">✕ 关闭</button></div>
+      <label class="ctl" style="display:flex"><input type="checkbox" id="lightOn" /> 启用逐entity光照(游戏同款)</label>
+      <label class="ctl" style="display:flex">阴影 <select class="t" id="shadowMode"><option value="off">off</option><option value="planar">planar</option></select></label>
+      <label class="ctl" style="display:flex">光方位 <input type="range" id="lAzi" min="0" max="360" value="125" /></label>
+      <label class="ctl" style="display:flex">光仰角 <input type="range" id="lElev" min="5" max="89" value="55" /></label>
+      <label class="ctl" style="display:flex">主光色 <input type="color" id="lKey" value="#fff7ea" /> 强 <input type="range" id="lKeyI" min="0" max="2" step="0.05" value="1" /></label>
+      <label class="ctl" style="display:flex">环境色 <input type="color" id="lAmb" value="#8c99b8" /> 强 <input type="range" id="lAmbI" min="0" max="2" step="0.05" value="1" /></label>
+      <label class="ctl" style="display:flex">色调融入 <input type="range" id="lTone" min="0" max="1" step="0.05" value="0.45" /></label>
+      <label class="ctl" style="display:flex">AO 接触 <input type="range" id="lAoC" min="0" max="1" step="0.05" value="0.45" /></label>
+      <label class="ctl" style="display:flex">AO 体积 <input type="range" id="lAoF" min="0" max="1" step="0.05" value="0.25" /></label>
+      <label class="ctl" style="display:flex">阴影暗 <input type="range" id="sDark" min="0" max="1" step="0.05" value="0.5" /></label>
+      <label class="ctl" style="display:flex">阴影长 <input type="range" id="sLen" min="0" max="3" step="0.1" value="1.2" /></label>
+    </div>
+  </div>
+
+  <div id="right" class="col">
+    <div id="info"></div>
+  </div>
+</div>
+<div id="toast"></div>
+<script type="module" src="/main.ts"></script>
+</body>
+</html>

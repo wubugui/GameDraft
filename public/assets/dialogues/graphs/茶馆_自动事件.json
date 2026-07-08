@@ -16,7 +16,7 @@
         },
         {
           "state": "state_1",
-          "next": ""
+          "next": "n_4"
         }
       ],
       "defaultNext": "n_2",
@@ -29,7 +29,7 @@
         "kind": "literal",
         "name": "错误"
       },
-      "next": "",
+      "next": "n_4",
       "text": "状态机没有状态。"
     },
     "n_3": {
@@ -48,7 +48,10 @@
           }
         }
       ],
-      "next": ""
+      "next": "n_4"
+    },
+    "n_4": {
+      "type": "end"
     }
   }
 }

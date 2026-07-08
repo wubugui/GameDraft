@@ -177,6 +177,67 @@ class PaperCraftRoundtripTests(unittest.TestCase):
             self.assertEqual(row.get("file"), "pc_new_inst.json",
                              "index 项必须带 file 字段，保存层才能写出新实例文件")
 
+    def test_new_fields_guarded_writes_preserve_format(self) -> None:
+        # E1 新增可编辑字段（part.image / paper.tags）的写回必须"守门"：
+        # 不给本无该键的记录凭空加键；填入后才落键。编辑器往返不引入格式漂移。
+        with TemporaryDirectory() as td:
+            model = self._build_model(Path(td) / "p")
+            editor = PaperCraftEditor(model)
+            editor.instance_list.setCurrentRow(0)
+            editor.order_combo.setCurrentIndex(0)
+
+            # (a) 改部件显示名 → 不得给本无 image 键的部件加 "image"。
+            editor.part_combo.setCurrentIndex(0)
+            editor.part_label.setText("脸(改)")
+            editor._write_part()
+            part0 = model.paper_craft_instances[PC_ID]["orders"][0]["parts"][0]
+            self.assertEqual(part0["label"], "脸(改)")
+            self.assertNotIn("image", part0, "未填图片时不得加 image 键（格式保真）")
+
+            # (b) 改白纸显示名（白纸夹具无 tags）→ 不得加 "tags"。
+            editor.paper_combo.setCurrentIndex(0)
+            editor.paper_label.setText("白纸(改)")
+            editor._write_paper()
+            paper0 = model.paper_craft_instances[PC_ID]["orders"][0]["paperOptions"][0]
+            self.assertEqual(paper0["label"], "白纸(改)")
+            self.assertNotIn("tags", paper0, "未填标签时不得加 tags 键（格式保真）")
+
+            # (c) 填入图片 / 标签后才落键，且值正确。
+            img = "/resources/runtime/images/minigames/paper_craft/parts/x.png"
+            editor.part_image.set_path(img)
+            editor._write_part()
+            self.assertEqual(
+                model.paper_craft_instances[PC_ID]["orders"][0]["parts"][0]["image"], img,
+            )
+            editor.paper_tags.setText("红白相冲, 纸色不合")
+            editor._write_paper()
+            self.assertEqual(
+                model.paper_craft_instances[PC_ID]["orders"][0]["paperOptions"][0]["tags"],
+                ["红白相冲", "纸色不合"],
+            )
+
+    def test_instance_label_edit_syncs_index_and_instance(self) -> None:
+        # 实例显示名写回须同步 index 行 + 实例文件 label；backgroundImage 守门。
+        with TemporaryDirectory() as td:
+            model = self._build_model(Path(td) / "p")
+            editor = PaperCraftEditor(model)
+            editor.instance_list.setCurrentRow(0)
+
+            editor.instance_label_edit.setText("改名了")
+            editor._write_instance_meta()
+            self.assertEqual(model.paper_craft_instances[PC_ID]["label"], "改名了")
+            row = next(r for r in model.paper_craft_index if r.get("id") == PC_ID)
+            self.assertEqual(row.get("label"), "改名了", "index 行 label 须同步")
+            self.assertNotIn(
+                "backgroundImage", model.paper_craft_instances[PC_ID],
+                "未设底图时不得加 backgroundImage 键（格式保真）",
+            )
+
+            bg = "/resources/runtime/images/minigames/paper_craft/bg.png"
+            editor.instance_bg.set_path(bg)
+            editor._write_instance_meta()
+            self.assertEqual(model.paper_craft_instances[PC_ID]["backgroundImage"], bg)
+
 
 if __name__ == "__main__":
     unittest.main()

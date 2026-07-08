@@ -62,7 +62,10 @@
         "kind": "player"
       },
       "text": "（张口的剪，断的是纠缠。老辈子是恁个讲的。……老辈子怕是也没见过这种阵仗。）",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "end1": {
       "type": "end"

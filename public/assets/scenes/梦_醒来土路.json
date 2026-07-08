@@ -1,7 +1,7 @@
 {
   "id": "梦_醒来土路",
   "name": "两天后·城外土路",
-  "worldWidth": 2400,
+  "worldWidth": 2400.0,
   "camera": {
     "zoom": 0.9,
     "pixelsPerUnit": 1.0

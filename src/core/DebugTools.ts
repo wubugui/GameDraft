@@ -103,6 +103,9 @@ export class DebugTools {
   private positionDebugMode = false;
   private positionDebugKeyHandler: (e: KeyboardEvent) => void = () => {};
   private positionDebugPointerHandler: (e: PointerEvent) => void = () => {};
+  /** F10 点选坐标的十字标记；跨场景/销毁时清除，防已 destroy 对象二次 destroy */
+  private debugMarker: Graphics | null = null;
+  private sceneUnloadCb: (() => void) | null = null;
 
   private debugMiddleButtonCameraZoomEnabled = false;
   private middleZoomDragActive = false;
@@ -131,6 +134,16 @@ export class DebugTools {
     this.setupPositionDebugTool();
     this.setupMiddleButtonCameraZoom();
     this.setupDebugPanelSections();
+    // F10 marker 挂在 entityLayer 上，场景卸载会连带销毁它——先行清引用，避免跨场景残留/双 destroy
+    this.sceneUnloadCb = () => this.clearDebugMarker();
+    this.deps.eventBus.on('scene:beforeUnload', this.sceneUnloadCb);
+  }
+
+  /** 清除 F10 坐标标记（幂等；场景卸载已销毁时只清引用）。 */
+  private clearDebugMarker(): void {
+    if (!this.debugMarker) return;
+    if (!this.debugMarker.destroyed) this.debugMarker.destroy();
+    this.debugMarker = null;
   }
 
   private clampDebugCameraZoom(z: number): number {
@@ -224,8 +237,6 @@ export class DebugTools {
     };
     window.addEventListener('keydown', this.positionDebugKeyHandler);
 
-    let debugMarker: Graphics | null = null;
-
     this.positionDebugPointerHandler = (e: PointerEvent) => {
       if (!this.positionDebugMode) return;
       e.preventDefault();
@@ -252,11 +263,8 @@ export class DebugTools {
         '| player:', this.deps.player.x.toFixed(1), this.deps.player.y.toFixed(1),
       );
 
-      if (debugMarker) {
-        debugMarker.destroy();
-        debugMarker = null;
-      }
-      debugMarker = new Graphics();
+      this.clearDebugMarker();
+      const debugMarker = new Graphics();
       const arm = 12;
       debugMarker.moveTo(-arm, 0).lineTo(arm, 0).stroke({ color: 0xff0000, width: 2 });
       debugMarker.moveTo(0, -arm).lineTo(0, arm).stroke({ color: 0xff0000, width: 2 });
@@ -264,6 +272,7 @@ export class DebugTools {
       debugMarker.x = worldX;
       debugMarker.y = worldY;
       renderer.entityLayer.addChild(debugMarker);
+      this.debugMarker = debugMarker;
 
       const x = worldX.toFixed(1);
       const y = worldY.toFixed(1);
@@ -1085,6 +1094,11 @@ export class DebugTools {
 
   destroy(): void {
     window.removeEventListener('keydown', this.positionDebugKeyHandler);
+    if (this.sceneUnloadCb) {
+      this.deps.eventBus.off('scene:beforeUnload', this.sceneUnloadCb);
+      this.sceneUnloadCb = null;
+    }
+    this.clearDebugMarker();
     let canvas: HTMLCanvasElement | undefined;
     try {
       canvas = this.deps.renderer.app?.canvas as HTMLCanvasElement | undefined;

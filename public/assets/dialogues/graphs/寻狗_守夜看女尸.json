@@ -11,7 +11,11 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "wrap_守夜", "state": "done", "reached": true }
+            {
+              "narrative": "wrap_守夜",
+              "state": "done",
+              "reached": true
+            }
           ],
           "next": "after_1"
         }
@@ -20,27 +24,41 @@
     },
     "after_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "天快亮了。她还是没人认领。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "席子底下停着具很瘦很白的女尸。无名无姓，没人认领——城隍庙收的，最后一程的香火钱都是庙里出。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "脸盖着黄纸。纸很平整——夜里没风，可灵前那盏灯的火苗，一直在极轻地晃。",
       "next": "n3"
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（无名无姓……死球了连个收尸的名字都没得。这年生，人比鬼还薄。）",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "end1": {
       "type": "end"

@@ -1,11 +1,31 @@
 {
   "schemaVersion": 1,
   "id": "寻狗_码头选择",
-  "entry": "root",
+  "entry": "n_archive",
   "meta": {
     "title": "寻狗Demo·码头捞箱（A跳水/B喊价/C看热闹）"
   },
   "nodes": {
+    "n_archive": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "addArchiveEntry",
+          "params": {
+            "bookType": "character",
+            "entryId": "clara_crossley"
+          }
+        },
+        {
+          "type": "addArchiveEntry",
+          "params": {
+            "bookType": "character",
+            "entryId": "edgar_crossley"
+          }
+        }
+      ],
+      "next": "root"
+    },
     "root": {
       "type": "switch",
       "cases": [
@@ -175,7 +195,10 @@
         "kind": "player"
       },
       "text": "（罗盘乱转必撞煞……洋人研究勒个整啥子？）",
-      "next": "a_10"
+      "next": "a_10",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "a_10": {
       "type": "runActions",
@@ -196,7 +219,11 @@
         "name": "埃德加"
       },
       "text": "Good job！说好的十块大洋——呃，box 进了水，货损了 value……（从兜里摸出两枚银角子塞过来）辛苦费！Very 慷慨！",
-      "next": "a_12"
+      "next": "a_12",
+      "portrait": {
+        "slug": "edgar",
+        "emotion": "smirk"
+      }
     },
     "a_12": {
       "type": "runActions",
@@ -223,7 +250,10 @@
         "kind": "player"
       },
       "text": "两枚银角子？！你龟儿管这叫十块大洋？！……算咯，洋人这笔账，比僵尸还邪门。",
-      "next": "a_14"
+      "next": "a_14",
+      "portrait": {
+        "emotion": "angry"
+      }
     },
     "a_14": {
       "type": "line",

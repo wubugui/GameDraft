@@ -67,6 +67,14 @@ export interface WaterEntityDef {
     period: number;
   };
   glow?: { enabled: boolean; color: string; daylightHint?: number };
+  /**
+   * 显示尺寸（贴图最长边缩放目标，bounds 像素）。
+   * 缺省按品类默认：grass 70 / sunken 62 / floating 46 / swimming 52。
+   * 大型实体（如水猴子影）由数据显式放大，不再由引擎按贴图路径猜测。
+   */
+  displaySize?: number;
+  /** 识别阶段点击命中半径（bounds 像素）。缺省按品类默认：grass 42 / swimming 34 / sunken 38 / floating 30。 */
+  hitRadius?: number;
   pull?: {
     zoneSize: number;
     sliderSpeed: number;
@@ -79,7 +87,7 @@ export interface WaterEntityDef {
   cue?: string;
   hint?: string;
   valueTier?: WaterValueTier;
-  /** 拉扯成功后从该局移除（存档 consumer key) */
+  /** 得手后从该局移除并跨局记账（拉扯成功 / floating 捞取 onPick 皆适用）；给奖励的实体应置 true 防无限刷 */
   consumeOnSuccess?: boolean;
   onPick?: ActionDef[];
   onPullSuccess?: ActionDef[];

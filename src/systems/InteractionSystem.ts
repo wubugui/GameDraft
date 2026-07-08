@@ -14,12 +14,27 @@ interface InteractableTarget {
   npc?: Npc;
 }
 
+/**
+ * 位面交互门闸（由 PlaneReconciler 注入 getter，见 setPlaneInteractionPolicy）：
+ * false 的通道对应目标不出提示、不可触发（选目标循环直接跳过）。
+ * canPickup 仅额外约束 pickup 型热点（canInteractHotspots 为总闸）。
+ */
+export interface PlaneInteractionPolicy {
+  canInteractHotspots: boolean;
+  canTalkNpcs: boolean;
+  canPickup: boolean;
+}
+
 export class InteractionSystem implements IGameSystem {
   private hotspots: Hotspot[] = [];
   private npcs: Npc[] = [];
   private nearestTarget: InteractableTarget | null = null;
-  /** 已进入范围并触发过一次的 autoTrigger 热点，离开前不重复触发 */
-  private autoTriggeredHotspot: Hotspot | null = null;
+  /**
+   * 已在触发范围内且触发过一次的 autoTrigger 热点集合。
+   * 按「玩家是否仍在该热点触发范围内」维护：进入触发一次，离开范围才移除——
+   * 不随最近目标切换重置（NPC 路过抢走 nearest 不会导致重触发）；同帧 E 触发也入集防双发。
+   */
+  private autoTriggeredInRange: Set<Hotspot> = new Set();
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private inputManager: InputManager;
@@ -28,6 +43,8 @@ export class InteractionSystem implements IGameSystem {
   /** 与 SceneManager.refreshCutsceneBoundEntityVisibility 一致的基础显隐，不含触发条件图层 */
   private hotspotBaseEnabled: ((h: Hotspot) => boolean) | null = null;
   private npcBaseVisible: ((n: Npc) => boolean) | null = null;
+  /** 位面交互门闸 getter；null = 不限制（现状行为） */
+  private planePolicy: (() => PlaneInteractionPolicy) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, inputManager: InputManager) {
     this.eventBus = eventBus;
@@ -72,6 +89,11 @@ export class InteractionSystem implements IGameSystem {
     this.playerPosGetter = getter;
   }
 
+  /** 注入/清除位面交互门闸（由 PlaneReconciler 按激活位面设/清）。 */
+  setPlaneInteractionPolicy(fn: (() => PlaneInteractionPolicy) | null): void {
+    this.planePolicy = fn;
+  }
+
   setHotspots(hotspots: Hotspot[]): void {
     this.clearHotspots();
     this.hotspots = hotspots;
@@ -80,7 +102,7 @@ export class InteractionSystem implements IGameSystem {
   clearHotspots(): void {
     this.hotspots = [];
     this.clearNearestIfKind('hotspot');
-    this.autoTriggeredHotspot = null;
+    this.autoTriggeredInRange.clear();
   }
 
   setNpcs(npcs: Npc[]): void {
@@ -101,31 +123,28 @@ export class InteractionSystem implements IGameSystem {
     }
   }
 
-  /** 返回该热点的条件是否满足（供同帧的交互判定复用，避免二次求值）。 */
+  /**
+   * 返回该热点的条件是否满足（供同帧的交互判定复用，避免二次求值）。
+   * 每帧只写实体的「派生基底/条件」通道；拾取位与会话覆盖由实体自行合成，不在此被冲掉。
+   */
   private applyHotspotVisibilityAndBase(hotspot: Hotspot, ctx: ConditionEvalContext | null): boolean {
     const conds = hotspot.def.conditions;
     const condOk = this.evalWith(conds, ctx);
     const base = this.hotspotBaseEnabled?.(hotspot) ?? true;
     const hideWhenFail = hotspot.def.conditionHidesEntity === true && !!conds?.length;
-    if (hideWhenFail) {
-      hotspot.setEnabled(base && condOk);
-    } else {
-      hotspot.setEnabled(base);
-    }
+    hotspot.setDerivedBaseEnabled(base);
+    hotspot.setConditionEnabled(hideWhenFail ? condOk : true);
     return condOk;
   }
 
-  /** 返回该 NPC 的条件是否满足（供同帧的交互判定复用，避免二次求值）。 */
+  /** 返回该 NPC 的条件是否满足（供同帧的交互判定复用，避免二次求值）。写通道语义同上。 */
   private applyNpcVisibilityAndBase(npc: Npc, ctx: ConditionEvalContext | null): boolean {
     const conds = npc.def.conditions;
     const condOk = this.evalWith(conds, ctx);
     const base = this.npcBaseVisible?.(npc) ?? true;
     const hideWhenFail = npc.def.conditionHidesEntity === true && !!conds?.length;
-    if (hideWhenFail) {
-      npc.setVisible(base && condOk);
-    } else {
-      npc.setVisible(base);
-    }
+    npc.setDerivedBaseVisible(base);
+    npc.setConditionVisible(hideWhenFail ? condOk : true);
     return condOk;
   }
 
@@ -139,11 +158,26 @@ export class InteractionSystem implements IGameSystem {
 
     // 每帧仅构建一次条件上下文，供本帧所有实体复用（避免 per-entity 分配 + 二次求值）。
     const ctx = this.conditionCtxFactory?.() ?? null;
+    // 位面交互门闸本帧取一次；被禁目标仍照常写显隐通道，只是不参与选目标（无提示、不可触发）。
+    const policy = this.planePolicy?.() ?? null;
 
     for (const hotspot of this.hotspots) {
       const condOk = this.applyHotspotVisibilityAndBase(hotspot, ctx);
+
+      // autoTrigger「离开范围才重置」：无论热点当前是否 active 都做范围判定，
+      // 玩家在范围内经历 禁用→启用 不应重触发，离开范围期间被禁用也要正确移除。
+      if (hotspot.def.autoTrigger && this.autoTriggeredInRange.has(hotspot)) {
+        const dxA = pos.x - hotspot.centerX;
+        const dyA = pos.y - hotspot.centerY;
+        if (Math.sqrt(dxA * dxA + dyA * dyA) > hotspot.def.interactionRange) {
+          this.autoTriggeredInRange.delete(hotspot);
+        }
+      }
+
       if (!hotspot.active) continue;
       if (!hotspotOffersPlayerInteraction(hotspot.def)) continue;
+      if (policy && !policy.canInteractHotspots) continue;
+      if (policy && !policy.canPickup && hotspot.def.type === 'pickup') continue;
       if (hotspot.def.conditions && hotspot.def.conditions.length > 0 && !condOk) continue;
 
       const dx = pos.x - hotspot.centerX;
@@ -159,6 +193,7 @@ export class InteractionSystem implements IGameSystem {
     for (const npc of this.npcs) {
       const condOk = this.applyNpcVisibilityAndBase(npc, ctx);
       if (!npc.container.visible) continue;
+      if (policy && !policy.canTalkNpcs) continue;
       if (npc.def.conditions && npc.def.conditions.length > 0 && !condOk) continue;
       const dx = pos.x - npc.x;
       const dy = pos.y - npc.y;
@@ -177,15 +212,17 @@ export class InteractionSystem implements IGameSystem {
     }
 
     if (closestTarget && this.inputManager.wasKeyJustPressed('KeyE')) {
+      // 同帧 E 触发 autoTrigger 热点也写入已触发标记，防止下一帧 auto 路径双发
+      if (closestTarget.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger) {
+        this.autoTriggeredInRange.add(closestTarget.hotspot);
+      }
       this.triggerTarget(closestTarget);
     } else if (closestTarget?.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger) {
       const h = closestTarget.hotspot;
-      if (this.autoTriggeredHotspot !== h) {
-        this.autoTriggeredHotspot = h;
+      if (!this.autoTriggeredInRange.has(h)) {
+        this.autoTriggeredInRange.add(h);
         this.triggerTarget(closestTarget);
       }
-    } else {
-      this.autoTriggeredHotspot = null;
     }
   }
 
@@ -240,10 +277,14 @@ export class InteractionSystem implements IGameSystem {
       kind: 'hotspot' | 'npc'; id: string; type?: string; x: number; y: number;
       interactionRange: number; available: boolean; inRange: boolean; distance: number;
     }> = [];
+    // 与 update() 选目标同口径：位面交互门闸计入 available，防调试快照与玩家实际可交互漂移。
+    const planePolicy = this.planePolicy?.() ?? null;
     for (const hotspot of this.hotspots) {
       const available =
         hotspot.active &&
         hotspotOffersPlayerInteraction(hotspot.def) &&
+        (!planePolicy || (planePolicy.canInteractHotspots &&
+          (planePolicy.canPickup || hotspot.def.type !== 'pickup'))) &&
         (!hotspot.def.conditions?.length || this.evalConditionsList(hotspot.def.conditions));
       const dx = px - hotspot.centerX;
       const dy = py - hotspot.centerY;
@@ -259,6 +300,7 @@ export class InteractionSystem implements IGameSystem {
     for (const npc of this.npcs) {
       const available =
         npc.container.visible &&
+        (!planePolicy || planePolicy.canTalkNpcs) &&
         (!npc.def.conditions?.length || this.evalConditionsList(npc.def.conditions));
       const dx = px - npc.x;
       const dy = py - npc.y;
@@ -309,9 +351,10 @@ export class InteractionSystem implements IGameSystem {
     this.clearHotspots();
     this.clearNpcs();
     this.nearestTarget = null;
-    this.autoTriggeredHotspot = null;
+    this.autoTriggeredInRange.clear();
     this.playerPosGetter = null;
     this.hotspotBaseEnabled = null;
     this.npcBaseVisible = null;
+    this.planePolicy = null;
   }
 }

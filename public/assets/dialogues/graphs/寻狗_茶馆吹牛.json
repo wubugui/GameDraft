@@ -46,7 +46,10 @@
         "kind": "player"
       },
       "text": "昨晚上半夜，老子接了桩大活路——头七没过的崖墓尸，硬是叫老子一个人背的。",
-      "next": "n3"
+      "next": "n3",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n3": {
       "type": "line",

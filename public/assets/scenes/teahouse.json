@@ -15,6 +15,10 @@
       "y": 0
     }
   ],
+  "ambientSounds": [
+    "teahouse_roomtone",
+    "中文人声闹市"
+  ],
   "spawnPoint": {
     "x": 115.5,
     "y": 227.9
@@ -255,7 +259,9 @@
     {
       "type": "startDialogueGraph",
       "params": {
-        "graphId": "茶馆_自动事件"
+        "graphId": "茶馆_自动事件",
+        "ownerType": "hotspot",
+        "ownerId": "茶馆_自动事件"
       }
     }
   ]

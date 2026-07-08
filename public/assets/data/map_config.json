@@ -1,224 +1,248 @@
-[
-  {
-    "sceneId": "雾津街头",
-    "name": "雾津街头",
-    "x": 200.0,
-    "y": 160.0,
-    "unlockConditions": []
-  },
-  {
-    "sceneId": "teahouse",
-    "name": "茶馆",
-    "x": 168.0,
-    "y": 122.0,
-    "unlockConditions": []
-  },
-  {
-    "sceneId": "码头白天",
-    "name": "码头",
-    "x": 55.28706624605677,
-    "y": 218.99652996845427,
-    "unlockConditions": []
-  },
-  {
-    "sceneId": "崖墓",
-    "name": "临江崖墓",
-    "x": 282.0,
-    "y": 112.0,
-    "unlockConditions": [
-      {
-        "narrative": "scenario_背尸",
-        "state": "hired",
-        "reached": true
-      },
-      {
-        "not": {
+{
+  "backgroundImage": "/resources/runtime/images/maps/wujin-paper-map-v1.png",
+  "nodes": [
+    {
+      "sceneId": "雾津街头",
+      "name": "雾津街头",
+      "x": 200.0,
+      "y": 160.0,
+      "unlockConditions": []
+    },
+    {
+      "sceneId": "teahouse",
+      "name": "茶馆",
+      "x": 168.0,
+      "y": 122.0,
+      "unlockConditions": []
+    },
+    {
+      "sceneId": "码头白天",
+      "name": "码头",
+      "x": 55.28706624605677,
+      "y": 218.99652996845427,
+      "unlockConditions": []
+    },
+    {
+      "sceneId": "崖墓",
+      "name": "临江崖墓",
+      "x": 282.0,
+      "y": 112.0,
+      "unlockConditions": [
+        {
           "narrative": "scenario_背尸",
-          "state": "fled",
+          "state": "hired",
           "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_背尸",
+            "state": "fled",
+            "reached": true
+          }
         }
-      }
-    ]
-  },
-  {
-    "sceneId": "婆子家院",
-    "name": "婆子家小院",
-    "x": 95.33564668769716,
-    "y": 93.68864353312303,
-    "unlockConditions": [
-      {
-        "narrative": "scenario_婆子家",
-        "state": "hired",
-        "reached": true
-      },
-      {
-        "not": {
+      ]
+    },
+    {
+      "sceneId": "婆子家院",
+      "name": "婆子家小院",
+      "x": 95.33564668769716,
+      "y": 93.68864353312303,
+      "unlockConditions": [
+        {
           "narrative": "scenario_婆子家",
-          "state": "paid",
+          "state": "hired",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_婆子家",
+            "state": "paid",
+            "reached": true
+          }
+        }
+      ]
+    },
+    {
+      "sceneId": "河边",
+      "name": "城外河滩",
+      "x": 49.49826498422713,
+      "y": 150.01388012618298,
+      "unlockConditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s04_pozi",
           "reached": true
         }
-      }
-    ]
-  },
-  {
-    "sceneId": "河边",
-    "name": "城外河滩",
-    "x": 49.49826498422713,
-    "y": 150.01388012618298,
-    "unlockConditions": [
-      {
-        "narrative": "flow_xungou_main",
-        "state": "s04_pozi",
-        "reached": true
-      }
-    ]
-  },
-  {
-    "sceneId": "枯井土地庙",
-    "name": "土地庙枯井",
-    "x": 142.63231554929405,
-    "y": 31.9448297142507,
-    "unlockConditions": [
-      {
-        "narrative": "scenario_枯井",
-        "state": "hired",
-        "reached": true
-      },
-      {
-        "not": {
+      ]
+    },
+    {
+      "sceneId": "枯井土地庙",
+      "name": "土地庙枯井",
+      "x": 142.63231554929405,
+      "y": 31.9448297142507,
+      "unlockConditions": [
+        {
           "narrative": "scenario_枯井",
-          "state": "fled",
+          "state": "hired",
           "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_枯井",
+            "state": "fled",
+            "reached": true
+          }
         }
-      }
-    ]
-  },
-  {
-    "sceneId": "阎王岭山口",
-    "name": "阎王岭山口",
-    "x": 363.688643533123,
-    "y": 43.50520504731862,
-    "unlockConditions": [
-      {
-        "narrative": "scenario_送货",
-        "state": "bundle_taken",
-        "reached": true
-      },
-      {
-        "not": {
+      ]
+    },
+    {
+      "sceneId": "阎王岭山口",
+      "name": "阎王岭山口",
+      "x": 363.688643533123,
+      "y": 43.50520504731862,
+      "unlockConditions": [
+        {
           "narrative": "scenario_送货",
-          "state": "returned",
+          "state": "bundle_taken",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_送货",
+            "state": "returned",
+            "reached": true
+          }
+        }
+      ]
+    },
+    {
+      "sceneId": "义庄",
+      "name": "义庄",
+      "x": 267.8443217665615,
+      "y": 35.81656151419559,
+      "unlockConditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
           "reached": true
         }
-      }
-    ]
-  },
-  {
-    "sceneId": "义庄",
-    "name": "义庄",
-    "x": 267.8443217665615,
-    "y": 35.81656151419559,
-    "unlockConditions": [
-      {
-        "narrative": "flow_xungou_main",
-        "state": "s09_songhuo",
-        "reached": true
-      }
-    ]
-  },
-  {
-    "sceneId": "城隍庙夜",
-    "name": "城隍庙（守夜）",
-    "x": 344.52255520504735,
-    "y": 114.4809148264984,
-    "unlockConditions": [
-      {
-        "quest": "xg11_shouye",
-        "questStatus": "Active"
-      }
-    ]
-  },
-  {
-    "sceneId": "城门口",
-    "name": "城门口",
-    "x": 215.34258675078868,
-    "y": 29.32870662460568,
-    "unlockConditions": [
-      {
-        "narrative": "flow_xungou_main",
-        "state": "s11_zhaomu"
-      },
-      {
-        "narrative": "scenario_向导",
-        "state": "outfitted",
-        "reached": true
-      }
-    ]
-  },
-  {
-    "sceneId": "test_room_a",
-    "name": "街巷",
-    "x": 252.9,
-    "y": 142.0,
-    "unlockConditions": [
-      {
-        "flag": "legacy_iron_box_flow"
-      }
-    ]
-  },
-  {
-    "sceneId": "test_room_b",
-    "name": "后巷",
-    "x": 141.46782334384858,
-    "y": 264.99037854889593,
-    "unlockConditions": [
-      {
-        "flag": "legacy_iron_box_flow"
-      }
-    ]
-  },
-  {
-    "sceneId": "temple",
-    "name": "城隍庙（旧）",
-    "x": 425.5425867507886,
-    "y": 173.77034700315457,
-    "unlockConditions": [
-      {
-        "flag": "legacy_iron_box_flow"
-      }
-    ]
-  },
-  {
-    "sceneId": "temple_exterior",
-    "name": "庙宇",
-    "x": 433.49384858044175,
-    "y": 72.18958990536278,
-    "unlockConditions": [
-      {
-        "flag": "legacy_iron_box_flow"
-      }
-    ]
-  },
-  {
-    "sceneId": "bridge_underpass",
-    "name": "桥下",
-    "x": 211.0,
-    "y": 260.3,
-    "unlockConditions": [
-      {
-        "flag": "legacy_iron_box_flow"
-      }
-    ]
-  },
-  {
-    "sceneId": "mountain_pass",
-    "name": "山路",
-    "x": 355.4460567823343,
-    "y": 162.60252365930597,
-    "unlockConditions": [
-      {
-        "flag": "legacy_iron_box_flow"
-      }
-    ]
-  }
-]
+      ]
+    },
+    {
+      "sceneId": "城隍庙夜",
+      "name": "城隍庙（守夜）",
+      "x": 344.52255520504735,
+      "y": 114.4809148264984,
+      "unlockConditions": [
+        {
+          "quest": "xg11_shouye",
+          "questStatus": "Active"
+        }
+      ]
+    },
+    {
+      "sceneId": "城门口",
+      "name": "城门口",
+      "x": 215.34258675078868,
+      "y": 29.32870662460568,
+      "unlockConditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s11_zhaomu"
+        },
+        {
+          "narrative": "scenario_向导",
+          "state": "outfitted",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "sceneId": "test_room_a",
+      "name": "街巷",
+      "runtimeVisible": false,
+      "devOnly": true,
+      "x": 252.9,
+      "y": 142.0,
+      "unlockConditions": [
+        {
+          "flag": "legacy_iron_box_flow"
+        }
+      ]
+    },
+    {
+      "sceneId": "test_room_b",
+      "name": "后巷",
+      "runtimeVisible": false,
+      "devOnly": true,
+      "x": 141.46782334384858,
+      "y": 264.99037854889593,
+      "unlockConditions": [
+        {
+          "flag": "legacy_iron_box_flow"
+        }
+      ]
+    },
+    {
+      "sceneId": "temple",
+      "name": "城隍庙（旧）",
+      "runtimeVisible": false,
+      "x": 425.5425867507886,
+      "y": 173.77034700315457,
+      "unlockConditions": [
+        {
+          "flag": "legacy_iron_box_flow"
+        }
+      ]
+    },
+    {
+      "sceneId": "temple_exterior",
+      "name": "庙宇",
+      "runtimeVisible": false,
+      "x": 433.49384858044175,
+      "y": 72.18958990536278,
+      "unlockConditions": [
+        {
+          "flag": "legacy_iron_box_flow"
+        }
+      ]
+    },
+    {
+      "sceneId": "bridge_underpass",
+      "name": "桥下",
+      "runtimeVisible": false,
+      "x": 211.0,
+      "y": 260.3,
+      "unlockConditions": [
+        {
+          "flag": "legacy_iron_box_flow"
+        }
+      ]
+    },
+    {
+      "sceneId": "mountain_pass",
+      "name": "山路",
+      "runtimeVisible": false,
+      "x": 355.4460567823343,
+      "y": 162.60252365930597,
+      "unlockConditions": [
+        {
+          "flag": "legacy_iron_box_flow"
+        }
+      ]
+    },
+    {
+      "sceneId": "dev_teahouse_alive",
+      "name": "茶馆·会动版(dev)",
+      "runtimeVisible": false,
+      "devOnly": true,
+      "x": 405.0,
+      "y": 255.0,
+      "unlockConditions": [
+        {
+          "flag": "legacy_iron_box_flow"
+        }
+      ]
+    }
+  ]
+}

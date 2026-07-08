@@ -11,10 +11,24 @@ export const ANIM_IDLE = 'idle';
 export const ANIM_WALK = 'walk';
 export const ANIM_RUN = 'run';
 
+/**
+ * 位面等外部规则对自由移动的修饰量（由 PlaneReconciler 注入 getter，见 setMovementModifier）：
+ * drift 为恒定漂移速度（世界单位/秒，无输入也生效——站着被拽走）；speedScale 乘在场景速度上；
+ * allowRun=false 掩蔽奔跑（Shift / 触屏跑一并挡住）。
+ */
+export interface PlayerMovementModifier {
+  driftX: number;
+  driftY: number;
+  speedScale: number;
+  allowRun: boolean;
+}
+
 export class Player implements ICutsceneActor {
   public sprite: SpriteEntity;
   private inputManager: InputManager;
   private depthCollision: ((worldX: number, worldY: number) => boolean) | null = null;
+  /** 与 depthCollision 同模式的注入 getter；null = 无修饰（现状行为） */
+  private movementModifier: (() => PlayerMovementModifier) | null = null;
 
   private moveTarget: {
     x: number; y: number; speed: number; resolve: () => void;
@@ -39,6 +53,11 @@ export class Player implements ICutsceneActor {
 
   setDepthCollision(fn: ((worldX: number, worldY: number) => boolean) | null): void {
     this.depthCollision = fn;
+  }
+
+  /** 注入/清除自由移动修饰（漂移/速度系数/禁跑）。仅影响 update() 自由移动分支。 */
+  setMovementModifier(fn: (() => PlayerMovementModifier) | null): void {
+    this.movementModifier = fn;
   }
 
   setCollisionsEnabled(enabled: boolean): void {
@@ -158,12 +177,17 @@ export class Player implements ICutsceneActor {
     }
     const dir = this.inputManager.getMovementDirection();
     const isMoving = dir.x !== 0 || dir.y !== 0;
-    const isRunning = this.inputManager.isRunning();
-    const speed = isRunning ? this.runSpeed : this.walkSpeed;
+    const mod = this.movementModifier?.() ?? null;
+    // allowRun 掩蔽奔跑；speedScale 乘速度；drift 恒生效（不并入 isMoving——站着被拖走
+    // 时动画保持 idle 正是要的效果）。位移积分处向量加，X/Y 分轴走既有碰撞/边界钳制。
+    const isRunning = this.inputManager.isRunning() && (mod?.allowRun ?? true);
+    const speed = (isRunning ? this.runSpeed : this.walkSpeed) * (mod?.speedScale ?? 1);
+    const stepX = dir.x * speed * dt + (mod?.driftX ?? 0) * dt;
+    const stepY = dir.y * speed * dt + (mod?.driftY ?? 0) * dt;
 
-    if (isMoving) {
-      const newX = this.sprite.x + dir.x * speed * dt;
-      const newY = this.sprite.y + dir.y * speed * dt;
+    if (stepX !== 0 || stepY !== 0) {
+      const newX = this.sprite.x + stepX;
+      const newY = this.sprite.y + stepY;
 
       if (!this.collidesAt(newX, this.sprite.y) && !this.isOutOfBounds(newX, this.sprite.y)) {
         this.sprite.x = newX;
@@ -171,7 +195,9 @@ export class Player implements ICutsceneActor {
       if (!this.collidesAt(this.sprite.x, newY) && !this.isOutOfBounds(this.sprite.x, newY)) {
         this.sprite.y = newY;
       }
+    }
 
+    if (isMoving) {
       this.sprite.setDirection(dir.x, dir.y);
 
       if (isRunning) {

@@ -12,11 +12,13 @@ import { dialogueGraphJsonUrl } from '../core/projectPaths';
 import type {
   ActionDef,
   DialogueChoice,
+  DialogueEndPayload,
   DialogueGraphFile,
   DialogueGraphNodeDef,
   DialogueGraphSpeaker,
   DialogueLine,
   DialogueLinePayload,
+  DialogueStartPayload,
   IGameSystem,
   GameContext,
 } from '../data/types';
@@ -59,6 +61,11 @@ export interface NarrativeSwitchDebug {
  * 一条执行链；`drainUntilBlocking` 内 `while` 顺序前进，仅在 `await executeAwait` / `await loadJson` 处让出线程。
  */
 export class GraphDialogueManager implements IGameSystem {
+  /** R8：drainUntilBlocking 单次最多推进的节点步数——纯路由环（switch/ownerState/contextState/
+   *  runActions 的 next 连成环）会同步 while 死循环冻死主线程，数据校验抓不到图内连边成环，
+   *  此上限是最后防线（超限强制收束，软失败优于冻死页面）。 */
+  private static readonly MAX_DRAIN_STEPS_PER_RUN = 1000;
+
   private eventBus: EventBus;
   private flagStore: FlagStore;
   private actionExecutor: ActionExecutor;
@@ -79,6 +86,8 @@ export class GraphDialogueManager implements IGameSystem {
   private active = false;
   private npcName: string = '';
   private npcId: string = '';
+  /** 本会话是否压暗场景背景（随行下发 DialogueUI）；默认不压 */
+  private dimBackground: boolean = false;
   private ownerType: string = '';
   private ownerId: string = '';
   /** 串行化 advance / chooseOption / start，避免异步 drain 期间丢弃重复点击或重入 */
@@ -104,7 +113,16 @@ export class GraphDialogueManager implements IGameSystem {
     ownerId?: string;
     /** true 时加载图后优先使用 `meta.title` 作为对话显示名（Inspect 看板等） */
     preferGraphMetaTitle?: boolean;
+    dimBackground?: boolean;
   }> = [];
+  /** deferred 链式接续 runner 是否在跑（同一时刻至多一个，避免双循环并发消费队列） */
+  private chainRunnerActive = false;
+  /** endDialogue 已发 willContinue=true、下一张图尚未 active 的空窗期：
+   *  供发起方（InteractionCoordinator / Game）判断「会话链尚未真正终结」，不得提前收尾/恢复 Exploring */
+  private chainContinuationPending = false;
+  /** 最近一次发出的 graph `dialogue:end` 是否带 willContinue=true——链条全部接续失败时据此补发
+   *  恰好一次 willContinue=false 的最终 end，保证状态恢复不悬空也不重复 */
+  private lastGraphEndWasContinuing = false;
 
   private lastPreconditionDebug: NarrativePreconditionDebug | null = null;
   private lastSwitchDebug: NarrativeSwitchDebug | null = null;
@@ -250,38 +268,30 @@ export class GraphDialogueManager implements IGameSystem {
   update(_dt: number): void {}
 
   serialize(): object {
-    if (!this.active || !this.graph) return { active: false };
-    return {
-      active: true,
-      graphId: this.graphSourceId || this.graph.id,
-      npcName: this.npcName,
-      nodeId: this.currentNodeId,
-    };
+    /** 存读档收敛（serialize/deserialize 对称）：进行中的图对话是 transient 会话，不入档——
+     *  存档在 Dialogue 态本被 canSave 禁止，正常玩家路径存档时无活跃会话；
+     *  本系统亦无其它需持久化的静态数据。 */
+    return { active: false };
   }
 
   deserialize(_data: object): void {
+    /** 静默收束任何活跃会话：**不发 dialogue:end**——避免读档瞬间触发 EventBridge 状态切换
+     *  与结束音效。Dialogue 态不可开菜单存读档，dev 命令路径读档时静默丢弃会话即可。 */
     this.deferredGraphQueue.length = 0;
-    if (this.active) this.endDialogue();
-    this.active = false;
-    this.graph = null;
-    this.graphSourceId = '';
-    this.currentNodeId = '';
-    this.npcName = '';
-    this.npcId = '';
-    this.ownerType = '';
-    this.ownerId = '';
-    this.choicePhase = null;
-    this.lastPreconditionDebug = null;
-    this.lastSwitchDebug = null;
-    this.narrativeRouteNodeIds = [];
-    this.awaitingLineDismiss = false;
-    this.lineBeatIndex = 0;
-    this.deferredGraphQueue = [];
-    this.opChain = Promise.resolve();
+    this.chainContinuationPending = false;
+    this.lastGraphEndWasContinuing = false;
+    this.resetSessionFields();
   }
 
   get isActive(): boolean {
     return this.active;
+  }
+
+  /** endDialogue 已排定 deferred 链式接续、但下一张图尚未 active 的空窗期。
+   *  发起方在 startDialogueGraph 返回后若见 `!isActive && hasPendingChainContinuation`，
+   *  说明会话链仍在接续中，不得按「启动失败」提前恢复 Exploring / 收尾。 */
+  get hasPendingChainContinuation(): boolean {
+    return this.chainContinuationPending;
   }
 
   getDebugInteractionState(): {
@@ -382,7 +392,16 @@ export class GraphDialogueManager implements IGameSystem {
 
   destroy(): void {
     this.deferredGraphQueue.length = 0;
-    this.endDialogue();
+    this.chainContinuationPending = false;
+    this.lastGraphEndWasContinuing = false;
+    if (this.active) {
+      this.endDialogue();
+    } else {
+      /** B18：非活跃但可能有在途 startDialogueGraph（图 JSON 加载中）——
+       *  推进代际使其归来即弃（不发 dialogue:start、不 drain） */
+      this.opDrainGeneration++;
+      this.opChain = Promise.resolve();
+    }
     this.strings = null;
   }
 
@@ -394,6 +413,8 @@ export class GraphDialogueManager implements IGameSystem {
     ownerType?: string;
     ownerId?: string;
     preferGraphMetaTitle?: boolean;
+    /** 本次对话压暗场景背景（startDialogueGraph 动作可选项）；默认不压 */
+    dimBackground?: boolean;
   }): Promise<void> {
     const gid = params.graphId?.trim();
     if (!gid) return Promise.resolve();
@@ -407,6 +428,7 @@ export class GraphDialogueManager implements IGameSystem {
         ownerType: params.ownerType?.trim() || undefined,
         ownerId: params.ownerId?.trim() || params.npcId?.trim() || undefined,
         preferGraphMetaTitle: params.preferGraphMetaTitle === true,
+        dimBackground: params.dimBackground === true,
       });
       return Promise.resolve();
     }
@@ -417,6 +439,7 @@ export class GraphDialogueManager implements IGameSystem {
         return;
       }
 
+      const genAtStart = this.opDrainGeneration;
       const path = dialogueGraphJsonUrl(gid);
       let raw: DialogueGraphFile;
       try {
@@ -425,6 +448,10 @@ export class GraphDialogueManager implements IGameSystem {
         console.warn(`GraphDialogueManager: 无法加载 ${path}`, e);
         return;
       }
+
+      /** B18：加载期间 destroy / deserialize / endDialogue 已推进代际——
+       *  本次开图归来即弃，不发 dialogue:start、不 drain */
+      if (genAtStart !== this.opDrainGeneration) return;
 
       if (!raw.nodes || typeof raw.entry !== 'string' || !raw.nodes[raw.entry]) {
         console.warn(`GraphDialogueManager: 图 ${gid} 缺少 entry 或 nodes`);
@@ -461,6 +488,7 @@ export class GraphDialogueManager implements IGameSystem {
       this.npcId = params.npcId?.trim() ?? '';
       this.ownerType = params.ownerType?.trim() || (this.npcId ? 'npc' : '');
       this.ownerId = params.ownerId?.trim() || this.npcId;
+      this.dimBackground = params.dimBackground === true;
       this.currentNodeId = (params.entry?.trim() && raw.nodes[params.entry.trim()])
         ? params.entry.trim()
         : raw.entry;
@@ -470,13 +498,24 @@ export class GraphDialogueManager implements IGameSystem {
       this.awaitingLineDismiss = false;
       this.lineBeatIndex = 0;
 
-      this.eventBus.emit('dialogue:start', { npcName: this.npcName, graphId: gid });
+      this.eventBus.emit('dialogue:start', {
+        npcName: this.npcName,
+        graphId: gid,
+        source: 'graph',
+      } satisfies DialogueStartPayload);
       await this.drainUntilBlocking();
     });
   }
 
   async advance(): Promise<void> {
-    return this.runUserOp(() => this.advanceCore());
+    return this.runUserOp(async () => {
+      /** 显式「可接受用户推进」检查：仅「台词待点击确认」与「choice prompt 待展开」两态接受。
+       *  runActions await 间隙（drain 进行中）、选项已展示等状态下注入的 advance（正常输入不可达，
+       *  调试/脚本通道可达）一律忽略，杜绝与在途 drain 并发重跑 runActions。 */
+      if (!this.active || !this.graph) return;
+      if (!this.awaitingLineDismiss && this.choicePhase?.stage !== 'prompt') return;
+      await this.advanceCore();
+    });
   }
 
   private async advanceCore(): Promise<void> {
@@ -609,6 +648,26 @@ export class GraphDialogueManager implements IGameSystem {
 
   endDialogue(): void {
     if (!this.active) return;
+    this.resetSessionFields();
+    /** R5/R6 根因：dialogue:end 带来源与接续标记。willContinue=true 表示 deferred 链上还有图
+     *  将立即接续（此 end 非最外层结束）——EventBridge 不恢复 Exploring、InteractionCoordinator
+     *  不收尾、AudioManager 不播结束音效，接续图全程保持 Dialogue 态播放。 */
+    const willContinue = this.deferredGraphQueue.length > 0;
+    this.lastGraphEndWasContinuing = willContinue;
+    this.eventBus.emit('dialogue:end', {
+      source: 'graph',
+      willContinue,
+    } satisfies DialogueEndPayload);
+    if (!willContinue) return;
+    /** runner 内同步完结的图触发的 endDialogue 不再另起 runner（由在跑的 runner 继续消费队列）；
+     *  亦不可包 runExclusive：否则与 startDialogueGraph 内部的 runExclusive 互相等待死锁 */
+    if (this.chainRunnerActive) return;
+    this.chainContinuationPending = true;
+    void this.runDeferredChainContinuation();
+  }
+
+  /** 会话字段复位（不发事件、不动 deferred 队列与链式标记）：endDialogue 与 deserialize 静默收束共用 */
+  private resetSessionFields(): void {
     this.active = false;
     this.graph = null;
     this.graphSourceId = '';
@@ -617,6 +676,7 @@ export class GraphDialogueManager implements IGameSystem {
     this.npcId = '';
     this.ownerType = '';
     this.ownerId = '';
+    this.dimBackground = false;
     this.choicePhase = null;
     this.lastPreconditionDebug = null;
     this.lastSwitchDebug = null;
@@ -625,25 +685,48 @@ export class GraphDialogueManager implements IGameSystem {
     this.lineBeatIndex = 0;
     this.opDrainGeneration++;
     this.opChain = Promise.resolve();
-    this.eventBus.emit('dialogue:end', {});
+  }
 
-    const q = this.deferredGraphQueue.splice(0);
-    if (q.length === 0) return;
-    /** 不可再包一层 runExclusive：否则与 startDialogueGraph 内部的 runExclusive 互相等待死锁 */
-    void Promise.resolve()
-      .then(async () => {
-        for (const item of q) {
-          await this.startDialogueGraph(item);
-        }
-      })
-      .catch((e) => console.warn('GraphDialogueManager: 衔接嵌套图失败', e));
+  /** deferred 链式接续：按序尝试启动排队图。全部接续项都未能启动（加载失败 / preconditions
+   *  不满足）时，链条实际已终结，补发**恰好一次** willContinue=false 的最终 dialogue:end，
+   *  避免 willContinue=true 之后无人恢复状态、卡死在 Dialogue（R6 的失败分支兜底）。 */
+  private async runDeferredChainContinuation(): Promise<void> {
+    this.chainRunnerActive = true;
+    try {
+      while (!this.active && this.deferredGraphQueue.length > 0) {
+        const item = this.deferredGraphQueue.shift()!;
+        await this.startDialogueGraph(item);
+      }
+    } catch (e) {
+      console.warn('GraphDialogueManager: 衔接嵌套图失败', e);
+    } finally {
+      this.chainRunnerActive = false;
+      this.chainContinuationPending = false;
+    }
+    if (!this.active && this.lastGraphEndWasContinuing) {
+      this.lastGraphEndWasContinuing = false;
+      this.eventBus.emit('dialogue:end', {
+        source: 'graph',
+        willContinue: false,
+      } satisfies DialogueEndPayload);
+    }
   }
 
   private async drainUntilBlocking(): Promise<void> {
     if (!this.active || !this.graph) return;
     this.drainDepth++;
+    let steps = 0;
     try {
       while (this.active && this.graph) {
+      /** R8：纯路由环护栏（见 MAX_DRAIN_STEPS_PER_RUN 注释）——超限记 error 并强制收束 */
+      if (++steps > GraphDialogueManager.MAX_DRAIN_STEPS_PER_RUN) {
+        console.error(
+          `GraphDialogueManager: 图 ${this.graphSourceId} 单次推进超过 ${GraphDialogueManager.MAX_DRAIN_STEPS_PER_RUN} 步，` +
+            `疑似路由成环（当前节点 ${this.currentNodeId}，近路由 ${this.narrativeRouteNodeIds.slice(-8).join(' -> ')}），强制结束对话`,
+        );
+        this.endDialogue();
+        return;
+      }
       const node = this.graph.nodes[this.currentNodeId];
       if (!node) {
         console.warn(`GraphDialogueManager: 缺失节点 ${this.currentNodeId}`);
@@ -752,6 +835,15 @@ export class GraphDialogueManager implements IGameSystem {
 
   private emitChoicesForNode(node: Extract<DialogueGraphNodeDef, { type: 'choice' }>): void {
     const choices = this.buildChoicesForNode(node);
+    /** D6 坏数据兜底：选项为空或全部被条件/花费置灰时，玩家在选项界面无任何可推进入口（软锁）。
+     *  记 error 并优雅收束对话——软失败优于冻死；正确修法是数据侧保证至少一个无条件出口。 */
+    if (choices.length === 0 || choices.every((c) => !c.enabled)) {
+      console.error(
+        `GraphDialogueManager: choice 节点 ${this.currentNodeId}（图 ${this.graphSourceId}）无可选选项，强制结束对话`,
+      );
+      this.endDialogue();
+      return;
+    }
     this.eventBus.emit('dialogue:choices', choices);
   }
 
@@ -948,9 +1040,11 @@ export class GraphDialogueManager implements IGameSystem {
   ): DialogueLinePayload[] {
     const lines = node.lines;
     if (Array.isArray(lines) && lines.length > 0) {
-      return lines;
+      // 节点级 portrait 作为各拍默认，拍内自带的覆盖之（编辑器只在节点级出选择器）
+      if (node.portrait === undefined) return lines;
+      return lines.map((p) => (p.portrait === undefined ? { ...p, portrait: node.portrait } : p));
     }
-    return [{ speaker: node.speaker, text: node.text, textKey: node.textKey }];
+    return [{ speaker: node.speaker, text: node.text, textKey: node.textKey, portrait: node.portrait }];
   }
 
   private linePayloadToDialogueLine(p: DialogueLinePayload): DialogueLine {
@@ -963,7 +1057,59 @@ export class GraphDialogueManager implements IGameSystem {
     } else {
       text = p.text ?? '';
     }
-    return { speaker, text: this.r(text), tags: [] };
+    return {
+      speaker,
+      text: this.r(text),
+      tags: [],
+      portrait: this.resolvePortrait(p),
+      speakerEntity: this.speakerEntityOf(p.speaker),
+      dim: this.dimBackground || undefined,
+    };
+  }
+
+  /** 说话人对应的世界实体（「…」气泡定位）；旁白/literal 返回 undefined。 */
+  private speakerEntityOf(s: DialogueGraphSpeaker): DialogueLine['speakerEntity'] {
+    if (s.kind === 'player') return { kind: 'player' };
+    const id = this.speakerNpcId(s);
+    return id ? { kind: 'npc', npcId: id } : undefined;
+  }
+
+  /**
+   * 头像解析：显式 slug 原样用；slug 缺省 =「跟随说话人」——
+   * npc/sceneNpc → 场景 NPC 的 portraitSlug（共享图挂谁显谁）；
+   * player → 当前生效装扮配置的立绘集（Game 经 setPlayerPortraitSlugProvider 注入）；
+   * 解析不到（literal 说话人、未配置）则本行不显头像。UI 收到的 portrait 恒带 slug。
+   */
+  private resolvePortrait(p: DialogueLinePayload): DialogueLine['portrait'] {
+    const ref = p.portrait;
+    if (!ref || !ref.emotion) return undefined;
+    if (ref.slug?.trim()) return ref;
+    if (p.speaker.kind === 'player') {
+      const slug = this.playerPortraitSlugProvider?.()?.trim();
+      return slug ? { slug, emotion: ref.emotion } : undefined;
+    }
+    const id = this.speakerNpcId(p.speaker);
+    if (!id) return undefined;
+    const slug = this.sceneManager.getNpcById(id)?.currentPortraitSlug;
+    return slug ? { slug, emotion: ref.emotion } : undefined;
+  }
+
+  /** 主角当前装扮配置的立绘集提供者（Game 装配期注入；缺省 null=主角行不显头像）。 */
+  private playerPortraitSlugProvider: (() => string | null) | null = null;
+
+  setPlayerPortraitSlugProvider(fn: () => string | null): void {
+    this.playerPortraitSlugProvider = fn;
+  }
+
+  /** 说话人对应的场景 NPC id；player/literal 无 id 返回 null。 */
+  private speakerNpcId(s: DialogueGraphSpeaker): string | null {
+    if (s.kind === 'npc') return this.npcId.trim() || null;
+    if (s.kind === 'sceneNpc') {
+      const raw = s.npcId?.trim() ?? '';
+      const id = raw === '@contextNpc' ? this.npcId.trim() : raw;
+      return id || null;
+    }
+    return null;
   }
 
   private resolveSpeaker(s: DialogueGraphSpeaker): string {

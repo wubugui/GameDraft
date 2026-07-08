@@ -5,12 +5,20 @@
 """
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFormLayout, QWidget
 
 
 def compact_form(form: QFormLayout) -> QFormLayout:
-    """字段按 sizeHint 宽度排布（短字段不撑满整行）。返回自身便于链式。"""
+    """紧凑表单：字段按 sizeHint 宽度排布（短字段不撑满整行），标签左对齐、整体顶左
+    锚定（不在大面板里居中漂浮），行距收紧。返回自身便于链式。"""
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+    # 标签左对齐：紧贴字段，去掉右对齐留下的「标签—空隙—字段」间距感。
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    # 表单顶左锚定：字段窄时整块靠左上，不被布局居中。
+    form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    form.setHorizontalSpacing(10)
+    form.setVerticalSpacing(6)
     return form
 
 

@@ -1,17 +1,34 @@
 {
   "schemaVersion": 1,
   "id": "寻狗_义庄管事",
-  "entry": "root",
+  "entry": "root_gate",
   "meta": {
     "title": "寻狗Demo·义庄管事上门（半推半架）"
   },
   "nodes": {
+    "n_archive": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "addArchiveEntry",
+          "params": {
+            "bookType": "character",
+            "entryId": "yizhuang_keeper"
+          }
+        }
+      ],
+      "next": "root"
+    },
     "root": {
       "type": "switch",
       "cases": [
         {
           "conditions": [
-            { "narrative": "scenario_义庄镇尸", "state": "all_done", "reached": true }
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "all_done",
+              "reached": true
+            }
           ],
           "next": "done_1"
         }
@@ -20,33 +37,58 @@
     },
     "done_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "先生的大恩……庄里给你立个长生牌位！哦不不，呸呸，给你多包一份钱！",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "关、关先生！可算寻着你了！义庄……义庄出事了！！",
-      "next": "n2"
+      "next": "n2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "（压着嗓子，眼珠子直打颤）庄里停的两具死人子——在地上、扭着！揪着！互相压起！守夜的瞄了一眼，裤儿都吓湿了，人已经跑没影喽！",
-      "next": "n3"
+      "next": "n3",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "……扭着？死人子还能自己下板凳？你娃莫是把酒当饭吃了迈。",
-      "next": "n4"
+      "next": "n4",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n4": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "小的哪敢拿这种事开玩笑！正经先生……正经先生庄里请不起嘛。你是「李天狗那一脉」，你肯定有法子！钱！钱好说！",
-      "next": "c1"
+      "next": "c1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "c1": {
       "type": "choice",
@@ -65,7 +107,10 @@
     },
     "c_drag": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "管事力气不大，架不住豁得出去——半求半拽，关二狗就这么被「请」上了路。",
       "next": "c_go"
     },
@@ -84,6 +129,29 @@
     },
     "end1": {
       "type": "end"
+    },
+    "beishi_busy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "行内人做事有个先来后到。肩上这位先送进来，别的再讲。",
+      "next": "end1"
+    },
+    "root_gate": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ],
+          "next": "beishi_busy"
+        }
+      ],
+      "defaultNext": "n_archive"
     }
   }
 }

@@ -1,6 +1,7 @@
 """递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative）。"""
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any, Callable
 
@@ -28,6 +29,16 @@ from .form_layout import compact_form
 # 与 narrative_data_editors /运行时一致
 _SCENARIO_STATUSES = ("pending", "active", "done", "locked")
 _QUEST_STATUSES = ("Inactive", "Active", "Completed")
+
+
+def _render_outcome_text(oc: object) -> str:
+    """与 set_dict 展示 outcome 的渲染保持一致（用于"文本未改动"判定）。"""
+    if isinstance(oc, str):
+        return oc
+    try:
+        return json.dumps(oc, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(oc)
 _SCENARIO_LINE_STATUSES = ("inactive", "active", "completed")
 _MAX_DEPTH = 32
 # 单个 flag 节点约 ~120px；旧值 640 会让常见的一节点条件凭空占掉大片空白。
@@ -478,6 +489,11 @@ class ConditionExprNodeEditor(QWidget):
             self.changed.emit()
 
     def set_dict(self, data: dict[str, Any] | None) -> None:
+        # 原始形状快照：UI 未实际编辑时 to_dict 逐字返回原 dict
+        #（不注入 questStatus/lineStatus/phase/status 默认键、不丢 reached:false、
+        #  不把旧 "status" 键名改写成 "questStatus"、保留未知附加键）。
+        self._orig_data: dict[str, Any] | None = None
+        self._orig_canonical: dict[str, Any] | None = None
         if not isinstance(data, dict):
             self._kind.blockSignals(True)
             self._kind.setCurrentIndex(3)
@@ -564,6 +580,10 @@ class ConditionExprNodeEditor(QWidget):
             self._fill_scenario_line_combo()
             slid = str(data.get("scenarioLine", "")).strip()
             idx = self._sl_id.findData(slid)
+            if idx < 0 and slid:
+                # 保留指向已删/未知 scenario 的既有值，不静默丢失（与 quest/narrative 一致）
+                self._sl_id.addItem(f"（数据）{slid}", slid)
+                idx = self._sl_id.count() - 1
             self._sl_id.setCurrentIndex(idx if idx >= 0 else 0)
             lst = str(data.get("lineStatus", "inactive")).strip()
             i2 = self._sl_st.findData(lst)
@@ -575,10 +595,18 @@ class ConditionExprNodeEditor(QWidget):
             self._fill_scenario_combos()
             sc = str(data.get("scenario", "")).strip()
             idx = self._sc_id.findData(sc)
+            if idx < 0 and sc:
+                # 保留指向已删/未知 scenario 的既有值，不静默丢失（与 quest/narrative 一致）
+                self._sc_id.addItem(f"（数据）{sc}", sc)
+                idx = self._sc_id.count() - 1
             self._sc_id.setCurrentIndex(idx if idx >= 0 else 0)
             self._fill_phase_combo()
             ph = str(data.get("phase", "")).strip()
             idx2 = self._sc_ph.findData(ph)
+            if idx2 < 0 and ph:
+                # 已删/未知 phase 同样保留，避免静默改写
+                self._sc_ph.addItem(f"（数据）{ph}", ph)
+                idx2 = self._sc_ph.count() - 1
             self._sc_ph.setCurrentIndex(idx2 if idx2 >= 0 else 0)
             st = str(data.get("status", "done"))
             idx3 = self._sc_st.findData(st)
@@ -615,8 +643,19 @@ class ConditionExprNodeEditor(QWidget):
             self._nv_state.setCurrentIndex(max(0, i2))
             self._nv_state.blockSignals(False)
             self._nv_reached.setChecked(data.get("reached") is True)
+        # 记录原始 dict 与"载入后立即序列化"的规范化基线：
+        # to_dict 时若规范化输出仍等于基线（= UI 无实际编辑），逐字返回原 dict。
+        self._orig_data = copy.deepcopy(data)
+        self._orig_canonical = self._to_dict_canonical()
 
     def to_dict(self) -> dict[str, Any]:
+        cur = self._to_dict_canonical()
+        orig = getattr(self, "_orig_data", None)
+        if orig is not None and cur == getattr(self, "_orig_canonical", None):
+            return copy.deepcopy(orig)
+        return cur
+
+    def _to_dict_canonical(self) -> dict[str, Any]:
         k = self._kind.currentData()
         if not isinstance(k, str):
             return {}
@@ -650,10 +689,9 @@ class ConditionExprNodeEditor(QWidget):
                         pass
                     else:
                         result["value"] = v
-                elif isinstance(v, str):
-                    result["value"] = v
                 else:
-                    result["value"] = float(v)
+                    # 不做 float() 强转：FlagValueEdit 原值保留（int 保 int、raw 保原类型）
+                    result["value"] = v
             return result
         if k == "quest" and self._q_id and self._q_st:
             qid = self._q_id.current_id().strip()
@@ -676,18 +714,30 @@ class ConditionExprNodeEditor(QWidget):
             ph = phd.strip() if isinstance(phd, str) else ""
             st_d = self._sc_st.currentData()
             st = str(st_d) if st_d is not None else self._sc_st.currentText()
-            if not sid or not ph:
+            if not sid:
                 return {}
+            # phase 允许为空（运行时 isScenarioLeaf / validator 接受 phase:''）：
+            # 保留该值而非把整条 scenario 条件静默丢弃。
             out: dict[str, Any] = {"scenario": sid, "phase": ph, "status": st}
             ot = self._sc_out.text().strip()
             if ot:
-                try:
-                    out["outcome"] = json.loads(ot)
-                except json.JSONDecodeError:
-                    if ot.lower() in ("true", "false"):
-                        out["outcome"] = ot.lower() == "true"
-                    else:
-                        out["outcome"] = ot
+                orig = getattr(self, "_orig_data", None)
+                orig_oc = orig.get("outcome") if isinstance(orig, dict) else None
+                if (
+                    isinstance(orig, dict)
+                    and "outcome" in orig
+                    and _render_outcome_text(orig_oc) == ot
+                ):
+                    # 文本未改动：按原始类型回写（字符串 "true" 不漂成 bool）
+                    out["outcome"] = copy.deepcopy(orig_oc)
+                else:
+                    try:
+                        out["outcome"] = json.loads(ot)
+                    except json.JSONDecodeError:
+                        if ot.lower() in ("true", "false"):
+                            out["outcome"] = ot.lower() == "true"
+                        else:
+                            out["outcome"] = ot
             return out
         if k == "narrative" and self._nv_graph and self._nv_state and self._nv_reached:
             gid = self._nv_graph.currentData()

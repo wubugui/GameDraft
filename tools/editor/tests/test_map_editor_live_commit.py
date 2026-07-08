@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QPlainTextEdit, QScrollArea
 
 from tools.editor.editors.map_editor import MapEditor
@@ -179,6 +180,29 @@ class TestMapEditorLiveCommit(unittest.TestCase):
         from tools.editor.shared import condition_expr_tree as cet
         # 回归护栏：树滚动区下限不得再膨胀回旧的 640（凭空占大片空白）。
         self.assertLessEqual(cet._CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT, 240)
+
+    def test_map_background_uses_readonly_image_picker_and_canvas_background(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            editor, model = self._editor(root)
+            image_dir = root / "public" / "resources" / "runtime" / "images" / "maps"
+            image_dir.mkdir(parents=True, exist_ok=True)
+            disk = image_dir / "paper_map.png"
+            pm = QPixmap(96, 48)
+            pm.fill(QColor(230, 210, 160))
+            self.assertTrue(pm.save(str(disk), "PNG"))
+
+            url = "/resources/runtime/images/maps/paper_map.png"
+            self.assertTrue(editor._map_bg_picker._edit.isReadOnly())
+            editor._set_background_image(url)
+
+            self.assertEqual(model.map_background_image, url)
+            self.assertTrue(model._map_config_is_object)
+            self.assertTrue(model._map_config_had_background_image_key)
+            self.assertEqual(editor._map_bg_picker.path(), url)
+            self.assertIsNotNone(editor._map_bg_item)
+            self.assertFalse(editor._map_bg_item.pixmap().isNull())
+            self.assertLess(editor._map_bg_item.zValue(), 0)
 
 
 if __name__ == "__main__":

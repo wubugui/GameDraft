@@ -11,13 +11,20 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "wrap_守夜", "state": "oil_added", "reached": true }
+            {
+              "narrative": "wrap_守夜",
+              "state": "oil_added",
+              "reached": true
+            }
           ],
           "next": "after_1"
         },
         {
           "conditions": [
-            { "narrative": "wrap_守夜", "state": "intro_done" }
+            {
+              "narrative": "wrap_守夜",
+              "state": "intro_done"
+            }
           ],
           "next": "n1"
         }
@@ -26,34 +33,53 @@
     },
     "early_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "长明灯豆大的火苗。先进庙里把活路交代清楚再说。",
       "next": "end1"
     },
     "after_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "油碗满着。火苗稳稳的——比刚才稳。",
       "next": "end1"
     },
     "n1": {
       "type": "runActions",
       "actions": [
-        { "type": "playSfx", "params": { "id": "sfx_lamp_oil_flame" } }
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_lamp_oil_flame"
+          }
+        }
       ],
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "他把灯芯挑了挑，添上油。火苗腾地亮了一指，又安分下去。灵前一圈，亮堂了些。",
       "next": "n3"
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（灯莫熄。守夜的规矩就勒一条——一条就一条，记得到。）",
-      "next": "n_sig"
+      "next": "n_sig",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_sig": {
       "type": "runActions",

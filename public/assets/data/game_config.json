@@ -53,9 +53,10 @@
   "playerAvatar": {
     "animManifest": "/resources/runtime/animation/player_anim/anim.json",
     "stateMap": {
-      "idle": "hero_stand",
-      "walk": "hero_walk",
-      "run": "hero_run_new"
-    }
+      "idle": "idle",
+      "walk": "walk",
+      "run": "run"
+    },
+    "portraitSlug": "player_carry_corpse_anim"
   }
 }

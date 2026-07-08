@@ -2,176 +2,359 @@
   "schemaVersion": 1,
   "id": "茶馆瞎子李",
   "entry": "root",
-  "meta": { "title": "茶馆·瞎子李" },
+  "meta": {
+    "title": "茶馆·瞎子李"
+  },
   "nodes": {
     "root": {
       "type": "switch",
       "cases": [
-        { "conditions": [{ "flag": "got_iron_box", "value": true }], "next": "after_box_1" },
-        { "conditions": [{ "flag": "heard_teahouse_story", "value": true }], "next": "first_1" }
+        {
+          "conditions": [
+            {
+              "flag": "got_iron_box",
+              "value": true
+            }
+          ],
+          "next": "after_box_1"
+        },
+        {
+          "conditions": [
+            {
+              "flag": "heard_teahouse_story",
+              "value": true
+            }
+          ],
+          "next": "first_1"
+        }
       ],
       "defaultNext": "too_early"
     },
     "too_early": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "老张那段都还没摆完。你娃耳朵都没竖起来，就先往我这点凑，学得成个啥子？",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "first_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "茶就免了，有啥子事说啥子事。",
-      "next": "first_flags"
+      "next": "first_flags",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "first_flags": {
       "type": "runActions",
       "actions": [
-        { "type": "setFlag", "params": { "key": "met_blind_li", "value": true } },
-        { "type": "addArchiveEntry", "params": { "bookType": "character", "entryId": "blind_li" } }
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "met_blind_li",
+            "value": true
+          }
+        },
+        {
+          "type": "addArchiveEntry",
+          "params": {
+            "bookType": "character",
+            "entryId": "blind_li"
+          }
+        }
       ],
       "next": "first_choice"
     },
     "first_choice": {
       "type": "choice",
       "options": [
-        { "id": "learn", "text": "李先生，我想拜你为师，学算命", "next": "learn_1" },
-        { "id": "help", "text": "没得啥子事，我就来扶你坐一哈", "next": "help_1" }
+        {
+          "id": "learn",
+          "text": "李先生，我想拜你为师，学算命",
+          "next": "learn_1"
+        },
+        {
+          "id": "help",
+          "text": "没得啥子事，我就来扶你坐一哈",
+          "next": "help_1"
+        }
       ]
     },
     "learn_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "学算命？",
-      "next": "learn_2"
+      "next": "learn_2",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "learn_2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "你是想拯救苍生于水火，还是看上了这碗饭好吃？",
-      "next": "motive_ch"
+      "next": "motive_ch",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "motive_ch": {
       "type": "choice",
       "options": [
-        { "id": "honest", "text": "肯定是想学门混饭吃的手艺撒", "next": "honest_open" },
-        { "id": "false", "text": "救人于危难，济世于乱时", "next": "false_1" }
+        {
+          "id": "honest",
+          "text": "肯定是想学门混饭吃的手艺撒",
+          "next": "honest_open"
+        },
+        {
+          "id": "false",
+          "text": "救人于危难，济世于乱时",
+          "next": "false_1"
+        }
       ]
     },
     "false_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "放屁。你关二狗要真有这份心，城里头早给你立长生牌位了。",
-      "next": "false_2"
+      "next": "false_2",
+      "portrait": {
+        "emotion": "angry"
+      }
     },
     "false_2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "直说嘛，你就是觉得这门手艺不费本钱，嘴巴皮一翻就能混口饭。",
-      "next": "honest_open"
+      "next": "honest_open",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "honest_open": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "啥子都瞒不过李先生。我就是想混口比跑腿体面点的饭吃。",
-      "next": "honest_2"
+      "next": "honest_2",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "honest_2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "这还像句人话。",
-      "next": "honest_3"
+      "next": "honest_3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "honest_3": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "命不是哪个都算得来的。光靠嘴巴皮，那叫坑蒙拐骗，不叫本事。",
-      "next": "honest_4"
+      "next": "honest_4",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "honest_4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "你要真想跟我学，先看看你有没有这个命。",
-      "next": "honest_give"
+      "next": "honest_give",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "honest_give": {
       "type": "runActions",
       "actions": [
-        { "type": "giveItem", "params": { "id": "iron_box", "count": 1 } },
-        { "type": "setFlag", "params": { "key": "got_iron_box", "value": true } },
-        { "type": "setFlag", "params": { "key": "box_taboo_active", "value": true } },
-        { "type": "showNotification", "params": { "text": "获得关键道具：铁盒子", "type": "info" } }
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "iron_box",
+            "count": 1
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "got_iron_box",
+            "value": true
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "box_taboo_active",
+            "value": true
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "获得关键道具：铁盒子",
+            "type": "info"
+          }
+        }
       ],
       "next": "honest_5"
     },
     "honest_5": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "这个盒子你拿到，七天之内不许打开。要是七天之后它还是好好的，就在最后一晚带起它切渝都卫水库桥脚下来找我。",
-      "next": "warn_ch"
+      "next": "warn_ch",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "warn_ch": {
       "type": "choice",
       "options": [
-        { "id": "w1", "text": "这差事就恁个简单？", "next": "ask_warn" },
-        { "id": "w2", "text": "为啥子不能打开", "next": "ask_warn_b" }
+        {
+          "id": "w1",
+          "text": "这差事就恁个简单？",
+          "next": "ask_warn"
+        },
+        {
+          "id": "w2",
+          "text": "为啥子不能打开",
+          "next": "ask_warn_b"
+        }
       ]
     },
     "ask_warn": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "简单不简单，要看你手贱不贱。",
-      "next": "ask_warn_b"
+      "next": "ask_warn_b",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "ask_warn_b": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "你打开试一哈，出了大事我可不管。",
-      "next": "ask_warn_c"
+      "next": "ask_warn_c",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "ask_warn_c": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "……",
-      "next": "ask_warn_d"
+      "next": "ask_warn_d",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "ask_warn_d": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "记到起，七天，莫开。到时候桥脚下来见我。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "help_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "人扶到了，嘴里头的话还没落地。你有事求我，脸上都写起的。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "after_box_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "盒子还在吧？",
-      "next": "after_ch"
+      "next": "after_ch",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "after_ch": {
       "type": "choice",
       "options": [
-        { "id": "a1", "text": "在。你这东西到底装了啥子", "next": "after_a1" },
-        { "id": "a2", "text": "我记到起的，七天不能开", "next": "after_a2" }
+        {
+          "id": "a1",
+          "text": "在。你这东西到底装了啥子",
+          "next": "after_a1"
+        },
+        {
+          "id": "a2",
+          "text": "我记到起的，七天不能开",
+          "next": "after_a2"
+        }
       ]
     },
     "after_a1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "你要忍得住，七天后自然晓得。忍不住，现在就能坏事。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "after_a2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "瞎子李" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "记到起就好。莫跟自己的命开玩笑。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
-    "end1": { "type": "end" }
+    "end1": {
+      "type": "end"
+    }
   }
 }

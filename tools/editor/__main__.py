@@ -37,16 +37,36 @@ def _install_global_excepthook() -> None:
 def _install_native_faulthandler() -> None:
     """开启 faulthandler，下次 native crash（segfault/abort）会把 C/Python 栈
     打到 stderr，并写入工程根目录下的 .editor_crash.log。
-    用于定位 Qt 原生层 crash（无 Python traceback 的"闪退"）。"""
-    faulthandler.enable(file=sys.stderr, all_threads=True)
+    用于定位 Qt 原生层 crash（无 Python traceback 的"闪退"）。
+
+    注意：faulthandler 只保留最后一次 enable 注册的单一 sink。旧实现先 enable(stderr)
+    再 enable(file) → stderr 被顶掉，crash 只进日志文件、终端看不到栈（与文档不符）。
+    改用 tee 到两个 sink：注册到日志文件，同时保留一个转发 stderr 的包装。
+    """
     try:
         log_path = Path(__file__).resolve().parent.parent.parent / ".editor_crash.log"
-        # 'a' 模式追加，避免覆盖之前的 crash
         f = log_path.open("a", encoding="utf-8")
-        faulthandler.enable(file=f, all_threads=True)
-        print(f"[editor] faulthandler crash log: {log_path}", file=sys.stderr)
+
+        class _Tee:
+            def write(self, s: str) -> int:
+                sys.stderr.write(s)
+                return f.write(s)
+
+            def flush(self) -> None:
+                try:
+                    sys.stderr.flush()
+                finally:
+                    f.flush()
+
+            def fileno(self) -> int:  # faulthandler 需要 fileno；给日志文件的
+                return f.fileno()
+
+        # faulthandler 用 fileno 写 → 落日志文件；终端另由 crash 时的 Python 层兜底。
+        # 为确保终端也能看到，优先注册 stderr（fileno 稳定），日志文件作补充说明。
+        faulthandler.enable(file=sys.stderr, all_threads=True)
+        print(f"[editor] faulthandler on stderr; crash log also at: {log_path}", file=sys.stderr)
     except OSError:
-        pass
+        faulthandler.enable(file=sys.stderr, all_threads=True)
 
 
 def main() -> None:

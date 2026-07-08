@@ -2,7 +2,7 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { AssetManager } from '../../core/AssetManager';
 import type { GameContext, IGameSystem } from '../../data/types';
 import { TEXT_URLS } from '../../core/projectPaths';
-import { clamp01, validateInterruptRatios } from './holdProgress';
+import { clamp01, validateInterruptChain } from './holdProgress';
 import type { PressureHoldDef, PressureHoldInterruptDef, PressureHoldOutcome } from './types';
 
 export interface PressureHoldRuntimeBinding {
@@ -177,7 +177,9 @@ export class PressureHoldManager implements IGameSystem {
       throw new Error('abortOnReleaseFromRatio 须在 (0,1) 开区间内');
     }
     const interrupts: PressureHoldInterruptDef[] = def.interrupts ?? [];
-    validateInterruptRatios(interrupts.map((i) => i.atRatio));
+    // B14：连同 resetToRatio 与下一停点的关系一起在加载期校验，
+    // 防止 runFlow 中段以 startRatio ≥ stopRatio 构造 HoldProgress 运行期抛错
+    validateInterruptChain(interrupts);
   }
 }
 

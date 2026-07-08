@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
 import type { StringsProvider } from '../core/StringsProvider';
 
@@ -23,6 +24,9 @@ export class InspectBox {
   }
 
   show(text: string): Promise<void> {
+    // 二次 show 时先正常收尾旧会话（resolve 旧 Promise、拆监听、销毁旧容器），
+    // 否则旧 Promise 永不 resolve、等待它的动作链悬挂。
+    if (this.container || this.resolveClose) this.close();
     return new Promise(resolve => {
       this.resolveClose = resolve;
 
@@ -47,10 +51,10 @@ export class InspectBox {
       const boxY = this.renderer.screenHeight - boxHeight - 30;
 
       const bg = new Graphics();
-      bg.roundRect(boxX, boxY, boxWidth, boxHeight, UITheme.panel.borderRadius);
-      bg.fill({ color: UITheme.colors.panelBgAlt, alpha: UITheme.alpha.dialogueBg });
-      bg.roundRect(boxX, boxY, boxWidth, boxHeight, UITheme.panel.borderRadius);
-      bg.stroke({ color: UITheme.colors.borderActive, width: 1 });
+      drawPanelBase(bg, boxX, boxY, boxWidth, boxHeight, SKINS.panelAlt, {
+        fillAlpha: UITheme.alpha.dialogueBg,
+        border: UITheme.colors.borderActive,
+      });
       this.container.addChild(bg);
 
       textObj.x = boxX + 20;

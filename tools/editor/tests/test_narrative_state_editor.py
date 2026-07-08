@@ -19,6 +19,7 @@ from tools.editor.editors.narrative_state_editor import (
     authoring_catalog,
     derive_projection,
     validate_narrative_graphs,
+    web_build_staleness,
 )
 from tools.editor.shared.action_editor import ACTION_TYPES, CONTENT_ACTION_TYPES
 
@@ -110,6 +111,64 @@ class TestNarrativeStateEditor(unittest.TestCase):
             self.assertTrue(m.is_dirty)
             self.assertEqual(m.narrative_composition_ids_ordered(), ["comp"])
 
+    def test_state_active_plane_survives_normalize_and_save(self) -> None:
+        """位面点名字段 activePlane：经 _normalize_file + saveData 往返不丢不漂。
+
+        narrative_graphs 不在 canvas 黄金往返快照内（save 路径带 normalize），
+        该字段的往返契约由本探针专门守护。
+        """
+        from tools.editor.editors.narrative_state_editor import _normalize_file
+        payload = {
+            "schemaVersion": 3,
+            "signals": [{"id": "go"}],
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow",
+                        "ownerType": "flow",
+                        "initialState": "initial",
+                        "states": {
+                            "initial": {"id": "initial"},
+                            "carrying": {"id": "carrying", "activePlane": "背尸"},
+                        },
+                        "transitions": [
+                            {"id": "t1", "from": "initial", "to": "carrying", "signal": "go"},
+                        ],
+                    },
+                    "elements": [],
+                }
+            ],
+        }
+        normalized = _normalize_file(payload)
+        self.assertEqual(
+            normalized["compositions"][0]["mainGraph"]["states"]["carrying"].get("activePlane"),
+            "背尸",
+        )
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            bridge = NarrativeEditorBridge(m)
+            result = bridge.saveData(json.dumps(payload, ensure_ascii=False))
+            self.assertIn("saved", result)
+            saved_state = (
+                m.narrative_graphs["compositions"][0]["mainGraph"]["states"]["carrying"]
+            )
+            self.assertEqual(saved_state.get("activePlane"), "背尸")
+
+    def test_authoring_catalog_exposes_plane_ids(self) -> None:
+        """planeIds 目录：planes.json 缺失容错为空列表；有数据时按 id 列出。"""
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            self.assertEqual(authoring_catalog(m)["planeIds"], [])
+            m.planes = [{"id": "normal", "label": "常态"}, {"id": "背尸"}]
+            self.assertEqual(authoring_catalog(m)["planeIds"], ["normal", "背尸"])
+
     def test_bridge_save_rejects_invalid_narrative_graphs(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
@@ -191,6 +250,45 @@ class TestNarrativeStateEditor(unittest.TestCase):
             ],
         })
         self.assertTrue(any(i.get("code") == "condition.narrative.stateMissing" for i in issues))
+
+    def test_validate_accepts_relative_narrative_condition_tokens(self) -> None:
+        # @owner / @scene 在运行时解析：TS 权威校验器与运行时都接受，Python 兜底不得更严
+        # （否则合法条件会在 saveData / save_all 被拦下）。
+        for token in ("@owner", "@scene"):
+            issues = validate_narrative_graphs({
+                "schemaVersion": 3,
+                "signals": [{"id": "go"}],
+                "compositions": [
+                    {
+                        "id": "comp",
+                        "mainGraph": {
+                            "id": "flow",
+                            "ownerType": "flow",
+                            "initialState": "a",
+                            "states": {"a": {"id": "a"}, "b": {"id": "b"}},
+                            "transitions": [
+                                {
+                                    "id": "t",
+                                    "from": "a",
+                                    "to": "b",
+                                    "signal": "go",
+                                    "conditions": [{"narrative": token, "state": "active"}],
+                                }
+                            ],
+                        },
+                        "elements": [],
+                    }
+                ],
+            })
+            narrative_errors = [
+                i for i in issues
+                if str(i.get("code", "")).startswith("condition.narrative")
+                or i.get("code") == "condition.shape"
+            ]
+            self.assertEqual(
+                narrative_errors, [],
+                f"{token} 相对 token 不应触发 narrative/shape 校验错误：{narrative_errors}",
+            )
 
     def test_projection_derives_real_trigger_edges_from_actions(self) -> None:
         with TemporaryDirectory() as td:
@@ -783,6 +881,102 @@ class TestNarrativeStateEditor(unittest.TestCase):
         ):
             self.assertTrue(NarrativeStateEditor.confirm_close(fake, None))  # type: ignore[arg-type]
         self.assertTrue(fake.flushed)
+
+
+class TestWebBuildStaleness(unittest.TestCase):
+    """网页构建过期检测：源码比 dist 新 ⇒ 编辑器在跑旧产物，须显眼提示。"""
+
+    def _make_web_dir(self, root: Path, *, dist_first: bool) -> Path:
+        import os
+        wd = root / "narrative_editor_web"
+        (wd / "dist").mkdir(parents=True)
+        (wd / "src").mkdir(parents=True)
+        idx = wd / "dist" / "index.html"
+        srcf = wd / "src" / "App.tsx"
+        if dist_first:
+            idx.write_text("<html>", encoding="utf-8")
+            os.utime(idx, (1000, 1000))
+            srcf.write_text("x", encoding="utf-8")
+            os.utime(srcf, (2000, 2000))  # src 更新 → 过期
+        else:
+            srcf.write_text("x", encoding="utf-8")
+            os.utime(srcf, (1000, 1000))
+            idx.write_text("<html>", encoding="utf-8")
+            os.utime(idx, (2000, 2000))  # dist 更新 → 不过期
+        return wd
+
+    def test_stale_when_source_newer_than_dist(self) -> None:
+        with TemporaryDirectory() as td:
+            wd = self._make_web_dir(Path(td), dist_first=True)
+            stale, msg = web_build_staleness(wd)
+            self.assertTrue(stale)
+            self.assertIn("比已构建", msg)
+
+    def test_fresh_when_dist_newer(self) -> None:
+        with TemporaryDirectory() as td:
+            wd = self._make_web_dir(Path(td), dist_first=False)
+            stale, _ = web_build_staleness(wd)
+            self.assertFalse(stale)
+
+    def test_stale_when_dist_missing(self) -> None:
+        with TemporaryDirectory() as td:
+            wd = Path(td) / "narrative_editor_web"
+            (wd / "src").mkdir(parents=True)
+            stale, msg = web_build_staleness(wd)
+            self.assertTrue(stale)
+            self.assertIn("尚未构建", msg)
+
+    def test_dev_server_never_stale(self) -> None:
+        from tools.editor.editors.narrative_state_editor import NARRATIVE_EDITOR_DEV_URL_ENV
+        with TemporaryDirectory() as td:
+            wd = self._make_web_dir(Path(td), dist_first=True)  # 本应过期
+            with patch.dict("os.environ", {NARRATIVE_EDITOR_DEV_URL_ENV: "http://localhost:5173"}):
+                stale, _ = web_build_staleness(wd)
+            self.assertFalse(stale)  # dev server 读源码，不打扰
+
+
+class TestLoadedPageStalenessBanner(unittest.TestCase):
+    """已加载页面落后于磁盘 dist（外部/终端重建过但本页没刷新）时，横幅提示「刷新页面」。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PySide6.QtWidgets import QApplication
+        cls._qt_app = QApplication.instance() or QApplication([])
+
+    def _editor(self):
+        from tools.editor.editors.narrative_state_editor import NarrativeStateEditor
+        td = TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name) / "p"
+        write_minimal_loadable_project(root)
+        m = ProjectModel()
+        m.load_project(root)
+        return NarrativeStateEditor(m)
+
+    def test_banner_prompts_reload_when_page_behind_disk(self) -> None:
+        N = "tools.editor.editors.narrative_state_editor"
+        ed = self._editor()
+        if ed._view is None:
+            self.skipTest("无 QtWebEngine")
+        ed._loaded_dist_mtime = 1000.0
+        # dist 比已加载页面新，且 dist 不比 src 旧（case A 不触发）
+        with patch(f"{N}.web_build_staleness", return_value=(False, "")), \
+                patch(f"{N}._current_dist_mtime", return_value=2000.0):
+            ed._refresh_staleness_banner()
+        self.assertFalse(ed._staleness_banner.isHidden())  # 横幅显示
+        self.assertFalse(ed._reload_btn.isHidden())        # 刷新按钮显示
+        self.assertTrue(ed._rebuild_btn.isHidden())        # 重建按钮隐藏
+
+    def test_banner_hidden_when_page_matches_disk(self) -> None:
+        N = "tools.editor.editors.narrative_state_editor"
+        ed = self._editor()
+        if ed._view is None:
+            self.skipTest("无 QtWebEngine")
+        ed._loaded_dist_mtime = 2000.0
+        with patch(f"{N}.web_build_staleness", return_value=(False, "")), \
+                patch(f"{N}._current_dist_mtime", return_value=2000.0):
+            ed._refresh_staleness_banner()
+        self.assertTrue(ed._staleness_banner.isHidden())
 
 
 if __name__ == "__main__":

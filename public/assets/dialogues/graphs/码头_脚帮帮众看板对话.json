@@ -19,19 +19,28 @@
           "speaker": {
             "kind": "player"
           },
-          "text": "师傅，这上面写的啥？"
+          "text": "师傅，这上面写的啥？",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "说是这水边闹水猴子，不准下水。"
+          "text": "说是这水边闹水猴子，不准下水。",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "这年生不太平哟。码头人来人往的水猴子都敢来闹。"
+          "text": "这年生不太平哟。码头人来人往的水猴子都敢来闹。",
+          "portrait": {
+            "emotion": "sad"
+          }
         }
       ],
       "text": "师傅，这上面写的啥？"
@@ -66,25 +75,37 @@
           "speaker": {
             "kind": "player"
           },
-          "text": "我前几天还下水洗过澡也，我咋没见过有水猴子？"
+          "text": "我前几天还下水洗过澡也，我咋没见过有水猴子？",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "那是你娃命大！官府盖了印章，未必还能是假的。"
+          "text": "那是你娃命大！官府盖了印章，未必还能是假的。",
+          "portrait": {
+            "emotion": "laugh"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "命大你可以去抓水猴子撒。还有钱拿哟。"
+          "text": "命大你可以去抓水猴子撒。还有钱拿哟。",
+          "portrait": {
+            "emotion": "smirk"
+          }
         },
         {
           "speaker": {
             "kind": "player"
           },
-          "text": "钱？！好多钱哦？"
+          "text": "钱？！好多钱哦？",
+          "portrait": {
+            "emotion": "laugh"
+          }
         }
       ],
       "text": "我前几天还下水洗过澡也，我咋没见过有水猴子？"
@@ -116,13 +137,19 @@
           "speaker": {
             "kind": "npc"
           },
-          "text": "你看哈，这上面写的——"
+          "text": "你看哈，这上面写的——",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "生擒，五十两。\n击杀，三十两。\n报信都有五百文哟！"
+          "text": "生擒，五十两。\n击杀，三十两。\n报信都有五百文哟！",
+          "portrait": {
+            "emotion": "calm"
+          }
         }
       ],
       "text": "你看哈，这上面写的——"
@@ -212,37 +239,55 @@
           "speaker": {
             "kind": "player"
           },
-          "text": "真的呀？！"
+          "text": "真的呀？！",
+          "portrait": {
+            "emotion": "laugh"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "（嘻嘻的笑）哄你咋子嘛？要是有本事把这个东西逮到，搞得到钱哟！"
+          "text": "（嘻嘻的笑）哄你咋子嘛？要是有本事把这个东西逮到，搞得到钱哟！",
+          "portrait": {
+            "emotion": "smirk"
+          }
         },
         {
           "speaker": {
             "kind": "player"
           },
-          "text": "（思考）......"
+          "text": "（思考）......",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "咋子？关二狗。你还当真了索？"
+          "text": "咋子？关二狗。你还当真了索？",
+          "portrait": {
+            "emotion": "smirk"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "老子跟你说，这个钱想不得哟！"
+          "text": "老子跟你说，这个钱想不得哟！",
+          "portrait": {
+            "emotion": "angry"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "这个钱要是真的这么好赚，罗二爷手底下的人他能没动嘛？哈得很。"
+          "text": "这个钱要是真的这么好赚，罗二爷手底下的人他能没动嘛？哈得很。",
+          "portrait": {
+            "emotion": "smirk"
+          }
         }
       ],
       "text": "真的呀？！"
@@ -258,7 +303,10 @@
           "speaker": {
             "kind": "npc"
           },
-          "text": "关二狗，去不得哟！你怕是想钱想疯咯。"
+          "text": "关二狗，去不得哟！你怕是想钱想疯咯。",
+          "portrait": {
+            "emotion": "smirk"
+          }
         }
       ],
       "text": "关二狗，去不得哟！你摸想钱想疯了。"
@@ -284,7 +332,10 @@
         "kind": "npc"
       },
       "next": "n_11",
-      "text": "这年生不太平哟。码头人来人往的水猴子都敢来闹。"
+      "text": "这年生不太平哟。码头人来人往的水猴子都敢来闹。",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "n_16": {
       "type": "switch",

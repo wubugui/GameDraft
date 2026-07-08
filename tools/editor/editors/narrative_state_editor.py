@@ -11,9 +11,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, QUrl, Slot
+from PySide6.QtCore import QEventLoop, QObject, QProcess, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import QContextMenuEvent
-from PySide6.QtWidgets import QLabel, QMessageBox, QVBoxLayout, QWidget, QSizePolicy
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QVBoxLayout, QWidget, QSizePolicy,
+)
 
 try:
     from PySide6.QtWebChannel import QWebChannel
@@ -403,6 +406,224 @@ class NarrativeEditorBridge(QObject):
         return json.dumps(authoring_catalog(self._model), ensure_ascii=False)
 
     @Slot(str, result=str)
+    def get_task_index(self, composition_id: str) -> str:  # noqa: N802 - shared bridge contract name
+        """「任务总线」交叉引用（单 composition）。名字由冻结契约固定，web 侧 loadTaskIndex 直调。"""
+        from ..shared.narrative_catalog import build_task_index
+
+        return json.dumps(
+            build_task_index(self._model, (composition_id or "").strip()),
+            ensure_ascii=False,
+        )
+
+    # --------------------------------------------------------------------- #
+    # 叙事状态机模板（archetype）：编辑器专用，运行时永不加载。
+    # --------------------------------------------------------------------- #
+    @Slot(result=str)
+    def getTemplates(self) -> str:  # noqa: N802 - Qt slot name
+        """当前工程的模板注册表（归一后 {schemaVersion, templates:[...]}）。"""
+        from ..shared.narrative_templates import normalize_templates_file
+
+        return json.dumps(normalize_templates_file(self._model.narrative_templates), ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def saveTemplates(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """整表覆盖保存模板（校验通过则并入 model + 标脏 narrative_templates）。"""
+        from ..shared.narrative_templates import normalize_templates_file, validate_templates_file
+
+        try:
+            parsed = json.loads(payload or "{}")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
+        normalized = normalize_templates_file(parsed)
+        errors = [i for i in validate_templates_file(normalized) if i.get("severity") == "error"]
+        if errors:
+            preview = "; ".join(str(e.get("message")) for e in errors[:4])
+            return json.dumps({"ok": False, "reason": f"{len(errors)} 条错误：{preview}", "errors": errors}, ensure_ascii=False)
+        self._model.narrative_templates = normalized
+        self._model.mark_dirty("narrative_templates")
+        return json.dumps({"ok": True, "templates": normalized}, ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def getQuest(self, quest_id: str) -> str:  # noqa: N802 - Qt slot name
+        """按 id 取一条 quest 的 JSON（供「从现成作曲创建模板」把镜像 quest 一起参数化）。"""
+        qid = (quest_id or "").strip()
+        for q in self._model.quests if isinstance(self._model.quests, list) else []:
+            if isinstance(q, dict) and str(q.get("id") or "").strip() == qid:
+                return json.dumps({"ok": True, "quest": q}, ensure_ascii=False)
+        return json.dumps({"ok": False, "reason": f"任务「{qid}」不存在"}, ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def extractTemplate(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """从一张现成作曲反抽出模板对象（不落盘；web 侧拿去并入模板表再 saveTemplates）。
+
+        payload = {composition, params:[{name,type,label,sample,required,default,note}],
+                   templateId, label?, description?, signals?, quest?, dialogueStubs?}
+        """
+        from ..shared.narrative_templates import extract_template, validate_template
+
+        try:
+            parsed = json.loads(payload or "{}")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
+        composition = parsed.get("composition")
+        if not isinstance(composition, dict) or not composition:
+            return json.dumps({"ok": False, "reason": "缺少 composition"}, ensure_ascii=False)
+        template_id = str(parsed.get("templateId") or "").strip()
+        if not template_id:
+            return json.dumps({"ok": False, "reason": "缺少 templateId"}, ensure_ascii=False)
+        try:
+            tpl = extract_template(
+                composition,
+                parsed.get("params") or [],
+                template_id=template_id,
+                label=str(parsed.get("label") or ""),
+                description=str(parsed.get("description") or ""),
+                signals=parsed.get("signals"),
+                quest=parsed.get("quest"),
+                dialogue_stubs=parsed.get("dialogueStubs"),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            return json.dumps({"ok": False, "reason": f"抽取失败：{exc}"}, ensure_ascii=False)
+        return json.dumps({"ok": True, "template": tpl, "issues": validate_template(tpl)}, ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def stampTemplate(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """盖章：模板 + 参数值 → 真作曲(并入传入的 narrative 并回传) + 镜像 quest(写 model) + 可选对话桩(写盘)。
+
+        payload = {templateId, values:{...}, currentNarrative:{...},
+                   generateDialogueStubs:bool, dryRun:bool}
+        dryRun：只回 preview，不产生任何副作用。
+        """
+        from ..shared.narrative_templates import normalize_templates_file, stamp_template
+
+        try:
+            parsed = json.loads(payload or "{}")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
+
+        template_id = str(parsed.get("templateId") or "").strip()
+        values = parsed.get("values") if isinstance(parsed.get("values"), dict) else {}
+        dry_run = bool(parsed.get("dryRun"))
+        gen_stubs = bool(parsed.get("generateDialogueStubs"))
+        current = parsed.get("currentNarrative")
+        if not isinstance(current, dict):
+            current = _normalize_file(self._model.narrative_graphs)
+
+        templates = normalize_templates_file(self._model.narrative_templates)["templates"]
+        tpl = next((t for t in templates if t.get("id") == template_id), None)
+        if tpl is None:
+            return json.dumps({"ok": False, "reason": f"模板「{template_id}」不存在"}, ensure_ascii=False)
+
+        existing_comp = {
+            str(c.get("id") or "").strip()
+            for c in (current.get("compositions") or [])
+            if isinstance(c, dict)
+        }
+        existing_comp.discard("")
+        existing_quest = {q[0] for q in self._model.all_quest_ids()}
+        existing_dlg = set(self._model.all_dialogue_graph_ids())
+
+        result = stamp_template(
+            tpl, values,
+            existing_composition_ids=existing_comp,
+            existing_quest_ids=existing_quest,
+            existing_dialogue_ids=existing_dlg,
+            generate_dialogue_stubs=gen_stubs,
+        )
+        if not result.get("ok"):
+            return json.dumps({
+                "ok": False,
+                "reason": "；".join(str(e.get("message")) for e in result.get("errors", [])[:4]) or "盖章失败",
+                "errors": result.get("errors", []),
+                "warnings": result.get("warnings", []),
+            }, ensure_ascii=False)
+
+        preview = {
+            "compositionId": result["compositionId"],
+            "questId": result.get("questId", ""),
+            "signals": [s.get("id") for s in result.get("signals", [])],
+            "dialogueStubs": [
+                {"id": s["id"], "emitSignal": s.get("emitSignal", ""), "exists": s.get("exists", False)}
+                for s in result.get("dialogueStubs", [])
+            ],
+            "requiredEntities": result.get("requiredEntities", []),
+            "warnings": result.get("warnings", []),
+        }
+        if dry_run:
+            return json.dumps({"ok": True, "dryRun": True, "preview": preview}, ensure_ascii=False)
+
+        # ---- 确认盖章：先构造并校验合并后的 narrative（有错则零副作用回滚） ----
+        merged = _clone(current)
+        merged.setdefault("compositions", [])
+        if not isinstance(merged["compositions"], list):
+            merged["compositions"] = []
+        merged["compositions"].append(result["composition"])
+        merged.setdefault("signals", [])
+        if not isinstance(merged["signals"], list):
+            merged["signals"] = []
+        have_sig = {s.get("id") for s in merged["signals"] if isinstance(s, dict)}
+        for sig in result.get("signals", []):
+            if isinstance(sig, dict) and sig.get("id") not in have_sig:
+                merged["signals"].append(sig)
+                have_sig.add(sig.get("id"))
+
+        merged_norm = _normalize_file(merged)
+        nerrors = _validation_errors_for_save(merged_norm, self._model)
+        if nerrors:
+            preview_msg = "; ".join(str(e.get("message") or e.get("code")) for e in nerrors[:4])
+            return json.dumps({
+                "ok": False,
+                "reason": f"合并后作曲校验失败（未写入任何文件）：{preview_msg}",
+                "errors": nerrors,
+            }, ensure_ascii=False)
+
+        # ---- 副作用：镜像 quest 写入 model（标脏，随主编辑器 Save All 落盘） ----
+        quest_written = False
+        quest_obj = result.get("quest")
+        if isinstance(quest_obj, dict) and result.get("questId"):
+            if not isinstance(self._model.quests, list):
+                self._model.quests = []
+            self._model.quests.append(quest_obj)
+            self._model.mark_dirty("quests")
+            quest_written = True
+
+        # ---- 副作用：为缺失的对话图写空白桩文件（新文件即时落盘，永不覆盖已有） ----
+        stubs_written: list[str] = []
+        stub_skipped: list[str] = []
+        if gen_stubs:
+            from ..file_io import write_json
+            graphs_dir = self._model.dialogues_path / "graphs"
+            for stub in result.get("dialogueStubs", []):
+                gid = str(stub.get("id") or "").strip()
+                if not gid:
+                    continue
+                if stub.get("exists"):
+                    stub_skipped.append(gid)
+                    continue
+                target = graphs_dir / f"{gid}.json"
+                if target.exists():
+                    stub_skipped.append(gid)
+                    continue
+                write_json(target, stub.get("graph") or {})
+                stubs_written.append(gid)
+
+        return json.dumps({
+            "ok": True,
+            "dryRun": False,
+            "narrative": merged_norm,
+            "summary": {
+                "compositionId": result["compositionId"],
+                "questId": result.get("questId", ""),
+                "questWritten": quest_written,
+                "signals": [s.get("id") for s in result.get("signals", [])],
+                "stubsWritten": stubs_written,
+                "stubsSkipped": stub_skipped,
+                "requiredEntities": result.get("requiredEntities", []),
+                "warnings": result.get("warnings", []),
+            },
+        }, ensure_ascii=False)
+
+    @Slot(str, result=str)
     def validateData(self, payload: str) -> str:  # noqa: N802 - Qt slot name
         try:
             parsed = json.loads(payload or "{}")
@@ -499,6 +720,54 @@ class NarrativeEditorBridge(QObject):
             return json.dumps({"ok": False, "reason": "cancelled"}, ensure_ascii=False)
         return json.dumps({"ok": True, "actions": editor.to_list()}, ensure_ascii=False)
 
+    @Slot(str, str, result=str)
+    def editConditions(self, label: str, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """Open the shared native ConditionEditor (all leaf types + all/any/not) and return the edited list.
+
+        Mirrors editActions: lets planners author flag/quest/scenario/scenarioLine/narrative conditions
+        with proper pickers instead of hand-editing JSON. transition.conditions may be a list or a single
+        object; both are accepted and a list is returned (the canonical on-disk shape).
+        """
+        try:
+            parsed = json.loads(payload or "[]")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid conditions payload: {exc}"}, ensure_ascii=False)
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        if not isinstance(parsed, list):
+            return json.dumps({"ok": False, "reason": "conditions payload must be a list or object"}, ensure_ascii=False)
+
+        try:
+            from PySide6.QtWidgets import QDialog, QDialogButtonBox
+            from ..shared.condition_editor import ConditionEditor
+        except Exception as exc:  # pragma: no cover - depends on full editor imports
+            return json.dumps({"ok": False, "reason": f"ConditionEditor is unavailable: {exc}"}, ensure_ascii=False)
+
+        parent = self.parent() if isinstance(self.parent(), QWidget) else None
+        dialog = QDialog(parent)
+        title = (label or "Conditions").strip() or "Conditions"
+        dialog.setWindowTitle(title)
+        dialog.resize(820, 640)
+
+        layout = QVBoxLayout(dialog)
+        editor = ConditionEditor(title, dialog)
+        editor.set_flag_pattern_context(self._model, None)
+        editor.set_data([c for c in parsed if isinstance(c, dict)])
+        layout.addWidget(editor, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        remember_dialog_geometry(dialog, "narrative_condition_editor")
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return json.dumps({"ok": False, "reason": "cancelled"}, ensure_ascii=False)
+        return json.dumps({"ok": True, "conditions": editor.to_list()}, ensure_ascii=False)
+
     @Slot(str, str)
     def navigate(self, kind: str, ref_id: str) -> None:
         kind = (kind or "").strip()
@@ -509,6 +778,12 @@ class NarrativeEditorBridge(QObject):
         while win is not None and not hasattr(win, "navigate_to_dialogue_graph"):
             win = win.parent()
         if win is None:
+            return
+        # plane 非 wrapper owner 类型（不入 WRAPPER_OWNER_NAVIGATION，见其覆盖不变量测试），
+        # 它是 state.activePlane 的跳转目标，独立分支路由到「位面」页。
+        if kind == "plane":
+            if hasattr(win, "navigate_to_plane"):
+                win.navigate_to_plane(ref_id)
             return
         route = WRAPPER_OWNER_NAVIGATION.get(kind)
         if route is None:
@@ -524,6 +799,8 @@ class NarrativeEditorBridge(QObject):
         elif hasattr(win, "_on_navigate_to_source"):
             if route == "quest":
                 win._on_navigate_to_source("quest", ref_id, "")
+            elif route == "scene":
+                win._on_navigate_to_source("scene", ref_id, "")
             elif route in _SCENE_OWNER_SOURCE_TYPES:
                 scene_id, source_id = _split_scene_ref(ref_id)
                 source_type = _SCENE_OWNER_SOURCE_TYPES[route]
@@ -642,8 +919,124 @@ class NarrativeStateEditor(QWidget):
         self._channel = QWebChannel(self._view.page())
         self._channel.registerObject("narrativeBridge", self._bridge)
         self._view.page().setWebChannel(self._channel)
+        self._rebuild_proc: QProcess | None = None
+        self._loaded_dist_mtime: float | None = None
+        self._build_staleness_banner(root)
         root.addWidget(self._view, 1)
         self._load_web_editor()
+        self._refresh_staleness_banner()
+
+    def _build_staleness_banner(self, root: QVBoxLayout) -> None:
+        """顶部"网页构建过期"横幅：dist 比源码旧时显眼提示 + 一键重建。"""
+        bar = QFrame(self)
+        bar.setObjectName("narrativeStaleBanner")
+        bar.setStyleSheet(
+            "QFrame#narrativeStaleBanner { background-color: #b35309; }"
+            "QFrame#narrativeStaleBanner QLabel { color: #fff7ed; }"
+        )
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(10, 5, 8, 5)
+        lay.setSpacing(8)
+        self._staleness_label = QLabel("", bar)
+        self._staleness_label.setWordWrap(True)
+        lay.addWidget(self._staleness_label, 1)
+        self._rebuild_btn = QPushButton("重建并刷新", bar)
+        self._rebuild_btn.setToolTip(f"运行 {_WEB_REBUILD_CMD} 并重新载入网页")
+        self._rebuild_btn.clicked.connect(self._rebuild_web_bundle)
+        lay.addWidget(self._rebuild_btn)
+        self._reload_btn = QPushButton("刷新页面", bar)
+        self._reload_btn.setToolTip("当前页面是旧 bundle，点此加载磁盘上最新构建")
+        self._reload_btn.clicked.connect(self._reload_web_page)
+        lay.addWidget(self._reload_btn)
+        recheck = QPushButton("重新检查", bar)
+        recheck.setToolTip("外部重建后点此刷新过期状态")
+        recheck.clicked.connect(self._refresh_staleness_banner)
+        lay.addWidget(recheck)
+        self._staleness_banner = bar
+        bar.setVisible(False)
+        root.addWidget(bar)
+
+    def _refresh_staleness_banner(self) -> None:
+        banner = getattr(self, "_staleness_banner", None)
+        if banner is None:
+            return
+        # A) dist 比源码旧：改了 src 没重建 → 提示重建。
+        stale, message = web_build_staleness()
+        if stale:
+            self._staleness_label.setText("⚠ " + message)
+            self._rebuild_btn.setVisible(True)
+            self._reload_btn.setVisible(False)
+            banner.setVisible(True)
+            return
+        # B) dist 已比"当前已加载页面"新：外部/终端重建过但本页还是旧 bundle → 提示刷新页面。
+        dev = bool(os.environ.get(NARRATIVE_EDITOR_DEV_URL_ENV, "").strip())
+        cur = _current_dist_mtime()
+        loaded = self._loaded_dist_mtime
+        if not dev and cur is not None and loaded is not None and cur > loaded:
+            self._staleness_label.setText(
+                "⚠ 网页已重建，但当前页面仍是旧 bundle（新功能/修复不会出现）。点「刷新页面」加载最新。"
+            )
+            self._rebuild_btn.setVisible(False)
+            self._reload_btn.setVisible(True)
+            banner.setVisible(True)
+            return
+        banner.setVisible(False)
+
+    def _reload_web_page(self) -> None:
+        self._toolbar_reload_page()
+        self._refresh_staleness_banner()
+
+    def _rebuild_web_bundle(self) -> None:
+        """一键重建网页 bundle 并自动重载（经登录 shell，GUI 启动也能找到 npm）。"""
+        if self._rebuild_proc is not None:
+            return
+        self._rebuild_btn.setEnabled(False)
+        self._rebuild_btn.setText("重建中…")
+        program, args = _rebuild_shell_invocation()
+        proc = QProcess(self)
+        proc.setWorkingDirectory(str(_repo_root()))
+        proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        proc.setProgram(program)
+        proc.setArguments(args)
+        proc.finished.connect(self._on_rebuild_finished)
+        proc.errorOccurred.connect(self._on_rebuild_error)
+        self._rebuild_proc = proc
+        proc.start()
+
+    def _reset_rebuild_button(self) -> None:
+        self._rebuild_btn.setEnabled(True)
+        self._rebuild_btn.setText("重建并刷新")
+
+    def _on_rebuild_error(self, error) -> None:
+        # 仅处理"起不来"（如 shell 缺失）；起来后才出的错交给 finished，避免双弹框。
+        if error != QProcess.ProcessError.FailedToStart:
+            return
+        self._rebuild_proc = None
+        self._reset_rebuild_button()
+        QMessageBox.warning(
+            self, "重建失败",
+            f"无法启动重建命令。请在项目根目录手动运行：\n\n{_WEB_REBUILD_CMD}",
+        )
+
+    def _on_rebuild_finished(self, code: int, _status) -> None:
+        proc = self._rebuild_proc
+        self._rebuild_proc = None
+        self._reset_rebuild_button()
+        if code == 0:
+            self._toolbar_reload_page()  # 载入新 hash 的 bundle
+            self._refresh_staleness_banner()  # 不再过期 → 横幅自动隐藏
+            return
+        detail = ""
+        if proc is not None:
+            detail = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")[-1500:]
+        QMessageBox.warning(
+            self, "重建失败",
+            f"{_WEB_REBUILD_CMD} 失败（退出码 {code}）：\n\n{detail}",
+        )
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._refresh_staleness_banner()
 
     def _toolbar_save(self) -> None:
         self.flush_to_model()
@@ -661,6 +1054,7 @@ class NarrativeStateEditor(QWidget):
             return
         url = _web_editor_load_url()
         if url is not None:
+            self._loaded_dist_mtime = _current_dist_mtime()
             self._view.load(url)
             return
         self._load_web_editor()
@@ -751,6 +1145,7 @@ class NarrativeStateEditor(QWidget):
         assert self._view is not None
         url = _web_editor_load_url()
         if url is not None:
+            self._loaded_dist_mtime = _current_dist_mtime()
             self._view.load(url)
             return
         message = (
@@ -991,6 +1386,7 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
                 elif key == "zones":
                     zone_refs.append(ref)
                     zone_refs.append(eid)
+    from ..shared.narrative_catalog import emitted_signal_ids, plane_membership_counts
     return {
         "dialogueGraphIds": model.all_dialogue_graph_ids(),
         "scenarioIds": model.scenario_ids_ordered(),
@@ -1002,18 +1398,29 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         "zoneRefs": sorted(set(zone_refs)),
         "minigameIds": sorted(set(minigame_ids)),
         "cutsceneIds": [x[0] for x in model.all_cutscene_ids()],
+        # 状态节点 activePlane 下拉候选（planes.json；文件缺失时为空列表）
+        "planeIds": [pid for pid, _ in model.all_plane_ids()],
         "graphIds": model.narrative_graph_ids_ordered(),
         "actionTypes": action_types,
         "actionParamSchemas": action_param_schemas,
         "actionPersistence": action_persistence,
+        # 稳定引用字段（web 侧任务问题检查器消费，见 TaskBusPanel issues）：
+        # planeMembership = 每个位面被多少场景实体（planes 字段含它）归属 → 空位面判据。
+        # emittedSignals = 全项目「实际发出」的信号集（不含 blackbox meta.emits 声明）→ 悬空信号判据。
+        "planeMembership": plane_membership_counts(model),
+        "emittedSignals": emitted_signal_ids(model),
     }
 
 
 def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Legacy Python structural validator retained for older direct tests.
+    """Python structural validator: a coarse save-path backstop and the basis for direct unit tests.
 
-    Do not wire this into the Qt bridge or save path; structural validation is owned by
-    src/core/narrativeGraphValidation.ts.
+    The canonical, deeper validator is ``src/core/narrativeGraphValidation.ts``, which the web
+    editor runs live (in-editor) before every save. This Python pass is intentionally wired into
+    the Qt bridge (``validateData``) and the save path (``_validation_errors_for_save`` →
+    ``saveData`` / ``ProjectModel.save_all``) as a second line of defense so structurally invalid
+    graphs can never reach disk. It is deliberately kept a subset of the TS checks so the two
+    never contradict — do not add stricter/divergent rules here; extend the TS validator instead.
     """
     issues: list[dict[str, Any]] = []
     seen_signal_ids: set[str] = set()
@@ -1358,31 +1765,6 @@ def _resolve_endpoint(raw: Any, owner_graph_id: str) -> dict[str, str]:
     return {"graphId": owner_graph_id, "stateId": str(raw or "").strip()}
 
 
-def _validate_cross_graph_boundary(
-    graph_index: dict[str, dict[str, Any]],
-    owner_graph_id: str,
-    transition_id: str,
-    from_ep: dict[str, str],
-    to_ep: dict[str, str],
-    path: str,
-    issues: list[dict[str, Any]],
-) -> None:
-    if from_ep["graphId"] == to_ep["graphId"]:
-        return
-    from_graph = graph_index.get(from_ep["graphId"], {})
-    to_graph = graph_index.get(to_ep["graphId"], {})
-    from_kind = str(from_graph.get("__elementKind", "")).strip()
-    to_kind = str(to_graph.get("__elementKind", "")).strip()
-    if from_kind == "wrapperGraph" or to_kind == "wrapperGraph":
-        _issue(issues, "error", "transition.wrapper.crossGraph", f"{owner_graph_id}.{transition_id}: wrapper graph 不能直接跨图连线", path, transition_id)
-        return
-    if (to_kind == "scenarioSubgraph" or str(to_graph.get("ownerType", "")).strip() == "scenario") and to_ep["stateId"] != str(to_graph.get("entryState", "")).strip():
-        _issue(issues, "error", "scenario.boundary.entry", f"{owner_graph_id}.{transition_id}: 外部只能连接到 scenario entryState", f"{path}.to", transition_id)
-    exits = [str(x).strip() for x in (from_graph.get("exitStates") if isinstance(from_graph.get("exitStates"), list) else [])]
-    if (from_kind == "scenarioSubgraph" or str(from_graph.get("ownerType", "")).strip() == "scenario") and from_ep["stateId"] not in exits:
-        _issue(issues, "error", "scenario.boundary.exit", f"{owner_graph_id}.{transition_id}: scenario 只能从 exitStates 连到外部", f"{path}.from", transition_id)
-
-
 def _validate_lifecycle_signal_scope(owner_graph_id: str, transition_id: str, signal: str, path: str, issues: list[dict[str, Any]], target: dict[str, Any] | None = None) -> None:
     lifecycle = _parse_lifecycle_signal(signal)
     if lifecycle and lifecycle[0] == owner_graph_id:
@@ -1499,17 +1881,6 @@ def _validate_owner_bindings(data: dict[str, Any], issues: list[dict[str, Any]])
                 )
 
 
-def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:
-    if raw is None:
-        return
-    if not isinstance(raw, list):
-        _issue(issues, "warning", "actions.shape", f"{owner}: Actions 应为数组", path, owner)
-        return
-    for i, action in enumerate(raw):
-        if not isinstance(action, dict) or not str(action.get("type", "")).strip():
-            _issue(issues, "warning", "action.shape", f"{owner}: action {i + 1} 缺少 type", f"{path}[{i}]", owner)
-
-
 _VALID_REACTIVE_TRIGGERS = frozenset({"signal", "reactive", "reactiveAll", "reactiveAny"})
 
 
@@ -1544,30 +1915,7 @@ def _validate_reactive_trigger(
             )
 
 
-def _validate_conditions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str) -> None:
-    if raw is None:
-        return
-    if not isinstance(raw, list):
-        _issue(issues, "warning", "conditions.shape", f"{owner}: conditions 应为数组", path, owner)
-        return
-    for i, expr in enumerate(raw):
-        if not _is_condition_shape(expr):
-            _issue(issues, "warning", "condition.shape", f"{owner}: condition {i + 1} 形状未知", f"{path}[{i}]", owner)
-
-
-def _is_condition_shape(expr: Any) -> bool:
-    if not isinstance(expr, dict):
-        return False
-    if isinstance(expr.get("all"), list):
-        return all(_is_condition_shape(x) for x in expr["all"])
-    if isinstance(expr.get("any"), list):
-        return all(_is_condition_shape(x) for x in expr["any"])
-    if "not" in expr:
-        return _is_condition_shape(expr["not"])
-    return any(isinstance(expr.get(k), str) for k in ("narrative", "flag", "quest", "scenario", "scenarioLine"))
-
-
-def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str, target: dict[str, Any] | None = None) -> None:  # type: ignore[no-redef]
+def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: str, target: dict[str, Any] | None = None) -> None:
     if raw is None:
         return
     if not isinstance(raw, list):
@@ -1598,6 +1946,10 @@ def _validate_action_def(action: dict[str, Any], path: str, issues: list[dict[st
     required = schemas.get(action_type, [])
     if action_type == "emitNarrativeSignal":
         required = [("signal", "str")]
+    elif action_type == "stopSceneAmbient":
+        # actionParamManifest.ts: required=[]——id（留空=清全部环境层）与 fadeMs 均可选，
+        # 不得把 _PARAM_SCHEMAS 的 GUI 参数当必填（TS 权威校验也不拦）。
+        required = []
     for name, _kind in required:
         value = params.get(name)
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -1631,7 +1983,7 @@ def _validate_conditions(
     owner: str,
     graph_index: dict[str, dict[str, Any]] | None = None,
     target: dict[str, Any] | None = None,
-) -> None:  # type: ignore[no-redef]
+) -> None:
     if raw is None:
         return
     if not isinstance(raw, list):
@@ -1641,7 +1993,7 @@ def _validate_conditions(
         _validate_condition_expr(expr, f"{path}[{i}]", issues, owner, graph_index or {}, target)
 
 
-def _is_condition_shape(expr: Any) -> bool:  # type: ignore[no-redef]
+def _is_condition_shape(expr: Any) -> bool:
     if not isinstance(expr, dict):
         return False
     if isinstance(expr.get("all"), list):
@@ -1686,6 +2038,11 @@ def _validate_condition_expr(
         if not state_id:
             _issue(issues, "error", "condition.shape", f"{owner}: narrative condition requires state", path, owner, target)
             return False
+        # 相对 token（@owner / @scene）在运行时解析，跳过静态 graphId/state 存在性检查——
+        # 与权威校验器 narrativeGraphValidation.ts:718 一致。否则 Python 兜底比 TS 更严，
+        # 会把运行时/TS 都认可的合法条件拦在保存路径外（saveData / save_all）。
+        if graph_id.startswith("@"):
+            return True
         graph = graph_index.get(graph_id)
         if not graph:
             _issue(issues, "error", "condition.narrative.graphMissing", f"{owner}: narrative graph does not exist: {graph_id}", f"{path}.narrative", owner, target)
@@ -1785,8 +2142,80 @@ def _find_main_window(obj: QObject) -> QObject | None:
     return win
 
 
+def _web_editor_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "narrative_editor_web"
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
 def _web_editor_index() -> Path:
-    return Path(__file__).resolve().parents[2] / "narrative_editor_web" / "dist" / "index.html"
+    return _web_editor_dir() / "dist" / "index.html"
+
+
+_WEB_REBUILD_CMD = "npm run build:narrative-editor"
+
+
+def _current_dist_mtime() -> float | None:
+    """当前磁盘上 dist/index.html 的 mtime（缺失/出错为 None）。"""
+    idx = _web_editor_index()
+    try:
+        return idx.stat().st_mtime if idx.is_file() else None
+    except OSError:
+        return None
+
+
+def _rebuild_shell_invocation() -> tuple[str, list[str]]:
+    """经登录 shell 跑重建命令：`$SHELL -lc 'cd <root> && npm run …'`。
+
+    `-l` 会加载用户 profile（.zprofile/.bash_profile 等），从而拿到 nvm/homebrew 的 PATH——
+    这样即便编辑器从 Finder/Dock 等 GUI 启动（PATH 精简、`which npm` 找不到）也能跑起来。
+    """
+    import shlex
+    shell = os.environ.get("SHELL") or "/bin/zsh"
+    cmd = f"cd {shlex.quote(str(_repo_root()))} && {_WEB_REBUILD_CMD}"
+    return shell, ["-lc", cmd]
+
+
+def web_build_staleness(web_dir: Path | None = None) -> tuple[bool, str]:
+    """返回 (网页构建是否过期, 提示文案)。
+
+    dist/index.html 比 src 任一源文件旧 ⇒ 编辑器仍在跑旧产物（改了源码没重建）。
+    dev server 模式（设了 env URL）始终读源码，永不过期。web_dir 仅供测试注入。
+    """
+    if os.environ.get(NARRATIVE_EDITOR_DEV_URL_ENV, "").strip():
+        return False, ""
+    wd = web_dir or _web_editor_dir()
+    index = wd / "dist" / "index.html"
+    if not index.is_file():
+        return True, f"叙事编辑器网页尚未构建（dist 缺失）。运行 {_WEB_REBUILD_CMD} 后重开本页。"
+    try:
+        dist_mtime = index.stat().st_mtime
+    except OSError:
+        return False, ""
+    src_dir = wd / "src"
+    newest = 0.0
+    newest_name = ""
+    candidates: list[Path] = list(src_dir.rglob("*")) if src_dir.is_dir() else []
+    cfg = wd / "vite.config.ts"
+    if cfg.is_file():
+        candidates.append(cfg)
+    for p in candidates:
+        try:
+            if not p.is_file():
+                continue
+            mt = p.stat().st_mtime
+        except OSError:
+            continue
+        if mt > newest:
+            newest, newest_name = mt, p.name
+    if newest > dist_mtime:
+        return True, (
+            f"网页源码（{newest_name}）比已构建的 dist 新——编辑器仍在跑旧产物，"
+            f"新功能/修复不会出现。点「重建并刷新」或运行 {_WEB_REBUILD_CMD}，完成后重开本页。"
+        )
+    return False, ""
 
 
 def _web_editor_load_url() -> QUrl | None:

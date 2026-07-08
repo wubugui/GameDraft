@@ -1,12 +1,14 @@
 """Archive editor: characters, lore, books, documents."""
 from __future__ import annotations
 
+import copy
+
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QTabWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
-    QScrollArea, QLabel, QGroupBox, QFileDialog, QDialog, QMessageBox,
+    QScrollArea, QLabel, QGroupBox, QFileDialog, QMessageBox,
     QToolButton, QStyle, QMenu,
 )
 from PySide6.QtCore import Qt, QObject, QEvent
@@ -17,7 +19,7 @@ from ..shared.collapsible_section import CollapsibleSection
 from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.action_editor import ActionEditor
-from ..shared.rich_text_field import InsertRefDialog, RichTextLineEdit, RichTextTextEdit
+from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.project_paths import (
     DIR_KIND_RUNTIME_IMAGES_ILLUSTRATIONS,
@@ -91,43 +93,6 @@ def _make_insert_image_btn(
     return btn
 
 
-def _open_game_tag_insert_dialog(
-    parent: QWidget,
-    model: ProjectModel,
-    text_edit: QTextEdit | RichTextTextEdit,
-) -> None:
-    """统一插入对话框（8 种 tag，与运行时 resolveText 一致）。"""
-    core = (
-        text_edit.core_text_edit()
-        if isinstance(text_edit, RichTextTextEdit)
-        else text_edit
-    )
-    dlg = InsertRefDialog(model, parent)
-    if dlg.exec() != QDialog.DialogCode.Accepted:
-        return
-    marker = dlg.marker()
-    if not marker:
-        return
-    cur = core.textCursor()
-    cur.insertText(marker)
-    core.setTextCursor(cur)
-
-
-def _make_insert_game_tag_btn(
-    text_edit: QTextEdit | RichTextTextEdit,
-    model: ProjectModel,
-    parent: QWidget,
-) -> QPushButton:
-    btn = QPushButton("插入 tag")
-
-    def _go() -> None:
-        _open_game_tag_insert_dialog(parent, model, text_edit)
-
-    btn.setMaximumWidth(100)
-    btn.clicked.connect(_go)
-    return btn
-
-
 # ---------------------------------------------------------------------------
 # List affordances (context menu + Delete key) — UI-only, reuse existing handlers
 # ---------------------------------------------------------------------------
@@ -191,6 +156,27 @@ def _wire_list_affordances(
     list_widget._delete_key_filter = flt  # type: ignore[attr-defined]
 
 
+# lore.json 的 categories 键固定为这 4 类（与 src/data/types.ts 的 LoreEntry.category 联合类型一致）
+_LORE_CATEGORY_KEYS = ("legend", "geography", "folklore", "affairs")
+_LORE_CATEGORY_DEFAULT_NAMES = {
+    "legend": "传说", "geography": "地理", "folklore": "民俗", "affairs": "时事",
+}
+
+
+def _next_unique_id(prefix: str, existing) -> str:
+    """生成 ``prefix_N`` 形式、且不与 *existing* 冲突的 id。
+
+    旧实现用 ``f"{prefix}_{len(list)}"``，在“删掉中间一项后再新增”时会重新落到一个
+    已存在的编号上（例如 ``[char_0, char_2]`` 再 +1 又得 ``char_2``），运行时 Map
+    last-wins 会让一条档案凭空消失。这里从 ``len`` 起步、撞到就自增，保证唯一。
+    """
+    seen = set(existing)
+    i = len(seen)
+    while f"{prefix}_{i}" in seen:
+        i += 1
+    return f"{prefix}_{i}"
+
+
 # ---------------------------------------------------------------------------
 # Helpers for repeatable condition+text groups
 # ---------------------------------------------------------------------------
@@ -223,81 +209,8 @@ class _CondTextGroup(QGroupBox):
         lay.addWidget(self._text)
 
     def to_dict(self) -> dict:
-        return {"conditions": self._cond.to_list(), "text": self._text.toPlainText()}
-
-
-class _ListDetailTab(QWidget):
-    """Generic list+detail for a flat list of dicts."""
-
-    def __init__(self, model: ProjectModel, items_ref: list[dict],
-                 data_type: str, build_detail, save_detail,
-                 make_new, display_fn, parent=None):
-        super().__init__(parent)
-        self._model = model
-        self._items = items_ref
-        self._data_type = data_type
-        self._build_detail = build_detail
-        self._save_detail = save_detail
-        self._make_new = make_new
-        self._display_fn = display_fn
-        self._current_idx = -1
-
-        root = QHBoxLayout(self)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        left = QWidget()
-        ll = QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
-        btn_row = QHBoxLayout()
-        btn_add = QPushButton("+ Add"); btn_add.clicked.connect(self._add)
-        btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._delete)
-        btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
-        ll.addLayout(btn_row)
-        self._list = QListWidget()
-        self._list.currentRowChanged.connect(self._on_select)
-        ll.addWidget(self._list)
-
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        self._detail = QWidget()
-        self._detail_layout = QVBoxLayout(self._detail)
-        self._build_detail(self._detail_layout)
-        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply)
-        self._detail_layout.addWidget(apply_btn)
-        self._detail_layout.addStretch()
-        scroll.setWidget(self._detail)
-
-        splitter.addWidget(left)
-        splitter.addWidget(scroll)
-        splitter.setSizes([220, 550])
-        root.addWidget(splitter)
-        self.refresh()
-
-    def refresh(self) -> None:
-        self._list.clear()
-        for it in self._items:
-            self._list.addItem(self._display_fn(it))
-
-    def _on_select(self, row: int) -> None:
-        if row < 0 or row >= len(self._items):
-            return
-        self._current_idx = row
-
-    def _apply(self) -> None:
-        if self._current_idx >= 0:
-            self._save_detail(self._current_idx)
-            self._model.mark_dirty(self._data_type)
-            self.refresh()
-
-    def _add(self) -> None:
-        self._items.append(self._make_new())
-        self._model.mark_dirty(self._data_type)
-        self.refresh()
-
-    def _delete(self) -> None:
-        if self._current_idx >= 0:
-            self._items.pop(self._current_idx)
-            self._current_idx = -1
-            self._model.mark_dirty(self._data_type)
-            self.refresh()
+        # 键序与磁盘数据一致（text 先于 conditions），保编辑器往返字节不变。
+        return {"text": self._text.toPlainText(), "conditions": self._cond.to_list()}
 
 
 # ---------------------------------------------------------------------------
@@ -325,17 +238,20 @@ class ArchiveEditor(QWidget):
         if it is not None:
             it.setText(text)
 
-    def flush_to_model(self) -> bool:
+    def flush_to_model(self, for_save_all: bool = False) -> bool:
         """Save All 钩子：提交四个档案区当前选中项的未应用编辑（跨页编辑也一并提交）。
 
         每个 _apply_* 在对应区无选中（idx<0）时自守空转；无条件提交是安全的——只写入当前
         UI 状态，未编辑的区写回等值数据（语义上无操作），保存后清脏；黄金往返测试保证不损坏。
         这堵住"改了档案没点 Apply 就 Ctrl+S 被静默丢弃"的主要丢失路径。
+
+        ``for_save_all`` 仅为与 main_window 统一调用签名（无需异常兜底重试），逻辑上不区分。
         """
-        self._apply_char()
-        self._apply_lore()
-        self._apply_doc()
-        self._apply_book()
+        self._apply_char(refresh=False)
+        self._apply_lore(refresh=False)
+        self._apply_doc(refresh=False)
+        self._apply_book(refresh=False)
+        self._apply_lore_categories()
         return True
 
     # ---- Characters -------------------------------------------------------
@@ -374,8 +290,12 @@ class ArchiveEditor(QWidget):
         self._ch_title.setMinimumWidth(240)
         f.addRow("title", self._ch_title)
         dl.addLayout(f)
-        self._ch_unlock = ConditionEditor("unlockConditions")
-        dl.addWidget(self._ch_unlock)
+        ch_unlock_hint = QLabel(
+            "人物档案的解锁唯一入口是 addArchiveEntry 动作"
+            "（在对话图/过场里 addArchiveEntry: bookType=character, entryId=本档案 id）。")
+        ch_unlock_hint.setWordWrap(True)
+        ch_unlock_hint.setStyleSheet("color:#888; font-size:11px;")
+        dl.addWidget(ch_unlock_hint)
         ch_fv_box = QGroupBox("首次阅览动作 firstViewActions")
         ch_fv_box.setToolTip("玩家第一次点开该人物档案时执行一次。")
         ch_fv_lay = QVBoxLayout(ch_fv_box)
@@ -408,7 +328,7 @@ class ArchiveEditor(QWidget):
         ki_sec.add_body(ki_body)
         dl.addWidget(ki_sec)
 
-        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply_char)
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_char(refresh=False))
         dl.addWidget(apply_btn)
         dl.addStretch()
         scroll.setWidget(detail)
@@ -441,8 +361,6 @@ class ArchiveEditor(QWidget):
         self._ch_id.setText(ch.get("id", ""))
         self._ch_name.setText(ch.get("name", ""))
         self._ch_title.setText(ch.get("title", ""))
-        self._ch_unlock.set_flag_pattern_context(self._model, None)
-        self._ch_unlock.set_data(ch.get("unlockConditions", []))
         self._ch_first_view.set_project_context(self._model, None)
         self._ch_first_view.set_data(ch.get("firstViewActions", []))
         self._rebuild_cond_text_list(self._ch_imp_layout, self._imp_widgets,
@@ -522,14 +440,14 @@ class ArchiveEditor(QWidget):
 
     def _add_impression(self) -> None:
         g = _CondTextGroup(f"Impression {len(self._imp_widgets) + 1}",
-                           {"conditions": [], "text": ""}, self._model)
+                           {"text": "", "conditions": []}, self._model)
         self._wire_cond_text_group(g)
         self._imp_widgets.append(g)
         self._ch_imp_layout.addWidget(g)
 
     def _add_known_info(self) -> None:
         g = _CondTextGroup(f"Info {len(self._ki_widgets) + 1}",
-                           {"conditions": [], "text": ""}, self._model)
+                           {"text": "", "conditions": []}, self._model)
         self._wire_cond_text_group(g)
         self._ki_widgets.append(g)
         self._ch_ki_layout.addWidget(g)
@@ -538,10 +456,12 @@ class ArchiveEditor(QWidget):
         if self._char_idx < 0:
             return
         ch = self._model.archive_characters[self._char_idx]
+        _before = copy.deepcopy(ch)
         ch["id"] = self._ch_id.text().strip()
         ch["name"] = self._ch_name.text()
         ch["title"] = self._ch_title.text()
-        ch["unlockConditions"] = self._ch_unlock.to_list()
+        # 人物解锁只走 addArchiveEntry 动作；清掉历史遗留的死字段 unlockConditions。
+        ch.pop("unlockConditions", None)
         ch_fv = self._ch_first_view.to_list()
         if ch_fv:
             ch["firstViewActions"] = ch_fv
@@ -549,6 +469,8 @@ class ArchiveEditor(QWidget):
             del ch["firstViewActions"]
         ch["impressions"] = [w.to_dict() for w in self._imp_widgets]
         ch["knownInfo"] = [w.to_dict() for w in self._ki_widgets]
+        if ch == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
         self._model.mark_dirty("archive")
         if refresh:
             self._refresh_chars()
@@ -558,12 +480,15 @@ class ArchiveEditor(QWidget):
                 f"{ch.get('id', '?')}  [{ch.get('name', '')}]")
 
     def _add_char(self) -> None:
+        new_id = _next_unique_id(
+            "char", (c.get("id", "") for c in self._model.archive_characters))
         self._model.archive_characters.append({
-            "id": f"char_{len(self._model.archive_characters)}", "name": "New",
-            "title": "", "impressions": [], "knownInfo": [], "unlockConditions": [],
+            "id": new_id, "name": "New",
+            "title": "", "impressions": [], "knownInfo": [],
         })
         self._model.mark_dirty("archive")
         self._refresh_chars()
+        self._char_list.setCurrentRow(len(self._model.archive_characters) - 1)
 
     def _del_char(self) -> None:
         if self._char_idx >= 0:
@@ -620,10 +545,12 @@ class ArchiveEditor(QWidget):
         self._lo_cat = QComboBox()
         self._lo_cat.addItems(["legend", "geography", "folklore", "affairs"])
         self._lo_cat.setMaximumWidth(160)
-        self._lo_cat.setToolTip("传说分类：legend 传说 / geography 地理 / folklore 风俗 / affairs 时事。")
+        self._lo_cat.setToolTip(
+            "传说分类键：legend / geography / folklore / affairs（中文显示名见下方"
+            "「分类名称 categories」可编辑）。")
         f.addRow("category", self._lo_cat)
         self._lo_cond = ConditionEditor("unlockConditions")
-        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply_lore)
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_lore(refresh=False))
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -634,6 +561,7 @@ class ArchiveEditor(QWidget):
         self._lo_first_view = ActionEditor("firstViewActions")
         rl.addWidget(self._lo_first_view)
         rl.addWidget(apply_btn)
+        rl.addWidget(self._build_lore_categories_section())
 
         splitter.addWidget(left)
         splitter.addWidget(right)
@@ -642,6 +570,61 @@ class ArchiveEditor(QWidget):
         self._lore_idx = -1
         self._refresh_lore()
         return w
+
+    def _lore_categories_map(self):
+        """lore 的 categories 映射（dict）——仅当 archive_lore 是 dict 且确含该键时返回；否则 None。"""
+        d = self._model.archive_lore
+        if isinstance(d, dict) and isinstance(d.get("categories"), dict):
+            return d["categories"]
+        return None
+
+    def _build_lore_categories_section(self) -> QWidget:
+        """分类显示名编辑（全局，非按条目）。仅当工程 lore 已使用 categories 映射时可写，
+        绝不向缺此键的工程注入字段——保护"数据格式不变"。"""
+        cats = self._lore_categories_map()
+        self._lore_categories_editable = cats is not None
+        self._lore_cat_name_edits: dict[str, QLineEdit] = {}
+        body = QWidget()
+        form = compact_form(QFormLayout(body))
+        for key in _LORE_CATEGORY_KEYS:
+            le = QLineEdit()
+            le.setMaximumWidth(160)
+            le.setText((cats or {}).get(key, _LORE_CATEGORY_DEFAULT_NAMES[key]))
+            if not self._lore_categories_editable or key not in (cats or {}):
+                le.setReadOnly(True)
+            self._lore_cat_name_edits[key] = le
+            form.addRow(key, le)
+        if self._lore_categories_editable:
+            btn = QPushButton("应用分类名")
+            btn.setMaximumWidth(120)
+            btn.clicked.connect(self._apply_lore_categories)
+            form.addRow("", btn)
+        sec = CollapsibleSection("分类名称 categories（全局）", start_open=False)
+        if self._lore_categories_editable:
+            sec.set_header_tool_tip(
+                "编辑各分类的中文显示名（运行时档案界面用）。键固定为 4 类、不可增删；"
+                "仅工程 lore 已含 categories 时可改，灰色行表示该键不在映射中。")
+        else:
+            sec.set_header_tool_tip("当前工程 lore 未使用 categories 映射，此处为只读默认值。")
+        sec.add_body(body)
+        return sec
+
+    def _apply_lore_categories(self) -> None:
+        """把分类显示名就地写回已存在的键，不注入新键、不删除、不重排（保 JSON 字节级往返）。"""
+        if not getattr(self, "_lore_categories_editable", False):
+            return
+        cats = self._lore_categories_map()
+        if cats is None:
+            return
+        changed = False
+        for key in _LORE_CATEGORY_KEYS:
+            le = self._lore_cat_name_edits.get(key)
+            if le is not None and key in cats:
+                if cats[key] != le.text():
+                    cats[key] = le.text()
+                    changed = True
+        if changed:
+            self._model.mark_dirty("archive")
 
     def _lore_entries(self) -> list[dict]:
         d = self._model.archive_lore
@@ -680,6 +663,7 @@ class ArchiveEditor(QWidget):
         if self._lore_idx < 0 or self._lore_idx >= len(entries):
             return
         e = entries[self._lore_idx]
+        _before = copy.deepcopy(e)
         e["id"] = self._lo_id.text().strip()
         e["title"] = self._lo_title.text()
         e["content"] = self._lo_content.toPlainText()
@@ -691,6 +675,8 @@ class ArchiveEditor(QWidget):
             e["firstViewActions"] = lo_fv
         elif "firstViewActions" in e:
             del e["firstViewActions"]
+        if e == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
         self._model.mark_dirty("archive")
         if refresh:
             self._refresh_lore()
@@ -701,12 +687,14 @@ class ArchiveEditor(QWidget):
 
     def _add_lore(self) -> None:
         entries = self._lore_entries()
+        new_id = _next_unique_id("lore", (e.get("id", "") for e in entries))
         entries.append({
-            "id": f"lore_{len(entries)}", "title": "", "content": "",
+            "id": new_id, "title": "", "content": "",
             "source": "", "category": "legend", "unlockConditions": [],
         })
         self._model.mark_dirty("archive")
         self._refresh_lore()
+        self._lore_list.setCurrentRow(len(entries) - 1)
 
     def _del_lore(self) -> None:
         entries = self._lore_entries()
@@ -767,7 +755,7 @@ class ArchiveEditor(QWidget):
         dl.addWidget(QLabel("<b>首次阅览动作 firstViewActions</b>"))
         self._doc_first_view = ActionEditor("firstViewActions")
         dl.addWidget(self._doc_first_view)
-        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply_doc)
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_doc(refresh=False))
         dl.addWidget(apply_btn)
         dl.addStretch()
         scroll.setWidget(detail)
@@ -808,6 +796,7 @@ class ArchiveEditor(QWidget):
         if self._doc_idx < 0:
             return
         d = self._model.archive_documents[self._doc_idx]
+        _before = copy.deepcopy(d)
         d["id"] = self._doc_id.text().strip()
         d["name"] = self._doc_name.text()
         d["content"] = self._doc_content.toPlainText()
@@ -822,6 +811,8 @@ class ArchiveEditor(QWidget):
             d["firstViewActions"] = doc_fv
         elif "firstViewActions" in d:
             del d["firstViewActions"]
+        if d == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
         self._model.mark_dirty("archive")
         if refresh:
             self._refresh_docs()
@@ -831,12 +822,15 @@ class ArchiveEditor(QWidget):
                 f"{d.get('id', '?')}  [{d.get('name', '')}]")
 
     def _add_doc(self) -> None:
+        new_id = _next_unique_id(
+            "doc", (d.get("id", "") for d in self._model.archive_documents))
         self._model.archive_documents.append({
-            "id": f"doc_{len(self._model.archive_documents)}", "name": "",
+            "id": new_id, "name": "",
             "content": "", "discoverConditions": [],
         })
         self._model.mark_dirty("archive")
         self._refresh_docs()
+        self._doc_list.setCurrentRow(len(self._model.archive_documents) - 1)
 
     def _del_doc(self) -> None:
         if self._doc_idx >= 0:
@@ -882,7 +876,10 @@ class ArchiveEditor(QWidget):
         f.addRow("title", self._bk_title)
         self._bk_pages_spin = QSpinBox(); self._bk_pages_spin.setRange(0, 99)
         self._bk_pages_spin.setMaximumWidth(90)
-        self._bk_pages_spin.setToolTip("书籍总页数（用于运行时分页显示），通常应与下方 Pages 数量一致。")
+        self._bk_pages_spin.setReadOnly(True)
+        self._bk_pages_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._bk_pages_spin.setToolTip(
+            "书籍总页数：只读，自动同步为下方 Pages 的实际数量（避免手填与真实页数漂移）。")
         f.addRow("totalPages", self._bk_pages_spin)
         dl.addLayout(f)
         dl.addWidget(QLabel("<b>Pages</b>"))
@@ -958,17 +955,14 @@ class ArchiveEditor(QWidget):
         en_content_row.addWidget(self._en_content)
         en_content_row.addWidget(_make_insert_image_btn(self._en_content, self._model))
         ef.addRow("content", en_content_row)
-        ann_row = QHBoxLayout()
         self._en_annotation = RichTextTextEdit(self._model)
         self._en_annotation.setMinimumWidth(240)
         self._en_annotation.setMaximumHeight(100)
         self._en_annotation.setPlaceholderText("按语…")
         self._en_annotation.setToolTip(
-            "按语；可点右侧插入 [tag:string:类:key]、[tag:flag:键]、[tag:item:道具id]",
+            "按语；可点内置「引用」按钮插入 [tag:string:类:key]、[tag:flag:键]、[tag:item:道具id]",
         )
-        ann_row.addWidget(self._en_annotation)
-        ann_row.addWidget(_make_insert_game_tag_btn(self._en_annotation, self._model, self))
-        ef.addRow("annotation", ann_row)
+        ef.addRow("annotation", self._en_annotation)
         self._en_illust = IdRefSelector(allow_empty=True, editable=True)
         self._en_illust.setMinimumWidth(180)
         self._en_illust.setToolTip("本子条目插图资源 id（可留空）；从已登记的插图资源中选择。")
@@ -980,7 +974,7 @@ class ArchiveEditor(QWidget):
         self._en_first_view = ActionEditor("entry firstViewActions")
         dl.addWidget(self._en_first_view)
 
-        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(self._apply_book)
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_book(refresh=False))
         dl.addWidget(apply_btn)
         dl.addStretch()
         scroll.setWidget(detail)
@@ -1012,7 +1006,7 @@ class ArchiveEditor(QWidget):
         b = self._model.archive_books[row]
         self._bk_id.setText(b.get("id", ""))
         self._bk_title.setText(b.get("title", ""))
-        self._bk_pages_spin.setValue(b.get("totalPages", 0))
+        self._bk_pages_spin.setValue(len(b.get("pages", []) or []))
         self._page_list.clear()
         for pg in b.get("pages", []):
             self._page_list.addItem(f"Page {pg.get('pageNum', '?')}: {pg.get('title', '')}")
@@ -1112,6 +1106,20 @@ class ArchiveEditor(QWidget):
         self._en_first_view.set_project_context(self._model, None)
         self._en_first_view.set_data(ent.get("firstViewActions", []))
 
+    def _all_book_entry_ids(self):
+        """所有书全部页内子条目 id 的集合（条目 id 须跨书全局唯一，validator 强制）。"""
+        ids = set()
+        for bk in self._model.archive_books:
+            if not isinstance(bk, dict):
+                continue
+            for pg in bk.get("pages") or []:
+                if not isinstance(pg, dict):
+                    continue
+                for ent in pg.get("entries") or []:
+                    if isinstance(ent, dict) and ent.get("id"):
+                        ids.add(ent["id"])
+        return ids
+
     def _add_page_entry(self) -> None:
         if self._book_idx < 0 or self._page_idx < 0:
             return
@@ -1119,7 +1127,7 @@ class ArchiveEditor(QWidget):
         pg = pages[self._page_idx]
         ents = pg.setdefault("entries", [])
         ents.append({
-            "id": f"book_entry_{len(ents) + 1}",
+            "id": _next_unique_id("book_entry", self._all_book_entry_ids()),
             "title": "",
             "content": "",
         })
@@ -1160,6 +1168,8 @@ class ArchiveEditor(QWidget):
         ents = self._page_entries()
         if ents is None or self._entry_idx <= 0 or self._entry_idx >= len(ents):
             return
+        # 提交当前条目未应用编辑后再交换，避免随后重建列表时丢失。
+        self._apply_book(refresh=False)
         i = self._entry_idx
         ents[i - 1], ents[i] = ents[i], ents[i - 1]
         self._entry_idx = -1
@@ -1171,6 +1181,8 @@ class ArchiveEditor(QWidget):
         ents = self._page_entries()
         if ents is None or self._entry_idx < 0 or self._entry_idx >= len(ents) - 1:
             return
+        # 提交当前条目未应用编辑后再交换，避免随后重建列表时丢失。
+        self._apply_book(refresh=False)
         i = self._entry_idx
         ents[i + 1], ents[i] = ents[i], ents[i + 1]
         self._entry_idx = -1
@@ -1181,9 +1193,13 @@ class ArchiveEditor(QWidget):
     def _add_page(self) -> None:
         if self._book_idx < 0:
             return
+        # 先提交当前页/条目未应用编辑：下面 _on_book_select(同一本书) 不会触发
+        # commit-on-leave（prev==row），会直接用数据重置表单，丢掉手头的改动。
+        self._apply_book(refresh=False)
         pages = self._model.archive_books[self._book_idx].setdefault("pages", [])
         pages.append({"pageNum": len(pages) + 1, "content": "", "unlockConditions": []})
         self._on_book_select(self._book_idx)
+        self._page_list.setCurrentRow(len(pages) - 1)
 
     def _renumber_pages(self, pages: list[dict]) -> None:
         """重排后让每页 pageNum 等于其顺序号（1 起），与列表位置一致。"""
@@ -1203,6 +1219,8 @@ class ArchiveEditor(QWidget):
             f"含 {nent} 个条目。" if nent else "",
         ):
             return
+        # 提交书级（id/title）等未应用编辑，再删除当前页——否则 _on_book_select 重置会丢掉它们。
+        self._apply_book(refresh=False)
         pages.pop(self._page_idx)
         self._renumber_pages(pages)
         self._page_idx = -1
@@ -1215,6 +1233,8 @@ class ArchiveEditor(QWidget):
         pages = self._model.archive_books[self._book_idx].get("pages", [])
         if self._page_idx >= len(pages):
             return
+        # 提交当前页/条目编辑后再交换：随后 _on_book_select 会用数据重建表单。
+        self._apply_book(refresh=False)
         i = self._page_idx
         pages[i - 1], pages[i] = pages[i], pages[i - 1]
         self._renumber_pages(pages)
@@ -1229,6 +1249,8 @@ class ArchiveEditor(QWidget):
         pages = self._model.archive_books[self._book_idx].get("pages", [])
         if self._page_idx >= len(pages) - 1:
             return
+        # 提交当前页/条目编辑后再交换：随后 _on_book_select 会用数据重建表单。
+        self._apply_book(refresh=False)
         i = self._page_idx
         pages[i + 1], pages[i] = pages[i], pages[i + 1]
         self._renumber_pages(pages)
@@ -1241,9 +1263,11 @@ class ArchiveEditor(QWidget):
         if self._book_idx < 0:
             return
         b = self._model.archive_books[self._book_idx]
+        _before = copy.deepcopy(b)
         b["id"] = self._bk_id.text().strip()
         b["title"] = self._bk_title.text()
-        b["totalPages"] = self._bk_pages_spin.value()
+        # totalPages 派生自实际页数，杜绝手填漂移（运行时本就只认 pages，此字段仅展示）。
+        b["totalPages"] = len(b.get("pages", []) or [])
         if self._page_idx >= 0:
             pages = b.get("pages", [])
             if self._page_idx < len(pages):
@@ -1293,6 +1317,8 @@ class ArchiveEditor(QWidget):
                             ent["firstViewActions"] = en_fv
                         elif "firstViewActions" in ent:
                             del ent["firstViewActions"]
+        if b == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
         self._model.mark_dirty("archive")
         if refresh:
             self._refresh_books()
@@ -1302,12 +1328,15 @@ class ArchiveEditor(QWidget):
                 f"{b.get('id', '?')}  [{b.get('title', '')}]")
 
     def _add_book(self) -> None:
+        new_id = _next_unique_id(
+            "book", (b.get("id", "") for b in self._model.archive_books))
         self._model.archive_books.append({
-            "id": f"book_{len(self._model.archive_books)}", "title": "",
+            "id": new_id, "title": "",
             "totalPages": 0, "pages": [],
         })
         self._model.mark_dirty("archive")
         self._refresh_books()
+        self._book_list.setCurrentRow(len(self._model.archive_books) - 1)
 
     def _del_book(self) -> None:
         if self._book_idx >= 0:

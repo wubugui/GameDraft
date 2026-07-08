@@ -56,7 +56,10 @@
         "kind": "player"
       },
       "text": "罗盘有咯，不淘了。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "end1": {
       "type": "end"

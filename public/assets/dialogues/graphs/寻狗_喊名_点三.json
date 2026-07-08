@@ -47,7 +47,10 @@
         "kind": "player"
       },
       "text": "（最后一个。喊完拿钱。……叫、叫啥子来着？）",
-      "next": "c1"
+      "next": "c1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "c1": {
       "type": "choice",

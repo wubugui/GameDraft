@@ -7,11 +7,12 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QPushButton, QDoubleSpinBox, QScrollArea,
     QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsTextItem,
-    QGraphicsLineItem, QGraphicsPolygonItem, QGraphicsItem, QMenu,
+    QGraphicsLineItem, QGraphicsPolygonItem, QGraphicsPixmapItem, QGraphicsItem,
+    QMenu, QComboBox, QLabel,
 )
 from PySide6.QtGui import (
     QPen, QBrush, QColor, QFont, QPainter, QWheelEvent, QPolygonF,
-    QMouseEvent, QKeyEvent,
+    QMouseEvent, QKeyEvent, QPixmap, QTransform,
 )
 from PySide6.QtCore import Qt, QPoint, QPointF
 
@@ -22,6 +23,7 @@ from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.form_layout import compact_form
 from ..shared.fonts import MONO_FONT_FAMILY
+from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 
 
 class _ZoomableView(QGraphicsView):
@@ -32,6 +34,8 @@ class _ZoomableView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # 地图总览内容通常比视口矮，居中能避免节点团贴在左上角。
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._zoom = 1.0
         self._middle_panning = False
         self._pan_last_pos = QPoint()
@@ -94,6 +98,12 @@ _PEN_NORMAL = QPen(QColor(100, 200, 255, 180), 1.5)
 _PEN_CONDITIONAL = QPen(QColor(255, 170, 50, 200), 1.5, Qt.PenStyle.DashLine)
 _BRUSH_ARROW_NORMAL = QBrush(QColor(100, 200, 255, 200))
 _BRUSH_ARROW_COND = QBrush(QColor(255, 170, 50, 220))
+# 与 src/ui/MapUI.ts 的 sheetRect -> mapRect 比例保持一致。
+_BG_MAP_INSET_X = 0.08
+_BG_MAP_INSET_Y = 0.11
+_BG_MAP_WIDTH_RATIO = 0.84
+_BG_MAP_HEIGHT_RATIO = 0.78
+_DEFAULT_BG_SCENE_WIDTH = 720.0
 
 
 def _arrow_head(tip: QPointF, angle: float, size: float) -> QPolygonF:
@@ -149,6 +159,9 @@ class MapNodeGraphicsItem(QGraphicsEllipseItem):
     def set_label(self, text: str) -> None:
         self._label_item.setPlainText(text)
 
+    def set_label_visible(self, visible: bool) -> None:
+        self._label_item.setVisible(visible)
+
     def set_node_index(self, index: int) -> None:
         self._node_index = index
 
@@ -171,6 +184,7 @@ class MapEditor(QWidget):
         self._current_idx = -1
         self._node_graphics: list[MapNodeGraphicsItem] = []
         self._edge_items: list[QGraphicsItem] = []
+        self._map_bg_item: QGraphicsPixmapItem | None = None
         self._syncing_selection = False
         self._updating_from_spin = False
         self._loading_ui = False
@@ -203,6 +217,41 @@ class MapEditor(QWidget):
 
         center = QWidget()
         cl = QVBoxLayout(center)
+        edge_row = QHBoxLayout()
+        edge_row.setContentsMargins(0, 0, 0, 0)
+        edge_row.addWidget(QLabel("连线"))
+        self._edge_mode = QComboBox()
+        self._edge_mode.addItems(["选中相关", "全部", "隐藏"])
+        self._edge_mode.setToolTip("场景跳转连线显示模式；默认只看选中节点的一跳，避免全图线团。")
+        edge_row.addWidget(self._edge_mode)
+        edge_row.addWidget(QLabel("标签"))
+        self._label_mode = QComboBox()
+        self._label_mode.addItems(["选中", "全部", "隐藏"])
+        self._label_mode.setToolTip("地图节点文字标签显示模式；默认只显示选中节点。")
+        edge_row.addWidget(self._label_mode)
+        btn_fit = QPushButton("Fit")
+        btn_fit.setToolTip("缩放到全部地图节点")
+        btn_fit.clicked.connect(self._map_view_fit_later)
+        edge_row.addWidget(btn_fit)
+        edge_row.addStretch(1)
+        cl.addLayout(edge_row)
+        bg_row = QHBoxLayout()
+        bg_row.setContentsMargins(0, 0, 0, 0)
+        bg_row.addWidget(QLabel("运行时背景图"))
+        self._map_bg_picker = CutsceneImagePathRow(
+            self._model,
+            "",
+            external_copy_subdir="maps",
+            external_copy_hint="项目外图片会复制到 resources/runtime/images/maps/；这里只能通过图片选择器写入。",
+            path_edit_read_only=True,
+        )
+        self._map_bg_picker.setToolTip("游戏内按 M 打开的地图背景图；留空则使用运行时兜底纸图。")
+        bg_row.addWidget(self._map_bg_picker, 1)
+        btn_bg_clear = QPushButton("清空")
+        btn_bg_clear.setToolTip("清空地图背景图配置，运行时回到兜底纸图。")
+        btn_bg_clear.clicked.connect(lambda: self._set_background_image(""))
+        bg_row.addWidget(btn_bg_clear)
+        cl.addLayout(bg_row)
         self._map_scene = QGraphicsScene()
         self._map_view = _ZoomableView(self._map_scene)
         cl.addWidget(self._map_view)
@@ -216,8 +265,12 @@ class MapEditor(QWidget):
         dv = QVBoxLayout(detail)
         dv.setContentsMargins(6, 6, 6, 6)
 
-        form_box = QWidget()
-        f = compact_form(QFormLayout(form_box))
+        self._empty_hint = QLabel("选择左侧节点或画布节点后编辑属性。")
+        self._empty_hint.setWordWrap(True)
+        dv.addWidget(self._empty_hint)
+
+        self._form_box = QWidget()
+        f = compact_form(QFormLayout(self._form_box))
         f.setContentsMargins(0, 0, 0, 0)
         self._m_scene = IdRefSelector(allow_empty=False, editable=False, click_opens_popup=True)
         self._m_scene.setMinimumWidth(180)
@@ -237,7 +290,7 @@ class MapEditor(QWidget):
         f.addRow("y", self._m_y)
         self._m_cond = ConditionEditor("unlockConditions")
 
-        dv.addWidget(form_box)
+        dv.addWidget(self._form_box)
         dv.addWidget(self._m_cond)
         dv.addStretch(1)
         scroll.setWidget(detail)
@@ -249,6 +302,9 @@ class MapEditor(QWidget):
         self._m_scene.value_changed.connect(self._on_scene_field_changed)
         self._m_name.textChanged.connect(self._on_name_field_changed)
         self._m_cond.changed.connect(self._on_cond_field_changed)
+        self._edge_mode.currentIndexChanged.connect(lambda *_: self._redraw_edges())
+        self._label_mode.currentIndexChanged.connect(lambda *_: self._apply_label_visibility())
+        self._map_bg_picker.changed.connect(self._on_background_image_changed)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -258,7 +314,10 @@ class MapEditor(QWidget):
         splitter.addWidget(left)
         splitter.addWidget(center)
         splitter.addWidget(right)
-        splitter.setSizes([180, 400, 320])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([220, 760, 340])
         root.addWidget(splitter)
         self._refresh()
 
@@ -283,6 +342,134 @@ class MapEditor(QWidget):
         for it in self._edge_items:
             self._map_scene.removeItem(it)
         self._edge_items.clear()
+
+    def _map_view_fit_later(self) -> None:
+        self._map_view.fit_all()
+
+    def _show_detail_enabled(self, enabled: bool) -> None:
+        self._empty_hint.setVisible(not enabled)
+        self._form_box.setVisible(enabled)
+        self._m_cond.setVisible(enabled)
+
+    def _selected_scene_id(self) -> str:
+        if 0 <= self._current_idx < len(self._model.map_nodes):
+            return str(self._model.map_nodes[self._current_idx].get("sceneId", "") or "")
+        return ""
+
+    def _edge_mode_text(self) -> str:
+        return self._edge_mode.currentText() if hasattr(self, "_edge_mode") else "选中相关"
+
+    def _label_mode_text(self) -> str:
+        return self._label_mode.currentText() if hasattr(self, "_label_mode") else "选中"
+
+    def _sync_background_field(self) -> None:
+        if not hasattr(self, "_map_bg_picker"):
+            return
+        self._map_bg_picker.set_path(str(getattr(self._model, "map_background_image", "") or ""))
+
+    def _set_background_image(self, path: str) -> None:
+        path = str(path or "").strip()
+        if getattr(self._model, "map_background_image", "") == path:
+            self._sync_background_field()
+            return
+        self._model.map_background_image = path
+        self._model._map_config_is_object = True
+        self._model._map_config_had_background_image_key = True
+        self._model.mark_dirty("map")
+        self._refresh()
+
+    def _on_background_image_changed(self) -> None:
+        self._set_background_image(self._map_bg_picker.path())
+
+    def _runtime_layout_positions(self) -> list[tuple[float, float]]:
+        positions: list[tuple[float, float]] = []
+        fallback: list[tuple[float, float]] = []
+        for node in self._model.map_nodes:
+            try:
+                x = float(node.get("x", 0))
+                y = float(node.get("y", 0))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(x) or not math.isfinite(y):
+                continue
+            fallback.append((x, y))
+            scene_id = str(node.get("sceneId", "") or "").strip()
+            if node.get("runtimeVisible") is False or node.get("devOnly") is True or not scene_id:
+                continue
+            positions.append((x, y))
+        return positions or fallback
+
+    def _background_scene_rect(self, pm: QPixmap) -> tuple[float, float, float, float]:
+        raw_w = float(pm.width())
+        raw_h = float(pm.height())
+        aspect = raw_w / raw_h if raw_w > 0 and raw_h > 0 else 16.0 / 9.0
+        aspect = max(0.55, min(2.4, aspect))
+        positions = self._runtime_layout_positions()
+        if not positions:
+            w = _DEFAULT_BG_SCENE_WIDTH
+            h = w / aspect
+            return (0.0, 0.0, w, h)
+
+        xs = [p[0] for p in positions]
+        ys = [p[1] for p in positions]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        span_x = max(1.0, max_x - min_x)
+        span_y = max(1.0, max_y - min_y)
+        w = max(
+            _DEFAULT_BG_SCENE_WIDTH,
+            span_x / _BG_MAP_WIDTH_RATIO,
+            (span_y / _BG_MAP_HEIGHT_RATIO) * aspect,
+        )
+        h = w / aspect
+        map_w = w * _BG_MAP_WIDTH_RATIO
+        map_h = h * _BG_MAP_HEIGHT_RATIO
+        center_x = (min_x + max_x) / 2.0
+        center_y = (min_y + max_y) / 2.0
+        map_x = center_x - map_w / 2.0
+        map_y = center_y - map_h / 2.0
+        return (
+            map_x - w * _BG_MAP_INSET_X,
+            map_y - h * _BG_MAP_INSET_Y,
+            w,
+            h,
+        )
+
+    def _add_background_to_scene(self) -> None:
+        self._map_bg_item = None
+        url = str(getattr(self._model, "map_background_image", "") or "").strip()
+        if not url:
+            return
+        disk = disk_path_for_runtime_url(self._model, url)
+        if disk is None:
+            return
+        pm = QPixmap(str(disk))
+        if pm.isNull():
+            return
+        x, y, w, h = self._background_scene_rect(pm)
+        item = QGraphicsPixmapItem(pm)
+        item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        item.setPos(QPointF(x, y))
+        item.setTransform(
+            QTransform.fromScale(
+                w / max(1.0, float(pm.width())),
+                h / max(1.0, float(pm.height())),
+            )
+        )
+        item.setZValue(-100)
+        self._map_scene.addItem(item)
+        self._map_bg_item = item
+
+    def _apply_label_visibility(self) -> None:
+        mode = self._label_mode_text()
+        for i, item in enumerate(self._node_graphics):
+            if mode == "全部":
+                visible = True
+            elif mode == "隐藏":
+                visible = False
+            else:
+                visible = i == self._current_idx
+            item.set_label_visible(visible)
 
     def _on_node_item_moved(self, idx: int, pos: QPointF) -> None:
         if self._updating_from_spin:
@@ -352,6 +539,7 @@ class MapEditor(QWidget):
     def _refresh(self) -> None:
         # 快照目标选中行：clear() 会同步触发 selectionChanged / currentRowChanged(-1)，
         # 把 _current_idx 清成 -1，若不先快照，末尾的恢复块就成了死代码（选择丢失）。
+        self._sync_background_field()
         target = self._current_idx
         self._syncing_selection = True
         try:
@@ -361,8 +549,10 @@ class MapEditor(QWidget):
             self._syncing_selection = False
         self._node_graphics.clear()
         self._edge_items.clear()
+        self._map_bg_item = None
 
         pos_map: dict[str, tuple[float, float]] = {}
+        self._add_background_to_scene()
 
         for i, n in enumerate(self._model.map_nodes):
             sid = n.get("sceneId", "?")
@@ -375,7 +565,6 @@ class MapEditor(QWidget):
             self._map_scene.addItem(item)
             self._node_graphics.append(item)
 
-        self._draw_edges(pos_map)
         self._map_view.fit_all()
         self._m_scene.set_items([(s, s) for s in self._model.all_scene_ids()])
 
@@ -387,8 +576,13 @@ class MapEditor(QWidget):
                 self._node_graphics[target].setSelected(True)
             finally:
                 self._syncing_selection = False
+            self._show_detail_enabled(True)
         else:
             self._current_idx = -1
+            self._show_detail_enabled(False)
+
+        self._draw_edges(pos_map)
+        self._apply_label_visibility()
 
     def _redraw_edges(self) -> None:
         self._clear_edge_items()
@@ -403,6 +597,10 @@ class MapEditor(QWidget):
         self._draw_edges(pos_map)
 
     def _draw_edges(self, pos_map: dict[str, tuple[float, float]]) -> None:
+        mode = self._edge_mode_text()
+        if mode == "隐藏":
+            return
+        selected_scene_id = self._selected_scene_id()
         edges = self._model.scene_transitions()
 
         pair_set: set[tuple[str, str]] = set()
@@ -421,6 +619,10 @@ class MapEditor(QWidget):
             fs, ts = e["from_scene"], e["to_scene"]
             if fs not in pos_map or ts not in pos_map or fs == ts:
                 continue
+            if mode == "选中相关" and selected_scene_id and fs != selected_scene_id and ts != selected_scene_id:
+                continue
+            if mode == "选中相关" and not selected_scene_id:
+                continue
             pair_key = (fs, ts)
             if pair_key in drawn_pairs:
                 continue
@@ -432,11 +634,12 @@ class MapEditor(QWidget):
             is_dual = pair_key in reverse_set
 
             self._draw_arrow(x1, y1, x2, y2, e["conditional"],
-                             e["label"], is_dual, _DUAL_OFFSET)
+                             e["label"], is_dual, _DUAL_OFFSET, mode == "全部")
 
     def _draw_arrow(self, x1: float, y1: float, x2: float, y2: float,
                     conditional: bool, label: str,
-                    offset_side: bool, offset_px: float) -> None:
+                    offset_side: bool, offset_px: float,
+                    show_label: bool) -> None:
         dx = x2 - x1
         dy = y2 - y1
         dist = math.hypot(dx, dy)
@@ -477,7 +680,7 @@ class MapEditor(QWidget):
         arrow.setZValue(2)
         self._edge_items.append(arrow)
 
-        if label:
+        if show_label and label:
             mx = (sx + ex) / 2
             my = (sy + ey) / 2
             lbl = self._map_scene.addText(label, QFont(MONO_FONT_FAMILY, 6))
@@ -497,8 +700,12 @@ class MapEditor(QWidget):
                     self._map_scene.clearSelection()
                 finally:
                     self._syncing_selection = False
+            self._show_detail_enabled(False)
+            self._redraw_edges()
+            self._apply_label_visibility()
             return
         self._current_idx = row
+        self._show_detail_enabled(True)
         self._syncing_selection = True
         try:
             self._map_scene.clearSelection()
@@ -533,6 +740,8 @@ class MapEditor(QWidget):
             self._m_cond.set_data(n.get("unlockConditions", []))
         finally:
             self._loading_ui = False
+        self._redraw_edges()
+        self._apply_label_visibility()
 
     def _commit_node_field(self, key: str, value) -> bool:
         """即时把单个字段写回当前节点；载入 UI 期间忽略，避免回写覆盖。"""
@@ -564,6 +773,7 @@ class MapEditor(QWidget):
         self._update_list_label(self._current_idx)
         if self._current_idx < len(self._node_graphics):
             self._node_graphics[self._current_idx].set_label(name)
+        self._apply_label_visibility()
 
     def _on_cond_field_changed(self) -> None:
         self._commit_node_field("unlockConditions", self._m_cond.to_list())

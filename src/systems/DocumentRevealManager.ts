@@ -94,7 +94,10 @@ export class DocumentRevealManager implements IGameSystem {
     this.defs.clear();
     this.revealed.clear();
     this.revealing.clear();
+    // 注入的回调闭包持有 CutsceneManager/Game 侧引用，销毁时必须放掉
+    this.blend = null;
     this.resolveConditionLiteral = null;
+    this.conditionCtxFactory = null;
   }
 
   private ctx(): ConditionEvalContext {
@@ -148,6 +151,9 @@ export class DocumentRevealManager implements IGameSystem {
       return;
     }
     if (this.revealed.has(id)) return;
+    // 重入守卫：blend 动画期间重复触发同一揭示会双跑叠化并重发 document:revealed；
+    // 直接忽略后到的请求（下方 finally 保证集合最终会被清掉）。
+    if (this.revealing.has(id)) return;
     if (!evaluateConditionExpr(def.revealCondition, this.ctx())) return;
     const blendFn = this.blend;
     if (!blendFn) {

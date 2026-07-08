@@ -155,6 +155,72 @@
   margin: 0 0 0.35rem;
 }
 
+/* 可折叠区块：summary 作标题行（标题 + pin 按钮），自绘 ▸/▾ 折叠指示 */
+summary.debug-dock__section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+summary.debug-dock__section-title::-webkit-details-marker {
+  display: none;
+}
+
+summary.debug-dock__section-title::before {
+  content: '▸';
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  color: #667;
+  transition: transform 0.12s ease;
+}
+
+details[open] > summary.debug-dock__section-title::before {
+  transform: rotate(90deg);
+}
+
+.debug-dock__section-title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-dock__section-pins {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.debug-dock__pin-btn {
+  padding: 0 0.2rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #55667a;
+  cursor: pointer;
+}
+
+.debug-dock__pin-btn:hover {
+  color: #bcd;
+  background: #1e2430;
+}
+
+.debug-dock__pin-btn.is-on {
+  color: #ffd24a;
+}
+
+.debug-dock__quick-hint {
+  margin: 0 0 0.6rem;
+  font-size: 0.72rem;
+  color: #7a8498;
+}
+
 .debug-dock__pre {
   margin: 0;
   white-space: pre-wrap;
@@ -500,4 +566,36 @@
   flex-wrap: wrap;
   gap: 0.35rem;
   align-items: center;
+}
+
+/* 游戏画面常驻卡（📌）：挂在 #game-mount 右上角，F2 收起也显示；无 pin 时 display:none 不挡画面 */
+#debug-screen-pins {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 50;
+  display: none;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: min(20rem, 38vw);
+  max-height: calc(100% - 1rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: system-ui, 'Segoe UI', sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: #ccd;
+}
+
+#debug-screen-pins.is-visible {
+  display: flex;
+}
+
+.debug-screen-pins__card {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.3rem 0.5rem 0.45rem;
+  background: rgba(13, 13, 20, 0.88);
+  border: 1px solid #334466;
+  border-radius: 6px;
 }

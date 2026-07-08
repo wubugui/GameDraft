@@ -47,6 +47,8 @@ export class SpriteEntity {
   /** 仅显示：与背景像素密度对齐的低通（内层 Sprite，不影响外层深度滤镜） */
   private pixelDensityBlur: BlurFilter | null = null;
   private pixelDensityMatchActive = false;
+  /** 模糊滤镜当前是否挂在 sprite.filters 上：Pixi 8 的 filters setter 每次赋值都 slice+freeze+重建 FilterEffect，只允许在启用/禁用边界切换时增删 */
+  private pixelDensityBlurMounted = false;
 
   constructor() {
     this.container = new Container();
@@ -199,6 +201,43 @@ export class SpriteEntity {
     return this.currentState;
   }
 
+  /** 当前状态可播放帧数（供预览工具做时间轴/逐帧）。 */
+  getFrameCount(): number {
+    return this.currentFrames.length;
+  }
+
+  /** 当前显示的帧下标（0 基，指向当前状态的 frames 序列）。 */
+  getFrameIndex(): number {
+    return this.frameIndex;
+  }
+
+  /** 直接定位到某一帧并显示（供预览工具 scrub/逐帧）；不改变 playing 标志，越界自动夹取。 */
+  setFrameIndex(index: number): void {
+    if (this.currentFrames.length === 0) return;
+    const n = this.currentFrames.length;
+    const i = ((Math.trunc(index) % n) + n) % n;
+    this.frameIndex = i;
+    this.frameTimer = 0;
+    this.sprite.texture = this.currentFrames[i];
+    this.applySpriteScale();
+    this.syncPosition();
+  }
+
+  /** 暂停 / 恢复帧推进（供预览工具）。恢复时若已到非循环末帧则从头。 */
+  setPlaying(playing: boolean): void {
+    if (playing && !this.playing && this.currentFrames.length > 0) {
+      if (this.frameIndex >= this.currentFrames.length - 1 && !this.currentFrameDef?.loop) {
+        this.frameIndex = 0;
+      }
+    }
+    this.playing = playing && this.currentFrames.length > 0;
+  }
+
+  /** anim.json 中定义的全部状态名。 */
+  getStateNames(): string[] {
+    return this.animDef ? Object.keys(this.animDef.states) : [];
+  }
+
   getWorldSize(): { width: number; height: number } {
     return { width: this.worldWidth, height: this.worldHeight };
   }
@@ -240,7 +279,7 @@ export class SpriteEntity {
     const k = computePixelDensityK(frameW, frameH, this.worldWidth, this.worldHeight, dBg);
     const strength = blurStrengthFromPixelDensityK(k, strengthScale);
     if (strength <= 0) {
-      this.sprite.filters = [];
+      this.unmountPixelDensityBlur();
       return;
     }
     if (!this.pixelDensityBlur) {
@@ -248,11 +287,21 @@ export class SpriteEntity {
     } else {
       this.pixelDensityBlur.strength = strength;
     }
-    this.sprite.filters = [this.pixelDensityBlur];
+    if (!this.pixelDensityBlurMounted) {
+      this.sprite.filters = [this.pixelDensityBlur];
+      this.pixelDensityBlurMounted = true;
+    }
+  }
+
+  /** 从 sprite.filters 摘除（保留滤镜实例复用，强度回升时免重建） */
+  private unmountPixelDensityBlur(): void {
+    if (!this.pixelDensityBlurMounted) return;
+    this.sprite.filters = [];
+    this.pixelDensityBlurMounted = false;
   }
 
   private clearPixelDensityBlur(): void {
-    this.sprite.filters = [];
+    this.unmountPixelDensityBlur();
     if (this.pixelDensityBlur) {
       this.pixelDensityBlur.destroy();
       this.pixelDensityBlur = null;

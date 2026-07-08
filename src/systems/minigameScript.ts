@@ -92,6 +92,11 @@ export function coreOpcodes<S extends MinigameScriptStep>(): OpcodeRegistry<S> {
         if (Array.isArray(then) && then.length > 0) {
           return runChildren(then as S[]);
         }
+      } else {
+        const els = field(step, 'else');
+        if (Array.isArray(els) && els.length > 0) {
+          return runChildren(els as S[]);
+        }
       }
     },
   } as OpcodeRegistry<S>;

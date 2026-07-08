@@ -20,6 +20,7 @@ type CatalogListKey =
   | 'dialogueGraphIds'
   | 'scenarioIds'
   | 'questIds'
+  | 'sceneIds'
   | 'sceneNpcRefs'
   | 'sceneHotspotRefs'
   | 'zoneRefs'
@@ -35,6 +36,10 @@ export const WRAPPER_OWNER_REGISTRY = {
   npc: { catalogKey: 'sceneNpcRefs', navigationKind: 'npc' },
   hotspot: { catalogKey: 'sceneHotspotRefs', navigationKind: 'hotspot' },
   zone: { catalogKey: 'zoneRefs', navigationKind: 'zone' },
+  // 场景级 wrapper（给整张场景挂状态机）。运行时/校验/Python 目录均已支持 scene owner；
+  // 此前 web 注册表漏了 scene，导致"绑定类型"下拉选不到。navigationKind:'scene' 配合
+  // SceneEditor.select_scene_by_id + main_window SOURCE_NAVIGATION_TABS["scene"]，"跳转资源"可定位场景。
+  scene: { catalogKey: 'sceneIds', navigationKind: 'scene' },
   quest: { catalogKey: 'questIds', navigationKind: 'quest' },
   dialogue: { catalogKey: 'dialogueGraphIds', navigationKind: 'dialogue' },
   minigame: { catalogKey: 'minigameIds', navigationKind: 'minigame' },

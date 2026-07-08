@@ -48,6 +48,13 @@
       "picker": "plain",
       "apply": "patrol",
       "label": "patrolDisabled"
+    },
+    "portraitSlug": {
+      "kind": "string",
+      "persistent": true,
+      "picker": "portraitSlug",
+      "apply": "none",
+      "label": "portraitSlug（对话头像立绘集）"
     }
   },
   "hotspot": {

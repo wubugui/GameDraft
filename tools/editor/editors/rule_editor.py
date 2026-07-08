@@ -261,8 +261,9 @@ class RuleEditor(QWidget):
         rid = str(rules[self._rule_idx].get("id", "")).strip()
         if not rid:
             return
+        self._commit_pending_edits()
         frags = self._model.rules_data.setdefault("fragments", [])
-        new_id = f"frag_{len(frags)}"
+        new_id = self._unique_id("frag", (f.get("id", "") for f in frags))
         frags.append({
             "id": new_id,
             "text": "",
@@ -309,7 +310,11 @@ class RuleEditor(QWidget):
     def _restore_frag_row_by_global_index(self, frag_index: int) -> None:
         if frag_index < 0:
             return
-        self._frag_list.blockSignals(True)
+        # 不 blockSignals：必须让 _on_frag_select 正常重载表单/_frag_idx/快照。
+        # 旧实现只恢复高亮，_frag_idx 停在 -1、表单空——继续输入再 Apply 全被
+        # 静默丢弃（审查 P0-4）。_suppress_commit 防恢复期间重入提交。
+        prev_sup = self._suppress_commit
+        self._suppress_commit = True
         try:
             for row in range(self._frag_list.count()):
                 it = self._frag_list.item(row)
@@ -317,7 +322,24 @@ class RuleEditor(QWidget):
                     self._frag_list.setCurrentRow(row)
                     return
         finally:
-            self._frag_list.blockSignals(False)
+            self._suppress_commit = prev_sup
+
+    def _commit_pending_edits(self) -> None:
+        """新增/删除/刷新前静默提交未应用编辑（commit-on-leave 语义，防 _refresh 丢编辑）。"""
+        if self._is_dirty_frag():
+            prev = self._suppress_commit
+            self._suppress_commit = True
+            try:
+                self._apply_frag(refresh=False)
+            finally:
+                self._suppress_commit = prev
+        if self._is_dirty_rule():
+            prev = self._suppress_commit
+            self._suppress_commit = True
+            try:
+                self._apply_rule()
+            finally:
+                self._suppress_commit = prev
 
     def _apply_rule(self) -> None:
         rules = self._model.rules_data.get("rules", [])
@@ -325,7 +347,21 @@ class RuleEditor(QWidget):
             return
         r = rules[self._rule_idx]
         prev_id = str(r.get("id", "")).strip()
-        r["id"] = self._r_id.text().strip()
+        new_id = self._r_id.text().strip()
+        if not new_id:
+            new_id = prev_id  # 空 id 不接受：保留原 id
+        elif new_id != prev_id and any(
+            str(o.get("id", "")).strip() == new_id
+            for j, o in enumerate(rules) if j != self._rule_idx
+        ):
+            QMessageBox.warning(
+                self, "规矩 id",
+                f"id「{new_id}」与其它规矩重复，已保留原 id「{prev_id}」。")
+            new_id = prev_id
+        r["id"] = new_id
+        self._r_id.blockSignals(True)
+        self._r_id.setText(new_id)
+        self._r_id.blockSignals(False)
         r["name"] = self._r_name.text()
         iname = self._r_iname.text()
         if iname:
@@ -356,6 +392,11 @@ class RuleEditor(QWidget):
             r.pop(k, None)
         self._model.mark_dirty("rules")
         rid = str(r.get("id", "")).strip()
+        # 改名级联：碎片 ruleId 跟随规矩 id，否则碎片链路悬垂断裂（审查 P1）
+        if rid and prev_id and rid != prev_id:
+            for fr in self._model.rules_data.get("fragments", []):
+                if str(fr.get("ruleId", "")).strip() == prev_id:
+                    fr["ruleId"] = rid
         lw = self._rule_list.item(self._rule_idx)
         if lw is not None:
             lw.setText(f"{r.get('id', '?')}  [{r.get('name', '')}]")
@@ -366,10 +407,20 @@ class RuleEditor(QWidget):
         self._refresh_frag_list()
         self._restore_frag_row_by_global_index(saved_frag)
 
+    @staticmethod
+    def _unique_id(prefix: str, existing_ids) -> str:
+        taken = {str(i) for i in existing_ids}
+        n = 0
+        while f"{prefix}_{n}" in taken:
+            n += 1
+        return f"{prefix}_{n}"
+
     def _add_rule(self) -> None:
+        self._commit_pending_edits()
         rules = self._model.rules_data.setdefault("rules", [])
         rules.append({
-            "id": f"rule_{len(rules)}", "name": "New Rule", "category": "ward",
+            "id": self._unique_id("rule", (r.get("id", "") for r in rules)),
+            "name": "New Rule", "category": "ward",
             "layers": {"xiang": {"text": "", "verified": "unverified"}},
         })
         self._model.mark_dirty("rules")
@@ -460,6 +511,13 @@ class RuleEditor(QWidget):
         )
 
     def _on_frag_filter_changed(self, _idx: int) -> None:
+        if not self._suppress_commit and self._is_dirty_frag():
+            prev_sup = self._suppress_commit
+            self._suppress_commit = True
+            try:
+                self._apply_frag(refresh=False)
+            finally:
+                self._suppress_commit = prev_sup
         self._frag_idx = -1
         self._sync_frag_add_button_enabled()
         self._refresh_frag_list()
@@ -513,6 +571,14 @@ class RuleEditor(QWidget):
         return rule_id
 
     def _on_frag_select(self, row: int) -> None:
+        # commit-on-leave：切走前提交上一条碎片的未应用编辑（对齐规矩侧 _on_rule_select）
+        if not self._suppress_commit and self._is_dirty_frag():
+            prev_sup = self._suppress_commit
+            self._suppress_commit = True
+            try:
+                self._apply_frag(refresh=False)
+            finally:
+                self._suppress_commit = prev_sup
         if row < 0:
             self._frag_idx = -1
             self._f_id.clear()
@@ -553,7 +619,7 @@ class RuleEditor(QWidget):
         self._f_src.setText(fr.get("source", ""))
         self._frag_snapshot = self._frag_ui_state()
 
-    def _apply_frag(self) -> None:
+    def _apply_frag(self, refresh: bool = True) -> None:
         frags = self._model.rules_data.get("fragments", [])
         if self._frag_idx < 0 or self._frag_idx >= len(frags):
             return
@@ -568,19 +634,32 @@ class RuleEditor(QWidget):
         elif "source" in fr:
             del fr["source"]
         self._model.mark_dirty("rules")
-        saved_frag = self._frag_idx
-        self._refresh_frag_list()
-        self._restore_frag_row_by_global_index(saved_frag)
-        self._refresh_rule_fragments_sidebar()
+        if refresh:
+            saved_frag = self._frag_idx
+            self._refresh_frag_list()
+            self._restore_frag_row_by_global_index(saved_frag)
+            self._refresh_rule_fragments_sidebar()
+        else:
+            # commit-on-leave 路径：就地更新该碎片行标签，不重建列表（防重入丢选中）
+            for row in range(self._frag_list.count()):
+                it = self._frag_list.item(row)
+                if it is not None and it.data(Qt.ItemDataRole.UserRole) == self._frag_idx:
+                    raw = (fr.get("text", "") or "").replace("\n", " ").strip()
+                    lay0 = str(fr.get("layer", "?"))
+                    rid0 = str(fr.get("ruleId", "")).strip()
+                    it.setText(f"{fr.get('id', '?')}  [{lay0}]  {rid0}")
+                    break
+            self._refresh_rule_fragments_sidebar()
 
     def _add_frag(self) -> None:
         rid0 = self._filter_rule_id()
         if not rid0:
             return
+        self._commit_pending_edits()
         frags = self._model.rules_data.setdefault("fragments", [])
         default_rid = rid0
         frags.append({
-            "id": f"frag_{len(frags)}",
+            "id": self._unique_id("frag", (f.get("id", "") for f in frags)),
             "text": "",
             "ruleId": default_rid,
             "layer": "xiang",

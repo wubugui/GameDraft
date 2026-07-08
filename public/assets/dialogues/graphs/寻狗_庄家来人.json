@@ -12,6 +12,15 @@
         {
           "conditions": [
             {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ],
+          "next": "beishi_busy"
+        },
+        {
+          "conditions": [
+            {
               "narrative": "scenario_背尸",
               "state": "fled",
               "reached": true
@@ -28,7 +37,10 @@
         "kind": "npc"
       },
       "text": "……那桩夜活，烂在肚子头。哪个问都没得。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n1": {
       "type": "line",
@@ -45,7 +57,10 @@
         "kind": "npc"
       },
       "text": "你就是那个背尸的？有桩背尸的活，今天黑了动身。",
-      "next": "n3"
+      "next": "n3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n3": {
       "type": "line",
@@ -53,7 +68,10 @@
         "kind": "npc"
       },
       "text": "（压低声）城外临江崖墓，里头停的一具，要背下来送义庄。你只管背，别的莫问。",
-      "next": "n3b"
+      "next": "n3b",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n3b": {
       "type": "line",
@@ -61,7 +79,10 @@
         "kind": "player"
       },
       "text": "崖墓里背下来？……人头七还没过吧？这就往外挪，不唱魂、不怕回煞撞起？",
-      "next": "n3c"
+      "next": "n3c",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n3c": {
       "type": "line",
@@ -69,7 +90,10 @@
         "kind": "npc"
       },
       "text": "（脸一沉）莫多嘴。背到义庄就是，钱多给你。",
-      "next": "n4"
+      "next": "n4",
+      "portrait": {
+        "emotion": "angry"
+      }
     },
     "n4": {
       "type": "line",
@@ -101,7 +125,10 @@
         "kind": "npc"
       },
       "text": "（从袖里摸出一小串钱）定钱十文。事办成再给四十。嘴上嫌晦气，手倒是伸得快。",
-      "next": "n_accept"
+      "next": "n_accept",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "c_jiele": {
       "type": "line",
@@ -109,7 +136,10 @@
         "kind": "npc"
       },
       "text": "（多看了他一眼）撇脱。定钱十文，事办成再给四十。走撒。",
-      "next": "n_accept"
+      "next": "n_accept",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_accept": {
       "type": "runActions",
@@ -149,6 +179,14 @@
     },
     "end1": {
       "type": "end"
+    },
+    "beishi_busy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "你肩上驮个死人子，来谈我庄上的事？先送了，再来。",
+      "next": "end1"
     }
   }
 }

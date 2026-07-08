@@ -1,4 +1,3 @@
-import { MarkerType } from '@xyflow/react';
 import type { CanvasMode } from '../types/canvas';
 import type {
   CanvasEdge,
@@ -7,20 +6,15 @@ import type {
   ProjectionResult,
 } from '../types';
 import type { GraphExclusiveView } from './activeGraphView';
-import { projectionEndpointLabel } from './canvasIds';
 import { elementParentId } from './subgraphGroupLayout';
-import { visibleProjectionEdgesForComposition } from './buildCompositionOverlay';
+import {
+  buildProjectionAnchorNode,
+  buildProjectionCanvasEdge,
+  visibleProjectionEdgesForComposition,
+} from './buildCompositionOverlay';
 
 function showProjection(canvasMode: CanvasMode): boolean {
   return canvasMode === 'wiring' || canvasMode === 'debug';
-}
-
-function edgeColor(kind: string): string {
-  if (kind === 'transition') return '#d9a441';
-  if (kind === 'trigger') return '#45a8e5';
-  if (kind === 'read') return '#79b65d';
-  if (kind === 'stateCommand') return '#d94d4d';
-  return '#d782d9';
 }
 
 function projectionTouchesGraph(edge: ProjectionEdgeDef, graphId: string, elementNodeId: string): boolean {
@@ -31,7 +25,9 @@ function projectionTouchesGraph(edge: ProjectionEdgeDef, graphId: string, elemen
     if (endpoint === elementNodeId) return true;
     if (endpoint.startsWith(anchorPrefix) || endpoint.startsWith(rawAnchorPrefix)) return true;
     if (endpoint === `graph:${graphId}`) return true;
-    if (endpoint === `state:${graphId}` || endpoint.includes(`.${graphId}.`)) return true;
+    // 说明：投影端点用 ':' 分隔（state:<stateId> / graph:<gid> / projection-anchor:<gid>.<sid> …），
+    // 图 id 从不被 '.' 两侧包裹，故旧的 `.${graphId}.` 子串匹配从不命中真实格式、只会造成
+    // 前缀撞车误判（npc 命中 npc_ring）；`state:${graphId}` 同样匹配不到 state:<stateId>。已移除。
   }
   return false;
 }
@@ -53,7 +49,9 @@ function resolveExclusiveProjectionEndpoint(
   if (endpoint.startsWith('graph:')) return endpoint;
   if (endpoint.startsWith('projection-anchor:')) return endpoint;
   if (endpoint.startsWith('external:')) return endpoint;
-  return endpoint.startsWith('projection-anchor:') ? endpoint : `projection-anchor:${endpoint.replace(/^projection-anchor:/, '')}`;
+  // 到此 endpoint 必不以 'projection-anchor:' 开头（上面已 return），故旧三元恒走 else 分支；
+  // 直接补前缀，语义等价、去掉误导性的死分支。
+  return `projection-anchor:${endpoint}`;
 }
 
 export function mergeGraphLayerWithExclusiveProjection(
@@ -75,19 +73,13 @@ export function mergeGraphLayerWithExclusiveProjection(
     view.comp, projection, showTrigger, showRead, showCommand,
   ).filter((edge) => projectionTouchesGraph(edge, view.activeGraphId, elementNodeId));
 
-  const projectionCanvasEdges: CanvasEdge[] = scopedEdges.map((edge) => ({
-    id: `projection:${edge.id}`,
-    source: resolveExclusiveProjectionEndpoint(edge.source, view),
-    target: resolveExclusiveProjectionEndpoint(edge.target, view),
-    type: 'projection',
-    label: edge.label,
-    selectable: true,
-    deletable: false,
-    interactionWidth: 12,
-    zIndex: 0,
-    markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor(edge.kind) },
-    data: { edgeKind: edge.kind, label: edge.label, detail: edge.detail ?? edge.id },
-  })).filter((e) => e.source && e.target);
+  const projectionCanvasEdges: CanvasEdge[] = scopedEdges.map((edge) =>
+    buildProjectionCanvasEdge(
+      edge,
+      edge.kind,
+      resolveExclusiveProjectionEndpoint(edge.source, view),
+      resolveExclusiveProjectionEndpoint(edge.target, view),
+    )).filter((e) => e.source && e.target);
 
   const knownIds = new Set(graphNodes.map((node) => node.id));
   const anchors: CanvasNode[] = [];
@@ -98,20 +90,7 @@ export function mergeGraphLayerWithExclusiveProjection(
       if (knownIds.has(endpoint)) continue;
       if (endpoint.startsWith('transition-anchor:')) continue;
       knownIds.add(endpoint);
-      const index = anchors.length;
-      anchors.push({
-        id: endpoint,
-        type: 'projectionAnchor',
-        position: { x: 760 + (index % 2) * 210, y: 120 + Math.floor(index / 2) * 96 },
-        draggable: false,
-        deletable: false,
-        data: {
-          label: projectionEndpointLabel(endpoint),
-          subtitle: '投影端点',
-          kind: 'projectionAnchor',
-          detail: endpoint,
-        },
-      });
+      anchors.push(buildProjectionAnchorNode(endpoint, anchors.length));
     }
   }
 

@@ -33,6 +33,7 @@ import { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager
 import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
 import { SmellSystem } from '../systems/SmellSystem';
+import { PlaneReconciler } from '../systems/PlaneReconciler';
 import { HUD } from '../ui/HUD';
 import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
 import { NotificationUI } from '../ui/NotificationUI';
@@ -57,15 +58,22 @@ import type {
   ActionDef,
   IGameSystem,
   AnimationSetDef,
+  DialogueEndPayload,
+  DialogueLine,
+  DialoguePortraitRef,
   GameConfig,
+  MapConfigFile,
   MapNodeDef,
   SceneData,
   SceneDataRaw,
   ScenarioCatalogFile,
+  SceneLightEnv,
   ICutsceneActor,
   HotspotDisplayImage,
   IEmoteBubbleAnchor,
+  CharacterRegistryFile,
 } from '../data/types';
+import { buildCharacterRegistry } from '../data/characterRegistry';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
@@ -73,7 +81,7 @@ import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import type { Hotspot } from '../entities/Hotspot';
-import { registerActionHandlers } from './ActionRegistry';
+import { registerActionHandlers, auditActionRegistrationsAgainstManifest } from './ActionRegistry';
 import { collectRecentPageErrors, installPageErrorTrap } from './pageErrorTrap';
 import { ScenarioStateManager } from './ScenarioStateManager';
 import { NarrativeStateManager, type NarrativeSignal } from './NarrativeStateManager';
@@ -111,7 +119,11 @@ import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
 import { TouchMobileControls } from '../ui/TouchMobileControls';
-import { resolveScriptedSpeakerDisplay } from '../utils/scriptedDialogueSpeaker';
+import {
+  resolveScriptedSpeakerDisplay,
+  resolveScriptedSpeakerEntity,
+  type ScriptedSpeakerEntity,
+} from '../utils/scriptedDialogueSpeaker';
 import { RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
 import {
@@ -235,7 +247,8 @@ export class Game {
 
   private interactionCoordinator!: InteractionCoordinator;
   private eventBridge!: EventBridge;
-  private debugTools!: DebugTools;
+  /** T1：仅 DEV 装配（F10 坐标、中键缩放、F2 调试区块等纯开发设施），生产为 null */
+  private debugTools: DebugTools | null = null;
   private sceneDepthSystem: SceneDepthSystem;
   private waterMinigameManager: WaterMinigameManager;
   private sugarWheelMinigameManager: SugarWheelMinigameManager;
@@ -244,6 +257,7 @@ export class Game {
   private signalCueManager: SignalCueManager;
   private healthSystem: HealthSystem;
   private smellSystem: SmellSystem;
+  private planeReconciler: PlaneReconciler;
   private smellProfilesData: SmellProfilesRaw | null = null;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
@@ -255,10 +269,16 @@ export class Game {
   private currentLightEnv: ResolvedLightEnv | null = null;
   /** 当前场景的光照环境曲线（预处理累计弧长）；null=无曲线，按静态 lightEnv 走（零影响） */
   private currentLightCurve: PreparedLightCurve | null = null;
+  /** 位面光照档覆盖（PlaneReconciler 经 applyPlaneLightEnvOverride 设/清）；激活期 lightEnvCurve 挂起 */
+  private planeLightEnvOverride: SceneLightEnv | null = null;
   /** 阴影方向/长度来源（今天=全局 LightEnv 均匀场；将来可换成场景灯光方向场） */
   private currentShadowField: ShadowProjectionField | null = null;
-  /** 玩家/各 NPC 的投影阴影（key: 'player' / npc.id） */
-  private entityShadows = new Map<string, IEntityShadow>();
+  /**
+   * 玩家/NPC/热点的投影阴影（key: 'player' / npc.id / `hotspot:<id>`）。
+   * F2 性能：ShadowSource 按实体缓存（owner 记录实例身份，实例被过场重建时按需换源），
+   * updateEntityShadows 不再逐帧新建闭包包。
+   */
+  private entityShadows = new Map<string, { shadow: IEntityShadow; src: ShadowSource; owner: unknown }>();
   /**
    * 场景 onEnter 执行期间的隐式叙事 owner（`scene:<场景id>`）。
    * 供 onEnter 里未显式指定 owner 的 startDialogueGraph 与条件 `@owner` 继承当前场景。
@@ -301,6 +321,8 @@ export class Game {
   /** 避免 beforeunload 与 pagehide 接连触发时重复销毁（第二次会踩已 teardown 的 Pixi Application） */
   private tearDownComplete = false;
   private isDevMode = false;
+  /** ?smellDebug 安装的 window 全局键（destroy 时清除，见 start 内安装处） */
+  private smellDebugGlobalKeys: string[] = [];
   private devModeUI: DevModeUI | null = null;
   private touchMobileControls: TouchMobileControls | null = null;
   /** `overlay_images.json`：可写短 id，避免 action 参数里塞长路径 */
@@ -350,6 +372,8 @@ export class Game {
       this.inventoryManager,
       this.scenarioStateManager,
     );
+    // 主角头像跟「当前生效装扮配置」走（与 NPC 的 currentPortraitSlug 同构）
+    this.graphDialogueManager.setPlayerPortraitSlugProvider(() => this.currentPlayerPortraitSlug);
     this.documentRevealManager = new DocumentRevealManager(
       this.assetManager,
       this.eventBus,
@@ -367,6 +391,7 @@ export class Game {
     this.signalCueManager = new SignalCueManager(this.actionExecutor);
     this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
     this.smellSystem = new SmellSystem(this.eventBus, this.flagStore);
+    this.planeReconciler = new PlaneReconciler(this.eventBus);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
@@ -383,6 +408,8 @@ export class Game {
       { name: 'questManager', system: this.questManager },
       { name: 'scenarioStateManager', system: this.scenarioStateManager },
       { name: 'narrativeStateManager', system: this.narrativeStateManager },
+      // 位面对账器排在叙事之后：deserialize 时叙事激活态已恢复，可立即重派生激活位面。
+      { name: 'planeReconciler', system: this.planeReconciler },
       { name: 'documentRevealManager', system: this.documentRevealManager },
       { name: 'encounterManager', system: this.encounterManager },
       { name: 'audioManager', system: this.audioManager },
@@ -455,6 +482,39 @@ export class Game {
   }
 
   /**
+   * `playScriptedDialogue` 逐行的头像 + 说话实体解析（与图对话 {@link GraphDialogueManager.resolvePortrait} 同语义）：
+   * - speakerEntity：由 speaker 字段占位（`{{player}}` / `{{npc[:id]}}`）推导，供「…」气泡定位与头像跟随；
+   * - portrait：显式 slug 原样用；仅带 emotion 时跟随 speakerEntity（player→当前装扮立绘集、npc→场景 NPC 的 portraitSlug），解析不到则本行不显头像。
+   */
+  private resolveScriptedLineExtras(
+    rawSpeaker: string,
+    portraitRef: DialoguePortraitRef | undefined,
+    scriptedNpcId: string,
+  ): { portrait?: DialoguePortraitRef; speakerEntity?: DialogueLine['speakerEntity'] } {
+    const entity = resolveScriptedSpeakerEntity(rawSpeaker, {
+      graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
+      fallbackNpcId: scriptedNpcId,
+    });
+    return { portrait: this.resolveScriptedPortrait(portraitRef, entity), speakerEntity: entity };
+  }
+
+  private resolveScriptedPortrait(
+    ref: DialoguePortraitRef | undefined,
+    entity: ScriptedSpeakerEntity | undefined,
+  ): DialoguePortraitRef | undefined {
+    if (!ref || !ref.emotion) return undefined;
+    const slug = ref.slug?.trim();
+    if (slug) return { slug, emotion: ref.emotion };
+    if (!entity) return undefined;
+    if (entity.kind === 'player') {
+      const p = this.currentPlayerPortraitSlug?.trim();
+      return p ? { slug: p, emotion: ref.emotion } : undefined;
+    }
+    const npcSlug = this.sceneManager.getNpcById(entity.npcId)?.currentPortraitSlug;
+    return npcSlug ? { slug: npcSlug, emotion: ref.emotion } : undefined;
+  }
+
+  /**
    * showEmote / showSpeechBubble / showEmoteAndWait / showSpeechBubbleAndWait / showSubtitle.subtitleEmote 共用：resolveActor 未命中时再匹配当前场景热点 id。
    */
   private resolveEmoteTarget(raw: string): IEmoteBubbleAnchor | null {
@@ -499,7 +559,8 @@ export class Game {
   private async refreshTextResolveLookups(): Promise<void> {
     this.sceneDisplayNameById.clear();
     try {
-      const nodes = await this.assetManager.loadJson<MapNodeDef[]>(TEXT_URLS.mapConfig);
+      const mapConfig = await this.assetManager.loadJson<MapNodeDef[] | MapConfigFile>(TEXT_URLS.mapConfig);
+      const nodes = Array.isArray(mapConfig) ? mapConfig : (Array.isArray(mapConfig.nodes) ? mapConfig.nodes : []);
       for (const n of nodes) {
         if (n.sceneId) this.sceneDisplayNameById.set(n.sceneId, n.name);
       }
@@ -555,24 +616,52 @@ export class Game {
   async start(options: GameStartOptions = {}): Promise<void> {
     this.isDevMode = !!options.devMode;
     await this.renderer.init();
+    /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
+    if (this.tearDownComplete) return;
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
 
     await this.stringsProvider.load(this.assetManager);
 
     await this.loadGameConfig();
+    if (this.tearDownComplete) return;
     if (this.gameConfig.windowSize) {
       this.renderer.setWindowSize(this.gameConfig.windowSize.width, this.gameConfig.windowSize.height);
     }
     if (this.gameConfig.viewport) {
       this.renderer.setViewportSize(this.gameConfig.viewport.width, this.gameConfig.viewport.height);
     }
+    /** game_config.health → HealthSystem：构造期 init 已按默认配置执行；configure 后按
+     *  IGameSystem「重 init 与首次一致」契约重跑 init 套用上限/阈值（此时尚无伤害与存档写入）。 */
+    if (this.gameConfig.health) {
+      this.healthSystem.configure(this.gameConfig.health);
+      this.healthSystem.init({
+        eventBus: this.eventBus,
+        flagStore: this.flagStore,
+        strings: this.stringsProvider,
+        assetManager: this.assetManager,
+      });
+    }
 
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
     this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider);
-    this.dialogueUI = new DialogueUI(this.renderer, this.eventBus, this.stringsProvider);
+    this.dialogueUI = new DialogueUI(this.renderer, this.eventBus, this.stringsProvider, this.assetManager);
+    // 说话中「…」气泡：当前行说话实体头顶挂常驻气泡（与对话大头像并存指示说话对象），
+    // 换行随说话人移动、旁白无实体则收起、对话结束即撤。
+    const SPEAKING_BUBBLE_OWNER = 'dialogue-speaking';
+    this.eventBus.on('dialogue:line', (line: DialogueLine) => {
+      this.emoteBubbleManager.cleanupByOwner(SPEAKING_BUBBLE_OWNER);
+      const se = line.speakerEntity;
+      if (!se) return;
+      const anchor = se.kind === 'player' ? this.player : this.sceneManager.getNpcById(se.npcId);
+      if (!anchor) return;
+      this.emoteBubbleManager.showSticky(anchor, '……', undefined, SPEAKING_BUBBLE_OWNER);
+    });
+    const clearSpeakingBubble = () => this.emoteBubbleManager.cleanupByOwner(SPEAKING_BUBBLE_OWNER);
+    this.eventBus.on('dialogue:end', clearSpeakingBubble);
+    this.eventBus.on('dialogue:hidePanel', clearSpeakingBubble);
     this.encounterUI = new EncounterUI(this.renderer, this.eventBus, this.stringsProvider);
-    this.actionChoiceUI = new ActionChoiceUI(this.renderer);
-    this.pressureHoldUI = new PressureHoldUI(this.renderer);
+    this.actionChoiceUI = new ActionChoiceUI(this.renderer, this.stringsProvider);
+    this.pressureHoldUI = new PressureHoldUI(this.renderer, this.stringsProvider);
     this.hud = new HUD(this.renderer, this.eventBus, this.stringsProvider);
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
     this.questPanelUI = new QuestPanelUI(this.renderer, this.questManager, this.stringsProvider);
@@ -606,6 +695,7 @@ export class Game {
     );
     this.cutsceneManager.init({ eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager });
     this.cutsceneManager.setInputManager(this.inputManager);
+    this.cutsceneManager.setAudioManager(this.audioManager);
     const cmEntry = this.registeredSystems.find(e => e.name === 'cutsceneManager');
     if (cmEntry) cmEntry.system = this.cutsceneManager;
     /**
@@ -723,17 +813,8 @@ export class Game {
       return { name: def.name, incompleteName: def.incompleteName };
     });
 
-    this.documentRevealManager.setBlendExecutor((id, from, to, x, y, w, dur, delay) =>
-      this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
-    await this.documentRevealManager.loadDefinitions();
-    try {
-      const scenarioCat = await this.assetManager.loadJson<ScenarioCatalogFile>(TEXT_URLS.scenarios);
-      this.scenarioStateManager.configureRuntime(this.flagStore, scenarioCat, this.eventBus);
-    } catch {
-      this.scenarioStateManager.configureRuntime(this.flagStore, null, this.eventBus);
-    }
-    await this.narrativeStateManager.loadFromAsset(this.assetManager);
-
+    /** B8：条件上下文工厂必须先于 narrativeStateManager.loadFromAsset 注入——
+     *  加载即触发 reactive 求值，晚注入会导致开机首轮全部 missing-ctx 判 false。 */
     const mkCondCtx = (): ConditionEvalContext => ({
       flagStore: this.flagStore,
       questManager: this.questManager,
@@ -761,6 +842,47 @@ export class Game {
     this.documentRevealManager.setConditionEvalContextFactory(mkCondCtx);
     this.narrativeStateManager.setConditionEvalContextFactory(mkCondCtx);
 
+    // 位面对账器接线须先于 narrativeStateManager.loadFromAsset——注册图时的 reactive
+    // 迁移会立即发 narrative:stateChanged，晚接线会漏掉首轮点名（scene:ready 虽兜底，
+    // 但装载期 zone 过滤已按激活位面取值）。
+    this.planeReconciler.bindRuntime({
+      narrative: {
+        getGraphs: () => this.narrativeStateManager.getGraphs(),
+        getActiveState: (graphId) => this.narrativeStateManager.getActiveState(graphId),
+      },
+      setPlayerMovementModifier: (fn) => this.player.setMovementModifier(fn),
+      setPlaneInteractionPolicy: (fn) => this.interactionSystem.setPlaneInteractionPolicy(fn),
+      refreshEntitiesForPlaneChange: () => {
+        const sid = this.sceneManager.currentSceneData?.id;
+        if (sid) this.sceneManager.refreshEntitiesForPlaneChange(sid);
+      },
+      refreshZonesForPlaneChange: () => {
+        const sid = this.sceneManager.currentSceneData?.id;
+        if (sid) this.sceneManager.refreshZonesForPlaneChange(sid);
+      },
+      setCameraZoom: (z) => this.camera.setZoom(z),
+      restoreSceneCameraZoom: () => {
+        // 对账器在"离开位面"时调，此刻激活位面已切走 → 基线即场景 zoom；用统一基线口保持一致。
+        this.camera.setZoom(this.getCameraBaselineZoom());
+      },
+      applyPlaneLightEnvOverride: (partial) => this.applyPlaneLightEnvOverride(partial),
+      damagePlayer: (amount) => this.healthSystem.damage(amount),
+      getGameState: () => this.stateController.currentState,
+    });
+    this.sceneManager.setActivePlaneGetter(() => this.planeReconciler.getActivePlaneId());
+
+    this.documentRevealManager.setBlendExecutor((id, from, to, x, y, w, dur, delay) =>
+      this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
+    await this.documentRevealManager.loadDefinitions();
+    try {
+      const scenarioCat = await this.assetManager.loadJson<ScenarioCatalogFile>(TEXT_URLS.scenarios);
+      this.scenarioStateManager.configureRuntime(this.flagStore, scenarioCat, this.eventBus);
+    } catch {
+      this.scenarioStateManager.configureRuntime(this.flagStore, null, this.eventBus);
+    }
+    await this.narrativeStateManager.loadFromAsset(this.assetManager);
+    if (this.tearDownComplete) return;
+
     registerActionHandlers(this.actionExecutor, {
       resolveScriptedSpeaker: (raw, scriptedNpcId) =>
         resolveScriptedSpeakerDisplay(raw, {
@@ -770,6 +892,8 @@ export class Game {
           graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
           fallbackNpcId: scriptedNpcId ?? '',
         }),
+      resolveScriptedLineExtras: (rawSpeaker, portraitRef, scriptedNpcId) =>
+        this.resolveScriptedLineExtras(rawSpeaker, portraitRef, scriptedNpcId ?? ''),
       ruleOfferRegistry: this.ruleOfferRegistry,
       inventoryManager: this.inventoryManager,
       rulesManager: this.rulesManager,
@@ -790,7 +914,7 @@ export class Game {
       pickupNotification: this.pickupNotification,
       inspectBox: this.inspectBox,
       shopUI: this.shopUI,
-      applyPlayerAvatar: (path, sm) => this.applyPlayerAvatarFromAction(path, sm),
+      applyPlayerAvatar: (path, sm, ps) => this.applyPlayerAvatarFromAction(path, sm, ps),
       resetPlayerAvatar: () => this.resetPlayerAvatarFromAction(),
       setSceneDepthFloorOffset: (v) => { this.sceneDepthSystem.floorOffset = v; },
       resetSceneDepthFloorOffset: () => {
@@ -799,13 +923,11 @@ export class Game {
       },
       setCameraZoom: (z) => { this.camera.setZoom(z); },
       restoreSceneCameraZoom: () => {
-        const z = this.sceneManager.currentSceneData?.camera?.zoom;
-        this.camera.setZoom(z !== undefined && Number.isFinite(z) && z > 0 ? z : 1);
+        // 基线=位面相机档(激活时) ?? 场景 zoom：对话/演出收尾恢复到位面态该有的值，不盖掉位面档。
+        this.camera.setZoom(this.getCameraBaselineZoom());
       },
       fadingRestoreSceneCameraZoom: (durationMs) => {
-        const z = this.sceneManager.currentSceneData?.camera?.zoom;
-        const target = z !== undefined && Number.isFinite(z) && z > 0 ? z : 1;
-        return this.cutsceneManager.fadingCameraZoom(target, durationMs);
+        return this.cutsceneManager.fadingCameraZoom(this.getCameraBaselineZoom(), durationMs);
       },
       stopNpcPatrol: (npcId) => {
         this.stopNpcPatrol(npcId);
@@ -821,7 +943,7 @@ export class Game {
       },
       blendOverlayImage: (id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs) =>
         this.cutsceneManager.blendOverlayImage(id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs),
-      startDialogueGraph: async (graphId, entry, npcId, ownerType, ownerId) => {
+      startDialogueGraph: async (graphId, entry, npcId, ownerType, ownerId, dimBackground) => {
         this.stateController.setState(GameState.Dialogue);
         try {
           let npcName = '';
@@ -842,8 +964,14 @@ export class Game {
             npcId: npcIdTrim || undefined,
             ownerType: ownerTypeTrim || undefined,
             ownerId: ownerIdTrim || undefined,
+            dimBackground: dimBackground === true,
           });
-          if (!this.graphDialogueManager.isActive) {
+          /** R6：图同步完结但 deferred 链式接续图正在启动时（hasPendingChainContinuation）
+           *  会话未终结，不得提前恢复 Exploring——状态恢复交给最终 dialogue:end / EventBridge */
+          if (
+            !this.graphDialogueManager.isActive &&
+            !this.graphDialogueManager.hasPendingChainContinuation
+          ) {
             this.stateController.setState(GameState.Exploring);
           }
         } catch (e) {
@@ -852,14 +980,23 @@ export class Game {
         }
       },
       playScriptedDialogue: (lines) => {
+        /** P3 协议死锁兜底：空 lines 时 DialogueManager 不发任何事件，挂起等待即永久悬死 */
+        if (!lines.length) {
+          console.warn('Game: playScriptedDialogue 收到空 lines，跳过');
+          return Promise.resolve();
+        }
+        /** 嵌套判定在 start 前采样：图对话活跃时本段脚本台词属嵌套段（R5，见 DialogueEndPayload） */
+        const nestedInGraph = this.graphDialogueManager.isActive;
         this.stateController.setState(GameState.Dialogue);
         return new Promise<void>((resolve) => {
-          const onEnd = () => {
+          const onEnd = (p?: DialogueEndPayload) => {
+            /** R5：只认脚本台词自身的结束；嵌套于图对话时，图的 dialogue:end 不得提前解锁本动作 */
+            if (p?.source !== 'scripted') return;
             this.eventBus.off('dialogue:end', onEnd);
             resolve();
           };
           this.eventBus.on('dialogue:end', onEnd);
-          this.dialogueManager.startScriptedDialogue(lines);
+          this.dialogueManager.startScriptedDialogue(lines, nestedInGraph);
         });
       },
       waitClickContinue: (hintOverride) => {
@@ -902,7 +1039,15 @@ export class Game {
       signalCueManager: this.signalCueManager,
       healthSystem: this.healthSystem,
       smellSystem: this.smellSystem,
+      planeReconciler: this.planeReconciler,
     });
+
+    /** D1：DEV 下对照 actionParamManifest 与 executor 实际注册互查，防三方参数表再漂移 */
+    if (import.meta.env.DEV) {
+      for (const msg of auditActionRegistrationsAgainstManifest(this.actionExecutor)) {
+        console.warn(`[actionParamManifest 漂移] ${msg}`);
+      }
+    }
 
     this.pressureHoldManager.bindRuntime({
       resolveDisplayText: (s) => this.resolveDisplayText(s),
@@ -959,6 +1104,7 @@ export class Game {
       resolveDisplayText: (s) => this.resolveDisplayText(s),
     });
     await this.paperCraftMinigameManager.loadIndex();
+    if (this.tearDownComplete) return;
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
       stateController: this.stateController,
@@ -978,9 +1124,9 @@ export class Game {
         return this.cutsceneManager.fadingCameraZoom(targetZoom, durationMs);
       },
       fadingRestoreSceneCameraZoom: (durationMs) => {
-        const z = this.sceneManager.currentSceneData?.camera?.zoom;
-        const target = z !== undefined && Number.isFinite(z) && z > 0 ? z : 1;
-        return this.cutsceneManager.fadingCameraZoom(target, durationMs);
+        // NPC 对话收尾的 550ms 渐变必须以"位面基线"为目标——按场景 zoom 渐变会把
+        // 对账器在 Dialogue→Exploring 边沿重贴的位面相机档静默盖掉。
+        return this.cutsceneManager.fadingCameraZoom(this.getCameraBaselineZoom(), durationMs);
       },
     });
     this.interactionCoordinator.init();
@@ -1017,7 +1163,9 @@ export class Game {
       (msg) => this.logDepthDiag(msg),
     );
 
-    this.debugTools = new DebugTools({
+    /** T1：调试工具与 F2 面板注册统一按 import.meta.env.DEV 门控（判据与
+     *  TouchMobileControls 的「调试」chip 一致），生产玩家无任何调试入口。 */
+    if (import.meta.env.DEV) this.debugTools = new DebugTools({
       renderer: this.renderer,
       camera: this.camera,
       eventBus: this.eventBus,
@@ -1118,16 +1266,18 @@ export class Game {
         setFormParam: (key, value) => this.hud?.setSmellFormParam(key, value),
       },
     });
-    this.debugTools.init();
+    this.debugTools?.init();
 
     await Promise.all([
       this.loadFlagRegistry(),
+      this.loadCharacterRegistry(),
       this.loadSmellProfiles(),
       this.inventoryManager.loadDefs(),
       this.rulesManager.loadDefs(),
       this.questManager.loadDefs(),
       this.encounterManager.loadDefs(),
       this.pressureHoldManager.loadDefs(),
+      this.planeReconciler.loadDefs(),
       this.signalCueManager.loadDefs(),
       this.audioManager.loadConfig(),
       this.cutsceneManager.loadDefs(),
@@ -1135,12 +1285,15 @@ export class Game {
       this.shopUI.loadDefs(),
       this.mapUI.loadConfig(),
     ]);
+    if (this.tearDownComplete) return;
 
     await this.refreshTextResolveLookups();
+    if (this.tearDownComplete) return;
     this.wireTextResolve();
 
     this.debugPanelUI.attachFlagDebug(this.flagStore, this.eventBus);
     this.setupCutsceneStepHud();
+    this.setupPlaneDebugSection();
 
     if (!this.gameConfig.initialScene) {
       console.error('Game: initialScene not configured in game_config.json');
@@ -1148,12 +1301,17 @@ export class Game {
     this.saveManager.setFallbackScene(this.gameConfig.fallbackScene || this.gameConfig.initialScene);
 
     await this.setupPlayer({ deferAvatar: this.isDevMode });
+    if (this.tearDownComplete) return;
     this.setupRuntimeDebugSnapshotPublishing();
     this.setupRuntimeCommandPolling();
     // 气味调试 hook（平时关；URL 加 ?smellDebug 开启）：console 里 __smell(scent,intensity,dir,flicker) /
     // __smellSniff() / __smellStep(n) 驱动 HUD 气味指示器看效果。隐藏页 rAF 被节流时 __smell 会强制步进给截图用。
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('smellDebug')) {
       const w = window as unknown as Record<string, unknown>;
+      this.smellDebugGlobalKeys = [
+        '__smell', '__smellSniff', '__smellStep', '__smellInfo',
+        '__smellZoneEnter', '__smellZoneExit', '__smellSource',
+      ];
       const stepHud = (n: number) => {
         if (!document.hidden) return; // 可见页：让 HUD 自带 rAF 自然播动画（flash/coil/fade）；只在隐藏页强制步进给截图用
         const r = (this.hud as unknown as { smellRenderer?: { update: (dt: number) => void } }).smellRenderer;
@@ -1227,6 +1385,13 @@ export class Game {
     };
     ticker.add(this.mainTick);
     this.setupWebGlPanelDiagnostics();
+
+    // dev 启动直达路由：主 tick 已挂载（过场位移/小游戏 update 有驱动），此刻才安全执行
+    if (this.devStartupRoute) {
+      const route = this.devStartupRoute;
+      this.devStartupRoute = null;
+      void route().catch((e) => console.warn('Game: dev 启动直达路由失败', e));
+    }
   }
 
   /** F2「日志」页：WebGL getError、深度 GPU 纹理、shader 预热与上下文丢失；JS/Pixi 运行时错误镜像 */
@@ -1303,12 +1468,56 @@ export class Game {
     this.listenEvent('cutscene:step', onStep);
   }
 
+  /** F2「位面」区块：当前激活位面 / 来源（manual|narrative|default）/ 各槽生效值。 */
+  private setupPlaneDebugSection(): void {
+    this.debugPanelUI.addSection('位面', () => {
+      const s = this.planeReconciler.getDebugState();
+      const lines: string[] = [];
+      lines.push(`激活位面: ${s.activePlaneId}${s.def?.label ? `（${s.def.label}）` : ''}`);
+      lines.push(`来源: ${s.source === 'manual' ? 'manual（activatePlane 覆盖）' : s.source === 'narrative' ? 'narrative（叙事点名）' : 'default（normal 兜底）'}`);
+      if (s.namedBy.length > 0) {
+        lines.push(`点名: ${s.namedBy.map((n) => `${n.graphId}→${n.planeId}`).join(', ')}`);
+      }
+      const d = s.def;
+      if (d) {
+        if (d.movement) {
+          const m = d.movement;
+          lines.push(
+            `移动: drift=(${m.driftX ?? 0},${m.driftY ?? 0}) speed×${m.speedScale ?? 1} 跑=${m.allowRun !== false ? '允许' : '禁止'}`,
+          );
+        }
+        if (d.interaction) {
+          const i = d.interaction;
+          lines.push(
+            `交互: 热点=${i.canInteractHotspots !== false ? '可' : '禁'} 拾取=${i.canPickup !== false ? '可' : '禁'} 对话=${i.canTalkNpcs !== false ? '可' : '禁'}`,
+          );
+        }
+        if (d.camera?.zoom !== undefined) lines.push(`相机 zoom: ${d.camera.zoom}`);
+        if (d.lighting) lines.push('光照: 位面档生效（lightEnvCurve 挂起）');
+        if (d.healthDrainPerSec !== undefined) lines.push(`掉阳气: ${d.healthDrainPerSec}/s（仅 Exploring）`);
+      } else if (s.activePlaneId !== 'normal') {
+        lines.push('（该位面未在 planes.json 注册，各槽按无配置处理）');
+      }
+      return `位面\n${lines.join('\n')}`;
+    });
+  }
+
   private async loadFlagRegistry(): Promise<void> {
     try {
       const reg = await this.assetManager.loadJson<FlagRegistryJson>(TEXT_URLS.flagRegistry);
       this.flagStore.configureRegistry(reg);
     } catch {
       this.flagStore.configureRegistry(null);
+    }
+  }
+
+  /** 角色注册表 → SceneManager（NPC 实例化时合并 name/animFile/portraitSlug 默认）。缺文件则空表、退化为纯 NpcDef 内联。 */
+  private async loadCharacterRegistry(): Promise<void> {
+    try {
+      const raw = await this.assetManager.loadJson<CharacterRegistryFile>(TEXT_URLS.characterRegistry);
+      this.sceneManager.setCharacterRegistry(buildCharacterRegistry(raw?.characters));
+    } catch {
+      this.sceneManager.setCharacterRegistry({});
     }
   }
 
@@ -1359,6 +1568,9 @@ export class Game {
       }
       if (cfg.entityLighting && typeof cfg.entityLighting === 'object') {
         this.gameConfig.entityLighting = cfg.entityLighting;
+      }
+      if (cfg.health && typeof cfg.health === 'object') {
+        this.gameConfig.health = { ...cfg.health };
       }
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
@@ -1441,13 +1653,25 @@ export class Game {
     };
   }
 
+  /** 主角当前生效装扮配置的对话头像立绘集（装扮配置解耦：头像跟配置走，切装扮即切头像） */
+  private currentPlayerPortraitSlug: string | null = null;
+
+  /** 装扮配置缺省立绘集：按动画包目录名同名推导，如 …/player_anim/anim.json → player_anim */
+  private static portraitSlugFromManifest(path: string): string | null {
+    const m = /\/animation\/([^/]+)\/anim\.json/.exec(path);
+    return m ? m[1] : null;
+  }
+
   private mountPlayerAvatar(
     texture: any,
     animDef: AnimationSetDef,
     stateMap: Record<string, string> | undefined,
     sourcePathForLog: string,
     applyStateMap: boolean,
+    portraitSlug?: string | null,
   ): void {
+    this.currentPlayerPortraitSlug =
+      portraitSlug?.trim() || Game.portraitSlugFromManifest(sourcePathForLog);
     this.playerAnimDef = animDef;
     this.player.sprite.loadFromDef(texture, animDef);
     const sm = applyStateMap ? stateMap : undefined;
@@ -1468,6 +1692,7 @@ export class Game {
   async applyPlayerAvatarFromAction(
     manifestPath: string,
     stateMap?: Record<string, string> | null,
+    portraitSlug?: string | null,
   ): Promise<void> {
     const path = manifestPath.trim();
     if (!path) return;
@@ -1478,7 +1703,7 @@ export class Game {
     }
     const sm =
       stateMap && Object.keys(stateMap).length > 0 ? stateMap : undefined;
-    this.mountPlayerAvatar(loaded.texture, loaded.animDef, sm, path, true);
+    this.mountPlayerAvatar(loaded.texture, loaded.animDef, sm, path, true, portraitSlug);
   }
 
   /** 按 game_config.playerAvatar 恢复（与开局 setupPlayer 数据源一致）。 */
@@ -1486,7 +1711,7 @@ export class Game {
     const avatar = this.gameConfig.playerAvatar;
     const defaultManifest = '/resources/runtime/animation/player_anim/anim.json';
     const path = (avatar?.animManifest?.trim() || defaultManifest);
-    await this.applyPlayerAvatarFromAction(path, avatar?.stateMap ?? null);
+    await this.applyPlayerAvatarFromAction(path, avatar?.stateMap ?? null, avatar?.portraitSlug ?? null);
   }
 
   private async setupPlayer(options: { deferAvatar?: boolean } = {}): Promise<void> {
@@ -1496,7 +1721,7 @@ export class Game {
 
     if (options.deferAvatar) {
       const { texture, animDef } = this.placeholderPlayerAvatar();
-      this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false);
+      this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false, avatar?.portraitSlug);
       void (async () => {
         await this.assetManager.preloadManifest({
           scopeId: 'startup:player',
@@ -1504,7 +1729,7 @@ export class Game {
         }, { mode: 'runtime', tolerateErrors: true });
         const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
         if (!loaded || this.tearDownComplete || !this.renderer.isInitialized()) return;
-        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true);
+        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true, avatar?.portraitSlug);
       })();
     } else {
       await this.assetManager.preloadManifest({
@@ -1513,10 +1738,10 @@ export class Game {
       }, { mode: 'stage', tolerateErrors: true });
       const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
       if (loaded) {
-        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true);
+        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true, avatar?.portraitSlug);
       } else {
         const { texture, animDef } = this.placeholderPlayerAvatar();
-        this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false);
+        this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false, avatar?.portraitSlug);
       }
     }
     this.renderer.entityLayer.addChild(this.player.sprite.container);
@@ -1575,6 +1800,20 @@ export class Game {
     const patrolStoppedByAction = (): boolean =>
       (this.npcPatrolEpoch.get(npcId) ?? 0) !== tokenAtStart;
 
+    // 相邻重复路点会产生零长度段：moveTo 立即返回 → 协程热转空耗（单路点 route 尤甚）。
+    // 先去重（含 ping-pong 端点），只剩一个点则走到位后驻停，不进循环。
+    const pts: { x: number; y: number }[] = [];
+    for (const p of route) {
+      const last = pts[pts.length - 1];
+      if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.001) pts.push(p);
+    }
+    if (pts.length <= 1) {
+      if (pts.length === 1) {
+        void npc.moveTo(pts[0].x, pts[0].y, speed, moveAnimState);
+      }
+      return;
+    }
+
     const run = async () => {
       let i = 0;
       let step = 1;
@@ -1588,17 +1827,18 @@ export class Game {
           break;
         }
         if (patrolStoppedByAction()) break;
-        await npc.moveTo(route[i].x, route[i].y, speed, moveAnimState);
+        await npc.moveTo(pts[i].x, pts[i].y, speed, moveAnimState);
         if (this.patrolGeneration !== gen || !this.sceneManager.getCurrentNpcs().includes(npc)) {
           break;
         }
         if (!npc.consumePatrolSkipWaypointAdvance()) {
           i += step;
-          if (i >= route.length) {
-            i = Math.max(0, route.length - 1);
+          // ping-pong 掉头：跳过端点自身（pts.length ≥ 2），避免端点零长度 move 抖帧
+          if (i >= pts.length) {
+            i = pts.length - 2;
             step = -1;
           } else if (i < 0) {
-            i = 0;
+            i = 1;
             step = 1;
           }
         }
@@ -1787,33 +2027,97 @@ export class Game {
     const env = this.currentLightEnv;
     if (!env || env.shadow.mode === 'off' || !this.sceneDepthSystem.isLightingEnabled) return;
 
-    this.entityShadows.set('player', this.createShadowImpl(env.shadow.mode));
+    this.entityShadows.set('player', {
+      shadow: this.createShadowImpl(env.shadow.mode),
+      src: this.makePlayerShadowSource(),
+      owner: this.player,
+    });
     for (const npc of this.sceneManager.getCurrentNpcs()) {
-      if (npc.def.castShadow === false) continue;
-      this.entityShadows.set(npc.id, this.createShadowImpl(env.shadow.mode));
+      this.buildNpcShadowEntry(npc);
     }
-    // hotspot：仅有展示图（精灵）且未关闭开关者投影；键加前缀避免与 npc.id 撞
     for (const h of this.sceneManager.getCurrentHotspots()) {
-      if (h.def.castShadow === false || !h.def.displayImage?.image) continue;
-      this.entityShadows.set(`hotspot:${h.def.id}`, this.createShadowImpl(env.shadow.mode));
+      this.buildHotspotShadowEntry(h);
     }
   }
 
-  /** 按模式建阴影实现：real+有深度→deferred；否则→planar（real 无深度时退化为纯平面）。 */
+  /**
+   * 定向重建：仅对 payload 里给定 id 的 npc/hotspot 换新阴影实例（过场进出重建实体时用），
+   * 不动玩家与未列出的实体，避免全场阴影整体销毁重建（与 entityShadows owner-swap 缓存自相矛盾）。
+   * enter/exit 时序下某 id 若在当前场景已无实例，只销毁旧 entry、不新建。
+   */
+  private rebuildEntityShadowsForIds(npcIds: string[], hotspotIds: string[]): void {
+    const env = this.currentLightEnv;
+    const shadowsOn = !!env && env.shadow.mode !== 'off' && this.sceneDepthSystem.isLightingEnabled;
+
+    for (const id of npcIds) {
+      this.destroyEntityShadowEntry(id);
+      if (!shadowsOn) continue;
+      const npc = this.sceneManager.getNpcById(id);
+      if (npc) this.buildNpcShadowEntry(npc);
+    }
+    for (const id of hotspotIds) {
+      this.destroyEntityShadowEntry(`hotspot:${id}`);
+      if (!shadowsOn) continue;
+      const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === id);
+      if (h) this.buildHotspotShadowEntry(h);
+    }
+  }
+
+  /** 销毁并从 map 移除单个实体阴影 entry（若存在）：unregister + destroy + delete，键规则同 rebuild。 */
+  private destroyEntityShadowEntry(key: string): void {
+    const entry = this.entityShadows.get(key);
+    if (!entry) return;
+    this.sceneDepthSystem.unregisterShadow(entry.shadow);
+    entry.shadow.destroy();
+    this.entityShadows.delete(key);
+  }
+
+  /** 为单个 NPC 建阴影 entry（castShadow!==false 才建）；rebuildEntityShadows 与定向重建共用，避免逻辑漂移。 */
+  private buildNpcShadowEntry(npc: Npc): void {
+    const env = this.currentLightEnv;
+    if (!env || npc.def.castShadow === false) return;
+    this.entityShadows.set(npc.id, {
+      shadow: this.createShadowImpl(env.shadow.mode),
+      src: this.makeNpcShadowSource(npc),
+      owner: npc,
+    });
+  }
+
+  /** 为单个 hotspot 建阴影 entry（仅有展示图且 castShadow!==false 才建；键加前缀避免与 npc.id 撞）。共用以避免漂移。 */
+  private buildHotspotShadowEntry(h: Hotspot): void {
+    const env = this.currentLightEnv;
+    if (!env || h.def.castShadow === false || !h.def.displayImage?.image) return;
+    this.entityShadows.set(`hotspot:${h.def.id}`, {
+      shadow: this.createShadowImpl(env.shadow.mode),
+      src: this.makeHotspotShadowSource(h),
+      owner: h,
+    });
+  }
+
+  /** 按模式建阴影实现：real+有深度→deferred；否则→planar（real 无深度时退化为纯平面）。
+   *  实例注册进 SceneDepthSystem 调参广播列表（F2 改 tolerance/floorOffset 实时传播）。 */
   private createShadowImpl(mode: 'real' | 'planar' | 'off'): IEntityShadow {
     const layer = this.renderer.shadowLayer;
     const ctx = this.sceneDepthSystem.getShadowSceneContext();
-    if (mode === 'real' && ctx) return new DeferredEntityShadow(layer, ctx);
-    return new PlanarEntityShadow(layer, ctx);
+    const sh = mode === 'real' && ctx
+      ? new DeferredEntityShadow(layer, ctx)
+      : new PlanarEntityShadow(layer, ctx);
+    this.sceneDepthSystem.registerShadow(sh);
+    return sh;
   }
 
-  /** 按 toneEnabled / mode 设置所有光照滤镜的 tone 与 sprite-AO（接触斑唯一归地面侧，避免双压）。 */
+  /** 按 toneEnabled / mode 设置所有光照滤镜的 tone 与 sprite-AO（接触斑唯一归地面侧，避免双压：
+   *  阴影开启时接触斑由阴影实现绘制，滤镜侧 aoContact 归零；阴影 off 时才走滤镜侧 ao.contact）。 */
   private applyShadowAndAO(): void {
     const env = this.currentLightEnv;
     if (!env) return;
     const tone = env.toneEnabled ? env.toneStrength : 0;
     const aoForm = env.shadow.mode === 'off' ? 0 : env.ao.form;
-    this.sceneDepthSystem.applyShadowFilterToneAO(tone, 0, aoForm);
+    this.sceneDepthSystem.applyShadowFilterToneAO(
+      tone,
+      env.shadow.mode === 'off' ? env.ao.contact : 0,
+      aoForm,
+    );
   }
 
   /** F2 切换 shadowMode/tone/billboard 后重建阴影实例并重设滤镜 tone/AO。 */
@@ -1833,12 +2137,51 @@ export class Game {
   }
 
   /**
+   * 相机基线 zoom：激活位面配置了 camera.zoom 时以位面档为基线，否则场景 JSON zoom（缺省 1）。
+   * 所有"恢复场景 zoom"路径（restoreSceneCameraZoom / fadingRestoreSceneCameraZoom，
+   * 对话与演出收尾走它）必须恢复到该基线——按裸场景 zoom 恢复会把位面相机档静默盖掉。
+   */
+  private getCameraBaselineZoom(): number {
+    const planeZoom = this.planeReconciler.getActiveCameraZoom();
+    if (planeZoom !== null) return planeZoom;
+    const z = this.sceneManager.currentSceneData?.camera?.zoom;
+    return z !== undefined && Number.isFinite(z) && z > 0 ? z : 1;
+  }
+
+  /**
+   * 位面光照档钩子（PlaneReconciler 经 bindRuntime 调用）：
+   * - partial 非空：把该档经 resolveLightEnv 补全后按 updateLightEnvFromCurve 的推送序列
+   *   写进光照管线，并挂起 lightEnvCurve（同 F2 打开时的让位规则，见 updateLightEnvFromCurve）。
+   * - null：清除覆盖并恢复场景默认光照（有曲线的场景下一帧由曲线自然接管）。
+   * 幂等：重复以同一档调用只是重推同值；override 已空时传 null 为 no-op。
+   * 场景光照未启用（无 currentLightEnv）时仅记录覆盖，切场景后由 scene:ready 对账重贴。
+   */
+  applyPlaneLightEnvOverride(partial: SceneLightEnv | null): void {
+    if (!partial && !this.planeLightEnvOverride) return;
+    this.planeLightEnvOverride = partial;
+    const env = this.currentLightEnv;
+    if (!env) return;
+    const prevMode = env.shadow.mode;
+    const resolved = resolveLightEnv(
+      partial ?? this.sceneManager.currentSceneData?.lightEnv,
+      this.gameConfig.entityLighting,
+    );
+    copyResolvedInto(env, resolved);
+    this.sceneDepthSystem.applyKeyAmbient(
+      env.key.color, env.key.intensity, env.ambient.color, env.ambient.intensity,
+    );
+    this.applyShadowAndAO();
+    if (env.shadow.mode !== prevMode) this.rebuildEntityShadows();
+  }
+
+  /**
    * 每帧：若有光照环境曲线，按玩家投影位置插值并把新环境推给阴影/滤镜。
    * 无曲线时单次 null 检查即返回 —— 对现有场景零影响。
    */
   private updateLightEnvFromCurve(): void {
     const env = this.currentLightEnv;
     if (!this.currentLightCurve || !env) return;          // 无曲线/无环境=零影响
+    if (this.planeLightEnvOverride) return;               // 位面光照档激活期间曲线挂起（同 F2 让位）
     if (this.debugPanelUI?.isOpen) return;                // F2 光照调试期间让出控制权（避免被逐帧覆盖）
     const prevMode = env.shadow.mode;
     this.resolveLightCurveInto(this.player.x, this.player.y, env);
@@ -1852,23 +2195,34 @@ export class Game {
     if (env.shadow.mode !== prevMode) this.rebuildEntityShadows();
   }
 
-  /** 每帧更新投影阴影（位置/剪影/朝向跟随实体）。 */
+  /** 每帧更新投影阴影（位置/剪影/朝向跟随实体）。ShadowSource 复用缓存（F2 性能）；
+   *  仍按当前实体列表寻址——实例被过场重建（owner 变化）时就地换源，不更新已不在场的实体。 */
   private updateEntityShadows(): void {
     const env = this.currentLightEnv;
     if (!env || this.entityShadows.size === 0) return;
 
     const field = this.currentShadowField;
-    const playerShadow = this.entityShadows.get('player');
-    if (playerShadow) {
-      playerShadow.update(this.makePlayerShadowSource(), env, field);
+    const playerEntry = this.entityShadows.get('player');
+    if (playerEntry) {
+      playerEntry.shadow.update(playerEntry.src, env, field);
     }
     for (const npc of this.sceneManager.getCurrentNpcs()) {
-      const sh = this.entityShadows.get(npc.id);
-      if (sh) sh.update(this.makeNpcShadowSource(npc), env, field);
+      const entry = this.entityShadows.get(npc.id);
+      if (!entry) continue;
+      if (entry.owner !== npc) {
+        entry.owner = npc;
+        entry.src = this.makeNpcShadowSource(npc);
+      }
+      entry.shadow.update(entry.src, env, field);
     }
     for (const h of this.sceneManager.getCurrentHotspots()) {
-      const sh = this.entityShadows.get(`hotspot:${h.def.id}`);
-      if (sh) sh.update(this.makeHotspotShadowSource(h), env, field);
+      const entry = this.entityShadows.get(`hotspot:${h.def.id}`);
+      if (!entry) continue;
+      if (entry.owner !== h) {
+        entry.owner = h;
+        entry.src = this.makeHotspotShadowSource(h);
+      }
+      entry.shadow.update(entry.src, env, field);
     }
   }
 
@@ -1910,7 +2264,10 @@ export class Game {
   }
 
   private clearEntityShadows(): void {
-    for (const sh of this.entityShadows.values()) sh.destroy();
+    for (const entry of this.entityShadows.values()) {
+      this.sceneDepthSystem.unregisterShadow(entry.shadow);
+      entry.shadow.destroy();
+    }
     this.entityShadows.clear();
   }
 
@@ -2015,14 +2372,19 @@ export class Game {
     this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyF');
     this.stateController.registerPanel('shop', this.shopUI);
     this.stateController.registerPanel('menu', this.menuUI);
-    this.stateController.registerPanel('debug', this.debugPanelUI, 'F2', {
-      alwaysOpenable: true,
-      overlaysGameState: false,
-    });
+    /** T1：F2 调试坞仅 DEV 注册（门控判据与 TouchMobileControls 的「调试」chip 一致）；
+     *  生产构建下 F2 与触屏调试入口都不存在。 */
+    if (import.meta.env.DEV) {
+      this.stateController.registerPanel('debug', this.debugPanelUI, 'F2', {
+        alwaysOpenable: true,
+        overlaysGameState: false,
+      });
+    }
 
     this.stateController.setEscapeFallback(() => {
-      this.stateController.setState(GameState.UIOverlay);
-      this.menuUI.openPauseMenu();
+      /** η2a 交接收敛：统一走 togglePanel（压栈进 UIOverlay、开暂停菜单；Esc/closePanel
+       *  按栈恢复），不再手工 setState+openPauseMenu 造成压栈不平衡。 */
+      this.stateController.togglePanel('menu');
     });
 
     const touchMount = document.getElementById('game-mount');
@@ -2032,6 +2394,7 @@ export class Game {
         this.stateController,
         () => this.stateController.currentState,
         touchMount,
+        this.stringsProvider,
       );
     }
   }
@@ -2119,40 +2482,12 @@ export class Game {
       }
 
       for (const npc of this.sceneManager.getCurrentNpcs()) {
-        try {
-          const npcLift = 0.4 * npc.getWorldSize().height;
-          const npcFilter = lightingOn
-            ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift)
-            : this.sceneDepthSystem.createFilterForEntity();
-          if (npcFilter) {
-            depthLog('Game', 'attaching entity filter to NPC:', npc.id, 'lighting=', lightingOn);
-            npc.container.filters = [npcFilter];
-          }
-        } catch (e) {
-          depthError('Game', 'NPC filter FAILED', npc.id, e);
-        }
-        const patrol = npc.def.patrol;
-        if (
-          npc.container.visible &&
-          patrol?.route &&
-          patrol.route.length > 0 &&
-          !this.sceneManager.isNpcPatrolPersistentlyDisabled(npc.id)
-        ) {
-          this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, patrol.moveAnimState);
-        }
+        this.attachNpcSceneFilters(npc);
+        this.startNpcPatrolIfEligible(npc);
       }
 
       for (const h of this.sceneManager.getCurrentHotspots()) {
-        if (!h.hasDepthDisplayImage()) continue;
-        try {
-          const hf = this.sceneDepthSystem.createFilterForEntity();
-          if (hf) {
-            depthLog('Game', 'attaching depth filter to hotspot display:', h.def.id);
-            h.attachDepthOcclusionFilter(hf);
-          }
-        } catch (e) {
-          depthError('Game', 'hotspot depth filter FAILED', h.def.id, e);
-        }
+        this.attachHotspotDepthFilter(h);
       }
 
       this.rebuildEntityShadows();
@@ -2195,9 +2530,83 @@ export class Game {
         }
       }
     });
+
+    /** B11：过场进入/退出重建的实体是全新实例，scene:ready 附加的滤镜/巡逻/阴影随旧实例
+     *  销毁——此处对重建实体复用 scene:ready 的附加逻辑。巡逻仅在 exit 阶段重启：
+     *  enter 阶段过场拥有实体动线（自动巡逻会与 moveEntityTo 抢），与重建前行为一致。 */
+    this.listenEvent(
+      'scene:entitiesRebuilt',
+      (p: { cutsceneId: string; phase: 'enter' | 'exit'; hotspotIds: string[]; npcIds: string[] }) => {
+        for (const id of p.npcIds ?? []) {
+          const npc = this.sceneManager.getNpcById(id);
+          if (!npc) continue;
+          // 防双协程：旧实例协程按 npcPatrolEpoch 立即失效，再按条件评估重启
+          this.stopNpcPatrol(id);
+          this.attachNpcSceneFilters(npc);
+          if (p.phase === 'exit') this.startNpcPatrolIfEligible(npc);
+        }
+        for (const id of p.hotspotIds ?? []) {
+          const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === id);
+          if (!h) continue;
+          this.attachHotspotDepthFilter(h);
+        }
+        // 只对本次重建的实体换阴影实例（不整体销毁重建全场），与 owner-swap 缓存一致。
+        this.rebuildEntityShadowsForIds(p.npcIds ?? [], p.hotspotIds ?? []);
+        this.applyShadowAndAO();
+        this.syncEntityPixelDensityMatch();
+      },
+    );
+  }
+
+  /** scene:ready 与 scene:entitiesRebuilt 共用：为 NPC 附加光照/深度遮挡滤镜。 */
+  private attachNpcSceneFilters(npc: Npc): void {
+    if (npc.def.renderRaw) { npc.container.filters = []; return; }
+    const lightingOn = this.sceneDepthSystem.isLightingEnabled;
+    try {
+      const npcLift = 0.4 * npc.getWorldSize().height;
+      const npcFilter = lightingOn
+        ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift)
+        : this.sceneDepthSystem.createFilterForEntity();
+      if (npcFilter) {
+        depthLog('Game', 'attaching entity filter to NPC:', npc.id, 'lighting=', lightingOn);
+        npc.container.filters = [npcFilter];
+      }
+    } catch (e) {
+      depthError('Game', 'NPC filter FAILED', npc.id, e);
+    }
+  }
+
+  /** scene:ready 与 scene:entitiesRebuilt（exit 阶段）共用：条件满足则启动巡逻协程。 */
+  private startNpcPatrolIfEligible(npc: Npc): void {
+    const patrol = npc.def.patrol;
+    if (
+      npc.container.visible &&
+      patrol?.route &&
+      patrol.route.length > 0 &&
+      !this.sceneManager.isNpcPatrolPersistentlyDisabled(npc.id)
+    ) {
+      this.runNpcPatrol(npc, patrol.route, patrol.speed ?? 60, patrol.moveAnimState);
+    }
+  }
+
+  /** scene:ready 与 scene:entitiesRebuilt 共用：带展示图的热点附加深度遮挡滤镜。 */
+  private attachHotspotDepthFilter(h: Hotspot): void {
+    if (!h.hasDepthDisplayImage()) return;
+    try {
+      const hf = this.sceneDepthSystem.createFilterForEntity();
+      if (hf) {
+        depthLog('Game', 'attaching depth filter to hotspot display:', h.def.id);
+        h.attachDepthOcclusionFilter(hf);
+      }
+    } catch (e) {
+      depthError('Game', 'hotspot depth filter FAILED', h.def.id, e);
+    }
   }
 
   private narrativeWarps: DevNarrativeWarp[] = [];
+
+  /** dev 启动直达路由：startDevMode 组装、start() 在 ticker 挂载后执行（见 startDevMode 注释） */
+  private devStartupRoute: (() => Promise<void>) | null = null;
 
   private async loadNarrativeWarps(): Promise<void> {
     try {
@@ -2210,23 +2619,50 @@ export class Game {
     }
   }
 
-  /** dev 跳转：把主流程图沿线性链推进到 flowState（逐个 setState 使前置 reached、任务链推进），
-   *  再按 set 设各状态，最后进入对应场景。 */
+  /** dev 跳转：把主流程图推进到 flowState（逐个 setState 使前置 reached、任务链推进），
+   *  再按 set 设各状态，最后进入对应场景。BFS 求 initial→flowState 迁移路径——
+   *  分支图取最短路径，线性图与旧实现一致；不可达时明确报错并跳过主线推进。 */
   private async enterNarrativeWarp(id: string): Promise<void> {
     const warp = this.narrativeWarps.find((w) => w.id === id);
     if (!warp) return;
     if (warp.flowGraph && warp.flowState) {
       const graph = this.narrativeStateManager.getGraph(warp.flowGraph);
-      if (graph) {
-        const nextOf = new Map<string, string>();
-        for (const t of graph.transitions ?? []) nextOf.set(t.from, t.to);
-        let s: string | undefined = graph.initialState;
-        const seen = new Set<string>();
-        while (s && !seen.has(s)) {
-          seen.add(s);
-          await this.narrativeStateManager.debugSetNarrativeState(warp.flowGraph, s);
-          if (s === warp.flowState) break;
-          s = nextOf.get(s);
+      if (!graph) {
+        console.warn(`enterNarrativeWarp: 找不到流程图 "${warp.flowGraph}"`);
+      } else {
+        const adjacency = new Map<string, string[]>();
+        for (const t of graph.transitions ?? []) {
+          const arr = adjacency.get(t.from);
+          if (arr) arr.push(t.to);
+          else adjacency.set(t.from, [t.to]);
+        }
+        const start = graph.initialState;
+        const cameFrom = new Map<string, string>();
+        const seen = new Set<string>([start]);
+        const queue: string[] = [start];
+        while (queue.length > 0) {
+          const cur = queue.shift()!;
+          if (cur === warp.flowState) break;
+          for (const next of adjacency.get(cur) ?? []) {
+            if (seen.has(next)) continue;
+            seen.add(next);
+            cameFrom.set(next, cur);
+            queue.push(next);
+          }
+        }
+        if (!seen.has(warp.flowState)) {
+          console.warn(
+            `enterNarrativeWarp: 流程图 "${warp.flowGraph}" 从 "${start}" 无迁移路径可达 "${warp.flowState}"，已跳过主线推进`,
+          );
+        } else {
+          const path: string[] = [];
+          for (let s: string | undefined = warp.flowState; s !== undefined; s = cameFrom.get(s)) {
+            path.unshift(s);
+            if (s === start) break;
+          }
+          for (const s of path) {
+            await this.narrativeStateManager.debugSetNarrativeState(warp.flowGraph, s);
+          }
         }
       }
     }
@@ -2318,59 +2754,54 @@ export class Game {
       setNarrativeState: (graphId, stateId) =>
         this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
     };
-    if (playCutscene) {
-      setTimeout(() => this.devPlayCutscene(playCutscene), 300);
-    }
-
-    const nw = (narrativeWarp ?? '').trim();
-    if (nw) {
-      setTimeout(() => {
-        void this.enterNarrativeWarp(nw);
-      }, playCutscene ? 900 : 300);
-      return;
-    }
-
-    const ds = (devScene ?? '').trim();
-    if (ds) {
-      if (ds !== DEV_SCENE) {
-        setTimeout(() => {
-          void this.devLoadScene(ds);
-        }, playCutscene ? 900 : 300);
+    /** 启动直达路由（过场直启 / 场景直达 / 各小游戏预览）需要主 tick 驱动位移与小游戏
+     *  update——存起来由 start() 在 `ticker.add(mainTick)` 之后调用（真实就绪信号，
+     *  替代旧 300/900/450ms 魔数延时）；顺序 await 保证过场播完才进下一站。 */
+    this.devStartupRoute = async () => {
+      if (playCutscene) await this.devPlayCutscene(playCutscene);
+      const nw = (narrativeWarp ?? '').trim();
+      if (nw) {
+        await this.enterNarrativeWarp(nw);
+        return;
       }
-      return;
-    }
-
-    const wp = (waterPreview ?? '').trim();
-    if (wp) {
-      setTimeout(() => {
+      const ds = (devScene ?? '').trim();
+      if (ds) {
+        if (ds !== DEV_SCENE) await this.devLoadScene(ds);
+        return;
+      }
+      const wp = (waterPreview ?? '').trim();
+      if (wp) {
         this.devModeUI?.close();
-        void this.waterMinigameManager.start(wp);
-      }, playCutscene ? 900 : 450);
-    }
-
-    const swp = (sugarWheelPreview ?? '').trim();
-    if (swp) {
-      setTimeout(() => {
+        await this.waterMinigameManager.start(wp);
+        return;
+      }
+      const swp = (sugarWheelPreview ?? '').trim();
+      if (swp) {
         this.devModeUI?.close();
-        void this.sugarWheelMinigameManager.start(swp);
-      }, playCutscene || wp ? 900 : 450);
-    }
-
-    const pcp = (paperCraftPreview ?? '').trim();
-    if (pcp) {
-      setTimeout(() => {
+        await this.sugarWheelMinigameManager.start(swp);
+        return;
+      }
+      const pcp = (paperCraftPreview ?? '').trim();
+      if (pcp) {
         this.devModeUI?.close();
-        void this.paperCraftMinigameManager.start(pcp);
-      }, playCutscene || wp || swp ? 900 : 450);
-    }
+        await this.paperCraftMinigameManager.start(pcp);
+      }
+    };
   }
 
   private async devPlayCutscene(id: string): Promise<void> {
     if (this.cutsceneManager.isPlaying) return;
     this.devModeUI?.close();
     this.stateController.setState(GameState.Cutscene);
-    await this.cutsceneManager.startCutscene(id);
-    this.stateController.setState(GameState.Exploring);
+    /** 过场抛错时也必须复位状态机（对齐 tryStartInitialPrologue），否则 GameState 卡在 Cutscene、
+     *  输入被门控。startCutscene 自身 finally 已回收其资源，这里只兜 Game 层状态。 */
+    try {
+      await this.cutsceneManager.startCutscene(id);
+    } catch (e) {
+      console.warn('DevMode: 过场播放失败', id, e);
+    } finally {
+      this.stateController.setState(GameState.Exploring);
+    }
     if (this.isDevMode) {
       const currentScene = this.sceneManager.currentSceneData?.id;
       if (currentScene !== 'dev_room') {
@@ -2433,8 +2864,16 @@ export class Game {
     if (doneFlag && this.flagStore.get(doneFlag)) return;
 
     this.stateController.setState(GameState.Cutscene);
-    await this.cutsceneManager.startCutscene(cutsceneId);
-    this.stateController.setState(GameState.Exploring);
+    try {
+      await this.cutsceneManager.startCutscene(cutsceneId);
+      /** B17：过场内 setFlag 被全局黑名单拦截，「播过不再播」的标记由 Game 侧在
+       *  播完后写入；失败不写（下次启动重试），并对齐 startCutscene 失败即恢复模式。 */
+      if (doneFlag) this.flagStore.set(doneFlag, true);
+    } catch (e) {
+      console.warn('Game: 序章过场播放失败', cutsceneId, e);
+    } finally {
+      this.stateController.setState(GameState.Exploring);
+    }
   }
 
   private collectSaveData(): Record<string, object> {
@@ -2450,6 +2889,9 @@ export class Game {
   }
 
   private distributeSaveData(data: Record<string, object>): void {
+    /** 读档开始信号：HUD 等纯事件驱动的展示层先清上一局残留（任务追踪等），
+     *  随后各系统 deserialize 补发的事件（quest:accepted{restored} 等）重建显示。 */
+    this.eventBus.emit('save:restoring', {});
     // 读档期间抑制 QuestManager / ArchiveManager 对 flag:changed 的反应：
     // 各系统 deserialize 会逐个 syncFlag → emit flag:changed，但此刻 scenario/narrative/档案集合
     // 可能尚未恢复，按半态重评会导致任务误判完成/激活、以及虚假“档案更新”通知。
@@ -2813,7 +3255,7 @@ export class Game {
     this.player.sprite.setPixelDensityMatchActive(on);
     this.player.sprite.applyPixelDensityMatch(dBg, strengthScale);
     for (const npc of this.sceneManager.getCurrentNpcs()) {
-      npc.applyEntityPixelDensityMatch(on, dBg, strengthScale);
+      npc.applyEntityPixelDensityMatch(npc.def.renderRaw ? false : on, dBg, strengthScale);
     }
     for (const h of this.sceneManager.getCurrentHotspots()) {
       h.applyEntityPixelDensityMatch(on, dBg, strengthScale);
@@ -2877,7 +3319,17 @@ export class Game {
   private async reloadScene(sceneId: string): Promise<void> {
     this.sceneManager.unloadScene();
     await this.sceneManager.loadScene(sceneId);
-    this.stateController.setState(GameState.Exploring);
+    /** η2a 交接：读档后 onEnter 可能已自动开演（对话/过场/遭遇/小游戏）——
+     *  仅在没有进行中的子状态时才盖写回 Exploring，避免顶掉刚开播的演出。 */
+    const s = this.stateController.currentState;
+    if (
+      s !== GameState.Dialogue &&
+      s !== GameState.Cutscene &&
+      s !== GameState.Encounter &&
+      s !== GameState.Minigame
+    ) {
+      this.stateController.setState(GameState.Exploring);
+    }
   }
 
   private playerNavTarget: { x: number; y: number } | null = null;
@@ -2961,9 +3413,11 @@ export class Game {
       narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
       narrativeState: this.narrativeStateManager.debugSnapshot(),
       documentReveals: this.documentRevealManager.debugSnapshot(),
-      dialogue: this.graphDialogueManager.serialize(),
+      // serialize() 已收敛为恒 {active:false}（对话不入档），快照改用只读调试 getter
+      dialogue: this.graphDialogueManager.getDebugInteractionState(),
       dialogueView: this.graphDialogueManager.getDialogueViewDebug(),
       player: { x: this.player.x, y: this.player.y, facing: this.player.facingDirection },
+      planes: this.planeReconciler.getDebugState(),
       inventory: this.inventoryManager.serialize(),
       interactables: this.interactionSystem.debugListInteractables(this.player.x, this.player.y),
       playerView: this.getPlayerView(),
@@ -3055,8 +3509,16 @@ export class Game {
         return t === undefined || t === null || String(t) === this.runtimeBootId;
       });
       if (commands.length === 0) return;
+      // 分批：每轮最多 50 条，剩余留在队列由下一轮轮询继续取——不再静默丢尾
+      const batch = commands.slice(0, 50);
       const results = [];
-      for (const command of commands.slice(0, 50)) {
+      const consumedIds: string[] = [];
+      let allBatchHaveIds = true;
+      for (const command of batch) {
+        const rawId = (command as { id?: unknown })?.id;
+        const cid = rawId === undefined || rawId === null ? '' : String(rawId).trim();
+        if (cid) consumedIds.push(cid);
+        else allBatchHaveIds = false;
         try {
           results.push(await this.applyRuntimeCommand(command));
         } catch (error) {
@@ -3069,7 +3531,17 @@ export class Game {
         }
       }
       this.lastRuntimeCommandResults = results;
-      await fetch('/__gamedraft-api/runtime-command', { method: 'DELETE' });
+      // 按命令 id 定向删除本实例已执行的命令：targetBootId 不符/未进本批的命令留队列。
+      // 队列里混有无 id 的旧格式命令时退回整清（否则会重复执行）——服务端 POST 已补发 id，
+      // 此退路仅兜历史残留文件。
+      if (allBatchHaveIds && consumedIds.length > 0) {
+        await fetch(
+          `/__gamedraft-api/runtime-command?ids=${encodeURIComponent(consumedIds.join(','))}`,
+          { method: 'DELETE' },
+        );
+      } else {
+        await fetch('/__gamedraft-api/runtime-command', { method: 'DELETE' });
+      }
       await this.publishRuntimeDebugSnapshot(
         results.every((r) => r.ok) ? 'runtime-command:complete' : 'runtime-command:failed',
       );
@@ -3131,6 +3603,8 @@ export class Game {
       playerMoveTo: (x, y) => this.setPlayerNavTarget(x, y),
       playerTap: () => this.inputManager.injectPointerDown(),
       setPlayerCollisions: (enabled) => this.player.setCollisionsEnabled(enabled),
+      activatePlane: (planeId) => this.planeReconciler.activatePlaneManually(planeId),
+      deactivatePlane: () => this.planeReconciler.deactivateManualPlane(),
     });
   }
 
@@ -3238,6 +3712,11 @@ export class Game {
     if (this.tearDownComplete) return;
     this.tearDownComplete = true;
 
+    /** P3：先推进巡逻代数/epoch——NPC 巡逻协程在下一个检查点立刻退出，
+     *  不会在系统逐个销毁期间继续 moveTo 已销毁的实体（HMR 悬挂根因）。 */
+    this.patrolGeneration++;
+    this.npcPatrolEpoch.clear();
+
     if (this.mainTick && this.renderer?.app?.ticker) {
       try {
         this.renderer.app.ticker.remove(this.mainTick);
@@ -3293,8 +3772,12 @@ export class Game {
     this.unsubRendererResize?.();
     this.unsubRendererResize = null;
 
-    this.stateController.closeAllPanels();
-
+    /**
+     * 面板属主契约（P3 双重 destroy 收敛）：凡 registerPanel 进 stateController 的面板
+     * （quest/inventory/rules/dialogueLog/bookshelf/map/ruleUse/shop/menu/debug）由
+     * stateController.destroy() 统一 close+destroy，Game 只销毁未注册的 UI。
+     * debug 面板仅 DEV 注册（T1），生产下由 Game 兜底销毁。
+     */
     this.inspectBox?.destroy();
     this.pickupNotification?.destroy();
     this.dialogueUI?.destroy();
@@ -3304,23 +3787,22 @@ export class Game {
     this.hud?.destroy();
     this.notificationUI?.destroy();
     this.bookReaderUI?.destroy();
-    this.questPanelUI?.destroy();
-    this.inventoryUI?.destroy();
-    this.rulesPanelUI?.destroy();
-    this.dialogueLogUI?.destroy();
-    this.bookshelfUI?.destroy();
-    this.shopUI?.destroy();
-    this.mapUI?.destroy();
-    this.menuUI?.destroy();
-    this.ruleUseUI?.destroy();
-    this.debugPanelUI?.destroy();
+    if (!import.meta.env.DEV) this.debugPanelUI?.destroy();
     this.devModeUI?.destroy();
     this.devModeUI = null;
     delete window.__gameDevAPI;
 
+    /** P3：清 ?smellDebug 安装的 window 全局（共 7 个，见 start 内安装处） */
+    if (this.smellDebugGlobalKeys.length > 0) {
+      const w = window as unknown as Record<string, unknown>;
+      for (const k of this.smellDebugGlobalKeys) delete w[k];
+      this.smellDebugGlobalKeys = [];
+    }
+
     this.interactionCoordinator?.destroy();
     this.eventBridge?.destroy();
     this.debugTools?.destroy();
+    this.debugTools = null;
     this.depthDebugVisualizer?.destroy();
 
     this.stateController.destroy();
@@ -3335,6 +3817,9 @@ export class Game {
     // 各系统/UI/桥接均已各自 off 监听后，再清空总线作为兜底；
     // 早于各 destroy() 清空会使各模块的 off() 作用在空总线上，掩盖其监听泄漏。
     this.eventBus.clear();
+
+    // CutsceneRenderer 不在 registeredSystems 里（渲染层），显式释放 resize 订阅与演出内容
+    this.cutsceneRenderer?.destroy();
 
     this.actionExecutor.destroy();
     this.flagStore.destroy();
@@ -3416,6 +3901,7 @@ export class Game {
 
     this.emoteBubbleManager.update(dt);
     this.notificationUI.update(dt);
+    this.planeReconciler.update(dt);
     this.camera.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();
@@ -3429,19 +3915,26 @@ export class Game {
         this.renderer.worldContainer.y,
         S,
       );
-      const zones = this.sceneManager.currentSceneData?.zones;
+      // depth_floor 直读场景 zones、不经 ZoneSystem——位面归属在此消费点单独过滤
+      //（standard zone 的位面过滤在 shouldRegisterZoneWithZoneSystem）。
+      const zonesRaw = this.sceneManager.currentSceneData?.zones;
+      const zones = zonesRaw?.some((z) => z.planes?.length)
+        ? zonesRaw.filter((z) => this.sceneManager.isEntityInActivePlane(z))
+        : zonesRaw;
+      /** F2 性能：深度 floor 偏移的条件上下文每帧建一次，玩家/NPC/热点三处循环共享 */
+      const floorCondCtx = {
+        flagStore: this.flagStore,
+        questManager: this.questManager,
+        scenarioState: this.scenarioStateManager,
+        narrativeState: this.narrativeStateManager,
+      };
       if (this.playerDepthFilter) {
         const ex = resolveDepthFloorOffsetBoost(
           zones,
           this.player.x,
           this.player.y,
           this.flagStore,
-          {
-            flagStore: this.flagStore,
-            questManager: this.questManager,
-            scenarioState: this.scenarioStateManager,
-            narrativeState: this.narrativeStateManager,
-          },
+          floorCondCtx,
         );
         this.sceneDepthSystem.updateEntityDepthOcclusion(
           this.playerDepthFilter,
@@ -3459,12 +3952,7 @@ export class Game {
         if (c.filters) {
           for (const f of c.filters) {
             if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
-              const ex = resolveDepthFloorOffsetBoost(zones, c.x, c.y, this.flagStore, {
-                flagStore: this.flagStore,
-                questManager: this.questManager,
-                scenarioState: this.scenarioStateManager,
-                narrativeState: this.narrativeStateManager,
-              });
+              const ex = resolveDepthFloorOffsetBoost(zones, c.x, c.y, this.flagStore, floorCondCtx);
               this.sceneDepthSystem.updateEntityDepthOcclusion(
                 f as unknown as IEntityShadingFilter,
                 c.x,
@@ -3479,12 +3967,7 @@ export class Game {
         const hf = h.getDepthOcclusionFilter();
         if (!hf) continue;
         const footY = h.depthOcclusionFootWorldY();
-        const ex = resolveDepthFloorOffsetBoost(zones, h.container.x, footY, this.flagStore, {
-          flagStore: this.flagStore,
-          questManager: this.questManager,
-          scenarioState: this.scenarioStateManager,
-          narrativeState: this.narrativeStateManager,
-        });
+        const ex = resolveDepthFloorOffsetBoost(zones, h.container.x, footY, this.flagStore, floorCondCtx);
         this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
       }
     }

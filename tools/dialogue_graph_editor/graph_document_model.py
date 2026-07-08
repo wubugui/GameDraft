@@ -137,11 +137,88 @@ class GraphDocumentModel(QObject):
 
     # -- graph-level mutations ----------------------------------------------
 
-    def apply_meta_patch(self, patch: dict[str, Any]) -> None:
-        """Atomically apply top-level fields (id, entry, meta, preconditions, schemaVersion)."""
+    def apply_meta_patch(
+        self, patch: dict[str, Any], *, delete_keys: list[str] | None = None
+    ) -> None:
+        """Atomically apply top-level fields (id, entry, meta, preconditions, schemaVersion).
+
+        仅在实际改变数据时才发 ``meta_changed`` 并标脏——空操作（如打开后校验回灌相同值）
+        不会再误标脏。``delete_keys`` 用于忠实删除某个顶层键（如把缺省的 preconditions 保持缺省）。
+        就地修改 ``_data``，不替换对象，避免持有 ``mutable_data`` 活引用的 UI 失联。
+        """
+        delete_keys = delete_keys or []
+        changed = False
+        for k, v in patch.items():
+            if k not in self._data or self._data[k] != v:
+                changed = True
+                break
+        if not changed:
+            for k in delete_keys:
+                if k in self._data:
+                    changed = True
+                    break
+        if not changed:
+            return
         self._data.update(copy.deepcopy(patch))
+        for k in delete_keys:
+            self._data.pop(k, None)
         self.meta_changed.emit()
         self.mark_dirty()
+
+    def apply_graph_meta_fields(
+        self,
+        *,
+        graph_id: str,
+        entry: str,
+        title: str,
+        scenario_id: str,
+        preconditions: list[Any],
+        schema_version_present: bool,
+        meta_present: bool,
+        preconditions_present: bool,
+    ) -> None:
+        """把图级字段「忠实」回写顶层：这套「未改动即与磁盘字节一致」的表示规则集中在 model，
+        不再散落在 UI（过去 `_widgets_to_data_meta` 内联，靠 widget 的 `_orig_*_present` 决策）。
+
+        - ``schemaVersion``：原本存在才回写、且原样透传（不强制 int 化、缺省不凭空添加）；
+        - ``meta``：在原 meta 上原地更新（保留已有键位置与额外键），空且原本缺省则删键、原本存在则保留 ``{}``；
+        - ``preconditions``：非空写出；空则按原始表示（原本有键→``[]``，原本缺省→保持缺省删键）。
+
+        ``*_present`` 为「载入时该键是否存在」的基线，由调用方（widget 载入时捕获、存盘后刷新）传入。
+        """
+        patch: dict[str, Any] = {}
+        delete_keys: list[str] = []
+
+        if schema_version_present:
+            patch["schemaVersion"] = self._data.get("schemaVersion")
+        patch["id"] = graph_id
+        patch["entry"] = entry
+
+        prev_meta = self._data.get("meta")
+        meta: dict[str, Any] = dict(prev_meta) if isinstance(prev_meta, dict) else {}
+        if title:
+            meta["title"] = title
+        elif "title" in meta:
+            del meta["title"]
+        if scenario_id:
+            meta["scenarioId"] = scenario_id
+        elif "scenarioId" in meta:
+            del meta["scenarioId"]
+        if meta:
+            patch["meta"] = meta
+        elif meta_present:
+            patch["meta"] = {}
+        else:
+            delete_keys.append("meta")
+
+        if preconditions:
+            patch["preconditions"] = list(preconditions)
+        elif preconditions_present:
+            patch["preconditions"] = []
+        else:
+            delete_keys.append("preconditions")
+
+        self.apply_meta_patch(patch, delete_keys=delete_keys)
 
     # -- topology mutations -------------------------------------------------
 

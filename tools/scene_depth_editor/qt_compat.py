@@ -44,6 +44,16 @@ def _app() -> QApplication:
     inst = QApplication.instance()
     if inst is None:
         inst = QApplication([])
+    if isinstance(inst, QApplication) and not getattr(
+        inst, "_gamedraft_combo_wheel_blocker_installed", False,
+    ):
+        try:
+            from tools.editor.shared.qt_combo_wheel_guard import (
+                install_global_combo_wheel_block,
+            )
+            install_global_combo_wheel_block(inst)
+        except Exception:
+            pass  # 独立分发场景下缺 tools.editor 也不影响本工具运行
     return inst
 
 

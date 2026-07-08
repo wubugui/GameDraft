@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -173,6 +174,62 @@ class _FrameDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index) -> QSize:
         return QSize(_THUMB + 8, _THUMB + 8)
+
+
+# ---------------------------------------------------------------------------
+# Frame picker dialog (visual replace-slot — no manual index typing)
+# ---------------------------------------------------------------------------
+
+class _FramePickerDialog(QDialog):
+    """缩略图网格里点选一帧，返回其在传入 frame_ids 中的索引（取消则 -1）。"""
+
+    def __init__(self, ws: Workspace, frame_ids: List[str],
+                 parent=None, title: str = "选择帧") -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(600, 460)
+        self._chosen = -1
+        v = QVBoxLayout(self)
+        v.addWidget(QLabel("双击缩略图或选中后点「选择此帧」："))
+        self._model = _FrameListModel(self)
+        self._model.set_data(ws, list(frame_ids))
+        self._view = QListView()
+        self._view.setModel(self._model)
+        self._view.setViewMode(QListView.ViewMode.IconMode)
+        self._view.setUniformItemSizes(True)
+        self._view.setIconSize(QSize(_THUMB, _THUMB))
+        self._view.setGridSize(QSize(_THUMB + 10, _THUMB + 10))
+        self._view.setMovement(QListView.Movement.Static)
+        self._view.setResizeMode(QListView.ResizeMode.Adjust)
+        self._view.setWrapping(True)
+        self._view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._view.doubleClicked.connect(self._on_double)
+        v.addWidget(self._view, 1)
+        btns = QHBoxLayout()
+        btns.addStretch()
+        ok = QPushButton("选择此帧")
+        ok.clicked.connect(self._on_ok)
+        btns.addWidget(ok)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(cancel)
+        v.addLayout(btns)
+
+    def _on_double(self, index: QModelIndex) -> None:
+        if index.isValid():
+            self._chosen = index.row()
+            self.accept()
+
+    def _on_ok(self) -> None:
+        idx = self._view.currentIndex()
+        if idx.isValid():
+            self._chosen = idx.row()
+            self.accept()
+        else:
+            self.reject()
+
+    def chosen_index(self) -> int:
+        return self._chosen
 
 
 # ---------------------------------------------------------------------------
@@ -1036,10 +1093,13 @@ class MainWindow(QWidget):
         if vs is None or not vs.frame_ids:
             QMessageBox.information(self, "提示", "激活子库为空")
             return
-        idx, ok = QInputDialog.getInt(self, "替换帧",
-                                      f"输入激活子库中的帧索引 (0-{len(vs.frame_ids)-1}):",
-                                      0, 0, len(vs.frame_ids) - 1)
-        if not ok:
+        dlg = _FramePickerDialog(
+            self._ws, vs.frame_ids, self,
+            title=f"替换槽位 #{row} — 从「{vs.display_name}」选一帧")
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        idx = dlg.chosen_index()
+        if idx < 0 or idx >= len(vs.frame_ids):
             return
         new_fid = vs.frame_ids[idx]
         existing = {s.frame_id for s in clip.slots}

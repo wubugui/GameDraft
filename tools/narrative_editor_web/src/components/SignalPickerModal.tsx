@@ -113,7 +113,9 @@ export function SignalPickerModal(props: {
               <span className="signal-row-meta">
                 {entry.kind === 'author' ? '作者' : entry.kind === 'derived' ? '派生' : '草稿'}
                 {entry.label ? ` · ${entry.label}` : ''}
-                {` · 监听 ${entry.listeners} · 发射 ${entry.emitters}`}
+                {/* 本弹窗按 props.data 构建目录、未传 emitterRefsById，故发射数恒为 0、会误导；
+                    只展示准确的「监听」数（发射源跨对话/场景/运行时，无法在此可靠统计）。 */}
+                {` · 监听 ${entry.listeners}`}
               </span>
             </button>
           ))}

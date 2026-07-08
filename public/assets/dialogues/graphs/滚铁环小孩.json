@@ -39,13 +39,19 @@
           "speaker": {
             "kind": "player"
           },
-          "text": "勒死麻批娃儿才混哦~好，还给你还给你。"
+          "text": "勒死麻批娃儿才混哦~好，还给你还给你。",
+          "portrait": {
+            "emotion": "angry"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "哇哇哇哇哇哇哇哇哇哇哇哇......"
+          "text": "哇哇哇哇哇哇哇哇哇哇哇哇......",
+          "portrait": {
+            "emotion": "cry"
+          }
         },
         {
           "speaker": {
@@ -100,7 +106,10 @@
         "kind": "npc"
       },
       "next": "end1",
-      "text": "谢谢你帮我把铁环捡回来嘛！"
+      "text": "谢谢你帮我把铁环捡回来嘛！",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "before_evt_1": {
       "type": "line",
@@ -108,7 +117,10 @@
         "kind": "player"
       },
       "next": "before_evt_2",
-      "text": "小娃儿，这圈圈有点东西，借给老子耍哈撒。"
+      "text": "小娃儿，这圈圈有点东西，借给老子耍哈撒。",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "before_evt_2": {
       "type": "line",
@@ -116,7 +128,10 @@
         "kind": "npc"
       },
       "next": "before_evt_3",
-      "text": "你哪个嘛？不给......"
+      "text": "你哪个嘛？不给......",
+      "portrait": {
+        "emotion": "angry"
+      }
     },
     "before_evt_3": {
       "type": "line",
@@ -124,7 +139,10 @@
         "kind": "player"
       },
       "next": "sw_archive_ring",
-      "text": "（嗤笑）切~个破铁环当传家宝，送老子，老子都不要！"
+      "text": "（嗤笑）切~个破铁环当传家宝，送老子，老子都不要！",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "sw_archive_ring": {
       "type": "switch",
@@ -182,7 +200,10 @@
         "kind": "player"
       },
       "text": "小娃儿，这圈圈你滚了一天，也该刹一脚歇哈了。\n让老子滚一哈撒。",
-      "next": "opt_ask_2"
+      "next": "opt_ask_2",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "opt_ask_2": {
       "type": "line",
@@ -190,7 +211,10 @@
         "kind": "npc"
       },
       "next": "opt_ask_fade",
-      "text": "......"
+      "text": "......",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "opt_ask_fade": {
       "type": "runActions",
@@ -292,7 +316,10 @@
         "kind": "player"
       },
       "next": "opt_snatch_2",
-      "text": "喂！这圈圈老子玩玩！"
+      "text": "喂！这圈圈老子玩玩！",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "opt_snatch_2": {
       "type": "line",

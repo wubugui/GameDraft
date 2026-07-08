@@ -1,6 +1,9 @@
 import type { AssetManager } from '../../core/AssetManager';
 import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { Renderer } from '../../rendering/Renderer';
+import { MinigameActionPlaybackGate } from '../minigameSession';
+import { fillToken, fillTemplate } from '../../utils/fillTemplate';
+import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
 import type {
   PaperCraftFinishOption,
   PaperCraftInstance,
@@ -57,6 +60,12 @@ export class PaperCraftMinigameScene {
   private drag: DragState | null = null;
   private unsubResize: (() => void) | null = null;
   private closing = false;
+  private destroyed = false;
+  private orderIndex = 0;
+  private finishing = false;
+  private paletteContentH = 410;
+  /** 交活结算 Action 批播放通道：锁输入 + 批后恢复 Minigame 状态（B13，公共实现见 minigameSession）。 */
+  private readonly actionGate: MinigameActionPlaybackGate;
 
   constructor(
     renderer: Renderer,
@@ -65,6 +74,7 @@ export class PaperCraftMinigameScene {
     resolveText: (s: string) => string,
     onResult: (result: PaperCraftResult) => void,
     onClose: () => void,
+    restoreMinigameStateAfterAction?: () => void,
   ) {
     this.renderer = renderer;
     this.assetManager = assetManager;
@@ -73,23 +83,47 @@ export class PaperCraftMinigameScene {
     this.onResult = onResult;
     this.onClose = onClose;
 
+    this.actionGate = new MinigameActionPlaybackGate(
+      (acts) => this.actionExecutor.executeBatchAwait(acts),
+      {
+        onLockChanged: (locked) => this.setInputLocked(locked),
+        restoreMinigameState: restoreMinigameStateAfterAction,
+      },
+    );
+
     this.root = new Container();
     this.root.eventMode = 'static';
     this.root.hitArea = new Rectangle(0, 0, renderer.screenWidth, renderer.screenHeight);
     this.root.addChild(this.bg, this.workLayer, this.paletteLayer, this.uiLayer);
     this.uiLayer.addChild(this.feedback);
-    this.unsubResize = this.renderer.subscribeAfterResize(() => this.layout());
+    this.unsubResize = this.renderer.subscribeAfterResize(() => this.onResize());
+  }
+
+  /** Manager 侧 Esc 在动作播放期间让路（与转盘一致）。 */
+  isActionsPlaybackLocked(): boolean {
+    return this.actionGate.locked;
+  }
+
+  /** 动作播放期间整棵场景树不接输入（eventMode 'none' 对子树同样生效）。 */
+  private setInputLocked(locked: boolean): void {
+    this.root.eventMode = locked ? 'none' : 'static';
   }
 
   async load(instance: PaperCraftInstance): Promise<void> {
     this.instance = instance;
-    this.order = instance.orders[0];
-    const paperOptions = this.getPaperOptions();
-    const finishOptions = this.getFinishOptions();
-    this.selectedPaper = paperOptions[0] ?? null;
-    this.selectedFinish = finishOptions[0] ?? null;
-
-    await this.loadTextures();
+    if (!instance.orders || instance.orders.length === 0) {
+      throw new Error('paperCraft: instance has no orders');
+    }
+    // 纸色 / 收尾选项携带分值与忌讳 tag，是游戏规则数值——必须由数据声明，
+    // 缺失按坏数据报错（由 Manager 捕获并拆场），不做代码内静默兜底。
+    for (const order of instance.orders) {
+      if (!order.paperOptions || order.paperOptions.length === 0) {
+        throw new Error(`paperCraft: order "${order.id}" 缺少 paperOptions（纸色选项须由数据声明）`);
+      }
+      if (!order.finishOptions || order.finishOptions.length === 0) {
+        throw new Error(`paperCraft: order "${order.id}" 缺少 finishOptions（收尾选项须由数据声明）`);
+      }
+    }
     if (instance.backgroundImage) {
       try {
         this.backgroundSprite = new Sprite(await this.assetManager.loadTexture(instance.backgroundImage));
@@ -98,11 +132,33 @@ export class PaperCraftMinigameScene {
         this.backgroundSprite = null;
       }
     }
+    await this.enterOrder(0);
+  }
+
+  /** 进入第 index 张订单：重置选择与已放部件，载入该订单部件贴图并重建界面。 */
+  private async enterOrder(index: number): Promise<void> {
+    this.orderIndex = index;
+    this.order = this.instance.orders[index];
+    this.placed.clear();
+    this.selectedPart = null;
+    const paperOptions = this.getPaperOptions();
+    const finishOptions = this.getFinishOptions();
+    this.selectedPaper = paperOptions[0] ?? null;
+    this.selectedFinish = finishOptions[0] ?? null;
+    await this.loadTextures();
+    // 贴图 await 期间可能已 Esc 拆场 / 销毁：不再对已销毁的容器 rebuild
+    if (this.closing || this.destroyed) return;
     this.rebuild();
   }
 
   update(_dt: number): void {
     /* Interaction is event driven. */
+  }
+
+  /** 窗口尺寸变化：重建界面，使绝对定位的顶栏/纸色/收尾按钮一并跟随重排（修复 resize 后按钮错位）。 */
+  private onResize(): void {
+    if (this.order) this.rebuild();
+    else this.layout();
   }
 
   abort(): void {
@@ -112,6 +168,8 @@ export class PaperCraftMinigameScene {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.unsubResize?.();
     this.unsubResize = null;
     this.root.destroy({ children: true });
@@ -160,19 +218,40 @@ export class PaperCraftMinigameScene {
       this.backgroundSprite.alpha = 0.35;
     }
 
-    const workW = Math.max(360, Math.min(620, sw - 340));
-    const workH = Math.max(340, sh - 160);
-    this.workLayer.position.set(28, 86);
-    this.workLayer.scale.set(workW / 560, workH / 410);
-    this.paletteLayer.position.set(Math.min(sw - 286, 28 + workW + 34), 86);
-    this.feedback.position.set(28, sh - 48);
+    // 顶部留给纸色/收尾/交活·退出工具条，底部留给提示行；中间是内容区。
+    const topStrip = 80;
+    const bottomStrip = 46;
+    const margin = 24;
+    const gap = 24;
+    const maxScale = 1.4;
+    const regionH = Math.max(160, sh - topStrip - bottomStrip);
+    const innerW = Math.max(240, sw - margin * 2 - gap);
+
+    // 工作台占主宽、调色板占右侧窄列；两者各自按"统一缩放"(等比不拉伸)适配，再整体居中。
+    const paletteRegionW = Math.min(innerW * 0.34, 250 * maxScale);
+    const workRegionW = innerW - paletteRegionW;
+    const workScale = Math.min(workRegionW / 560, regionH / 410, maxScale);
+    const palScale = Math.min(paletteRegionW / 250, regionH / this.paletteContentH, maxScale);
+
+    const workW = 560 * workScale;
+    const workH = 410 * workScale;
+    const palW = 250 * palScale;
+    const palH = this.paletteContentH * palScale;
+
+    const totalW = workW + gap + palW;
+    const startX = Math.max(margin, (sw - totalW) / 2);
+    const midY = topStrip + regionH / 2;
+
+    this.workLayer.scale.set(workScale);
+    this.workLayer.position.set(startX, midY - workH / 2);
+    this.paletteLayer.scale.set(palScale);
+    this.paletteLayer.position.set(startX + workW + gap, midY - palH / 2);
+    this.feedback.position.set(margin, sh - 30);
   }
 
   private buildSlots(): void {
     const table = new Graphics();
-    table.roundRect(0, 0, 560, 410, 8);
-    table.fill({ color: 0x2a2118, alpha: 0.92 });
-    table.stroke({ color: 0x7c5f3a, width: 2 });
+    drawPanelBase(table, 0, 0, 560, 410, SKINS.panel);
     this.workLayer.addChild(table);
 
     const title = new Text({
@@ -183,7 +262,7 @@ export class PaperCraftMinigameScene {
     this.workLayer.addChild(title);
 
     const desc = new Text({
-      text: this.resolveText(this.order.description ?? '按活计单子选纸、搭骨、糊面。部件可换，但分数和忌讳不一样。'),
+      text: this.resolveText(this.order.description ?? '[tag:string:paperCraft:orderDescDefault]'),
       style: { fontFamily: 'sans-serif', fontSize: 12, fill: 0xd8c4a4, wordWrap: true, wordWrapWidth: 510 },
     });
     desc.position.set(18, 43);
@@ -202,9 +281,7 @@ export class PaperCraftMinigameScene {
     wrap.hitArea = new Rectangle(0, 0, slot.width, slot.height);
 
     const g = new Graphics();
-    g.roundRect(0, 0, slot.width, slot.height, 6);
-    g.fill({ color: 0x0f172a, alpha: 0.34 });
-    g.stroke({ color: slot.optional ? 0x806744 : 0xc4a35a, width: 2 });
+    drawPanelBase(g, 0, 0, slot.width, slot.height, SKINS.row, { border: slot.optional ? 0x806744 : 0xc4a35a });
     wrap.addChild(g);
 
     const placed = this.placed.get(slot.id);
@@ -215,7 +292,7 @@ export class PaperCraftMinigameScene {
     }
 
     const t = new Text({
-      text: `${slot.label}${slot.optional ? '（可空）' : ''}`,
+      text: `${slot.label}${slot.optional ? this.resolveText('[tag:string:paperCraft:slotOptionalSuffix]') : ''}`,
       style: { fontFamily: 'sans-serif', fontSize: 11, fill: 0xf1d99c },
     });
     t.anchor.set(0.5, 0);
@@ -223,9 +300,16 @@ export class PaperCraftMinigameScene {
     wrap.addChild(t);
 
     wrap.on('pointertap', () => {
-      if (!this.selectedPart) return;
+      if (!this.selectedPart) {
+        // 空手点击已放置的槽位 = 取下该部件，便于反复试摆 / 清空可选槽。
+        if (this.placed.has(slot.id)) {
+          this.placed.delete(slot.id);
+          this.rebuild();
+        }
+        return;
+      }
       if (!slot.accepts.includes(this.selectedPart.id)) {
-        this.feedback.text = `${slot.label} 放不上 ${this.selectedPart.label}`;
+        this.feedback.text = this.slotRejectsText(slot.label, this.selectedPart.label);
         return;
       }
       this.placed.set(slot.id, this.selectedPart);
@@ -236,22 +320,26 @@ export class PaperCraftMinigameScene {
   }
 
   private buildPalette(): void {
+    const cols = 2;
+    const rows = Math.max(1, Math.ceil(this.order.parts.length / cols));
+    // 背板高度随部件数自适应，避免部件溢出固定高度的面板（此前 15 个部件会漏到面板外）。
+    const bgH = 46 + rows * 74 + 10;
+    this.paletteContentH = bgH;
+
     const bg = new Graphics();
-    bg.roundRect(0, 0, 250, 410, 8);
-    bg.fill({ color: 0x211a13, alpha: 0.95 });
-    bg.stroke({ color: 0x6f5634, width: 2 });
+    drawPanelBase(bg, 0, 0, 250, bgH, SKINS.panelAlt);
     this.paletteLayer.addChild(bg);
 
     const title = new Text({
-      text: '纸扎部件',
+      text: this.resolveText('[tag:string:paperCraft:paletteTitle]'),
       style: { fontFamily: 'sans-serif', fontSize: 17, fill: 0xf8e7c0, fontWeight: '700' },
     });
     title.position.set(14, 12);
     this.paletteLayer.addChild(title);
 
     this.order.parts.forEach((part, i) => {
-      const x = 14 + (i % 2) * 112;
-      const y = 46 + Math.floor(i / 2) * 74;
+      const x = 14 + (i % cols) * 112;
+      const y = 46 + Math.floor(i / cols) * 74;
       const item = this.makePaletteItem(part);
       item.position.set(x, y);
       this.paletteLayer.addChild(item);
@@ -312,8 +400,10 @@ export class PaperCraftMinigameScene {
     );
     if (slot && slot.accepts.includes(this.drag.part.id)) {
       this.placed.set(slot.id, this.drag.part);
+      // 放好后清空选择，使"空手点已放槽位即取下"的手势一致可用。
+      this.selectedPart = null;
     } else if (slot) {
-      this.feedback.text = `${slot.label} 放不上 ${this.drag.part.label}`;
+      this.feedback.text = this.slotRejectsText(slot.label, this.drag.part.label);
     }
     this.drag.sprite.destroy({ children: true });
     this.drag = null;
@@ -326,7 +416,7 @@ export class PaperCraftMinigameScene {
   private buildPaperButtons(): void {
     const opts = this.getPaperOptions();
     const title = new Text({
-      text: '纸色',
+      text: this.resolveText('[tag:string:paperCraft:paperTitle]'),
       style: { fontFamily: 'sans-serif', fontSize: 13, fill: 0xe7d5b6, fontWeight: '700' },
     });
     title.position.set(28, 18);
@@ -348,7 +438,7 @@ export class PaperCraftMinigameScene {
   private buildFinishButtons(): void {
     const opts = this.getFinishOptions();
     const title = new Text({
-      text: this.resolveText(this.order.finishQuestion ?? '收口'),
+      text: this.resolveText(this.order.finishQuestion ?? '[tag:string:paperCraft:finishTitleDefault]'),
       style: { fontFamily: 'sans-serif', fontSize: 13, fill: 0xe7d5b6, fontWeight: '700' },
     });
     title.position.set(28, 48);
@@ -364,10 +454,10 @@ export class PaperCraftMinigameScene {
   }
 
   private buildTopChrome(): void {
-    const finish = this.makeSmallButton('交活', 86, true, () => void this.finish());
+    const finish = this.makeSmallButton(this.resolveText('[tag:string:paperCraft:submit]'), 86, true, () => void this.finish());
     finish.position.set(this.renderer.screenWidth - 190, 18);
     this.uiLayer.addChild(finish);
-    const close = this.makeSmallButton('退出', 74, false, () => this.abort());
+    const close = this.makeSmallButton(this.resolveText('[tag:string:paperCraft:exit]'), 74, false, () => this.abort());
     close.position.set(this.renderer.screenWidth - 94, 18);
     this.uiLayer.addChild(close);
   }
@@ -393,23 +483,43 @@ export class PaperCraftMinigameScene {
   }
 
   private async finish(): Promise<void> {
+    if (this.finishing) return;
     const missing = this.order.slots.filter((slot) => !slot.optional && !this.placed.has(slot.id));
     if (missing.length > 0) {
-      this.feedback.text = `还缺：${missing.map((s) => s.label).join('、')}`;
+      this.feedback.text = fillToken(
+        this.resolveText('[tag:string:paperCraft:missingParts]'),
+        '{parts}',
+        missing.map((s) => s.label).join('、'),
+      );
       return;
     }
-    const result = this.calculateResult();
-    this.onResult(result);
-    const actions =
-      result.level === 'success'
-        ? this.order.onSuccessActions
-        : result.level === 'warn'
-          ? this.order.onWarnActions
-          : this.order.onBadActions;
-    if (actions?.length) {
-      await this.actionExecutor.executeBatchAwait(actions);
+    // finishing 贯穿"交活→动作→载入下一张→重建"全程，finally 复位：
+    // 结算动作抛错不再永久废掉「交活」按钮，同时保留对重入竞态的防护。
+    this.finishing = true;
+    try {
+      const result = this.calculateResult();
+      this.onResult(result);
+      const actions =
+        result.level === 'success'
+          ? this.order.onSuccessActions
+          : result.level === 'warn'
+            ? this.order.onWarnActions
+            : this.order.onBadActions;
+      try {
+        // 经播放通道执行：动作期间锁小游戏输入，批结束后恢复 Minigame 状态（B13）
+        await this.actionGate.run(actions);
+      } catch (e) {
+        console.warn('paperCraft: 交活结算动作执行失败', e);
+      }
+      if (this.closing || this.destroyed) return;
+      if (this.orderIndex < this.instance.orders.length - 1) {
+        await this.enterOrder(this.orderIndex + 1);
+      } else {
+        this.abort();
+      }
+    } finally {
+      this.finishing = false;
     }
-    this.abort();
   }
 
   private calculateResult(): PaperCraftResult {
@@ -418,7 +528,12 @@ export class PaperCraftMinigameScene {
     const paper = this.selectedPaper;
     const finish = this.selectedFinish;
     if (paper) {
-      score += paper.score ?? (paper.id === this.order.correctPaper ? 12 : -6);
+      score += paper.score ?? 0;
+      // correctPaper 作为叠加奖惩：选对纸 +12，选错 -6。仅在订单声明了正确纸色时生效，
+      // 因此即便每种纸都填了显式 score，"正确纸色"仍有实际作用（不再是死字段）。
+      if (this.order.correctPaper) {
+        score += paper.id === this.order.correctPaper ? 12 : -6;
+      }
       for (const t of paper.tags ?? []) tags.add(t);
     }
     if (finish) {
@@ -450,10 +565,27 @@ export class PaperCraftMinigameScene {
     };
   }
 
+  private slotRejectsText(slotLabel: string, partLabel: string): string {
+    return fillTemplate(this.resolveText('[tag:string:paperCraft:slotRejects]'), {
+      '{slot}': slotLabel,
+      '{part}': partLabel,
+    });
+  }
+
   private updateFeedback(): void {
-    const result = this.calculateResult();
-    const levelText = result.level === 'success' ? '像样' : result.level === 'warn' ? '能交但犯忌' : '不像活';
-    this.feedback.text = `当前：${levelText} / ${result.score} 分${result.tags.length ? ` / ${result.tags.join('、')}` : ''}`;
+    // 不再实时回显分数/档位/忌讳标签——那会把"是否懂规矩忌讳"的考查降成照着提示反复试。
+    // 改为常驻显示该订单的目标提示（targetHint），多订单时附带进度。成败反馈交给交活后的动作。
+    const total = this.instance.orders.length;
+    const progress = total > 1
+      ? fillTemplate(this.resolveText('[tag:string:paperCraft:progressPrefix]'), {
+          '{i}': String(this.orderIndex + 1),
+          '{n}': String(total),
+        })
+      : '';
+    const hint = this.order.targetHint?.trim()
+      ? this.resolveText(this.order.targetHint)
+      : this.resolveText('[tag:string:paperCraft:targetHintDefault]');
+    this.feedback.text = `${progress}${hint}`;
   }
 
   private makePartVisual(part: PaperCraftPartDef, maxW: number, maxH: number): Container {
@@ -485,20 +617,14 @@ export class PaperCraftMinigameScene {
     return `${DEFAULT_PART_IMAGE_ROOT}${part.id}.png`;
   }
 
+  // 纸色 / 收尾选项是携带分值与忌讳 tag 的规则数值，一律来自订单数据；
+  // 缺失在 load() 即报错，这里不再保留代码内兜底默认。
   private getPaperOptions(): PaperCraftPaperOption[] {
-    return this.order.paperOptions ?? [
-      { id: 'white', label: '白纸', tint: '#f4ecd8', score: 10 },
-      { id: 'yellow', label: '黄表', tint: '#d8a942', score: 4 },
-      { id: 'blue', label: '青纸', tint: '#7ba4b8', score: -6, tags: ['纸色不合'] },
-    ];
+    return this.order.paperOptions ?? [];
   }
 
   private getFinishOptions(): PaperCraftFinishOption[] {
-    return this.order.finishOptions ?? [
-      { id: 'paste_plain', label: '糨糊收口', score: 8 },
-      { id: 'seal_mouth', label: '封口', score: 2, tags: ['封口犯忌'] },
-      { id: 'paint_eye', label: '点眼', score: -18, tags: ['点眼犯忌'] },
-    ];
+    return this.order.finishOptions ?? [];
   }
 
   private parseColor(raw: string, fallback: number): number {

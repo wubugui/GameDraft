@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
 import type { FailurePolicy, PullRhythm } from './types';
 
 export type PullPanelResult = 'success' | 'fail_escape' | 'fail_snap' | 'fail_bite' | 'abort';
@@ -99,9 +100,7 @@ export class WaterPullPanel extends Container {
     const halfZ = Math.max(0.04, Math.min(0.45, this.params.zoneSize));
 
     this.barG.clear();
-    this.barG.roundRect(0, 0, this.barW, this.barH, 6);
-    this.barG.fill({ color: 0x1a2332, alpha: 0.95 });
-    this.barG.stroke({ color: 0x3d4f6a, width: 2 });
+    drawPanelBase(this.barG, 0, 0, this.barW, this.barH, SKINS.panel);
 
     this.warningG.clear();
     if (this.burstTelegraph > 0.001) {
@@ -245,20 +244,20 @@ export class WaterPullPanel extends Container {
     }
 
     const rem = Math.max(0, this.limit - this.elapsed);
-    const controlHint = this.marker < this.greenCenter
-      ? '按住鼠标或空格'
-      : '松开一下';
-    const rhythmHint =
+    const t = (key: string) => this.params.resolveText(`[tag:string:waterMinigame:${key}]`);
+    const stateHint =
       this.params.rhythm === 'burst' && this.burstTelegraph > 0.01
-        ? '（前摇）'
+        ? t('pullStateForeshadow')
         : this.params.rhythm === 'spasm' && this.spasmKick > 0.01
-          ? '（猛拽）'
+          ? t('pullStateYank')
           : overlap
-            ? '（在区内）'
-            : `（${controlHint}）`;
-    this.hint.text = this.params.resolveText(
-      `[水边拉扯] 剩余 ${rem.toFixed(1)}s  ${rhythmHint}`,
-    );
+            ? t('pullStateInZone')
+            : this.marker < this.greenCenter
+              ? t('pullStateHold')
+              : t('pullStateRelease');
+    this.hint.text = t('pullStatus')
+      .replace('{sec}', rem.toFixed(1))
+      .replace('{state}', stateHint);
     this.refreshGeometry();
 
     if (this.progress >= 0.995) {

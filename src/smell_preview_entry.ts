@@ -5,6 +5,8 @@
  */
 import { Application, Container } from 'pixi.js';
 import { SmellIndicatorRenderer, type SmellProfilesRaw } from './ui/smell/SmellIndicatorRenderer';
+import { fetchAsset } from './core/assetPath';
+import { TEXT_URLS } from './core/projectPaths';
 
 type PreviewWin = {
   __setProfiles?: (data: SmellProfilesRaw) => void;
@@ -56,7 +58,7 @@ async function main(): Promise<void> {
 
   // 默认：加载真实 profiles 先展示香粉味（非空白）；编辑器随后会 __setProfiles 覆盖。
   try {
-    const def = (await fetch('/assets/data/smell_profiles.json').then((r) => r.json())) as SmellProfilesRaw;
+    const def = (await fetchAsset(TEXT_URLS.smellProfiles).then((r) => r.json())) as SmellProfilesRaw;
     rebuild(def);
   } catch {
     /* 等编辑器注入 */

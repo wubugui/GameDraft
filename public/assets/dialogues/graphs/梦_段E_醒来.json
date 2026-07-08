@@ -30,7 +30,10 @@
         "kind": "player"
       },
       "text": "……好饿。",
-      "next": "n28"
+      "next": "n28",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n28": {
       "type": "line",

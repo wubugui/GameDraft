@@ -53,6 +53,23 @@ def save_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
+def write_bytes_atomic(path: Path, data: bytes) -> None:
+    """原样写出字节（先写 .tmp 再 replace）。用于"内容未变则原样回写磁盘字节"以保格式零变化。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp_path.open("wb") as f:
+            f.write(data)
+    except OSError:
+        try:
+            if tmp_path.is_file():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+    tmp_path.replace(path)
+
+
 def extract_flow_edges(nodes: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Return canvas edges as (source id, target id, label)."""
     edges: list[tuple[str, str, str]] = []
@@ -101,6 +118,46 @@ def nodes_reachable_from_entry(nodes: dict[str, Any], entry: str) -> set[str]:
     return reachable
 
 
+# 层间/层内的额外留白（加在节点自身宽/高之上）——保证不同宽度的节点也不重叠，同时不过度铺开。
+_LAYER_GAP = 60.0   # 相邻层水平留白（节点宽已单独计入）
+_ROW_GAP = 34.0     # 同层相邻节点垂直留白（节点高已单独计入）
+
+
+def node_type_label_zh(node_type: Any) -> str:
+    """节点类型的中文短标签——画布节点标题与布局尺寸估算共用的唯一来源，避免两处漂移。"""
+    if not isinstance(node_type, str):
+        return "未知"
+    return {
+        "line": "对白",
+        "runActions": "动作",
+        "choice": "选项",
+        "switch": "分支",
+        "ownerState": "所属实体状态",
+        "contextState": "上下文状态",
+        "end": "结束",
+    }.get(node_type, f"其它({node_type})")
+
+
+def _estimate_node_size(nid: str, raw: Any) -> tuple[float, float]:
+    """无画布时按内容估算节点渲染尺寸（宁可略微高估宽度以免重叠）。与画布 draw_node 近似。"""
+    label = node_type_label_zh(raw.get("type") if isinstance(raw, dict) else None)
+    summ = node_summary(nid, raw, max_text=24)
+    line1 = f"{label} · {nid}"
+    line2 = summ
+
+    def _visual_len(s: str) -> float:
+        # CJK/全角字符按 ~1.8 个拉丁字符宽计
+        total = 0.0
+        for ch in s:
+            total += 1.8 if ord(ch) > 0x2E7F else 1.0
+        return total
+
+    max_units = max(_visual_len(line1), _visual_len(line2), 6.0)
+    width = max_units * 9.0 + 56.0   # 每单位≈9px + 左右内边距
+    width = min(max(width, 150.0), 460.0)
+    return (width, 92.0)
+
+
 def auto_layout_node_positions(
     nodes: dict[str, Any],
     entry: str,
@@ -108,38 +165,145 @@ def auto_layout_node_positions(
     x_spacing: float = 260.0,
     y_spacing: float = 120.0,
     avoid_rects: list[tuple[float, float, float, float]] | None = None,
+    node_sizes: dict[str, tuple[float, float]] | None = None,
 ) -> dict[str, tuple[float, float]]:
-    """按拓扑 BFS 分层：X=层号（沿流程从左到右），Y=同层内分支上下错开。
-
-    旧实现把「层」画在 Y 轴、每层仅横向展开，线性图会变成整列竖条；现改为常见流程图阅读方向。
-    从 entry 做 BFS；不可从 entry 到达的节点放到最右侧一列（仍按 id 纵向排列）。
-    若无合法 entry，则从所有入度为 0 的节点多源 BFS。
+    """成熟分层布局：优先用 grandalf 的 Sugiyama（正确分层 + 假节点处理长边 + 顺序最小化交叉 +
+    坐标对齐：子节点对齐到父节点、链路拉直），映射为左→右阅读方向（X=层、Y=层内对齐坐标）。
+    **按节点真实宽高分配层间/层内间距**（node_sizes 给出画布实测尺寸；否则按内容估算），
+    避免宽节点（长对白）在窄层距下横向重叠。grandalf 缺库/异常时回退简单 BFS 分层。
     """
-    from collections import defaultdict, deque
-
     if not nodes:
         return {}
+    pos = _sugiyama_layout(nodes, entry, node_sizes)
+    if pos is None:
+        pos = _bfs_layered_layout(nodes, entry, x_spacing, y_spacing, node_sizes)
+    if avoid_rects:
+        from .editor_group_geometry import nudge_node_positions_avoid_rects
 
-    edges = extract_flow_edges(nodes)
+        nudge_node_positions_avoid_rects(pos, nodes, avoid_rects)
+    return pos
+
+
+def _sugiyama_layout(
+    nodes: dict[str, Any],
+    entry: str,
+    node_sizes: dict[str, tuple[float, float]] | None,
+) -> dict[str, tuple[float, float]] | None:
+    """grandalf Sugiyama 布局；任何缺库/异常返回 None 交回退。确定性：所有输入/根均按 id 排序。
+
+    轴映射：grandalf 上→下排（层在 y、层内在 x）。我们要左→右，故读出后交换 (gx,gy)->(X=gy,Y=gx)。
+    因此把「节点宽」喂给 grandalf 的 view.h（层方向→我们的 X 间距），「节点高」喂给 view.w（层内→Y）。
+    这样 grandalf 直接按真实尺寸分层，输出无需再离散化即层列整齐且不重叠。
+    """
+    try:
+        from grandalf.graphs import Vertex, Edge, Graph
+        from grandalf.layouts import SugiyamaLayout
+    except Exception:
+        return None
+
+    def _dims(nid: str) -> tuple[float, float]:
+        if node_sizes and nid in node_sizes:
+            w, h = node_sizes[nid]
+            return (max(60.0, float(w)), max(40.0, float(h)))
+        return _estimate_node_size(nid, nodes.get(nid))
+
+    class _View:
+        __slots__ = ("w", "h", "xy")
+
+        def __init__(self, nid: str) -> None:
+            nw, nh = _dims(nid)
+            self.h = nw + _LAYER_GAP  # 层方向(→我们的 X)：容纳节点宽
+            self.w = nh + _ROW_GAP    # 层内(→我们的 Y)：容纳节点高
+            self.xy = (0.0, 0.0)
+
+    try:
+        node_ids = sorted(nodes.keys(), key=lambda x: (x.lower(), x))  # 固定顺序保确定性
+        edges = [
+            (s, d)
+            for s, d, _ in extract_flow_edges(nodes)
+            if s in nodes and d in nodes and s != d
+        ]
+        verts = {nid: Vertex(nid) for nid in node_ids}
+        for nid in node_ids:
+            verts[nid].view = _View(nid)
+        graph = Graph(
+            [verts[nid] for nid in node_ids],
+            [Edge(verts[s], verts[d]) for s, d in edges],
+        )
+
+        ent = str(entry or "").strip()
+        comps: list[dict[str, tuple[float, float]]] = []
+        for comp in graph.C:
+            comp_ids = sorted(
+                (v.data for v in comp.sV if v.data in nodes), key=lambda x: (x.lower(), x)
+            )
+            roots = [verts[nid] for nid in comp_ids if len(verts[nid].e_in()) == 0]
+            if ent in comp_ids:  # 入口优先作根（最左）
+                ev = verts[ent]
+                roots = [ev] + [r for r in roots if r is not ev]
+            if not roots:  # 纯环：取 id 最小者作根，grandalf 自动反转环边
+                roots = [verts[comp_ids[0]]]
+            sug = SugiyamaLayout(comp)
+            sug.init_all(roots=roots)
+            sug.draw()
+            comps.append(
+                {nid: (float(verts[nid].view.xy[0]), float(verts[nid].view.xy[1])) for nid in comp_ids}
+            )
+
+        if sum(len(c) for c in comps) != len(nodes):
+            return None  # 覆盖不全 → 回退
+
+        # 直接用 grandalf 输出并交换轴（左→右），各连通分量纵向堆叠不重叠。
+        pos: dict[str, tuple[float, float]] = {}
+        y_cursor = 0.0
+        for c in comps:
+            xs = [gx for (gx, _gy) in c.values()]
+            ys = [gy for (_gx, gy) in c.values()]
+            min_gx, min_gy = min(xs), min(ys)
+            span_x = max(xs) - min_gx  # grandalf-x 跨度 → 我们的 Y 高度
+            for nid, (gx, gy) in c.items():
+                pos[nid] = (float(gy - min_gy), float(gx - min_gx + y_cursor))
+            y_cursor += span_x + _ROW_GAP * 3  # 连通分量纵向堆叠留白
+        return pos
+    except Exception:
+        return None
+
+
+def _bfs_layered_layout(
+    nodes: dict[str, Any],
+    entry: str,
+    x_spacing: float,
+    y_spacing: float,
+    node_sizes: dict[str, tuple[float, float]] | None = None,
+) -> dict[str, tuple[float, float]]:
+    """回退：BFS 分层 + 层内按 id 等距。简单但稳，仅在 grandalf 不可用时使用。
+    层间距按各层最大节点宽自适应，避免宽节点重叠。"""
+    from collections import defaultdict, deque
+
+    def _w(nid: str) -> float:
+        if node_sizes and nid in node_sizes:
+            return max(60.0, float(node_sizes[nid][0]))
+        return _estimate_node_size(nid, nodes.get(nid))[0]
+
+    def _h(nid: str) -> float:
+        if node_sizes and nid in node_sizes:
+            return max(40.0, float(node_sizes[nid][1]))
+        return _estimate_node_size(nid, nodes.get(nid))[1]
+
     out_adj: dict[str, list[str]] = defaultdict(list)
     in_deg: dict[str, int] = defaultdict(int)
-    for s, d, _ in edges:
+    for s, d, _ in extract_flow_edges(nodes):
         if s in nodes and d in nodes:
             out_adj[s].append(d)
             in_deg[d] += 1
     for nid in nodes:
         in_deg.setdefault(nid, 0)
-
-    roots = [n for n in nodes if in_deg.get(n, 0) == 0]
-    seeds: list[str] = []
     ent = str(entry or "").strip()
     if ent in nodes:
         seeds = [ent]
-    elif roots:
-        seeds = sorted(roots, key=lambda x: (x.lower(), x))
     else:
-        seeds = [sorted(nodes.keys(), key=lambda x: (x.lower(), x))[0]]
-
+        roots = sorted((n for n in nodes if in_deg.get(n, 0) == 0), key=lambda x: (x.lower(), x))
+        seeds = roots or [sorted(nodes.keys(), key=lambda x: (x.lower(), x))[0]]
     dist: dict[str, int] = {}
     dq = deque()
     for s in seeds:
@@ -152,23 +316,23 @@ def auto_layout_node_positions(
             if v in nodes and v not in dist:
                 dist[v] = dist[u] + 1
                 dq.append(v)
-
     max_d = max(dist.values(), default=0)
-    orphan_x = max_d + 2
     layers: dict[int, list[str]] = defaultdict(list)
     for nid in nodes:
-        d = dist[nid] if nid in dist else orphan_x
-        layers[d].append(nid)
-
+        layers[dist[nid] if nid in dist else max_d + 2].append(nid)
+    # 每层 X = 前面各层最大宽累加（宽节点把后续层往右推），避免固定层距下重叠。
+    # 层内 Y 按各节点真实高度逐个累加（而非固定 y_spacing*i），避免同层高节点竖向重叠。
     pos: dict[str, tuple[float, float]] = {}
-    for layer_key in sorted(layers.keys()):
-        row = sorted(layers[layer_key], key=lambda x: (x.lower(), x))
-        for i, nid in enumerate(row):
-            pos[nid] = (float(layer_key) * x_spacing, float(i) * y_spacing)
-    if avoid_rects:
-        from .editor_group_geometry import nudge_node_positions_avoid_rects
-
-        nudge_node_positions_avoid_rects(pos, nodes, avoid_rects)
+    layer_keys = sorted(layers.keys())
+    x_cursor = 0.0
+    for d in layer_keys:
+        members = sorted(layers[d], key=lambda x: (x.lower(), x))
+        layer_w = max((_w(nid) for nid in members), default=160.0)
+        y_cursor = 0.0
+        for nid in members:
+            pos[nid] = (x_cursor, y_cursor)
+            y_cursor += max(_h(nid), y_spacing) + _ROW_GAP
+        x_cursor += layer_w + _LAYER_GAP
     return pos
 
 
@@ -339,6 +503,34 @@ def _validate_owner_context_state_nodes(
                 sid = str(case.get("state", "") or "").strip()
                 if sid and known and sid not in known:
                     errors.append(f"节点 {nid} contextState case {i}: state {sid!r} 不存在于图 {gid}")
+
+
+def validate_owner_context_state(
+    data: dict[str, Any],
+    *,
+    project_root: Path | None = None,
+    project_model: Any | None = None,
+) -> tuple[list[str], list[str]]:
+    """仅跑 ownerState/contextState 的 wrapper/state 存在性校验（不含连边/entry 等结构检查）。
+
+    供全量 validate-data 复用：过去这套只在编辑器保存时随 ``validate_graph_tiered`` 触发，
+    全量校验漏检，导致 wrapper state 拼错/contextState graphId 非法要打开那张图才暴露。
+    返回 (errors, warnings)。
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    nodes = data.get("nodes")
+    if not isinstance(nodes, dict):
+        return (errors, warnings)
+    _validate_owner_context_state_nodes(
+        data,
+        nodes,
+        errors,
+        warnings,
+        project_root=project_root,
+        project_model=project_model,
+    )
+    return (errors, warnings)
 
 
 def validate_graph_tiered(

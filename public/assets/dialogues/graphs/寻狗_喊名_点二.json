@@ -47,7 +47,10 @@
         "kind": "player"
       },
       "text": "（雇主教的那个名字……叫啥子来着？隔了一截路、一桩怪事，名字在脑壳里头打滑。）",
-      "next": "c1"
+      "next": "c1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "c1": {
       "type": "choice",
@@ -120,7 +123,10 @@
         "kind": "player"
       },
       "text": "（……好像是喊这个嘛。管他的，差不多就是了。）",
-      "next": "sig_wrong"
+      "next": "sig_wrong",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "sig_wrong": {
       "type": "runActions",

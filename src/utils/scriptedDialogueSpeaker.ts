@@ -73,3 +73,34 @@ export function resolveScriptedSpeakerDisplay(raw: string, ctx: ScriptedSpeakerR
   }
   return out;
 }
+
+/** speaker 字段对应的世界实体（说话中「…」气泡定位 + 头像跟随说话人用）。 */
+export type ScriptedSpeakerEntity = { kind: 'npc'; npcId: string } | { kind: 'player' };
+
+/**
+ * 从 `playScriptedDialogue` 的 speaker 字段解析说话实体（与 {@link resolveScriptedSpeakerDisplay} 同占位语义）：
+ * - `{{player}}` → 玩家；
+ * - `{{npc}}` / `{{npc:@context}}` → 上下文 NPC（优先图对话 npcId，其次 scriptedNpcId）；
+ * - `{{npc:some_id}}` → 指定场景 NPC；
+ * 只认**首个** `{{…}}` 占位；字面名/旁白/无可用 id → undefined（不显气泡、头像无从跟随）。
+ */
+export function resolveScriptedSpeakerEntity(
+  raw: string,
+  ctx: Pick<ScriptedSpeakerResolveCtx, 'graphDialogueNpcId' | 'fallbackNpcId'>,
+): ScriptedSpeakerEntity | undefined {
+  const s = raw ?? '';
+  const start = s.indexOf('{{');
+  if (start < 0) return undefined;
+  const end = s.indexOf('}}', start + 2);
+  if (end < 0) return undefined;
+  const parts = s.slice(start + 2, end).split(':').map((p) => p.trim()).filter((p) => p.length > 0);
+  const kind = (parts[0] ?? '').toLowerCase();
+  if (kind === 'player') return { kind: 'player' };
+  if (kind === 'npc') {
+    const idPart = parts[1] ?? '';
+    const useContext = !idPart || idPart === '@context';
+    const pick = (useContext ? (ctx.graphDialogueNpcId.trim() || ctx.fallbackNpcId.trim()) : idPart).trim();
+    return pick ? { kind: 'npc', npcId: pick } : undefined;
+  }
+  return undefined;
+}

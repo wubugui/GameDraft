@@ -29,7 +29,9 @@
     "unknownScene": "未知",
     "bgm": "背景音乐",
     "sfx": "音效",
-    "ambient": "环境音"
+    "ambient": "环境音",
+    "saveFailed": "存档失败",
+    "loadFailed": "读档失败，进度未改变"
   },
   "encounter": {
     "unknownRule": "未知规矩",
@@ -146,7 +148,7 @@
   "dialogue": {
     "ruleTag": "[规]",
     "defaultProtagonistName": "你",
-    "narratorLabel": "",
+    "narratorLabel": "旁白",
     "choiceNeedRule": "规矩本里尚未收录「{name}」，无法使用该说法。",
     "choiceFlagLocked": "条件未满足，无法选择该选项。",
     "choiceNeedCoins": "铜钱不足，至少需要 {amount} 文。"
@@ -176,12 +178,71 @@
     "dockCrateSuccess": "箱子角浮出水面，铜钱叮当——暂且算是捞出点名堂。",
     "dockCrateFail": "绳子发涩，箱子往深处滑走了……再找机会。",
     "dockMonkeyBite": "脚踝猛地一紧：水面下的东西拽了你一把！",
-    "dockRipple": "波纹晃得人眼花——底下太深。"
+    "dockRipple": "波纹晃得人眼花——底下太深。",
+    "grassDefault": "[水草] 指尖掠过一根飘摇的水草……",
+    "nothingToGrab": "……没有什么能抓的。",
+    "pickPrefix": "[捞起] {cue}",
+    "pullSuccessPrefix": "[成功] {cue}",
+    "pullEscape": "[挣脱] 它一摆尾不见了。",
+    "pullSnap": "[线断] 绳结一紧，断了。",
+    "pullBite": "[咬伤] 水里有什么狠咬了一口！",
+    "pullStatus": "[水边拉扯] 剩余 {sec}s  {state}",
+    "pullStateForeshadow": "（前摇）",
+    "pullStateYank": "（猛拽）",
+    "pullStateInZone": "（在区内）",
+    "pullStateHold": "（按住鼠标或空格）",
+    "pullStateRelease": "（松开一下）"
   },
   "npc名字": {
     "卖糖画的商贩的名字": "许糖匠"
   },
   "价格": {
     "抽糖画价格": 5
+  },
+  "pressureHold": {
+    "holdHint": "按住 [空格] 或按住鼠标"
+  },
+  "actionChoice": {
+    "cancelHint": "Esc 取消"
+  },
+  "touchControls": {
+    "quest": "任务",
+    "inventory": "背包",
+    "rules": "规矩",
+    "dialogueLog": "日志",
+    "bookshelf": "书架",
+    "map": "地图",
+    "ruleUse": "规则牌",
+    "shop": "商店",
+    "menu": "菜单",
+    "debug": "调试",
+    "up": "上",
+    "down": "下",
+    "left": "左",
+    "right": "右",
+    "run": "跑",
+    "interact": "互动",
+    "back": "返回"
+  },
+  "paperCraft": {
+    "orderDescDefault": "按活计单子选纸、搭骨、糊面。部件可换，但分数和忌讳不一样。",
+    "targetHintDefault": "摆好部件、定纸色与收尾，再交活。",
+    "paletteTitle": "纸扎部件",
+    "paperTitle": "纸色",
+    "finishTitleDefault": "收口",
+    "slotOptionalSuffix": "（可空）",
+    "slotRejects": "{slot} 放不上 {part}",
+    "missingParts": "还缺：{parts}",
+    "progressPrefix": "〔第 {i}/{n} 件〕 ",
+    "submit": "交活",
+    "exit": "退出"
+  },
+  "sugarWheel": {
+    "hint": "拖动指针选起点 · 按住蓄力钮蓄力 · Esc 关闭",
+    "chargeGlyph": "蓄",
+    "confirmClose": "确定要关闭转盘吗？",
+    "confirmYes": "关闭",
+    "confirmNo": "取消",
+    "resultBanner": "抽中了：{label}"
   }
 }

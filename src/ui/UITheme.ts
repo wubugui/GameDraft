@@ -1,26 +1,27 @@
 export const UITheme = {
   colors: {
-    panelBg: 0x111122,
-    panelBgAlt: 0x1a1a2e,
-    dialogueBg: 0x0e0e1a,
+    // 面板底色：由冷藏青统一暖化为「暖近黑麻布」，配合 PanelSkin 的金细双线 + 云纹角
+    panelBg: 0x17120d,
+    panelBgAlt: 0x201811,
+    dialogueBg: 0x130f0a,
     encounterBg: 0x1a0a0a,
-    mainMenuBg: 0x0a0a14,
-    detailBg: 0x181830,
-    bookBg: 0x1a1a1a,
+    mainMenuBg: 0x100b07,
+    detailBg: 0x241b12,
+    bookBg: 0x191410,
 
-    panelBorder: 0x444466,
+    panelBorder: 0x4a3a24,
     encounterBorder: 0x664444,
-    borderSubtle: 0x333344,
-    borderMid: 0x333355,
-    borderActive: 0x555577,
-    bookBorder: 0x666666,
+    borderSubtle: 0x342a1c,
+    borderMid: 0x3a2e1e,
+    borderActive: 0x6b5636,
+    bookBorder: 0x6b5a3e,
 
     overlay: 0x000000,
 
-    rowBg: 0x222233,
-    rowBgDark: 0x1a1a2e,
-    rowBgInactive: 0x151520,
-    rowHover: 0x2a2a4e,
+    rowBg: 0x241d13,
+    rowBgDark: 0x1c160e,
+    rowBgInactive: 0x17120b,
+    rowHover: 0x342713,
     encounterRow: 0x221111,
     encounterHover: 0x332222,
 
@@ -140,12 +141,14 @@ export const UITheme = {
 
 /** Animate alpha from 0 to 1 (fire-and-forget). */
 export function fadeIn(
-  target: { alpha: number },
+  target: { alpha: number; destroyed?: boolean },
   duration: number = UITheme.animation.fadeInDuration,
 ): void {
   target.alpha = 0;
   const start = performance.now();
   const tick = () => {
+    // 目标（Pixi 容器）可能在动画期间被销毁：立即停表，避免 rAF 链残留与写已销毁对象
+    if (target.destroyed) return;
     const t = Math.min((performance.now() - start) / duration, 1);
     target.alpha = t;
     if (t < 1) requestAnimationFrame(tick);

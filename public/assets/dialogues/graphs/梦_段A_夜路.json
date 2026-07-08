@@ -55,7 +55,10 @@
         "kind": "player"
       },
       "text": "（脚杆自己在往那边走。路两边啥子都没得。静得只剩我自己的脚步声。）",
-      "next": "a_end"
+      "next": "a_end",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "a_end": {
       "type": "runActions",

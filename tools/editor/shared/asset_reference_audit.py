@@ -51,6 +51,11 @@ _MEDIA_KEY_NAMES = {
     "collision_map",
     "raw_depth_rg",
     "background.png",
+    # overlay 混合叠图动作的图引用（叠图 from/to 是 overlay_images 短名，审查 P2-36）
+    "fromImage",
+    "toImage",
+    # 档案条目插画（ArchiveManager 会预载，审查 P2-36）
+    "illustration",
 }
 
 # 富文本里 [img:...] 也按媒体短名解析
@@ -58,6 +63,7 @@ _RICH_IMG_RE = re.compile(r"\[img:([^\]]+)\]")
 
 _TEXT_KEY_NAMES = {
     "animFile",  # /resources/runtime/animation/<id>/anim.json 实际是 JSON，但运行时与媒体共用 runtime 根
+    "animManifest",  # game_config.playerAvatar / setPlayerAvatar 动作的动画包 URL（现网在用，审查 P2-36）
     "manifest",
     "dialogueGraphId",
 }
@@ -270,21 +276,39 @@ def _audit_map_scene_nodes(paths: ProjectPaths, report: AuditReport) -> None:
     if not map_path.is_file():
         return
     data = _load_json_for_audit(map_path, report, paths)
-    if not isinstance(data, list):
+    file_rel = str(map_path.relative_to(paths.project_root)).replace("\\", "/")
+    if isinstance(data, list):
+        nodes = data
+        field_prefix = ""
+    elif isinstance(data, dict):
+        raw_nodes = data.get("nodes")
+        if not isinstance(raw_nodes, list):
+            report.add_issue(
+                AssetIssue(
+                    file=file_rel,
+                    field_path="nodes",
+                    raw_value="",
+                    reason="map_config.json 的 nodes 必须是数组",
+                ),
+            )
+            return
+        nodes = raw_nodes
+        field_prefix = "nodes"
+    else:
         report.add_issue(
             AssetIssue(
-                file=str(map_path.relative_to(paths.project_root)).replace("\\", "/"),
+                file=file_rel,
                 field_path="",
                 raw_value="",
-                reason="map_config.json 顶层必须是数组",
+                reason="map_config.json 顶层必须是数组或包含 nodes 数组的对象",
             ),
         )
         return
 
-    file_rel = str(map_path.relative_to(paths.project_root)).replace("\\", "/")
-    for idx, node in enumerate(data):
+    for idx, node in enumerate(nodes):
         if not isinstance(node, dict):
             continue
+        field_base = f"{field_prefix}[{idx}]" if field_prefix else f"[{idx}]"
         scene_id = str(node.get("sceneId") or "").strip()
         if not scene_id:
             continue
@@ -296,7 +320,7 @@ def _audit_map_scene_nodes(paths: ProjectPaths, report: AuditReport) -> None:
             report.add_issue(
                 AssetIssue(
                     file=file_rel,
-                    field_path=f"[{idx}].sceneId",
+                    field_path=f"{field_base}.sceneId",
                     raw_value=scene_id,
                     reason=f"非法地图 sceneId：{exc}",
                 ),
@@ -306,7 +330,7 @@ def _audit_map_scene_nodes(paths: ProjectPaths, report: AuditReport) -> None:
             report.add_issue(
                 AssetIssue(
                     file=file_rel,
-                    field_path=f"[{idx}].sceneId",
+                    field_path=f"{field_base}.sceneId",
                     raw_value=scene_id,
                     reason=f"地图场景 JSON 不存在：{scene_json}",
                 ),
@@ -315,7 +339,7 @@ def _audit_map_scene_nodes(paths: ProjectPaths, report: AuditReport) -> None:
             report.add_issue(
                 AssetIssue(
                     file=file_rel,
-                    field_path=f"[{idx}].sceneId",
+                    field_path=f"{field_base}.sceneId",
                     raw_value=scene_id,
                     reason=f"地图场景媒体目录不存在：{scene_dir}",
                 ),

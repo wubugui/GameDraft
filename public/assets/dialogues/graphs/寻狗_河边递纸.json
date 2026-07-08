@@ -46,7 +46,10 @@
         "kind": "player"
       },
       "text": "（……纸。哦豁，出门忘了带纸。）",
-      "next": "n3"
+      "next": "n3",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "n3": {
       "type": "runActions",
@@ -124,7 +127,10 @@
         "kind": "player"
       },
       "text": "（…………等等。）",
-      "next": "n7"
+      "next": "n7",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n7": {
       "type": "line",
@@ -132,7 +138,10 @@
         "kind": "player"
       },
       "text": "（前不着村，后不着店。这河滩上——哪点冒出来个人？？）",
-      "next": "n8"
+      "next": "n8",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n8": {
       "type": "runActions",
@@ -186,7 +195,10 @@
         "kind": "player"
       },
       "text": "（有东西……在跟着我。）",
-      "next": "n13"
+      "next": "n13",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n13": {
       "type": "line",

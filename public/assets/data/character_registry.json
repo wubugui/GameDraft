@@ -1,0 +1,26 @@
+{
+  "characters": [
+    {
+      "id": "clara",
+      "name": "克拉拉",
+      "animFile": "/resources/runtime/animation/克拉拉_anim/anim.json",
+      "portraitSlug": "clara"
+    },
+    {
+      "id": "edgar",
+      "name": "埃德加",
+      "animFile": "/resources/runtime/animation/埃德加_anim/anim.json",
+      "portraitSlug": "edgar"
+    },
+    {
+      "id": "dream_old_man",
+      "name": "老头",
+      "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json"
+    },
+    {
+      "id": "dream_old_woman",
+      "name": "老妇人",
+      "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json"
+    }
+  ]
+}

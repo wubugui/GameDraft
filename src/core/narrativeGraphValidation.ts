@@ -1,3 +1,5 @@
+import { getActionParamManifest } from './actionParamManifest';
+
 export type NarrativeValidationSeverity = 'error' | 'warning';
 
 export interface NarrativeValidationIssue {
@@ -33,6 +35,7 @@ interface ActionLike {
 interface NarrativeStateLike {
   id?: string;
   broadcastOnEnter?: boolean;
+  activePlane?: unknown;
   onEnterActions?: ActionLike[];
   onExitActions?: ActionLike[];
 }
@@ -139,12 +142,23 @@ export function narrativeStateBroadcastOnEnter(state: { broadcastOnEnter?: boole
   return state?.broadcastOnEnter === true;
 }
 
-export function validateNarrativeGraphData(dataRaw: unknown): NarrativeValidationIssue[] {
+export interface NarrativeValidationOptions {
+  /** planes.json 位面 id 目录：提供时校验状态 activePlane 的引用存在性，不传跳过该检查。 */
+  planeIds?: ReadonlySet<string>;
+}
+
+export function validateNarrativeGraphData(
+  dataRaw: unknown,
+  opts?: NarrativeValidationOptions,
+): NarrativeValidationIssue[] {
   const data = normalizeValidationFile(dataRaw);
   const issues: NarrativeValidationIssue[] = [];
   const compIds = new Set<string>();
   const graphIds = new Set<string>();
   const graphIndex = buildGraphIndex(data);
+  // 信号目录（作者信号 + broadcastOnEnter 派生信号）在顶层构建一次，
+  // 避免每条 transition 校验时重建整套集合（O(迁移×图×状态)）。
+  const knownSignals = collectKnownSignals(data);
   for (const [compIndex, comp] of (data.compositions ?? []).entries()) {
     const compPath = `compositions[${compIndex}]`;
     const compositionId = String(comp.id ?? '').trim();
@@ -157,8 +171,10 @@ export function validateNarrativeGraphData(dataRaw: unknown): NarrativeValidatio
       issues,
       graphIds,
       graphIndex,
-      data,
+      knownSignals,
       { compositionId, graphId: mainGraphId },
+      undefined,
+      opts,
     );
     for (const [elIndex, el] of (comp.elements ?? []).entries()) {
       const path = `${compPath}.elements[${elIndex}]`;
@@ -186,9 +202,10 @@ export function validateNarrativeGraphData(dataRaw: unknown): NarrativeValidatio
           issues,
           graphIds,
           graphIndex,
-          data,
+          knownSignals,
           { compositionId, graphId: String(el.graph.id ?? '').trim(), elementId },
           el.kind,
+          opts,
         );
       }
       for (const key of ['emits', 'reads', 'commands'] as const) {
@@ -215,6 +232,7 @@ export function validateNarrativeGraphData(dataRaw: unknown): NarrativeValidatio
   validateOwnerBindings(data, issues);
   validateStateCommandTargets(data, graphIndex, issues);
   validateBroadcastStateSignals(data, issues);
+  validateActivePlanes(data, issues);
   return issues;
 }
 
@@ -300,9 +318,10 @@ function validateGraph(
   issues: NarrativeValidationIssue[],
   graphIds: Set<string>,
   graphIndex: GraphIndex,
-  data: NarrativeGraphsFileLike,
+  knownSignals: ReadonlySet<string>,
   ctx: GraphValidationContext,
   elementKind?: ElementKind,
+  opts?: NarrativeValidationOptions,
 ): void {
   const graphTarget = graphTargetFromCtx(ctx);
   addDuplicateIssue(issues, graphIds, graph.id, `${path}.id`, 'graph id', graph.id, { ...graphTarget, field: 'id' });
@@ -337,6 +356,13 @@ function validateGraph(
     if (sid === graph.initialState && (state.onEnterActions?.length ?? 0) > 0) {
       addIssue(issues, 'error', 'initialState.onEnterActions.unsupported', `${graph.id}.${sid}: initialState onEnterActions will not run at registration/load time`, `${path}.states.${sid}.onEnterActions`, sid, { ...stateTarget, field: 'onEnterActions' });
     }
+    if (state.activePlane !== undefined) {
+      if (typeof state.activePlane !== 'string' || !state.activePlane.trim()) {
+        addIssue(issues, 'error', 'state.activePlane.invalid', `${graph.id}.${sid}: activePlane must be a non-empty string`, `${path}.states.${sid}.activePlane`, sid, { ...stateTarget, field: 'activePlane' });
+      } else if (opts?.planeIds && !opts.planeIds.has(state.activePlane.trim())) {
+        addIssue(issues, 'error', 'state.activePlane.unknown', `${graph.id}.${sid}: activePlane references unknown plane: ${state.activePlane.trim()}`, `${path}.states.${sid}.activePlane`, sid, { ...stateTarget, field: 'activePlane' });
+      }
+    }
     validateActions(state.onEnterActions, `${path}.states.${sid}.onEnterActions`, issues, `${graph.id}.${sid}`, { ...stateTarget, field: 'onEnterActions' });
     validateActions(state.onExitActions, `${path}.states.${sid}.onExitActions`, issues, `${graph.id}.${sid}`, { ...stateTarget, field: 'onExitActions' });
   }
@@ -362,7 +388,7 @@ function validateGraph(
     const to = resolveNarrativeEndpoint(t.to, graph.id ?? '');
     if (!graph.states?.[from.stateId]) addIssue(issues, 'error', 'transition.from.missing', `${graph.id}.${t.id}: from state is missing`, `${tPath}.from`, t.id, { ...transitionTarget, field: 'from' });
     if (!graph.states?.[to.stateId]) addIssue(issues, 'error', 'transition.to.missing', `${graph.id}.${t.id}: to state is missing`, `${tPath}.to`, t.id, { ...transitionTarget, field: 'to' });
-    validateTransitionSignal(graph.id ?? '', t, tPath, issues, data, { ...transitionTarget, field: 'signal' });
+    validateTransitionSignal(graph.id ?? '', t, tPath, issues, knownSignals, { ...transitionTarget, field: 'signal' });
     validateReactiveTrigger(t, `${tPath}.trigger`, issues, { ...transitionTarget, field: 'trigger' });
     validateConditions(t.conditions, `${tPath}.conditions`, issues, `${graph.id}.${t.id}`, graphIndex, { ...transitionTarget, field: 'conditions' });
   }
@@ -370,12 +396,24 @@ function validateGraph(
 
 const validWrapperOwnerTypes = new Set(['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'scene', 'system']);
 
+/** 作者信号 id + 全部 broadcastOnEnter 状态的派生 `state:<graphId>:<stateId>` 信号。 */
+function collectKnownSignals(data: NarrativeGraphsFileLike): ReadonlySet<string> {
+  const known = new Set((data.signals ?? []).map((s) => String(s.id ?? '').trim()).filter(Boolean));
+  for (const { graph } of compileGraphs(data)) {
+    for (const [stateId, state] of Object.entries(graph.states ?? {})) {
+      if (!narrativeStateBroadcastOnEnter(state)) continue;
+      known.add(narrativeStateEnteredSignalKey(graph.id ?? '', stateId));
+    }
+  }
+  return known;
+}
+
 function validateTransitionSignal(
   ownerGraphId: string,
   transition: NarrativeTransitionLike,
   path: string,
   issues: NarrativeValidationIssue[],
-  data: NarrativeGraphsFileLike,
+  knownSignals: ReadonlySet<string>,
   target: NarrativeValidationTarget,
 ): void {
   const sig = String(transition.signal ?? '').trim() || DEFAULT_NARRATIVE_DRAFT_SIGNAL;
@@ -403,14 +441,7 @@ function validateTransitionSignal(
     );
     return;
   }
-  const known = new Set((data.signals ?? []).map((s) => String(s.id ?? '').trim()).filter(Boolean));
-  for (const { graph } of compileGraphs(data)) {
-    for (const [stateId, state] of Object.entries(graph.states ?? {})) {
-      if (!narrativeStateBroadcastOnEnter(state)) continue;
-      known.add(narrativeStateEnteredSignalKey(graph.id ?? '', stateId));
-    }
-  }
-  if (!known.has(sig)) {
+  if (!knownSignals.has(sig)) {
     addIssue(
       issues,
       'warning',
@@ -626,6 +657,32 @@ function validateBroadcastStateSignals(data: NarrativeGraphsFileLike, issues: Na
   }
 }
 
+/**
+ * 位面点名互斥 v1（照 validateOwnerBindings 聚合范式）：同图多状态点名合法（一图一激活态），
+ * 跨图出现多于一个声明 activePlane 的图 = warning（运行时兜底为「后进者胜」+ error 日志）。
+ */
+function validateActivePlanes(data: NarrativeGraphsFileLike, issues: NarrativeValidationIssue[]): void {
+  const declaring: string[] = [];
+  for (const { graph } of compileGraphs(data)) {
+    const gid = String(graph.id ?? '').trim();
+    if (!gid) continue;
+    const has = Object.values(graph.states ?? {}).some(
+      (state) => typeof state.activePlane === 'string' && state.activePlane.trim() !== '',
+    );
+    if (has) declaring.push(gid);
+  }
+  if (declaring.length > 1) {
+    addIssue(
+      issues,
+      'warning',
+      'plane.activePlane.multiGraph',
+      `multiple graphs declare activePlane; simultaneously reachable namings fall back to last-entered at runtime: ${declaring.join(', ')}`,
+      undefined,
+      declaring.join(','),
+    );
+  }
+}
+
 function collectListenerRefs(data: NarrativeGraphsFileLike): Map<string, Array<{ graphId: string; transitionId: string }>> {
   const map = new Map<string, Array<{ graphId: string; transitionId: string }>>();
   for (const { graph } of compileGraphs(data)) {
@@ -735,107 +792,27 @@ function validateConditionExpr(
   return false;
 }
 
-const knownActionParamSchemas: Record<string, string[]> = {
-  setFlag: ['key', 'value'],
-  appendFlag: ['key', 'text'],
-  showNotification: ['text', 'type'],
-  emitNarrativeSignal: ['signal'],
-  setScenarioPhase: ['scenarioId', 'phase', 'status'],
-  startScenario: ['scenarioId'],
-  activateScenario: ['scenarioId'],
-  completeScenario: ['scenarioId'],
-  revealDocument: ['documentId'],
-  runActions: ['actions'],
-  chooseAction: ['options'],
-  randomBranch: ['probability'],
-  enableRuleOffers: ['slots'],
-  addDelayedEvent: ['actions'],
-  disableRuleOffers: [],
-  giveItem: ['id'],
-  removeItem: ['id'],
-  giveCurrency: ['amount'],
-  removeCurrency: ['amount'],
-  giveRule: ['id'],
-  grantRuleLayer: ['ruleId', 'layer'],
-  giveFragment: ['id'],
-  updateQuest: ['id'],
-  startEncounter: ['id'],
-  playBgm: ['id'],
-  stopBgm: [],
-  playSfx: ['id'],
-  endDay: [],
-  addArchiveEntry: ['type', 'id'],
-  startCutscene: ['id'],
-  startWaterMinigame: ['id'],
-  startSugarWheelMinigame: ['id'],
-  startPaperCraftMinigame: ['id'],
-  sugarWheelShowSpeech: ['target', 'text'],
-  sugarWheelDismissSpeech: ['target'],
-  sugarWheelDismissAllSpeech: [],
-  sugarWheelResetPointer: ['angleDeg'],
-  debugAlertActionParams: [],
-  showEmote: ['target', 'emote'],
-  showSpeechBubble: ['target', 'text'],
-  playNpcAnimation: ['target', 'state'],
-  setEntityEnabled: ['target', 'enabled'],
-  openShop: ['shopId'],
-  pickup: ['itemId'],
-  switchScene: ['targetScene'],
-  changeScene: ['targetScene'],
-  shopPurchase: ['itemId', 'price'],
-  inventoryDiscard: ['itemId'],
-  setPlayerAvatar: [],
-  resetPlayerAvatar: [],
-  setSceneDepthFloorOffset: ['floor_offset'],
-  resetSceneDepthFloorOffset: [],
-  setCameraZoom: ['zoom'],
-  restoreSceneCameraZoom: [],
-  fadingZoom: ['zoom'],
-  fadingRestoreSceneCameraZoom: [],
-  stopNpcPatrol: ['npcId'],
-  persistNpcDisablePatrol: ['npcId'],
-  persistNpcEnablePatrol: ['npcId'],
-  persistNpcEntityEnabled: ['target', 'enabled'],
-  persistHotspotEnabled: ['sceneId', 'hotspotId', 'enabled'],
-  setZoneEnabled: ['sceneId', 'zoneId', 'enabled'],
-  persistZoneEnabled: ['sceneId', 'zoneId', 'enabled'],
-  setSceneEntityPosition: ['sceneId', 'entityKind', 'entityId', 'x', 'y'],
-  persistNpcAt: ['target', 'x', 'y'],
-  persistNpcAnimState: ['target', 'state'],
-  persistPlayNpcAnimation: ['target', 'state'],
-  fadeWorldToBlack: [],
-  fadeWorldFromBlack: [],
-  playSignalCue: ['id'],
-  showOverlayImage: ['id', 'imagePath'],
-  setHotspotDisplayImage: ['sceneId', 'hotspotId', 'image'],
-  setEntityField: ['sceneId', 'entityKind', 'entityId', 'fieldName', 'value'],
-  hideOverlayImage: ['id'],
-  blendOverlayImage: ['id', 'fromImagePath', 'toImagePath'],
-  startDialogueGraph: ['graphId'],
-  waitClickContinue: [],
-  playScriptedDialogue: ['lines'],
-  waitMs: ['durationMs'],
-  moveEntityTo: ['target', 'x', 'y'],
-  faceEntity: ['target'],
-  cutsceneSpawnActor: ['id', 'name', 'x', 'y'],
-  cutsceneRemoveActor: ['id'],
-  showEmoteAndWait: ['target', 'emote'],
-  showSpeechBubbleAndWait: ['target', 'text'],
-};
-
 function validateActionDef(action: ActionLike, path: string, issues: NarrativeValidationIssue[], owner: string, target?: NarrativeValidationTarget): void {
   const type = String(action.type ?? '').trim();
   const params = action.params && typeof action.params === 'object' && !Array.isArray(action.params)
     ? action.params as Record<string, unknown>
     : {};
-  const required = knownActionParamSchemas[type];
-  if (!required) {
+  // 动作参数唯一权威源：src/core/actionParamManifest.ts（三方同步契约见该文件头注释）。
+  const manifest = getActionParamManifest(type);
+  if (!manifest) {
     addIssue(issues, 'error', 'action.type.unknown', `${owner}: unknown action type ${type}`, `${path}.type`, owner, target);
     return;
   }
-  for (const name of required) {
-    if (params[name] === undefined || params[name] === null || String(params[name]).trim() === '') {
+  for (const name of manifest.required) {
+    const value = params[name];
+    if (value === undefined || value === null) {
       addIssue(issues, 'error', 'action.param.missing', `${owner}: ${type} missing params.${name}`, `${path}.params.${name}`, owner, target);
+      continue;
+    }
+    // 仅对 manifest 显式声明「非空」的参数做空串检查（运行时对这些参数 trim 后拒绝空串）；
+    // 其余必填参数允许合法空串/空数组/false/0，只判 undefined/null。
+    if (manifest.nonEmpty?.includes(name) && typeof value === 'string' && value.trim() === '') {
+      addIssue(issues, 'error', 'action.param.missing', `${owner}: ${type} params.${name} is empty`, `${path}.params.${name}`, owner, target);
     }
   }
   if (type === 'runActions' || type === 'addDelayedEvent') {
@@ -956,17 +933,6 @@ function signalTarget(signalId: string, field?: string): NarrativeValidationTarg
 
 function compactTarget<T extends NarrativeValidationTarget>(target: T): T {
   return Object.fromEntries(Object.entries(target).filter(([, value]) => value !== undefined && value !== '')) as T;
-}
-
-function visitUnknown(value: unknown, fn: (obj: Record<string, unknown>) => void): void {
-  if (Array.isArray(value)) {
-    value.forEach((item) => visitUnknown(item, fn));
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-  const obj = value as Record<string, unknown>;
-  fn(obj);
-  Object.values(obj).forEach((item) => visitUnknown(item, fn));
 }
 
 function stringList(value: unknown): string[] {

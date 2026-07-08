@@ -12,7 +12,10 @@
         "kind": "player"
       },
       "text": "哦豁……我的腰……我这是、我刚才咋子了……",
-      "next": "n_ltg_scold"
+      "next": "n_ltg_scold",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n_ltg_scold": {
       "type": "line",
@@ -29,7 +32,10 @@
         "kind": "player"
       },
       "text": "啊？喊咋子了……我脚杆还在不嘛……",
-      "next": "n_ltg_rule"
+      "next": "n_ltg_rule",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_ltg_rule": {
       "type": "line",
@@ -46,7 +52,10 @@
         "kind": "player"
       },
       "text": "嗨呀——你看嘛我穿的啥子？这还要你教？小道我吃的就是这碗饭。",
-      "next": "n_gjg_pack"
+      "next": "n_gjg_pack",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_gjg_pack": {
       "type": "line",
@@ -54,7 +63,10 @@
         "kind": "player"
       },
       "text": "……嘿，没落没落。麻烦你了哈。",
-      "next": "n_ltg_smell"
+      "next": "n_ltg_smell",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_ltg_smell": {
       "type": "line",
@@ -71,7 +83,10 @@
         "kind": "player"
       },
       "text": "桃溪？哪个没去过嘛——几年前我还过去教训了一个女妖嘞！那地方我熟，熟得很!",
-      "next": "n_flag_actions"
+      "next": "n_flag_actions",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n_flag_actions": {
       "type": "runActions",

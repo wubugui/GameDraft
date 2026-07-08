@@ -11,58 +11,184 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "scenario_义庄镇尸", "state": "all_done", "reached": true }
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ],
+          "next": "jiaoshi_1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "all_done",
+              "reached": true
+            }
           ],
           "next": "after_1"
         },
         {
           "conditions": [
-            { "narrative": "scenario_义庄镇尸", "state": "in_progress", "reached": true }
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "in_progress",
+              "reached": true
+            }
           ],
           "next": "mid_1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "not_entered"
+            }
+          ],
+          "next": "keeper_daily"
         }
       ],
       "defaultNext": "n1"
     },
     "after_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "躺、躺平了……真个躺平了！先生！你这手段，比城里头请的先生还要硬扎！（往他手里头塞钱，塞得嘿实在）",
-      "next": "after_2"
+      "next": "after_2",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "after_2": {
       "type": "runActions",
       "actions": [
-        { "type": "giveCurrency", "params": { "amount": 50 } }
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 50
+          }
+        }
       ],
       "next": "after_3"
     },
     "after_3": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "管事只给一回钱，但谢能谢八遍。第三遍起，关二狗已经在想别的事了——刚才那一下，到底是哪样压住的？",
       "next": "end1"
     },
     "mid_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "（贴着门框，半个身子杵在门外头）先、先生你接到来！小的在这点……在这点给你守起门！",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "就、就是它们两个……老爷子是寄停在这点的，等吉日下葬；外乡那具是船运来的，等屋头人来认领。昨晚上都还好生生躺起的！",
-      "next": "n2"
+      "next": "n2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
+      "speaker": {
+        "kind": "npc"
+      },
       "text": "你要使啥子物件，供桌上头都有——米、墨斗、剪子，石头子外头地上多得很。小的就不上前了！",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "end1": {
       "type": "end"
+    },
+    "jiaoshi_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "管事掀开苇席角，只扫了一眼，眉头就拧起来。",
+      "next": "jiaoshi_2"
+    },
+    "jiaoshi_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "淹的？……泡了两日往上，水腥都闷出来了。搁那边凳上。",
+      "next": "jiaoshi_put"
+    },
+    "jiaoshi_put": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_管事义庄内",
+            "signal": "beishi_yan_delivered"
+          }
+        },
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 8
+          }
+        },
+        {
+          "type": "grantRuleLayer",
+          "params": {
+            "ruleId": "rule_drowned_corpse",
+            "layer": "xiang"
+          }
+        }
+      ],
+      "next": "jiaoshi_3"
+    },
+    "jiaoshi_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "尸身落凳，肩头一轻，贴了一路后颈的水腥气总算散了。八文铜钱，到手。",
+      "next": "jiaoshi_4"
+    },
+    "jiaoshi_4": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "记到：淹死的水汽重，背起走道莫沿水边——水汽勾水汽，它要闹。你娃今天走哪边过来的，自家心头有数。",
+      "next": "jiaoshi_end"
+    },
+    "jiaoshi_end": {
+      "type": "end"
+    },
+    "keeper_daily": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "义庄重地，生人莫乱走。有正事说正事，没得事就出切。",
+      "next": "jiaoshi_end"
     }
   }
 }

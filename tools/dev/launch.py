@@ -24,6 +24,9 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "chronicle-sim": ("tools.chronicle_sim_v3", []),
     "filter-tool": ("tools.filter_tool", []),
     "lightvol": ("tools.lightvolume_lab", []),
+    "anim-preview": ("tools.anim_preview", []),
+    "parallax-editor": ("tools.parallax_editor", []),
+    "skill-governance": ("tools.skill_workflow_governance.console", []),
     "validate-data": ("tools.editor.validate", []),
 }
 
@@ -78,5 +81,54 @@ def run_chronicle_week(extra: list[str], check: bool = False) -> int:
     env["PYTHONPATH"] = str(repo_root())
     try:
         return subprocess.call([str(python), script, *extra], cwd=str(repo_root()), env=_tool_env(env))
+    except KeyboardInterrupt:
+        return 130
+
+
+def run_agent_canvas_os(check: bool = False) -> int:
+    """Launch the standalone Agent Canvas OS (~/AIWork/agent-canvas-os): sync server + tldraw web, then open the canvas.
+
+    Not a ``tools.<module>`` GUI — it's a separate repo started via its ``scripts/start.sh``.
+    """
+    import socket
+    import time
+    import webbrowser
+    from pathlib import Path
+
+    start = Path.home() / "AIWork" / "agent-canvas-os" / "scripts" / "start.sh"
+    if check:
+        print(f"[check] bash {start}")
+        return 0
+    if not start.exists():
+        print(f"Agent Canvas OS not found: {start} (build it first)")
+        return 1
+    subprocess.call(["bash", str(start)], cwd=str(start.parent.parent))
+    for _ in range(60):
+        try:
+            with socket.create_connection(("127.0.0.1", 3100), timeout=0.3):
+                webbrowser.open("http://localhost:3100/")
+                return 0
+        except OSError:
+            time.sleep(0.5)
+    print("Canvas web (:3100) not ready yet — open http://localhost:3100 manually.")
+    return 0
+
+
+def run_acos_agent(check: bool = False) -> int:
+    """Run the Agent Canvas OS 'canvas agent' loop: watches the chat inbox and acts on the canvas.
+
+    Standalone repo; needs ANTHROPIC_API_KEY (or a logged-in Claude Agent SDK).
+    """
+    from pathlib import Path
+
+    agent = Path.home() / "AIWork" / "agent-canvas-os" / "scripts" / "agent.sh"
+    if check:
+        print(f"[check] bash {agent}")
+        return 0
+    if not agent.exists():
+        print(f"canvas agent not found: {agent} (build Agent Canvas OS first)")
+        return 1
+    try:
+        return subprocess.call(["bash", str(agent)])
     except KeyboardInterrupt:
         return 130

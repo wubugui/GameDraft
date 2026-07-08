@@ -89,6 +89,8 @@ export class SugarWheelAtmosphereScheduler {
   private runner: MinigameScriptRunner<SugarWheelAtmosphereStep> | null = null;
   private ctx: MinigameScriptContext | null = null;
   private currentPhase: SugarWheelAtmospherePhaseName | null = null;
+  /** 被 'start' 挡下、等其播完再接的相位（只可能是 'spinning'） */
+  private pendingPhase: SugarWheelAtmospherePhaseName | null = null;
   private host: SugarWheelAtmosphereHost;
 
   constructor(host: SugarWheelAtmosphereHost) {
@@ -117,24 +119,51 @@ export class SugarWheelAtmosphereScheduler {
     this.currentPhase = null;
   }
 
-  /** 由 Scene 在 phase 变化或 update 中调用，传入当前 spin phase。 */
+  /**
+   * 由 Scene 在 phase 变化或 update 中调用，传入当前 spin phase。
+   *
+   * 相位优先级（R22）：发射后下一帧物理必然进入 spinning，若任由其抢占，
+   * 'start' 脚本只播得出第一句、`wait` 之后的台词全部静默丢弃。因此
+   * 'start' 播完前不被 'spinning' 抢占（挂起，播完自然衔接）；
+   * 'slowing' / 'stop' 表示转盘将停 / 已停，语义上必须立即切换，仍即时抢占。
+   */
   notifyPhase(phase: SugarWheelAtmospherePhaseName): void {
     if (phase === this.currentPhase) return;
+    if (
+      phase === 'spinning'
+      && this.currentPhase === 'start'
+      && this.runner?.running
+    ) {
+      this.pendingPhase = 'spinning';
+      return;
+    }
+    this.pendingPhase = null;
+    this.startPhase(phase);
+  }
+
+  tick(dt: number): void {
+    this.runner?.tick(dt);
+    // 'start' 播完后若期间已进入 spinning，则衔接 spinning 脚本
+    if (this.pendingPhase && this.runner && !this.runner.running) {
+      const next = this.pendingPhase;
+      this.pendingPhase = null;
+      this.startPhase(next);
+    }
+  }
+
+  cancel(): void {
+    this.runner?.cancel();
+    this.currentPhase = null;
+    this.pendingPhase = null;
+  }
+
+  private startPhase(phase: SugarWheelAtmospherePhaseName): void {
     this.currentPhase = phase;
     if (!this.group || !this.runner) return;
     const steps = this.group[phase];
     if (steps && steps.length > 0) {
       this.runner.runPhase(steps);
     }
-  }
-
-  tick(dt: number): void {
-    this.runner?.tick(dt);
-  }
-
-  cancel(): void {
-    this.runner?.cancel();
-    this.currentPhase = null;
   }
 
   /** 根据 Scene 的 phase + omega 映射出四阶段名。 */

@@ -47,7 +47,10 @@
         "kind": "player"
       },
       "text": "……啷个又绕回来咯？",
-      "next": "loop1_act"
+      "next": "loop1_act",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "loop1_act": {
       "type": "runActions",
@@ -105,7 +108,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "脱鞋反穿、撒泡尿、糙米、桃木、求爹爹告奶奶……背尸老手那点家底全使了一遍，路还是绕回原地。",
+      "text": "光脚倒走、撒泡尿、糙米、桃木、求爹爹告奶奶……背尸老手那点家底全使了一遍，路还是绕回原地。",
       "next": "loop2b"
     },
     "loop2b": {
@@ -155,7 +158,10 @@
         "kind": "player"
       },
       "text": "工钱……工钱个屁！！",
-      "next": "fall2"
+      "next": "fall2",
+      "portrait": {
+        "emotion": "angry"
+      }
     },
     "fall2": {
       "type": "line",

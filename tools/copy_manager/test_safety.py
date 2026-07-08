@@ -131,41 +131,56 @@ assert test_rules["categories"]["ward"] == "护卫"
 assert test_rules["rules"][1]["name"] == "盐能驱邪"
 print("  PASS: Dict-wrapped rules.json correctly modified")
 
-# Test 10: Boolean values not replaced
+# Test 10: map_config.json wrapped structure keeps legacy map[...] paths writable
 print()
-print("Test 10: Boolean values NOT replaced")
+print("Test 10: map_config.json wrapped structure")
+test_map = {
+    "backgroundImage": "/resources/runtime/images/maps/wujin-paper-map-v1.png",
+    "nodes": [
+        {"sceneId": "teahouse", "name": "茶馆"},
+    ],
+}
+_set_value_safe(test_map, "map[0].name", "Teahouse")
+assert test_map["nodes"][0]["name"] == "Teahouse"
+r4 = _set_json_value_safe(test_map, "map[0].name", "茶馆")
+assert r4 is True and test_map["nodes"][0]["name"] == "茶馆"
+print("  PASS: legacy map[...] path writes through to nodes[...]")
+
+# Test 11: Boolean values not replaced
+print()
+print("Test 11: Boolean values NOT replaced")
 test_bool = {"items": [{"id": "test", "name": "测试", "active": True}]}
 _set_value_safe(test_bool, "items[test].active", "false")
 assert test_bool["items"][0]["active"] is True
 print("  PASS: Boolean NOT replaced")
 
-# Test 11: Array values not replaced
+# Test 12: Array values not replaced
 print()
-print("Test 11: Array values NOT replaced")
+print("Test 12: Array values NOT replaced")
 test_arr = {"items": [{"id": "test", "name": "测试", "tags": ["a", "b"]}]}
 _set_value_safe(test_arr, "items[test].tags", "no tags")
 assert test_arr["items"][0]["tags"] == ["a", "b"]
 print("  PASS: Array NOT replaced")
 
-# Test 12: Object values not replaced
+# Test 13: Object values not replaced
 print()
-print("Test 12: Object values NOT replaced")
+print("Test 13: Object values NOT replaced")
 test_obj = {"items": [{"id": "test", "name": "测试", "meta": {"x": 1}}]}
 _set_value_safe(test_obj, "items[test].meta", "no meta")
 assert test_obj["items"][0]["meta"] == {"x": 1}
 print("  PASS: Object NOT replaced")
 
-# Test 13: Null value field not replaced
+# Test 14: Null value field not replaced
 print()
-print("Test 13: Null value NOT replaced")
+print("Test 14: Null value NOT replaced")
 test_null = {"items": [{"id": "test", "name": None}]}
 _set_value_safe(test_null, "items[test].name", "something")
 assert test_null["items"][0]["name"] is None
 print("  PASS: Null value NOT replaced")
 
-# Test 14: Real quest data structure test
+# Test 15: Real quest data structure test
 print()
-print("Test 14: Real quest data structure integrity")
+print("Test 15: Real quest data structure integrity")
 test_quest = {
     "id": "opening_01",
     "title": "听张叨叨摆书",
@@ -184,4 +199,4 @@ assert test_quest["nextQuests"] == [{"questId": "opening_02", "conditions": []}]
 print("  PASS: Quest structure fully preserved after title change")
 
 print()
-print("=== All 14 safety tests passed! ===")
+print("=== All 15 safety tests passed! ===")

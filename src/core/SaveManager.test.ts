@@ -89,7 +89,7 @@ describe('SaveManager save/load/re-enter smoke', () => {
       'fallback_scene',
     );
 
-    manager.save(1);
+    expect(manager.save(1)).toBe(true);
     const loaded = await manager.load(1);
 
     expect(loaded).toBe(true);
@@ -137,5 +137,186 @@ describe('SaveManager save/load/re-enter smoke', () => {
     expect(loaded).toBe(false);
     expect(distributed).not.toHaveBeenCalled();
     expect(reloader).not.toHaveBeenCalled();
+  });
+});
+
+describe('SaveManager save failure reporting', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', createMemoryStorage());
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('returns false when the storage write throws (quota / sandbox)', () => {
+    (localStorage as unknown as { setItem: () => void }).setItem = () => {
+      throw new Error('QuotaExceededError');
+    };
+    const manager = new SaveManager(
+      () => ({ sceneManager: { currentSceneId: 's1' } }),
+      () => {},
+      async () => {},
+      new StringsProvider(),
+      'fallback_scene',
+    );
+
+    expect(manager.save(0)).toBe(false);
+  });
+
+  it('returns false when the canSave predicate rejects', () => {
+    const collector = vi.fn(() => ({}));
+    const manager = new SaveManager(collector, () => {}, async () => {}, new StringsProvider(), 'fallback_scene');
+    manager.setCanSavePredicate(() => false);
+
+    expect(manager.save(0)).toBe(false);
+    expect(collector).not.toHaveBeenCalled();
+    expect(manager.hasSave(0)).toBe(false);
+  });
+
+  it('returns false for an out-of-range slot', () => {
+    const manager = new SaveManager(() => ({}), () => {}, async () => {}, new StringsProvider(), 'fallback_scene');
+    expect(manager.save(-1)).toBe(false);
+    expect(manager.save(3)).toBe(false);
+  });
+});
+
+describe('SaveManager load atomicity', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', createMemoryStorage());
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('rolls back distributed state and reloads the original scene when scene reload fails', async () => {
+    const savedState = {
+      sceneManager: { currentSceneId: 'dock_board' },
+      flagStore: { flags: { saved: true } },
+    };
+    const liveState = {
+      sceneManager: { currentSceneId: 'street' },
+      flagStore: { flags: { live: true } },
+    };
+    let collectorState: Record<string, object> = savedState;
+    const distributed: Record<string, object>[] = [];
+    const reloaded: string[] = [];
+    let failReloadOfSavedScene = false;
+    const manager = new SaveManager(
+      () => collectorState,
+      (data) => {
+        distributed.push(data);
+      },
+      async (sceneId) => {
+        reloaded.push(sceneId);
+        if (failReloadOfSavedScene && sceneId === 'dock_board') {
+          throw new Error('scene load failed');
+        }
+      },
+      new StringsProvider(),
+      'fallback_scene',
+    );
+
+    expect(manager.save(0)).toBe(true);
+    // 存档之后运行时推进到了另一状态：读档失败必须回滚到这份状态而非半读档混合态
+    collectorState = liveState;
+    failReloadOfSavedScene = true;
+
+    const loaded = await manager.load(0);
+
+    expect(loaded).toBe(false);
+    expect(distributed).toEqual([savedState, liveState]);
+    expect(reloaded).toEqual(['dock_board', 'street']);
+  });
+
+  it('rolls back and returns false when distribute itself throws', async () => {
+    const liveState = { sceneManager: { currentSceneId: 'street' } };
+    const distributed: Record<string, object>[] = [];
+    const reloaded: string[] = [];
+    let distributeCalls = 0;
+    const manager = new SaveManager(
+      () => liveState,
+      (data) => {
+        distributeCalls += 1;
+        if (distributeCalls === 1) throw new Error('distribute failed');
+        distributed.push(data);
+      },
+      async (sceneId) => {
+        reloaded.push(sceneId);
+      },
+      new StringsProvider(),
+      'fallback_scene',
+    );
+
+    localStorage.setItem(
+      'gamedraft_save_0',
+      JSON.stringify({ version: 1, timestamp: 1, systems: { sceneManager: { currentSceneId: 'dock_board' } } }),
+    );
+
+    const loaded = await manager.load(0);
+
+    expect(loaded).toBe(false);
+    // 第一次 distribute 抛错后只回滚快照 + 重载当前场景，不会再去载存档场景
+    expect(distributed).toEqual([liveState]);
+    expect(reloaded).toEqual(['street']);
+  });
+
+  it('rejects a corrupted save without touching system state', async () => {
+    const distributor = vi.fn();
+    const reloader = vi.fn();
+    const manager = new SaveManager(
+      () => ({ sceneManager: { currentSceneId: 'street' } }),
+      distributor,
+      reloader,
+      new StringsProvider(),
+      'fallback_scene',
+    );
+
+    localStorage.setItem('gamedraft_save_0', '{not valid json');
+    expect(await manager.load(0)).toBe(false);
+
+    localStorage.setItem('gamedraft_save_1', JSON.stringify({ version: 1, timestamp: 1 }));
+    expect(await manager.load(1)).toBe(false);
+
+    expect(distributor).not.toHaveBeenCalled();
+    expect(reloader).not.toHaveBeenCalled();
+  });
+});
+
+describe('SaveManager storage access hardening', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('hasSave/getSlotMeta/deleteSlot/load survive a throwing localStorage', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('localStorage', {
+      getItem() {
+        throw new Error('SecurityError');
+      },
+      setItem() {
+        throw new Error('SecurityError');
+      },
+      removeItem() {
+        throw new Error('SecurityError');
+      },
+    });
+    const manager = new SaveManager(() => ({}), () => {}, async () => {}, new StringsProvider(), 'fallback_scene');
+
+    expect(manager.hasSave(0)).toBe(false);
+    expect(manager.hasAnySave()).toBe(false);
+    expect(manager.getSlotMeta(0)).toBeNull();
+    expect(() => manager.deleteSlot(0)).not.toThrow();
+    expect(manager.save(0)).toBe(false);
+    await expect(manager.load(0)).resolves.toBe(false);
   });
 });

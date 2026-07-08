@@ -38,11 +38,14 @@
     "n5": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "老妇人"
+        "kind": "sceneNpc",
+        "npcId": "npc_dream_old_woman"
       },
       "text": "「总算转来咯。」",
-      "next": "b_end"
+      "next": "b_end",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "b_end": {
       "type": "runActions",

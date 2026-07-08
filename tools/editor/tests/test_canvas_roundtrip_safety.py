@@ -27,16 +27,16 @@ ALL_DIRTY_BUCKETS = [
     "config", "item", "quest", "questGroup", "encounter", "rules", "shop",
     "map", "cutscene", "audio", "strings", "archive", "scene", "flag_registry",
     "overlay_images", "scenarios", "narrative_graphs", "document_reveals",
-    "pressure_holds", "signal_cues", "water_minigames", "sugar_wheel",
+    "pressure_holds", "signal_cues", "planes", "water_minigames", "sugar_wheel",
     "paper_craft", "filter",
 ]
 
 # 模型内存属性（与 load_project 一致）；保存→重载后逐项深比较。
 SNAPSHOT_ATTRS = [
     "game_config", "items", "quests", "quest_groups", "encounters",
-    "rules_data", "shops", "map_nodes", "cutscenes", "audio_config", "strings",
+    "rules_data", "shops", "map_nodes", "map_background_image", "cutscenes", "audio_config", "strings",
     "archive_characters", "archive_lore", "archive_books", "archive_documents",
-    "pressure_holds", "signal_cues", "overlay_images", "scenarios_catalog",
+    "pressure_holds", "signal_cues", "planes", "overlay_images", "scenarios_catalog",
     "document_reveals", "scenes", "filter_defs", "flag_registry",
     "water_minigames_index", "water_minigames_instances",
     "sugar_wheel_index", "sugar_wheel_instances",
@@ -64,7 +64,7 @@ def _managed_files(m: ProjectModel) -> list[tuple[object, Path]]:
         (m.encounters, dp / "encounters.json"),
         (m.rules_data, dp / "rules.json"),
         (m.shops, dp / "shops.json"),
-        (m.map_nodes, dp / "map_config.json"),
+        (m.map_config_document(), dp / "map_config.json"),
         (m.cutscenes, dp / "cutscenes" / "index.json"),
         (m.audio_config, dp / "audio_config.json"),
         (m.strings, dp / "strings.json"),
@@ -74,6 +74,7 @@ def _managed_files(m: ProjectModel) -> list[tuple[object, Path]]:
         (m.archive_documents, dp / "archive" / "documents.json"),
         (m.pressure_holds, dp / "pressure_holds.json"),
         (m.signal_cues, dp / "signal_cues.json"),
+        (m.planes, dp / "planes.json"),
         (m.overlay_images, dp / "overlay_images.json"),
         (m.scenarios_catalog, dp / "scenarios.json"),
         (m.document_reveals, dp / "document_reveals.json"),

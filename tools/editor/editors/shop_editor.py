@@ -79,6 +79,13 @@ class ShopEditor(QWidget):
         root.addWidget(splitter)
         self._refresh()
 
+    def reload_refs_from_model(self) -> None:
+        """切页激活时重拉物品下拉候选(别处新增的 item),保留各行当前选中值。"""
+        for i in range(self._table.rowCount()):
+            w = self._table.cellWidget(i, 0)
+            if isinstance(w, IdRefSelector):
+                w.set_items(self._model.all_item_ids())
+
     def _make_item_pick(self, item_id: str) -> IdRefSelector:
         w = IdRefSelector(self, allow_empty=False, editable=False, click_opens_popup=True)
         w.setMinimumWidth(200)
@@ -240,7 +247,11 @@ class ShopEditor(QWidget):
             lw.setText(f"{s.get('id', '?')}  [{s.get('name', '')}]")
 
     def _add(self) -> None:
-        self._model.shops.append({"id": f"shop_{len(self._model.shops)}", "name": "", "items": []})
+        taken = {str(s.get("id", "")) for s in self._model.shops}
+        n = 0
+        while f"shop_{n}" in taken:
+            n += 1
+        self._model.shops.append({"id": f"shop_{n}", "name": "", "items": []})
         self._model.mark_dirty("shop")
         self._refresh()
 

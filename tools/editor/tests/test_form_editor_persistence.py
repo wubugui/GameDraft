@@ -22,6 +22,7 @@ from tools.editor.editors.pressure_signal_editor import (
     PressureHoldEditor,
     SignalCueEditor,
 )
+from tools.editor.editors.narrative_data_editors import ScenariosCatalogEditor
 from tools.editor.editors.quest_editor import QuestEditor
 from tools.editor.editors.rule_editor import RuleEditor
 from tools.editor.editors.shop_editor import ShopEditor
@@ -412,6 +413,101 @@ class AudioEditorPersistenceTests(unittest.TestCase):
             self.assertTrue(ed.flush_to_model())
             self.assertIn("track_renamed", model.audio_config.get("bgm", {}),
                           "Save All 前必须提交未应用的音频表编辑")
+
+
+class ScenariosCatalogEditorPersistenceTests(unittest.TestCase):
+    """Scenarios 编辑器曾不在防丢失安全网内：未 Apply 即关闭/切工程会静默丢编辑，
+    且每次 Save All 无脑重写 scenarios.json。本组锁定修复：_is_dirty + 脏判定 flush +
+    confirm_close + phases.outcome 不被 Apply 抹掉。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._qt_app = QApplication.instance() or QApplication(sys.argv)
+
+    def _editor(self, root: Path, scenarios: list[dict]):
+        write_minimal_loadable_project(root)
+        model = ProjectModel()
+        model.load_project(root)
+        model.scenarios_catalog = {"scenarios": scenarios}
+        ed = ScenariosCatalogEditor(model)
+        ed.reload_from_model()
+        return ed, model
+
+    def test_clean_state_not_dirty(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, _model = self._editor(
+                Path(td) / "p",
+                [{"id": "s_a", "phases": {"起始": {"status": "pending"}}}],
+            )
+            ed._sc_list.setCurrentRow(0)
+            self.assertFalse(ed._is_dirty(), "纯加载/选择不应判定为脏（否则每次保存都误重写）")
+
+    def test_edit_then_flush_persists(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(
+                Path(td) / "p",
+                [{"id": "s_a", "phases": {"起始": {"status": "pending"}}}],
+            )
+            ed._sc_list.setCurrentRow(0)
+            ed._f_desc.setText("新描述")            # 不点 Apply
+            self.assertTrue(ed._is_dirty(), "编辑后必须判脏")
+            self.assertTrue(ed.flush_to_model(), "Save All 前必须提交未应用编辑")
+            self.assertEqual(
+                model.scenarios_catalog["scenarios"][0].get("description"), "新描述",
+                "未 Apply 的编辑必须在 flush 时落入模型，不能静默丢弃",
+            )
+
+    def test_flush_noop_when_unedited_does_not_mark_dirty(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(
+                Path(td) / "p",
+                [{"id": "s_a", "phases": {"起始": {"status": "pending"}}}],
+            )
+            ed._sc_list.setCurrentRow(0)
+            model._dirty.discard("scenarios")
+            self.assertTrue(ed.flush_to_model())
+            self.assertNotIn(
+                "scenarios", model._dirty,
+                "未改动时 flush 不得标脏（否则每次 Save All 都重写 scenarios.json）",
+            )
+
+    def test_confirm_close_clean_returns_true(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, _model = self._editor(
+                Path(td) / "p",
+                [{"id": "s_a", "phases": {"起始": {"status": "pending"}}}],
+            )
+            ed._sc_list.setCurrentRow(0)
+            self.assertTrue(ed.confirm_close(), "无未应用编辑时关闭不应被拦")
+
+    def test_phase_outcome_preserved_through_sync(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(
+                Path(td) / "p",
+                [{"id": "s_oc", "phases": {"p1": {"status": "done", "outcome": "win"}}}],
+            )
+            ed._sc_list.setCurrentRow(0)
+            ed._f_desc.setText("触发 sync")          # 任意编辑触发重建 phases
+            self.assertTrue(ed.flush_to_model())
+            p1 = model.scenarios_catalog["scenarios"][0]["phases"]["p1"]
+            self.assertEqual(p1.get("outcome"), "win",
+                             "phases 无列编辑的 outcome 不得被 Apply/flush 抹掉")
+            self.assertEqual(p1.get("status"), "done")
+
+    def test_exposes_without_expose_after_phase_rejected(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, _model = self._editor(
+                Path(td) / "p",
+                [{
+                    "id": "s_x",
+                    "phases": {"起始": {"status": "pending"}},
+                    "exposes": {"some_flag": True},
+                }],
+            )
+            ed._sc_list.setCurrentRow(0)
+            err = ed._validate()
+            self.assertIsNotNone(err, "配了 exposes 却无 exposeAfterPhase 应被校验拦下")
+            self.assertIn("exposeAfterPhase", err or "")
 
 
 if __name__ == "__main__":

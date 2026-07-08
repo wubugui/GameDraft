@@ -31,5 +31,7 @@
   "sugarWheelDismissSpeech",
   "sugarWheelDismissAllSpeech",
   "sugarWheelResetPointer",
-  "randomBranch"
+  "randomBranch",
+  "activatePlane",
+  "deactivatePlane"
 ]

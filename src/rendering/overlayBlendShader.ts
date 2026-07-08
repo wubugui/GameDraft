@@ -50,6 +50,11 @@ export interface OverlayBlendMeshHandle {
   /** 自定义 Shader 的 Mesh，运行时类型为 Mesh<MeshGeometry, Shader> */
   mesh: Mesh;
   setT: (t: number) => void;
+  /**
+   * 释放自建 geometry/shader：Pixi 8 的 Mesh.destroy 只解引用不销毁两者，须在销毁 mesh 后显式调用。
+   * shader.destroy 默认不销毁 GlProgram（走 Shader.from 的共享程序缓存），可安全重复创建同款 mesh。
+   */
+  disposeGpu: () => void;
 }
 
 /**
@@ -94,12 +99,19 @@ export function createOverlayBlendMesh(
 
   const setT = (t: number): void => {
     const clamped = Math.max(0, Math.min(1, t));
-    const u = (shader.resources as Record<string, { uniforms?: Record<string, unknown> }>)['blendUniforms']?.uniforms;
+    // shader.destroy 后 resources 为 null（并发换图/skip 竞态下可能仍有在途 tick），静默忽略
+    const res = shader.resources as Record<string, { uniforms?: Record<string, unknown> }> | null;
+    const u = res?.['blendUniforms']?.uniforms;
     if (u) {
       /** Pixi 初始化后标量 uniform 多为裸 number，与 DepthOcclusionFilter 一致直接赋值 */
       u['uT'] = clamped;
     }
   };
 
-  return { mesh, setT };
+  const disposeGpu = (): void => {
+    geometry.destroy();
+    shader.destroy();
+  };
+
+  return { mesh, setT, disposeGpu };
 }

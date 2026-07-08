@@ -5,7 +5,6 @@ import re
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
@@ -28,12 +27,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QInputDialog,
-    QColorDialog,
 )
 
 from ..project_model import ProjectModel
 from ..shared import confirm
 from ..shared.action_editor import ActionEditor
+from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
 from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.id_ref_selector import IdRefSelector
@@ -52,6 +51,8 @@ _PULL_RHYTHM = ["stable", "burst", "spasm", "heavy_sink"]
 _FAILURE = ["escape", "snap", "bite"]
 _VALUE_TIER = ["normal", "premium"]
 _MOTION_PATH = ["stationary", "drift", "patrol", "approach", "flee"]
+_DEPTH_OSC_CURVE = ["none", "sine", "approach_surface", "random_walk"]
+_SHORE_EDGE = ["top", "bottom", "left", "right"]
 _LOCATION_PRESETS = ["dock", "wild", "grave", "dev"]
 
 
@@ -123,6 +124,9 @@ class WaterMinigameEditor(QWidget):
         self._extra_spot_ids: set[str] = set()
         self._prev_ent_row: int = -1
         self._selected_ent_row: int = -1
+        # 岸边前景（shoreForeground.banks）主从编辑状态
+        self._cur_bank: dict | None = None
+        self._selected_bank_row: int = -1
 
         root = QHBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
@@ -182,6 +186,13 @@ class WaterMinigameEditor(QWidget):
 
         self._surf_loc = QComboBox()
         self._surf_loc.setEditable(False)
+        self._surf_loc_wrap = QWidget()
+        sll = QHBoxLayout(self._surf_loc_wrap)
+        sll.setContentsMargins(0, 0, 0, 0)
+        sll.addWidget(self._surf_loc, stretch=1)
+        self._btn_new_loc = QPushButton("新建…")
+        self._btn_new_loc.setToolTip("登记新的 surface.location（自由文本；下拉仅列预设与已用过的）")
+        sll.addWidget(self._btn_new_loc)
         self._surf_time = QComboBox()
         for x in _TIME_OPTS:
             self._surf_time.addItem(x)
@@ -216,13 +227,16 @@ class WaterMinigameEditor(QWidget):
 
         inst_form.addRow("标题 label", self._inst_label)
         inst_form.addRow("spotId（水域锚点）", self._spot_wrap)
-        inst_form.addRow("surface.location", self._surf_loc)
+        inst_form.addRow("surface.location", self._surf_loc_wrap)
         inst_form.addRow("surface.time", self._surf_time)
         inst_form.addRow("surface.weather", self._surf_weather)
         inst_form.addRow("bounds", bounds_wrap)
         inst_form.addRow("waterBottom.texture", self._wb_tex)
         inst_form.addRow("waterBottom.tint", self._wb_tint_row)
         inst_form.addRow("waterBottom.depth", self._wb_depth)
+
+        self._shore_section = self._build_shore_section()
+        inst_form.addRow(self._shore_section)
 
         inst_scroll.setWidget(inst_host)
 
@@ -295,6 +309,25 @@ class WaterMinigameEditor(QWidget):
         self._ent_depth.setDecimals(4)
         self._ent_depth.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
 
+        self._ent_display_size = QDoubleSpinBox()
+        self._ent_display_size.setRange(0.0, 9999.0)
+        self._ent_display_size.setDecimals(2)
+        self._ent_display_size.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._ent_display_size.setSpecialValueText("(品类默认)")
+        self._ent_display_size.setToolTip(
+            "显示尺寸：贴图最长边缩放目标（bounds 像素）。0=按品类默认"
+            "（grass 70 / sunken 62 / floating 46 / swimming 52），为 0 时不写入 displaySize。",
+        )
+        self._ent_hit_radius = QDoubleSpinBox()
+        self._ent_hit_radius.setRange(0.0, 9999.0)
+        self._ent_hit_radius.setDecimals(2)
+        self._ent_hit_radius.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._ent_hit_radius.setSpecialValueText("(品类默认)")
+        self._ent_hit_radius.setToolTip(
+            "识别阶段点击命中半径（bounds 像素）。0=按品类默认"
+            "（grass 42 / swimming 34 / sunken 38 / floating 30），为 0 时不写入 hitRadius。",
+        )
+
         self._motion_group = QGroupBox("位移 motion")
         self._motion_group.setCheckable(True)
         mf = compact_form(QFormLayout(self._motion_group))
@@ -305,8 +338,14 @@ class WaterMinigameEditor(QWidget):
         self._motion_speed.setRange(0.0, 99.0)
         self._motion_speed.setDecimals(4)
         self._motion_speed.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._motion_jitter = QDoubleSpinBox()
+        self._motion_jitter.setRange(0.0, 99.0)
+        self._motion_jitter.setDecimals(4)
+        self._motion_jitter.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._motion_jitter.setToolTip("位移抖动幅度；为 0 时不写入 motion.jitter")
         mf.addRow("path", self._motion_path)
         mf.addRow("speed", self._motion_speed)
+        mf.addRow("jitter", self._motion_jitter)
 
         self._pull_group = QGroupBox("拉扯 pull")
         self._pull_group.setCheckable(True)
@@ -332,6 +371,36 @@ class WaterMinigameEditor(QWidget):
         pf.addRow("rhythm", self._pull_rhythm)
         pf.addRow("failurePolicy", self._pull_fail)
         pf.addRow("timeLimitSec", self._pull_time)
+
+        self._osc_group = QGroupBox("深度起伏 depthOsc")
+        self._osc_group.setCheckable(True)
+        of = compact_form(QFormLayout(self._osc_group))
+        self._osc_curve = QComboBox()
+        for c in _DEPTH_OSC_CURVE:
+            self._osc_curve.addItem(c)
+        self._osc_amp = QDoubleSpinBox()
+        self._osc_amp.setRange(0.0, 9.0)
+        self._osc_amp.setDecimals(4)
+        self._osc_amp.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._osc_period = QDoubleSpinBox()
+        self._osc_period.setRange(0.0, 999.0)
+        self._osc_period.setDecimals(3)
+        self._osc_period.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        of.addRow("curve", self._osc_curve)
+        of.addRow("amplitude", self._osc_amp)
+        of.addRow("period", self._osc_period)
+
+        self._glow_group = QGroupBox("发光 glow（启用）")
+        self._glow_group.setCheckable(True)
+        gf = compact_form(QFormLayout(self._glow_group))
+        self._glow_color = HexColorPickRow("#8899aa", title="glow.color")
+        self._glow_daylight = QDoubleSpinBox()
+        self._glow_daylight.setRange(0.0, 1.0)
+        self._glow_daylight.setDecimals(3)
+        self._glow_daylight.setSingleStep(0.05)
+        self._glow_daylight.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        gf.addRow("color", self._glow_color)
+        gf.addRow("daylightHint", self._glow_daylight)
 
         self._ent_value_tier = QComboBox()
         self._ent_value_tier.addItem("(默认)")
@@ -397,8 +466,12 @@ class WaterMinigameEditor(QWidget):
         ef.addRow("sprite", self._ent_sprite)
         ef.addRow("pos x,y", pxw)
         ef.addRow("depth", self._ent_depth)
+        ef.addRow("displaySize", self._ent_display_size)
+        ef.addRow("hitRadius", self._ent_hit_radius)
+        ef.addRow(self._osc_group)
         ef.addRow(self._motion_group)
         ef.addRow(self._pull_group)
+        ef.addRow(self._glow_group)
         ef.addRow("valueTier", self._ent_value_tier)
         ef.addRow(self._ent_consume)
         ef.addRow("cue", cue_box)
@@ -451,6 +524,7 @@ class WaterMinigameEditor(QWidget):
         self._inst_label.textChanged.connect(self._on_inst_label_changed)
         self._spot_sel.value_changed.connect(self._on_spot_changed)
         self._btn_new_spot.clicked.connect(self._on_new_spot_clicked)
+        self._btn_new_loc.clicked.connect(self._on_new_location_clicked)
         self._surf_loc.currentTextChanged.connect(self._on_surface_changed)
         self._surf_time.currentTextChanged.connect(self._on_surface_changed)
         self._surf_weather.currentTextChanged.connect(self._on_surface_changed)
@@ -471,9 +545,19 @@ class WaterMinigameEditor(QWidget):
         self._ent_px.valueChanged.connect(self._on_ent_pos_changed)
         self._ent_py.valueChanged.connect(self._on_ent_pos_changed)
         self._ent_depth.valueChanged.connect(self._on_ent_scalar_changed_spin)
+        self._ent_display_size.valueChanged.connect(self._on_ent_display_size_changed)
+        self._ent_hit_radius.valueChanged.connect(self._on_ent_hit_radius_changed)
         self._motion_group.toggled.connect(self._on_motion_toggled)
         self._motion_path.currentTextChanged.connect(self._on_motion_field_changed)
         self._motion_speed.valueChanged.connect(self._on_motion_field_changed)
+        self._motion_jitter.valueChanged.connect(self._on_motion_field_changed)
+        self._osc_group.toggled.connect(self._on_osc_toggled)
+        self._osc_curve.currentTextChanged.connect(self._on_osc_field_changed)
+        self._osc_amp.valueChanged.connect(self._on_osc_field_changed)
+        self._osc_period.valueChanged.connect(self._on_osc_field_changed)
+        self._glow_group.toggled.connect(self._on_glow_toggled)
+        self._glow_color.changed.connect(self._on_glow_field_changed)
+        self._glow_daylight.valueChanged.connect(self._on_glow_field_changed)
         self._pull_group.toggled.connect(self._on_pull_toggled)
         for w in (
             self._pull_zone,
@@ -556,6 +640,7 @@ class WaterMinigameEditor(QWidget):
             self._spot_sel,
             self._btn_new_spot,
             self._surf_loc,
+            self._btn_new_loc,
             self._surf_time,
             self._surf_weather,
             self._bounds_w,
@@ -563,6 +648,7 @@ class WaterMinigameEditor(QWidget):
             self._wb_tex,
             self._wb_tint_row,
             self._wb_depth,
+            self._shore_section,
             self._canvas,
             self._btn_add_ent,
             self._btn_rm_ent,
@@ -575,8 +661,12 @@ class WaterMinigameEditor(QWidget):
             self._ent_px,
             self._ent_py,
             self._ent_depth,
+            self._ent_display_size,
+            self._ent_hit_radius,
+            self._osc_group,
             self._motion_group,
             self._pull_group,
+            self._glow_group,
             self._ent_value_tier,
             self._ent_consume,
             self._cue_mode,
@@ -613,6 +703,7 @@ class WaterMinigameEditor(QWidget):
         if row < 0:
             self._current_inst_id = None
             self._doc = None
+            self._reload_shore()
             self._canvas.refresh(
                 bounds_wh=(720, 480),
                 texture_url="",
@@ -629,8 +720,7 @@ class WaterMinigameEditor(QWidget):
         self._current_inst_id = iid
         self._doc = self._model.water_minigames_instances.get(iid)
         self._set_editor_enabled(True)
-        self._refresh_spot_selector()
-        self._fill_instance_form()
+        self._fill_instance_form()  # 内部已 _refresh_spot_selector，无需在此重复
         self._reload_entities_canvas(select_row=0)
 
     def _refresh_spot_selector(self) -> None:
@@ -683,6 +773,8 @@ class WaterMinigameEditor(QWidget):
                 self._wb_tex.set_path("")
                 self._wb_tint_row.set_hex("#1b2f42")
                 self._wb_depth.setValue(1.0)
+
+            self._reload_shore()
         finally:
             self._loading = False
 
@@ -737,6 +829,18 @@ class WaterMinigameEditor(QWidget):
         self._spot_sel.blockSignals(False)
         self._on_spot_changed(sp)
 
+    def _on_new_location_clicked(self) -> None:
+        if self._loading or not self._doc:
+            return
+        raw, ok = QInputDialog.getText(self, "新建 location", "新的 surface.location：")
+        if not ok:
+            return
+        loc = raw.strip()
+        if not loc:
+            return
+        # 加入下拉并选中；setCurrentIndex 会触发 _on_surface_changed 写回 doc。
+        _combo_set_text(self._surf_loc, loc)
+
     def _on_surface_changed(self, *_a: Any) -> None:
         if self._loading or not self._doc:
             return
@@ -760,7 +864,7 @@ class WaterMinigameEditor(QWidget):
         wb = self._ensure_wb_dict()
         wb["texture"] = self._wb_tex.path().strip()
         wb["tint"] = self._wb_tint_row.hex().strip()
-        wb["depth"] = float(self._wb_depth.value())
+        wb["depth"] = self._keep_num(float(self._wb_depth.value()), wb.get("depth"))
         self._mark_wm_dirty()
         self._refresh_canvas_visual()
 
@@ -810,6 +914,233 @@ class WaterMinigameEditor(QWidget):
         if self._current_inst_id:
             self.preview_requested.emit(self._current_inst_id)
 
+    # ---- shoreForeground.banks（实例级岸边前景，主从列表 + 详情）------------
+
+    def _build_shore_section(self) -> CollapsibleSection:
+        sec = CollapsibleSection("岸边前景 shoreForeground（最多 2 条）", start_open=False)
+        host = QWidget()
+        v = QVBoxLayout(host)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        tool = QHBoxLayout()
+        self._btn_shore_add = QPushButton("+岸边")
+        self._btn_shore_add.setToolTip("新增一条岸边（最多 2 条）")
+        self._btn_shore_rm = QPushButton("−岸边")
+        self._btn_shore_rm.setToolTip("删除选中岸边")
+        self._btn_shore_up = QPushButton("↑")
+        self._btn_shore_up.setToolTip("上移（调整 banks 数组顺序）")
+        self._btn_shore_up.setMaximumWidth(30)
+        self._btn_shore_down = QPushButton("↓")
+        self._btn_shore_down.setToolTip("下移（调整 banks 数组顺序）")
+        self._btn_shore_down.setMaximumWidth(30)
+        tool.addWidget(QLabel("岸边列表"))
+        tool.addStretch()
+        tool.addWidget(self._btn_shore_up)
+        tool.addWidget(self._btn_shore_down)
+        tool.addWidget(self._btn_shore_add)
+        tool.addWidget(self._btn_shore_rm)
+        v.addLayout(tool)
+
+        self._shore_list_w = QListWidget()
+        self._shore_list_w.setMaximumHeight(64)
+        v.addWidget(self._shore_list_w)
+
+        self._shore_detail = QWidget()
+        sf = compact_form(QFormLayout(self._shore_detail))
+        self._shore_sprite = CutsceneImagePathRow(
+            self._model,
+            "",
+            external_copy_subdir="illustrations",
+            external_copy_hint="岸边贴图：仅 Browse 写入路径",
+            path_edit_read_only=True,
+        )
+        self._shore_edge = QComboBox()
+        for e in _SHORE_EDGE:
+            self._shore_edge.addItem(e)
+        self._shore_thickness = QSpinBox()
+        self._shore_thickness.setRange(0, 8192)
+        self._shore_inset = QSpinBox()
+        self._shore_inset.setRange(-8192, 8192)
+        self._shore_overhang = QSpinBox()
+        self._shore_overhang.setRange(0, 8192)
+        self._shore_alpha = QDoubleSpinBox()
+        self._shore_alpha.setRange(0.0, 1.0)
+        self._shore_alpha.setDecimals(3)
+        self._shore_alpha.setSingleStep(0.05)
+        self._shore_alpha.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        sf.addRow("sprite", self._shore_sprite)
+        sf.addRow("edge", self._shore_edge)
+        sf.addRow("thickness", self._shore_thickness)
+        sf.addRow("inset", self._shore_inset)
+        sf.addRow("overhang", self._shore_overhang)
+        sf.addRow("alpha", self._shore_alpha)
+        v.addWidget(self._shore_detail)
+
+        sec.add_body(host)
+
+        self._shore_list_w.currentRowChanged.connect(self._on_shore_row_changed)
+        self._btn_shore_add.clicked.connect(self._add_shore_bank)
+        self._btn_shore_rm.clicked.connect(self._remove_shore_bank)
+        self._btn_shore_up.clicked.connect(self._move_shore_up)
+        self._btn_shore_down.clicked.connect(self._move_shore_down)
+        self._shore_sprite.changed.connect(self._on_shore_sprite_changed)
+        self._shore_edge.currentTextChanged.connect(self._on_shore_edge_changed)
+        self._shore_thickness.valueChanged.connect(lambda val: self._set_bank_num("thickness", int(val)))
+        self._shore_inset.valueChanged.connect(lambda val: self._set_bank_num("inset", int(val)))
+        self._shore_overhang.valueChanged.connect(lambda val: self._set_bank_num("overhang", int(val)))
+        self._shore_alpha.valueChanged.connect(lambda val: self._set_bank_num("alpha", float(val)))
+        return sec
+
+    def _shore_banks(self, *, create: bool = False) -> list[dict]:
+        """返回真实 banks 列表引用（create=True 时按需建 shoreForeground.banks）。"""
+        if not self._doc:
+            return []
+        sf = self._doc.get("shoreForeground")
+        if not isinstance(sf, dict):
+            if not create:
+                return []
+            sf = {}
+            self._doc["shoreForeground"] = sf
+        banks = sf.get("banks")
+        if not isinstance(banks, list):
+            if not create:
+                return []
+            banks = []
+            sf["banks"] = banks
+        return banks
+
+    def _shore_item_text(self, bank: dict) -> str:
+        edge = str(bank.get("edge") or "?") if isinstance(bank, dict) else "?"
+        spr = str(bank.get("sprite") or "") if isinstance(bank, dict) else ""
+        base = spr.rsplit("/", 1)[-1] if spr else "(无贴图)"
+        return f"[{edge}] {base}"
+
+    def _update_shore_buttons(self, n: int) -> None:
+        self._btn_shore_add.setEnabled(n < 2)
+        has = n > 0
+        self._btn_shore_rm.setEnabled(has)
+        self._btn_shore_up.setEnabled(has)
+        self._btn_shore_down.setEnabled(has)
+
+    def _rebuild_shore_list(self, select_row: int) -> None:
+        banks = self._shore_banks()
+        self._shore_list_w.blockSignals(True)
+        self._shore_list_w.clear()
+        for b in banks:
+            self._shore_list_w.addItem(QListWidgetItem(self._shore_item_text(b)))
+        self._shore_list_w.blockSignals(False)
+        n = self._shore_list_w.count()
+        self._update_shore_buttons(n)
+        if n > 0:
+            row = min(max(select_row, 0), n - 1)
+            self._shore_list_w.setCurrentRow(row)  # 触发 _on_shore_row_changed 填详情
+        else:
+            self._selected_bank_row = -1
+            self._fill_shore_detail(None)
+
+    def _reload_shore(self) -> None:
+        self._cur_bank = None
+        self._selected_bank_row = -1
+        self._rebuild_shore_list(select_row=0)
+
+    def _fill_shore_detail(self, bank: dict | None) -> None:
+        prev = self._loading
+        self._loading = True
+        try:
+            self._cur_bank = bank if isinstance(bank, dict) else None
+            self._shore_detail.setEnabled(self._cur_bank is not None)
+            b = self._cur_bank or {}
+            self._shore_sprite.set_path(str(b.get("sprite") or ""))
+            edge = str(b.get("edge") or "top")
+            ei = self._shore_edge.findText(edge)
+            self._shore_edge.setCurrentIndex(ei if ei >= 0 else 0)
+            self._shore_thickness.setValue(int(b.get("thickness") or 0))
+            self._shore_inset.setValue(int(b.get("inset") or 0))
+            self._shore_overhang.setValue(int(b.get("overhang") or 0))
+            self._shore_alpha.setValue(float(b.get("alpha") if b.get("alpha") is not None else 1.0))
+        finally:
+            self._loading = prev
+
+    def _on_shore_row_changed(self, row: int) -> None:
+        self._selected_bank_row = row
+        banks = self._shore_banks()
+        if 0 <= row < len(banks) and isinstance(banks[row], dict):
+            self._fill_shore_detail(banks[row])
+        else:
+            self._fill_shore_detail(None)
+
+    def _add_shore_bank(self) -> None:
+        if not self._doc:
+            return
+        banks = self._shore_banks(create=True)
+        if len(banks) >= 2:
+            QMessageBox.information(self, "水域小游戏", "岸边前景最多 2 条")
+            return
+        banks.append({"sprite": "", "edge": "top"})
+        self._mark_wm_dirty()
+        self._rebuild_shore_list(select_row=len(banks) - 1)
+        self._refresh_canvas_visual()
+
+    def _remove_shore_bank(self) -> None:
+        if not self._doc:
+            return
+        row = self._selected_bank_row
+        banks = self._shore_banks()
+        if row < 0 or row >= len(banks):
+            return
+        banks.pop(row)
+        if not banks:
+            # 清空岸边即移除整个 shoreForeground，避免在 JSON 留 {"banks": []} 空壳
+            self._doc.pop("shoreForeground", None)
+        self._mark_wm_dirty()
+        self._rebuild_shore_list(select_row=min(row, len(banks) - 1))
+        self._refresh_canvas_visual()
+
+    def _move_shore_up(self) -> None:
+        self._swap_shore(self._selected_bank_row, self._selected_bank_row - 1)
+
+    def _move_shore_down(self) -> None:
+        self._swap_shore(self._selected_bank_row, self._selected_bank_row + 1)
+
+    def _swap_shore(self, a: int, b: int) -> None:
+        banks = self._shore_banks()
+        if a < 0 or b < 0 or a >= len(banks) or b >= len(banks) or a == b:
+            return
+        banks[a], banks[b] = banks[b], banks[a]
+        self._mark_wm_dirty()
+        self._rebuild_shore_list(select_row=b)
+        self._refresh_canvas_visual()
+
+    def _refresh_shore_label(self, row: int) -> None:
+        if row < 0 or row >= self._shore_list_w.count() or not self._cur_bank:
+            return
+        it = self._shore_list_w.item(row)
+        if it is not None:
+            it.setText(self._shore_item_text(self._cur_bank))
+
+    def _set_bank_num(self, key: str, value: Any) -> None:
+        if self._loading or not self._cur_bank:
+            return
+        self._cur_bank[key] = value
+        self._mark_wm_dirty()
+        if key in ("thickness", "inset", "overhang"):
+            self._refresh_canvas_visual()  # 这几项影响粗略预览的矩形
+
+    def _on_shore_sprite_changed(self) -> None:
+        if self._loading or not self._cur_bank:
+            return
+        self._cur_bank["sprite"] = self._shore_sprite.path().strip()
+        self._mark_wm_dirty()
+        self._refresh_shore_label(self._selected_bank_row)
+
+    def _on_shore_edge_changed(self, _t: str = "") -> None:
+        if self._loading or not self._cur_bank:
+            return
+        self._cur_bank["edge"] = self._shore_edge.currentText().strip()
+        self._mark_wm_dirty()
+        self._refresh_shore_label(self._selected_bank_row)
+        self._refresh_canvas_visual()
+
     # ---- entities ---------------------------------------------------------
 
     def _entities_list(self) -> list[dict]:
@@ -847,6 +1178,8 @@ class WaterMinigameEditor(QWidget):
             wth = str(surf.get("weather") or "clear").strip() or "clear"
         else:
             tim, wth = "day", "clear"
+        sfg = self._doc.get("shoreForeground")
+        banks = sfg.get("banks") if isinstance(sfg, dict) else None
         self._canvas.refresh(
             bounds_wh=(bw, bh),
             texture_url=tex,
@@ -854,6 +1187,7 @@ class WaterMinigameEditor(QWidget):
             entities=ents,
             selected_row=sel,
             ambient=(tim, wth),
+            shore_banks=banks if isinstance(banks, list) else None,
         )
 
     def _rebuild_ent_list(self, selected_row: int) -> None:
@@ -1033,9 +1367,19 @@ class WaterMinigameEditor(QWidget):
                 self._ent_px.setValue(0)
                 self._ent_py.setValue(0)
                 self._ent_depth.setValue(0.5)
+                self._ent_display_size.setValue(0.0)
+                self._ent_hit_radius.setValue(0.0)
                 self._motion_group.setChecked(False)
                 self._motion_path.setCurrentIndex(0)
                 self._motion_speed.setValue(0.05)
+                self._motion_jitter.setValue(0.0)
+                self._osc_group.setChecked(False)
+                self._osc_curve.setCurrentIndex(0)
+                self._osc_amp.setValue(0.0)
+                self._osc_period.setValue(1.0)
+                self._glow_group.setChecked(False)
+                self._glow_color.set_hex("#8899aa")
+                self._glow_daylight.setValue(0.4)
                 self._pull_group.setChecked(False)
                 self._pull_zone.setValue(0.1)
                 self._pull_speed.setValue(1.0)
@@ -1066,6 +1410,14 @@ class WaterMinigameEditor(QWidget):
             self._ent_px.setValue(int(pos.get("x") or 0))
             self._ent_py.setValue(int(pos.get("y") or 0))
             self._ent_depth.setValue(float(ent.get("depth") if ent.get("depth") is not None else 0.5))
+            ds = ent.get("displaySize")
+            self._ent_display_size.setValue(
+                float(ds) if isinstance(ds, (int, float)) and not isinstance(ds, bool) else 0.0,
+            )
+            hr = ent.get("hitRadius")
+            self._ent_hit_radius.setValue(
+                float(hr) if isinstance(hr, (int, float)) and not isinstance(hr, bool) else 0.0,
+            )
 
             motion = ent.get("motion")
             has_m = isinstance(motion, dict)
@@ -1075,6 +1427,38 @@ class WaterMinigameEditor(QWidget):
                 mi = self._motion_path.findText(mp)
                 self._motion_path.setCurrentIndex(mi if mi >= 0 else 0)
                 self._motion_speed.setValue(float(motion.get("speed") if motion.get("speed") is not None else 0.05))
+                self._motion_jitter.setValue(float(motion.get("jitter") if motion.get("jitter") is not None else 0.0))
+            else:
+                # 重置为默认：不残留上一实体的参数（勾选启用时以默认起步）
+                self._motion_path.setCurrentIndex(0)
+                self._motion_speed.setValue(0.05)
+                self._motion_jitter.setValue(0.0)
+
+            osc = ent.get("depthOsc")
+            has_osc = isinstance(osc, dict)
+            self._osc_group.setChecked(has_osc)
+            if has_osc:
+                cv = str(osc.get("curve") or "none")
+                ci = self._osc_curve.findText(cv)
+                self._osc_curve.setCurrentIndex(ci if ci >= 0 else 0)
+                self._osc_amp.setValue(float(osc.get("amplitude") if osc.get("amplitude") is not None else 0.0))
+                self._osc_period.setValue(float(osc.get("period") if osc.get("period") is not None else 1.0))
+            else:
+                self._osc_curve.setCurrentIndex(0)
+                self._osc_amp.setValue(0.0)
+                self._osc_period.setValue(1.0)
+
+            glow = ent.get("glow")
+            has_glow = isinstance(glow, dict)
+            self._glow_group.setChecked(has_glow)
+            if has_glow:
+                self._glow_color.set_hex(str(glow.get("color") or "#8899aa"))
+                self._glow_daylight.setValue(
+                    float(glow.get("daylightHint") if glow.get("daylightHint") is not None else 0.4),
+                )
+            else:
+                self._glow_color.set_hex("#8899aa")
+                self._glow_daylight.setValue(0.4)
 
             pull = ent.get("pull")
             has_p = isinstance(pull, dict)
@@ -1090,6 +1474,12 @@ class WaterMinigameEditor(QWidget):
                 self._pull_fail.setCurrentIndex(fi if fi >= 0 else 0)
                 tl = pull.get("timeLimitSec")
                 self._pull_time.setValue(int(tl) if tl is not None else 15)
+            else:
+                self._pull_zone.setValue(0.1)
+                self._pull_speed.setValue(1.0)
+                self._pull_rhythm.setCurrentIndex(0)
+                self._pull_fail.setCurrentIndex(0)
+                self._pull_time.setValue(15)
 
             vt = ent.get("valueTier")
             if vt in _VALUE_TIER:
@@ -1229,26 +1619,107 @@ class WaterMinigameEditor(QWidget):
         if r >= 0:
             self._canvas.update_marker_visual(r, self._entities_list())
 
+    def _on_ent_display_size_changed(self, _v: float = 0.0) -> None:
+        if self._loading or not self._cur_ent:
+            return
+        v = float(self._ent_display_size.value())
+        if v <= 0:
+            self._cur_ent.pop("displaySize", None)
+        else:
+            self._cur_ent["displaySize"] = self._keep_num(v, self._cur_ent.get("displaySize"))
+        self._mark_wm_dirty()
+
+    def _on_ent_hit_radius_changed(self, _v: float = 0.0) -> None:
+        if self._loading or not self._cur_ent:
+            return
+        v = float(self._ent_hit_radius.value())
+        if v <= 0:
+            self._cur_ent.pop("hitRadius", None)
+        else:
+            self._cur_ent["hitRadius"] = self._keep_num(v, self._cur_ent.get("hitRadius"))
+        self._mark_wm_dirty()
+
+    def _refresh_selected_entity_visual(self) -> None:
+        """当前实体的视觉相关字段（depthOsc/glow 等画布会渲染）改动后刷新单行。"""
+        r = self._selected_ent_row
+        if r >= 0:
+            self._canvas.update_marker_visual(r, self._entities_list())
+
+    def _sync_motion_dict(self) -> None:
+        assert self._cur_ent is not None
+        m: dict[str, Any] = {
+            "path": self._motion_path.currentText(),
+            "speed": float(self._motion_speed.value()),
+        }
+        jit = float(self._motion_jitter.value())
+        if jit > 0:
+            m["jitter"] = jit
+        self._cur_ent["motion"] = m
+
     def _on_motion_toggled(self, on: bool) -> None:
         if self._loading or not self._cur_ent:
             return
         if not on:
             self._cur_ent.pop("motion", None)
         else:
-            self._cur_ent["motion"] = {
-                "path": self._motion_path.currentText(),
-                "speed": float(self._motion_speed.value()),
-            }
+            self._sync_motion_dict()
         self._mark_wm_dirty()
 
     def _on_motion_field_changed(self, *_a: Any) -> None:
         if self._loading or not self._cur_ent or not self._motion_group.isChecked():
             return
-        self._cur_ent["motion"] = {
-            "path": self._motion_path.currentText(),
-            "speed": float(self._motion_speed.value()),
-        }
+        self._sync_motion_dict()
         self._mark_wm_dirty()
+
+    def _sync_osc_dict(self) -> None:
+        assert self._cur_ent is not None
+        self._cur_ent["depthOsc"] = {
+            "curve": self._osc_curve.currentText(),
+            "amplitude": float(self._osc_amp.value()),
+            "period": float(self._osc_period.value()),
+        }
+
+    def _on_osc_toggled(self, on: bool) -> None:
+        if self._loading or not self._cur_ent:
+            return
+        if not on:
+            self._cur_ent.pop("depthOsc", None)
+        else:
+            self._sync_osc_dict()
+        self._mark_wm_dirty()
+        self._refresh_selected_entity_visual()
+
+    def _on_osc_field_changed(self, *_a: Any) -> None:
+        if self._loading or not self._cur_ent or not self._osc_group.isChecked():
+            return
+        self._sync_osc_dict()
+        self._mark_wm_dirty()
+        self._refresh_selected_entity_visual()
+
+    def _sync_glow_dict(self) -> None:
+        assert self._cur_ent is not None
+        self._cur_ent["glow"] = {
+            "enabled": True,
+            "color": self._glow_color.hex().strip(),
+            "daylightHint": float(self._glow_daylight.value()),
+        }
+
+    def _on_glow_toggled(self, on: bool) -> None:
+        if self._loading or not self._cur_ent:
+            return
+        if not on:
+            self._cur_ent.pop("glow", None)
+        else:
+            self._sync_glow_dict()
+        self._mark_wm_dirty()
+        self._refresh_selected_entity_visual()
+
+    def _on_glow_field_changed(self, *_a: Any) -> None:
+        if self._loading or not self._cur_ent or not self._glow_group.isChecked():
+            return
+        self._sync_glow_dict()
+        self._mark_wm_dirty()
+        self._refresh_selected_entity_visual()
 
     def _on_pull_toggled(self, on: bool) -> None:
         if self._loading or not self._cur_ent:
@@ -1259,15 +1730,35 @@ class WaterMinigameEditor(QWidget):
             self._sync_pull_dict()
         self._mark_wm_dirty()
 
+    @staticmethod
+    def _keep_num(new_val, old_val):
+        if (
+            isinstance(old_val, (int, float))
+            and not isinstance(old_val, bool)
+            and float(old_val) == float(new_val)
+        ):
+            return old_val
+        return new_val
+
     def _sync_pull_dict(self) -> None:
         assert self._cur_ent is not None
-        self._cur_ent["pull"] = {
-            "zoneSize": float(self._pull_zone.value()),
-            "sliderSpeed": float(self._pull_speed.value()),
-            "rhythm": self._pull_rhythm.currentText(),
-            "failurePolicy": self._pull_fail.currentText(),
-            "timeLimitSec": int(self._pull_time.value()),
-        }
+        old = self._cur_ent.get("pull")
+        old = old if isinstance(old, dict) else {}
+        p: dict = {k: v for k, v in old.items()}  # 未知键原样保留
+        p["zoneSize"] = self._keep_num(float(self._pull_zone.value()), old.get("zoneSize"))
+        p["sliderSpeed"] = self._keep_num(float(self._pull_speed.value()), old.get("sliderSpeed"))
+        p["rhythm"] = self._pull_rhythm.currentText()
+        p["failurePolicy"] = self._pull_fail.currentText()
+        t = int(self._pull_time.value())
+        if "timeLimitSec" in old:
+            p["timeLimitSec"] = self._keep_num(t, old.get("timeLimitSec"))
+        elif t != 15:
+            p["timeLimitSec"] = t  # 用户显式改动才写
+        else:
+            # 缺省不注入：运行时按 rhythm/failurePolicy 给 14/10/12 秒的动态默认，
+            # 恒写 15 会钉死行为（审查 P2-12）
+            p.pop("timeLimitSec", None)
+        self._cur_ent["pull"] = p
 
     def _on_pull_field_changed(self, *_a: Any) -> None:
         if self._loading or not self._cur_ent or not self._pull_group.isChecked():
@@ -1298,18 +1789,20 @@ class WaterMinigameEditor(QWidget):
         self._cue_stack.setCurrentIndex(1 if idx == 1 else 0)
         if self._loading or not self._cur_ent:
             return
+        # 双缓冲都保留：模式切换只改"模型取哪个缓冲"，绝不清空另一侧——
+        # 旧实现切到 tag 模式即 clear() 明文框（连撤销栈一起清），来回切一次
+        # cue 文案就永久丢失（审查 P1-27）。
         if idx == 1:
-            cur = self._cue_plain.toPlainText().strip()
-            if cur and not _looks_like_string_tag(cur):
-                self._cue_plain.clear()
-            if self._cue_tag_disp.text().strip():
-                self._cur_ent["cue"] = self._cue_tag_disp.text().strip()
+            tag = self._cue_tag_disp.text().strip()
+            if tag:
+                self._cur_ent["cue"] = tag
             else:
                 self._cur_ent.pop("cue", None)
         else:
-            self._cue_tag_disp.clear()
-            self._cur_ent["cue"] = self._cue_plain.toPlainText().strip()
-            if not self._cur_ent["cue"]:
+            txt = self._cue_plain.toPlainText().strip()
+            if txt:
+                self._cur_ent["cue"] = txt
+            else:
                 self._cur_ent.pop("cue", None)
         self._mark_wm_dirty()
 
@@ -1346,15 +1839,18 @@ class WaterMinigameEditor(QWidget):
         self._hint_stack.setCurrentIndex(1 if idx == 1 else 0)
         if self._loading or not self._cur_ent:
             return
+        # 与 cue 同规：双缓冲都保留，切换只改指向
         if idx == 1:
-            if self._hint_tag_disp.text().strip():
-                self._cur_ent["hint"] = self._hint_tag_disp.text().strip()
+            tag = self._hint_tag_disp.text().strip()
+            if tag:
+                self._cur_ent["hint"] = tag
             else:
                 self._cur_ent.pop("hint", None)
         else:
-            self._hint_tag_disp.clear()
-            self._cur_ent["hint"] = self._hint_plain.toPlainText().strip()
-            if not self._cur_ent["hint"]:
+            txt = self._hint_plain.toPlainText().strip()
+            if txt:
+                self._cur_ent["hint"] = txt
+            else:
                 self._cur_ent.pop("hint", None)
         self._mark_wm_dirty()
 
@@ -1388,15 +1884,21 @@ class WaterMinigameEditor(QWidget):
             self._mark_wm_dirty()
 
     def flush_to_model(self) -> None:
+        # 懒回写按身份提交当前 ActionEditor 内容；仅当实体真的变化才标脏。
+        import copy as _copy
+
+        owner = self._ae_owner
+        before = _copy.deepcopy(owner) if isinstance(owner, dict) else None
         self._flush_actions_for_entity_row(self._selected_ent_row)
+        if isinstance(owner, dict) and before != owner:
+            self._mark_wm_dirty()
         bag = getattr(self._model, "water_minigames_instances", {}) or {}
         for iid, doc in bag.items():
             if not isinstance(doc, dict):
                 raise ValueError(f"water_minigames[{iid}]: 根必须为对象")
             ents = doc.get("entities")
             if ents is None:
-                doc["entities"] = []
-                ents = doc["entities"]
+                continue  # 缺键=无实体：只校验不注入 entities:[]，保持原文件形状
             if not isinstance(ents, list):
                 raise ValueError(f"water_minigames[{iid}]: entities 必须为数组")
             seen: set[str] = set()
@@ -1409,9 +1911,18 @@ class WaterMinigameEditor(QWidget):
                 if eid in seen:
                     raise ValueError(f"water_minigames[{iid}]: 重复的实体 id {eid!r}")
                 seen.add(eid)
-        self._model.mark_dirty("water_minigames")
+        # 不再无条件 mark_dirty：真实编辑路径各自已标脏（_mark_wm_dirty）。
+        # 旧的无条件标脏正是"每次 Save All/运行游戏都重写全部水域文件"的根因。
 
     def _ae_assign(self, ent: dict) -> None:
-        ent["onPick"] = self._ae_pick.to_list()
-        ent["onPullSuccess"] = self._ae_ok.to_list()
-        ent["onPullFail"] = self._ae_fail.to_list()
+        # 存在性保留：动作非空才写；为空时仅当键原本就在（保留显式空数组），
+        # 否则不新增——免得「浏览一下从未配过动作的实体」就给它注入三个空数组，破坏往返格式。
+        self._assign_action_list(ent, "onPick", self._ae_pick)
+        self._assign_action_list(ent, "onPullSuccess", self._ae_ok)
+        self._assign_action_list(ent, "onPullFail", self._ae_fail)
+
+    @staticmethod
+    def _assign_action_list(ent: dict, key: str, ae: ActionEditor) -> None:
+        lst = ae.to_list()
+        if lst or key in ent:
+            ent[key] = lst

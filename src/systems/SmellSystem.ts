@@ -59,7 +59,7 @@ export class SmellSystem implements IGameSystem {
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
-    // 构造期订阅一次（每实例一次，避免 init 多次调用重复订阅）；destroy 退订。
+    // 回调在构造期绑定一次；订阅在 init 挂、destroy 摘（律8：destroy→init 后行为与首次一致）。
     this.onZoneEnter = (p) => {
       const zone = (p as { zone?: { id?: string; smell?: ZoneSmellConfig } } | undefined)?.zone;
       if (!zone?.id || !zone.smell?.scent) return;
@@ -72,11 +72,14 @@ export class SmellSystem implements IGameSystem {
       const id = pp?.zoneId ?? pp?.zone?.id;
       if (id && this.activeZoneSmells.delete(id)) this.refreshZoneLayer();
     };
-    this.eventBus.on('zone:enter', this.onZoneEnter);
-    this.eventBus.on('zone:exit', this.onZoneExit);
   }
 
   init(_ctx: GameContext): void {
+    // off 先行保证 init 重复调用不叠订阅（EventBus.off 对未订阅回调是幂等 no-op）
+    this.eventBus.off('zone:enter', this.onZoneEnter);
+    this.eventBus.off('zone:exit', this.onZoneExit);
+    this.eventBus.on('zone:enter', this.onZoneEnter);
+    this.eventBus.on('zone:exit', this.onZoneExit);
     this.action = emptyLayer();
     this.zone = emptyLayer();
     this.activeZoneSmells.clear();

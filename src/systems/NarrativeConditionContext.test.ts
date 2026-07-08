@@ -10,15 +10,17 @@ function baseContext(active = true, multiOwner = false): { eventBus: EventBus; f
   const eventBus = new EventBus();
   const flagStore = new FlagStore(eventBus);
   const ownerGraphIds = multiOwner ? ['npc_ringboy_a', 'npc_ringboy_b'] : ['npc_ringboy_a'];
+  // 与真实 NarrativeStateManager 一致：isStateActive ≡ getActiveState(graphId) === stateId
+  const getActiveState = (graphId: string) => {
+    if (graphId === 'flow') return active ? 'ready' : 'other';
+    if (graphId === 'npc_ringboy_a') return active ? 'after_event' : 'before_event';
+    if (graphId === 'npc_ringboy_b') return active ? 'ring_taken' : 'before_event';
+    if (graphId === 'scene_wrapper') return active ? 'scene_open' : 'scene_closed';
+    return 'other';
+  };
   const narrativeState = {
-    getActiveState: (graphId: string) => {
-      if (graphId === 'flow') return active ? 'ready' : 'other';
-      if (graphId === 'npc_ringboy_a') return active ? 'after_event' : 'before_event';
-      if (graphId === 'npc_ringboy_b') return active ? 'ring_taken' : 'before_event';
-      if (graphId === 'scene_wrapper') return active ? 'scene_open' : 'scene_closed';
-      return 'other';
-    },
-    isStateActive: (graphId: string, stateId: string) => graphId === 'flow' && stateId === 'ready' && active,
+    getActiveState,
+    isStateActive: (graphId: string, stateId: string) => getActiveState(graphId) === stateId,
     getGraph: (graphId: string) => {
       if (graphId === 'npc_ringboy_a' || graphId === 'npc_ringboy_b' || graphId === 'scene_wrapper') return { id: graphId };
       return undefined;
@@ -84,6 +86,37 @@ describe('narrative condition context injection', () => {
     // 未注入 hasReachedState 时 reached 退化为 isStateActive
     delete (ctx.narrativeState as any).hasReachedState;
     expect(evaluateConditionExprList([{ narrative: 'flow', state: 'ready', reached: true } as any], ctx)).toBe(false);
+  });
+
+  it('keeps the trace evaluator aligned with the non-trace evaluator on reached leaves', async () => {
+    const { evaluateConditionExpr, evaluateConditionExprWithTrace } =
+      await import('./graphDialogue/evaluateGraphCondition');
+    const { ctx } = baseContext(false);
+    (ctx.narrativeState as any).hasReachedState = (g: string, s: string) => g === 'flow' && s === 'ready';
+    const reachedExpr = { narrative: 'flow', state: 'ready', reached: true } as any;
+    const activeExpr = { narrative: 'flow', state: 'ready' } as any;
+    // 对话图 switch / preconditions 走的 trace 版必须与非 trace 版同判（R7 曾缺 reached 分支）
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(evaluateConditionExpr(reachedExpr, ctx));
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(true);
+    expect(evaluateConditionExprWithTrace(activeExpr, ctx).result).toBe(evaluateConditionExpr(activeExpr, ctx));
+    expect(evaluateConditionExprWithTrace(activeExpr, ctx).result).toBe(false);
+    // 未注入 hasReachedState 时两版一致退化为 isStateActive
+    delete (ctx.narrativeState as any).hasReachedState;
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(evaluateConditionExpr(reachedExpr, ctx));
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(false);
+  });
+
+  it('fails closed on unknown flag condition operators and warns once per operator', async () => {
+    const { evaluateConditionExprList } = await import('./graphDialogue/conditionEvalBridge');
+    const { flagStore, ctx } = baseContext(true);
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    flagStore.set('x', 1);
+    // 非法 op（如 '===' 笔误）判 false，而非被静默跳过恒真
+    expect(evaluateConditionExprList([{ flag: 'x', op: '===', value: 1 } as any], ctx)).toBe(false);
+    expect(evaluateConditionExprList([{ flag: 'x', op: '==', value: 1 } as any], ctx)).toBe(true);
+    evaluateConditionExprList([{ flag: 'x', op: '===', value: 1 } as any], ctx);
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes('未知运算符')).length).toBe(1);
+    spy.mockRestore();
   });
 
   it('lets graph dialogue preconditions read narrative state', async () => {

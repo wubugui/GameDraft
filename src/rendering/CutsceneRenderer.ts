@@ -1,9 +1,10 @@
-import { Container, Graphics, Text, HTMLText, Sprite, Texture, type Mesh } from 'pixi.js';
+import { Container, Graphics, Text, HTMLText, Sprite, Texture, Rectangle, type Mesh } from 'pixi.js';
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
-import { resolveAssetPath } from '../core/assetPath';
 import { createOverlayBlendMesh } from './overlayBlendShader';
 import type { AssetManager } from '../core/AssetManager';
+import type { CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe } from '../data/types';
+import { CUTSCENE_ANON_SHOT_ID } from '../data/types';
 
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
 export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
@@ -56,18 +57,40 @@ export class CutsceneRenderer {
     /** 与 Assets.load 使用的解析路径一致，仅作记录；不在 hideImg 里 unload，避免与 Pixi 缓存键/共享 Texture 冲突。 */
     imagePath: string;
     isPlaceholder?: boolean;
+    /** 自建 Mesh（blendPercentImg）的 geometry/shader 释放钩子：Pixi 8 Mesh.destroy 只解引用不销毁两者 */
+    disposeGpu?: () => void;
   }> = new Map();
   private movieBarContainer: Container | null = null;
   /** 单边电影黑边高度（像素），供 showSubtitle 槽位布局；hideMovieBar / cleanup 时归零 */
   private movieBarHeightPx: number = 0;
+  /** 单边黑边占屏高比例（0-1），resize 重排时按此重建 */
+  private movieBarHeightPercent: number = 0;
+  /** 活跃字幕及其布局参数：resize 时按新屏幕尺寸原容器重排（容器由 CutsceneManager 持有并 dismiss） */
+  private activeSubtitles = new Map<Container, { content: ShowSubtitleContent; layout: ShowSubtitleLayout }>();
   private pendingRafIds = new Set<number>();
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
   /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
   private cutsceneOpResolvers = new Set<() => void>();
+  /**
+   * 演出代际：abortCutsceneOps / cleanup 时 +1。async 演出函数入口捕获、每个 await 后校验，
+   * 过期立即收束——不再 addChild、不写 images、不新建 op，跳过后整条链在一两个微任务内落地。
+   */
+  private opEpoch = 0;
+  /** 逐 id 的图片请求序号：同 id 并发时后发覆盖先发（晚 resolve 的旧请求丢弃） */
+  private imageRequestSeq = new Map<string, number>();
+  private unsubscribeResize: (() => void) | null = null;
   constructor(renderer: Renderer, camera: Camera, assetManager: AssetManager) {
     this.renderer = renderer;
     this.camera = camera;
     this.assetManager = assetManager;
+    this.unsubscribeResize = renderer.subscribeAfterResize(() => this.relayoutForScreenSize());
+  }
+
+  /** 释放 resize 订阅并清空演出内容（Renderer.destroy 也会清订阅集，此处供显式拆除） */
+  destroy(): void {
+    this.unsubscribeResize?.();
+    this.unsubscribeResize = null;
+    this.cleanup();
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -238,14 +261,15 @@ export class CutsceneRenderer {
   }
 
   async showTitle(text: string, duration: number): Promise<void> {
+    const ep = this.opEpoch;
     const sw = this.screenWidth;
     const sh = this.screenHeight;
 
-    this.titleContainer = new Container();
+    const tc = new Container();
     const bg = new Graphics();
     bg.rect(0, 0, sw, sh);
     bg.fill({ color: 0x000000, alpha: 0.8 });
-    this.titleContainer.addChild(bg);
+    tc.addChild(bg);
 
     const t = new Text({
       text: this.r(text),
@@ -253,19 +277,27 @@ export class CutsceneRenderer {
     });
     t.x = (sw - t.width) / 2;
     t.y = (sh - t.height) / 2;
-    this.titleContainer.addChild(t);
+    tc.addChild(t);
 
-    this.titleContainer.alpha = 0;
-    this.renderer.uiLayer.addChild(this.titleContainer);
+    tc.alpha = 0;
+    this.titleContainer = tc;
+    this.renderer.uiLayer.addChild(tc);
 
     const fadeTime = Math.min(300, duration / 4);
-    await this.animateAlpha(this.titleContainer, 0, 1, fadeTime);
+    await this.animateAlpha(tc, 0, 1, fadeTime);
+    if (ep !== this.opEpoch) { this.discardTitle(tc); return; }
     await this.wait(duration - fadeTime * 2);
-    await this.animateAlpha(this.titleContainer, 1, 0, fadeTime);
+    if (ep !== this.opEpoch) { this.discardTitle(tc); return; }
+    await this.animateAlpha(tc, 1, 0, fadeTime);
+    this.discardTitle(tc);
+  }
 
-    if (this.titleContainer.parent) this.titleContainer.parent.removeChild(this.titleContainer);
-    this.titleContainer.destroy({ children: true });
+  /** 摘除并销毁 title；若 cleanup 已接管（字段不再指向它，容器可能已 destroy）则不重复触碰 */
+  private discardTitle(tc: Container): void {
+    if (this.titleContainer !== tc) return;
     this.titleContainer = null;
+    if (tc.parent) tc.parent.removeChild(tc);
+    tc.destroy({ children: true });
   }
 
   showDialogueBox(text: string, speaker?: string): Container {
@@ -338,10 +370,12 @@ export class CutsceneRenderer {
 
     await this.wait(duration);
 
+    // cleanup 已把它从 activeEmotes 摘除并 destroy（如过场 skip）→ 不可再触碰
+    const idx = this.activeEmotes.indexOf(bubble);
+    if (idx < 0) return;
+    this.activeEmotes.splice(idx, 1);
     if (bubble.parent) bubble.parent.removeChild(bubble);
     bubble.destroy({ children: true });
-    const idx = this.activeEmotes.indexOf(bubble);
-    if (idx >= 0) this.activeEmotes.splice(idx, 1);
   }
 
   private trackRaf(fn: () => void): void {
@@ -364,8 +398,13 @@ export class CutsceneRenderer {
     return finish;
   }
 
-  /** 取消过场中的 RAF/定时器并让进行中的 Promise 立即结束（供 Esc 跳过等） */
+  /**
+   * 取消过场中的 RAF/定时器并让进行中的 Promise 立即结束（供 Esc 跳过等）。
+   * 先递进代际：被打断的 async 演出函数在 await 恢复后据此判定过期、立即 return，
+   * 不再触碰可能已被 cleanup 拆掉的容器，也不再新建不受管控的 op。
+   */
   abortCutsceneOps(): void {
+    this.opEpoch++;
     this.pendingRafIds.forEach(id => cancelAnimationFrame(id));
     this.pendingRafIds.clear();
     this.pendingTimerIds.forEach(id => clearTimeout(id));
@@ -373,6 +412,18 @@ export class CutsceneRenderer {
     const pending = [...this.cutsceneOpResolvers];
     this.cutsceneOpResolvers.clear();
     for (const f of pending) f();
+  }
+
+  /** 逐 id 递进图片请求序号并返回本次序号 */
+  private nextImageRequestSeq(id: string): number {
+    const seq = (this.imageRequestSeq.get(id) ?? 0) + 1;
+    this.imageRequestSeq.set(id, seq);
+    return seq;
+  }
+
+  /** 图片类演出在 await 后的过期判定：代际被 abort 递进，或同 id 已有更晚请求 */
+  private imageOpStale(epoch: number, id: string, seq: number): boolean {
+    return epoch !== this.opEpoch || this.imageRequestSeq.get(id) !== seq;
   }
 
   async cameraMove(x: number, y: number, duration: number): Promise<void> {
@@ -429,14 +480,67 @@ export class CutsceneRenderer {
     });
   }
 
-  /** 显示图片：居中无拉伸填满视口（cover 模式），id 作为句柄供 hideImg 使用 */
-  async showImg(imagePath: string, id: string): Promise<void> {
-    const resolvedPath = resolveAssetPath(imagePath);
+  /**
+   * Ken Burns 缓推缓移：在 cover 基准上对全屏插画做匀速缩放+平移漂移。
+   * fire-and-forget——不产生可 await 的 op；图片被 hideImg / 同 id 换图接管、
+   * 或 abortCutsceneOps 取消 RAF 后自然停止。平移每帧按缩放余量夹紧，保证不露底。
+   */
+  private startKenBurns(
+    sprite: Sprite,
+    id: string,
+    kb: CutsceneKenBurns,
+    coverScale: number,
+    texW: number,
+    texH: number,
+  ): void {
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const fromScale = Math.max(1, Number(kb.fromScale ?? 1) || 1);
+    const toScale = Math.max(1, Number(kb.toScale ?? fromScale) || fromScale);
+    const fromX = Number(kb.fromX ?? 0) || 0;
+    const fromY = Number(kb.fromY ?? 0) || 0;
+    const toX = Number(kb.toX ?? 0) || 0;
+    const toY = Number(kb.toY ?? 0) || 0;
+    const durationMs = Math.max(1, Number(kb.durationMs ?? 12000) || 12000);
+    const startTime = performance.now();
+
+    const apply = (t: number) => {
+      const s = coverScale * (fromScale + (toScale - fromScale) * t);
+      const maxOffX = Math.max(0, (texW * s - sw) / 2);
+      const maxOffY = Math.max(0, (texH * s - sh) / 2);
+      const ox = ((fromX + (toX - fromX) * t) / 100) * sw;
+      const oy = ((fromY + (toY - fromY) * t) / 100) * sh;
+      sprite.scale.set(s);
+      sprite.x = sw / 2 + Math.max(-maxOffX, Math.min(maxOffX, ox));
+      sprite.y = sh / 2 + Math.max(-maxOffY, Math.min(maxOffY, oy));
+    };
+    apply(0);
+    const tick = () => {
+      if (this.images.get(id)?.sprite !== sprite) return;
+      const t = Math.min((performance.now() - startTime) / durationMs, 1);
+      apply(t);
+      if (t < 1) this.trackRaf(tick);
+    };
+    this.trackRaf(tick);
+  }
+
+  /**
+   * 显示图片：居中无拉伸填满视口（cover 模式），id 作为句柄供 hideImg 使用；可选 kenBurns 缓推缓移。
+   * `zIndex`：叠层顺序（越大越靠前），用于多层视差合成（背景低、前景高）；缺省 0。
+   * 电影黑边恒为 10000，故正常传 0..999 即可，永远在黑边之下。传了 zIndex 会自动开启叠层排序。
+   */
+  async showImg(imagePath: string, id: string, kenBurns?: CutsceneKenBurns, zIndex?: number): Promise<void> {
+    const ep = this.opEpoch;
+    const seq = this.nextImageRequestSeq(id);
+    const z = typeof zIndex === 'number' && Number.isFinite(zIndex) ? zIndex : undefined;
+    // 路径解析统一交给 AssetManager.loadTexture 内部（幂等），此处不再预解析（原冗余调用已删）
+    const resolvedPath = imagePath;
     let texture: Texture;
     try {
       texture = await this.assetManager.loadTexture(resolvedPath);
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
+      if (this.imageOpStale(ep, id, seq)) return;
       this.hideImg(id);
       const sw = this.screenWidth;
       const sh = this.screenHeight;
@@ -444,10 +548,12 @@ export class CutsceneRenderer {
       placeholder.rect(0, 0, sw, sh);
       placeholder.fill({ color: 0x333344, alpha: 0.9 });
       placeholder.label = id;
+      if (z !== undefined) { placeholder.zIndex = z; this.renderer.cutsceneOverlay.sortableChildren = true; }
       this.renderer.cutsceneOverlay.addChild(placeholder);
       this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
       return;
     }
+    if (this.imageOpStale(ep, id, seq)) return;
     if (!texture || texture.width <= 0 || texture.height <= 0) {
       console.warn(`[CutsceneRenderer] 图片尺寸异常: ${resolvedPath} (${texture?.width}x${texture?.height})`);
     }
@@ -462,11 +568,16 @@ export class CutsceneRenderer {
     sprite.x = sw / 2;
     sprite.y = sh / 2;
     sprite.label = id;
+    // 叠层顺序：传了 zIndex 就参与排序（多层视差合成需确定 z 序，不再只靠 addChild 先后）。
+    if (z !== undefined) { sprite.zIndex = z; this.renderer.cutsceneOverlay.sortableChildren = true; }
     // 先把新贴图加载、布置好，最后一刻才移除旧图并加入新图：
     // 避免「先 hideImg → 再 await 加载」期间叠加层出现空帧，导致切图闪烁/漏出底层（旧图或场景）。
     this.hideImg(id);
     this.renderer.cutsceneOverlay.addChild(sprite);
     this.images.set(id, { sprite, imagePath: resolvedPath });
+    if (kenBurns && typeof kenBurns === 'object') {
+      this.startKenBurns(sprite, id, kenBurns, scale, iw, ih);
+    }
   }
 
   /**
@@ -480,8 +591,11 @@ export class CutsceneRenderer {
     yPercent: number,
     widthPercent: number,
   ): Promise<void> {
+    const ep = this.opEpoch;
+    const seq = this.nextImageRequestSeq(id);
     this.hideImg(id);
-    const resolvedPath = resolveAssetPath(imagePath);
+    // 同 showImg：解析统一在 AssetManager 内部，冗余 resolveAssetPath 已删
+    const resolvedPath = imagePath;
     const sw = this.screenWidth;
     const sh = this.screenHeight;
     const xp = Math.max(0, Math.min(100, xPercent));
@@ -496,6 +610,7 @@ export class CutsceneRenderer {
       texture = await this.assetManager.loadTexture(resolvedPath);
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
+      if (this.imageOpStale(ep, id, seq)) return;
       const dispH = Math.max(8, dispW * 0.75);
       const placeholder = new Graphics();
       placeholder.rect(-dispW / 2, -dispH / 2, dispW, dispH);
@@ -507,6 +622,7 @@ export class CutsceneRenderer {
       this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
       return;
     }
+    if (this.imageOpStale(ep, id, seq)) return;
     if (!texture || texture.width <= 0 || texture.height <= 0) {
       console.warn(`[CutsceneRenderer] 图片尺寸异常: ${resolvedPath} (${texture?.width}x${texture?.height})`);
     }
@@ -525,6 +641,239 @@ export class CutsceneRenderer {
   }
 
   /**
+   * 动画特效叠层：把 fx_build 产出的网格图集（anim.json + atlas.png）当一层【循环动画】叠在过场画面上，
+   * 用于飘雾 / 余烬 / 尘埃 / 辉光等丰富单帧。id 作为句柄（与 hideImg / showImg 共用同一 images 表）。
+   * fire-and-forget：帧推进走受管 RAF，不阻塞后续步骤；hideImg(id) / 同 id 换层 / abortCutsceneOps / cleanup 即停并释放帧子纹理。
+   * 布局：给 `widthPercent` → 按屏幕百分比定位（中心 x/y%，宽度 width%，高度按帧比）；否则 cover 铺满全屏。
+   * `zIndex` 决定叠层顺序（FX 通常压在插画之上、黑边之下，传 100 上下即可）；`alpha` 控制整体透明度。
+   */
+  async showAnimLayer(
+    animFile: string,
+    id: string,
+    opts: {
+      state?: string;
+      xPercent?: number;
+      yPercent?: number;
+      widthPercent?: number;
+      alpha?: number;
+      zIndex?: number;
+    } = {},
+  ): Promise<void> {
+    const ep = this.opEpoch;
+    const seq = this.nextImageRequestSeq(id);
+    let animDef: AnimationSetDef;
+    let atlas: Texture;
+    try {
+      animDef = await this.assetManager.loadJson<AnimationSetDef>(animFile);
+      if (this.imageOpStale(ep, id, seq)) return;
+      const atlasPath = animFile.replace(/[^/]+$/, animDef.spritesheet);
+      atlas = await this.assetManager.loadTexture(atlasPath);
+    } catch (err) {
+      console.error(`[CutsceneRenderer] animLayer 加载失败: ${animFile}`, err);
+      return;
+    }
+    if (this.imageOpStale(ep, id, seq)) return;
+
+    const stateName = opts.state && animDef.states?.[opts.state]
+      ? opts.state
+      : (animDef.states?.idle ? 'idle' : Object.keys(animDef.states ?? {})[0]);
+    const stateDef = stateName ? animDef.states?.[stateName] : undefined;
+    if (!stateDef || !Array.isArray(stateDef.frames) || stateDef.frames.length === 0) {
+      console.warn(`[CutsceneRenderer] animLayer 无有效状态: ${animFile}`);
+      return;
+    }
+
+    // 切帧（与 SpriteEntity.loadFromDef 同规则：col=idx%cols, row=floor(idx/cols)）
+    const cols = Math.max(1, animDef.cols);
+    const rows = Math.max(1, animDef.rows);
+    const strideW = animDef.cellWidth && animDef.cellWidth > 0 ? animDef.cellWidth : atlas.width / cols;
+    const strideH = animDef.cellHeight && animDef.cellHeight > 0 ? animDef.cellHeight : atlas.height / rows;
+    const frameTextures: Texture[] = [];
+    for (const slot of stateDef.frames) {
+      const col = slot % cols;
+      const row = Math.floor(slot / cols);
+      const box = animDef.atlasFrames?.[slot];
+      const rw = box && box.width > 0 ? box.width : strideW;
+      const rh = box && box.height > 0 ? box.height : strideH;
+      frameTextures.push(new Texture({ source: atlas.source, frame: new Rectangle(col * strideW, row * strideH, rw, rh) }));
+    }
+
+    const sprite = new Sprite(frameTextures[0]);
+    sprite.anchor.set(0.5);
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const fw = Math.max(1, frameTextures[0].width);
+    const fh = Math.max(1, frameTextures[0].height);
+    if (typeof opts.widthPercent === 'number' && opts.widthPercent > 0) {
+      const dispW = sw * (Math.min(400, opts.widthPercent) / 100);
+      sprite.width = dispW;
+      sprite.height = dispW * (fh / fw);
+      sprite.x = sw * ((opts.xPercent ?? 50) / 100);
+      sprite.y = sh * ((opts.yPercent ?? 50) / 100);
+    } else {
+      const scale = Math.max(sw / fw, sh / fh); // cover 铺满
+      sprite.scale.set(scale);
+      sprite.x = sw / 2;
+      sprite.y = sh / 2;
+    }
+    sprite.alpha = typeof opts.alpha === 'number' && Number.isFinite(opts.alpha)
+      ? Math.max(0, Math.min(1, opts.alpha))
+      : 1;
+    sprite.label = id;
+    const z = typeof opts.zIndex === 'number' && Number.isFinite(opts.zIndex) ? opts.zIndex : undefined;
+    if (z !== undefined) { sprite.zIndex = z; this.renderer.cutsceneOverlay.sortableChildren = true; }
+
+    this.hideImg(id);
+    this.renderer.cutsceneOverlay.addChild(sprite);
+
+    let stopped = false;
+    const disposeGpu = () => {
+      stopped = true;
+      // 帧子纹理与 atlas 共享 Assets 管理的 TextureSource，只 destroy(false) 解引用、不拆整张图集
+      for (const t of frameTextures) t.destroy(false);
+    };
+    this.images.set(id, { sprite, imagePath: animFile, disposeGpu });
+
+    // 帧驱动（受管 RAF；abort 取消后自然停）
+    const fpsRaw = Number(stateDef.frameRate);
+    const fps = Number.isFinite(fpsRaw) && fpsRaw > 0 ? fpsRaw : 8;
+    const frameDurationMs = 1000 / fps;
+    const loop = stateDef.loop !== false;
+    let idx = 0;
+    let last = performance.now();
+    let acc = 0;
+    const tick = () => {
+      if (stopped || this.images.get(id)?.sprite !== sprite) return;
+      if (frameTextures.length > 1) {
+        const now = performance.now();
+        acc += now - last;
+        last = now;
+        let ended = false;
+        while (acc >= frameDurationMs) {
+          acc -= frameDurationMs;
+          idx++;
+          if (idx >= frameTextures.length) {
+            if (loop) { idx = 0; }
+            else { idx = frameTextures.length - 1; ended = true; break; }
+          }
+        }
+        sprite.texture = frameTextures[idx];
+        if (ended) return; // 非循环播完停在末帧，不再排 RAF
+      }
+      this.trackRaf(tick);
+    };
+    this.trackRaf(tick);
+  }
+
+  /** parallax 关键帧插值：按 nowMs 在关键帧序列内插出 {x,y,scale,rotation,alpha}。 */
+  private sampleParallaxKeyframe(
+    kf: ParallaxKeyframe[],
+    nowMs: number,
+    loop: boolean,
+    easing: NonNullable<ParallaxLayerDef['easing']>,
+  ): Required<Omit<ParallaxKeyframe, 'atMs'>> {
+    const norm = (k: ParallaxKeyframe) => ({
+      x: k.x, y: k.y,
+      scale: typeof k.scale === 'number' ? k.scale : 1,
+      rotation: typeof k.rotation === 'number' ? k.rotation : 0,
+      alpha: typeof k.alpha === 'number' ? k.alpha : 1,
+    });
+    if (kf.length === 1) return norm(kf[0]);
+    const last = kf[kf.length - 1];
+    const total = last.atMs;
+    let t = nowMs;
+    if (loop && total > 0) t = ((t % total) + total) % total;
+    if (t <= kf[0].atMs) return norm(kf[0]);
+    if (t >= last.atMs) return norm(last);
+    let i = 0;
+    while (i < kf.length - 1 && kf[i + 1].atMs <= t) i++;
+    const a = kf[i], b = kf[i + 1];
+    const span = Math.max(1, b.atMs - a.atMs);
+    let u = (t - a.atMs) / span;
+    u = easing === 'easeIn' ? u * u
+      : easing === 'easeOut' ? 1 - (1 - u) * (1 - u)
+      : easing === 'easeInOut' ? (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2)
+      : u;
+    const A = norm(a), B = norm(b);
+    return {
+      x: A.x + (B.x - A.x) * u,
+      y: A.y + (B.y - A.y) * u,
+      scale: A.scale + (B.scale - A.scale) * u,
+      rotation: A.rotation + (B.rotation - A.rotation) * u,
+      alpha: A.alpha + (B.alpha - A.alpha) * u,
+    };
+  }
+
+  /**
+   * 播放一个 parallax 场景：多层图片各自独立按多关键帧运动。
+   * `handleId` 作为整场句柄（存入 images 表；hideImg(handleId) / abort / cleanup 即停并释放）。
+   * 坐标：授权画布 (widthRef×heightRef) px，按 cover 映射到屏幕、居中。fire-and-forget。
+   */
+  async showParallaxScene(def: ParallaxSceneDef, handleId: string): Promise<void> {
+    const ep = this.opEpoch;
+    const seq = this.nextImageRequestSeq(handleId);
+    const widthRef = Math.max(1, Number(def.widthRef) || 1);
+    const heightRef = Math.max(1, Number(def.heightRef) || 1);
+    const rawLayers = Array.isArray(def.layers) ? def.layers : [];
+    const loaded: { def: ParallaxLayerDef; sprite: Sprite; kf: ParallaxKeyframe[] }[] = [];
+    for (const layer of rawLayers) {
+      if (!layer || !layer.image || !Array.isArray(layer.keyframes) || layer.keyframes.length === 0) continue;
+      let texture: Texture;
+      try {
+        texture = await this.assetManager.loadTexture(layer.image);
+      } catch (err) {
+        console.error(`[CutsceneRenderer] parallax 图层加载失败: ${layer.image}`, err);
+        continue;
+      }
+      if (this.imageOpStale(ep, handleId, seq)) { for (const l of loaded) l.sprite.destroy(); return; }
+      const sprite = new Sprite(texture);
+      sprite.anchor.set(0.5);
+      sprite.zIndex = typeof layer.zIndex === 'number' ? layer.zIndex : 0;
+      const kf = [...layer.keyframes].sort((a, b) => a.atMs - b.atMs);
+      loaded.push({ def: layer, sprite, kf });
+    }
+    if (this.imageOpStale(ep, handleId, seq)) { for (const l of loaded) l.sprite.destroy(); return; }
+
+    // 新视差场景挂载即顶掉匿名镜头位（未写 handle 的 parallaxScene / 未写 id 的 showImg 托管于此，
+    // 「不写句柄=自动销毁、写了=手动管理」契约）；同时递进其请求序号，令仍在加载中的匿名演出过期。
+    if (handleId !== CUTSCENE_ANON_SHOT_ID) {
+      this.nextImageRequestSeq(CUTSCENE_ANON_SHOT_ID);
+      this.hideImg(CUTSCENE_ANON_SHOT_ID);
+    }
+    this.hideImg(handleId);
+    const wrap = new Container();
+    wrap.label = handleId;
+    wrap.sortableChildren = true;
+    for (const l of loaded) wrap.addChild(l.sprite);
+    this.renderer.cutsceneOverlay.sortableChildren = true;
+    this.renderer.cutsceneOverlay.addChild(wrap);
+    this.images.set(handleId, { sprite: wrap, imagePath: `parallax:${def.id}` });
+
+    const applyAll = (nowMs: number) => {
+      const sw = this.screenWidth, sh = this.screenHeight;
+      const k = Math.max(sw / widthRef, sh / heightRef);
+      const ox = (sw - widthRef * k) / 2;
+      const oy = (sh - heightRef * k) / 2;
+      for (const l of loaded) {
+        const s = this.sampleParallaxKeyframe(l.kf, nowMs, l.def.loop === true, l.def.easing ?? 'linear');
+        l.sprite.x = ox + s.x * k;
+        l.sprite.y = oy + s.y * k;
+        l.sprite.scale.set(s.scale * k);
+        l.sprite.rotation = (s.rotation * Math.PI) / 180;
+        l.sprite.alpha = Math.max(0, Math.min(1, s.alpha));
+      }
+    };
+    const start = performance.now();
+    applyAll(0);
+    const tick = () => {
+      if (this.images.get(handleId)?.sprite !== wrap) return;
+      applyAll(performance.now() - start);
+      this.trackRaf(tick);
+    };
+    this.trackRaf(tick);
+  }
+
+  /**
    * 从 overlay 移除显示对象。不在此调用 `Assets.unload`：
    * 缓存键与 `resolveAssetPath` 字符串易不一致；叠化/共享 Texture 时 unload 会破坏仍被引用的 `TextureSource`，
    * 导致 WebGL `bindSource` 读到 null 的 `alphaMode` / `addressModeU`。贴图留在全局 Assets 缓存即可。
@@ -534,6 +883,8 @@ export class CutsceneRenderer {
     if (!entry) return;
     if (entry.sprite.parent) entry.sprite.parent.removeChild(entry.sprite);
     entry.sprite.destroy({ children: true, texture: false, textureSource: false });
+    // 自建 Mesh 的 geometry/shader 不随 destroy 释放（Pixi 8 语义），须显式补销
+    entry.disposeGpu?.();
     this.images.delete(id);
   }
 
@@ -552,9 +903,12 @@ export class CutsceneRenderer {
     durationMs: number,
     delayMs: number,
   ): Promise<void> {
+    const ep = this.opEpoch;
+    const seq = this.nextImageRequestSeq(id);
     this.hideImg(id);
-    const resolvedFrom = resolveAssetPath(fromImagePath);
-    const resolvedTo = resolveAssetPath(toImagePath);
+    // 同 showImg：解析统一在 AssetManager 内部，冗余 resolveAssetPath 已删
+    const resolvedFrom = fromImagePath;
+    const resolvedTo = toImagePath;
     const sw = this.screenWidth;
     const sh = this.screenHeight;
     const xp = Math.max(0, Math.min(100, xPercent));
@@ -578,6 +932,7 @@ export class CutsceneRenderer {
         return undefined;
       }),
     ]);
+    if (this.imageOpStale(ep, id, seq)) return;
     if (!texFrom && !texTo) return;
     if (!texFrom) texFrom = texTo;
     if (!texTo) texTo = texFrom;
@@ -586,7 +941,7 @@ export class CutsceneRenderer {
     const ihT = Math.max(1, texTo!.height);
     const dispH = dispW * (ihT / iwT);
 
-    const { mesh, setT } = createOverlayBlendMesh(texFrom!, texTo!, cx, cy, dispW, dispH);
+    const { mesh, setT, disposeGpu } = createOverlayBlendMesh(texFrom!, texTo!, cx, cy, dispW, dispH);
     mesh.label = id;
     this.renderer.cutsceneOverlay.addChild(mesh);
 
@@ -601,14 +956,17 @@ export class CutsceneRenderer {
       if (mesh.parent) mesh.parent.removeChild(mesh);
       // 勿对 mesh 使用 destroy(true)：布尔 true 会连带销毁贴图，与后续 Sprite(texTo) 冲突。
       mesh.destroy({ children: true, texture: false, textureSource: false });
+      disposeGpu();
 
       this.renderer.cutsceneOverlay.addChild(sprite);
       this.images.set(id, { sprite, imagePath: resolvedTo });
     };
 
-    this.images.set(id, { sprite: mesh, imagePath: resolvedTo });
+    // 中途被 hideImg / cleanup / 同 id 新请求接管时，由 disposeGpu 钩子释放自建 geometry/shader
+    this.images.set(id, { sprite: mesh, imagePath: resolvedTo, disposeGpu });
 
     await this.wait(delay);
+    if (this.imageOpStale(ep, id, seq)) return;
     if (dur <= 0) {
       setT(1);
       finalizeStill();
@@ -619,6 +977,8 @@ export class CutsceneRenderer {
       const finish = this.createOpFinisher(() => resolve());
       const start = performance.now();
       const tick = (): void => {
+        // 中途过期（skip / 同 id 后发请求已销毁 mesh）：立即收束，不再驱动 uniform
+        if (this.imageOpStale(ep, id, seq)) { finish(); return; }
         const u = Math.min((performance.now() - start) / dur, 1);
         setT(u);
         if (u < 1) this.trackRaf(tick);
@@ -626,6 +986,7 @@ export class CutsceneRenderer {
       };
       this.trackRaf(tick);
     });
+    if (this.imageOpStale(ep, id, seq)) return;
 
     finalizeStill();
   }
@@ -637,6 +998,7 @@ export class CutsceneRenderer {
     const sh = this.screenHeight;
     const barHeight = Math.round(sh * Math.max(0, Math.min(1, heightPercent)));
     this.movieBarHeightPx = barHeight;
+    this.movieBarHeightPercent = Math.max(0, Math.min(1, heightPercent));
     this.movieBarContainer = new Container();
     // 电影黑边须始终盖在过场图片之上（信箱构图）。showImg 的贴图按「cover」铺满全屏且
     // 后加入覆盖层，会盖住先加入的黑边；用高 zIndex + sortableChildren 保证黑边恒在最上层，
@@ -656,6 +1018,7 @@ export class CutsceneRenderer {
 
   hideMovieBar(): void {
     this.movieBarHeightPx = 0;
+    this.movieBarHeightPercent = 0;
     if (!this.movieBarContainer) return;
     if (this.movieBarContainer.parent) this.movieBarContainer.parent.removeChild(this.movieBarContainer);
     this.movieBarContainer.destroy({ children: true });
@@ -666,9 +1029,17 @@ export class CutsceneRenderer {
    * 显示字幕：已解析的整串，或说话人/正文对象（同行；布局与纯 string 一致，仅说话人段变色）。
    */
   showSubtitle(content: ShowSubtitleContent, layout: ShowSubtitleLayout = 'bottom'): Container {
+    const container = new Container();
+    this.layoutSubtitleInto(container, content, layout);
+    this.renderer.uiLayer.addChild(container);
+    this.activeSubtitles.set(container, { content, layout });
+    return container;
+  }
+
+  /** 按当前屏幕尺寸把字幕文本构建进 container（resize 重排时重建：换行宽度随屏宽变化，须重排版而非平移） */
+  private layoutSubtitleInto(container: Container, content: ShowSubtitleContent, layout: ShowSubtitleLayout): void {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
-    const container = new Container();
     const margin = 40;
 
     if (isShowSubtitleMovieSlot(layout)) {
@@ -697,8 +1068,7 @@ export class CutsceneRenderer {
         this.placeSubtitleTextCenterAt(t, sw / 2, y);
       }
       container.addChild(t);
-      this.renderer.uiLayer.addChild(container);
-      return container;
+      return;
     }
 
     const position = layout;
@@ -717,11 +1087,10 @@ export class CutsceneRenderer {
     }
     this.placeSubtitleTextCenterAt(t, sw / 2, y);
     container.addChild(t);
-    this.renderer.uiLayer.addChild(container);
-    return container;
   }
 
   dismissSubtitle(container: Container): void {
+    this.activeSubtitles.delete(container);
     if (container.parent) container.parent.removeChild(container);
     container.destroy({ children: true });
   }
@@ -738,6 +1107,32 @@ export class CutsceneRenderer {
       };
       this.trackRaf(tick);
     });
+  }
+
+  /**
+   * 画布 resize 后重排屏幕锚定的演出几何（fade/worldFade/movieBar/字幕）。
+   * fade 覆盖层保持 alpha 只重画矩形；黑边按记录的高度比例重建；字幕原容器按新尺寸重排版
+   * （容器身份不变，CutsceneManager 持有的引用与 dismiss 语义不受影响）。
+   */
+  private relayoutForScreenSize(): void {
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const redrawFullscreen = (g: Graphics): void => {
+      g.clear();
+      g.rect(0, 0, sw + 200, sh + 200);
+      g.fill(0x000000);
+    };
+    if (this.fadeOverlay) redrawFullscreen(this.fadeOverlay);
+    if (this.worldFadeOverlay) redrawFullscreen(this.worldFadeOverlay);
+
+    // 黑边先于字幕重建：movie 槽位字幕的 y 依赖新的 movieBarHeightPx
+    if (this.movieBarContainer && this.movieBarHeightPercent > 0) {
+      this.showMovieBar(this.movieBarHeightPercent);
+    }
+    for (const [container, { content, layout }] of this.activeSubtitles) {
+      for (const child of container.removeChildren()) child.destroy({ children: true });
+      this.layoutSubtitleInto(container, content, layout);
+    }
   }
 
   cleanup(): void {
@@ -761,11 +1156,17 @@ export class CutsceneRenderer {
     for (const id of Array.from(this.images.keys())) {
       this.hideImg(id);
     }
+    this.imageRequestSeq.clear();
     this.hideMovieBar();
+    // 字幕容器本身由 CutsceneManager 在其 finally 中 dismissSubtitle 销毁，此处仅停止 resize 重排跟踪
+    this.activeSubtitles.clear();
     for (const emote of this.activeEmotes) {
       if (emote.parent) emote.parent.removeChild(emote);
       emote.destroy({ children: true });
     }
     this.activeEmotes.length = 0;
+    // showImg/showAnimLayer/showMovieBar 用到 zIndex 时会把共享 cutsceneOverlay 的 sortableChildren
+    // 置 true；overlay 已清空，复位为 false，不把本过场的排序开关残留给后续过场。
+    this.renderer.cutsceneOverlay.sortableChildren = false;
   }
 }

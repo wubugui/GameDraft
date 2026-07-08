@@ -49,6 +49,8 @@ export class FlagStore {
   private eventBus: EventBus;
   private registryRuntime: RegistryRuntime | null = null;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
+  /** 已告警过的非法条件运算符（去重，防每帧刷屏） */
+  private warnedInvalidOps: Set<string> = new Set();
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
@@ -187,6 +189,32 @@ export class FlagStore {
     this.set(key, base + add);
   }
 
+  /**
+   * 在登记表中 valueType 为 float 的 flag 上做数值累加；非数值登记类型（或未登记 / 未配置登记表）
+   * 时拒绝写入（console.warn），与 {@link appendStringFlag} 的校验口径一致。
+   * 当前值非有限数字（含未设置）按 0 处理。供 ActionExecutor.addFlagValue 接线使用。
+   */
+  addNumericFlag(key: string, delta: number): void {
+    const vt = this.getRegistryValueType(key);
+    if (vt !== 'float') {
+      if (this.registryRuntime) {
+        console.warn(
+          `[addFlagValue] key ${JSON.stringify(key)} 在登记表中不是数值类型（${vt ?? '未登记'}），已跳过`,
+        );
+      } else {
+        console.warn('[addFlagValue] 未配置 flag 登记表，无法校验数值类型，已跳过');
+      }
+      return;
+    }
+    if (typeof delta !== 'number' || !Number.isFinite(delta)) {
+      console.warn(`[addFlagValue] delta 须为有限数字: ${String(delta)}`);
+      return;
+    }
+    const cur = this.get(key);
+    const base = typeof cur === 'number' && Number.isFinite(cur) ? cur : 0;
+    this.set(key, base + delta);
+  }
+
   set(key: string, value: FlagValue): void {
     const prev = this.flags.get(key);
     this.flags.set(key, value);
@@ -239,6 +267,15 @@ export class FlagStore {
         case '<=':
           if (!this.compareOrder(actual, expected, '<=')) return false;
           break;
+        default: {
+          // fail-closed：未知运算符（如 '===' 笔误）判整组不满足，而非静默跳过恒真。
+          const opKey = String(op);
+          if (!this.warnedInvalidOps.has(opKey)) {
+            this.warnedInvalidOps.add(opKey);
+            console.warn(`[FlagStore] 条件包含未知运算符 ${JSON.stringify(opKey)}（flag=${cond.flag}），该条件按不满足处理`);
+          }
+          return false;
+        }
       }
     }
     return true;
@@ -342,6 +379,10 @@ export class FlagStore {
   }
 
   destroy(): void {
+    // eventBus 为构造注入依赖，生命周期由装配层（Game）管理，此处只清本实例持有的状态/缓存。
     this.flags.clear();
+    this.warnedInvalidOps.clear();
+    this.registryRuntime = null;
+    this.conditionCtxFactory = null;
   }
 }

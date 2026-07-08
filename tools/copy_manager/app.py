@@ -18,6 +18,9 @@ def create_app() -> tuple[QApplication, Path]:
     # Apply dark theme (reuses editor theme module)
     _apply_dark_theme(app)
 
+    from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_block
+    install_global_combo_wheel_block(app)
+
     # Resolve project root
     if len(sys.argv) > 1:
         project_root = Path(sys.argv[1]).resolve()

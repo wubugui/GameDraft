@@ -56,9 +56,16 @@ class ProjectModel(QObject):
         self.rules_data: dict = {}
         self.shops: list[dict] = []
         self.map_nodes: list[dict] = []
+        self.map_background_image: str = ""
+        self._map_config_is_object: bool = False
+        self._map_config_had_background_image_key: bool = False
         self.cutscenes: list[dict] = []
+        # parallax_scenes.json：由独立的 parallax Web 编辑器维护，主编辑器只读加载，
+        # 供 cutscene present:parallaxScene 步的场景 id 选择器与校验用（不写回，避免与工具争抢）。
+        self.parallax_scenes: list[dict] = []
         self.audio_config: dict = {}
         self.strings: dict = {}
+        self.character_registry: dict[str, dict] = {}
         self.archive_characters: list[dict] = []
         self.archive_lore: dict = {}
         self.archive_books: list[dict] = []
@@ -71,8 +78,15 @@ class ProjectModel(QObject):
         self.scenarios_catalog: dict = {}
         self.narrative_graphs: dict = {}
         self.document_reveals: list = []
+        self.smell_profiles: dict = {}
         self.pressure_holds: list[dict] = []
         self.signal_cues: list[dict] = []
+        # planes.json：位面注册表（PlaneDef[]，TS 权威类型 src/systems/plane/types.ts）。
+        # 文件可能尚未创建（由运行时/内容侧初始化），缺失时容错为空数组。
+        self.planes: list[dict] = []
+        # narrative_templates.json：叙事状态机模板（archetype）注册表——编辑器专用，运行时永不加载。
+        # 归一形状 {schemaVersion, templates:[...]}；缺失时容错为空表。见 shared/narrative_templates.py。
+        self.narrative_templates: dict = {"schemaVersion": 1, "templates": []}
 
         self.water_minigames_index: list[dict] = []
         self.water_minigames_instances: dict[str, dict] = {}
@@ -125,6 +139,22 @@ class ProjectModel(QObject):
     def scenes_path(self) -> Path:
         return self.assets_path / "scenes"
 
+    def map_config_document(self) -> list[dict] | dict:
+        """Return the exact top-level document shape used for map_config.json.
+
+        Older projects store map nodes as a bare array. Newer projects can attach
+        map-wide settings, currently the runtime paper-map background, next to the
+        node list. Keep this as the single serialization contract so editor save
+        paths and safety tests do not have to know the storage shape.
+        """
+        if self._map_config_is_object or self.map_background_image:
+            doc: dict = {}
+            if self.map_background_image or self._map_config_had_background_image_key:
+                doc["backgroundImage"] = self.map_background_image
+            doc["nodes"] = self.map_nodes
+            return doc
+        return self.map_nodes
+
     @property
     def animation_bundles_path(self) -> Path:
         """每个子目录含 anim.json +图集，与 video_to_atlas 导出一致。"""
@@ -137,19 +167,55 @@ class ProjectModel(QObject):
     # ---- loading ----------------------------------------------------------
 
     def load_project(self, project_path: Path) -> None:
+        """换工程半途失败必须回滚：旧实现先改 project_path 再逐文件读，任一文件损坏就留下
+        「新路径 + 新旧混合数据」，之后 Save All 会把混合数据写进新工程（审查 P1-30）。
+        现在快照全部属性，失败时整体还原到打开前状态再抛错。"""
+        _prev_state = dict(self.__dict__)
+        try:
+            self._load_project_inner(project_path)
+        except Exception:
+            self.__dict__.clear()
+            self.__dict__.update(_prev_state)
+            raise
+
+    def _load_project_inner(self, project_path: Path) -> None:
         self.project_path = project_path
         dp = self.data_path
         sp = self.scenes_path
 
         self.game_config = self._load(dp / "game_config.json", {})
+        _char_reg = self._load(dp / "character_registry.json", {})
+        _chars = _char_reg.get("characters") if isinstance(_char_reg, dict) else None
+        # id -> 角色定义（name/animFile/portraitSlug）；供 NPC 读取端合并继承
+        self.character_registry: dict[str, dict] = {
+            str(c["id"]).strip(): c
+            for c in (_chars or [])
+            if isinstance(c, dict) and str(c.get("id") or "").strip()
+        }
         self.items = self._load(dp / "items.json", [])
         self.quests = self._load(dp / "quests.json", [])
         self.quest_groups = self._load(dp / "questGroups.json", [])
         self.encounters = self._load(dp / "encounters.json", [])
         self.rules_data = self._load(dp / "rules.json", {})
         self.shops = self._load(dp / "shops.json", [])
-        self.map_nodes = self._load(dp / "map_config.json", [])
+        raw_map_config = self._load(dp / "map_config.json", [])
+        self._map_config_is_object = isinstance(raw_map_config, dict)
+        if isinstance(raw_map_config, dict):
+            self._map_config_had_background_image_key = "backgroundImage" in raw_map_config
+            raw_nodes = raw_map_config.get("nodes")
+            self.map_nodes = raw_nodes if isinstance(raw_nodes, list) else []
+            self.map_background_image = str(raw_map_config.get("backgroundImage") or "")
+        elif isinstance(raw_map_config, list):
+            self.map_nodes = raw_map_config
+            self.map_background_image = ""
+            self._map_config_had_background_image_key = False
+        else:
+            self.map_nodes = []
+            self.map_background_image = ""
+            self._map_config_had_background_image_key = False
         self.cutscenes = self._load(dp / "cutscenes" / "index.json", [])
+        raw_parallax = self._load(dp / "parallax_scenes.json", [])
+        self.parallax_scenes = [x for x in raw_parallax if isinstance(x, dict)] if isinstance(raw_parallax, list) else []
         self.audio_config = self._load(dp / "audio_config.json", {})
         self.strings = self._load(dp / "strings.json", {})
         self.archive_characters = self._load(dp / "archive" / "characters.json", [])
@@ -159,6 +225,12 @@ class ProjectModel(QObject):
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
         self.signal_cues = self._load(dp / "signal_cues.json", [])
         self.smell_profiles = self._load(dp / "smell_profiles.json", {})
+        raw_planes = self._load(dp / "planes.json", [])
+        self.planes = [x for x in raw_planes if isinstance(x, dict)] if isinstance(raw_planes, list) else []
+        from .shared.narrative_templates import normalize_templates_file
+        self.narrative_templates = normalize_templates_file(
+            self._load(dp / "narrative_templates.json", {"schemaVersion": 1, "templates": []})
+        )
 
         self.animations = {}
         anim_root = self.animation_bundles_path
@@ -289,6 +361,28 @@ class ProjectModel(QObject):
                         self.animations[sub.name] = self._load(aj, {})
         self.data_changed.emit("animation", "")
 
+    def save_animation_bundle(self, bundle_id: str, anim: dict) -> Path:
+        """把单个动画包的 anim.json 写回磁盘并同步内存。
+
+        - 只写 ``animation/<id>/anim.json``，不碰图集 PNG / atlas.meta.json（像素布局相关字段
+          cols/rows/cellWidth/cellHeight/atlasFrames 由调用方原样带回，避免与图集脱钩）。
+        - 经 :func:`file_io.write_json` 落盘：UTF-8、2 空格缩进、中文不转义、保留键序、末尾换行，
+          与 video_to_atlas 导出及仓库内既有 anim.json 约定一致（编辑器可往返）。
+        - 写后回读，保证内存 ``self.animations[id]`` 与盘面字节一致，再广播 ``animation`` 变更。
+        """
+        if self.project_path is None:
+            raise RuntimeError("未加载工程")
+        bid = str(bundle_id).strip()
+        if not bid:
+            raise ValueError("空动画包 ID")
+        aj = self.animation_bundles_path / bid / "anim.json"
+        if not aj.parent.is_dir():
+            raise FileNotFoundError(f"动画包目录不存在：{aj.parent}")
+        write_json(aj, anim)
+        self.animations[bid] = read_json(aj)
+        self.data_changed.emit("animation", bid)
+        return aj
+
     @staticmethod
     def _load(path: Path, default: Any) -> Any:
         if path.exists():
@@ -328,11 +422,22 @@ class ProjectModel(QObject):
             if sc_err:
                 raise ValueError(sc_err)
 
+            # 仅在本次要写 paper_craft 时把关：不因磁盘上既有的坏数据拦住无关域的保存。
+            if "paper_craft" in dty:
+                pc_err = self._paper_craft_presave_error()
+                if pc_err:
+                    raise ValueError(pc_err)
+
         maybe_stamp(clk, "预校验通过 — 顺序：refs → scenarios → writes")
 
         try:
             if "config" in dty:
                 write_json(dp / "game_config.json", self.game_config)
+            if "characterRegistry" in dty:
+                write_json(
+                    dp / "character_registry.json",
+                    {"characters": [self.character_registry[k] for k in sorted(self.character_registry)]},
+                )
             if "item" in dty:
                 write_json(dp / "items.json", self.items)
             if "quest" in dty:
@@ -346,7 +451,12 @@ class ProjectModel(QObject):
             if "shop" in dty:
                 write_json(dp / "shops.json", self.shops)
             if "map" in dty:
-                write_json(dp / "map_config.json", self.map_nodes)
+                map_doc = self.map_config_document()
+                write_json(dp / "map_config.json", map_doc)
+                self._map_config_is_object = isinstance(map_doc, dict)
+                self._map_config_had_background_image_key = (
+                    isinstance(map_doc, dict) and "backgroundImage" in map_doc
+                )
             if "cutscene" in dty:
                 write_json(dp / "cutscenes" / "index.json", self.cutscenes)
             if "audio" in dty:
@@ -391,10 +501,18 @@ class ProjectModel(QObject):
                 write_json(dp / "narrative_graphs.json", self.narrative_graphs)
             if "document_reveals" in dty:
                 write_json(dp / "document_reveals.json", self.document_reveals)
+            if "smell_profiles" in dty:
+                write_json(dp / "smell_profiles.json", self.smell_profiles)
             if "pressure_holds" in dty:
                 write_json(dp / "pressure_holds.json", self.pressure_holds)
             if "signal_cues" in dty:
                 write_json(dp / "signal_cues.json", self.signal_cues)
+            if "planes" in dty:
+                write_json(dp / "planes.json", self.planes)
+            if "narrative_templates" in dty:
+                from .shared.narrative_templates import normalize_templates_file
+                self.narrative_templates = normalize_templates_file(self.narrative_templates)
+                write_json(dp / "narrative_templates.json", self.narrative_templates)
             if "water_minigames" in dty:
                 wm_dir = dp / "water_minigames"
                 wm_dir.mkdir(parents=True, exist_ok=True)
@@ -456,6 +574,27 @@ class ProjectModel(QObject):
         self._dirty_scenes_all = False
         self.dirty_changed.emit(False)
         maybe_stamp(clk, "结束（清 dirty）")
+
+    def _paper_craft_presave_error(self) -> str | None:
+        """扎纸订单硬约束：每张订单 paperOptions/finishOptions 非空——运行时缺失即拒载
+        （PaperCraftMinigameScene 加载时 throw），存出去就是坏档，保存前必须拦下。"""
+        errs: list[str] = []
+        for iid, inst in self.paper_craft_instances.items():
+            if not isinstance(inst, dict):
+                continue
+            for order in inst.get("orders") or []:
+                if not isinstance(order, dict):
+                    continue
+                oid = str(order.get("id") or "").strip() or "?"
+                for key, label in (("paperOptions", "纸色"), ("finishOptions", "收尾")):
+                    rows = order.get(key)
+                    if not isinstance(rows, list) or not rows:
+                        errs.append(
+                            f"paper_craft[{iid}] 订单「{oid}」的 {key} 为空：{label}选项至少 1 条（运行时拒载）",
+                        )
+        if not errs:
+            return None
+        return "扎纸订单校验失败，未保存：\n" + "\n".join(errs)
 
     def mark_dirty(self, data_type: str, item_id: str = "") -> None:
         was_dirty = self.is_dirty
@@ -569,6 +708,27 @@ class ProjectModel(QObject):
             return out
         return []
 
+    def character_field(self, npc: dict, key: str) -> str:
+        """NPC 的 name/animFile/portraitSlug 生效值：就地字段优先，缺省从 characterId 引用的角色继承。"""
+        v = npc.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+        cid = str(npc.get("characterId") or "").strip()
+        if cid:
+            ch = self.character_registry.get(cid)
+            if isinstance(ch, dict):
+                cv = ch.get(key)
+                if isinstance(cv, str) and cv.strip():
+                    return cv
+        return str(v) if v is not None else ""
+
+    def _npc_label(self, npc: dict) -> str:
+        return (
+            npc.get("label")
+            or self.character_field(npc, "name")
+            or str(npc.get("id") or npc.get("npcId") or "")
+        )
+
     def all_npc_ids_global(self) -> list[tuple[str, str]]:
         """All NPC ids across all scenes, deduplicated."""
         seen: dict[str, str] = {}
@@ -580,12 +740,11 @@ class ProjectModel(QObject):
                     continue
                 nid = npc.get("id") or npc.get("npcId")
                 if nid and str(nid) not in seen:
-                    label = npc.get("label") or npc.get("name") or str(nid)
-                    seen[str(nid)] = str(label)[:40]
+                    seen[str(nid)] = str(self._npc_label(npc))[:40]
         return [(k, v) for k, v in sorted(seen.items())]
 
     def all_npc_names(self) -> list[str]:
-        """All unique NPC display names across all scenes."""
+        """All unique NPC display names across all scenes（含角色注册表继承名）。"""
         names: set[str] = set()
         for sc in self.scenes.values():
             if not isinstance(sc, dict):
@@ -593,9 +752,14 @@ class ProjectModel(QObject):
             for npc in sc.get("npcs") or []:
                 if not isinstance(npc, dict):
                     continue
-                name = npc.get("name") or npc.get("label") or npc.get("id")
+                name = self.character_field(npc, "name") or npc.get("label") or npc.get("id")
                 if name:
                     names.add(str(name))
+        # 角色注册表里可能有尚未在任何场景摆放的角色名，一并纳入
+        for ch in self.character_registry.values():
+            nm = ch.get("name")
+            if isinstance(nm, str) and nm.strip():
+                names.add(nm.strip())
         return sorted(names)
 
     def npc_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
@@ -609,8 +773,7 @@ class ProjectModel(QObject):
                 continue
             nid = npc.get("id") or npc.get("npcId")
             if nid:
-                label = npc.get("label") or npc.get("name") or str(nid)
-                out.append((str(nid), str(label)[:40]))
+                out.append((str(nid), str(self._npc_label(npc))[:40]))
         return out
 
     def hotspot_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
@@ -735,6 +898,22 @@ class ProjectModel(QObject):
     def all_cutscene_ids(self) -> list[tuple[str, str]]:
         return [(c["id"], c["id"]) for c in self.cutscenes]
 
+    def all_parallax_scene_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：parallax_scenes.json 的场景 id，供 present:parallaxScene 步选场景。
+
+        label 附图层数，方便在下拉里辨认（如 `shenxianding_02_demo · 2 层`）。
+        """
+        out: list[tuple[str, str]] = []
+        for s in self.parallax_scenes:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("id") or "").strip()
+            if not sid:
+                continue
+            n = len(s.get("layers") or []) if isinstance(s.get("layers"), list) else 0
+            out.append((sid, f"{sid} · {n} 层"))
+        return out
+
     def all_shop_ids(self) -> list[tuple[str, str]]:
         return [(s["id"], s.get("name", s["id"])) for s in self.shops]
 
@@ -775,6 +954,33 @@ class ProjectModel(QObject):
                 continue
             label = str(row.get("label") or "").strip()
             out.append((iid, label or iid))
+        return out
+
+    def all_plane_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：planes.json（PlaneDef[]）登记项。文件缺失时为空列表。"""
+        out: list[tuple[str, str]] = []
+        for row in self.planes:
+            if not isinstance(row, dict):
+                continue
+            pid = str(row.get("id") or "").strip()
+            if not pid:
+                continue
+            label = str(row.get("label") or "").strip()
+            out.append((pid, label or pid))
+        return out
+
+    def all_narrative_template_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：narrative_templates.json 的模板条目。文件缺失时为空列表。"""
+        out: list[tuple[str, str]] = []
+        data = self.narrative_templates if isinstance(self.narrative_templates, dict) else {}
+        for row in data.get("templates") or []:
+            if not isinstance(row, dict):
+                continue
+            tid = str(row.get("id") or "").strip()
+            if not tid:
+                continue
+            label = str(row.get("label") or "").strip()
+            out.append((tid, label or tid))
         return out
 
     def all_smell_profile_ids(self) -> list[tuple[str, str]]:
@@ -1189,9 +1395,9 @@ class ProjectModel(QObject):
             raw = npc.get("id") or npc.get("npcId")
             if raw is None or str(raw).strip() != nid:
                 continue
-            af = npc.get("animFile")
-            if af is not None and str(af).strip():
-                return str(af).strip()
+            af = self.character_field(npc, "animFile")
+            if af.strip():
+                return af.strip()
         return ""
 
     def player_avatar_anim_manifest(self) -> str:

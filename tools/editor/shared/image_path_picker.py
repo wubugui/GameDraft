@@ -28,7 +28,8 @@ from .project_paths import (
     URL_KIND_MEDIA,
 )
 
-_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All (*.*)"
+_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
 # 缩略预览边长上限（勿用 label.width() 等会随 pixmap 变化的量作为 scaled 目标）
 _CUTSCENE_PREVIEW_BOX = 100
@@ -79,6 +80,9 @@ def import_or_resolve_image_path(
         source = source.resolve()
     except OSError:
         QMessageBox.warning(None, "Image import", f"无法解析路径:\n{source}")
+        return None
+    if source.suffix.lower() not in _IMAGE_SUFFIXES:
+        QMessageBox.warning(None, "Image import", "请选择 png / jpg / jpeg / webp / bmp / gif 图片文件。")
         return None
 
     if paths.is_under_runtime(source):

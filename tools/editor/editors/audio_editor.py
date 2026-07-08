@@ -44,6 +44,8 @@ except ImportError:  # 极少数环境未带 QtMultimedia
 
 from ..project_model import ProjectModel
 
+from ..shared.audio_preview_selector import AudioIdPreviewSelector
+
 from ..shared.id_ref_selector import IdRefSelector
 
 from ..shared.list_affordances import make_table_search_box
@@ -516,6 +518,8 @@ class _AudioChannelTab(QWidget):
 
     def _apply(self) -> None:
 
+        old_ch = self._model.audio_config.get(self._channel)
+        old_ch = old_ch if isinstance(old_ch, dict) else {}
         ch: dict = {}
 
         for i in range(self._table.rowCount()):
@@ -526,10 +530,17 @@ class _AudioChannelTab(QWidget):
 
             if aid_item and aid_item.text().strip():
 
+                aid = aid_item.text().strip()
                 src_txt = row.current_src().strip() if row else ""
+                # 保留同 id 原条目的未知键（volume 等未来字段），只更新 src
+                prev = old_ch.get(aid)
+                entry = dict(prev) if isinstance(prev, dict) else {}
+                entry["src"] = src_txt
+                ch[aid] = entry
 
-                ch[aid_item.text().strip()] = {"src": src_txt}
-
+        # 无实质变化不写不标脏：堵住"每次 Save All 重写 audio_config.json"
+        if ch == old_ch and self._channel in self._model.audio_config:
+            return
         self._model.audio_config[self._channel] = ch
 
         self._model.mark_dirty("audio")
@@ -642,7 +653,7 @@ class _SystemSfxTab(QWidget):
         it = self._table.item(row, 0)
         return it.text().strip() if it else ""
 
-    def _make_sfx_selector(self, initial_id: str) -> IdRefSelector:
+    def _make_sfx_selector(self, initial_id: str) -> AudioIdPreviewSelector:
 
         items = [(sid, sid) for sid in self._model.all_audio_ids("sfx")]
 
@@ -650,11 +661,13 @@ class _SystemSfxTab(QWidget):
 
             items = [(initial_id, initial_id)] + items
 
-        sel = IdRefSelector(self, allow_empty=True, editable=True)
+        sel = AudioIdPreviewSelector(self._model, "sfx", self, allow_empty=True, editable=True)
 
         sel.set_items(items)
 
         sel.set_current(initial_id)
+
+        sel.setToolTip("systemSfx 使用的 sfx id；右侧按钮可试听当前选择。")
 
         return sel
 
@@ -760,12 +773,16 @@ class _SystemSfxTab(QWidget):
 
             sel = self._table.cellWidget(i, 1)
 
-            sfx_id = sel.current_id().strip() if isinstance(sel, IdRefSelector) else ""
+            sfx_id = sel.current_id().strip() if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)) else ""
 
             if key:
 
                 out[key] = sfx_id
 
+        # 无实质变化不写不标脏
+        old = self._model.audio_config.get("systemSfx")
+        if out == old:
+            return
         self._model.audio_config["systemSfx"] = out
 
         self._model.mark_dirty("audio")

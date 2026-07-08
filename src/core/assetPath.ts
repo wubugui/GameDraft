@@ -8,11 +8,18 @@ export function resolveAssetPath(path: string): string {
   const meta = typeof import.meta !== 'undefined' ? import.meta : undefined;
   const baseUrl = (meta as { env?: { BASE_URL?: string } })?.env?.BASE_URL;
   const base = baseUrl != null ? String(baseUrl) : '/';
-  const normalized = path.startsWith('/') ? path.slice(1) : path;
   const baseNorm = base.endsWith('/') ? base.slice(0, -1) : base;
+  // 幂等契约：R(R(x)) === R(x)。AssetManager 以解析结果为缓存键，且存在「调用方先解析、
+  // load* 内部再解析一次」的链路（如 CutsceneRenderer 预热/加载）；若二次解析产生
+  // `././...` 这类新串，预热键与加载键分裂 → 同图双份缓存、预热永不命中。
+  // 故凡已是本函数解析产物形状的输入一律原样返回。
   if (baseNorm === '.' || baseNorm === '') {
+    if (path === '.' || path.startsWith('./')) return path;
+    const normalized = path.startsWith('/') ? path.slice(1) : path;
     return normalized ? `./${normalized}` : '.';
   }
+  if (path === baseNorm || path.startsWith(`${baseNorm}/`)) return path;
+  const normalized = path.startsWith('/') ? path.slice(1) : path;
   return baseNorm + '/' + normalized;
 }
 

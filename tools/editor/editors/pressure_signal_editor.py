@@ -31,7 +31,7 @@ from ..project_model import ProjectModel
 from ..shared import confirm
 from ..shared.list_affordances import wire_list_affordances
 from ..shared.action_editor import ActionEditor
-from ..shared.id_ref_selector import IdRefSelector
+from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.form_layout import compact_form
 from ..shared.collapsible_section import CollapsibleSection
@@ -168,8 +168,8 @@ class PressureHoldEditor(QWidget):
         self._f_decay.setSingleStep(0.1)
         self._f_decay.setToolTip("松手后每秒回落的进度量")
         ft.addRow("decayPerSecond", self._f_decay)
-        self._f_sfx = IdRefSelector(allow_empty=True, editable=True)
-        self._f_sfx.setToolTip("长按时循环的音效 id（可空）；从已登记的 sfx 中选择")
+        self._f_sfx = AudioIdPreviewSelector(self._model, "sfx", allow_empty=True, editable=True)
+        self._f_sfx.setToolTip("长按时循环的音效 id（可空）；右侧按钮可试听当前选择。")
         ft.addRow("holdSfx", self._f_sfx)
         self._f_color_chk = QCheckBox("自定义")
         self._f_color_chk.setToolTip("勾选则覆盖进度条默认颜色")
@@ -277,6 +277,7 @@ class PressureHoldEditor(QWidget):
 
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.pressure_holds):
+            self._current_idx = -1  # 清选中即清索引，杜绝"删除删旧项"（审查 P2-30）
             return
         # commit-on-leave：切到别的条目前提交上一项未应用编辑，避免静默丢弃。
         if 0 <= self._current_idx < len(self._model.pressure_holds) \
@@ -378,14 +379,19 @@ class PressureHoldEditor(QWidget):
             lw.setText(f"{h.get('id', '?')}  [{h.get('prompt', '')[:18]}]")
 
     def _add(self) -> None:
+        taken = {str(h.get("id", "")) for h in self._model.pressure_holds}
+        n = 0
+        while f"hold_{n}" in taken:
+            n += 1
         self._model.pressure_holds.append({
-            "id": f"hold_{len(self._model.pressure_holds)}",
+            "id": f"hold_{n}",
             "prompt": "",
             "fillSeconds": 3.0,
             "decayPerSecond": 0.6,
         })
         self._model.mark_dirty("pressure_holds")
         self._refresh()
+        self._list.setCurrentRow(len(self._model.pressure_holds) - 1)
 
     def _delete(self) -> None:
         if self._current_idx >= 0:
@@ -464,6 +470,7 @@ class SignalCueEditor(QWidget):
 
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.signal_cues):
+            self._current_idx = -1  # 清选中即清索引，杜绝"删除删旧项"（审查 P2-30）
             return
         # commit-on-leave：切到别的信号 Cue 前提交上一项未应用编辑。
         if 0 <= self._current_idx < len(self._model.signal_cues) \
@@ -524,12 +531,17 @@ class SignalCueEditor(QWidget):
             lw.setText(f"{c.get('id', '?')}  [{c.get('description', '')[:22]}]")
 
     def _add(self) -> None:
+        taken = {str(c.get("id", "")) for c in self._model.signal_cues}
+        n = 0
+        while f"cue_{n}" in taken:
+            n += 1
         self._model.signal_cues.append({
-            "id": f"cue_{len(self._model.signal_cues)}",
+            "id": f"cue_{n}",
             "actions": [],
         })
         self._model.mark_dirty("signal_cues")
         self._refresh()
+        self._list.setCurrentRow(len(self._model.signal_cues) - 1)
 
     def _delete(self) -> None:
         if self._current_idx >= 0:

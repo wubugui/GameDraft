@@ -17,6 +17,8 @@ export class InputManager {
   private onPointerMoveBound: (e: PointerEvent) => void;
   private onPointerDownBound: (e: PointerEvent) => void;
   private onPointerUpBound: (e: PointerEvent) => void;
+  private onWindowBlurBound: () => void;
+  private onVisibilityChangeBound: () => void;
 
   private keyDownSubscribers: ((e: KeyboardEvent) => void)[] = [];
   private anyInputSubscribers: (() => void)[] = [];
@@ -29,15 +31,32 @@ export class InputManager {
     this.onPointerMoveBound = this.onPointerMove.bind(this);
     this.onPointerDownBound = this.onPointerDown.bind(this);
     this.onPointerUpBound = this.onPointerUp.bind(this);
+    this.onWindowBlurBound = this.onFocusLost.bind(this);
+    this.onVisibilityChangeBound = () => {
+      if (document.visibilityState === 'hidden') this.onFocusLost();
+    };
 
     window.addEventListener('keydown', this.onKeyDownBound);
     window.addEventListener('keyup', this.onKeyUpBound);
     window.addEventListener('pointermove', this.onPointerMoveBound);
     window.addEventListener('pointerdown', this.onPointerDownBound);
     window.addEventListener('pointerup', this.onPointerUpBound);
+    window.addEventListener('blur', this.onWindowBlurBound);
+    document.addEventListener('visibilitychange', this.onVisibilityChangeBound);
+  }
+
+  /** 失焦/切后台后收不到 keyup/pointerup：清掉按住状态（含 Shift 跑步），
+   *  否则 Alt-Tab 回来角色沿旧方向自走（B1）。触屏轴由 TouchMobileControls 自管，不在此清。 */
+  private onFocusLost(): void {
+    this.keysDown.clear();
+    this.keyJustPressed.clear();
+    this.mouseDown = false;
+    this.mouseJustClicked = false;
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    // 订阅者分发一律快照遍历（对齐 EventBus.emit 的 [...set]）：回调内退订会 splice
+    // 正在遍历的数组，跳过后一个订阅者（B2）
     if (!this.gameKeyboardBlocked) {
       if (!this.keysDown.has(e.code)) {
         this.keyJustPressed.add(e.code);
@@ -45,10 +64,10 @@ export class InputManager {
       this.keysDown.add(e.code);
       // 长按会产生 repeat 的 keydown；过场用 subscribeAnyInput 推进对话时若每次都触发会瞬间连点完所有指令
       if (!e.repeat) {
-        for (const cb of this.anyInputSubscribers) cb();
+        for (const cb of [...this.anyInputSubscribers]) cb();
       }
     }
-    for (const cb of this.keyDownSubscribers) cb(e);
+    for (const cb of [...this.keyDownSubscribers]) cb(e);
   }
 
   private onKeyUp(e: KeyboardEvent): void {
@@ -63,8 +82,8 @@ export class InputManager {
   private onPointerDown(_e: PointerEvent): void {
     this.mouseDown = true;
     this.mouseJustClicked = true;
-    for (const cb of this.anyInputSubscribers) cb();
-    for (const cb of this.pointerDownSubscribers) cb();
+    for (const cb of [...this.anyInputSubscribers]) cb();
+    for (const cb of [...this.pointerDownSubscribers]) cb();
   }
 
   private onPointerUp(_e: PointerEvent): void {
@@ -139,8 +158,8 @@ export class InputManager {
    *  供玩家同构测试的 playerTap：推进过场、点击继续、对话行等玩家用鼠标点的路径。 */
   injectPointerDown(): void {
     this.mouseJustClicked = true;
-    for (const cb of this.anyInputSubscribers) cb();
-    for (const cb of this.pointerDownSubscribers) cb();
+    for (const cb of [...this.anyInputSubscribers]) cb();
+    for (const cb of [...this.pointerDownSubscribers]) cb();
   }
 
   setTouchMoveAxes(x: -1 | 0 | 1, y: -1 | 0 | 1): void {
@@ -186,6 +205,8 @@ export class InputManager {
     window.removeEventListener('pointermove', this.onPointerMoveBound);
     window.removeEventListener('pointerdown', this.onPointerDownBound);
     window.removeEventListener('pointerup', this.onPointerUpBound);
+    window.removeEventListener('blur', this.onWindowBlurBound);
+    document.removeEventListener('visibilitychange', this.onVisibilityChangeBound);
     this.keyDownSubscribers.length = 0;
     this.anyInputSubscribers.length = 0;
     this.pointerDownSubscribers.length = 0;

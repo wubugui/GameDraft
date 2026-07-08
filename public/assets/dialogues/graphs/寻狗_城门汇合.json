@@ -51,20 +51,26 @@
     "n1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "埃德加"
+        "kind": "sceneNpc",
+        "npcId": "npc_埃德加"
       },
       "text": "Ah，我们的向导先生！Look at you——这身行头，very 专业！（他冲克拉拉挑了挑眉）",
-      "next": "n2"
+      "next": "n2",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n2": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "克拉拉"
+        "kind": "sceneNpc",
+        "npcId": "npc_克拉拉城门"
       },
       "text": "（上下打量了一遍那身凑合的道袍，在本子上记了一笔，什么也没说）行李齐了。Guan 先生，可以出发了吗？此行经桃溪一带——那里，Guan 先生去过吗？",
-      "next": "sw_met_ltg"
+      "next": "sw_met_ltg",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "sw_met_ltg": {
       "type": "switch",
@@ -87,7 +93,10 @@
         "kind": "player"
       },
       "text": "桃溪嗦？老子熟得很！前几天还有个怪道士，专门来向老子打听那一带的事——那个地方，老子门清！",
-      "next": "c1"
+      "next": "c1",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "c1": {
       "type": "choice",

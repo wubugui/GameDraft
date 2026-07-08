@@ -307,6 +307,14 @@ class FlagRegistryEditor(QWidget):
     def _on_pattern_changed(self) -> None:
         self._patterns_flush_timer.start()
 
+    def flush_to_model(self) -> bool:
+        """Save All/关窗钩子：把 220ms 防抖窗口内的 pattern 编辑立即落进模型。
+        没有这个钩子时，"敲完字 220ms 内 Ctrl+S/关窗"会落盘旧值甚至彻底丢编辑（审查 P1-9）。"""
+        if self._patterns_flush_timer.isActive():
+            self._patterns_flush_timer.stop()
+            self._flush_patterns_to_model()
+        return True
+
     def _flush_patterns_to_model(self) -> None:
         new_list = []
         for i in range(self._patterns_layout.count()):

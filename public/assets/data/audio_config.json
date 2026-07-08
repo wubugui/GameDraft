@@ -127,6 +127,27 @@
     "sfx_gavel_rap": {
       "src": "/resources/runtime/audio/sfx_gavel_rap.wav"
     },
+    "sfx_sword_swing": {
+      "src": "/resources/runtime/audio/sfx_sword_swing.wav"
+    },
+    "sfx_sword_clash": {
+      "src": "/resources/runtime/audio/sfx_sword_clash.wav"
+    },
+    "sfx_hanba_roar": {
+      "src": "/resources/runtime/audio/sfx_hanba_roar.wav"
+    },
+    "sfx_fireball_whoosh": {
+      "src": "/resources/runtime/audio/sfx_fireball_whoosh.wav"
+    },
+    "sfx_teahouse_cheer": {
+      "src": "/resources/runtime/audio/sfx_teahouse_cheer.mp3"
+    },
+    "sfx_jingju_luogu": {
+      "src": "/resources/runtime/audio/sfx_jingju_luogu.mp3"
+    },
+    "sfx_yinfeng_gust": {
+      "src": "/resources/runtime/audio/sfx_yinfeng_gust.wav"
+    },
     "iron_box_chime": {
       "src": "/resources/runtime/audio/iron_box_chime.wav"
     },
@@ -270,6 +291,72 @@
     },
     "sugar_wheel_prize_chime": {
       "src": "/resources/runtime/audio/sugar_wheel_prize_chime.wav"
+    },
+    "voice_001": {
+      "src": "/resources/runtime/audio/voice/1.mp3"
+    },
+    "voice_002": {
+      "src": "/resources/runtime/audio/voice/2.mp3"
+    },
+    "voice_002a": {
+      "src": "/resources/runtime/audio/voice/2a.mp3"
+    },
+    "voice_002b": {
+      "src": "/resources/runtime/audio/voice/2b.mp3"
+    },
+    "voice_004a": {
+      "src": "/resources/runtime/audio/voice/4a.mp3"
+    },
+    "voice_004b": {
+      "src": "/resources/runtime/audio/voice/4b.mp3"
+    },
+    "voice_006a": {
+      "src": "/resources/runtime/audio/voice/6a.mp3"
+    },
+    "voice_006b": {
+      "src": "/resources/runtime/audio/voice/6b.mp3"
+    },
+    "voice_008a": {
+      "src": "/resources/runtime/audio/voice/8a.mp3"
+    },
+    "voice_008b": {
+      "src": "/resources/runtime/audio/voice/8b.mp3"
+    },
+    "voice_011a": {
+      "src": "/resources/runtime/audio/voice/11a.mp3"
+    },
+    "voice_011b": {
+      "src": "/resources/runtime/audio/voice/11b.mp3"
+    },
+    "voice_003": {
+      "src": "/resources/runtime/audio/voice/3.mp3"
+    },
+    "voice_004": {
+      "src": "/resources/runtime/audio/voice/4.mp3"
+    },
+    "voice_005": {
+      "src": "/resources/runtime/audio/voice/5.mp3"
+    },
+    "voice_006": {
+      "src": "/resources/runtime/audio/voice/6.mp3"
+    },
+    "voice_007": {
+      "src": "/resources/runtime/audio/voice/7.mp3"
+    },
+    "voice_008": {
+      "src": "/resources/runtime/audio/voice/8.mp3"
+    },
+    "voice_009": {
+      "src": "/resources/runtime/audio/voice/9.mp3"
+    },
+    "voice_010": {
+      "src": "/resources/runtime/audio/voice/10.mp3"
+    },
+    "voice_011": {
+      "src": "/resources/runtime/audio/voice/11.mp3"
+    },
+    "voice_012": {
+      "src": "/resources/runtime/audio/voice/12.mp3"
     }
   },
   "systemSfx": {
@@ -304,6 +391,7 @@
     "encounterStart": "encounter_start",
     "encounterChoice": "encounter_choice",
     "encounterResult": "encounter_result",
+    "audioUnlock": "ui_hover",
     "cutsceneStart": "cutscene_start",
     "cutsceneEnd": "cutscene_end",
     "dayStart": "day_start",

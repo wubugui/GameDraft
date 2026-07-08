@@ -12,6 +12,12 @@ export interface HealthConfig {
   restoreFloor: number;
   /** 死亡系绳触发的信号 cue id（阿秀冷信号：香粉味+小调） */
   tetherCueId: string;
+  /**
+   * 外部接管系绳的抑制 flag 键：该 flag 为 true 时跳过内置系绳演出与自动回血，
+   * HP 交由内容侧脚本（healPlayer）救场。内容键名走配置而非硬编码（律4，与 tetherCueId
+   * 同模式）；默认保持既有键，game_config.health 可覆盖。
+   */
+  tetherSuppressFlagKey: string;
 }
 
 const DEFAULT_HEALTH_CONFIG: HealthConfig = {
@@ -19,6 +25,7 @@ const DEFAULT_HEALTH_CONFIG: HealthConfig = {
   deathThreshold: 0,
   restoreFloor: 60,
   tetherCueId: 'signal_death_tether',
+  tetherSuppressFlagKey: 'forest.tether_suppressed',
 };
 
 /**
@@ -128,9 +135,9 @@ export class HealthSystem implements IGameSystem {
     this.syncFlags();
     this.emitChanged();
 
-    // 外部接管口子（L2）：forest.tether_suppressed = true 时李天狗脚本已接手救场，
-    // 跳过阿秀信号与自动回血，HP 交由外部 healPlayer 恢复。
-    if (this.flagStore.get('forest.tether_suppressed') === true) {
+    // 外部接管口子：抑制 flag 为 true 时内容脚本已接手救场（如李天狗线），
+    // 跳过阿秀信号与自动回血，HP 交由外部 healPlayer 恢复。键名见 config.tetherSuppressFlagKey。
+    if (this.flagStore.get(this.config.tetherSuppressFlagKey) === true) {
       this.tethering = false;
       return;
     }

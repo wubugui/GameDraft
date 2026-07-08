@@ -43,8 +43,6 @@ uniform float uR20; uniform float uR21; uniform float uR22;
 uniform float uInvert;
 uniform float uScale;
 uniform float uOffset;
-uniform float uFloorA;
-uniform float uFloorB;
 uniform float uFootX;
 uniform float uFootY;
 uniform float uHgtM;       // 角色 M-world 高
@@ -188,8 +186,6 @@ export class DeferredEntityShadow implements IEntityShadow {
           uInvert: f32(ctx.invert),
           uScale: f32(ctx.scale),
           uOffset: f32(ctx.offset),
-          uFloorA: f32(ctx.floorA),
-          uFloorB: f32(ctx.floorB),
           uFootX: f32(0),
           uFootY: f32(0),
           uHgtM: f32(1),

@@ -245,7 +245,12 @@ class ProductionWorkbenchCodexAssetRunnerTests(TestCase):
             self.assertTrue((result.run_dir / "postprocess.txt").is_file())
             summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
             self.assertEqual(summary["postprocess"]["okCount"], 1)
-            self.assertIn(str(ready), summary["postprocess"]["outputs"])
+            # macOS 上 /var 是 /private/var 的符号链接；后处理记录的是规范化真实路径，
+            # 故两侧都 resolve() 后再比较，避免 /var vs /private/var 误报。
+            self.assertIn(
+                str(ready.resolve()),
+                [str(Path(o).resolve()) for o in summary["postprocess"]["outputs"]],
+            )
 
 
 if __name__ == "__main__":

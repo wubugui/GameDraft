@@ -70,9 +70,12 @@ describe('sceneJsonUrl / sceneRuntimeAssetUrl', () => {
     ).toBe('/resources/runtime/images/illustrations/码头人群1.png');
   });
 
-  it('rejects assets-rooted url for media', () => {
-    expect(() => sceneRuntimeAssetUrl('s', '/assets/images/x.png')).toThrow();
-    expect(() => sceneRuntimeAssetUrl('s', 'assets/images/x.png')).toThrow();
+  it('warns but passes through assets-rooted url for media (lenient, keeps legacy data loadable)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(sceneRuntimeAssetUrl('s', '/assets/images/x.png')).toBe('/assets/images/x.png');
+    expect(sceneRuntimeAssetUrl('s', 'assets/images/x.png')).toBe('assets/images/x.png');
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
   });
 
   it('throws on empty inputs', () => {

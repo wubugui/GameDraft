@@ -27,11 +27,14 @@
     "n16": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "老头"
+        "kind": "sceneNpc",
+        "npcId": "npc_dream_old_man"
       },
       "text": "（轻声）「给你烧的。」",
-      "next": "n17"
+      "next": "n17",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n17": {
       "type": "line",

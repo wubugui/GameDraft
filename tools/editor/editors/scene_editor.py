@@ -54,12 +54,14 @@ from ..shared.list_affordances import make_list_search_box
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
+from ..shared.audio_preview_selector import AudioIdPreviewSelector, AudioPreviewControls
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 from ..shared.move_entity_map_picker import WorldPointPickView, resolve_world_size_for_scene_json
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
 from ..shared.hex_color_pick_row import HexColorPickRow
+from ..shared.portrait_catalog import load_portrait_sets
 from ..shared.project_paths import ProjectPaths
 from ..shared.fonts import MONO_FONT_FAMILY
 
@@ -1505,6 +1507,10 @@ class SceneCanvas(QGraphicsView):
         self._entity_items: dict[str, QGraphicsEllipseItem | QGraphicsRectItem | QGraphicsObject] = {}
         self._npc_ref_items: list[QGraphicsItem] = []
         self._npc_ref_visible: bool = True
+        # 位面视图过滤（纯视图，不改数据）：None=显示全部；否则只显示归属含该位面 +
+        # 缺省(无 planes=存在于所有位面)的实体，与运行时 SceneManager.entityInPlane 同口径。
+        self._plane_filter: str | None = None
+        self._entity_planes: dict[str, list[str] | None] = {}
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
         self._lightcurve_overlay: _LightCurvePolyline | None = None
         self._world_w: float = 800
@@ -1539,6 +1545,7 @@ class SceneCanvas(QGraphicsView):
         self._gfx.clear()
         self._bg_item = None
         self._entity_items.clear()
+        self._entity_planes.clear()  # _plane_filter 保留：切场景后按同一位面视图重贴
         self._patrol_overlays.clear()
         self._lightcurve_overlay = None
 
@@ -1603,6 +1610,7 @@ class SceneCanvas(QGraphicsView):
         self._gfx.addItem(item)
         self._entity_items[f"hotspot:{hs.get('id', '')}"] = item
         self.refresh_hotspot_visuals(hs)
+        self._record_entity_planes(f"hotspot:{hs.get('id', '')}", hs.get("planes"))
 
     def refresh_hotspot_visuals(self, hs: dict) -> None:
         """同步 displayImage 预览（底边中点对齐 x,y）与 collisionPolygon。"""
@@ -1759,6 +1767,7 @@ class SceneCanvas(QGraphicsView):
         self._gfx.addItem(item)
         self._entity_items[f"npc:{npc.get('id', '')}"] = item
         self.refresh_npc_collision_visuals(npc)
+        self._record_entity_planes(f"npc:{npc.get('id', '')}", npc.get("planes"))
 
     def add_zone(self, zone: dict) -> None:
         pts = _zone_polygon_points_for_editor(zone)
@@ -1766,6 +1775,7 @@ class SceneCanvas(QGraphicsView):
             self, pts, _zone_canvas_color(zone), zone.get("id", "?"))
         self._gfx.addItem(item)
         self._entity_items[f"zone:{zone.get('id', '')}"] = item
+        self._record_entity_planes(f"zone:{zone.get('id', '')}", zone.get("planes"))
         if self._zone_pick_frozen:
             item.set_zone_pick_frozen(True)
 
@@ -2000,6 +2010,39 @@ class SceneCanvas(QGraphicsView):
             it = self._entity_items.get(key)
             if it is not None:
                 it.setVisible(visible)
+
+    # ---- 位面视图过滤（纯视图，不改数据；与运行时 entityInPlane 同口径）----------
+
+    @staticmethod
+    def _norm_planes(raw: object) -> list[str] | None:
+        """实体 planes 归一：非空字符串列表，或 None（缺省=存在于所有位面）。"""
+        if not isinstance(raw, list):
+            return None
+        xs = [str(p).strip() for p in raw if str(p).strip()]
+        return xs or None
+
+    def _entity_visible_under_plane_filter(self, planes: list[str] | None) -> bool:
+        pf = self._plane_filter
+        return pf is None or planes is None or pf in planes
+
+    def _record_entity_planes(self, key: str, raw: object) -> None:
+        """add_* 登记实体归属并按当前位面视图即时套用（新图元默认可见，故只需隐藏被过滤掉的）。"""
+        planes = self._norm_planes(raw)
+        self._entity_planes[key] = planes
+        if not self._entity_visible_under_plane_filter(planes):
+            kind, _, eid = key.partition(":")
+            self.set_entity_visible(kind, eid, False)
+
+    def set_plane_filter(self, plane_id: str | None) -> None:
+        """设位面视图：None=显示全部；否则只显示归属含该位面 + 缺省(全位面)的实体。纯预览，不改数据。"""
+        self._plane_filter = (str(plane_id).strip() or None) if plane_id else None
+        self._apply_plane_filter()
+
+    def _apply_plane_filter(self) -> None:
+        for key, planes in self._entity_planes.items():
+            kind, _, eid = key.partition(":")
+            self.set_entity_visible(
+                kind, eid, self._entity_visible_under_plane_filter(planes))
 
     def update_hotspot_type_color(self, entity_id: str, hs_type: str) -> None:
         hid = str(entity_id).strip()
@@ -2319,21 +2362,18 @@ class TargetSpawnPickerDialog(QDialog):
             return
         self._canvas.clear_scene()
         img_path = _scene_background_disk_path(self._model, self._scene_id, sc)
-        if not isinstance(sc.get("spawnPoint"), dict):
-            world_w, world_h = resolve_world_size_for_scene_json(sc, img_path)
-            sc["spawnPoint"] = {
-                "x": round(world_w * 0.5, 1),
-                "y": round(world_h * 0.5, 1),
-            }
-            self._model.mark_dirty("scene", self._scene_id)
         world_w, world_h = resolve_world_size_for_scene_json(sc, img_path)
         self._last_world = (world_w, world_h)
         self._canvas.setup_world(world_w, world_h)
         if img_path:
             self._canvas.load_background(img_path, world_w, world_h)
         sp = sc.get("spawnPoint")
-        if isinstance(sp, dict):
-            self._canvas.add_spawn("default", sp)
+        if not isinstance(sp, dict):
+            # 仅用于画布展示的兜底默认位，不写 model 不标脏——
+            # 旧实现"一打开对话框就注入 spawnPoint 且 Cancel 不回退"（审查 P2）。
+            # 用户真拖动默认图钉时 _on_canvas_moved 才写入。
+            sp = {"x": round(world_w * 0.5, 1), "y": round(world_h * 0.5, 1)}
+        self._canvas.add_spawn("default", sp)
         for name, pos in sorted((sc.get("spawnPoints") or {}).items()):
             if isinstance(pos, dict):
                 self._canvas.add_spawn(name, pos)
@@ -2601,7 +2641,7 @@ _LC_BASELINE_ENV: dict = {
     "ambient": {"color": [0.55, 0.6, 0.72], "intensity": 1.0},
     "shadow": {
         "mode": "real", "enabled": True, "darkness": 0.4, "softness": 1.0,
-        "contact": 0.5, "contactSize": 1.0, "drape": 0.6, "drapeEnabled": True,
+        "contact": 0.5, "contactSize": 1.0,
         "softSamples": 1, "softRadius": 0.05, "billboard": "light",
     },
     "toneStrength": 0.45, "toneEnabled": True,
@@ -2641,7 +2681,7 @@ def _spin(lo: float, hi: float, step: float, decimals: int) -> QDoubleSpinBox:
 class _LightEnvKeyframeEditor(QWidget):
     """单关键帧光照环境编辑器：key/ambient/shadow/tone/ao 全字段，写「完整」env。
 
-    阴影 length/skewX 故意不暴露——运行时由 elevation/azimuth 推导（keying 方位/仰角即动画）。
+    阴影 length 故意不暴露——运行时由 elevation/azimuth 推导（keying 方位/仰角即动画）。
     """
 
     changed = Signal()
@@ -2701,8 +2741,6 @@ class _LightEnvKeyframeEditor(QWidget):
         self.sh_softness = _spin(0, 4, 0.05, 3)
         self.sh_contact = _spin(0, 1, 0.02, 3)
         self.sh_contact_size = _spin(0.1, 3, 0.05, 3)
-        self.sh_drape = _spin(0, 3, 0.05, 3)
-        self.sh_drape_enabled = QCheckBox("贴地披覆 drapeEnabled")
         self.sh_soft_samples = QSpinBox()
         self.sh_soft_samples.setRange(1, 16)
         self.sh_soft_samples.setMaximumWidth(90)
@@ -2714,8 +2752,6 @@ class _LightEnvKeyframeEditor(QWidget):
         sform.addRow("柔和 softness", self.sh_softness)
         sform.addRow("接触 contact", self.sh_contact)
         sform.addRow("接触尺寸 contactSize", self.sh_contact_size)
-        sform.addRow("披覆 drape", self.sh_drape)
-        sform.addRow("", self.sh_drape_enabled)
         sform.addRow("软采样 softSamples", self.sh_soft_samples)
         sform.addRow("软半径 softRadius", self.sh_soft_radius)
         sform.addRow("billboard", self.sh_billboard)
@@ -2725,10 +2761,10 @@ class _LightEnvKeyframeEditor(QWidget):
         # 统一接变更信号
         for sp in (self.key_az, self.key_el, self.key_int, self.amb_int, self.tone_strength,
                    self.ao_contact, self.ao_form, self.sh_darkness, self.sh_softness,
-                   self.sh_contact, self.sh_contact_size, self.sh_drape, self.sh_soft_radius):
+                   self.sh_contact, self.sh_contact_size, self.sh_soft_radius):
             sp.valueChanged.connect(self._on_any)
         self.sh_soft_samples.valueChanged.connect(self._on_any)
-        for cb in (self.tone_enabled, self.sh_enabled, self.sh_drape_enabled):
+        for cb in (self.tone_enabled, self.sh_enabled):
             cb.stateChanged.connect(self._on_any)
         for combo in (self.sh_mode, self.sh_billboard):
             combo.currentIndexChanged.connect(self._on_any)
@@ -2770,8 +2806,6 @@ class _LightEnvKeyframeEditor(QWidget):
             self.sh_softness.setValue(float(sh.get("softness", 1.0)))
             self.sh_contact.setValue(float(sh.get("contact", 0.5)))
             self.sh_contact_size.setValue(float(sh.get("contactSize", 1.0)))
-            self.sh_drape.setValue(float(sh.get("drape", 0.6)))
-            self.sh_drape_enabled.setChecked(bool(sh.get("drapeEnabled", True)))
             self.sh_soft_samples.setValue(int(sh.get("softSamples", 1)))
             self.sh_soft_radius.setValue(float(sh.get("softRadius", 0.05)))
             self.sh_billboard.set_committed_type(str(sh.get("billboard", "light")))
@@ -2798,8 +2832,6 @@ class _LightEnvKeyframeEditor(QWidget):
                 "softness": round(self.sh_softness.value(), 3),
                 "contact": round(self.sh_contact.value(), 3),
                 "contactSize": round(self.sh_contact_size.value(), 3),
-                "drape": round(self.sh_drape.value(), 3),
-                "drapeEnabled": bool(self.sh_drape_enabled.isChecked()),
                 "softSamples": int(self.sh_soft_samples.value()),
                 "softRadius": round(self.sh_soft_radius.value(), 3),
                 "billboard": self.sh_billboard.committed_type() or "light",
@@ -2843,6 +2875,19 @@ class ScenePropertyPanel(QScrollArea):
     pending_dirty_changed = Signal(bool)
     # 背景图已导入/更换（已落盘 + 写入场景数据）→ 请求画布重载背景
     scene_background_changed = Signal()
+
+    def reload_refs_from_model(self) -> None:
+        """重拉跨域引用候选(filter/item/encounter/bgm,均为别处可新增的全局列表),
+        保留各选择器当前选中值。供切页激活时调用。"""
+        for attr, provider in (
+            ("_sc_filter", self._model.all_filter_ids),
+            ("_hs_pickup_item", self._model.all_item_ids),
+            ("_hs_enc_id", self._model.all_encounter_ids),
+            ("_sc_bgm", lambda: [(a, a) for a in self._model.all_audio_ids("bgm")]),
+        ):
+            sel = getattr(self, attr, None)
+            if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)):
+                sel.set_items(provider())
 
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -2898,6 +2943,10 @@ class ScenePropertyPanel(QScrollArea):
         self._staging_scene: dict | None = None
         self._hs_cutscene_ids_pending: list[str] = []
         self._npc_cutscene_ids_pending: list[str] = []
+        # 位面归属（planes；缺省=存在于所有位面）：与 cutsceneIds 同款 pending 列表
+        self._hs_plane_ids_pending: list[str] = []
+        self._npc_plane_ids_pending: list[str] = []
+        self._zn_plane_ids_pending: list[str] = []
         self._spawn_flush_scene: dict | None = None
         self._editing_scene_id: str = ""
         self._zn_poly_updating: bool = False
@@ -3097,6 +3146,14 @@ class ScenePropertyPanel(QScrollArea):
                 out.append(x)
         return out
 
+    def _current_ambient_preview_id(self) -> str:
+        item = self._sc_ambient_list.currentItem()
+        if item is not None:
+            return item.text().strip()
+        extra_raw = self._sc_ambient_extra.text().strip()
+        extra = [s.strip() for s in extra_raw.split(",") if s.strip()]
+        return extra[0] if extra else ""
+
     def show_empty(self) -> None:
         self._stack.setCurrentWidget(self._empty)
 
@@ -3132,17 +3189,23 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("", self._sc_lock_aspect)
         self._sc_width.valueChanged.connect(self._on_world_width_changed)
         self._sc_height.valueChanged.connect(self._on_world_height_changed)
-        self._sc_bgm = IdRefSelector(allow_empty=True, editable=True)
+        self._sc_bgm = AudioIdPreviewSelector(self._model, "bgm", allow_empty=True, editable=True)
         self._sc_bgm.setMinimumWidth(160)
         self._sc_bgm.value_changed.connect(lambda _x: self._emit_props_changed())
+        self._sc_bgm.setToolTip("场景背景音乐 id；右侧按钮可试听当前选择。")
         form.addRow("bgm", self._sc_bgm)
         self._sc_filter = IdRefSelector(allow_empty=True, editable=True)
+        self._sc_filter.value_changed.connect(lambda _x: self._emit_props_changed())
         form.addRow("filterId", self._sc_filter)
+        # 这批控件此前不接 changed 信号 → 永不置 pending-dirty → 不点 Apply 切场景即丢（审查 P1-1）
         self._sc_zoom = QDoubleSpinBox(); self._sc_zoom.setRange(0.01, 20); self._sc_zoom.setSingleStep(0.1)
+        self._sc_zoom.valueChanged.connect(lambda _v: self._emit_props_changed())
         form.addRow("camera.zoom", self._sc_zoom)
         self._sc_ppu = QDoubleSpinBox(); self._sc_ppu.setRange(0.01, 9999); self._sc_ppu.setValue(1)
+        self._sc_ppu.valueChanged.connect(lambda _v: self._emit_props_changed())
         form.addRow("camera.ppu", self._sc_ppu)
         self._sc_scale = QDoubleSpinBox(); self._sc_scale.setRange(0.01, 10); self._sc_scale.setValue(1)
+        self._sc_scale.valueChanged.connect(lambda _v: self._emit_props_changed())
         form.addRow("worldScale", self._sc_scale)
         basic.add_body(basic_inner)
         outer.addWidget(basic)
@@ -3218,8 +3281,10 @@ class ScenePropertyPanel(QScrollArea):
         move_inner = QWidget()
         move_f = compact_form(QFormLayout(move_inner))
         self._sc_walk = QDoubleSpinBox(); self._sc_walk.setRange(0, 9999)
+        self._sc_walk.valueChanged.connect(lambda _v: self._emit_props_changed())
         move_f.addRow("walkSpeed", self._sc_walk)
         self._sc_run = QDoubleSpinBox(); self._sc_run.setRange(0, 9999)
+        self._sc_run.valueChanged.connect(lambda _v: self._emit_props_changed())
         move_f.addRow("runSpeed", self._sc_run)
         move_g.add_body(move_inner)
         outer.addWidget(move_g)
@@ -3240,7 +3305,21 @@ class ScenePropertyPanel(QScrollArea):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
         )
         self._sc_ambient_list.itemChanged.connect(lambda _i: self._emit_props_changed())
+        self._sc_ambient_list.itemDoubleClicked.connect(
+            lambda _i: self._sc_ambient_preview.preview_current(),
+        )
         amb_lay.addWidget(self._sc_ambient_list)
+        amb_preview_row = QHBoxLayout()
+        amb_preview_row.addWidget(QLabel("试听当前 ambient"))
+        self._sc_ambient_preview = AudioPreviewControls(
+            self._model,
+            "ambient",
+            self._current_ambient_preview_id,
+            self,
+        )
+        amb_preview_row.addWidget(self._sc_ambient_preview)
+        amb_preview_row.addStretch(1)
+        amb_lay.addLayout(amb_preview_row)
         self._sc_ambient_extra = QLineEdit()
         self._sc_ambient_extra.setPlaceholderText("其它 ambient id，逗号分隔")
         self._sc_ambient_extra.textChanged.connect(lambda *_: self._emit_props_changed())
@@ -3452,6 +3531,8 @@ class ScenePropertyPanel(QScrollArea):
         if self._updating_world_dims:
             return
         if not self._sc_lock_aspect.isChecked():
+            # 未锁比例也要置脏：改宽高本身就是编辑（旧实现提前 return 导致不点 Apply 即丢）
+            self._emit_props_changed()
             return
         w = self._sc_width.value()
         if w <= 0:
@@ -3469,6 +3550,7 @@ class ScenePropertyPanel(QScrollArea):
         if self._updating_world_dims:
             return
         if not self._sc_lock_aspect.isChecked():
+            self._emit_props_changed()
             return
         h = self._sc_height.value()
         if h <= 0:
@@ -3729,14 +3811,25 @@ class ScenePropertyPanel(QScrollArea):
             self._sp_y.blockSignals(False)
         self._emit_props_changed()
 
+    @staticmethod
+    def _keep_num(new_val: float, old_val: object) -> object:
+        """未改动的数值按原始 int/float 表示回写（1376 不漂成 1376.0）。"""
+        if (
+            isinstance(old_val, (int, float))
+            and not isinstance(old_val, bool)
+            and float(old_val) == float(new_val)
+        ):
+            return old_val
+        return new_val
+
     def _flush_scene_widgets_into(self, sc: dict) -> None:
         sc["name"] = self._sc_name.text()
         ww = self._sc_width.value()
         if ww > 0:
-            sc["worldWidth"] = ww
+            sc["worldWidth"] = self._keep_num(ww, sc.get("worldWidth"))
         wh = self._sc_height.value()
         if wh > 0:
-            sc["worldHeight"] = wh
+            sc["worldHeight"] = self._keep_num(wh, sc.get("worldHeight"))
         bgm = self._sc_bgm.current_id().strip()
         if bgm:
             sc["bgm"] = bgm
@@ -3747,28 +3840,34 @@ class ScenePropertyPanel(QScrollArea):
             sc["filterId"] = fid
         elif "filterId" in sc:
             del sc["filterId"]
-        cam = sc.setdefault("camera", {})
-        cam["zoom"] = self._sc_zoom.value()
-        cam["pixelsPerUnit"] = self._sc_ppu.value()
+        # 场景本无 camera 且取值仍是运行时默认（zoom=1, ppu=1）→ 不注入 camera 块
+        zoom_v = self._sc_zoom.value()
+        ppu_v = self._sc_ppu.value()
+        if "camera" in sc or zoom_v != 1 or ppu_v != 1:
+            cam = sc.setdefault("camera", {})
+            cam["zoom"] = self._keep_num(zoom_v, cam.get("zoom"))
+            cam["pixelsPerUnit"] = self._keep_num(ppu_v, cam.get("pixelsPerUnit"))
         sc_scale = self._sc_scale.value()
         if sc_scale != 1:
-            sc["worldScale"] = sc_scale
+            sc["worldScale"] = self._keep_num(sc_scale, sc.get("worldScale"))
         elif "worldScale" in sc:
             del sc["worldScale"]
         ws = self._sc_walk.value()
         if ws > 0:
-            sc["playerWalkSpeed"] = ws
+            sc["playerWalkSpeed"] = self._keep_num(ws, sc.get("playerWalkSpeed"))
         elif "playerWalkSpeed" in sc:
             del sc["playerWalkSpeed"]
         rs = self._sc_run.value()
         if rs > 0:
-            sc["playerRunSpeed"] = rs
+            sc["playerRunSpeed"] = self._keep_num(rs, sc.get("playerRunSpeed"))
         elif "playerRunSpeed" in sc:
             del sc["playerRunSpeed"]
         dc_save = sc.get("depthConfig")
         if isinstance(dc_save, dict):
-            dc_save["depth_tolerance"] = float(self._sc_depth_tol.value())
-            dc_save["floor_offset"] = float(self._sc_floor_offset.value())
+            dc_save["depth_tolerance"] = self._keep_num(
+                float(self._sc_depth_tol.value()), dc_save.get("depth_tolerance"))
+            dc_save["floor_offset"] = self._keep_num(
+                float(self._sc_floor_offset.value()), dc_save.get("floor_offset"))
         ambs = self._ambient_ids_from_widgets()
         if ambs:
             sc["ambientSounds"] = ambs
@@ -4020,6 +4119,122 @@ class ScenePropertyPanel(QScrollArea):
             return None
         return [it.text() for it in lw.selectedItems()]
 
+    # ---- 位面归属（planes）--------------------------------------------------
+
+    def _entity_plane_ids_from_data(self, ent: dict) -> list[str]:
+        raw = ent.get("planes")
+        if not isinstance(raw, list):
+            return []
+        return [str(x).strip() for x in raw if str(x).strip()]
+
+    def _format_plane_ids_label(self, ids: list[str]) -> str:
+        return "、".join(ids) if ids else "（所有位面）"
+
+    def _pick_plane_ids(self, current: list[str]) -> list[str] | None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("选择位面归属")
+        dlg.resize(420, 520)
+        lay = QVBoxLayout(dlg)
+        hint = QLabel(
+            "可多选。写入实体的 planes 字段：实体仅存在于所选位面；"
+            "全不选（清空）= 缺省 = 存在于所有位面。候选来自 planes.json（位面面板维护）。",
+        )
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        lw = QListWidget(dlg)
+        lw.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        search = make_list_search_box(
+            lw, tooltip="按位面 id / 名称过滤下方列表（仅隐藏不匹配项，不影响已勾选项）。")
+        lay.addWidget(search)
+        pairs = [(pid, label) for pid, label in self._model.all_plane_ids() if pid]
+        known = {pid for pid, _ in pairs}
+        cur = [x for x in current if x]
+        # 保值孤儿项：数据里引用了当前 planes.json 没有的位面 id，仍列出可去勾，不无声丢。
+        for orphan in cur:
+            if orphan not in known:
+                pairs.append((orphan, f"{orphan}（未登记）"))
+        cur_set = set(cur)
+        for pid, label in pairs:
+            text = pid if (not label or label == pid) else f"{pid} — {label}"
+            it = QListWidgetItem(text)
+            it.setData(Qt.ItemDataRole.UserRole, pid)
+            if pid in cur_set:
+                it.setSelected(True)
+            lw.addItem(it)
+        lay.addWidget(lw, 1)
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dlg,
+        )
+        bbox.accepted.connect(dlg.accept)
+        bbox.rejected.connect(dlg.reject)
+        lay.addWidget(bbox)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return [str(it.data(Qt.ItemDataRole.UserRole)) for it in lw.selectedItems()]
+
+    def _open_hs_plane_ids_picker(self) -> None:
+        picked = self._pick_plane_ids(self._hs_plane_ids_pending)
+        if picked is None:
+            return
+        self._hs_plane_ids_pending = picked
+        self._hs_plane_ids_label.setText(self._format_plane_ids_label(picked))
+        self._emit_props_changed()
+
+    def _clear_hs_plane_ids(self) -> None:
+        self._hs_plane_ids_pending = []
+        self._hs_plane_ids_label.setText(self._format_plane_ids_label([]))
+        self._emit_props_changed()
+
+    def _open_npc_plane_ids_picker(self) -> None:
+        picked = self._pick_plane_ids(self._npc_plane_ids_pending)
+        if picked is None:
+            return
+        self._npc_plane_ids_pending = picked
+        self._npc_plane_ids_label.setText(self._format_plane_ids_label(picked))
+        self._emit_props_changed()
+
+    def _clear_npc_plane_ids(self) -> None:
+        self._npc_plane_ids_pending = []
+        self._npc_plane_ids_label.setText(self._format_plane_ids_label([]))
+        self._emit_props_changed()
+
+    def _open_zn_plane_ids_picker(self) -> None:
+        picked = self._pick_plane_ids(self._zn_plane_ids_pending)
+        if picked is None:
+            return
+        self._zn_plane_ids_pending = picked
+        self._zn_plane_ids_label.setText(self._format_plane_ids_label(picked))
+        self._emit_props_changed()
+
+    def _clear_zn_plane_ids(self) -> None:
+        self._zn_plane_ids_pending = []
+        self._zn_plane_ids_label.setText(self._format_plane_ids_label([]))
+        self._emit_props_changed()
+
+    def _make_plane_ids_row(self, label_attr: str, on_pick, on_clear) -> QWidget:
+        """「只读 label + 选择位面… + 清除」行（hotspot/npc/zone 共用）。"""
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel(self._format_plane_ids_label([]))
+        lbl.setWordWrap(True)
+        lbl.setToolTip(
+            "位面归属：实体仅存在于所列位面；缺省（空）=存在于所有位面。"
+            "候选来自 planes.json（位面面板维护）。",
+        )
+        setattr(self, label_attr, lbl)
+        btn_pick = QPushButton("选择位面…")
+        btn_pick.setToolTip("多选该实体归属的位面（写入 planes 字段）")
+        btn_pick.clicked.connect(on_pick)
+        btn_clear = QPushButton("清除")
+        btn_clear.setToolTip("清空 planes（回到缺省=存在于所有位面）")
+        btn_clear.clicked.connect(on_clear)
+        rl.addWidget(lbl, 1)
+        rl.addWidget(btn_pick)
+        rl.addWidget(btn_clear)
+        return row
+
     def _open_hs_cutscene_ids_picker(self) -> None:
         previous_has_binding = bool(self._hs_cutscene_ids_pending)
         picked = self._pick_cutscene_ids(self._hs_cutscene_ids_pending)
@@ -4102,6 +4317,7 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_id.textChanged.connect(lambda *_: self._emit_props_changed())
         self._hs_type = QComboBox()
         self._hs_type.addItems(["inspect", "pickup", "transition", "npc", "encounter"])
+        self._hs_type.currentIndexChanged.connect(lambda _i: self._emit_props_changed())
         form.addRow("type", self._hs_type)
         self._hs_label = RichTextLineEdit(self._model); form.addRow("label", self._hs_label)
         self._hs_label.textChanged.connect(lambda *_: self._emit_props_changed())
@@ -4115,6 +4331,7 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("interactionRange", self._hs_range)
         self._hs_range.valueChanged.connect(self._on_hotspot_interaction_range_live)
         self._hs_auto = QCheckBox(); form.addRow("autoTrigger", self._hs_auto)
+        self._hs_auto.stateChanged.connect(lambda _s: self._emit_props_changed())
         self._hs_cast_shadow = QCheckBox("投射阴影 + 接触AO")
         self._hs_cast_shadow.setToolTip(
             "缺省开启：有展示图的热区在地面投射阴影并带脚下接触 AO。"
@@ -4143,6 +4360,11 @@ class ScenePropertyPanel(QScrollArea):
         hs_multi_l.addWidget(self._hs_cutscene_ids_btn)
         hs_multi_l.addWidget(self._hs_cutscene_ids_clear_btn)
         form.addRow("cutsceneIds", hs_multi_row)
+        form.addRow("位面归属", self._make_plane_ids_row(
+            "_hs_plane_ids_label",
+            self._open_hs_plane_ids_picker,
+            self._clear_hs_plane_ids,
+        ))
         basic_g.add_body(basic_inner)
         lay.addWidget(basic_g)
 
@@ -4357,9 +4579,12 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_pickup_item.value_changed.connect(lambda _x: self._emit_props_changed())
         pf.addRow("itemId", self._hs_pickup_item)
         self._hs_pickup_name = QLineEdit(); pf.addRow("itemName", self._hs_pickup_name)
+        self._hs_pickup_name.textChanged.connect(lambda *_: self._emit_props_changed())
         self._hs_pickup_count = QSpinBox(); self._hs_pickup_count.setRange(1, 999)
         pf.addRow("count", self._hs_pickup_count)
+        self._hs_pickup_count.valueChanged.connect(lambda _v: self._emit_props_changed())
         self._hs_pickup_currency = QCheckBox(); pf.addRow("isCurrency", self._hs_pickup_currency)
+        self._hs_pickup_currency.stateChanged.connect(lambda _s: self._emit_props_changed())
         self._hs_data_stack.addWidget(pp)
 
         # transition data
@@ -4397,6 +4622,7 @@ class ScenePropertyPanel(QScrollArea):
         ep = QWidget(); ef = compact_form(QFormLayout(ep))
         self._hs_enc_id = IdRefSelector(
             allow_empty=False, editable=False, click_opens_popup=True)
+        self._hs_enc_id.value_changed.connect(lambda _x: self._emit_props_changed())
         ef.addRow("encounterId", self._hs_enc_id)
         self._hs_data_stack.addWidget(ep)
 
@@ -4712,6 +4938,8 @@ class ScenePropertyPanel(QScrollArea):
             if self._hs_trans_spawn_key not in (sc.get("spawnPoints") or {}):
                 self._hs_trans_spawn_key = ""
         self._refresh_trans_spawn_display()
+        # 改 targetScene 本身就是编辑：先置脏，随后弹的出生点对话框即使 Cancel 也不丢置脏
+        self._emit_props_changed()
         # 可编辑 Combo 在下拉关闭的同一事件里弹模态框容易导致列表闪退；延后一拍再打开出生点对话框。
         QTimer.singleShot(0, self._open_trans_spawn_picker)
 
@@ -4733,7 +4961,23 @@ class ScenePropertyPanel(QScrollArea):
             QMessageBox.information(self, "传送热点", "请先选择目标场景。")
             return
         dlg = TargetSpawnPickerDialog(self._model, sid, self._hs_trans_spawn_key, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        accepted = dlg.exec() == QDialog.DialogCode.Accepted
+        # 对话框内"新建/拖动出生点"直写 model；若目标场景恰是正在编辑的场景，
+        # 必须把 staging 的出生点快照同步刷新——否则稍后 Apply 用打开场景时的旧快照
+        # 整体覆盖 spawnPoints，刚建的出生点被删、引用悬垂（审查 P1-25）。
+        # Cancel 也要同步：移动/新建不随 Cancel 回退。
+        st = self._staging_scene
+        src_sc = self._model.scenes.get(sid)
+        if st is not None and src_sc is not None and str(st.get("id")) == str(sid):
+            if "spawnPoints" in src_sc:
+                st["spawnPoints"] = copy.deepcopy(src_sc.get("spawnPoints"))
+            else:
+                st.pop("spawnPoints", None)
+            if "spawnPoint" in src_sc:
+                st["spawnPoint"] = copy.deepcopy(src_sc.get("spawnPoint"))
+            else:
+                st.pop("spawnPoint", None)
+        if accepted:
             self._hs_trans_spawn_key = dlg.selected_spawn_key()
             self._refresh_trans_spawn_display()
             self._emit_props_changed()
@@ -4771,6 +5015,10 @@ class ScenePropertyPanel(QScrollArea):
                 self._format_cutscene_ids_label(self._hs_cutscene_ids_pending),
             )
             self._sync_hs_cutscene_only_checkbox()
+            self._hs_plane_ids_pending = self._entity_plane_ids_from_data(st)
+            self._hs_plane_ids_label.setText(
+                self._format_plane_ids_label(self._hs_plane_ids_pending),
+            )
             self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
             self._hs_cond.set_data(st.get("conditions", []))
             self._hs_cond_hide_entity.blockSignals(True)
@@ -5093,6 +5341,11 @@ class ScenePropertyPanel(QScrollArea):
         else:
             hs.pop("cutsceneIds", None)
         hs.pop("cutsceneId", None)
+        hs_planes = [x for x in self._hs_plane_ids_pending if str(x).strip()]
+        if hs_planes:
+            hs["planes"] = hs_planes
+        else:
+            hs.pop("planes", None)  # 缺省=存在于所有位面
         if self._entity_has_cutscene_binding(hs):
             if self._hs_cutscene_only.isChecked():
                 hs.pop("cutsceneOnly", None)
@@ -5190,6 +5443,16 @@ class ScenePropertyPanel(QScrollArea):
         form = compact_form(QFormLayout(base_inner))
         self._npc_id = QLineEdit(); form.addRow("id", self._npc_id)
         self._npc_id.textChanged.connect(lambda *_: self._emit_props_changed())
+        self._npc_character = QComboBox()
+        self._npc_character.setMinimumWidth(180)
+        self._npc_character.setToolTip(
+            "引用角色注册表（「角色」页 / character_registry.json）：名字·动画包·对话头像默认从角色继承，"
+            "跨场景同一角色只配一次。选「（独立NPC）」= 不引用、身份就地定义。\n"
+            "下方 name/animFile/portrait 默认显示继承值、仍可改：改成异于继承的值 = 只覆盖此摆放的装扮"
+            "（换角色本身请去「角色」页）；设回继承值或清空 = 继续继承。"
+        )
+        self._npc_character.currentIndexChanged.connect(self._on_npc_character_changed)
+        form.addRow("角色(characterId)", self._npc_character)
         self._npc_name = QLineEdit(); form.addRow("name", self._npc_name)
         self._npc_name.textChanged.connect(lambda *_: self._emit_props_changed())
         self._npc_x = QDoubleSpinBox(); self._npc_x.setRange(-99999, 99999); self._npc_x.setDecimals(1)
@@ -5251,6 +5514,11 @@ class ScenePropertyPanel(QScrollArea):
         npc_multi_l.addWidget(self._npc_cutscene_ids_btn)
         npc_multi_l.addWidget(self._npc_cutscene_ids_clear_btn)
         form.addRow("cutsceneIds", npc_multi_row)
+        form.addRow("位面归属", self._make_plane_ids_row(
+            "_npc_plane_ids_label",
+            self._open_npc_plane_ids_picker,
+            self._clear_npc_plane_ids,
+        ))
         self._npc_cast_shadow = QCheckBox("投射阴影 + 接触AO")
         self._npc_cast_shadow.setToolTip(
             "缺省开启：该 NPC 在地面投射阴影并带脚下接触 AO。关闭则此 NPC 不投影也无接触 AO。"
@@ -5325,6 +5593,14 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_initial_state.setMinimumWidth(180)
         self._npc_initial_state.currentIndexChanged.connect(self._on_npc_initial_state_changed)
         anim_f.addRow("initialAnimState", self._npc_initial_state)
+        self._npc_portrait = IdRefSelector(allow_empty=True, editable=False)
+        self._npc_portrait.setMinimumWidth(180)
+        self._npc_portrait.setToolTip(
+            "对话头像立绘集（resources/runtime/images/dialogue_portraits/<slug>/）。\n"
+            "图对话行头像选「跟随说话NPC」时按此解析；留空则该 NPC 不出头像。"
+        )
+        self._npc_portrait.value_changed.connect(self._on_npc_portrait_slug_changed)
+        anim_f.addRow("portraitSlug", self._npc_portrait)
         anim_g.add_body(anim_inner)
         outer.addWidget(anim_g)
 
@@ -5681,6 +5957,90 @@ class ScenePropertyPanel(QScrollArea):
         self._emit_props_changed()
         self.npc_xy_live_changed.emit(str(npc.get("id", "")))
 
+    def _npc_character_items(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = [("（独立NPC）", "")]
+        for cid, ch in sorted((self._model.character_registry or {}).items()):
+            nm = (ch.get("name") or cid) if isinstance(ch, dict) else cid
+            out.append((f"{nm} · {cid}", cid))
+        return out
+
+    def _npc_char_inherited(self, key: str) -> str:
+        cid = str(self._npc_character.currentData() or "").strip()
+        ch = (self._model.character_registry or {}).get(cid) if cid else None
+        v = ch.get(key) if isinstance(ch, dict) else None
+        return v.strip() if isinstance(v, str) else ""
+
+    def _write_identity_override(self, npc: dict, key: str, value: str) -> None:
+        """characterId 引用时写 name/animFile/portraitSlug：仅当就地值非空且异于继承值才写（本摆放覆盖），
+        等于继承值或空则删键（继续继承角色注册表）。"""
+        inherited = self._npc_char_inherited(key)
+        if value and value != inherited:
+            npc[key] = value
+        else:
+            npc.pop(key, None)
+
+    def _apply_npc_character_inheritance(self) -> None:
+        """引用角色时：name/animFile/portrait 保持可编辑，展示「就地覆盖值优先、否则继承值」，
+        并把继承值写进 tooltip 作提示。改成异于继承 = 覆盖此摆放，等于/空 = 继续继承。"""
+        cid = str(self._npc_character.currentData() or "").strip()
+        # 一律可编辑（覆盖靠「值是否异于继承」判定，不再禁用字段）
+        self._npc_name.setReadOnly(False)
+        self._npc_anim.setEnabled(True)
+        self._npc_portrait.setEnabled(True)
+        npc = self._pending_npc or {}
+        if not cid:
+            for w in (self._npc_name, self._npc_anim, self._npc_portrait):
+                w.setToolTip("")
+            return
+
+        def _eff(key: str) -> tuple[str, str]:
+            inh = self._npc_char_inherited(key)
+            own = str(npc.get(key) or "").strip()
+            return (own or inh), inh
+
+        nm, nm_inh = _eff("name")
+        self._npc_name.blockSignals(True)
+        self._npc_name.setText(nm)
+        self._npc_name.blockSignals(False)
+        self._npc_name.setToolTip(f"继承自角色：{nm_inh or '（空）'}；改成别的值 = 只覆盖此摆放，设回/清空 = 继续继承")
+
+        af, af_inh = _eff("animFile")
+        a_items = self._model.anim_asset_path_choices()
+        if af and all(x[0] != af for x in a_items):
+            a_items = [(af, af)] + a_items
+        self._npc_anim.blockSignals(True)
+        self._npc_anim.set_items(a_items)
+        self._npc_anim.set_current(af)
+        self._npc_anim.blockSignals(False)
+        self._npc_anim.setToolTip(f"继承自角色：{af_inh or '（空）'}；改成别的动画包 = 只覆盖此摆放的装扮，设回/清空 = 继续继承")
+
+        ps, ps_inh = _eff("portraitSlug")
+        p_items = (
+            [(s, s) for s in load_portrait_sets(self._model.project_path)]
+            if self._model.project_path is not None else []
+        )
+        if ps and all(x[0] != ps for x in p_items):
+            p_items = [(ps, ps)] + p_items
+        self._npc_portrait.blockSignals(True)
+        self._npc_portrait.set_items(p_items)
+        self._npc_portrait.set_current(ps)
+        self._npc_portrait.blockSignals(False)
+        self._npc_portrait.setToolTip(f"继承自角色：{ps_inh or '（空）'}；改成别的立绘集 = 只覆盖此摆放，设回/清空 = 继续继承")
+
+    def _on_npc_character_changed(self, _i: int) -> None:
+        if self._npc_character.signalsBlocked():
+            return
+        if self._pending_npc is None or self._stack.currentWidget() != self._npc_panel:
+            self._emit_props_changed()
+            return
+        # 切换角色（或切到独立）会更换继承基线，先清掉旧的就地覆盖，避免残留错角色的装扮
+        for _k in ("name", "animFile", "portraitSlug"):
+            self._pending_npc.pop(_k, None)
+        self._apply_npc_character_inheritance()
+        self._fill_npc_initial_state_combo()
+        self._emit_props_changed()
+        self._request_scene_npc_anim_refresh()
+
     def _on_npc_facing_changed(self, _i: int) -> None:
         if self._npc_facing.signalsBlocked():
             return
@@ -5700,7 +6060,10 @@ class ScenePropertyPanel(QScrollArea):
             self._emit_props_changed()
             return
         anim = self._npc_anim.current_id().strip()
-        if anim:
+        if str(self._npc_character.currentData() or "").strip():
+            # 引用角色：异于继承才作本摆放覆盖写入，等于/空则继续继承
+            self._write_identity_override(npc, "animFile", anim)
+        elif anim:
             npc["animFile"] = anim
         elif "animFile" in npc:
             del npc["animFile"]
@@ -5710,6 +6073,21 @@ class ScenePropertyPanel(QScrollArea):
         self._emit_props_changed()
         self._request_scene_npc_anim_refresh()
         self._update_npc_patrol_preview_enabled()
+
+    def _on_npc_portrait_slug_changed(self, _id: str) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            self._emit_props_changed()
+            return
+        slug = self._npc_portrait.current_id().strip()
+        if str(self._npc_character.currentData() or "").strip():
+            # 引用角色：异于继承才作本摆放覆盖写入，等于/空则继续继承
+            self._write_identity_override(npc, "portraitSlug", slug)
+        elif slug:
+            npc["portraitSlug"] = slug
+        elif "portraitSlug" in npc:
+            del npc["portraitSlug"]
+        self._emit_props_changed()
 
     def _npc_anim_json_path(self, anim_id: str) -> Path | None:
         aid = anim_id.strip()
@@ -5884,6 +6262,10 @@ class ScenePropertyPanel(QScrollArea):
                 self._format_cutscene_ids_label(self._npc_cutscene_ids_pending),
             )
             self._sync_npc_cutscene_only_checkbox()
+            self._npc_plane_ids_pending = self._entity_plane_ids_from_data(st)
+            self._npc_plane_ids_label.setText(
+                self._format_plane_ids_label(self._npc_plane_ids_pending),
+            )
             self._npc_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
             self._npc_cond.set_data(st.get("conditions", []))
             self._npc_cond_hide_entity.blockSignals(True)
@@ -5909,6 +6291,32 @@ class ScenePropertyPanel(QScrollArea):
                 self._npc_anim.set_current(cur_a)
             finally:
                 self._npc_anim.blockSignals(False)
+            p_items: list[tuple[str, str]] = [
+                (s, s) for s in load_portrait_sets(self._model.project_path)
+            ] if self._model.project_path is not None else []
+            cur_p = st.get("portraitSlug", "") or ""
+            if cur_p and all(x[0] != cur_p for x in p_items):
+                p_items = [(cur_p, f"{cur_p}（缺集）")] + p_items
+            self._npc_portrait.blockSignals(True)
+            try:
+                self._npc_portrait.set_items(p_items)
+                self._npc_portrait.set_current(cur_p)
+            finally:
+                self._npc_portrait.blockSignals(False)
+            # 角色引用：装下拉 + 设当前，再按继承态切 name/animFile/portrait 只读展示
+            self._npc_character.blockSignals(True)
+            try:
+                self._npc_character.clear()
+                for label, cid in self._npc_character_items():
+                    self._npc_character.addItem(label, cid)
+                cur_cid = str(st.get("characterId", "") or "").strip()
+                if cur_cid and self._npc_character.findData(cur_cid) < 0:
+                    self._npc_character.addItem(f"{cur_cid}（缺角色）", cur_cid)
+                idx = self._npc_character.findData(cur_cid)
+                self._npc_character.setCurrentIndex(idx if idx >= 0 else 0)
+            finally:
+                self._npc_character.blockSignals(False)
+            self._apply_npc_character_inheritance()
             self._fill_npc_initial_state_combo()
             self._load_npc_patrol_ui(st)
             colp = st.get("collisionPolygon")
@@ -5932,7 +6340,15 @@ class ScenePropertyPanel(QScrollArea):
 
     def _write_npc_widgets_to_dict(self, npc: dict) -> None:
         npc["id"] = self._npc_id.text().strip()
-        npc["name"] = self._npc_name.text()
+        _cid = str(self._npc_character.currentData() or "").strip()
+        if _cid:
+            # 引用角色：name/animFile/portraitSlug 默认继承角色注册表；仅「就地值异于继承」时写覆盖（本摆放换装）
+            npc["characterId"] = _cid
+            self._write_identity_override(npc, "name", self._npc_name.text().strip())
+            self._write_identity_override(npc, "portraitSlug", self._npc_portrait.current_id().strip())
+        else:
+            npc.pop("characterId", None)
+            npc["name"] = self._npc_name.text()
         npc["x"] = self._npc_x.value()
         npc["y"] = self._npc_y.value()
         fv = self._npc_facing.currentData()
@@ -5965,6 +6381,11 @@ class ScenePropertyPanel(QScrollArea):
         else:
             npc.pop("cutsceneIds", None)
         npc.pop("cutsceneId", None)
+        npc_planes = [x for x in self._npc_plane_ids_pending if str(x).strip()]
+        if npc_planes:
+            npc["planes"] = npc_planes
+        else:
+            npc.pop("planes", None)  # 缺省=存在于所有位面
         if self._entity_has_cutscene_binding(npc):
             if self._npc_cutscene_only.isChecked():
                 npc.pop("cutsceneOnly", None)
@@ -5987,7 +6408,10 @@ class ScenePropertyPanel(QScrollArea):
         elif "castShadow" in npc:
             del npc["castShadow"]
         anim = self._npc_anim.current_id().strip()
-        if anim:
+        if _cid:
+            # 引用角色：animFile 默认继承；异于继承才作本摆放覆盖写入
+            self._write_identity_override(npc, "animFile", anim)
+        elif anim:
             npc["animFile"] = anim
         elif "animFile" in npc:
             del npc["animFile"]
@@ -6060,6 +6484,11 @@ class ScenePropertyPanel(QScrollArea):
             "depth_floor：叠加到深度遮挡 d_base（与场景 floor_offset 同语义）。重叠多区取 |值| 最大者。")
         self._zn_boost.valueChanged.connect(lambda _v: self._emit_props_changed())
         form.addRow("floorOffsetBoost", self._zn_boost)
+        form.addRow("位面归属", self._make_plane_ids_row(
+            "_zn_plane_ids_label",
+            self._open_zn_plane_ids_picker,
+            self._clear_zn_plane_ids,
+        ))
         top_g.add_body(top_inner)
         lay.addWidget(top_g)
 
@@ -6157,7 +6586,7 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_smell_dir = QDoubleSpinBox()
         self._zn_smell_dir.setRange(-1.0, 1.0)
         self._zn_smell_dir.setSingleStep(0.1)
-        self._zn_smell_dir.setDecimals(2)
+        self._zn_smell_dir.setDecimals(3)  # 与写回 round(...,3) 精度一致，载入 0.125 不被控件截断
         self._zn_smell_dir.setToolTip("方位偏向 -1..1（0=居中；气缕拖向来源那侧）。")
         self._zn_smell_dir.valueChanged.connect(lambda _v: self._emit_props_changed())
         smell_form.addRow("方位偏向 dir", self._zn_smell_dir)
@@ -6241,6 +6670,9 @@ class ScenePropertyPanel(QScrollArea):
         if len(poly) < 3:
             return
         self.zone_polygon_changed.emit(eid, poly)
+        # 三份顶点表中唯一漏置脏的一份：hotspot(:_emit_hs_col_polygon_if_valid)/NPC 都有，
+        # zone 没有 → 只改侧栏顶点、切实体即丢（审查 P1-2）
+        self._emit_props_changed()
 
     def _on_zone_poly_cell_changed(self, item: QTableWidgetItem) -> None:
         if self._zn_poly_updating:
@@ -6332,6 +6764,10 @@ class ScenePropertyPanel(QScrollArea):
             self._current_data = st
             self._stack.setCurrentWidget(self._zone_panel)
             self._zn_id.setText(st.get("id", ""))
+            self._zn_plane_ids_pending = self._entity_plane_ids_from_data(st)
+            self._zn_plane_ids_label.setText(
+                self._format_plane_ids_label(self._zn_plane_ids_pending),
+            )
             poly = st.get("polygon")
             if isinstance(poly, list) and len(poly) >= 3:
                 self._set_zone_poly_table(poly)
@@ -6384,6 +6820,11 @@ class ScenePropertyPanel(QScrollArea):
 
     def _write_zone_widgets_to_dict(self, zone: dict) -> None:
         zone["id"] = self._zn_id.text().strip()
+        zn_planes = [x for x in self._zn_plane_ids_pending if str(x).strip()]
+        if zn_planes:
+            zone["planes"] = zn_planes
+        else:
+            zone.pop("planes", None)  # 缺省=存在于所有位面
         poly = self._zone_polygon_from_table()
         if len(poly) >= 3:
             zone["polygon"] = poly
@@ -6415,12 +6856,23 @@ class ScenePropertyPanel(QScrollArea):
                 del zone["onExit"]
             scent = self._zn_smell_scent.committed_type().strip()
             if scent:
-                sm: dict = {"scent": scent, "intensity": int(self._zn_smell_intensity.value())}
+                old_sm = zone.get("smell") if isinstance(zone.get("smell"), dict) else {}
+                sm: dict = {"scent": scent}
+                inten = int(self._zn_smell_intensity.value())
+                # 原本没有 intensity 且仍为运行时默认 60 → 不注入（省略即默认，SmellSystem.ts:23）
+                if "intensity" in old_sm or inten != 60:
+                    sm["intensity"] = self._keep_num(inten, old_sm.get("intensity"))
                 dval = round(float(self._zn_smell_dir.value()), 3)
-                if dval != 0:
+                if "dir" in old_sm and float(old_sm.get("dir") or 0) == float(self._zn_smell_dir.value()):
+                    sm["dir"] = old_sm["dir"]  # 未改动按原精度回写（0.125 不被 round 成 0.13→0.125 显示截断）
+                elif dval != 0:
                     sm["dir"] = dval
                 if self._zn_smell_flicker.isChecked():
                     sm["flicker"] = True
+                # 保留未知键
+                for k, v in old_sm.items():
+                    if k not in ("scent", "intensity", "dir", "flicker"):
+                        sm[k] = v
                 zone["smell"] = sm
             elif "smell" in zone:
                 del zone["smell"]
@@ -6452,14 +6904,17 @@ class ScenePropertyPanel(QScrollArea):
         form_host = QWidget()
         form = compact_form(QFormLayout(form_host))
         self._sp_key = QLineEdit()
+        self._sp_key.textChanged.connect(lambda *_: self._emit_props_changed())
         form.addRow("key", self._sp_key)
         self._sp_x = QDoubleSpinBox()
         self._sp_x.setRange(-99999, 99999)
         self._sp_x.setDecimals(1)
+        self._sp_x.valueChanged.connect(lambda _v: self._emit_props_changed())
         form.addRow("x", self._sp_x)
         self._sp_y = QDoubleSpinBox()
         self._sp_y.setRange(-99999, 99999)
         self._sp_y.setDecimals(1)
+        self._sp_y.valueChanged.connect(lambda _v: self._emit_props_changed())
         form.addRow("y", self._sp_y)
         self._sp_note = QLabel()
         self._sp_note.setWordWrap(True)
@@ -6652,6 +7107,17 @@ class SceneEditor(QWidget):
         self._combo_cutscene_ctx.typeCommitted.connect(self._on_cutscene_edit_context_changed)
         ll.addWidget(self._combo_cutscene_ctx)
 
+        _plane_lab = QLabel("位面视图")
+        _plane_lab.setToolTip(
+            "只显示归属所选位面的实体（缺省=无 planes 字段=存在于所有位面的实体始终显示），"
+            "与运行时位面显隐同口径。纯预览过滤，不改数据；选「全部位面」= 不过滤。"
+        )
+        ll.addWidget(_plane_lab)
+        self._combo_plane_view = FilterableTypeCombo([], self, select_only=True)
+        self._combo_plane_view.setToolTip(_plane_lab.toolTip())
+        self._combo_plane_view.typeCommitted.connect(self._on_plane_view_changed)
+        ll.addWidget(self._combo_plane_view)
+
         self._btn_new_scene = QPushButton("+ 新建场景")
         self._btn_new_scene.setToolTip(
             "创建一个新的空场景（最小骨架：id / name / 出生点）。"
@@ -6733,6 +7199,34 @@ class SceneEditor(QWidget):
 
         self._refresh_scene_list()
         self._refill_scene_cutscene_ctx_combo(init=True)
+        self._refill_scene_plane_view_combo(init=True)
+
+    def reload_refs_from_model(self) -> None:
+        """切页激活时,让属性面板重拉跨域引用候选(filter/item/encounter)。"""
+        self._props.reload_refs_from_model()
+        # 位面面板可能新增/删位面：刷新「位面视图」下拉候选（保留当前选中）。
+        self._refill_scene_plane_view_combo()
+
+    def _refill_scene_plane_view_combo(self, *, init: bool = False) -> None:
+        w = getattr(self, "_combo_plane_view", None)
+        if not isinstance(w, FilterableTypeCombo):
+            return
+        prev = "" if init else w.committed_type().strip()
+        rows: list[tuple[str, str]] = [("（全部位面）", "")]
+        rows += [
+            (f"{pid}（{label}）" if label and str(label) != pid else pid, pid)
+            for pid, label in self._model.all_plane_ids()
+        ]
+        w.set_entries(rows)
+        keys = {v for _a, v in rows}
+        w.set_committed_type(prev if (prev and prev in keys) else "")
+        # 候选变化后按当前选中重贴一次（选中位面被删则回落到全部=显示全部）。
+        self._canvas.set_plane_filter(w.committed_type().strip() or None)
+
+    def _on_plane_view_changed(self, _t: str = "") -> None:
+        w = getattr(self, "_combo_plane_view", None)
+        pid = w.committed_type().strip() if isinstance(w, FilterableTypeCombo) else ""
+        self._canvas.set_plane_filter(pid or None)
 
     def _refill_scene_cutscene_ctx_combo(self, *, init: bool = False) -> None:
         w = getattr(self, "_combo_cutscene_ctx", None)
@@ -6928,7 +7422,8 @@ class SceneEditor(QWidget):
         npc_id = str(npc.get("id", "") or "")
         if not npc_id:
             return
-        anim_id = str(npc.get("animFile", "") or "").strip()
+        # characterId 引用的 NPC 无就地 animFile，须经角色注册表解析（否则画布不出 sprite）
+        anim_id = self._model.character_field(npc, "animFile").strip()
         if not anim_id:
             return
         path = self._resolve_anim_public_path(anim_id)
@@ -7348,6 +7843,10 @@ class SceneEditor(QWidget):
         if self._current_scene_id:
             sc = self._model.scenes.get(self._current_scene_id)
             if sc:
+                # 点画布空白=离开当前实体，与切实体路径一致：先提交未应用编辑再回场景面板。
+                # 旧实现直接重建 staging，把编辑连同 pending 标志一起静默丢弃（审查 P0-3）。
+                self._commit_pending_scene_edits()
+                sc = self._model.scenes.get(self._current_scene_id) or sc
                 self._props.load_scene_props(sc, clear_pending_edits=False)
         self._refresh_npc_patrol_overlay()
 
@@ -7569,8 +8068,13 @@ class SceneEditor(QWidget):
             self._mark_canvas_edit()
 
     def flush_to_model(self) -> None:
-        """Save All：与 Apply 相同，原子提交 staging 并增量同步画布。"""
-        self._apply_props()
+        """Save All / 关闭前 flush：仅在确有未应用编辑时才提交 staging。
+
+        与 ``confirm_close`` / ``_commit_pending_scene_edits`` 一致走 ``is_pending_dirty``
+        门控。此前无条件 ``_apply_props()`` 会在末尾 ``mark_dirty("scene")``，于是"打开
+        编辑器啥都没改直接关闭"也被伪标脏、弹出保存提示（关窗时对所有面板逐个 flush）。"""
+        if self._props.is_pending_dirty():
+            self._apply_props()
 
     def confirm_close(self, parent: QWidget | None = None) -> bool:
         """关闭 / 切项目门控钩子（被 MainWindow._confirm_pending_editor_changes 调用）。
@@ -7949,6 +8453,16 @@ class SceneEditor(QWidget):
             return None
         return sc
 
+    @staticmethod
+    def _unique_entity_id(prefix: str, existing_ids) -> str:
+        """new_xxx_N 探测式取号：len() 命名在删过中间项后会撞既存 id（审查 P1-26），
+        撞车会让画布图元键覆盖、属性/删除按 id 首匹配串台。"""
+        taken = {str(i) for i in existing_ids}
+        n = 0
+        while f"{prefix}_{n}" in taken:
+            n += 1
+        return f"{prefix}_{n}"
+
     def _on_canvas_context_add_entity(self, kind: str, wx: float, wy: float) -> None:
         if kind == "hotspot":
             self._add_hotspot_at(wx, wy)
@@ -7966,7 +8480,8 @@ class SceneEditor(QWidget):
         wx = round(float(wx), 1)
         wy = round(float(wy), 1)
         hs_list = sc.setdefault("hotspots", [])
-        new_id = f"new_hotspot_{len(hs_list)}"
+        new_id = self._unique_entity_id(
+            "new_hotspot", (h.get("id", "") for h in hs_list if isinstance(h, dict)))
         hs_list.append({
             "id": new_id, "type": "inspect", "label": "", "x": wx, "y": wy,
             "interactionRange": 50, "data": {"text": ""},
@@ -7984,7 +8499,8 @@ class SceneEditor(QWidget):
         wx = round(float(wx), 1)
         wy = round(float(wy), 1)
         npc_list = sc.setdefault("npcs", [])
-        new_id = f"new_npc_{len(npc_list)}"
+        new_id = self._unique_entity_id(
+            "new_npc", (n.get("id", "") for n in npc_list if isinstance(n, dict)))
         npc_list.append({
             "id": new_id, "name": "New NPC", "x": wx, "y": wy,
             "interactionRange": 50,
@@ -8002,7 +8518,8 @@ class SceneEditor(QWidget):
         wx = round(float(wx), 1)
         wy = round(float(wy), 1)
         z_list = sc.setdefault("zones", [])
-        new_id = f"new_zone_{len(z_list)}"
+        new_id = self._unique_entity_id(
+            "new_zone", (z.get("id", "") for z in z_list if isinstance(z, dict)))
         z_list.append({
             "id": new_id,
             "polygon": [
@@ -8148,6 +8665,17 @@ class SceneEditor(QWidget):
 
     def select_zone_by_id(self, item_id: str, scene_id: str = "") -> None:
         self._select_scene_entity_by_kind("zone", item_id, scene_id)
+
+    def select_scene_by_id(self, scene_id: str, _scene_id: str = "") -> None:
+        """Select a whole scene by id (used by narrative scene-wrapper navigation)."""
+        scene_id = (scene_id or "").strip()
+        if not scene_id:
+            return
+        for i in range(self._scene_list.count()):
+            it = self._scene_list.item(i)
+            if it is not None and it.data(Qt.ItemDataRole.UserRole) == scene_id:
+                self._scene_list.setCurrentItem(it)
+                return
 
     def select_by_id(self, item_id: str, scene_id: str = "") -> None:
         for kind in ("npc", "hotspot", "zone"):

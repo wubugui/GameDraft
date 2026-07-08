@@ -21,7 +21,10 @@
         "kind": "player"
       },
       "text": "（板着脸，声音压得又沉又慢）「要得。——镇住咯。」",
-      "next": "n3"
+      "next": "n3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n3": {
       "type": "line",
@@ -58,11 +61,14 @@
     "n5": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "婆子"
+        "kind": "sceneNpc",
+        "npcId": "npc_院中婆子"
       },
       "text": "灵了！硬是灵了！！小先生——钱！钱你收好！",
-      "next": "n_pay"
+      "next": "n_pay",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n_pay": {
       "type": "runActions",
@@ -84,7 +90,10 @@
         "kind": "player"
       },
       "text": "（攥着铜钱，手心发烫）来钱……龟儿子，硬是撇脱。",
-      "next": "n7"
+      "next": "n7",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n7": {
       "type": "line",

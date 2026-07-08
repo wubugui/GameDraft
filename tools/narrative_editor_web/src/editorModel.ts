@@ -72,6 +72,7 @@ export const emptyCatalog: AuthoringCatalogDef = {
   dialogueGraphIds: [],
   scenarioIds: [],
   questIds: [],
+  sceneIds: [],
   sceneEntityRefs: [],
   sceneNpcRefs: [],
   sceneHotspotRefs: [],
@@ -82,6 +83,7 @@ export const emptyCatalog: AuthoringCatalogDef = {
   actionTypes: [],
   actionParamSchemas: {},
   actionPersistence: {},
+  planeIds: [],
 };
 
 export function normalizeFile(data: NarrativeGraphsFileDef | unknown): NarrativeGraphsFileDef {
@@ -165,15 +167,17 @@ function normalizeGraph(graph: NarrativeGraphDef): void {
 }
 
 function normalizeAuthorSignals(signals: NarrativeAuthorSignalDef[]): void {
-  const seen = new Set<string>();
+  // 只做无争议归一化：清 id/label/notes 两端空白、剔除空 id / 保留字前缀等无效项。
+  // 重复 id 不再静默丢弃——保留交给校验器报 signal.id.duplicate（JS 与 Python 两侧都报此码）。
+  // 否则会在校验前就把重复项抹掉：既丢了策划的数据、又让重复校验永远不触发，且与 Python
+  // _normalize_file（v3 不去重）行为不一致。当前文件无重复信号，故导出字节不变。
   for (let i = signals.length - 1; i >= 0; i -= 1) {
     const row = signals[i]!;
     row.id = String(row.id ?? '').trim();
-    if (!row.id || isReservedAuthorSignalId(row.id) || seen.has(row.id)) {
+    if (!row.id || isReservedAuthorSignalId(row.id)) {
       signals.splice(i, 1);
       continue;
     }
-    seen.add(row.id);
     if (row.label) row.label = String(row.label).trim();
     if (row.notes) row.notes = String(row.notes).trim();
   }
@@ -712,8 +716,23 @@ function evalCondition(expr: unknown, activeStates: Record<string, string>): boo
   return false;
 }
 
+/**
+ * 已登记位面 id 目录（authoring catalog 的 planeIds）。App 装载 catalog 后注入；
+ * null = 目录未知（如 catalog 加载失败），activePlane 存在性检查跳过（不误报）。
+ * 不注入则 TS 权威侧的 state.activePlane.unknown 检查永不触发（Python validate-data 仍兜底）。
+ */
+let knownPlaneIdsForValidation: ReadonlySet<string> | null = null;
+
+export function setKnownPlaneIdsForValidation(ids: readonly string[] | null): void {
+  knownPlaneIdsForValidation = ids
+    ? new Set(ids.map((id) => String(id ?? '').trim()).filter(Boolean))
+    : null;
+}
+
 export function validateNarrativeData(dataRaw: NarrativeGraphsFileDef | unknown): ValidationIssueDef[] {
-  return validateNarrativeGraphData(normalizeFile(dataRaw)) as ValidationIssueDef[];
+  return validateNarrativeGraphData(normalizeFile(dataRaw), {
+    planeIds: knownPlaneIdsForValidation ?? undefined,
+  }) as ValidationIssueDef[];
 }
 
 export function blockingValidationErrors(issues: ValidationIssueDef[]): ValidationIssueDef[] {

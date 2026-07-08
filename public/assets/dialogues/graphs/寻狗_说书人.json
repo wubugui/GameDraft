@@ -34,20 +34,24 @@
     "ret_1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "npc"
       },
       "text": "今天这书讲完了。明天请早——明天讲飞僵，白僵紫僵都得靠边站的那种。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "feijiang_1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "npc"
       },
       "text": "（醒木一拍）——要说这僵尸，白僵不算凶，紫僵才开荤。最毒的是飞僵！飞天遁地，米山符海都拦不住！",
-      "next": "feijiang_2"
+      "next": "feijiang_2",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "feijiang_2": {
       "type": "line",
@@ -61,11 +65,13 @@
     "ts_1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "npc"
       },
       "text": "「……那墓门一开，地里腾起一只大旱魃！赤地千里，草木一舔就焦——」",
-      "next": "ts_2"
+      "next": "ts_2",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "ts_2": {
       "type": "line",
@@ -79,20 +85,24 @@
     "ts_3": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "npc"
       },
       "text": "「也是那伙倒斗的命不该绝！李天狗一袭旧道袍路过神仙顶，拔剑、咬指、画符——剑光跟焦风撞在一处！」",
-      "next": "ts_4"
+      "next": "ts_4",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "ts_4": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "npc"
       },
       "text": "「一道符下去，旱魃生生镇进地里！倒斗的连滚带爬，捧着银钱磕头谢恩呐——」",
-      "next": "ts_5"
+      "next": "ts_5",
+      "portrait": {
+        "emotion": "angry"
+      }
     },
     "ts_5": {
       "type": "line",
@@ -225,11 +235,14 @@
     "kicked_2": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "茶馆掌柜"
+        "kind": "sceneNpc",
+        "npcId": "npc_掌柜"
       },
       "text": "（头也不抬）「背尸的，莫挡到客人的路。」",
-      "next": "kicked_3"
+      "next": "kicked_3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "kicked_3": {
       "type": "runActions",

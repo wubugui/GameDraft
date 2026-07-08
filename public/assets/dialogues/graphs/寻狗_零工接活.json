@@ -12,23 +12,43 @@
         {
           "conditions": [
             {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "accepted"
+            }
+          ],
+          "next": "yan_remind"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ],
+          "next": "yan_carrying"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "delivered",
+              "reached": true
+            }
+          ],
+          "next": "yan_done"
+        },
+        {
+          "conditions": [
+            {
               "flag": "零工背尸_done",
               "op": "==",
               "value": true
             }
           ],
-          "next": "done_1"
+          "next": "yan_offer"
         }
       ],
       "defaultNext": "n1"
-    },
-    "done_1": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "路倒拉走了嗦？要得。回头有脏活路再来寻你。",
-      "next": "end1"
     },
     "n1": {
       "type": "line",
@@ -45,7 +65,10 @@
         "kind": "npc"
       },
       "text": "巷子尾头躺了具死人子，没得人认。拉切义庄，给你五文。整不整？",
-      "next": "n_choice"
+      "next": "n_choice",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_choice": {
       "type": "choice",
@@ -89,7 +112,10 @@
         "kind": "npc"
       },
       "text": "（努嘴往巷子深处）那点还撂起一具，吊死的老汉。一路拉了，再给你五文。",
-      "next": "n_carry2"
+      "next": "n_carry2",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_carry2": {
       "type": "runActions",
@@ -118,6 +144,83 @@
     },
     "end1": {
       "type": "end"
+    },
+    "yan_offer": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "又是你嗦。正好——河头今早捞起个泡涨的，官面验过，没得人认。拉切义庄，八文。整不整？",
+      "next": "yan_choice"
+    },
+    "yan_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "jie",
+          "text": "「八文就八文。淹的又咋个，一样背。」",
+          "next": "yan_ok"
+        },
+        {
+          "id": "buji",
+          "text": "「泡涨的死人子沉得很……等老子缓口气。」",
+          "next": "yan_no"
+        }
+      ]
+    },
+    "yan_ok": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_零工接活",
+            "signal": "beishi_yan_accepted"
+          }
+        }
+      ],
+      "next": "yan_ok_line"
+    },
+    "yan_ok_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "死人子在码头巷口，苇席底下撂起。莫拖——日头毒了要出味。",
+      "next": "end1"
+    },
+    "yan_no": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "要得，想通了再来。死人子又跑不脱。",
+      "next": "end1"
+    },
+    "yan_remind": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "还没去嗦？码头巷口，苇席底下。手脚麻利点。",
+      "next": "end1"
+    },
+    "yan_carrying": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "背都背起了还杵到这做啥子？义庄，快切！",
+      "next": "end1"
+    },
+    "yan_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "淹的那个交了嗦？要得。回头再有活路喊你。",
+      "next": "end1"
     }
   }
 }

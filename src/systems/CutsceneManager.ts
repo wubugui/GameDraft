@@ -5,8 +5,8 @@ import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer, ShowSubtitleLayout } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
-import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep } from '../data/types';
-import { CUTSCENE_ACTION_WHITELIST } from '../data/types';
+import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, CutsceneKenBurns, ICutsceneAudioPlayer, AudioPlaybackHandle, ParallaxSceneDef } from '../data/types';
+import { CUTSCENE_ACTION_WHITELIST, CUTSCENE_ANON_SHOT_ID } from '../data/types';
 import { Npc } from '../entities/Npc';
 import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
 import { TEXT_URLS } from '../core/projectPaths';
@@ -48,6 +48,18 @@ export type ChangeSceneParams = {
 
 export type SceneSwitcher = (params: ChangeSceneParams) => Promise<void>;
 
+/** 过场发出的表情气泡归属标记：cleanup 定向清理用（EmoteBubbleManager.cleanupByOwner） */
+const CUTSCENE_EMOTE_OWNER = 'cutscene';
+
+/**
+ * showImg.id / parallaxScene.handle / hideImg.id 的句柄解析：
+ * 显式非空 → 手动管理；缺省/空白 → 匿名镜头位（CUTSCENE_ANON_SHOT_ID，自动托管）。
+ */
+function resolveCutsceneImageHandle(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  return s || CUTSCENE_ANON_SHOT_ID;
+}
+
 /** 与 playScriptedDialogue 一致：解析 speaker 中的 {{player}} / {{npc}} 等 */
 export type ScriptedSpeakerResolver = (raw: string, scriptedNpcId?: string) => string;
 
@@ -65,6 +77,9 @@ interface CutsceneSnapshot {
   cameraX: number;
   cameraY: number;
   cameraZoom: number;
+  /** 过场前音频基线：当前 BGM id（无则 null）与活跃环境层 id 列表，供同场景过场结束后还原。 */
+  bgmId: string | null;
+  ambientIds: string[];
 }
 
 export class CutsceneManager implements IGameSystem {
@@ -74,6 +89,8 @@ export class CutsceneManager implements IGameSystem {
   private cutsceneRenderer: CutsceneRenderer;
 
   private cutsceneDefs: Map<string, NewCutsceneDef> = new Map();
+  /** parallax_scenes.json 惰性加载缓存（present:parallaxScene 按 id 检索） */
+  private parallaxScenes: Record<string, ParallaxSceneDef> | null = null;
   private playing: boolean = false;
   private waitClickResolve: (() => void) | null = null;
   private dialogueResolve: (() => void) | null = null;
@@ -89,11 +106,18 @@ export class CutsceneManager implements IGameSystem {
   private emoteBubbleProvider: IEmoteBubbleProvider | null = null;
   private emoteTargetResolver: ((raw: string) => IEmoteBubbleAnchor | null) | null = null;
   private inputManager: InputManager | null = null;
+  private audioManager: ICutsceneAudioPlayer | null = null;
   private assetManager!: AssetManager;
   private unsubPointer: (() => void) | null = null;
   private unsubKey: (() => void) | null = null;
   private destroyed = false;
   private skipping = false;
+  /** R9：中止在途 steps 的代际——skip / deserialize / destroy 推进。`skipping` 标志会在 finally
+   *  复位，被 parallel race 放弃的轨道靠此代际在其当前 await 归来时终止，不再执行后续步。 */
+  private stepEpoch = 0;
+  /** R10：「世界已被替换」代际——deserialize / destroy 推进。在飞 startCutscene 的 finally
+   *  见过期即不得用过场前快照覆盖刚读入的存档状态，也不重复 cleanup。 */
+  private worldEpoch = 0;
 
   private snapshot: CutsceneSnapshot | null = null;
   /** 当前播放的过场 id（供调试 HUD / cutscene:step 事件） */
@@ -114,6 +138,7 @@ export class CutsceneManager implements IGameSystem {
   /** 与 Game.resolveDisplayText 同源；过场字幕在此解析后再交给 CutsceneRenderer（避免绕开统一解析链）。 */
   private displayTextResolver: ((s: string) => string) | null = null;
   private sceneManagerAPI: SceneManagerCutsceneAPI | null = null;
+  private activeSubtitleVoiceStops = new Set<() => void>();
 
   constructor(
     eventBus: EventBus,
@@ -147,11 +172,28 @@ export class CutsceneManager implements IGameSystem {
 
   init(ctx: GameContext): void {
     this.assetManager = ctx.assetManager;
+    /** 律8：destroy 后重 init 行为须与首次一致——瞬态会话状态全部复位
+     *  （destroy 已落地挂起 resolve / 解绑输入，这里只清标志与句柄） */
+    this.destroyed = false;
+    this.playing = false;
+    this.skipping = false;
+    this.waitClickResolve = null;
+    this.dialogueResolve = null;
+    this.dialogueAdvanceNotBefore = 0;
+    this.waitClickNotBefore = 0;
+    this.snapshot = null;
+    this.playbackCutsceneId = null;
+    this.playbackPathLast = null;
+    this.playbackLabelLast = null;
   }
   update(_dt: number): void {}
 
   setInputManager(im: InputManager): void {
     this.inputManager = im;
+  }
+
+  setAudioManager(audioManager: ICutsceneAudioPlayer): void {
+    this.audioManager = audioManager;
   }
 
   setEntityResolver(resolver: EntityResolver): void {
@@ -303,6 +345,23 @@ export class CutsceneManager implements IGameSystem {
     }
   }
 
+  /** 惰性加载 parallax_scenes.json（数组）并按 id 建索引；供 present:parallaxScene 检索。 */
+  private async getParallaxScene(id: string): Promise<ParallaxSceneDef | null> {
+    if (!this.parallaxScenes) {
+      try {
+        const arr = await this.assetManager.loadJson<ParallaxSceneDef[]>(TEXT_URLS.parallaxScenes);
+        const map: Record<string, ParallaxSceneDef> = {};
+        for (const s of Array.isArray(arr) ? arr : []) {
+          if (s && typeof s.id === 'string') map[s.id] = s;
+        }
+        this.parallaxScenes = map;
+      } catch {
+        this.parallaxScenes = {};
+      }
+    }
+    return this.parallaxScenes[id] ?? null;
+  }
+
   private collectImagePathsFromSteps(steps: CutsceneStep[], out: Set<string>): void {
     for (const step of steps) {
       if (step.kind === 'present' && step.type === 'showImg' && typeof step.image === 'string') {
@@ -324,6 +383,9 @@ export class CutsceneManager implements IGameSystem {
     if (this.playing) return;
     this.playing = true;
     this.skipping = false;
+    /** 本次会话的代际快照：steps 执行与 finally 收尾据此判断是否已被 skip / 读档 / 拆除作废 */
+    const stepEpochAtStart = this.stepEpoch;
+    const worldEpochAtStart = this.worldEpoch;
     this.playbackCutsceneId = id;
     this.eventBus.emit('cutscene:start', { id });
 
@@ -358,6 +420,10 @@ export class CutsceneManager implements IGameSystem {
     let wasCrossScene = false;
     try {
       this.captureSnapshot();
+      /** 开启一次性音效捕获：其后 action(playSfx/playSignalCue) 起的 SFX 由 AudioManager 登记。
+       *  cleanup 时 endCutsceneSfxCapture 收尾——中断路径（Esc 跳过/读档/拆除）停尾音、自然播完让末拍收尾。
+       *  置于 cutscene:start 之后：不误捕开场 cutsceneStart 系统提示音（其在 cleanup 前已自然收束）。 */
+      this.audioManager?.beginCutsceneSfxCapture();
 
       const targetSceneId = (def.targetScene || '').trim();
       const currentSceneId = this.sceneIdGetter?.()?.trim() ?? '';
@@ -377,7 +443,14 @@ export class CutsceneManager implements IGameSystem {
       if (!('steps' in def) || !Array.isArray((def as NewCutsceneDef).steps)) {
         console.warn(`CutsceneManager: cutscene "${id}" has no steps array (old commands format is no longer supported)`);
       } else {
-        await this.executeSteps((def as NewCutsceneDef).steps);
+        /** L1 根因修复：黑名单在 ActionExecutor 唯一执行入口强制（含 randomBranch /
+         *  playSignalCue 嵌套批次）；executeOneStep 的顶层 step 过滤保留作纵深防御。 */
+        this.actionExecutor.pushActionPolicy(CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST, `cutscene:${id}`);
+        try {
+          await this.executeSteps((def as NewCutsceneDef).steps, stepEpochAtStart);
+        } finally {
+          this.actionExecutor.popActionPolicy();
+        }
       }
 
       if (this.destroyed) return;
@@ -386,6 +459,15 @@ export class CutsceneManager implements IGameSystem {
       console.warn(`CutsceneManager: startCutscene "${id}" failed`, e);
       throw e;
     } finally {
+      if (this.worldEpoch !== worldEpochAtStart) {
+        /** R10：过场中读档 / 整机拆除已接管收尾（deserialize/destroy 已 cleanup + 解绑输入 +
+         *  复位 playing 等），世界随后会整场景重载。这里**不得**用过场前快照覆盖新状态、
+         *  不重复 cleanup、不触碰可能已属新会话的 playing/playback 字段；
+         *  只兜底清 staging 上下文（幂等）并补发恰好一次 cutscene:end，
+         *  保证 await 本次过场的动作链不悬死。 */
+        this.sceneManagerAPI?.endCutsceneStaging();
+        this.eventBus.emit('cutscene:end', { id });
+      } else {
       const wasSkipping = this.skipping;
       this.unsubPointer?.();
       this.unsubPointer = null;
@@ -420,13 +502,15 @@ export class CutsceneManager implements IGameSystem {
         console.warn('CutsceneManager: restore cutscene scene session failed', e);
       }
       this.snapshot = null;
-      this.cleanup();
+      // wasSkipping=true 是 Esc 跳过（中断，停尾音）；false 是自然播完（让末拍音效收尾）。
+      this.cleanup(wasSkipping);
       this.playing = false;
       this.playbackCutsceneId = null;
       this.playbackPathLast = null;
       this.playbackLabelLast = null;
       this.eventBus.emit('cutscene:step', { cutsceneId: null, path: null, label: null });
       this.eventBus.emit('cutscene:end', { id });
+      }
     }
   }
 
@@ -434,6 +518,10 @@ export class CutsceneManager implements IGameSystem {
   skip(): void {
     if (!this.playing) return;
     this.skipping = true;
+    /** R9：推进 step 代际——被 parallel race 放弃的在途轨道在 `skipping` 于 finally 复位后
+     *  仍会从当前 await 归来，靠代际不再执行后续步（残留 tween / 加回图片 / 对已销毁演员操作） */
+    this.stepEpoch++;
+    this.stopActiveSubtitleVoices();
     this.cutsceneRenderer.abortCutsceneOps();
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
@@ -489,6 +577,8 @@ export class CutsceneManager implements IGameSystem {
       cameraX: this.cameraAccessor?.getX() ?? 0,
       cameraY: this.cameraAccessor?.getY() ?? 0,
       cameraZoom: this.cameraAccessor?.getZoom() ?? 1,
+      bgmId: this.audioManager?.getCurrentBgmId() ?? null,
+      ambientIds: this.audioManager?.getActiveAmbientIds() ?? [],
     };
   }
 
@@ -500,6 +590,10 @@ export class CutsceneManager implements IGameSystem {
       this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
       this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
       this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+      // 同场景过场结束：把被过场 action 改动的音频（playBgm/stopBgm/playSignalCue→stopSceneAmbient）
+      // 还原到过场前基线。跨场景分支下方 sceneSwitcher→loadScene→applySceneAudio 会重建目标场景音频，
+      // 故只在同场景分支处理（幂等：基线未被改动时全为 no-op）。
+      this.audioManager?.restoreAudioBaseline(this.snapshot.bgmId, this.snapshot.ambientIds);
       return;
     }
     if (this.snapshot.sceneId && this.sceneSwitcher) {
@@ -514,10 +608,28 @@ export class CutsceneManager implements IGameSystem {
   // 新 schema step 执行（阶段 3）
   // ================================================================
 
-  private async executeSteps(steps: CutsceneStep[]): Promise<void> {
+  /**
+   * 步进路径「本次会话已作废」判据。skip() 是唯一置 `skipping=true` 处，且在同一同步调用里
+   * 立即 `stepEpoch++`（deserialize / destroy 亦推进 stepEpoch），故 `skipping` 已被 epoch 失配蕴含，
+   * 此处不再冗余检查——只要 stepEpoch 偏离启动时快照或已 destroyed，在途步即放弃。
+   */
+  private isStepStale(epoch: number): boolean {
+    return this.destroyed || this.stepEpoch !== epoch;
+  }
+
+  /**
+   * arming 路径「此刻可武装等待」判据（点击/对白/字幕的双 rAF 窗口末尾）。此处保留 `skipping`：
+   * skip 在 finally 复位 skipping 后被 race 放弃的轨道不经此路径，而 arming 是新武装动作，
+   * 须在 skip / 拆除 / 非播放态时拒绝武装，避免留下无人认领的 resolve 令演出通道悬死。
+   */
+  private canArmWait(): boolean {
+    return !this.skipping && !this.destroyed && this.playing;
+  }
+
+  private async executeSteps(steps: CutsceneStep[], epoch: number): Promise<void> {
     for (let i = 0; i < steps.length; i++) {
-      if (this.destroyed || this.skipping) return;
-      await this.executeOneStep(steps[i], String(i));
+      if (this.isStepStale(epoch)) return;
+      await this.executeOneStep(steps[i], String(i), epoch);
     }
   }
 
@@ -579,8 +691,8 @@ export class CutsceneManager implements IGameSystem {
     });
   }
 
-  private async executeOneStep(step: CutsceneStep, path: string): Promise<void> {
-    if (this.destroyed || this.skipping) return;
+  private async executeOneStep(step: CutsceneStep, path: string, epoch: number): Promise<void> {
+    if (this.isStepStale(epoch)) return;
     this.emitPlaybackStep(path, step);
     switch (step.kind) {
       case 'action':
@@ -603,13 +715,13 @@ export class CutsceneManager implements IGameSystem {
         const raceSkip = new Promise<void>(resolve => {
           resolveSkip = resolve;
           const check = () => {
-            if (this.skipping || this.destroyed) { resolve(); return; }
+            if (this.isStepStale(epoch)) { resolve(); return; }
             skipRafId = requestAnimationFrame(check);
           };
           check();
         });
         await Promise.race([
-          Promise.all(step.tracks.map((s, j) => this.executeOneStep(s, `${path}.p${j}`))).then(() => {
+          Promise.all(step.tracks.map((s, j) => this.executeOneStep(s, `${path}.p${j}`, epoch))).then(() => {
             cancelAnimationFrame(skipRafId);
             resolveSkip?.();
           }),
@@ -661,11 +773,52 @@ export class CutsceneManager implements IGameSystem {
         await this.showDialogueText(merged.text, merged.speaker);
         break;
       }
-      case 'showImg':
-        await this.cutsceneRenderer.showImg(step.image as string, step.id as string ?? 'default');
+      case 'showImg': {
+        const kb = step.kenBurns;
+        const rawZ = step.zIndex;
+        const z = typeof rawZ === 'number' ? rawZ : Number(rawZ);
+        await this.cutsceneRenderer.showImg(
+          step.image as string,
+          resolveCutsceneImageHandle(step.id),
+          kb && typeof kb === 'object' && !Array.isArray(kb) ? (kb as CutsceneKenBurns) : undefined,
+          Number.isFinite(z) ? z : undefined,
+        );
         break;
+      }
+      case 'animLayer': {
+        const numOrU = (v: unknown): number | undefined => {
+          const n = typeof v === 'number' ? v : Number(v);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        await this.cutsceneRenderer.showAnimLayer(
+          step.animFile as string,
+          step.id as string ?? 'anim',
+          {
+            state: typeof step.state === 'string' ? step.state : undefined,
+            xPercent: numOrU(step.xPercent),
+            yPercent: numOrU(step.yPercent),
+            widthPercent: numOrU(step.widthPercent),
+            alpha: numOrU(step.alpha),
+            zIndex: numOrU(step.zIndex),
+          },
+        );
+        break;
+      }
+      case 'parallaxScene': {
+        const inline = step.scene && typeof step.scene === 'object' && !Array.isArray(step.scene)
+          ? (step.scene as ParallaxSceneDef)
+          : null;
+        const sid = String(step.id ?? '').trim();
+        const def = inline ?? (sid ? await this.getParallaxScene(sid) : null);
+        if (def && Array.isArray(def.layers)) {
+          await this.cutsceneRenderer.showParallaxScene(def, resolveCutsceneImageHandle(step.handle));
+        } else {
+          console.warn(`CutsceneManager: parallaxScene 未找到场景 "${sid}"`);
+        }
+        break;
+      }
       case 'hideImg':
-        this.cutsceneRenderer.hideImg(step.id as string ?? 'default');
+        this.cutsceneRenderer.hideImg(resolveCutsceneImageHandle(step.id));
         break;
       case 'showMovieBar':
         this.cutsceneRenderer.showMovieBar((step.heightPercent as number) ?? 0.1);
@@ -678,6 +831,8 @@ export class CutsceneManager implements IGameSystem {
           step.text as string,
           this.resolveShowSubtitleLayout(step as Record<string, unknown>),
           this.parseSubtitleEmoteSpec(step as Record<string, unknown>),
+          this.parseSubtitleVoiceSpec(step as Record<string, unknown>),
+          this.parseSubtitleAutoAdvanceSpec(step as Record<string, unknown>),
         );
         break;
       case 'cameraMove':
@@ -747,6 +902,12 @@ export class CutsceneManager implements IGameSystem {
   private waitForClick(): Promise<void> {
     return new Promise(resolve => {
       const arm = () => {
+        /** 双 rAF arming 窗口内已 skip / 读档 / 拆除：立即落地，不再武装等待
+         *  （否则 Esc 卡一拍；读档后新武装的 resolve 无人认领 → 演出通道悬死） */
+        if (!this.canArmWait()) {
+          resolve();
+          return;
+        }
         this.waitClickNotBefore = performance.now() + 120;
         this.waitClickResolve = () => {
           this.waitClickResolve = null;
@@ -789,6 +950,11 @@ export class CutsceneManager implements IGameSystem {
     const box = this.cutsceneRenderer.showDialogueBox(text, speaker);
     await new Promise<void>(resolve => {
       const arm = () => {
+        /** 同 waitForClick：arming 窗口内已 skip / 读档 / 拆除则立即落地 */
+        if (!this.canArmWait()) {
+          resolve();
+          return;
+        }
         this.dialogueAdvanceNotBefore = performance.now() + 120;
         this.dialogueResolve = () => {
           this.dialogueResolve = null;
@@ -853,10 +1019,49 @@ export class CutsceneManager implements IGameSystem {
     };
   }
 
+  /**
+   * 字幕配音。`subtitleVoice` 字符串表示 audio_config.sfx id；
+   * 对象形态可写 `{ "id": "...", "volume": 0.8 }`。
+   */
+  private parseSubtitleVoiceSpec(step: Record<string, unknown>): { id: string; volume?: number } | null {
+    const raw = step.subtitleVoice;
+    if (typeof raw === 'string') {
+      const id = raw.trim();
+      return id ? { id } : null;
+    }
+    if (!raw || typeof raw !== 'object') return null;
+    const o = raw as Record<string, unknown>;
+    const id = typeof o.id === 'string'
+      ? o.id.trim()
+      : typeof o.sfxId === 'string'
+        ? o.sfxId.trim()
+        : '';
+    if (!id) return null;
+    const rawVolume = o.volume;
+    const volume = typeof rawVolume === 'number' ? rawVolume : Number(rawVolume);
+    return Number.isFinite(volume) ? { id, volume } : { id };
+  }
+
+  /**
+   * `subtitleAutoAdvance`：`"voice"`=配音自然播完后自动推进；正数=展示该毫秒数后自动推进。
+   * 缺省 / 非法值 = 现状（等待点击）。两种模式下玩家点击仍可提前推进。
+   */
+  private parseSubtitleAutoAdvanceSpec(
+    step: Record<string, unknown>,
+  ): { mode: 'voice' } | { mode: 'timer'; ms: number } | null {
+    const raw = step.subtitleAutoAdvance;
+    if (raw === 'voice') return { mode: 'voice' };
+    const ms = typeof raw === 'number' ? raw : NaN;
+    if (Number.isFinite(ms) && ms > 0) return { mode: 'timer', ms };
+    return null;
+  }
+
   private async showSubtitleText(
     text: string,
     layout: ShowSubtitleLayout,
     subtitleEmote: ReturnType<CutsceneManager['parseSubtitleEmoteSpec']>,
+    subtitleVoice: ReturnType<CutsceneManager['parseSubtitleVoiceSpec']>,
+    autoAdvance: ReturnType<CutsceneManager['parseSubtitleAutoAdvanceSpec']> = null,
   ): Promise<void> {
     const raw = String(text ?? '');
     const resolved = this.displayTextResolver ? this.displayTextResolver(raw) : raw;
@@ -866,6 +1071,30 @@ export class CutsceneManager implements IGameSystem {
       : resolved;
     const container = this.cutsceneRenderer.showSubtitle(subtitleContent, layout);
     let dismissSubtitleEmote: (() => void) | null = null;
+    let voiceHandle: AudioPlaybackHandle | null = null;
+    let stopVoice: (() => void) | null = null;
+    /** voice 模式：配音自然播完 → 触发与点击等价的推进；等待尚未武装时先记账，武装时补发 */
+    let autoAdvanceFire: (() => void) | null = null;
+    let voiceEndedBeforeArm = false;
+    const onVoiceEnd = autoAdvance?.mode === 'voice'
+      ? () => {
+        if (autoAdvanceFire) autoAdvanceFire();
+        else voiceEndedBeforeArm = true;
+      }
+      : undefined;
+    if (subtitleVoice) {
+      voiceHandle = this.audioManager?.playTransientSfx(
+        subtitleVoice.id,
+        { volume: subtitleVoice.volume, onEnd: onVoiceEnd },
+      ) ?? null;
+      if (voiceHandle) {
+        stopVoice = () => {
+          voiceHandle?.stop();
+          voiceHandle = null;
+        };
+        this.activeSubtitleVoiceStops.add(stopVoice);
+      }
+    }
     if (subtitleEmote && this.emoteBubbleProvider) {
       const anchor = this.emoteTargetResolver?.(subtitleEmote.target) ?? null;
       if (anchor) {
@@ -876,32 +1105,81 @@ export class CutsceneManager implements IGameSystem {
           anchor,
           emoteText,
           subtitleEmote.opts,
+          CUTSCENE_EMOTE_OWNER,
         );
       } else {
         console.warn(`CutsceneManager showSubtitle: subtitleEmote 目标未解析 "${subtitleEmote.target}"`);
       }
     }
-    await new Promise<void>(resolve => {
-      const arm = () => {
-        this.dialogueAdvanceNotBefore = performance.now() + 120;
-        this.dialogueResolve = () => {
-          this.dialogueResolve = null;
+    try {
+      await new Promise<void>(resolve => {
+        let settled = false;
+        let autoTimerId: ReturnType<typeof setTimeout> | null = null;
+        /** 点击 / skip / 定时 / 配音结束共用的收束：幂等，负责清理定时器与共享 resolver */
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          if (autoTimerId !== null) {
+            clearTimeout(autoTimerId);
+            autoTimerId = null;
+          }
+          autoAdvanceFire = null;
+          if (this.dialogueResolve === wrappedFinish) this.dialogueResolve = null;
           this.dialogueAdvanceNotBefore = 0;
           resolve();
         };
-      };
-      requestAnimationFrame(() => {
-        requestAnimationFrame(arm);
+        /** onClickBound / skip 会先把 dialogueResolve 置 null 再调用；直调 finish 亦安全 */
+        const wrappedFinish = () => finish();
+        const arm = () => {
+          /** 同 waitForClick：arming 窗口内已 skip / 读档 / 拆除则立即落地 */
+          if (!this.canArmWait()) {
+            finish();
+            return;
+          }
+          if (voiceEndedBeforeArm) {
+            finish();
+            return;
+          }
+          this.dialogueAdvanceNotBefore = performance.now() + 120;
+          this.dialogueResolve = wrappedFinish;
+          autoAdvanceFire = finish;
+          if (autoAdvance?.mode === 'timer') {
+            autoTimerId = setTimeout(finish, autoAdvance.ms);
+          }
+        };
+        requestAnimationFrame(() => {
+          requestAnimationFrame(arm);
+        });
       });
-    });
-    dismissSubtitleEmote?.();
-    this.cutsceneRenderer.dismissSubtitle(container);
+    } finally {
+      if (stopVoice) {
+        stopVoice();
+        this.activeSubtitleVoiceStops.delete(stopVoice);
+      }
+      dismissSubtitleEmote?.();
+      this.cutsceneRenderer.dismissSubtitle(container);
+    }
   }
 
-  private cleanup(): void {
+  private stopActiveSubtitleVoices(): void {
+    for (const stop of Array.from(this.activeSubtitleVoiceStops)) {
+      stop();
+    }
+    this.activeSubtitleVoiceStops.clear();
+  }
+
+  /**
+   * @param stopCutsceneSfx 中断路径（Esc 跳过 / 读档 / 拆除）传 true——停掉本过场尚在播放的一次性音效；
+   *   自然播完传 false——只关闭捕获作用域、让末拍音效按编排收尾。所有退出路径都经 cleanup，是音频收尾唯一收口。
+   */
+  private cleanup(stopCutsceneSfx: boolean): void {
+    this.stopActiveSubtitleVoices();
+    this.audioManager?.endCutsceneSfxCapture(stopCutsceneSfx);
     this.cutsceneRenderer.cleanup();
-    this.emoteBubbleProvider?.cleanup();
+    /** 只清过场自己发的气泡（owner='cutscene'）：全量 cleanup 会误杀世界侧仍在倒计时的气泡 */
+    this.emoteBubbleProvider?.cleanupByOwner(CUTSCENE_EMOTE_OWNER);
     for (const [, npc] of this.tempActors) {
+      /** Npc.destroy 会落地其在途 moveTo promise，避免等待该移动的动作链悬死 */
       npc.destroy();
     }
     this.tempActors.clear();
@@ -912,12 +1190,34 @@ export class CutsceneManager implements IGameSystem {
   }
 
   deserialize(_data: any): void {
+    /** R10：过场中读档必须真正中止在途演出——
+     *  (a) 推进 stepEpoch：在途 steps（含被 parallel 放弃的轨道）从当前 await 归来即弃；
+     *  (b) 立即落地挂起的 waitClick / 对白 resolve：否则监听已 unsub、promise 永不 resolve，
+     *      cutscene:end 不发、演出通道悬死；
+     *  (c) 推进 worldEpoch：在飞 startCutscene 的 finally 不得用过场前快照覆盖刚读入的存档
+     *      （staging / cutscene:end 由该 finally 的过期分支兜底、只发一次）。
+     *  cleanup 内 cutsceneRenderer.cleanup 会 abortCutsceneOps（渲染侧代际，Wave1）。 */
+    this.stepEpoch++;
+    this.worldEpoch++;
+    if (this.waitClickResolve) {
+      const r = this.waitClickResolve;
+      this.waitClickResolve = null;
+      r();
+    }
+    if (this.dialogueResolve) {
+      const r = this.dialogueResolve;
+      this.dialogueResolve = null;
+      r();
+    }
     if (this.playing) {
       this.unsubPointer?.();
       this.unsubPointer = null;
       this.unsubKey?.();
       this.unsubKey = null;
-      this.cleanup();
+      // 读档中断在途过场：停掉尾音（applySceneAudio 只重建 BGM/环境，不管一次性 SFX）。
+      this.cleanup(true);
+      /** 调试 HUD 的 step 读数靠事件驱动：会话在此终止，补发一次清空（幂等，仅 UI 读数） */
+      this.eventBus.emit('cutscene:step', { cutsceneId: null, path: null, label: null });
     }
     this.playing = false;
     this.skipping = false;
@@ -931,6 +1231,9 @@ export class CutsceneManager implements IGameSystem {
 
   destroy(): void {
     this.destroyed = true;
+    /** 与 deserialize 同因：在途 steps / 在飞 finally 归来即弃（finally 走过期分支收尾） */
+    this.stepEpoch++;
+    this.worldEpoch++;
     this.skipping = false;
     this.snapshot = null;
     this.playbackCutsceneId = null;
@@ -952,7 +1255,8 @@ export class CutsceneManager implements IGameSystem {
     this.unsubPointer = null;
     this.unsubKey?.();
     this.unsubKey = null;
-    this.cleanup();
+    // 拆除中断在途过场：停掉尾音（AudioManager.destroy 亦会全停 sfxCache，双保险）。
+    this.cleanup(true);
     this.cutsceneDefs.clear();
   }
 }

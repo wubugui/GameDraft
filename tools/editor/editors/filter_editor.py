@@ -217,9 +217,42 @@ class FilterEditor(QWidget):
     def _reload_from_disk(self) -> None:
         self._model.reload_filters_from_disk()
 
+    def _is_dirty(self) -> bool:
+        """表单与模型比对；matrix 文本不可解析也算脏（有未落库的输入）。"""
+        stem = self._current_stem
+        if not stem:
+            return False
+        data = self._model.filter_defs.get(stem, {})
+        mat = self._parse_matrix()
+        if mat is None:
+            return bool(self._matrix_edit.text().strip())
+        if mat != data.get("matrix", _IDENTITY_MATRIX):
+            return True
+        old_alpha = data.get("alpha", 1)
+        try:
+            return float(old_alpha) != float(self._alpha.value())
+        except (TypeError, ValueError):
+            return True
+
     def flush_to_model(self) -> None:
-        if self._current_stem:
+        if self._current_stem and self._is_dirty():
             self._apply(show_errors=False)
+
+    def confirm_close(self, parent=None) -> bool:
+        if not self._current_stem or not self._is_dirty():
+            return True
+        from PySide6.QtWidgets import QMessageBox as _MB
+        r = _MB.question(
+            self, "未应用的修改", "当前滤镜有未应用的修改。保存到模型？",
+            _MB.StandardButton.Save | _MB.StandardButton.Discard | _MB.StandardButton.Cancel,
+        )
+        if r == _MB.StandardButton.Cancel:
+            return False
+        if r == _MB.StandardButton.Save:
+            self._apply(show_errors=True)
+            if self._is_dirty():
+                return False  # matrix 非法等原因没保成，留在编辑器里改
+        return True
 
     def _refresh_list(self) -> None:
         self._list.blockSignals(True)
@@ -232,6 +265,9 @@ class FilterEditor(QWidget):
         self._empty_hint.setVisible(self._list.count() == 0)
 
     def _on_select(self, row: int) -> None:
+        # commit-on-leave：切走前提交上一条的未应用编辑（与其它表单编辑器一致）
+        if self._current_stem and self._is_dirty():
+            self._apply(show_errors=False)
         if row < 0:
             self._current_stem = None
             self._lbl_stem.setText("-")
@@ -248,7 +284,9 @@ class FilterEditor(QWidget):
         self._lbl_stem.setText(stem)
         m = data.get("matrix", _IDENTITY_MATRIX)
         if isinstance(m, list) and len(m) == 20:
-            self._matrix_edit.setText(", ".join(str(float(x)) for x in m))
+            # 保留原始 int/float 表示（1 显示 "1" 而非 "1.0"），配合 _parse_matrix 的
+            # int 保真解析，"仅点选+Save All" 不再把整数矩阵重写成 float。
+            self._matrix_edit.setText(", ".join(str(x) for x in m))
         else:
             self._matrix_edit.setText("")
         self._alpha.setValue(float(data.get("alpha", 1)))
@@ -265,24 +303,35 @@ class FilterEditor(QWidget):
         raw = self._matrix_edit.text().strip()
         if not raw:
             return None
+        def _num(tok: str):
+            try:
+                return json.loads(tok)  # "1"->int 1、"0.5"->float 0.5
+            except (json.JSONDecodeError, ValueError):
+                return float(tok)  # 容忍 "1." 等非严格 JSON 数字
+
         if raw.startswith("["):
             try:
                 arr = json.loads(raw)
             except json.JSONDecodeError:
                 return None
             if isinstance(arr, list) and len(arr) == 20:
-                try:
-                    return [float(x) for x in arr]
-                except (TypeError, ValueError):
-                    return None
+                out: list = []
+                for x in arr:
+                    if isinstance(x, bool) or not isinstance(x, (int, float)):
+                        return None
+                    out.append(x)
+                return out
             return None
         parts = raw.replace(",", " ").split()
         if len(parts) != 20:
             return None
         try:
-            return [float(x) for x in parts]
-        except ValueError:
+            vals = [_num(t) for t in parts]
+        except (TypeError, ValueError):
             return None
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in vals):
+            return None
+        return vals
 
     def _apply(self, *, show_errors: bool = True) -> None:
         if not self._current_stem:
@@ -297,11 +346,22 @@ class FilterEditor(QWidget):
                 )
             return
         stem = self._current_stem
-        self._model.filter_defs[stem] = {
-            "id": stem,
-            "matrix": mat,
-            "alpha": float(self._alpha.value()),
-        }
+        old = self._model.filter_defs.get(stem)
+        cand: dict = dict(old) if isinstance(old, dict) else {"id": stem}
+        cand.setdefault("id", stem)
+        cand["matrix"] = mat
+        alpha_v: object = float(self._alpha.value())
+        old_alpha = (old or {}).get("alpha") if isinstance(old, dict) else None
+        if (
+            isinstance(old_alpha, (int, float))
+            and not isinstance(old_alpha, bool)
+            and float(old_alpha) == alpha_v
+        ):
+            alpha_v = old_alpha  # 未改动按原始 int/float 表示回写
+        cand["alpha"] = alpha_v
+        if cand == old:
+            return  # 无实质变化：不写不标脏
+        self._model.filter_defs[stem] = cand
         self._model.mark_dirty("filter")
 
     def _add(self) -> None:

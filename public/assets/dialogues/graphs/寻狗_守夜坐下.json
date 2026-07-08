@@ -46,7 +46,10 @@
         "kind": "player"
       },
       "text": "（无名无姓，停在这点。要不是庙里出钱，连口薄棺都没得。）",
-      "next": "n3"
+      "next": "n3",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "n3": {
       "type": "line",
@@ -54,7 +57,10 @@
         "kind": "player"
       },
       "text": "（我从小没得爹没得娘，要是哪天横死在外头……估摸也就是这个待遇。）——都是可怜人。",
-      "next": "n_cue"
+      "next": "n_cue",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "n_cue": {
       "type": "runActions",

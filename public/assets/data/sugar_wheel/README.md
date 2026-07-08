@@ -26,13 +26,13 @@
   "wheelMaxSizePx": 660,
   "sectorAngleOffsetDeg": 0,
   "sectorDirection": "clockwise",
-  "spinDurationMs": 4200,
-  "minSpinDurationMs": 1700,
-  "maxSpinDurationMs": 5200,
-  "powerChargeMs": 1300,
-  "minLaunchPower": 0.18,
-  "minFullSpins": 5,
-  "maxFullSpins": 9,
+  "powerChargeMs": 2600,
+  "minLaunchPower": 0,
+  "powerChargeCurve": 1.4,
+  "spinLinearDragPerSec": 0.12,
+  "spinChargeMaxVelocityRadPerSec": 11,
+  "spinChargeMaxAccelRadPerSec2": 9,
+  "spinWeightBiasStrengthRadPerSec2": 4.2,
   "sectors": [
     { "id": "a", "label": "甲", "weight": 1, "payload": { "tag": "custom" } },
     { "id": "b", "label": "乙", "weight": 1 }
@@ -55,14 +55,18 @@
 - `wheelMaxSizePx`：轮盘最大像素尺寸。
 - `sectorAngleOffsetDeg`：格子角度校准。正数为顺时针，用于让抽中结果对齐美术。
 - `sectorDirection`：格子顺序，`clockwise` 或 `counterclockwise`。
-- `spinDurationMs`：兼容旧字段；未配置最大时长时作为默认最大旋转时长。
-- `minSpinDurationMs` / `maxSpinDurationMs`：玩家轻拨/重拨时的旋转时长范围。
 - `powerChargeMs`：按住开始多久蓄满力。
 - `minLaunchPower`：轻点时的最低力度，`0` 到 `1`。
-- `minFullSpins` / `maxFullSpins`：轻拨/重拨时的额外完整圈数范围。
+- `powerChargeCurve`：蓄力映射曲线，`1`=线性，`>1` 前段更细腻。
 - `sectors`：格子列表。数量不限，代码会自动按数量等分。默认 `clockwise` 时，第一个格子对应正上方顺时针半格处的扇区，然后继续顺时针排列。
-- `sectors[].weight`：抽中权重，未填默认 `1`。只影响概率，不影响格子视觉宽度。
+- `sectors[].weight`：**跑道高度倾向**，未填默认 `1`（平地）。越大=低谷越易停、越小=高坡越难停。**不是精确中奖率**——指针停在哪由物理积分（阻力/干摩擦/势能偏置/临界角速削弱）共同决定。想看实际落点占比，用主编辑器转盘面板的「试转分布…」按钮做蒙特卡洛近似。
 - `sectors[].payload`：原样透传到结果事件，供外部奖励/剧情系统自行解释。
+
+### 物理停针（运行时积分，编辑器「物理停针」分组可调）
+
+松手后转盘按欧拉积分 `θ += ωΔt，ω += (α − k·ω + 偏置)·Δt` 减速直到停稳：`spinLinearDragPerSec`（阻力 k）、`spinDragLowSpeedThreshold/BoostRadPerSec`（低速段加阻）、`spinChargeMin/MaxVelocity/AccelRad*`（蓄力→初速/初加速度映射）、`spinAccelHalfLifeSec`（α 衰减）、`spinDryFrictionAccelRadPerSec2`（干摩擦收尾）、`spinStopSpeed/SettleSec`（停转判定）、`spinWeightBiasStrengthRadPerSec2`（weight 跑道高低的整体强度）、`spinWeightBiasCreepRefRadPerSec`（临界角速下削弱偏置，让盘能停在坡上而非被顶着慢转）。
+
+> 旧字段 `spinDurationMs` / `minSpinDurationMs` / `maxSpinDurationMs` / `minFullSpins` / `maxFullSpins` / `sectorStopJitterNormalized` 已被物理模型取代，运行时忽略，残留也不再生效。
 
 ## 结果事件
 

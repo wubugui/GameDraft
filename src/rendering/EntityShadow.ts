@@ -313,6 +313,13 @@ export class PlanarEntityShadow implements IEntityShadow {
     }
   }
 
+  /** 深度调参广播（contact shader 的 col/occ 恒关，深度参数无效，仅 cast 需要） */
+  setDepthParams(tolerance: number, floorOffset: number, occlusionBlendFactor: number): void {
+    setU(this.castShader, 'uTolerance', tolerance);
+    setU(this.castShader, 'uFloorOffset', floorOffset);
+    setU(this.castShader, 'uOccBlend', occlusionBlendFactor);
+  }
+
   destroy(): void {
     if (this.blur) {
       this.blur.destroy();

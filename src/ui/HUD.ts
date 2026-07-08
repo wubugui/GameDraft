@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { SmellIndicatorRenderer, type SmellProfilesRaw, type SmellRenderState, type SmellFormParams } from './smell/SmellIndicatorRenderer';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -54,8 +55,12 @@ export class HUD {
   private resolveDisplay: ((s: string) => string) | null = null;
 
   private currencyCb: (p: { newTotal: number }) => void;
-  private questAcceptedCb: (p: { title: string }) => void;
-  private questCompletedCb: (p: { title: string }) => void;
+  private questAcceptedCb: (p: { questId: string; title: string }) => void;
+  private questCompletedCb: (p: { questId: string; title: string }) => void;
+  /** 已接未完成的任务（按接取顺序）；追踪栏显示最近接取且仍激活的一个，完成时回退到上一个而非清空 */
+  private trackedQuests: { id: string; title: string }[] = [];
+  /** 读档开始：清上一局追踪残留（随后 QuestManager.deserialize 补发 quest:accepted{restored} 重建） */
+  private saveRestoringCb: () => void;
   private healthCb: (p: { current: number; max: number }) => void;
   private healthDebugOverrideCb: (p: { enabled?: boolean; value?: number; ratio?: number }) => void;
   private healthCurrent: number = 100;
@@ -73,8 +78,7 @@ export class HUD {
     this.container = new Container();
 
     this.coinBg = new Graphics();
-    this.coinBg.roundRect(0, 0, 120, 28, UITheme.panel.borderRadiusSmall);
-    this.coinBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
+    drawPanelBase(this.coinBg, 0, 0, 120, 28, SKINS.chip);
     this.coinBg.x = 10;
     this.coinBg.y = 10;
     this.container.addChild(this.coinBg);
@@ -105,8 +109,7 @@ export class HUD {
     this.startFlameLoop();
 
     this.questBg = new Graphics();
-    this.questBg.roundRect(0, 0, 220, 28, UITheme.panel.borderRadiusSmall);
-    this.questBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
+    drawPanelBase(this.questBg, 0, 0, 220, 28, SKINS.chip);
     this.questBg.x = this.renderer.screenWidth - 230;
     this.questBg.y = 10;
     this.questBg.visible = false;
@@ -121,8 +124,7 @@ export class HUD {
     this.container.addChild(this.questText);
 
     this.ruleHintBg = new Graphics();
-    this.ruleHintBg.roundRect(0, 0, 160, 28, UITheme.panel.borderRadiusSmall);
-    this.ruleHintBg.fill({ color: UITheme.colors.hudRuleHint, alpha: UITheme.alpha.hudBgDark });
+    drawPanelBase(this.ruleHintBg, 0, 0, 160, 28, SKINS.chip, { fill: UITheme.colors.hudRuleHint, fillAlpha: UITheme.alpha.hudBgDark });
     this.ruleHintBg.x = (this.renderer.screenWidth - 160) / 2;
     this.ruleHintBg.y = this.renderer.screenHeight - 50;
     this.ruleHintBg.visible = false;
@@ -160,13 +162,20 @@ export class HUD {
     this.currencyCb = (p) => {
       this.coinText.text = `${this.strings.get('hud', 'coins')} ${p.newTotal}`;
       this.coinBg.clear();
-      this.coinBg.roundRect(0, 0, this.coinText.width + 20, 28, UITheme.panel.borderRadiusSmall);
-      this.coinBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
+      drawPanelBase(this.coinBg, 0, 0, this.coinText.width + 20, 28, SKINS.chip);
     };
     this.questAcceptedCb = (p) => {
+      this.trackedQuests = this.trackedQuests.filter((q) => q.id !== p.questId);
+      this.trackedQuests.push({ id: p.questId, title: p.title });
       this.setQuestHint(p.title);
     };
-    this.questCompletedCb = () => {
+    this.questCompletedCb = (p) => {
+      this.trackedQuests = this.trackedQuests.filter((q) => q.id !== p.questId);
+      const last = this.trackedQuests[this.trackedQuests.length - 1];
+      this.setQuestHint(last ? last.title : '');
+    };
+    this.saveRestoringCb = () => {
+      this.trackedQuests = [];
       this.setQuestHint('');
     };
     this.zoneEnterCb = () => { this.updateRuleHint(true); };
@@ -195,6 +204,7 @@ export class HUD {
     this.eventBus.on('currency:changed', this.currencyCb);
     this.eventBus.on('quest:accepted', this.questAcceptedCb);
     this.eventBus.on('quest:completed', this.questCompletedCb);
+    this.eventBus.on('save:restoring', this.saveRestoringCb);
     this.eventBus.on('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.on('zone:ruleUnavailable', this.zoneExitCb);
     this.eventBus.on('player:healthChanged', this.healthCb);
@@ -214,16 +224,14 @@ export class HUD {
   setCoins(amount: number): void {
     this.coinText.text = `${this.strings.get('hud', 'coins')} ${amount}`;
     this.coinBg.clear();
-    this.coinBg.roundRect(0, 0, this.coinText.width + 20, 28, UITheme.panel.borderRadiusSmall);
-    this.coinBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
+    drawPanelBase(this.coinBg, 0, 0, this.coinText.width + 20, 28, SKINS.chip);
   }
 
   setQuestHint(title: string): void {
     if (title) {
       this.questText.text = `${this.strings.get('hud', 'current')}${this.r(title)}`;
       this.questBg.clear();
-      this.questBg.roundRect(0, 0, this.questText.width + 20, 28, UITheme.panel.borderRadiusSmall);
-      this.questBg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.hudBg });
+      drawPanelBase(this.questBg, 0, 0, this.questText.width + 20, 28, SKINS.chip);
       this.questBg.visible = true;
     } else {
       this.questText.text = '';
@@ -369,6 +377,7 @@ export class HUD {
     this.eventBus.off('currency:changed', this.currencyCb);
     this.eventBus.off('quest:accepted', this.questAcceptedCb);
     this.eventBus.off('quest:completed', this.questCompletedCb);
+    this.eventBus.off('save:restoring', this.saveRestoringCb);
     this.eventBus.off('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.off('zone:ruleUnavailable', this.zoneExitCb);
     this.eventBus.off('player:healthChanged', this.healthCb);

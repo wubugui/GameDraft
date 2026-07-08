@@ -13,6 +13,17 @@ export type ActionHandler = (
   zoneContext: ZoneActionContext | null,
 ) => void | Promise<void>;
 
+/**
+ * 执行策略（L1 根因修复）：过场等宿主在执行窗口内压入黑名单，`executeAwait` 对**每个**
+ * 动作（含 randomBranch / playSignalCue 等嵌套 executeBatchAwait 的）检查，命中即跳过。
+ * 顶层 step 过滤仍保留在 CutsceneManager 作纵深防御。
+ */
+export interface ActionExecutionPolicy {
+  blockedTypes: ReadonlySet<string>;
+  /** 诊断标签（如 `cutscene:<id>`），告警时输出 */
+  label: string;
+}
+
 export class ActionExecutor {
   private handlers: Map<string, ActionHandler> = new Map();
   private paramNamesMap: Map<string, string[]> = new Map();
@@ -20,6 +31,7 @@ export class ActionExecutor {
   private flagStore: FlagStore;
   private gameStateController: GameStateController | undefined;
   private zoneContextStack: ZoneActionContext[] = [];
+  private actionPolicyStack: ActionExecutionPolicy[] = [];
   private resolveNotificationText: ((s: string) => string) | null = null;
   /** destroy() 后置 true；ZoneSystem 等 Promise 链仍可能异步回调，需在入口短路避免误报 unknown */
   private destroyed = false;
@@ -55,7 +67,10 @@ export class ActionExecutor {
       this.flagStore.appendStringFlag(params.key as string, String(params.text ?? ''));
     }, ['key', 'text']);
 
-    /** 数值标记自增：当前值非数字（含未设置）按 0 处理；delta 非有限数字时跳过并告警。 */
+    /**
+     * 数值标记自增：委托 FlagStore.addNumericFlag——登记表 valueType 必须为 float，
+     * 否则拒绝写入（与 appendFlag 的 string 校验口径一致）。当前值非数字按 0 处理。
+     */
     this.register('addFlagValue', (params) => {
       const key = String(params.key ?? '').trim();
       if (!key) {
@@ -68,9 +83,7 @@ export class ActionExecutor {
         console.warn(`addFlagValue: delta 须为有限数字: ${String(deltaRaw)}`);
         return;
       }
-      const cur = this.flagStore.get(key);
-      const base = typeof cur === 'number' && Number.isFinite(cur) ? cur : 0;
-      this.flagStore.set(key, base + delta);
+      this.flagStore.addNumericFlag(key, delta);
     }, ['key', 'delta']);
 
     this.register('showNotification', (params) => {
@@ -88,6 +101,28 @@ export class ActionExecutor {
   getParamNames(type: string): string[] | undefined {
     const k = ActionExecutor.normalizeActionTypeKey(type);
     return k === '' ? undefined : this.paramNamesMap.get(k);
+  }
+
+  /** 已注册动作类型（DEV 下与 actionParamManifest 互查用，防三方表漂移）。 */
+  getRegisteredActionTypes(): string[] {
+    return [...this.handlers.keys()];
+  }
+
+  /** 宿主（如过场）在执行窗口内压入黑名单策略；必须与 popActionPolicy 成对（finally 弹出）。 */
+  pushActionPolicy(blockedTypes: ReadonlySet<string>, label: string): void {
+    this.actionPolicyStack.push({ blockedTypes, label });
+  }
+
+  popActionPolicy(): void {
+    this.actionPolicyStack.pop();
+  }
+
+  private findBlockingPolicy(typeKey: string): ActionExecutionPolicy | null {
+    for (let i = this.actionPolicyStack.length - 1; i >= 0; i--) {
+      const p = this.actionPolicyStack[i]!;
+      if (p.blockedTypes.has(typeKey)) return p;
+    }
+    return null;
   }
 
   hasHandler(type: string): boolean {
@@ -128,6 +163,14 @@ export class ActionExecutor {
       console.warn('ActionExecutor: action.type 无效，已跳过', action);
       return;
     }
+    /** L1：唯一执行入口强制黑名单——嵌套批次（randomBranch / playSignalCue 等）同样经过这里 */
+    const blocking = this.findBlockingPolicy(typeKey);
+    if (blocking) {
+      console.warn(
+        `ActionExecutor: 动作 "${typeKey}" 命中执行策略「${blocking.label}」黑名单（过场内禁改存档），已跳过`,
+      );
+      return;
+    }
     await this.runWithExploreActionLock(async () => {
       const handler = this.handlers.get(typeKey);
       if (!handler) {
@@ -161,6 +204,7 @@ export class ActionExecutor {
     this.handlers.clear();
     this.paramNamesMap.clear();
     this.zoneContextStack = [];
+    this.actionPolicyStack = [];
   }
 
   /**

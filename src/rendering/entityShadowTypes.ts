@@ -20,16 +20,12 @@ export interface ShadowSource {
 /**
  * 阴影系统的场景上下文：来自 SceneDepthSystem.getShadowSceneContext()。
  * planar 与 real(deferred) 共用——
- * - real：用 depthTexture(GPU) + 完整 9 元 R + ppu/cx/cy + floorA/B + depth_mapping 在片元重建真实 3D。
- * - planar：用 depthTexture/collisionTexture(GPU) 做碰撞裁切 + 遮挡 blend；depthPixels(CPU) 做 drape。
+ * - real：用 depthTexture(GPU) + 完整 9 元 R + ppu/cx/cy + depth_mapping 在片元重建真实 3D。
+ * - planar：用 depthTexture/collisionTexture(GPU) 做碰撞裁切 + 遮挡 blend。
  */
 export interface ShadowSceneContext {
   depthTexture: Texture;
   collisionTexture: Texture | null;
-  /** 深度图 CPU 像素（RGBA），供 planar 的 depth-drape 逐顶点采样 */
-  depthPixels: Uint8ClampedArray | null;
-  depthPxW: number;
-  depthPxH: number;
   sceneW: number;
   sceneH: number;
   worldToPixelX: number;
@@ -58,5 +54,11 @@ export interface ShadowSceneContext {
 /** 阴影实现统一接口（PlanarEntityShadow / DeferredEntityShadow 各实现一版）。 */
 export interface IEntityShadow {
   update(src: ShadowSource, env: ResolvedLightEnv, field?: ShadowProjectionField | null): void;
+  /**
+   * 深度调参（F2 tolerance/floorOffset/occlusionBlendFactor）广播入口：
+   * 构造时这些值以快照烘焙进 shader uniform，运行时改参须经此传播。
+   * 不消费深度参数的实现（deferred）可不实现。
+   */
+  setDepthParams?(tolerance: number, floorOffset: number, occlusionBlendFactor: number): void;
   destroy(): void;
 }

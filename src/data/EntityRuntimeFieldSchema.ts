@@ -8,14 +8,17 @@ export type RuntimeFieldPicker =
   | 'animationManifest'
   | 'animationState'
   | 'imagePath'
-  | 'hotspotDisplayImage';
+  | 'hotspotDisplayImage'
+  | 'portraitSlug';
 export type RuntimeFieldApply =
   | 'position'
   | 'visibility'
   | 'reloadAnimation'
   | 'playAnimation'
   | 'patrol'
-  | 'reloadHotspotDisplayImage';
+  | 'reloadHotspotDisplayImage'
+  /** 无需立即应用：写回 def 即生效（如 portraitSlug，下一句对话行自然读到） */
+  | 'none';
 
 export type RuntimeFieldValue = string | number | boolean | HotspotDisplayImage | null;
 
@@ -130,7 +133,7 @@ export function applyNpcRuntimeOverride(base: NpcDef, override: Record<string, R
     if (!desc?.persistent) continue;
     if (key === 'x' || key === 'y') {
       if (typeof value === 'number') (out as unknown as Record<string, unknown>)[key] = value;
-    } else if (key === 'animFile' || key === 'initialAnimState') {
+    } else if (key === 'animFile' || key === 'initialAnimState' || key === 'portraitSlug') {
       if (typeof value === 'string') (out as unknown as Record<string, unknown>)[key] = value;
     }
   }

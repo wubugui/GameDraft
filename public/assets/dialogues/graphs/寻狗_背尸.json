@@ -46,7 +46,10 @@
         "kind": "player"
       },
       "text": "（尸都背身上了，还看啥子……找路下崖嘛。）",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n1": {
       "type": "line",
@@ -115,7 +118,10 @@
         "kind": "player"
       },
       "text": "凉是凉的，沉是沉的，该是啥子——",
-      "next": "n_chant2"
+      "next": "n_chant2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_chant2": {
       "type": "line",
@@ -159,7 +165,10 @@
         "kind": "player"
       },
       "text": "（莫管它邪门不邪门，工钱在前。背起就走——下崖那截窄道，自己摸黑下去。）",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "end1": {
       "type": "end"

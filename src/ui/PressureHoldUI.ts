@@ -1,6 +1,8 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
+import type { StringsProvider } from '../core/StringsProvider';
 import { HoldProgress } from '../systems/pressureHold/holdProgress';
 
 export interface PressureHoldSegmentRequest {
@@ -33,6 +35,7 @@ const HINT_FLASH_MS = 900;
  */
 export class PressureHoldUI {
   private renderer: Renderer;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private fillBar: Graphics | null = null;
   private hintText: Text | null = null;
@@ -44,8 +47,9 @@ export class PressureHoldUI {
   private currentRatio = 0;
   private abortOnReleaseFromRatio: number | undefined;
 
-  constructor(renderer: Renderer) {
+  constructor(renderer: Renderer, strings: StringsProvider) {
     this.renderer = renderer;
+    this.strings = strings;
   }
 
   /** 跑一段长按充能；进度到达 stopRatio resolve 'reached'，不容松手关口松手 resolve 'released'。 */
@@ -56,15 +60,15 @@ export class PressureHoldUI {
       this.holding = false;
       this.currentRatio = req.startRatio;
       this.abortOnReleaseFromRatio = req.abortOnReleaseFromRatio;
-      this.buildView(req);
-      this.attachInput();
-
+      // 先构造 HoldProgress（坏参数会 throw），再挂 UI 与全屏输入监听，构造失败不留残留。
       const progress = new HoldProgress({
         startRatio: req.startRatio,
         stopRatio: req.stopRatio,
         fillSeconds: req.fillSeconds,
         decayPerSecond: req.decayPerSecond,
       });
+      this.buildView(req);
+      this.attachInput();
 
       let lastTs = performance.now();
       const step = (ts: number) => {
@@ -138,10 +142,9 @@ export class PressureHoldUI {
     this.container.addChild(prompt);
 
     const frame = new Graphics();
-    frame.roundRect(barX - 3, barY - 3, BAR_WIDTH + 6, BAR_HEIGHT + 6, 6);
-    frame.fill({ color: UITheme.colors.panelBgAlt, alpha: 0.85 });
-    frame.roundRect(barX - 3, barY - 3, BAR_WIDTH + 6, BAR_HEIGHT + 6, 6);
-    frame.stroke({ color: UITheme.colors.borderActive, width: 1 });
+    drawPanelBase(frame, barX - 3, barY - 3, BAR_WIDTH + 6, BAR_HEIGHT + 6, SKINS.panelAlt, {
+      border: UITheme.colors.borderActive,
+    });
     this.container.addChild(frame);
 
     this.fillBar = new Graphics();
@@ -150,7 +153,7 @@ export class PressureHoldUI {
     this.container.addChild(this.fillBar);
 
     const keyHint = new Text({
-      text: '按住 [空格] 或按住鼠标',
+      text: this.strings.get('pressureHold', 'holdHint'),
       style: { fontSize: 11, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
     });
     keyHint.anchor.set(0.5, 0);

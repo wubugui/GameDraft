@@ -11,7 +11,11 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "scenario_义庄镇尸", "state": "all_done", "reached": true }
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "all_done",
+              "reached": true
+            }
           ],
           "next": "after_1"
         }
@@ -20,31 +24,48 @@
     },
     "after_1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "两具尸直挺挺并排躺着，规规矩矩，像睡熟的。越规矩，越不敢多看。",
       "next": "end1"
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "两具尸在地上扭着、揪着、互相压——没有声音。只有布料摩擦的窸窣，和骨头磕在地上的闷响。",
       "next": "n2"
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "老爷子的手揪着外乡尸的领口，外乡尸的手杆反压着他的肩——招招都是巷子里打架的路数。死人，打的活人架。",
       "next": "n3"
     },
     "n3": {
       "type": "line",
-      "speaker": { "kind": "player" },
+      "speaker": {
+        "kind": "player"
+      },
       "text": "（脑壳嗡的一声。脚肚子在打转筋。可手……手是熟的。背过尸的手，晓得下一步该做啥子。）",
-      "next": "n4"
+      "next": "n4",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n4": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
       "text": "吹牛时抖出去的那套「镇尸四样」，这一哈一样一样浮上来：糙米连豆，墨斗线，七颗子，一把剪。——自选顺序，莫选错时辰。",
       "next": "end1"
     },

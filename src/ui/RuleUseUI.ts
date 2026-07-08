@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, RuleLayerKey } from '../data/types';
@@ -117,10 +118,7 @@ export class RuleUseUI {
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    bg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.panelBg });
-    bg.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, px, py, panelW, panelH, SKINS.panel);
     this.container.addChild(bg);
 
     const title = new Text({
@@ -136,10 +134,10 @@ export class RuleUseUI {
       const ry = py + titleH + padY + i * rowH;
 
       const rowBg = new Graphics();
-      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
-      rowBg.fill({ color: s.enabled ? UITheme.colors.rowBgDark : UITheme.colors.rowBgInactive, alpha: UITheme.alpha.rowHover });
-      rowBg.roundRect(px + 10, ry, panelW - 20, rowH - 4, UITheme.panel.borderRadiusSmall);
-      rowBg.stroke({ color: s.enabled ? UITheme.colors.borderActive : UITheme.colors.borderSubtle, width: 1 });
+      drawPanelBase(rowBg, px + 10, ry, panelW - 20, rowH - 4, SKINS.row, {
+        fill: s.enabled ? UITheme.colors.rowBgDark : UITheme.colors.rowBgInactive,
+        border: s.enabled ? UITheme.colors.borderActive : UITheme.colors.borderSubtle,
+      });
       this.container.addChild(rowBg);
 
       let label = `${i + 1}. ${s.ruleName}`;
@@ -181,7 +179,8 @@ export class RuleUseUI {
   }
 
   private selectSlot(slot: ResolvedRuleSlot): void {
-    this.close();
+    // 不在此处 close()：直接自关会绕过 GameStateController 的弹栈恢复，状态滞留 UIOverlay
+    // 造成软锁（R11）。关面板统一由 ruleUse:apply 的处理方（EventBridge）走 closePanel 通道。
     this.eventBus.emit('ruleUse:apply', {
       ruleId: slot.slot.ruleId,
       actions: slot.slot.resultActions,

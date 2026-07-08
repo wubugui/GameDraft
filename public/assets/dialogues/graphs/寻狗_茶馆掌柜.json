@@ -37,7 +37,10 @@
         "kind": "npc"
       },
       "text": "不点茶就莫占位子。要听书，切墙脚站到起。",
-      "next": "def_2"
+      "next": "def_2",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "def_2": {
       "type": "line",
@@ -45,7 +48,10 @@
         "kind": "player"
       },
       "text": "嘿，掌柜的，我这不是给你拉人气嘛。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "after_1": {
       "type": "line",
@@ -53,7 +59,10 @@
         "kind": "npc"
       },
       "text": "（拨着算盘）「李天狗那一脉的」……哼，茶钱照样一文都不得少。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "xd_1": {
       "type": "line",
@@ -61,7 +70,10 @@
         "kind": "npc"
       },
       "text": "听说没得？码头那对洋人，出重金找进神仙顶的向导。重金哦。好多人挤破脑壳——告示就贴在那点。",
-      "next": "xd_2"
+      "next": "xd_2",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "xd_2": {
       "type": "line",
@@ -69,7 +81,10 @@
         "kind": "player"
       },
       "text": "（重金？）……掌柜的，这茶我改天铁定来点。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "end1": {
       "type": "end"
