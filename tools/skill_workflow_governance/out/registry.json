@@ -1,6 +1,6 @@
 {
   "root": "/Users/dannyteng/AIWork/GameDraft",
-  "generated_at": "2026-07-09T01:09:33",
+  "generated_at": "2026-07-09T01:27:20",
   "artifacts": [
     {
       "id": "agent.agents",
@@ -1050,41 +1050,13 @@
       "source": "tool_doc",
       "summary": "\"\"\"单独跑谣言传播阶段，校验图传播与「走样」抽样（默认 stub，不耗真实 API）。",
       "agent": "shared",
-      "modified": "2026-06-12T21:41:42",
-      "modified_ts": 1781271702.5091598,
-      "size": 5646,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.5119681,
+      "size": 5652,
       "headings": [],
       "trigger_hints": [],
       "commands": [],
-      "references": [
-        {
-          "raw": "world/agents",
-          "kind": "inline_code",
-          "line": 10,
-          "target": "world/agents",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
-          "raw": "world/relationships/graph.json",
-          "kind": "inline_code",
-          "line": 10,
-          "target": "world/relationships/graph.json",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
-          "raw": "config/llm_config.json",
-          "kind": "inline_code",
-          "line": 10,
-          "target": "config/llm_config.json",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        }
-      ],
+      "references": [],
       "tags": [
         "script",
         "workflow"
@@ -1098,33 +1070,15 @@
       "source": "tool_doc",
       "summary": "\"\"\"对已有 Run 的某一周：只跑谣言传播并输出统计。",
       "agent": "shared",
-      "modified": "2026-06-12T21:41:42",
-      "modified_ts": 1781271702.5092945,
-      "size": 9216,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.5124087,
+      "size": 9208,
       "headings": [],
       "trigger_hints": [
         "f\"本统计使用的 rumor_sim: max_llm_calls_per_event(有效值)={max_llm_effective}, \" f\"max_propagation_rounds={max_rounds}, p_follow_edge={p_edge}, p_each_spreader_starts={p_start}\" ) print()"
       ],
       "commands": [],
       "references": [
-        {
-          "raw": "config/llm_config.json",
-          "kind": "inline_code",
-          "line": 4,
-          "target": "config/llm_config.json",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
-          "raw": "world/",
-          "kind": "inline_code",
-          "line": 7,
-          "target": "world/",
-          "status": "ok",
-          "resolved_to": "tools/chronicle_sim_v2/core/world",
-          "note": "dirname matches=1"
-        },
         {
           "raw": "world/",
           "kind": "inline_code",
@@ -1420,9 +1374,9 @@
       "source": "cursor_skill",
       "summary": "name: animation-production description: 把角色各 state 的稳定化视频产出为游戏可用的精灵图集(atlas.png + anim.json),抠图/锚点/循环/2K/QA 全走已验证的确定性脚本;agent 只在质检语义裁决与异常处理时入场。",
       "agent": "cursor",
-      "modified": "2026-07-04T02:14:27",
-      "modified_ts": 1783102467.3223183,
-      "size": 2845,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.5086234,
+      "size": 2878,
       "headings": [
         "动画生产 — agent 入口(SOP)",
         "一键产出(程序干活)",
@@ -1471,15 +1425,6 @@
           "note": "suffix matches=21"
         },
         {
-          "raw": "finals.json",
-          "kind": "inline_code",
-          "line": 22,
-          "target": "finals.json",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
           "raw": "qa_gate.py",
           "kind": "inline_code",
           "line": 27,
@@ -1487,15 +1432,6 @@
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/qa_gate.py",
           "note": "suffix matches=1"
-        },
-        {
-          "raw": "finals.json",
-          "kind": "inline_code",
-          "line": 31,
-          "target": "finals.json",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
         },
         {
           "raw": "tmp/libtv_animation_batch_run_20260702/run_animation_batch.py",
@@ -1590,9 +1526,9 @@
       "source": "cursor_skill",
       "summary": "name: debug-panel-extension description: Adds features to the in-game debug panel based on user description. Use when the user asks to add debug panel functionality, 往debug面板添加功能, 添加debug功能, or similar. Implements minimal changes, runs subagent diff review, and reports for approval if changes are too large.",
       "agent": "cursor",
-      "modified": "2026-06-12T21:41:42",
-      "modified_ts": 1781271702.4519117,
-      "size": 4808,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.5097291,
+      "size": 4819,
       "headings": [
         "Debug Panel Extension",
         "何时使用",
@@ -1637,12 +1573,12 @@
           "note": "suffix matches=1"
         },
         {
-          "raw": "src/debug/DebugHelper.ts",
+          "raw": "src/debug/",
           "kind": "inline_code",
           "line": 95,
-          "target": "src/debug/DebugHelper.ts",
-          "status": "missing",
-          "resolved_to": null,
+          "target": "src/debug/",
+          "status": "ok",
+          "resolved_to": "src/debug",
           "note": ""
         }
       ],
@@ -2087,9 +2023,9 @@
       "source": "cursor_skill",
       "summary": "name: interactive-architecture-html description: Produces single-file interactive C4 container + function-chain architecture HTML matching GameDraft/tools/chronicle_sim_v3/data/architecture-v3.html (same layout, CSS classes, and JS behaviors). Use when the user asks for an interactive architecture diagram, C4 + 关键函数 H...",
       "agent": "cursor",
-      "modified": "2026-06-12T21:41:42",
-      "modified_ts": 1781271702.4524493,
-      "size": 6242,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.5102499,
+      "size": 6285,
       "headings": [
         "交互式 C4 架构图 HTML（与 architecture-v3 同形）",
         "规范参考（只读、不可改交互契约）",
@@ -2123,30 +2059,12 @@
           "note": ""
         },
         {
-          "raw": "GameDraft/docs/architecture-gamedraft-runtime.html",
-          "kind": "inline_code",
-          "line": 22,
-          "target": "docs/architecture-gamedraft-runtime.html",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
           "raw": "GameDraft/tools/editor",
           "kind": "inline_code",
           "line": 23,
           "target": "tools/editor",
           "status": "ok",
           "resolved_to": "tools/editor",
-          "note": ""
-        },
-        {
-          "raw": "GameDraft/tools/editor/data/architecture-editor.html",
-          "kind": "inline_code",
-          "line": 23,
-          "target": "tools/editor/data/architecture-editor.html",
-          "status": "missing",
-          "resolved_to": null,
           "note": ""
         },
         {
@@ -2249,7 +2167,7 @@
           "target": "tools/**",
           "status": "ok",
           "resolved_to": "tools",
-          "note": "glob matches=1425"
+          "note": "glob matches=1427"
         },
         {
           "raw": "public/assets/data/*.json",
@@ -2975,9 +2893,9 @@
       "source": "docs",
       "summary": "日期：2026-05-31",
       "agent": "shared",
-      "modified": "2026-06-13T00:11:02",
-      "modified_ts": 1781280662.9832468,
-      "size": 26858,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.5109184,
+      "size": 26866,
       "headings": [
         "GameDraft 生产工具需求总表",
         "核心结论",
@@ -3063,15 +2981,6 @@
           "note": "suffix matches=1"
         },
         {
-          "raw": "frame_001.png",
-          "kind": "inline_code",
-          "line": 250,
-          "target": "frame_001.png",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
           "raw": "resources/editor_projects/editor_data/production_workbench/asset_tasks.jsonl",
           "kind": "inline_code",
           "line": 276,
@@ -3088,15 +2997,6 @@
           "status": "ok",
           "resolved_to": "resources/editor_projects/editor_data/production_workbench/asset_task_runs/20260531-191829-asset-20260531-191829/output-validation.txt",
           "note": "suffix matches=1"
-        },
-        {
-          "raw": "postprocess.txt",
-          "kind": "inline_code",
-          "line": 284,
-          "target": "postprocess.txt",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
         },
         {
           "raw": "narrative_graphs.json",
@@ -3256,9 +3156,9 @@
       "source": "tool_doc",
       "summary": "Turns a character's per-state stabilized videos into a **game-loadable** `atlas.png` + `anim.json`, gated by QA. This is the **post-processing half**; the generation half (LibTV → download → stabilize) lives in `tmp/libtv_animation_batch_run_20260702/run_animation_batch.py`.",
       "agent": "shared",
-      "modified": "2026-07-04T02:13:40",
-      "modified_ts": 1783102420.4026375,
-      "size": 5297,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.5114677,
+      "size": 5341,
       "headings": [
         "animation_pipeline — stabilized clips → game-ready sprite atlas",
         "One-click",
@@ -3303,18 +3203,9 @@
           "note": ""
         },
         {
-          "raw": "finals.json",
-          "kind": "inline_code",
-          "line": 21,
-          "target": "finals.json",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
           "raw": "matting.py",
           "kind": "inline_code",
-          "line": 36,
+          "line": 37,
           "target": "matting.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/matting.py",
@@ -3323,7 +3214,7 @@
         {
           "raw": "pipeline.py",
           "kind": "inline_code",
-          "line": 55,
+          "line": 56,
           "target": "pipeline.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/pipeline.py",
@@ -3332,7 +3223,7 @@
         {
           "raw": "recipes.py",
           "kind": "inline_code",
-          "line": 66,
+          "line": 67,
           "target": "recipes.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/recipes.py",
@@ -3341,7 +3232,7 @@
         {
           "raw": "../video_to_atlas/atlas_core.py",
           "kind": "inline_code",
-          "line": 82,
+          "line": 83,
           "target": "../video_to_atlas/atlas_core.py",
           "status": "ok",
           "resolved_to": "tools/video_to_atlas/atlas_core.py",
@@ -3350,7 +3241,7 @@
         {
           "raw": "anim.json",
           "kind": "inline_code",
-          "line": 83,
+          "line": 84,
           "target": "anim.json",
           "status": "ok",
           "resolved_to": "public/resources/runtime/animation/npc_employer_anim/anim.json",
@@ -3359,7 +3250,7 @@
         {
           "raw": "qa_gate.py",
           "kind": "inline_code",
-          "line": 85,
+          "line": 86,
           "target": "qa_gate.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/qa_gate.py",
@@ -3368,7 +3259,7 @@
         {
           "raw": "recipes.py",
           "kind": "inline_code",
-          "line": 95,
+          "line": 96,
           "target": "recipes.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/recipes.py",
@@ -3377,7 +3268,7 @@
         {
           "raw": "matting.py",
           "kind": "inline_code",
-          "line": 96,
+          "line": 97,
           "target": "matting.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/matting.py",
@@ -3386,7 +3277,7 @@
         {
           "raw": "pipeline.py",
           "kind": "inline_code",
-          "line": 96,
+          "line": 97,
           "target": "pipeline.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/pipeline.py",
@@ -3395,7 +3286,7 @@
         {
           "raw": "qa_gate.py",
           "kind": "inline_code",
-          "line": 97,
+          "line": 98,
           "target": "qa_gate.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/qa_gate.py",
@@ -3404,7 +3295,7 @@
         {
           "raw": "produce.py",
           "kind": "inline_code",
-          "line": 97,
+          "line": 98,
           "target": "produce.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/produce.py",
@@ -3467,9 +3358,9 @@
       "source": "tool_doc",
       "summary": "Python + PIL 实现，与游戏 ColorMatrix 格式一致。输出 JSON 供游戏 FilterLoader 加载。",
       "agent": "shared",
-      "modified": "2026-06-13T00:10:13",
-      "modified_ts": 1781280613.57915,
-      "size": 1238,
+      "modified": "2026-07-09T01:27:14",
+      "modified_ts": 1783531634.0106788,
+      "size": 1295,
       "headings": [
         "滤镜工具",
         "安装",
@@ -3480,7 +3371,7 @@
       ],
       "trigger_hints": [
         "## 使用",
-        "1. 加载图片：选择场景或背景图 2. 预制：内置（还原、夜晚、黄昏、阴天、复古）+ 自定义 3. 添加预制：调节参数后输入名称，点击「添加当前为预制」，保存到 `tools/filter_tool/custom_presets.json` 4. 参数：亮度、对比度、饱和度、色相",
+        "1. 加载图片：选择场景或背景图 2. 预制：内置（还原、夜晚、黄昏、阴天、复古）+ 自定义 3. 添加预制：调节参数后输入名称，点击「添加当前为预制」，保存到 `tools/filter_tool/custom_presets.json`（仓库提供空默认文件，首次保存会更新） 4. 参数：亮度、对比度、饱和度、色相",
         "- 滤镜 JSON 目录由 [`paths.py`](paths.py) 的 `filters_json_dir(project_root)` 解析，与编辑器 `ProjectModel` 使用的 `public/assets/data/filters` **为同一路径**。 - 内置矩阵名与说明与 [`presets.py`](presets.py) 一致，编辑器 Filters 页可一键填入同一套预制。 - 在编辑器 Filters 标签页可 **打开滤镜工具**（本模块）或 **从磁盘重载** 以同步另一程序保存的文件。"
       ],
       "commands": [
@@ -3493,8 +3384,8 @@
           "kind": "inline_code",
           "line": 23,
           "target": "tools/filter_tool/custom_presets.json",
-          "status": "missing",
-          "resolved_to": null,
+          "status": "ok",
+          "resolved_to": "tools/filter_tool/custom_presets.json",
           "note": ""
         },
         {
@@ -3555,9 +3446,9 @@
       "source": "tool_doc",
       "summary": "从视频中按时间区间抽帧，管理**多视频子帧库**和**动画序列**，导出 **native 等大单元格**图集 PNG 及 `.anim.json`。工作区数据持久化为 `.vtaw` 目录。",
       "agent": "shared",
-      "modified": "2026-06-13T00:10:13",
-      "modified_ts": 1781280613.5794313,
-      "size": 3758,
+      "modified": "2026-07-09T01:26:18",
+      "modified_ts": 1783531578.512944,
+      "size": 3703,
       "headings": [
         "Video-to-Atlas Workspace (GameDraft)",
         "环境",
@@ -3670,36 +3561,27 @@
           "note": ""
         },
         {
-          "raw": "gui.py",
+          "raw": "workspace_ui_concept.html",
           "kind": "inline_code",
           "line": 36,
-          "target": "gui.py",
-          "status": "missing",
-          "resolved_to": null,
-          "note": ""
-        },
-        {
-          "raw": "project_model.py",
-          "kind": "inline_code",
-          "line": 37,
-          "target": "project_model.py",
+          "target": "workspace_ui_concept.html",
           "status": "ok",
-          "resolved_to": "tools/editor/project_model.py",
-          "note": "suffix matches=1"
+          "resolved_to": "tools/video_to_atlas/workspace_ui_concept.html",
+          "note": ""
         },
         {
           "raw": "*.png",
           "kind": "inline_code",
-          "line": 83,
+          "line": 82,
           "target": "*.png",
           "status": "ok",
-          "resolved_to": "agent_canvas_os_case_reference.png",
-          "note": "glob matches=10"
+          "resolved_to": "tools/animation_pipeline/ambient_fx/stills/curtain_v1.png",
+          "note": "glob matches=21"
         },
         {
           "raw": "*.meta.json",
           "kind": "inline_code",
-          "line": 84,
+          "line": 83,
           "target": "*.meta.json",
           "status": "ok",
           "resolved_to": "tools/video_to_atlas/1_atlas.meta.json",
@@ -3708,7 +3590,7 @@
         {
           "raw": "*.anim.json",
           "kind": "inline_code",
-          "line": 85,
+          "line": 84,
           "target": "*.anim.json",
           "status": "ok",
           "resolved_to": "tools/video_to_atlas/1_atlas.anim.json",
@@ -3842,61 +3724,6 @@
       "title": "Skill has no clear trigger/use condition",
       "evidence": "No obvious trigger/use/scope section was detected.",
       "suggestion": "Add a short 'when to use / when not to use' section near the top of the skill."
-    },
-    {
-      "id": "broken-ref.cursor-skill.animation-production.22.finals.json",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "cursor-skill.animation-production",
-      "path": ".cursor/skills/animation-production/SKILL.md",
-      "line": 22,
-      "title": "Reference target is missing",
-      "evidence": "`finals.json` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.cursor-skill.animation-production.31.finals.json",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "cursor-skill.animation-production",
-      "path": ".cursor/skills/animation-production/SKILL.md",
-      "line": 31,
-      "title": "Reference target is missing",
-      "evidence": "`finals.json` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "drift.cursor-skill.debug-panel-extension.34.src-core-game.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.debug-panel-extension",
-      "path": ".cursor/skills/debug-panel-extension/SKILL.md",
-      "line": 34,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/Game.ts` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.debug-panel-extension.59.src-ui-debugpanelui.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.debug-panel-extension",
-      "path": ".cursor/skills/debug-panel-extension/SKILL.md",
-      "line": 59,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/ui/DebugPanelUI.ts` is about 24 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "broken-ref.cursor-skill.debug-panel-extension.95.src-debug-debughelper.ts",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "cursor-skill.debug-panel-extension",
-      "path": ".cursor/skills/debug-panel-extension/SKILL.md",
-      "line": 95,
-      "title": "Reference target is missing",
-      "evidence": "`src/debug/DebugHelper.ts` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
     },
     {
       "id": "drift.cursor-skill.editor-tools-iteration.14.tools-editor-validator.py",
@@ -4073,28 +3900,6 @@
       "title": "Referenced artifact is newer than this rule/workflow",
       "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "broken-ref.cursor-skill.interactive-architecture-html.22.docs-architecture-gamedraft-runtime.html",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "cursor-skill.interactive-architecture-html",
-      "path": ".cursor/skills/interactive-architecture-html/SKILL.md",
-      "line": 22,
-      "title": "Reference target is missing",
-      "evidence": "`GameDraft/docs/architecture-gamedraft-runtime.html` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.cursor-skill.interactive-architecture-html.23.tools-editor-data-architecture-editor.html",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "cursor-skill.interactive-architecture-html",
-      "path": ".cursor/skills/interactive-architecture-html/SKILL.md",
-      "line": 23,
-      "title": "Reference target is missing",
-      "evidence": "`GameDraft/tools/editor/data/architecture-editor.html` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
     },
     {
       "id": "drift.cursor-skill.production-mode.34.docs-editor-authoring-surface.md",
@@ -4339,204 +4144,6 @@
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
-      "id": "drift.docs-plan-production-tooling-requirements.55.public-assets-data-narrative_graphs.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "docs-plan-production-tooling-requirements",
-      "path": "docs/plan/production-tooling-requirements.md",
-      "line": 55,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/assets/data/narrative_graphs.json` is about 24 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "broken-ref.docs-plan-production-tooling-requirements.250.frame_001.png",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "docs-plan-production-tooling-requirements",
-      "path": "docs/plan/production-tooling-requirements.md",
-      "line": 250,
-      "title": "Reference target is missing",
-      "evidence": "`frame_001.png` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.docs-plan-production-tooling-requirements.284.postprocess.txt",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "docs-plan-production-tooling-requirements",
-      "path": "docs/plan/production-tooling-requirements.md",
-      "line": 284,
-      "title": "Reference target is missing",
-      "evidence": "`postprocess.txt` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "drift.docs-plan-production-tooling-requirements.311.public-assets-data-narrative_graphs.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "docs-plan-production-tooling-requirements",
-      "path": "docs/plan/production-tooling-requirements.md",
-      "line": 311,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/assets/data/narrative_graphs.json` is about 24 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.docs-plan-production-tooling-requirements.414.resources-editor_projects-editor_data-production_workbench-runtime_debug_snapshot.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "docs-plan-production-tooling-requirements",
-      "path": "docs/plan/production-tooling-requirements.md",
-      "line": 414,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "broken-ref.tools-animation_pipeline-readme.21.finals.json",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "tools-animation_pipeline-readme",
-      "path": "tools/animation_pipeline/README.md",
-      "line": 21,
-      "title": "Reference target is missing",
-      "evidence": "`finals.json` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.config-llm_config.json",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone",
-      "path": "tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py",
-      "line": 10,
-      "title": "Reference target is missing",
-      "evidence": "`config/llm_config.json` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-agents",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone",
-      "path": "tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py",
-      "line": 10,
-      "title": "Reference target is missing",
-      "evidence": "`world/agents` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-relationships-graph.json",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone",
-      "path": "tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py",
-      "line": 10,
-      "title": "Reference target is missing",
-      "evidence": "`world/relationships/graph.json` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_week_stats.4.config-llm_config.json",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "tools-chronicle_sim_v2-scripts-run_rumor_week_stats",
-      "path": "tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py",
-      "line": 4,
-      "title": "Reference target is missing",
-      "evidence": "`config/llm_config.json` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "broken-ref.tools-filter_tool-readme.23.tools-filter_tool-custom_presets.json",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "tools-filter_tool-readme",
-      "path": "tools/filter_tool/README.md",
-      "line": 23,
-      "title": "Reference target is missing",
-      "evidence": "`tools/filter_tool/custom_presets.json` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "drift.tools-video_to_atlas-readme.27.tools-video_to_atlas-main.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "tools-video_to_atlas-readme",
-      "path": "tools/video_to_atlas/README.md",
-      "line": 27,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/video_to_atlas/main.py` is about 19 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.tools-video_to_atlas-readme.28.tools-video_to_atlas-main_window.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "tools-video_to_atlas-readme",
-      "path": "tools/video_to_atlas/README.md",
-      "line": 28,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/video_to_atlas/main_window.py` is about 19 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.tools-video_to_atlas-readme.33.tools-video_to_atlas-export_panel.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "tools-video_to_atlas-readme",
-      "path": "tools/video_to_atlas/README.md",
-      "line": 33,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/video_to_atlas/export_panel.py` is about 19 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "tools-video_to_atlas-readme",
-      "path": "tools/video_to_atlas/README.md",
-      "line": 34,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/video_to_atlas/atlas_core.py` is about 19 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "broken-ref.tools-video_to_atlas-readme.36.gui.py",
-      "severity": "warn",
-      "category": "broken-reference",
-      "artifact_id": "tools-video_to_atlas-readme",
-      "path": "tools/video_to_atlas/README.md",
-      "line": 36,
-      "title": "Reference target is missing",
-      "evidence": "`gui.py` resolves to no existing file or directory.",
-      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
-    },
-    {
-      "id": "drift.tools-video_to_atlas-readme.37.tools-editor-project_model.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "tools-video_to_atlas-readme",
-      "path": "tools/video_to_atlas/README.md",
-      "line": 37,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/project_model.py` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.tools-video_to_atlas-readme.83.agent_canvas_os_case_reference.png",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "tools-video_to_atlas-readme",
-      "path": "tools/video_to_atlas/README.md",
-      "line": 83,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_canvas_os_case_reference.png` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
       "id": "missing-lifecycle.cursor-skill.add-game-action",
       "severity": "info",
       "category": "missing-lifecycle",
@@ -4671,7 +4278,7 @@
   ],
   "stats": {
     "artifact_count": 67,
-    "issue_count": 86,
+    "issue_count": 61,
     "by_type": {
       "agent_rules": 2,
       "ci_workflow": 1,
@@ -4683,116 +4290,15 @@
     },
     "by_severity": {
       "info": 12,
-      "warn": 74
+      "warn": 49
     },
     "by_category": {
-      "broken-reference": 14,
-      "drift-risk": 59,
+      "drift-risk": 48,
       "missing-lifecycle": 12,
       "missing-metadata": 1
     }
   },
   "workpacks": [
-    {
-      "id": "broken-reference",
-      "priority": "P0",
-      "title": "断链修复包",
-      "kind": "agent-fix",
-      "summary": "缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。",
-      "next": "交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。",
-      "issue_count": 14,
-      "artifact_count": 9,
-      "artifact_types": [
-        "script",
-        "skill",
-        "workflow_doc"
-      ],
-      "paths": [
-        ".cursor/skills/animation-production/SKILL.md",
-        ".cursor/skills/debug-panel-extension/SKILL.md",
-        ".cursor/skills/interactive-architecture-html/SKILL.md",
-        "docs/plan/production-tooling-requirements.md",
-        "tools/animation_pipeline/README.md",
-        "tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py",
-        "tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py",
-        "tools/filter_tool/README.md",
-        "tools/video_to_atlas/README.md"
-      ],
-      "hidden_path_count": 0,
-      "issue_ids": [
-        "broken-ref.cursor-skill.animation-production.22.finals.json",
-        "broken-ref.cursor-skill.animation-production.31.finals.json",
-        "broken-ref.cursor-skill.debug-panel-extension.95.src-debug-debughelper.ts",
-        "broken-ref.cursor-skill.interactive-architecture-html.22.docs-architecture-gamedraft-runtime.html",
-        "broken-ref.cursor-skill.interactive-architecture-html.23.tools-editor-data-architecture-editor.html",
-        "broken-ref.docs-plan-production-tooling-requirements.250.frame_001.png",
-        "broken-ref.docs-plan-production-tooling-requirements.284.postprocess.txt",
-        "broken-ref.tools-animation_pipeline-readme.21.finals.json",
-        "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.config-llm_config.json",
-        "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-agents",
-        "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-relationships-graph.json",
-        "broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_week_stats.4.config-llm_config.json",
-        "broken-ref.tools-filter_tool-readme.23.tools-filter_tool-custom_presets.json",
-        "broken-ref.tools-video_to_atlas-readme.36.gui.py"
-      ],
-      "sample_issues": [
-        {
-          "id": "broken-ref.cursor-skill.animation-production.22.finals.json",
-          "severity": "warn",
-          "path": ".cursor/skills/animation-production/SKILL.md",
-          "line": 22,
-          "title": "Reference target is missing",
-          "evidence": "`finals.json` resolves to no existing file or directory.",
-          "href": "/governance/source?path=.cursor/skills/animation-production/SKILL.md&line=22#L22"
-        },
-        {
-          "id": "broken-ref.cursor-skill.animation-production.31.finals.json",
-          "severity": "warn",
-          "path": ".cursor/skills/animation-production/SKILL.md",
-          "line": 31,
-          "title": "Reference target is missing",
-          "evidence": "`finals.json` resolves to no existing file or directory.",
-          "href": "/governance/source?path=.cursor/skills/animation-production/SKILL.md&line=31#L31"
-        },
-        {
-          "id": "broken-ref.cursor-skill.debug-panel-extension.95.src-debug-debughelper.ts",
-          "severity": "warn",
-          "path": ".cursor/skills/debug-panel-extension/SKILL.md",
-          "line": 95,
-          "title": "Reference target is missing",
-          "evidence": "`src/debug/DebugHelper.ts` resolves to no existing file or directory.",
-          "href": "/governance/source?path=.cursor/skills/debug-panel-extension/SKILL.md&line=95#L95"
-        },
-        {
-          "id": "broken-ref.cursor-skill.interactive-architecture-html.22.docs-architecture-gamedraft-runtime.html",
-          "severity": "warn",
-          "path": ".cursor/skills/interactive-architecture-html/SKILL.md",
-          "line": 22,
-          "title": "Reference target is missing",
-          "evidence": "`GameDraft/docs/architecture-gamedraft-runtime.html` resolves to no existing file or directory.",
-          "href": "/governance/source?path=.cursor/skills/interactive-architecture-html/SKILL.md&line=22#L22"
-        },
-        {
-          "id": "broken-ref.cursor-skill.interactive-architecture-html.23.tools-editor-data-architecture-editor.html",
-          "severity": "warn",
-          "path": ".cursor/skills/interactive-architecture-html/SKILL.md",
-          "line": 23,
-          "title": "Reference target is missing",
-          "evidence": "`GameDraft/tools/editor/data/architecture-editor.html` resolves to no existing file or directory.",
-          "href": "/governance/source?path=.cursor/skills/interactive-architecture-html/SKILL.md&line=23#L23"
-        },
-        {
-          "id": "broken-ref.docs-plan-production-tooling-requirements.250.frame_001.png",
-          "severity": "warn",
-          "path": "docs/plan/production-tooling-requirements.md",
-          "line": 250,
-          "title": "Reference target is missing",
-          "evidence": "`frame_001.png` resolves to no existing file or directory.",
-          "href": "/governance/source?path=docs/plan/production-tooling-requirements.md&line=250#L250"
-        }
-      ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：断链修复包（broken-reference，14 项）。\n目标：缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。\n执行方式：交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- docs/plan/production-tooling-requirements.md\n- tools/animation_pipeline/README.md\n- tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py\n- tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py\n- tools/filter_tool/README.md\n- tools/video_to_atlas/README.md"
-    },
     {
       "id": "drift-risk",
       "priority": "P1",
@@ -4800,8 +4306,8 @@
       "kind": "agent-review",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
       "next": "交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。",
-      "issue_count": 59,
-      "artifact_count": 11,
+      "issue_count": 48,
+      "artifact_count": 8,
       "artifact_types": [
         "skill",
         "workflow_doc"
@@ -4809,15 +4315,12 @@
       "paths": [
         ".cursor/skills/add-game-action/SKILL.md",
         ".cursor/skills/add-text-ref/SKILL.md",
-        ".cursor/skills/debug-panel-extension/SKILL.md",
         ".cursor/skills/editor-tools-iteration/SKILL.md",
         ".cursor/skills/gameplay-iteration/SKILL.md",
         ".cursor/skills/production-mode/SKILL.md",
         ".cursor/skills/pure-data-iteration/SKILL.md",
         ".cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md",
-        "artifact/cursor-workflow-guide.md",
-        "docs/plan/production-tooling-requirements.md",
-        "tools/video_to_atlas/README.md"
+        "artifact/cursor-workflow-guide.md"
       ],
       "hidden_path_count": 0,
       "issue_ids": [
@@ -4831,8 +4334,6 @@
         "drift.cursor-skill.add-game-action.50.tools-editor-shared-action_editor.py",
         "drift.cursor-skill.add-game-action.51.tools-editor-validator.py",
         "drift.cursor-skill.add-text-ref.15.src-core-game.ts",
-        "drift.cursor-skill.debug-panel-extension.34.src-core-game.ts",
-        "drift.cursor-skill.debug-panel-extension.59.src-ui-debugpanelui.ts",
         "drift.cursor-skill.editor-tools-iteration.14.tools-editor-validator.py",
         "drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-action_editor.py",
         "drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-id_ref_selector.py",
@@ -4870,16 +4371,7 @@
         "drift.cursor-skill.push-gamedraft-story-temp-proxy.20..git-config",
         "drift.artifact-cursor-workflow-guide.42.docs-.md",
         "drift.artifact-cursor-workflow-guide.47.docs-.md",
-        "drift.artifact-cursor-workflow-guide.138.src-core-game.ts",
-        "drift.docs-plan-production-tooling-requirements.55.public-assets-data-narrative_graphs.json",
-        "drift.docs-plan-production-tooling-requirements.311.public-assets-data-narrative_graphs.json",
-        "drift.docs-plan-production-tooling-requirements.414.resources-editor_projects-editor_data-production_workbench-runtime_debug_snapshot.json",
-        "drift.tools-video_to_atlas-readme.27.tools-video_to_atlas-main.py",
-        "drift.tools-video_to_atlas-readme.28.tools-video_to_atlas-main_window.py",
-        "drift.tools-video_to_atlas-readme.33.tools-video_to_atlas-export_panel.py",
-        "drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py",
-        "drift.tools-video_to_atlas-readme.37.tools-editor-project_model.py",
-        "drift.tools-video_to_atlas-readme.83.agent_canvas_os_case_reference.png"
+        "drift.artifact-cursor-workflow-guide.138.src-core-game.ts"
       ],
       "sample_issues": [
         {
@@ -4937,7 +4429,7 @@
           "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=48#L48"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，59 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- artifact/cursor-workflow-guide.md\n- docs/plan/production-tooling-requirements.md\n- tools/video_to_atlas/README.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，48 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- artifact/cursor-workflow-guide.md"
     },
     {
       "id": "missing-metadata",

@@ -36,25 +36,25 @@ Codex, Claude, or another agent client can reference this file directly instead 
 
 ## Audit Summary
 
-- Generated: `2026-07-09T01:09:33`
+- Generated: `2026-07-09T01:27:20`
 - Root: `/Users/dannyteng/AIWork/GameDraft`
 - Artifacts: `67`
-- Issues: `86`
-- By severity: `{"info": 12, "warn": 74}`
-- By category: `{"broken-reference": 14, "drift-risk": 59, "missing-lifecycle": 12, "missing-metadata": 1}`
+- Issues: `61`
+- By severity: `{"info": 12, "warn": 49}`
+- By category: `{"drift-risk": 48, "missing-lifecycle": 12, "missing-metadata": 1}`
 
 ## Governance Resources
 
 - `governance://hub` (1): 治理台 Host 快照。完整 MCP Host / Agent Workbench 快照。
 - `governance://canvas/current` (0): 当前画布状态。0 个引用，视图 workpacks
-- `governance://audit/stats` (86): 审计统计。67 个资产，86 个问题
-- `governance://dashboard/elements` (262): 页面元素引用索引。dashboard 中 262 个可引用的数据元素和面板入口。
-- `governance://workpacks` (4): 治理包索引。4 个治理包
-- `governance://issues` (86): 证据库。86 条原始证据
+- `governance://audit/stats` (61): 审计统计。67 个资产，61 个问题
+- `governance://dashboard/elements` (235): 页面元素引用索引。dashboard 中 235 个可引用的数据元素和面板入口。
+- `governance://workpacks` (3): 治理包索引。3 个治理包
+- `governance://issues` (61): 证据库。61 条原始证据
 - `governance://artifacts` (67): 资产清单。67 个 skill/workflow/agent 资产
 - `governance://apps` (5): 治理台应用。已注册的内置应用和外部 MCP/命令应用。
 - `governance://tools` (14): 治理台工具。Host 暴露给 agent 的工具清单。
-- `governance://prompts` (7): 治理台提示词。Host 暴露给 agent 的 prompt 模板。
+- `governance://prompts` (6): 治理台提示词。Host 暴露给 agent 的 prompt 模板。
 - `governance://agent/jobs` (0): Agent 运行记录。0 个当前 console 内存中的 agent job
 - `governance://policy/write-gates` (3): 写入权限和审批边界。chat 为只读；fix 才允许写入；修复后必须自动审计。
 - `governance://view/mcp-install` (1): MCP 安装区。安装命令、客户端配置和 MCP 自检状态。
@@ -62,12 +62,11 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://view/workpacks` (1): 治理包区。按优先级分组的可执行治理包。
 - `governance://view/issues` (1): 证据库区。原始 issue / evidence 列表。
 - `governance://view/artifacts` (1): 资产清单区。扫描到的 skill / workflow / script 资产。
-- `governance://stat/workpack-count` (4): 治理包数量。4
-- `governance://stat/issue-count` (86): 证据项数量。86
+- `governance://stat/workpack-count` (3): 治理包数量。3
+- `governance://stat/issue-count` (61): 证据项数量。61
 - `governance://stat/error-count` (0): 断链/错误数量。0
-- `governance://stat/warn-count` (74): 需复核数量。74
-- `governance://workpack/broken-reference` (14): 断链修复包。缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。
-- `governance://workpack/drift-risk` (59): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
+- `governance://stat/warn-count` (49): 需复核数量。49
+- `governance://workpack/drift-risk` (48): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 - `governance://workpack/missing-metadata` (1): Skill 触发条件补齐包。Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
 - `governance://workpack/missing-lifecycle` (12): 生命周期元数据补齐包。缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
 - `governance://issue/drift.cursor-skill.add-game-action.21.src-core-actionregistry.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:21
@@ -81,11 +80,6 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://issue/drift.cursor-skill.add-game-action.51.tools-editor-validator.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:51
 - `governance://issue/drift.cursor-skill.add-text-ref.15.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-text-ref/SKILL.md:15
 - `governance://issue/missing-trigger.cursor-skill.animation-production` (1): Skill has no clear trigger/use condition。.cursor/skills/animation-production/SKILL.md:1
-- `governance://issue/broken-ref.cursor-skill.animation-production.22.finals.json` (1): Reference target is missing。.cursor/skills/animation-production/SKILL.md:22
-- `governance://issue/broken-ref.cursor-skill.animation-production.31.finals.json` (1): Reference target is missing。.cursor/skills/animation-production/SKILL.md:31
-- `governance://issue/drift.cursor-skill.debug-panel-extension.34.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/debug-panel-extension/SKILL.md:34
-- `governance://issue/drift.cursor-skill.debug-panel-extension.59.src-ui-debugpanelui.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/debug-panel-extension/SKILL.md:59
-- `governance://issue/broken-ref.cursor-skill.debug-panel-extension.95.src-debug-debughelper.ts` (1): Reference target is missing。.cursor/skills/debug-panel-extension/SKILL.md:95
 - `governance://issue/drift.cursor-skill.editor-tools-iteration.14.tools-editor-validator.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:14
 - `governance://issue/drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:29
 - `governance://issue/drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-id_ref_selector.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:29
@@ -102,8 +96,6 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://issue/drift.cursor-skill.gameplay-iteration.22.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:22
 - `governance://issue/drift.cursor-skill.gameplay-iteration.33.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:33
 - `governance://issue/drift.cursor-skill.gameplay-iteration.58.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:58
-- `governance://issue/broken-ref.cursor-skill.interactive-architecture-html.22.docs-architecture-gamedraft-runtime.html` (1): Reference target is missing。.cursor/skills/interactive-architecture-html/SKILL.md:22
-- `governance://issue/broken-ref.cursor-skill.interactive-architecture-html.23.tools-editor-data-architecture-editor.html` (1): Reference target is missing。.cursor/skills/interactive-architecture-html/SKILL.md:23
 - `governance://issue/drift.cursor-skill.production-mode.34.docs-editor-authoring-surface.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:34
 - `governance://issue/drift.cursor-skill.production-mode.34.public-assets-data-cutscenes-index.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:34
 - `governance://issue/drift.cursor-skill.production-mode.34.public-assets-data-overlay_images.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:34
@@ -126,24 +118,6 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://issue/drift.artifact-cursor-workflow-guide.42.docs-.md` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:42
 - `governance://issue/drift.artifact-cursor-workflow-guide.47.docs-.md` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:47
 - `governance://issue/drift.artifact-cursor-workflow-guide.138.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:138
-- `governance://issue/drift.docs-plan-production-tooling-requirements.55.public-assets-data-narrative_graphs.json` (1): Referenced artifact is newer than this rule/workflow。docs/plan/production-tooling-requirements.md:55
-- `governance://issue/broken-ref.docs-plan-production-tooling-requirements.250.frame_001.png` (1): Reference target is missing。docs/plan/production-tooling-requirements.md:250
-- `governance://issue/broken-ref.docs-plan-production-tooling-requirements.284.postprocess.txt` (1): Reference target is missing。docs/plan/production-tooling-requirements.md:284
-- `governance://issue/drift.docs-plan-production-tooling-requirements.311.public-assets-data-narrative_graphs.json` (1): Referenced artifact is newer than this rule/workflow。docs/plan/production-tooling-requirements.md:311
-- `governance://issue/drift.docs-plan-production-tooling-requirements.414.resources-editor_projects-editor_data-production_workbench-runtime_debug_snapshot.json` (1): Referenced artifact is newer than this rule/workflow。docs/plan/production-tooling-requirements.md:414
-- `governance://issue/broken-ref.tools-animation_pipeline-readme.21.finals.json` (1): Reference target is missing。tools/animation_pipeline/README.md:21
-- `governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.config-llm_config.json` (1): Reference target is missing。tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10
-- `governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-agents` (1): Reference target is missing。tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10
-- `governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-relationships-graph.json` (1): Reference target is missing。tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10
-- `governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_week_stats.4.config-llm_config.json` (1): Reference target is missing。tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py:4
-- `governance://issue/broken-ref.tools-filter_tool-readme.23.tools-filter_tool-custom_presets.json` (1): Reference target is missing。tools/filter_tool/README.md:23
-- `governance://issue/drift.tools-video_to_atlas-readme.27.tools-video_to_atlas-main.py` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:27
-- `governance://issue/drift.tools-video_to_atlas-readme.28.tools-video_to_atlas-main_window.py` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:28
-- `governance://issue/drift.tools-video_to_atlas-readme.33.tools-video_to_atlas-export_panel.py` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:33
-- `governance://issue/drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:34
-- `governance://issue/broken-ref.tools-video_to_atlas-readme.36.gui.py` (1): Reference target is missing。tools/video_to_atlas/README.md:36
-- `governance://issue/drift.tools-video_to_atlas-readme.37.tools-editor-project_model.py` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:37
-- `governance://issue/drift.tools-video_to_atlas-readme.83.agent_canvas_os_case_reference.png` (1): Referenced artifact is newer than this rule/workflow。tools/video_to_atlas/README.md:83
 - `governance://issue/missing-lifecycle.cursor-skill.add-game-action` (1): Skill has no lifecycle metadata。.cursor/skills/add-game-action/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.add-text-ref` (1): Skill has no lifecycle metadata。.cursor/skills/add-text-ref/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.animation-production` (1): Skill has no lifecycle metadata。.cursor/skills/animation-production/SKILL.md:1
@@ -303,7 +277,6 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://prompt/governance.triage` (1): 治理总览。基于当前画布解释优先级、风险和执行顺序。
 - `governance://prompt/governance.auto-vs-confirm` (1): 自动/确认分流。区分哪些可以自动修，哪些必须人工确认。
 - `governance://prompt/governance.fix-plan` (1): 修复计划。生成 fix 模式可执行计划，包含验证命令。
-- `governance://prompt/governance.workpack.broken-reference` (1): 断链修复包。交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。
 - `governance://prompt/governance.workpack.drift-risk` (1): 规则漂移复核包。交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 - `governance://prompt/governance.workpack.missing-metadata` (1): Skill 触发条件补齐包。交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。
 - `governance://prompt/governance.workpack.missing-lifecycle` (1): 生命周期元数据补齐包。交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。
@@ -327,82 +300,39 @@ Codex, Claude, or another agent client can reference this file directly instead 
 
 ## Workpacks
 
-### P0 断链修复包
-
-- URI: `governance://workpack/broken-reference`
-- Kind: `agent-fix`
-- Issues: `14`
-- Summary: 缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。
-- Next: 交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。
-- Paths:
-  - `.cursor/skills/animation-production/SKILL.md`
-  - `.cursor/skills/debug-panel-extension/SKILL.md`
-  - `.cursor/skills/interactive-architecture-html/SKILL.md`
-  - `docs/plan/production-tooling-requirements.md`
-  - `tools/animation_pipeline/README.md`
-  - `tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py`
-  - `tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py`
-  - `tools/filter_tool/README.md`
-  - `tools/video_to_atlas/README.md`
-
-Prompt:
-
-```text
-请处理 GameDraft Skill/Workflow 治理包：断链修复包（broken-reference，14 项）。
-目标：缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。
-执行方式：交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。
-要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
-涉及文件：
-- .cursor/skills/animation-production/SKILL.md
-- .cursor/skills/debug-panel-extension/SKILL.md
-- .cursor/skills/interactive-architecture-html/SKILL.md
-- docs/plan/production-tooling-requirements.md
-- tools/animation_pipeline/README.md
-- tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py
-- tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py
-- tools/filter_tool/README.md
-- tools/video_to_atlas/README.md
-```
-
 ### P1 规则漂移复核包
 
 - URI: `governance://workpack/drift-risk`
 - Kind: `agent-review`
-- Issues: `59`
+- Issues: `48`
 - Summary: 规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 - Next: 交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 - Paths:
   - `.cursor/skills/add-game-action/SKILL.md`
   - `.cursor/skills/add-text-ref/SKILL.md`
-  - `.cursor/skills/debug-panel-extension/SKILL.md`
   - `.cursor/skills/editor-tools-iteration/SKILL.md`
   - `.cursor/skills/gameplay-iteration/SKILL.md`
   - `.cursor/skills/production-mode/SKILL.md`
   - `.cursor/skills/pure-data-iteration/SKILL.md`
   - `.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md`
   - `artifact/cursor-workflow-guide.md`
-  - `docs/plan/production-tooling-requirements.md`
-  - `tools/video_to_atlas/README.md`
 
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，59 项）。
+请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，48 项）。
 目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
 涉及文件：
 - .cursor/skills/add-game-action/SKILL.md
 - .cursor/skills/add-text-ref/SKILL.md
-- .cursor/skills/debug-panel-extension/SKILL.md
 - .cursor/skills/editor-tools-iteration/SKILL.md
 - .cursor/skills/gameplay-iteration/SKILL.md
 - .cursor/skills/production-mode/SKILL.md
 - .cursor/skills/pure-data-iteration/SKILL.md
 - .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md
 - artifact/cursor-workflow-guide.md
-- docs/plan/production-tooling-requirements.md
-- tools/video_to_atlas/README.md
 ```
 
 ### P1 Skill 触发条件补齐包
@@ -502,7 +432,7 @@ Prompt:
     "visibleView": "workpacks",
     "stats": {
       "artifact_count": 67,
-      "issue_count": 86,
+      "issue_count": 61,
       "by_type": {
         "agent_rules": 2,
         "ci_workflow": 1,
@@ -514,17 +444,16 @@ Prompt:
       },
       "by_severity": {
         "info": 12,
-        "warn": 74
+        "warn": 49
       },
       "by_category": {
-        "broken-reference": 14,
-        "drift-risk": 59,
+        "drift-risk": 48,
         "missing-lifecycle": 12,
         "missing-metadata": 1
       }
     },
-    "workpackCount": 4,
-    "issueCount": 86,
+    "workpackCount": 3,
+    "issueCount": 61,
     "artifactCount": 67
   },
   "enabled_apps": [
@@ -607,29 +536,29 @@ Prompt:
       "uri": "governance://audit/stats",
       "title": "审计统计",
       "kind": "audit",
-      "summary": "67 个资产，86 个问题",
-      "count": 86
+      "summary": "67 个资产，61 个问题",
+      "count": 61
     },
     {
       "uri": "governance://dashboard/elements",
       "title": "页面元素引用索引",
       "kind": "element-index",
-      "summary": "dashboard 中 262 个可引用的数据元素和面板入口。",
-      "count": 262
+      "summary": "dashboard 中 235 个可引用的数据元素和面板入口。",
+      "count": 235
     },
     {
       "uri": "governance://workpacks",
       "title": "治理包索引",
       "kind": "workpack-index",
-      "summary": "4 个治理包",
-      "count": 4
+      "summary": "3 个治理包",
+      "count": 3
     },
     {
       "uri": "governance://issues",
       "title": "证据库",
       "kind": "issue-index",
-      "summary": "86 条原始证据",
-      "count": 86
+      "summary": "61 条原始证据",
+      "count": 61
     },
     {
       "uri": "governance://artifacts",
@@ -657,7 +586,7 @@ Prompt:
       "title": "治理台提示词",
       "kind": "prompt-index",
       "summary": "Host 暴露给 agent 的 prompt 模板。",
-      "count": 7
+      "count": 6
     },
     {
       "uri": "governance://agent/jobs",
@@ -712,15 +641,15 @@ Prompt:
       "uri": "governance://stat/workpack-count",
       "title": "治理包数量",
       "kind": "stat",
-      "summary": "4",
-      "count": 4
+      "summary": "3",
+      "count": 3
     },
     {
       "uri": "governance://stat/issue-count",
       "title": "证据项数量",
       "kind": "stat",
-      "summary": "86",
-      "count": 86
+      "summary": "61",
+      "count": 61
     },
     {
       "uri": "governance://stat/error-count",
@@ -733,22 +662,15 @@ Prompt:
       "uri": "governance://stat/warn-count",
       "title": "需复核数量",
       "kind": "stat",
-      "summary": "74",
-      "count": 74
-    },
-    {
-      "uri": "governance://workpack/broken-reference",
-      "title": "断链修复包",
-      "kind": "workpack",
-      "summary": "缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。",
-      "count": 14
+      "summary": "49",
+      "count": 49
     },
     {
       "uri": "governance://workpack/drift-risk",
       "title": "规则漂移复核包",
       "kind": "workpack",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
-      "count": 59
+      "count": 48
     },
     {
       "uri": "governance://workpack/missing-metadata",
@@ -839,41 +761,6 @@ Prompt:
       "title": "Skill has no clear trigger/use condition",
       "kind": "issue",
       "summary": ".cursor/skills/animation-production/SKILL.md:1",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.cursor-skill.animation-production.22.finals.json",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": ".cursor/skills/animation-production/SKILL.md:22",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.cursor-skill.animation-production.31.finals.json",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": ".cursor/skills/animation-production/SKILL.md:31",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.debug-panel-extension.34.src-core-game.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/debug-panel-extension/SKILL.md:34",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.debug-panel-extension.59.src-ui-debugpanelui.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/debug-panel-extension/SKILL.md:59",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.cursor-skill.debug-panel-extension.95.src-debug-debughelper.ts",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": ".cursor/skills/debug-panel-extension/SKILL.md:95",
       "count": 1
     },
     {
@@ -986,20 +873,6 @@ Prompt:
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": ".cursor/skills/gameplay-iteration/SKILL.md:58",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.cursor-skill.interactive-architecture-html.22.docs-architecture-gamedraft-runtime.html",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": ".cursor/skills/interactive-architecture-html/SKILL.md:22",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.cursor-skill.interactive-architecture-html.23.tools-editor-data-architecture-editor.html",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": ".cursor/skills/interactive-architecture-html/SKILL.md:23",
       "count": 1
     },
     {
@@ -1154,132 +1027,6 @@ Prompt:
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": "artifact/cursor-workflow-guide.md:138",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.docs-plan-production-tooling-requirements.55.public-assets-data-narrative_graphs.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "docs/plan/production-tooling-requirements.md:55",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.docs-plan-production-tooling-requirements.250.frame_001.png",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "docs/plan/production-tooling-requirements.md:250",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.docs-plan-production-tooling-requirements.284.postprocess.txt",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "docs/plan/production-tooling-requirements.md:284",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.docs-plan-production-tooling-requirements.311.public-assets-data-narrative_graphs.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "docs/plan/production-tooling-requirements.md:311",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.docs-plan-production-tooling-requirements.414.resources-editor_projects-editor_data-production_workbench-runtime_debug_snapshot.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "docs/plan/production-tooling-requirements.md:414",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.tools-animation_pipeline-readme.21.finals.json",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "tools/animation_pipeline/README.md:21",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.config-llm_config.json",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-agents",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_spread_standalone.10.world-relationships-graph.json",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.tools-chronicle_sim_v2-scripts-run_rumor_week_stats.4.config-llm_config.json",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py:4",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.tools-filter_tool-readme.23.tools-filter_tool-custom_presets.json",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "tools/filter_tool/README.md:23",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.tools-video_to_atlas-readme.27.tools-video_to_atlas-main.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "tools/video_to_atlas/README.md:27",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.tools-video_to_atlas-readme.28.tools-video_to_atlas-main_window.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "tools/video_to_atlas/README.md:28",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.tools-video_to_atlas-readme.33.tools-video_to_atlas-export_panel.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "tools/video_to_atlas/README.md:33",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "tools/video_to_atlas/README.md:34",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/broken-ref.tools-video_to_atlas-readme.36.gui.py",
-      "title": "Reference target is missing",
-      "kind": "issue",
-      "summary": "tools/video_to_atlas/README.md:36",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.tools-video_to_atlas-readme.37.tools-editor-project_model.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "tools/video_to_atlas/README.md:37",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.tools-video_to_atlas-readme.83.agent_canvas_os_case_reference.png",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": "tools/video_to_atlas/README.md:83",
       "count": 1
     },
     {
@@ -2396,13 +2143,6 @@ Prompt:
       "count": 1
     },
     {
-      "uri": "governance://prompt/governance.workpack.broken-reference",
-      "title": "断链修复包",
-      "kind": "prompt",
-      "summary": "交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。",
-      "count": 1
-    },
-    {
       "uri": "governance://prompt/governance.workpack.drift-risk",
       "title": "规则漂移复核包",
       "kind": "prompt",
@@ -2539,11 +2279,6 @@ Prompt:
       "name": "governance.fix-plan",
       "title": "修复计划",
       "description": "生成 fix 模式可执行计划，包含验证命令。"
-    },
-    {
-      "name": "governance.workpack.broken-reference",
-      "title": "断链修复包",
-      "description": "交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。"
     },
     {
       "name": "governance.workpack.drift-risk",

@@ -1,9 +1,9 @@
 # Skill / Workflow Governance Report
 
-- Generated: `2026-07-09T01:09:33`
+- Generated: `2026-07-09T01:27:20`
 - Root: `/Users/dannyteng/AIWork/GameDraft`
 - Artifacts: `67`
-- Issues: `86`
+- Issues: `61`
 
 ## Summary
 
@@ -20,7 +20,7 @@
 ### Issues By Severity
 
 - `info`: `12`
-- `warn`: `74`
+- `warn`: `49`
 
 ## Issues
 
@@ -37,11 +37,6 @@
 | warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:51 | `tools/editor/validator.py` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/add-text-ref/SKILL.md:15 | `src/core/Game.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | missing-metadata | .cursor/skills/animation-production/SKILL.md:1 | No obvious trigger/use/scope section was detected. | Add a short 'when to use / when not to use' section near the top of the skill. |
-| warn | broken-reference | .cursor/skills/animation-production/SKILL.md:22 | `finals.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | .cursor/skills/animation-production/SKILL.md:31 | `finals.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | drift-risk | .cursor/skills/debug-panel-extension/SKILL.md:34 | `src/core/Game.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/debug-panel-extension/SKILL.md:59 | `src/ui/DebugPanelUI.ts` is about 24 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | broken-reference | .cursor/skills/debug-panel-extension/SKILL.md:95 | `src/debug/DebugHelper.ts` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:14 | `tools/editor/validator.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:29 | `tools/editor/shared/action_editor.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:29 | `tools/editor/shared/id_ref_selector.py` is about 17 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
@@ -58,8 +53,6 @@
 | warn | drift-risk | .cursor/skills/gameplay-iteration/SKILL.md:22 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/gameplay-iteration/SKILL.md:33 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/gameplay-iteration/SKILL.md:58 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | broken-reference | .cursor/skills/interactive-architecture-html/SKILL.md:22 | `GameDraft/docs/architecture-gamedraft-runtime.html` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | .cursor/skills/interactive-architecture-html/SKILL.md:23 | `GameDraft/tools/editor/data/architecture-editor.html` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
 | warn | drift-risk | .cursor/skills/production-mode/SKILL.md:34 | `docs/editor-authoring-surface.md` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/production-mode/SKILL.md:34 | `public/assets/data/cutscenes/index.json` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/production-mode/SKILL.md:34 | `public/assets/data/overlay_images.json` is about 15 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
@@ -82,24 +75,6 @@
 | warn | drift-risk | artifact/cursor-workflow-guide.md:42 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | artifact/cursor-workflow-guide.md:47 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | artifact/cursor-workflow-guide.md:138 | `src/core/Game.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | docs/plan/production-tooling-requirements.md:55 | `public/assets/data/narrative_graphs.json` is about 24 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | broken-reference | docs/plan/production-tooling-requirements.md:250 | `frame_001.png` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | docs/plan/production-tooling-requirements.md:284 | `postprocess.txt` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | drift-risk | docs/plan/production-tooling-requirements.md:311 | `public/assets/data/narrative_graphs.json` is about 24 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | docs/plan/production-tooling-requirements.md:414 | `resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | broken-reference | tools/animation_pipeline/README.md:21 | `finals.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10 | `config/llm_config.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10 | `world/agents` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | tools/chronicle_sim_v2/scripts/run_rumor_spread_standalone.py:10 | `world/relationships/graph.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py:4 | `config/llm_config.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | broken-reference | tools/filter_tool/README.md:23 | `tools/filter_tool/custom_presets.json` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | drift-risk | tools/video_to_atlas/README.md:27 | `tools/video_to_atlas/main.py` is about 19 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | tools/video_to_atlas/README.md:28 | `tools/video_to_atlas/main_window.py` is about 19 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | tools/video_to_atlas/README.md:33 | `tools/video_to_atlas/export_panel.py` is about 19 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | tools/video_to_atlas/README.md:34 | `tools/video_to_atlas/atlas_core.py` is about 19 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | broken-reference | tools/video_to_atlas/README.md:36 | `gui.py` resolves to no existing file or directory. | Fix the path, remove the stale reference, or create/register the missing artifact. |
-| warn | drift-risk | tools/video_to_atlas/README.md:37 | `tools/editor/project_model.py` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | tools/video_to_atlas/README.md:83 | `agent_canvas_os_case_reference.png` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | info | missing-lifecycle | .cursor/skills/add-game-action/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
 | info | missing-lifecycle | .cursor/skills/add-text-ref/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
 | info | missing-lifecycle | .cursor/skills/animation-production/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |

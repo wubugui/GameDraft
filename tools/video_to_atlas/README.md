@@ -33,8 +33,7 @@ cd /path/to/GameDraft
 | `export_panel.py` | 导出工作台：per-job 参数、分别导出、合并导出 |
 | `atlas_core.py` | 图像处理核心：抽帧解码、色键、图集打包、导出格式生成 |
 | `loop_range_bar.py` | 双关键点循环区间条 UI 组件 |
-| `gui.py` | (旧版主窗口，已废弃，保留备查) |
-| `project_model.py` | (旧版数据模型，已废弃，保留备查) |
+| `workspace_ui_concept.html` | 早期 UI 概念参考，不是运行入口 |
 
 ## 工作区持久化格式
 

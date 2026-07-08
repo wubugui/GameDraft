@@ -19,7 +19,7 @@ description: 把角色各 state 的稳定化视频产出为游戏可用的精灵
     --world-w <数> --world-h <数>
 ```
 
-产物:`atlas.png` + `anim.json`(游戏可直接加载) + `finals.json`(质检结论 + 待裁决 flag)。
+产物:`atlas.png` + `anim.json`(游戏可直接加载) + `<out>/finals.json`(质检结论 + 待裁决 flag)。
 退出码 0 ⇔ 所有**硬**质检通过。
 
 ## 你的职责①:裁决 QA flag(最重要)
@@ -28,7 +28,7 @@ description: 把角色各 state 的稳定化视频产出为游戏可用的精灵
 - **硬闸门**(帧数/位移/裁切/atlas≤2K)——程序直接判死,不需要你。
 - **软 flag**(漂浮碎片/剪影面积突变/抠图镂空)——程序**只报可疑**,交你定性。
 
-拿到 `finals.json` 的 `agent_flags`,对每条:调出该 clip 的密排帧图,按
+拿到输出目录里的 `<out>/finals.json`,读取 `agent_flags`,对每条:调出该 clip 的密排帧图,按
 `qa_gate.AGENT_SCHEMA` 结构化回答:道具是否全程在手且完整、动作对不对、身份/画风/朝向、
 可疑帧是否真缺陷 → `verdict: accept|reject`。**程序从不单独判"通过";硬失败从不花你的 token。**
 

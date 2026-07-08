@@ -92,7 +92,7 @@ this.debugPanelUI.addSection('SectionId', () => ({
 
 - `setupDebugPanelSections` 内的闭包变量
 - `Game` 中以 `debug` / `showXxxDebug` 等命名的私有成员（仅用于 debug 面板与 overlay）
-- 必要时新建 `src/debug/DebugHelper.ts` 等独立模块
+- 必要时在 `src/debug/` 下新建 DebugHelper.ts 一类独立模块
 
 ### Game 中可用的游戏 API
 

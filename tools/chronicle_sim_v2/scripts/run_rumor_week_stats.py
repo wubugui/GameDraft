@@ -1,10 +1,10 @@
 """对已有 Run 的某一周：只跑谣言传播并输出统计。
 
 默认 **不调走样 LLM**：``run_rumor_spread(..., skip_distort_llm=True)``，
-``max_llm_calls_per_event`` 等仍从源 Run 的 ``config/llm_config.json`` 原样读取，
+``max_llm_calls_per_event`` 等仍从源 Run 的 config/llm_config.json 原样读取，
 仅在实际调用走样模型处短路（与把配额改成 0 无关）。
 
-复制源 Run 的 ``world/``（不能用符号链接：``read_json`` 的 ``resolve`` 会判越界）。
+复制源 Run 的 world/（不能用符号链接：``read_json`` 的 ``resolve`` 会判越界）。
 
 用法（仓库根目录）::
 

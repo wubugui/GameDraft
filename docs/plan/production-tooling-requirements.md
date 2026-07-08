@@ -247,7 +247,7 @@
 - 生产工作台提供 `动画Sheet` 页签。
 - 支持检查 sheet 网格：整图尺寸、columns、rows、单帧宽高、帧数、透明通道。
 - 支持按 columns/rows、单帧宽高，或可整除的帧数推断网格。
-- 支持把 sheet 拆成 `frame_001.png` 这类单帧 PNG。
+- 支持把 sheet 拆成 frame_001.png 这类单帧 PNG。
 - 支持从帧目录重新合成 sheet。
 - 支持合成时指定列数、帧数和帧间距。
 - 拆帧和合成输出都限制在当前工程目录内，覆盖前需要明确勾选。
@@ -281,7 +281,7 @@
 - 执行报告会提取 savedPath、model、token 用量摘要等线索，便于后续验收和复盘；原始 JSONL 事件只落盘，不直接塞进日常 GUI 报告。
 - 每次执行会在 run summary 中保存任务规格快照，避免后续无法知道当时要求的宽高、透明、帧数。
 - 每次执行后会自动生成 `output-validation.txt`，检查 savedPath 是否存在、尺寸是否符合任务、透明通道是否符合任务。
-- 勾选自动后处理时，每次执行后会生成 `postprocess.txt`，并把后处理输出路径写入 run summary。
+- 勾选自动后处理时，每次执行后会生成 `<run-dir>/postprocess.txt`，并把后处理输出路径写入 run summary。
 - 对 animation / animation_sheet / 带 frameCount 的输出，会尝试按帧数解释 sheet，生成网格和单帧尺寸验收结果。
 
 边界：

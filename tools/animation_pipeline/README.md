@@ -18,7 +18,8 @@ The measurements below are why each default is what it is.
 ```
 
 Exit 0 ⇔ all **hard** QA gates pass. Agent-flags (see below) are reported in
-`finals.json` for a human/VLM to adjudicate — they do not silently block.
+the output manifest (`<out>/finals.json`) for a human/VLM to adjudicate — they
+do not silently block.
 
 ## Pipeline (program-driven; agent is a *called judge*, not the driver)
 
@@ -28,7 +29,7 @@ per-clip PROGRAM QA ─HARD_FAIL→ abort
         ▼
  matte(fusion) → anchor + scale-norm → loop-select → 2K grid atlas → anim.json
         ▼
- atlas QA (≤2K, indices valid) → finals.json (verdicts + agent-flags)
+ atlas QA (≤2K, indices valid) → output manifest (finals.json verdicts + agent-flags)
 ```
 
 ## Proven method choices (with the numbers that justified them)
