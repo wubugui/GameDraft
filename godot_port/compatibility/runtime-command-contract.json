@@ -1,0 +1,702 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contractVersion": 1,
+  "authority": {
+    "commandUnion": "src/core/devRuntimeCommands.ts#RuntimeCommand",
+    "executionSemantics": "src/core/devRuntimeCommands.ts#applyDevRuntimeCommand",
+    "sourceSha256": "79b9b85d37bf5cf9919a840d83e38b9f17f505bd8f5c5f87e17bd6b6f3cd971a"
+  },
+  "transport": {
+    "batchLimit": 50,
+    "resultRequiredFields": [
+      "id",
+      "type",
+      "ok",
+      "message"
+    ],
+    "transportOnlyFields": [
+      "targetBootId",
+      "createdAt",
+      "source",
+      "enqueuedAt"
+    ],
+    "unknownCommand": "return ok=false; never throw out of the batch"
+  },
+  "parityControl": {
+    "protocolVersion": 1,
+    "operations": [
+      "ping",
+      "runtimeCommand",
+      "captureSnapshot"
+    ],
+    "pingResult": {
+      "ok": true,
+      "message": "pong"
+    }
+  },
+  "commands": {
+    "activatePlane": {
+      "acceptedFields": [
+        "id",
+        "planeId",
+        "type"
+      ],
+      "required": [
+        "planeId"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "captureSnapshot": {
+      "acceptedFields": [
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "clearNarrativeTrace": {
+      "acceptedFields": [
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "deactivatePlane": {
+      "acceptedFields": [
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugAdvanceDialogue": {
+      "acceptedFields": [
+        "id",
+        "maxSteps",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {
+        "maxSteps": 24
+      },
+      "coercion": {},
+      "bounds": {
+        "maxSteps": [
+          1,
+          200
+        ]
+      },
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugChooseDialogueOption": {
+      "acceptedFields": [
+        "id",
+        "index",
+        "text",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [
+        [
+          "index",
+          "text"
+        ]
+      ],
+      "defaults": {},
+      "coercion": {
+        "index": "non-negative integer",
+        "text": "trimmed non-empty string"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugClearEventTrace": {
+      "acceptedFields": [
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugClick": {
+      "acceptedFields": [
+        "id",
+        "type",
+        "x",
+        "y"
+      ],
+      "required": [
+        "x",
+        "y"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {
+        "x": "finite number",
+        "y": "finite number"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugDrag": {
+      "acceptedFields": [
+        "durationMs",
+        "fromX",
+        "fromY",
+        "id",
+        "reason",
+        "toX",
+        "toY",
+        "type"
+      ],
+      "required": [
+        "fromX",
+        "fromY",
+        "toX",
+        "toY"
+      ],
+      "requiredAny": [],
+      "defaults": {
+        "durationMs": 350
+      },
+      "coercion": {},
+      "bounds": {
+        "durationMs": [
+          1,
+          60000
+        ]
+      },
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugExecuteAction": {
+      "acceptedFields": [
+        "action",
+        "id",
+        "type"
+      ],
+      "required": [
+        "action"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugInteractNpc": {
+      "acceptedFields": [
+        "id",
+        "npcId",
+        "type"
+      ],
+      "required": [
+        "npcId"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugLoadGame": {
+      "acceptedFields": [
+        "id",
+        "slot",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {
+        "slot": 2
+      },
+      "coercion": {},
+      "bounds": {},
+      "enum": {
+        "slot": [
+          0,
+          1,
+          2
+        ]
+      },
+      "captureAfterExecution": true
+    },
+    "debugMovePlayerTo": {
+      "acceptedFields": [
+        "id",
+        "snapCamera",
+        "speed",
+        "type",
+        "x",
+        "y"
+      ],
+      "required": [
+        "x",
+        "y"
+      ],
+      "requiredAny": [],
+      "defaults": {
+        "speed": 180,
+        "snapCamera": true
+      },
+      "coercion": {
+        "x": "finite number",
+        "y": "finite number",
+        "speed": "positive number",
+        "snapCamera": "boolean alias"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugReloadScene": {
+      "acceptedFields": [
+        "id",
+        "sceneId",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugResetScenarioProgress": {
+      "acceptedFields": [
+        "id",
+        "scenarioId",
+        "type"
+      ],
+      "required": [
+        "scenarioId"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugSaveGame": {
+      "acceptedFields": [
+        "id",
+        "slot",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {
+        "slot": 2
+      },
+      "coercion": {},
+      "bounds": {},
+      "enum": {
+        "slot": [
+          0,
+          1,
+          2
+        ]
+      },
+      "captureAfterExecution": true
+    },
+    "debugSetFixedTickMode": {
+      "acceptedFields": [
+        "enabled",
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {
+        "enabled": true
+      },
+      "coercion": {
+        "enabled": "boolean alias"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugSetNarrativeState": {
+      "acceptedFields": [
+        "graphId",
+        "id",
+        "stateId",
+        "type"
+      ],
+      "required": [
+        "graphId",
+        "stateId"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugSetPlayerPosition": {
+      "acceptedFields": [
+        "id",
+        "snapCamera",
+        "type",
+        "x",
+        "y"
+      ],
+      "required": [
+        "x",
+        "y"
+      ],
+      "requiredAny": [],
+      "defaults": {
+        "snapCamera": true
+      },
+      "coercion": {
+        "x": "finite number",
+        "y": "finite number",
+        "snapCamera": "boolean alias"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugSetQuestStatus": {
+      "acceptedFields": [
+        "id",
+        "questId",
+        "status",
+        "type"
+      ],
+      "required": [
+        "questId",
+        "status"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {
+        "status": "quest status alias -> 0|1|2"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugSetScenarioLineLifecycle": {
+      "acceptedFields": [
+        "id",
+        "reason",
+        "scenarioId",
+        "state",
+        "type"
+      ],
+      "required": [
+        "scenarioId",
+        "state"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {
+        "state": "lifecycle alias -> inactive|active|completed"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugSetScenarioPhase": {
+      "acceptedFields": [
+        "id",
+        "outcome",
+        "phase",
+        "reason",
+        "scenarioId",
+        "status",
+        "type"
+      ],
+      "required": [
+        "scenarioId",
+        "phase",
+        "status"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugStartDialogueGraph": {
+      "acceptedFields": [
+        "entry",
+        "graphId",
+        "id",
+        "npcId",
+        "npcName",
+        "ownerId",
+        "ownerType",
+        "reason",
+        "type"
+      ],
+      "required": [
+        "graphId"
+      ],
+      "requiredAny": [],
+      "defaults": {
+        "npcName": "$graphId"
+      },
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugStepTicks": {
+      "acceptedFields": [
+        "dtMs",
+        "id",
+        "ticks",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {
+        "ticks": 1,
+        "dtMs": 16.6666666667
+      },
+      "coercion": {},
+      "bounds": {
+        "ticks": [
+          1,
+          200
+        ],
+        "dtMs": [
+          1,
+          100
+        ]
+      },
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugSwitchScene": {
+      "acceptedFields": [
+        "id",
+        "sceneId",
+        "spawnPoint",
+        "type"
+      ],
+      "required": [
+        "sceneId"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugTriggerHotspot": {
+      "acceptedFields": [
+        "hotspotId",
+        "id",
+        "type"
+      ],
+      "required": [
+        "hotspotId"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "debugWait": {
+      "acceptedFields": [
+        "durationMs",
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {
+        "durationMs": 500
+      },
+      "coercion": {},
+      "bounds": {
+        "durationMs": [
+          1,
+          60000
+        ]
+      },
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "emitNarrativeSignal": {
+      "acceptedFields": [
+        "id",
+        "reason",
+        "signal",
+        "sourceId",
+        "sourceType",
+        "type"
+      ],
+      "required": [
+        "sourceType",
+        "sourceId",
+        "signal"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "playerAdvance": {
+      "acceptedFields": [
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "playerChoose": {
+      "acceptedFields": [
+        "id",
+        "index",
+        "type"
+      ],
+      "required": [
+        "index"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {
+        "index": "non-negative integer"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "playerInteract": {
+      "acceptedFields": [
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "playerMoveTo": {
+      "acceptedFields": [
+        "id",
+        "type",
+        "x",
+        "y"
+      ],
+      "required": [
+        "x",
+        "y"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {
+        "x": "finite number",
+        "y": "finite number"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "playerTap": {
+      "acceptedFields": [
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {},
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "setFlag": {
+      "acceptedFields": [
+        "id",
+        "key",
+        "type",
+        "value"
+      ],
+      "required": [
+        "key"
+      ],
+      "requiredAny": [],
+      "defaults": {},
+      "coercion": {
+        "value": "registered flag kind"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    },
+    "setPlayerCollisions": {
+      "acceptedFields": [
+        "enabled",
+        "id",
+        "type"
+      ],
+      "required": [],
+      "requiredAny": [],
+      "defaults": {
+        "enabled": true
+      },
+      "coercion": {
+        "enabled": "false only when literal false"
+      },
+      "bounds": {},
+      "enum": {},
+      "captureAfterExecution": true
+    }
+  }
+}

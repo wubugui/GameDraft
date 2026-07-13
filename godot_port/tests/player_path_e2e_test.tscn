@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource path="res://tests/player_path_e2e_test.gd" type="Script" id="1"]
+
+[node name="PlayerPathE2ETest" type="Node"]
+script = ExtResource("1")

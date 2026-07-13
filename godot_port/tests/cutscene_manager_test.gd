@@ -1,0 +1,22 @@
+extends Node
+
+var probe_log: Array = []
+
+
+func _ready() -> void:
+	var repository := ProjectSettings.globalize_path("res://").trim_suffix("/").get_base_dir(); var assets := RuntimeAssetManager.new(RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository)); var events := RuntimeEventBus.new(); var flags := RuntimeFlagStore.new(events); flags.configure_registry(assets.load_json("/assets/data/flag_registry.json")); var input := RuntimeInputManager.new(); add_child(input); var state := RuntimeGameStateController.new(input, events); var actions := RuntimeActionExecutor.new(events, flags, state); actions.register("playSfx", Callable(self, "_parallel_probe"), ["id"]); var renderer := RuntimeRenderer.new(); add_child(renderer); renderer.init_renderer(); renderer.set_viewport_size(800, 600); var camera := RuntimeCamera.new(renderer.world_container); camera.set_screen_size(800, 600); var player := RuntimePlayer.new(input); renderer.entity_layer.add_child(player.sprite); var scenes := RuntimeSceneManager.new(assets, events, renderer, player, camera); add_child(scenes); scenes.init({}); assert(scenes.load_scene("teahouse")); var presentation := RuntimeCutsceneRenderer.new(renderer, camera, assets); var manager := RuntimeCutsceneManager.new(events, flags, actions, presentation, input, assets, camera, player, scenes); manager.init({}); manager.set_time_scale(0.0); assert(manager.load_defs() and manager.get_cutscene_ids().size() == 20 and manager.has_cutscene("说书-李天狗大战旱魃"))
+	manager.cutscene_defs.synthetic = {"id": "synthetic", "restoreState": true, "steps": [{"kind": "action", "type": "setFlag", "params": {"key": "cutscene_forbidden", "value": true}}, {"kind": "parallel", "tracks": [{"kind": "action", "type": "playSfx", "params": {"id": "a"}}, {"kind": "action", "type": "playSfx", "params": {"id": "b"}}]}, {"kind": "present", "type": "showTitle", "text": "并行完", "duration": 20}, {"kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "掌柜：继续"}, {"kind": "present", "type": "showMovieBar", "heightPercent": 0.1}, {"kind": "present", "type": "showSubtitle", "text": "字幕", "subtitleAutoAdvance": 10}, {"kind": "present", "type": "hideMovieBar"}]}
+	var original := Vector2(player.get_x(), player.get_y()); manager.start_cutscene("synthetic"); var guard := 0
+	while manager.is_playing() and guard < 50: guard += 1; manager.debug_advance(); await get_tree().process_frame
+	assert(guard < 50 and not manager.is_playing() and flags.get_value("cutscene_forbidden") != true and actions.policy_depth() == 0); assert(probe_log.slice(0, 2) == ["start:a", "start:b"] and probe_log.has("end:a") and probe_log.has("end:b")); assert(Vector2(player.get_x(), player.get_y()) == original)
+	manager.set_time_scale(1.0); manager.cutscene_defs.long = {"id": "long", "steps": [{"kind": "present", "type": "waitTime", "duration": 10000}, {"kind": "action", "type": "playSfx", "params": {"id": "must_not_run"}}]}; manager.start_cutscene("long"); await get_tree().process_frame; assert(manager.is_playing()); manager.skip(); await get_tree().process_frame; await get_tree().process_frame; assert(not manager.is_playing() and not probe_log.has("start:must_not_run"))
+	manager.cutscene_defs.arming = {"id": "arming", "steps": [{"kind": "present", "type": "waitClick"}, {"kind": "action", "type": "playSfx", "params": {"id": "after_armed_click"}}]}; manager.start_cutscene("arming"); manager.debug_advance(); await get_tree().process_frame; await get_tree().process_frame; await get_tree().process_frame; assert(manager.is_playing() and not probe_log.has("start:after_armed_click")); await get_tree().create_timer(0.14).timeout; manager.debug_advance()
+	for _index in 10:
+		await get_tree().process_frame
+		if not manager.is_playing(): break
+	assert(not manager.is_playing() and probe_log.has("start:after_armed_click"))
+	manager.destroy(); manager.free(); scenes.destroy(); remove_child(scenes); scenes.free(); player.destroy_player(); state.destroy(); input.destroy(); remove_child(input); input.free(); actions.destroy(); flags.destroy(); events.clear(); assets.dispose(); renderer.destroy_renderer(); remove_child(renderer); renderer.free(); print("CutsceneManager session/parallel/policy/skip contract test: PASS"); get_tree().quit(0)
+
+
+func _parallel_probe(params: Dictionary, _zone: Variant) -> void:
+	var id := str(params.get("id", "")); probe_log.push_back("start:%s" % id); await get_tree().process_frame; probe_log.push_back("end:%s" % id)

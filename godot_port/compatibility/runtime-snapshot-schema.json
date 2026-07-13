@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gamedraft://godot/runtime-snapshot-schema-v1",
+  "title": "GameDraft cross-runtime debug snapshot",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "reason",
+    "capturedAt",
+    "currentSceneId",
+    "gameState",
+    "previousGameState",
+    "flags",
+    "questState",
+    "scenarioState",
+    "narrativeEval",
+    "narrativeState",
+    "documentReveals",
+    "eventTrace",
+    "saveData",
+    "runtimeRandomState",
+    "activeZones",
+    "uiState",
+    "hudVisualState",
+    "renderState",
+    "entityVisualState",
+    "audioState",
+    "inFlight",
+    "dialogue",
+    "dialogueView",
+    "minigameDebug",
+    "player",
+    "planes",
+    "inventory",
+    "interactables",
+    "playerView",
+    "runtimeCommands",
+    "recentPageErrors",
+    "bootId"
+  ],
+  "properties": {
+    "reason": {
+      "type": "string"
+    },
+    "capturedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "currentSceneId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "gameState": {
+      "type": "string"
+    },
+    "previousGameState": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "flags": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "questState": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "scenarioState": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "narrativeEval": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "narrativeState": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "documentReveals": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "eventTrace": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seq",
+          "event",
+          "payload"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "event": {
+            "type": "string"
+          },
+          "payload": {}
+        }
+      }
+    },
+    "saveData": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "runtimeRandomState": {
+      "type": "integer"
+    },
+    "activeZones": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "uiState": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "hudVisualState": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "renderState": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "entityVisualState": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "audioState": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "inFlight": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "dialogue": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "dialogueView": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "minigameDebug": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "player": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "x",
+        "y",
+        "facing"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "facing": {
+          "type": "string"
+        }
+      }
+    },
+    "planes": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "interactables": {
+      "type": "array"
+    },
+    "playerView": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "mode",
+        "scene",
+        "player",
+        "entities",
+        "interactionPrompt",
+        "dialogue",
+        "hud",
+        "navTargetActive"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "scene": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "player": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "x",
+            "y",
+            "facing"
+          ],
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "facing": {
+              "type": "string"
+            }
+          }
+        },
+        "entities": {
+          "type": "array"
+        },
+        "interactionPrompt": {
+          "type": [
+            "object",
+            "string",
+            "null"
+          ]
+        },
+        "dialogue": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "hud": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "navTargetActive": {
+          "type": "boolean"
+        }
+      }
+    },
+    "runtimeCommands": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "lastResults"
+      ],
+      "properties": {
+        "lastResults": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "ok",
+              "message"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "recentPageErrors": {
+      "type": "array"
+    },
+    "bootId": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "x-authority": "src/core/Game.ts#buildRuntimeDebugSnapshot",
+  "x-parity": {
+    "ignoredValuePaths": [
+      "/reason",
+      "/capturedAt",
+      "/bootId",
+      "/runtimeCommands/lastResults",
+      "/saveData/game/playTimeMs"
+    ],
+    "ignoredObjectKeysAtPaths": [
+      {
+        "path": "/narrativeState/recentTrace",
+        "keys": [
+          "at"
+        ]
+      },
+      {
+        "path": "/narrativeEval",
+        "keys": [
+          "traceText",
+          "summaryText"
+        ]
+      }
+    ],
+    "numericTolerance": 0.0001,
+    "unorderedObjectKeys": true,
+    "arraysRemainOrdered": true
+  }
+}

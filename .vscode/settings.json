@@ -1,0 +1,12 @@
+{
+  "json.schemas": [
+    {
+      "fileMatch": [
+        "/public/assets/data/**/*.json",
+        "/public/assets/scenes/*.json",
+        "/public/assets/dialogues/graphs/*.json"
+      ],
+      "url": "./tools/json_lang/out/gamedraft-data.schema.json"
+    }
+  ]
+}

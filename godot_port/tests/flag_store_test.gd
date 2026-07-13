@@ -1,0 +1,70 @@
+extends SceneTree
+
+var changes: Array = []
+
+
+func _init() -> void:
+	var root_dir := ProjectSettings.globalize_path("res://").trim_suffix("/").get_base_dir()
+	var assets := RuntimeAssetManager.new(RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, root_dir))
+	var bus := RuntimeEventBus.new()
+	bus.on("flag:changed", func(payload: Variant) -> void: changes.push_back(payload))
+	var flags := RuntimeFlagStore.new(bus)
+	flags.configure_registry(assets.load_json("/assets/data/flag_registry.json"))
+	assert(flags.registry_counts() == {"static": 76, "patterns": 18})
+	assert(flags.is_key_allowed_by_registry("player_health"))
+	assert(flags.is_key_allowed_by_registry("picked_up_any_hotspot"))
+	assert(flags.is_key_allowed_by_registry("rule_x_acquired"))
+	assert(not flags.is_key_allowed_by_registry("rule__acquired"))
+	assert(not flags.is_key_allowed_by_registry("unknown_key"))
+	assert(flags.get_registry_value_type("抽糖画价格") == "float")
+	assert(flags.get_registry_value_type("书籍_风物志_铁环标注") == "string")
+	assert(flags.get_registry_value_type("rule_x_fragments_total") == "float")
+
+	assert(not flags.set_value(" ", true))
+	assert(flags.set_value("player_health", 5.0))
+	assert(flags.set_value("player_health", 5.0))
+	assert(changes.size() == 1)
+	assert(flags.set_value("player_health", true))
+	assert(changes.size() == 2)
+	assert(flags.add_numeric_flag("player_health", 2.0) and flags.get_value("player_health") == 2.0)
+	assert(not flags.add_numeric_flag("current_smell", 1.0))
+	assert(flags.append_string_flag("current_smell", "香") and flags.append_string_flag("current_smell", "火"))
+	assert(flags.get_value("current_smell") == "香火")
+	assert(not flags.append_string_flag("player_health", "x"))
+
+	flags.set_value("bool_true", true)
+	flags.set_value("zero", 0.0)
+	flags.set_value("one", 1.0)
+	flags.set_value("numeric_string", "10")
+	flags.set_value("word", "beta")
+	assert(flags.eval_pure_flag_conjunction([]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "bool_true", "value": 1.0}]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "one", "value": true}]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "one", "value": "1"}]))
+	assert(not flags.eval_pure_flag_conjunction([{"flag": "one", "value": "01"}]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "numeric_string", "op": ">", "value": 2.0}]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "word", "op": ">", "value": "alpha"}]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "missing_bool", "value": false}]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "missing_num", "value": 0.0}]))
+	assert(flags.eval_pure_flag_conjunction([{"flag": "missing_text", "value": ""}]))
+	assert(not flags.eval_pure_flag_conjunction([{"flag": "one", "op": "===", "value": 1.0}]))
+	assert(not flags.check_conditions([{"quest": "q1", "status": "active"}]))
+
+	var migrated := RuntimeFlagStore.new(bus)
+	migrated.configure_registry({
+		"static": [{"key": "new", "valueType": "bool"}],
+		"migrations": {"old": "new"},
+		"runtime": {"stripUnknown": true},
+	})
+	migrated.deserialize({"old": true, "unknown": true, " ": true})
+	assert(migrated.serialize() == {"new": true})
+	flags.deserialize({"player_health": 8.0, "custom_unknown": "kept"})
+	assert(flags.serialize() == {"player_health": 8.0, "custom_unknown": "kept"})
+	assert(flags.get_debug_value_kind("custom_unknown") == "string")
+	assert(flags.get_debug_pickable_keys().has("custom_unknown"))
+	flags.destroy()
+	assert(flags.serialize().is_empty())
+	migrated.destroy()
+	assets.dispose()
+	print("FlagStore registry/comparison test: PASS")
+	quit(0)

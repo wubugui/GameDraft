@@ -1,0 +1,150 @@
+{
+  "scene": {
+    "id": { "disposition": "runtime", "consumers": ["SceneManager", "SaveManager", "MapUI"] },
+    "name": { "disposition": "runtime", "consumers": ["SceneManager", "SaveManager", "resolveText"] },
+    "notes": { "disposition": "editor_only", "consumers": ["narrative template/editor metadata"] },
+    "worldWidth": { "disposition": "runtime", "consumers": ["SceneManager", "Camera", "Renderer"] },
+    "worldHeight": { "disposition": "runtime", "consumers": ["SceneManager", "Camera", "Renderer"] },
+    "worldScale": { "disposition": "runtime", "consumers": ["SceneManager", "Camera"] },
+    "backgrounds": { "disposition": "runtime", "consumers": ["SceneManager", "Renderer"] },
+    "spawnPoint": { "disposition": "runtime", "consumers": ["SceneManager", "CutsceneManager"] },
+    "spawnPoints": { "disposition": "runtime", "consumers": ["SceneManager", "CutsceneManager"] },
+    "hotspots": { "disposition": "runtime", "consumers": ["SceneManager", "InteractionSystem"] },
+    "npcs": { "disposition": "runtime", "consumers": ["SceneManager", "InteractionSystem"] },
+    "zones": { "disposition": "runtime", "consumers": ["SceneManager", "ZoneSystem"] },
+    "bgm": { "disposition": "runtime", "consumers": ["SceneManager", "AudioManager"] },
+    "ambientSounds": { "disposition": "runtime", "consumers": ["SceneManager", "AudioManager"] },
+    "filterId": { "disposition": "runtime", "consumers": ["FilterLoader", "WorldFilterPipeline"] },
+    "depthConfig": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "DepthOcclusionFilter", "Player collision"] },
+    "lightEnv": { "disposition": "runtime", "consumers": ["Game light pipeline", "EntityLightingFilter", "EntityShadow"] },
+    "lightEnvCurve": { "disposition": "runtime", "consumers": ["lightEnvCurve", "Game light pipeline"] },
+    "camera": { "disposition": "runtime", "consumers": ["SceneManager", "Camera"] },
+    "playerWalkSpeed": { "disposition": "runtime", "consumers": ["SceneManager", "Player"] },
+    "playerRunSpeed": { "disposition": "runtime", "consumers": ["SceneManager", "Player"] },
+    "onEnter": { "disposition": "runtime", "consumers": ["SceneManager", "ActionExecutor"] }
+  },
+  "background": {
+    "image": { "disposition": "runtime", "consumers": ["SceneManager", "AssetManager", "Renderer"] },
+    "x": { "disposition": "runtime", "consumers": ["SceneManager", "Renderer"] },
+    "y": { "disposition": "runtime", "consumers": ["SceneManager", "Renderer"] }
+  },
+  "camera": {
+    "zoom": { "disposition": "runtime", "consumers": ["Camera", "Game camera baseline"] },
+    "pixelsPerUnit": { "disposition": "runtime", "consumers": ["Camera projection", "SceneDepthSystem"] }
+  },
+  "npc": {
+    "id": { "disposition": "runtime", "consumers": ["SceneManager", "InteractionSystem", "CutsceneManager"] },
+    "characterId": { "disposition": "runtime", "consumers": ["characterRegistry", "SceneManager"] },
+    "name": { "disposition": "runtime", "consumers": ["SceneManager", "GraphDialogueManager", "resolveText"] },
+    "x": { "disposition": "runtime", "consumers": ["SceneManager", "Npc", "collision"] },
+    "y": { "disposition": "runtime", "consumers": ["SceneManager", "Npc", "Y sort", "collision"] },
+    "planes": { "disposition": "runtime", "consumers": ["PlaneReconciler", "SceneManager"] },
+    "cutsceneIds": { "disposition": "runtime", "consumers": ["SceneManager", "CutsceneManager"] },
+    "cutsceneOnly": { "disposition": "runtime", "consumers": ["SceneManager", "CutsceneManager"] },
+    "dialogueGraphId": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "GraphDialogueManager"] },
+    "dialogueGraphEntry": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "GraphDialogueManager"] },
+    "dialogueCameraZoom": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "Camera"] },
+    "dialogueStandAnimState": { "disposition": "deprecated_ignored", "consumers": ["NpcDef type compatibility only; runtime intentionally ignores it"] },
+    "interactionRange": { "disposition": "runtime", "consumers": ["InteractionSystem"] },
+    "conditions": { "disposition": "runtime", "consumers": ["ConditionEvaluator", "InteractionSystem"] },
+    "conditionHidesEntity": { "disposition": "runtime", "consumers": ["InteractionSystem", "Npc visibility composition"] },
+    "animFile": { "disposition": "runtime", "consumers": ["SceneManager", "SpriteEntity", "AssetManager"] },
+    "portraitSlug": { "disposition": "runtime", "consumers": ["GraphDialogueManager", "DialogueUI"] },
+    "initialAnimState": { "disposition": "runtime", "consumers": ["Npc", "SpriteEntity"] },
+    "initialFacing": { "disposition": "runtime", "consumers": ["Npc", "SpriteEntity"] },
+    "patrol": { "disposition": "runtime", "consumers": ["SceneManager", "Npc patrol"] },
+    "collisionPolygon": { "disposition": "runtime", "consumers": ["InteractionSystem", "Player collision"] },
+    "collisionPolygonLocal": { "disposition": "runtime", "consumers": ["hotspotCollision", "Player collision"] },
+    "castShadow": { "disposition": "runtime", "consumers": ["Game entity shadow pipeline"] },
+    "renderRaw": { "disposition": "runtime", "consumers": ["Game entity filters", "EntityPixelDensityMatch"] },
+    "enabled": { "disposition": "runtime_override", "consumers": ["SceneManager sceneMemory", "Npc visibility composition"] }
+  },
+  "patrol": {
+    "route": { "disposition": "runtime", "consumers": ["Npc patrol"] },
+    "speed": { "disposition": "runtime", "consumers": ["Npc patrol"] },
+    "moveAnimState": { "disposition": "runtime", "consumers": ["Npc patrol", "SpriteEntity"] }
+  },
+  "hotspot": {
+    "id": { "disposition": "runtime", "consumers": ["SceneManager", "InteractionSystem", "CutsceneManager"] },
+    "type": { "disposition": "runtime", "consumers": ["InteractionCoordinator"] },
+    "x": { "disposition": "runtime", "consumers": ["SceneManager", "Hotspot", "collision"] },
+    "y": { "disposition": "runtime", "consumers": ["SceneManager", "Hotspot", "Y sort", "collision"] },
+    "planes": { "disposition": "runtime", "consumers": ["PlaneReconciler", "SceneManager"] },
+    "cutsceneIds": { "disposition": "runtime", "consumers": ["SceneManager", "CutsceneManager"] },
+    "cutsceneOnly": { "disposition": "runtime", "consumers": ["SceneManager", "CutsceneManager"] },
+    "interactionRange": { "disposition": "runtime", "consumers": ["InteractionSystem"] },
+    "conditions": { "disposition": "runtime", "consumers": ["ConditionEvaluator", "InteractionSystem"] },
+    "conditionHidesEntity": { "disposition": "runtime", "consumers": ["InteractionSystem", "Hotspot visibility composition"] },
+    "label": { "disposition": "runtime", "consumers": ["InteractionSystem", "playerView"] },
+    "autoTrigger": { "disposition": "runtime", "consumers": ["InteractionSystem"] },
+    "data": { "disposition": "runtime", "consumers": ["InteractionCoordinator"] },
+    "displayImage": { "disposition": "runtime", "consumers": ["Hotspot", "SpriteEntity", "SceneManager"] },
+    "collisionPolygon": { "disposition": "runtime", "consumers": ["hotspotCollision", "Player collision"] },
+    "collisionPolygonLocal": { "disposition": "runtime", "consumers": ["hotspotCollision", "Player collision"] },
+    "castShadow": { "disposition": "runtime", "consumers": ["Game entity shadow pipeline"] },
+    "enabled": { "disposition": "runtime_override", "consumers": ["SceneManager sceneMemory", "Hotspot visibility composition"] }
+  },
+  "hotspotDisplayImage": {
+    "image": { "disposition": "runtime", "consumers": ["AssetManager", "Hotspot", "SpriteEntity"] },
+    "worldWidth": { "disposition": "runtime", "consumers": ["Hotspot", "SpriteEntity"] },
+    "worldHeight": { "disposition": "runtime", "consumers": ["Hotspot", "SpriteEntity"] },
+    "facing": { "disposition": "runtime", "consumers": ["Hotspot", "SpriteEntity"] },
+    "spriteSort": { "disposition": "runtime", "consumers": ["SceneManager Y sort"] }
+  },
+  "hotspotData": {
+    "text": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "InspectBox"] },
+    "actions": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "ActionExecutor"] },
+    "graphId": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "GraphDialogueManager"] },
+    "entry": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "GraphDialogueManager"] },
+    "itemId": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "InventoryManager"] },
+    "itemName": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "PickupNotification"] },
+    "count": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "InventoryManager"] },
+    "isCurrency": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "InventoryManager"] },
+    "targetScene": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "SceneManager"] },
+    "targetSpawnPoint": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "SceneManager"] },
+    "npcId": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "SceneManager"] },
+    "encounterId": { "disposition": "runtime", "consumers": ["InteractionCoordinator", "EncounterManager"] }
+  },
+  "zone": {
+    "id": { "disposition": "runtime", "consumers": ["SceneManager", "ZoneSystem"] },
+    "planes": { "disposition": "runtime", "consumers": ["PlaneReconciler", "SceneManager"] },
+    "zoneKind": { "disposition": "runtime", "consumers": ["SceneManager", "depthFloorZones", "ZoneSystem"] },
+    "floorOffsetBoost": { "disposition": "runtime", "consumers": ["depthFloorZones", "SceneDepthSystem"] },
+    "polygon": { "disposition": "runtime", "consumers": ["ZoneSystem", "zoneGeometry"] },
+    "conditions": { "disposition": "runtime", "consumers": ["ConditionEvaluator", "ZoneSystem"] },
+    "onEnter": { "disposition": "runtime", "consumers": ["ZoneSystem", "ActionExecutor"] },
+    "onStay": { "disposition": "runtime", "consumers": ["ZoneSystem", "ActionExecutor"] },
+    "onExit": { "disposition": "runtime", "consumers": ["ZoneSystem", "ActionExecutor"] },
+    "smell": { "disposition": "runtime", "consumers": ["SmellSystem"] }
+  },
+  "zoneSmell": {
+    "scent": { "disposition": "runtime", "consumers": ["SmellSystem", "smell_profiles.json"] },
+    "intensity": { "disposition": "runtime", "consumers": ["SmellSystem"] },
+    "dir": { "disposition": "runtime", "consumers": ["SmellSystem", "SmellIndicatorRenderer"] },
+    "flicker": { "disposition": "runtime", "consumers": ["SmellSystem", "SmellIndicatorRenderer"] }
+  },
+  "depthConfig": {
+    "depth_map": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "DepthOcclusionFilter"] },
+    "collision_map": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "Player collision"] },
+    "M": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "depth projection"] },
+    "depth_mapping": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "DepthOcclusionFilter"] },
+    "shader": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "DepthOcclusionFilter"] },
+    "collision": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "Player collision"] },
+    "depth_tolerance": { "disposition": "runtime", "consumers": ["DepthOcclusionFilter"] },
+    "floor_offset": { "disposition": "runtime", "consumers": ["SceneDepthSystem", "DepthOcclusionFilter"] }
+  },
+  "lightEnv": {
+    "key": { "disposition": "runtime", "consumers": ["resolveLightEnv", "EntityShadow", "EntityLightingFilter"] },
+    "ambient": { "disposition": "runtime", "consumers": ["resolveLightEnv", "EntityLightingFilter"] },
+    "shadow": { "disposition": "runtime", "consumers": ["resolveLightEnv", "EntityShadow"] },
+    "toneStrength": { "disposition": "runtime", "consumers": ["EntityLightingFilter"] },
+    "toneEnabled": { "disposition": "runtime", "consumers": ["EntityLightingFilter"] },
+    "ao": { "disposition": "runtime", "consumers": ["EntityLightingFilter"] }
+  },
+  "lightEnvCurve": {
+    "points": { "disposition": "runtime", "consumers": ["prepareLightCurve", "Game light pipeline"] },
+    "points[].x": { "disposition": "runtime", "consumers": ["prepareLightCurve"] },
+    "points[].y": { "disposition": "runtime", "consumers": ["prepareLightCurve"] },
+    "points[].env": { "disposition": "runtime", "consumers": ["prepareLightCurve", "resolveLightEnv"] }
+  }
+}
