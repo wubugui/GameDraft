@@ -1,0 +1,11 @@
+{
+  "name": "gamedraft-json-lang",
+  "displayName": "GameDraft JSON 数据语言",
+  "description": "GameDraft 数据 JSON 的跳转/引用/悬停(连接 tools/json_lang/lsp_server.py)",
+  "publisher": "gamedraft",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.70.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:json"],
+  "main": "./extension.js"
+}

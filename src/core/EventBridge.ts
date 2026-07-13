@@ -17,6 +17,8 @@ export interface EventBridgeDeps {
   mapUI: { setCurrentScene(sceneId: string): void };
   menuUI: { close(): void; openMainMenu(): void };
   inspectBox: { show(text: string): Promise<void> };
+  /** travel 槽第二道闸（第一道在 map 面板 openGuard）：返回 false 拒绝快速旅行并自行提示 */
+  guardMapTravel: () => boolean;
 }
 
 export class EventBridge {
@@ -96,12 +98,17 @@ export class EventBridge {
 
     this.listen('map:travel', async (p: { sceneId: string }) => {
       // 保留手工恢复（特殊时序，不可换成 closePanel('map')）：MapUI 在自己的 pointerdown 里
-      // 已同步 close() 拆掉 UI（closePanel 对已关面板是幂等 no-op，不会弹栈），且恢复必须发生在
-      // switchScene **之前**——否则 switchScene 完成后会按“进入时的 prev=UIOverlay”恢复，
-      // 快速旅行后卡在 UIOverlay。restorePreviousState 弹掉 KeyM 打开时压的那层栈，栈保持平衡。
+      // 已同步 close() 拆掉 UI（closePanel 对已关面板是幂等 no-op，不会弹栈）。恢复必须发生在
+      // guard 与 switchScene **之前**：guard 拒绝时若不先弹栈，玩家会滞留在无面板的 UIOverlay
+      // （地图已自关、Esc 找不到面板、其它面板禁开——不可恢复软锁）；而 switchScene 之后再恢复，
+      // 会按“进入时的 prev=UIOverlay”恢复，快速旅行后同样卡住。map:travel 仅由 MapUI 发出
+      // （全库唯一发射点），故 UIOverlay 态即意味着栈顶是打开地图时压的那层，弹栈安全。
       if (stateController.currentState === GameState.UIOverlay) {
         stateController.restorePreviousState();
       }
+      // travel 槽第二道闸：面板 openGuard 后位面可能已切换（面板开着时叙事点名），
+      // 或事件来自竞态路径——此处兜底拒绝（状态已在上方恢复，此处仅取消旅行）。
+      if (!this.deps.guardMapTravel()) return;
       try {
         await actionExecutor.executeAwait({
           type: 'switchScene',

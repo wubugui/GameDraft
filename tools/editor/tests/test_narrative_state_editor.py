@@ -111,6 +111,86 @@ class TestNarrativeStateEditor(unittest.TestCase):
             self.assertTrue(m.is_dirty)
             self.assertEqual(m.narrative_composition_ids_ordered(), ["comp"])
 
+    # --- 「整理分组」标签：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json --- #
+    def test_missing_narrative_categories_loads_empty_without_dirty(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            self.assertEqual(
+                m.narrative_categories,
+                {"schemaVersion": 1, "compositions": {}, "subgraphs": {}},
+            )
+            self.assertFalse(m.is_dirty)
+
+    def test_bridge_save_categories_marks_dirty_and_normalizes(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            bridge = NarrativeEditorBridge(m)
+            result = json.loads(bridge.saveCategories(json.dumps({
+                "compositions": {"comp": " 主线 ", "gone": ""},
+                "subgraphs": {"comp": {"el": "NPC"}, "emptyComp": {}},
+            }, ensure_ascii=False)))
+            self.assertTrue(result["ok"])
+            self.assertTrue(m.is_dirty)
+            # 归一：strip、丢空值、丢空内层
+            self.assertEqual(result["categories"]["compositions"], {"comp": "主线"})
+            self.assertEqual(result["categories"]["subgraphs"], {"comp": {"el": "NPC"}})
+            # getCategories 返回归一后的当前注册表
+            got = json.loads(bridge.getCategories())
+            self.assertEqual(got["compositions"], {"comp": "主线"})
+            self.assertEqual(got["subgraphs"], {"comp": {"el": "NPC"}})
+
+    def test_save_all_writes_narrative_categories(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            m.narrative_categories = {
+                "schemaVersion": 1,
+                "compositions": {"comp": "主线"},
+                "subgraphs": {"comp": {"el": "NPC"}},
+            }
+            m.mark_dirty("narrative_categories")
+            m.save_all()
+            path = root / "public" / "assets" / "data" / "narrative_categories.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(data["compositions"]["comp"], "主线")
+            self.assertEqual(data["subgraphs"]["comp"]["el"], "NPC")
+
+    def test_save_all_categories_only_does_not_touch_narrative_graphs(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            ng_path = root / "public" / "assets" / "data" / "narrative_graphs.json"
+            before = ng_path.read_text(encoding="utf-8") if ng_path.exists() else None
+            m.narrative_categories = {
+                "schemaVersion": 1,
+                "compositions": {"comp": "主线"},
+                "subgraphs": {},
+            }
+            m.mark_dirty("narrative_categories")
+            m.save_all()
+            after = ng_path.read_text(encoding="utf-8") if ng_path.exists() else None
+            # 只脏分组时，narrative_graphs.json 分毫未动（分类绝不污染运行时数据）
+            self.assertEqual(before, after)
+
+    def test_narrative_categories_normalize_is_idempotent_and_sorted(self) -> None:
+        from tools.editor.shared.narrative_categories import normalize_categories_file
+        raw = {"compositions": {"b": "Y", "a": "X"}, "subgraphs": {"c": {"e2": "k", "e1": "m"}}}
+        once = normalize_categories_file(raw)
+        twice = normalize_categories_file(once)
+        self.assertEqual(once, twice)
+        self.assertEqual(list(once["compositions"].keys()), ["a", "b"])
+        self.assertEqual(list(once["subgraphs"]["c"].keys()), ["e1", "e2"])
+
     def test_state_active_plane_survives_normalize_and_save(self) -> None:
         """位面点名字段 activePlane：经 _normalize_file + saveData 往返不丢不漂。
 
@@ -861,6 +941,10 @@ class TestNarrativeStateEditor(unittest.TestCase):
 
     def test_confirm_close_dirty_save_flushes_model(self) -> None:
         class FakeEditor:
+            # 借用真实的脏判断助手，让测试穿过 confirm_close → _web_editor_is_dirty
+            # → _run_editor_js_result 的完整链路。
+            _web_editor_is_dirty = NarrativeStateEditor._web_editor_is_dirty
+
             def __init__(self) -> None:
                 self._view = object()
                 self.flushed = False

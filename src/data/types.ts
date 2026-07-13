@@ -386,13 +386,22 @@ export type NarrativeStateConditionLeaf = {
   reached?: boolean;
 };
 
+/**
+ * 位面叶子：当前**激活位面** === 该 id（含 manual override 压过叙事点名后的结果）。
+ * 组合语义用 all/any/not（如「非 normal」= { not: { plane: 'normal' } }）。
+ */
+export type PlaneConditionLeaf = {
+  plane: string;
+};
+
 /** 图对话原子条件（无逻辑组合） */
 export type GraphConditionLeaf =
   | Condition
   | QuestConditionLeaf
   | ScenarioConditionLeaf
   | ScenarioLineConditionLeaf
-  | NarrativeStateConditionLeaf;
+  | NarrativeStateConditionLeaf
+  | PlaneConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -1626,4 +1635,7 @@ export interface ISaveDataProvider {
   getSlotMeta(slot: number): SaveSlotMeta | null;
   hasSave(slot: number): boolean;
   hasAnySave(): boolean;
+  /** 跨运行壳互通：导出/导入原始 v1 JSON 信封；不改变 systems 桶。 */
+  exportSlotPayload(slot: number): string | null;
+  importSlotPayload(slot: number, raw: string): boolean;
 }

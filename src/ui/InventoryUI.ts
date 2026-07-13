@@ -64,7 +64,10 @@ export class InventoryUI {
 
     const w = this.renderer.screenWidth;
     const h = this.renderer.screenHeight;
-    const rows = Math.ceil(MAX_SLOTS / GRID_COLS);
+    // critical 给予（关键道具保底）可临时超过 12 槽——网格按实际物品数增行，溢出物品不隐身
+    const itemCount = this.inventoryData.getAllItems().length;
+    const slotCount = Math.max(MAX_SLOTS, itemCount);
+    const rows = Math.ceil(slotCount / GRID_COLS);
     const gridW = GRID_COLS * (CELL_SIZE + CELL_GAP) + CELL_GAP;
     const gridH = rows * (CELL_SIZE + CELL_GAP) + CELL_GAP;
     const panelW = gridW + 220;
@@ -101,7 +104,7 @@ export class InventoryUI {
     const gridStartX = px + CELL_GAP + 10;
     const gridStartY = py + 50;
 
-    for (let i = 0; i < MAX_SLOTS; i++) {
+    for (let i = 0; i < slotCount; i++) {
       const col = i % GRID_COLS;
       const row = Math.floor(i / GRID_COLS);
       const cx = gridStartX + col * (CELL_SIZE + CELL_GAP);

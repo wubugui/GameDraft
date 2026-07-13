@@ -18,6 +18,18 @@ function deps() {
       captureSnapshot: async (reason: string) => {
         calls.push(`snapshot:${reason}`);
       },
+      clearEventTrace: () => {
+        calls.push('clearEventTrace');
+      },
+      debugExecuteAction: async (action: { type: string }) => {
+        calls.push(`action:${action.type}`);
+      },
+      debugSetFixedTickMode: (enabled: boolean) => {
+        calls.push(`fixed:${enabled}`);
+      },
+      debugStepTicks: async (ticks: number, dtMs: number) => {
+        calls.push(`step:${ticks}:${dtMs}`);
+      },
       clearNarrativeTrace: () => {
         calls.push('clearTrace');
       },
@@ -93,6 +105,7 @@ function deps() {
       },
       debugSaveGame: (slot: number) => {
         calls.push(`save:${slot}`);
+        return slot === 2;
       },
       debugLoadGame: async (slot: number) => {
         calls.push(`load:${slot}`);
@@ -114,6 +127,38 @@ function deps() {
 }
 
 describe('applyDevRuntimeCommand', () => {
+  it('clears the cross-runtime event trace before capturing', async () => {
+    const ctx = deps();
+
+    const result = await applyDevRuntimeCommand(
+      { id: 'event-trace-reset', type: 'debugClearEventTrace', reason: 'parity-start' },
+      ctx.deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(ctx.calls).toEqual(['clearEventTrace', 'snapshot:parity-start']);
+  });
+
+  it('executes a validated action through the shared executor boundary', async () => {
+    const ctx = deps();
+    const result = await applyDevRuntimeCommand(
+      { type: 'debugExecuteAction', action: { type: 'giveCurrency', params: { amount: 7 } } },
+      ctx.deps,
+    );
+    expect(result.ok).toBe(true);
+    expect(ctx.calls).toEqual(['action:giveCurrency', 'snapshot:runtime-command:debugExecuteAction']);
+
+    expect((await applyDevRuntimeCommand({ type: 'debugExecuteAction', action: {} }, ctx.deps)).ok).toBe(false);
+  });
+
+  it('controls deterministic fixed-tick stepping', async () => {
+    const ctx = deps();
+    expect((await applyDevRuntimeCommand({ type: 'debugSetFixedTickMode', enabled: true }, ctx.deps)).ok).toBe(true);
+    expect((await applyDevRuntimeCommand({ type: 'debugStepTicks', ticks: 12, dtMs: 20 }, ctx.deps)).ok).toBe(true);
+    expect(ctx.calls).toContain('fixed:true');
+    expect(ctx.calls).toContain('step:12:20');
+  });
+
   it('clears trace and captures a fresh snapshot', async () => {
     const ctx = deps();
 
@@ -290,6 +335,16 @@ describe('applyDevRuntimeCommand', () => {
     expect(ctx.calls).toContain('save:2');
     expect(ctx.calls).toContain('load:2');
     expect(ctx.calls).toContain('reloadScene:dock_board');
+  });
+
+  it('reports a rejected save immediately instead of claiming success', async () => {
+    const ctx = deps();
+    const result = await applyDevRuntimeCommand(
+      { type: 'debugSaveGame', slot: 1 },
+      { ...ctx.deps, debugSaveGame: () => false },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('failed to write');
   });
 
   it('rejects missing save slots during debug load', async () => {

@@ -149,6 +149,14 @@
       "valueType": "bool"
     },
     {
+      "key": "met_paoge_leader",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_jiaobang_leader",
+      "valueType": "bool"
+    },
+    {
       "key": "met_mysterious_visitor",
       "valueType": "bool"
     },
@@ -282,6 +290,18 @@
     },
     {
       "key": "forest.tether_suppressed",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_看过油布包",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_动了死人的东西",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_烤过火",
       "valueType": "bool"
     }
   ],

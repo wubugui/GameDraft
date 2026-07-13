@@ -848,7 +848,10 @@ class EncounterEditor(QWidget):
             return False
         if choice == "save":
             return self._apply_impl()
-        return True  # discard：用户明确放弃
+        # discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+        # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+        self._load_row(self._current_idx)
+        return True
 
     def _add(self) -> None:
         # 新增前处理当前未应用编辑：与切行路径同一套三选一，绕过即静默丢（审查 P1-3）

@@ -416,6 +416,129 @@ class NarrativeEditorBridge(QObject):
         )
 
     # --------------------------------------------------------------------- #
+    # 信号重构（改名 / 删除）：全项目级联，零磁盘写入，落盘只经主编辑器 Save All。
+    # --------------------------------------------------------------------- #
+    @Slot(str, result=str)
+    def scanSignalUsages(self, signal_id: str) -> str:  # noqa: N802 - Qt slot name
+        """一个作者信号的全项目使用点清单（重构预览），只读不改。"""
+        from ..shared.signal_refactor import scan_signal_usages
+
+        try:
+            usages = scan_signal_usages(self._model, signal_id)
+            return json.dumps({"ok": True, "usages": usages}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
+            return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
+
+    @Slot(str, str, result=str)
+    def scanStateUsages(self, graph_id: str, state_id: str) -> str:  # noqa: N802 - Qt slot name
+        from ..shared.signal_refactor import scan_state_usages
+
+        try:
+            return json.dumps({"ok": True, "usages": scan_state_usages(self._model, graph_id, state_id)}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
+            return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def scanGraphUsages(self, graph_id: str) -> str:  # noqa: N802 - Qt slot name
+        from ..shared.signal_refactor import scan_graph_usages
+
+        try:
+            return json.dumps({"ok": True, "usages": scan_graph_usages(self._model, graph_id)}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
+            return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def applySignalRefactor(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """执行叙事重构。payload.op ∈ {rename, delete, renameState, renameGraph} + 各自参数 + data。
+
+        data 是网页当前文档：先走与 saveData 相同的校验+暂存（让重构作用在最新画布上），
+        再跑共享引擎级联全项目引用（状态/图改名自动登记存档 migrations）。全程只改
+        ProjectModel 内存并标脏，落盘只经主编辑器 Save All；撤销见 undoSignalRefactor
+        （撤销日志挂在 ProjectModel 上，与 PyQt 信号管理器共用一份）。
+        """
+        from ..shared.signal_refactor import (
+            SignalRefactorError,
+            _migrations_snapshot,
+            delete_signal,
+            push_journal,
+            rename_graph,
+            rename_signal,
+            rename_state,
+        )
+
+        try:
+            req = json.loads(payload or "{}")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
+        if not isinstance(req, dict):
+            return json.dumps({"ok": False, "reason": "payload must be an object"}, ensure_ascii=False)
+
+        data = req.get("data")
+        if isinstance(data, dict):
+            normalized = _normalize_file(data)
+            errors = _validation_errors_for_save(normalized, self._model)
+            if errors:
+                return json.dumps(
+                    {"ok": False, "reason": f"save blocked: {len(errors)} validation error(s)（先解决校验错误再重构）"},
+                    ensure_ascii=False,
+                )
+            self._model.narrative_graphs = normalized
+            self._model.mark_dirty("narrative_graphs")
+
+        op = str(req.get("op") or "").strip()
+        try:
+            if op == "rename":
+                summary = rename_signal(self._model, str(req.get("oldId") or ""), str(req.get("newId") or ""))
+                journal_entry = {"op": "rename", "oldId": summary["oldId"], "newId": summary["newId"], "summary": summary}
+            elif op == "delete":
+                summary, reverse_ops = delete_signal(
+                    self._model, str(req.get("signalId") or ""), force=bool(req.get("force")),
+                )
+                journal_entry = {"op": "delete", "signalId": summary["signalId"], "summary": summary, "reverseOps": reverse_ops}
+            elif op == "renameState":
+                snapshot = _migrations_snapshot(self._model)
+                summary = rename_state(
+                    self._model, str(req.get("graphId") or ""),
+                    str(req.get("oldStateId") or ""), str(req.get("newStateId") or ""),
+                )
+                journal_entry = {**{k: summary[k] for k in ("op", "graphId", "oldStateId", "newStateId")},
+                                 "summary": summary, "migrationsSnapshot": snapshot}
+            elif op == "renameGraph":
+                snapshot = _migrations_snapshot(self._model)
+                summary = rename_graph(
+                    self._model, str(req.get("oldGraphId") or ""), str(req.get("newGraphId") or ""),
+                )
+                journal_entry = {**{k: summary[k] for k in ("op", "oldGraphId", "newGraphId")},
+                                 "summary": summary, "migrationsSnapshot": snapshot}
+            else:
+                return json.dumps({"ok": False, "reason": f"unknown op: {op!r}"}, ensure_ascii=False)
+        except SignalRefactorError as exc:
+            return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
+            return json.dumps({"ok": False, "reason": f"refactor failed: {exc}"}, ensure_ascii=False)
+
+        size = push_journal(self._model, journal_entry)
+        return json.dumps(
+            {
+                "ok": True,
+                "summary": summary,
+                "narrative": _normalize_file(self._model.narrative_graphs),
+                "journalSize": size,
+            },
+            ensure_ascii=False,
+        )
+
+    @Slot(result=str)
+    def undoSignalRefactor(self) -> str:  # noqa: N802 - Qt slot name
+        """撤销最近一次叙事重构（共享日志：web 与 PyQt 信号管理器同一份）。"""
+        from ..shared.signal_refactor import undo_last
+
+        result = undo_last(self._model)
+        if result.get("ok"):
+            result["narrative"] = _normalize_file(self._model.narrative_graphs)
+        return json.dumps(result, ensure_ascii=False)
+
+    # --------------------------------------------------------------------- #
     # 叙事状态机模板（archetype）：编辑器专用，运行时永不加载。
     # --------------------------------------------------------------------- #
     @Slot(result=str)
@@ -442,6 +565,87 @@ class NarrativeEditorBridge(QObject):
         self._model.narrative_templates = normalized
         self._model.mark_dirty("narrative_templates")
         return json.dumps({"ok": True, "templates": normalized}, ensure_ascii=False)
+
+    # --------------------------------------------------------------------- #
+    # 「整理分组」标签：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json。
+    # 与 wrapper 子图那个进 JSON、驱动运行时校验的 category「分类备注」字段完全无关。
+    # --------------------------------------------------------------------- #
+    @Slot(result=str)
+    def getCategories(self) -> str:  # noqa: N802 - Qt slot name
+        """当前工程的整理分组注册表（归一后 {schemaVersion, compositions, subgraphs}）。"""
+        from ..shared.narrative_categories import normalize_categories_file
+
+        return json.dumps(normalize_categories_file(self._model.narrative_categories), ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def saveCategories(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """整表覆盖保存整理分组（归一后并入 model + 标脏 narrative_categories，不落盘）。"""
+        from ..shared.narrative_categories import normalize_categories_file
+
+        try:
+            parsed = json.loads(payload or "{}")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
+        normalized = normalize_categories_file(parsed)
+        self._model.narrative_categories = normalized
+        self._model.mark_dirty("narrative_categories")
+        return json.dumps({"ok": True, "categories": normalized}, ensure_ascii=False)
+
+    # --------------------------------------------------------------------- #
+    # 编辑器专用 sidecar（UI 偏好 / 画布分组框）：运行时永不加载、与游戏数据无关，
+    # 故**不经 Save All / mark_dirty，改动即立即落盘**（见 debug-ui-persistence 范式：
+    # 编辑器 UI 状态走工程文件、禁 localStorage-only；对齐图对话 dialogue_flow_layout.json 先例）。
+    # --------------------------------------------------------------------- #
+    def _read_editor_sidecar(self, filename: str) -> str:
+        """读 editor_data/<filename>；无工程/文件缺失/读失败一律返回空对象串。"""
+        if getattr(self._model, "project_path", None) is None:
+            return "{}"
+        path = self._model.editor_data_path / filename
+        if not path.is_file():
+            return "{}"
+        try:
+            return path.read_text(encoding="utf-8")
+        except Exception:
+            return "{}"
+
+    def _write_editor_sidecar(self, filename: str, payload: str, root_desc: str) -> str:
+        """整表覆盖写 editor_data/<filename> 并立即落盘；返回 {ok,...} JSON 串。"""
+        try:
+            parsed = json.loads(payload or "{}")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
+        if not isinstance(parsed, dict):
+            return json.dumps({"ok": False, "reason": f"{root_desc} root must be an object"}, ensure_ascii=False)
+        if getattr(self._model, "project_path", None) is None:
+            return json.dumps({"ok": False, "reason": "no project open"}, ensure_ascii=False)
+        path = self._model.editor_data_path / filename
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            text = json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
+            path.write_text(text, encoding="utf-8")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"write failed: {exc}"}, ensure_ascii=False)
+        return json.dumps({"ok": True}, ensure_ascii=False)
+
+    @Slot(result=str)
+    def getEditorPreferences(self) -> str:  # noqa: N802 - Qt slot name
+        """读当前工程的叙事编辑器 UI 偏好；无工程/文件缺失时返回空对象。"""
+        return self._read_editor_sidecar("narrative_editor_preferences.json")
+
+    @Slot(str, result=str)
+    def saveEditorPreferences(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """整表覆盖保存 UI 偏好并**立即写盘**（apply 即固化，重启不丢）。"""
+        return self._write_editor_sidecar("narrative_editor_preferences.json", payload, "preferences")
+
+    @Slot(result=str)
+    def getCanvasGroups(self) -> str:  # noqa: N802 - Qt slot name
+        """读当前工程的叙事画布分组框注册表；无工程/文件缺失时返回空对象。"""
+        return self._read_editor_sidecar("narrative_canvas_groups.json")
+
+    @Slot(str, result=str)
+    def saveCanvasGroups(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """整表覆盖保存画布分组框并**立即写盘**（重启不丢；归一化由 web 侧负责）。"""
+        return self._write_editor_sidecar("narrative_canvas_groups.json", payload, "canvas groups")
 
     @Slot(str, result=str)
     def getQuest(self, quest_id: str) -> str:  # noqa: N802 - Qt slot name
@@ -522,12 +726,22 @@ class NarrativeEditorBridge(QObject):
         existing_comp.discard("")
         existing_quest = {q[0] for q in self._model.all_quest_ids()}
         existing_dlg = set(self._model.all_dialogue_graph_ids())
+        # 既有信号 = 当前草稿的作者信号注册表。模板声明的新信号与之重名 = error（禁止：
+        # 两单任务共用一个信号会互相串线推进）。注意不能拿「全项目实际发出集」查重——
+        # 策划先手写好本单对话（已 emit 本单信号）再盖章是合法流程，不能误伤。
+        existing_sig = {
+            str(s.get("id") or "").strip()
+            for s in (current.get("signals") or [])
+            if isinstance(s, dict)
+        }
+        existing_sig.discard("")
 
         result = stamp_template(
             tpl, values,
             existing_composition_ids=existing_comp,
             existing_quest_ids=existing_quest,
             existing_dialogue_ids=existing_dlg,
+            existing_signal_ids=existing_sig,
             generate_dialogue_stubs=gen_stubs,
         )
         if not result.get("ok"):
@@ -577,35 +791,38 @@ class NarrativeEditorBridge(QObject):
                 "errors": nerrors,
             }, ensure_ascii=False)
 
-        # ---- 副作用：镜像 quest 写入 model（标脏，随主编辑器 Save All 落盘） ----
-        quest_written = False
+        # ---- 全有全无：三样产物一并暂存进 ProjectModel，此刻零磁盘写入 ----
+        # 主编辑器 Save All 一次性落盘（作曲+信号 → narrative_graphs.json；镜像任务 →
+        # quests.json；对话桩 → dialogues/graphs/）。中途放弃/崩溃 = 三样都不存在，无孤儿。
+        # 注意脏键：save_all 认的是 "quest"（单数），标错键 = Save All 不写文件却清脏标记，
+        # 暂存内容无声丢失（历史 bug，勿回退）。
+        self._model.narrative_graphs = merged_norm
+        self._model.mark_dirty("narrative_graphs")
+
+        quest_staged = False
         quest_obj = result.get("quest")
         if isinstance(quest_obj, dict) and result.get("questId"):
             if not isinstance(self._model.quests, list):
                 self._model.quests = []
             self._model.quests.append(quest_obj)
-            self._model.mark_dirty("quests")
-            quest_written = True
+            self._model.mark_dirty("quest")
+            quest_staged = True
 
-        # ---- 副作用：为缺失的对话图写空白桩文件（新文件即时落盘，永不覆盖已有） ----
-        stubs_written: list[str] = []
+        stubs_staged: list[str] = []
         stub_skipped: list[str] = []
         if gen_stubs:
-            from ..file_io import write_json
             graphs_dir = self._model.dialogues_path / "graphs"
             for stub in result.get("dialogueStubs", []):
                 gid = str(stub.get("id") or "").strip()
                 if not gid:
                     continue
-                if stub.get("exists"):
+                if stub.get("exists") or (graphs_dir / f"{gid}.json").exists():
                     stub_skipped.append(gid)
                     continue
-                target = graphs_dir / f"{gid}.json"
-                if target.exists():
-                    stub_skipped.append(gid)
-                    continue
-                write_json(target, stub.get("graph") or {})
-                stubs_written.append(gid)
+                self._model.pending_dialogue_stubs[gid] = stub.get("graph") or {}
+                stubs_staged.append(gid)
+            if stubs_staged:
+                self._model.mark_dirty("dialogue_stubs")
 
         return json.dumps({
             "ok": True,
@@ -614,9 +831,9 @@ class NarrativeEditorBridge(QObject):
             "summary": {
                 "compositionId": result["compositionId"],
                 "questId": result.get("questId", ""),
-                "questWritten": quest_written,
+                "questStaged": quest_staged,
                 "signals": [s.get("id") for s in result.get("signals", [])],
-                "stubsWritten": stubs_written,
+                "stubsStaged": stubs_staged,
                 "stubsSkipped": stub_skipped,
                 "requiredEntities": result.get("requiredEntities", []),
                 "warnings": result.get("warnings", []),
@@ -982,13 +1199,36 @@ class NarrativeStateEditor(QWidget):
             return
         banner.setVisible(False)
 
+    def _flush_web_draft_before_reload(self) -> bool:
+        """重载/重建页面前把 Web 侧未保存草稿写进工程模型（复核 P1-08）。
+
+        重载会整页丢弃 Web 编辑器状态，未 flush 的草稿=静默消失。flush 失败
+        （校验不过等）时明确询问是否丢弃草稿；取消则中止重载。
+        """
+        if not self._web_editor_is_dirty():
+            return True
+        if self.flush_to_model(for_save_all=True):
+            return True
+        r = QMessageBox.question(
+            self, "叙事草稿无法保存",
+            f"{self._last_flush_error or '未知原因'}\n\n仍要重载页面并丢弃当前草稿吗？",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+        )
+        return r == QMessageBox.StandardButton.Discard
+
     def _reload_web_page(self) -> None:
+        if not self._flush_web_draft_before_reload():
+            return
         self._toolbar_reload_page()
         self._refresh_staleness_banner()
 
     def _rebuild_web_bundle(self) -> None:
         """一键重建网页 bundle 并自动重载（经登录 shell，GUI 启动也能找到 npm）。"""
         if self._rebuild_proc is not None:
+            return
+        # 重建完成会自动重载页面：先把当前草稿收进模型，防止构建期间的编辑被
+        # 成功路径的自动 reload 丢掉（复核 P1-08）。
+        if not self._flush_web_draft_before_reload():
             return
         self._rebuild_btn.setEnabled(False)
         self._rebuild_btn.setText("重建中…")
@@ -1023,6 +1263,11 @@ class NarrativeStateEditor(QWidget):
         self._rebuild_proc = None
         self._reset_rebuild_button()
         if code == 0:
+            # 构建期间用户可能又编辑了：重载前再收一次草稿；用户取消则不自动重载，
+            # 横幅保持可见，稍后可手动点「刷新页面」。
+            if not self._flush_web_draft_before_reload():
+                self._refresh_staleness_banner()
+                return
             self._toolbar_reload_page()  # 载入新 hash 的 bundle
             self._refresh_staleness_banner()  # 不再过期 → 横幅自动隐藏
             return
@@ -1058,6 +1303,22 @@ class NarrativeStateEditor(QWidget):
             self._view.load(url)
             return
         self._load_web_editor()
+
+    def focus_state(self, graph_id: str, state_id: str) -> bool:
+        """外部跳转入口（位面面板 hub 等）：让 web 编辑器切编排并聚焦指定状态。
+
+        经 window.__narrativeEditor.focusState 定位（旧 dist 无此 API 时返回 False）。
+        """
+        gid = str(graph_id or "").strip()
+        sid = str(state_id or "").strip()
+        if not gid or not sid or self._view is None:
+            return False
+        code = (
+            "window.__narrativeEditor && window.__narrativeEditor.focusState"
+            f" ? window.__narrativeEditor.focusState({json.dumps(gid, ensure_ascii=False)},"
+            f" {json.dumps(sid, ensure_ascii=False)}) : false"
+        )
+        return self._run_editor_js_result(code) is True
 
     def pop_flush_error(self) -> str | None:
         message = self._last_flush_error
@@ -1110,14 +1371,18 @@ class NarrativeStateEditor(QWidget):
         )
         return True
 
+    def _web_editor_is_dirty(self) -> bool:
+        if self._view is None:
+            return False
+        return self._run_editor_js_result(
+            "window.__narrativeEditor && window.__narrativeEditor.isDirty"
+            " ? window.__narrativeEditor.isDirty() : false",
+        ) is True
+
     def confirm_close(self, parent: QWidget) -> bool:
         if self._view is None:
             return True
-        dirty = self._run_editor_js_result(
-            "window.__narrativeEditor && window.__narrativeEditor.isDirty"
-            " ? window.__narrativeEditor.isDirty() : false",
-        )
-        if dirty is not True:
+        if not self._web_editor_is_dirty():
             return True
         result = QMessageBox.question(
             parent,
@@ -1131,10 +1396,10 @@ class NarrativeStateEditor(QWidget):
             return False
         if result == QMessageBox.StandardButton.Save:
             return self.flush_to_model()
-        self._run_editor_js_result(
-            "window.__narrativeEditor && window.__narrativeEditor.markSaved"
-            " ? (window.__narrativeEditor.markSaved(), true) : false",
-        )
+        # Discard：重载页面把内容真正回滚到模型当前值。只调 markSaved 清 dirty 标志
+        # 不够——flush_to_model 走的是内容 diff，被放弃的编辑仍会被随后的统一 flush
+        # 重新提交进模型（复核 P1-01）。
+        self._toolbar_reload_page()
         return True
 
     def reload_from_model(self) -> None:
@@ -1406,8 +1671,14 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         "actionPersistence": action_persistence,
         # 稳定引用字段（web 侧任务问题检查器消费，见 TaskBusPanel issues）：
         # planeMembership = 每个位面被多少场景实体（planes 字段含它）归属 → 空位面判据。
+        # planeExclusive = 世界模型为 exclusive（独立世界型）的位面 id 集（沿 extends 链解析）
+        #   → 空位面文案分流：exclusive 空位面 = 空世界强提示。
         # emittedSignals = 全项目「实际发出」的信号集（不含 blackbox meta.emits 声明）→ 悬空信号判据。
         "planeMembership": plane_membership_counts(model),
+        "planeExclusive": [
+            pid for pid, _ in model.all_plane_ids()
+            if model.plane_membership(pid) == "exclusive"
+        ],
         "emittedSignals": emitted_signal_ids(model),
     }
 
@@ -1950,6 +2221,9 @@ def _validate_action_def(action: dict[str, Any], path: str, issues: list[dict[st
         # actionParamManifest.ts: required=[]——id（留空=清全部环境层）与 fadeMs 均可选，
         # 不得把 _PARAM_SCHEMAS 的 GUI 参数当必填（TS 权威校验也不拦）。
         required = []
+    elif action_type == "giveItem":
+        # actionParamManifest.ts: required=['id']——count 与 critical（关键给予绕过槽上限）均可选。
+        required = [("id", "str")]
     for name, _kind in required:
         value = params.get(name)
         if value is None or (isinstance(value, str) and not value.strip()):

@@ -146,7 +146,7 @@ export function visibleProjectionEdgesForComposition(
  */
 export function buildProjectionCanvasEdge(
   edge: ProjectionEdgeDef,
-  kind: string,
+  kind: 'trigger' | 'read' | 'stateCommand' | 'transition',
   source: string,
   target: string,
 ): CanvasEdge {

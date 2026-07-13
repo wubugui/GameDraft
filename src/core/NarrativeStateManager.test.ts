@@ -3,6 +3,7 @@ import { ActionExecutor } from './ActionExecutor';
 import { EventBus } from './EventBus';
 import { FlagStore } from './FlagStore';
 import { compileNarrativeGraphs, NarrativeStateManager, type NarrativeGraph, type NarrativeGraphsFile } from './NarrativeStateManager';
+import { validateNarrativeGraphData } from './narrativeGraphValidation';
 import narrativeGraphsData from '../../public/assets/data/narrative_graphs.json';
 
 function makeRuntime() {
@@ -621,8 +622,123 @@ describe('NarrativeStateManager', () => {
     narrative.deserialize({ activeStates: { g: 'a' } });
     expect(narrative.getActiveState('g')).toBe('a');
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     narrative.deserialize({ activeStates: { g: 'missing', other: 'x' } });
     expect(narrative.getActiveState('g')).toBe('a');
+    warn.mockRestore();
+  });
+
+  it('warns by name instead of silently dropping unknown save entries', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g',
+      ownerType: 'flow',
+      initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' } },
+      transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'go' }],
+    }]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    narrative.deserialize({
+      activeStates: { gone_graph: 'x', g: 'renamed_away' },
+      reachedStates: { gone_graph: ['x', 'y'], g: ['a', 'renamed_away'] },
+    });
+    const messages = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    // active：删掉的图 / 改名的状态各点名一次，并说明后果
+    expect(messages.some((m) => m.includes('unknown narrative graph "gone_graph"') && m.includes('dropped active state "x"'))).toBe(true);
+    expect(messages.some((m) => m.includes('unknown state "renamed_away"') && m.includes('graph "g"') && m.includes('initialState "a"'))).toBe(true);
+    // reached：同样点名，说明门控回锁
+    expect(messages.some((m) => m.includes('unknown narrative graph "gone_graph"') && m.includes('reached states [x, y]'))).toBe(true);
+    expect(messages.some((m) => m.includes('unknown state "renamed_away"') && m.includes('dropped from reached states'))).toBe(true);
+
+    // 留痕进 recentIssues（debugSnapshot 可见）
+    const issues = (narrative.debugSnapshot().recentIssues as Array<{ code: string }>).map((i) => i.code);
+    expect(issues).toContain('save.active.graphMissing');
+    expect(issues).toContain('save.active.stateMissing');
+    expect(issues).toContain('save.reached.graphMissing');
+    expect(issues).toContain('save.reached.stateMissing');
+
+    // 丢弃后的兜底行为不变：g 回到 initialState，合法的 reached 条目仍恢复
+    expect(narrative.getActiveState('g')).toBe('a');
+    expect(narrative.hasReachedState('g', 'a')).toBe(true);
+    expect(narrative.hasReachedState('g', 'renamed_away')).toBe(false);
+  });
+
+  it('remaps renamed graphs and states from old saves via migrations', () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'g2',
+      ownerType: 'flow',
+      initialState: 'start',
+      states: { start: { id: 'start' }, done_v2: { id: 'done_v2' } },
+      transitions: [{ id: 'go', from: 'start', to: 'done_v2', signal: 'go' }],
+    }]);
+    // 图 g1→g2 改名 + 状态 done→done_v2 改名（states 外层键用改名后的新图 id）
+    narrative.setSaveMigrations({
+      graphs: { g1: 'g2' },
+      states: { g2: { done: 'done_v2' } },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    narrative.deserialize({
+      activeStates: { g1: 'done' },
+      reachedStates: { g1: ['start', 'done'] },
+    });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    expect(narrative.getActiveState('g2')).toBe('done_v2');
+    expect(narrative.hasReachedState('g2', 'start')).toBe(true);
+    expect(narrative.hasReachedState('g2', 'done_v2')).toBe(true);
+  });
+
+  it('wires migrations from the data file via loadFromAsset', async () => {
+    const { narrative } = makeRuntime();
+    const file: NarrativeGraphsFile = {
+      schemaVersion: 3,
+      migrations: { graphs: { old_flow: 'flow_x' } },
+      compositions: [{
+        id: 'c',
+        mainGraph: {
+          id: 'flow_x',
+          ownerType: 'flow',
+          initialState: 'start',
+          states: { start: { id: 'start' }, done: { id: 'done' } },
+          transitions: [{ id: 'go', from: 'start', to: 'done', signal: 'go' }],
+        },
+      }],
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await narrative.loadFromAsset({ loadJson: async () => file } as unknown as import('./AssetManager').AssetManager);
+    narrative.deserialize({ activeStates: { old_flow: 'done' } });
+    warn.mockRestore();
+    expect(narrative.getActiveState('flow_x')).toBe('done');
+  });
+
+  it('validator flags dangling or shadowed migration mappings as warnings', () => {
+    const issues = validateNarrativeGraphData({
+      signals: [],
+      compositions: [{
+        id: 'c',
+        mainGraph: {
+          id: 'g',
+          ownerType: 'flow',
+          initialState: 'a',
+          states: { a: { id: 'a' } },
+          transitions: [],
+        },
+      }],
+      migrations: {
+        graphs: { old: 'nope', g: 'g' },
+        states: { g: { gone: 'nope2', a: 'a' }, ghost: { x: 'y' } },
+      },
+    });
+    const codes = issues.map((i) => i.code);
+    expect(codes).toContain('migrations.graph.target.missing');
+    expect(codes).toContain('migrations.graph.source.stillExists');
+    expect(codes).toContain('migrations.state.target.missing');
+    expect(codes).toContain('migrations.state.source.stillExists');
+    expect(codes).toContain('migrations.states.graph.missing');
+    expect(issues.filter((i) => i.code.startsWith('migrations.')).every((i) => i.severity === 'warning')).toBe(true);
   });
 
   it('restores activeStates on a fresh manager via deserialize', async () => {

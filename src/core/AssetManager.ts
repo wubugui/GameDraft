@@ -127,6 +127,8 @@ export class AssetManager {
   };
   private logicalClock = 0;
   private scopeRefs = new Map<string, AssetRef[]>();
+  /** dispose() 后置 true：在途加载完成的产物立即释放、不入缓存（见 loadIntoBucket） */
+  private disposed = false;
   private readonly verboseStageLog =
     typeof import.meta !== 'undefined'
     && import.meta.env?.DEV
@@ -179,6 +181,12 @@ export class AssetManager {
     const p = loader()
       .then((value) => {
         bucket.inflight.delete(key);
+        // 整机已 dispose：在途加载的产物完成即释放、不入缓存——否则 new Howl 已注册进
+        // Howler 全局表/纹理已占显存，销毁后无人回收（跨 HMR/预览残留）。
+        if (this.disposed) {
+          this.disposeValue(type, value);
+          return value;
+        }
         bucket.errors.delete(key);
         bucket.stats.loads++;
         const existing = bucket.entries.get(key);
@@ -246,15 +254,18 @@ export class AssetManager {
   }
 
   private disposeEntry(entry: CacheEntry): void {
-    if (entry.type === 'texture') {
-      const texture = entry.value as Texture;
-      texture.source?.unload();
+    this.disposeValue(entry.type, entry.value);
+  }
+
+  private disposeValue(type: AssetType, value: unknown): void {
+    if (type === 'texture') {
+      (value as Texture).source?.unload();
     }
-    if (entry.type === 'audio') {
-      (entry.value as Howl).unload();
+    if (type === 'audio') {
+      (value as Howl).unload();
     }
-    if (entry.type === 'bitmap') {
-      (entry.value as ImageBitmap).close();
+    if (type === 'bitmap') {
+      (value as ImageBitmap).close();
     }
   }
 
@@ -495,6 +506,16 @@ export class AssetManager {
       bucket.errors.clear();
     }
     if (!type) this.scopeRefs.clear();
+  }
+
+  /**
+   * 整机销毁（Game.destroy 收尾专用）：清空全部缓存并进入 disposed 态——之后才完成的
+   * 在途加载产物会被立即释放而不入缓存。Howl 不 unload 会常驻 Howler 全局注册表、
+   * Pixi 纹理缓存跨实例存活，不做这步会跨 HMR/编辑器预览残留解码音频与贴图。
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.clearCache();
   }
 
   /** 场景媒体路径统一委托 projectPaths（单一实现源）；空引用原样返回、由上层按缺资源处理。 */

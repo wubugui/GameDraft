@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_义庄门口拦活",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·义庄门口拦活（路倒零活·义庄发派）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "accepted"
+            }
+          ],
+          "next": "lg_remind"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "carrying"
+            }
+          ],
+          "next": "lg_carrying"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "placed"
+            }
+          ],
+          "next": "lg_placed"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "义庄门口，一个袖着手的老汉拦下东张西望的关二狗，上下打量了他一眼。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "看你晃得没得正事——寻活路迈？巷口墙根撂了具死人子，路倒的，没得人认。背拉义庄搁凳上，五文。整不整？",
+      "next": "n_choice",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "n_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "jie",
+          "text": "「五文就五文。死人钱好挣得很。」",
+          "next": "c_jie"
+        },
+        {
+          "id": "xian",
+          "text": "「才五文索？……算了，拉就拉。」",
+          "next": "c_jie"
+        }
+      ]
+    },
+    "c_jie": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_义庄门口拦活",
+            "signal": "beishi_lg_accepted"
+          }
+        }
+      ],
+      "next": "c_jie_line"
+    },
+    "c_jie_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "巷口墙根，苇席底下撂起。自己去寻，背拉这搁凳上，管事结钱。莫拖——日头毒了要出味。",
+      "next": "end_n",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "lg_remind": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "还没去嗦？巷口墙根，苇席底下。手脚麻利点。",
+      "next": "end_n"
+    },
+    "lg_carrying": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "背都背起了还杵到门口做啥子？搁凳上切！",
+      "next": "end_n"
+    },
+    "lg_placed": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "放下了就找管事结钱，钱在他手头。",
+      "next": "end_n"
+    },
+    "end_n": {
+      "type": "end"
+    }
+  }
+}

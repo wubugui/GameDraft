@@ -2,6 +2,7 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
+import { reportDevError } from '../core/devErrorOverlay';
 import type { SceneManager } from './SceneManager';
 import type { RulesManager } from './RulesManager';
 import type { QuestManager } from './QuestManager';
@@ -455,6 +456,7 @@ export class GraphDialogueManager implements IGameSystem {
 
       if (!raw.nodes || typeof raw.entry !== 'string' || !raw.nodes[raw.entry]) {
         console.warn(`GraphDialogueManager: 图 ${gid} 缺少 entry 或 nodes`);
+        reportDevError(`对话图 "${gid}" 缺少 entry 或 nodes，对话未开启`, '[dialogue]');
         return;
       }
 

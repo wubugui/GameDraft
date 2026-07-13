@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_零工验看",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·零工路倒验看+上肩（开场教学）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "掀开苇席一角：面生的汉子，眉眼周正，就是走得急，鞋都只剩一只。没伤没破，是具干净的路倒。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "新走的，还算轻省。上前，过肩，搭手——背死人子的老把式，闭着眼睛都不会错。",
+      "next": "c_main"
+    },
+    "c_main": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "carry",
+          "text": "「背。五文钱的活，莫磨蹭。」",
+          "next": "a_carry"
+        },
+        {
+          "id": "wait",
+          "text": "「再缓缓。」",
+          "next": "w_1"
+        }
+      ]
+    },
+    "a_carry": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_ordinary_corpse"
+          }
+        }
+      ],
+      "next": "end_n"
+    },
+    "w_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "缓归缓，日头不等人。",
+      "next": "end_n"
+    },
+    "end_n": {
+      "type": "end"
+    }
+  }
+}

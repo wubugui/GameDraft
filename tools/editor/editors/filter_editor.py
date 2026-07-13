@@ -252,6 +252,10 @@ class FilterEditor(QWidget):
             self._apply(show_errors=True)
             if self._is_dirty():
                 return False  # matrix 非法等原因没保成，留在编辑器里改
+        else:
+            # Discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            self._load_stem_into_form(self._current_stem)
         return True
 
     def _refresh_list(self) -> None:

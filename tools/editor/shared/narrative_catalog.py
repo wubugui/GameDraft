@@ -485,9 +485,10 @@ def plane_membership_counts(model: Any) -> dict[str, int]:
 def emitted_signal_ids(model: Any) -> list[str]:
     """全项目「实际发出」的信号 id 去重排序集。
 
-    = 对话图（public/assets/dialogues/graphs/*）∪ 内容资产 action 树里
-    emitNarrativeSignal.params.signal ∪ 派生广播 state:<g>:<s>（仅 broadcastOnEnter 的 state）。
-    **不含** blackbox 的 meta.emits（那是「声明」非「实发」）。
+    = 对话图（public/assets/dialogues/graphs/*）∪ 内容资产 action 树 ∪ 叙事图自身
+    action 树（状态 onEnter/onExitActions 运行时真执行）里 emitNarrativeSignal.params.signal
+    ∪ 派生广播 state:<g>:<s>（仅 broadcastOnEnter 的 state）。
+    **不含** blackbox 的 meta.emits（那是「声明」非「实发」——纯字符串列表，深度遍历不会误收）。
 
     每次网页 loadAuthoringCatalog 调一次（非每帧），全项目线性扫（读一遍对话图目录 + 遍历
     内容集合），无 O(n^2)。
@@ -512,8 +513,15 @@ def emitted_signal_ids(model: Any) -> list[str]:
         if root is not None:
             _collect_emitted_signal_ids(root, emitted)
 
-    # 3. 派生广播信号。
-    emitted |= _derived_broadcast_signals(getattr(model, "narrative_graphs", None))
+    # 3. 叙事图自身 action 树：状态 onEnter/onExitActions 由运行时
+    #    NarrativeStateManager.runActions 真执行，是合法发射点（blackbox meta.emits
+    #    为纯字符串列表，深度遍历不会误收）。
+    narrative_data = getattr(model, "narrative_graphs", None)
+    if narrative_data is not None:
+        _collect_emitted_signal_ids(narrative_data, emitted)
+
+    # 4. 派生广播信号。
+    emitted |= _derived_broadcast_signals(narrative_data)
 
     return sorted(emitted)
 

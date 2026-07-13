@@ -1,7 +1,7 @@
 """热区/任务等条件编辑：多行 flag 条件 + 结构化 ConditionExpr 树。
 
 导出为 `ConditionExpr[]` 语义（组内 AND）。递归「表达式树」负责编辑
-all/any/not 与 flag/quest/scenario/scenarioLine 叶子（与运行时一致）。
+all/any/not 与 flag/quest/scenario/scenarioLine/narrative/plane 叶子（与运行时一致）。
 原始 JSON 粘贴区只保留为专家兜底，不作为常规填写入口。
 """
 from __future__ import annotations

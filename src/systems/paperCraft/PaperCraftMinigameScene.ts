@@ -104,6 +104,22 @@ export class PaperCraftMinigameScene {
     return this.actionGate.locked;
   }
 
+  /** Visual-parity evidence; event-driven state only, with no wall-clock values. */
+  getDebugVisualState(): Record<string, unknown> {
+    return {
+      instanceId: this.instance?.id ?? '',
+      orderId: this.order?.id ?? '',
+      orderIndex: this.orderIndex,
+      selectedPartId: this.selectedPart?.id ?? '',
+      selectedPaperId: this.selectedPaper?.id ?? '',
+      selectedFinishId: this.selectedFinish?.id ?? '',
+      placed: Object.fromEntries([...this.placed].map(([slotId, part]) => [slotId, part.id])),
+      feedbackText: this.feedback.text,
+      actionsPlaybackLocked: this.isActionsPlaybackLocked(),
+      finishing: this.finishing,
+    };
+  }
+
   /** 动作播放期间整棵场景树不接输入（eventMode 'none' 对子树同样生效）。 */
   private setInputLocked(locked: boolean): void {
     this.root.eventMode = locked ? 'none' : 'static';

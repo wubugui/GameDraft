@@ -20,7 +20,8 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   /** onStay 最小间隔（秒），避免每帧执行重逻辑 */
   private zoneStayNextAt: Map<string, number> = new Map();
   private static readonly STAY_INTERVAL_SEC = 0.25;
-  /** 每个 zone 的 onEnter/onExit/onStay 串行，避免 zoneContextStack 与其它批交错 */
+  /** 每个 zone 的 onEnter/onExit/onStay 串行（进出快速抖动时批不重叠）；
+   *  zone 上下文已按参数显式线程化（executeBatchInZoneContext），跨 zone 并发不再共享栈。 */
   private zoneActionTail: Map<string, Promise<void>> = new Map();
 
   constructor(
@@ -89,6 +90,26 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     for (const id of [...this.zoneStayNextAt.keys()]) {
       if (!nextIds.has(id)) this.zoneStayNextAt.delete(id);
     }
+  }
+
+  /** F2 调试用：当前玩家所在的活跃 zone 定义（只读引用，不要改写）。 */
+  getActiveZones(): ZoneDef[] {
+    return this.zones.filter((z) => this.activeZoneIds.has(z.id));
+  }
+
+  /**
+   * 读档专用：静默撤销全部 zone 的"活跃"身份——不跑 onExit 动作批、不发 zone:exit 事件。
+   * 读档流程先 distribute（全系统状态已覆盖为存档时间线）后卸载旧场景；若照常经
+   * setZones([]) 走 exitZone，旧时间线的 onExit 写入（fire-and-forget 异步批）会落在
+   * 刚恢复的 FlagStore 上，且 flag 抖动发生在 setRestoring 抑制窗之外，可能误触
+   * 任务/叙事重评。旧时间线既被整体丢弃，其退出副作用一并丢弃。
+   * 只清活跃集与 stay 节流表：随后的 setZones([]) 因无活跃 zone 而零副作用地完成
+   * 规矩供给撤销与 zones 置换；zoneActionTail 不动（同 id 在途批仍需串行语义）。
+   * 必须在 unloadScene **之前**调用（SaveManager 的 sceneReloader 包装负责时序）。
+   */
+  clearActiveZonesForRestore(): void {
+    this.activeZoneIds.clear();
+    this.zoneStayNextAt.clear();
   }
 
   clearZones(): void {

@@ -32,7 +32,9 @@ type WrapperOwnerRule = {
   navigationKind?: string;
 };
 
-export const WRAPPER_OWNER_REGISTRY = {
+// 显式注解为 Record<string, WrapperOwnerRule>：`as const` 会把 system:{} 收窄成
+// 空对象字面量类型，联合上访问 catalogKey/navigationKind 全部报 TS2339。
+export const WRAPPER_OWNER_REGISTRY: Record<string, WrapperOwnerRule> = {
   npc: { catalogKey: 'sceneNpcRefs', navigationKind: 'npc' },
   hotspot: { catalogKey: 'sceneHotspotRefs', navigationKind: 'hotspot' },
   zone: { catalogKey: 'zoneRefs', navigationKind: 'zone' },
@@ -46,7 +48,7 @@ export const WRAPPER_OWNER_REGISTRY = {
   cutscene: { catalogKey: 'cutsceneIds', navigationKind: 'cutscene' },
   scenario: { catalogKey: 'scenarioIds', navigationKind: 'scenario' },
   system: {},
-} as const satisfies Record<string, WrapperOwnerRule>;
+};
 
 export const WRAPPER_OWNER_TYPES = Object.keys(WRAPPER_OWNER_REGISTRY);
 

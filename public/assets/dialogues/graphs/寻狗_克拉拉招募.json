@@ -12,6 +12,14 @@
         {
           "conditions": [
             {
+              "plane": "背尸"
+            }
+          ],
+          "next": "cl_beishi"
+        },
+        {
+          "conditions": [
+            {
               "narrative": "flow_xungou_main",
               "state": "s11_zhaomu",
               "reached": true
@@ -164,6 +172,14 @@
     },
     "end1": {
       "type": "end"
+    },
+    "cl_beishi": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "（她合上本子，退开半步，目光在他背上那具尸和他脸上来回走了一趟）Guan 先生，先做完手上的事。我等得起——它可等不起。",
+      "next": "end1"
     }
   }
 }

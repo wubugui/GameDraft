@@ -48,14 +48,17 @@ export class Renderer {
     this.assetManager = assetManager;
   }
 
-  async init(): Promise<void> {
+  async init(options: { resolution?: number } = {}): Promise<void> {
     const mount = document.getElementById('game-mount');
+    const resolution = Number.isFinite(options.resolution) && (options.resolution ?? 0) > 0
+      ? Number(options.resolution)
+      : (window.devicePixelRatio || 1);
 
     await this.app.init({
       background: '#1a1a2e',
       resizeTo: mount ?? window,
       antialias: false,
-      resolution: window.devicePixelRatio || 1,
+      resolution,
       autoDensity: true,
     });
 
@@ -301,5 +304,16 @@ export class Renderer {
    */
   clearWorldFilter(): void {
     this.worldFilterPipeline.clear();
+  }
+
+  getDebugRenderState(): Record<string, unknown> {
+    return {
+      worldX: this.worldContainer.x,
+      worldY: this.worldContainer.y,
+      worldScaleX: this.worldContainer.scale.x,
+      worldScaleY: this.worldContainer.scale.y,
+      worldFilterCount: this.worldFilterPipeline.getFilters().length,
+      worldFilterApplied: this.worldContainer.filters !== null && this.worldContainer.filters.length > 0,
+    };
   }
 }

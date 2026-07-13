@@ -48,6 +48,29 @@ def run(project_root: Path) -> list[Issue]:
     return validate(model)
 
 
+def _json_lang_issues(project_root: Path) -> list[Issue]:
+    """json_lang 咨询层并入收尾门:schema 全量校验(悬垂 id/未登记 flag 等
+    validator 盲区)记 warning;对话图连边 lint(悬垂连边/悬垂外部入口)记 error、
+    不可达节点记 warning。json_lang 自身故障降级为一条 warning,不拦内容工作。"""
+    out: list[Issue] = []
+    try:
+        from tools.json_lang.build import _rebuild, _validate_all
+        from tools.json_lang.lint import lint_dialogue_graphs
+
+        schema = _rebuild(project_root)["schema"]
+        for problem in _validate_all(schema, project_root):
+            severity = "warning"
+            if problem.startswith("(跳过"):
+                out.append(Issue("warning", "json-lang", "schema", problem))
+                continue
+            out.append(Issue(severity, "json-lang", "schema", problem))
+        for it in lint_dialogue_graphs(project_root):
+            out.append(Issue(it.severity, "json-lang", it.file, it.message))
+    except Exception as exc:  # noqa: BLE001 — 咨询层坏了不应挡住权威校验
+        out.append(Issue("warning", "json-lang", "self", f"json_lang 检查未能运行: {exc}"))
+    return out
+
+
 def _format(iss: Issue) -> str:
     prefix = "ERR " if iss.severity == "error" else "WARN"
     return f"[{prefix}] [{iss.data_type}] {iss.item_id}: {iss.message}"
@@ -91,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 — report load/validate failure, don't traceback-spam
         print(f"[validate] 工程加载/校验失败: {exc}", file=sys.stderr)
         return 2
+
+    issues.extend(_json_lang_issues(project_root))
 
     errors = [i for i in issues if i.severity == "error"]
     warnings = [i for i in issues if i.severity != "error"]

@@ -3,6 +3,15 @@
 > 本文件每次会话自动载入。**开工先按 §0 判定任务类型，再遵守对应那一套规则。**
 > **列举型内容以代码为准**：架构文档（`docs/游戏架构设计文档.md`）的清单会漂移——Action 清单查 `tools/editor/shared/action_editor.py` 的 `ACTION_TYPES`，游戏状态查 `src/data/types.ts` 的 `GameState`，条件叶子查 `src/systems/graphDialogue/evaluateGraphCondition.ts`。不要照抄文档里的表。
 
+<!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->
+## §A 开工先查公共知识库(agent_docs)
+
+- 动手前按任务域读 `agent_docs/INDEX.md` 对应条目;确定要改的文件后跑
+  `python3 agent_docs/_meta/audit.py --paths <files...>` 取必读机制卡,先读卡再动手。
+- 治理类业务(治理/建库/收编方法论/炼化/intake)统一入口:`python3 agent_docs/_meta/cli.py`。
+- 发现库内文档与现实打架:收尾往 `agent_docs/_meta/inbox/` 丢一条三行偏差记录(零门槛)。
+<!-- agent-docs-gate:end -->
+
 ## §G Skill / Workflow 治理台入口
 
 做 skill / workflow 治理、治理包拆分、Codex / Claude agent 任务分发时，不要靠 dashboard 截图或页面肉眼信息判断。先刷新并读取结构化上下文：
@@ -61,7 +70,7 @@ python3 -B tools/skill_workflow_governance/govern.py audit
 **机制铁律**（绕过的写法运行时被静默跳过或编辑器拒绝保存）
 - 游戏行为全走 command（`ACTION_TYPES` 为权威清单）。
 - 成段演出（有时序/相机/淡入淡出/并行）全走 cutscene；cutscene 内**禁改存档**、只用白名单 action。单发反馈（showEmote/playScriptedDialogue/playNpcAnimation）可作普通 command。
-- 条件走 5 类叶子（flag / quest / scenario / scenarioLine / narrative）+ all/any/not。
+- 条件走 6 类叶子（flag / quest / scenario / scenarioLine / narrative / plane）+ all/any/not（权威清单以 `evaluateGraphCondition.ts` 为准）。
 - 对话分支走图对话 graph JSON；玩家可见文本走 `[tag:…]`。
 
 **升级三级阶梯**

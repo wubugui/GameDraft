@@ -50,6 +50,13 @@
       "autoPort": false
     },
     {
+      "name": "narrative-editor",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:narrative-editor", "--", "--port", "5210", "--strictPort"],
+      "port": 5210,
+      "autoPort": false
+    },
+    {
       "name": "acos-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "/Users/dannyteng/AIWork/agent-canvas-os/web", "run", "dev"],

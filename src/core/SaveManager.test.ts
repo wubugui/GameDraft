@@ -138,6 +138,19 @@ describe('SaveManager save/load/re-enter smoke', () => {
     expect(distributed).not.toHaveBeenCalled();
     expect(reloader).not.toHaveBeenCalled();
   });
+
+  it('exports and imports the same interoperable JSON systems envelope', () => {
+    const systems = { sceneManager: { currentSceneId: 'dock_board' }, dialogueLog: { entries: [{ text: '跨壳' }] } };
+    const producer = new SaveManager(() => systems, () => {}, async () => {}, new StringsProvider(), 'fallback_scene');
+    expect(producer.save(0)).toBe(true);
+    const payload = producer.exportSlotPayload(0);
+    expect(payload).not.toBeNull();
+    producer.deleteSlot(0);
+    expect(producer.importSlotPayload(2, payload!)).toBe(true);
+    expect(JSON.parse(producer.exportSlotPayload(2)!).systems).toEqual(systems);
+    expect(producer.importSlotPayload(1, '{broken')).toBe(false);
+    expect(producer.importSlotPayload(1, JSON.stringify({ version: 1 }))).toBe(false);
+  });
 });
 
 describe('SaveManager save failure reporting', () => {

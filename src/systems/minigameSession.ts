@@ -83,6 +83,10 @@ export abstract class MinigameSessionManagerBase<
   protected scene: TScene | null = null;
   private activeScopeId: string | null = null;
   protected active = false;
+
+  get isActive(): boolean {
+    return this.active;
+  }
   protected prevState = GameState.Exploring;
   private unsubKey: (() => void) | null = null;
   private sessionResolve: ((result: TResult | null) => void) | null = null;
@@ -239,16 +243,18 @@ export abstract class MinigameSessionManagerBase<
       const inst = this.prepareInstance(inst0);
 
       const scopeId = `${this.scopePrefix}:${inst.id}`;
+      // 预载前就登记归属：preloadManifest 半途 reject 时 catch 兜底也能 releaseActiveScope，
+      // 不留部分入栈的资源作用域。
+      this.activeScopeId = scopeId;
       await this.assetManager.preloadManifest(
         { scopeId, refs: this.buildInstanceManifestRefs(inst) },
         { mode: 'stage', tolerateErrors: true },
       );
       if (epoch !== this.sessionEpoch) {
-        this.assetManager.releaseScope(scopeId);
+        this.releaseActiveScope();
         this.resolveSession();
         return;
       }
-      this.activeScopeId = scopeId;
 
       this.prevState = this.stateController!.currentState;
       this.stateController!.setState(GameState.Minigame);
@@ -273,6 +279,23 @@ export abstract class MinigameSessionManagerBase<
 
       this.renderer!.cutsceneOverlay.addChild(scene.root);
       this.onSceneLoaded(inst);
+    } catch (e) {
+      // 启动链任一步（prepareInstance / preloadManifest / onSessionActive / createScene /
+      // onSceneLoaded…）抛出都必须收尾：sessionResolve 悬挂会把外层 await 的动作链永久卡死，
+      // 且残留的 resolve 会让之后所有 runUntilDone 被上方 B12 守卫直接挡掉（小游戏整体失效）；
+      // active 置真后抛还会滞留 Minigame 态 + 键盘锁。两条路径分别对齐 teardownSession 与
+      // destroy() 非 active 分支的既有清理清单，全部操作幂等。
+      this.warnSession(`start "${id}" failed`, e);
+      if (this.active) {
+        this.teardownSession();
+      } else {
+        this.unsubKey?.();
+        this.unsubKey = null;
+        this.inputManager?.setGameKeyboardBlocked(false);
+        this.releaseActiveScope();
+        this.removeScene();
+        this.resolveSession();
+      }
     } finally {
       this.startInFlight = false;
     }

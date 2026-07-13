@@ -12,6 +12,33 @@
         {
           "conditions": [
             {
+              "narrative": "flow_背尸_零工活",
+              "state": "accepted"
+            }
+          ],
+          "next": "lg_remind"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "carrying"
+            }
+          ],
+          "next": "lg_carrying"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "placed"
+            }
+          ],
+          "next": "lg_placed"
+        },
+        {
+          "conditions": [
+            {
               "narrative": "flow_背尸_淹尸活",
               "state": "accepted"
             }
@@ -40,9 +67,9 @@
         {
           "conditions": [
             {
-              "flag": "零工背尸_done",
-              "op": "==",
-              "value": true
+              "narrative": "flow_背尸_零工活",
+              "state": "delivered",
+              "reached": true
             }
           ],
           "next": "yan_offer"
@@ -64,7 +91,7 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "巷子尾头躺了具死人子，没得人认。拉切义庄，给你五文。整不整？",
+      "text": "巷口墙根撂了具死人子，路倒的，没得人认。拉切义庄，五文。整不整？",
       "next": "n_choice",
       "portrait": {
         "emotion": "calm"
@@ -86,61 +113,18 @@
       ]
     },
     "c_jie": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "关二狗啐了口唾沫搓搓手——上前，过肩，搭手。背死人子的老把式，闭着眼睛都不会错。",
-      "next": "n_carry"
-    },
-    "n_carry": {
       "type": "runActions",
       "actions": [
         {
-          "type": "startPressureHold",
+          "type": "emitNarrativeSignal",
           "params": {
-            "id": "carry_ordinary_corpse"
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_零工接活",
+            "signal": "beishi_lg_accepted"
           }
         }
       ],
-      "next": "n_more"
-    },
-    "n_more": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "text": "（努嘴往巷子深处）那点还撂起一具，吊死的老汉。一路拉了，再给你五文。",
-      "next": "n_carry2",
-      "portrait": {
-        "emotion": "calm"
-      }
-    },
-    "n_carry2": {
-      "type": "runActions",
-      "actions": [
-        {
-          "type": "startPressureHold",
-          "params": {
-            "id": "carry_ordinary_corpse"
-          }
-        }
-      ],
-      "next": "n_done"
-    },
-    "n_done": {
-      "type": "runActions",
-      "actions": [
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "零工背尸_done",
-            "value": true
-          }
-        }
-      ],
-      "next": "end1"
+      "next": "c_jie_line"
     },
     "end1": {
       "type": "end"
@@ -220,6 +204,41 @@
         "kind": "npc"
       },
       "text": "淹的那个交了嗦？要得。回头再有活路喊你。",
+      "next": "end1"
+    },
+    "c_jie_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "巷口墙根，苇席底下撂起。拉到义庄搁凳上，管事结钱。莫拖——日头毒了要出味。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "lg_remind": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "还没去嗦？巷口墙根，苇席底下。手脚麻利点。",
+      "next": "end1"
+    },
+    "lg_carrying": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "背都背起了还杵到这做啥子？义庄，快切！",
+      "next": "end1"
+    },
+    "lg_placed": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "放下了就找管事结钱切，钱在他手头，莫来找我。",
       "next": "end1"
     }
   }

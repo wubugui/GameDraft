@@ -12,6 +12,7 @@ const narrativeWarp = urlParams.get('narrativeWarp') ?? urlParams.get('narrative
 const waterPreview = urlParams.get('waterPreview') ?? undefined;
 const sugarWheelPreview = urlParams.get('sugarWheelPreview') ?? undefined;
 const paperCraftPreview = urlParams.get('paperCraftPreview') ?? undefined;
+const visualCapture = urlParams.has('visualCapture');
 
 let game: Game | null = null;
 
@@ -25,8 +26,16 @@ function startGame(): void {
     waterPreview,
     sugarWheelPreview,
     paperCraftPreview,
+    visualCapture,
   }).catch((e) => {
     console.error(e);
+    // 先拆掉半初始化实例：Game 构造期就已挂全局输入监听、各系统已 init（EventBus 订阅已建立），
+    // 不销毁会陪着错误画面一直残留（destroy 幂等；出错也不阻断下面的错误提示）。
+    try {
+      destroyGame();
+    } catch (cleanupError) {
+      console.warn('main: 启动失败后的清理也失败', cleanupError);
+    }
     // 生产启动失败原本只剩黑屏：给玩家一个最小可诊断的 DOM 错误提示（dev 另有 overlay/console）
     try {
       const el = document.createElement('div');

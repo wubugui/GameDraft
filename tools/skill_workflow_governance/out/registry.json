@@ -1,6 +1,6 @@
 {
   "root": "/Users/dannyteng/AIWork/GameDraft",
-  "generated_at": "2026-07-09T01:27:20",
+  "generated_at": "2026-07-11T10:16:38",
   "artifacts": [
     {
       "id": "agent.agents",
@@ -10,16 +10,19 @@
       "source": "agent_entry",
       "summary": "This repository uses `CLAUDE.md` as the full project rulebook. Codex agents should read and follow `CLAUDE.md` first, then apply any narrower instructions from the current task.",
       "agent": "shared",
-      "modified": "2026-07-08T23:50:18",
-      "modified_ts": 1783525818.7114844,
-      "size": 1669,
+      "modified": "2026-07-11T10:03:59",
+      "modified_ts": 1783735439.8383608,
+      "size": 2247,
       "headings": [
         "GameDraft Agent Entry",
+        "§A 开工先查公共知识库(agent_docs)",
         "Governance Context"
       ],
       "trigger_hints": [],
       "commands": [
-        "python3 -B tools/skill_workflow_governance/govern.py audit"
+        "python3 -B tools/skill_workflow_governance/govern.py audit",
+        "python3 agent_docs/_meta/audit.py --paths <files...>",
+        "python3 agent_docs/_meta/cli.py"
       ],
       "references": [
         {
@@ -32,9 +35,18 @@
           "note": ""
         },
         {
+          "raw": "agent_docs/INDEX.md",
+          "kind": "inline_code",
+          "line": 8,
+          "target": "agent_docs/INDEX.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/INDEX.md",
+          "note": ""
+        },
+        {
           "raw": "tools/skill_workflow_governance/out/agent-context-current.md",
           "kind": "inline_code",
-          "line": 9,
+          "line": 18,
           "target": "tools/skill_workflow_governance/out/agent-context-current.md",
           "status": "ok",
           "resolved_to": "tools/skill_workflow_governance/out/agent-context-current.md",
@@ -43,7 +55,7 @@
         {
           "raw": "tools/skill_workflow_governance/out/registry.json",
           "kind": "inline_code",
-          "line": 10,
+          "line": 19,
           "target": "tools/skill_workflow_governance/out/registry.json",
           "status": "ok",
           "resolved_to": "tools/skill_workflow_governance/out/registry.json",
@@ -63,13 +75,14 @@
       "title": "GameDraft — Claude 工作规则",
       "path": "CLAUDE.md",
       "source": "agent_entry",
-      "summary": "做 skill / workflow 治理、治理包拆分、Codex / Claude agent 任务分发时，不要靠 dashboard 截图或页面肉眼信息判断。先刷新并读取结构化上下文：",
+      "summary": "<!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->",
       "agent": "shared",
-      "modified": "2026-07-08T23:50:26",
-      "modified_ts": 1783525826.534745,
-      "size": 11060,
+      "modified": "2026-07-11T10:04:19",
+      "modified_ts": 1783735459.4528873,
+      "size": 11702,
       "headings": [
         "GameDraft — Claude 工作规则",
+        "§A 开工先查公共知识库(agent_docs)",
         "§G Skill / Workflow 治理台入口",
         "§0 先分类，再动手",
         "§1 改代码时 — 8 条架构铁律",
@@ -89,7 +102,9 @@
         "npm test",
         "npx tsc --noEmit",
         "python -m tools.editor.shared.asset_reference_audit . --strict",
-        "python3 -B tools/skill_workflow_governance/govern.py audit"
+        "python3 -B tools/skill_workflow_governance/govern.py audit",
+        "python3 agent_docs/_meta/audit.py --paths <files...>",
+        "python3 agent_docs/_meta/cli.py"
       ],
       "references": [
         {
@@ -129,9 +144,18 @@
           "note": ""
         },
         {
+          "raw": "agent_docs/INDEX.md",
+          "kind": "inline_code",
+          "line": 9,
+          "target": "agent_docs/INDEX.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/INDEX.md",
+          "note": ""
+        },
+        {
           "raw": "tools/skill_workflow_governance/out/agent-context-current.md",
           "kind": "inline_code",
-          "line": 16,
+          "line": 25,
           "target": "tools/skill_workflow_governance/out/agent-context-current.md",
           "status": "ok",
           "resolved_to": "tools/skill_workflow_governance/out/agent-context-current.md",
@@ -140,7 +164,7 @@
         {
           "raw": "tools/skill_workflow_governance/out/registry.json",
           "kind": "inline_code",
-          "line": 17,
+          "line": 26,
           "target": "tools/skill_workflow_governance/out/registry.json",
           "status": "ok",
           "resolved_to": "tools/skill_workflow_governance/out/registry.json",
@@ -149,7 +173,7 @@
         {
           "raw": "tools/skill_workflow_governance/README.md",
           "kind": "inline_code",
-          "line": 23,
+          "line": 32,
           "target": "tools/skill_workflow_governance/README.md",
           "status": "ok",
           "resolved_to": "tools/skill_workflow_governance/README.md",
@@ -158,7 +182,7 @@
         {
           "raw": "tools/editor",
           "kind": "inline_code",
-          "line": 31,
+          "line": 40,
           "target": "tools/editor",
           "status": "ok",
           "resolved_to": "tools/editor",
@@ -167,7 +191,7 @@
         {
           "raw": "tools/*_editor",
           "kind": "inline_code",
-          "line": 31,
+          "line": 40,
           "target": "tools/*_editor",
           "status": "ok",
           "resolved_to": "tools/dialogue_graph_editor",
@@ -176,7 +200,7 @@
         {
           "raw": "docs/玩法功能需求清单.md",
           "kind": "inline_code",
-          "line": 32,
+          "line": 41,
           "target": "docs/玩法功能需求清单.md",
           "status": "ok",
           "resolved_to": "docs/玩法功能需求清单.md",
@@ -185,7 +209,7 @@
         {
           "raw": "artifact/Reviews/",
           "kind": "inline_code",
-          "line": 33,
+          "line": 42,
           "target": "artifact/Reviews/",
           "status": "ok",
           "resolved_to": "artifact/Reviews",
@@ -194,7 +218,7 @@
         {
           "raw": "docs/游戏架构设计文档.md",
           "kind": "inline_code",
-          "line": 39,
+          "line": 48,
           "target": "docs/游戏架构设计文档.md",
           "status": "ok",
           "resolved_to": "docs/游戏架构设计文档.md",
@@ -203,7 +227,7 @@
         {
           "raw": "Game.ts",
           "kind": "inline_code",
-          "line": 41,
+          "line": 50,
           "target": "Game.ts",
           "status": "ok",
           "resolved_to": "src/core/Game.ts",
@@ -212,7 +236,7 @@
         {
           "raw": ".cursor/skills/production-mode/SKILL.md",
           "kind": "inline_code",
-          "line": 54,
+          "line": 63,
           "target": ".cursor/skills/production-mode/SKILL.md",
           "status": "ok",
           "resolved_to": ".cursor/skills/production-mode/SKILL.md",
@@ -221,16 +245,25 @@
         {
           "raw": "docs/editor-authoring-surface.md",
           "kind": "inline_code",
-          "line": 54,
+          "line": 63,
           "target": "docs/editor-authoring-surface.md",
           "status": "ok",
           "resolved_to": "docs/editor-authoring-surface.md",
           "note": ""
         },
         {
+          "raw": "evaluateGraphCondition.ts",
+          "kind": "inline_code",
+          "line": 73,
+          "target": "evaluateGraphCondition.ts",
+          "status": "ok",
+          "resolved_to": "src/systems/graphDialogue/evaluateGraphCondition.ts",
+          "note": "suffix matches=1"
+        },
+        {
           "raw": "anim.json",
           "kind": "inline_code",
-          "line": 74,
+          "line": 83,
           "target": "anim.json",
           "status": "ok",
           "resolved_to": "public/resources/runtime/animation/npc_employer_anim/anim.json",
@@ -239,7 +272,7 @@
         {
           "raw": "public/resources/runtime/**",
           "kind": "inline_code",
-          "line": 74,
+          "line": 83,
           "target": "public/resources/runtime/**",
           "status": "ok",
           "resolved_to": "public/resources/runtime",
@@ -248,7 +281,7 @@
         {
           "raw": "./dev.sh validate-data",
           "kind": "inline_code",
-          "line": 82,
+          "line": 91,
           "target": "./dev.sh",
           "status": "ok",
           "resolved_to": "dev.sh",
@@ -257,7 +290,7 @@
         {
           "raw": ".cursor/skills/editor-tools-iteration/SKILL.md",
           "kind": "inline_code",
-          "line": 87,
+          "line": 96,
           "target": ".cursor/skills/editor-tools-iteration/SKILL.md",
           "status": "ok",
           "resolved_to": ".cursor/skills/editor-tools-iteration/SKILL.md",
@@ -266,7 +299,7 @@
         {
           "raw": "main_window.py",
           "kind": "inline_code",
-          "line": 90,
+          "line": 99,
           "target": "main_window.py",
           "status": "ok",
           "resolved_to": "tools/dialogue_graph_editor/main_window.py",
@@ -275,7 +308,7 @@
         {
           "raw": "project_model.py",
           "kind": "inline_code",
-          "line": 90,
+          "line": 99,
           "target": "project_model.py",
           "status": "ok",
           "resolved_to": "tools/editor/project_model.py",
@@ -284,7 +317,7 @@
         {
           "raw": "validator.py",
           "kind": "inline_code",
-          "line": 115,
+          "line": 124,
           "target": "validator.py",
           "status": "ok",
           "resolved_to": "tools/editor/validator.py",
@@ -293,7 +326,7 @@
         {
           "raw": ".cursor/skills/feature-iteration/",
           "kind": "inline_code",
-          "line": 119,
+          "line": 128,
           "target": ".cursor/skills/feature-iteration/",
           "status": "ok",
           "resolved_to": ".cursor/skills/feature-iteration",
@@ -302,7 +335,7 @@
         {
           "raw": "docs/游戏架构设计文档.md",
           "kind": "inline_code",
-          "line": 119,
+          "line": 128,
           "target": "docs/游戏架构设计文档.md",
           "status": "ok",
           "resolved_to": "docs/游戏架构设计文档.md",
@@ -311,7 +344,7 @@
         {
           "raw": ".cursor/skills/production-mode/",
           "kind": "inline_code",
-          "line": 120,
+          "line": 129,
           "target": ".cursor/skills/production-mode/",
           "status": "ok",
           "resolved_to": ".cursor/skills/production-mode",
@@ -320,7 +353,7 @@
         {
           "raw": "docs/editor-authoring-surface.md",
           "kind": "inline_code",
-          "line": 120,
+          "line": 129,
           "target": "docs/editor-authoring-surface.md",
           "status": "ok",
           "resolved_to": "docs/editor-authoring-surface.md",
@@ -329,7 +362,7 @@
         {
           "raw": "docs/玩法功能需求清单.md",
           "kind": "inline_code",
-          "line": 120,
+          "line": 129,
           "target": "docs/玩法功能需求清单.md",
           "status": "ok",
           "resolved_to": "docs/玩法功能需求清单.md",
@@ -338,7 +371,7 @@
         {
           "raw": ".cursor/skills/add-game-action/",
           "kind": "inline_code",
-          "line": 121,
+          "line": 130,
           "target": ".cursor/skills/add-game-action/",
           "status": "ok",
           "resolved_to": ".cursor/skills/add-game-action",
@@ -347,7 +380,7 @@
         {
           "raw": ".cursor/skills/add-text-ref/",
           "kind": "inline_code",
-          "line": 121,
+          "line": 130,
           "target": ".cursor/skills/add-text-ref/",
           "status": "ok",
           "resolved_to": ".cursor/skills/add-text-ref",
@@ -398,9 +431,9 @@
       "source": "package_json",
       "summary": "tsc && vite build && npm run build:narrative-editor",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -418,15 +451,15 @@
       "title": "npm run build:narrative-editor",
       "path": "package.json",
       "source": "package_json",
-      "summary": "vite build --config tools/narrative_editor_web/vite.config.ts",
+      "summary": "npm run typecheck:narrative-editor && vite build --config tools/narrative_editor_web/vite.config.ts",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
-        "vite build --config tools/narrative_editor_web/vite.config.ts"
+        "npm run typecheck:narrative-editor && vite build --config tools/narrative_editor_web/vite.config.ts"
       ],
       "references": [],
       "tags": [
@@ -442,9 +475,9 @@
       "source": "package_json",
       "summary": "vite",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -464,9 +497,9 @@
       "source": "package_json",
       "summary": "vite --config tools/anim_preview/vite.config.ts",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -486,9 +519,9 @@
       "source": "package_json",
       "summary": "vite --config tools/narrative_editor_web/vite.config.ts",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -508,9 +541,9 @@
       "source": "package_json",
       "summary": "vite --config tools/parallax_editor/vite.config.ts",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -530,9 +563,9 @@
       "source": "package_json",
       "summary": "node scripts/pytool.cjs filter_tool",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -552,9 +585,9 @@
       "source": "package_json",
       "summary": "node scripts/pytool.cjs production_workbench .",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -574,9 +607,9 @@
       "source": "package_json",
       "summary": "vite preview",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
@@ -596,13 +629,35 @@
       "source": "package_json",
       "summary": "vitest run",
       "agent": "shared",
-      "modified": "2026-07-05T01:22:41",
-      "modified_ts": 1783185761.047543,
-      "size": 1170,
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
       "headings": [],
       "trigger_hints": [],
       "commands": [
         "vitest run"
+      ],
+      "references": [],
+      "tags": [
+        "workflow",
+        "script"
+      ]
+    },
+    {
+      "id": "package-script.typecheck-narrative-editor",
+      "type": "package_script",
+      "title": "npm run typecheck:narrative-editor",
+      "path": "package.json",
+      "source": "package_json",
+      "summary": "tsc --noEmit -p tools/narrative_editor_web",
+      "agent": "shared",
+      "modified": "2026-07-11T06:12:17",
+      "modified_ts": 1783721537.0891404,
+      "size": 1288,
+      "headings": [],
+      "trigger_hints": [],
+      "commands": [
+        "tsc --noEmit -p tools/narrative_editor_web"
       ],
       "references": [],
       "tags": [
@@ -1143,6 +1198,34 @@
       ]
     },
     {
+      "id": "claude-skill.agent-docs-cli",
+      "type": "skill",
+      "title": "agent-docs-cli(薄壳)",
+      "path": ".claude/skills/agent-docs-cli/SKILL.md",
+      "source": "cursor_skill",
+      "summary": "name: agent-docs-cli description: >- agent_docs 公共知识库治理台 CLI 的统一入口。凡遇治理类业务——治理 agent 文档/一键治理/ 更新知识库/建库/蒸馏记忆/govern agent docs/收编方法论/炼化经验/这个坑入库/记到库里/ intake——先跑 python3 agent_docs/_meta/cli.py,从中现场发现并取用权威流程文件照做。 本壳不含任何流程内容。",
+      "agent": "cursor",
+      "modified": "2026-07-11T08:55:47",
+      "modified_ts": 1783731347.6376169,
+      "size": 967,
+      "headings": [
+        "agent-docs-cli(薄壳)"
+      ],
+      "trigger_hints": [],
+      "commands": [
+        "python3 agent_docs/_meta/cli.py audit [...] # 机械体检/索引/--paths 查必读卡",
+        "python3 agent_docs/_meta/cli.py get <id> # 打印权威正文,读它并严格照做",
+        "python3 agent_docs/_meta/cli.py list # 列出所有治理流程",
+        "python3 agent_docs/_meta/cli.py route \"一句话\" # 按业务描述匹配流程"
+      ],
+      "references": [],
+      "tags": [
+        "claude",
+        "skill",
+        "workflow"
+      ]
+    },
+    {
       "id": "cursor-skill.add-game-action",
       "type": "skill",
       "title": "添加游戏 Action（项目约定）",
@@ -1150,9 +1233,9 @@
       "source": "cursor_skill",
       "summary": "name: add-game-action description: Registers a new ActionExecutor action in GameDraft with editor support and validation. Use when the user asks to add an action, command, 新动作, 新 Action, 指令, 添加命令, ActionRegistry, or extend hotspot/quest/encounter actions. Covers ActionRegistry.ts, action_editor.py, optional Game deps,...",
       "agent": "cursor",
-      "modified": "2026-06-12T21:41:42",
-      "modified_ts": 1781271702.4514163,
-      "size": 4958,
+      "modified": "2026-07-11T07:43:34",
+      "modified_ts": 1783727014.6000276,
+      "size": 5203,
       "headings": [
         "添加游戏 Action（项目约定）",
         "术语",
@@ -1174,9 +1257,27 @@
       ],
       "references": [
         {
+          "raw": "agent_docs/content/mechanisms/l2-action-primitive-registration.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/content/mechanisms/l2-action-primitive-registration.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/mechanisms/l2-action-primitive-registration.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/runtime/mechanisms/action-registration-quadruple.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/runtime/mechanisms/action-registration-quadruple.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/runtime/mechanisms/action-registration-quadruple.md",
+          "note": ""
+        },
+        {
           "raw": "src/core/ActionRegistry.ts",
           "kind": "inline_code",
-          "line": 21,
+          "line": 23,
           "target": "src/core/ActionRegistry.ts",
           "status": "ok",
           "resolved_to": "src/core/ActionRegistry.ts",
@@ -1185,7 +1286,7 @@
         {
           "raw": "Game.ts",
           "kind": "inline_code",
-          "line": 24,
+          "line": 26,
           "target": "Game.ts",
           "status": "ok",
           "resolved_to": "src/core/Game.ts",
@@ -1194,7 +1295,7 @@
         {
           "raw": "tools/editor/shared/action_editor.py",
           "kind": "inline_code",
-          "line": 26,
+          "line": 28,
           "target": "tools/editor/shared/action_editor.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/action_editor.py",
@@ -1203,7 +1304,7 @@
         {
           "raw": "tools/editor/validator.py",
           "kind": "inline_code",
-          "line": 32,
+          "line": 34,
           "target": "tools/editor/validator.py",
           "status": "ok",
           "resolved_to": "tools/editor/validator.py",
@@ -1212,7 +1313,7 @@
         {
           "raw": "src/core/ActionRegistry.ts",
           "kind": "inline_code",
-          "line": 48,
+          "line": 50,
           "target": "src/core/ActionRegistry.ts",
           "status": "ok",
           "resolved_to": "src/core/ActionRegistry.ts",
@@ -1221,7 +1322,7 @@
         {
           "raw": "src/core/Game.ts",
           "kind": "inline_code",
-          "line": 48,
+          "line": 50,
           "target": "src/core/Game.ts",
           "status": "ok",
           "resolved_to": "src/core/Game.ts",
@@ -1230,7 +1331,7 @@
         {
           "raw": "src/core/ActionExecutor.ts",
           "kind": "inline_code",
-          "line": 49,
+          "line": 51,
           "target": "src/core/ActionExecutor.ts",
           "status": "ok",
           "resolved_to": "src/core/ActionExecutor.ts",
@@ -1239,7 +1340,7 @@
         {
           "raw": "tools/editor/shared/action_editor.py",
           "kind": "inline_code",
-          "line": 50,
+          "line": 52,
           "target": "tools/editor/shared/action_editor.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/action_editor.py",
@@ -1248,7 +1349,7 @@
         {
           "raw": "tools/editor/validator.py",
           "kind": "inline_code",
-          "line": 51,
+          "line": 53,
           "target": "tools/editor/validator.py",
           "status": "ok",
           "resolved_to": "tools/editor/validator.py",
@@ -1269,9 +1370,9 @@
       "source": "cursor_skill",
       "summary": "name: add-text-ref description: >- 在 GameDraft 中扩展项目级文本引用 [tag:…]：新增 resolveText 类型、玩家可见展示点、或编辑器 RichTextField 挂载。 触发词：add tag、新引用、ref、引用类型、resolveText、TagCatalog、嵌入引用、RichTextField、ref_validator。",
       "agent": "cursor",
-      "modified": "2026-06-12T21:41:42",
-      "modified_ts": 1781271702.4515862,
-      "size": 3605,
+      "modified": "2026-07-11T07:43:37",
+      "modified_ts": 1783727017.106328,
+      "size": 3778,
       "headings": [
         "文本引用系统扩展清单",
         "1. 添加新 ref 类型（kind）",
@@ -1287,9 +1388,18 @@
       "commands": [],
       "references": [
         {
+          "raw": "agent_docs/content/mechanisms/text-ref-tag-system.md",
+          "kind": "inline_code",
+          "line": 12,
+          "target": "agent_docs/content/mechanisms/text-ref-tag-system.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/mechanisms/text-ref-tag-system.md",
+          "note": ""
+        },
+        {
           "raw": "GameDraft/src/core/resolveText.ts",
           "kind": "inline_code",
-          "line": 14,
+          "line": 16,
           "target": "src/core/resolveText.ts",
           "status": "ok",
           "resolved_to": "src/core/resolveText.ts",
@@ -1298,7 +1408,7 @@
         {
           "raw": "Game.ts",
           "kind": "inline_code",
-          "line": 15,
+          "line": 17,
           "target": "Game.ts",
           "status": "ok",
           "resolved_to": "src/core/Game.ts",
@@ -1307,7 +1417,7 @@
         {
           "raw": "tools/editor/shared/tag_catalog.py",
           "kind": "inline_code",
-          "line": 17,
+          "line": 19,
           "target": "tools/editor/shared/tag_catalog.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/tag_catalog.py",
@@ -1316,7 +1426,7 @@
         {
           "raw": "tools/editor/shared/rich_text_field.py",
           "kind": "inline_code",
-          "line": 18,
+          "line": 20,
           "target": "tools/editor/shared/rich_text_field.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/rich_text_field.py",
@@ -1325,7 +1435,7 @@
         {
           "raw": "tools/editor/shared/ref_validator.py",
           "kind": "inline_code",
-          "line": 19,
+          "line": 21,
           "target": "tools/editor/shared/ref_validator.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/ref_validator.py",
@@ -1334,7 +1444,7 @@
         {
           "raw": "tools/copy_manager/constants.py",
           "kind": "inline_code",
-          "line": 27,
+          "line": 29,
           "target": "tools/copy_manager/constants.py",
           "status": "ok",
           "resolved_to": "tools/copy_manager/constants.py",
@@ -1343,7 +1453,7 @@
         {
           "raw": "tools/editor/shared/rich_text_field.py",
           "kind": "inline_code",
-          "line": 31,
+          "line": 33,
           "target": "tools/editor/shared/rich_text_field.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/rich_text_field.py",
@@ -1352,7 +1462,7 @@
         {
           "raw": "tools/graph_editor/panels/*",
           "kind": "inline_code",
-          "line": 33,
+          "line": 35,
           "target": "tools/graph_editor/panels/*",
           "status": "ok",
           "resolved_to": "tools/graph_editor/panels/property_stack.py",
@@ -1367,6 +1477,34 @@
       ]
     },
     {
+      "id": "cursor-skill.agent-docs-cli",
+      "type": "skill",
+      "title": "agent-docs-cli(薄壳)",
+      "path": ".cursor/skills/agent-docs-cli/SKILL.md",
+      "source": "cursor_skill",
+      "summary": "name: agent-docs-cli description: >- agent_docs 公共知识库治理台 CLI 的统一入口。凡遇治理类业务——治理 agent 文档/一键治理/ 更新知识库/建库/蒸馏记忆/govern agent docs/收编方法论/炼化经验/这个坑入库/记到库里/ intake——先跑 python3 agent_docs/_meta/cli.py,从中现场发现并取用权威流程文件照做。 本壳不含任何流程内容。",
+      "agent": "cursor",
+      "modified": "2026-07-11T08:55:51",
+      "modified_ts": 1783731351.419885,
+      "size": 967,
+      "headings": [
+        "agent-docs-cli(薄壳)"
+      ],
+      "trigger_hints": [],
+      "commands": [
+        "python3 agent_docs/_meta/cli.py audit [...] # 机械体检/索引/--paths 查必读卡",
+        "python3 agent_docs/_meta/cli.py get <id> # 打印权威正文,读它并严格照做",
+        "python3 agent_docs/_meta/cli.py list # 列出所有治理流程",
+        "python3 agent_docs/_meta/cli.py route \"一句话\" # 按业务描述匹配流程"
+      ],
+      "references": [],
+      "tags": [
+        "cursor",
+        "skill",
+        "workflow"
+      ]
+    },
+    {
       "id": "cursor-skill.animation-production",
       "type": "skill",
       "title": "动画生产 — agent 入口(SOP)",
@@ -1374,9 +1512,9 @@
       "source": "cursor_skill",
       "summary": "name: animation-production description: 把角色各 state 的稳定化视频产出为游戏可用的精灵图集(atlas.png + anim.json),抠图/锚点/循环/2K/QA 全走已验证的确定性脚本;agent 只在质检语义裁决与异常处理时入场。",
       "agent": "cursor",
-      "modified": "2026-07-09T01:26:18",
-      "modified_ts": 1783531578.5086234,
-      "size": 2878,
+      "modified": "2026-07-11T07:43:46",
+      "modified_ts": 1783727026.727855,
+      "size": 3454,
       "headings": [
         "动画生产 — agent 入口(SOP)",
         "一键产出(程序干活)",
@@ -1407,9 +1545,45 @@
           "note": ""
         },
         {
+          "raw": "agent_docs/asset-pipeline/mechanisms/animation-pipeline.md",
+          "kind": "inline_code",
+          "line": 13,
+          "target": "agent_docs/asset-pipeline/mechanisms/animation-pipeline.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/asset-pipeline/mechanisms/animation-pipeline.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/asset-pipeline/mechanisms/sprite-atlas-anim-contract.md",
+          "kind": "inline_code",
+          "line": 14,
+          "target": "agent_docs/asset-pipeline/mechanisms/sprite-atlas-anim-contract.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/asset-pipeline/mechanisms/sprite-atlas-anim-contract.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/asset-pipeline/mechanisms/matting-toolbox.md",
+          "kind": "inline_code",
+          "line": 15,
+          "target": "agent_docs/asset-pipeline/mechanisms/matting-toolbox.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/asset-pipeline/mechanisms/matting-toolbox.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/asset-pipeline/decisions/2026-07-10-reprocess-source-must-match-shipped.md",
+          "kind": "inline_code",
+          "line": 18,
+          "target": "agent_docs/asset-pipeline/decisions/2026-07-10-reprocess-source-must-match-shipped.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/asset-pipeline/decisions/2026-07-10-reprocess-source-must-match-shipped.md",
+          "note": ""
+        },
+        {
           "raw": "atlas.png",
           "kind": "inline_code",
-          "line": 22,
+          "line": 29,
           "target": "atlas.png",
           "status": "ok",
           "resolved_to": "public/resources/runtime/animation/npc_employer_anim/atlas.png",
@@ -1418,7 +1592,7 @@
         {
           "raw": "anim.json",
           "kind": "inline_code",
-          "line": 22,
+          "line": 29,
           "target": "anim.json",
           "status": "ok",
           "resolved_to": "public/resources/runtime/animation/npc_employer_anim/anim.json",
@@ -1427,7 +1601,7 @@
         {
           "raw": "qa_gate.py",
           "kind": "inline_code",
-          "line": 27,
+          "line": 34,
           "target": "qa_gate.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/qa_gate.py",
@@ -1436,7 +1610,7 @@
         {
           "raw": "tmp/libtv_animation_batch_run_20260702/run_animation_batch.py",
           "kind": "inline_code",
-          "line": 42,
+          "line": 49,
           "target": "tmp/libtv_animation_batch_run_20260702/run_animation_batch.py",
           "status": "ok",
           "resolved_to": "tmp/libtv_animation_batch_run_20260702/run_animation_batch.py",
@@ -1445,7 +1619,7 @@
         {
           "raw": "tools/animation_pipeline/recipes.py",
           "kind": "inline_code",
-          "line": 47,
+          "line": 54,
           "target": "tools/animation_pipeline/recipes.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/recipes.py",
@@ -1454,7 +1628,7 @@
         {
           "raw": "recipes.py",
           "kind": "inline_code",
-          "line": 52,
+          "line": 59,
           "target": "recipes.py",
           "status": "ok",
           "resolved_to": "tools/animation_pipeline/recipes.py",
@@ -1463,7 +1637,7 @@
         {
           "raw": "src/rendering/SpriteEntity.ts",
           "kind": "inline_code",
-          "line": 53,
+          "line": 60,
           "target": "src/rendering/SpriteEntity.ts",
           "status": "ok",
           "resolved_to": "src/rendering/SpriteEntity.ts",
@@ -1596,9 +1770,9 @@
       "source": "cursor_skill",
       "summary": "name: editor-tools-iteration description: Guides safe, pattern-based iteration on GameDraft PySide editor tools (tools/editor, graph_editor, scene_depth_editor, etc.). Use when the user asks to 迭代编辑器,改编辑器, 改策划工具, Action编辑器, 表单, PySide, Qt 编辑器, or any change under tools/editor or related desktop editors. Emphasizes dat...",
       "agent": "cursor",
-      "modified": "2026-06-14T20:53:57",
-      "modified_ts": 1781441637.564773,
-      "size": 8376,
+      "modified": "2026-07-11T07:43:41",
+      "modified_ts": 1783727021.318749,
+      "size": 8823,
       "headings": [
         "GameDraft 编辑器工具迭代",
         "1. 数据正确性（最高优先级）",
@@ -1647,9 +1821,72 @@
           "note": ""
         },
         {
+          "raw": "agent_docs/editor-tools/norms.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/editor-tools/norms.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/norms.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/editor-tools/mechanisms/editor-data-sync-paradigm.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/editor-tools/mechanisms/editor-data-sync-paradigm.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/mechanisms/editor-data-sync-paradigm.md",
+          "note": ""
+        },
+        {
+          "raw": "save-all-dirty-buckets.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "save-all-dirty-buckets.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/mechanisms/save-all-dirty-buckets.md",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "close-path-flush-discard.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "close-path-flush-discard.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/mechanisms/close-path-flush-discard.md",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "mainwindow-editor-hooks.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "mainwindow-editor-hooks.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/mechanisms/mainwindow-editor-hooks.md",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "shared-widget-value-fidelity.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "shared-widget-value-fidelity.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/mechanisms/shared-widget-value-fidelity.md",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "agent_docs/editor-tools/recipes/editor-change-verification-gate.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/editor-tools/recipes/editor-change-verification-gate.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/recipes/editor-change-verification-gate.md",
+          "note": ""
+        },
+        {
           "raw": "validator.py",
           "kind": "inline_code",
-          "line": 14,
+          "line": 16,
           "target": "validator.py",
           "status": "ok",
           "resolved_to": "tools/editor/validator.py",
@@ -1658,28 +1895,10 @@
         {
           "raw": "shared/id_ref_selector.py",
           "kind": "inline_code",
-          "line": 29,
+          "line": 31,
           "target": "shared/id_ref_selector.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/id_ref_selector.py",
-          "note": "suffix matches=1"
-        },
-        {
-          "raw": "shared/action_editor.py",
-          "kind": "inline_code",
-          "line": 29,
-          "target": "shared/action_editor.py",
-          "status": "ok",
-          "resolved_to": "tools/editor/shared/action_editor.py",
-          "note": "suffix matches=1"
-        },
-        {
-          "raw": "shared/action_editor.py",
-          "kind": "inline_code",
-          "line": 30,
-          "target": "shared/action_editor.py",
-          "status": "ok",
-          "resolved_to": "tools/editor/shared/action_editor.py",
           "note": "suffix matches=1"
         },
         {
@@ -1692,30 +1911,12 @@
           "note": "suffix matches=1"
         },
         {
-          "raw": "shared/flag_key_field.py",
+          "raw": "shared/action_editor.py",
           "kind": "inline_code",
           "line": 32,
-          "target": "shared/flag_key_field.py",
+          "target": "shared/action_editor.py",
           "status": "ok",
-          "resolved_to": "tools/editor/shared/flag_key_field.py",
-          "note": "suffix matches=1"
-        },
-        {
-          "raw": "shared/flag_value_edit.py",
-          "kind": "inline_code",
-          "line": 32,
-          "target": "shared/flag_value_edit.py",
-          "status": "ok",
-          "resolved_to": "tools/editor/shared/flag_value_edit.py",
-          "note": "suffix matches=1"
-        },
-        {
-          "raw": "shared/condition_editor.py",
-          "kind": "inline_code",
-          "line": 33,
-          "target": "shared/condition_editor.py",
-          "status": "ok",
-          "resolved_to": "tools/editor/shared/condition_editor.py",
+          "resolved_to": "tools/editor/shared/action_editor.py",
           "note": "suffix matches=1"
         },
         {
@@ -1728,9 +1929,45 @@
           "note": "suffix matches=1"
         },
         {
-          "raw": "shared/move_entity_map_picker.py",
+          "raw": "shared/flag_key_field.py",
           "kind": "inline_code",
           "line": 34,
+          "target": "shared/flag_key_field.py",
+          "status": "ok",
+          "resolved_to": "tools/editor/shared/flag_key_field.py",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "shared/flag_value_edit.py",
+          "kind": "inline_code",
+          "line": 34,
+          "target": "shared/flag_value_edit.py",
+          "status": "ok",
+          "resolved_to": "tools/editor/shared/flag_value_edit.py",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "shared/condition_editor.py",
+          "kind": "inline_code",
+          "line": 35,
+          "target": "shared/condition_editor.py",
+          "status": "ok",
+          "resolved_to": "tools/editor/shared/condition_editor.py",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "shared/action_editor.py",
+          "kind": "inline_code",
+          "line": 35,
+          "target": "shared/action_editor.py",
+          "status": "ok",
+          "resolved_to": "tools/editor/shared/action_editor.py",
+          "note": "suffix matches=1"
+        },
+        {
+          "raw": "shared/move_entity_map_picker.py",
+          "kind": "inline_code",
+          "line": 36,
           "target": "shared/move_entity_map_picker.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/move_entity_map_picker.py",
@@ -1739,7 +1976,7 @@
         {
           "raw": "editors/scene_editor.py",
           "kind": "inline_code",
-          "line": 35,
+          "line": 37,
           "target": "editors/scene_editor.py",
           "status": "ok",
           "resolved_to": "tools/editor/editors/scene_editor.py",
@@ -1748,7 +1985,7 @@
         {
           "raw": "timeline_editor.py",
           "kind": "inline_code",
-          "line": 35,
+          "line": 37,
           "target": "timeline_editor.py",
           "status": "ok",
           "resolved_to": "tools/editor/editors/timeline_editor.py",
@@ -1757,7 +1994,7 @@
         {
           "raw": "shared/image_path_picker.py",
           "kind": "inline_code",
-          "line": 36,
+          "line": 38,
           "target": "shared/image_path_picker.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/image_path_picker.py",
@@ -1766,7 +2003,7 @@
         {
           "raw": "editors/water_minigame_editor.py",
           "kind": "inline_code",
-          "line": 37,
+          "line": 39,
           "target": "editors/water_minigame_editor.py",
           "status": "ok",
           "resolved_to": "tools/editor/editors/water_minigame_editor.py",
@@ -1775,7 +2012,7 @@
         {
           "raw": "shared/rich_text_field.py",
           "kind": "inline_code",
-          "line": 38,
+          "line": 40,
           "target": "shared/rich_text_field.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/rich_text_field.py",
@@ -1784,7 +2021,7 @@
         {
           "raw": "shared/pick_strings_dialog.py",
           "kind": "inline_code",
-          "line": 39,
+          "line": 41,
           "target": "shared/pick_strings_dialog.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/pick_strings_dialog.py",
@@ -1793,7 +2030,7 @@
         {
           "raw": "scene_editor.py",
           "kind": "inline_code",
-          "line": 48,
+          "line": 50,
           "target": "scene_editor.py",
           "status": "ok",
           "resolved_to": "tools/editor/editors/scene_editor.py",
@@ -2118,9 +2355,9 @@
       "source": "cursor_skill",
       "summary": "name: production-mode description: >- 策划模式（做游戏内容时的工作流）。当用户要做内容、改数据、加任务/支线/对话/遭遇/规矩/演出/场景交互/物品/商店/档案/小游戏等，且希望\"以数据为主、人类仍能用编辑器维护\"时使用。 触发词：策划模式、做内容、改 json、改数据、加任务/对话/演出/遭遇/规矩、production mode、关卡/剧情制作。 本模式默认代码只读、只写 JSON；纯数据写不出来时按 L1/L2/L3 阶梯升级（L2 自动新增 command，L3 跳过并汇报）；所有写出的 JSON 必须保证编辑器能打开并往返编辑。",
       "agent": "cursor",
-      "modified": "2026-06-14T18:43:35",
-      "modified_ts": 1781433815.5352437,
-      "size": 13284,
+      "modified": "2026-07-11T07:41:53",
+      "modified_ts": 1783726913.9114223,
+      "size": 11496,
       "headings": [
         "策划模式（Production Mode）",
         "何时使用",
@@ -2167,7 +2404,7 @@
           "target": "tools/**",
           "status": "ok",
           "resolved_to": "tools",
-          "note": "glob matches=1427"
+          "note": "glob matches=1440"
         },
         {
           "raw": "public/assets/data/*.json",
@@ -2194,7 +2431,7 @@
           "target": "public/assets/dialogues/graphs/*.json",
           "status": "ok",
           "resolved_to": "public/assets/dialogues/graphs/码头_看热闹的路人.json",
-          "note": "glob matches=58"
+          "note": "glob matches=61"
         },
         {
           "raw": "public/assets/data/cutscenes/index.json",
@@ -2224,45 +2461,45 @@
           "note": ""
         },
         {
-          "raw": "tools/editor/shared/action_editor.py",
+          "raw": "agent_docs/content/mechanisms/content-expression-channels.md",
           "kind": "inline_code",
-          "line": 44,
-          "target": "tools/editor/shared/action_editor.py",
+          "line": 45,
+          "target": "agent_docs/content/mechanisms/content-expression-channels.md",
           "status": "ok",
-          "resolved_to": "tools/editor/shared/action_editor.py",
+          "resolved_to": "agent_docs/content/mechanisms/content-expression-channels.md",
           "note": ""
         },
         {
-          "raw": "cutscenes/index.json",
+          "raw": "agent_docs/content/mechanisms/text-ref-tag-system.md",
           "kind": "inline_code",
           "line": 45,
-          "target": "cutscenes/index.json",
+          "target": "agent_docs/content/mechanisms/text-ref-tag-system.md",
           "status": "ok",
-          "resolved_to": "public/assets/data/cutscenes/index.json",
-          "note": "suffix matches=1"
-        },
-        {
-          "raw": "src/data/cutscene_action_allowlist.json",
-          "kind": "inline_code",
-          "line": 45,
-          "target": "src/data/cutscene_action_allowlist.json",
-          "status": "ok",
-          "resolved_to": "src/data/cutscene_action_allowlist.json",
+          "resolved_to": "agent_docs/content/mechanisms/text-ref-tag-system.md",
           "note": ""
         },
         {
-          "raw": "src/systems/graphDialogue/evaluateGraphCondition.ts",
+          "raw": "action_editor.py",
           "kind": "inline_code",
-          "line": 46,
-          "target": "src/systems/graphDialogue/evaluateGraphCondition.ts",
+          "line": 45,
+          "target": "action_editor.py",
           "status": "ok",
-          "resolved_to": "src/systems/graphDialogue/evaluateGraphCondition.ts",
+          "resolved_to": "tools/graph_editor/panels/action_editor.py",
+          "note": "suffix matches=2"
+        },
+        {
+          "raw": "agent_docs/content/mechanisms/l2-action-primitive-registration.md",
+          "kind": "inline_code",
+          "line": 60,
+          "target": "agent_docs/content/mechanisms/l2-action-primitive-registration.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/mechanisms/l2-action-primitive-registration.md",
           "note": ""
         },
         {
           "raw": "src/core/ActionRegistry.ts",
           "kind": "inline_code",
-          "line": 66,
+          "line": 64,
           "target": "src/core/ActionRegistry.ts",
           "status": "ok",
           "resolved_to": "src/core/ActionRegistry.ts",
@@ -2271,7 +2508,7 @@
         {
           "raw": "evaluateGraphCondition.ts",
           "kind": "inline_code",
-          "line": 66,
+          "line": 64,
           "target": "evaluateGraphCondition.ts",
           "status": "ok",
           "resolved_to": "src/systems/graphDialogue/evaluateGraphCondition.ts",
@@ -2280,7 +2517,7 @@
         {
           "raw": "tools/editor/shared/action_editor.py",
           "kind": "inline_code",
-          "line": 67,
+          "line": 65,
           "target": "tools/editor/shared/action_editor.py",
           "status": "ok",
           "resolved_to": "tools/editor/shared/action_editor.py",
@@ -2289,7 +2526,7 @@
         {
           "raw": "validator.py",
           "kind": "inline_code",
-          "line": 67,
+          "line": 65,
           "target": "validator.py",
           "status": "ok",
           "resolved_to": "tools/editor/validator.py",
@@ -2298,7 +2535,7 @@
         {
           "raw": "cutscene_action_allowlist.json",
           "kind": "inline_code",
-          "line": 67,
+          "line": 65,
           "target": "cutscene_action_allowlist.json",
           "status": "ok",
           "resolved_to": "src/data/cutscene_action_allowlist.json",
@@ -2307,7 +2544,7 @@
         {
           "raw": "public/assets/data/**",
           "kind": "inline_code",
-          "line": 88,
+          "line": 86,
           "target": "public/assets/data/**",
           "status": "ok",
           "resolved_to": "public/assets/data",
@@ -2316,7 +2553,7 @@
         {
           "raw": "public/assets/scenes/*.json",
           "kind": "inline_code",
-          "line": 88,
+          "line": 86,
           "target": "public/assets/scenes/*.json",
           "status": "ok",
           "resolved_to": "public/assets/scenes/temple.json",
@@ -2325,16 +2562,16 @@
         {
           "raw": "public/assets/dialogues/graphs/*.json",
           "kind": "inline_code",
-          "line": 89,
+          "line": 87,
           "target": "public/assets/dialogues/graphs/*.json",
           "status": "ok",
           "resolved_to": "public/assets/dialogues/graphs/码头_看热闹的路人.json",
-          "note": "glob matches=58"
+          "note": "glob matches=61"
         },
         {
           "raw": "narrative_graphs.json",
           "kind": "inline_code",
-          "line": 89,
+          "line": 87,
           "target": "narrative_graphs.json",
           "status": "ok",
           "resolved_to": "public/assets/data/narrative_graphs.json",
@@ -2343,7 +2580,7 @@
         {
           "raw": "anim.json",
           "kind": "inline_code",
-          "line": 90,
+          "line": 88,
           "target": "anim.json",
           "status": "ok",
           "resolved_to": "public/resources/runtime/animation/npc_employer_anim/anim.json",
@@ -2352,11 +2589,20 @@
         {
           "raw": "public/resources/runtime/**",
           "kind": "inline_code",
-          "line": 90,
+          "line": 88,
           "target": "public/resources/runtime/**",
           "status": "ok",
           "resolved_to": "public/resources/runtime",
           "note": "glob matches=1236"
+        },
+        {
+          "raw": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "kind": "inline_code",
+          "line": 91,
+          "target": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "note": ""
         },
         {
           "raw": "docs/editor-authoring-surface.md",
@@ -2365,6 +2611,15 @@
           "target": "docs/editor-authoring-surface.md",
           "status": "ok",
           "resolved_to": "docs/editor-authoring-surface.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/content/recipes/content-validation-gate.md",
+          "kind": "inline_code",
+          "line": 103,
+          "target": "agent_docs/content/recipes/content-validation-gate.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/recipes/content-validation-gate.md",
           "note": ""
         }
       ],
@@ -2382,9 +2637,9 @@
       "source": "cursor_skill",
       "summary": "name: pure-data-iteration description: Handles game iteration when only pure data changes are needed (no code). Checks whether current code and config structure can support the requested design; if not, reports gaps and suggestions and blocks for user approval. If supported, edits data then runs data validation until...",
       "agent": "cursor",
-      "modified": "2026-06-12T21:41:42",
-      "modified_ts": 1781271702.4527006,
-      "size": 4843,
+      "modified": "2026-07-11T07:42:49",
+      "modified_ts": 1783726969.0578568,
+      "size": 5215,
       "headings": [
         "Pure Data Iteration",
         "何时使用",
@@ -2415,9 +2670,45 @@
           "note": ""
         },
         {
+          "raw": "agent_docs/content/mechanisms/content-expression-channels.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/content/mechanisms/content-expression-channels.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/mechanisms/content-expression-channels.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/content/recipes/content-validation-gate.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/content/recipes/content-validation-gate.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/recipes/content-validation-gate.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/content/norms.md",
+          "kind": "inline_code",
+          "line": 10,
+          "target": "agent_docs/content/norms.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/norms.md",
+          "note": ""
+        },
+        {
           "raw": "dialogues/graphs/*.json",
           "kind": "inline_code",
-          "line": 14,
+          "line": 16,
           "target": "dialogues/graphs/*.json",
           "status": "ok",
           "resolved_to": "public/assets/dialogues/graphs/码头_看热闹的路人.json",
@@ -2426,7 +2717,7 @@
         {
           "raw": "游戏架构设计文档.md",
           "kind": "inline_code",
-          "line": 27,
+          "line": 29,
           "target": "游戏架构设计文档.md",
           "status": "ok",
           "resolved_to": "docs/游戏架构设计文档.md",
@@ -2435,7 +2726,7 @@
         {
           "raw": "public/assets/data/*.json",
           "kind": "inline_code",
-          "line": 27,
+          "line": 29,
           "target": "public/assets/data/*.json",
           "status": "ok",
           "resolved_to": "public/assets/data/overlay_images.json",
@@ -2444,16 +2735,16 @@
         {
           "raw": "public/assets/dialogues/graphs/*.json",
           "kind": "inline_code",
-          "line": 27,
+          "line": 29,
           "target": "public/assets/dialogues/graphs/*.json",
           "status": "ok",
           "resolved_to": "public/assets/dialogues/graphs/码头_看热闹的路人.json",
-          "note": "glob matches=58"
+          "note": "glob matches=61"
         },
         {
           "raw": "public/assets/scenes/*.json",
           "kind": "inline_code",
-          "line": 27,
+          "line": 29,
           "target": "public/assets/scenes/*.json",
           "status": "ok",
           "resolved_to": "public/assets/scenes/temple.json",
@@ -2462,25 +2753,34 @@
         {
           "raw": "游戏架构设计文档.md",
           "kind": "inline_code",
-          "line": 43,
+          "line": 45,
           "target": "游戏架构设计文档.md",
           "status": "ok",
           "resolved_to": "docs/游戏架构设计文档.md",
           "note": "suffix matches=1"
         },
         {
-          "raw": "游戏架构设计文档.md",
+          "raw": "agent_docs/content/recipes/content-validation-gate.md",
           "kind": "inline_code",
-          "line": 73,
-          "target": "游戏架构设计文档.md",
+          "line": 75,
+          "target": "agent_docs/content/recipes/content-validation-gate.md",
           "status": "ok",
-          "resolved_to": "docs/游戏架构设计文档.md",
-          "note": "suffix matches=1"
+          "resolved_to": "agent_docs/content/recipes/content-validation-gate.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "kind": "inline_code",
+          "line": 75,
+          "target": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
+          "note": ""
         },
         {
           "raw": "public/assets/data/",
           "kind": "inline_code",
-          "line": 74,
+          "line": 76,
           "target": "public/assets/data/",
           "status": "ok",
           "resolved_to": "public/assets/data",
@@ -2489,7 +2789,7 @@
         {
           "raw": "public/assets/dialogues/graphs/",
           "kind": "inline_code",
-          "line": 74,
+          "line": 76,
           "target": "public/assets/dialogues/graphs/",
           "status": "ok",
           "resolved_to": "public/assets/dialogues/graphs",
@@ -2498,20 +2798,20 @@
         {
           "raw": "public/assets/scenes/",
           "kind": "inline_code",
-          "line": 74,
+          "line": 76,
           "target": "public/assets/scenes/",
           "status": "ok",
           "resolved_to": "public/assets/scenes",
           "note": ""
         },
         {
-          "raw": "玩法功能需求清单.md",
+          "raw": "docs/玩法功能需求清单.md",
           "kind": "inline_code",
-          "line": 75,
-          "target": "玩法功能需求清单.md",
+          "line": 77,
+          "target": "docs/玩法功能需求清单.md",
           "status": "ok",
           "resolved_to": "docs/玩法功能需求清单.md",
-          "note": "suffix matches=1"
+          "note": ""
         }
       ],
       "tags": [
@@ -3605,114 +3905,26 @@
   ],
   "issues": [
     {
-      "id": "drift.cursor-skill.add-game-action.21.src-core-actionregistry.ts",
+      "id": "missing-trigger.claude-skill.agent-docs-cli",
       "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 21,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/ActionRegistry.ts` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
+      "category": "missing-metadata",
+      "artifact_id": "claude-skill.agent-docs-cli",
+      "path": ".claude/skills/agent-docs-cli/SKILL.md",
+      "line": 1,
+      "title": "Skill has no clear trigger/use condition",
+      "evidence": "No obvious trigger/use/scope section was detected.",
+      "suggestion": "Add a short 'when to use / when not to use' section near the top of the skill."
     },
     {
-      "id": "drift.cursor-skill.add-game-action.24.src-core-game.ts",
+      "id": "missing-trigger.cursor-skill.agent-docs-cli",
       "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 24,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/Game.ts` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-game-action.26.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 26,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-game-action.32.tools-editor-validator.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 32,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/validator.py` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-game-action.48.src-core-actionregistry.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 48,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/ActionRegistry.ts` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-game-action.48.src-core-game.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 48,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/Game.ts` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-game-action.49.src-core-actionexecutor.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 49,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/ActionExecutor.ts` is about 20 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-game-action.50.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 50,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-game-action.51.tools-editor-validator.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-game-action",
-      "path": ".cursor/skills/add-game-action/SKILL.md",
-      "line": 51,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/validator.py` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.add-text-ref.15.src-core-game.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.add-text-ref",
-      "path": ".cursor/skills/add-text-ref/SKILL.md",
-      "line": 15,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/Game.ts` is about 25 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
+      "category": "missing-metadata",
+      "artifact_id": "cursor-skill.agent-docs-cli",
+      "path": ".cursor/skills/agent-docs-cli/SKILL.md",
+      "line": 1,
+      "title": "Skill has no clear trigger/use condition",
+      "evidence": "No obvious trigger/use/scope section was detected.",
+      "suggestion": "Add a short 'when to use / when not to use' section near the top of the skill."
     },
     {
       "id": "missing-trigger.cursor-skill.animation-production",
@@ -3724,149 +3936,6 @@
       "title": "Skill has no clear trigger/use condition",
       "evidence": "No obvious trigger/use/scope section was detected.",
       "suggestion": "Add a short 'when to use / when not to use' section near the top of the skill."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.14.tools-editor-validator.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 14,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/validator.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 29,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-id_ref_selector.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 29,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/id_ref_selector.py` is about 17 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.30.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 30,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.31.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 31,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.32.tools-editor-shared-flag_value_edit.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 32,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/flag_value_edit.py` is about 17 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 33,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-condition_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 33,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/condition_editor.py` is about 17 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-scene_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 35,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/editors/scene_editor.py` is about 24 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-timeline_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 35,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/editors/timeline_editor.py` is about 22 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.36.tools-editor-shared-image_path_picker.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 36,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/image_path_picker.py` is about 24 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.37.tools-editor-editors-water_minigame_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 37,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/editors/water_minigame_editor.py` is about 18 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.editor-tools-iteration.48.tools-editor-editors-scene_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.editor-tools-iteration",
-      "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-      "line": 48,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/editors/scene_editor.py` is about 24 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
       "id": "drift.cursor-skill.gameplay-iteration.22.docs-.md",
@@ -3897,204 +3966,6 @@
       "artifact_id": "cursor-skill.gameplay-iteration",
       "path": ".cursor/skills/gameplay-iteration/SKILL.md",
       "line": 58,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.34.docs-editor-authoring-surface.md",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 34,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`docs/editor-authoring-surface.md` is about 22 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.34.public-assets-data-cutscenes-index.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 34,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/assets/data/cutscenes/index.json` is about 22 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.34.public-assets-data-overlay_images.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 34,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/assets/data/overlay_images.json` is about 15 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.34.src-data-types.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 34,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/data/types.ts` is about 24 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.44.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 44,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.45.public-assets-data-cutscenes-index.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 45,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/assets/data/cutscenes/index.json` is about 22 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.45.src-data-cutscene_action_allowlist.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 45,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/data/cutscene_action_allowlist.json` is about 22 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.46.src-systems-graphdialogue-evaluategraphcondition.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 46,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/systems/graphDialogue/evaluateGraphCondition.ts` is about 18 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.66.src-core-actionregistry.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 66,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/ActionRegistry.ts` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.66.src-systems-graphdialogue-evaluategraphcondition.ts",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 66,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/systems/graphDialogue/evaluateGraphCondition.ts` is about 18 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.67.src-data-cutscene_action_allowlist.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 67,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/data/cutscene_action_allowlist.json` is about 22 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.67.tools-editor-shared-action_editor.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 67,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.67.tools-editor-validator.py",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 67,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/validator.py` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.89.public-assets-data-narrative_graphs.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 89,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/assets/data/narrative_graphs.json` is about 23 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.90.public-resources-runtime-animation-npc_employer_anim-anim.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 90,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/resources/runtime/animation/npc_employer_anim/anim.json` is about 20 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.production-mode.92.docs-editor-authoring-surface.md",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.production-mode",
-      "path": ".cursor/skills/production-mode/SKILL.md",
-      "line": 92,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`docs/editor-authoring-surface.md` is about 22 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.pure-data-iteration.27.public-assets-data-overlay_images.json",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.pure-data-iteration",
-      "path": ".cursor/skills/pure-data-iteration/SKILL.md",
-      "line": 27,
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`public/assets/data/overlay_images.json` is about 17 days newer than this file.",
-      "suggestion": "Check whether the skill/workflow still describes the current implementation."
-    },
-    {
-      "id": "drift.cursor-skill.pure-data-iteration.75.docs-.md",
-      "severity": "warn",
-      "category": "drift-risk",
-      "artifact_id": "cursor-skill.pure-data-iteration",
-      "path": ".cursor/skills/pure-data-iteration/SKILL.md",
-      "line": 75,
       "title": "Referenced artifact is newer than this rule/workflow",
       "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
@@ -4140,8 +4011,30 @@
       "path": "artifact/cursor-workflow-guide.md",
       "line": 138,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/Game.ts` is about 25 days newer than this file.",
+      "evidence": "`src/core/Game.ts` is about 28 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
+    },
+    {
+      "id": "missing-lifecycle.claude-skill.agent-docs-cli",
+      "severity": "info",
+      "category": "missing-lifecycle",
+      "artifact_id": "claude-skill.agent-docs-cli",
+      "path": ".claude/skills/agent-docs-cli/SKILL.md",
+      "line": 1,
+      "title": "Skill has no lifecycle metadata",
+      "evidence": "No status/owner/last-verified style metadata was detected.",
+      "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
+    },
+    {
+      "id": "overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli",
+      "severity": "info",
+      "category": "possible-overlap",
+      "artifact_id": "claude-skill.agent-docs-cli",
+      "path": ".claude/skills/agent-docs-cli/SKILL.md",
+      "line": 1,
+      "title": "Two skills may overlap",
+      "evidence": "`.claude/skills/agent-docs-cli/SKILL.md` and `.cursor/skills/agent-docs-cli/SKILL.md` have token overlap score 1.00.",
+      "suggestion": "Compare triggers and decide whether they should be split more clearly, merged, or cross-linked."
     },
     {
       "id": "missing-lifecycle.cursor-skill.add-game-action",
@@ -4160,6 +4053,17 @@
       "category": "missing-lifecycle",
       "artifact_id": "cursor-skill.add-text-ref",
       "path": ".cursor/skills/add-text-ref/SKILL.md",
+      "line": 1,
+      "title": "Skill has no lifecycle metadata",
+      "evidence": "No status/owner/last-verified style metadata was detected.",
+      "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
+    },
+    {
+      "id": "missing-lifecycle.cursor-skill.agent-docs-cli",
+      "severity": "info",
+      "category": "missing-lifecycle",
+      "artifact_id": "cursor-skill.agent-docs-cli",
+      "path": ".cursor/skills/agent-docs-cli/SKILL.md",
       "line": 1,
       "title": "Skill has no lifecycle metadata",
       "evidence": "No status/owner/last-verified style metadata was detected.",
@@ -4277,25 +4181,26 @@
     }
   ],
   "stats": {
-    "artifact_count": 67,
-    "issue_count": 61,
+    "artifact_count": 70,
+    "issue_count": 25,
     "by_type": {
       "agent_rules": 2,
       "ci_workflow": 1,
-      "package_script": 10,
+      "package_script": 11,
       "script": 24,
-      "skill": 13,
+      "skill": 15,
       "tool_requirements": 9,
       "workflow_doc": 8
     },
     "by_severity": {
-      "info": 12,
-      "warn": 49
+      "info": 15,
+      "warn": 10
     },
     "by_category": {
-      "drift-risk": 48,
-      "missing-lifecycle": 12,
-      "missing-metadata": 1
+      "drift-risk": 7,
+      "missing-lifecycle": 14,
+      "missing-metadata": 3,
+      "possible-overlap": 1
     }
   },
   "workpacks": [
@@ -4306,68 +4211,22 @@
       "kind": "agent-review",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
       "next": "交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。",
-      "issue_count": 48,
-      "artifact_count": 8,
+      "issue_count": 7,
+      "artifact_count": 3,
       "artifact_types": [
         "skill",
         "workflow_doc"
       ],
       "paths": [
-        ".cursor/skills/add-game-action/SKILL.md",
-        ".cursor/skills/add-text-ref/SKILL.md",
-        ".cursor/skills/editor-tools-iteration/SKILL.md",
         ".cursor/skills/gameplay-iteration/SKILL.md",
-        ".cursor/skills/production-mode/SKILL.md",
-        ".cursor/skills/pure-data-iteration/SKILL.md",
         ".cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md",
         "artifact/cursor-workflow-guide.md"
       ],
       "hidden_path_count": 0,
       "issue_ids": [
-        "drift.cursor-skill.add-game-action.21.src-core-actionregistry.ts",
-        "drift.cursor-skill.add-game-action.24.src-core-game.ts",
-        "drift.cursor-skill.add-game-action.26.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.add-game-action.32.tools-editor-validator.py",
-        "drift.cursor-skill.add-game-action.48.src-core-actionregistry.ts",
-        "drift.cursor-skill.add-game-action.48.src-core-game.ts",
-        "drift.cursor-skill.add-game-action.49.src-core-actionexecutor.ts",
-        "drift.cursor-skill.add-game-action.50.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.add-game-action.51.tools-editor-validator.py",
-        "drift.cursor-skill.add-text-ref.15.src-core-game.ts",
-        "drift.cursor-skill.editor-tools-iteration.14.tools-editor-validator.py",
-        "drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-id_ref_selector.py",
-        "drift.cursor-skill.editor-tools-iteration.30.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.31.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.32.tools-editor-shared-flag_value_edit.py",
-        "drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-condition_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-scene_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-timeline_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.36.tools-editor-shared-image_path_picker.py",
-        "drift.cursor-skill.editor-tools-iteration.37.tools-editor-editors-water_minigame_editor.py",
-        "drift.cursor-skill.editor-tools-iteration.48.tools-editor-editors-scene_editor.py",
         "drift.cursor-skill.gameplay-iteration.22.docs-.md",
         "drift.cursor-skill.gameplay-iteration.33.docs-.md",
         "drift.cursor-skill.gameplay-iteration.58.docs-.md",
-        "drift.cursor-skill.production-mode.34.docs-editor-authoring-surface.md",
-        "drift.cursor-skill.production-mode.34.public-assets-data-cutscenes-index.json",
-        "drift.cursor-skill.production-mode.34.public-assets-data-overlay_images.json",
-        "drift.cursor-skill.production-mode.34.src-data-types.ts",
-        "drift.cursor-skill.production-mode.44.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.production-mode.45.public-assets-data-cutscenes-index.json",
-        "drift.cursor-skill.production-mode.45.src-data-cutscene_action_allowlist.json",
-        "drift.cursor-skill.production-mode.46.src-systems-graphdialogue-evaluategraphcondition.ts",
-        "drift.cursor-skill.production-mode.66.src-core-actionregistry.ts",
-        "drift.cursor-skill.production-mode.66.src-systems-graphdialogue-evaluategraphcondition.ts",
-        "drift.cursor-skill.production-mode.67.src-data-cutscene_action_allowlist.json",
-        "drift.cursor-skill.production-mode.67.tools-editor-shared-action_editor.py",
-        "drift.cursor-skill.production-mode.67.tools-editor-validator.py",
-        "drift.cursor-skill.production-mode.89.public-assets-data-narrative_graphs.json",
-        "drift.cursor-skill.production-mode.90.public-resources-runtime-animation-npc_employer_anim-anim.json",
-        "drift.cursor-skill.production-mode.92.docs-editor-authoring-surface.md",
-        "drift.cursor-skill.pure-data-iteration.27.public-assets-data-overlay_images.json",
-        "drift.cursor-skill.pure-data-iteration.75.docs-.md",
         "drift.cursor-skill.push-gamedraft-story-temp-proxy.20..git-config",
         "drift.artifact-cursor-workflow-guide.42.docs-.md",
         "drift.artifact-cursor-workflow-guide.47.docs-.md",
@@ -4375,61 +4234,61 @@
       ],
       "sample_issues": [
         {
-          "id": "drift.cursor-skill.add-game-action.21.src-core-actionregistry.ts",
+          "id": "drift.cursor-skill.gameplay-iteration.22.docs-.md",
           "severity": "warn",
-          "path": ".cursor/skills/add-game-action/SKILL.md",
-          "line": 21,
+          "path": ".cursor/skills/gameplay-iteration/SKILL.md",
+          "line": 22,
           "title": "Referenced artifact is newer than this rule/workflow",
-          "evidence": "`src/core/ActionRegistry.ts` is about 25 days newer than this file.",
-          "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=21#L21"
+          "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
+          "href": "/governance/source?path=.cursor/skills/gameplay-iteration/SKILL.md&line=22#L22"
         },
         {
-          "id": "drift.cursor-skill.add-game-action.24.src-core-game.ts",
+          "id": "drift.cursor-skill.gameplay-iteration.33.docs-.md",
           "severity": "warn",
-          "path": ".cursor/skills/add-game-action/SKILL.md",
-          "line": 24,
+          "path": ".cursor/skills/gameplay-iteration/SKILL.md",
+          "line": 33,
           "title": "Referenced artifact is newer than this rule/workflow",
-          "evidence": "`src/core/Game.ts` is about 25 days newer than this file.",
-          "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=24#L24"
+          "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
+          "href": "/governance/source?path=.cursor/skills/gameplay-iteration/SKILL.md&line=33#L33"
         },
         {
-          "id": "drift.cursor-skill.add-game-action.26.tools-editor-shared-action_editor.py",
+          "id": "drift.cursor-skill.gameplay-iteration.58.docs-.md",
           "severity": "warn",
-          "path": ".cursor/skills/add-game-action/SKILL.md",
-          "line": 26,
+          "path": ".cursor/skills/gameplay-iteration/SKILL.md",
+          "line": 58,
           "title": "Referenced artifact is newer than this rule/workflow",
-          "evidence": "`tools/editor/shared/action_editor.py` is about 25 days newer than this file.",
-          "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=26#L26"
+          "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
+          "href": "/governance/source?path=.cursor/skills/gameplay-iteration/SKILL.md&line=58#L58"
         },
         {
-          "id": "drift.cursor-skill.add-game-action.32.tools-editor-validator.py",
+          "id": "drift.cursor-skill.push-gamedraft-story-temp-proxy.20..git-config",
           "severity": "warn",
-          "path": ".cursor/skills/add-game-action/SKILL.md",
-          "line": 32,
+          "path": ".cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md",
+          "line": 20,
           "title": "Referenced artifact is newer than this rule/workflow",
-          "evidence": "`tools/editor/validator.py` is about 25 days newer than this file.",
-          "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=32#L32"
+          "evidence": "`.git/config` is about 20 days newer than this file.",
+          "href": "/governance/source?path=.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md&line=20#L20"
         },
         {
-          "id": "drift.cursor-skill.add-game-action.48.src-core-actionregistry.ts",
+          "id": "drift.artifact-cursor-workflow-guide.42.docs-.md",
           "severity": "warn",
-          "path": ".cursor/skills/add-game-action/SKILL.md",
-          "line": 48,
+          "path": "artifact/cursor-workflow-guide.md",
+          "line": 42,
           "title": "Referenced artifact is newer than this rule/workflow",
-          "evidence": "`src/core/ActionRegistry.ts` is about 25 days newer than this file.",
-          "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=48#L48"
+          "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
+          "href": "/governance/source?path=artifact/cursor-workflow-guide.md&line=42#L42"
         },
         {
-          "id": "drift.cursor-skill.add-game-action.48.src-core-game.ts",
+          "id": "drift.artifact-cursor-workflow-guide.47.docs-.md",
           "severity": "warn",
-          "path": ".cursor/skills/add-game-action/SKILL.md",
-          "line": 48,
+          "path": "artifact/cursor-workflow-guide.md",
+          "line": 47,
           "title": "Referenced artifact is newer than this rule/workflow",
-          "evidence": "`src/core/Game.ts` is about 25 days newer than this file.",
-          "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=48#L48"
+          "evidence": "`docs/玩法功能需求清单.md` is about 16 days newer than this file.",
+          "href": "/governance/source?path=artifact/cursor-workflow-guide.md&line=47#L47"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，48 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- artifact/cursor-workflow-guide.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，7 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- artifact/cursor-workflow-guide.md"
     },
     {
       "id": "missing-metadata",
@@ -4438,19 +4297,41 @@
       "kind": "agent-edit",
       "summary": "Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。",
       "next": "交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。",
-      "issue_count": 1,
-      "artifact_count": 1,
+      "issue_count": 3,
+      "artifact_count": 3,
       "artifact_types": [
         "skill"
       ],
       "paths": [
+        ".claude/skills/agent-docs-cli/SKILL.md",
+        ".cursor/skills/agent-docs-cli/SKILL.md",
         ".cursor/skills/animation-production/SKILL.md"
       ],
       "hidden_path_count": 0,
       "issue_ids": [
+        "missing-trigger.claude-skill.agent-docs-cli",
+        "missing-trigger.cursor-skill.agent-docs-cli",
         "missing-trigger.cursor-skill.animation-production"
       ],
       "sample_issues": [
+        {
+          "id": "missing-trigger.claude-skill.agent-docs-cli",
+          "severity": "warn",
+          "path": ".claude/skills/agent-docs-cli/SKILL.md",
+          "line": 1,
+          "title": "Skill has no clear trigger/use condition",
+          "evidence": "No obvious trigger/use/scope section was detected.",
+          "href": "/governance/source?path=.claude/skills/agent-docs-cli/SKILL.md&line=1#L1"
+        },
+        {
+          "id": "missing-trigger.cursor-skill.agent-docs-cli",
+          "severity": "warn",
+          "path": ".cursor/skills/agent-docs-cli/SKILL.md",
+          "line": 1,
+          "title": "Skill has no clear trigger/use condition",
+          "evidence": "No obvious trigger/use/scope section was detected.",
+          "href": "/governance/source?path=.cursor/skills/agent-docs-cli/SKILL.md&line=1#L1"
+        },
         {
           "id": "missing-trigger.cursor-skill.animation-production",
           "severity": "warn",
@@ -4461,7 +4342,7 @@
           "href": "/governance/source?path=.cursor/skills/animation-production/SKILL.md&line=1#L1"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：Skill 触发条件补齐包（missing-metadata，1 项）。\n目标：Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。\n执行方式：交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/animation-production/SKILL.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：Skill 触发条件补齐包（missing-metadata，3 项）。\n目标：Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。\n执行方式：交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/agent-docs-cli/SKILL.md\n- .cursor/skills/agent-docs-cli/SKILL.md\n- .cursor/skills/animation-production/SKILL.md"
     },
     {
       "id": "missing-lifecycle",
@@ -4470,14 +4351,16 @@
       "kind": "batch-edit",
       "summary": "缺少 status / owner / last verified 这类治理字段，可以标准化批量补。",
       "next": "交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。",
-      "issue_count": 12,
-      "artifact_count": 12,
+      "issue_count": 14,
+      "artifact_count": 14,
       "artifact_types": [
         "skill"
       ],
       "paths": [
+        ".claude/skills/agent-docs-cli/SKILL.md",
         ".cursor/skills/add-game-action/SKILL.md",
         ".cursor/skills/add-text-ref/SKILL.md",
+        ".cursor/skills/agent-docs-cli/SKILL.md",
         ".cursor/skills/animation-production/SKILL.md",
         ".cursor/skills/debug-panel-extension/SKILL.md",
         ".cursor/skills/editor-tools-iteration/SKILL.md",
@@ -4485,14 +4368,14 @@
         ".cursor/skills/gameplay-iteration/SKILL.md",
         ".cursor/skills/interactive-architecture-html/SKILL.md",
         ".cursor/skills/production-mode/SKILL.md",
-        ".cursor/skills/pure-data-iteration/SKILL.md",
-        ".cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md",
-        ".cursor/skills/restart-gamedraft/SKILL.md"
+        ".cursor/skills/pure-data-iteration/SKILL.md"
       ],
-      "hidden_path_count": 0,
+      "hidden_path_count": 2,
       "issue_ids": [
+        "missing-lifecycle.claude-skill.agent-docs-cli",
         "missing-lifecycle.cursor-skill.add-game-action",
         "missing-lifecycle.cursor-skill.add-text-ref",
+        "missing-lifecycle.cursor-skill.agent-docs-cli",
         "missing-lifecycle.cursor-skill.animation-production",
         "missing-lifecycle.cursor-skill.debug-panel-extension",
         "missing-lifecycle.cursor-skill.editor-tools-iteration",
@@ -4505,6 +4388,15 @@
         "missing-lifecycle.cursor-skill.restart-gamedraft"
       ],
       "sample_issues": [
+        {
+          "id": "missing-lifecycle.claude-skill.agent-docs-cli",
+          "severity": "info",
+          "path": ".claude/skills/agent-docs-cli/SKILL.md",
+          "line": 1,
+          "title": "Skill has no lifecycle metadata",
+          "evidence": "No status/owner/last-verified style metadata was detected.",
+          "href": "/governance/source?path=.claude/skills/agent-docs-cli/SKILL.md&line=1#L1"
+        },
         {
           "id": "missing-lifecycle.cursor-skill.add-game-action",
           "severity": "info",
@@ -4524,6 +4416,15 @@
           "href": "/governance/source?path=.cursor/skills/add-text-ref/SKILL.md&line=1#L1"
         },
         {
+          "id": "missing-lifecycle.cursor-skill.agent-docs-cli",
+          "severity": "info",
+          "path": ".cursor/skills/agent-docs-cli/SKILL.md",
+          "line": 1,
+          "title": "Skill has no lifecycle metadata",
+          "evidence": "No status/owner/last-verified style metadata was detected.",
+          "href": "/governance/source?path=.cursor/skills/agent-docs-cli/SKILL.md&line=1#L1"
+        },
+        {
           "id": "missing-lifecycle.cursor-skill.animation-production",
           "severity": "info",
           "path": ".cursor/skills/animation-production/SKILL.md",
@@ -4540,27 +4441,41 @@
           "title": "Skill has no lifecycle metadata",
           "evidence": "No status/owner/last-verified style metadata was detected.",
           "href": "/governance/source?path=.cursor/skills/debug-panel-extension/SKILL.md&line=1#L1"
-        },
-        {
-          "id": "missing-lifecycle.cursor-skill.editor-tools-iteration",
-          "severity": "info",
-          "path": ".cursor/skills/editor-tools-iteration/SKILL.md",
-          "line": 1,
-          "title": "Skill has no lifecycle metadata",
-          "evidence": "No status/owner/last-verified style metadata was detected.",
-          "href": "/governance/source?path=.cursor/skills/editor-tools-iteration/SKILL.md&line=1#L1"
-        },
-        {
-          "id": "missing-lifecycle.cursor-skill.feature-iteration",
-          "severity": "info",
-          "path": ".cursor/skills/feature-iteration/SKILL.md",
-          "line": 1,
-          "title": "Skill has no lifecycle metadata",
-          "evidence": "No status/owner/last-verified style metadata was detected.",
-          "href": "/governance/source?path=.cursor/skills/feature-iteration/SKILL.md&line=1#L1"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，12 项）。\n目标：缺少 status / owner / last verified 这类治理字段，可以标准化批量补。\n执行方式：交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- .cursor/skills/restart-gamedraft/SKILL.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，14 项）。\n目标：缺少 status / owner / last verified 这类治理字段，可以标准化批量补。\n执行方式：交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/agent-docs-cli/SKILL.md\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/agent-docs-cli/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- .cursor/skills/restart-gamedraft/SKILL.md"
+    },
+    {
+      "id": "possible-overlap",
+      "priority": "P3",
+      "title": "Skill 重叠边界包",
+      "kind": "agent-review",
+      "summary": "相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。",
+      "next": "交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。",
+      "issue_count": 1,
+      "artifact_count": 1,
+      "artifact_types": [
+        "skill"
+      ],
+      "paths": [
+        ".claude/skills/agent-docs-cli/SKILL.md"
+      ],
+      "hidden_path_count": 0,
+      "issue_ids": [
+        "overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli"
+      ],
+      "sample_issues": [
+        {
+          "id": "overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli",
+          "severity": "info",
+          "path": ".claude/skills/agent-docs-cli/SKILL.md",
+          "line": 1,
+          "title": "Two skills may overlap",
+          "evidence": "`.claude/skills/agent-docs-cli/SKILL.md` and `.cursor/skills/agent-docs-cli/SKILL.md` have token overlap score 1.00.",
+          "href": "/governance/source?path=.claude/skills/agent-docs-cli/SKILL.md&line=1#L1"
+        }
+      ],
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：Skill 重叠边界包（possible-overlap，1 项）。\n目标：相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。\n执行方式：交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/agent-docs-cli/SKILL.md"
     }
   ]
 }

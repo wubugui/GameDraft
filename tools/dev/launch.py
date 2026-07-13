@@ -28,6 +28,7 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "parallax-editor": ("tools.parallax_editor", []),
     "skill-governance": ("tools.skill_workflow_governance.console", []),
     "validate-data": ("tools.editor.validate", []),
+    "json-lang": ("tools.json_lang.build", []),
 }
 
 

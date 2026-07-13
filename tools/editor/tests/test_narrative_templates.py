@@ -272,6 +272,209 @@ def test_project_model_template_roundtrip_and_ids():
     assert normalize_templates_file(model.narrative_templates) == model.narrative_templates
 
 
+def test_chinese_param_name_roundtrip():
+    """中文参数名全链路：抽取造出 {{中文洞}}，盖章能填上（历史 bug：regex 只认 ASCII）。"""
+    comp = _mini_composition()
+    specs = [{"name": "任务名", "type": "identifier", "sample": "淹尸活", "required": True}]
+    tpl = extract_template(comp, specs, template_id="t_cn")
+    assert "{{任务名}}" in json.dumps(tpl["composition"], ensure_ascii=False)
+    assert iter_placeholders(tpl["composition"]) == {"任务名"}
+    res = stamp_template(tpl, {"任务名": "吊尸活"})
+    assert res["ok"], res["errors"]
+    assert res["composition"]["id"] == "flow_吊尸活"
+    assert "{{" not in json.dumps(res["composition"], ensure_ascii=False)
+    # 原样值盖回 == 原作曲
+    back = stamp_template(tpl, {"任务名": "淹尸活"})
+    assert back["composition"] == comp
+
+
+def test_invalid_param_name_is_error():
+    """带空格/标点/数字开头的参数名 = error（替换引擎认不出这种洞，禁止保存）。"""
+    for bad in ("task id", "1abc", "a-b", "名字!"):
+        tpl = {"id": "t1", "params": [{"name": bad, "type": "text"}], "composition": {"id": "x"}}
+        issues = validate_template(normalize_templates_file({"templates": [tpl]})["templates"][0])
+        assert any(i["code"] == "template.param.name" and i["severity"] == "error" for i in issues), bad
+
+
+def test_stamp_rejects_unsafe_dialogue_stub_id():
+    """对话桩 id 即文件名：含 / \\ .. 或以 . 开头 = error（防写出目录外/写进扫不到的子目录）。"""
+    comp = _mini_composition()
+    tpl = extract_template(comp, _mini_specs(), template_id="a",
+                           dialogue_stubs=[{"id": "{{deliverDlg}}", "emitSignal": "淹尸活__delivered"}])
+    for bad in ("../越界", "子目录/图", "a\\b", ".隐藏"):
+        res = stamp_template(tpl, {"taskId": "新活", "plane": "背尸", "minigame": "m", "deliverDlg": bad})
+        assert any(e["code"] == "stamp.dialogue.badId" for e in res["errors"]), bad
+        assert not res["ok"]
+    ok = stamp_template(tpl, {"taskId": "新活", "plane": "背尸", "minigame": "m", "deliverDlg": "正常图"})
+    assert ok["ok"], ok["errors"]
+
+
+def test_stamp_signal_collision_is_error():
+    """模板声明的新信号与既有信号注册表重名 = error 禁止盖章（防跨任务串线）。"""
+    comp = _mini_composition()
+    tpl = extract_template(
+        comp, _mini_specs(), template_id="a",
+        signals=[{"id": "淹尸活__shouldered", "label": "上肩"}],
+    )
+    res = stamp_template(
+        tpl, {"taskId": "夜活", "plane": "背尸", "minigame": "m", "deliverDlg": "d"},
+        existing_signal_ids={"夜活__shouldered"},
+    )
+    assert any(e["code"] == "stamp.collision.signal" for e in res["errors"])
+    assert not res["ok"]
+    # 不撞时照常通过
+    res2 = stamp_template(
+        tpl, {"taskId": "夜活", "plane": "背尸", "minigame": "m", "deliverDlg": "d"},
+        existing_signal_ids={"别家任务__accepted"},
+    )
+    assert res2["ok"], res2["errors"]
+
+
+def test_validate_data_warns_raw_file_duplicate_ids(tmp_path):
+    """手改文件里的重复模板 id：validate-data 必须读原始磁盘文件报警（模型加载已静默去重）。"""
+    from tools.editor.tests.save_test_utils import write_minimal_loadable_project
+    from tools.editor import validator as v
+
+    root = tmp_path / "proj"
+    write_minimal_loadable_project(root)
+    dup_file = {
+        "schemaVersion": 1,
+        "templates": [
+            {"id": "dup", "label": "第一个", "params": [], "composition": {"id": "a"}},
+            {"id": "dup", "label": "第二个", "params": [], "composition": {"id": "b"}},
+        ],
+    }
+    (root / "public/assets/data/narrative_templates.json").write_text(
+        json.dumps(dup_file, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    model = ProjectModel()
+    model.load_project(root)
+    # 加载后模型里只剩一条（静默去重）——警告必须仍能报出来
+    assert len(model.narrative_templates["templates"]) == 1
+    issues = v.validate(model)
+    hits = [i for i in issues if i.data_type == "narrative_template" and "重复" in i.message]
+    assert hits, "validate-data 应对原始文件里的重复模板 id 报警"
+    assert hits[0].severity == "warning"
+
+
+def _write_stub_test_project(tmp_path):
+    """极小工程 + 一个带 quest/对话桩的模板，供盖章暂存语义测试。"""
+    from tools.editor.tests.save_test_utils import write_minimal_loadable_project
+
+    root = tmp_path / "proj"
+    write_minimal_loadable_project(root)
+    tpl_file = {
+        "schemaVersion": 1,
+        "templates": [{
+            "id": "t_stage",
+            "label": "暂存测试",
+            "params": [{"name": "taskId", "type": "identifier", "required": True}],
+            "signals": [{"id": "{{taskId}}__done"}],
+            "composition": {
+                "id": "c_{{taskId}}",
+                "mainGraph": {
+                    "id": "flow_{{taskId}}", "ownerType": "flow", "initialState": "a",
+                    "states": {"a": {"id": "a"}, "b": {"id": "b"}},
+                    "transitions": [{"id": "t1", "from": "a", "to": "b", "signal": "{{taskId}}__done"}],
+                },
+                "elements": [{"id": "dlg", "kind": "dialogueBlackbox", "refId": "{{taskId}}_对话",
+                              "meta": {"emits": ["{{taskId}}__done"]}}],
+            },
+            "quest": {"id": "q_{{taskId}}", "group": "g", "type": "side", "title": "t",
+                      "preconditions": [],
+                      "completionConditions": [{"narrative": "flow_{{taskId}}", "state": "b", "reached": True}],
+                      "rewards": [], "nextQuests": []},
+            "dialogueStubs": [{"id": "{{taskId}}_对话", "title": "{{taskId}}", "emitSignal": "{{taskId}}__done"}],
+        }],
+    }
+    (root / "public/assets/data/narrative_templates.json").write_text(
+        json.dumps(tpl_file, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return root
+
+
+def test_stamp_stages_all_or_nothing_and_save_all_commits(tmp_path):
+    """盖章 = 三样一并暂存、零磁盘写入；Save All 一次性落盘全部（全有全无，无孤儿）。"""
+    from PySide6.QtWidgets import QApplication
+    if QApplication.instance() is None:
+        QApplication([])
+    from tools.editor.editors.narrative_state_editor import NarrativeEditorBridge
+
+    root = _write_stub_test_project(tmp_path)
+    model = ProjectModel()
+    model.load_project(root)
+    bridge = NarrativeEditorBridge(model)
+
+    ng_path = root / "public/assets/data/narrative_graphs.json"
+    quests_path = root / "public/assets/data/quests.json"
+    stub_path = root / "public/assets/dialogues/graphs/新活_对话.json"
+    quests_disk_before = quests_path.read_text(encoding="utf-8")
+
+    current = json.loads(bridge.getData())
+    resp = json.loads(bridge.stampTemplate(json.dumps({
+        "templateId": "t_stage", "values": {"taskId": "新活"},
+        "currentNarrative": current, "generateDialogueStubs": True, "dryRun": False,
+    }, ensure_ascii=False)))
+    assert resp["ok"], resp
+    assert resp["summary"]["questStaged"] is True
+    assert resp["summary"]["stubsStaged"] == ["新活_对话"]
+
+    # 盖章时刻：零磁盘写入（narrative_graphs 不存在 / quests 原样 / 无桩文件）
+    assert not ng_path.exists()
+    assert quests_path.read_text(encoding="utf-8") == quests_disk_before
+    assert not stub_path.exists()
+    # 但三样都已暂存进模型，脏键正确（save_all 认 "quest" 单数——标错键会无声丢任务）
+    assert any(c.get("id") == "c_新活" for c in model.narrative_graphs["compositions"])
+    assert any(q.get("id") == "q_新活" for q in model.quests)
+    assert "新活_对话" in model.pending_dialogue_stubs
+    assert {"narrative_graphs", "quest", "dialogue_stubs"} <= model._dirty
+
+    # Save All：一次性全部落盘
+    model.save_all()
+    assert any(c.get("id") == "c_新活" for c in json.loads(ng_path.read_text(encoding="utf-8"))["compositions"])
+    assert any(q.get("id") == "q_新活" for q in json.loads(quests_path.read_text(encoding="utf-8")))
+    stub = json.loads(stub_path.read_text(encoding="utf-8"))
+    assert stub["nodes"]["emit"]["actions"][0]["params"]["signal"] == "新活__done"
+    assert model.pending_dialogue_stubs == {}
+    assert not model.is_dirty
+
+    # 全无路径：撞名盖章失败 = 模型零变化
+    n_comps = len(model.narrative_graphs["compositions"])
+    n_quests = len(model.quests)
+    resp2 = json.loads(bridge.stampTemplate(json.dumps({
+        "templateId": "t_stage", "values": {"taskId": "新活"},
+        "currentNarrative": json.loads(bridge.getData()), "generateDialogueStubs": True, "dryRun": False,
+    }, ensure_ascii=False)))
+    assert not resp2["ok"]
+    assert len(model.narrative_graphs["compositions"]) == n_comps
+    assert len(model.quests) == n_quests
+    assert model.pending_dialogue_stubs == {}
+    assert not model.is_dirty
+
+
+def test_pending_stub_never_overwrites_existing(tmp_path):
+    """暂存桶落盘只写新文件：既有对话图（策划手作）绝不被覆盖。"""
+    from tools.editor.tests.save_test_utils import write_minimal_loadable_project
+
+    root = tmp_path / "proj"
+    write_minimal_loadable_project(root)
+    graphs_dir = root / "public/assets/dialogues/graphs"
+    graphs_dir.mkdir(parents=True, exist_ok=True)
+    precious = {"schemaVersion": 1, "id": "已有图", "entry": "root",
+                "nodes": {"root": {"type": "line", "speaker": {"kind": "literal", "name": "旁白"}, "text": "手作内容"}}}
+    target = graphs_dir / "已有图.json"
+    target.write_text(json.dumps(precious, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    before = target.read_text(encoding="utf-8")
+
+    model = ProjectModel()
+    model.load_project(root)
+    model.pending_dialogue_stubs["已有图"] = {"id": "已有图", "nodes": {}}
+    model.pending_dialogue_stubs["../越界"] = {"id": "x"}  # 防御：坏 id 直接跳过
+    model.mark_dirty("dialogue_stubs")
+    model.save_all()
+    assert target.read_text(encoding="utf-8") == before
+    assert not (root / "public/assets/dialogues/越界.json").exists()
+    assert model.pending_dialogue_stubs == {}
+
+
 def test_save_all_template_roundtrip_byte_identical(tmp_path):
     """经真实 save_all 写盘：narrative_templates.json 逐字节不变（黄金往返）。"""
     from tools.editor.tests.save_test_utils import file_sha256, write_minimal_loadable_project

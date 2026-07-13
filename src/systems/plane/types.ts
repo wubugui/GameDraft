@@ -1,6 +1,15 @@
 import type { SceneLightEnv } from '../../data/types';
 
 /**
+ * 激活位面快照（SceneManager 位面归属判定用；由 Game 从 PlaneReconciler 接线）。
+ * membership 语义见 {@link PlaneDef.membership}。
+ */
+export interface ActivePlaneSnapshot {
+  id: string;
+  membership: 'shared' | 'exclusive';
+}
+
+/**
  * 位面（Plane）配置：一份全局注册的数据资产 = 系统配置（下述各槽）+ 独占实体集
  * （由实体/zone 的 `planes?: string[]` 归属字段反向定义，缺省 = 存在于所有位面）。
  *
@@ -37,14 +46,34 @@ export interface PlaneCameraConfig {
   zoom?: number;
 }
 
+export interface PlaneTravelConfig {
+  /** false 时位面激活期间禁止打开地图快速旅行（面板 openGuard + map:travel 双闸）；缺省 true */
+  allowMapTravel?: boolean;
+}
+
 export interface PlaneDef {
   id: string;
   label?: string;
+  /**
+   * 数据层组合（单继承）：加载期按**槽级覆盖**展开——本定义写了某槽就整槽用自己的，
+   * 未写的槽继承父位面。运行时只见展开后的扁平定义（任意时刻仍恰有一个激活位面，
+   * 组合位面须显式建条目，如「背尸喊名 extends 背尸」）。环/缺父由校验器拦，运行时 warn 并忽略继承。
+   */
+  extends?: string;
+  /**
+   * 世界模型（决定**无 `planes` 归属字段实体**在本位面激活时是否存在）：
+   * - `shared`（缺省，共享世界型）：缺省实体存在——同一世界加修饰（如背尸）。
+   * - `exclusive`（独立世界型）：缺省实体不存在——异世界从空场景开始，只有显式归属的实体在。
+   * 显式 `planes` 白名单语义不受影响；`normal` 恒为 shared（校验/运行时双侧强制）。
+   */
+  membership?: 'shared' | 'exclusive';
   movement?: PlaneMovementConfig;
   interaction?: PlaneInteractionConfig;
   camera?: PlaneCameraConfig;
   /** 位面光照档（partial，经 resolveLightEnv 补全；激活期挂起场景 lightEnvCurve） */
   lighting?: SceneLightEnv;
-  /** 激活且 Exploring 时每秒扣阳气（经 HealthSystem.damage，可触发死亡系绳） */
+  /** 旅行插件槽：位面激活期间的地图快速旅行门闸（缺省不生效=允许，与其它槽同构） */
+  travel?: PlaneTravelConfig;
+  /** 激活且 Exploring 时每秒扣阳气（经 HealthSystem.damage，可触发死亡系绳；仅 Exploring 计费，对话/过场/UI 面板期间不累计） */
   healthDrainPerSec?: number;
 }

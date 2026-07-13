@@ -120,10 +120,12 @@ export class HealthSystem implements IGameSystem {
   /**
    * 显式触发死亡系绳（濒死被拽回）。供编排层 `triggerDeathTether` action 用，
    * 替代旧的 `damagePlayer{9999}` 魔法数硬凑——意图即"该死那一拍、念气把人薅回"。
-   * 重入由内部 `tethering` 守卫挡掉。
+   * 重入由内部 `tethering` 守卫挡掉（守卫命中时返回已 resolve 的 Promise）。
+   * 必须返回整段系绳流程的 Promise：动作批严格按序执行依赖 handler 返回真实异步，
+   * 否则批内排在其后的音效/信号会在演出完成前提前执行（与 damage() 路径同约定）。
    */
-  tether(): void {
-    void this.triggerDeathTether();
+  tether(): Promise<void> {
+    return this.triggerDeathTether();
   }
 
   private async triggerDeathTether(): Promise<void> {

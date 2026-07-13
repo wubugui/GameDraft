@@ -83,6 +83,7 @@ import type { Npc } from '../entities/Npc';
 import type { Hotspot } from '../entities/Hotspot';
 import { registerActionHandlers, auditActionRegistrationsAgainstManifest } from './ActionRegistry';
 import { collectRecentPageErrors, installPageErrorTrap } from './pageErrorTrap';
+import { DeterministicRandom } from '../utils/deterministicRandom';
 import { ScenarioStateManager } from './ScenarioStateManager';
 import { NarrativeStateManager, type NarrativeSignal } from './NarrativeStateManager';
 import { DocumentRevealManager } from '../systems/DocumentRevealManager';
@@ -155,6 +156,8 @@ export interface GameStartOptions {
   sugarWheelPreview?: string;
   /** 开发模式下直接进入指定扎纸小游戏实例（URL `paperCraftPreview=`） */
   paperCraftPreview?: string;
+  /** 自动视觉基准模式：保留 dev 直达能力，但不打开 DevMode 遮罩。 */
+  visualCapture?: boolean;
 }
 
 declare global {
@@ -170,6 +173,16 @@ declare global {
       emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
       debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
       setNarrativeState(graphId: string, stateId: string): Promise<void>;
+      setDepthDebug(enabled: boolean): void;
+      clearWorldFilter(): void;
+      setWorldFadeAlpha(alpha: number): void;
+      completeDialogueText(): void;
+      startMinigame(kind: 'water' | 'sugarWheel' | 'paperCraft' | 'pressureHold', id: string): Promise<boolean>;
+      stepFixedTicks(ticks: number, dtMs: number): Promise<void>;
+      getMinigameDebugState(): Record<string, unknown>;
+      playAudioProbe(id: string, fadeMs: number): void;
+      getAudioDebugState(): Record<string, unknown>;
+      suppressSceneEnterForVisualCapture(): void;
     };
   }
 }
@@ -243,6 +256,7 @@ export class Game {
   private lastTime: number = 0;
   private lastFps: number = 0;
   private playTimeMs: number = 0;
+  private readonly runtimeRandom = new DeterministicRandom('gamedraft-runtime-v1');
   private playerAnimDef: AnimationSetDef | null = null;
 
   private interactionCoordinator!: InteractionCoordinator;
@@ -311,6 +325,9 @@ export class Game {
   /** 本次页面会话的实例 id；快照携带，命令可用 targetBootId 指向特定实例（多开页签时避免互抢） */
   private readonly runtimeBootId = Math.random().toString(36).slice(2, 10);
   private runtimeDebugSnapshotErrorLogged = false;
+  private fixedTickMode = false;
+  /** 主 ticker 与启动直达路由均已落地后才开放自动化命令，防启动场景覆盖测试场景。 */
+  private runtimeReady = false;
   private runtimeCommandPollErrorLogged = false;
   private lastRuntimeCommandResults: { id: string; type: string; ok: boolean; message: string }[] = [];
 
@@ -342,6 +359,7 @@ export class Game {
 
   constructor() {
     this.eventBus = new EventBus();
+    if (import.meta.env.DEV) this.eventBus.enableDebugTrace();
     this.flagStore = new FlagStore(this.eventBus);
     this.stringsProvider = new StringsProvider();
     this.inputManager = new InputManager();
@@ -615,7 +633,7 @@ export class Game {
 
   async start(options: GameStartOptions = {}): Promise<void> {
     this.isDevMode = !!options.devMode;
-    await this.renderer.init();
+    await this.renderer.init(options.visualCapture ? { resolution: 1 } : undefined);
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
@@ -752,7 +770,13 @@ export class Game {
     this.saveManager = new SaveManager(
       () => this.collectSaveData(),
       (data) => this.distributeSaveData(data),
-      (sceneId) => this.reloadScene(sceneId),
+      // 读档专用重载（含失败回滚路径）：先静默撤下旧场景活跃 zone——distribute 已把全系统
+      // 覆盖为存档时间线，旧时间线 zone 的 onExit 异步批不得再污染恢复后的状态。
+      // 只挂在 SaveManager 这条线上：F2 调试重载与其它 reloadScene 调用方语义不变。
+      (sceneId) => {
+        this.zoneSystem.clearActiveZonesForRestore();
+        return this.reloadScene(sceneId);
+      },
       this.stringsProvider,
       this.gameConfig.fallbackScene,
     );
@@ -815,17 +839,7 @@ export class Game {
 
     /** B8：条件上下文工厂必须先于 narrativeStateManager.loadFromAsset 注入——
      *  加载即触发 reactive 求值，晚注入会导致开机首轮全部 missing-ctx 判 false。 */
-    const mkCondCtx = (): ConditionEvalContext => ({
-      flagStore: this.flagStore,
-      questManager: this.questManager,
-      scenarioState: this.scenarioStateManager,
-      narrativeState: this.narrativeStateManager,
-      resolveConditionLiteral: (raw) => this.resolveDisplayText(raw),
-      // `@scene` 解析为当前场景 wrapper；`@owner` 在 onEnter 期间继承场景 owner
-      // （对话内由 GraphDialogueManager.conditionCtx 覆盖为对话 owner）。
-      currentSceneId: this.sceneManager.currentSceneData?.id ?? undefined,
-      currentOwner: this.ambientNarrativeOwner ?? undefined,
-    });
+    const mkCondCtx = (): ConditionEvalContext => this.buildConditionEvalContext();
     this.flagStore.setConditionEvalContextFactory(mkCondCtx);
     this.questManager.setConditionEvalContextFactory(mkCondCtx);
     this.zoneSystem.setConditionEvalContextFactory(mkCondCtx);
@@ -869,7 +883,10 @@ export class Game {
       damagePlayer: (amount) => this.healthSystem.damage(amount),
       getGameState: () => this.stateController.currentState,
     });
-    this.sceneManager.setActivePlaneGetter(() => this.planeReconciler.getActivePlaneId());
+    this.sceneManager.setActivePlaneGetter(() => ({
+      id: this.planeReconciler.getActivePlaneId(),
+      membership: this.planeReconciler.getActivePlaneMembership(),
+    }));
 
     this.documentRevealManager.setBlendExecutor((id, from, to, x, y, w, dur, delay) =>
       this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
@@ -884,6 +901,7 @@ export class Game {
     if (this.tearDownComplete) return;
 
     registerActionHandlers(this.actionExecutor, {
+      randomValue: () => this.runtimeRandom.next(),
       resolveScriptedSpeaker: (raw, scriptedNpcId) =>
         resolveScriptedSpeakerDisplay(raw, {
           strings: this.stringsProvider,
@@ -1084,14 +1102,9 @@ export class Game {
       debugPanelLog: (msg) => this.debugPanelUI?.log(msg),
       evaluateBeforeChargeCondition: (expr) => {
         if (expr === undefined || expr === null) return true;
-        const ctx: ConditionEvalContext = {
-          flagStore: this.flagStore,
-          questManager: this.questManager,
-          scenarioState: this.scenarioStateManager,
-          narrativeState: this.narrativeStateManager,
-          resolveConditionLiteral: (raw) => this.resolveDisplayText(raw),
-        };
-        return evaluateConditionExpr(expr, ctx);
+        // 统一走中央工厂（律5 统一条件源）：手工缩水上下文缺 @scene/@owner/plane 叶子，
+        // 同一条件在此入口与对话/zone/热点入口会得出不同结果。
+        return evaluateConditionExpr(expr, this.buildConditionEvalContext());
       },
     });
     await this.sugarWheelMinigameManager.loadIndex();
@@ -1150,6 +1163,7 @@ export class Game {
       mapUI: this.mapUI,
       menuUI: this.menuUI,
       inspectBox: this.inspectBox,
+      guardMapTravel: () => this.guardMapTravel(),
     });
     this.eventBridge.init();
 
@@ -1303,7 +1317,6 @@ export class Game {
     await this.setupPlayer({ deferAvatar: this.isDevMode });
     if (this.tearDownComplete) return;
     this.setupRuntimeDebugSnapshotPublishing();
-    this.setupRuntimeCommandPolling();
     // 气味调试 hook（平时关；URL 加 ?smellDebug 开启）：console 里 __smell(scent,intensity,dir,flicker) /
     // __smellSniff() / __smellStep(n) 驱动 HUD 气味指示器看效果。隐藏页 rAF 被节流时 __smell 会强制步进给截图用。
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('smellDebug')) {
@@ -1360,6 +1373,7 @@ export class Game {
         options.paperCraftPreview,
         options.devScene,
         options.narrativeWarp,
+        options.visualCapture === true,
       );
     } else {
       if (this.gameConfig.initialQuest) {
@@ -1381,7 +1395,7 @@ export class Game {
       const now = performance.now();
       const dt = Math.min((now - this.lastTime) / 1000, 0.1);
       this.lastTime = now;
-      this.tick(dt);
+      if (!this.fixedTickMode) this.tick(dt);
     };
     ticker.add(this.mainTick);
     this.setupWebGlPanelDiagnostics();
@@ -1390,8 +1404,16 @@ export class Game {
     if (this.devStartupRoute) {
       const route = this.devStartupRoute;
       this.devStartupRoute = null;
-      void route().catch((e) => console.warn('Game: dev 启动直达路由失败', e));
+      try {
+        await route();
+      } catch (e) {
+        console.warn('Game: dev 启动直达路由失败', e);
+      }
     }
+    if (this.tearDownComplete || !this.renderer.isInitialized()) return;
+    this.runtimeReady = true;
+    this.setupRuntimeCommandPolling();
+    await this.publishRuntimeDebugSnapshot('runtime-ready');
   }
 
   /** F2「日志」页：WebGL getError、深度 GPU 纹理、shader 预热与上下文丢失；JS/Pixi 运行时错误镜像 */
@@ -1494,10 +1516,26 @@ export class Game {
         }
         if (d.camera?.zoom !== undefined) lines.push(`相机 zoom: ${d.camera.zoom}`);
         if (d.lighting) lines.push('光照: 位面档生效（lightEnvCurve 挂起）');
-        if (d.healthDrainPerSec !== undefined) lines.push(`掉阳气: ${d.healthDrainPerSec}/s（仅 Exploring）`);
+        if (d.membership === 'exclusive') lines.push('世界模型: exclusive（独立世界，缺省实体不存在）');
+        if (d.travel?.allowMapTravel === false) lines.push('旅行: 地图快速旅行禁用');
       } else if (s.activePlaneId !== 'normal') {
         lines.push('（该位面未在 planes.json 注册，各槽按无配置处理）');
       }
+      // 掉阳气合成视图（D5 对账可见性）：位面 drain 基线 + 活跃 zone 的 damagePlayer 数额，
+      // 两条通道都走 HealthSystem.damage，同一血条上叠加。
+      const drainParts: string[] = [];
+      if (d?.healthDrainPerSec !== undefined) drainParts.push(`位面 ${d.healthDrainPerSec}/s（仅 Exploring 计费）`);
+      for (const z of this.zoneSystem.getActiveZones()) {
+        for (const [hook, label] of [['onEnter', '进入'], ['onStay', '停留']] as const) {
+          for (const a of (z[hook] ?? [])) {
+            if (a?.type === 'damagePlayer') {
+              const amount = (a.params as { amount?: number } | undefined)?.amount;
+              drainParts.push(`zone ${z.id} ${label} -${amount ?? '?'}`);
+            }
+          }
+        }
+      }
+      if (drainParts.length > 0) lines.push(`掉阳气: ${drainParts.join('；')}`);
       return `位面\n${lines.join('\n')}`;
     });
   }
@@ -2362,13 +2400,50 @@ export class Game {
     e.shadow.enabled = !e.shadow.enabled;
   }
 
+  /**
+   * travel 槽门闸：当前位面禁止地图快速旅行时拒绝并 toast 提示。
+   * 面板 openGuard 与 EventBridge 的 map:travel 双闸共用（后者兜脚本/竞态路径）。
+   */
+  /**
+   * 条件求值上下文唯一工厂（律5 统一条件源）：所有条件消费方——包括 Game 内部的手工求值点
+   * （糖转盘 beforeCharge、depth_floor 每帧偏移）——一律经此构造。手工拼缩水上下文会缺
+   * plane/@scene/@owner 叶子，同一条件在不同入口得出不同结果（plane 叶子缺 getter 时
+   * 静默按 'normal' 求值）。
+   */
+  private buildConditionEvalContext(): ConditionEvalContext {
+    return {
+      flagStore: this.flagStore,
+      questManager: this.questManager,
+      scenarioState: this.scenarioStateManager,
+      narrativeState: this.narrativeStateManager,
+      resolveConditionLiteral: (raw) => this.resolveDisplayText(raw),
+      // `@scene` 解析为当前场景 wrapper；`@owner` 在 onEnter 期间继承场景 owner
+      // （对话内由 GraphDialogueManager.conditionCtx 覆盖为对话 owner）。
+      currentSceneId: this.sceneManager.currentSceneData?.id ?? undefined,
+      currentOwner: this.ambientNarrativeOwner ?? undefined,
+      // plane 叶子：当前激活位面（含 manual override）；全部条件消费方经此工厂自动可用
+      getActivePlaneId: () => this.planeReconciler.getActivePlaneId(),
+    };
+  }
+
+  private guardMapTravel(): boolean {
+    if (this.planeReconciler.isMapTravelAllowed()) return true;
+    this.eventBus.emit('notification:show', {
+      text: this.stringsProvider.get('notifications', 'mapTravelBlocked'),
+      type: 'warning',
+    });
+    return false;
+  }
+
   private registerUIPanels(): void {
     this.stateController.registerPanel('quest', this.questPanelUI, 'Tab');
     this.stateController.registerPanel('inventory', this.inventoryUI, 'KeyI');
     this.stateController.registerPanel('rules', this.rulesPanelUI, 'KeyR');
     this.stateController.registerPanel('dialogueLog', this.dialogueLogUI, 'KeyL');
     this.stateController.registerPanel('bookshelf', this.bookshelfUI, 'KeyB');
-    this.stateController.registerPanel('map', this.mapUI, 'KeyM');
+    this.stateController.registerPanel('map', this.mapUI, 'KeyM', {
+      openGuard: () => this.guardMapTravel(),
+    });
     this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyF');
     this.stateController.registerPanel('shop', this.shopUI);
     this.stateController.registerPanel('menu', this.menuUI);
@@ -2679,6 +2754,7 @@ export class Game {
     paperCraftPreview?: string,
     devScene?: string,
     narrativeWarp?: string,
+    visualCapture: boolean = false,
   ): Promise<void> {
     const DEV_SCENE = 'dev_room';
     await this.sceneManager.loadScene(DEV_SCENE);
@@ -2719,7 +2795,7 @@ export class Game {
       getNarrativeWarps: () => this.narrativeWarps.map((w) => ({ id: w.id, label: w.label })),
       enterNarrativeWarp: (id: string) => { void this.enterNarrativeWarp(id); },
     });
-    this.devModeUI.open();
+    if (!visualCapture) this.devModeUI.open();
 
     this.waterMinigameManager.setOnSessionEnd(() => {
       if (!this.isDevMode) return;
@@ -2753,6 +2829,38 @@ export class Game {
         this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
       setNarrativeState: (graphId, stateId) =>
         this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
+      setDepthDebug: (enabled) => this.sceneDepthSystem.setDebugOnFilters(enabled),
+      clearWorldFilter: () => this.renderer.clearWorldFilter(),
+      setWorldFadeAlpha: (alpha) => this.cutsceneRenderer.setDebugWorldFadeAlpha(alpha),
+      completeDialogueText: () => this.dialogueUI.debugCompleteText(),
+      startMinigame: async (kind, id) => {
+        this.devModeUI?.close();
+        if (kind === 'water') await this.waterMinigameManager.start(id);
+        else if (kind === 'sugarWheel') await this.sugarWheelMinigameManager.start(id);
+        else if (kind === 'paperCraft') await this.paperCraftMinigameManager.start(id);
+        else {
+          const request = this.pressureHoldManager.getDebugPreviewRequest(id);
+          if (!request) return false;
+          this.pressureHoldUI.showDebugPreview(request, 0.42);
+        }
+        return kind === 'water'
+          ? this.waterMinigameManager.isActive
+          : kind === 'sugarWheel'
+            ? this.sugarWheelMinigameManager.isActive
+            : kind === 'paperCraft'
+              ? this.paperCraftMinigameManager.isActive
+              : this.pressureHoldUI.isActive();
+      },
+      stepFixedTicks: (ticks, dtMs) => this.debugStepTicks(ticks, dtMs),
+      getMinigameDebugState: () => ({
+        water: this.waterMinigameManager.getDebugVisualState(),
+        sugarWheel: this.sugarWheelMinigameManager.getDebugVisualState(),
+        paperCraft: this.paperCraftMinigameManager.getDebugVisualState(),
+        pressureHold: this.pressureHoldUI.getDebugVisualState(),
+      }),
+      playAudioProbe: (id, fadeMs) => this.audioManager.playBgm(id, fadeMs),
+      getAudioDebugState: () => this.audioManager.getDebugOutputState(),
+      suppressSceneEnterForVisualCapture: () => this.sceneManager.setSceneEnterRunner(null),
     };
     /** 启动直达路由（过场直启 / 场景直达 / 各小游戏预览）需要主 tick 驱动位移与小游戏
      *  update——存起来由 start() 在 `ticker.add(mainTick)` 之后调用（真实就绪信号，
@@ -2884,7 +2992,7 @@ export class Game {
       if (entry.system) data[entry.name] = entry.system.serialize();
     }
     data.dialogueLog = this.dialogueLogUI.serialize();
-    data.game = { playTimeMs: this.playTimeMs };
+    data.game = { playTimeMs: this.playTimeMs, randomState: this.runtimeRandom.getState() };
     return data;
   }
 
@@ -2904,7 +3012,10 @@ export class Game {
         if (entry.system && data[entry.name]) entry.system.deserialize(data[entry.name]);
       }
       if (data['dialogueLog']) this.dialogueLogUI.deserialize(data['dialogueLog'] as any);
-      if (data['game']) this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
+      if (data['game']) {
+        this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
+        this.runtimeRandom.setState((data['game'] as any).randomState);
+      }
     } finally {
       this.questManager.setRestoring(false);
       this.archiveManager.setRestoring(false);
@@ -3413,9 +3524,53 @@ export class Game {
       narrativeEval: this.graphDialogueManager.getNarrativeEvalDebug(),
       narrativeState: this.narrativeStateManager.debugSnapshot(),
       documentReveals: this.documentRevealManager.debugSnapshot(),
+      eventTrace: this.eventBus.getDebugTrace(),
+      saveData: this.collectSaveData(),
+      runtimeRandomState: this.runtimeRandom.getState(),
+      activeZones: [...this.zoneSystem.getActiveZoneIds()].sort(),
+      uiState: this.stateController.getDebugState(),
+      hudVisualState: this.fixedTickMode ? this.hud.getDebugVisualState() : null,
+      renderState: {
+        ...this.renderer.getDebugRenderState(),
+        ...this.sceneManager.getDebugRenderState(),
+      },
+      entityVisualState: this.fixedTickMode ? {
+        player: {
+          x: this.player.x,
+          y: this.player.y,
+          visible: this.player.sprite.container.visible,
+          animation: this.player.sprite.getDebugVisualState(),
+        },
+        npcs: this.sceneManager.getDebugEntityVisualState(),
+      } : null,
+      audioState: {
+        currentBgmId: this.audioManager.getRequestedBgmId(),
+        ambientIds: this.audioManager.getRequestedAmbientIds().sort(),
+        volumes: this.audioManager.serialize(),
+      },
+      inFlight: {
+        runtimeReady: this.runtimeReady,
+        fixedTickMode: this.fixedTickMode,
+        sceneSwitching: this.sceneManager.switching,
+        actionPolicyDepth: this.actionExecutor.getPolicyDepth(),
+        cutscene: this.cutsceneManager.isPlaying,
+        graphDialogue: this.graphDialogueManager.isActive,
+        scriptedDialogue: this.dialogueManager.isActive,
+        encounter: this.encounterManager.isActive,
+        waterMinigame: this.waterMinigameManager.isActive,
+        sugarWheelMinigame: this.sugarWheelMinigameManager.isActive,
+        paperCraftMinigame: this.paperCraftMinigameManager.isActive,
+        pressureHold: this.pressureHoldUI.isActive(),
+      },
       // serialize() 已收敛为恒 {active:false}（对话不入档），快照改用只读调试 getter
       dialogue: this.graphDialogueManager.getDebugInteractionState(),
       dialogueView: this.graphDialogueManager.getDialogueViewDebug(),
+      minigameDebug: {
+        water: this.waterMinigameManager.getDebugVisualState(),
+        sugarWheel: this.sugarWheelMinigameManager.getDebugVisualState(),
+        paperCraft: this.paperCraftMinigameManager.getDebugVisualState(),
+        pressureHold: this.pressureHoldUI.getDebugVisualState(),
+      },
       player: { x: this.player.x, y: this.player.y, facing: this.player.facingDirection },
       planes: this.planeReconciler.getDebugState(),
       inventory: this.inventoryManager.serialize(),
@@ -3446,7 +3601,6 @@ export class Game {
     for (const event of events) {
       this.listenEvent(event, () => this.scheduleRuntimeDebugSnapshotPublish(event));
     }
-    this.scheduleRuntimeDebugSnapshotPublish('runtime-ready');
   }
 
   private scheduleRuntimeDebugSnapshotPublish(reason: string): void {
@@ -3561,6 +3715,17 @@ export class Game {
   private applyRuntimeCommand(command: unknown): Promise<{ id: string; type: string; ok: boolean; message: string }> {
     return applyDevRuntimeCommand(command, {
       captureSnapshot: (reason) => this.publishRuntimeDebugSnapshot(reason),
+      clearEventTrace: () => this.eventBus.clearDebugTrace(),
+      debugExecuteAction: (action) => this.actionExecutor.executeAwait(action),
+      debugSetFixedTickMode: (enabled) => {
+        this.fixedTickMode = enabled;
+        this.hud.setFixedTickMode(enabled);
+        if (enabled) {
+          this.player.sprite.resetAnimationClock();
+          this.sceneManager.resetEntityAnimationClocks();
+        }
+      },
+      debugStepTicks: (ticks, dtMs) => this.debugStepTicks(ticks, dtMs),
       clearNarrativeTrace: () => this.narrativeStateManager.clearDebugTrace(),
       emitNarrativeSignal: (signal) => this.narrativeStateManager.emitNarrativeSignal(signal as NarrativeSignal),
       debugSetNarrativeState: (graphId, stateId) => this.narrativeStateManager.debugSetNarrativeState(graphId, stateId),
@@ -3583,6 +3748,9 @@ export class Game {
           type: 'switchScene',
           params: { targetScene: sceneId, targetSpawnPoint: spawnPoint },
         });
+        this.interactionSystem.update(0);
+        this.zoneSystem.update(0);
+        await this.debugWait(1);
       },
       debugTriggerHotspot: (hotspotId) => this.interactionCoordinator.debugTriggerHotspotById(hotspotId),
       debugInteractNpc: (npcId) => this.interactionCoordinator.debugInteractNpcById(npcId),
@@ -3613,7 +3781,34 @@ export class Game {
     await new Promise<void>((resolve) => window.setTimeout(resolve, ms));
   }
 
-  private debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): void {
+  private async debugStepTicks(ticks: number, dtMs: number): Promise<void> {
+    const count = Math.max(1, Math.min(200, Math.trunc(ticks)));
+    const dt = Math.max(0.001, Math.min(0.1, dtMs / 1000));
+    for (let index = 0; index < count; index++) {
+      this.tick(dt);
+      this.hud.stepFixedTick(dt);
+      // 真实 Ticker 的每帧之间会回到事件循环并清空整条微任务链；单次
+      // Promise.resolve 只让出一层，巡逻 moveTo→sleepWhilePaused 的第二层 continuation
+      // 仍会落到下一固定帧之后。MessageChannel 让出一个完整 task，且不推进墙钟。
+      await this.debugYieldEventLoopTurn();
+    }
+    // 固定步调试不经过 Pixi Ticker；显式提交一帧，保证截图读取的是本次逻辑状态而非已清 backbuffer。
+    this.renderer.app.render();
+  }
+
+  private debugYieldEventLoopTurn(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        channel.port2.close();
+        resolve();
+      };
+      channel.port2.postMessage(null);
+    });
+  }
+
+  private async debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): Promise<void> {
     this.player.x = x;
     this.player.y = y;
     if (snapCamera) {
@@ -3621,6 +3816,9 @@ export class Game {
     } else {
       this.camera.follow(x, y);
     }
+    this.interactionSystem.update(0);
+    this.zoneSystem.update(0);
+    await this.debugWait(1);
   }
 
   private async debugMovePlayerTo(x: number, y: number, speed: number, snapCamera: boolean): Promise<void> {
@@ -3629,7 +3827,7 @@ export class Game {
     const dy = y - this.player.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     if (distance < 0.5) {
-      this.debugSetPlayerPosition(x, y, snapCamera);
+      await this.debugSetPlayerPosition(x, y, snapCamera);
       return;
     }
 
@@ -3642,7 +3840,7 @@ export class Game {
     if (timeoutHandle !== null) {
       window.clearTimeout(timeoutHandle);
     }
-    this.debugSetPlayerPosition(x, y, snapCamera);
+    await this.debugSetPlayerPosition(x, y, snapCamera);
   }
 
   private async debugClick(x: number, y: number): Promise<void> {
@@ -3754,6 +3952,7 @@ export class Game {
       window.clearInterval(this.runtimeCommandPollTimer);
       this.runtimeCommandPollTimer = null;
     }
+    this.runtimeReady = false;
     this.runtimeCommandPollInFlight = false;
 
     for (const { event, fn } of this.boundCallbacks) {
@@ -3825,6 +4024,9 @@ export class Game {
     this.flagStore.destroy();
     this.inputManager.destroy();
     this.renderer.destroy();
+    // 资产缓存收尾必须放最后（各系统 destroy 可能仍触碰贴图/音频引用）：
+    // 不 dispose 则 Howl 常驻 Howler 全局注册表、纹理跨实例存活，跨 HMR/编辑器预览泄漏。
+    this.assetManager.dispose();
   }
 
   private tick(dt: number): void {
@@ -3832,6 +4034,10 @@ export class Game {
     this.playTimeMs += dt * 1000;
 
     this.camera.setPixelSnapTranslation(this.isEntityPixelDensityMatchRenderingOn());
+
+    // 位面对账先于 Exploring 分支：回 Exploring 边沿挂起的 zone 重注册（pendingZoneRefresh）
+    // 必须在本帧 zoneSystem.update 之前补刷，否则旧位面 zone 会以过期集合多跑一帧 enter/stay。
+    this.planeReconciler.update(dt);
 
     if (this.stateController.currentState === GameState.Exploring) {
       this.updatePlayerNav();
@@ -3901,7 +4107,6 @@ export class Game {
 
     this.emoteBubbleManager.update(dt);
     this.notificationUI.update(dt);
-    this.planeReconciler.update(dt);
     this.camera.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();
@@ -3917,17 +4122,15 @@ export class Game {
       );
       // depth_floor 直读场景 zones、不经 ZoneSystem——位面归属在此消费点单独过滤
       //（standard zone 的位面过滤在 shouldRegisterZoneWithZoneSystem）。
+      // exclusive（独立世界型）激活时缺省 zone 也不存在，须无条件走过滤。
       const zonesRaw = this.sceneManager.currentSceneData?.zones;
       const zones = zonesRaw?.some((z) => z.planes?.length)
-        ? zonesRaw.filter((z) => this.sceneManager.isEntityInActivePlane(z))
+          || this.planeReconciler.getActivePlaneMembership() === 'exclusive'
+        ? zonesRaw?.filter((z) => this.sceneManager.isEntityInActivePlane(z))
         : zonesRaw;
-      /** F2 性能：深度 floor 偏移的条件上下文每帧建一次，玩家/NPC/热点三处循环共享 */
-      const floorCondCtx = {
-        flagStore: this.flagStore,
-        questManager: this.questManager,
-        scenarioState: this.scenarioStateManager,
-        narrativeState: this.narrativeStateManager,
-      };
+      /** F2 性能：深度 floor 偏移的条件上下文每帧建一次，玩家/NPC/热点三处循环共享；
+       *  统一走中央工厂（律5），plane/@scene/@owner 叶子与其它条件入口口径一致。 */
+      const floorCondCtx = this.buildConditionEvalContext();
       if (this.playerDepthFilter) {
         const ex = resolveDepthFloorOffsetBoost(
           zones,

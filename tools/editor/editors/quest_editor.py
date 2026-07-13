@@ -792,6 +792,13 @@ class QuestEditor(QWidget):
         if r == QMessageBox.StandardButton.Save:
             if not self._commit_current_selection():
                 return False  # 校验失败：留在编辑器里修
+        else:
+            # Discard：把面板回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            if self._selection_type == "group" and self._current_selection:
+                self._show_group_props(self._current_selection)
+            elif self._selection_type == "quest" and self._current_selection:
+                self._show_quest_props(self._current_selection)
         return True
 
     def _on_tree_select(self, current: QTreeWidgetItem | None, _prev) -> None:

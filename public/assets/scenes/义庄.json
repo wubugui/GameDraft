@@ -23,8 +23,8 @@
   },
   "spawnPoints": {
     "entry": {
-      "x": 660.0,
-      "y": 660.0
+      "x": 430.0,
+      "y": 520.0
     }
   },
   "zones": [
@@ -72,6 +72,9 @@
             "sourceId": "义庄:z_义庄进门"
           }
         }
+      ],
+      "planes": [
+        "normal"
       ]
     },
     {
@@ -98,6 +101,45 @@
         "scent": "incense",
         "intensity": 38
       }
+    },
+    {
+      "id": "z_背尸_进门指路",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 330.0,
+          "y": 440.0
+        },
+        {
+          "x": 540.0,
+          "y": 440.0
+        },
+        {
+          "x": 540.0,
+          "y": 557.0
+        },
+        {
+          "x": 330.0,
+          "y": 557.0
+        }
+      ],
+      "conditions": [
+        {
+          "plane": "背尸"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "showSpeechBubble",
+          "params": {
+            "target": "npc_管事",
+            "text": "轻些放！那边空凳——脚朝门，头朝里！",
+            "duration": 2.8
+          }
+        }
+      ]
     }
   ],
   "hotspots": [
@@ -143,7 +185,10 @@
           "reached": true
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_镇尸_撒米",
@@ -172,7 +217,10 @@
       ],
       "data": {
         "graphId": "寻狗_镇尸_撒米"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_镇尸_墨斗",
@@ -201,7 +249,10 @@
       ],
       "data": {
         "graphId": "寻狗_镇尸_墨斗"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_镇尸_石子",
@@ -230,7 +281,10 @@
       ],
       "data": {
         "graphId": "寻狗_镇尸_石子"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_镇尸_剪子",
@@ -259,7 +313,10 @@
       ],
       "data": {
         "graphId": "寻狗_镇尸_剪子"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_停尸凳",
@@ -276,22 +333,91 @@
           "reached": true
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_出义庄",
       "type": "transition",
       "label": "出去",
-      "x": 660.0,
-      "y": 720.0,
+      "x": 430.0,
+      "y": 548.0,
       "interactionRange": 56.0,
       "data": {
         "targetScene": "雾津街头",
-        "targetSpawnPoint": "from_event"
+        "targetSpawnPoint": "from_yizhuang"
+      }
+    },
+    {
+      "id": "hs_背尸_空凳",
+      "type": "inspect",
+      "label": "空着的停尸凳",
+      "x": 630.0,
+      "y": 350.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "plane": "背尸"
+        }
+      ],
+      "conditionHidesEntity": true,
+      "planes": [
+        "背尸"
+      ],
+      "data": {
+        "actions": [
+          {
+            "type": "startDialogueGraph",
+            "params": {
+              "graphId": "义庄_背尸落凳"
+            }
+          }
+        ]
       }
     }
   ],
   "npcs": [
+    {
+      "id": "npc_义庄门口拦活",
+      "name": "袖手的老汉",
+      "x": 520.0,
+      "y": 490.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_义庄门口拦活",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu"
+        },
+        {
+          "any": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "looking"
+            },
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "accepted"
+            },
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "carrying"
+            },
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "placed"
+            }
+          ]
+        }
+      ],
+      "conditionHidesEntity": true
+    },
     {
       "id": "npc_管事",
       "name": "义庄管事",

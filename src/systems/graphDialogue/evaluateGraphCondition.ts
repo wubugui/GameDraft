@@ -3,6 +3,7 @@ import type { ConditionExpr } from '../../data/types';
 import type { QuestManager } from '../QuestManager';
 import type { FlagStore } from '../../core/FlagStore';
 import type { ScenarioStateManager } from '../../core/ScenarioStateManager';
+import { reportDevError } from '../../core/devErrorOverlay';
 import { QuestStatus } from '../../data/types';
 
 /** 单次条件求值的树形追踪（供 Debug 展示） */
@@ -15,6 +16,7 @@ export type ConditionTrace =
   | { kind: 'scenario'; result: boolean; label: string }
   | { kind: 'scenarioLine'; result: boolean; label: string }
   | { kind: 'narrative'; result: boolean; label: string }
+  | { kind: 'plane'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -40,6 +42,8 @@ export interface ConditionEvalContext {
     getPrimaryGraphByOwner?(ownerType: string, ownerId: string): { id: string } | undefined;
     getPrimaryActiveStateByOwner?(ownerType: string, ownerId: string): string | undefined;
     isOwnerStateActive?(ownerType: string, ownerId: string, stateId: string): boolean;
+    /** 诊断用（dev 悬垂引用检测）：判定图/状态是否存在于注册数据；图册未就绪返回 'unavailable'。 */
+    classifyStateRef?(graphId: string, stateId: string): 'ok' | 'missingGraph' | 'missingState' | 'unavailable';
   };
   /**
    * Flag 条件叶子中 `value` 为 string 时，比较前调用（与 resolveDisplayText 一致，支持 [tag:…]）。
@@ -50,6 +54,8 @@ export interface ConditionEvalContext {
   currentOwner?: { ownerType: string; ownerId: string };
   /** 当前场景 id：供 narrative 叶子的 `@scene` token 解析为 `scene:<id>` wrapper 图。 */
   currentSceneId?: string;
+  /** 当前激活位面 id（PlaneReconciler 派生，含 manual override）。未注入时 plane 叶子按 'normal' 比较。 */
+  getActivePlaneId?: () => string;
 }
 
 /**
@@ -109,6 +115,17 @@ function isScenarioLineLeaf(x: ConditionExpr): x is ScenarioLineConditionLeaf {
   return SCENARIO_LINE_STATUSES.has(m.lineStatus as ScenarioLineConditionLeaf['lineStatus']);
 }
 
+function isPlaneLeaf(x: ConditionExpr): x is { plane: string } {
+  const m = x as { plane?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown; narrative?: unknown };
+  return (
+    typeof m.plane === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined
+  );
+}
+
 function isNarrativeStateLeaf(x: ConditionExpr): x is { narrative: string; state: string } {
   const m = x as { narrative?: unknown; state?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown };
   return (
@@ -163,6 +180,42 @@ function evalScenarioLineLeaf(expr: ScenarioLineConditionLeaf, ctx: ConditionEva
   return sid ? ctx.scenarioState.getLineLifecycleState(sid) === expr.lineStatus : false;
 }
 
+// ---- dev 悬垂引用诊断 ----
+// narrative 叶子引用不存在的图/状态时求值恒为 false，与「存在但未到达」在运行时不可分辨，
+// 是内容改名/删除后最隐蔽的静默失败。dev 下对每对 (graphId, stateId) 做一次性存在性判定并
+// 上报顶部错误面；记忆化保证热路径不重复查询、稳态零分配，prod 短路为一次布尔判断。
+const isDevRuntime = (() => {
+  try {
+    return typeof import.meta !== 'undefined' && !!import.meta.env?.DEV;
+  } catch {
+    return false;
+  }
+})();
+const checkedNarrativeLeafRefs = new Map<string, Set<string>>();
+
+function devReportDanglingNarrativeLeaf(graphId: string, stateId: string, ctx: ConditionEvalContext): void {
+  if (!isDevRuntime) return;
+  const ns = ctx.narrativeState;
+  if (!ns?.classifyStateRef) return;
+  const checkedStates = checkedNarrativeLeafRefs.get(graphId);
+  if (checkedStates?.has(stateId)) return;
+  const verdict = ns.classifyStateRef(graphId, stateId);
+  if (verdict === 'unavailable') return; // 图册未就绪（装配期），等加载后再判
+  let states = checkedStates;
+  if (!states) {
+    states = new Set();
+    checkedNarrativeLeafRefs.set(graphId, states);
+  }
+  states.add(stateId);
+  if (verdict === 'ok') return;
+  reportDevError(
+    verdict === 'missingGraph'
+      ? `条件引用不存在的叙事图 "${graphId}"（state "${stateId}"）——该条件恒为 false，疑似图改名/删除后的悬垂引用`
+      : `条件引用叙事图 "${graphId}" 中不存在的状态 "${stateId}"——该条件恒为 false，疑似状态改名/删除后的悬垂引用`,
+    '[narrative]',
+  );
+}
+
 /** graphId / stateId 由调用方解析（trace 版还要用它们拼 label，避免重复解析）。 */
 function evalNarrativeLeaf(
   graphId: string,
@@ -172,6 +225,7 @@ function evalNarrativeLeaf(
 ): boolean {
   const ns = ctx.narrativeState;
   if (!graphId || !stateId || !ns) return false;
+  devReportDanglingNarrativeLeaf(graphId, stateId, ctx);
   if (reached) {
     if (typeof ns.hasReachedState === 'function') {
       return ns.hasReachedState(graphId, stateId);
@@ -195,6 +249,14 @@ function evalQuestLeaf(quest: string, qsRaw: unknown, ctx: ConditionEvalContext)
 function evalFlagLeaf(expr: Condition, ctx: ConditionEvalContext): boolean {
   const c = applyResolvedFlagConditionValue(expr, ctx);
   return ctx.flagStore.evalPureFlagConjunction([c]);
+}
+
+/** 当前激活位面 === 期望 id；未注入 getter 时按 'normal'（保守：无位面系统即常态）。 */
+function evalPlaneLeaf(expr: { plane: string }, ctx: ConditionEvalContext): boolean {
+  const want = expr.plane.trim();
+  if (!want) return false;
+  const active = ctx.getActivePlaneId ? ctx.getActivePlaneId() : 'normal';
+  return active === want;
 }
 
 /**
@@ -232,6 +294,10 @@ export function evaluateConditionExpr(
     const graphId = resolveNarrativeGraphRef(expr.narrative, ctx);
     const stateId = expr.state.trim();
     return evalNarrativeLeaf(graphId, stateId, narrativeLeafReached(expr), ctx);
+  }
+
+  if (isPlaneLeaf(expr)) {
+    return evalPlaneLeaf(expr, ctx);
   }
 
   if (isQuestLeaf(expr)) {
@@ -326,6 +392,13 @@ export function evaluateConditionExprWithTrace(
       ? `narrative「${ref}」期望 reached=${stateId || '—'}，当前=${got ?? '—'}`
       : `narrative「${ref}」期望=${stateId || '—'}实际=${got ?? '—'}`;
     return { result: ok, trace: { kind: 'narrative', result: ok, label } };
+  }
+
+  if (isPlaneLeaf(expr)) {
+    const ok = evalPlaneLeaf(expr, ctx);
+    const active = ctx.getActivePlaneId ? ctx.getActivePlaneId() : 'normal';
+    const label = `plane 期望=${expr.plane.trim() || '—'}实际=${active}`;
+    return { result: ok, trace: { kind: 'plane', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

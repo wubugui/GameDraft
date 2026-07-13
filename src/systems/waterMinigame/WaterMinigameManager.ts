@@ -82,6 +82,10 @@ export class WaterMinigameManager extends MinigameSessionManagerBase<
     };
   }
 
+  getDebugVisualState(): Record<string, unknown> {
+    return { active: this.active, scene: this.scene?.getDebugVisualState() ?? null };
+  }
+
   deserialize(data: object): void {
     const d = data as {
       usesBySpotDay?: Record<string, number>;

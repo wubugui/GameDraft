@@ -174,4 +174,28 @@ export class SaveManager implements ISaveDataProvider {
     }
     return false;
   }
+
+  exportSlotPayload(slot: number): string | null {
+    if (slot < 0 || slot >= MAX_SLOTS) return null;
+    try {
+      const raw = localStorage.getItem(STORAGE_PREFIX + slot);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { systems?: unknown };
+      return parsed && typeof parsed === 'object' && parsed.systems && typeof parsed.systems === 'object' ? raw : null;
+    } catch {
+      return null;
+    }
+  }
+
+  importSlotPayload(slot: number, raw: string): boolean {
+    if (slot < 0 || slot >= MAX_SLOTS || typeof raw !== 'string' || !raw.trim()) return false;
+    try {
+      const parsed = JSON.parse(raw) as { systems?: unknown };
+      if (!parsed || typeof parsed !== 'object' || !parsed.systems || typeof parsed.systems !== 'object') return false;
+      localStorage.setItem(STORAGE_PREFIX + slot, JSON.stringify(parsed));
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

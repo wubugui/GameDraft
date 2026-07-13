@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from .file_io import read_json
 from .shared.cutscene_action_allowlist_io import cutscene_action_allowlist_frozenset
 from .shared.move_entity_map_picker import normalize_move_entity_waypoints
+from .shared.narrative_catalog import emitted_signal_ids
 from .shared.runtime_field_schema import field_meta, is_valid_field, value_matches_field
 
 if TYPE_CHECKING:
@@ -58,6 +59,11 @@ def _anim_bundle_id_from_ref(raw: object) -> str:
 def validate(model: ProjectModel) -> list[Issue]:
     issues: list[Issue] = []
     from .shared.ref_validator import validate_all_embedded_refs
+
+    # 载入期被静默修正/丢弃的数据异常（重复 id 后者覆盖等）：不冒出来的话，
+    # 模型里已看不到原始问题、validator 之后永远发现不了。
+    for msg in getattr(model, "load_anomalies", None) or []:
+        issues.append(Issue("warning", "load", "project", str(msg)))
 
     for i, msg in enumerate(validate_all_embedded_refs(model)):
         issues.append(Issue("error", "embeddedRef", f"#{i}", msg))
@@ -196,6 +202,14 @@ def validate(model: ProjectModel) -> list[Issue]:
                 if ts and ts not in scene_ids:
                     issues.append(Issue("error", "scene", sid,
                                         f"Hotspot '{hs.get('id')}' targetScene '{ts}' not found"))
+                tsp = str(data.get("targetSpawnPoint") or "").strip()
+                if ts and ts in scene_ids and tsp \
+                        and tsp not in set(model.spawn_point_keys_for_scene(ts)):
+                    # 运行时静默回落默认出生点，落点错位难排查——编辑期兜出来
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"Hotspot '{hs.get('id')}' targetSpawnPoint '{tsp}' 不在场景 "
+                        f"'{ts}' 的 spawnPoints 中（运行时将回落默认出生点）"))
             if hs.get("type") == "encounter":
                 eid = data.get("encounterId", "")
                 if eid and eid not in encounter_ids:
@@ -701,6 +715,10 @@ def validate(model: ProjectModel) -> list[Issue]:
     if cfg.get("initialCutscene") and cfg["initialCutscene"] not in cutscene_ids:
         issues.append(Issue("warning", "config", "game_config",
                             f"initialCutscene '{cfg['initialCutscene']}' not found"))
+    # fallbackScene：目标场景缺失时的兜底场景（SaveManager 恢复存档用），悬垂同样致命。
+    if cfg.get("fallbackScene") and cfg["fallbackScene"] not in scene_ids:
+        issues.append(Issue("error", "config", "game_config",
+                            f"fallbackScene '{cfg['fallbackScene']}' not found"))
 
     _validate_overlay_images(model, issues)
     _validate_parallax_scenes(model, issues)
@@ -715,9 +733,72 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_paper_craft(model, issues)
     _validate_narrative(model, issues)
     _validate_planes(model, issues)
+    _validate_plane_action_pairing(model, issues)
     _validate_narrative_templates(model, issues)
+    _validate_entity_reachability(model, issues)
 
     return issues
+
+
+def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> None:
+    """对话图裸实体引用按可达场景集校验（实体迁移场景后的头号盲区）。
+
+    裸 target/npcId 运行时只在**当前场景**解析,找不到静默跳过;而无场景上下文的
+    兜底检查按全局 id 集放行——实体搬走后校验全绿、运行时演出无声丢失。本检查对
+    "可达集封闭"（只从已知场景触发）的对话图收紧口径:引用 id 全局存在但不在任何
+    可达场景中 → warning。全局都不存在的 id 由既有兜底检查报,这里不重复。
+    软引用（startDialogueGraph.npcId 等,未命中回退显示名）不在此列。
+    """
+    from .shared import signal_refactor as _sig
+    from .shared.entity_refactor import (
+        ENTITY_REF_PARAMS,
+        _walk_ref_actions,
+        dialogue_graph_scene_reach,
+    )
+
+    global_npcs = _all_npc_ids_global_set(model)
+    global_hotspots = _all_hotspot_ids_global_set(model)
+    for gid, reach in sorted(dialogue_graph_scene_reach(model).items()):
+        if not isinstance(reach, set) or not reach:
+            continue  # GLOBAL / 无触发面：可达集不封闭,维持全局口径
+        doc = _sig._load_dialogue_doc(model, gid)
+        if doc is None:
+            continue
+        npc_union: set[str] = set()
+        hotspot_union: set[str] = set()
+        for sid in reach:
+            npc_union |= _npc_ids_in_scene(model, sid)
+            hotspot_union |= _hotspot_ids_in_scene(model, sid)
+        seen: set[tuple[str, str, str]] = set()
+
+        def visit(act_type: str, params: dict) -> None:
+            for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
+                if spec_kind not in ("actor", "emote_subject", "npc"):
+                    continue
+                value = params.get(param)
+                if not isinstance(value, str):
+                    continue
+                ref = value.strip()
+                if not ref or ref == "player" or ref.startswith("_cut_"):
+                    continue
+                allowed = npc_union | (hotspot_union if spec_kind == "emote_subject" else set())
+                if ref in allowed:
+                    continue
+                exists_globally = ref in global_npcs or (
+                    spec_kind == "emote_subject" and ref in global_hotspots)
+                if not exists_globally:
+                    continue
+                key = (act_type, param, ref)
+                if key in seen:
+                    continue
+                seen.add(key)
+                issues.append(Issue(
+                    "warning", "dialogue", gid,
+                    f"{act_type}.{param} 引用实体 {ref!r}，但它不在本图任何可达场景"
+                    f"（{'、'.join(sorted(reach))}）中——运行时按当前场景解析将静默跳过。"
+                    "该实体若刚被迁移过场景，需改此引用或连带处理",
+                ))
+        _walk_ref_actions(doc, visit)
 
 
 def _iter_narrative_graphs(model: ProjectModel):
@@ -783,6 +864,21 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
         return
     registered = _narrative_registered_signal_ids(model)
     graphs = _narrative_graph_index(model)
+    # 悬垂监听检查的两个「有人发」集合（口径对齐网页 TaskBusPanel 的 danglingSignalNoEmit）：
+    # 实发 = emitted_signal_ids（对话图 + 内容资产 + 叙事图 action 树 + 派生广播）；
+    # 声明 = 全项目 blackbox meta.emits 并集（声明未真发的漂移由下方第 3 段单独报）。
+    emitted = set(emitted_signal_ids(model))
+    declared_emits: set[str] = set()
+    for comp in data.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        for el in comp.get("elements") or []:
+            if not isinstance(el, dict):
+                continue
+            for raw in (el.get("meta") or {}).get("emits") or []:
+                s = str(raw).strip()
+                if s:
+                    declared_emits.add(s)
 
     # 1. 信号注册表：重复 id
     seen: set[str] = set()
@@ -843,6 +939,13 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                     "warning", "narrative", gid,
                     f"Transition {tid!r} 的信号 {sig!r} 未在信号注册表（signals）登记",
                 ))
+            # 悬垂监听：注册≠有人发。允许「先接线后写对话」的合法流程，故 warning 不 error。
+            if sig not in emitted and sig not in declared_emits:
+                issues.append(Issue(
+                    "warning", "narrative", gid,
+                    f"Transition {tid!r} 监听信号 {sig!r}，但全项目没有任何对话/资产/叙事图发出它，"
+                    f"也无画布黑盒声明（悬垂监听，永远不会触发）",
+                ))
 
     # 3. dialogueBlackbox meta.emits 与对话图实际 emitNarrativeSignal 的漂移（画布不可说谎）
     gd = model.dialogues_path / "graphs"
@@ -893,7 +996,8 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
 
 
 _PLANE_KNOWN_TOP_KEYS = frozenset((
-    "id", "label", "movement", "interaction", "camera", "lighting", "healthDrainPerSec",
+    "id", "label", "extends", "membership",
+    "movement", "interaction", "camera", "lighting", "travel", "healthDrainPerSec",
 ))
 _PLANE_MOVEMENT_NUM_KEYS = ("driftX", "driftY", "speedScale")
 _PLANE_INTERACTION_KEYS = ("canPickup", "canInteractHotspots", "canTalkNpcs")
@@ -915,11 +1019,35 @@ def _validate_narrative_templates(model: ProjectModel, issues: list[Issue]) -> N
     真正的存在性由盖章期（stamp）撞名检测与盖章后的 narrative_graphs 校验兜底。
     """
     data = getattr(model, "narrative_templates", None)
-    if not isinstance(data, dict) or not (data.get("templates") or []):
-        return
     try:
         from .shared.narrative_templates import validate_templates_file
     except Exception:  # pragma: no cover - defensive
+        return
+    # 重名检测必须读原始磁盘文件：加载期 normalize 已静默去重（保留首条），模型里永远
+    # 看不到重复——不读原文件这条检查就是死代码，而下次保存会把第二条从磁盘上抹掉。
+    raw_path = model.data_path / "narrative_templates.json"
+    if raw_path.is_file():
+        try:
+            import json as _json
+            raw = _json.loads(raw_path.read_text(encoding="utf-8"))
+            raw_templates = raw.get("templates") if isinstance(raw, dict) else raw
+            seen_ids: set[str] = set()
+            if isinstance(raw_templates, list):
+                for t in raw_templates:
+                    if not isinstance(t, dict):
+                        continue
+                    tid = str(t.get("id") or "").strip()
+                    if tid and tid in seen_ids:
+                        issues.append(Issue(
+                            "warning", "narrative_template", tid,
+                            f"narrative_templates.json 里模板 id「{tid}」重复：编辑器加载只认第一条，"
+                            "下次保存会把后面的重复条目从磁盘删除——请先手工去重",
+                        ))
+                    if tid:
+                        seen_ids.add(tid)
+        except Exception:
+            pass  # 文件损坏由加载路径容错，这里不重复报
+    if not isinstance(data, dict) or not (data.get("templates") or []):
         return
     for row in validate_templates_file(data):
         sev = "error" if row.get("severity") == "error" else "warning"
@@ -927,12 +1055,48 @@ def _validate_narrative_templates(model: ProjectModel, issues: list[Issue]) -> N
         issues.append(Issue(sev, "narrative_template", item, str(row.get("message") or row.get("code"))))
 
 
+def plane_extends_errors(planes: list) -> list[tuple[str, str]]:
+    """planes 的 extends 缺父/成环检查，返回 (位面id, 错误信息) 列表。
+
+    运行时（PlaneReconciler.expandExtends）对这两类问题只 console.warn 并静默忽略
+    继承——数据意义被改变，必须在保存/校验层拦成 error。_validate_planes 与
+    ProjectModel.save_all 预校验共用本函数，避免两处逻辑漂移（复核 P1-04）。
+    """
+    ids: set[str] = set()
+    extends_of: dict[str, str] = {}
+    for p in planes or []:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id") or "").strip()
+        if not pid:
+            continue
+        ids.add(pid)
+        ext = p.get("extends")
+        if isinstance(ext, str) and ext.strip():
+            extends_of[pid] = ext.strip()
+    errs: list[tuple[str, str]] = []
+    for pid, parent in extends_of.items():
+        if parent not in ids:
+            errs.append((pid, f"extends 的父位面 {parent!r} 不在 planes.json 中"))
+    for pid in extends_of:
+        trail: set[str] = set()
+        cur: str | None = pid
+        while cur is not None and cur in extends_of:
+            if cur in trail:
+                errs.append((pid, f"extends 链存在环（经 {cur!r}），运行时将忽略继承"))
+                break
+            trail.add(cur)
+            cur = extends_of.get(cur)
+    return errs
+
+
 def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
     """planes.json（PlaneDef[]）结构 + 实体 planes / 叙事 activePlane 引用存在性。
 
     契约（src/systems/plane/types.ts）：id 非空唯一；movement/interaction/camera/lighting
     为对象；未知顶层键 warning。实体归属引用不存在的位面 = error；跨图多于一个声明
-    activePlane 的图 = warning（运行时后进者胜为兜底）。
+    activePlane 的图 = error（决议：运行时恒单激活，组合需求走 extends 组合位面）；
+    extends 缺父/成环 = error（运行时忽略继承兜底）。
     """
     seen: set[str] = set()
     for p in model.planes:
@@ -949,6 +1113,20 @@ def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
         label = p.get("label")
         if label is not None and not isinstance(label, str):
             issues.append(Issue("error", "plane", pid, "label 须为字符串"))
+        ext = p.get("extends")
+        if ext is not None and (not isinstance(ext, str) or not ext.strip()):
+            issues.append(Issue("error", "plane", pid, "extends 须为非空字符串（父位面 id）"))
+        mem = p.get("membership")
+        if mem is not None and mem not in ("shared", "exclusive"):
+            issues.append(Issue(
+                "error", "plane", pid,
+                "membership 须为 'shared' 或 'exclusive'（世界模型：缺省实体是否存在）",
+            ))
+        if pid == "normal" and mem == "exclusive":
+            issues.append(Issue(
+                "error", "plane", pid,
+                "normal 位面恒为 shared（共享世界型），不可配 membership='exclusive'",
+            ))
         mv = p.get("movement")
         if mv is not None:
             if not isinstance(mv, dict):
@@ -986,6 +1164,14 @@ def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
         lt = p.get("lighting")
         if lt is not None and not isinstance(lt, dict):
             issues.append(Issue("error", "plane", pid, "lighting 须为对象（partial SceneLightEnv）"))
+        tv = p.get("travel")
+        if tv is not None:
+            if not isinstance(tv, dict):
+                issues.append(Issue("error", "plane", pid, "travel 须为对象"))
+            else:
+                amt = tv.get("allowMapTravel")
+                if amt is not None and not isinstance(amt, bool):
+                    issues.append(Issue("error", "plane", pid, "travel.allowMapTravel 须为布尔"))
         hd = p.get("healthDrainPerSec")
         if hd is not None and (
             isinstance(hd, bool) or not isinstance(hd, (int, float))
@@ -998,13 +1184,19 @@ def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
                     "warning", "plane", pid,
                     f"未知顶层键 {key!r}（PlaneDef 之外的字段，运行时不消费）",
                 ))
+    # --- extends 存在性 + 环检测（运行时忽略非法继承，此处必须 error 拦住）---
+    # 与 save_all 预校验共用 plane_extends_errors，防两处逻辑漂移。
+    for pid, msg in plane_extends_errors(model.planes):
+        issues.append(Issue("error", "plane", pid, msg))
+
     if model.planes and "normal" not in seen:
         issues.append(Issue(
-            "warning", "plane", "planes",
+            "error", "plane", "planes",
             "planes.json 缺少 id='normal' 的常态位面（契约：normal 为开局默认激活位面）",
         ))
 
     known = _plane_id_set(model)
+    explicit_member_counts: dict[str, int] = {}
 
     # --- 实体归属 planes 引用存在性（hotspot / npc / zone）---
     for sid, sc in model.scenes.items():
@@ -1012,7 +1204,22 @@ def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
             continue
         for key in ("hotspots", "npcs", "zones"):
             for ent in sc.get(key) or []:
-                if not isinstance(ent, dict) or "planes" not in ent:
+                if not isinstance(ent, dict):
+                    continue
+                # 世界模型提示：项目启用多位面后，transition 未声明 planes 时在
+                # exclusive 位面下会随缺省实体一起消失（玩家可能困死在异世界）。
+                if (
+                    key == "hotspots"
+                    and len(known) > 1
+                    and str(ent.get("type") or "") == "transition"
+                    and "planes" not in ent
+                ):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"transition '{ent.get('id') or '?'}' 未声明 planes 归属"
+                        "（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）",
+                    ))
+                if "planes" not in ent:
                     continue
                 eid = str(ent.get("id") or "?")
                 raw = ent.get("planes")
@@ -1034,15 +1241,31 @@ def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
                             "error", "scene", sid,
                             f"{key[:-1]} '{eid}' 归属的位面 {ref_s!r} 不在 planes.json 中",
                         ))
+                    else:
+                        explicit_member_counts[ref_s] = explicit_member_counts.get(ref_s, 0) + 1
 
-    # --- 叙事状态 activePlane 引用存在性 + 跨图多图声明 warning ---
-    declaring_graphs: list[str] = []
+    # --- exclusive（独立世界型）位面全项目零显式归属实体 = 空世界 ---
+    for pid in sorted(known):
+        if pid == "normal":
+            continue
+        if model.plane_membership(pid) == "exclusive" and not explicit_member_counts.get(pid):
+            issues.append(Issue(
+                "warning", "plane", pid,
+                "独立世界型（exclusive）位面没有任何显式归属实体：激活后是空世界"
+                "（缺省实体不存在），请给实体 planes 加该位面或改回 shared",
+            ))
+
+    # --- 叙事状态 activePlane 引用存在性 + 跨图点名口径（2026-07-10 制作人拍板）---
+    # 同一个位面被多张图点名 = 完全合法不报：模板从 archetype 盖出的每单任务各是一图、
+    # 共用同一位面（如多单背尸活），运行时按「最后进入的状态」逐态派生，毫无歧义。
+    # 只有「多张图点名了**不同**位面」才提示（warning）：静态无法证明它们不会同时处于
+    # 点名状态，运行时后进者胜为兜底——请确认这些任务不会同时进行。
+    plane_declaring_graphs: dict[str, set[str]] = {}
     for g in _iter_narrative_graphs(model):
         gid = str(g["id"])
         states = g.get("states")
         if not isinstance(states, dict):
             continue
-        declares = False
         for stid, st in states.items():
             if not isinstance(st, dict) or "activePlane" not in st:
                 continue
@@ -1053,21 +1276,70 @@ def _validate_planes(model: ProjectModel, issues: list[Issue]) -> None:
                     f"状态 {stid!r} 的 activePlane 须为非空字符串",
                 ))
                 continue
-            declares = True
             if ap.strip() not in known:
                 issues.append(Issue(
                     "error", "narrative", gid,
                     f"状态 {stid!r} 点名的位面 {ap.strip()!r} 不在 planes.json 中",
                 ))
-        if declares:
-            declaring_graphs.append(gid)
-    if len(declaring_graphs) > 1:
+            plane_declaring_graphs.setdefault(ap.strip(), set()).add(gid)
+    if len(plane_declaring_graphs) > 1:
+        detail = "; ".join(
+            f"{pid}: {', '.join(sorted(gids))}"
+            for pid, gids in sorted(plane_declaring_graphs.items())
+        )
         issues.append(Issue(
             "warning", "narrative", "planes",
-            "多于一个叙事图声明 activePlane（"
-            + ", ".join(sorted(declaring_graphs))
-            + "）；跨图同时点名时运行时按后进者胜兜底，建议一位面一图",
+            f"多张叙事图点名了不同位面（{detail}）；若这些任务可能同时处于点名状态，"
+            "运行时按后进者胜——请确认互斥（同一位面被多图点名不在此列，完全合法）",
         ))
+
+
+def _validate_plane_action_pairing(model: ProjectModel, issues: list[Issue]) -> None:
+    """activatePlane 配对检查（anywhere_scoped 决议）。
+
+    过场内的 activatePlane 随 cutscene:end 自动清除，无需配对；过场外为 session 语义
+    ——非过场资产的 action 树里出现 `activatePlane` 而**同资产**内没有任何
+    `deactivatePlane`，多半是忘了收（玩家会永久卡在该位面），报 warning。
+    粗粒度递归扫描（不区分分支可达性），资产粒度：scene 文件 / quest / encounter /
+    叙事图 / pressure_hold / signal_cue 条目。
+    """
+    def scan(obj: object, found: set[str]) -> None:
+        if isinstance(obj, dict):
+            t = obj.get("type")
+            if t in ("activatePlane", "deactivatePlane"):
+                found.add(str(t))
+            for v in obj.values():
+                scan(v, found)
+        elif isinstance(obj, list):
+            for v in obj:
+                scan(v, found)
+
+    assets: list[tuple[str, str, object]] = []
+    for sid, sc in model.scenes.items():
+        assets.append(("scene", sid, sc))
+    for q in model.quests:
+        if isinstance(q, dict):
+            assets.append(("quest", str(q.get("id") or "?"), q))
+    for e in model.encounters:
+        if isinstance(e, dict):
+            assets.append(("encounter", str(e.get("id") or "?"), e))
+    for g in _iter_narrative_graphs(model):
+        assets.append(("narrative", str(g["id"]), g))
+    for h in model.pressure_holds:
+        if isinstance(h, dict):
+            assets.append(("pressure_hold", str(h.get("id") or "?"), h))
+    for c in model.signal_cues:
+        if isinstance(c, dict):
+            assets.append(("signal_cue", str(c.get("id") or "?"), c))
+    for data_type, item_id, payload in assets:
+        found: set[str] = set()
+        scan(payload, found)
+        if "activatePlane" in found and "deactivatePlane" not in found:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "出现 activatePlane 但同资产内无 deactivatePlane：过场外的手动覆盖持续到"
+                " deactivate/读档（压过叙事点名）。确认由别处收尾，或改用叙事点名/过场内激活",
+            ))
 
 
 def _validate_pressure_holds(model: ProjectModel, issues: list[Issue]) -> None:
@@ -1705,9 +1977,10 @@ def _append_action_param_ref_issues(
         if not pid:
             issues.append(Issue("error", data_type, item_id, "activatePlane 缺少 id"))
         elif pid not in known:
+            # 运行时对未注册位面直接拒绝激活（静默跳过），必须 error 拦在编辑期
             issues.append(Issue(
-                "warning", data_type, item_id,
-                f"activatePlane id {pid!r} 不在 planes.json 中",
+                "error", data_type, item_id,
+                f"activatePlane id {pid!r} 不在 planes.json 中（运行时会拒绝激活）",
             ))
 
     if t == "startDialogueGraph":
@@ -1732,6 +2005,24 @@ def _append_action_param_ref_issues(
             issues.append(Issue(
                 "warning", data_type, item_id,
                 f"startDialogueGraph npcId {nid!r} 在当前上下文下无法解析为实体",
+            ))
+
+    if t in ("switchScene", "changeScene"):
+        ts = str(p.get("targetScene") or "").strip()
+        tsp = str(p.get("targetSpawnPoint") or "").strip()
+        known_scenes = set(model.all_scene_ids())
+        if not ts:
+            issues.append(Issue("error", data_type, item_id, f"{t} 缺少 targetScene"))
+        elif ts not in known_scenes:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{t} targetScene {ts!r} 不在场景列表中",
+            ))
+        elif tsp and tsp not in set(model.spawn_point_keys_for_scene(ts)):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{t} targetSpawnPoint {tsp!r} 不在场景 {ts!r} 的 spawnPoints 中"
+                "（运行时将回落默认出生点）",
             ))
 
     if t == "setHotspotDisplayImage":
@@ -2385,6 +2676,19 @@ def _scan_condition_expr(
                 "narrative 条件 reached 须为布尔（true=曾到达过，含当前）",
             ))
         return
+    if isinstance(expr.get("plane"), str):
+        pid = str(expr["plane"]).strip()
+        if not pid:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "plane 条件需要非空位面 id",
+            ))
+        elif pid not in _plane_id_set(model):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"plane 条件引用的位面 {pid!r} 不在 planes.json 中",
+            ))
+        return
     issues.append(Issue(
         "warning", data_type, item_id,
         f"无法识别的条件叶子（键: {sorted(expr.keys())!s}）",
@@ -2586,7 +2890,12 @@ def _walk_action_defs(
                 f"添加新 Action 须在 ActionRegistry 与 action_editor 同步维护",
             ))
         p = act.get("params") or {}
-        if t == "setFlag" and p.get("key"):
+        if t in ("setFlag", "appendFlag") and not str(p.get("key") or "").strip():
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{t} 的 params.key 为空——运行时 FlagStore 拒写空键，该动作等于无效",
+            ))
+        elif t == "setFlag" and p.get("key"):
             _flag_issue(model, issues, str(p["key"]), data_type, item_id, scene_id)
             _setflag_whitelist_issue(issues, "setFlag", str(p["key"]).strip(), data_type, item_id)
         elif t == "appendFlag" and p.get("key"):

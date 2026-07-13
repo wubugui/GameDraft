@@ -1239,6 +1239,10 @@ class ScenariosCatalogEditor(QWidget):
                     self.pop_flush_error() or "校验未通过，无法保存。",
                 )
                 return False
+        else:
+            # Discard：把编辑缓冲回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # 缓冲≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            self._reload_scenarios_keep_selection()
         return True
 
 

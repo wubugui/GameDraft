@@ -35,6 +35,7 @@ import {
   coerceRuntimeFieldValue,
   type SceneEntityKind,
 } from '../data/EntityRuntimeFieldSchema';
+import type { ActivePlaneSnapshot } from './plane/types';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -108,8 +109,8 @@ export class SceneManager implements IGameSystem {
   /** 当前播放或过场预览绑定的 cutscene id；用于筛选 cutsceneOnly 实体。 */
   private activeCutsceneBindingId: string | null = null;
 
-  /** 由 Game 注入：当前激活位面 id（PlaneReconciler 派生）；未注入时按 'normal'。 */
-  private activePlaneGetter: (() => string) | null = null;
+  /** 由 Game 注入：当前激活位面快照（PlaneReconciler 派生）；未注入时按 normal/shared。 */
+  private activePlaneGetter: (() => ActivePlaneSnapshot) | null = null;
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
@@ -239,16 +240,20 @@ export class SceneManager implements IGameSystem {
     return this.activeCutsceneBindingId;
   }
 
-  setActivePlaneGetter(fn: (() => string) | null): void {
+  setActivePlaneGetter(fn: (() => ActivePlaneSnapshot) | null): void {
     this.activePlaneGetter = fn;
   }
 
-  /** 实体/zone 是否归属当前激活位面：缺省（无 planes 字段）= 存在于所有位面。 */
+  /**
+   * 实体/zone 是否归属当前激活位面。缺省（无 planes 字段/空数组）由激活位面的世界模型决定：
+   * shared（共享世界型）= 存在；exclusive（独立世界型）= 不存在，只有显式归属实体在。
+   * 显式 planes 为白名单：须包含激活位面 id。
+   */
   private entityInPlane(def: { planes?: string[] }): boolean {
     const planes = def.planes;
-    if (!Array.isArray(planes) || planes.length === 0) return true;
-    const active = this.activePlaneGetter?.() ?? 'normal';
-    return planes.includes(active);
+    const active = this.activePlaneGetter?.() ?? { id: 'normal', membership: 'shared' as const };
+    if (!Array.isArray(planes) || planes.length === 0) return active.membership === 'shared';
+    return planes.includes(active.id);
   }
 
   /**
@@ -923,6 +928,33 @@ export class SceneManager implements IGameSystem {
       x: first.texture.width / scene.worldWidth,
       y: first.texture.height / scene.worldHeight,
     };
+  }
+
+  getDebugRenderState(): Record<string, unknown> {
+    const backgrounds = this.sceneContainerBg?.children
+      .filter((child): child is Sprite => child instanceof Sprite)
+      .map((sprite) => ({
+        x: sprite.x,
+        y: sprite.y,
+        scaleX: sprite.scale.x,
+        scaleY: sprite.scale.y,
+        textureWidth: sprite.texture.width,
+        textureHeight: sprite.texture.height,
+      })) ?? [];
+    return {
+      filterId: this.currentScene?.filterId ?? null,
+      backgrounds,
+    };
+  }
+
+  getDebugEntityVisualState(): Record<string, unknown>[] {
+    return this.currentNpcs
+      .map((npc) => npc.getDebugVisualState())
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  }
+
+  resetEntityAnimationClocks(): void {
+    for (const npc of this.currentNpcs) npc.resetAnimationClock();
   }
 
   /** 第一层背景的纹理（用于构建辐照度探针）；无有效背景精灵时返回 null。 */

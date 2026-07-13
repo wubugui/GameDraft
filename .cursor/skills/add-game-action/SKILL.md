@@ -7,6 +7,8 @@ description: Registers a new ActionExecutor action in GameDraft with editor supp
 
 在 GameDraft 中，**一条可用的 Action = 运行时注册 + 主编辑器可配置 + 数据校验认可**。只做其中一步视为未完成。
 
+> 登记面全景与已知坑（可选参数被 Python 兜底当必填、参数往返保真登记等）：`agent_docs/content/mechanisms/l2-action-primitive-registration.md`、`agent_docs/runtime/mechanisms/action-registration-quadruple.md`。
+
 ## 术语
 
 策划或口语里的 **command / 命令 / 指令** 在多数场景下与本文的 **Action** 同指：数据中为 `{ "type": "...", "params": { ... } }`，由 **`ActionExecutor`** 执行（热区、区域、任务奖励、遭遇结果、延迟事件嵌套等）。若用户指的是 **演出（cutscene）时间线里的 `commands`**，其字段与 `ActionDef` 不同，须按 `cutscenes` 数据与 `CutsceneManager` 单独处理，**不完全等同**本 Skill 的流程。
@@ -30,6 +32,9 @@ description: Registers a new ActionExecutor action in GameDraft with editor supp
 
 3. **嵌套 Action**
    - 若新动作的 `params` 内含 **`ActionDef[]`**（例如子动作列表），必须在 **`tools/editor/validator.py`** 的 **`_walk_action_defs`** 中为该类型增加递归（与 `enableRuleOffers`、`addDelayedEvent` 同级），否则子动作不会参与「类型已登记」校验。**新增递归属「需审批」范围**（影响全局校验行为）。
+
+3.5 **实体/场景引用参数登记（条件性第五件）**
+   - 若参数是**实体/场景/出生点引用**（裸 `target`/`npcId`、`sceneId`+`entityId`/`hotspotId`/`zoneId` 限定、`targetScene`/`targetSpawnPoint` 等），必须在 **`tools/editor/shared/entity_refactor.py`** 的 **`ENTITY_REF_PARAMS`** 登记该参数及其引用种类（文件头注释有种类清单）。实体重构（迁移/改名/安全删除）、引用扫描、validator 可达性检查共同消费这张表；漏登记 = 该引用对重构与校验双双隐形。`_PARAM_SCHEMAS` 内的漏网会被 `tools/editor/tests/test_entity_refactor.py` 的 parity 测试拦下，走自定义参数分支的动作必须自觉登记。
 
 4. **校验**
    - `validator` 会对数据中出现的 `action.type` 与 **`ACTION_TYPES`** 比对；未登记会报 **error**。新增类型后运行主编辑器 **Validate Data** 或等价调用 `validate(model)` 做冒烟。

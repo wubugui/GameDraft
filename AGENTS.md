@@ -2,6 +2,15 @@
 
 This repository uses `CLAUDE.md` as the full project rulebook. Codex agents should read and follow `CLAUDE.md` first, then apply any narrower instructions from the current task.
 
+<!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->
+## §A 开工先查公共知识库(agent_docs)
+
+- 动手前按任务域读 `agent_docs/INDEX.md` 对应条目;确定要改的文件后跑
+  `python3 agent_docs/_meta/audit.py --paths <files...>` 取必读机制卡,先读卡再动手。
+- 治理类业务(治理/建库/收编方法论/炼化/intake)统一入口:`python3 agent_docs/_meta/cli.py`。
+- 发现库内文档与现实打架:收尾往 `agent_docs/_meta/inbox/` 丢一条三行偏差记录(零门槛)。
+<!-- agent-docs-gate:end -->
+
 ## Governance Context
 
 For Skill / Workflow governance tasks, do not use the dashboard screenshot as source of truth. Use one of these structured entry points:

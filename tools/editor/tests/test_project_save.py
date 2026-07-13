@@ -10,6 +10,7 @@ from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
 
 from tools.editor.project_model import ProjectModel
+from tools.editor.tests.save_test_utils import patch_staged_add
 
 
 class TestProjectSaveAll(unittest.TestCase):
@@ -45,9 +46,7 @@ class TestProjectSaveAll(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch(
-                "tools.editor.project_model.write_json", side_effect=cap,
-            ):
+            ), patch_staged_add(cap):
                 m.save_all()
             self.assertEqual(written, [])
 
@@ -69,9 +68,7 @@ class TestProjectSaveAll(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch(
-                "tools.editor.project_model.write_json", side_effect=fail_write,
-            ):
+            ), patch_staged_add(fail_write):
                 with self.assertRaises(ValueError):
                     m.save_all()
             self.assertEqual(calls, [])
@@ -96,9 +93,7 @@ class TestProjectSaveAll(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch(
-                "tools.editor.project_model.write_json", side_effect=capture,
-            ):
+            ), patch_staged_add(capture):
                 m.save_all()
 
             data_root = root / "public" / "assets" / "data"

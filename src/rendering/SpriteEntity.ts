@@ -211,6 +211,32 @@ export class SpriteEntity {
     return this.frameIndex;
   }
 
+  /** 跨运行壳视觉门禁：只读导出当前动画游标与帧裁切，不参与游戏逻辑。 */
+  getDebugVisualState(): Record<string, unknown> {
+    const frame = this.sprite.texture?.frame;
+    return {
+      state: this.currentState,
+      frameIndex: this.frameIndex,
+      frameTimer: this.frameTimer,
+      playing: this.playing,
+      facing: this.facingDirection,
+      worldWidth: this.worldWidth,
+      worldHeight: this.worldHeight,
+      frame: frame ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height } : null,
+      pixelDensityMatchActive: this.pixelDensityMatchActive,
+    };
+  }
+
+  /** 固定时钟门禁起点：保留当前动画状态/播放标志，只归零游标与余量。 */
+  resetAnimationClock(): void {
+    this.frameIndex = 0;
+    this.frameTimer = 0;
+    if (this.currentFrames.length > 0) {
+      this.sprite.texture = this.currentFrames[0];
+      this.applySpriteScale();
+    }
+  }
+
   /** 直接定位到某一帧并显示（供预览工具 scrub/逐帧）；不改变 playing 标志，越界自动夹取。 */
   setFrameIndex(index: number): void {
     if (this.currentFrames.length === 0) return;

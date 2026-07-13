@@ -2,6 +2,7 @@ import type {
   ActionDef,
   AuthoringCatalogDef,
   ExtractResponseDef,
+  NarrativeCategoriesFileDef,
   NarrativeGraphsFileDef,
   NarrativeTemplatesFileDef,
   ProjectionResult,
@@ -11,7 +12,13 @@ import type {
   TaskIndex,
   ValidationIssueDef,
 } from './types';
+import { normalizeCategoriesFile } from './editor/categories';
 import { emptyCatalog, mergeValidationIssues, validateNarrativeData } from './editorModel';
+import {
+  loadEditorPreferencesLocal,
+  saveEditorPreferencesLocal,
+  type EditorPreferences,
+} from './utils/editorPreferences';
 
 const DRAFT_STORAGE_KEY = 'narrative-editor-draft';
 
@@ -33,6 +40,17 @@ type QtBridge = {
   extractTemplate?: (payload: string, cb: (result: string) => void) => void;
   stampTemplate?: (payload: string, cb: (result: string) => void) => void;
   getQuest?: (questId: string, cb: (result: string) => void) => void;
+  getCategories?: (cb: (result: string) => void) => void;
+  saveCategories?: (payload: string, cb: (result: string) => void) => void;
+  getEditorPreferences?: (cb: (result: string) => void) => void;
+  saveEditorPreferences?: (payload: string, cb: (result: string) => void) => void;
+  getCanvasGroups?: (cb: (result: string) => void) => void;
+  saveCanvasGroups?: (payload: string, cb: (result: string) => void) => void;
+  scanSignalUsages?: (signalId: string, cb: (result: string) => void) => void;
+  scanStateUsages?: (graphId: string, stateId: string, cb: (result: string) => void) => void;
+  scanGraphUsages?: (graphId: string, cb: (result: string) => void) => void;
+  applySignalRefactor?: (payload: string, cb: (result: string) => void) => void;
+  undoSignalRefactor?: (cb: (result: string) => void) => void;
 };
 
 declare global {
@@ -47,6 +65,9 @@ declare global {
       getCurrentDataHash: () => string;
       isDirty: () => boolean;
       markSaved: () => void;
+      refresh?: () => void;
+      /** 宿主（PySide 位面面板等）跳转定位：切到含该图的编排并聚焦该状态。返回是否命中。 */
+      focusState?: (graphId: string, stateId: string) => boolean;
     };
   }
 }
@@ -269,6 +290,159 @@ export async function stampTemplateRemote(payload: Record<string, unknown>): Pro
   });
 }
 
+const CATEGORIES_DRAFT_STORAGE_KEY = 'narrative-editor-categories-draft';
+
+/**
+ * 「整理分组」标签：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json。
+ * 主路径走 Qt 宿主（ProjectModel 旁挂文件 narrative_categories.json）；纯 Web 开发态
+ * 兜底到 localStorage 草稿 / 直读文件（仅 dev 便利，主路径仍是文件）。
+ */
+export async function loadCategories(): Promise<NarrativeCategoriesFileDef> {
+  const bridge = await waitForBridge();
+  if (!bridge?.getCategories) {
+    const draft = localStorage.getItem(CATEGORIES_DRAFT_STORAGE_KEY);
+    if (draft) {
+      try {
+        return normalizeCategoriesFile(JSON.parse(draft));
+      } catch {
+        localStorage.removeItem(CATEGORIES_DRAFT_STORAGE_KEY);
+      }
+    }
+    try {
+      const res = await fetch('/assets/data/narrative_categories.json');
+      return normalizeCategoriesFile(await res.json());
+    } catch {
+      return normalizeCategoriesFile(null);
+    }
+  }
+  return new Promise((resolve) => {
+    bridge.getCategories!((payload) => {
+      try {
+        resolve(normalizeCategoriesFile(JSON.parse(payload)));
+      } catch {
+        resolve(normalizeCategoriesFile(null));
+      }
+    });
+  });
+}
+
+export async function saveCategoriesRemote(
+  file: NarrativeCategoriesFileDef,
+): Promise<{ ok: boolean; reason?: string; categories?: NarrativeCategoriesFileDef }> {
+  const bridge = await waitForBridge();
+  const normalized = normalizeCategoriesFile(file);
+  if (!bridge?.saveCategories) {
+    // 纯 Web 开发态：落 localStorage 草稿（主路径是 Qt 宿主旁挂文件）。
+    try {
+      localStorage.setItem(CATEGORIES_DRAFT_STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+      /* 存储不可用时静默降级为内存态 */
+    }
+    return { ok: true, categories: normalized };
+  }
+  return new Promise((resolve) => {
+    bridge.saveCategories!(JSON.stringify(normalized), (payload) => {
+      try {
+        resolve(JSON.parse(payload) as { ok: boolean; reason?: string; categories?: NarrativeCategoriesFileDef });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析分组保存响应：${String(e)}` });
+      }
+    });
+  });
+}
+
+/**
+ * 叙事编辑器 UI 偏好（字体/缩放/画布点阵…）：编辑器专用，运行时永不加载。
+ * 主路径走 Qt 宿主 bridge → 工程文件 editor_data/narrative_editor_preferences.json，
+ * apply 即立即落盘、重启不丢；纯 Web 开发态兜底到 localStorage（见 debug-ui-persistence 范式）。
+ */
+export async function loadEditorPreferencesRemote(): Promise<Partial<EditorPreferences> | null> {
+  const bridge = await waitForBridge();
+  if (!bridge?.getEditorPreferences) {
+    return loadEditorPreferencesLocal();
+  }
+  return new Promise((resolve) => {
+    bridge.getEditorPreferences!((payload) => {
+      try {
+        const parsed = JSON.parse(payload || '{}') as Partial<EditorPreferences>;
+        resolve(parsed && typeof parsed === 'object' ? parsed : null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+export async function saveEditorPreferencesRemote(
+  preferences: EditorPreferences,
+): Promise<{ ok: boolean; reason?: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge?.saveEditorPreferences) {
+    saveEditorPreferencesLocal(preferences);
+    return { ok: true };
+  }
+  return new Promise((resolve) => {
+    bridge.saveEditorPreferences!(JSON.stringify(preferences), (payload) => {
+      try {
+        resolve(JSON.parse(payload) as { ok: boolean; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析偏好保存响应：${String(e)}` });
+      }
+    });
+  });
+}
+
+const CANVAS_GROUPS_DRAFT_STORAGE_KEY = 'narrative-editor-canvas-groups-draft';
+
+/**
+ * 画布分组框（编辑器视觉整理层）：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json。
+ * 主路径走 Qt 宿主 bridge → 工程文件 editor_data/narrative_canvas_groups.json，改动即落盘、
+ * 重启不丢；纯 Web 开发态兜底 localStorage（见 canvas/editorGroups.ts）。
+ */
+export async function loadCanvasGroupsRemote(): Promise<unknown> {
+  const bridge = await waitForBridge();
+  if (!bridge?.getCanvasGroups) {
+    try {
+      const draft = localStorage.getItem(CANVAS_GROUPS_DRAFT_STORAGE_KEY);
+      return draft ? (JSON.parse(draft) as unknown) : null;
+    } catch {
+      return null;
+    }
+  }
+  return new Promise((resolve) => {
+    bridge.getCanvasGroups!((payload) => {
+      try {
+        const parsed = JSON.parse(payload || '{}') as unknown;
+        resolve(parsed && typeof parsed === 'object' ? parsed : null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+export async function saveCanvasGroupsRemote(file: unknown): Promise<{ ok: boolean; reason?: string }> {
+  const bridge = await waitForBridge();
+  const payload = JSON.stringify(file);
+  if (!bridge?.saveCanvasGroups) {
+    try {
+      localStorage.setItem(CANVAS_GROUPS_DRAFT_STORAGE_KEY, payload);
+    } catch {
+      /* 存储不可用时静默降级为内存态 */
+    }
+    return { ok: true };
+  }
+  return new Promise((resolve) => {
+    bridge.saveCanvasGroups!(payload, (result) => {
+      try {
+        resolve(JSON.parse(result) as { ok: boolean; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析分组保存响应：${String(e)}` });
+      }
+    });
+  });
+}
+
 export async function getQuestRemote(questId: string): Promise<{ ok: boolean; quest?: Record<string, unknown>; reason?: string }> {
   const bridge = await waitForBridge();
   if (!bridge?.getQuest) return { ok: false, reason: '任务读取只在主编辑器（Qt 宿主）内可用' };
@@ -357,6 +531,140 @@ export async function editConditionsNative(
         resolve(parsed && typeof parsed === 'object' ? parsed : { ok: false, reason: 'Invalid ConditionEditor response' });
       } catch (e) {
         resolve({ ok: false, reason: `Invalid ConditionEditor response: ${String(e)}` });
+      }
+    });
+  });
+}
+
+// --------------------------------------------------------------------------- //
+// 信号重构（改名/删除）：宿主引擎全项目级联，零磁盘写入，落盘只经主编辑器 Save All。
+// --------------------------------------------------------------------------- //
+
+export type SignalUsagesDef = {
+  signalId: string;
+  registryIndex: number;
+  listeners: Array<{ graphId: string; transitionId: string }>;
+  actionEmits: number;
+  metaEmits: Array<{ compositionId: string; elementId: string }>;
+  dialogues: Array<{ graphId: string; count: number }>;
+  assets: Array<{ bucket: string; attr: string; itemId: string; count: number }>;
+  totalRefs: number;
+};
+
+export type StateUsagesDef = {
+  graphId: string;
+  stateId: string;
+  internalEndpoints: number;
+  derivedListeners: Array<{ graphId: string; transitionId: string }>;
+  narrativeConditions: number;
+  external: Array<{ bucket: string; itemId: string; count: number }>;
+  totalRefs: number;
+};
+
+export type GraphUsagesDef = {
+  graphId: string;
+  derivedListeners: number;
+  metaReads: number;
+  narrativeConditions: number;
+  external: Array<{ bucket: string; itemId: string; count: number }>;
+  totalRefs: number;
+};
+
+export type SignalRefactorResultDef = {
+  ok: boolean;
+  reason?: string;
+  summary?: Record<string, unknown>;
+  description?: string;
+  narrative?: NarrativeGraphsFileDef;
+  journalSize?: number;
+};
+
+const REFACTOR_HOST_ONLY = '重构需要工程文件后端，只在主编辑器（Qt 宿主）内可用；独立网页开发模式没有工程数据可级联';
+
+export async function scanSignalUsagesRemote(
+  signalId: string,
+): Promise<{ ok: boolean; usages?: SignalUsagesDef; reason?: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge?.scanSignalUsages) return { ok: false, reason: REFACTOR_HOST_ONLY };
+  return new Promise((resolve) => {
+    bridge.scanSignalUsages!(signalId, (payload) => {
+      try {
+        resolve(JSON.parse(payload) as { ok: boolean; usages?: SignalUsagesDef; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析扫描响应：${String(e)}` });
+      }
+    });
+  });
+}
+
+export async function scanStateUsagesRemote(
+  graphId: string,
+  stateId: string,
+): Promise<{ ok: boolean; usages?: StateUsagesDef; reason?: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge?.scanStateUsages) return { ok: false, reason: REFACTOR_HOST_ONLY };
+  return new Promise((resolve) => {
+    bridge.scanStateUsages!(graphId, stateId, (payload) => {
+      try {
+        resolve(JSON.parse(payload) as { ok: boolean; usages?: StateUsagesDef; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析扫描响应：${String(e)}` });
+      }
+    });
+  });
+}
+
+export async function scanGraphUsagesRemote(
+  graphId: string,
+): Promise<{ ok: boolean; usages?: GraphUsagesDef; reason?: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge?.scanGraphUsages) return { ok: false, reason: REFACTOR_HOST_ONLY };
+  return new Promise((resolve) => {
+    bridge.scanGraphUsages!(graphId, (payload) => {
+      try {
+        resolve(JSON.parse(payload) as { ok: boolean; usages?: GraphUsagesDef; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析扫描响应：${String(e)}` });
+      }
+    });
+  });
+}
+
+export async function applySignalRefactorRemote(payload: {
+  op: 'rename' | 'delete' | 'renameState' | 'renameGraph';
+  oldId?: string;
+  newId?: string;
+  signalId?: string;
+  force?: boolean;
+  graphId?: string;
+  oldStateId?: string;
+  newStateId?: string;
+  oldGraphId?: string;
+  newGraphId?: string;
+  data: NarrativeGraphsFileDef;
+}): Promise<SignalRefactorResultDef> {
+  const bridge = await waitForBridge();
+  if (!bridge?.applySignalRefactor) return { ok: false, reason: REFACTOR_HOST_ONLY };
+  return new Promise((resolve) => {
+    bridge.applySignalRefactor!(JSON.stringify(payload), (result) => {
+      try {
+        resolve(JSON.parse(result) as SignalRefactorResultDef);
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析重构响应：${String(e)}` });
+      }
+    });
+  });
+}
+
+export async function undoSignalRefactorRemote(): Promise<SignalRefactorResultDef> {
+  const bridge = await waitForBridge();
+  if (!bridge?.undoSignalRefactor) return { ok: false, reason: REFACTOR_HOST_ONLY };
+  return new Promise((resolve) => {
+    bridge.undoSignalRefactor!((result) => {
+      try {
+        resolve(JSON.parse(result) as SignalRefactorResultDef);
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析撤销响应：${String(e)}` });
       }
     });
   });

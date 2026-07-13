@@ -1507,9 +1507,11 @@ class SceneCanvas(QGraphicsView):
         self._entity_items: dict[str, QGraphicsEllipseItem | QGraphicsRectItem | QGraphicsObject] = {}
         self._npc_ref_items: list[QGraphicsItem] = []
         self._npc_ref_visible: bool = True
-        # 位面视图过滤（纯视图，不改数据）：None=显示全部；否则只显示归属含该位面 +
-        # 缺省(无 planes=存在于所有位面)的实体，与运行时 SceneManager.entityInPlane 同口径。
+        # 位面视图过滤（纯视图，不改数据）：None=显示全部；否则只显示归属含该位面的实体，
+        # 缺省(无 planes)实体按该位面世界模型——shared 显示 / exclusive 隐藏，
+        # 与运行时 SceneManager.entityInPlane 同口径。
         self._plane_filter: str | None = None
+        self._plane_filter_exclusive: bool = False
         self._entity_planes: dict[str, list[str] | None] = {}
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
         self._lightcurve_overlay: _LightCurvePolyline | None = None
@@ -1938,6 +1940,7 @@ class SceneCanvas(QGraphicsView):
         hid = str(entity_id).strip()
         if not hid:
             return
+        self._entity_planes.pop(f"hotspot:{hid}", None)
         for key in (f"hotspot:{hid}", f"hotspot_display:{hid}", f"hotspot_collision:{hid}"):
             it = self._entity_items.pop(key, None)
             if it is not None and it.scene() is self._gfx:
@@ -1948,6 +1951,7 @@ class SceneCanvas(QGraphicsView):
         if not nid:
             return
         self.remove_npc_patrol_overlay(nid)
+        self._entity_planes.pop(f"npc:{nid}", None)
         for key in (f"npc:{nid}", f"npc_collision:{nid}"):
             it = self._entity_items.pop(key, None)
             if it is not None and it.scene() is self._gfx:
@@ -1958,6 +1962,7 @@ class SceneCanvas(QGraphicsView):
         if not zid:
             return
         key = f"zone:{zid}"
+        self._entity_planes.pop(key, None)
         it = self._entity_items.pop(key, None)
         if it is not None and it.scene() is self._gfx:
             self._gfx.removeItem(it)
@@ -2023,7 +2028,12 @@ class SceneCanvas(QGraphicsView):
 
     def _entity_visible_under_plane_filter(self, planes: list[str] | None) -> bool:
         pf = self._plane_filter
-        return pf is None or planes is None or pf in planes
+        if pf is None:
+            return True
+        if planes is None:
+            # 缺省实体：shared 位面存在 / exclusive（独立世界型）不存在
+            return not self._plane_filter_exclusive
+        return pf in planes
 
     def _record_entity_planes(self, key: str, raw: object) -> None:
         """add_* 登记实体归属并按当前位面视图即时套用（新图元默认可见，故只需隐藏被过滤掉的）。"""
@@ -2033,9 +2043,11 @@ class SceneCanvas(QGraphicsView):
             kind, _, eid = key.partition(":")
             self.set_entity_visible(kind, eid, False)
 
-    def set_plane_filter(self, plane_id: str | None) -> None:
-        """设位面视图：None=显示全部；否则只显示归属含该位面 + 缺省(全位面)的实体。纯预览，不改数据。"""
+    def set_plane_filter(self, plane_id: str | None, exclusive: bool = False) -> None:
+        """设位面视图：None=显示全部；否则只显示归属含该位面的实体。缺省实体按
+        exclusive（该位面世界模型是否独立世界型）决定显隐。纯预览，不改数据。"""
         self._plane_filter = (str(plane_id).strip() or None) if plane_id else None
+        self._plane_filter_exclusive = bool(exclusive) and self._plane_filter is not None
         self._apply_plane_filter()
 
     def _apply_plane_filter(self) -> None:
@@ -4542,9 +4554,12 @@ class ScenePropertyPanel(QScrollArea):
         gcombo.setMinimumWidth(160)
         self._hs_inspect_graph_combo = gcombo
         graph_row.addRow("graphId", gcombo)
-        self._hs_inspect_entry = FilterableTypeCombo([], self, select_only=False)
+        self._hs_inspect_entry = FilterableTypeCombo([("（留空）", "")], self, select_only=True)
         self._hs_inspect_entry.setMinimumWidth(160)
-        self._hs_inspect_entry.lineEdit().setPlaceholderText("可选 entry 节点 id（从 graphId 的节点中选）")
+        self._hs_inspect_entry.setToolTip(
+            "可选 entry 节点 id：从所选 graphId 的图节点中选（留空=图默认入口）。"
+            "已存的未知值以「(数据)」前缀保留可选。",
+        )
         graph_row.addRow("entry", self._hs_inspect_entry)
         self._hs_inspect_graph_wrap = QWidget()
         self._hs_inspect_graph_wrap.setLayout(graph_row)
@@ -6159,11 +6174,15 @@ class ScenePropertyPanel(QScrollArea):
     def _set_inspect_entry_choices(self, graph_id: str, entry_value: str) -> None:
         gid = (graph_id or "").strip()
         node_ids = self._model.dialogue_graph_node_ids(gid) if gid else []
+        rows = [("（留空）", "")] + [(n, n) for n in node_ids]
+        ev = (entry_value or "").strip()
+        # select_only 选择器：已存的未知 entry 注入保留（IdRefSelector 悬垂保值同款范式）。
+        if ev and all(x[1] != ev for x in rows):
+            rows = [(f"(数据) {ev}", ev)] + rows
         self._hs_inspect_entry.blockSignals(True)
         try:
-            self._hs_inspect_entry.set_entries(
-                [("（留空）", "")] + [(n, n) for n in node_ids])
-            self._hs_inspect_entry.set_committed_type(entry_value or "")
+            self._hs_inspect_entry.set_entries(rows)
+            self._hs_inspect_entry.set_committed_type(ev)
         finally:
             self._hs_inspect_entry.blockSignals(False)
 
@@ -7055,6 +7074,23 @@ class SceneEditor(QWidget):
         del_btn.setToolTip("删除当前选中的实体")
         del_btn.clicked.connect(self._delete_selected)
         tb.addWidget(del_btn)
+        refactor_menu = QMenu(self)
+        refactor_menu.addAction("迁移到场景…", lambda: self._refactor_selected("move"))
+        refactor_menu.addAction("重命名 id…", lambda: self._refactor_selected("rename"))
+        refactor_menu.addAction("安全删除（引用报告）…", lambda: self._refactor_selected("delete"))
+        refactor_menu.addSeparator()
+        refactor_menu.addAction("撤销上次重构", self._undo_entity_refactor)
+        refactor_btn = QToolButton()
+        refactor_btn.setText("重构")
+        refactor_btn.setToolTip(
+            "选中 NPC / 热区 / Zone / 出生点后：跨场景迁移、全项目改名、带引用报告的安全删除；"
+            "先扫描全项目引用并预览，确认才执行（未 Save All 前仅内存变更）。"
+            "Zone 的入站引用与出生点的入站 transition/切场景动作会全量机械改写跟随；"
+            "polygon / 坐标需迁移后在目标场景重画。")
+        refactor_btn.setMenu(refactor_menu)
+        refactor_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        refactor_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        tb.addWidget(refactor_btn)
         ll.addWidget(tb)
 
         # canvas zoom controls (do not touch data; operate only on the view)
@@ -7109,8 +7145,9 @@ class SceneEditor(QWidget):
 
         _plane_lab = QLabel("位面视图")
         _plane_lab.setToolTip(
-            "只显示归属所选位面的实体（缺省=无 planes 字段=存在于所有位面的实体始终显示），"
-            "与运行时位面显隐同口径。纯预览过滤，不改数据；选「全部位面」= 不过滤。"
+            "只显示归属所选位面的实体；缺省（无 planes 字段）实体按该位面世界模型——"
+            "共享世界型(shared)显示、独立世界型(exclusive)隐藏，与运行时位面显隐同口径。"
+            "纯预览过滤，不改数据；选「全部位面」= 不过滤。"
         )
         ll.addWidget(_plane_lab)
         self._combo_plane_view = FilterableTypeCombo([], self, select_only=True)
@@ -7221,12 +7258,30 @@ class SceneEditor(QWidget):
         keys = {v for _a, v in rows}
         w.set_committed_type(prev if (prev and prev in keys) else "")
         # 候选变化后按当前选中重贴一次（选中位面被删则回落到全部=显示全部）。
-        self._canvas.set_plane_filter(w.committed_type().strip() or None)
+        pid0 = w.committed_type().strip()
+        self._canvas.set_plane_filter(
+            pid0 or None, exclusive=self._plane_view_exclusive(pid0))
+
+    def _plane_view_exclusive(self, pid: str) -> bool:
+        """所选位面是否独立世界型（含 extends 链解析），与运行时缺省实体口径一致。"""
+        return bool(pid) and self._model.plane_membership(pid) == "exclusive"
+
+    def activate_plane_view(self, plane_id: str) -> None:
+        """外部跳转入口（位面面板 hub）：打开指定位面的位面视图（空/未知 id 回落全部）。"""
+        w = getattr(self, "_combo_plane_view", None)
+        if not isinstance(w, FilterableTypeCombo):
+            return
+        self._refill_scene_plane_view_combo()
+        pid = str(plane_id or "").strip()
+        known = {p for p, _ in self._model.all_plane_ids()}
+        w.set_committed_type(pid if pid in known else "")
+        self._on_plane_view_changed()
 
     def _on_plane_view_changed(self, _t: str = "") -> None:
         w = getattr(self, "_combo_plane_view", None)
         pid = w.committed_type().strip() if isinstance(w, FilterableTypeCombo) else ""
-        self._canvas.set_plane_filter(pid or None)
+        self._canvas.set_plane_filter(
+            pid or None, exclusive=self._plane_view_exclusive(pid))
 
     def _refill_scene_cutscene_ctx_combo(self, *, init: bool = False) -> None:
         w = getattr(self, "_combo_cutscene_ctx", None)
@@ -8206,6 +8261,9 @@ class SceneEditor(QWidget):
         lbl = str(hs.get("id", "") or "").strip() or new_id
         self._canvas.update_entity_circle_label("hotspot", new_id, lbl)
         self._canvas.refresh_hotspot_visuals(hs)
+        # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
+        self._canvas._record_entity_planes(key, hs.get("planes"))
+        self._canvas._apply_plane_filter()
 
     def _sync_npc_canvas_after_commit(self, old_id: str, npc: dict) -> None:
         new_id = str(npc.get("id", "") or "").strip()
@@ -8234,6 +8292,9 @@ class SceneEditor(QWidget):
         self._canvas.update_entity_circle_label("npc", new_id, disp)
         self._canvas.refresh_npc_collision_visuals(npc)
         self._refresh_one_scene_npc_anim(new_id)
+        # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
+        self._canvas._record_entity_planes(key, npc.get("planes"))
+        self._canvas._apply_plane_filter()
 
     def _sync_zone_canvas_after_commit(self, old_id: str, zone: dict) -> None:
         new_id = str(zone.get("id", "") or "").strip()
@@ -8259,6 +8320,9 @@ class SceneEditor(QWidget):
                 self._canvas.update_zone_polygon(
                     new_id, [{"x": x, "y": y} for x, y in pts],
                 )
+        # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
+        self._canvas._record_entity_planes(key, zone.get("planes"))
+        self._canvas._apply_plane_filter()
 
     def _capture_canvas_primary_selection(self) -> tuple[str, str] | None:
         """返回画布当前选中图元的 (entity_kind, entity_id)；无选中则 None。"""
@@ -8565,33 +8629,93 @@ class SceneEditor(QWidget):
             return
         self._delete_selected()
 
-    def _delete_selected(self) -> None:
-        sc = self._require_scene()
-        if sc is None:
-            return
-        kind: str | None = None
-        eid: str | None = None
+    def _selected_entity_ref(self) -> tuple[str, str] | None:
+        """当前选中实体的 (kind, id)：画布选中优先，退回右侧属性面板正在编辑的实体。"""
         for it in self._canvas._gfx.selectedItems():
             if hasattr(it, "entity_kind") and hasattr(it, "entity_id"):
                 ek = str(getattr(it, "entity_kind", "") or "")
                 ei = getattr(it, "entity_id", None)
                 if ek and ei is not None and str(ei) != "":
-                    kind, eid = ek, str(ei)
-                    break
-        if kind is None or eid is None:
-            w = self._props._stack.currentWidget()
-            if w == self._props._npc_panel and self._props._pending_npc:
-                kind, eid = "npc", str(
-                    self._props._pending_npc.get("id", "") or "")
-            elif w == self._props._hotspot_panel and self._props._pending_hotspot:
-                kind, eid = "hotspot", str(
-                    self._props._pending_hotspot.get("id", "") or "")
-            elif w == self._props._zone_panel and self._props._pending_zone:
-                kind, eid = "zone", str(
-                    self._props._pending_zone.get("id", "") or "")
-            elif w == self._props._spawn_panel and self._props._spawn_scene is not None:
-                kind = "spawn"
-                eid = str(self._props._spawn_name_original or "")
+                    return ek, str(ei)
+        w = self._props._stack.currentWidget()
+        if w == self._props._npc_panel and self._props._pending_npc:
+            return "npc", str(self._props._pending_npc.get("id", "") or "")
+        if w == self._props._hotspot_panel and self._props._pending_hotspot:
+            return "hotspot", str(self._props._pending_hotspot.get("id", "") or "")
+        if w == self._props._zone_panel and self._props._pending_zone:
+            return "zone", str(self._props._pending_zone.get("id", "") or "")
+        if w == self._props._spawn_panel and self._props._spawn_scene is not None:
+            return "spawn", str(self._props._spawn_name_original or "")
+        return None
+
+    def _refactor_selected(self, op: str) -> None:
+        """实体重构入口（迁移/改名/安全删除）：先提交 staging，再开预览确认对话框。"""
+        sc = self._require_scene()
+        if sc is None:
+            return
+        ref = self._selected_entity_ref()
+        kind = ""
+        if ref is not None:
+            kind = {"npc_collision": "npc", "hotspot_collision": "hotspot"}.get(ref[0], ref[0])
+        if ref is None or kind not in ("npc", "hotspot", "zone", "spawn"):
+            QMessageBox.information(
+                self, "实体重构", "请先选中一个 NPC / 热区 / Zone / 出生点。")
+            return
+        eid = ref[1]
+        if kind == "spawn" and eid == "default":
+            QMessageBox.information(self, "实体重构", "默认出生点不参与重构。")
+            return
+        # commit-on-leave：把属性面板/画布 staging 先落进模型，重构基于已提交数据
+        self._commit_pending_scene_edits()
+        from ..shared.entity_refactor_dialog import (
+            MoveEntityDialog,
+            RenameEntityDialog,
+            SafeDeleteEntityDialog,
+        )
+        dialog_cls = {
+            "move": MoveEntityDialog,
+            "rename": RenameEntityDialog,
+            "delete": SafeDeleteEntityDialog,
+        }[op]
+        try:
+            dlg = dialog_cls(self._model, self._current_scene_id or "", kind, eid, self)
+        except Exception as exc:  # noqa: BLE001 - 扫描期异常给提示,不崩编辑器
+            QMessageBox.warning(self, "实体重构", f"引用扫描失败：{exc}")
+            return
+        if not dlg.exec() or dlg.result_summary is None:
+            return
+        summary = dlg.result_summary
+        self._load_scene(self._current_scene_id, reset_view=False)
+        if summary.get("op") == "moveEntity":
+            dst = summary["dstScene"]
+            self._select_scene_entity_by_kind(kind, eid, dst)
+            dangling = len(summary.get("danglingSceneLocal") or [])
+            msg = (f"已迁移到「{dst}」；坐标保留原值，请在目标场景重新摆位。"
+                   + (f"\n源场景仍有 {dangling} 处裸引用悬垂（见 Validate Data）。" if dangling else ""))
+        elif summary.get("op") == "renameEntity":
+            skipped = summary.get("scope", {}).get("skippedDialogues") or []
+            msg = (f"已改名为「{summary['newId']}」。"
+                   + (f"\n未自动改写（指向歧义）的对话图：{'、'.join(skipped)}" if skipped else ""))
+        else:
+            msg = (f"已删除「{eid}」；"
+                   f"{summary.get('danglingRefs', 0)} 处引用悬垂（跑 Validate Data 查看）。")
+        QMessageBox.information(self, "实体重构", msg)
+
+    def _undo_entity_refactor(self) -> None:
+        from ..shared import entity_refactor as er
+        result = er.undo_last(self._model)
+        if result.get("ok"):
+            self._load_scene(self._current_scene_id, reset_view=False)
+        QMessageBox.information(
+            self, "实体重构", str(result.get("description") or result.get("reason") or ""))
+
+    def _delete_selected(self) -> None:
+        sc = self._require_scene()
+        if sc is None:
+            return
+        ref = self._selected_entity_ref()
+        kind: str | None = ref[0] if ref else None
+        eid: str | None = ref[1] if ref else None
         if not kind or not eid:
             return
         if kind == "spawn" and eid == "default":

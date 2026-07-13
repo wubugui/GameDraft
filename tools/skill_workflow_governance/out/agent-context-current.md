@@ -36,25 +36,25 @@ Codex, Claude, or another agent client can reference this file directly instead 
 
 ## Audit Summary
 
-- Generated: `2026-07-09T01:27:20`
+- Generated: `2026-07-11T10:16:38`
 - Root: `/Users/dannyteng/AIWork/GameDraft`
-- Artifacts: `67`
-- Issues: `61`
-- By severity: `{"info": 12, "warn": 49}`
-- By category: `{"drift-risk": 48, "missing-lifecycle": 12, "missing-metadata": 1}`
+- Artifacts: `70`
+- Issues: `25`
+- By severity: `{"info": 15, "warn": 10}`
+- By category: `{"drift-risk": 7, "missing-lifecycle": 14, "missing-metadata": 3, "possible-overlap": 1}`
 
 ## Governance Resources
 
 - `governance://hub` (1): 治理台 Host 快照。完整 MCP Host / Agent Workbench 快照。
 - `governance://canvas/current` (0): 当前画布状态。0 个引用，视图 workpacks
-- `governance://audit/stats` (61): 审计统计。67 个资产，61 个问题
-- `governance://dashboard/elements` (235): 页面元素引用索引。dashboard 中 235 个可引用的数据元素和面板入口。
-- `governance://workpacks` (3): 治理包索引。3 个治理包
-- `governance://issues` (61): 证据库。61 条原始证据
-- `governance://artifacts` (67): 资产清单。67 个 skill/workflow/agent 资产
+- `governance://audit/stats` (25): 审计统计。70 个资产，25 个问题
+- `governance://dashboard/elements` (206): 页面元素引用索引。dashboard 中 206 个可引用的数据元素和面板入口。
+- `governance://workpacks` (4): 治理包索引。4 个治理包
+- `governance://issues` (25): 证据库。25 条原始证据
+- `governance://artifacts` (70): 资产清单。70 个 skill/workflow/agent 资产
 - `governance://apps` (5): 治理台应用。已注册的内置应用和外部 MCP/命令应用。
 - `governance://tools` (14): 治理台工具。Host 暴露给 agent 的工具清单。
-- `governance://prompts` (6): 治理台提示词。Host 暴露给 agent 的 prompt 模板。
+- `governance://prompts` (7): 治理台提示词。Host 暴露给 agent 的 prompt 模板。
 - `governance://agent/jobs` (0): Agent 运行记录。0 个当前 console 内存中的 agent job
 - `governance://policy/write-gates` (3): 写入权限和审批边界。chat 为只读；fix 才允许写入；修复后必须自动审计。
 - `governance://view/mcp-install` (1): MCP 安装区。安装命令、客户端配置和 MCP 自检状态。
@@ -62,64 +62,29 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://view/workpacks` (1): 治理包区。按优先级分组的可执行治理包。
 - `governance://view/issues` (1): 证据库区。原始 issue / evidence 列表。
 - `governance://view/artifacts` (1): 资产清单区。扫描到的 skill / workflow / script 资产。
-- `governance://stat/workpack-count` (3): 治理包数量。3
-- `governance://stat/issue-count` (61): 证据项数量。61
+- `governance://stat/workpack-count` (4): 治理包数量。4
+- `governance://stat/issue-count` (25): 证据项数量。25
 - `governance://stat/error-count` (0): 断链/错误数量。0
-- `governance://stat/warn-count` (49): 需复核数量。49
-- `governance://workpack/drift-risk` (48): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
-- `governance://workpack/missing-metadata` (1): Skill 触发条件补齐包。Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
-- `governance://workpack/missing-lifecycle` (12): 生命周期元数据补齐包。缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
-- `governance://issue/drift.cursor-skill.add-game-action.21.src-core-actionregistry.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:21
-- `governance://issue/drift.cursor-skill.add-game-action.24.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:24
-- `governance://issue/drift.cursor-skill.add-game-action.26.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:26
-- `governance://issue/drift.cursor-skill.add-game-action.32.tools-editor-validator.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:32
-- `governance://issue/drift.cursor-skill.add-game-action.48.src-core-actionregistry.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:48
-- `governance://issue/drift.cursor-skill.add-game-action.48.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:48
-- `governance://issue/drift.cursor-skill.add-game-action.49.src-core-actionexecutor.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:49
-- `governance://issue/drift.cursor-skill.add-game-action.50.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:50
-- `governance://issue/drift.cursor-skill.add-game-action.51.tools-editor-validator.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-game-action/SKILL.md:51
-- `governance://issue/drift.cursor-skill.add-text-ref.15.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/add-text-ref/SKILL.md:15
+- `governance://stat/warn-count` (10): 需复核数量。10
+- `governance://workpack/drift-risk` (7): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
+- `governance://workpack/missing-metadata` (3): Skill 触发条件补齐包。Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
+- `governance://workpack/missing-lifecycle` (14): 生命周期元数据补齐包。缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
+- `governance://workpack/possible-overlap` (1): Skill 重叠边界包。相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。
+- `governance://issue/missing-trigger.claude-skill.agent-docs-cli` (1): Skill has no clear trigger/use condition。.claude/skills/agent-docs-cli/SKILL.md:1
+- `governance://issue/missing-trigger.cursor-skill.agent-docs-cli` (1): Skill has no clear trigger/use condition。.cursor/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-trigger.cursor-skill.animation-production` (1): Skill has no clear trigger/use condition。.cursor/skills/animation-production/SKILL.md:1
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.14.tools-editor-validator.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:14
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:29
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-id_ref_selector.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:29
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.30.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:30
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.31.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:31
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.32.tools-editor-shared-flag_value_edit.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:32
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:33
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-condition_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:33
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-scene_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:35
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-timeline_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:35
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.36.tools-editor-shared-image_path_picker.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:36
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.37.tools-editor-editors-water_minigame_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:37
-- `governance://issue/drift.cursor-skill.editor-tools-iteration.48.tools-editor-editors-scene_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/editor-tools-iteration/SKILL.md:48
 - `governance://issue/drift.cursor-skill.gameplay-iteration.22.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:22
 - `governance://issue/drift.cursor-skill.gameplay-iteration.33.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:33
 - `governance://issue/drift.cursor-skill.gameplay-iteration.58.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:58
-- `governance://issue/drift.cursor-skill.production-mode.34.docs-editor-authoring-surface.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:34
-- `governance://issue/drift.cursor-skill.production-mode.34.public-assets-data-cutscenes-index.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:34
-- `governance://issue/drift.cursor-skill.production-mode.34.public-assets-data-overlay_images.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:34
-- `governance://issue/drift.cursor-skill.production-mode.34.src-data-types.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:34
-- `governance://issue/drift.cursor-skill.production-mode.44.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:44
-- `governance://issue/drift.cursor-skill.production-mode.45.public-assets-data-cutscenes-index.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:45
-- `governance://issue/drift.cursor-skill.production-mode.45.src-data-cutscene_action_allowlist.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:45
-- `governance://issue/drift.cursor-skill.production-mode.46.src-systems-graphdialogue-evaluategraphcondition.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:46
-- `governance://issue/drift.cursor-skill.production-mode.66.src-core-actionregistry.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:66
-- `governance://issue/drift.cursor-skill.production-mode.66.src-systems-graphdialogue-evaluategraphcondition.ts` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:66
-- `governance://issue/drift.cursor-skill.production-mode.67.src-data-cutscene_action_allowlist.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:67
-- `governance://issue/drift.cursor-skill.production-mode.67.tools-editor-shared-action_editor.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:67
-- `governance://issue/drift.cursor-skill.production-mode.67.tools-editor-validator.py` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:67
-- `governance://issue/drift.cursor-skill.production-mode.89.public-assets-data-narrative_graphs.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:89
-- `governance://issue/drift.cursor-skill.production-mode.90.public-resources-runtime-animation-npc_employer_anim-anim.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:90
-- `governance://issue/drift.cursor-skill.production-mode.92.docs-editor-authoring-surface.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/production-mode/SKILL.md:92
-- `governance://issue/drift.cursor-skill.pure-data-iteration.27.public-assets-data-overlay_images.json` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/pure-data-iteration/SKILL.md:27
-- `governance://issue/drift.cursor-skill.pure-data-iteration.75.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/pure-data-iteration/SKILL.md:75
 - `governance://issue/drift.cursor-skill.push-gamedraft-story-temp-proxy.20..git-config` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md:20
 - `governance://issue/drift.artifact-cursor-workflow-guide.42.docs-.md` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:42
 - `governance://issue/drift.artifact-cursor-workflow-guide.47.docs-.md` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:47
 - `governance://issue/drift.artifact-cursor-workflow-guide.138.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:138
+- `governance://issue/missing-lifecycle.claude-skill.agent-docs-cli` (1): Skill has no lifecycle metadata。.claude/skills/agent-docs-cli/SKILL.md:1
+- `governance://issue/overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli` (1): Two skills may overlap。.claude/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.add-game-action` (1): Skill has no lifecycle metadata。.cursor/skills/add-game-action/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.add-text-ref` (1): Skill has no lifecycle metadata。.cursor/skills/add-text-ref/SKILL.md:1
+- `governance://issue/missing-lifecycle.cursor-skill.agent-docs-cli` (1): Skill has no lifecycle metadata。.cursor/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.animation-production` (1): Skill has no lifecycle metadata。.cursor/skills/animation-production/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.debug-panel-extension` (1): Skill has no lifecycle metadata。.cursor/skills/debug-panel-extension/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.editor-tools-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/editor-tools-iteration/SKILL.md:1
@@ -143,6 +108,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://artifact/package-script.planner-gui` (1): npm run planner:gui。package.json
 - `governance://artifact/package-script.preview` (1): npm run preview。package.json
 - `governance://artifact/package-script.test` (1): npm run test。package.json
+- `governance://artifact/package-script.typecheck-narrative-editor` (1): npm run typecheck:narrative-editor。package.json
 - `governance://artifact/bootstrap` (1): GameDraft bootstrap for macOS/Linux. Creates a project venv (.tools/venv)。bootstrap.sh
 - `governance://artifact/dev` (1): macOS/Linux task entry: ./dev.sh <task> [args]。dev.sh
 - `governance://artifact/scripts-build-player-atlas` (1): build-player-atlas。scripts/build-player-atlas.py
@@ -167,8 +133,10 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://artifact/tools-chronicle_sim_v2-scripts-run_rumor_week_stats` (1): run_rumor_week_stats。tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py
 - `governance://artifact/tools-chronicle_sim_v2-scripts-run_simulation_once` (1): run_simulation_once。tools/chronicle_sim_v2/scripts/run_simulation_once.py
 - `governance://artifact/tools-chronicle_sim_v3-scripts-bootstrap_v2_demo_seed_to_v3` (1): bootstrap_v2_demo_seed_to_v3。tools/chronicle_sim_v3/scripts/bootstrap_v2_demo_seed_to_v3.py
+- `governance://artifact/claude-skill.agent-docs-cli` (1): agent-docs-cli(薄壳)。.claude/skills/agent-docs-cli/SKILL.md
 - `governance://artifact/cursor-skill.add-game-action` (1): 添加游戏 Action（项目约定）。.cursor/skills/add-game-action/SKILL.md
 - `governance://artifact/cursor-skill.add-text-ref` (1): 文本引用系统扩展清单。.cursor/skills/add-text-ref/SKILL.md
+- `governance://artifact/cursor-skill.agent-docs-cli` (1): agent-docs-cli(薄壳)。.cursor/skills/agent-docs-cli/SKILL.md
 - `governance://artifact/cursor-skill.animation-production` (1): 动画生产 — agent 入口(SOP)。.cursor/skills/animation-production/SKILL.md
 - `governance://artifact/cursor-skill.core-framework-architecture-review` (1): 核心框架架构审查。.cursor/skills/core-framework-architecture-review/SKILL.md
 - `governance://artifact/cursor-skill.debug-panel-extension` (1): Debug Panel Extension。.cursor/skills/debug-panel-extension/SKILL.md
@@ -197,8 +165,10 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://artifact/tools-chronicle_sim_v2-readme` (1): ChronicleSim v2。tools/chronicle_sim_v2/README.md
 - `governance://artifact/tools-filter_tool-readme` (1): 滤镜工具。tools/filter_tool/README.md
 - `governance://artifact/tools-video_to_atlas-readme` (1): Video-to-Atlas Workspace (GameDraft)。tools/video_to_atlas/README.md
+- `governance://source/.claude%2Fskills%2Fagent-docs-cli%2FSKILL.md` (1): .claude/skills/agent-docs-cli/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fadd-game-action%2FSKILL.md` (1): .cursor/skills/add-game-action/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fadd-text-ref%2FSKILL.md` (1): .cursor/skills/add-text-ref/SKILL.md。项目内源码/文档路径。
+- `governance://source/.cursor%2Fskills%2Fagent-docs-cli%2FSKILL.md` (1): .cursor/skills/agent-docs-cli/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fanimation-production%2FSKILL.md` (1): .cursor/skills/animation-production/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fcore-framework-architecture-review%2FSKILL.md` (1): .cursor/skills/core-framework-architecture-review/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fdebug-panel-extension%2FSKILL.md` (1): .cursor/skills/debug-panel-extension/SKILL.md。项目内源码/文档路径。
@@ -280,6 +250,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://prompt/governance.workpack.drift-risk` (1): 规则漂移复核包。交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 - `governance://prompt/governance.workpack.missing-metadata` (1): Skill 触发条件补齐包。交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。
 - `governance://prompt/governance.workpack.missing-lifecycle` (1): 生命周期元数据补齐包。交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。
+- `governance://prompt/governance.workpack.possible-overlap` (1): Skill 重叠边界包。交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。
 
 ## Governance Tools
 
@@ -304,33 +275,23 @@ Codex, Claude, or another agent client can reference this file directly instead 
 
 - URI: `governance://workpack/drift-risk`
 - Kind: `agent-review`
-- Issues: `48`
+- Issues: `7`
 - Summary: 规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 - Next: 交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 - Paths:
-  - `.cursor/skills/add-game-action/SKILL.md`
-  - `.cursor/skills/add-text-ref/SKILL.md`
-  - `.cursor/skills/editor-tools-iteration/SKILL.md`
   - `.cursor/skills/gameplay-iteration/SKILL.md`
-  - `.cursor/skills/production-mode/SKILL.md`
-  - `.cursor/skills/pure-data-iteration/SKILL.md`
   - `.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md`
   - `artifact/cursor-workflow-guide.md`
 
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，48 项）。
+请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，7 项）。
 目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
 涉及文件：
-- .cursor/skills/add-game-action/SKILL.md
-- .cursor/skills/add-text-ref/SKILL.md
-- .cursor/skills/editor-tools-iteration/SKILL.md
 - .cursor/skills/gameplay-iteration/SKILL.md
-- .cursor/skills/production-mode/SKILL.md
-- .cursor/skills/pure-data-iteration/SKILL.md
 - .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md
 - artifact/cursor-workflow-guide.md
 ```
@@ -339,20 +300,24 @@ Prompt:
 
 - URI: `governance://workpack/missing-metadata`
 - Kind: `agent-edit`
-- Issues: `1`
+- Issues: `3`
 - Summary: Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
 - Next: 交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。
 - Paths:
+  - `.claude/skills/agent-docs-cli/SKILL.md`
+  - `.cursor/skills/agent-docs-cli/SKILL.md`
   - `.cursor/skills/animation-production/SKILL.md`
 
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：Skill 触发条件补齐包（missing-metadata，1 项）。
+请处理 GameDraft Skill/Workflow 治理包：Skill 触发条件补齐包（missing-metadata，3 项）。
 目标：Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
 执行方式：交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
 涉及文件：
+- .claude/skills/agent-docs-cli/SKILL.md
+- .cursor/skills/agent-docs-cli/SKILL.md
 - .cursor/skills/animation-production/SKILL.md
 ```
 
@@ -360,12 +325,14 @@ Prompt:
 
 - URI: `governance://workpack/missing-lifecycle`
 - Kind: `batch-edit`
-- Issues: `12`
+- Issues: `14`
 - Summary: 缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
 - Next: 交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。
 - Paths:
+  - `.claude/skills/agent-docs-cli/SKILL.md`
   - `.cursor/skills/add-game-action/SKILL.md`
   - `.cursor/skills/add-text-ref/SKILL.md`
+  - `.cursor/skills/agent-docs-cli/SKILL.md`
   - `.cursor/skills/animation-production/SKILL.md`
   - `.cursor/skills/debug-panel-extension/SKILL.md`
   - `.cursor/skills/editor-tools-iteration/SKILL.md`
@@ -374,19 +341,19 @@ Prompt:
   - `.cursor/skills/interactive-architecture-html/SKILL.md`
   - `.cursor/skills/production-mode/SKILL.md`
   - `.cursor/skills/pure-data-iteration/SKILL.md`
-  - `.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md`
-  - `.cursor/skills/restart-gamedraft/SKILL.md`
 
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，12 项）。
+请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，14 项）。
 目标：缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
 执行方式：交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
 涉及文件：
+- .claude/skills/agent-docs-cli/SKILL.md
 - .cursor/skills/add-game-action/SKILL.md
 - .cursor/skills/add-text-ref/SKILL.md
+- .cursor/skills/agent-docs-cli/SKILL.md
 - .cursor/skills/animation-production/SKILL.md
 - .cursor/skills/debug-panel-extension/SKILL.md
 - .cursor/skills/editor-tools-iteration/SKILL.md
@@ -397,6 +364,27 @@ Prompt:
 - .cursor/skills/pure-data-iteration/SKILL.md
 - .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md
 - .cursor/skills/restart-gamedraft/SKILL.md
+```
+
+### P3 Skill 重叠边界包
+
+- URI: `governance://workpack/possible-overlap`
+- Kind: `agent-review`
+- Issues: `1`
+- Summary: 相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。
+- Next: 交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。
+- Paths:
+  - `.claude/skills/agent-docs-cli/SKILL.md`
+
+Prompt:
+
+```text
+请处理 GameDraft Skill/Workflow 治理包：Skill 重叠边界包（possible-overlap，1 项）。
+目标：相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。
+执行方式：交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。
+要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
+涉及文件：
+- .claude/skills/agent-docs-cli/SKILL.md
 ```
 
 ## Compact Host Snapshot
@@ -431,30 +419,31 @@ Prompt:
     "filters": {},
     "visibleView": "workpacks",
     "stats": {
-      "artifact_count": 67,
-      "issue_count": 61,
+      "artifact_count": 70,
+      "issue_count": 25,
       "by_type": {
         "agent_rules": 2,
         "ci_workflow": 1,
-        "package_script": 10,
+        "package_script": 11,
         "script": 24,
-        "skill": 13,
+        "skill": 15,
         "tool_requirements": 9,
         "workflow_doc": 8
       },
       "by_severity": {
-        "info": 12,
-        "warn": 49
+        "info": 15,
+        "warn": 10
       },
       "by_category": {
-        "drift-risk": 48,
-        "missing-lifecycle": 12,
-        "missing-metadata": 1
+        "drift-risk": 7,
+        "missing-lifecycle": 14,
+        "missing-metadata": 3,
+        "possible-overlap": 1
       }
     },
-    "workpackCount": 3,
-    "issueCount": 61,
-    "artifactCount": 67
+    "workpackCount": 4,
+    "issueCount": 25,
+    "artifactCount": 70
   },
   "enabled_apps": [
     {
@@ -536,36 +525,36 @@ Prompt:
       "uri": "governance://audit/stats",
       "title": "审计统计",
       "kind": "audit",
-      "summary": "67 个资产，61 个问题",
-      "count": 61
+      "summary": "70 个资产，25 个问题",
+      "count": 25
     },
     {
       "uri": "governance://dashboard/elements",
       "title": "页面元素引用索引",
       "kind": "element-index",
-      "summary": "dashboard 中 235 个可引用的数据元素和面板入口。",
-      "count": 235
+      "summary": "dashboard 中 206 个可引用的数据元素和面板入口。",
+      "count": 206
     },
     {
       "uri": "governance://workpacks",
       "title": "治理包索引",
       "kind": "workpack-index",
-      "summary": "3 个治理包",
-      "count": 3
+      "summary": "4 个治理包",
+      "count": 4
     },
     {
       "uri": "governance://issues",
       "title": "证据库",
       "kind": "issue-index",
-      "summary": "61 条原始证据",
-      "count": 61
+      "summary": "25 条原始证据",
+      "count": 25
     },
     {
       "uri": "governance://artifacts",
       "title": "资产清单",
       "kind": "artifact-index",
-      "summary": "67 个 skill/workflow/agent 资产",
-      "count": 67
+      "summary": "70 个 skill/workflow/agent 资产",
+      "count": 70
     },
     {
       "uri": "governance://apps",
@@ -586,7 +575,7 @@ Prompt:
       "title": "治理台提示词",
       "kind": "prompt-index",
       "summary": "Host 暴露给 agent 的 prompt 模板。",
-      "count": 6
+      "count": 7
     },
     {
       "uri": "governance://agent/jobs",
@@ -641,15 +630,15 @@ Prompt:
       "uri": "governance://stat/workpack-count",
       "title": "治理包数量",
       "kind": "stat",
-      "summary": "3",
-      "count": 3
+      "summary": "4",
+      "count": 4
     },
     {
       "uri": "governance://stat/issue-count",
       "title": "证据项数量",
       "kind": "stat",
-      "summary": "61",
-      "count": 61
+      "summary": "25",
+      "count": 25
     },
     {
       "uri": "governance://stat/error-count",
@@ -662,98 +651,49 @@ Prompt:
       "uri": "governance://stat/warn-count",
       "title": "需复核数量",
       "kind": "stat",
-      "summary": "49",
-      "count": 49
+      "summary": "10",
+      "count": 10
     },
     {
       "uri": "governance://workpack/drift-risk",
       "title": "规则漂移复核包",
       "kind": "workpack",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
-      "count": 48
+      "count": 7
     },
     {
       "uri": "governance://workpack/missing-metadata",
       "title": "Skill 触发条件补齐包",
       "kind": "workpack",
       "summary": "Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。",
-      "count": 1
+      "count": 3
     },
     {
       "uri": "governance://workpack/missing-lifecycle",
       "title": "生命周期元数据补齐包",
       "kind": "workpack",
       "summary": "缺少 status / owner / last verified 这类治理字段，可以标准化批量补。",
-      "count": 12
+      "count": 14
     },
     {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.21.src-core-actionregistry.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:21",
+      "uri": "governance://workpack/possible-overlap",
+      "title": "Skill 重叠边界包",
+      "kind": "workpack",
+      "summary": "相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。",
       "count": 1
     },
     {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.24.src-core-game.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
+      "uri": "governance://issue/missing-trigger.claude-skill.agent-docs-cli",
+      "title": "Skill has no clear trigger/use condition",
       "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:24",
+      "summary": ".claude/skills/agent-docs-cli/SKILL.md:1",
       "count": 1
     },
     {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.26.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
+      "uri": "governance://issue/missing-trigger.cursor-skill.agent-docs-cli",
+      "title": "Skill has no clear trigger/use condition",
       "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:26",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.32.tools-editor-validator.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:32",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.48.src-core-actionregistry.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:48",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.48.src-core-game.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:48",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.49.src-core-actionexecutor.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:49",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.50.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:50",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.add-game-action.51.tools-editor-validator.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-game-action/SKILL.md:51",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.add-text-ref.15.src-core-game.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/add-text-ref/SKILL.md:15",
+      "summary": ".cursor/skills/agent-docs-cli/SKILL.md:1",
       "count": 1
     },
     {
@@ -761,97 +701,6 @@ Prompt:
       "title": "Skill has no clear trigger/use condition",
       "kind": "issue",
       "summary": ".cursor/skills/animation-production/SKILL.md:1",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.14.tools-editor-validator.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:14",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:29",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.29.tools-editor-shared-id_ref_selector.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:29",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.30.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:30",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.31.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:31",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.32.tools-editor-shared-flag_value_edit.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:32",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:33",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.33.tools-editor-shared-condition_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:33",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-scene_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:35",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.35.tools-editor-editors-timeline_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:35",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.36.tools-editor-shared-image_path_picker.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:36",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.37.tools-editor-editors-water_minigame_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:37",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.editor-tools-iteration.48.tools-editor-editors-scene_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:48",
       "count": 1
     },
     {
@@ -873,132 +722,6 @@ Prompt:
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": ".cursor/skills/gameplay-iteration/SKILL.md:58",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.34.docs-editor-authoring-surface.md",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:34",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.34.public-assets-data-cutscenes-index.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:34",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.34.public-assets-data-overlay_images.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:34",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.34.src-data-types.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:34",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.44.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:44",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.45.public-assets-data-cutscenes-index.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:45",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.45.src-data-cutscene_action_allowlist.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:45",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.46.src-systems-graphdialogue-evaluategraphcondition.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:46",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.66.src-core-actionregistry.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:66",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.66.src-systems-graphdialogue-evaluategraphcondition.ts",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:66",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.67.src-data-cutscene_action_allowlist.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:67",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.67.tools-editor-shared-action_editor.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:67",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.67.tools-editor-validator.py",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:67",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.89.public-assets-data-narrative_graphs.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:89",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.90.public-resources-runtime-animation-npc_employer_anim-anim.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:90",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.production-mode.92.docs-editor-authoring-surface.md",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/production-mode/SKILL.md:92",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.pure-data-iteration.27.public-assets-data-overlay_images.json",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/pure-data-iteration/SKILL.md:27",
-      "count": 1
-    },
-    {
-      "uri": "governance://issue/drift.cursor-skill.pure-data-iteration.75.docs-.md",
-      "title": "Referenced artifact is newer than this rule/workflow",
-      "kind": "issue",
-      "summary": ".cursor/skills/pure-data-iteration/SKILL.md:75",
       "count": 1
     },
     {
@@ -1030,6 +753,20 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.agent-docs-cli",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".claude/skills/agent-docs-cli/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".claude/skills/agent-docs-cli/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.add-game-action",
       "title": "Skill has no lifecycle metadata",
       "kind": "issue",
@@ -1041,6 +778,13 @@ Prompt:
       "title": "Skill has no lifecycle metadata",
       "kind": "issue",
       "summary": ".cursor/skills/add-text-ref/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.cursor-skill.agent-docs-cli",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/agent-docs-cli/SKILL.md:1",
       "count": 1
     },
     {
@@ -1200,6 +944,13 @@ Prompt:
     {
       "uri": "governance://artifact/package-script.test",
       "title": "npm run test",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.typecheck-narrative-editor",
+      "title": "npm run typecheck:narrative-editor",
       "kind": "artifact",
       "summary": "package.json",
       "count": 1
@@ -1373,6 +1124,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/claude-skill.agent-docs-cli",
+      "title": "agent-docs-cli(薄壳)",
+      "kind": "artifact",
+      "summary": ".claude/skills/agent-docs-cli/SKILL.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/cursor-skill.add-game-action",
       "title": "添加游戏 Action（项目约定）",
       "kind": "artifact",
@@ -1384,6 +1142,13 @@ Prompt:
       "title": "文本引用系统扩展清单",
       "kind": "artifact",
       "summary": ".cursor/skills/add-text-ref/SKILL.md",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/cursor-skill.agent-docs-cli",
+      "title": "agent-docs-cli(薄壳)",
+      "kind": "artifact",
+      "summary": ".cursor/skills/agent-docs-cli/SKILL.md",
       "count": 1
     },
     {
@@ -1583,6 +1348,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://source/.claude%2Fskills%2Fagent-docs-cli%2FSKILL.md",
+      "title": ".claude/skills/agent-docs-cli/SKILL.md",
+      "kind": "source",
+      "summary": "项目内源码/文档路径。",
+      "count": 1
+    },
+    {
       "uri": "governance://source/.cursor%2Fskills%2Fadd-game-action%2FSKILL.md",
       "title": ".cursor/skills/add-game-action/SKILL.md",
       "kind": "source",
@@ -1592,6 +1364,13 @@ Prompt:
     {
       "uri": "governance://source/.cursor%2Fskills%2Fadd-text-ref%2FSKILL.md",
       "title": ".cursor/skills/add-text-ref/SKILL.md",
+      "kind": "source",
+      "summary": "项目内源码/文档路径。",
+      "count": 1
+    },
+    {
+      "uri": "governance://source/.cursor%2Fskills%2Fagent-docs-cli%2FSKILL.md",
+      "title": ".cursor/skills/agent-docs-cli/SKILL.md",
       "kind": "source",
       "summary": "项目内源码/文档路径。",
       "count": 1
@@ -2162,6 +1941,13 @@ Prompt:
       "kind": "prompt",
       "summary": "交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。",
       "count": 1
+    },
+    {
+      "uri": "governance://prompt/governance.workpack.possible-overlap",
+      "title": "Skill 重叠边界包",
+      "kind": "prompt",
+      "summary": "交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。",
+      "count": 1
     }
   ],
   "tools": [
@@ -2294,6 +2080,11 @@ Prompt:
       "name": "governance.workpack.missing-lifecycle",
       "title": "生命周期元数据补齐包",
       "description": "交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。"
+    },
+    {
+      "name": "governance.workpack.possible-overlap",
+      "title": "Skill 重叠边界包",
+      "description": "交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。"
     }
   ]
 }

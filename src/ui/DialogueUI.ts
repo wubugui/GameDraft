@@ -405,6 +405,12 @@ export class DialogueUI {
     }
   }
 
+  /** 自动视觉 golden 专用：只补完当前打字机，不向管理器发“下一句”推进。 */
+  debugCompleteText(): void {
+    if (!this.container || this.waitingForChoice || this.isShowingFullText) return;
+    this.handleAdvance();
+  }
+
   private onClick(e: PointerEvent): void {
     if (!isEventOnGameCanvas(this.renderer, e)) return;
     if (isPointerConsumed(e)) return;

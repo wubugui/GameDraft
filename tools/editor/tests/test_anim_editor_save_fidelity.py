@@ -6,7 +6,8 @@ anim.json（图集不动）。这组测试钉死三件事：
 1. 不做任何改动地"载入→构建保存字典"必须与原 anim.json 逐键逐值且**键序**一致，
    且落盘为工程规范格式（UTF-8 / 2 空格缩进 / 中文不转义 / 保留键序 / 末尾换行）。
 2. 改一个字段（如某状态 frameRate）后保存，除该字段外**一切原样保留**——包括
-   spritesheet/cols/rows/单格像素/atlasFrames，以及未知键（player_taoist_anim_v1 的 notes）。
+   spritesheet/cols/rows/单格像素/atlasFrames，以及编辑器不认识的未知顶层键（测试往临时
+   拷贝注入的 notes，覆盖"真实数据里暂时没有"的潜伏形状，见验证门卡合成 fixture 一节）。
 3. 非法 frames（越界/空/非数字）会被拦下，绝不写出会让运行时错位的 anim.json。
 """
 from __future__ import annotations
@@ -78,9 +79,23 @@ class AnimEditorSaveFidelityTests(unittest.TestCase):
     def test_edit_framerate_roundtrip_preserves_everything_else(self) -> None:
         model, root, td = self._temp_model()
         try:
-            # 选含未知键 notes 的包，确保编辑保存不吞掉它
+            # 真实仓库里的 anim.json 不一定带未知键（编辑器不认识的顶层键），本测试要钉死的是
+            # "编辑保存不吞掉未识别的顶层键"这条契约，故往临时拷贝里注入一个 notes 未知键——
+            # 用嵌套结构 + 中文 + 整数 + 列表，兼验深结构与 ensure_ascii=False 一并原样保真；
+            # 从盘重载使内存与盘面一致，不依赖真实工程数据是否恰好带 notes（那会随内容漂移而失效）。
             bid = "player_taoist_anim_v1"
             self.assertIn(bid, model.animations)
+            aj = (root / "public" / "resources" / "runtime" / "animation"
+                  / bid / "anim.json")
+            disk = json.loads(aj.read_text(encoding="utf-8"))
+            disk["notes"] = {
+                "author": "保真测试",
+                "tags": ["未知键", "roundtrip"],
+                "revision": 3,
+            }
+            aj.write_text(_canonical(disk), encoding="utf-8")
+            model.reload_animations_from_disk()
+
             orig = json.loads(json.dumps(model.animations[bid]))  # 深拷贝快照
             self.assertIn("notes", orig)
             first_state = next(iter(orig["states"].keys()))
@@ -101,9 +116,7 @@ class AnimEditorSaveFidelityTests(unittest.TestCase):
             self.assertTrue(editor._dirty, "改动应标记为 dirty")
             self.assertTrue(editor._do_save(), "保存应成功")
 
-            # 盘面校验
-            aj = (root / "public" / "resources" / "runtime" / "animation"
-                  / bid / "anim.json")
+            # 盘面校验（aj 即上面注入 notes 的同一份 anim.json）
             raw = aj.read_text(encoding="utf-8")
             self.assertTrue(raw.endswith("\n"), "应有末尾换行")
             saved = json.loads(raw)

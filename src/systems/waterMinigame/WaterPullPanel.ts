@@ -12,6 +12,7 @@ export interface WaterPullPanelParams {
   timeLimitSec: number;
   onResult: (r: PullPanelResult) => void;
   resolveText: (raw: string) => string;
+  random?: () => number;
 }
 
 /**
@@ -34,7 +35,8 @@ export class WaterPullPanel extends Container {
   private burstTelegraph = 0;
   private spasmNextAt = 0;
   private spasmKick = 0;
-  private wobbleSeed = Math.random() * Math.PI * 2;
+  private wobbleSeed = 0;
+  private readonly random: () => number;
 
   private readonly barW = 28;
   private readonly barH = 260;
@@ -47,6 +49,8 @@ export class WaterPullPanel extends Container {
 
   constructor(private params: WaterPullPanelParams) {
     super();
+    this.random = params.random ?? Math.random;
+    this.wobbleSeed = this.random() * Math.PI * 2;
     this.limit = Math.max(2, params.timeLimitSec);
     this.resetMarkerForRhythm();
 
@@ -93,7 +97,7 @@ export class WaterPullPanel extends Container {
       this.marker = 0.5;
     }
     this.markerVel = 0;
-    this.spasmNextAt = 0.65 + Math.random() * 0.85;
+    this.spasmNextAt = 0.65 + this.random() * 0.85;
   }
 
   private refreshGeometry(): void {
@@ -177,10 +181,10 @@ export class WaterPullPanel extends Container {
       }
     } else if (rhythm === 'spasm') {
       if (t >= this.spasmNextAt) {
-        this.greenCenter = 0.18 + Math.random() * 0.64;
-        this.markerVel -= (0.16 + Math.random() * 0.22) * Math.max(0.2, this.params.sliderSpeed);
+        this.greenCenter = 0.18 + this.random() * 0.64;
+        this.markerVel -= (0.16 + this.random() * 0.22) * Math.max(0.2, this.params.sliderSpeed);
         this.spasmKick = 1;
-        this.spasmNextAt = t + 0.45 + Math.random() * 1.35;
+        this.spasmNextAt = t + 0.45 + this.random() * 1.35;
       }
       this.greenCenter += Math.sin(t * 11 + (this.marker * 7)) * dt * 0.28;
     } else {

@@ -85,4 +85,8 @@ export class PaperCraftMinigameManager extends MinigameSessionManagerBase<
     this.lastResult = result;
     this.eventBus.emit('minigame:paperCraftResult', result);
   }
+
+  getDebugVisualState(): Record<string, unknown> | null {
+    return this.scene?.getDebugVisualState() ?? null;
+  }
 }

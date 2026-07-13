@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import copy
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget,
@@ -112,6 +114,13 @@ class CharacterRegistryEditor(QWidget):
             self._cur_id = None
             return
         cid = str(cur.data(_ROLE) or "")
+        # commit-on-leave：切到别的角色前提交上一项未应用编辑，避免表单被覆盖静默丢失。
+        # 此处不重建列表（currentItemChanged 处理中重建会重入），标签文本下次刷新对齐。
+        if self._cur_id and self._cur_id != cid and self._is_dirty():
+            self._apply_to_model()
+        self._load_entry_into_form(cid)
+
+    def _load_entry_into_form(self, cid: str) -> None:
         ch = self._model.character_registry.get(cid) or {}
         self._cur_id = cid
         self._id.setText(cid)
@@ -136,31 +145,98 @@ class CharacterRegistryEditor(QWidget):
         self._portrait.setCurrentIndex(max(0, self._portrait.findData(ps)))
         self._portrait.blockSignals(False)
 
-    def _apply(self) -> None:
-        cid = self._id.text().strip()
-        if not cid:
-            QMessageBox.warning(self, "角色", "id 不能为空。")
-            return
-        old = self._cur_id
-        if old and old != cid and cid in self._model.character_registry:
-            QMessageBox.warning(self, "角色", f"id {cid!r} 已存在。")
-            return
-        entry: dict = {"id": cid}
+    def _write_entry_into(self, entry: dict) -> None:
+        """把当前表单值就地写入 entry（保留未知键、不 mark_dirty）。_apply 与脏判断共用。"""
+        entry["id"] = self._id.text().strip()
         nm = self._name.text().strip()
         if nm:
             entry["name"] = nm
+        else:
+            entry.pop("name", None)
         af = self._anim.current_id().strip()
         if af:
             entry["animFile"] = af
+        else:
+            entry.pop("animFile", None)
         ps = str(self._portrait.currentData() or "").strip()
         if ps:
             entry["portraitSlug"] = ps
-        if old and old != cid:
+        else:
+            entry.pop("portraitSlug", None)
+
+    def _is_dirty(self) -> bool:
+        """当前表单是否与模型里的该角色有差异（切换/保存/关闭时判断是否需提交）。"""
+        if not self._cur_id:
+            return False
+        cur = self._model.character_registry.get(self._cur_id)
+        if not isinstance(cur, dict):
+            return False
+        test = copy.deepcopy(cur)
+        self._write_entry_into(test)
+        return test != cur
+
+    def _apply_to_model(self) -> bool:
+        """把表单提交进模型（不重建列表；返回 False = id 非法被拒、未提交）。"""
+        if not self._cur_id:
+            return True
+        cid = self._id.text().strip()
+        old = self._cur_id
+        if not cid:
+            QMessageBox.warning(self, "角色", "id 不能为空。")
+            return False
+        if old != cid and cid in self._model.character_registry:
+            QMessageBox.warning(self, "角色", f"id {cid!r} 已存在。")
+            return False
+        base = self._model.character_registry.get(old)
+        entry = base if isinstance(base, dict) else {"id": old}
+        self._write_entry_into(entry)
+        if old != cid:
             self._model.character_registry.pop(old, None)
         self._model.character_registry[cid] = entry
+        self._cur_id = cid
         self._model.mark_dirty("characterRegistry")
+        return True
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用编辑在保存前提交进模型，否则被静默丢弃（复核 P1-06）。"""
+        if self._is_dirty():
+            return self._apply_to_model()
+        return True
+
+    def pop_flush_error(self) -> str:
+        return "角色注册表的未应用编辑校验未通过（id 为空或重复），请先在「角色」页修正。"
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        """关闭/切项目门控：有未应用编辑则提示保存/放弃/取消（复核 P1-06）。"""
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "当前角色有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            if not self._apply_to_model():
+                return False  # id 非法：留在编辑器里修
+            self._reload_list()
+            self._select_id(self._cur_id or "")
+        else:
+            # Discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            if self._cur_id:
+                self._load_entry_into_form(self._cur_id)
+        return True
+
+    def _apply(self) -> None:
+        if not self._cur_id:
+            return
+        if not self._apply_to_model():
+            return
         self._reload_list()
-        self._select_id(cid)
+        self._select_id(self._cur_id)
 
     def _add(self) -> None:
         i = 1

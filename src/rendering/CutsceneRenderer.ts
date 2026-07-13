@@ -246,6 +246,11 @@ export class CutsceneRenderer {
     return this.animateAlpha(overlay, overlay.alpha, 0, duration);
   }
 
+  /** 自动视觉 golden 专用：直接固定“仅世界渐黑”关键帧，不启动异步时间线。 */
+  setDebugWorldFadeAlpha(alpha: number): void {
+    this.ensureWorldFadeOverlay().alpha = Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 0));
+  }
+
   async flashWhite(duration: number): Promise<void> {
     const flash = new Graphics();
     flash.rect(0, 0, this.screenWidth + 200, this.screenHeight + 200);

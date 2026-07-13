@@ -199,6 +199,50 @@ export class SmellIndicatorRenderer {
     this.draw();
   }
 
+  /** DEV 固定步基准把动画相位归零；持续状态与换味进度保留，只改时钟原点。 */
+  resetAnimationClock(): void {
+    this.t = 0;
+    this.envStartT = this.renderScent && this.profiles[this.renderScent]?.special?.envelope ? 0 : -1;
+    this.draw();
+  }
+
+  /** 跨壳视觉门禁读取的规范化绘制参数；不暴露 Pixi 对象本身。 */
+  getDebugState(): Record<string, unknown> {
+    const sprite = (value: Sprite): Record<string, unknown> => ({
+      visible: value.visible,
+      x: value.x,
+      y: value.y,
+      scaleX: value.scale.x,
+      scaleY: value.scale.y,
+      alpha: value.alpha,
+      color: Number(value.tint).toString(16).padStart(6, '0'),
+      additive: value.blendMode === 'add',
+    });
+    return {
+      time: this.t,
+      target: { ...this.target },
+      renderScent: this.renderScent,
+      pendingScent: this.pendingScent,
+      displayIntensity: this.dispIntensity,
+      displayDirection: this.dispDir,
+      fade: this.fade,
+      envelopeStartTime: this.envStartT,
+      root: { x: this.layer.x, y: this.layer.y },
+      bloom: sprite(this.bloom),
+      baseline: this.baseSprites.map(sprite),
+      wisps: this.wispSprites.map(sprite),
+      reaches: this.reachSprites.map(sprite),
+      label: {
+        visible: this.label.visible,
+        text: this.label.text,
+        x: this.label.x,
+        y: this.label.y,
+        alpha: this.label.alpha,
+        color: Number(this.label.tint).toString(16).padStart(6, '0'),
+      },
+    };
+  }
+
   private envelope(prof: Profile): number {
     const env = prof.special?.envelope;
     if (!env || this.envStartT < 0) return 1;

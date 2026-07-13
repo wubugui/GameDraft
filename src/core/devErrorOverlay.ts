@@ -1,11 +1,12 @@
 /**
  * 开发模式专用的「屏幕顶部错误浮层」。
  *
- * 约定：任何加载/解码失败都不能静默——除了写控制台，还要直接糊到游戏画面顶部，
- * 让人一眼看见。生产构建（import.meta.env.DEV 为 false）或无 DOM 环境（测试/node）下整体降级为无操作。
+ * 约定：任何运行时问题（加载/解码失败、未知动作、悬垂叙事引用等内容错误）都不能静默——
+ * 除了写控制台，还要直接糊到游戏画面顶部，让人一眼看见。
+ * 生产构建（import.meta.env.DEV 为 false）或无 DOM 环境（测试/node）下整体降级为无操作。
  *
  * 主要接入点是 AssetManager 的加载咽喉（texture/json/text/bitmap/audio/filter 全经过），
- * 以及 depthError 等显式失败上报。
+ * 以及 ActionExecutor 未知动作、depthError、叙事悬垂信号/条件等显式失败上报。
  */
 
 const isDev = (() => {
@@ -55,7 +56,7 @@ function ensureOverlay(): void {
     marginBottom: '2px',
   });
   const title = document.createElement('span');
-  title.textContent = '⚠ 加载/资源失败 (dev) — 不应静默';
+  title.textContent = '⚠ 运行时问题 (dev) — 不应静默';
   const clearBtn = document.createElement('button');
   clearBtn.textContent = '清除';
   Object.assign(clearBtn.style, {
@@ -78,11 +79,14 @@ function ensureOverlay(): void {
   document.body.appendChild(container);
 }
 
-/** 把一条失败信息打到控制台 + 屏幕顶部浮层（dev 限定）。同一条信息折叠计数，避免刷屏。 */
-export function reportDevError(message: string): void {
+/**
+ * 把一条失败信息打到控制台 + 屏幕顶部浮层（dev 限定）。同一条信息折叠计数，避免刷屏。
+ * consoleTag 仅影响控制台前缀（便于按来源过滤），默认保持历史的 [load-failure]。
+ */
+export function reportDevError(message: string, consoleTag = '[load-failure]'): void {
   if (!isDev) return;
   // 控制台优先，保证即使无 DOM（测试/无头）也不丢信息。
-  console.error('[load-failure] ' + message);
+  console.error(consoleTag + ' ' + message);
   if (!hasDom) return;
   ensureOverlay();
   if (!listEl) return;

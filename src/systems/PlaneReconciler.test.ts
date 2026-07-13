@@ -89,17 +89,22 @@ const carryGraph: NarrativeGraph = {
   ],
 };
 
-const callGraph: NarrativeGraph = {
-  id: 'call',
+/** 嵌套点名的正规写法（决议）：单图状态切换 + extends 组合位面，多图点名是校验 error。 */
+const nestGraph: NarrativeGraph = {
+  id: 'carry_nest',
   ownerType: 'flow',
-  initialState: 'quiet',
+  initialState: 'idle',
   states: {
-    quiet: { id: 'quiet' },
-    calling: { id: 'calling', activePlane: '喊名' },
+    idle: { id: 'idle' },
+    carrying: { id: 'carrying', activePlane: '背尸' },
+    carrying_call: { id: 'carrying_call', activePlane: '背尸喊名' },
+    done: { id: 'done' },
   },
   transitions: [
-    { id: 't1', from: 'quiet', to: 'calling', signal: 'call_start' },
-    { id: 't2', from: 'calling', to: 'quiet', signal: 'call_end' },
+    { id: 't1', from: 'idle', to: 'carrying', signal: 'pick' },
+    { id: 't2', from: 'carrying', to: 'carrying_call', signal: 'call_start' },
+    { id: 't3', from: 'carrying_call', to: 'carrying', signal: 'call_end' },
+    { id: 't4', from: 'carrying', to: 'done', signal: 'drop' },
   ],
 };
 
@@ -114,6 +119,8 @@ const defs: PlaneDef[] = [
     healthDrainPerSec: 0.35,
   },
   { id: '喊名', label: '喊名位面', movement: { driftX: 10 } },
+  // 组合位面：movement 整槽覆写，interaction/camera/healthDrainPerSec 继承背尸
+  { id: '背尸喊名', label: '背尸·喊名', extends: '背尸', movement: { driftX: 10 } },
 ];
 
 describe('PlaneReconciler', () => {
@@ -143,10 +150,10 @@ describe('PlaneReconciler', () => {
     expect(calls).toContain('zoom:restore');
   });
 
-  it('多图点名后进者胜；退出后回落到仍点名的图', async () => {
-    const { narrative, reconciler } = makeRuntime();
+  it('嵌套点名走单图状态切换 + extends 组合位面；槽级继承父位面', async () => {
+    const { narrative, reconciler, state } = makeRuntime();
     reconciler.registerDefs(defs);
-    narrative.registerGraphs([carryGraph, callGraph]);
+    narrative.registerGraphs([nestGraph]);
 
     narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'pick' });
     await flush();
@@ -154,11 +161,71 @@ describe('PlaneReconciler', () => {
 
     narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'call_start' });
     await flush();
-    expect(reconciler.getActivePlaneId()).toBe('喊名'); // 后进者胜
+    expect(reconciler.getActivePlaneId()).toBe('背尸喊名');
+    // movement 整槽覆写为子定义（未写的键回落槽内缺省，不与父合并）
+    expect(state.movementFn?.()).toEqual({ driftX: 10, driftY: 0, speedScale: 1, allowRun: true });
+    // interaction / camera / healthDrainPerSec 继承父（背尸）
+    expect(state.policyFn?.()).toEqual({ canPickup: false, canInteractHotspots: true, canTalkNpcs: true });
+    expect(reconciler.getActiveCameraZoom()).toBe(1.25);
 
     narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'call_end' });
     await flush();
-    expect(reconciler.getActivePlaneId()).toBe('背尸'); // 回落到仍点名的 carry
+    expect(reconciler.getActivePlaneId()).toBe('背尸'); // 回落到外层点名状态
+    expect(state.movementFn?.()).toEqual({ driftX: -28, driftY: 0, speedScale: 0.62, allowRun: false });
+  });
+
+  it('membership：normal 恒 shared；exclusive 生效且可沿 extends 继承', () => {
+    const { reconciler } = makeRuntime();
+    reconciler.registerDefs([
+      { id: 'normal' },
+      { id: '冥界', membership: 'exclusive' },
+      { id: '冥界喊名', extends: '冥界' },
+      { id: '滤镜', camera: { zoom: 1.1 } },
+    ]);
+    expect(reconciler.getActivePlaneMembership()).toBe('shared'); // normal
+    reconciler.activatePlaneManually('冥界');
+    expect(reconciler.getActivePlaneMembership()).toBe('exclusive');
+    reconciler.activatePlaneManually('冥界喊名'); // membership 槽继承父
+    expect(reconciler.getActivePlaneMembership()).toBe('exclusive');
+    reconciler.activatePlaneManually('滤镜'); // 未配置缺省 shared
+    expect(reconciler.getActivePlaneMembership()).toBe('shared');
+  });
+
+  it('activatePlane 作用域：过场内写入随 cutscene:end 清除；过场外为 session 语义', async () => {
+    const { eventBus, narrative, reconciler } = makeRuntime();
+    reconciler.registerDefs(defs);
+    narrative.registerGraphs([carryGraph]);
+
+    // 过场内写入 → cutscene 作用域，过场结束自动清除并回落叙事点名
+    narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'pick' });
+    await flush();
+    eventBus.emit('cutscene:start', { id: 'cs1' });
+    expect(reconciler.activatePlaneManually('喊名')).toBe(true);
+    expect(reconciler.getActivePlaneId()).toBe('喊名');
+    eventBus.emit('cutscene:end', { id: 'cs1' });
+    expect(reconciler.getActivePlaneId()).toBe('背尸'); // 回落到仍点名的叙事状态
+
+    // 过场外写入 → session 作用域，后续过场结束不清除
+    expect(reconciler.activatePlaneManually('喊名')).toBe(true);
+    eventBus.emit('cutscene:start', { id: 'cs2' });
+    eventBus.emit('cutscene:end', { id: 'cs2' });
+    expect(reconciler.getActivePlaneId()).toBe('喊名');
+    reconciler.deactivateManualPlane();
+    expect(reconciler.getActivePlaneId()).toBe('背尸');
+  });
+
+  it('extends 展开：缺父/成环 warn 并忽略继承，条目仍注册可用', () => {
+    const { reconciler } = makeRuntime();
+    reconciler.registerDefs([
+      { id: 'normal' },
+      { id: 'orphan', extends: 'missing', camera: { zoom: 2 } },
+      { id: 'loop_a', extends: 'loop_b', camera: { zoom: 3 } },
+      { id: 'loop_b', extends: 'loop_a' },
+    ]);
+    expect(reconciler.activatePlaneManually('orphan')).toBe(true); // 缺父仅忽略继承
+    expect(reconciler.getActiveCameraZoom()).toBe(2);
+    expect(reconciler.activatePlaneManually('loop_a')).toBe(true); // 成环仅忽略继承
+    expect(reconciler.getActiveCameraZoom()).toBe(3);
   });
 
   it('manual override 压过叙事点名；清 override 回叙事', async () => {

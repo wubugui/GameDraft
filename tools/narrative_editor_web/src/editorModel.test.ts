@@ -188,7 +188,7 @@ describe('editorModel', () => {
     comp.mainGraph.transitions.push({
       id: 'enter_scenario',
       from: 'a',
-      to: { graphId: 'scenario', stateId: 'entry' },
+      to: { graphId: 'scenario', stateId: 'entry' } as unknown as string,
       signal: 'external:system:test:enter',
     });
     const result = simulateSignalImpact(data, 'enter');
@@ -231,7 +231,7 @@ describe('editorModel', () => {
     comp.mainGraph.transitions.push({
       id: 'bad_enter',
       from: 'a',
-      to: { graphId: 'scenario', stateId: 'middle' },
+      to: { graphId: 'scenario', stateId: 'middle' } as unknown as string,
       signal: 'external:system:test:bad',
     });
     const codes = validateNarrativeData(data).map((issue) => issue.code);

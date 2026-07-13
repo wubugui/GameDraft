@@ -140,4 +140,8 @@ export class SugarWheelMinigameManager extends MinigameSessionManagerBase<
   resetPointerGeomAngleDeg(angleDeg: number): void {
     this.scene?.resetPointerGeomAngleDeg(angleDeg);
   }
+
+  getDebugVisualState(): Record<string, unknown> | null {
+    return this.scene?.getDebugVisualState() ?? null;
+  }
 }

@@ -354,6 +354,24 @@ export class SugarWheelMinigameScene {
     return this.actionGate.locked;
   }
 
+  /** Visual-parity evidence; read-only and deliberately excludes wall-clock animation timestamps. */
+  getDebugVisualState(): Record<string, unknown> {
+    return {
+      instanceId: this.instance?.id ?? '',
+      phase: this.phase,
+      sectorCount: this.instance?.sectors?.length ?? 0,
+      pointerGeomAngleRad: this.pointerSprite ? this.wheelGeomAngleMod() : 0,
+      spinOmega: this.spinOmega,
+      spinAlpha: this.spinAlpha,
+      chargeElapsed: this.chargeElapsed,
+      speechCount: this.speechEntries.length,
+      confirmVisible: this.confirmVisible,
+      actionsPlaybackLocked: this.isActionsPlaybackLocked(),
+      geomDebugVisible: this.geomDebugVisible,
+      lastResult: this.lastResult,
+    };
+  }
+
   private sugarDbg(msg: string): void {
     this.debugSugarLog?.(`[糖画转盘] ${msg}`);
   }

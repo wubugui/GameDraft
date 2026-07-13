@@ -20,6 +20,18 @@ def parse_frame_gid(node_name: str) -> str | None:
     return None
 
 
+def group_super_node_name(gid: str) -> str:
+    """折叠分组在画布上呈现为一个「超级节点」时的保留节点名（非图节点 id）。"""
+    return f"__editor_grpnode_{gid}"
+
+
+def parse_group_super_node_gid(node_name: str) -> str | None:
+    p = "__editor_grpnode_"
+    if node_name.startswith(p):
+        return node_name[len(p) :]
+    return None
+
+
 def migrate_legacy_frames_from_assignments(
     positions: dict[str, tuple[float, float]],
     node_to_group: dict[str, str],

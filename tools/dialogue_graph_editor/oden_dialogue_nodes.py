@@ -222,3 +222,38 @@ class DialogueGhostNode(BaseNode):
         self.view.setToolTip(
             f"缺失目标节点<br/>连线指向的 id「{gid}」不在本图 nodes 中。<br/>保存前请补节点或改连线。"
         )
+
+
+class DialogueGroupNode(BaseNode):
+    """折叠分组的「超级节点」：一个 in（收所有入组连线）+ 一个 out（发所有出组连线）。
+
+    纯编辑器视觉——折叠时把整组画成一个节点，跨组边改接到它；展开即恢复。**不对应任何图节点、
+    绝不进 JSON**（其保留节点名不是图节点 id，所有坐标/幽灵/分组快照都按类型过滤掉它）。
+    """
+
+    __identifier__ = "gamedraft.dialogue"
+    NODE_NAME = "group"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.group_gid: str = ""
+        self.add_input("in", multi_input=True, display_name=False)
+        self.add_output("out", multi_output=True, display_name=False)
+        try:
+            self.view.text_item.set_locked(True)
+        except Exception:
+            pass
+
+    def setup_group(
+        self, gid: str, title: str, count: int, rgba: tuple[int, int, int, int]
+    ) -> None:
+        # 不改 name（保留保留名，供边路由/命中检测按名反查）；可见标签走 text_item（同 DialogueFlowNode）。
+        self.group_gid = gid
+        self.set_property("color", rgba, push_undo=False)
+        self.set_property("border_color", (235, 225, 180, 255), push_undo=False)
+        self.view.text_item.setPlainText(f"▸ 分组：{title}\n（已折叠 {count} 个节点·双击展开）")
+        self.view.draw_node()
+        self.view.setToolTip(
+            f"折叠的分组「{title}」<br/>含 {count} 个节点。<br/>"
+            "跨组连线已改接到本节点；双击或右键可展开。<br/>纯视觉，不影响数据。"
+        )

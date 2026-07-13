@@ -27,6 +27,7 @@ function parseHexColor(s: string): { r: number; g: number; b: number } {
 export type WaterEntityCreateOptions = {
   /** 写入参数 RT（深度 R、发光 G、标记 B）；漂浮物不进 RT，应为 false */
   paramsEncode?: boolean;
+  random?: () => number;
 };
 
 /** 品类默认显示尺寸（贴图最长边缩放目标，bounds 像素）；实体可用 displaySize 覆盖 */
@@ -54,7 +55,8 @@ export class WaterEntity {
   paramsSprite?: Sprite;
 
   private motionT = 0;
-  private depthPhase = Math.random() * Math.PI * 2;
+  private depthPhase = 0;
+  private random: () => number;
   private patrolDir = 1;
   private startX: number;
   private startY: number;
@@ -72,6 +74,8 @@ export class WaterEntity {
   ) {
     this.def = def;
     this.category = def.category;
+    this.random = options?.random ?? Math.random;
+    this.depthPhase = this.random() * Math.PI * 2;
     this.startX = def.pos.x;
     this.startY = def.pos.y;
 
@@ -238,8 +242,8 @@ export class WaterEntity {
         this.container.y += (dy / len) * sp * dt * (18 + this.fleeBursts * 4);
       }
       if (jit > 0) {
-        this.container.x += (Math.random() - 0.5) * jit * dt * 30;
-        this.container.y += (Math.random() - 0.5) * jit * dt * 30;
+        this.container.x += (this.random() - 0.5) * jit * dt * 30;
+        this.container.y += (this.random() - 0.5) * jit * dt * 30;
       }
     } else if (this.category === 'floating') {
       this.container.x += Math.sin(this.motionT * 0.4) * dt * 6;

@@ -158,6 +158,24 @@ export class Npc implements ICutsceneActor {
     return this.container;
   }
 
+  /** 跨运行壳视觉门禁用的稳定只读状态。 */
+  getDebugVisualState(): Record<string, unknown> {
+    return {
+      id: this.id,
+      x: this.x,
+      y: this.y,
+      visible: this.container.visible,
+      scaleX: this.container.scale.x,
+      scaleY: this.container.scale.y,
+      animation: this.sprite?.getDebugVisualState() ?? null,
+    };
+  }
+
+
+  resetAnimationClock(): void {
+    this.sprite?.resetAnimationClock();
+  }
+
   /** 气泡底边在头顶附近；无精灵时用占位圆顶部估算 */
   getEmoteBubbleAnchorLocalY(): number {
     const headGap = 8;

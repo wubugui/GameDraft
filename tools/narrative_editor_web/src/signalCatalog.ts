@@ -142,14 +142,34 @@ export function collectKnownSignals(data: NarrativeGraphsFileDef): string[] {
     .map((e) => e.id);
 }
 
-export function createAuthorSignal(data: NarrativeGraphsFileDef, id: string, label?: string): void {
+export function createAuthorSignal(data: NarrativeGraphsFileDef, id: string, label?: string, notes?: string): void {
   const trimmed = String(id ?? '').trim();
   if (isReservedAuthorSignalId(trimmed)) throw new Error(`Invalid signal id: ${trimmed}`);
   data.signals ??= [];
   if (data.signals.some((s) => s.id === trimmed)) throw new Error(`Signal already exists: ${trimmed}`);
   const entry: NarrativeAuthorSignalDef = { id: trimmed };
   if (label?.trim()) entry.label = label.trim();
+  if (notes?.trim()) entry.notes = notes.trim();
   data.signals.push(entry);
+}
+
+/**
+ * 给作者信号写/改注释。注释就是「注册那个地方」——若该信号已被引用但还没进 data.signals，
+ * 写注释时顺手把它注册进去（注释即注册）。派生/保留信号不接受作者注释（它们由状态自动生成）。
+ * 清空注释 = 删 notes 键；对本来就不存在、又被清空的信号不无谓创建空行。
+ */
+export function setAuthorSignalNotes(data: NarrativeGraphsFileDef, id: string, notes: string): void {
+  const target = String(id ?? '').trim();
+  if (!target || isReservedAuthorSignalId(target) || isDerivedStateSignal(target)) return;
+  data.signals ??= [];
+  const row = data.signals.find((s) => s.id === target);
+  const trimmed = String(notes ?? '').trim();
+  if (row) {
+    if (trimmed) row.notes = trimmed;
+    else delete row.notes;
+  } else if (trimmed) {
+    data.signals.push({ id: target, notes: trimmed });
+  }
 }
 
 /** 递归更新 emitNarrativeSignal 动作里 params.signal 的引用（动作可嵌套，故递归）。 */

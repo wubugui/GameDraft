@@ -1,5 +1,6 @@
 {
   "schemaVersion": 3,
+  "migrations": {},
   "compositions": [
     {
       "id": "dock_water_monkey_ring_flow",
@@ -16,8 +17,8 @@
             "label": "未开始",
             "meta": {
               "editor": {
-                "x": 24,
-                "y": 24
+                "x": 23,
+                "y": 20
               }
             },
             "broadcastOnEnter": false
@@ -112,7 +113,7 @@
           "kind": "minigameBlackbox",
           "label": "捞箱小游戏",
           "refId": "dock_crate_tutorial",
-          "x": 724,
+          "x": 770,
           "y": -96,
           "meta": {
             "emits": [
@@ -478,8 +479,8 @@
             "label": "开局·茶馆门外的人",
             "meta": {
               "editor": {
-                "x": 24,
-                "y": 24
+                "x": 26,
+                "y": -13
               }
             }
           },
@@ -511,8 +512,8 @@
             "broadcastOnEnter": true,
             "meta": {
               "editor": {
-                "x": 544,
-                "y": 124
+                "x": 647,
+                "y": 169
               }
             }
           },
@@ -4408,8 +4409,8 @@
             "label": "未接",
             "meta": {
               "editor": {
-                "x": -31,
-                "y": 37
+                "x": 252,
+                "y": 122
               }
             }
           },
@@ -4418,8 +4419,8 @@
             "label": "已接活",
             "meta": {
               "editor": {
-                "x": 301,
-                "y": 89
+                "x": 753,
+                "y": 113
               }
             }
           },
@@ -4429,8 +4430,24 @@
             "activePlane": "背尸",
             "meta": {
               "editor": {
-                "x": 667,
-                "y": 110
+                "x": 1263,
+                "y": 103
+              }
+            }
+          },
+          "placed": {
+            "id": "placed",
+            "label": "已落凳（等结钱）",
+            "onEnterActions": [
+              {
+                "type": "resetPlayerAvatar",
+                "params": {}
+              }
+            ],
+            "meta": {
+              "editor": {
+                "x": 1746,
+                "y": 93
               }
             }
           },
@@ -4439,16 +4456,10 @@
             "label": "已交付",
             "meta": {
               "editor": {
-                "x": 920,
-                "y": -13
+                "x": 2256,
+                "y": 93
               }
-            },
-            "onEnterActions": [
-              {
-                "type": "resetPlayerAvatar",
-                "params": {}
-              }
-            ]
+            }
           }
         },
         "transitions": [
@@ -4465,8 +4476,14 @@
             "signal": "beishi_yan_shouldered"
           },
           {
-            "id": "t_deliver",
+            "id": "t_place",
             "from": "carrying",
+            "to": "placed",
+            "signal": "beishi_yan_placed"
+          },
+          {
+            "id": "t_deliver",
+            "from": "placed",
             "to": "delivered",
             "signal": "beishi_yan_delivered"
           }
@@ -4478,10 +4495,11 @@
           "kind": "dialogueBlackbox",
           "label": "工头派活",
           "refId": "寻狗_零工接活",
-          "x": 32,
-          "y": -115,
+          "x": 12,
+          "y": 115,
           "meta": {
             "emits": [
+              "beishi_lg_accepted",
               "beishi_yan_accepted"
             ],
             "reads": [],
@@ -4493,11 +4511,26 @@
           "kind": "minigameBlackbox",
           "label": "上肩长按",
           "refId": "carry_drowned_corpse",
-          "x": 345,
-          "y": -146,
+          "x": 513,
+          "y": 31,
           "meta": {
             "emits": [
               "beishi_yan_shouldered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_putdown",
+          "kind": "minigameBlackbox",
+          "label": "落凳长按",
+          "refId": "carry_putdown_drowned",
+          "x": 1023,
+          "y": 22,
+          "meta": {
+            "emits": [
+              "beishi_yan_placed"
             ],
             "reads": [],
             "commands": []
@@ -4508,10 +4541,202 @@
           "kind": "dialogueBlackbox",
           "label": "义庄交尸",
           "refId": "寻狗_管事义庄内",
-          "x": 622,
-          "y": -139,
+          "x": 1506,
+          "y": 12,
           "meta": {
             "emits": [
+              "beishi_lg_delivered",
+              "beishi_yan_delivered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "beishi_lingong_flow",
+      "label": "背尸零活 · 路倒送义庄（开场教学单）",
+      "description": "开场教学单(自由空挡起手):街上自由逛→打哈欠起意找活→到义庄被人拦下接活→自己去巷口墙根寻路倒验看上肩(进背尸位面)→背回义庄落凳→管事结五文。完成后解锁庄家来人(阿秀线)与淹尸单。",
+      "mainGraph": {
+        "id": "flow_背尸_零工活",
+        "ownerType": "flow",
+        "ownerId": "背尸零工活",
+        "label": "背尸·零工路倒",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "未找活（街上自由逛）",
+            "meta": {
+              "editor": {
+                "x": 252,
+                "y": 132
+              }
+            }
+          },
+          "looking": {
+            "id": "looking",
+            "label": "找活中（走访几处）",
+            "meta": {
+              "editor": {
+                "x": 732,
+                "y": 122
+              }
+            }
+          },
+          "accepted": {
+            "id": "accepted",
+            "label": "已接活",
+            "meta": {
+              "editor": {
+                "x": 1224,
+                "y": 113
+              }
+            }
+          },
+          "carrying": {
+            "id": "carrying",
+            "label": "已上肩（背尸位面）",
+            "activePlane": "背尸",
+            "meta": {
+              "editor": {
+                "x": 1734,
+                "y": 103
+              }
+            }
+          },
+          "placed": {
+            "id": "placed",
+            "label": "已落凳（等结钱）",
+            "onEnterActions": [
+              {
+                "type": "resetPlayerAvatar",
+                "params": {}
+              }
+            ],
+            "meta": {
+              "editor": {
+                "x": 2214,
+                "y": 93
+              }
+            }
+          },
+          "delivered": {
+            "id": "delivered",
+            "label": "已交付",
+            "meta": {
+              "editor": {
+                "x": 2715,
+                "y": 93
+              }
+            }
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_seek",
+            "from": "initial",
+            "to": "looking",
+            "signal": "beishi_lg_seek"
+          },
+          {
+            "id": "t_accept",
+            "from": "looking",
+            "to": "accepted",
+            "signal": "beishi_lg_accepted"
+          },
+          {
+            "id": "t_shoulder",
+            "from": "accepted",
+            "to": "carrying",
+            "signal": "beishi_lg_shouldered"
+          },
+          {
+            "id": "t_place",
+            "from": "carrying",
+            "to": "placed",
+            "signal": "beishi_lg_placed"
+          },
+          {
+            "id": "t_deliver",
+            "from": "placed",
+            "to": "delivered",
+            "signal": "beishi_lg_delivered"
+          }
+        ]
+      },
+      "elements": [
+        {
+          "id": "dlg_seek",
+          "kind": "dialogueBlackbox",
+          "label": "打哈欠找活",
+          "refId": "寻狗_找活",
+          "x": 49,
+          "y": 241,
+          "meta": {
+            "emits": [
+              "beishi_lg_seek"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_accept",
+          "kind": "dialogueBlackbox",
+          "label": "义庄门口拦活",
+          "refId": "寻狗_义庄门口拦活",
+          "x": 492,
+          "y": 41,
+          "meta": {
+            "emits": [
+              "beishi_lg_accepted"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_shoulder",
+          "kind": "minigameBlackbox",
+          "label": "上肩长按",
+          "refId": "carry_ordinary_corpse",
+          "x": 984,
+          "y": 31,
+          "meta": {
+            "emits": [
+              "beishi_lg_shouldered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_putdown",
+          "kind": "minigameBlackbox",
+          "label": "落凳长按",
+          "refId": "carry_putdown_ordinary",
+          "x": 1494,
+          "y": 22,
+          "meta": {
+            "emits": [
+              "beishi_lg_placed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_deliver",
+          "kind": "dialogueBlackbox",
+          "label": "义庄结钱",
+          "refId": "寻狗_管事义庄内",
+          "x": 1974,
+          "y": 12,
+          "meta": {
+            "emits": [
+              "beishi_lg_delivered",
               "beishi_yan_delivered"
             ],
             "reads": [],
@@ -4861,6 +5086,31 @@
     {
       "id": "beishi_yan_delivered",
       "label": "背尸零活·淹尸送达义庄"
+    },
+    {
+      "id": "beishi_yan_placed",
+      "label": "背尸零活·淹尸落凳"
+    },
+    {
+      "id": "beishi_lg_seek",
+      "label": "背尸零活·路倒起意找活",
+      "notes": "？？"
+    },
+    {
+      "id": "beishi_lg_accepted",
+      "label": "背尸零活·路倒接活"
+    },
+    {
+      "id": "beishi_lg_shouldered",
+      "label": "背尸零活·路倒上肩"
+    },
+    {
+      "id": "beishi_lg_placed",
+      "label": "背尸零活·路倒落凳"
+    },
+    {
+      "id": "beishi_lg_delivered",
+      "label": "背尸零活·路倒送达"
     }
   ]
 }

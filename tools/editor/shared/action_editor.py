@@ -142,6 +142,8 @@ _OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
     #（否则含 setSmell 的条目"打开即注入" dir:0.0/flicker:false）
     "dir": 0.0,
     "flicker": False,
+    # giveItem critical（关键给予绕过槽上限）为可选：原本没有且未勾选时不写出
+    "critical": False,
 }
 
 def _coerce_bool_param(val: object) -> bool:
@@ -387,7 +389,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "sniff": [],
     "activatePlane": [("id", "str")],
     "deactivatePlane": [],
-    "giveItem": [("id", "str"), ("count", "int")],
+    "giveItem": [("id", "str"), ("count", "int"), ("critical", "bool")],
     "removeItem": [("id", "str"), ("count", "int")],
     "giveCurrency": [("amount", "int")],
     "removeCurrency": [("amount", "str")],
@@ -825,14 +827,21 @@ class NarrativeSignalManagerDialog(QDialog):
         tools = QHBoxLayout()
         add_btn = QPushButton("新增", self)
         del_btn = QPushButton("删除", self)
+        undo_btn = QPushButton("撤销重构", self)
+        undo_btn.setToolTip(
+            "撤销最近一次叙事重构（改 id / 删除的全项目级联）。\n"
+            "与叙事编辑器共用同一撤销日志；只动暂存不落盘。"
+        )
         self._select_btn = QPushButton("选用当前信号", self)
         validate_btn = QPushButton("校验", self)
         add_btn.clicked.connect(self._add_signal)
         del_btn.clicked.connect(self._delete_signal)
+        undo_btn.clicked.connect(self._undo_refactor)
         self._select_btn.clicked.connect(self._select_current)
         validate_btn.clicked.connect(self._refresh_validation)
         tools.addWidget(add_btn)
         tools.addWidget(del_btn)
+        tools.addWidget(undo_btn)
         tools.addStretch(1)
         tools.addWidget(validate_btn)
         tools.addWidget(self._select_btn)
@@ -927,11 +936,17 @@ class NarrativeSignalManagerDialog(QDialog):
         old_id = str(row.get("id") or "").strip()
         text = item.text().strip()
         if item.column() == 0:
-            row["id"] = text
             if old_id and text and old_id != text:
-                _rename_narrative_signal_refs(self._data, old_id, text)
+                # 改 id 走全项目重构引擎（与叙事编辑器同一引擎/同一撤销日志），
+                # 拒绝或失败时表格重建即还原显示（本地拷贝与模型均未变）。
+                if not self._refactor_rename(old_id, text):
+                    self._rebuild_table()
+                    self._refresh_validation()
+                    return
                 if self._selected == old_id:
                     self._selected = text
+            else:
+                row["id"] = text
         elif item.column() == 1:
             if text:
                 row["label"] = text
@@ -981,19 +996,116 @@ class NarrativeSignalManagerDialog(QDialog):
         if idx < 0 or idx >= len(signals):
             return
         sid = str(signals[idx].get("id") or "").strip() if isinstance(signals[idx], dict) else ""
-        if sid and _narrative_listener_counts(self._data).get(sid, 0) > 0:
-            ok = QMessageBox.question(
-                self,
-                "删除信号",
-                f"信号 {sid!r} 正被 Transition 监听。删除后校验会报错，确定删除？",
+        if self._model is None or not sid:
+            # 脱机/空 id 兜底：保持旧的本地拷贝行为
+            if sid and _narrative_listener_counts(self._data).get(sid, 0) > 0:
+                ok = QMessageBox.question(
+                    self,
+                    "删除信号",
+                    f"信号 {sid!r} 正被 Transition 监听。删除后校验会报错，确定删除？",
+                )
+                if ok != QMessageBox.StandardButton.Yes:
+                    return
+            del signals[idx]
+        else:
+            # 走全项目重构引擎：有引用先列数目并确认强制清理（监听置草稿、发射动作移除）
+            from .signal_refactor import SignalRefactorError, delete_signal, push_journal, scan_signal_usages
+
+            if not self._stage_copy_to_model():
+                return
+            usages = scan_signal_usages(self._model, sid)
+            refs = usages["totalRefs"]
+            prompt = (
+                f"删除信号 {sid!r}？共 {refs} 处引用将被强制清理：\n"
+                f"监听 transition 置为草稿（__draft__），发射动作从对话/场景/资产中移除\n"
+                f"（对话图 {len(usages['dialogues'])} 个、场景/资产 {len(usages['assets'])} 个条目）。\n\n"
+                "改动只进暂存、不落盘（Save All 才写文件）；可经「撤销重构」精确复原，"
+                "不随本对话框取消而回滚。"
+                if refs
+                else f"删除信号 {sid!r}（无引用，仅移除注册表行）？可经「撤销重构」复原。"
             )
+            ok = QMessageBox.question(self, "重构删除", prompt)
             if ok != QMessageBox.StandardButton.Yes:
                 return
-        del signals[idx]
+            try:
+                summary, reverse_ops = delete_signal(self._model, sid, force=bool(refs))
+            except SignalRefactorError as exc:
+                QMessageBox.warning(self, "重构删除失败", str(exc))
+                return
+            push_journal(self._model, {"op": "delete", "signalId": sid, "summary": summary, "reverseOps": reverse_ops})
+            self._resync_from_model()
         if self._selected == sid:
             self._selected = ""
         self._rebuild_table()
         self._refresh_validation()
+
+    def _stage_copy_to_model(self) -> bool:
+        """把本对话框的当前拷贝（含 label/notes 编辑）暂存进模型——重构必须作用在最新数据上。
+        校验错误时拒绝（与 OK 提交同一道闸），不产生任何修改。"""
+        errors, _warnings = self._refresh_validation()
+        if errors:
+            QMessageBox.warning(self, "信号校验未通过", "请先修复错误，再执行重构。")
+            return False
+        self._model.narrative_graphs = self._data
+        self._model.mark_dirty("narrative_graphs")
+        return True
+
+    def _resync_from_model(self) -> None:
+        """重构后从模型取回最新数据（引擎直接改模型，本地拷贝必须跟上）。"""
+        src = self._model.narrative_graphs if isinstance(self._model.narrative_graphs, dict) else {}
+        self._data = json.loads(json.dumps(src, ensure_ascii=False))
+        self._data.setdefault("signals", [])
+        if not isinstance(self._data["signals"], list):
+            self._data["signals"] = []
+
+    def _refactor_rename(self, old_id: str, new_id: str) -> bool:
+        """信号改 id 的全项目级联（共享引擎）。脱机（无模型）退回旧的拷贝内级联。"""
+        if self._model is None:
+            for row in self._signals():
+                if isinstance(row, dict) and str(row.get("id") or "").strip() == old_id:
+                    row["id"] = new_id
+            _rename_narrative_signal_refs(self._data, old_id, new_id)
+            return True
+        from .signal_refactor import SignalRefactorError, push_journal, rename_signal, scan_signal_usages
+
+        if not self._stage_copy_to_model():
+            return False
+        usages = scan_signal_usages(self._model, old_id)
+        ok = QMessageBox.question(
+            self,
+            "重构改名",
+            f"把信号 {old_id!r} 全项目改名为 {new_id!r}？\n\n"
+            f"共 {usages['totalRefs']} 处引用将级联更新"
+            f"（对话图 {len(usages['dialogues'])} 个、场景/资产 {len(usages['assets'])} 个条目、"
+            f"监听 transition {len(usages['listeners'])} 条）。\n\n"
+            "改动只进暂存、不落盘（Save All 才写文件）；可经「撤销重构」回退，"
+            "不随本对话框取消而回滚。",
+        )
+        if ok != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            summary = rename_signal(self._model, old_id, new_id)
+        except SignalRefactorError as exc:
+            QMessageBox.warning(self, "重构改名失败", str(exc))
+            return False
+        push_journal(self._model, {"op": "rename", "oldId": old_id, "newId": new_id, "summary": summary})
+        self._resync_from_model()
+        return True
+
+    def _undo_refactor(self) -> None:
+        if self._model is None:
+            QMessageBox.information(self, "撤销重构", "脱机模式没有重构日志。")
+            return
+        from .signal_refactor import undo_last
+
+        result = undo_last(self._model)
+        if not result.get("ok"):
+            QMessageBox.information(self, "撤销重构", str(result.get("reason") or "没有可撤销的重构操作"))
+            return
+        self._resync_from_model()
+        self._rebuild_table()
+        self._refresh_validation()
+        QMessageBox.information(self, "撤销重构", f"{result.get('description')}（仍未落盘）")
 
     def _refresh_validation(self) -> tuple[list[str], list[str]]:
         errors, warnings = _validate_narrative_signals_for_manager(self._data)
@@ -2717,7 +2829,9 @@ class ActionRow(QWidget):
             "sugar_wheel_minigame": "仅下拉选择；列表来自 sugar_wheel/index.json。",
             "paper_craft_minigame": "仅下拉选择；列表来自 paper_craft/index.json。",
             "smell": "仅下拉选择；列表来自 smell_profiles.json 的 profiles（香火/阴腥/尸臭/血腥/霉/香粉…）。留空=回落正常态。",
-            "plane": "仅下拉选择；列表来自 planes.json（位面面板维护）。",
+            "plane": "仅下拉选择；列表来自 planes.json（位面面板维护）。\n"
+                     "activatePlane 作用域：过场内激活随过场结束自动清除；"
+                     "过场外持续至 deactivatePlane / 读档，且压过叙事点名。",
         }.get(kind)
         if tip:
             w.setToolTip(tip)
@@ -4164,6 +4278,11 @@ class ActionRow(QWidget):
                 w = QCheckBox(self)
                 # 字符串 "false"/"0" 必须解析为 False（运行时同语义），不能 bool("false")→True
                 w.setChecked(_coerce_bool_param(val))
+                if act_type == "giveItem" and pname == "critical":
+                    w.setToolTip(
+                        "关键给予：背包满时绕过 12 槽上限也要给到手。\n"
+                        "剧情必得道具（分支按 flag 推进、不可再入）勾这个，防止满包时道具永久丢失。"
+                    )
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})

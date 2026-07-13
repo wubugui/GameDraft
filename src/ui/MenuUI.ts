@@ -230,6 +230,29 @@ export class MenuUI {
           }
         });
       }
+
+      if (meta) {
+        const exportLink = new Text({
+          text: 'JSON ↓',
+          style: { fontSize: 11, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui },
+        });
+        exportLink.x = px + PANEL_W - 82;
+        exportLink.y = slotY + 7;
+        exportLink.eventMode = 'static';
+        exportLink.cursor = 'pointer';
+        exportLink.on('pointerdown', () => this.exportSaveFile(i));
+        this.container.addChild(exportLink);
+      }
+      const importLink = new Text({
+        text: 'JSON ↑',
+        style: { fontSize: 11, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui },
+      });
+      importLink.x = px + PANEL_W - 82;
+      importLink.y = slotY + 35;
+      importLink.eventMode = 'static';
+      importLink.cursor = 'pointer';
+      importLink.on('pointerdown', () => this.importSaveFile(i));
+      this.container.addChild(importLink);
     }
 
     const backBtn = new Text({
@@ -248,6 +271,40 @@ export class MenuUI {
 
     this.renderer.uiLayer.addChild(this.container);
     fadeIn(this.container);
+  }
+
+  private exportSaveFile(slot: number): void {
+    const raw = this.saveData.exportSlotPayload(slot);
+    if (!raw) {
+      this.eventBus.emit('notification:show', { text: this.strings.get('menu', 'saveFailed'), type: 'error' });
+      return;
+    }
+    const blob = new Blob([raw.endsWith('\n') ? raw : raw + '\n'], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `gamedraft_save_${slot + 1}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private importSaveFile(slot: number): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.style.display = 'none';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      const ok = file ? this.saveData.importSlotPayload(slot, await file.text()) : false;
+      input.remove();
+      this.eventBus.emit('notification:show', {
+        text: ok ? this.strings.get('menu', 'loadSlot', { slot: slot + 1 }) : this.strings.get('menu', 'loadFailed'),
+        type: ok ? 'info' : 'error',
+      });
+      if (ok) this.build();
+    };
+    document.body.appendChild(input);
+    input.click();
   }
 
   private buildSettings(): void {

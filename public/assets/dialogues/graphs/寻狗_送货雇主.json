@@ -12,8 +12,7 @@
         {
           "conditions": [
             {
-              "narrative": "flow_背尸_淹尸活",
-              "state": "carrying"
+              "plane": "背尸"
             }
           ],
           "next": "beishi_busy"

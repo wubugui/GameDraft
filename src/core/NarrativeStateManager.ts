@@ -8,8 +8,10 @@ import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEva
 import {
   blockingNarrativeValidationErrors,
   validateNarrativeGraphData,
+  DEFAULT_NARRATIVE_DRAFT_SIGNAL,
   type NarrativeValidationIssue,
 } from './narrativeGraphValidation';
+import { reportDevError } from './devErrorOverlay';
 import { TEXT_URLS } from './projectPaths';
 
 export type NarrativeOwnerType =
@@ -102,6 +104,20 @@ export interface NarrativeGraphsFile {
   schemaVersion?: number;
   graphs?: NarrativeGraph[];
   compositions?: NarrativeComposition[];
+  migrations?: NarrativeSaveMigrations;
+}
+
+/**
+ * 旧存档迁移映射（对齐 FlagStore 的 flag_registry.migrations 机制）：改名叙事图/状态后，
+ * 在 narrative_graphs.json 顶层声明 旧名→新名，deserialize 先重映射再按现行图校验。
+ * 单跳、不追链（a→b、b→c 不会把 a 映到 c）；`states` 的外层键一律用**当前**
+ * （图改名之后的新）图 id——图改名先应用，状态改名后应用。
+ */
+export interface NarrativeSaveMigrations {
+  /** 旧图 id → 新图 id */
+  graphs?: Record<string, string>;
+  /** 图 id（当前名）→ { 旧 state id → 新 state id } */
+  states?: Record<string, Record<string, string>>;
 }
 
 export type NarrativeCompositionElementKind =
@@ -227,6 +243,11 @@ export class NarrativeStateManager implements IGameSystem {
   /** graphId → 到达过的状态集合（含 initialState 与当前状态），随存档持久化 */
   private reachedStates: Map<string, Set<string>> = new Map();
   private recentIssues: NarrativeRuntimeIssue[] = [];
+  private saveMigrations: NarrativeSaveMigrations | null = null;
+  /** 全部已注册图 signal 型 transition 的监听键缓存（registerGraphs 时失效，懒重建）。 */
+  private listenedSignalKeysCache: Set<string> | null = null;
+  /** 已上报过的悬垂信号键（同名只进一次错误面/issue，避免重复发射刷屏）。 */
+  private reportedUnlistenedSignalKeys: Set<string> = new Set();
   private recentTrace: NarrativeTraceEvent[] = [];
   private traceSeq = 0;
   private primaryOwnerWarningKeys: Set<string> = new Set();
@@ -285,6 +306,7 @@ export class NarrativeStateManager implements IGameSystem {
     try {
       const data = await assetManager.loadJson<NarrativeGraphsFile>(path);
       this.validateLoadedData(data, path);
+      this.setSaveMigrations(data.migrations);
       this.registerGraphs(compileNarrativeGraphs(data));
     } catch (e) {
       const message = `NarrativeStateManager: narrative_graphs.json not found or invalid: ${String(e)}`;
@@ -293,8 +315,17 @@ export class NarrativeStateManager implements IGameSystem {
         throw e;
       }
       console.warn('NarrativeStateManager: narrative_graphs.json not found or invalid, running empty', e);
+      this.setSaveMigrations(null);
       this.registerGraphs([]);
     }
+  }
+
+  /**
+   * 注入旧存档迁移映射（loadFromAsset 从数据文件自动接线；直接 registerGraphs 的装配方/
+   * 测试可手动注入）。传 null/undefined 清空。
+   */
+  setSaveMigrations(migrations: NarrativeSaveMigrations | null | undefined): void {
+    this.saveMigrations = migrations ?? null;
   }
 
   registerGraphs(graphs: NarrativeGraph[]): void {
@@ -304,6 +335,8 @@ export class NarrativeStateManager implements IGameSystem {
     this.ownerIndex.clear();
     this.queue.length = 0;
     this.primaryOwnerWarningKeys.clear();
+    this.listenedSignalKeysCache = null;
+    this.reportedUnlistenedSignalKeys.clear();
     this.recentIssues = this.recentIssues.filter((issue) => issue.code === 'narrative.load.failed');
     for (const graph of graphs) {
       if (!graph || !graph.id || !graph.initialState || !graph.states?.[graph.initialState]) {
@@ -418,6 +451,17 @@ export class NarrativeStateManager implements IGameSystem {
 
   getGraph(graphId: string): NarrativeGraph | undefined {
     return this.graphs.get(graphId);
+  }
+
+  /**
+   * 诊断用：判定条件叶子引用的图/状态是否存在于注册数据（区别于「存在但未到达/未激活」）。
+   * 图册为空（尚未加载或加载失败）时返回 'unavailable'，调用方应跳过判定，避免装配期误报。
+   */
+  classifyStateRef(graphId: string, stateId: string): 'ok' | 'missingGraph' | 'missingState' | 'unavailable' {
+    if (this.graphs.size === 0) return 'unavailable';
+    const graph = this.graphs.get(String(graphId ?? '').trim());
+    if (!graph) return 'missingGraph';
+    return graph.states[String(stateId ?? '').trim()] ? 'ok' : 'missingState';
   }
 
   getGraphs(): NarrativeGraph[] {
@@ -545,10 +589,29 @@ export class NarrativeStateManager implements IGameSystem {
   }
 
   restoreActiveStates(states: Record<string, unknown>): void {
-    for (const [graphId, stateRaw] of Object.entries(states ?? {})) {
+    for (const [rawGraphId, stateRaw] of Object.entries(states ?? {})) {
+      const graphId = this.migrateSaveGraphId(rawGraphId);
+      const rawStateId = String(stateRaw ?? '').trim();
+      const stateId = rawStateId ? this.migrateSaveStateId(graphId, rawStateId) : '';
       const graph = this.graphs.get(graphId);
-      const stateId = String(stateRaw ?? '').trim();
-      if (!graph || !stateId || !graph.states[stateId]) continue;
+      if (!graph) {
+        this.warnDroppedSaveEntry(
+          'save.active.graphMissing',
+          `NarrativeStateManager: save references unknown narrative graph "${rawGraphId}"${this.migrationSuffix(rawGraphId, graphId)}; dropped active state "${rawStateId}". If the graph was renamed, declare it in narrative_graphs.json migrations.graphs.`,
+          graphId,
+          stateId || undefined,
+        );
+        continue;
+      }
+      if (!stateId || !graph.states[stateId]) {
+        this.warnDroppedSaveEntry(
+          'save.active.stateMissing',
+          `NarrativeStateManager: save references unknown state "${rawStateId}"${this.migrationSuffix(rawStateId, stateId)} in graph "${graphId}"; graph falls back to initialState "${graph.initialState}". If the state was renamed, declare it in narrative_graphs.json migrations.states.`,
+          graphId,
+          stateId || rawStateId || undefined,
+        );
+        continue;
+      }
       this.activeStates.set(graphId, stateId);
     }
   }
@@ -556,12 +619,33 @@ export class NarrativeStateManager implements IGameSystem {
   /** 旧档无 reachedStates 时回填：initialState + 当前 activeState 视为到达过。 */
   private restoreReachedStates(states: Record<string, unknown> | undefined): void {
     if (states && typeof states === 'object') {
-      for (const [graphId, listRaw] of Object.entries(states)) {
+      for (const [rawGraphId, listRaw] of Object.entries(states)) {
+        if (!Array.isArray(listRaw)) continue;
+        const graphId = this.migrateSaveGraphId(rawGraphId);
         const graph = this.graphs.get(graphId);
-        if (!graph || !Array.isArray(listRaw)) continue;
+        if (!graph) {
+          const dropped = listRaw.map((s) => String(s ?? '').trim()).filter(Boolean);
+          this.warnDroppedSaveEntry(
+            'save.reached.graphMissing',
+            `NarrativeStateManager: save references unknown narrative graph "${rawGraphId}"${this.migrationSuffix(rawGraphId, graphId)}; dropped reached states [${dropped.join(', ')}] (reached-gates re-lock). If the graph was renamed, declare it in narrative_graphs.json migrations.graphs.`,
+            graphId,
+          );
+          continue;
+        }
         for (const sRaw of listRaw) {
-          const stateId = String(sRaw ?? '').trim();
-          if (stateId && graph.states[stateId]) this.markStateReached(graphId, stateId);
+          const rawStateId = String(sRaw ?? '').trim();
+          if (!rawStateId) continue;
+          const stateId = this.migrateSaveStateId(graphId, rawStateId);
+          if (!graph.states[stateId]) {
+            this.warnDroppedSaveEntry(
+              'save.reached.stateMissing',
+              `NarrativeStateManager: save references unknown state "${rawStateId}"${this.migrationSuffix(rawStateId, stateId)} in graph "${graphId}"; dropped from reached states (its reached-gate re-locks). If the state was renamed, declare it in narrative_graphs.json migrations.states.`,
+              graphId,
+              stateId,
+            );
+            continue;
+          }
+          this.markStateReached(graphId, stateId);
         }
       }
     }
@@ -570,6 +654,29 @@ export class NarrativeStateManager implements IGameSystem {
       const graph = this.graphs.get(graphId);
       if (graph) this.markStateReached(graphId, graph.initialState);
     }
+  }
+
+  /** 单跳重映射存档里的图 id（对齐 FlagStore.migrations 语义：命中即映射、不追链）。 */
+  private migrateSaveGraphId(graphId: string): string {
+    const mapped = this.saveMigrations?.graphs?.[graphId];
+    return typeof mapped === 'string' && mapped.trim() ? mapped.trim() : graphId;
+  }
+
+  /** 单跳重映射存档里的状态 id；graphId 须为图改名之后的当前 id。 */
+  private migrateSaveStateId(graphId: string, stateId: string): string {
+    const mapped = this.saveMigrations?.states?.[graphId]?.[stateId];
+    return typeof mapped === 'string' && mapped.trim() ? mapped.trim() : stateId;
+  }
+
+  /** 迁移映射生效过时在告警里点出来，方便区分"改名没配映射"和"映射目标配错"。 */
+  private migrationSuffix(rawId: string, migratedId: string): string {
+    return migratedId && migratedId !== rawId ? ` (migrated to "${migratedId}")` : '';
+  }
+
+  /** 存档条目重映射后仍对不上注册图：进 recentIssues 留痕 + console.warn 点名，不再静默丢弃。 */
+  private warnDroppedSaveEntry(code: string, message: string, graphId: string, stateId?: string): void {
+    this.recordIssue({ severity: 'warning', code, message, graphId, stateId });
+    console.warn(message);
   }
 
   destroy(): void {
@@ -586,6 +693,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.reachedStates.clear();
     this.ownerIndex.clear();
     this.nestedDrainPromises.clear();
+    this.saveMigrations = null;
     this.queue.length = 0;
   }
 
@@ -843,11 +951,49 @@ export class NarrativeStateManager implements IGameSystem {
       migratedGraphs.add(graphId);
       matchedGraphIds.push(graphId);
     }
+    if (matchedGraphIds.length === 0) {
+      this.reportUnlistenedSignal(triggerKey);
+    }
     this.recordTrace('signal.processed', {
       triggerKey,
       payload: { matchedGraphIds },
       message: matchedGraphIds.length ? `matched ${matchedGraphIds.length} graph(s)` : 'no matching transition',
     });
+  }
+
+  private getListenedSignalKeys(): Set<string> {
+    if (!this.listenedSignalKeysCache) {
+      const keys = new Set<string>();
+      for (const graph of this.graphs.values()) {
+        for (const t of graph.transitions) {
+          if (t.trigger && t.trigger !== 'signal') continue;
+          const key = NarrativeStateManager.normalizeTriggerKey(t.signal);
+          if (key) keys.add(key);
+        }
+      }
+      this.listenedSignalKeysCache = keys;
+    }
+    return this.listenedSignalKeysCache;
+  }
+
+  /**
+   * 信号本次零命中且**静态**无任何图监听 = 悬垂（多为信号改名/删除后遗留的发射端）。
+   * 区别于「有监听但 from 状态不在位」的正常重复/迟到发射——那种保持 trace-only 不打扰。
+   * dev 顶部错误面点名 + recentIssues 留痕（prod 只留痕），同名只报一次。
+   */
+  private reportUnlistenedSignal(triggerKey: NarrativeTriggerKey): void {
+    const key = NarrativeStateManager.normalizeTriggerKey(triggerKey);
+    if (!key || key === DEFAULT_NARRATIVE_DRAFT_SIGNAL) return;
+    if (this.graphs.size === 0) return;
+    if (this.reportedUnlistenedSignalKeys.has(key)) return;
+    if (this.getListenedSignalKeys().has(key)) return;
+    this.reportedUnlistenedSignalKeys.add(key);
+    const message = `NarrativeStateManager: signal "${key}" has no listening transition in any registered graph (emit is a no-op); likely dangling after rename/delete`;
+    this.recordIssue({ severity: 'warning', code: 'signal.unlistened', message });
+    reportDevError(
+      `叙事信号 "${key}" 没有任何已注册叙事图的 transition 监听，发射不推动任何状态——疑似信号改名/删除后的悬垂发射端`,
+      '[narrative]',
+    );
   }
 
   private conditionsMet(conditions: ConditionExpr[] | undefined): boolean {

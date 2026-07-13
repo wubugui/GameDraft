@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QStatusBar, QFileDialog,
     QMessageBox, QTextEdit, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QSizePolicy, QWidget, QStyle, QSplitter, QTreeWidget,
-    QTreeWidgetItem, QStackedWidget, QToolButton,
+    QTreeWidgetItem, QStackedWidget, QToolButton, QMenu,
 )
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize, QSettings
@@ -52,6 +53,16 @@ SOURCE_NAVIGATION_SELECTORS = {
     "scene_zone_rule": "select_zone_by_id",
     "plane": "select_by_id",
 }
+
+# 导航历史栈单条记录。kind 决定重放时走哪个 navigate_to_*（见 _replay_nav），
+# args 是可原样透传给该方法的参数元组。frozen → 可哈希、可去重相等比较。
+_NAV_HISTORY_LIMIT = 100
+
+
+@dataclass(frozen=True)
+class _NavLocation:
+    kind: str
+    args: tuple = ()
 
 
 def _vite_dev_url_from_log(log: str) -> str | None:
@@ -129,6 +140,26 @@ def _npm_run_command(*args: str) -> tuple[str, list[str]]:
 _GAME_BROWSER_SENTINEL = object()
 
 
+class _EditorLoadErrorPage(QWidget):
+    """某编辑页构造失败时的占位页：保住 stack 索引对齐，其余页面照常可用。
+
+    不实现 flush_to_model / confirm_close 等钩子（鸭子协议 getattr 自动跳过），
+    对保存/关闭流程零参与。
+    """
+
+    def __init__(self, label: str, error: Exception, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        msg = QLabel(
+            f"「{label}」页载入失败：\n\n{error}\n\n"
+            "多为数据结构异常或代码缺陷；其余页面不受影响。\n"
+            "修复后重新打开工程即可恢复本页。",
+        )
+        msg.setWordWrap(True)
+        lay.addWidget(msg)
+        lay.addStretch(1)
+
+
 class _StackPageHost(QWidget):
     """Each stacked tab reports the same small minimum so hidden editors do not block maximize."""
 
@@ -176,7 +207,6 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("GameDraft Editor")
         self.resize(1400, 900)
 
         self._model = ProjectModel(self)
@@ -224,12 +254,18 @@ class MainWindow(QMainWindow):
         self._editor_labels: list[str] = []
         self._nav_tree.currentItemChanged.connect(self._on_nav_tree_current_changed)
 
+        # 导航历史栈（浏览器式后退/前进）——见 _record_nav / _replay_nav。
+        self._nav_history: list[_NavLocation] = []
+        self._nav_cursor: int = -1
+        self._nav_replaying: bool = False
+
         self._build_menus()
         self._build_menu_bar_corner()
         self._status = QStatusBar()
         self.setStatusBar(self._status)
 
         self._model.dirty_changed.connect(self._on_dirty)
+        self._refresh_window_title()
 
     # ---- menu / toolbar ---------------------------------------------------
 
@@ -314,12 +350,50 @@ class MainWindow(QMainWindow):
                 fn(tid)
 
     def _build_menu_bar_corner(self) -> None:
-        """Save/Validate/运行控制并入菜单栏右侧，避免单独工具栏占垂直空间。"""
+        """导航后退/前进 + Save/Validate/运行控制并入菜单栏右侧，避免单独工具栏占垂直空间。"""
+        # corner 需长期存活：offscreen 等平台上 setCornerWidget 不接管所有权时，
+        # 局部变量被回收会连带删掉子按钮（踩过）——存到 self 上兜底。
         corner = QWidget()
         corner.setObjectName("menuBarCorner")
+        self._menu_corner = corner
         layout = QHBoxLayout(corner)
         layout.setContentsMargins(8, 0, 4, 0)
         layout.setSpacing(6)
+
+        st = self.style()
+
+        # ---- 导航历史：◀ 后退（带下拉历史） / ▶ 前进（像浏览器）--------------
+        self._nav_back_btn = QToolButton(corner)
+        self._nav_back_btn.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
+        self._nav_back_btn.setToolTip("后退 (Alt+←)　·　点右侧箭头看历史")
+        self._nav_back_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self._nav_back_btn.setAutoRaise(True)
+        self._nav_back_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._nav_back_menu = QMenu(self._nav_back_btn)
+        self._nav_back_menu.aboutToShow.connect(self._rebuild_back_menu)
+        self._nav_back_btn.setMenu(self._nav_back_menu)
+        self._nav_back_btn.clicked.connect(self._nav_back)
+        layout.addWidget(self._nav_back_btn)
+
+        self._nav_fwd_btn = QToolButton(corner)
+        self._nav_fwd_btn.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
+        self._nav_fwd_btn.setToolTip("前进 (Alt+→)")
+        self._nav_fwd_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self._nav_fwd_btn.setAutoRaise(True)
+        self._nav_fwd_btn.clicked.connect(self._nav_forward)
+        layout.addWidget(self._nav_fwd_btn)
+
+        # 窗口级快捷键：即便焦点在某编辑器内，Alt+←/→ 仍可后退/前进。
+        self._nav_back_action = QAction("后退", self)
+        self._nav_back_action.setShortcut(QKeySequence("Alt+Left"))
+        self._nav_back_action.triggered.connect(self._nav_back)
+        self.addAction(self._nav_back_action)
+        self._nav_forward_action = QAction("前进", self)
+        self._nav_forward_action.setShortcut(QKeySequence("Alt+Right"))
+        self._nav_forward_action.triggered.connect(self._nav_forward)
+        self.addAction(self._nav_forward_action)
+
+        layout.addSpacing(12)
 
         def text_btn(label: str, tip: str, slot) -> QToolButton:
             btn = QToolButton(corner)
@@ -335,8 +409,6 @@ class MainWindow(QMainWindow):
         text_btn("Validate", "校验工程数据", self._validate)
 
         layout.addSpacing(8)
-
-        st = self.style()
 
         def icon_btn(icon, tip: str, slot) -> QToolButton:
             btn = QToolButton(corner)
@@ -365,6 +437,113 @@ class MainWindow(QMainWindow):
         )
 
         self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
+        self._update_nav_buttons()
+
+    # ---- navigation history (后退 / 前进) ---------------------------------
+
+    def _record_nav(self, loc: _NavLocation) -> None:
+        """把一次落地位置压入历史栈（浏览器语义：截断前进分支、去重相邻重复）。
+
+        重放（后退/前进）过程中不记录，避免自成环。"""
+        if self._nav_replaying:
+            return
+        hist = self._nav_history
+        cur = self._nav_cursor
+        if 0 <= cur < len(hist) and hist[cur] == loc:
+            return
+        del hist[cur + 1:]
+        hist.append(loc)
+        if len(hist) > _NAV_HISTORY_LIMIT:
+            del hist[: len(hist) - _NAV_HISTORY_LIMIT]
+        self._nav_cursor = len(hist) - 1
+        self._update_nav_buttons()
+
+    def _replay_nav(self, loc: _NavLocation) -> None:
+        """重放一个历史位置：复用既有 navigate_to_*，全程抑制记录。"""
+        self._nav_replaying = True
+        try:
+            k, a = loc.kind, loc.args
+            if k == "page":
+                self._show_stack_page(a[0])
+            elif k == "dialogue_graph":
+                self.navigate_to_dialogue_graph(a[0])
+            elif k == "scenario":
+                self.navigate_to_scenario_catalog(a[0])
+            elif k == "minigame":
+                self.navigate_to_minigame(a[0])
+            elif k == "cutscene":
+                self.navigate_to_cutscene(a[0])
+            elif k == "narrative_state":
+                self.navigate_to_narrative_state(a[0], a[1])
+            elif k == "scene_entity":
+                self.navigate_to_scene_entity(*a)
+            elif k == "plane":
+                self.navigate_to_plane(a[0])
+            elif k == "source":
+                self._on_navigate_to_source(*a)
+        finally:
+            self._nav_replaying = False
+        self._update_nav_buttons()
+
+    def _nav_go_to_index(self, index: int) -> None:
+        if not (0 <= index < len(self._nav_history)):
+            return
+        self._nav_cursor = index
+        self._replay_nav(self._nav_history[index])
+
+    def _nav_back(self) -> None:
+        if self._nav_cursor > 0:
+            self._nav_go_to_index(self._nav_cursor - 1)
+
+    def _nav_forward(self) -> None:
+        if self._nav_cursor < len(self._nav_history) - 1:
+            self._nav_go_to_index(self._nav_cursor + 1)
+
+    def _update_nav_buttons(self) -> None:
+        can_back = self._nav_cursor > 0
+        can_fwd = 0 <= self._nav_cursor < len(self._nav_history) - 1
+        for w in (getattr(self, "_nav_back_btn", None), getattr(self, "_nav_back_action", None)):
+            if w is not None:
+                w.setEnabled(can_back)
+        for w in (getattr(self, "_nav_fwd_btn", None), getattr(self, "_nav_forward_action", None)):
+            if w is not None:
+                w.setEnabled(can_fwd)
+
+    def _nav_location_label(self, loc: _NavLocation) -> str:
+        k, a = loc.kind, loc.args
+        if k == "page":
+            idx = a[0]
+            if 0 <= idx < len(self._editor_labels):
+                return self._editor_labels[idx]
+            return "页面"
+        if k == "dialogue_graph":
+            return f"图对话 · {a[0]}"
+        if k == "scenario":
+            return f"Scenario · {a[0]}"
+        if k == "minigame":
+            return f"小游戏 · {a[0]}"
+        if k == "cutscene":
+            return f"过场 · {a[0]}"
+        if k == "narrative_state":
+            return f"叙事 · {a[0]} / {a[1]}"
+        if k == "scene_entity":
+            return f"场景{a[0]} · {a[1]}"
+        if k == "plane":
+            return f"位面 · {a[0]}"
+        if k == "source":
+            return f"{a[0]} · {a[1]}"
+        return k
+
+    def _rebuild_back_menu(self) -> None:
+        """下拉列出当前位置之前的每一站（最近在上），点击一键直达。"""
+        menu = self._nav_back_menu
+        menu.clear()
+        for idx in range(self._nav_cursor - 1, -1, -1):
+            act = menu.addAction(self._nav_location_label(self._nav_history[idx]))
+            act.triggered.connect(lambda _checked=False, i=idx: self._nav_go_to_index(i))
+        if menu.isEmpty():
+            act = menu.addAction("（无更早的位置）")
+            act.setEnabled(False)
 
     @staticmethod
     def _act(menu, text, slot, shortcut=None) -> QAction:
@@ -397,7 +576,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Open Project Error", str(e))
             return
-        self.setWindowTitle(f"GameDraft Editor - {path.name}")
+        self._refresh_window_title()
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
         QTimer.singleShot(500, self._prewarm_game_backend)
@@ -611,6 +790,8 @@ class MainWindow(QMainWindow):
         if not isinstance(idx, int):
             return
         self._stack.setCurrentIndex(idx)
+        # 手动点左侧导航树切页也入历史（程序化跳转经 _show_stack_page 屏蔽了本信号，不会重复记录）。
+        self._record_nav(_NavLocation("page", (idx,)))
 
     def _show_stack_page(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
@@ -642,6 +823,9 @@ class MainWindow(QMainWindow):
         self._stack_index_to_item.clear()
         self._editor_instances.clear()
         self._editor_labels.clear()
+        # 换工程/重建页面栈 → 旧导航历史失效，清空重开。
+        self._nav_history.clear()
+        self._nav_cursor = -1
 
         from .editors.scene_editor import SceneEditor
         from .editors.quest_editor import QuestEditor
@@ -710,6 +894,7 @@ class MainWindow(QMainWindow):
         ]
 
         stack_idx = 0
+        failed_pages: list[tuple[str, Exception]] = []
         for path, label, cls in rows:
             if cls is _GAME_BROWSER_SENTINEL:
                 self._game_browser = GameBrowserTab(self)
@@ -718,7 +903,15 @@ class MainWindow(QMainWindow):
                 self._game_browser.stop_requested.connect(self._stop_game)
                 widget: QWidget = self._game_browser
             else:
-                ed = cls(self._model)
+                # 单页构造隔离：某页遇到异常数据结构抛错时，用错误占位页顶位，
+                # 其余页面照常可用，不让整个工程载入留在半切换状态。
+                try:
+                    ed: QWidget = cls(self._model)
+                except Exception as e:  # noqa: BLE001 — 页面构造失败必须兜底
+                    import traceback
+                    traceback.print_exc()
+                    ed = _EditorLoadErrorPage(label, e)
+                    failed_pages.append((label, e))
                 widget = ed
                 self._editor_instances.append(ed)
                 self._editor_labels.append(label)
@@ -741,9 +934,20 @@ class MainWindow(QMainWindow):
             self._stack_index_to_item[stack_idx] = leaf
             stack_idx += 1
 
+        if failed_pages:
+            names = "、".join(lbl for lbl, _e in failed_pages)
+            first_err = failed_pages[0][1]
+            QMessageBox.warning(
+                self, "部分编辑页载入失败",
+                f"以下页面构造失败，已用占位页顶替：{names}\n\n"
+                f"首个错误：{first_err}\n"
+                "其余页面不受影响；修复数据/代码后重新打开工程即可恢复。",
+            )
+
         self._expand_nav_tree()
         if self._stack_index_to_item:
             self._show_stack_page(0)
+            self._record_nav(_NavLocation("page", (0,)))
 
         self._connect_action_nav()
         self._sync_theme_to_editors()
@@ -842,9 +1046,24 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Error", str(e))
             return False
 
+    # 标题栏常驻导航提示——把易忘的后退/前进快捷键写在标题里,时刻可见。
+    _NAV_TITLE_HINT = "导航后退/前进 Alt+←/→(◀▶ 在右上角)"
+
+    def _compose_window_title(self) -> str:
+        base = "GameDraft Editor"
+        proj = self._model.project_path
+        if proj is not None:
+            base += f" - {proj.name}"
+        base += f"　｜　{self._NAV_TITLE_HINT}"
+        if self._model.is_dirty:
+            base += " *"
+        return base
+
+    def _refresh_window_title(self) -> None:
+        self.setWindowTitle(self._compose_window_title())
+
     def _on_dirty(self, dirty: bool) -> None:
-        title = self.windowTitle().rstrip(" *")
-        self.setWindowTitle(title + (" *" if dirty else ""))
+        self._refresh_window_title()
 
     # ---- run game ---------------------------------------------------------
 
@@ -1037,12 +1256,14 @@ class MainWindow(QMainWindow):
             self._status.showMessage("Dev server prewarmed.", 3000)
 
     def _on_game_proc_output(self) -> None:
-        if self._game_server_ready or self._game_proc is None:
+        if self._game_proc is None:
             return
+        # ready 之后也要持续读走输出：不读则 QProcess 内部缓冲随 HMR 日志无界增长
+        # （长开发会话内存泄漏）；读出后直接丢弃，不再解析。
         chunk = bytes(self._game_proc.readAllStandardOutput()).decode(
             "utf-8", errors="replace",
         )
-        if not chunk:
+        if self._game_server_ready or not chunk:
             return
         self._game_proc_log += chunk
         url = _vite_dev_url_from_log(self._game_proc_log)
@@ -1313,6 +1534,7 @@ class MainWindow(QMainWindow):
         gid = (graph_id or "").strip()
         if not gid:
             return
+        self._record_nav(_NavLocation("dialogue_graph", (gid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, DialogueGraphEditorTab):
                 self._show_stack_page(i)
@@ -1326,6 +1548,7 @@ class MainWindow(QMainWindow):
         sid = (scenario_id or "").strip()
         if not sid:
             return
+        self._record_nav(_NavLocation("scenario", (sid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, ScenariosCatalogEditor):
                 self._show_stack_page(i)
@@ -1340,6 +1563,7 @@ class MainWindow(QMainWindow):
         iid = (instance_id or "").strip()
         if not iid:
             return
+        self._record_nav(_NavLocation("minigame", (iid,)))
         candidates: list[type] = []
         if iid in getattr(self._model, "water_minigames_instances", {}):
             candidates.append(WaterMinigameEditor)
@@ -1363,12 +1587,63 @@ class MainWindow(QMainWindow):
         cid = (cutscene_id or "").strip()
         if not cid:
             return
+        self._record_nav(_NavLocation("cutscene", (cid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, TimelineEditor):
                 self._show_stack_page(i)
                 select = getattr(ed, "select_by_id", None)
                 if callable(select):
                     select(cid)
+                return
+
+    def navigate_to_narrative_state(self, graph_id: str, state_id: str) -> None:
+        """切换到「叙事状态机」页并让 web 编辑器聚焦指定图的状态（位面面板 Tab2 跳转落点）。"""
+        from .editors.narrative_state_editor import NarrativeStateEditor
+
+        gid = (graph_id or "").strip()
+        sid = (state_id or "").strip()
+        if not gid or not sid:
+            return
+        self._record_nav(_NavLocation("narrative_state", (gid, sid)))
+        for i, ed in enumerate(self._editor_instances):
+            if isinstance(ed, NarrativeStateEditor):
+                self._show_stack_page(i)
+                if not ed.focus_state(gid, sid):
+                    self._status.showMessage(
+                        f"未能在叙事编辑器中定位 {gid}.{sid}（图不存在或 web 编辑器未就绪）", 5000,
+                    )
+                return
+
+    def navigate_to_scene_entity(
+        self, kind: str, entity_id: str, scene_id: str, plane_view: str = "",
+    ) -> None:
+        """切换到「Scene」页选中场景实体；plane_view 非空时同时打开该位面的位面视图
+        （位面面板 Tab3 跳转落点）。"""
+        from .editors.scene_editor import SceneEditor
+
+        kind = (kind or "").strip()
+        selector_name = {
+            "npc": "select_npc_by_id",
+            "hotspot": "select_hotspot_by_id",
+            "zone": "select_zone_by_id",
+        }.get(kind)
+        if not selector_name:
+            return
+        self._record_nav(_NavLocation(
+            "scene_entity",
+            (kind, (entity_id or "").strip(), (scene_id or "").strip(), (plane_view or "").strip()),
+        ))
+        for i, ed in enumerate(self._editor_instances):
+            if isinstance(ed, SceneEditor):
+                self._show_stack_page(i)
+                pv = (plane_view or "").strip()
+                if pv:
+                    activate = getattr(ed, "activate_plane_view", None)
+                    if callable(activate):
+                        activate(pv)
+                select = getattr(ed, selector_name, None)
+                if callable(select):
+                    select((entity_id or "").strip(), (scene_id or "").strip())
                 return
 
     def navigate_to_plane(self, plane_id: str) -> None:
@@ -1378,6 +1653,7 @@ class MainWindow(QMainWindow):
         pid = (plane_id or "").strip()
         if not pid:
             return
+        self._record_nav(_NavLocation("plane", (pid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, PlaneEditor):
                 self._show_stack_page(i)
@@ -1395,6 +1671,7 @@ class MainWindow(QMainWindow):
             return
         for i, label in enumerate(self._editor_labels):
             if label == target_label:
+                self._record_nav(_NavLocation("source", (source_type, source_id, scene_id)))
                 self._show_stack_page(i)
                 ed = self._editor_instances[i]
                 selector_name = SOURCE_NAVIGATION_SELECTORS.get(source_type, "select_by_id")

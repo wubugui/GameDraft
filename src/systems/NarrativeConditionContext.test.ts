@@ -106,6 +106,25 @@ describe('narrative condition context injection', () => {
     expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(false);
   });
 
+  it('evaluates plane leaves against the injected active plane (normal fallback when absent)', async () => {
+    const { evaluateConditionExprList } = await import('./graphDialogue/conditionEvalBridge');
+    const { evaluateConditionExpr, evaluateConditionExprWithTrace } =
+      await import('./graphDialogue/evaluateGraphCondition');
+    const { ctx } = baseContext(true);
+    // 未注入 getActivePlaneId：按 normal 比较
+    expect(evaluateConditionExprList([{ plane: 'normal' } as any], ctx)).toBe(true);
+    expect(evaluateConditionExprList([{ plane: '背尸' } as any], ctx)).toBe(false);
+    // 注入后按激活位面比较；trace 版与非 trace 版同判
+    ctx.getActivePlaneId = () => '背尸';
+    const leaf = { plane: '背尸' } as any;
+    expect(evaluateConditionExpr(leaf, ctx)).toBe(true);
+    expect(evaluateConditionExprWithTrace(leaf, ctx).result).toBe(true);
+    // 组合语义：非 normal
+    expect(evaluateConditionExpr({ not: { plane: 'normal' } } as any, ctx)).toBe(true);
+    // 空 id 判 false
+    expect(evaluateConditionExpr({ plane: '' } as any, ctx)).toBe(false);
+  });
+
   it('fails closed on unknown flag condition operators and warns once per operator', async () => {
     const { evaluateConditionExprList } = await import('./graphDialogue/conditionEvalBridge');
     const { flagStore, ctx } = baseContext(true);

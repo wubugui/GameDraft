@@ -198,6 +198,10 @@ class ItemEditor(QWidget):
             return False
         if r == QMessageBox.StandardButton.Save:
             self._apply()
+        else:
+            # Discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            self._on_select(self._current_idx)
         return True
 
     def _on_select(self, row: int) -> None:

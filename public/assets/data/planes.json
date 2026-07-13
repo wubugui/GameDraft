@@ -18,6 +18,9 @@
     "camera": {
       "zoom": 1.25
     },
-    "healthDrainPerSec": 0.35
+    "travel": {
+      "allowMapTravel": false
+    },
+    "healthDrainPerSec": 1.5
   }
 ]

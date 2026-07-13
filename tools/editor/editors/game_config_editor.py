@@ -60,22 +60,23 @@ class GameConfigEditor(QWidget):
         start_box = QGroupBox("启动引用（初始场景/任务/演出）")
         f = compact_form(QFormLayout(start_box))
 
-        self._initial_scene = IdRefSelector(allow_empty=True, editable=True)
+        # 引用他者 id 一律选择器选、禁手打（候选完备；悬垂旧值由 IdRefSelector 保值）。
+        self._initial_scene = IdRefSelector(allow_empty=True, click_opens_popup=True)
         self._initial_scene.set_items([(s, s) for s in model.all_scene_ids()])
         self._initial_scene.setToolTip("新存档进入的第一个场景")
         f.addRow("initialScene", self._initial_scene)
 
-        self._initial_quest = IdRefSelector(allow_empty=True, editable=True)
+        self._initial_quest = IdRefSelector(allow_empty=True, click_opens_popup=True)
         self._initial_quest.set_items(model.all_quest_ids())
         self._initial_quest.setToolTip("新存档自动激活的初始任务")
         f.addRow("initialQuest", self._initial_quest)
 
-        self._fallback_scene = IdRefSelector(allow_empty=True, editable=True)
+        self._fallback_scene = IdRefSelector(allow_empty=True, click_opens_popup=True)
         self._fallback_scene.set_items([(s, s) for s in model.all_scene_ids()])
         self._fallback_scene.setToolTip("目标场景缺失时回退到的场景")
         f.addRow("fallbackScene", self._fallback_scene)
 
-        self._initial_cutscene = IdRefSelector(allow_empty=True, editable=True)
+        self._initial_cutscene = IdRefSelector(allow_empty=True, click_opens_popup=True)
         self._initial_cutscene.set_items(model.all_cutscene_ids())
         self._initial_cutscene.setToolTip("新游戏开场播放的 cutscene；留空则不写入")
         f.addRow("initialCutscene", self._initial_cutscene)
@@ -234,6 +235,10 @@ class GameConfigEditor(QWidget):
             return False
         if r == QMessageBox.StandardButton.Save:
             self._apply()
+        else:
+            # Discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            self._load()
         return True
 
     def _write_config_into(self, cfg: dict) -> None:

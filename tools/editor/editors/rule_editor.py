@@ -171,6 +171,18 @@ class RuleEditor(QWidget):
                 self._apply_frag()
             if self._is_dirty_rule():
                 self._apply_rule()
+        else:
+            # Discard：把两个表单回滚到模型当前值，否则关闭路径随后的统一 flush 会按
+            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。_suppress_commit
+            # 防重填路径自身的 commit-on-leave 把被放弃的编辑先提交掉。
+            self._suppress_commit = True
+            try:
+                if self._is_dirty_frag():
+                    self._on_frag_select(self._frag_list.currentRow())
+                if self._is_dirty_rule():
+                    self._on_rule_select(self._rule_idx)
+            finally:
+                self._suppress_commit = False
         return True
 
     def _on_rule_select(self, row: int) -> None:

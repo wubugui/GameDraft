@@ -39,27 +39,27 @@ description: >-
 
 ## 二、数据侧机制铁律（必须走的通道）
 
-这些在代码层面是强制的，绕过的写法运行时被静默跳过或编辑器拒绝保存：
+这些在代码层面是强制的，绕过的写法运行时被静默跳过或编辑器拒绝保存。五通道：
+**行为走 command、成段演出走 cutscene（内禁改存档+白名单；单发反馈 showEmote/playScriptedDialogue/playNpcAnimation 例外）、条件走统一条件表达式（六类叶子 `flag / quest / scenario / scenarioLine / narrative / plane` + all/any/not）、对话分支走图对话 graph、玩家可见文本走 `[tag:…]`。**
 
-- **一切游戏行为走 command（Action）**：数据里写 `{ "type": "...", "params": {...} }`，唯一执行链路是 `ActionExecutor`。可用类型以编辑器 `tools/editor/shared/action_editor.py` 的 `ACTION_TYPES` 为权威清单（不要照抄架构文档里的旧表，已过时）。未注册的 type 运行时不执行、校验器报 error。挂载点：任务 `acceptActions`/`rewards`、遭遇 `options[].resultActions`/`rewards`、场景热区 `data.actions`/inspect、区域 `onEnter/onStay/onExit`、图对话 `runActions`、`addDelayedEvent.params.actions` 等。
-- **一切"成段演出"走 cutscene**：有时序/相机/淡入淡出/并行的演出，一律 `cutscenes/index.json` + `startCutscene`。cutscene 内**禁止改存档**（setFlag/giveItem 等副作用要放到 `startCutscene` 外层执行），且只能用 `src/data/cutscene_action_allowlist.json` 白名单内的 action。*例外*：单发反馈（`showEmote` 气泡、`playScriptedDialogue` 单句、`playNpcAnimation` 单动画）可作普通 command 直接跑，不必进 cutscene。
-- **一切条件走统一条件表达式**：叶子类型 `flag / quest / scenario / scenarioLine / narrative`，可用 `all/any/not` 组合（求值入口 `src/systems/graphDialogue/evaluateGraphCondition.ts`）。运行时布尔/数值状态以 FlagStore 为唯一存储。
-- **一切对话分支走图对话 graph JSON**：节点类型 `line / choice / switch / runActions / end`；选项可用 `requireFlag / requireCondition / costCoins` 门控。
-- **一切玩家可见文本走 `[tag:…]` 引用**，且必须经编辑器"插入引用"（RichTextField）生成、引用目标必须存在。
+各通道的权威清单指针、挂载点与细则 → `agent_docs/content/mechanisms/content-expression-channels.md`；`[tag:]` 系统细则 → `agent_docs/content/mechanisms/text-ref-tag-system.md`。权威清单以代码为准（如 `action_editor.py` 的 `ACTION_TYPES`），不要照抄架构文档旧表。
+
+**场景实体的迁移/改名/删除是重构操作，不要手搓 JSON 追引用网**：调 `tools/editor/shared/entity_refactor.py` 引擎（无头：`load_project → scan_entity_usages 看影响面 → move_entity / rename_entity / delete_entity → save_all`），引用机械改写+分类报告+可撤销。裸 id 引用运行时按当前场景解析、断了**静默跳过且校验可能全绿**，手搓必踩。细则 → `agent_docs/content/mechanisms/entity-refactor-engine.md`。
 
 ## 三、升级三级阶梯
 
-对每个需求依次自问：①是副作用还是成段演出？②需要的能力有没有对应的已注册 command？③参数在该 command 的 schema 里吗？④触发条件能用五类叶子的布尔组合写出吗？⑤需要运行时算术 / 跨变量取值 / 集合遍历吗？
+对每个需求依次自问：①是副作用还是成段演出？②需要的能力有没有对应的已注册 command？③参数在该 command 的 schema 里吗？④触发条件能用六类叶子的布尔组合写出吗？⑤需要运行时算术 / 跨变量取值 / 集合遍历吗？
 
 ### L1 — 纯数据可达（默认路径）
 
-能用「已注册 command × 允许的 param × 五类条件 × 图节点 × `runActions`/`chooseAction`/`randomBranch` 控制流」拼出来 → **直接在 JSON 实现**。
+能用「已注册 command × 允许的 param × 六类条件 × 图节点 × `runActions`/`chooseAction`/`randomBranch` 控制流」拼出来 → **直接在 JSON 实现**。
 
 ### L2 — 缺一个能力原语 → 自动新增 command（受控代码改动）
 
 判定：需要一个不存在的能力原语——新 command、某 command 缺一个 param、新 cutscene present 类型、新条件叶子、新图节点。典型："扣 N% 铜钱""按好感度算价""隐藏全场某类 NPC"（当前数据层无运行时算术与集合寻址）。
 
-处理（**本模式唯一允许的代码改动**）：
+处理（**本模式唯一允许的代码改动**）——登记面知识与三坑详见
+`agent_docs/content/mechanisms/l2-action-primitive-registration.md`：
 
 1. **优先确认真的是 L2**，不是 L1 没拼对，也不是 L3 子系统级缺口。
 2. 切到代码模式，按 `add-game-action` 的三件套新增能力原语，缺一不可：
@@ -89,19 +89,20 @@ description: >-
 - ✅ 走独立编辑器（同样 2 空格 / 不转义约定）：`public/assets/dialogues/graphs/*.json`、`narrative_graphs.json`。
 - 🚫 不要碰：`anim.json`（编辑器只读、靠 `video_to_atlas` 导出，AI 改了人类无法用 GUI 维护）、`.ink`（无 GUI 且非运行时主路径）、`public/resources/runtime/**` 媒体。
 
-**C. 字段层面（防静默丢数据）**——详见 `docs/editor-authoring-surface.md`。
-
-- **重建区：编辑器 Apply 会整体重建的子结构，只能写它认识的字段**（人类开一次面板即抹掉未知键，绝不能塞自定义字段）：`hotspot.data`（尤其 **inspect 的 `data.text` 会被丢——想"看一眼弹正文"必须用 actions 或 graphId**）、`npc.patrol`、`spawnPoint`（只留 `{x,y}`）、**被编辑过的对话节点**、`scenarios` 的 `phase.outcome`、cutscene **已知 present 步**的额外字段、音频条目（只留 `src`）、item `dynamicDescriptions[]`（只留 conditions+text）。
-- **别写 deprecated 字段**（编辑器会主动删除）：`quest.nextQuestId`、`rule` 旧 `verified/description/source`、`zone.x/y/width/height/ruleSlots`、`npc.dialogueFile/dialogueKnot`、cutscene 旧 `commands`。
-- **盲区即升级信号**：编辑器没暴露、但运行时支持的字段（`changeScene.cameraX/cameraY`、`flag_registry.migrations/runtime`、扎纸小游戏多数高级字段、非档案富文本的 `[img:…]` 等）——需求一旦落到盲区，说明它超出"编辑器可协作"范围，按 L2 升级（补编辑器支持）或上报，**不要闷头写人类用 GUI 维护不了的 JSON**。
-- **ID 一致性**：minigame 实例文件内 `id` == 它在 index.json 的 `id`；场景文件 `id` == 文件名。删 minigame 实例要顺手清盘上旧 `<id>.json`。
-- `narrative_graphs` 守住当前 `schemaVersion`、`transition.trigger` 只用合法枚举，避免被编辑器自动迁移改写。
+**C. 字段层面（防静默丢数据）**——重建区/deprecated/盲区/ID 一致性的完整细则见
+`agent_docs/content/mechanisms/editor-roundtrip-contract.md`（字段级地图另见
+`docs/editor-authoring-surface.md`）。三条头等纪律：**重建区只能写编辑器认识的字段**（塞
+自定义键会被人类开一次面板抹掉）；**deprecated 字段别写**（编辑器主动删）；**盲区即升级
+信号**（编辑器没暴露、运行时支持的字段——落到这里按 L2 升级或上报，不要闷头写人类用
+GUI 维护不了的 JSON）。
 
 **D. 引用必须有效（最硬的闸门）**
 - 所有 `[tag:item:X]`/`[tag:flag:X]`/`[tag:string:cat:key]` 等的目标**必须存在**，否则编辑器保存时直接 `raise`、整个工程存不了。strings 之间不能有引用环。
 - 跨文件 ID（`targetScene`/`encounterId`/`dialogueGraphId`/`nextQuests`/`requiredRuleId`/cutscene id…）必须指向真实存在的对象。
 
 ## 五、收尾校验（每次改完 JSON 必做，迭代到通过）
+
+> 命令、退出码与校验盲点的权威配方：`agent_docs/content/recipes/content-validation-gate.md`。
 
 1. **结构可解析**：改过的每个文件能被 `json.loads` 解析，根类型正确（scenes 根=对象、map_config 根=数组、scenarios 根=带 `scenarios` 的对象、对话图根=带 `nodes` 对象与合法 `entry`）。
 2. **素材引用审计（有 CLI，必跑）**：

@@ -26,11 +26,15 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   private currentBgm: Howl | null = null;
   private currentBgmId: string | null = null;
+  /** 数据/动作层要求的 BGM；不受浏览器手势门、解码时序和输出设备状态影响。 */
+  private requestedBgmId: string | null = null;
   /** 每次 playBgm/stopBgm 自增；await loadAudio 期间若被更新的请求取代，旧请求放弃播放，避免泄漏正在播放的 Howl。 */
   private bgmRequestSeq = 0;
   /** 当前 BGM 的基础音量乘数（配置 entry.volume ?? 1）；setVolume('bgm') 按 base×全局 重算而非直接覆盖 */
   private currentBgmBaseVolume = 1.0;
   private ambientLayers: Map<string, Howl> = new Map();
+  /** 数据/动作层要求的环境音集合；用于跨运行时确定性快照。 */
+  private requestedAmbientIds = new Set<string>();
   /** 每层 ambient 的基础音量乘数（addAmbient 入参 ?? 配置 entry.volume ?? 1）；setVolume('ambient') 按 base×全局 重算 */
   private ambientBaseVolume: Map<string, number> = new Map();
   /**
@@ -108,6 +112,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   playBgm(id: string, fadeMs: number = 1000): void {
+    this.requestedBgmId = id;
     const myReq = ++this.bgmRequestSeq;
     this.runWhenAudioAllowed(async () => {
       // 排队期间已被更新的请求取代：放弃。
@@ -151,6 +156,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   stopBgm(fadeMs: number = 1000): void {
+    this.requestedBgmId = null;
     // 使任何在途的 playBgm 失效（其 myReq 将不再匹配），避免 stop 后旧加载又把 BGM 拉起。
     ++this.bgmRequestSeq;
     this.runWhenAudioAllowed(() => {
@@ -171,6 +177,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   addAmbient(id: string, volume?: number): void {
+    this.requestedAmbientIds.add(id);
     // 代次在调用时同步领取：后续任何 remove/clear/更新的 add 都会使本次请求过期
     const myReq = this.bumpAmbientSeq(id);
     this.runWhenAudioAllowed(async () => {
@@ -200,6 +207,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   removeAmbient(id: string, fadeMs: number = 500): void {
+    this.requestedAmbientIds.delete(id);
     // 使该层任何在途 addAmbient 作废
     this.bumpAmbientSeq(id);
     this.runWhenAudioAllowed(() => {
@@ -214,6 +222,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   clearAmbient(fadeMs: number = 500): void {
+    this.requestedAmbientIds.clear();
     // 使全部层的在途 addAmbient 作废（含尚未入 Map、还停在 await loadAudio 的）
     for (const key of this.ambientRequestSeq.keys()) this.bumpAmbientSeq(key);
     this.runWhenAudioAllowed(() => {
@@ -288,6 +297,33 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   /** 当前活跃环境层 id 列表——供过场快照音频基线。 */
   getActiveAmbientIds(): string[] {
     return Array.from(this.ambientLayers.keys());
+  }
+
+  /** 与设备实际是否已获准发声解耦的确定性音频意图。 */
+  getRequestedBgmId(): string | null {
+    return this.requestedBgmId;
+  }
+
+  getRequestedAmbientIds(): string[] {
+    return Array.from(this.requestedAmbientIds);
+  }
+
+  /** 自动化听感门禁：读取实际 Howler 播放实例，不参与存档或玩法判断。 */
+  getDebugOutputState(): Record<string, unknown> {
+    const bgmVolume = this.currentBgm ? Number(this.currentBgm.volume()) : 0;
+    return {
+      audioUnblocked: this.audioUnblocked,
+      bgm: {
+        requestedId: this.requestedBgmId,
+        currentId: this.currentBgmId,
+        linearVolume: Number.isFinite(bgmVolume) ? bgmVolume : 0,
+        playing: this.currentBgm?.playing() === true,
+      },
+      ambient: Array.from(this.ambientLayers.entries())
+        .map(([id, howl]) => ({ id, linearVolume: Number(howl.volume()) || 0, playing: howl.playing() === true }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      activeSfxCount: this.sfxCache.size,
+    };
   }
 
   /**
@@ -662,6 +698,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.ambientLayers.forEach((howl) => { howl.stop(); });
     this.ambientLayers.clear();
     this.ambientBaseVolume.clear();
+    this.requestedBgmId = null;
+    this.requestedAmbientIds.clear();
     this.currentBgmBaseVolume = 1.0;
     this.sfxCache.forEach((howl) => howl.stop());
     this.sfxCache.clear();

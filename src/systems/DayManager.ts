@@ -11,6 +11,10 @@ export class DayManager implements IGameSystem {
 
   private _currentDay: number = 1;
   private delayedEvents: DelayedEvent[] = [];
+  /** endDay 串行尾链：连发 endDay 时后一次排队等前一次（延迟事件+day:start）完整落地，
+   *  防止交错期间 day:start 读到已再次自增的日期。prev.then(run, run) 与
+   *  ZoneSystem.zoneActionTail 同惯例——前一次失败不毒化链。 */
+  private endDayTail: Promise<void> = Promise.resolve();
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -22,6 +26,7 @@ export class DayManager implements IGameSystem {
     // 律8：重 init 行为与首次一致——运行态回到初始天（读档由 deserialize 覆盖，不受影响）
     this._currentDay = 1;
     this.delayedEvents = [];
+    this.endDayTail = Promise.resolve();
     this.syncFlag();
   }
   update(_dt: number): void {}
@@ -30,16 +35,26 @@ export class DayManager implements IGameSystem {
     return this._currentDay;
   }
 
-  endDay(): void {
-    this.eventBus.emit('day:end', { dayNumber: this._currentDay });
-    this._currentDay++;
-    this.syncFlag();
-    void this.finishEndDayAfterDelayed();
+  /**
+   * 结束当天：day:end → 天数自增 → 到期延迟事件 → day:start。
+   * 返回整段流程的 Promise（endDay action 的严格顺序依赖它）；day:start 的日期在
+   * 自增当拍捕获为局部值——延迟事件执行期间若再次 endDay，不会把后一次的日期串进来。
+   */
+  endDay(): Promise<void> {
+    const run = () => {
+      this.eventBus.emit('day:end', { dayNumber: this._currentDay });
+      this._currentDay++;
+      const startedDay = this._currentDay;
+      this.syncFlag();
+      return this.finishEndDayAfterDelayed(startedDay);
+    };
+    this.endDayTail = this.endDayTail.then(run, run);
+    return this.endDayTail;
   }
 
-  private async finishEndDayAfterDelayed(): Promise<void> {
+  private async finishEndDayAfterDelayed(dayNumber: number): Promise<void> {
     await this.processDelayedEvents();
-    this.eventBus.emit('day:start', { dayNumber: this._currentDay });
+    this.eventBus.emit('day:start', { dayNumber });
   }
 
   addDelayedEvent(targetDay: number, actions: ActionDef[]): void {
@@ -86,5 +101,6 @@ export class DayManager implements IGameSystem {
   destroy(): void {
     this._currentDay = 1;
     this.delayedEvents = [];
+    this.endDayTail = Promise.resolve();
   }
 }

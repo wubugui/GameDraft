@@ -150,9 +150,9 @@
       "category": "folklore",
       "unlockConditions": [
         {
-          "flag": "零工背尸_done",
-          "op": "==",
-          "value": true
+          "narrative": "flow_背尸_零工活",
+          "state": "delivered",
+          "reached": true
         }
       ]
     }

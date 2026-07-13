@@ -216,6 +216,12 @@ export class FlagStore {
   }
 
   set(key: string, value: FlagValue): void {
+    // 空/纯空白键拒写（与 addFlagValue/appendStringFlag 的入口校验口径对齐）：
+    // 空键一旦写入会随存档序列化扩散，且任何条件都读不到它——只会是数据笔误。
+    if (typeof key !== 'string' || !key.trim()) {
+      console.warn(`FlagStore.set: 忽略空 flag 键（value=${JSON.stringify(value)}）`);
+      return;
+    }
     const prev = this.flags.get(key);
     this.flags.set(key, value);
     // 仅在值真正变化时广播：避免无意义的 flag:changed 触发各系统重评（读档时尤甚）。
@@ -365,6 +371,11 @@ export class FlagStore {
     this.flags.clear();
     for (const [rawKey, v] of Object.entries(data)) {
       let k = rawKey;
+      // 历史存档可能残留空键（旧版 set 未拒写）：任何条件都读不到空键，直接丢弃洗档
+      if (!k.trim()) {
+        console.warn('[FlagStore] 存档含空 flag 键，已丢弃');
+        continue;
+      }
       if (r && r.migrations && k in r.migrations) {
         k = r.migrations[k];
       }

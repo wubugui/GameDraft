@@ -46,9 +46,22 @@
     "barColor": "#4a4438",
     "onComplete": [
       {
-        "type": "giveCurrency",
+        "type": "setPlayerAvatar",
         "params": {
-          "amount": 5
+          "bundleId": "player_carry_corpse_anim",
+          "stateMap": {
+            "idle": "carry_idle",
+            "walk": "carry_walk",
+            "run": "carry_heavy_walk"
+          }
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_ordinary_corpse",
+          "signal": "beishi_lg_shouldered"
         }
       },
       {
@@ -61,7 +74,7 @@
             },
             {
               "speaker": "{{player}}",
-              "text": "得，五文到手。下一个。"
+              "text": "义庄。走。"
             }
           ]
         }
@@ -253,5 +266,71 @@
     "fillSeconds": 1.5,
     "decayPerSecond": 0.7,
     "barColor": "#3a3a52"
+  },
+  {
+    "id": "carry_putdown_drowned",
+    "prompt": "稳住——弯腰、松肩，把死人子放平",
+    "fillSeconds": 1.6,
+    "decayPerSecond": 0.6,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#3d5a66",
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_putdown_drowned",
+          "signal": "beishi_yan_placed"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身落凳，肩头陡然一轻。贴了一路后颈的水腥气，总算散了。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "交割了。找管事结钱切。"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "carry_putdown_ordinary",
+    "prompt": "稳住——弯腰、松肩，把死人子放平",
+    "fillSeconds": 1.4,
+    "decayPerSecond": 0.5,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#4a4438",
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_putdown_ordinary",
+          "signal": "beishi_lg_placed"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身落凳，肩头一轻。寻常死人子，放平就放平了，没得那些幺蛾子。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "找管事结钱切。"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

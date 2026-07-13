@@ -121,6 +121,8 @@ function parseBubbleDurationParam(params: Record<string, unknown>, fallback = 15
 }
 
 export interface ActionRegistryDeps {
+  /** Shared saveable runtime PRNG used by randomBranch. */
+  randomValue: () => number;
   /** playScriptedDialogue speaker 中的 {{player}} / {{npc}} 等占位解析；scriptedNpcId 为 params.scriptedNpcId */
   resolveScriptedSpeaker: (raw: string, scriptedNpcId?: string) => string;
   /** playScriptedDialogue 逐行头像 + 说话实体解析（头像跟随说话人 + 「…」气泡定位） */
@@ -354,11 +356,13 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.ruleOfferRegistry.unregister(zctx.zoneId);
   }, []);
 
-  executor.register('runActions', async (p) => {
-    await executor.executeBatchAwait(actionListFromParam(p.actions));
+  // 嵌套容器动作转发 zctx：zone 批里包一层 runActions/chooseAction/randomBranch 时，
+  // 内层 enableRuleOffers 等仍能拿到本 zone 上下文（与旧共享栈的继承语义一致）。
+  executor.register('runActions', async (p, zctx) => {
+    await executor.executeBatchAwait(actionListFromParam(p.actions), zctx);
   }, ['actions']);
 
-  executor.register('chooseAction', async (p) => {
+  executor.register('chooseAction', async (p, zctx) => {
     const rawOptions = Array.isArray(p.options) ? p.options : [];
     const options = rawOptions
       .filter((x): x is Record<string, unknown> => isParamObject(x))
@@ -386,20 +390,20 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       }
     }
     if (picked === null || picked < 0 || picked >= options.length) return;
-    await executor.executeBatchAwait(options[picked].actions);
+    await executor.executeBatchAwait(options[picked].actions, zctx);
   }, ['prompt', 'options', 'allowCancel']);
 
   /** r ∈ [0,1) 均匀采样；r > probability → aboveActions，否则 belowActions。probability 夹到 [0,1]。 */
-  executor.register('randomBranch', async (p) => {
+  executor.register('randomBranch', async (p, zctx) => {
     const raw = p.probability;
     let threshold = typeof raw === 'number' ? raw : Number(raw);
     if (!Number.isFinite(threshold)) threshold = 0.5;
     threshold = Math.min(1, Math.max(0, threshold));
-    const r = Math.random();
+    const r = d.randomValue();
     const above = r > threshold;
     const key = above ? 'aboveActions' : 'belowActions';
     const actions = actionListFromParam(p[key]);
-    await executor.executeBatchAwait(actions);
+    await executor.executeBatchAwait(actions, zctx);
   }, ['probability', 'aboveActions', 'belowActions']);
 
   executor.register('setScenarioPhase', (p) => {
@@ -450,7 +454,17 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     });
   }, ['signal']);
 
-  executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
+  // critical=true 为关键给予（剧情必得道具）：绕过背包槽上限——给予分支常按 flag 推进且不可再入，
+  // 满包时丢弃即永久丢失。非 critical 失败时 addItem 已弹"包袱满了"，此处仅 warn 留痕
+  // （动作批彼此独立，失败不中止批内后续动作；需要事务语义的购买路径见 shopPurchase 的退款处理）。
+  executor.register('giveItem', (p) => {
+    const ok = d.inventoryManager.addItem(
+      p.id as string,
+      (p.count as number) ?? 1,
+      p.critical === true ? { bypassSlotLimit: true } : undefined,
+    );
+    if (!ok) console.warn(`giveItem: 背包已满，物品 "${String(p.id)}" 未能给予（非 critical 给予不绕过槽上限）`);
+  }, ['id', 'count', 'critical']);
   executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
   /** B7：金额走统一严格解析（非有限数 warn+跳过），杜绝 NaN/字符串污染 coins 入档。 */
   executor.register('giveCurrency', (p) => {
@@ -502,7 +516,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (p.id) { d.audioManager.removeAmbient(p.id as string, fadeMs); }
     else { d.audioManager.clearAmbient(fadeMs); }
   }, ['id', 'fadeMs']);
-  executor.register('endDay', () => { d.dayManager.endDay(); }, []);
+  // 必须 return：endDay 含到期延迟事件批 + day:start，批内后续动作要等整段落地（严格顺序）。
+  executor.register('endDay', () => d.dayManager.endDay(), []);
 
   executor.register('addDelayedEvent', (p) => {
     const raw = p.actions;
@@ -602,8 +617,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.healthSystem.setHealth(d.healthSystem.getHealth() - amount);
   }, ['amount']);
   // 显式触发死亡系绳（濒死被拽回）——替代旧的 damagePlayer{9999} 魔法数硬凑。
+  // 必须 return：系绳含约 2.6s 演出，批内后续动作（音效/信号）要等演出+回血完成（对齐 damagePlayer）。
   executor.register('triggerDeathTether', () => {
-    d.healthSystem.tether();
+    return d.healthSystem.tether();
   }, []);
   // 气味系统（SmellSystem）：编排层设/清当前主导气味，HUD 的"气味烟"随之变。
   // scent = 气味 id（corpse/yin/incense/blood/mold/powder…，见 smell_profiles.json），
@@ -820,7 +836,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       d.pickupNotification.show(p.itemName as string, amt);
       return;
     }
-    d.inventoryManager.addItem(p.itemId as string, p.count as number);
+    // 满包失败时不弹拾取成功提示（addItem 已弹"包袱满了"）；热点是否消费由
+    // InteractionCoordinator.handlePickup 按 inventory:full 事件判定（对齐 B22 遭遇消费语义）。
+    if (!d.inventoryManager.addItem(p.itemId as string, p.count as number)) return;
     d.pickupNotification.show(p.itemName as string, p.count as number);
   }, ['itemId', 'itemName', 'count', 'isCurrency']);
 

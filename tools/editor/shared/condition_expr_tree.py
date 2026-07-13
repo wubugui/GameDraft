@@ -1,4 +1,4 @@
-"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative）。"""
+"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative / plane）。"""
 from __future__ import annotations
 
 import copy
@@ -84,6 +84,7 @@ class ConditionExprNodeEditor(QWidget):
             ("Scenario 阶段", "scenario"),
             ("Scenario 线（生命周期）", "scenarioLine"),
             ("叙事状态", "narrative"),
+            ("激活位面", "plane"),
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
@@ -123,6 +124,8 @@ class ConditionExprNodeEditor(QWidget):
         self._nv_graph: QComboBox | None = None
         self._nv_state: QComboBox | None = None
         self._nv_reached: QCheckBox | None = None
+        self._pl_wrap: QWidget | None = None
+        self._pl_id: IdRefSelector | None = None
 
         self._remove_callback: Callable[[ConditionExprNodeEditor], None] | None = None
 
@@ -180,6 +183,8 @@ class ConditionExprNodeEditor(QWidget):
         self._nv_graph = None
         self._nv_state = None
         self._nv_reached = None
+        self._pl_wrap = None
+        self._pl_id = None
 
     def _rebuild_body(self, kind: str) -> None:
         self._clear_body()
@@ -327,6 +332,21 @@ class ConditionExprNodeEditor(QWidget):
             self._nv_wrap = nw
             self._body.addWidget(nw)
             self._fill_narrative_combos()
+        elif kind == "plane":
+            pw = QWidget()
+            pf = compact_form(QFormLayout(pw))
+            self._pl_id = IdRefSelector(allow_empty=True, editable=False, click_opens_popup=True)
+            self._pl_id.setToolTip(
+                "当前激活位面 === 该 id（含 activatePlane 手动覆盖压过叙事点名后的结果）。"
+                "「非 normal」写法：否定(not) + 本叶子选 normal。列表来自 planes.json。",
+            )
+            _pm = self._model()
+            if _pm is not None and hasattr(_pm, "all_plane_ids"):
+                self._pl_id.set_items(list(_pm.all_plane_ids()))
+            self._pl_id.value_changed.connect(lambda *_: self.changed.emit())
+            pf.addRow("plane", self._pl_id)
+            self._pl_wrap = pw
+            self._body.addWidget(pw)
 
     def _narrative_graph_entries(self) -> list[tuple[str, str, dict[str, Any]]]:
         """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。"""
@@ -517,6 +537,8 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(5)
         elif isinstance(data.get("narrative"), str) and str(data.get("narrative", "")).strip():
             self._kind.setCurrentIndex(7)
+        elif isinstance(data.get("plane"), str) and str(data.get("plane", "")).strip():
+            self._kind.setCurrentIndex(8)
         else:
             self._kind.setCurrentIndex(3)
         k = self._kind.currentData()
@@ -643,6 +665,19 @@ class ConditionExprNodeEditor(QWidget):
             self._nv_state.setCurrentIndex(max(0, i2))
             self._nv_state.blockSignals(False)
             self._nv_reached.setChecked(data.get("reached") is True)
+        elif k == "plane" and self._pl_id:
+            pid = str(data.get("plane", "")).strip()
+            _pm = self._model()
+            _items = (
+                list(_pm.all_plane_ids())
+                if (_pm is not None and hasattr(_pm, "all_plane_ids"))
+                else []
+            )
+            _ids = [i[0] if isinstance(i, (list, tuple)) else i for i in _items]
+            if pid and pid not in _ids:
+                _items.append((pid, pid))  # 保留指向已删/未知位面的既有值，不静默丢失
+            self._pl_id.set_items(_items)
+            self._pl_id.set_current(pid)
         # 记录原始 dict 与"载入后立即序列化"的规范化基线：
         # to_dict 时若规范化输出仍等于基线（= UI 无实际编辑），逐字返回原 dict。
         self._orig_data = copy.deepcopy(data)
@@ -750,6 +785,11 @@ class ConditionExprNodeEditor(QWidget):
             if self._nv_reached.isChecked():
                 leaf["reached"] = True
             return leaf
+        if k == "plane" and self._pl_id:
+            pid = self._pl_id.current_id().strip()
+            if not pid:
+                return {}
+            return {"plane": pid}
         return {}
 
 

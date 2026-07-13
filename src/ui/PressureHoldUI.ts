@@ -46,6 +46,7 @@ export class PressureHoldUI {
   private resolveSegment: ((outcome: PressureHoldSegmentOutcome) => void) | null = null;
   private currentRatio = 0;
   private abortOnReleaseFromRatio: number | undefined;
+  private currentRequest: PressureHoldSegmentRequest | null = null;
 
   constructor(renderer: Renderer, strings: StringsProvider) {
     this.renderer = renderer;
@@ -60,6 +61,7 @@ export class PressureHoldUI {
       this.holding = false;
       this.currentRatio = req.startRatio;
       this.abortOnReleaseFromRatio = req.abortOnReleaseFromRatio;
+      this.currentRequest = { ...req };
       // 先构造 HoldProgress（坏参数会 throw），再挂 UI 与全屏输入监听，构造失败不留残留。
       const progress = new HoldProgress({
         startRatio: req.startRatio,
@@ -97,6 +99,40 @@ export class PressureHoldUI {
     this.cancel();
   }
 
+  /** Deterministic visual-capture entry: builds the real view without attaching input or rAF. */
+  showDebugPreview(req: PressureHoldSegmentRequest, ratio = 0.42): void {
+    this.cancel();
+    this.holding = false;
+    this.currentRequest = { ...req };
+    this.currentRatio = Math.max(req.startRatio, Math.min(req.stopRatio, ratio));
+    this.abortOnReleaseFromRatio = req.abortOnReleaseFromRatio;
+    this.buildView(req);
+    this.redrawFill(this.currentRatio, req.barColor ?? UITheme.colors.borderActive);
+  }
+
+  isActive(): boolean {
+    return this.container !== null;
+  }
+
+  getDebugVisualState(): Record<string, unknown> | null {
+    const req = this.currentRequest;
+    if (!req || !this.container) return null;
+    return {
+      active: true,
+      prompt: req.prompt,
+      releaseHint: req.releaseHint ?? '',
+      barColor: req.barColor ?? UITheme.colors.borderActive,
+      startRatio: req.startRatio,
+      stopRatio: req.stopRatio,
+      fillSeconds: req.fillSeconds,
+      decayPerSecond: req.decayPerSecond,
+      abortOnReleaseFromRatio: req.abortOnReleaseFromRatio ?? null,
+      currentRatio: this.currentRatio,
+      holding: this.holding,
+      hintVisible: this.hintText?.visible ?? false,
+    };
+  }
+
   private finishSegment(outcome: PressureHoldSegmentOutcome): void {
     if (this.rafId) {
       cancelAnimationFrame(this.rafId);
@@ -111,6 +147,7 @@ export class PressureHoldUI {
       this.fillBar = null;
       this.hintText = null;
     }
+    this.currentRequest = null;
     const resolve = this.resolveSegment;
     this.resolveSegment = null;
     resolve?.(outcome);

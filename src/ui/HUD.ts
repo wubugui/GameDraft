@@ -37,6 +37,7 @@ export class HUD {
   private flameTime: number = 0;
   private flameTargetRatio: number = 1;
   private flameDisplayRatio: number = 1;
+  private fixedTickMode = false;
 
   // 气味系统（方案 E·双层·基线+浮现）：HUD 层常驻气味指示器，由 SmellSystem 经 player:smellChanged 驱动。
   // 渲染器在 setSmellProfiles（Game 异步加载 smell_profiles.json 后）创建。
@@ -266,7 +267,7 @@ export class HUD {
 
   /** 三把阳火逐帧动画自带 rAF（与 PressureHoldUI 一致：演出/对话间隙主循环可能没在更新）。 */
   private startFlameLoop(): void {
-    if (typeof requestAnimationFrame === 'undefined') return;
+    if (this.fixedTickMode || this.flameRafId !== null || typeof requestAnimationFrame === 'undefined') return;
     this.flameLastT = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const step = (now: number): void => {
       const dt = Math.min(0.05, Math.max(0, (now - this.flameLastT) / 1000));
@@ -350,6 +351,84 @@ export class HUD {
 
   private stepSmell(dt: number): void {
     this.smellRenderer?.update(dt);
+  }
+
+  private getFlameDebugState(inten: number, phase: number, ratio: number): Record<string, unknown> {
+    if (inten <= 0.015) return { active: false, intensity: inten, phase };
+    const t = this.flameTime;
+    const dying = 1 - inten;
+    const unrest = Math.max(dying, (1 - ratio) * 0.78);
+    const flickFreq = 9;
+    const flickAmp = 0.04 + unrest * 0.46;
+    const flick = 0.96 + Math.sin(t * flickFreq + phase) * flickAmp
+      + Math.sin(t * flickFreq * 1.7 + phase * 1.3) * flickAmp * 0.28;
+    const wink = inten < 0.32 ? 0.28 + 0.72 * Math.abs(Math.sin(t * 7 + phase * 2)) : 1;
+    const tipSway = Math.sin(t * 2.2 + phase) * (0.12 + unrest * 4.9);
+    const h = Math.max(2.2, 20 * Math.max(inten, 0.13) * flick);
+    const w = 2.3 + 3.8 * inten;
+    const alpha = (0.5 + 0.34 * inten) * wink;
+    const edgeNoise = Math.sin(t * 5.1 + phase * 1.7) * (0.04 + unrest * 0.92);
+    return {
+      active: true,
+      intensity: inten,
+      phase,
+      unrest,
+      flick,
+      wink,
+      tipSway,
+      height: h,
+      width: w,
+      alpha,
+      edgeNoise,
+      tipX: tipSway + edgeNoise,
+      tipY: -h,
+      colors: {
+        halo: lerpColor(0x233235, 0x6a4526, inten),
+        outer: lerpColor(0x5f746b, 0xb97836, inten),
+        core: lerpColor(0x9fb7aa, 0xe7c78d, inten),
+        ember: lerpColor(0x35504b, 0x7d4a22, inten),
+      },
+    };
+  }
+
+  /** 跨壳固定步视觉门禁：比较渲染参数而不是受字体/驱动影响的压缩像素。 */
+  getDebugVisualState(): Record<string, unknown> {
+    const healthRatio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
+    const currentTargetRatio = this.healthDebugOverrideEnabled ? this.healthDebugOverrideRatio : healthRatio;
+    return {
+      flameTime: this.flameTime,
+      flameTargetRatio: currentTargetRatio,
+      flameDisplayRatio: this.flameDisplayRatio,
+      flames: this.flamePhase.map((phase, index) =>
+        this.getFlameDebugState(Math.max(0, Math.min(1, this.flameDisplayRatio * 3 - index)), phase, this.flameDisplayRatio)),
+      smell: this.smellRenderer?.getDebugState() ?? null,
+    };
+  }
+
+  /** DEV 固定步截图/回放：冻结独立 rAF，并让 Game 的显式 tick 成为 HUD 唯一时钟。 */
+  setFixedTickMode(enabled: boolean): void {
+    if (this.fixedTickMode === enabled) return;
+    this.fixedTickMode = enabled;
+    if (enabled) {
+      if (this.flameRafId !== null && typeof cancelAnimationFrame !== 'undefined') {
+        cancelAnimationFrame(this.flameRafId);
+      }
+      this.flameRafId = null;
+      this.flameTime = 0;
+      this.flameDisplayRatio = this.flameTargetRatio;
+      this.smellRenderer?.resetAnimationClock();
+      this.stepFlames(0);
+    } else {
+      this.startFlameLoop();
+    }
+  }
+
+  /** 只由 DEV 固定步命令调用；普通运行继续走独立 rAF。 */
+  stepFixedTick(dt: number): void {
+    if (!this.fixedTickMode) return;
+    this.flameTime += dt;
+    this.stepFlames(dt);
+    this.stepSmell(dt);
   }
 
   /** 由 Game 异步加载 smell_profiles.json 后调用：建/重建气味指示器渲染器（方案 E·双层·基线+浮现）。

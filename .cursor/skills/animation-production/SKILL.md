@@ -10,6 +10,13 @@ description: 把角色各 state 的稳定化视频产出为游戏可用的精灵
 搬进对话即兴执行——那会毁掉可复现性。方法为何这么定,见
 `tools/animation_pipeline/README.md`(每个选择都有实测数据)。
 
+> 知识卡:管线契约与 QA 三态 `agent_docs/asset-pipeline/mechanisms/animation-pipeline.md`、
+> 图集/anim.json 产物契约 `agent_docs/asset-pipeline/mechanisms/sprite-atlas-anim-contract.md`、
+> 抠图路线选型 `agent_docs/asset-pipeline/mechanisms/matting-toolbox.md`;
+> 分工取向与"持械位移必单图生视频"死路见 `agent_docs/asset-pipeline/decisions/`。
+> 重处理已上线素材:源必须=游戏当前源(勿用已被否的 stabilized 目录),见
+> `agent_docs/asset-pipeline/decisions/2026-07-10-reprocess-source-must-match-shipped.md`。
+
 ## 一键产出(程序干活)
 
 ```bash

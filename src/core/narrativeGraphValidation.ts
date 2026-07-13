@@ -83,6 +83,8 @@ interface NarrativeCompositionLike {
 interface NarrativeGraphsFileLike {
   signals?: Array<{ id?: unknown }>;
   compositions?: NarrativeCompositionLike[];
+  /** 旧存档改名映射（NarrativeSaveMigrations），形状/目标在 validateSaveMigrations 里校验。 */
+  migrations?: unknown;
 }
 
 interface CompiledGraphRef {
@@ -233,6 +235,7 @@ export function validateNarrativeGraphData(
   validateStateCommandTargets(data, graphIndex, issues);
   validateBroadcastStateSignals(data, issues);
   validateActivePlanes(data, issues);
+  validateSaveMigrations(data, graphIndex, issues);
   return issues;
 }
 
@@ -256,6 +259,7 @@ function normalizeValidationFile(dataRaw: unknown): NarrativeGraphsFileLike {
   return {
     signals: Array.isArray(data.signals) ? data.signals : [],
     compositions: Array.isArray(data.compositions) ? data.compositions : [],
+    migrations: data.migrations,
   };
 }
 
@@ -658,8 +662,9 @@ function validateBroadcastStateSignals(data: NarrativeGraphsFileLike, issues: Na
 }
 
 /**
- * 位面点名互斥 v1（照 validateOwnerBindings 聚合范式）：同图多状态点名合法（一图一激活态），
- * 跨图出现多于一个声明 activePlane 的图 = warning（运行时兜底为「后进者胜」+ error 日志）。
+ * 位面点名互斥（照 validateOwnerBindings 聚合范式）：同图多状态点名合法（一图一激活态），
+ * 跨图出现多于一个声明 activePlane 的图 = error（决议：位面点名全局唯一归属一图，
+ * 组合需求走位面 extends 组合条目；运行时兜底仍为「后进者胜」+ error 日志）。
  */
 function validateActivePlanes(data: NarrativeGraphsFileLike, issues: NarrativeValidationIssue[]): void {
   const declaring: string[] = [];
@@ -674,13 +679,81 @@ function validateActivePlanes(data: NarrativeGraphsFileLike, issues: NarrativeVa
   if (declaring.length > 1) {
     addIssue(
       issues,
-      'warning',
+      'error',
       'plane.activePlane.multiGraph',
-      `multiple graphs declare activePlane; simultaneously reachable namings fall back to last-entered at runtime: ${declaring.join(', ')}`,
+      `multiple graphs declare activePlane (naming must be owned by a single graph; compose planes via extends instead): ${declaring.join(', ')}`,
       undefined,
       declaring.join(','),
     );
   }
+}
+
+/**
+ * 旧存档改名映射（顶层 migrations，运行时读者是 NarrativeStateManager.deserialize）：
+ * 全部 warning 级——映射写错不拦保存，只是退回"存档条目丢弃 + 运行时点名告警"的兜底行为。
+ * 检查三类：形状、映射目标是否存在、映射源是否仍存在（源还活着会把合法存档也重定向走）。
+ */
+function validateSaveMigrations(data: NarrativeGraphsFileLike, graphIndex: GraphIndex, issues: NarrativeValidationIssue[]): void {
+  const raw = data.migrations;
+  if (raw === undefined || raw === null) return;
+  if (!isPlainRecord(raw)) {
+    addIssue(issues, 'warning', 'migrations.shape', 'migrations must be an object: { graphs?: { oldGraphId: newGraphId }, states?: { graphId: { oldStateId: newStateId } } }', 'migrations');
+    return;
+  }
+  const graphsMap = raw.graphs;
+  if (graphsMap !== undefined && !isPlainRecord(graphsMap)) {
+    addIssue(issues, 'warning', 'migrations.graphs.shape', 'migrations.graphs must map old graph id -> new graph id', 'migrations.graphs');
+  } else if (graphsMap) {
+    for (const [oldId, newIdRaw] of Object.entries(graphsMap)) {
+      const path = `migrations.graphs.${oldId}`;
+      const newId = typeof newIdRaw === 'string' ? newIdRaw.trim() : '';
+      if (!newId) {
+        addIssue(issues, 'warning', 'migrations.graphs.value.shape', `${path}: mapping target must be a non-empty graph id string`, path);
+        continue;
+      }
+      if (!graphIndex.graphs.has(newId)) {
+        addIssue(issues, 'warning', 'migrations.graph.target.missing', `${path}: maps to unknown narrative graph "${newId}"`, path);
+      }
+      if (graphIndex.graphs.has(oldId)) {
+        addIssue(issues, 'warning', 'migrations.graph.source.stillExists', `${path}: source graph "${oldId}" still exists; saved entries for it will be redirected to "${newId}"`, path);
+      }
+    }
+  }
+  const statesMap = raw.states;
+  if (statesMap !== undefined && !isPlainRecord(statesMap)) {
+    addIssue(issues, 'warning', 'migrations.states.shape', 'migrations.states must map graphId -> { old state id: new state id }', 'migrations.states');
+  } else if (statesMap) {
+    for (const [graphId, renamesRaw] of Object.entries(statesMap)) {
+      const basePath = `migrations.states.${graphId}`;
+      const graph = graphIndex.graphs.get(graphId);
+      if (!graph) {
+        addIssue(issues, 'warning', 'migrations.states.graph.missing', `${basePath}: unknown narrative graph "${graphId}" (state-rename keys must use the current, post-rename graph id)`, basePath);
+        continue;
+      }
+      if (!isPlainRecord(renamesRaw)) {
+        addIssue(issues, 'warning', 'migrations.states.value.shape', `${basePath}: must map old state id -> new state id`, basePath);
+        continue;
+      }
+      for (const [oldState, newStateRaw] of Object.entries(renamesRaw)) {
+        const path = `${basePath}.${oldState}`;
+        const newState = typeof newStateRaw === 'string' ? newStateRaw.trim() : '';
+        if (!newState) {
+          addIssue(issues, 'warning', 'migrations.state.value.shape', `${path}: mapping target must be a non-empty state id string`, path);
+          continue;
+        }
+        if (!graph.states?.[newState]) {
+          addIssue(issues, 'warning', 'migrations.state.target.missing', `${path}: maps to unknown state "${newState}" in graph "${graphId}"`, path);
+        }
+        if (graph.states?.[oldState]) {
+          addIssue(issues, 'warning', 'migrations.state.source.stillExists', `${path}: source state "${oldState}" still exists in graph "${graphId}"; saved entries for it will be redirected to "${newState}"`, path);
+        }
+      }
+    }
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function collectListenerRefs(data: NarrativeGraphsFileLike): Map<string, Array<{ graphId: string; transitionId: string }>> {
@@ -788,6 +861,14 @@ function validateConditionExpr(
   if (typeof x.quest === 'string') return typeof x.questStatus === 'string' || typeof x.status === 'string';
   if (typeof x.scenario === 'string') return typeof x.phase === 'string' && typeof x.status === 'string';
   if (typeof x.scenarioLine === 'string') return typeof x.lineStatus === 'string';
+  // plane 叶子：id 存在性由编辑器侧 validator 对照 planes.json 检查（本模块无位面清单）
+  if (typeof x.plane === 'string') {
+    if (!x.plane.trim()) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: plane condition requires a non-empty id`, path, owner, target);
+      return false;
+    }
+    return true;
+  }
   addIssue(issues, 'error', 'condition.shape', `${owner}: condition has an unknown shape`, path, owner, target);
   return false;
 }

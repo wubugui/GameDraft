@@ -106,6 +106,26 @@ export class PressureHoldManager implements IGameSystem {
     }
   }
 
+  /** Read-only visual-capture request made from the same loaded definition and text resolver. */
+  getDebugPreviewRequest(id: string): Parameters<PressureHoldRuntimeBinding['runSegment']>[0] | null {
+    const def = this.defs.get(id);
+    const binding = this.binding;
+    if (!def || !binding) return null;
+    const interrupts = [...(def.interrupts ?? [])].sort((a, b) => a.atRatio - b.atRatio);
+    const request: Parameters<PressureHoldRuntimeBinding['runSegment']>[0] = {
+      prompt: binding.resolveDisplayText(def.prompt),
+      startRatio: 0,
+      stopRatio: interrupts[0]?.atRatio ?? 1,
+      fillSeconds: def.fillSeconds,
+      decayPerSecond: def.decayPerSecond ?? DEFAULT_DECAY_PER_SECOND,
+    };
+    if (def.releaseHint) request.releaseHint = binding.resolveDisplayText(def.releaseHint);
+    const barColor = parseHexColor(def.barColor);
+    if (barColor !== undefined) request.barColor = barColor;
+    if (def.abortOnReleaseFromRatio !== undefined) request.abortOnReleaseFromRatio = def.abortOnReleaseFromRatio;
+    return request;
+  }
+
   private async runFlow(
     def: PressureHoldDef,
     binding: PressureHoldRuntimeBinding,

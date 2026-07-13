@@ -385,7 +385,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    exclude: ['**/node_modules/**', '**/dist/**'],
+    // **/.claude/** 必须排除：Claude Code 的隐藏工作树（.claude/worktrees/<name>/）带着
+    // 全套旧测试副本，扫进来会把文件数翻倍并用过期代码假绿/假红。
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.claude/**'],
   },
   resolve: {
     alias: {

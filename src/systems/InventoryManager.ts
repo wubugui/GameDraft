@@ -57,12 +57,17 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
     return this.slots.size;
   }
 
-  addItem(id: string, count: number = 1): boolean {
+  /**
+   * @param opts.bypassSlotLimit 关键给予（giveItem critical=true）绕过槽上限：
+   * 剧情必得道具的给予分支往往按 flag 推进且不可再入，满包丢弃即永久丢失——
+   * 宁可临时超槽（UI 网格按需增行）也不能丢。maxStack 上限仍生效。
+   */
+  addItem(id: string, count: number = 1, opts?: { bypassSlotLimit?: boolean }): boolean {
     const existing = this.slots.get(id) ?? 0;
     const def = this.itemDefs.get(id);
     const maxStack = def?.maxStack ?? 99;
 
-    if (existing === 0 && this.getUsedSlots() >= MAX_SLOTS) {
+    if (existing === 0 && this.getUsedSlots() >= MAX_SLOTS && !opts?.bypassSlotLimit) {
       this.eventBus.emit('inventory:full', { itemId: id });
       this.eventBus.emit('notification:show', { text: this.strings.get('notifications', 'inventoryFull'), type: 'warning' });
       return false;

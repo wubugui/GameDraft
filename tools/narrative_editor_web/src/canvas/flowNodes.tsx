@@ -1,7 +1,8 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, NodeResizer, Position, type NodeProps } from '@xyflow/react';
 import type { MouseEvent } from 'react';
 import type { CanvasNode } from '../types';
 import { elementIdFromCanvasNodeId, useNarrativeCanvasActions } from './canvasActionsContext';
+import { parseGroupFrameNodeId } from './editorGroups';
 
 function isInlineSubgraphKind(kind: CanvasNode['data']['kind']): boolean {
   return kind === 'wrapperGraph' || kind === 'scenarioSubgraph';
@@ -25,6 +26,7 @@ export const flowNodeTypes = {
   projectionAnchor: AnchorNode,
   transitionAnchor: TransitionAnchorNode,
   subgraphGroup: SubgraphGroupNode,
+  editorGroupFrame: EditorGroupFrameNode,
   wrapperGraph: ElementNode,
   scenarioSubgraph: ElementNode,
   dialogueBlackbox: ElementNode,
@@ -32,6 +34,80 @@ export const flowNodeTypes = {
   minigameBlackbox: ElementNode,
   cutsceneBlackbox: ElementNode,
 };
+
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return `rgba(74, 111, 168, ${alpha})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 0xff}, ${(n >> 8) & 0xff}, ${n & 0xff}, ${alpha})`;
+}
+
+/**
+ * 编辑器分组框：纯视觉整理层（见 canvas/editorGroups.ts）。
+ * body 穿透点击（不挡框内节点），只有标题栏可交互——拖标题移动框、双击标题改名；
+ * 折叠时呈现为紧凑节点，跨组连线改接到本节点。
+ */
+function EditorGroupFrameNode({ id, data, selected }: NodeProps<CanvasNode>) {
+  const actions = useNarrativeCanvasActions();
+  const ga = actions?.groupActions;
+  const gid = parseGroupFrameNodeId(id ?? '') ?? '';
+  const color = data.groupColor ?? '#4a6fa8';
+  const collapsed = data.groupCollapsed === true;
+  const count = data.groupMemberCount ?? 0;
+
+  const header = (
+    <div
+      className="editor-group-header"
+      style={{ background: hexToRgba(color, collapsed ? 0.55 : 0.32) }}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        if (collapsed) ga?.toggleCollapsed(gid);
+        else ga?.rename(gid);
+      }}
+      title={collapsed ? '双击展开分组 · 拖动移动' : '双击改名 · 拖动标题移动分组框'}
+    >
+      <span className="editor-group-name">{data.label}</span>
+      <span className="editor-group-count">{count} 节点</span>
+      <span className="editor-group-tools nodrag nopan">
+        <input
+          type="color"
+          value={color}
+          onChange={(event) => ga?.setColor(gid, event.target.value)}
+          title="分组颜色"
+        />
+        <button type="button" onClick={() => ga?.toggleCollapsed(gid)} title={collapsed ? '展开分组' : '折叠为一个节点（纯画布呈现，数据不变）'}>
+          {collapsed ? '⊞' : '⊟'}
+        </button>
+        <button type="button" onClick={() => ga?.remove(gid)} title="删除分组框（框内节点与编排数据不受影响）">
+          ×
+        </button>
+      </span>
+    </div>
+  );
+
+  return (
+    <div
+      className={`editor-group-frame${collapsed ? ' collapsed' : ''}${selected ? ' selected' : ''}`}
+      style={{ borderColor: color, background: hexToRgba(color, collapsed ? 0.30 : 0.08) }}
+    >
+      {!collapsed && (
+        <NodeResizer
+          isVisible={selected}
+          minWidth={120}
+          minHeight={90}
+          color={color}
+          onResizeEnd={(_event, params) => {
+            ga?.setFrameRect(gid, { x: params.x, y: params.y, width: params.width, height: params.height });
+          }}
+        />
+      )}
+      <Handle type="target" position={Position.Left} className="editor-group-port" />
+      {header}
+      {!collapsed && <div className="editor-group-body" aria-hidden />}
+      <Handle type="source" position={Position.Right} className="editor-group-port" />
+    </div>
+  );
+}
 
 function StateNode({ data, selected }: NodeProps<CanvasNode>) {
   const boundaryClass = data.boundary ? ` boundary-${data.boundary}` : '';

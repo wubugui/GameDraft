@@ -142,13 +142,21 @@
       "type": "switch",
       "cases": [
         {
+          "next": "beishi_busy",
           "conditions": [
             {
-              "narrative": "flow_背尸_淹尸活",
-              "state": "carrying"
+              "any": [
+                {
+                  "narrative": "flow_背尸_淹尸活",
+                  "state": "carrying"
+                },
+                {
+                  "narrative": "flow_背尸_零工活",
+                  "state": "carrying"
+                }
+              ]
             }
-          ],
-          "next": "beishi_busy"
+          ]
         }
       ],
       "defaultNext": "n_archive"

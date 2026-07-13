@@ -7,6 +7,8 @@ description: Guides safe, pattern-based iteration on GameDraft PySide editor too
 
 在修改 `GameDraft/tools/editor`、`tools/graph_editor`、`tools/scene_depth_editor` 等基于 PySide 的编辑器时，**必须先读本技能再改代码**。
 
+> 域规范与知识卡（先查再动手）：`agent_docs/editor-tools/norms.md`；数据同步范式 `agent_docs/editor-tools/mechanisms/editor-data-sync-paradigm.md`、写盘与脏桶 `save-all-dirty-buckets.md`、关闭路径 `close-path-flush-discard.md`、新面板接入 `mainwindow-editor-hooks.md`、控件保值 `shared-widget-value-fidelity.md`；收尾验证门 `agent_docs/editor-tools/recipes/editor-change-verification-gate.md`。
+
 ## 1. 数据正确性（最高优先级）
 
 - 明确数据的**单一来源**：内存模型（如 `ProjectModel`）、JSON 路径、`Apply`/`flush_to_model`/`save_all` 的调用链；改 UI 必须同步到与现有保存路径一致的字段。

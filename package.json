@@ -5,14 +5,20 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && npm run build:narrative-editor",
-    "build:narrative-editor": "vite build --config tools/narrative_editor_web/vite.config.ts",
+    "typecheck:narrative-editor": "tsc --noEmit -p tools/narrative_editor_web",
+    "build:narrative-editor": "npm run typecheck:narrative-editor && vite build --config tools/narrative_editor_web/vite.config.ts",
     "dev:narrative-editor": "vite --config tools/narrative_editor_web/vite.config.ts",
     "dev:anim-preview": "vite --config tools/anim_preview/vite.config.ts",
     "dev:parallax-editor": "vite --config tools/parallax_editor/vite.config.ts",
     "planner:gui": "node scripts/pytool.cjs production_workbench .",
     "preview": "vite preview",
     "filter-tool": "node scripts/pytool.cjs filter_tool",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:godot-visual-parity": "node godot_port/tools/visual_parity_runner.mjs --require-thresholds",
+    "test:godot-scene-visuals": "node godot_port/tools/visual_scene_sweep.mjs --require-thresholds",
+    "test:godot-fade-visuals": "node godot_port/tools/visual_fade_sweep.mjs --require-thresholds",
+    "test:godot-dialogue-visuals": "node godot_port/tools/visual_dialogue_sweep.mjs --require-thresholds",
+    "test:godot-minigame-visuals": "node godot_port/tools/visual_minigame_sweep.mjs --require-thresholds"
   },
   "type": "module",
   "dependencies": {
@@ -21,6 +27,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "@xyflow/react": "^12.10.2",
+    "elkjs": "^0.11.1",
     "gifenc": "^1.0.3",
     "howler": "^2.2.4",
     "pixi.js": "^8.17.0",

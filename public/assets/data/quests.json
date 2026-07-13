@@ -457,11 +457,34 @@
     "nextQuests": []
   },
   {
+    "id": "背尸-零工路倒",
+    "group": "背尸零活",
+    "type": "side",
+    "title": "拉具路倒去义庄",
+    "description": "义庄门口一个老汉塞来的头一单腌臜活：巷口墙根一具没人认的路倒，自己去背来搁停尸凳上，找管事结五文。",
+    "preconditions": [
+      {
+        "narrative": "flow_背尸_零工活",
+        "state": "accepted",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_背尸_零工活",
+        "state": "delivered",
+        "reached": true
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
+  },
+  {
     "id": "背尸-淹尸送义庄",
     "group": "背尸零活",
     "type": "side",
     "title": "拉个泡涨的去义庄",
-    "description": "河头捞起个泡涨的淹死人，官面验过没人认。工头出八文：从码头巷口背去义庄，交给管事。",
+    "description": "河头捞起个泡涨的淹死人，官面验过没人认。工头出八文：从码头巷口背去义庄，搁上停尸凳，找管事结钱。",
     "preconditions": [
       {
         "narrative": "flow_背尸_淹尸活",

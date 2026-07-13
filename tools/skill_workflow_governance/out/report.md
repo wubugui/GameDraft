@@ -1,9 +1,9 @@
 # Skill / Workflow Governance Report
 
-- Generated: `2026-07-09T01:27:20`
+- Generated: `2026-07-11T10:16:38`
 - Root: `/Users/dannyteng/AIWork/GameDraft`
-- Artifacts: `67`
-- Issues: `61`
+- Artifacts: `70`
+- Issues: `25`
 
 ## Summary
 
@@ -11,72 +11,36 @@
 
 - `agent_rules`: `2`
 - `ci_workflow`: `1`
-- `package_script`: `10`
+- `package_script`: `11`
 - `script`: `24`
-- `skill`: `13`
+- `skill`: `15`
 - `tool_requirements`: `9`
 - `workflow_doc`: `8`
 
 ### Issues By Severity
 
-- `info`: `12`
-- `warn`: `49`
+- `info`: `15`
+- `warn`: `10`
 
 ## Issues
 
 | Severity | Category | Artifact | Evidence | Suggestion |
 |---|---|---|---|---|
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:21 | `src/core/ActionRegistry.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:24 | `src/core/Game.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:26 | `tools/editor/shared/action_editor.py` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:32 | `tools/editor/validator.py` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:48 | `src/core/ActionRegistry.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:48 | `src/core/Game.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:49 | `src/core/ActionExecutor.ts` is about 20 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:50 | `tools/editor/shared/action_editor.py` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-game-action/SKILL.md:51 | `tools/editor/validator.py` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/add-text-ref/SKILL.md:15 | `src/core/Game.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | missing-metadata | .claude/skills/agent-docs-cli/SKILL.md:1 | No obvious trigger/use/scope section was detected. | Add a short 'when to use / when not to use' section near the top of the skill. |
+| warn | missing-metadata | .cursor/skills/agent-docs-cli/SKILL.md:1 | No obvious trigger/use/scope section was detected. | Add a short 'when to use / when not to use' section near the top of the skill. |
 | warn | missing-metadata | .cursor/skills/animation-production/SKILL.md:1 | No obvious trigger/use/scope section was detected. | Add a short 'when to use / when not to use' section near the top of the skill. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:14 | `tools/editor/validator.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:29 | `tools/editor/shared/action_editor.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:29 | `tools/editor/shared/id_ref_selector.py` is about 17 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:30 | `tools/editor/shared/action_editor.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:31 | `tools/editor/shared/action_editor.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:32 | `tools/editor/shared/flag_value_edit.py` is about 17 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:33 | `tools/editor/shared/action_editor.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:33 | `tools/editor/shared/condition_editor.py` is about 17 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:35 | `tools/editor/editors/scene_editor.py` is about 24 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:35 | `tools/editor/editors/timeline_editor.py` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:36 | `tools/editor/shared/image_path_picker.py` is about 24 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:37 | `tools/editor/editors/water_minigame_editor.py` is about 18 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/editor-tools-iteration/SKILL.md:48 | `tools/editor/editors/scene_editor.py` is about 24 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/gameplay-iteration/SKILL.md:22 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/gameplay-iteration/SKILL.md:33 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/gameplay-iteration/SKILL.md:58 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:34 | `docs/editor-authoring-surface.md` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:34 | `public/assets/data/cutscenes/index.json` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:34 | `public/assets/data/overlay_images.json` is about 15 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:34 | `src/data/types.ts` is about 24 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:44 | `tools/editor/shared/action_editor.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:45 | `public/assets/data/cutscenes/index.json` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:45 | `src/data/cutscene_action_allowlist.json` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:46 | `src/systems/graphDialogue/evaluateGraphCondition.ts` is about 18 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:66 | `src/core/ActionRegistry.ts` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:66 | `src/systems/graphDialogue/evaluateGraphCondition.ts` is about 18 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:67 | `src/data/cutscene_action_allowlist.json` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:67 | `tools/editor/shared/action_editor.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:67 | `tools/editor/validator.py` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:89 | `public/assets/data/narrative_graphs.json` is about 23 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:90 | `public/resources/runtime/animation/npc_employer_anim/anim.json` is about 20 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/production-mode/SKILL.md:92 | `docs/editor-authoring-surface.md` is about 22 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/pure-data-iteration/SKILL.md:27 | `public/assets/data/overlay_images.json` is about 17 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | .cursor/skills/pure-data-iteration/SKILL.md:75 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md:20 | `.git/config` is about 20 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | artifact/cursor-workflow-guide.md:42 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
 | warn | drift-risk | artifact/cursor-workflow-guide.md:47 | `docs/玩法功能需求清单.md` is about 16 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
-| warn | drift-risk | artifact/cursor-workflow-guide.md:138 | `src/core/Game.ts` is about 25 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| warn | drift-risk | artifact/cursor-workflow-guide.md:138 | `src/core/Game.ts` is about 28 days newer than this file. | Check whether the skill/workflow still describes the current implementation. |
+| info | missing-lifecycle | .claude/skills/agent-docs-cli/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
+| info | possible-overlap | .claude/skills/agent-docs-cli/SKILL.md:1 | `.claude/skills/agent-docs-cli/SKILL.md` and `.cursor/skills/agent-docs-cli/SKILL.md` have token overlap score 1.00. | Compare triggers and decide whether they should be split more clearly, merged, or cross-linked. |
 | info | missing-lifecycle | .cursor/skills/add-game-action/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
 | info | missing-lifecycle | .cursor/skills/add-text-ref/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
+| info | missing-lifecycle | .cursor/skills/agent-docs-cli/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
 | info | missing-lifecycle | .cursor/skills/animation-production/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
 | info | missing-lifecycle | .cursor/skills/debug-panel-extension/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
 | info | missing-lifecycle | .cursor/skills/editor-tools-iteration/SKILL.md:1 | No status/owner/last-verified style metadata was detected. | Consider adding status, owner, and last verified fields once the registry format is settled. |
@@ -105,6 +69,7 @@
 | package_script | package-script.planner-gui | npm run planner:gui | package.json | package_json |
 | package_script | package-script.preview | npm run preview | package.json | package_json |
 | package_script | package-script.test | npm run test | package.json | package_json |
+| package_script | package-script.typecheck-narrative-editor | npm run typecheck:narrative-editor | package.json | package_json |
 | script | bootstrap | GameDraft bootstrap for macOS/Linux. Creates a project venv (.tools/venv) | bootstrap.sh | script |
 | script | dev | macOS/Linux task entry: ./dev.sh <task> [args] | dev.sh | script |
 | script | scripts-build-player-atlas | build-player-atlas | scripts/build-player-atlas.py | script |
@@ -129,8 +94,10 @@
 | script | tools-chronicle_sim_v2-scripts-run_rumor_week_stats | run_rumor_week_stats | tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py | tool_doc |
 | script | tools-chronicle_sim_v2-scripts-run_simulation_once | run_simulation_once | tools/chronicle_sim_v2/scripts/run_simulation_once.py | tool_doc |
 | script | tools-chronicle_sim_v3-scripts-bootstrap_v2_demo_seed_to_v3 | bootstrap_v2_demo_seed_to_v3 | tools/chronicle_sim_v3/scripts/bootstrap_v2_demo_seed_to_v3.py | tool_doc |
+| skill | claude-skill.agent-docs-cli | agent-docs-cli(薄壳) | .claude/skills/agent-docs-cli/SKILL.md | cursor_skill |
 | skill | cursor-skill.add-game-action | 添加游戏 Action（项目约定） | .cursor/skills/add-game-action/SKILL.md | cursor_skill |
 | skill | cursor-skill.add-text-ref | 文本引用系统扩展清单 | .cursor/skills/add-text-ref/SKILL.md | cursor_skill |
+| skill | cursor-skill.agent-docs-cli | agent-docs-cli(薄壳) | .cursor/skills/agent-docs-cli/SKILL.md | cursor_skill |
 | skill | cursor-skill.animation-production | 动画生产 — agent 入口(SOP) | .cursor/skills/animation-production/SKILL.md | cursor_skill |
 | skill | cursor-skill.core-framework-architecture-review | 核心框架架构审查 | .cursor/skills/core-framework-architecture-review/SKILL.md | cursor_skill |
 | skill | cursor-skill.debug-panel-extension | Debug Panel Extension | .cursor/skills/debug-panel-extension/SKILL.md | cursor_skill |

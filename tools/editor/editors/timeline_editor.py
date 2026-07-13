@@ -1401,9 +1401,36 @@ class StepWidget(QFrame):
         idw = QLineEdit(str(self._step_data.get("id", "") or ""), self)
         idw.setPlaceholderText("叠层句柄 id（与 hideImg 配对，如 fog）")
         idw.textChanged.connect(self._emit_dirty)
-        statew = QLineEdit(str(self._step_data.get("state", "") or ""), self)
-        statew.setPlaceholderText("状态名，缺省 idle")
-        statew.textChanged.connect(self._emit_dirty)
+
+        # state：从所选 anim 包的 states 枚举（选择器，禁手打；已存的未知值注入保留）。
+        def _state_rows(manifest_path: str) -> list[tuple[str, str]]:
+            states: list[str] = []
+            if model is not None and hasattr(model, "animation_state_names_for_manifest"):
+                states = list(model.animation_state_names_for_manifest(manifest_path))
+            return [("（缺省 idle）", "")] + [(s, s) for s in states]
+
+        cur_state = str(self._step_data.get("state", "") or "").strip()
+        state_rows = _state_rows(cur_file)
+        if cur_state and all(x[1] != cur_state for x in state_rows):
+            state_rows = [(f"(数据) {cur_state}", cur_state)] + state_rows
+        statew = FilterableTypeCombo(state_rows, self, select_only=True)
+        statew.set_committed_type(cur_state)
+        statew.setToolTip("动画状态名（取自所选 anim 包 anim.json 的 states）；留缺省即 idle。")
+        statew.typeCommitted.connect(lambda _t: self._emit_dirty())
+
+        def _refresh_state_choices(new_file: str) -> None:
+            cur = statew.committed_type().strip()
+            rows2 = _state_rows(new_file.strip())
+            if cur and all(x[1] != cur for x in rows2):
+                rows2 = [(f"(数据) {cur}", cur)] + rows2
+            statew.blockSignals(True)
+            try:
+                statew.set_entries(rows2)
+                statew.set_committed_type(cur)
+            finally:
+                statew.blockSignals(False)
+
+        fsel.typeCommitted.connect(_refresh_state_choices)
 
         def _opt_spin(key: str, lo: float, hi: float, dec: int, step: float, dv: float, tip: str) -> QDoubleSpinBox:
             v = self._step_data.get(key)
@@ -1467,7 +1494,7 @@ class StepWidget(QFrame):
         if idv:
             d["id"] = idv
         statew = self._widgets.get("_al_state")
-        st = statew.text().strip() if isinstance(statew, QLineEdit) else ""
+        st = statew.committed_type().strip() if isinstance(statew, FilterableTypeCombo) else ""
         if st:
             d["state"] = st
         defaults = {"xPercent": 50.0, "yPercent": 50.0, "widthPercent": 0.0, "alpha": 1.0, "zIndex": 0.0}

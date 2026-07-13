@@ -282,10 +282,21 @@ export class InteractionCoordinator {
 
   private async handlePickup(hotspot: Hotspot, data: PickupData): Promise<void> {
     const { actionExecutor, eventBus } = this.deps;
-    await actionExecutor.executeAwait({
-      type: 'pickup',
-      params: { itemId: data.itemId, itemName: data.itemName, count: data.count, isCurrency: data.isCurrency },
-    });
+    /** 对齐 B22 遭遇消费语义：只有真正入包才消费热点。失败判据用 inventory:full 事件
+     *  （addItem 满包时唯一发射点；铜钱路径 addCoins 不会失败也不发此事件）——满包时
+     *  不置 picked flag、不发 pickup:done，物品留在世界、热点保持可交互以便腾包后重拾。 */
+    let bagFull = false;
+    const onFull = () => { bagFull = true; };
+    eventBus.on('inventory:full', onFull);
+    try {
+      await actionExecutor.executeAwait({
+        type: 'pickup',
+        params: { itemId: data.itemId, itemName: data.itemName, count: data.count, isCurrency: data.isCurrency },
+      });
+    } finally {
+      eventBus.off('inventory:full', onFull);
+    }
+    if (bagFull) return;
     await actionExecutor.executeAwait({ type: 'setFlag', params: { key: FlagKeys.hotspotPickedUp(hotspot.def.id), value: true } });
     eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
   }

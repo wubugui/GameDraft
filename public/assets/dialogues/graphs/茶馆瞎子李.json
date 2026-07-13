@@ -197,7 +197,8 @@
           "type": "giveItem",
           "params": {
             "id": "iron_box",
-            "count": 1
+            "count": 1,
+            "critical": true
           }
         },
         {

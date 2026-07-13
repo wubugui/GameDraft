@@ -9,6 +9,7 @@ import { WaterPullPanel, type PullPanelResult } from './WaterPullPanel';
 import { WaterShaderFilter } from './WaterShaderFilter';
 import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
 import { fillToken } from '../../utils/fillTemplate';
+import { createDeterministicRandom } from '../../utils/deterministicRandom';
 import type { Application } from 'pixi.js';
 import {
   Container,
@@ -57,6 +58,7 @@ export class WaterMinigameScene {
   private readonly searchHorizonSec = 25;
   private unsubResize: (() => void) | null = null;
   private degraded = false;
+  private random = createDeterministicRandom('');
 
   private onFinish: (reason: 'abort') => void;
   private onConsumed: ((instanceId: string, entityId: string) => void) | null;
@@ -141,6 +143,7 @@ export class WaterMinigameScene {
 
   async load(instance: WaterMinigameInstance, options: { degraded: boolean }): Promise<void> {
     this.instance = instance;
+    this.random = createDeterministicRandom(instance.id);
     this.degraded = options.degraded;
     this.time = 0;
     this.phase = 'search';
@@ -169,6 +172,7 @@ export class WaterMinigameScene {
       const tex = await loadEntityTexture(this.assetManager, d.sprite);
       const we = new WaterEntity(d, tex, this.assetManager, {
         paramsEncode: d.category !== 'floating',
+        random: this.random,
       });
       /* 只有漂浮物画在水面之上（不过 RT 后处理）；水草与鱼虾沉底均写入 bottomMrt */
       if (d.category === 'floating') {
@@ -439,6 +443,15 @@ export class WaterMinigameScene {
     return this.actionGate.locked;
   }
 
+  getDebugVisualState(): Record<string, unknown> {
+    return {
+      phase: this.phase,
+      bounds: this.instance?.bounds,
+      renderTexture: { width: this.bottomMrt.width, height: this.bottomMrt.height },
+      surface: this.waterFilter.getDebugUniformState(),
+    };
+  }
+
   /** 动作播放期间整棵场景树不接输入（eventMode 'none' 对子树同样生效）。 */
   private setInputLocked(locked: boolean): void {
     this.root.eventMode = locked ? 'none' : 'passive';
@@ -573,6 +586,7 @@ export class WaterMinigameScene {
       failurePolicy: p.failurePolicy,
       timeLimitSec: timeLimit,
       resolveText: this.resolveText,
+      random: this.random,
       onResult: (r) => void this.onPullEnd(ent, r),
     });
     this.uiLayer.addChild(this.pullPanel);

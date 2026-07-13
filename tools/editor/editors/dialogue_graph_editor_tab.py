@@ -67,4 +67,11 @@ class DialogueGraphEditorTab(QWidget):
     def confirm_close(self, parent: QWidget) -> bool:
         if self._panel is None:
             return True
-        return self._panel.confirm_discard_or_save_before_close(parent)
+        if not self._panel.confirm_discard_or_save_before_close(parent):
+            return False
+        if self._panel.has_unsaved_changes():
+            # 走到这里 = 用户选了「放弃」（选保存则已写盘、不再有未保存修改）。
+            # 必须立刻真正放弃（重载磁盘/清空草稿），否则关闭路径随后的统一
+            # flush_to_model 会把被放弃的编辑直接写盘（复核 P1-01）。
+            self._panel.discard_unsaved_changes()
+        return True

@@ -60,7 +60,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   revealDocument: { required: ['documentId'], nonEmpty: ['documentId'] },
 
   // ---- 背包 / 货币 / 规矩 / 任务 ----
-  giveItem: { required: ['id'], nonEmpty: ['id'], optional: ['count'] },
+  giveItem: { required: ['id'], nonEmpty: ['id'], optional: ['count', 'critical'] },
   removeItem: { required: ['id'], nonEmpty: ['id'], optional: ['count'] },
   giveCurrency: { required: ['amount'] },
   removeCurrency: { required: ['amount'], nonEmpty: ['amount'] },

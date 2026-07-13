@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QWidget, QSplitter, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout,
     QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel, QLineEdit,
-    QFormLayout, QScrollArea, QGroupBox, QInputDialog,
+    QFormLayout, QScrollArea, QGroupBox, QInputDialog, QColorDialog,
     QMenu, QCompleter, QDialog, QSizePolicy, QComboBox, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel, QSettings
@@ -52,6 +52,7 @@ from .editor_group_geometry import (
     sync_node_to_group_from_layout_positions,
     sync_node_to_group_from_frames,
     avoid_rects_list,
+    parse_group_super_node_gid,
 )
 from .flow_oden_controller import DialogueFlowOdenController
 from .node_inspector import NodeInspector
@@ -64,6 +65,17 @@ _TREE_GROUP_KEY_ROLE = Qt.ItemDataRole.UserRole + 31
 _TK_GROUP = 1
 _TK_FILE = 2
 _TK_UNSAVED = 3
+
+# 分组配色：新建分组按序取不同色，一眼区分（纯编辑器视觉，不进图 JSON / 不影响运行时）。
+_LEGACY_GROUP_COLOR = "#4a6fa8"  # 历史上所有分组的硬编码同色；视作「未配色」，加载时自动派生不同色
+_GROUP_COLOR_PALETTE = [
+    "#4a6fa8", "#a8564a", "#4a8a5c", "#8a6f4a", "#7a4a8a",
+    "#4a8a8a", "#a88a4a", "#a84a7a", "#5a6f8a", "#6f8a4a",
+]
+
+
+def _palette_group_color(index: int) -> str:
+    return _GROUP_COLOR_PALETTE[index % len(_GROUP_COLOR_PALETTE)]
 
 
 def _graph_form_label(text: str, tip: str | None = None, *, max_w: int = 100) -> QLabel:
@@ -272,6 +284,43 @@ class DialogueGraphEditorWidget(QWidget):
         b_del_file = QPushButton("删除图…")
         b_del_file.clicked.connect(self.delete_selected_graph_file)
         fv.addWidget(b_del_file)
+
+        # 「被引用」反查面板：当前图被哪些地图实体/Scenario/叙事图/其它对话引用；双击跳过去。
+        # 整段可折叠（折叠后只留标题行，最省空间），折叠态用 QSettings 跨会话记住——UI 本就拥挤。
+        refs_wrap = QVBoxLayout()
+        refs_wrap.setContentsMargins(0, 0, 0, 0)
+        refs_wrap.setSpacing(2)
+        refs_head = QHBoxLayout()
+        refs_head.addWidget(QLabel("<b>被引用</b>"))
+        self._refs_count = QLabel("")
+        self._refs_count.setStyleSheet("color: #888;")
+        refs_head.addWidget(self._refs_count, 1)
+        self._refs_toggle = QPushButton("收起")
+        self._refs_toggle.setFixedWidth(56)
+        self._refs_toggle.clicked.connect(self._toggle_refs_panel)
+        refs_head.addWidget(self._refs_toggle)
+        refs_wrap.addLayout(refs_head)
+
+        self._refs_body = QWidget()
+        refs_body_layout = QVBoxLayout(self._refs_body)
+        refs_body_layout.setContentsMargins(0, 0, 0, 0)
+        self._refs_tree = QTreeWidget()
+        self._refs_tree.setHeaderHidden(True)
+        self._refs_tree.setRootIsDecorated(True)
+        self._refs_tree.setMaximumHeight(240)
+        self._refs_tree.itemDoubleClicked.connect(self._on_referrer_double_clicked)
+        refs_body_layout.addWidget(self._refs_tree)
+        self._refs_hint = QLabel("打开一张图后显示引用它的实体")
+        self._refs_hint.setWordWrap(True)
+        refs_body_layout.addWidget(self._refs_hint)
+        self._refs_refresh_btn = QPushButton("刷新引用")
+        self._refs_refresh_btn.clicked.connect(self._refresh_referrers)
+        refs_body_layout.addWidget(self._refs_refresh_btn)
+        refs_wrap.addWidget(self._refs_body)
+        fv.addLayout(refs_wrap)
+        self._refs_collapsed = False
+        self._restore_refs_panel_state()
+
         splitter.addWidget(file_box)
 
         self._oden = DialogueFlowOdenController(self._undo_stack, self, toast=self._toast)
@@ -288,6 +337,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._oden.auto_layout_requested.connect(self._flow_auto_layout)
         self._oden.canvas_context_menu.connect(self._on_flow_canvas_context_menu)
         self._oden.editor_frame_rename_requested.connect(self._on_editor_frame_rename)
+        self._oden.editor_group_expand_requested.connect(self._toggle_editor_group_collapsed)
         self._oden.set_editor_frame_drag_end_callback(self._on_editor_frame_drag_finished)
         self._oden.delete_key_requested.connect(self._on_flow_delete_key)
         self._flow_view = self._oden.viewer()
@@ -548,8 +598,36 @@ class DialogueGraphEditorWidget(QWidget):
         while gid in self._editor_groups:
             n += 1
             gid = f"{base}_{n}"
-        self._editor_groups[gid] = {"name": display_name.strip(), "color": "#4a6fa8"}
+        # 新组按现有组数取调色板下一色，天然与已有组不同
+        self._editor_groups[gid] = {
+            "name": display_name.strip(),
+            "color": _palette_group_color(len(self._editor_groups)),
+        }
         return gid
+
+    def _maybe_autocolor_legacy_groups(self) -> bool:
+        """把没配色/仍是历史同色的分组按序派生成不同色（一次性修旧数据的「都同色」）。返回是否有改动。"""
+        changed = False
+        for idx, (gid, meta) in enumerate(self._editor_groups.items()):
+            if not isinstance(meta, dict):
+                continue
+            cur = str(meta.get("color") or "").strip().lower()
+            if not cur or cur == _LEGACY_GROUP_COLOR:
+                meta["color"] = _palette_group_color(idx)
+                changed = True
+        return changed
+
+    def _on_editor_frame_change_color(self, gid: str) -> None:
+        if gid not in self._editor_groups:
+            return
+        cur = str((self._editor_groups.get(gid) or {}).get("color") or _LEGACY_GROUP_COLOR)
+        picked = QColorDialog.getColor(QColor(cur), self, "分组颜色")
+        if not picked.isValid():
+            return
+        self._editor_groups.setdefault(gid, {})["color"] = picked.name()
+        self._rebuild_flow_scene()
+        if self._layout_path_for_io():
+            self._flush_flow_layout_to_disk()
 
     def _sync_node_groups_from_scene(self) -> None:
         nodes = self._data.get("nodes") or {}
@@ -620,6 +698,25 @@ class DialogueGraphEditorWidget(QWidget):
             out[nid] = self._hex_to_rgba(c)
         return out
 
+    def _hidden_node_ids(self) -> set[str]:
+        """折叠分组的成员节点：画布上不渲染（只留分组框）。"""
+        collapsed = {
+            gid for gid, m in self._editor_groups.items()
+            if isinstance(m, dict) and m.get("collapsed")
+        }
+        if not collapsed:
+            return set()
+        return {nid for nid, gid in self._node_to_group.items() if gid in collapsed}
+
+    def _toggle_editor_group_collapsed(self, gid: str) -> None:
+        if gid not in self._editor_groups:
+            return
+        meta = self._editor_groups.setdefault(gid, {})
+        meta["collapsed"] = not bool(meta.get("collapsed"))
+        self._rebuild_flow_scene()
+        if self._layout_path_for_io():
+            self._flush_flow_layout_to_disk()
+
     def _update_search_completions(self, _t: str) -> None:
         nodes = self._data.get("nodes") or {}
         if not isinstance(nodes, dict):
@@ -649,6 +746,7 @@ class DialogueGraphEditorWidget(QWidget):
             if isinstance(hit_ghost_missing, str) and hit_ghost_missing.strip()
             else None
         )
+        super_gid = parse_group_super_node_gid(nid) if nid else None
         menu = QMenu(self)
         if ghost_mid:
             act_g = QAction(f'清除指向缺失节点「{ghost_mid}」的连线…', self)
@@ -661,11 +759,24 @@ class DialogueGraphEditorWidget(QWidget):
             act_nm = QAction("编辑分组名称…", self)
             act_nm.triggered.connect(lambda checked=False, g=fgid: self._on_editor_frame_rename(g))
             menu.addAction(act_nm)
+            act_color = QAction("改颜色…", self)
+            act_color.triggered.connect(lambda checked=False, g=fgid: self._on_editor_frame_change_color(g))
+            menu.addAction(act_color)
+            _collapsed = bool((self._editor_groups.get(fgid) or {}).get("collapsed"))
+            act_col = QAction("展开此分组" if _collapsed else "折叠此分组（隐藏组内节点）", self)
+            act_col.triggered.connect(lambda checked=False, g=fgid: self._toggle_editor_group_collapsed(g))
+            menu.addAction(act_col)
             act_rm = QAction("删除此分组框…", self)
             act_rm.triggered.connect(lambda checked=False, g=fgid: self._delete_editor_group_frame(g))
             menu.addAction(act_rm)
             menu.addSeparator()
-        if nid and nid in self._data["nodes"]:
+        if super_gid and super_gid in self._editor_groups:
+            act_ex = QAction("展开此分组", self)
+            act_ex.triggered.connect(
+                lambda checked=False, g=super_gid: self._toggle_editor_group_collapsed(g)
+            )
+            menu.addAction(act_ex)
+        elif nid and nid in self._data["nodes"]:
             act_entry = QAction("设为入口节点", self)
             cur_ent = str(self._data.get("entry", "") or "").strip()
             act_entry.setEnabled(cur_ent != nid)
@@ -953,6 +1064,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
         self._collapse_graph_prop_panel()
         self._schedule_validation_refresh(0)
+        self._refresh_referrers()
 
     def _reset_to_no_file_loaded(self) -> None:
         self._model.load_empty()
@@ -1075,6 +1187,20 @@ class DialogueGraphEditorWidget(QWidget):
         if r == QMessageBox.StandardButton.Cancel:
             return False
         return True
+
+    def discard_unsaved_changes(self) -> None:
+        """真正放弃当前未保存修改：有文件则重载磁盘版本，纯草稿则回到未加载状态。
+
+        嵌入主编辑器时供关闭路径在用户选「放弃」后调用——只清 dirty 标志不够，
+        随后的统一 flush 仍会按未保存内容判脏并写盘（复核 P1-01）。
+        """
+        if not self._model.is_dirty:
+            return
+        if self._current_path is not None:
+            self._load_path(self._current_path)
+        else:
+            self._reset_to_no_file_loaded()
+            self._refresh_file_list()
 
     def load_path(self, path: Path) -> None:
         """打开指定 graphs/*.json（若当前有未保存修改会先提示保存/放弃/取消）。"""
@@ -2033,6 +2159,9 @@ class DialogueGraphEditorWidget(QWidget):
             )
             regen_layout = True
         layout_fixed = self._canonicalize_editor_layout_to_graph_nodes()
+        # 旧「都同色」分组：加载即在内存里派生成不同色（确定性，跨开一致）。故意不因此单独写盘——
+        # 打开不改磁盘；等用户下次真正动布局/改色时随统一 flush 一起持久化。
+        self._maybe_autocolor_legacy_groups()
         self._undo_stack.clear()
         self._populate_node_list(select_first=True)
         self._rebuild_flow_scene()
@@ -2046,6 +2175,105 @@ class DialogueGraphEditorWidget(QWidget):
         self._schedule_validation_refresh(0)
         # 切文件后清跨文件残留的「连线失败」横幅（审查 P3-5）
         self._connect_feedback_messages = []
+        self._refresh_referrers()
+
+    # ----- 「被引用」反查（纯只读展示 + 双击导航；不改任何数据） -------------------
+    def _set_refs_collapsed(self, collapsed: bool) -> None:
+        self._refs_collapsed = collapsed
+        self._refs_body.setVisible(not collapsed)  # 折叠 = 整段隐藏，只留标题行
+        self._refs_toggle.setText("展开" if collapsed else "收起")
+
+    def _toggle_refs_panel(self) -> None:
+        self._set_refs_collapsed(not self._refs_collapsed)
+        self._save_refs_panel_state()
+
+    def _restore_refs_panel_state(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        self._set_refs_collapsed(bool(s.value("referrers_panel_collapsed", False, type=bool)))
+
+    def _save_refs_panel_state(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        s.setValue("referrers_panel_collapsed", self._refs_collapsed)
+
+    def _refresh_referrers(self) -> None:
+        """按当前图 id 反查引用它的实体，填充左栏「被引用」树。"""
+        from .dialogue_references import (
+            CATEGORY_ORDER,
+            find_dialogue_referrers,
+            group_by_category,
+        )
+
+        self._refs_tree.clear()
+        graph_id = self._current_path.stem if self._current_path is not None else ""
+        model = self._injected_project_model
+        if not graph_id or model is None:
+            self._refs_count.setText("")
+            self._refs_hint.setText("打开一张图后显示引用它的实体")
+            return
+
+        # 其它对话图：读盘扫一遍（不含当前图），找谁跳到本图。
+        other_dialogues: dict[str, Any] = {}
+        try:
+            for p in list_graph_files(self._project):
+                if p.stem == graph_id:
+                    continue
+                try:
+                    other_dialogues[p.stem] = load_json(p)
+                except (OSError, ValueError):
+                    continue
+        except OSError:
+            pass
+
+        referrers = find_dialogue_referrers(
+            graph_id,
+            scenes=getattr(model, "scenes", None) or {},
+            scenarios_catalog=getattr(model, "scenarios_catalog", None),
+            narrative_graphs=getattr(model, "narrative_graphs", None),
+            other_dialogues=other_dialogues,
+        )
+        if not referrers:
+            self._refs_count.setText("0")
+            self._refs_hint.setText(f"没有实体引用「{graph_id}」")
+            return
+        self._refs_count.setText(f"{len(referrers)} 处")
+        self._refs_hint.setText(f"{len(referrers)} 处引用（双击跳转）")
+
+        grouped = group_by_category(referrers)
+        for category in CATEGORY_ORDER:
+            items = grouped.get(category)
+            if not items:
+                continue
+            cat_item = QTreeWidgetItem([f"{category}（{len(items)}）"])
+            self._refs_tree.addTopLevelItem(cat_item)
+            # 地图实体再按场景分子组
+            if category == "地图实体":
+                by_scene: dict[str, list] = {}
+                for ref in items:
+                    by_scene.setdefault(ref.scene_id, []).append(ref)
+                for scene_id, scene_refs in by_scene.items():
+                    scene_item = QTreeWidgetItem([f"场景 {scene_id}" if scene_id else "（未归属场景）"])
+                    cat_item.addChild(scene_item)
+                    for ref in scene_refs:
+                        self._add_referrer_leaf(scene_item, ref)
+            else:
+                for ref in items:
+                    self._add_referrer_leaf(cat_item, ref)
+        self._refs_tree.expandAll()
+
+    def _add_referrer_leaf(self, parent: QTreeWidgetItem, ref) -> None:
+        leaf = QTreeWidgetItem([f"{ref.label}  ·  {ref.detail}"])
+        leaf.setToolTip(0, f"{ref.label} — {ref.detail}（双击导航）")
+        leaf.setData(0, Qt.ItemDataRole.UserRole, ref.nav)
+        parent.addChild(leaf)
+
+    def _on_referrer_double_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
+        nav = item.data(0, Qt.ItemDataRole.UserRole)
+        if not (isinstance(nav, tuple) and len(nav) == 2):
+            return  # 分组行不跳转
+        method_name, args = nav
+        fn = getattr(self.window(), str(method_name), None)
+        if callable(fn):
+            fn(*args)
 
     def _sync_file_list_selection(self, path: Path) -> None:
         target = path.resolve()
@@ -2730,6 +2958,34 @@ class DialogueGraphEditorWidget(QWidget):
             return False
         return self._model.to_dict() == disk_data
 
+    def _confirm_overwrite_external_changes(self, path: Path) -> bool:
+        """保存前的外部并发写检查：磁盘字节 ≠ 载入基线 → 明确询问是否覆盖。
+
+        内嵌与独立图对话编辑器可同开同一文件，双方各自保存时后写者会静默覆盖
+        前者；用载入时记录的 `_loaded_disk_bytes` 基线比对拦下这种覆盖。
+        """
+        disk_bytes = getattr(self, "_loaded_disk_bytes", None)
+        if disk_bytes is None or self._current_path is None:
+            return True  # 新草稿 / 无基线：不做冲突判断
+        try:
+            if path.resolve() != self._current_path.resolve():
+                return True  # 另存为：写新文件，无覆盖风险
+            now = path.read_bytes()
+        except OSError:
+            return True  # 文件被外部删除等：照常写出（等价于重建）
+        if now == disk_bytes:
+            return True
+        r = QMessageBox.question(
+            self,
+            "磁盘文件已被外部修改",
+            f"{path.name} 自载入后被其它程序（另一个图对话编辑器 / 外部工具）修改过。\n\n"
+            "继续保存会用当前编辑器内容覆盖那些外部修改。仍要覆盖吗？\n"
+            "选「No」取消本次保存，可先到外部确认后再存。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return r == QMessageBox.StandardButton.Yes
+
     def _write_to_path(self, path: Path) -> bool:
         old_draft = self._draft_layout_basename
         draft_lp = (self._graphs_dir / old_draft) if old_draft else None
@@ -2771,6 +3027,11 @@ class DialogueGraphEditorWidget(QWidget):
             )
             if r != QMessageBox.StandardButton.Yes:
                 return False
+
+        # 外部并发写检查：磁盘自载入后被别处（内嵌/独立图编辑器、外部工具）改过时，
+        # 直接写盘就是 last-writer-wins 静默覆盖，必须让用户明确选择。
+        if not self._confirm_overwrite_external_changes(path):
+            return False
 
         id_before_disk = str(self._data.get("id", "")).strip()
         final_gid = path.stem

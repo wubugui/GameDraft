@@ -17,6 +17,7 @@ import {
   createMinigameScriptRunner,
 } from '../minigameScript';
 import { sectorLayoutFromInstance } from './sugarWheelSpinPhysics';
+import { createDeterministicRandom } from '../../utils/deterministicRandom';
 
 // ---------------------------------------------------------------------------
 // 宿主 API（Scene 注入，opcode 读取）
@@ -92,6 +93,7 @@ export class SugarWheelAtmosphereScheduler {
   /** 被 'start' 挡下、等其播完再接的相位（只可能是 'spinning'） */
   private pendingPhase: SugarWheelAtmospherePhaseName | null = null;
   private host: SugarWheelAtmosphereHost;
+  private rng: () => number = createDeterministicRandom('');
 
   constructor(host: SugarWheelAtmosphereHost) {
     this.host = host;
@@ -105,9 +107,10 @@ export class SugarWheelAtmosphereScheduler {
       this.group = null;
       return;
     }
-    this.group = weightedPick(groups, (g) => Math.max(0, g.weight ?? 1));
+    this.rng = createDeterministicRandom(instance.id);
+    this.group = weightedPick(groups, (g) => Math.max(0, g.weight ?? 1), this.rng);
     this.ctx = {
-      rng: Math.random,
+      rng: this.rng,
       vars: { ...(this.group?.vars ?? {}) },
       slots: {},
     };
@@ -181,11 +184,11 @@ export class SugarWheelAtmosphereScheduler {
 // 工具
 // ---------------------------------------------------------------------------
 
-function weightedPick<T>(items: T[], weightFn: (t: T) => number): T {
+function weightedPick<T>(items: T[], weightFn: (t: T) => number, rng: () => number): T {
   let total = 0;
   for (const t of items) total += weightFn(t);
   if (total <= 0) return items[0];
-  let r = Math.random() * total;
+  let r = rng() * total;
   for (const t of items) {
     r -= weightFn(t);
     if (r <= 0) return t;

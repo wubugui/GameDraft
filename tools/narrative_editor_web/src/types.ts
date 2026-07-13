@@ -132,6 +132,19 @@ export interface NarrativeGraphsFileDef {
   compositions?: NarrativeCompositionDef[];
 }
 
+/**
+ * 「整理分组」标签：编辑器专用，运行时永不加载，**绝不进 narrative_graphs.json**。
+ * 只为作者整理左侧「编排列表」（compositions）与「子图导航」（subgraphs，按 compose 作用域）。
+ * 与 NarrativeGraphDef.category「分类备注」（进 JSON、驱动运行时校验）完全无关。
+ */
+export interface NarrativeCategoriesFileDef {
+  schemaVersion?: number;
+  /** compositionId → 分类名 */
+  compositions?: Record<string, string>;
+  /** compositionId → (elementId → 分类名) */
+  subgraphs?: Record<string, Record<string, string>>;
+}
+
 export interface ProjectionEdgeDef {
   id: string;
   kind: 'trigger' | 'read' | 'stateCommand';
@@ -197,6 +210,8 @@ export interface AuthoringCatalogDef {
   planeIds?: string[];
   /** 每个位面被多少场景实体（hotspot/npc/zone 的 planes 字段包含它）归属；缺失=旧 host，容错跳过空位面检查。 */
   planeMembership?: Record<string, number>;
+  /** 世界模型为 exclusive（独立世界型）的位面 id 集（沿 extends 链解析）；缺失=旧 host，按全 shared 处理。 */
+  planeExclusive?: string[];
   /** 全项目实际发出的信号 id 去重集（对话图 + 内容资产 emitNarrativeSignal ∪ broadcastOnEnter 派生广播）；缺失=旧 host。 */
   emittedSignals?: string[];
 }
@@ -334,9 +349,10 @@ export interface StampPreviewDef {
   warnings: ValidationIssueDef[];
 }
 
+/** 盖章确认结果：三样产物全部只是「暂存」进 ProjectModel（零磁盘写入），Save All 一次性落盘。 */
 export interface StampSummaryDef extends StampPreviewDef {
-  questWritten: boolean;
-  stubsWritten: string[];
+  questStaged: boolean;
+  stubsStaged: string[];
   stubsSkipped: string[];
 }
 
@@ -373,10 +389,14 @@ export interface RuntimeDebugSnapshotDef {
 export type CanvasNode = Node<{
   label: string;
   subtitle: string;
-  kind: 'state' | ElementKind | 'graphAnchor' | 'projectionAnchor' | 'transitionAnchor';
+  kind: 'state' | ElementKind | 'graphAnchor' | 'projectionAnchor' | 'transitionAnchor' | 'editorGroupFrame';
   detail?: string;
   boundary?: 'entry' | 'exit' | 'entryExit';
   active?: boolean;
+  /** 编辑器分组框（kind === 'editorGroupFrame'）专用视觉字段，见 canvas/editorGroups.ts */
+  groupColor?: string;
+  groupCollapsed?: boolean;
+  groupMemberCount?: number;
 }>;
 
 export type CanvasEdge = Edge<{

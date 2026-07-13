@@ -9,6 +9,8 @@ description: >-
 
 所有玩家可见字符串经同一 `resolveText(raw, ctx)`；编辑器侧须 **TagCatalog + RichTextField + ref_validator 白名单** 三件套一致，缺一视为未完成。
 
+> 系统契约与不变量（存 raw 运行时 JIT、保存前 raise 闸门等）：`agent_docs/content/mechanisms/text-ref-tag-system.md`；本清单只留操作步骤。
+
 ## 1. 添加新 ref 类型（kind）
 
 1. **运行时** `GameDraft/src/core/resolveText.ts`：为新 kind 增加解析分支；未知 kind 保持原样并 `console.warn`。

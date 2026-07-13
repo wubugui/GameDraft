@@ -8,7 +8,8 @@
     "questAccepted": "新任务：{title}",
     "questCompleted": "任务完成：{title}",
     "currencyInsufficient": "铜钱不足!",
-    "shopPurchased": "购买了 {name}"
+    "shopPurchased": "购买了 {name}",
+    "mapTravelBlocked": "此刻脱不开身，无法看图赶路。"
   },
   "menu": {
     "gameTitle": "七日惊魂",

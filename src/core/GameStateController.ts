@@ -18,6 +18,11 @@ export interface RegisterPanelOptions {
    * 为 false 时（如 DOM 侧栏调试面板）不改变 GameState，不阻挡探索/操作。
    */
   overlaysGameState?: boolean;
+  /**
+   * 开启前守卫：返回 false 拒绝本次打开（快捷键与 togglePanel 都过闸；关闭不受影响）。
+   * 拒绝提示由注册方在守卫内自行发（如 notificationUI），控制器不做 UI。
+   */
+  openGuard?: () => boolean;
 }
 
 interface PanelEntry {
@@ -26,6 +31,7 @@ interface PanelEntry {
   alwaysOpenable?: boolean;
   additionalKeys?: string[];
   overlaysGameState: boolean;
+  openGuard?: () => boolean;
 }
 
 export class GameStateController {
@@ -45,6 +51,16 @@ export class GameStateController {
 
   get currentState(): GameState { return this._currentState; }
   get previousState(): GameState { return this._previousState; }
+
+  getDebugState(): { overlayReturnStack: GameState[]; openPanels: string[] } {
+    return {
+      overlayReturnStack: [...this.overlayReturnStack],
+      openPanels: [...this.panels.entries()]
+        .filter(([, entry]) => entry.panel.isOpen)
+        .map(([name]) => name)
+        .sort(),
+    };
+  }
 
   setState(newState: GameState): void {
     this._previousState = this._currentState;
@@ -68,6 +84,7 @@ export class GameStateController {
       alwaysOpenable: options?.alwaysOpenable,
       additionalKeys: options?.additionalKeys,
       overlaysGameState: options?.overlaysGameState !== false,
+      openGuard: options?.openGuard,
     });
   }
 
@@ -125,6 +142,7 @@ export class GameStateController {
 
     const canOpen = entry.alwaysOpenable || this._currentState === GameState.Exploring;
     if (!canOpen) return;
+    if (entry.openGuard && !entry.openGuard()) return;
     if (entry.overlaysGameState) {
       this.overlayReturnStack.push(this._currentState);
       this._currentState = GameState.UIOverlay;

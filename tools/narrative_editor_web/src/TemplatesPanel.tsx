@@ -16,6 +16,32 @@ import type {
   TemplateParamType,
 } from './types';
 
+/** 危险操作两步确认按钮：第一次点变成红色「确认xx?」，再点才执行；失焦/超时自动复原。 */
+function ConfirmButton(props: { label: string; confirmLabel: string; className?: string; disabled?: boolean; title?: string; onConfirm: () => void }) {
+  const [arming, setArming] = useState(false);
+  useEffect(() => {
+    if (!arming) return;
+    const t = setTimeout(() => setArming(false), 4000);
+    return () => clearTimeout(t);
+  }, [arming]);
+  return (
+    <button
+      type="button"
+      className={`${props.className ?? 'link-btn'}${arming ? ' danger confirm-arming' : ''}`}
+      disabled={props.disabled}
+      title={props.title}
+      onBlur={() => setArming(false)}
+      onClick={() => {
+        if (!arming) { setArming(true); return; }
+        setArming(false);
+        props.onConfirm();
+      }}
+    >
+      {arming ? props.confirmLabel : props.label}
+    </button>
+  );
+}
+
 const PARAM_TYPE_LABELS: Record<TemplateParamType, string> = {
   identifier: '自由标识符',
   text: '自由文案',
@@ -110,7 +136,7 @@ function ParamField(props: {
     );
   } else {
     control = (
-      <input value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={param.type === 'identifier' ? '字母/数字/下划线/中文' : ''} />
+      <input value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={param.type === 'identifier' ? '字母/数字/下划线/中文，首字符非数字' : ''} />
     );
   }
 
@@ -265,7 +291,7 @@ function StampForm(props: {
         {status && <span className="muted">{status}</span>}
       </div>
       <div className="muted template-fine">
-        生成后：新作曲已并入本编辑器（记得点「保存」落盘 narrative_graphs）；镜像任务已写入模型（记得主编辑器 <b>Save All</b>）。
+        全有全无：确认后作曲+信号、镜像任务、对话桩<b>一并暂存</b>（此刻不写盘），主编辑器 <b>Save All</b> 一次性落盘全部；放弃/关闭不保存则三样都不存在。
       </div>
     </div>
   );
@@ -317,12 +343,26 @@ function TemplateEditor(props: {
         </div>
         {template.params.map((param, i) => (
           <div key={i} className="template-param-row">
-            <input className="template-param-name" value={param.name} placeholder="name" onChange={(e) => setParam(i, { name: e.target.value })} />
+            <input className="template-param-name" value={param.name} placeholder="参数名（中文/字母/数字/下划线）" onChange={(e) => setParam(i, { name: e.target.value })} />
             <select value={param.type} onChange={(e) => setParam(i, { type: e.target.value as TemplateParamType })}>
               {PARAM_TYPES.map((t) => <option key={t} value={t}>{PARAM_TYPE_LABELS[t]}</option>)}
             </select>
             <input className="template-param-label" value={param.label ?? ''} placeholder="标签" onChange={(e) => setParam(i, { label: e.target.value })} />
-            <input className="template-param-default" value={param.default === undefined ? '' : String(param.default)} placeholder="默认" onChange={(e) => setParam(i, { default: e.target.value })} />
+            {param.type === 'boolean' ? (
+              <label className="toggle compact-toggle" title="默认值">
+                <input type="checkbox" checked={Boolean(param.default)} onChange={(e) => setParam(i, { default: e.target.checked })} />默
+              </label>
+            ) : param.type === 'number' ? (
+              <input
+                className="template-param-default"
+                type="number"
+                value={param.default === undefined || param.default === '' ? '' : Number(param.default)}
+                placeholder="默认"
+                onChange={(e) => setParam(i, { default: e.target.value === '' ? undefined : Number(e.target.value) })}
+              />
+            ) : (
+              <input className="template-param-default" value={param.default === undefined ? '' : String(param.default)} placeholder="默认" onChange={(e) => setParam(i, { default: e.target.value })} />
+            )}
             <label className="toggle compact-toggle" title="必填">
               <input type="checkbox" checked={Boolean(param.required)} onChange={(e) => setParam(i, { required: e.target.checked })} />必
             </label>
@@ -339,16 +379,14 @@ function TemplateEditor(props: {
       </details>
 
       <div className="template-editor-actions">
-        <button
-          type="button"
-          className="link-btn"
+        <ConfirmButton
+          label="用当前作曲重建骨架"
+          confirmLabel="⚠️ 确认覆盖骨架？（{{洞}}会被真值覆盖，不可撤销）"
           disabled={!currentComposition}
-          title={currentComposition ? '把当前打开的作曲的结构写入本模板的骨架（参数样值替换见「从作曲创建」）' : '先在画布选中一张作曲'}
-          onClick={onRebuildFromComposition}
-        >
-          用当前作曲重建骨架
-        </button>
-        <button type="button" className="link-btn danger" onClick={onDelete}>删除模板</button>
+          title={currentComposition ? '把当前打开的作曲原样写入骨架——注意：不做参数化，原骨架的 {{洞}} 会全部被真值覆盖' : '先在画布选中一张作曲'}
+          onConfirm={onRebuildFromComposition}
+        />
+        <ConfirmButton label="删除模板" confirmLabel="⚠️ 确认删除？（不可撤销）" className="link-btn danger" onConfirm={onDelete} />
       </div>
     </div>
   );
@@ -358,11 +396,15 @@ function TemplateEditor(props: {
 function CreateFromCompositionForm(props: {
   composition: NarrativeCompositionDef;
   signals: NarrativeGraphsFileDef['signals'];
+  catalog: AuthoringCatalogDef;
+  /** 已有模板 id 集：新建撞名直接禁止（创建永不覆盖）。 */
+  existingIds: string[];
   onCreated: (tpl: NarrativeTemplateDef) => void;
   onCancel: () => void;
 }) {
-  const { composition, signals, onCreated, onCancel } = props;
+  const { composition, signals, catalog, existingIds, onCreated, onCancel } = props;
   const [templateId, setTemplateId] = useState(`${composition.id}_archetype`);
+  const idTaken = existingIds.includes(templateId.trim());
   const [label, setLabel] = useState(composition.label ?? '');
   const [description, setDescription] = useState('');
   const [params, setParams] = useState<TemplateParamDef[]>([
@@ -422,7 +464,11 @@ function CreateFromCompositionForm(props: {
         <b>从作曲「{composition.label || composition.id}」创建模板</b>
       </div>
       <div className="muted">给每个参数填「样值」——它在这张作曲里出现的真值；抽取时会被换成 {'{{name}}'} 洞。</div>
-      <div className="field"><label>模板 id</label><input value={templateId} onChange={(e) => setTemplateId(e.target.value)} /></div>
+      <div className="field">
+        <label>模板 id（新建，不可与已有模板重名）</label>
+        <input value={templateId} onChange={(e) => setTemplateId(e.target.value)} />
+        {idTaken && <div className="template-preview-error">⛔ 模板「{templateId.trim()}」已存在——创建不允许覆盖，请换个 id（要改它请回列表点「编辑」）</div>}
+      </div>
       <div className="field"><label>显示名</label><input value={label} onChange={(e) => setLabel(e.target.value)} /></div>
       <div className="field"><label>说明</label><input value={description} onChange={(e) => setDescription(e.target.value)} /></div>
 
@@ -433,7 +479,7 @@ function CreateFromCompositionForm(props: {
         </div>
         {params.map((param, i) => (
           <div key={i} className="template-param-row">
-            <input className="template-param-name" value={param.name} placeholder="name" onChange={(e) => setParam(i, { name: e.target.value })} />
+            <input className="template-param-name" value={param.name} placeholder="参数名（中文/字母/数字/下划线）" onChange={(e) => setParam(i, { name: e.target.value })} />
             <select value={param.type} onChange={(e) => setParam(i, { type: e.target.value as TemplateParamType })}>
               {PARAM_TYPES.map((t) => <option key={t} value={t}>{PARAM_TYPE_LABELS[t]}</option>)}
             </select>
@@ -445,12 +491,15 @@ function CreateFromCompositionForm(props: {
       </div>
 
       <div className="field">
-        <label>一并参数化的镜像任务 id（可选）</label>
-        <input value={includeQuestId} onChange={(e) => setIncludeQuestId(e.target.value)} placeholder="留空则不带 quest" />
+        <label>一并参数化的镜像任务（可选）</label>
+        <select value={includeQuestId} onChange={(e) => setIncludeQuestId(e.target.value)}>
+          <option value="">（不带 quest）</option>
+          {(catalog.questIds ?? []).map((q) => <option key={q} value={q}>{q}</option>)}
+        </select>
       </div>
 
       <div className="template-stamp-actions">
-        <button type="button" className="primary-btn" disabled={busy || !templateId.trim()} onClick={() => void doExtract()}>创建模板</button>
+        <button type="button" className="primary-btn" disabled={busy || !templateId.trim() || idTaken} onClick={() => void doExtract()}>创建模板</button>
         {status && <span className="muted">{status}</span>}
       </div>
     </div>
@@ -510,6 +559,8 @@ export function TemplatesPanel(props: {
         <CreateFromCompositionForm
           composition={currentComposition}
           signals={currentNarrative.signals}
+          catalog={catalog}
+          existingIds={templates.map((t) => t.id)}
           onCreated={(tpl) => { upsertTemplate(tpl); setActiveId(tpl.id); setMode('edit'); }}
           onCancel={() => setMode('list')}
         />
@@ -575,7 +626,7 @@ export function TemplatesPanel(props: {
               <div className="template-card-actions">
                 <button type="button" className="primary-btn" onClick={() => { setActiveId(tpl.id); setMode('stamp'); }}>🔨 盖章生成</button>
                 <button type="button" className="link-btn" onClick={() => { setActiveId(tpl.id); setMode('edit'); }}>编辑</button>
-                <button type="button" className="link-btn danger" onClick={() => deleteTemplate(tpl.id)}>删除</button>
+                <ConfirmButton label="删除" confirmLabel="⚠️ 确认删除？" className="link-btn danger" onConfirm={() => deleteTemplate(tpl.id)} />
               </div>
             </div>
           ))

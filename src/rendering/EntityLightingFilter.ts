@@ -88,6 +88,7 @@ uniform float uFloorOffset;
 uniform float uFloorOffsetExtra;
 uniform float uTolerance;
 uniform float uOcclusionBlendFactor;
+uniform float uDebug;
 
 // 光照
 uniform vec3  uKeyColor;
@@ -108,6 +109,7 @@ void main(void) {
     float wx = (vScreenPos.x - uWorldContainerPos.x) / S;
     float wy = (vScreenPos.y - uWorldContainerPos.y) / S;
 
+    bool occluded = false;
     // ---------- 深度遮挡（gated） ----------
     if (uDepthEnabled > 0.5) {
         vec2 depthUV = vec2(wx / uSceneSize.x, wy / uSceneSize.y);
@@ -120,12 +122,19 @@ void main(void) {
             float syTex = wy * uWorldToPixelY;
             float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
             float spriteDepth = d_base + uDepthPerSy * (syTex - syTexFoot);
-            if (sceneDepth + uTolerance < spriteDepth) {
-                if (uOcclusionBlendFactor < 1e-5) { discard; }
-                finalColor = vec4(color.rgb * uOcclusionBlendFactor, color.a * uOcclusionBlendFactor);
-                return;
-            }
+            occluded = sceneDepth + uTolerance < spriteDepth;
         }
+    }
+
+    if (uDebug > 0.5) {
+        finalColor = vec4(occluded ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0), 0.7);
+        return;
+    }
+
+    if (occluded) {
+        if (uOcclusionBlendFactor < 1e-5) { discard; }
+        finalColor = vec4(color.rgb * uOcclusionBlendFactor, color.a * uOcclusionBlendFactor);
+        return;
     }
 
     vec3 rgb = color.rgb; // Pixi 预乘 alpha
@@ -207,6 +216,7 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
           uFloorOffsetExtra: { value: 0, type: 'f32' },
           uTolerance: { value: cfg?.depth_tolerance ?? 0, type: 'f32' },
           uOcclusionBlendFactor: { value: 0, type: 'f32' },
+          uDebug: { value: 0, type: 'f32' },
 
           uKeyColor: { value: new Float32Array(lightEnv.key.color), type: 'vec3<f32>' },
           uKeyIntensity: { value: lightEnv.key.intensity, type: 'f32' },
@@ -325,9 +335,9 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
     }
   }
 
-  /** 无调试通路，保留接口兼容 */
-  setDebug(_on: boolean): void {
-    /* no-op */
+  setDebug(on: boolean): void {
+    const u = this._lu;
+    if (u) u['uDebug'] = on ? 1 : 0;
   }
 
   /** EntityLightingFilter 不使用碰撞贴图，保留接口兼容 */

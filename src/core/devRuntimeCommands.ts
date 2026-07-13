@@ -1,7 +1,12 @@
 import type { FlagValue } from './FlagStore';
+import type { ActionDef } from '../data/types';
 
 export type RuntimeCommand =
   | { id?: unknown; type: 'captureSnapshot'; reason?: unknown }
+  | { id?: unknown; type: 'debugClearEventTrace'; reason?: unknown }
+  | { id?: unknown; type: 'debugExecuteAction'; action?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'debugSetFixedTickMode'; enabled?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'debugStepTicks'; ticks?: unknown; dtMs?: unknown; reason?: unknown }
   | { id?: unknown; type: 'clearNarrativeTrace'; reason?: unknown }
   | {
       id?: unknown;
@@ -82,6 +87,10 @@ export type RuntimeCommandResult = {
 
 export type RuntimeCommandDeps = {
   captureSnapshot(reason: string): void | Promise<void>;
+  clearEventTrace(): void;
+  debugExecuteAction(action: ActionDef): Promise<void>;
+  debugSetFixedTickMode(enabled: boolean): void;
+  debugStepTicks(ticks: number, dtMs: number): void | Promise<void>;
   clearNarrativeTrace(): void;
   emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
   debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
@@ -110,11 +119,11 @@ export type RuntimeCommandDeps = {
   debugTriggerHotspot(hotspotId: string): Promise<boolean>;
   debugInteractNpc(npcId: string): Promise<boolean>;
   debugWait(durationMs: number): Promise<void>;
-  debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): void;
+  debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): void | Promise<void>;
   debugMovePlayerTo(x: number, y: number, speed: number, snapCamera: boolean): Promise<void>;
   debugClick(x: number, y: number): Promise<void>;
   debugDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): Promise<void>;
-  debugSaveGame(slot: number): void;
+  debugSaveGame(slot: number): boolean;
   debugLoadGame(slot: number): Promise<boolean>;
   debugReloadScene(sceneId?: string): Promise<void>;
   // 玩家输入：同步注入到真实输入路径、即发即走（不 await 游戏逻辑，理论上不会卡死游戏）
@@ -143,6 +152,39 @@ export async function applyDevRuntimeCommand(
       case 'captureSnapshot': {
         await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:captureSnapshot');
         return ok(id, type, 'snapshot captured');
+      }
+      case 'debugClearEventTrace': {
+        deps.clearEventTrace();
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugClearEventTrace');
+        return ok(id, type, 'event trace cleared');
+      }
+      case 'debugExecuteAction': {
+        if (!command.action || typeof command.action !== 'object' || Array.isArray(command.action)) {
+          throw new Error('runtime command action must be an object');
+        }
+        const action = command.action as Record<string, unknown>;
+        if (typeof action.type !== 'string' || !action.type.trim()) {
+          throw new Error('runtime command action missing type');
+        }
+        const params = action.params && typeof action.params === 'object' && !Array.isArray(action.params)
+          ? action.params as Record<string, unknown>
+          : {};
+        await deps.debugExecuteAction({ type: action.type.trim(), params } as ActionDef);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugExecuteAction');
+        return ok(id, type, `action executed: ${action.type.trim()}`);
+      }
+      case 'debugSetFixedTickMode': {
+        const enabled = coerceBool(command.enabled, true);
+        deps.debugSetFixedTickMode(enabled);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugSetFixedTickMode');
+        return ok(id, type, `fixed tick mode ${enabled ? 'enabled' : 'disabled'}`);
+      }
+      case 'debugStepTicks': {
+        const ticks = coercePositiveInt(command.ticks, 1);
+        const dtMs = Math.min(100, coercePositiveNumber(command.dtMs, 1000 / 60));
+        await deps.debugStepTicks(ticks, dtMs);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugStepTicks');
+        return ok(id, type, `stepped ${ticks} fixed tick(s) at ${dtMs}ms`);
       }
       case 'clearNarrativeTrace': {
         deps.clearNarrativeTrace();
@@ -273,7 +315,7 @@ export async function applyDevRuntimeCommand(
         return ok(id, type, 'waited for debug');
       }
       case 'debugSetPlayerPosition': {
-        deps.debugSetPlayerPosition(
+        await deps.debugSetPlayerPosition(
           coerceFiniteNumber(command.x, 'x'),
           coerceFiniteNumber(command.y, 'y'),
           coerceBool(command.snapCamera, true),
@@ -312,7 +354,9 @@ export async function applyDevRuntimeCommand(
       }
       case 'debugSaveGame': {
         const slot = coerceSaveSlot(command.slot, 2);
-        deps.debugSaveGame(slot);
+        if (!deps.debugSaveGame(slot)) {
+          throw new Error(`save slot failed to write: ${slot}`);
+        }
         await deps.captureSnapshot(optionalString(command.reason) || `runtime-command:debugSaveGame:${slot}`);
         return ok(id, type, `game saved to slot ${slot}`);
       }

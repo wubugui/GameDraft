@@ -27,13 +27,16 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 
-# 占位符 token：``{{ name }}``，name 为标识符（字母/数字/下划线，首字符非数字）。
-PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# 占位符 token：``{{ name }}``，name 为标识符（字母/数字/下划线/中文，首字符非数字）。
+# 字符集必须与参数名校验（validate_template 的 template.param.name）保持同一口径：
+# 表单里起得出的名字，替换引擎就必须认得——否则抽取造出的洞盖章时填不上（历史 bug）。
+PLACEHOLDER_NAME_RE = re.compile(r"^[A-Za-z_一-鿿][A-Za-z0-9_一-鿿]*$")
+PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_一-鿿][A-Za-z0-9_一-鿿]*)\s*\}\}")
 
 # 参数类型 → web 侧选择器 kind（IdRefSelector/枚举下拉/自由文本）。
 # identifier/text 用自由输入；其余用带类型选择器（值域受约束，禁手打）。
 PARAM_TYPES: dict[str, str] = {
-    "identifier": "自由标识符（信号/图/作曲前缀，仅字母数字下划线）",
+    "identifier": "自由标识符（信号/图/作曲前缀，字母/数字/下划线/中文）",
     "text": "自由文案（标题/描述/台词）",
     "number": "数字",
     "boolean": "布尔",
@@ -299,6 +302,15 @@ def validate_template(tpl: dict[str, Any]) -> list[dict[str, Any]]:
     declared = {_as_str(p.get("name")) for p in tpl.get("params") or [] if isinstance(p, dict)}
     declared.discard("")
 
+    # 参数名必须是替换引擎认得的占位符名（否则抽取造出的 {{洞}} 永远填不上）——error 拦保存。
+    for name in sorted(declared):
+        if not PLACEHOLDER_NAME_RE.match(name):
+            issues.append(_issue(
+                "error", "template.param.name",
+                f"模板「{tid}」参数名「{name}」不合法：只能用字母/数字/下划线/中文，首字符非数字，"
+                "不能含空格或标点（替换引擎认不出这种占位符）", tid,
+            ))
+
     comp = tpl.get("composition")
     if not isinstance(comp, dict) or not comp:
         issues.append(_issue("error", "template.composition.missing", f"模板「{tid}」没有 composition 骨架", tid))
@@ -500,6 +512,19 @@ def _composition_emit_sources(comp: dict[str, Any]) -> set[str]:
     return ids
 
 
+# 对话图 id 即文件名（graphs/<id>.json）：禁路径分隔符 / 上跳 / 隐藏文件，防写出目录外
+# 或写进 glob("*.json") 扫不到的子目录（黑洞文件）。
+_UNSAFE_DIALOGUE_ID_RE = re.compile(r"[/\\]|\.\.")
+
+
+def _dialogue_id_error(gid: str) -> str | None:
+    if not gid:
+        return "对话图 id 为空"
+    if _UNSAFE_DIALOGUE_ID_RE.search(gid) or gid.startswith("."):
+        return f"对话图 id「{gid}」不合法：不能含 / \\ .. 或以 . 开头（它会成为文件名）"
+    return None
+
+
 def stamp_template(
     tpl: dict[str, Any],
     provided_values: dict[str, Any],
@@ -507,16 +532,20 @@ def stamp_template(
     existing_composition_ids: set[str] | None = None,
     existing_quest_ids: set[str] | None = None,
     existing_dialogue_ids: set[str] | None = None,
+    existing_signal_ids: set[str] | None = None,
     generate_dialogue_stubs: bool = False,
 ) -> dict[str, Any]:
     """盖章：占位符替换 → 撞名检测 → 产出真作曲 / 信号 / quest / 对话桩规格。
 
     返回 ``{ok, errors, warnings, compositionId, composition, signals, questId, quest,
     dialogueStubs:[{id, graph, exists}], requiredEntities}``。撞名 = error（不覆盖已有内容）。
+    ``existing_signal_ids``：全项目已注册/已发出的信号集；模板**声明**的新信号与之重名
+    = error（两单任务共用一个信号会互相串线推进）。
     """
     existing_comp = existing_composition_ids or set()
     existing_quest = existing_quest_ids or set()
     existing_dlg = existing_dialogue_ids or set()
+    existing_sig = existing_signal_ids or set()
 
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -557,6 +586,15 @@ def stamp_template(
 
     used_signals = _composition_signal_ids(composition) if isinstance(composition, dict) else set()
 
+    # 模板声明的新信号与既有信号重名 = error（禁止：会与别的任务串线互相触发）。
+    for sig_row in signals:
+        sid = _as_str(sig_row.get("id")) if isinstance(sig_row, dict) else ""
+        if sid and sid in existing_sig:
+            errors.append(_issue(
+                "error", "stamp.collision.signal",
+                f"信号「{sid}」已存在于项目中，禁止重名（会与既有任务串线）；换个 taskId", tid,
+            ))
+
     quest_id = ""
     if quest is not None:
         quest_id = _as_str(quest.get("id"))
@@ -571,6 +609,10 @@ def stamp_template(
             continue
         gid = _as_str(spec.get("id"))
         if not gid:
+            continue
+        bad = _dialogue_id_error(gid)
+        if bad:
+            errors.append(_issue("error", "stamp.dialogue.badId", bad, tid))
             continue
         exists = gid in existing_dlg
         graph = _build_dialogue_stub(gid, _as_str(spec.get("title")), _as_str(spec.get("emitSignal")))

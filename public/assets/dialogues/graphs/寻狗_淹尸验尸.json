@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_淹尸验尸",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·淹尸验看（油布包抉择+上肩）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "淹尸_看过油布包",
+              "op": "==",
+              "value": true
+            }
+          ],
+          "next": "r_short"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "r_short": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "苇席掀开又盖回。人还是那个人，水腥还是那股水腥，泡白的脸朝着天。",
+      "next": "c_carry"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "掀开苇席一角：脸泡得发白发胀，衣裳还往外渗水。凑近一闻——臭是臭得淡，腥倒腥得很，一股子河底的凉气。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "再往下扫一眼：腰带上缠得有个油布小包，鼓鼓囊囊，勒进肉里头——缠的人怕丢，缠得死紧。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "捞起没两天，还算新鲜，就是水腥冲得很。……腰杆上那个包，官面验过都没解走？",
+      "next": "c_main"
+    },
+    "c_main": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "carry",
+          "text": "「背。八文钱的活，莫磨蹭。」",
+          "next": "a_carry"
+        },
+        {
+          "id": "bag",
+          "text": "解开腰上那个油布包看看。",
+          "next": "bag_1"
+        },
+        {
+          "id": "wait",
+          "text": "「再缓缓，先看看再说。」",
+          "next": "w_1"
+        }
+      ]
+    },
+    "bag_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "油布解开三道，里头一小把私钱，还有一张水浸透的字纸——字迹晕成一团乌黑，只认得出一个「渡」字。",
+      "next": "bag_2"
+    },
+    "bag_2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "淹尸_看过油布包",
+            "value": true
+          }
+        }
+      ],
+      "next": "c_bag"
+    },
+    "c_bag": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "take",
+          "text": "揣了。死人子用不上。",
+          "next": "t_1"
+        },
+        {
+          "id": "back",
+          "text": "照原样缠回去。",
+          "next": "h_1"
+        }
+      ]
+    },
+    "t_1": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 4
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "淹尸_动了死人的东西",
+            "value": true
+          }
+        }
+      ],
+      "next": "t_2"
+    },
+    "t_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "……财是小财，就是打手上过了一道凉。莫想，莫想。",
+      "next": "c_carry"
+    },
+    "h_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "钱和字纸照原样裹好，三道油布缠回腰上，缠得比原先还紧半分。",
+      "next": "h_2"
+    },
+    "h_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "你的就是你的。到了义庄，自有人经管。",
+      "next": "c_carry"
+    },
+    "c_carry": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "carry",
+          "text": "「背。莫磨蹭了。」",
+          "next": "a_carry"
+        },
+        {
+          "id": "wait",
+          "text": "「再缓缓。」",
+          "next": "w_1"
+        }
+      ]
+    },
+    "a_carry": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_drowned_corpse"
+          }
+        }
+      ],
+      "next": "end_n"
+    },
+    "w_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "日头毒了要出味……缓归缓，莫缓过头。",
+      "next": "end_n"
+    },
+    "end_n": {
+      "type": "end"
+    }
+  }
+}

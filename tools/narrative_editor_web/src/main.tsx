@@ -7,9 +7,10 @@ import { createRoot } from 'react-dom/client';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
 import { NarrativeEditorApp } from './NarrativeEditorApp';
-import { applyEditorPreferences, loadEditorPreferences } from './utils/editorPreferences';
+import { applyEditorPreferences, loadEditorPreferencesLocal } from './utils/editorPreferences';
 
-applyEditorPreferences(loadEditorPreferences());
+// 首帧防闪：先用本地兜底值应用一次；真正的工程偏好由 useEditorPreferences 经 bridge 异步加载覆盖。
+applyEditorPreferences(loadEditorPreferencesLocal());
 
 if (import.meta.env.PROD) {
   console.info('[narrative-editor] build', import.meta.url);
