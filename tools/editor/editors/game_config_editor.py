@@ -147,6 +147,21 @@ class GameConfigEditor(QWidget):
         lay.addStretch()
         self._load()
 
+    def reload_refs_from_model(self) -> None:
+        """主窗口切页后调用：重拉引用候选（本会话新建的场景/任务/演出 id 才可见），
+        保留各选择器当前值（含未 Apply 的编辑；IdRefSelector.set_items 静态快照不自更新，
+        故需切页重拉——见 mainwindow-editor-hooks 契约 3）。startupFlags 用 live 的
+        FlagKeyPickField，无需在此刷新（复核 P2 ③）。"""
+        for sel, items in (
+            (self._initial_scene, [(s, s) for s in self._model.all_scene_ids()]),
+            (self._initial_quest, self._model.all_quest_ids()),
+            (self._fallback_scene, [(s, s) for s in self._model.all_scene_ids()]),
+            (self._initial_cutscene, self._model.all_cutscene_ids()),
+        ):
+            cur = sel.current_id()
+            sel.set_items(items)
+            sel.set_current(cur)
+
     def _load(self) -> None:
         cfg = self._model.game_config
         self._initial_scene.set_current(cfg.get("initialScene", ""))

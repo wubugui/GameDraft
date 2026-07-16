@@ -1,6 +1,7 @@
 extends Node
 
 const BootstrapScript := preload("res://scripts/bootstrap.gd")
+const EXPECTED_INITIAL_JSON_ENTRIES := 50
 
 
 func _ready() -> void:
@@ -15,28 +16,42 @@ func _run() -> void:
 		await get_tree().process_frame
 		assert(bootstrap.runtime_root != null and bootstrap.runtime_root.is_initialized())
 		bootstrap.runtime_root.event_bus.on("stress", Callable(bootstrap, "resolve_display_text"))
-		# Core systems + Dialogue/Encounter/Cutscene/Menu UI bridges + dialogue speaking-bubble bridge + coordinator + test listener.
-		var listener_count: int = bootstrap.runtime_root.event_bus.listener_count()
-		assert(listener_count == 102, "unexpected initialized listener count: %s" % listener_count)
-		assert(bootstrap.asset_manager.get_stats().json.entries == 33)
-		assert(bootstrap.scene_manager.get_current_scene_id() == "teahouse" and bootstrap.scene_manager.get_current_npcs().size() == 4 and bootstrap.scene_manager.get_current_hotspots().size() == 7)
+		# Core systems + full 17-event EventBridge + dialogue speaking-bubble bridge +
+		# coordinator + DebugTools scene-unload marker listener + the source Game
+		# runtime-snapshot publication listeners (9) + test listener.
+		var listener_count: int = EventBusProbe.listener_count(bootstrap.runtime_root.event_bus)
+		assert(listener_count == 113, "unexpected initialized listener count: %s" % listener_count)
+		# Game.refreshTextResolveLookups() also caches every map-addressable scene so
+		# [tag:npc:*] resolution has the same global name lookup as the source shell.
+		assert(bootstrap.asset_manager.get_stats().json.entries == EXPECTED_INITIAL_JSON_ENTRIES, "unexpected JSON cache entries: %s" % bootstrap.asset_manager.get_stats().json.entries)
+		assert(
+			bootstrap.scene_manager.get_current_scene_id() == "teahouse"
+			and bootstrap.scene_manager.get_current_npcs().size() == 4
+			and bootstrap.scene_manager.get_current_hotspots().size() == 6,
+			"unexpected scene graph: scene=%s npcs=%s hotspots=%s" % [
+				bootstrap.scene_manager.get_current_scene_id(),
+				bootstrap.scene_manager.get_current_npcs().size(),
+				bootstrap.scene_manager.get_current_hotspots().size(),
+			],
+		)
 		var snapshot: Dictionary = bootstrap.build_runtime_debug_snapshot("stress:%s" % iteration)
 		assert(snapshot.gameState == "Exploring" and snapshot.flags is Dictionary and not str(snapshot.bootId).is_empty())
 		bootstrap.state_controller.destroy()
 		bootstrap.runtime_root.destroy_runtime()
 		bootstrap.action_executor.destroy()
-		bootstrap.save_manager.destroy()
 		bootstrap.flag_store.destroy()
 		bootstrap.input_manager.destroy()
 		bootstrap.asset_manager.dispose()
-		assert(bootstrap.runtime_root.event_bus.listener_count() == 0)
-		assert(bootstrap.input_manager.subscriber_count() == 0)
+		assert(EventBusProbe.listener_count(bootstrap.runtime_root.event_bus) == 0)
+		assert(InputManagerProbe.subscriber_count(bootstrap.input_manager) == 0)
 		for type: String in RuntimeAssetManager.ASSET_TYPES:
 			assert(bootstrap.asset_manager.get_stats()[type].entries == 0)
 		remove_child(bootstrap)
 		bootstrap.free()
 		await get_tree().process_frame
 	assert(get_child_count() == 0)
-	await get_tree().create_timer(0.15).timeout
+	# AudioStreamPlayer.stop/free 已同步完成；Godot 音频线程仍需一个真实
+	# 混音释放窗口才能丢掉最后一轮 playback 引用（与 audio_manager_test 一致）。
+	await get_tree().create_timer(0.5).timeout
 	print("Core lifecycle stress test: PASS (20 init/destroy cycles)")
 	get_tree().quit(0)

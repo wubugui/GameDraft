@@ -41,7 +41,7 @@ func _add(item: Dictionary) -> void:
 func _remove(index: int) -> void:
 	var node: Control = entries[index].node; entries.remove_at(index); if is_instance_valid(node): node.free(); _layout()
 func _layout() -> void:
-	for index in entries.size(): entries[index].node.position = Vector2((renderer.get_screen_width() - 240) / 2.0, 50 + (entries.size() - 1 - index) * 34)
+	for index in entries.size(): entries[index].node.position = Vector2((renderer.screen_width - 240) / 2.0, 50 + (entries.size() - 1 - index) * 34)
 func _color(type: String) -> Color:
 	match type:
 		"quest": return Color("ffcc66")

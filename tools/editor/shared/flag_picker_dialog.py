@@ -126,8 +126,22 @@ class FlagPickerDialog(QDialog):
         self._display.setText(self._selected_key)
 
     def _accept(self) -> None:
+        # 内嵌登记表的防抖 pattern 编辑先落模型，避免关窗丢尾窗编辑（P3）。
+        self._reg_editor.flush_to_model()
+        # 停在「编辑登记表」页点 Ok：若那里刚建/选中了某 flag，直接返回它，
+        # 免得用户以为选了却拿到旧的 display 值（P3）。
+        if self._tabs.currentIndex() == 1:
+            newly = self._reg_editor.current_static_key()
+            if newly:
+                self._set_selection(newly)
         self._selected_key = self._display.text().strip()
         self.accept()
+
+    def reject(self) -> None:  # type: ignore[override]
+        # 取消/Esc/关窗同样 flush 内嵌登记表的防抖编辑（登记表改动直改模型，
+        # 不随对话框取消回滚——尾窗 pattern 编辑必须落定，P3）。
+        self._reg_editor.flush_to_model()
+        super().reject()
 
     def _on_tab_changed(self, idx: int) -> None:
         if idx == 0:

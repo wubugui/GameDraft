@@ -103,6 +103,9 @@ class QuestGraphScene(QGraphicsScene):
         saved = self._layout_store.get(key)
         if saved is not None:
             item.setPos(saved[0], saved[1])
+        # 落盘门控基线：release 时与它比较，纯点击（位置未变）不写侧档，
+        # 防自动布局坐标被点选钉进侧档（审查 P0-1 ②）。
+        item.layout_baseline = (float(item.pos().x()), float(item.pos().y()))
 
     def _on_node_moved(self, key: str, x: float, y: float) -> None:
         valid = {

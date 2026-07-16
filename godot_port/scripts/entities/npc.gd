@@ -1,7 +1,31 @@
 class_name RuntimeNpc
 extends RefCounted
 
-signal move_progress
+const RuntimeCharacterRegistryScript := preload("res://scripts/data/character_registry.gd")
+
+
+class _MoveCompletion:
+	extends RefCounted
+
+	signal completed
+
+	var settled := false
+
+
+	func resolve() -> void:
+		if settled:
+			return
+		settled = true
+		call_deferred("_emit_completed")
+
+
+	func wait() -> void:
+		if not settled:
+			await completed
+
+
+	func _emit_completed() -> void:
+		completed.emit()
 
 const MARKER_SIZE := 20.0
 
@@ -15,8 +39,6 @@ var marker: Polygon2D
 var _x := 0.0
 var _y := 0.0
 var _move_target: Dictionary = {}
-var _move_token := 0
-var _completed_move_tokens: Dictionary = {}
 var _rest_anim_state := ""
 var _patrol_paused := false
 var _patrol_skip_waypoint_advance := false
@@ -37,26 +59,6 @@ func _init(definition: Dictionary) -> void:
 	apply_initial_facing()
 
 
-static func build_character_registry(raw: Variant) -> Dictionary:
-	var registry: Dictionary = {}
-	var characters: Variant = raw.get("characters", []) if raw is Dictionary else raw
-	if characters is Array:
-		for entry: Variant in characters:
-			if entry is Dictionary:
-				var id := str(entry.get("id", "")).strip_edges()
-				if not id.is_empty(): registry[id] = entry.duplicate(true)
-	return registry
-
-
-static func apply_character_defaults(definition: Dictionary, registry: Dictionary) -> Dictionary:
-	var cid := str(definition.get("characterId", "")).strip_edges()
-	if cid.is_empty() or not registry.get(cid) is Dictionary: return definition
-	var output := definition.duplicate(true); var character: Dictionary = registry[cid]
-	for field: String in ["name", "animFile", "portraitSlug"]:
-		if str(output.get(field, "")).is_empty() and not str(character.get(field, "")).is_empty(): output[field] = character[field]
-	return output
-
-
 static func apply_runtime_override(definition: Dictionary, override: Variant) -> Dictionary:
 	if not override is Dictionary: return definition
 	var output := definition.duplicate(true)
@@ -67,13 +69,6 @@ static func apply_runtime_override(definition: Dictionary, override: Variant) ->
 		elif field in ["x", "y"] and (value is int or value is float): output[field] = value
 		elif field not in ["x", "y"] and value is String: output[field] = value
 	return output
-
-
-static func portrait_slug_from_anim_file(anim_file: Variant) -> String:
-	var path := str(anim_file)
-	var regex := RegEx.new(); regex.compile("/animation/([^/]+)/anim\\.json")
-	var matched := regex.search(path)
-	return matched.get_string(1) if matched != null else ""
 
 
 func load_sprite_from_path(manifest_path: String, asset_manager: RuntimeAssetManager, initial_state := "") -> bool:
@@ -88,7 +83,7 @@ func load_sprite_from_path(manifest_path: String, asset_manager: RuntimeAssetMan
 
 func load_sprite(texture: Texture2D, animation_def: Dictionary, initial_state := "") -> void:
 	if sprite != null:
-		container.remove_child(sprite); sprite.destroy_entity(); sprite.free()
+		container.remove_child(sprite); sprite.destroy(); sprite.free()
 	if marker != null:
 		container.remove_child(marker); marker.free(); marker = null
 	sprite = RuntimeSpriteEntity.new(); sprite.name = "SpriteEntity"; sprite.load_from_def(texture, animation_def)
@@ -141,9 +136,9 @@ func reset_animation_clock() -> void:
 	if sprite != null: sprite.reset_animation_clock()
 
 
-func get_current_portrait_slug() -> String:
+func get_current_portrait_slug() -> Variant:
 	var explicit := str(def.get("portraitSlug", "")).strip_edges()
-	return explicit if not explicit.is_empty() else portrait_slug_from_anim_file(def.get("animFile"))
+	return explicit if not explicit.is_empty() else RuntimeCharacterRegistryScript.portrait_slug_from_anim_file(def.get("animFile"))
 
 
 func set_facing(dx: float, dy: float) -> void:
@@ -166,13 +161,18 @@ func play_animation(name: String) -> void:
 	if sprite != null: sprite.play_animation(name)
 
 
-func apply_entity_pixel_density_match(enabled: bool, _background_density: Variant = null, _strength_scale := 1.0) -> void:
-	if sprite != null: sprite.set_pixel_density_match_active(enabled)
+func apply_entity_pixel_density_match(enabled: bool, background_density: Variant = null, strength_scale := 1.0) -> void:
+	if sprite == null:
+		return
+	sprite.set_pixel_density_match_active(enabled)
+	sprite.apply_pixel_density_match(background_density, strength_scale)
 
 
 func cancel_active_move() -> void:
 	if _move_target.is_empty(): return
-	var token := int(_move_target.token); _move_target.clear(); _complete_move(token)
+	var completion: _MoveCompletion = _move_target.completion
+	_move_target.clear()
+	completion.resolve()
 
 
 func pause_patrol_and_face_for_dialogue(player_x: float, player_y: float) -> void:
@@ -201,23 +201,17 @@ func consume_patrol_skip_waypoint_advance() -> bool:
 	_patrol_skip_waypoint_advance = false; return true
 
 
-func move_to(target_x: float, target_y: float, speed: float, move_anim_state := "", face_toward_movement := false) -> void:
-	var token := begin_move_to(target_x, target_y, speed, move_anim_state, face_toward_movement)
-	if token < 0: return
-	while not _completed_move_tokens.has(token): await move_progress
-	await Engine.get_main_loop().process_frame
-
-
-func begin_move_to(target_x: float, target_y: float, speed: float, move_anim_state := "", face_toward_movement := false) -> int:
-	if _destroyed: return -1
+func move_to(target_x: float, target_y: float, speed: float, move_anim_state: Variant = null, face_toward_movement: Variant = null) -> void:
+	if _destroyed: return
 	cancel_active_move()
 	var delta := Vector2(target_x - _x, target_y - _y)
-	if delta.length_squared() < 0.000001: return -1
-	_move_token += 1; var token := _move_token; var anim := str(move_anim_state).strip_edges()
-	_move_target = {"token": token, "x": target_x, "y": target_y, "speed": speed, "faceTowardMovement": face_toward_movement}
+	if delta.length_squared() < 0.000001: return
+	var completion := _MoveCompletion.new()
+	var anim: String = move_anim_state.strip_edges() if move_anim_state is String else ""
+	_move_target = {"x": target_x, "y": target_y, "speed": speed, "faceTowardMovement": face_toward_movement == true, "completion": completion}
 	set_facing(delta.x, delta.y)
 	if not anim.is_empty(): play_animation(anim)
-	return token
+	await completion.wait()
 
 
 func cutscene_update(dt: float) -> void:
@@ -226,7 +220,9 @@ func cutscene_update(dt: float) -> void:
 		if distance <= step:
 			set_x(float(_move_target.x)); set_y(float(_move_target.y))
 			if not _rest_anim_state.is_empty(): play_animation(_rest_anim_state)
-			var token := int(_move_target.token); _move_target.clear(); _complete_move(token)
+			var completion: _MoveCompletion = _move_target.completion
+			_move_target.clear()
+			completion.resolve()
 		elif distance > 0:
 			if _move_target.faceTowardMovement: set_facing(delta.x, delta.y)
 			set_x(_x + delta.x / distance * step); set_y(_y + delta.y / distance * step)
@@ -247,7 +243,7 @@ func destroy_npc() -> void:
 	if _destroyed: return
 	_destroyed = true; hide_prompt(); cancel_active_move()
 	if sprite != null:
-		container.remove_child(sprite); sprite.destroy_entity(); sprite.free(); sprite = null
+		container.remove_child(sprite); sprite.destroy(); sprite.free(); sprite = null
 	if container != null and is_instance_valid(container):
 		if container.get_parent() != null: container.get_parent().remove_child(container)
 		container.free()
@@ -259,10 +255,6 @@ func _sync_container_position() -> void:
 
 func _apply_effective_visible() -> void:
 	container.visible = _derived_base_visible and _condition_visible and _session_enabled_override != false
-
-
-func _complete_move(token: int) -> void: _completed_move_tokens[token] = true; call_deferred("_emit_move_progress")
-func _emit_move_progress() -> void: move_progress.emit()
 
 
 func _circle_polygon(center: Vector2, radius: float, segments: int) -> PackedVector2Array:

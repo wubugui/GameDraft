@@ -25,9 +25,27 @@ func _init() -> void:
 	]})
 	var smooth := RuntimeLightEnvCurve.interpolate(non_linear, 0.25)
 	assert(is_equal_approx(float(smooth.key.intensity), 0.15625))
-	var destination := {"key": {"intensity": 9.0}, "ambient": {}, "shadow": {}, "ao": {}, "toneStrength": 0.0, "toneEnabled": true}
+	var destination := {
+		"key": {"azimuthDeg": 0.0, "elevationDeg": 0.0, "color": [0.0, 0.0, 0.0], "intensity": 9.0},
+		"ambient": {"color": [0.0, 0.0, 0.0], "intensity": 0.0},
+		"shadow": {"mode": "off", "enabled": false, "darkness": 0.0, "softness": 0.0, "length": 0.0, "contact": 0.0, "contactSize": 0.0, "softSamples": 0, "softRadius": 0.0, "billboard": "camera"},
+		"ao": {"contact": 0.0, "form": 0.0},
+		"toneStrength": 0.0,
+		"toneEnabled": true,
+	}
 	var identity := destination
-	RuntimeLightEnvCurve.copy_resolved_into(destination, {"key": {"intensity": 0.4}, "ambient": {"intensity": 0.5}, "shadow": {"mode": "real"}, "ao": {"form": 0.2}, "toneStrength": 0.3, "toneEnabled": false})
-	assert(identity == destination and destination.key.intensity == 0.4 and destination.shadow.mode == "real" and destination.toneEnabled == false)
+	var key_identity: Dictionary = destination.key
+	var shadow_identity: Dictionary = destination.shadow
+	var source := {
+		"key": {"azimuthDeg": 125.0, "elevationDeg": 55.0, "color": [1.0, 0.97, 0.92], "intensity": 0.4},
+		"ambient": {"color": [0.55, 0.6, 0.72], "intensity": 0.5},
+		"shadow": {"mode": "real", "enabled": true, "darkness": 0.4, "softness": 1.0, "length": 0.7, "contact": 0.5, "contactSize": 1.0, "softSamples": 1, "softRadius": 0.05, "billboard": "light"},
+		"ao": {"contact": 0.45, "form": 0.2},
+		"toneStrength": 0.3,
+		"toneEnabled": false,
+	}
+	RuntimeLightEnvCurve.copy_resolved_into(destination, source)
+	assert(identity == destination and is_same(destination.key, key_identity) and is_same(destination.shadow, shadow_identity))
+	assert(destination == source and destination.key.intensity == 0.4 and destination.shadow.mode == "real" and destination.toneEnabled == false)
 	print("LightEnvCurve projection/interpolation/copy parity test: PASS")
 	quit(0)

@@ -34,6 +34,11 @@ QT_QPA_PLATFORM=offscreen .tools/venv/bin/python -m pytest tools/editor/tests/ -
 - **真实数据探针覆盖不到"数据里暂时没有"的形状**——潜伏破口要靠合成 fixture(样板 `test_latent_roundtrip_fidelity.py`)。
 - **流程层零覆盖教训**:几百个 model 层测试全绿仍漏掉门控/切换/取消/悬垂回退整族 bug——修流程类问题要配"编辑→切走/Discard→断言模型"式流程探针(样板 `test_close_path_flow.py`)。
 
+## 两道升级门(2026-07-14 主编辑器二轮审查加,原三件套对本轮 2P0+19P1 全无感)
+
+- **流程探针门**(交互特性必测):交互/拖拽/门控特性的护栏必须从**用户触发的最外层入口**进——拖拽发真实 `QMouseEvent`(不调 `setPos`),门控测「编辑→操作→断言模型」(不调单个 commit 函数)。一条"手动把系统摆到断言点"的测试证明不了断点之前的路能不能走通(踩过:任务图节点拖不动,6 例全绿而特性对用户完全不可用)。
+- **镜像 parity 门**(手工镜像必测语义):每一处手工镜像清单(运行时↔编辑器↔校验器,如 CONTENT_ID_PARAMS↔控件、_PARAM_SCHEMAS↔required、KNOWN_DIRTY_BUCKETS↔LSP overlay、重构引擎 speaker 通道)必须有**语义级** parity 测试(不只锁存在性);**注释里写「有护栏」= 没有护栏**,声称的护栏必须能 grep 到对应测试。宁可**消灭镜像**(读单一真相源)也不维护两份——多数需 runtime 先 export 权威常量再对账。权威归纳见 `artifact/Reviews/主编辑器-防再犯归纳-2026-07-14.md`。
+
 ## "输出字节不变"强验收(声称零格式影响时用)
 
 1. `git stash` 隔离出 HEAD 版与改后版,两版对同一份数据各跑一次 save_all 到独立目录;

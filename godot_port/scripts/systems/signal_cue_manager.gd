@@ -17,40 +17,47 @@ func init(ctx: Dictionary) -> void:
 	asset_manager = ctx.get("assetManager")
 
 
-func load_defs() -> bool:
-	var raw: Variant = asset_manager.load_json(DEFS_URL) if asset_manager != null else null
-	if not raw is Array:
-		return false
-	defs.clear()
-	for definition: Variant in raw:
-		if not definition is Dictionary:
-			continue
-		var id := str(definition.get("id", "")).strip_edges()
-		if not id.is_empty() and definition.get("actions") is Array:
-			defs[id] = definition.duplicate(true)
-	return not defs.is_empty()
+func update(_dt: float) -> void:
+	return
 
 
-func has_cue(id: String) -> bool:
-	return defs.has(id.strip_edges())
-
-
-func play(id: String) -> bool:
-	var key := id.strip_edges()
-	var definition: Variant = defs.get(key)
-	if not definition is Dictionary or in_flight.has(key):
-		return false
-	in_flight[key] = true
-	await action_executor.execute_batch_await(definition.actions)
-	in_flight.erase(key)
-	return true
+func serialize() -> Dictionary:
+	return {}
 
 
 func deserialize(_data: Dictionary) -> void:
-	in_flight.clear()
+	return
 
 
 func destroy() -> void:
 	defs.clear()
 	in_flight.clear()
-	asset_manager = null
+
+
+func load_defs() -> void:
+	var loaded: Variant = asset_manager.load_json(DEFS_URL) if asset_manager != null else null
+	if not loaded is Array:
+		push_warning("SignalCueManager: signal_cues.json not found")
+		return
+	for definition: Variant in loaded:
+		var id := ""
+		if definition is Dictionary and definition.get("id") is String:
+			id = definition.id.strip_edges()
+		if id.is_empty() or not definition is Dictionary or not definition.get("actions") is Array:
+			push_warning("SignalCueManager: 非法 cue 配置，已跳过 %s" % str(definition))
+			continue
+		defs[id] = definition
+
+
+func play(cue_id: Variant) -> void:
+	var id := ("" if cue_id == null else str(cue_id)).strip_edges()
+	var definition: Variant = defs.get(id)
+	if not definition is Dictionary:
+		push_warning("SignalCueManager: unknown signal cue \"%s\"" % id)
+		return
+	if in_flight.has(id):
+		push_warning("SignalCueManager: cue \"%s\" 重入被忽略" % id)
+		return
+	in_flight[id] = true
+	await action_executor.execute_batch_await(definition.actions)
+	in_flight.erase(id)

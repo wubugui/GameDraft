@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from .. import theme
 from ..shared import confirm
 from ..shared.action_editor import ActionEditor
 from .atmosphere_script_editor import AtmosphereScriptEditor
@@ -330,6 +331,19 @@ class _SugarWheelMovablePixmap(QGraphicsPixmapItem):
         return res
 
 
+class _CenteredGraphicsSimpleTextItem(QGraphicsSimpleTextItem):
+    def __init__(self, text: str, center: QPointF) -> None:
+        super().__init__(text)
+        self._center = QPointF(center)
+
+    def refresh_editor_font(self) -> None:
+        rect = self.boundingRect()
+        self.setPos(
+            self._center.x() - rect.width() / 2,
+            self._center.y() - rect.height() / 2,
+        )
+
+
 class _SugarWheelSpeechAnchorItem(QGraphicsEllipseItem):
     """可拖动的气泡锚点（屏上比例坐标）。"""
 
@@ -356,10 +370,14 @@ class _SugarWheelSpeechAnchorItem(QGraphicsEllipseItem):
         self.setPen(QPen(pen, 2))
         self.setToolTip(f"气泡锚点 role={role}\n拖动调整 xRatio/yRatio（与右侧表同步）")
         lab = caption.strip() or role
-        txt = QGraphicsSimpleTextItem(lab, self)
-        txt.setBrush(QBrush(QColor(250, 245, 230)))
-        br = txt.boundingRect()
-        txt.setPos(-br.width() / 2, -br.height() - 4)
+        self._label = QGraphicsSimpleTextItem(lab, self)
+        self._label.setBrush(QBrush(QColor(250, 245, 230)))
+        theme.set_graphics_text_font(self._label, theme.FONT_ROLE_CANVAS_SECONDARY)
+        self.refresh_editor_font()
+
+    def refresh_editor_font(self) -> None:
+        br = self._label.boundingRect()
+        self._label.setPos(-br.width() / 2, -br.height() - 4)
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:  # noqa: ANN401
         res = super().itemChange(change, value)
@@ -386,6 +404,7 @@ class _SugarWheelChargeButtonItem(QGraphicsEllipseItem):
         self.setPen(QPen(QColor(190, 220, 255), 2))
         self._label = QGraphicsSimpleTextItem("蓄", self)
         self._label.setBrush(QBrush(QColor(250, 245, 230)))
+        theme.set_graphics_text_font(self._label, theme.FONT_ROLE_CANVAS_PRIMARY)
         br = self._label.boundingRect()
         self._label.setPos(-br.width() / 2, -br.height() / 2)
         self._apply_rect()
@@ -400,6 +419,11 @@ class _SugarWheelChargeButtonItem(QGraphicsEllipseItem):
         self.setRect(-h, -h, self._d, self._d)
         sc = max(0.45, min(1.5, self._d / 52.0))
         self._label.setScale(sc)
+        br = self._label.boundingRect()
+        self._label.setPos(-br.width() * sc / 2, -br.height() * sc / 2)
+
+    def refresh_editor_font(self) -> None:
+        self._apply_rect()
 
     def diameter(self) -> float:
         return self._d
@@ -589,7 +613,10 @@ class SugarWheelCanvas(QWidget):
             ptr.setToolTip("拖动：指针相对盘心的像素偏移（pointerOffsetX/Y）")
             self._scene.addItem(ptr)
             self._pointer_item = ptr
-        elif pointer_pm is not None:
+        elif pointer_pm is None:
+            # 指针图缺失（未配或文件丢失）时才画「缺少 pointerImage」提示。
+            # 旧写法 elif pointer_pm is not None 写反了：pointer_pm 为 None 时两支都不走，
+            # 缺图静默无提示（审查 P3）。
             self._draw_missing("pointerImage", QRectF(cx - 20, cy - size / 2, 40, size), 20)
 
         fg_pm = _load_runtime_pixmap(self._model, str(doc.get("foregroundImage") or ""))
@@ -712,13 +739,10 @@ class SugarWheelCanvas(QWidget):
             sid = str(sectors[i].get("id") or "") if i < len(sectors) else ""
             lab = str(sectors[i].get("label") or "") if i < len(sectors) else ""
             cap = f"{i}·{sid}" + (f"\n{lab}" if lab else "")
-            txt = QGraphicsSimpleTextItem(cap)
-            f = txt.font()
-            f.setPointSizeF(15.0)
-            txt.setFont(f)
+            txt = _CenteredGraphicsSimpleTextItem(cap, QPointF(lx, ly))
+            theme.set_graphics_text_font(txt, theme.FONT_ROLE_CANVAS_PROMINENT)
             txt.setBrush(QBrush(QColor(255, 244, 214)))
-            br = txt.boundingRect()
-            txt.setPos(lx - br.width() / 2, ly - br.height() / 2)
+            txt.refresh_editor_font()
             grp.addToGroup(txt)
         return grp
 
@@ -751,11 +775,13 @@ class SugarWheelCanvas(QWidget):
         self.speech_anchor_changed.emit(role, xr, yr)
 
     def _draw_empty(self) -> None:
-        self._scene.addText("没有选中转盘实例")
+        text = self._scene.addText("没有选中转盘实例")
+        theme.set_graphics_text_font(text, theme.FONT_ROLE_SECONDARY)
 
     def _draw_missing(self, label: str, rect: QRectF, z: float) -> None:
         self._scene.addRect(rect, QPen(QColor(220, 90, 80), 2, Qt.PenStyle.DashLine), QBrush(QColor(60, 20, 20, 80))).setZValue(z)
         text = self._scene.addText(f"缺少 {label}")
+        theme.set_graphics_text_font(text, theme.FONT_ROLE_SECONDARY)
         text.setDefaultTextColor(QColor(240, 150, 120))
         text.setPos(rect.left() + 8, rect.top() + 8)
         text.setZValue(z + 1)
@@ -1363,7 +1389,11 @@ class SugarWheelEditor(QWidget):
         self._btn_add_atmos_group.clicked.connect(self._add_atmos_group)
         self._btn_del_atmos_group.clicked.connect(self._del_atmos_group)
         self._btn_dup_atmos_group.clicked.connect(self._dup_atmos_group)
-        self._atmos_group_id.textChanged.connect(self._on_atmos_group_field_changed)
+        # id 走独立的 live(逐键写,不判重) + commit(editingFinished 判重回滚) 双路径,
+        # 不再挂 _on_atmos_group_field_changed(那会逐键判重、退格路过已存在 id 即整框
+        # 重置——审查 P3)。
+        self._atmos_group_id.textChanged.connect(self._on_atmos_group_id_live)
+        self._atmos_group_id.editingFinished.connect(self._on_atmos_group_id_commit)
         self._atmos_group_label.textChanged.connect(self._on_atmos_group_field_changed)
         self._atmos_group_weight.valueChanged.connect(self._on_atmos_group_field_changed)
         self._var_pool_list.currentRowChanged.connect(self._on_var_pool_selected)
@@ -1572,14 +1602,36 @@ class SugarWheelEditor(QWidget):
                 continue
             it.setHidden(bool(q) and q not in it.text().lower())
 
-    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
         iid = (item_id or "").strip()
         if not iid:
-            return
+            return False
         for row in self._model.sugar_wheel_index if isinstance(self._model.sugar_wheel_index, list) else []:
             if isinstance(row, dict) and str(row.get("id") or "").strip() == iid:
                 self._reload_list(iid)
-                return
+                return True
+        return False
+
+    def reload_refs_from_model(self) -> None:
+        """主窗切页激活时重拉动作/条件/氛围编辑器候选（item/flag/quest/scene 等在别处
+        新增后不切页看不见）。ActionEditor.set_project_context 因 model 相同会 early-return，
+        故用 set_data(to_list()) 原值重建；氛围指令编辑器走 refresh_choices。内容不变、
+        不触发 changed（set_data 静默）、不重置其它表单字段。"""
+        prev = self._loading
+        self._loading = True
+        try:
+            for ae in (
+                self._ae_sector_drag,
+                self._ae_sector_landing,
+                self._ae_before_charge_pass,
+                self._ae_before_charge_fail,
+            ):
+                ae.set_data(ae.to_list())
+            self._before_charge_cond.set_model_refresh()
+            for ed in self._atmos_phase_editors.values():
+                ed.refresh_choices()
+        finally:
+            self._loading = prev
 
     def _set_enabled(self, on: bool) -> None:
         for w in (
@@ -1728,8 +1780,11 @@ class SugarWheelEditor(QWidget):
             self._wheel_cy_off.setValue(_num(d.get("wheelCenterOffsetYPx"), 0))
             self._ptr_ox.setValue(_num(d.get("pointerOffsetXPx"), 0))
             self._ptr_oy.setValue(_num(d.get("pointerOffsetYPx"), 0))
-            rr = self._canvas._scene.sceneRect()
-            R = _preview_wheel_radius_px(d, float(rr.width()), float(rr.height()))
+            # 用游戏视口尺寸算默认蓄力偏移，而非画布 sceneRect：首次进页画布尚未
+            # refresh/resize，sceneRect 为空(0×0)会把默认算成 ~79px（正确约 179px），
+            # 一动 spin 就把错误默认写进 JSON（审查 P3）。viewport_size 与运行时一致。
+            _vw, _vh = self._canvas.viewport_size()
+            R = _preview_wheel_radius_px(d, float(_vw), float(_vh))
             def_ox = R * 0.72
             def_oy = R * 0.72
             self._charge_json_explicit = any(
@@ -2311,6 +2366,7 @@ class SugarWheelEditor(QWidget):
             groups = self._atmos_groups() if self._doc else []
             if r < 0 or r >= len(groups):
                 self._atmos_group_id.setText("")
+                self._atmos_group_id_committed = ""
                 self._atmos_group_label.setText("")
                 self._atmos_group_weight.setValue(1)
                 self._var_pool_list.clear()
@@ -2320,6 +2376,8 @@ class SugarWheelEditor(QWidget):
                 return
             g = groups[r]
             self._atmos_group_id.setText(str(g.get("id") or ""))
+            # id 查重回滚基线：当前组载入时的 id 即"上一个有效值"。
+            self._atmos_group_id_committed = str(g.get("id") or "")
             self._atmos_group_label.setText(str(g.get("label") or ""))
             self._atmos_group_weight.setValue(_num(g.get("weight"), 1))
             self._fill_var_pool_list(g)
@@ -2382,31 +2440,61 @@ class SugarWheelEditor(QWidget):
         self._atmos_group_list.setCurrentRow(r + 1)
         self._mark_dirty(refresh_canvas=False)
 
-    def _on_atmos_group_field_changed(self, *_a: Any) -> None:
-        if self._loading or not self._doc:
-            return
+    def _atmos_group_with_row(self) -> tuple[dict | None, int]:
         r = self._atmos_group_list.currentRow()
         groups = self._atmos_groups()
         if r < 0 or r >= len(groups):
+            return None, -1
+        return groups[r], r
+
+    def _refresh_atmos_group_list_label(self, r: int, g: dict) -> None:
+        it = self._atmos_group_list.item(r)
+        if it is not None:
+            it.setText(f"{g.get('label') or g.get('id') or ''}  [{g.get('id') or ''}]")
+
+    def _on_atmos_group_field_changed(self, *_a: Any) -> None:
+        """label / weight 实时写回（id 走独立 live+commit 路径）。"""
+        if self._loading or not self._doc:
             return
-        g = groups[r]
-        _new_gid = self._atmos_group_id.text().strip()
-        _old_gid = str(g.get("id") or "")
-        if not _new_gid or any(
-            j != r and str(groups[j].get("id") or "").strip() == _new_gid
-            for j in range(len(groups))
-        ):
-            _new_gid = _old_gid  # 空/重复 id 不接受：保留原 id
-            self._atmos_group_id.blockSignals(True)
-            self._atmos_group_id.setText(_old_gid)
-            self._atmos_group_id.blockSignals(False)
-        g["id"] = _new_gid
+        g, r = self._atmos_group_with_row()
+        if g is None:
+            return
         g["label"] = self._atmos_group_label.text().strip()
         g["weight"] = self._keep_num(float(self._atmos_group_weight.value()), g.get("weight"))
-        old_text = self._atmos_group_list.item(r)
-        if old_text:
-            old_text.setText(f"{g.get('label') or g['id']}  [{g['id']}]")
+        self._refresh_atmos_group_list_label(r, g)
         self._mark_dirty(refresh_canvas=False)
+
+    def _on_atmos_group_id_live(self, _t: str = "") -> None:
+        """氛围组 id 逐键即时写回（不判重，避免退格路过已存在 id 被整框重置——审查 P3）。"""
+        if self._loading or not self._doc:
+            return
+        g, r = self._atmos_group_with_row()
+        if g is None:
+            return
+        g["id"] = self._atmos_group_id.text().strip()
+        self._refresh_atmos_group_list_label(r, g)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _on_atmos_group_id_commit(self) -> None:
+        """id 提交时（editingFinished）判空/查重并回滚到上一个有效 id。"""
+        if self._loading or not self._doc:
+            return
+        g, r = self._atmos_group_with_row()
+        if g is None:
+            return
+        new_gid = self._atmos_group_id.text().strip()
+        groups = self._atmos_groups()
+        dup = any(
+            j != r and str(groups[j].get("id") or "").strip() == new_gid
+            for j in range(len(groups))
+        )
+        if new_gid and not dup:
+            self._atmos_group_id_committed = new_gid
+            return
+        msg = "氛围组 id 不能为空，已还原" if not new_gid else f"氛围组 id「{new_gid}」与其它组重复，已还原"
+        prev = getattr(self, "_atmos_group_id_committed", "") or str(g.get("id") or "")
+        self._atmos_group_id.setText(prev)  # 触发 live 写回，恢复模型/列表一致
+        QMessageBox.warning(self, "转盘小游戏", msg)
 
     # ── vars 文案池 UI ──
 

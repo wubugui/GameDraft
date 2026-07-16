@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -124,8 +125,8 @@ class _RefactorDialogBase(QDialog):
         return (f"{label}「{self._entity_id}」（场景：{self._scene_id}）——"
                 f"共 {self._report['totalRefs']} 处引用")
 
-    # 子类返回 summary（成功）或抛 EntityRefactorError
-    def _do_refactor(self) -> dict[str, Any]:
+    # 子类返回 summary（成功）、None（用户在子对话框里取消，静默留在本框）或抛 EntityRefactorError
+    def _do_refactor(self) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def _on_accept(self) -> None:
@@ -134,6 +135,8 @@ class _RefactorDialogBase(QDialog):
             summary = self._do_refactor()
         except er.EntityRefactorError as exc:
             QMessageBox.warning(self, self.windowTitle(), str(exc))
+            return
+        if summary is None:
             return
         self.result_summary = summary
         self.accept()
@@ -165,6 +168,11 @@ class MoveEntityDialog(_RefactorDialogBase):
         return summary
 
 
+# 与新建场景 id（scene_editor._new_scene）同规则：空格 / 中文 / []: 等会破坏
+# [tag:npc:…] 正则寻址与全局搜索。
+_ID_CHARSET_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
 class RenameEntityDialog(_RefactorDialogBase):
     """重命名实体 id：按歧义分级自动改写引用（详见 entity_refactor 模块 docstring）。"""
 
@@ -177,7 +185,9 @@ class RenameEntityDialog(_RefactorDialogBase):
         self._new_id.setText(entity_id)
         self._new_id.setToolTip(
             "全局唯一的 id 会连同对话图/叙事图/文本 [tag:npc:…] 一起改写；"
-            "多场景重名的 id 只改写可证明指向本实体的引用，其余留给人工。")
+            "多场景重名的 id 只改写可证明指向本实体的引用，其余留给人工。\n"
+            "新 id 仅允许字母 / 数字 / 下划线 / 连字符（与新建场景 id 同规则；"
+            "空格、[]: 等字符会破坏 [tag:npc:…] 寻址）。")
         self._form.addRow("新 id", self._new_id)
         defined = self._report["definedInScenes"]
         if len(defined) > 1:
@@ -186,10 +196,49 @@ class RenameEntityDialog(_RefactorDialogBase):
             warn.setWordWrap(True)
             self._form.addRow(warn)
 
-    def _do_refactor(self) -> dict[str, Any]:
+    def _tag_follow_choice(self, new_id: str) -> bool | None:
+        """非全局唯一 + 本场景是最后一个 npc 实例 + 存在 [tag:npc:…]：问「跟随改写/取消」。
+
+        返回 False=无需处理、True=确认跟随改写、None=用户取消（静默留框）。
+        与删除路径的硬拒口径对齐（引擎侧仍兜底硬拒，防绕过）。
+        """
+        if self._kind != "npc" or not self._report.get("tagRefs"):
+            return False
+        defined = self._report.get("definedInScenes") or []
+        other_kind = self._report.get("otherKindScenes") or []
+        unique_global = defined == [self._scene_id] and not other_kind
+        last_instance = defined == [self._scene_id]
+        if unique_global or not last_instance:
+            return False  # 唯一→引擎自动跟随；非最后实例→旧 id 仍有 npc 落点，tag 不悬垂
+        from PySide6.QtWidgets import QMessageBox
+        n = sum(int(h.get("count") or 0) for h in self._report["tagRefs"])
+        box = QMessageBox(self)
+        box.setWindowTitle(self.windowTitle())
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(
+            f"文本中有 {n} 处 [tag:npc:{self._entity_id}] 引用，而本场景是全项目最后一个"
+            f" npc「{self._entity_id}」（该 id 因与他场景实体重名不做全局改写）。\n"
+            "直接改名会让这些 tag 悬垂并卡住整工程保存。")
+        follow_btn = box.addButton(
+            f"跟随改写为 [tag:npc:{new_id}]", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return True if box.clickedButton() is follow_btn else None
+
+    def _do_refactor(self) -> dict[str, Any] | None:
+        new_id = self._new_id.text().strip()
+        if not new_id:
+            raise er.EntityRefactorError("新 id 不能为空")
+        if not _ID_CHARSET_RE.match(new_id):
+            raise er.EntityRefactorError(
+                f"非法 id：{new_id!r}\n仅允许字母、数字、下划线、连字符"
+                "（空格 / 中文 / []: 等字符会破坏 [tag:npc:…] 寻址与全局搜索）。")
+        follow = self._tag_follow_choice(new_id)
+        if follow is None:
+            return None
         summary = er.rename_entity(
             self._model, self._scene_id, self._kind,
-            self._entity_id, self._new_id.text().strip())
+            self._entity_id, new_id, follow_tag_refs=bool(follow))
         er.push_journal(self._model, summary)
         return summary
 

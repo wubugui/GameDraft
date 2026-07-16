@@ -50,3 +50,12 @@ class FlagKeyPickField(QWidget):
             return
         self._edit.setText(s)
         self.valueChanged.emit()
+
+    def set_key_silent(self, key: str) -> None:
+        """程序性设值，不发 valueChanged（供 set_dict 等载入路径用，避免误标脏）。
+
+        与 IdRefSelector.set_current 语义一致：程序性 set 不外发信号。
+        注意：常规 set_key 仍会发信号——condition_editor 的模板套用依赖该副作用置脏，
+        不可改动其行为，故新增本静默变体而非改 set_key。
+        """
+        self._edit.setText(key or "")

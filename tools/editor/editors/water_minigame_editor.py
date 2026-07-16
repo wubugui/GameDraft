@@ -118,6 +118,7 @@ class WaterMinigameEditor(QWidget):
         self._current_inst_id: str | None = None
         self._doc: dict | None = None
         self._cur_ent: dict | None = None
+        self._ent_id_committed: str = ""  # 实体 id 查重回滚基线（上一个有效值）
         # ActionEditor 当前归属的实体（按身份记，而非行号）：懒回写只写它，
         # 删除/重排后行号漂移也不会把动作串台进别的实体。
         self._ae_owner: dict | None = None
@@ -540,6 +541,7 @@ class WaterMinigameEditor(QWidget):
         self._btn_ent_down.clicked.connect(self._move_entity_down)
 
         self._ent_id.textChanged.connect(self._on_ent_id_changed)
+        self._ent_id.editingFinished.connect(self._on_ent_id_commit)
         self._ent_cat.currentTextChanged.connect(self._on_ent_scalar_changed)
         self._ent_sprite.changed.connect(self._on_ent_sprite_changed)
         self._ent_px.valueChanged.connect(self._on_ent_pos_changed)
@@ -598,9 +600,24 @@ class WaterMinigameEditor(QWidget):
         self._model.mark_dirty("water_minigames")
 
     def _on_model_data_changed(self, dtype: str, _key: str) -> None:
+        # 别处新增 item/flag/quest… 后刷新动作编辑器候选。旧写法调
+        # set_project_context(model, None)：model/scene 都没变 → early-return 空转，
+        # 候选实际不刷新（审查 P3）。改走真正的强制重建入口。
         if dtype in ("strings", "item", "flag_registry", "quest", "rule", "scene"):
+            self.reload_refs_from_model()
+
+    def reload_refs_from_model(self) -> None:
+        """主窗切页激活 / 跨域数据变更时：强制重建三个动作编辑器的行以重拉引用候选
+        （item/flag/quest/scene 等在别处新增后，ActionRow 的 IdRefSelector 是构造时
+        的静态快照，不重建看不见）。ActionEditor.set_project_context 因 model 相同会
+        early-return，故用 set_data(to_list()) 原值重建：内容不变、不触发 changed。"""
+        prev = self._loading
+        self._loading = True
+        try:
             for ae in (self._ae_pick, self._ae_ok, self._ae_fail):
-                ae.set_project_context(self._model, None)
+                ae.set_data(ae.to_list())
+        finally:
+            self._loading = prev
 
     # ---- instances --------------------------------------------------------
 
@@ -625,14 +642,15 @@ class WaterMinigameEditor(QWidget):
         if self._inst_list_w.count() > 0:
             self._inst_list_w.setCurrentRow(sel_row)
 
-    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
         iid = (item_id or "").strip()
         if not iid:
-            return
+            return False
         for row in self._model.water_minigames_index if isinstance(self._model.water_minigames_index, list) else []:
             if isinstance(row, dict) and str(row.get("id") or "").strip() == iid:
                 self._reload_instance_list(select_id=iid)
-                return
+                return True
+        return False
 
     def _set_editor_enabled(self, on: bool) -> None:
         for w in (
@@ -1402,6 +1420,8 @@ class WaterMinigameEditor(QWidget):
                 return
 
             self._ent_id.setText(str(ent.get("id") or ""))
+            # 查重回滚基线：当前实体载入时的 id 即"上一个有效值"。
+            self._ent_id_committed = str(ent.get("id") or "")
             cat = str(ent.get("category") or "grass")
             idx = self._ent_cat.findText(cat)
             self._ent_cat.setCurrentIndex(idx if idx >= 0 else 0)
@@ -1573,12 +1593,35 @@ class WaterMinigameEditor(QWidget):
     def _on_ent_id_changed(self, text: str) -> None:
         if self._loading or not self._cur_ent:
             return
+        # 逐键即时写模型（不丢字）；非空/查重回滚放到 editingFinished（提交点），
+        # 避免逐键回滚在"退格路过一个已存在 id"时把整框重置（审查 P3 氛围组 id 同坑）。
         self._cur_ent["id"] = text.strip()
         self._mark_wm_dirty()
         r = self._selected_ent_row
         if r >= 0:
             self._canvas.update_marker_visual(r, self._entities_list())
         self._refresh_ent_list_label(self._selected_ent_row)
+
+    def _on_ent_id_commit(self) -> None:
+        """实体 id 提交时（editingFinished）即时查重/非空校验并回滚——照糖画 sector id
+        样板，别拖到 Save All 才 critical 弹窗挡整个工程保存（审查 P2）。"""
+        if self._loading or not self._cur_ent:
+            return
+        new_id = self._ent_id.text().strip()
+        ents = self._entities_list()
+        dup = any(
+            e is not self._cur_ent and str(e.get("id") or "").strip() == new_id
+            for e in ents
+        )
+        if new_id and not dup:
+            self._ent_id_committed = new_id
+            return
+        # 空 id 或与其它实体重复：回滚到上一个有效 id（setText 触发 textChanged
+        # 统一写回模型 + 刷新画布/列表，保持一致）。
+        msg = "实体 id 不能为空，已还原" if not new_id else f"实体 id「{new_id}」与其它实体重复，已还原"
+        prev = getattr(self, "_ent_id_committed", "") or ""
+        self._ent_id.setText(prev)
+        QMessageBox.warning(self, "水域小游戏", msg)
 
     def _on_ent_scalar_changed(self, _t: str = "") -> None:
         if self._loading or not self._cur_ent:

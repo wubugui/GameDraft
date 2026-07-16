@@ -110,7 +110,11 @@ export function updateElement(
 
 export function ownerChoicesForGraph(graph: NarrativeGraphDef, catalog: AuthoringCatalogDef): string[] {
   const ownerType = graph.ownerType?.trim();
-  if (ownerType === 'flow') return catalog.scenarioIds;
+  // flow 主图的 ownerId 是自由描述性标注(数据惯例:「寻狗Demo主线」「背尸淹尸活」…),
+  // 运行时把 owner 对当不透明索引键、validator 也不校验它——此前误绑 scenarioIds
+  // 导致除码头流以外的所有主线锚点都黄标「未知引用」(2026-07-13 修)。
+  // 与 system 同款:不给候选 → TextField 按"候选为空不误标"设计不再告警。
+  if (ownerType === 'flow') return [];
   return ownerChoicesForType(ownerType, catalog);
 }
 

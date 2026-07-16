@@ -24,4 +24,4 @@ func _expire(label: Label) -> void:
 func _remove(label: Label) -> void:
 	active.erase(label); if is_instance_valid(label): label.free(); _layout()
 func _layout() -> void:
-	for index in active.size(): active[index].position = Vector2(renderer.get_screen_width() - 290, 20 + index * 40)
+	for index in active.size(): active[index].position = Vector2(renderer.screen_width - 290, 20 + index * 40)

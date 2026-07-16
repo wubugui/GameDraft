@@ -46,6 +46,13 @@ def preserve_numeric_repr(out: dict, original: dict | None) -> dict:
             # QDoubleSpinBox 输出 1000.0 -> 恢复原始 int 1000（或原本就是 1000.0）。
             if float(ov) == v:
                 out[k] = ov
+        elif isinstance(v, int):
+            # 反方向（审查 P3）：QSpinBox 输出 int 1，原值为 float 1.0 -> 恢复原始 1.0，
+            # 否则「打开即保存」把 1.0 漂成 1。仅当原值本就是 float 且数值相等时命中，
+            # 对 int 原值零副作用（int==int 表示相同，不改），不影响 anim 种子法
+            #（种子法在各自 to_dict 出口另行处理，不经本分支）。
+            if isinstance(ov, float) and float(v) == ov:
+                out[k] = ov
         elif isinstance(v, str):
             # RichTextLineEdit 等字符串控件输出数字串 "2" -> 恢复原始数值 2（仅当原值本就是数字且相等，
             # 故对真正的字符串参数无副作用；用户改成 [tag:…] 等非数字串则不命中、保持字符串）。

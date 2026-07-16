@@ -1,23 +1,23 @@
 {
   "sourceBaseline": {
     "assetAudit": {
-      "mediaFields": 343,
-      "textFields": 98,
+      "mediaFields": 352,
+      "textFields": 116,
       "richImages": 3,
       "mapScenes": 18,
       "issues": 0
     }
   },
   "summary": {
-    "edges": 869,
-    "localTargets": 747,
+    "edges": 912,
+    "localTargets": 775,
     "remoteTargets": 0,
     "missingTargets": 0,
-    "exportBytes": 565654376,
-    "runtimeFiles": 1085,
-    "referencedRuntimeFiles": 613,
-    "referencedRuntimeBytes": 564807456,
-    "unreferencedRuntimeFiles": 472
+    "exportBytes": 585562474,
+    "runtimeFiles": 1120,
+    "referencedRuntimeFiles": 624,
+    "referencedRuntimeBytes": 584627926,
+    "unreferencedRuntimeFiles": 496
   },
   "edges": [
     {
@@ -323,6 +323,16 @@
     {
       "source": "authority:content-json-root",
       "field": "json",
+      "raw": "/assets/data/runtime_field_schema.json",
+      "target": "public/assets/data/runtime_field_schema.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
       "raw": "/assets/data/scenarios.json",
       "target": "public/assets/data/scenarios.json",
       "kind": "textRoot",
@@ -493,6 +503,16 @@
     {
       "source": "authority:content-json-root",
       "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_偷鸡.json",
+      "target": "public/assets/dialogues/graphs/寻狗_偷鸡.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_克拉拉招募.json",
       "target": "public/assets/dialogues/graphs/寻狗_克拉拉招募.json",
       "kind": "textRoot",
@@ -503,8 +523,28 @@
     {
       "source": "authority:content-json-root",
       "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_叫花子斗嘴.json",
+      "target": "public/assets/dialogues/graphs/寻狗_叫花子斗嘴.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_向导传闻.json",
       "target": "public/assets/dialogues/graphs/寻狗_向导传闻.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_听书开场.json",
+      "target": "public/assets/dialogues/graphs/寻狗_听书开场.json",
       "kind": "textRoot",
       "resolution": "authoritativeRoot",
       "exists": true,
@@ -555,6 +595,16 @@
       "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_城隍庙供桌.json",
       "target": "public/assets/dialogues/graphs/寻狗_城隍庙供桌.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_壮汉撞人.json",
+      "target": "public/assets/dialogues/graphs/寻狗_壮汉撞人.json",
       "kind": "textRoot",
       "resolution": "authoritativeRoot",
       "exists": true,
@@ -635,6 +685,26 @@
       "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_找活.json",
       "target": "public/assets/dialogues/graphs/寻狗_找活.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_挑衅蹲坑.json",
+      "target": "public/assets/dialogues/graphs/寻狗_挑衅蹲坑.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_摸橘子.json",
+      "target": "public/assets/dialogues/graphs/寻狗_摸橘子.json",
       "kind": "textRoot",
       "resolution": "authoritativeRoot",
       "exists": true,
@@ -753,6 +823,16 @@
     {
       "source": "authority:content-json-root",
       "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_瞎子李算命.json",
+      "target": "public/assets/dialogues/graphs/寻狗_瞎子李算命.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_码头选择.json",
       "target": "public/assets/dialogues/graphs/寻狗_码头选择.json",
       "kind": "textRoot",
@@ -803,6 +883,36 @@
     {
       "source": "authority:content-json-root",
       "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_街头吹牛.json",
+      "target": "public/assets/dialogues/graphs/寻狗_街头吹牛.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_街头闲话.json",
+      "target": "public/assets/dialogues/graphs/寻狗_街头闲话.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_袍哥秒怂.json",
+      "target": "public/assets/dialogues/graphs/寻狗_袍哥秒怂.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_说书人.json",
       "target": "public/assets/dialogues/graphs/寻狗_说书人.json",
       "kind": "textRoot",
@@ -833,6 +943,36 @@
     {
       "source": "authority:content-json-root",
       "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_踢狗.json",
+      "target": "public/assets/dialogues/graphs/寻狗_踢狗.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_踢猫.json",
+      "target": "public/assets/dialogues/graphs/寻狗_踢猫.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_踩铜板.json",
+      "target": "public/assets/dialogues/graphs/寻狗_踩铜板.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_送包袱到棚.json",
       "target": "public/assets/dialogues/graphs/寻狗_送包袱到棚.json",
       "kind": "textRoot",
@@ -845,6 +985,16 @@
       "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_送货雇主.json",
       "target": "public/assets/dialogues/graphs/寻狗_送货雇主.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_野道岔路.json",
+      "target": "public/assets/dialogues/graphs/寻狗_野道岔路.json",
       "kind": "textRoot",
       "resolution": "authoritativeRoot",
       "exists": true,
@@ -905,6 +1055,16 @@
       "field": "json",
       "raw": "/assets/dialogues/graphs/寻狗_零工验看.json",
       "target": "public/assets/dialogues/graphs/寻狗_零工验看.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/dialogues/graphs/寻狗_验缢死尸.json",
+      "target": "public/assets/dialogues/graphs/寻狗_验缢死尸.json",
       "kind": "textRoot",
       "resolution": "authoritativeRoot",
       "exists": true,
@@ -1025,16 +1185,6 @@
       "field": "json",
       "raw": "/assets/dialogues/graphs/码头看板官差.json",
       "target": "public/assets/dialogues/graphs/码头看板官差.json",
-      "kind": "textRoot",
-      "resolution": "authoritativeRoot",
-      "exists": true,
-      "export": true
-    },
-    {
-      "source": "authority:content-json-root",
-      "field": "json",
-      "raw": "/assets/dialogues/graphs/茶馆_自动事件.json",
-      "target": "public/assets/dialogues/graphs/茶馆_自动事件.json",
       "kind": "textRoot",
       "resolution": "authoritativeRoot",
       "exists": true,
@@ -1335,6 +1485,26 @@
       "field": "json",
       "raw": "/assets/scenes/码头白天.json",
       "target": "public/assets/scenes/码头白天.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/scenes/破屋.json",
+      "target": "public/assets/scenes/破屋.json",
+      "kind": "textRoot",
+      "resolution": "authoritativeRoot",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "authority:content-json-root",
+      "field": "json",
+      "raw": "/assets/scenes/野道.json",
+      "target": "public/assets/scenes/野道.json",
       "kind": "textRoot",
       "resolution": "authoritativeRoot",
       "exists": true,
@@ -5652,7 +5822,7 @@
     },
     {
       "source": "public/assets/data/narrative_graphs.json",
-      "field": "compositions[2].elements[39].graph.states.try2_face.onEnterActions[3].params.image",
+      "field": "compositions[2].elements[38].graph.states.try2_face.onEnterActions[3].params.image",
       "raw": "scare_closeup",
       "target": "public/resources/runtime/images/illustrations/demo/bride_face_closeup.png",
       "kind": "media",
@@ -5662,7 +5832,7 @@
     },
     {
       "source": "public/assets/data/narrative_graphs.json",
-      "field": "compositions[2].elements[44].graph.states.handed.onEnterActions[1].params.image",
+      "field": "compositions[2].elements[43].graph.states.handed.onEnterActions[1].params.image",
       "raw": "river_ghost_hand",
       "target": "public/resources/runtime/images/illustrations/demo/river_ghost_hand.png",
       "kind": "media",
@@ -8171,6 +8341,36 @@
       "export": true
     },
     {
+      "source": "public/assets/scenes/破屋.json",
+      "field": "backgrounds[0].image",
+      "raw": "background.png",
+      "target": "public/resources/runtime/scenes/破屋/background.png",
+      "kind": "media",
+      "resolution": "sceneRelative",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/破屋.json",
+      "field": "hotspots[0].displayImage.image",
+      "raw": "/resources/runtime/images/corpses/back_carry/final/hanging_mark_corpse.png",
+      "target": "public/resources/runtime/images/corpses/back_carry/final/hanging_mark_corpse.png",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/野道.json",
+      "field": "backgrounds[0].image",
+      "raw": "background.png",
+      "target": "public/resources/runtime/scenes/野道/background.png",
+      "kind": "media",
+      "resolution": "sceneRelative",
+      "exists": true,
+      "export": true
+    },
+    {
       "source": "public/assets/scenes/阎王岭山口.json",
       "field": "backgrounds[0].image",
       "raw": "background.png",
@@ -8205,6 +8405,26 @@
       "field": "backgrounds[0].image",
       "raw": "background.png",
       "target": "public/resources/runtime/scenes/雾津街头/background.png",
+      "kind": "media",
+      "resolution": "sceneRelative",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "depthConfig.collision_map",
+      "raw": "collision.png",
+      "target": "public/resources/runtime/scenes/雾津街头/collision.png",
+      "kind": "media",
+      "resolution": "sceneRelative",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "depthConfig.depth_map",
+      "raw": "raw_depth_rg.png",
+      "target": "public/resources/runtime/scenes/雾津街头/raw_depth_rg.png",
       "kind": "media",
       "resolution": "sceneRelative",
       "exists": true,
@@ -8255,6 +8475,126 @@
       "field": "npcs[0].dialogueGraphId",
       "raw": "寻狗_零工接活",
       "target": "public/assets/dialogues/graphs/寻狗_零工接活.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[10].animFile",
+      "raw": "/resources/runtime/animation/chicken_anim/anim.json",
+      "target": "public/resources/runtime/animation/chicken_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[10].dialogueGraphId",
+      "raw": "寻狗_偷鸡",
+      "target": "public/assets/dialogues/graphs/寻狗_偷鸡.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[11].animFile",
+      "raw": "/resources/runtime/animation/dog_anim/anim.json",
+      "target": "public/resources/runtime/animation/dog_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[11].dialogueGraphId",
+      "raw": "寻狗_踢狗",
+      "target": "public/assets/dialogues/graphs/寻狗_踢狗.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[12].animFile",
+      "raw": "/resources/runtime/animation/cat_anim/anim.json",
+      "target": "public/resources/runtime/animation/cat_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[12].dialogueGraphId",
+      "raw": "寻狗_踢猫",
+      "target": "public/assets/dialogues/graphs/寻狗_踢猫.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[13].animFile",
+      "raw": "/resources/runtime/animation/guanchai_anim/anim.json",
+      "target": "public/resources/runtime/animation/guanchai_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[13].dialogueGraphId",
+      "raw": "寻狗_袍哥秒怂",
+      "target": "public/assets/dialogues/graphs/寻狗_袍哥秒怂.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[14].animFile",
+      "raw": "/resources/runtime/animation/npc_employer_anim/anim.json",
+      "target": "public/resources/runtime/animation/npc_employer_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[14].dialogueGraphId",
+      "raw": "寻狗_壮汉撞人",
+      "target": "public/assets/dialogues/graphs/寻狗_壮汉撞人.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[15].animFile",
+      "raw": "/resources/runtime/animation/npc_employer_anim/anim.json",
+      "target": "public/resources/runtime/animation/npc_employer_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[15].dialogueGraphId",
+      "raw": "寻狗_挑衅蹲坑",
+      "target": "public/assets/dialogues/graphs/寻狗_挑衅蹲坑.json",
       "kind": "dialogueGraph",
       "resolution": "explicit",
       "exists": true,
@@ -8371,10 +8711,100 @@
       "export": true
     },
     {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[7].animFile",
+      "raw": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "target": "public/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[7].dialogueGraphId",
+      "raw": "寻狗_街头吹牛",
+      "target": "public/assets/dialogues/graphs/寻狗_街头吹牛.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[8].animFile",
+      "raw": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
+      "target": "public/resources/runtime/animation/npc_blind_li_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[8].dialogueGraphId",
+      "raw": "寻狗_瞎子李算命",
+      "target": "public/assets/dialogues/graphs/寻狗_瞎子李算命.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[9].animFile",
+      "raw": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "target": "public/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "kind": "media",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/assets/scenes/雾津街头.json",
+      "field": "npcs[9].dialogueGraphId",
+      "raw": "寻狗_叫花子斗嘴",
+      "target": "public/assets/dialogues/graphs/寻狗_叫花子斗嘴.json",
+      "kind": "dialogueGraph",
+      "resolution": "explicit",
+      "exists": true,
+      "export": true
+    },
+    {
       "source": "public/resources/runtime/animation/boy_ring_anim/anim.json",
       "field": "spritesheet",
       "raw": "/resources/runtime/animation/boy_ring_anim/atlas.png",
       "target": "public/resources/runtime/animation/boy_ring_anim/atlas.png",
+      "kind": "media",
+      "resolution": "animationManifestRelative",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/resources/runtime/animation/cat_anim/anim.json",
+      "field": "spritesheet",
+      "raw": "/resources/runtime/animation/cat_anim/atlas.png",
+      "target": "public/resources/runtime/animation/cat_anim/atlas.png",
+      "kind": "media",
+      "resolution": "animationManifestRelative",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/resources/runtime/animation/chicken_anim/anim.json",
+      "field": "spritesheet",
+      "raw": "/resources/runtime/animation/chicken_anim/atlas.png",
+      "target": "public/resources/runtime/animation/chicken_anim/atlas.png",
+      "kind": "media",
+      "resolution": "animationManifestRelative",
+      "exists": true,
+      "export": true
+    },
+    {
+      "source": "public/resources/runtime/animation/dog_anim/anim.json",
+      "field": "spritesheet",
+      "raw": "/resources/runtime/animation/dog_anim/atlas.png",
+      "target": "public/resources/runtime/animation/dog_anim/atlas.png",
       "kind": "media",
       "resolution": "animationManifestRelative",
       "exists": true,
@@ -8682,7 +9112,7 @@
     },
     {
       "source": "src/core/Game.ts",
-      "field": "hardcodedRuntimeUrl@1750",
+      "field": "hardcodedRuntimeUrl@1752",
       "raw": "/resources/runtime/animation/player_anim/anim.json",
       "target": "public/resources/runtime/animation/player_anim/anim.json",
       "kind": "media",
@@ -8692,7 +9122,7 @@
     },
     {
       "source": "src/core/Game.ts",
-      "field": "hardcodedRuntimeUrl@1757",
+      "field": "hardcodedRuntimeUrl@1759",
       "raw": "/resources/runtime/animation/player_anim/anim.json",
       "target": "public/resources/runtime/animation/player_anim/anim.json",
       "kind": "media",
@@ -8744,8 +9174,8 @@
     },
     {
       "path": "public/assets/data/cutscenes/index.json",
-      "bytes": 64359,
-      "sha256": "7c86aee42029d51610e22fbc978bcffad58971ce2f822ff3c64ba96c2c97837e"
+      "bytes": 64494,
+      "sha256": "025547e7badf82ae9b4141398012ce9b827790a33ffd4cb284214b5f42bf7d88"
     },
     {
       "path": "public/assets/data/dev_narrative_warps.json",
@@ -8754,8 +9184,8 @@
     },
     {
       "path": "public/assets/data/document_reveals.json",
-      "bytes": 998,
-      "sha256": "3d82f700ec7d23beda72b9bb7e9e46fa8110f0bd5ff17911f6c3956a03d0af32"
+      "bytes": 1003,
+      "sha256": "35e5ada6e00e3a46f3a9d0f9c107be829b27fae2d45e07fd69cc54ea52229919"
     },
     {
       "path": "public/assets/data/encounters.json",
@@ -8789,8 +9219,8 @@
     },
     {
       "path": "public/assets/data/flag_registry.json",
-      "bytes": 8410,
-      "sha256": "203cbe1867eca107740a4dc23bda48cf879c5e61042d0edd25492485f3b37c35"
+      "bytes": 8488,
+      "sha256": "6f4165e7d3dcb733f0fe8d01ee245046d1634b3ed2a63ed11f3bdba13d17163f"
     },
     {
       "path": "public/assets/data/game_config.json",
@@ -8799,8 +9229,8 @@
     },
     {
       "path": "public/assets/data/items.json",
-      "bytes": 5019,
-      "sha256": "e6315d7a1ae0faaaf89524f41f0e8e5a08dd94257c13e0027cf5160b4846209b"
+      "bytes": 5575,
+      "sha256": "348bb2bff86adf2ef47a1c064767accf7b036df6920b52dba056c42f034b803d"
     },
     {
       "path": "public/assets/data/map_config.json",
@@ -8809,8 +9239,8 @@
     },
     {
       "path": "public/assets/data/narrative_graphs.json",
-      "bytes": 143834,
-      "sha256": "e06d21d4e97788367c705d6638e970e4918ae5b548c416d24e250036458d08da"
+      "bytes": 175932,
+      "sha256": "780f213b887ed8abedca860c881796557f15271b8e9d5d771e803f72b79ac464"
     },
     {
       "path": "public/assets/data/narrative_templates.json",
@@ -8844,8 +9274,8 @@
     },
     {
       "path": "public/assets/data/pressure_holds.json",
-      "bytes": 8547,
-      "sha256": "b26743f4efe844c0af0daba21c9a2ee4581443f3a6ad115230fac0cabed7ca85"
+      "bytes": 17202,
+      "sha256": "b871f7584cbb906d98b551b7571ebc7bd8a1ca6c3b607e5f45c8ecf9ac247893"
     },
     {
       "path": "public/assets/data/questGroups.json",
@@ -8863,9 +9293,14 @@
       "sha256": "f4cee65ad2b33eea33b54c4b48c4d12a6f73049bea183e0f298edcf77ee9a4de"
     },
     {
+      "path": "public/assets/data/runtime_field_schema.json",
+      "bytes": 1974,
+      "sha256": "41c650683f8f5c74076a9233341da0ef05364fb6597f3ba0a5e4209dc5aae96a"
+    },
+    {
       "path": "public/assets/data/scenarios.json",
-      "bytes": 1672,
-      "sha256": "d18e2fa3f777c4969f5492ea830abfbb767588f0b9bae14532505b0bb7dc2178"
+      "bytes": 22,
+      "sha256": "a7351ba72655cde4c780c8b0fd36fa8e9e538c5ebed914d19ebaf3c87dd55c49"
     },
     {
       "path": "public/assets/data/shops.json",
@@ -8874,8 +9309,8 @@
     },
     {
       "path": "public/assets/data/signal_cues.json",
-      "bytes": 3717,
-      "sha256": "18a4467d9f500bcdc130660489abafead131bc570f70ebc5238e26c687d4de7c"
+      "bytes": 4317,
+      "sha256": "4cc7667208b8b103a89777bbf2de5ced8794e8e9c4a5386caa3490b05060c146"
     },
     {
       "path": "public/assets/data/smell_profiles.json",
@@ -8939,23 +9374,38 @@
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_义庄管事.json",
-      "bytes": 4007,
-      "sha256": "3b7c25abca7c6f644c2dc94f90aba0596017e510a25cb438aa34c63e5fa7149d"
+      "bytes": 3794,
+      "sha256": "4c1d1d448576592727b09de41b7600ea7309d0c42d7e42355a37a3e6ddd5a9c3"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_义庄门口拦活.json",
-      "bytes": 3130,
-      "sha256": "1094c6469daaf1747b55bc43d995fecd74dbc43f41b87fa1db5d41e20adfe624"
+      "bytes": 3295,
+      "sha256": "b6dd70494ec189c6fa350fc99742e9bf3db6a18cca7ea0f8c7260201caeb6724"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_偷鸡.json",
+      "bytes": 3351,
+      "sha256": "1fd35145d9256d6ff9a18a030ab3cd20da5b27f1ddd122028cc14402ea72d094"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_克拉拉招募.json",
-      "bytes": 4866,
-      "sha256": "d288610d34a9231d93b96d866462cfe81a0db8af784fbd0b3e2a9ed335cf3eee"
+      "bytes": 4921,
+      "sha256": "49b5ebca001f4c368b3983f4305b8fb7c28a0af059de32e11da5cd5c7abb69b1"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_叫花子斗嘴.json",
+      "bytes": 3272,
+      "sha256": "a88282c30efe6112b5347c3ce900da4f46c03de1ff3ec0bcf015212dea454960"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_向导传闻.json",
       "bytes": 2971,
       "sha256": "37e981b2dbc54ca2a5d0156a4a032324422934a454e8b3af73c04b311976e30d"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_听书开场.json",
+      "bytes": 5782,
+      "sha256": "ef23bca4114971a252911d5ba282d8a3d2a6ddb03c1f644cb3f97157bc0bed6a"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_喊名_点三.json",
@@ -8983,9 +9433,14 @@
       "sha256": "dd71b9f15392ef8e995581e0254db49a6e7863b8cd1bc6008d4804eb5421e7e5"
     },
     {
+      "path": "public/assets/dialogues/graphs/寻狗_壮汉撞人.json",
+      "bytes": 1321,
+      "sha256": "3684a1dbf5a1afb80dbcff595cbf5611ab0c062183827ff9682372e5df51b63e"
+    },
+    {
       "path": "public/assets/dialogues/graphs/寻狗_婆子.json",
-      "bytes": 3773,
-      "sha256": "e71d7ffbf24312962ee1cf558e219f5d44605bd21c851e5f47f1cca49c964724"
+      "bytes": 3828,
+      "sha256": "99b09fd6521b843451fe674b39d4e6b5839cd623c7a427bcd0843b48937e1ef7"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_婆子家宣布.json",
@@ -9014,8 +9469,8 @@
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_庄家来人.json",
-      "bytes": 4690,
-      "sha256": "2c303d12a466b6eae767fc81f4df8962070fe52a3d8bf6e0b5456ae2a5f53771"
+      "bytes": 4745,
+      "sha256": "afe61c7eaa6c23633713bce66904582ca1e2913f2dc248b0eb5b640fdeb6906b"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_找活.json",
@@ -9023,9 +9478,19 @@
       "sha256": "7ecc7d606ddb2e3ed9d6bc2d938bea81e1dc525887df6f85ad26c080f213dc65"
     },
     {
+      "path": "public/assets/dialogues/graphs/寻狗_挑衅蹲坑.json",
+      "bytes": 1984,
+      "sha256": "5b25a3cc84928a53f61c1fe78084573751d6ced81b59d619d493ac3aab621a8c"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_摸橘子.json",
+      "bytes": 1842,
+      "sha256": "f989b3778dcae6eb4c48ced2c8e73a544fe74187ab68109f60df88d46ece30a0"
+    },
+    {
       "path": "public/assets/dialogues/graphs/寻狗_李天狗.json",
-      "bytes": 3125,
-      "sha256": "224c40205ab6ddb98f074c57e9add8f0412539124b2512535810d1baa7254afe"
+      "bytes": 3501,
+      "sha256": "5995f26e60a5d4ec438d3b9a7d0b61dc982093ce1064c402dfdeae4ed55b9d07"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_枯井往下看.json",
@@ -9034,8 +9499,8 @@
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_枯井街坊.json",
-      "bytes": 3617,
-      "sha256": "e1b78e5489d88a68ce5fac27bfbe0837ba1a1242d2c9119ad7b84748008b157c"
+      "bytes": 3672,
+      "sha256": "736e19c7d00480a5bdb6b9c795c21bb7e62f54178b12e1f2e435f0f27253c131"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_梦待死之礼.json",
@@ -9064,8 +9529,8 @@
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_淹尸验尸.json",
-      "bytes": 4712,
-      "sha256": "7cb1757bcf7fca0d2e8914a5e9fa66c2a37751aabf8dd1ed9d48e9cdc8e1be49"
+      "bytes": 4932,
+      "sha256": "c8030631fa9a18320471269189bc0d2aaa8e65c1bf058e771b0f16fed67bc893"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_看两尸.json",
@@ -9078,14 +9543,19 @@
       "sha256": "65caa6f7e2e3977751499c1ab5c6e85f24f60e02eb2358417ddeae737c3f05bf"
     },
     {
+      "path": "public/assets/dialogues/graphs/寻狗_瞎子李算命.json",
+      "bytes": 2249,
+      "sha256": "3dedc478fb50bf4024b90800c2b98768a5350d84f3a47e412c1b1f422a4b3f0b"
+    },
+    {
       "path": "public/assets/dialogues/graphs/寻狗_码头选择.json",
       "bytes": 9256,
       "sha256": "a6a73321ca8b2da98a87d5700913578c1166bf6dadb9e1f23d35ee0da5c52a3d"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_管事义庄内.json",
-      "bytes": 8933,
-      "sha256": "31e562e8dcdb1d6c05a6379114d21572f3e6ac69745d18fa5ab535969cc5dc9c"
+      "bytes": 9208,
+      "sha256": "868313909002a16fc1ea626c118d5255c48d5219646d3d4b1f867fa3db03b83c"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_背尸.json",
@@ -9103,9 +9573,24 @@
       "sha256": "beb82188ddd09293f5c02f55a6e2f5faf3d3c29ff23aaee112209c55400dfcb9"
     },
     {
+      "path": "public/assets/dialogues/graphs/寻狗_街头吹牛.json",
+      "bytes": 1194,
+      "sha256": "a4378fa814ed3f3c3a342499e52bab8d7eb365ce4de74e01a4d4df2500c299f3"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_街头闲话.json",
+      "bytes": 2188,
+      "sha256": "68fd0a93375c19501317452b00b7f43297003cf7a10d60f85a6de278400b92bc"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_袍哥秒怂.json",
+      "bytes": 1284,
+      "sha256": "5ab4df2a6a76a009d283dc7b81518a8dae6efb30ea74886aa6cf9f2e5fc19fd1"
+    },
+    {
       "path": "public/assets/dialogues/graphs/寻狗_说书人.json",
-      "bytes": 7324,
-      "sha256": "7b94e4c9e622a1b6b891f2cd1d3e1c914e2d802091122e9acf3db596f7309f4a"
+      "bytes": 1516,
+      "sha256": "2cf4849467ba9fd9be3914039af1e1440f10fca065ce1c7ace45b7248f5acab6"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_读人_儿子.json",
@@ -9118,14 +9603,34 @@
       "sha256": "9826431349b65b241930f8669649a92526e6f7b1a24cd295ad7e57430186b38c"
     },
     {
+      "path": "public/assets/dialogues/graphs/寻狗_踢狗.json",
+      "bytes": 2864,
+      "sha256": "50d9404e8d744bc6c37130b1c83380084d8e5adb37c246f32d6b37edd4fdbff8"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_踢猫.json",
+      "bytes": 2834,
+      "sha256": "5deb373187d3b2923ded3a7afe5ce14d82922b3e6ce5ec788a5b760a6c7d791f"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_踩铜板.json",
+      "bytes": 928,
+      "sha256": "7681fa70c844918d68175e113cb462232078aef62a58b2558179d02387e5aa9d"
+    },
+    {
       "path": "public/assets/dialogues/graphs/寻狗_送包袱到棚.json",
       "bytes": 1665,
       "sha256": "e39e8af8a4dd63b4c1990c02adbbfa464238099c7af48b12b9631c71200f2ac2"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_送货雇主.json",
-      "bytes": 4539,
-      "sha256": "c9050e567af6ddbfad65b759fd99e0f745c32cf17b6a0ef87dfe0be440baf950"
+      "bytes": 4594,
+      "sha256": "59d883bf3a2341b844dc947e42be8267cc2720a0e326edb12db83ef69302318d"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_野道岔路.json",
+      "bytes": 2226,
+      "sha256": "dd29b8be63cc7362ab3097409fd98be03f3be13a0b1ab0ad44ff0c312065e5ca"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_镇尸_剪子.json",
@@ -9149,13 +9654,18 @@
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_零工接活.json",
-      "bytes": 5887,
-      "sha256": "3a3b4c485a7084208ed6c448f5edc2fd4dc08b1c99cd0f487b6619a974371153"
+      "bytes": 6382,
+      "sha256": "9f1ca197aac8deb1ba50d71133cac50afbd120862732c8c3e316c12c61ce6251"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_零工验看.json",
-      "bytes": 1482,
-      "sha256": "c938727d4fdbffd804ce8b88f86f96134d7e0c50b23761b6ee34affee55e2b6b"
+      "bytes": 1592,
+      "sha256": "2bd541df795ee8ca2b255db33e04e27693a7cfac5d7fcbb27429905f7b21d961"
+    },
+    {
+      "path": "public/assets/dialogues/graphs/寻狗_验缢死尸.json",
+      "bytes": 5734,
+      "sha256": "c7554ad60532d77d438d74f35c71b8eb9b9db7554a79cd004a8ed3cd9e102784"
     },
     {
       "path": "public/assets/dialogues/graphs/寻狗_鬼打墙.json",
@@ -9189,8 +9699,8 @@
     },
     {
       "path": "public/assets/dialogues/graphs/滚铁环小孩.json",
-      "bytes": 9053,
-      "sha256": "f11dd7461d03025a95c5d608ac426d4ea20c4ac5cc45e555a3d01813dd8a4596"
+      "bytes": 9108,
+      "sha256": "41327b97f8fa67d6b4913c3346478bc8c43b43513c98604a549cc205dc3b90a1"
     },
     {
       "path": "public/assets/dialogues/graphs/码头_.json",
@@ -9199,28 +9709,23 @@
     },
     {
       "path": "public/assets/dialogues/graphs/码头_看热闹的路人.json",
-      "bytes": 343,
-      "sha256": "1e0ec5f1f3e4ba490857e6d0d0f85234830fe1c401ceb80aa6636709ff178a5d"
+      "bytes": 303,
+      "sha256": "1c78f27fb5ff3cec9b3d63b3b74db30ada4dc117500e4b29626e8e23ed0f716a"
     },
     {
       "path": "public/assets/dialogues/graphs/码头_脚帮帮众看板对话.json",
-      "bytes": 8743,
-      "sha256": "fa3fcffc03f79c0c781da397bfd8f01a9c62445b7233cf50b59cab525aae93c9"
+      "bytes": 8538,
+      "sha256": "c6741c0aaabbf42071e375c20c36effee28916c73a54f20b05dca9f3a3bfc9b9"
     },
     {
       "path": "public/assets/dialogues/graphs/码头看板.json",
-      "bytes": 3365,
-      "sha256": "f305f2390db7acbdaf1d6ed4b3eedc51c45477d9b4599bdbbffb198776ebd6bf"
+      "bytes": 2996,
+      "sha256": "4d5b0b8135a98dad88168f04ce14a537f06a90d5d7185afdb6fd101e17ef7ff9"
     },
     {
       "path": "public/assets/dialogues/graphs/码头看板官差.json",
-      "bytes": 10720,
-      "sha256": "eb11aab060432809973b8b94ca61d892290f83a1542cf4fc9b2cf3c11f9d281b"
-    },
-    {
-      "path": "public/assets/dialogues/graphs/茶馆_自动事件.json",
-      "bytes": 1093,
-      "sha256": "f15a158b534838ca342c67a264b2391d30f538da98b537446de985d0ea9959c8"
+      "bytes": 10291,
+      "sha256": "8ee0f6967032905d447f4cc004215b4f23c33d008d3b8a3cf8ae555acf7b0c99"
     },
     {
       "path": "public/assets/dialogues/graphs/茶馆小二.json",
@@ -9269,8 +9774,8 @@
     },
     {
       "path": "public/assets/scenes/teahouse.json",
-      "bytes": 6049,
-      "sha256": "26231f81b154e0a34ce2b80d0ae208e602584215df7b7a3567df2001af7e86b5"
+      "bytes": 5557,
+      "sha256": "b1622d3d5ac8e4617725fcf544acb7888542b6d7a86f7c1dc3e3c9179dc1eb3f"
     },
     {
       "path": "public/assets/scenes/temple.json",
@@ -9369,8 +9874,18 @@
     },
     {
       "path": "public/assets/scenes/码头白天.json",
-      "bytes": 18477,
-      "sha256": "f6046260738a5b8aa404b2bf896fb206dbd78419e91dfa9d8f408c1e4f749bcd"
+      "bytes": 18564,
+      "sha256": "fec9144ccf00b16a8b085a190af806ccd2518e45beec11eaacc0d53adfe93f1f"
+    },
+    {
+      "path": "public/assets/scenes/破屋.json",
+      "bytes": 1478,
+      "sha256": "01d4a2733ddc9fc4fce5cda5b1c4a88131222a8fe48e384caac1c57f4cbd9004"
+    },
+    {
+      "path": "public/assets/scenes/野道.json",
+      "bytes": 4272,
+      "sha256": "9b706a1b738f0e474a3beb327ef35522f9c46f9c49d8989477e38171528be7f2"
     },
     {
       "path": "public/assets/scenes/阎王岭山口.json",
@@ -9379,8 +9894,8 @@
     },
     {
       "path": "public/assets/scenes/雾津街头.json",
-      "bytes": 26045,
-      "sha256": "8231ca705cb923b30d9927e76c5bfc2f5593e39540bb0a4cac8094de75999b02"
+      "bytes": 33010,
+      "sha256": "33991d256d82c4fe68ff37f6a2168625e31feccdce55f6685704ff9785c5c640"
     },
     {
       "path": "public/resources/runtime/animation/boy_ring_anim/anim.json",
@@ -9391,6 +9906,36 @@
       "path": "public/resources/runtime/animation/boy_ring_anim/atlas.png",
       "bytes": 1499242,
       "sha256": "8e53ccbf82736e1751a70a64cb12947e0d733dcb8f7db9dab5ec344d0ff3f15e"
+    },
+    {
+      "path": "public/resources/runtime/animation/cat_anim/anim.json",
+      "bytes": 9153,
+      "sha256": "521c071bd3f702c5723db9f73a95d15998443d39d040534896936c5fd1f1fe6e"
+    },
+    {
+      "path": "public/resources/runtime/animation/cat_anim/atlas.png",
+      "bytes": 2736379,
+      "sha256": "8c38d12e38cd372750e4fba87d7e67fa6fa35722b3a44f1f538569257cc75aad"
+    },
+    {
+      "path": "public/resources/runtime/animation/chicken_anim/anim.json",
+      "bytes": 8910,
+      "sha256": "7e415d39927991e7e30835aa45f498591626ec4b8c27eee7c557ebc188e16f54"
+    },
+    {
+      "path": "public/resources/runtime/animation/chicken_anim/atlas.png",
+      "bytes": 4214237,
+      "sha256": "8ea28981c652a61433817fdb47a6a36b93aa5c2637435cbe86eb49c71dde423b"
+    },
+    {
+      "path": "public/resources/runtime/animation/dog_anim/anim.json",
+      "bytes": 10109,
+      "sha256": "3a94b171f61e568f31c940ae00dc83c5123b47708850f129377488ed43f55bff"
+    },
+    {
+      "path": "public/resources/runtime/animation/dog_anim/atlas.png",
+      "bytes": 4246804,
+      "sha256": "b9707ebed5ad460639a1f1e25bc41c5b518aa901615701a3b190f7ba8896b93c"
     },
     {
       "path": "public/resources/runtime/animation/fx_lantern_glow/anim.json",
@@ -10291,6 +10836,11 @@
       "path": "public/resources/runtime/images/backgrounds/day_alley_bg.png",
       "bytes": 2239505,
       "sha256": "89ebd02d3b309f8d5934d8c1016f690bf944a8beb0aad613c9177a45b9c585bb"
+    },
+    {
+      "path": "public/resources/runtime/images/corpses/back_carry/final/hanging_mark_corpse.png",
+      "bytes": 880930,
+      "sha256": "4459ebb73a69e48499d0db76d3362090277a9e000f679ab85b4d15c048d056a2"
     },
     {
       "path": "public/resources/runtime/images/corpses/back_carry/ordinary_roadside_corpse.png",
@@ -12438,14 +12988,34 @@
       "sha256": "c300bb95ad6cc6e2061c50702cc053d784519015f4094cfb42518c41ff8f129b"
     },
     {
+      "path": "public/resources/runtime/scenes/破屋/background.png",
+      "bytes": 2648866,
+      "sha256": "a0cdc5b9dfad1ed01d343971bfd49ee849449d43fe23e41dc22007263d81769a"
+    },
+    {
+      "path": "public/resources/runtime/scenes/野道/background.png",
+      "bytes": 3217645,
+      "sha256": "99159c053c860b327e746d14f8bb1b6f74e8f08d81c8b20a270607cdfb17fc2a"
+    },
+    {
       "path": "public/resources/runtime/scenes/阎王岭山口/background.png",
       "bytes": 3853421,
       "sha256": "20b84b19da340be9089835b82eed27b38067ddfeba17d7a1795dc7e65857a2a7"
     },
     {
       "path": "public/resources/runtime/scenes/雾津街头/background.png",
-      "bytes": 4771888,
-      "sha256": "1e7fa24c24f89aa52392445cfef8a284429e5e9586d80d9c7d2168ebce3d398b"
+      "bytes": 4820150,
+      "sha256": "151852c725b6b510f0db1007866bfe7a7f09ed8cd1cd5afb3c140171a32e46a7"
+    },
+    {
+      "path": "public/resources/runtime/scenes/雾津街头/collision.png",
+      "bytes": 2660,
+      "sha256": "5b1f48f02e47c2bb51ad401f65fd3e02f43566c79c90f10a7abdf31e87ace5fb"
+    },
+    {
+      "path": "public/resources/runtime/scenes/雾津街头/raw_depth_rg.png",
+      "bytes": 1796515,
+      "sha256": "49b6edb3b3a4a4d5fdddee1cc449d80307f822b7d818476bb0ea2609de2ec55b"
     }
   ],
   "remoteTargets": [],
@@ -12453,9 +13023,27 @@
   "unreferencedRuntimeFiles": [
     "public/resources/runtime/.DS_Store",
     "public/resources/runtime/animation/.DS_Store",
+    "public/resources/runtime/animation/bear_anim/anim.json",
+    "public/resources/runtime/animation/bear_anim/atlas.meta.json",
+    "public/resources/runtime/animation/bear_anim/atlas.png",
     "public/resources/runtime/animation/boy_ring_anim/atlas.meta.json",
+    "public/resources/runtime/animation/cat_anim/atlas.meta.json",
+    "public/resources/runtime/animation/chicken_anim/atlas.meta.json",
+    "public/resources/runtime/animation/dog_anim/atlas.meta.json",
+    "public/resources/runtime/animation/donkey_anim/anim.json",
+    "public/resources/runtime/animation/donkey_anim/atlas.meta.json",
+    "public/resources/runtime/animation/donkey_anim/atlas.png",
+    "public/resources/runtime/animation/duck_anim/anim.json",
+    "public/resources/runtime/animation/duck_anim/atlas.meta.json",
+    "public/resources/runtime/animation/duck_anim/atlas.png",
+    "public/resources/runtime/animation/fox_anim/anim.json",
+    "public/resources/runtime/animation/fox_anim/atlas.meta.json",
+    "public/resources/runtime/animation/fox_anim/atlas.png",
     "public/resources/runtime/animation/fx_door_curtain/anim.json",
     "public/resources/runtime/animation/fx_door_curtain/atlas.png",
+    "public/resources/runtime/animation/goose_anim/anim.json",
+    "public/resources/runtime/animation/goose_anim/atlas.meta.json",
+    "public/resources/runtime/animation/goose_anim/atlas.png",
     "public/resources/runtime/animation/guanchai_anim/atlas.meta.json",
     "public/resources/runtime/animation/npc_ascetic_monk_anim/atlas.meta.json",
     "public/resources/runtime/animation/npc_blind_li_anim/atlas.meta.json",
@@ -12550,9 +13138,15 @@
     "public/resources/runtime/animation/player_carry_corpse_anim/frames/frame_063_carry_collapse.png",
     "public/resources/runtime/animation/player_taoist_anim/atlas.meta.json",
     "public/resources/runtime/animation/player_taoist_anim_v1/atlas.meta.json",
+    "public/resources/runtime/animation/python_anim/anim.json",
+    "public/resources/runtime/animation/python_anim/atlas.meta.json",
+    "public/resources/runtime/animation/python_anim/atlas.png",
     "public/resources/runtime/animation/test_anim/anim.json",
     "public/resources/runtime/animation/test_anim/atlas.meta.json",
     "public/resources/runtime/animation/test_anim/atlas.png",
+    "public/resources/runtime/animation/tiger_anim/anim.json",
+    "public/resources/runtime/animation/tiger_anim/atlas.meta.json",
+    "public/resources/runtime/animation/tiger_anim/atlas.png",
     "public/resources/runtime/animation/克拉拉_anim/atlas.meta.json",
     "public/resources/runtime/animation/埃德加_anim/atlas.meta.json",
     "public/resources/runtime/animation/官差刀_anim/atlas.meta.json",
@@ -12614,7 +13208,6 @@
     "public/resources/runtime/images/corpses/back_carry/final/chenghuang_unknown_woman_horizontal.png",
     "public/resources/runtime/images/corpses/back_carry/final/dry_skeleton_remains.png",
     "public/resources/runtime/images/corpses/back_carry/final/gaunt_old_corpse.png",
-    "public/resources/runtime/images/corpses/back_carry/final/hanging_mark_corpse.png",
     "public/resources/runtime/images/corpses/back_carry/final/head_seven_fresh_corpse.png",
     "public/resources/runtime/images/corpses/back_carry/final/ordinary_roadside_corpse.png",
     "public/resources/runtime/images/corpses/back_carry/final/preserved_misleading_corpse.png",
@@ -12922,6 +13515,7 @@
     "public/resources/runtime/scenes/雾津街头/background_bigscene_v04.png",
     "public/resources/runtime/scenes/雾津街头/background_bigscene_v05.png",
     "public/resources/runtime/scenes/雾津街头/background_hires_v1.png",
-    "public/resources/runtime/scenes/雾津街头/background_legacy.png"
+    "public/resources/runtime/scenes/雾津街头/background_legacy.png",
+    "public/resources/runtime/scenes/雾津街头/background_桃溪_backup.png"
   ]
 }

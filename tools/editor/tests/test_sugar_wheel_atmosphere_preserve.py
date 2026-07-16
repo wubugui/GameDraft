@@ -106,6 +106,30 @@ class AtmosphereScriptWidgetTests(unittest.TestCase):
         finally:
             ed.deleteLater()
 
+    def test_pick_pool_combo_is_select_only(self) -> None:
+        # P3：pick 的池必须 select-only（不可手打），防止自由文本产生悬垂池引用；
+        # say 的 pool/text 框仍可编辑（自由输入=固定台词）。
+        ed = _make_widget()
+        try:
+            ed.set_data([
+                {"op": "say", "role": "child_a", "pool": "poolA"},
+                {"op": "pick", "pool": "poolA", "slot": "_x"},
+            ])
+            say_row, pick_row = ed._rows
+            self.assertTrue(say_row._pooltext.isEditable(), "say 的池/台词框应可自由输入")
+            self.assertFalse(pick_row._pooltext.isEditable(), "pick 的池框必须 select-only")
+        finally:
+            ed.deleteLater()
+
+    def test_pick_dangling_pool_value_preserved(self) -> None:
+        # select-only 也须对既有悬垂池值保值展示，不静默清空。
+        ed = _make_widget()  # pools_getter 只含 poolA
+        try:
+            ed.set_data([{"op": "pick", "pool": "poolGONE", "slot": "_x"}])
+            self.assertEqual(ed.to_list(), [{"op": "pick", "pool": "poolGONE", "slot": "_x"}])
+        finally:
+            ed.deleteLater()
+
 
 class SugarWheelAtmosphereIntegrationTests(unittest.TestCase):
     @classmethod
@@ -159,6 +183,60 @@ class SugarWheelAtmosphereIntegrationTests(unittest.TestCase):
             self.assertEqual(start[0].get("pool"), "poolB", "say 池引用应随改名更新")
             self.assertEqual(start[1].get("pool"), "poolB", "pick 池引用应随改名更新")
             self.assertEqual(start[3]["then"][0].get("pool"), "poolB", "嵌套 then 内池引用也应更新")
+
+    def _two_group_editor(self, root: Path) -> SugarWheelEditor:
+        write_minimal_loadable_project(root)
+        model = ProjectModel()
+        model.load_project(root)
+        model.sugar_wheel_index = [{"id": "sw1", "file": "sw1.json"}]
+        doc = _instance()
+        doc["atmosphereGroups"].append({"id": "g2", "label": "G2", "weight": 1, "vars": {}})
+        model.sugar_wheel_instances = {"sw1": doc}
+        ed = SugarWheelEditor(model)
+        ed._reload_list("sw1")
+        ed._list.setCurrentRow(0)
+        ed._atmos_group_list.setCurrentRow(0)
+        self._editors.append(ed)
+        return ed
+
+    def test_atmos_group_id_live_write_then_commit_dedup(self) -> None:
+        # P3：id 逐键即时写（不逐键回滚）；提交时（editingFinished）与其它组重复才回滚。
+        with TemporaryDirectory() as td:
+            ed = self._two_group_editor(Path(td) / "p")
+            groups = ed._model.sugar_wheel_instances["sw1"]["atmosphereGroups"]
+            ed._atmos_group_list.setCurrentRow(0)  # g1
+            ed._atmos_group_id.setText("g2")       # 逐键写：与 g2 撞
+            self.assertEqual(groups[0]["id"], "g2", "textChanged 应逐键即时写，不逐键回滚")
+            from unittest import mock
+            with mock.patch(
+                "tools.editor.editors.sugar_wheel_editor.QMessageBox.warning",
+            ):
+                ed._on_atmos_group_id_commit()
+            self.assertEqual(groups[0]["id"], "g1", "提交时与其它组重复应回滚")
+
+    def test_atmos_group_id_unique_commits(self) -> None:
+        with TemporaryDirectory() as td:
+            ed = self._two_group_editor(Path(td) / "p")
+            groups = ed._model.sugar_wheel_instances["sw1"]["atmosphereGroups"]
+            ed._atmos_group_list.setCurrentRow(0)
+            ed._atmos_group_id.setText("g1_renamed")
+            ed._on_atmos_group_id_commit()
+            self.assertEqual(groups[0]["id"], "g1_renamed", "唯一非空 id 应提交")
+
+    def test_charge_button_default_offset_uses_viewport(self) -> None:
+        # P3：首次进页画布 sceneRect 为空，蓄力默认偏移须按视口(1280×720)算 ≈R*0.72，
+        # 而非退化到 ~79px。R = _preview_wheel_radius_px(d, 1280, 720)。
+        from tools.editor.editors.sugar_wheel_editor import _preview_wheel_radius_px
+
+        with TemporaryDirectory() as td:
+            ed = self._editor(Path(td) / "p")  # 实例无显式 chargeButton 键
+            vw, vh = ed._canvas.viewport_size()
+            expected = _preview_wheel_radius_px(
+                ed._model.sugar_wheel_instances["sw1"], float(vw), float(vh),
+            ) * 0.72
+            self.assertGreaterEqual(expected, 150.0, "视口口径下默认偏移应 ≈179，不应退化到 ~79")
+            self.assertAlmostEqual(ed._charge_btn_ox.value(), expected, places=1)
+            self.assertAlmostEqual(ed._charge_btn_oy.value(), expected, places=1)
 
 
 if __name__ == "__main__":

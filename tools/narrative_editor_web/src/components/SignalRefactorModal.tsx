@@ -86,18 +86,20 @@ export function SignalRefactorModal(props: {
     setForceClean(false);
     setError('');
     const fail = (reason?: string) => setScanError(reason ?? '扫描失败');
+    // 预览计数带上当前画布草稿（P3）：执行时宿主会先暂存画布 data 再级联，扫描若只看
+    // 模型旧值，「预览 N 处」会与实际级联数对不上。
     if (req.kind === 'signal-rename' || req.kind === 'signal-delete') {
-      void scanSignalUsagesRemote(req.signalId).then((res) => {
+      void scanSignalUsagesRemote(req.signalId, props.data).then((res) => {
         if (res.ok && res.usages) setScan({ kind: 'signal', u: res.usages });
         else fail(res.reason);
       });
     } else if (req.kind === 'state-rename') {
-      void scanStateUsagesRemote(req.graphId, req.stateId).then((res) => {
+      void scanStateUsagesRemote(req.graphId, req.stateId, props.data).then((res) => {
         if (res.ok && res.usages) setScan({ kind: 'state', u: res.usages });
         else fail(res.reason);
       });
     } else {
-      void scanGraphUsagesRemote(req.graphId).then((res) => {
+      void scanGraphUsagesRemote(req.graphId, props.data).then((res) => {
         if (res.ok && res.usages) setScan({ kind: 'graph', u: res.usages });
         else fail(res.reason);
       });
@@ -144,12 +146,21 @@ export function SignalRefactorModal(props: {
     props.onClose();
   };
 
+  // 重构执行中禁止任何关闭入口（P3）：宿主级联是异步落地的，背景一点「像取消了」
+  // 但结果照样应用——执行期间只能等它结束。
+  const emitSourceCount = scan?.kind === 'signal'
+    ? scan.u.actionEmits
+      + scan.u.metaEmits.length
+      + scan.u.dialogues.reduce((sum, d) => sum + d.count, 0)
+      + scan.u.assets.reduce((sum, a) => sum + a.count, 0)
+    : null;
+
   return (
-    <div className="signal-modal-backdrop" role="presentation" onClick={props.onClose}>
+    <div className="signal-modal-backdrop" role="presentation" onClick={busy ? undefined : props.onClose}>
       <div className="signal-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <header className="signal-modal-header">
           <h3>{requestTitle(req)}</h3>
-          <button type="button" className="secondary" onClick={props.onClose}>关闭</button>
+          <button type="button" className="secondary" disabled={busy} onClick={props.onClose}>关闭</button>
         </header>
         <div className="signal-modal-list">
           {scan === null && !scanError ? <p className="muted">正在扫描全项目使用点…</p> : null}
@@ -161,6 +172,12 @@ export function SignalRefactorModal(props: {
               {usageLines.map((line) => (
                 <div key={line} className="signal-row-wrap"><span className="signal-row-meta">{line}</span></div>
               ))}
+              {emitSourceCount === 0 ? (
+                <p className="muted">
+                  ⚠ 未发现数据侧发射源：该信号可能由代码逻辑直接发射（例如 HealthSystem 的
+                  death_tether），本扫描只覆盖数据文件，改名/删除前请人工确认代码侧无引用。
+                </p>
+              ) : null}
             </>
           ) : null}
         </div>

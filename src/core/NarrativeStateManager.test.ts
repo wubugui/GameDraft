@@ -1035,3 +1035,169 @@ describe('NarrativeStateManager', () => {
     expect(narrative.getActiveState('g')).toBe('b');
   });
 });
+
+describe('保留前缀信号发射拦截（W5 回归）', () => {
+  it('emitNarrativeSignal 动作参数用 state:/__draft__ 保留前缀 = 校验 error', () => {
+    const issues = validateNarrativeGraphData({
+      schemaVersion: 3,
+      signals: [],
+      compositions: [{
+        id: 'comp',
+        mainGraph: {
+          id: 'flow',
+          ownerType: 'flow',
+          initialState: 'a',
+          states: {
+            a: { id: 'a' },
+            b: {
+              id: 'b',
+              onEnterActions: [
+                { type: 'emitNarrativeSignal', params: { signal: 'state:flow:done' } },
+                { type: 'emitNarrativeSignal', params: { signal: '__draft__' } },
+                { type: 'emitNarrativeSignal', params: { signal: 'legit_signal' } },
+              ],
+            },
+          },
+          transitions: [{ id: 't', from: 'a', to: 'b', signal: 'go' }],
+        },
+        elements: [],
+      }],
+    });
+    const reserved = issues.filter((i) => i.code === 'action.signal.reserved');
+    expect(reserved).toHaveLength(2);
+    expect(reserved.every((i) => i.severity === 'error')).toBe(true);
+  });
+});
+
+/**
+ * 2026-07-17 审查修复回归（artifact/Reviews/叙事状态机全面审查-2026-07-17.md R2/R3/W1/W2）：
+ * 旧时间线隔离、存档一致性门 isIdle、排空异常不悬挂。
+ */
+describe('时间线隔离与存档一致性（R2/R3/W1/W2 回归）', () => {
+  /** 子图 W（末态广播、onEnter 可控阻塞）+ 主图 M（监听 state:W:w1）。 */
+  function makeBroadcastPair() {
+    const rt = makeRuntime();
+    let unblock!: () => void;
+    const gate = new Promise<void>((r) => { unblock = r; });
+    rt.actionExecutor.register('block', () => gate, []);
+    rt.actionExecutor.register('emitNarrativeSignal', (p: Record<string, unknown>) =>
+      rt.narrative.emitNarrativeSignal({ signal: String(p.signal) }), ['signal']);
+    rt.narrative.registerGraphs([
+      {
+        id: 'W', ownerType: 'scenario', initialState: 'w0', entryState: 'w0', exitStates: ['w1'],
+        states: {
+          w0: { id: 'w0' },
+          w1: { id: 'w1', broadcastOnEnter: true, onEnterActions: [{ type: 'block', params: {} }] },
+        },
+        transitions: [{ id: 't', from: 'w0', to: 'w1', signal: 'S' }],
+      },
+      {
+        id: 'M', ownerType: 'flow', initialState: 'm0',
+        states: { m0: { id: 'm0' }, m1: { id: 'm1' } },
+        transitions: [{ id: 't', from: 'm0', to: 'm1', signal: 'state:W:w1' }],
+      },
+    ]);
+    return { ...rt, unblock };
+  }
+
+  it('R2：在飞排空期间 deserialize，旧时间线广播被抑制，恢复后的世界不被污染', async () => {
+    const { narrative, unblock } = makeBroadcastPair();
+    const save0 = JSON.parse(JSON.stringify(narrative.serialize())); // W:w0, M:m0
+    const p = narrative.emitNarrativeSignal({ signal: 'S' });
+    p.catch(() => {}); // 时间线失效会 reject 在飞项，此处消费避免 unhandled
+    await flush(); // W 已进 w1，onEnter 卡在 block，广播尚未入队
+    expect(narrative.getActiveState('W')).toBe('w1');
+    narrative.deserialize(save0); // 玩家读档回到初始档
+    unblock(); // 旧时间线动作完成
+    await flush();
+    await flush();
+    // 修复前：M 被旧时间线幽灵广播推到 m1 而 W 还在 w0；修复后两者都保持恢复态。
+    expect(narrative.getActiveState('W')).toBe('w0');
+    expect(narrative.getActiveState('M')).toBe('m0');
+  });
+
+  it('R2：换册（registerGraphs）同样隔离旧时间线且 reject 积压项，不静默悬挂（W2）', async () => {
+    const { narrative, unblock } = makeBroadcastPair();
+    const p = narrative.emitNarrativeSignal({ signal: 'S' });
+    await flush(); // 卡在 W.w1 onEnter
+    narrative.registerGraphs([{
+      id: 'G2', ownerType: 'flow', initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' } },
+      transitions: [{ id: 't', from: 'a', to: 'b', signal: 'state:W:w1' }],
+    }]);
+    unblock();
+    await flush();
+    await flush();
+    // 旧时间线广播不得推动新图册；在飞项以 reject 落定（不永久悬挂）。
+    expect(narrative.getActiveState('G2')).toBe('a');
+    await expect(Promise.race([
+      p.then(() => 'settled', () => 'settled'),
+      flush().then(() => 'pending'),
+    ])).resolves.toBe('settled');
+  });
+
+  it('R3：级联在飞时 isIdle=false（存档门拒绝半态档），空闲后恢复 true', async () => {
+    const { narrative, unblock } = makeBroadcastPair();
+    expect(narrative.isIdle()).toBe(true);
+    const p = narrative.emitNarrativeSignal({ signal: 'S' });
+    await flush(); // 卡在 W.w1 onEnter：子图已到末态、广播未消费——此刻存档即卡死档
+    expect(narrative.getActiveState('W')).toBe('w1');
+    expect(narrative.isIdle()).toBe(false);
+    unblock();
+    await p;
+    await flush();
+    // 级联完成：主图吃到广播、系统回到空闲，此刻的存档才是自洽的。
+    expect(narrative.getActiveState('M')).toBe('m1');
+    expect(narrative.isIdle()).toBe(true);
+  });
+
+  it('W1：条件上下文工厂抛错不拖挂排空循环（守卫迁移保守拒绝，系统保持可用）', async () => {
+    const { narrative, actionExecutor } = makeRuntime();
+    actionExecutor.register('emitNarrativeSignal', (p: Record<string, unknown>) =>
+      narrative.emitNarrativeSignal({ signal: String(p.signal) }), ['signal']);
+    narrative.setConditionEvalContextFactory(() => {
+      throw new Error('ctx factory boom');
+    });
+    narrative.registerGraphs([
+      {
+        // A 吃 S 后在 onEnter 里发 T 并 await —— T 的处理走嵌套排空
+        id: 'A', ownerType: 'flow', initialState: 'a0',
+        states: {
+          a0: { id: 'a0' },
+          a1: { id: 'a1', onEnterActions: [{ type: 'emitNarrativeSignal', params: { signal: 'T' } }] },
+        },
+        transitions: [{ id: 't', from: 'a0', to: 'a1', signal: 'S' }],
+      },
+      {
+        // C 对 T 的迁移带条件：工厂抛错必须被吞成 false，而不是把嵌套排空炸挂
+        id: 'C', ownerType: 'flow', initialState: 'c0',
+        states: { c0: { id: 'c0' }, c1: { id: 'c1' } },
+        transitions: [{ id: 't', from: 'c0', to: 'c1', signal: 'T', conditions: [{ flag: 'x', value: true }] }],
+      },
+    ]);
+    await narrative.emitNarrativeSignal({ signal: 'S' });
+    await flush();
+    expect(narrative.getActiveState('A')).toBe('a1');
+    expect(narrative.getActiveState('C')).toBe('c0'); // 条件保守拒绝
+    expect(narrative.isIdle()).toBe(true); // 循环未被拖挂
+    const issues = (narrative.debugSnapshot().recentIssues as Array<{ code: string }>);
+    expect(issues.some((i) => i.code === 'condition.ctxFactory.threw')).toBe(true);
+    // 系统仍然可用：后续无条件信号照常推进
+    await narrative.emitNarrativeSignal({ signal: 'T' });
+    await flush();
+    expect(narrative.getActiveState('C')).toBe('c0'); // 仍有条件仍拒
+  });
+
+  it('R2：save:restoring 事件钩子同样触发时间线失效（老档缺 narrative 条目的兜底）', async () => {
+    const { narrative, eventBus, unblock } = makeBroadcastPair();
+    const p = narrative.emitNarrativeSignal({ signal: 'S' });
+    p.catch(() => {});
+    await flush(); // 卡在 W.w1 onEnter
+    eventBus.emit('save:restoring', {});
+    unblock();
+    await flush();
+    await flush();
+    // 广播被抑制：M 不动（W 的置态发生在失效前，属旧时间线残影，由 deserialize 复位——本用例只验钩子对广播的抑制）
+    expect(narrative.getActiveState('M')).toBe('m0');
+  });
+});

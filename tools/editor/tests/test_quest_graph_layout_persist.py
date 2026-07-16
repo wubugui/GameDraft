@@ -21,6 +21,7 @@ from tempfile import TemporaryDirectory
 
 from PySide6.QtWidgets import QApplication
 
+from tools.editor import theme
 from tools.editor.editors.quest_graph_scene import QuestGraphScene
 from tools.editor.editors.quest_graph_layout_store import QuestGraphLayoutStore
 from tools.editor.project_model import ProjectModel
@@ -180,6 +181,53 @@ class QuestGraphLayoutPersistTests(unittest.TestCase):
         scene = QuestGraphScene()
         scene.populate_top_level(copy.deepcopy(_GROUPS), copy.deepcopy(_QUESTS))
         self.assertIn("g_main", scene._node_items)
+
+    def test_font_refresh_changes_only_graphics_geometry(self) -> None:
+        app = self._qt_app
+        original_theme = theme.current_theme_id()
+        original_font = theme.current_font_px()
+        try:
+            with TemporaryDirectory() as td:
+                root = Path(td) / "p"
+                model = self._model(root)
+                model_before = (copy.deepcopy(model.quests), copy.deepcopy(model.quest_groups))
+                disk_before = self._quest_json_snapshot(root)
+                side = root.joinpath(*_SIDE_FILE)
+
+                theme.apply_application_theme(app, theme.THEME_MODERN, theme.MIN_FONT_PX)
+                scene = QuestGraphScene(layout_store=QuestGraphLayoutStore(model.project_path))
+                scene.populate_group("g_main", model.quests, model.quest_groups)
+                node = scene._node_items["q_a"]
+                pos_before = (node.pos().x(), node.pos().y())
+                rect_before = node.rect()
+                font_before = node._id_text.font().pixelSize()
+                edge_calls: dict[int, int] = {}
+                for edge in scene._edge_items:
+                    key = id(edge)
+                    edge_calls[key] = 0
+                    original_update = edge.update_path
+
+                    def counted_update(*, _key=key, _original=original_update) -> None:
+                        edge_calls[_key] += 1
+                        _original()
+
+                    edge.update_path = counted_update  # type: ignore[method-assign]
+
+                theme.apply_application_theme(app, theme.THEME_MODERN, theme.MAX_FONT_PX)
+                theme.refresh_graphics_scene_fonts(scene)
+                rect_after = node.rect()
+                font_after = node._id_text.font().pixelSize()
+
+                self.assertEqual((node.pos().x(), node.pos().y()), pos_before)
+                self.assertGreater(font_after, font_before)
+                self.assertGreater(rect_after.height(), rect_before.height())
+                self.assertTrue(edge_calls)
+                self.assertTrue(all(count == 1 for count in edge_calls.values()))
+                self.assertEqual((model.quests, model.quest_groups), model_before)
+                self.assertEqual(self._quest_json_snapshot(root), disk_before)
+                self.assertFalse(side.exists(), "纯字体刷新不得生成或改写布局侧档")
+        finally:
+            theme.apply_application_theme(app, original_theme, original_font)
 
 
 if __name__ == "__main__":

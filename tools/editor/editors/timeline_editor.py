@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     QMimeData,
 )
 from PySide6.QtGui import (
-    QAction, QFont, QMouseEvent, QDrag, QKeySequence, QShortcut, QCursor,
+    QAction, QMouseEvent, QDrag, QKeySequence, QShortcut, QCursor,
 )
 
 from ..project_model import ProjectModel
@@ -42,6 +42,8 @@ from ..shared.fonts import MONO_FONT_FAMILY
 from ..shared.form_layout import compact_form
 from ..shared.numeric_roundtrip import preserve_numeric_repr
 from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
+
+_MONO_FONT_QSS = f'"{MONO_FONT_FAMILY}", "Cascadia Code", "Consolas", monospace'
 
 # Cutscene 步骤表头拖拽排序（TimelineEditor._dnd_cutscene_step_source 存 payload）
 _CUTSCENE_STEP_DRAG_MIME = "application/x-gamedraft-cutscene-step"
@@ -108,7 +110,8 @@ _PRESENT_PARAM_DEFAULTS: dict[str, dict[str, float]] = {
     "waitTime": {"duration": 1000.0},
     "showTitle": {"duration": 2000.0},
     "showMovieBar": {"heightPercent": 0.1},
-    "cameraZoom": {"scale": 1.0, "duration": 500.0},
+    # scale 0 = 运行时「恢复场景配置基线缩放」语义（缺键同义）；显式倍数才写正数
+    "cameraZoom": {"scale": 0.0, "duration": 500.0},
     "cameraMove": {"duration": 1000.0},
 }
 
@@ -120,8 +123,8 @@ _PRESENT_FLOAT_HINTS: dict[tuple[str, str], dict[str, Any]] = {
         "tooltip": "电影黑边高度占屏纵向比例，0–1（运行时默认 0.1）。",
     },
     ("cameraZoom", "scale"): {
-        "min": 0.01, "max": 100.0, "decimals": 3, "step": 0.1,
-        "tooltip": "镜头缩放倍数：1.0=不缩放，>1 放大，<1 缩小。",
+        "min": 0.0, "max": 100.0, "decimals": 3, "step": 0.1,
+        "tooltip": "镜头缩放倍数：>1 放大，<1 缩小；0（或缺省）= 恢复场景配置的基线缩放（scene.camera.zoom）。",
     },
 }
 
@@ -376,6 +379,10 @@ def _step_has_authored_content(d: dict) -> bool:
     if not isinstance(d, dict):
         return False
     kind = str(d.get("kind", ""))
+    if kind not in ("present", "action", "parallel"):
+        # 未知 kind（agent 手写坏数据）：除 kind 外还有任何键就算内容——
+        # 切走前必须确认 + 可撤销，不能因为表单画不出来就当它是空步。
+        return any(k != "kind" for k in d)
     if kind == "parallel":
         return bool(d.get("tracks"))
     if kind == "action":
@@ -438,6 +445,13 @@ class StepWidget(QFrame):
         # 已提交的 kind / present type，用于切换前捕获旧内容并在取消时回退控件。
         self._committed_kind = kind
         self._committed_present_type = str(step.get("type", "waitClick"))
+        # 畸形 parallel（tracks 非列表 / 含非 dict 轨）：不建子轨表单，
+        # to_dict 原样透传（对齐未知 present type 策略），展开不炸、Apply 不丢。
+        _tr = step.get("tracks")
+        self._parallel_malformed = kind == "parallel" and _tr is not None and (
+            not isinstance(_tr, list)
+            or any(not isinstance(t, dict) for t in _tr)
+        )
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
@@ -448,6 +462,11 @@ class StepWidget(QFrame):
         self._kind_combo.addItem("present", "present")
         self._kind_combo.addItem("action", "action")
         self._kind_combo.addItem("parallel", "parallel")
+        if kind not in ("present", "action", "parallel"):
+            # 未知 kind（agent 手写坏数据）：补孤儿项如实显示，不冒充 present；
+            # 旧实现停留在 present 项，to_dict 走 present 分支撞上不存在的
+            # _type_combo 直接 AttributeError（展开/Apply 双崩）。
+            self._kind_combo.addItem(f"[未知] {kind}", kind)
         for i in range(self._kind_combo.count()):
             if self._kind_combo.itemData(i) == kind:
                 self._kind_combo.setCurrentIndex(i)
@@ -511,8 +530,18 @@ class StepWidget(QFrame):
             if not self._confirm_discard_switch("步骤类型"):
                 self._set_kind_combo_silent(old_kind)
                 return
+            # 弹窗承诺「可用 Ctrl+Z 撤销」→ 确认清空前必须压整树快照（审查 P1-17）。
+            # 此刻 combo 已指向新 kind，to_dict 会按新类型序列化空内容；先静默回退
+            # 让快照捕获旧参数，压完再切回。
+            if self._editor is not None and hasattr(self._editor, "push_undo_snapshot"):
+                self._set_kind_combo_silent(old_kind)
+                try:
+                    self._editor.push_undo_snapshot()
+                finally:
+                    self._set_kind_combo_silent(new_kind)
         self._committed_kind = new_kind
         self._step_data = {"kind": new_kind}
+        self._parallel_malformed = False  # 换类型即离开畸形透传态（新 tracks 为空列表）
         if new_kind == "present":
             self._step_data["type"] = "waitClick"
         elif new_kind == "action":
@@ -553,7 +582,40 @@ class StepWidget(QFrame):
         elif kind == "action":
             self._build_action()
         elif kind == "parallel":
-            self._build_parallel()
+            if self._parallel_malformed:
+                self._build_raw_fallback("并行步的 tracks 含非对象项（数据异常）")
+            else:
+                self._build_parallel()
+        else:
+            # 未知 kind 兜底：不建表单也不炸，to_dict 原样透传（对齐未知 present type 策略）。
+            # validator 对未知 kind 只 warning，编辑器不应比它更暴烈（审查 P2）。
+            self._build_raw_fallback(f"未知步骤类型 kind={kind!r}")
+
+    def _raw_passthrough_dict(self, kind: str) -> dict:
+        """脏数据步的序列化：原样透传构造时的原始 JSON，绝不因表单缺失丢内容。"""
+        od = self._original_data
+        if isinstance(od, dict) and str(od.get("kind", "")) == str(kind):
+            return deepcopy(od)
+        d = deepcopy(self._step_data) if isinstance(self._step_data, dict) else {}
+        d["kind"] = kind
+        return d
+
+    def _build_raw_fallback(self, reason: str) -> None:
+        """脏数据兜底表单：说明原因 + 只读展示原始 JSON，不给可写控件。"""
+        lbl = QLabel(f"{reason}：编辑器无法编辑此步，Apply 时按原始数据原样保留。")
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("color:#e8590c;")
+        self._body.addWidget(lbl)
+        raw = QPlainTextEdit(self)
+        try:
+            raw.setPlainText(json.dumps(
+                self._raw_passthrough_dict(str(self._kind_combo.currentData())),
+                ensure_ascii=False, indent=2))
+        except Exception:  # noqa: BLE001 — 展示失败也不能挡住面板
+            raw.setPlainText(repr(self._original_data))
+        raw.setReadOnly(True)
+        raw.setMaximumHeight(140)
+        self._body.addWidget(raw)
 
     def _build_present(self) -> None:
         form = compact_form(QFormLayout())
@@ -589,6 +651,14 @@ class StepWidget(QFrame):
             if not self._confirm_discard_switch("present 类型"):
                 self._type_combo.set_committed_type(old_type)  # emit=False，不回弹本处理器
                 return
+            # 同 _on_kind_changed：确认清空前压快照，兑现「可用 Ctrl+Z 撤销」（审查 P1-17）。
+            # committed_type 已是新类型而旧参数控件还在，先回退让快照捕获旧内容。
+            if self._editor is not None and hasattr(self._editor, "push_undo_snapshot"):
+                self._type_combo.set_committed_type(old_type)
+                try:
+                    self._editor.push_undo_snapshot()
+                finally:
+                    self._type_combo.set_committed_type(new_type)
         self._committed_present_type = new_type
         self._step_data = {"kind": "present", "type": new_type}
         self._rebuild_present_params(new_type)
@@ -1558,7 +1628,8 @@ class StepWidget(QFrame):
         if has_inline:
             note = QLabel("① 本步内联了 scene 对象（不走注册表）；保存时原样保留。", self)
             note.setWordWrap(True)
-            note.setStyleSheet("color: #c98; font-size: 11px;")
+            note.setStyleSheet("color: #c98;")
+            app_theme.set_editor_font_role(note, app_theme.FONT_ROLE_HINT)
             self._present_params_layout.addRow(note)
 
     def _on_open_parallax_editor(self) -> None:
@@ -1674,7 +1745,11 @@ class StepWidget(QFrame):
                 cutscene_id=self._cutscene_id,
             )
             self._child_outlines.append(ol)
-            ol.contentChanged.connect(self._on_parallel_child_changed)
+            # 与复制/粘贴路径一致：子轨内容变化统一汇入编辑器去抖刷新
+            # （序号/摘要/overlay id 候选池）；父级折叠摘要由子 StepWidget
+            # ._emit_dirty 直调 _on_parallel_child_changed 刷新，保持不变。
+            if self._editor is not None and hasattr(self._editor, "_on_any_outline_changed"):
+                ol.contentChanged.connect(self._editor._on_any_outline_changed)
             self._parallel_layout.addWidget(ol)
         add_btn = QPushButton("+ Track")
         add_btn.clicked.connect(self._add_parallel_track)
@@ -1696,7 +1771,9 @@ class StepWidget(QFrame):
             cutscene_id=self._cutscene_id,
         )
         self._child_outlines.append(ol)
-        ol.contentChanged.connect(self._on_parallel_child_changed)
+        # 同 _build_parallel：统一连编辑器汇流；父级摘要靠 _emit_dirty 直调刷新。
+        if self._editor is not None and hasattr(self._editor, "_on_any_outline_changed"):
+            ol.contentChanged.connect(self._editor._on_any_outline_changed)
         self._parallel_layout.insertWidget(self._parallel_layout.count() - 1, ol)
         self._emit_dirty()
         if self._outline_frame:
@@ -1724,6 +1801,10 @@ class StepWidget(QFrame):
                 present_type_override: str | None = None) -> dict:
         # override 仅供「切换前捕获旧内容」用（此刻控件仍是旧 kind/type）；正常序列化不传。
         kind = kind_override if kind_override is not None else self._kind_combo.currentData()
+
+        if kind not in ("present", "action", "parallel"):
+            # 未知 kind：原样透传原始数据（对齐未知 present type 策略）。
+            return self._raw_passthrough_dict(str(kind))
 
         if kind == "action" and self._action_row is not None:
             ad = self._action_row.to_dict()
@@ -1819,6 +1900,9 @@ class StepWidget(QFrame):
             return self._preserve_present_numbers(d)
 
         if kind == "parallel":
+            if self._parallel_malformed:
+                # tracks 畸形（非列表/含非 dict 轨）：未建子轨表单，原样透传防丢数据。
+                return self._raw_passthrough_dict("parallel")
             return {
                 "kind": "parallel",
                 "tracks": [ol.to_dict() for ol in self._child_outlines],
@@ -1877,11 +1961,8 @@ class StepOutlineFrame(QFrame):
 
         self._idx_lbl = QLabel("—")
         self._idx_lbl.setMinimumWidth(28)
-        self._idx_lbl.setMaximumWidth(52)
         self._idx_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        fmono = QFont(MONO_FONT_FAMILY)
-        fmono.setStyleHint(QFont.StyleHint.Monospace)
-        self._idx_lbl.setFont(fmono)
+        self._idx_lbl.setStyleSheet(f"font-family: {_MONO_FONT_QSS};")
         hl.addWidget(self._idx_lbl)
 
         self._badge = QLabel()
@@ -2022,7 +2103,11 @@ class StepOutlineFrame(QFrame):
 
     def set_row_index(self, idx: object) -> None:
         # idx 顶层为序号字符串（"3"），并行子轨为分层号（"3.1"）。
-        self._idx_lbl.setText(str(idx))
+        text = str(idx)
+        self._idx_lbl.setText(text)
+        width = max(28, self._idx_lbl.fontMetrics().horizontalAdvance(text) + 8)
+        self._idx_lbl.setMinimumWidth(width)
+        self._idx_lbl.setMaximumWidth(width)
 
     def set_issue_marker(self, level: str | None, messages: list[str]) -> None:
         if not level:
@@ -2101,7 +2186,9 @@ class StepOutlineFrame(QFrame):
         )
         primary = "#dcdcdc" if app_theme.is_dark_theme(tid) else "#1a1a1a"
         muted = "#a0a0a0" if app_theme.is_dark_theme(tid) else "#666666"
-        self._idx_lbl.setStyleSheet(f"color: {muted};")
+        self._idx_lbl.setStyleSheet(
+            f"color: {muted}; font-family: {_MONO_FONT_QSS};"
+        )
         self._summary.setStyleSheet(f"color: {primary};")
         self._dur_lbl.setStyleSheet(f"color: {muted};")
         if kind == "parallel":
@@ -2452,9 +2539,10 @@ class TimelineEditor(QWidget):
         self._index_refresh_debounce.timeout.connect(
             self._refresh_outline_indices_and_zebra,
         )
-        # 结构性编辑的撤销/重做栈（每项 = 当前过场步骤树的整份深快照）。
-        self._undo_stack: list[list[dict]] = []
-        self._redo_stack: list[list[dict]] = []
+        # 结构性编辑的撤销/重做栈（每项 = {"steps": 深快照, "expanded": 顶层展开下标,
+        # "scroll": 滚动位}，恢复时连编辑现场一起还原）。
+        self._undo_stack: list[dict] = []
+        self._redo_stack: list[dict] = []
         # 每段过场的顶层展开态 + 滚动位置，切回时恢复「我刚在改哪一步」。
         self._view_state_by_cid: dict[str, dict] = {}
 
@@ -2675,23 +2763,48 @@ class TimelineEditor(QWidget):
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(slot)
 
-    # ----- 撤销 / 重做（结构性编辑：增删 / 重排 / 复制粘贴 / 并行合并移出 / 类型清空） -----
+    # ----- 撤销 / 重做（结构性编辑：增删 / 重排 / 复制粘贴 / 并行合并移出，
+    #        以及切换 kind / present 类型前的「确认清空」——两个切换 handler 在确认后
+    #        各压一次快照，兑现弹窗「可用 Ctrl+Z 撤销」的承诺；快照含步骤树 + 顶层
+    #        展开态 + 滚动位，恢复时不丢编辑现场） -----
+
+    def _capture_undo_state(self) -> dict | None:
+        """当前过场的整份深快照（步骤树 + 顶层展开态 + 滚动位）；失败返回 None。"""
+        try:
+            steps = [ol.to_dict() for ol in self._step_outlines]
+        except Exception:  # noqa: BLE001 — 快照失败绝不能打断用户操作
+            return None
+        return {
+            "steps": deepcopy(steps),
+            "expanded": [
+                i for i, ol in enumerate(self._step_outlines) if not ol._collapsed
+            ],
+            "scroll": self._steps_scroll.verticalScrollBar().value(),
+        }
 
     def push_undo_snapshot(self) -> None:
         """在一次结构性变更「之前」调用，捕获当前过场步骤树的整份深快照。"""
         if self._loading_ui or self._current_idx < 0:
             return
-        try:
-            snap = [ol.to_dict() for ol in self._step_outlines]
-        except Exception:  # noqa: BLE001 — 快照失败绝不能打断用户操作
+        snap = self._capture_undo_state()
+        if snap is None:
             return
-        self._undo_stack.append(deepcopy(snap))
+        self._undo_stack.append(snap)
         if len(self._undo_stack) > 80:
             self._undo_stack.pop(0)
         self._redo_stack.clear()
 
-    def _restore_steps_snapshot(self, snap: list[dict]) -> None:
-        self._rebuild_steps(deepcopy(snap))
+    def _restore_steps_snapshot(self, snap: dict | list) -> None:
+        if isinstance(snap, list):  # 兼容旧 list 形态（防御）
+            snap = {"steps": snap, "expanded": [], "scroll": None}
+        self._rebuild_steps(
+            deepcopy(snap.get("steps") or []),
+            expanded_indices={int(i) for i in snap.get("expanded") or []},
+        )
+        sv = snap.get("scroll")
+        if sv is not None:
+            bar = self._steps_scroll.verticalScrollBar()
+            QTimer.singleShot(0, self._steps_scroll, lambda: bar.setValue(int(sv)))
         self.mark_pending_changes()
 
     @staticmethod
@@ -2709,8 +2822,10 @@ class TimelineEditor(QWidget):
             return
         if not self._undo_stack:
             return
-        current = [ol.to_dict() for ol in self._step_outlines]
-        self._redo_stack.append(deepcopy(current))
+        current = self._capture_undo_state()
+        if current is None:
+            return
+        self._redo_stack.append(current)
         snap = self._undo_stack.pop()
         self._restore_steps_snapshot(snap)
 
@@ -2721,8 +2836,10 @@ class TimelineEditor(QWidget):
             return
         if not self._redo_stack:
             return
-        current = [ol.to_dict() for ol in self._step_outlines]
-        self._undo_stack.append(deepcopy(current))
+        current = self._capture_undo_state()
+        if current is None:
+            return
+        self._undo_stack.append(current)
         snap = self._redo_stack.pop()
         self._restore_steps_snapshot(snap)
 
@@ -2954,7 +3071,9 @@ class TimelineEditor(QWidget):
 
     # ----- 校验：把 validate-data 对本过场的问题引进编辑器，落到具体步骤 -----
 
-    def _run_current_cutscene_validation(self) -> None:
+    def _run_current_cutscene_validation(self, *, scroll_to_first: bool = True) -> None:
+        # scroll_to_first 仅键参：手动点「校验」滚到首个问题行；Apply 自动校验
+        # （scroll_to_first=False）不抢滚动位，只更新状态区。
         for ol in self._iter_all_step_outlines():
             ol.set_issue_marker(None, [])
         cid = self._current_cutscene_id() or self._c_id.text().strip() or ""
@@ -2964,6 +3083,7 @@ class TimelineEditor(QWidget):
                 _validate_cutscene_steps, _cutscene_has_show_movie_bar,
             )
         except Exception as exc:  # noqa: BLE001
+            self._validate_summary.setStyleSheet("")
             self._validate_summary.setText("校验未运行")
             self._validate_summary.setToolTip(f"无法加载校验器：{exc}")
             return
@@ -2973,6 +3093,7 @@ class TimelineEditor(QWidget):
             _validate_cutscene_steps(
                 self._model, deepcopy(steps), cid, all_issues, scan_param_refs=True)
         except Exception as exc:  # noqa: BLE001 — 校验器异常绝不能影响编辑
+            self._validate_summary.setStyleSheet("")
             self._validate_summary.setText("校验未运行")
             self._validate_summary.setToolTip(f"{type(exc).__name__}: {exc}")
             return
@@ -3002,12 +3123,19 @@ class TimelineEditor(QWidget):
             parts.append(f"{n_err} 错误")
         if n_warn:
             parts.append(f"{n_warn} 警告")
+        # error 标红 / warning 标橙：Apply 后自动校验靠这里在状态区提示（不阻断入库）。
+        if n_err:
+            self._validate_summary.setStyleSheet("color:#e03131; font-weight:bold;")
+        elif n_warn:
+            self._validate_summary.setStyleSheet("color:#f08c00;")
+        else:
+            self._validate_summary.setStyleSheet("")
         self._validate_summary.setText(
             "校验：" + ("、".join(parts) if parts else "无问题 ✓"))
         self._validate_summary.setToolTip(
             "\n".join(f"[{it.severity}] {it.message}" for it in all_issues)
             if all_issues else "本过场未发现问题。")
-        if first_row is not None:
+        if scroll_to_first and first_row is not None:
             ol = self._step_outlines[first_row]
             self._steps_scroll.ensureWidgetVisible(ol)
             ol.flash_highlight()
@@ -3169,10 +3297,44 @@ class TimelineEditor(QWidget):
         cid = (item_id or "").strip()
         if not cid:
             return
+        search = getattr(self, "_list_search", None)
+        if search is not None and search.text():
+            search.clear()  # 目标行可能被过场列表过滤隐藏
         for i, cutscene in enumerate(self._model.cutscenes):
             if str(cutscene.get("id", "")).strip() == cid:
                 self._list.setCurrentRow(i)
                 return
+
+    def focus_step(self, cutscene_id: str, step_index: int) -> bool:
+        """全局搜索落点：选中过场并展开第 step_index 个顶层步骤（懒详情就地
+        构造），滚到眼前。返回是否真正落位。"""
+        cid = (cutscene_id or "").strip()
+        self.select_by_id(cid)
+        # 核验真的切到了目标过场——id 不存在(过期搜索结果)或切换被未提交
+        # 修改的确认弹窗取消时,选中仍是旧过场;不核验会展开错过场的步骤
+        # 还谎报成功(对抗审查确认项)。
+        row = self._list.currentRow()
+        cuts = self._model.cutscenes
+        if not (0 <= row < len(cuts)) or str(cuts[row].get("id", "")).strip() != cid:
+            return False
+        step_search = getattr(self, "_step_search", None)
+        if step_search is not None and step_search.text():
+            step_search.clear()  # 步骤过滤会把目标步骤行藏起来
+        outlines = getattr(self, "_step_outlines", None) or []
+        if not (0 <= step_index < len(outlines)):
+            return False
+        ol = outlines[step_index]
+        try:
+            ol.set_collapsed(False)  # 内含 _ensure_detail_built
+        except Exception:
+            return False
+        p = ol.parentWidget()
+        while p is not None:
+            if isinstance(p, QScrollArea):
+                p.ensureWidgetVisible(ol, 48, 48)
+                break
+            p = p.parentWidget()
+        return True
 
     def _on_target_scene_changed(self, sid: str) -> None:
         if self._spawn_loading:
@@ -3462,10 +3624,31 @@ class TimelineEditor(QWidget):
 
         if self._current_idx < 0:
             return False
+
+        # —— 过场 id 守卫（审查 P2）：空 id 拒绝；与其它过场撞 id 需确认 ——
+        # 运行时按 id 找过场是 first-wins：重复 id 会把另一条静默遮蔽。
+        new_id = self._c_id.text().strip()
+        if not new_id:
+            QMessageBox.warning(self, "过场", "过场 id 不能为空，请填写后再 Apply。")
+            return False
+        if any(
+            i != self._current_idx and str(c.get("id", "")).strip() == new_id
+            for i, c in enumerate(self._model.cutscenes)
+        ):
+            r = QMessageBox.question(
+                self, "过场",
+                f"已有另一段过场使用 id「{new_id}」。\n"
+                "重复 id 运行时只取第一条，另一条会被静默遮蔽。仍要保存吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r != QMessageBox.StandardButton.Yes:
+                return False
+
         steps = [ol.to_dict() for ol in self._step_outlines]
 
         cs = self._model.cutscenes[self._current_idx]
-        cs["id"] = self._c_id.text().strip()
+        cs["id"] = new_id
 
         scene = self._target_scene.current_id()
         if scene:
@@ -3480,8 +3663,19 @@ class TimelineEditor(QWidget):
             cs.pop("targetSpawnPoint", None)
 
         if self._pos_chk.isChecked():
-            cs["targetX"] = self._target_x.value()
-            cs["targetY"] = self._target_y.value()
+            # 数值保真：未改动的值按原始 JSON 表示回写（int 保 int、100.0 保 100.0）；
+            # 新值 / 被改动的值整数化落 int，避免 QDoubleSpinBox 把 100 漂成 100.0。
+            for key, w in (("targetX", self._target_x), ("targetY", self._target_y)):
+                v = float(w.value())
+                ov = cs.get(key)
+                if (
+                    isinstance(ov, (int, float))
+                    and not isinstance(ov, bool)
+                    and float(ov) == v
+                ):
+                    cs[key] = ov
+                else:
+                    cs[key] = int(v) if v.is_integer() else v
         else:
             cs.pop("targetX", None)
             cs.pop("targetY", None)
@@ -3504,6 +3698,12 @@ class TimelineEditor(QWidget):
             finally:
                 self._list.blockSignals(False)
         maybe_stamp(_ap_clk, f"done steps={len(steps)} idx={self._current_idx}")
+        # Apply 成功后自动跑本过场校验（纯内存低成本，审查 P2）：有 error 在状态区
+        # 标红提示但不阻断——带病组合能入库但必须被看见；不抢滚动位。
+        try:
+            self._run_current_cutscene_validation(scroll_to_first=False)
+        except Exception:  # noqa: BLE001 — 校验绝不能让 Apply 失败
+            pass
         return True
 
     def _add(self) -> None:

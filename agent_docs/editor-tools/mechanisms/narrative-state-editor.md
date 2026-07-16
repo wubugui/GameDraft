@@ -38,7 +38,9 @@ last_governed: 2026-07-11
 
 - 桥接原生 ConditionEditor 的往返对某些叶子(空 phase scenario、未登记 id)会静默丢——web 侧回写前有 `droppedConditionLeaves` 比对护栏,发现丢即放弃修改;动条件编辑链路别拆掉这道护栏。
 - 归一化逻辑三语言重复(TS/Python/web)是架构固有,别试图"合并成一份";一致性靠各自字节幂等护栏 + parity 测试。
+- **flow 主图 `ownerId` = 纯注释、零机制效力**(2026-07-13 拍板方案 B):运行时无 `ByOwner('flow')` 消费点、catalog 只判 ownerType、校验不读它;检查器对 flow 主图 Owner ID 呈只读 + 「仅注释·无机制效力」标注(TextField `readOnlyNote`)。**禁止**再让任何校验/候选机制消费 flow ownerId——曾从码头孤例(ownerId 恰为 scenario id)误推 `flow→scenarioIds` 候选致全线误报;新增 owner 消费逻辑前先看本条。**wrapper 图的 owner 不受影响**,仍是真引用(注册表映射 + 校验 + 跳转)。
+- **wrapper/scenario 子图元素的 `meta.emits/reads` 不再手编**(2026-07-13 拍板):检查器「高级」两栏改为从子图内容自动派生的只读展示(`deriveGraphInterface`:状态动作 emit + broadcastOnEnter 派生 = 发出;迁移 signal = 监听;条件叶子 = 读取,口径对齐 [emitted-signal-catalog](emitted-signal-catalog.md));遗留手填显示「旧登记」可一键清空。黑盒元素保留登记语义(先接线后写对话),但候选从「全目录平铺」改为「已选 chip + 搜索弹窗」(对齐 [下拉vs弹窗拍板](decisions/2026-07-11-dropdown-vs-popup-selector.md)),emits 候选滤掉 `state:` 派生信号、reads 候选 = 图 id。
 
 ## 怎么验证
 
-`pytest tools/editor/tests/test_narrative_state_editor.py`;`npx vitest run tools/narrative_editor_web`;`npx vitest run src/core`;改网页后 `npm run build:narrative-editor` + `npm run typecheck:narrative-editor`。
+`pytest tools/editor/tests/test_narrative_state_editor.py`;`npx vitest run tools/narrative_editor_web`;`npx vitest run src/core`;改网页后 `npm run build:narrative-editor` + `npm run typecheck:narrative-editor`。纯 web 调试模式已可加载真实数据(vite dev-only `/assets` 只读中间件),不必经 PySide 壳即可复现浏览器行为。

@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 
 from PySide6.QtWidgets import QMessageBox
 
+from tools.editor import theme
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 from tools.editor.editors.narrative_state_editor import (
@@ -16,6 +17,7 @@ from tools.editor.editors.narrative_state_editor import (
     WRAPPER_OWNER_CATALOG_KEYS,
     WRAPPER_OWNER_NAVIGATION,
     _VALID_WRAPPER_OWNER_TYPES,
+    _placeholder_html,
     authoring_catalog,
     derive_projection,
     validate_narrative_graphs,
@@ -865,7 +867,13 @@ class TestNarrativeStateEditor(unittest.TestCase):
                         "states": {
                             "a": {
                                 "id": "a",
-                                "onExitActions": [{"type": "setNarrativeState", "params": {"graphId": "flow:bad"}}],
+                                "onExitActions": [
+                                    # setNarrativeState 是 DEBUG_ONLY、刻意不在 manifest：其缺 stateId
+                                    # 由 stateCommand.target.missing 捕获（不再走通用 param.missing）。
+                                    {"type": "setNarrativeState", "params": {"graphId": "flow:bad"}},
+                                    # manifest 内 action 的真缺必填仍走 action.param.missing。
+                                    {"type": "giveItem", "params": {}},
+                                ],
                             },
                         },
                         "transitions": [{"id": "t:bad", "from": "a", "to": "a", "signal": "external:system:test:go"}],
@@ -877,7 +885,8 @@ class TestNarrativeStateEditor(unittest.TestCase):
         error_codes = {issue["code"] for issue in issues if issue["severity"] == "error"}
         self.assertIn("graph.id.delimiter", error_codes)
         self.assertIn("transition.id.delimiter", error_codes)
-        self.assertIn("action.param.missing", error_codes)
+        self.assertIn("action.param.missing", error_codes)  # giveItem 缺 id
+        self.assertIn("stateCommand.target.missing", error_codes)  # setNarrativeState 缺 stateId
 
     def test_validate_blocks_external_edge_to_scenario_internal_state(self) -> None:
         issues = validate_narrative_graphs({
@@ -941,9 +950,9 @@ class TestNarrativeStateEditor(unittest.TestCase):
 
     def test_confirm_close_dirty_save_flushes_model(self) -> None:
         class FakeEditor:
-            # 借用真实的脏判断助手，让测试穿过 confirm_close → _web_editor_is_dirty
+            # 借用真实的脏判断助手，让测试穿过 confirm_close → _web_editor_dirty_state
             # → _run_editor_js_result 的完整链路。
-            _web_editor_is_dirty = NarrativeStateEditor._web_editor_is_dirty
+            _web_editor_dirty_state = NarrativeStateEditor._web_editor_dirty_state
 
             def __init__(self) -> None:
                 self._view = object()
@@ -965,6 +974,178 @@ class TestNarrativeStateEditor(unittest.TestCase):
         ):
             self.assertTrue(NarrativeStateEditor.confirm_close(fake, None))  # type: ignore[arg-type]
         self.assertTrue(fake.flushed)
+
+    def test_confirm_close_asks_when_dirty_state_unknown(self) -> None:
+        """脏态未知（JS 超时返回 None）时 fail-safe 当脏询问，不静默放行丢草稿（复核 P2）。"""
+        class FakeEditor:
+            _web_editor_dirty_state = NarrativeStateEditor._web_editor_dirty_state
+
+            def __init__(self) -> None:
+                self._view = object()
+
+            def _run_editor_js_result(self, code: str, timeout_ms: int = 5000):  # noqa: ANN001
+                return None  # 超时/取不到
+
+        fake = FakeEditor()
+        with patch(
+            "tools.editor.editors.narrative_state_editor.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Cancel,
+        ) as q:
+            # 未知按脏处理 → 弹询问 → Cancel → 返回 False（阻止关闭）
+            self.assertFalse(NarrativeStateEditor.confirm_close(fake, None))  # type: ignore[arg-type]
+        self.assertTrue(q.called, "脏态未知时应当弹确认，而非静默放行")
+
+    def test_flush_fail_safe_when_editor_state_unreadable(self) -> None:
+        """J 修复（对抗组 V3）：_read_editor_state 整体返回 None（JS 引擎彻底卡死，既非
+        crashed 也无 lastDraft）时，flush_to_model 必须 fail-safe 返回 False + 留可读原因，
+        绝不伪成功让 Save All 漏掉叙事草稿。"""
+        class FakeEditor:
+            flush_to_model = NarrativeStateEditor.flush_to_model
+            pop_flush_error = NarrativeStateEditor.pop_flush_error
+
+            def __init__(self) -> None:
+                self._view = object()
+                self._last_flush_error = None
+
+            def _read_editor_state(self, *a, **k):  # noqa: ANN002, ANN003
+                return None  # 整体读不到（JS 引擎卡死）
+
+        fake = FakeEditor()
+        self.assertFalse(fake.flush_to_model(for_save_all=True),
+                         "state 完全读不到时必须返回 False，不能伪成功")
+        reason = fake.pop_flush_error()
+        self.assertTrue(reason, "fail-safe 须留下可读原因")
+        self.assertIn("叙事", reason)
+
+    def test_flush_allows_when_state_readable_but_empty(self) -> None:
+        """不误伤：state 能读到（dict）但确实无内容/无草稿的合法路径仍 return True。"""
+        class FakeEditor:
+            flush_to_model = NarrativeStateEditor.flush_to_model
+
+            def __init__(self) -> None:
+                self._view = object()
+                self._last_flush_error = None
+
+            def _read_editor_state(self, *a, **k):  # noqa: ANN002, ANN003
+                return {"hasApi": True}  # 已加载、能读到，但无 json 内容可 flush
+
+        fake = FakeEditor()
+        self.assertTrue(fake.flush_to_model(for_save_all=True),
+                        "已加载但无内容的合法路径不应被 J 修复误伤")
+
+    def test_validate_accepts_minimal_legal_action_forms(self) -> None:
+        """P1-10：保持默认值的合法最小形态不得被兜底校验拦（此前 _PARAM_SCHEMAS 全项当必填）。"""
+        # waitMs（全可选）、stopSceneAmbient（全可选）、giveItem（仅 id 必填，count/critical 可选）
+        issues = validate_narrative_graphs({
+            "schemaVersion": 3,
+            "signals": [{"id": "go"}],
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow",
+                        "ownerType": "flow",
+                        "initialState": "a",
+                        "states": {
+                            "a": {"id": "a"},
+                            "b": {
+                                "id": "b",
+                                "onEnterActions": [
+                                    {"type": "waitMs", "params": {}},
+                                    {"type": "stopSceneAmbient", "params": {}},
+                                    {"type": "giveItem", "params": {"id": "item_x"}},
+                                    {"type": "showEmote", "params": {"target": "npc_a", "emote": "happy"}},
+                                ],
+                            },
+                        },
+                        "transitions": [{"id": "t", "from": "a", "to": "b", "signal": "go"}],
+                    },
+                    "elements": [],
+                }
+            ],
+        })
+        missing = [i for i in issues if i.get("code") == "action.param.missing"]
+        self.assertEqual(missing, [], f"合法最小形态被误报缺参：{missing}")
+
+    def test_validate_still_flags_true_missing_required(self) -> None:
+        """真缺必填仍要拦：giveItem 缺 id、emitNarrativeSignal 缺 signal。"""
+        issues = validate_narrative_graphs({
+            "schemaVersion": 3,
+            "signals": [{"id": "go"}],
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow",
+                        "ownerType": "flow",
+                        "initialState": "a",
+                        "states": {
+                            "a": {"id": "a"},
+                            "b": {
+                                "id": "b",
+                                "onEnterActions": [
+                                    {"type": "giveItem", "params": {}},
+                                    {"type": "emitNarrativeSignal", "params": {"signal": "  "}},
+                                ],
+                            },
+                        },
+                        "transitions": [{"id": "t", "from": "a", "to": "b", "signal": "go"}],
+                    },
+                    "elements": [],
+                }
+            ],
+        })
+        codes = [(i.get("code"), i.get("path")) for i in issues if i.get("code") == "action.param.missing"]
+        self.assertTrue(any("giveItem" not in str(p) or "id" in str(p) for _, p in codes))
+        self.assertTrue(len(codes) >= 2, f"应拦下 giveItem.id 与 emitNarrativeSignal.signal：{codes}")
+
+
+class TestNarrativeAppearance(unittest.TestCase):
+    def test_host_font_tokens_update_css_without_touching_model(self) -> None:
+        class FakePage:
+            scripts: list[str] = []
+
+            def runJavaScript(self, script: str) -> None:
+                self.scripts.append(script)
+
+        class FakeView:
+            _page = FakePage()
+
+            def page(self) -> FakePage:
+                return self._page
+
+        class FakeModel:
+            dirty_calls = 0
+
+            def mark_dirty(self, _bucket: str) -> None:
+                self.dirty_calls += 1
+
+        class FakeEditor:
+            _view = FakeView()
+            _model = FakeModel()
+
+        editor = FakeEditor()
+        tokens = {"--editor-host-font-delta": "7px", "--editor-host-font-12": "19px"}
+        with patch.object(theme, "web_font_css_tokens", return_value=tokens):
+            NarrativeStateEditor._apply_web_font_tokens(editor)  # type: ignore[arg-type]
+        script = editor._view._page.scripts[-1]
+        self.assertIn("--editor-host-font-delta", script)
+        self.assertIn("--editor-host-font-12", script)
+        self.assertEqual(editor._model.dirty_calls, 0)
+
+    def test_placeholder_font_comes_from_host_css_variable(self) -> None:
+        page = _placeholder_html("<not built>")
+        expected = theme.css_font_px(theme.FONT_ROLE_PROMINENT, theme.DEFAULT_FONT_PX)
+        self.assertIn(f"var(--editor-host-font-prominent,{expected})", page)
+        self.assertIn("&lt;not built&gt;", page)
+
+    def test_web_font_tokens_add_global_delta_without_page_zoom(self) -> None:
+        large = theme.web_font_css_tokens(theme.MAX_FONT_PX)
+        small = theme.web_font_css_tokens(theme.MIN_FONT_PX)
+        self.assertEqual(large["--editor-host-font-delta"], "7px")
+        self.assertEqual(large["--editor-host-font-12"], "19px")
+        self.assertEqual(small["--editor-host-font-delta"], "-4px")
+        self.assertEqual(small["--editor-host-font-9"], "7px")
 
 
 class TestWebBuildStaleness(unittest.TestCase):
@@ -1061,6 +1242,181 @@ class TestLoadedPageStalenessBanner(unittest.TestCase):
                 patch(f"{N}._current_dist_mtime", return_value=2000.0):
             ed._refresh_staleness_banner()
         self.assertTrue(ed._staleness_banner.isHidden())
+
+
+class TestReview20260717Regressions(unittest.TestCase):
+    """2026-07-17 审查修复回归（artifact/Reviews/叙事状态机全面审查-2026-07-17.md P-F1/F2/F4/F5/F6）。"""
+
+    @staticmethod
+    def _file_with_transition(conditions=None, states=None, transitions=None, elements=None):
+        return {
+            "schemaVersion": 3,
+            "signals": [{"id": "go", "label": "go"}],
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "flow",
+                        "ownerType": "flow",
+                        "initialState": "a",
+                        "states": states or {"a": {"id": "a"}, "b": {"id": "b"}},
+                        "transitions": transitions if transitions is not None else [
+                            {"id": "t", "from": "a", "to": "b", "signal": "go",
+                             **({"conditions": conditions} if conditions else {})},
+                        ],
+                    },
+                    "elements": elements or [],
+                }
+            ],
+        }
+
+    def _bridge(self, td: str) -> tuple[NarrativeEditorBridge, ProjectModel]:
+        root = Path(td) / "p"
+        write_minimal_loadable_project(root)
+        m = ProjectModel()
+        m.load_project(root)
+        return NarrativeEditorBridge(m), m
+
+    def test_bridge_save_accepts_plane_condition_leaf(self) -> None:
+        """P-F1：plane 是第 6 类合法条件叶子，Python 兜底不得拦（曾拦=比 TS 严红线再犯）。"""
+        with TemporaryDirectory() as td:
+            bridge, m = self._bridge(td)
+            result = bridge.saveData(json.dumps(self._file_with_transition(conditions=[{"plane": "yin"}])))
+            self.assertEqual(result, "saved to ProjectModel")
+            self.assertTrue(m.is_dirty)
+
+    def test_bridge_save_accepts_bare_quest_scenario_leaves(self) -> None:
+        """P-F1 同族：quest/scenario/scenarioLine 缺伴随字段时 TS 静默容忍，Python 不得报 error。"""
+        with TemporaryDirectory() as td:
+            bridge, _ = self._bridge(td)
+            result = bridge.saveData(json.dumps(self._file_with_transition(conditions=[
+                {"quest": "q1"},
+                {"scenario": "s1", "phase": "p"},
+                {"scenarioLine": "l1"},
+            ])))
+            self.assertEqual(result, "saved to ProjectModel")
+
+    def test_normalize_never_auto_marks_broadcast_and_validation_reports(self) -> None:
+        """P-F2：normalize 不代写 broadcastOnEnter（2026-07-16 拍板对齐 web 侧）；
+        监听未广播状态 = state.broadcast.missing error 拦保存，而不是被静默"修好"。"""
+        data = {
+            "schemaVersion": 3,
+            "signals": [],
+            "compositions": [
+                {
+                    "id": "comp",
+                    "mainGraph": {
+                        "id": "M",
+                        "ownerType": "flow",
+                        "initialState": "m0",
+                        "states": {"m0": {"id": "m0"}, "m1": {"id": "m1"}},
+                        "transitions": [{"id": "t", "from": "m0", "to": "m1", "signal": "state:W:w1"}],
+                    },
+                    "elements": [
+                        {
+                            "id": "el_w",
+                            "kind": "wrapperGraph",
+                            "ownerType": "npc",
+                            "ownerId": "npc_1",
+                            "graph": {
+                                "id": "W",
+                                "ownerType": "npc",
+                                "ownerId": "npc_1",
+                                "initialState": "w0",
+                                "states": {"w0": {"id": "w0"}, "w1": {"id": "w1"}},
+                                "transitions": [{"id": "t", "from": "w0", "to": "w1", "signal": "go_w"}],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        from tools.editor.editors.narrative_state_editor import _normalize_file
+
+        normalized = _normalize_file(data)
+        w_states = normalized["compositions"][0]["elements"][0]["graph"]["states"]
+        self.assertNotIn("broadcastOnEnter", w_states["w1"])  # normalize 绝不代写
+        issues = validate_narrative_graphs(normalized)
+        self.assertTrue(any(i.get("code") == "state.broadcast.missing" and i.get("severity") == "error" for i in issues))
+        with TemporaryDirectory() as td:
+            bridge, m = self._bridge(td)
+            before = m.narrative_graphs
+            result = bridge.saveData(json.dumps(data))
+            self.assertIn("save blocked", result)
+            self.assertEqual(m.narrative_graphs, before)
+
+    def test_save_templates_rejects_duplicate_ids_instead_of_silent_drop(self) -> None:
+        """P-F5：重复模板 id 必须被 template.id.duplicate 拦下，不得归一去重后静默丢第二份还返回 ok。"""
+        with TemporaryDirectory() as td:
+            bridge, m = self._bridge(td)
+            tpl = {
+                "id": "tpl_a",
+                "label": "A",
+                "params": [{"name": "taskId", "label": "任务", "kind": "identifier"}],
+                "composition": {"id": "flow_{{taskId}}", "mainGraph": {"id": "flow_{{taskId}}", "ownerType": "flow", "initialState": "a", "states": {"a": {"id": "a"}}, "transitions": []}, "elements": []},
+            }
+            result = json.loads(bridge.saveTemplates(json.dumps({"templates": [tpl, dict(tpl)]})))
+            self.assertFalse(result.get("ok"))
+            self.assertIn("重复", str(result.get("reason", "")))
+            self.assertFalse(m.is_dirty)
+
+    def test_bridge_save_survives_garbage_schema_version(self) -> None:
+        """P-F6：垃圾 schemaVersion 不得让 Qt slot 抛异常返回空串（网页会把空串当保存成功）。"""
+        with TemporaryDirectory() as td:
+            bridge, _ = self._bridge(td)
+            payload = self._file_with_transition()
+            payload["schemaVersion"] = "abc"
+            result = bridge.saveData(json.dumps(payload))
+            self.assertTrue(result)  # 绝不空串
+            self.assertNotEqual(result.strip(), "")
+
+    def test_bridge_save_rejects_unknown_active_plane_and_accepts_known(self) -> None:
+        """P-F4：activePlane 引用不存在位面 = error 拦保存（与 TS state.activePlane.unknown 对齐）。"""
+        with TemporaryDirectory() as td:
+            bridge, m = self._bridge(td)
+            m.planes = [{"id": "normal"}, {"id": "yin"}]
+            bad = self._file_with_transition(states={"a": {"id": "a"}, "b": {"id": "b", "activePlane": "nope"}})
+            result = bridge.saveData(json.dumps(bad))
+            self.assertIn("save blocked", result)
+            good = self._file_with_transition(states={"a": {"id": "a"}, "b": {"id": "b", "activePlane": "yin"}})
+            self.assertEqual(bridge.saveData(json.dumps(good)), "saved to ProjectModel")
+
+    def test_active_plane_shape_error_matches_ts(self) -> None:
+        """P-F4：activePlane 非空字符串形状检查（state.activePlane.invalid，文件本地即查）。"""
+        bad = self._file_with_transition(states={"a": {"id": "a"}, "b": {"id": "b", "activePlane": "  "}})
+        issues = validate_narrative_graphs(bad)
+        self.assertTrue(any(i.get("code") == "state.activePlane.invalid" and i.get("severity") == "error" for i in issues))
+
+    def test_scenario_subgraph_missing_graph_is_not_python_error(self) -> None:
+        """P-F8 对齐：scenarioSubgraph 缺 graph TS 无 issue，Python 兜底不得报 error。"""
+        data = self._file_with_transition(elements=[
+            {"id": "el_s", "kind": "scenarioSubgraph", "refId": "sc_1"},
+        ])
+        issues = validate_narrative_graphs(data)
+        self.assertFalse(any(i.get("code") == "element.graph.missing" for i in issues))
+
+    def test_reserved_prefix_emit_action_is_error(self) -> None:
+        """W5：emitNarrativeSignal 参数用 state:/__draft__ 保留前缀 = error 拦保存（伪造派生广播）。"""
+        data = self._file_with_transition(states={
+            "a": {"id": "a"},
+            "b": {"id": "b", "onEnterActions": [
+                {"type": "emitNarrativeSignal", "params": {"signal": "state:flow:b"}},
+            ]},
+        })
+        issues = validate_narrative_graphs(data)
+        self.assertTrue(any(i.get("code") == "action.signal.reserved" and i.get("severity") == "error" for i in issues))
+
+    def test_wrapper_empty_owner_type_no_phantom_warning(self) -> None:
+        """P-F9 对齐：wrapper ownerType 为空时 TS 跳过，Python 不得报幻影 warning。"""
+        data = self._file_with_transition(elements=[
+            {
+                "id": "el_w", "kind": "wrapperGraph", "ownerId": "npc_1",
+                "graph": {"id": "W2", "ownerType": "npc", "ownerId": "npc_1", "initialState": "w0",
+                          "states": {"w0": {"id": "w0"}}, "transitions": []},
+            },
+        ])
+        issues = validate_narrative_graphs(data)
+        self.assertFalse(any(i.get("code") == "wrapper.ownerType.unsupported" for i in issues))
 
 
 if __name__ == "__main__":

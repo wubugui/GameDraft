@@ -62,6 +62,12 @@ export class Hotspot {
     this._syncEntitySortBand();
   }
 
+  /** EventBus 调试 trace 投影：只吐可序列化关键数据，绝不暴露 `container`（活 PIXI 对象图，
+   *  深拷贝会顺 parent/children 摊开整个场景）或 `def` 全量。见 EventBus.canonicalizeTraceValue。 */
+  toTraceJSON(): { id: string; type: HotspotDef['type']; active: boolean } {
+    return { id: this.def.id, type: this.def.type, active: this._active };
+  }
+
   /** 与 Renderer.sortEntityLayer 配合：仅在有展示图且配置了 spriteSort 时标记容器 */
   private _syncEntitySortBand(): void {
     const c = this.container as Container & {

@@ -14,7 +14,7 @@ func _run() -> void:
 	var narrative := RuntimeNarrativeStateManager.new(bus, flags, executor)
 	narrative.init({"eventBus": bus, "flagStore": flags, "strings": null, "assetManager": null})
 	narrative.set_condition_eval_context_factory(func() -> Dictionary:
-		return {"evaluateList": Callable(self, "_evaluate_list")}
+		return {"flagStore": flags, "narrativeState": narrative}
 	)
 	var flow := {"id": "flow", "ownerType": "flow", "initialState": "a", "states": {
 		"a": {"id": "a"}, "b": {"id": "b"}, "c": {"id": "c"},
@@ -24,7 +24,7 @@ func _run() -> void:
 	var owner_a := {"id": "owner_a", "ownerType": "npc", "ownerId": "same", "initialState": "idle", "states": {"idle": {"id": "idle"}}, "transitions": []}
 	var owner_b := {"id": "owner_b", "ownerType": "npc", "ownerId": "same", "initialState": "idle", "states": {"idle": {"id": "idle"}}, "transitions": []}
 	narrative.register_graphs([flow, owner_a, owner_b, owner_b.duplicate(true), {"id": "invalid", "initialState": "missing", "states": {}, "transitions": []}])
-	assert(narrative.graph_count() == 3)
+	assert(narrative.get_graphs().size() == 3)
 	assert(narrative.classify_state_ref("flow", "a") == "ok")
 	assert(narrative.classify_state_ref("missing", "a") == "missingGraph")
 	assert(narrative.classify_state_ref("flow", "missing") == "missingState")
@@ -85,13 +85,9 @@ func _run() -> void:
 	assert(narrative.get_active_state("flow") == "c")
 	assert(narrative.has_reached_state("flow", "b") and narrative.has_reached_state("flow", "c"))
 
-	assert(bus.listener_count("flag:changed") == 1)
+	assert(EventBusProbe.listener_count(bus, "flag:changed") == 1)
 	narrative.destroy(); narrative.free()
-	assert(bus.listener_count("flag:changed") == 0)
+	assert(EventBusProbe.listener_count(bus, "flag:changed") == 0)
 	executor.destroy(); flags.destroy(); bus.clear()
 	print("Narrative owner/reached/save contract test: PASS")
 	get_tree().quit(0)
-
-
-func _evaluate_list(conditions: Array) -> bool:
-	return flags.eval_pure_flag_conjunction(conditions)

@@ -140,7 +140,10 @@ class PaperCraftEditor(QWidget):
         self.instance_label_edit.setToolTip(
             "实例显示名（同步写入 index 与实例文件；运行时小游戏列表据此显示）"
         )
-        self.instance_label_edit.editingFinished.connect(self._write_instance_meta)
+        # textChanged 即时写模型（P1-05）：editingFinished 在"打完字直接 Ctrl+S/关窗"
+        # 或菜单弹出（PopupFocusReason 不发失焦）时不触发，编辑会静默丢；
+        # 全文件行内 QLineEdit 同规（照 sugar/water 样板）。
+        self.instance_label_edit.textChanged.connect(self._write_instance_meta)
         self.instance_bg = CutsceneImagePathRow(
             self._model, "", external_copy_subdir="paper_craft",
         )
@@ -164,7 +167,7 @@ class PaperCraftEditor(QWidget):
         self.order_combo.setMaximumHeight(120)
         self.order_title = QLineEdit()
         self.order_title.setMaximumWidth(240)  # 短标题：上限而非下限，小屏可缩、大屏不拉满
-        self.order_title.editingFinished.connect(self._write_order)
+        self.order_title.textChanged.connect(self._write_order)
         self.order_desc = QTextEdit()
         # 长文本：去掉宽度下限，跟随列宽伸缩（小屏可缩、大屏占满宽行）
         self.order_desc.setMinimumHeight(56)
@@ -223,14 +226,14 @@ class PaperCraftEditor(QWidget):
         )
         self.part_combo.setMaximumHeight(110)
         self.part_label = QLineEdit()
-        self.part_label.editingFinished.connect(self._write_part)
+        self.part_label.textChanged.connect(self._write_part)
         self.part_score = QSpinBox()
         self.part_score.setRange(-999, 999)
         self.part_score.valueChanged.connect(self._write_part)
         self.part_tags = QLineEdit()
         self.part_tags.setPlaceholderText("逗号分隔，如：点眼犯忌, 红白相冲")
         self.part_tags.setMaximumWidth(240)  # 上限而非下限，小屏可缩
-        self.part_tags.editingFinished.connect(self._write_part)
+        self.part_tags.textChanged.connect(self._write_part)
         self.part_image = CutsceneImagePathRow(
             self._model, "", external_copy_subdir="paper_craft",
         )
@@ -269,7 +272,7 @@ class PaperCraftEditor(QWidget):
         )
         self.slot_combo.setMaximumHeight(110)
         self.slot_label = QLineEdit()
-        self.slot_label.editingFinished.connect(self._write_slot)
+        self.slot_label.textChanged.connect(self._write_slot)
         self.slot_optional = QCheckBox("可不放")
         self.slot_optional.stateChanged.connect(self._write_slot)
         self.slot_x = self._spin()
@@ -301,7 +304,7 @@ class PaperCraftEditor(QWidget):
         )
         self.paper_combo.setMaximumHeight(110)
         self.paper_label = QLineEdit()
-        self.paper_label.editingFinished.connect(self._write_paper)
+        self.paper_label.textChanged.connect(self._write_paper)
         self.paper_score = QSpinBox()
         self.paper_score.setRange(-999, 999)
         self.paper_score.valueChanged.connect(self._write_paper)
@@ -310,7 +313,7 @@ class PaperCraftEditor(QWidget):
         self.paper_tags = QLineEdit()
         self.paper_tags.setPlaceholderText("逗号分隔，如：红白相冲, 纸色不合")
         self.paper_tags.setMaximumWidth(240)  # 上限而非下限，小屏可缩
-        self.paper_tags.editingFinished.connect(self._write_paper)
+        self.paper_tags.textChanged.connect(self._write_paper)
         paper_form.addRow("纸色列表", self._list_with_tools(self.paper_combo))
         paper_form.addRow("显示名", self.paper_label)
         paper_form.addRow("分数", self.paper_score)
@@ -328,13 +331,13 @@ class PaperCraftEditor(QWidget):
         )
         self.finish_combo.setMaximumHeight(110)
         self.finish_label = QLineEdit()
-        self.finish_label.editingFinished.connect(self._write_finish)
+        self.finish_label.textChanged.connect(self._write_finish)
         self.finish_score = QSpinBox()
         self.finish_score.setRange(-999, 999)
         self.finish_score.valueChanged.connect(self._write_finish)
         self.finish_tags = QLineEdit()
         self.finish_tags.setMaximumWidth(240)  # 上限而非下限，小屏可缩
-        self.finish_tags.editingFinished.connect(self._write_finish)
+        self.finish_tags.textChanged.connect(self._write_finish)
         finish_form.addRow("收尾列表", self._list_with_tools(self.finish_combo))
         finish_form.addRow("显示名", self.finish_label)
         finish_form.addRow("分数", self.finish_score)
@@ -412,15 +415,41 @@ class PaperCraftEditor(QWidget):
         else:
             self._select_instance()
 
-    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
         iid = (item_id or "").strip()
         if not iid:
-            return
+            return False
         for r in range(self.instance_list.count()):
             it = self.instance_list.item(r)
             if it is not None and str(it.data(Qt.ItemDataRole.UserRole) or "") == iid:
                 self.instance_list.setCurrentRow(r)
-                return
+                return True
+        return False
+
+    # ── 主窗鸭子协议钩子（P1-05：此前全缺，Save All/关窗静默跳过本编辑器）──────
+    def flush_to_model(self) -> bool:
+        """Save All / 关窗前钩子。本编辑器所有行内控件均已 textChanged/valueChanged
+        即时写模型（无懒回写暂存），此处无待收取内容；不做无条件 mark_dirty（否则
+        零编辑也伪脏、每次保存都重写扎纸文件）。返回 True 表示可保存。"""
+        return True
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        """关闭门控：编辑即时入模型、无未应用暂存 → 恒可关（Discard 无需中和）。"""
+        del parent
+        return True
+
+    def reload_refs_from_model(self) -> None:
+        """主窗切页激活时：强制重建内部 ActionEditor 的行以重拉跨域引用候选
+        （item/flag/quest 等在别处新增后不切页看不见）。ActionEditor.set_project_context
+        在 model 相同（本编辑器恒相同）时短路，故用 set_data(to_list()) 原值重建，
+        内容不变、不触发 changed/_fb_dirty，不重置其它表单字段。"""
+        prev = self._syncing
+        self._syncing = True
+        try:
+            for ae in (self.ae_success, self.ae_warn, self.ae_bad):
+                ae.set_data(ae.to_list())
+        finally:
+            self._syncing = prev
 
     def _spin(self) -> QSpinBox:
         sp = QSpinBox()
@@ -839,7 +868,7 @@ class PaperCraftEditor(QWidget):
     def _instance_background_image(self) -> str:
         """实例级可选底图 URL（运行时 PaperCraftMinigameScene 读取 backgroundImage 绘制纸人底图）。
 
-        缺省时返回空串，画布退回中性背板（按槽位外接框定尺寸），不向 JSON 写入该字段。
+        缺省时返回空串，画布退回中性背板（固定 560×410 工作台尺寸），不向 JSON 写入该字段。
         """
         return str((self._doc or {}).get("backgroundImage") or "")
 

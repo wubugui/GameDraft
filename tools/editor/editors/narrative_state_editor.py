@@ -40,6 +40,7 @@ except ImportError:  # pragma: no cover - depends on local Qt install
     _NarrativeWebView = None  # type: ignore[assignment,misc]
 
 from ..project_model import ProjectModel
+from .. import theme
 from ..shared.dialog_geometry import remember_dialog_geometry
 from .narrative_anchor_codec import transition_anchor_id
 
@@ -74,27 +75,6 @@ def _parse_derived_state_signal(signal: str) -> tuple[str, str] | None:
 
 def _state_broadcast_on_enter(state: Any) -> bool:
     return isinstance(state, dict) and state.get("broadcastOnEnter") is True
-
-
-def _apply_derived_broadcast_auto_mark(data: dict[str, Any]) -> None:
-    graph_index = _build_graph_index(data)
-    for graph in graph_index.values():
-        transitions = graph.get("transitions")
-        if not isinstance(transitions, list):
-            continue
-        for transition in transitions:
-            if not isinstance(transition, dict):
-                continue
-            parsed = _parse_derived_state_signal(str(transition.get("signal", "")).strip())
-            if not parsed:
-                continue
-            source_graph = graph_index.get(parsed[0])
-            states = source_graph.get("states") if isinstance(source_graph, dict) else None
-            if not isinstance(states, dict):
-                continue
-            state = states.get(parsed[1])
-            if isinstance(state, dict):
-                state["broadcastOnEnter"] = True
 
 
 def _migrate_legacy_signal_key(raw: str) -> str:
@@ -162,11 +142,20 @@ def _migrate_narrative_signals_v3(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _coerce_schema_version(raw: Any) -> int:
+    """垃圾 schemaVersion（非数值字符串/对象）按 0 处理走迁移，绝不抛——
+    saveData 的 Qt slot 抛异常会返回空串，被网页 `result || 'saved'` 误判为保存成功。"""
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _normalize_file(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return _clone(EMPTY_NARRATIVE_GRAPHS)
     out = _clone(value)
-    if int(out.get("schemaVersion", 0) or 0) < NARRATIVE_SCHEMA_VERSION:
+    if _coerce_schema_version(out.get("schemaVersion", 0)) < NARRATIVE_SCHEMA_VERSION:
         out = _migrate_narrative_signals_v3(out)
     out["schemaVersion"] = NARRATIVE_SCHEMA_VERSION
     if not isinstance(out.get("signals"), list):
@@ -175,7 +164,9 @@ def _normalize_file(value: Any) -> dict[str, Any]:
     if not isinstance(comps, list):
         out["compositions"] = []
     _normalize_reactive_triggers(out)
-    _apply_derived_broadcast_auto_mark(out)
+    # 注意：这里刻意没有 broadcastOnEnter 的 auto-mark。2026-07-16 拍板"编辑器不代写数据"
+    # 已在 web 侧删除同款逻辑（editorModel normalizeFile），Python 侧必须对齐——
+    # 监听了未广播状态的数据由校验 state.broadcast.missing（error）交用户在状态面板手勾。
     return out
 
 
@@ -362,7 +353,75 @@ def validate_project_context(data: dict[str, Any], model: ProjectModel) -> list[
 
     Structural narrative graph validation is owned by src/core/narrativeGraphValidation.ts.
     """
-    return validate_external_state_command_targets(data, model)
+    return validate_external_state_command_targets(data, model) + _validate_active_plane_refs(data, model)
+
+
+def _validate_active_plane_refs(data: dict[str, Any], model: ProjectModel) -> list[dict[str, Any]]:
+    """activePlane 引用存在性（与 TS 权威 state.activePlane.unknown 同口径，error）。
+
+    TS 侧由网页把 planes.json 目录喂给 validateNarrativeGraphData(opts.planeIds)；
+    agent/脚本直写 ProjectModel 只经本兜底——缺这道检查会把坏位面接线落盘，
+    运行时 PlaneReconciler 静默降级、玩法坏而无声（2026-07-17 审查 P-F4）。
+    planes.json 缺失/为空时跳过（与 TS 不传 planeIds 即跳过同语义）。
+    """
+    try:
+        plane_ids = {pid for pid, _ in model.all_plane_ids()}
+    except Exception:
+        return []
+    if not plane_ids:
+        return []
+    issues: list[dict[str, Any]] = []
+    for comp in data.get("compositions", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        cid = str(comp.get("id", "")).strip()
+        candidates: list[tuple[str, dict[str, Any]]] = []
+        main = comp.get("mainGraph")
+        if isinstance(main, dict):
+            candidates.append(("", main))
+        for el in comp.get("elements", []) or []:
+            if isinstance(el, dict) and isinstance(el.get("graph"), dict):
+                candidates.append((str(el.get("id", "")).strip(), el["graph"]))
+        for element_id, graph in candidates:
+            gid = str(graph.get("id", "")).strip()
+            states = graph.get("states")
+            if not isinstance(states, dict):
+                continue
+            for sid, state in states.items():
+                if not isinstance(state, dict):
+                    continue
+                active_plane = state.get("activePlane")
+                if not isinstance(active_plane, str) or not active_plane.strip():
+                    continue  # 形状问题由 _validate_graph 报 state.activePlane.invalid
+                if active_plane.strip() not in plane_ids:
+                    target: dict[str, Any] = {"kind": "state", "compositionId": cid, "graphId": gid, "stateId": str(sid), "field": "activePlane"}
+                    if element_id:
+                        target["elementId"] = element_id
+                    issues.append({
+                        "severity": "error",
+                        "code": "state.activePlane.unknown",
+                        "message": f"{gid}.{sid}: activePlane 引用不存在的位面: {active_plane.strip()}",
+                        "path": f"{gid}.states.{sid}.activePlane",
+                        "itemId": str(sid),
+                        "target": target,
+                    })
+    return issues
+
+
+class _NarrativeDraftProxy:
+    """只读扫描代理：narrative_graphs 用传入的画布草稿，其余属性委托真实模型。
+
+    用于重构「预览计数」按当前画布草稿计（复核 P3）——扫描是只读的，绝不能因预览就把
+    草稿并进真实 model.narrative_graphs 并标脏（那会污染保存路径）。scan_* 只读取属性，
+    不调用 mark_dirty，故委托安全。
+    """
+
+    def __init__(self, base: ProjectModel, narrative: dict[str, Any]) -> None:
+        object.__setattr__(self, "_base", base)
+        object.__setattr__(self, "narrative_graphs", narrative)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(object.__getattribute__(self, "_base"), name)
 
 
 class NarrativeEditorBridge(QObject):
@@ -384,8 +443,12 @@ class NarrativeEditorBridge(QObject):
             return f"invalid json: {exc}"
         if not isinstance(parsed, dict):
             return "invalid narrative data: root must be an object"
-        normalized = _normalize_file(parsed)
-        errors = _validation_errors_for_save(normalized, self._model)
+        try:
+            normalized = _normalize_file(parsed)
+            errors = _validation_errors_for_save(normalized, self._model)
+        except Exception as exc:  # fail-safe 不 fail-open：Qt slot 抛异常会返回空串，
+            # 而网页 `result || 'saved'` 会把空串当保存成功（实际模型未更新）。
+            return f"save blocked: internal error: {exc}"
         if errors:
             return f"save blocked: {len(errors)} validation error(s)"
         self._model.narrative_graphs = normalized
@@ -418,13 +481,39 @@ class NarrativeEditorBridge(QObject):
     # --------------------------------------------------------------------- #
     # 信号重构（改名 / 删除）：全项目级联，零磁盘写入，落盘只经主编辑器 Save All。
     # --------------------------------------------------------------------- #
+    def _scan_model_with_optional_draft(self, arg: str) -> tuple[ProjectModel, dict[str, Any]]:
+        """扫描入参解析：arg 可能是裸 id（老格式）或 JSON `{..., data}`（带当前画布草稿）。
+
+        带 data 时（重构预览计数并入画布现状，复核 P3）在临时模型上扫，绝不改真实模型
+        （扫描是只读预览，不得因预览就把草稿并进 narrative_graphs 并标脏）。返回
+        (要扫的 model, 解析出的额外参数 dict)。data 非法/缺省时回落真实模型。
+        """
+        text = str(arg or "")
+        stripped = text.strip()
+        if stripped.startswith("{"):
+            try:
+                req = json.loads(stripped)
+            except Exception:
+                req = None
+            if isinstance(req, dict):
+                data = req.get("data")
+                if isinstance(data, dict):
+                    return _NarrativeDraftProxy(self._model, _normalize_file(data)), req
+                return self._model, req
+        return self._model, {"__raw__": text}
+
     @Slot(str, result=str)
     def scanSignalUsages(self, signal_id: str) -> str:  # noqa: N802 - Qt slot name
-        """一个作者信号的全项目使用点清单（重构预览），只读不改。"""
+        """一个作者信号的全项目使用点清单（重构预览），只读不改。
+
+        入参兼容裸 signalId 与 JSON `{signalId, data}`（data=当前画布草稿，复核 P3）。
+        """
         from ..shared.signal_refactor import scan_signal_usages
 
         try:
-            usages = scan_signal_usages(self._model, signal_id)
+            model, req = self._scan_model_with_optional_draft(signal_id)
+            sid = req.get("signalId") if "signalId" in req else req.get("__raw__", signal_id)
+            usages = scan_signal_usages(model, str(sid or ""))
             return json.dumps({"ok": True, "usages": usages}, ensure_ascii=False)
         except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
             return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
@@ -434,7 +523,10 @@ class NarrativeEditorBridge(QObject):
         from ..shared.signal_refactor import scan_state_usages
 
         try:
-            return json.dumps({"ok": True, "usages": scan_state_usages(self._model, graph_id, state_id)}, ensure_ascii=False)
+            model, req = self._scan_model_with_optional_draft(graph_id)
+            gid = req.get("graphId") if "graphId" in req else req.get("__raw__", graph_id)
+            sid = req.get("stateId", state_id)
+            return json.dumps({"ok": True, "usages": scan_state_usages(model, str(gid or ""), str(sid or ""))}, ensure_ascii=False)
         except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
             return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
 
@@ -443,7 +535,9 @@ class NarrativeEditorBridge(QObject):
         from ..shared.signal_refactor import scan_graph_usages
 
         try:
-            return json.dumps({"ok": True, "usages": scan_graph_usages(self._model, graph_id)}, ensure_ascii=False)
+            model, req = self._scan_model_with_optional_draft(graph_id)
+            gid = req.get("graphId") if "graphId" in req else req.get("__raw__", graph_id)
+            return json.dumps({"ok": True, "usages": scan_graph_usages(model, str(gid or ""))}, ensure_ascii=False)
         except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
             return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
 
@@ -538,6 +632,19 @@ class NarrativeEditorBridge(QObject):
             result["narrative"] = _normalize_file(self._model.narrative_graphs)
         return json.dumps(result, ensure_ascii=False)
 
+    @Slot(result=str)
+    def getRefactorJournalSize(self) -> str:  # noqa: N802 - Qt slot name
+        """当前重构撤销日志长度：页面（重）加载后据此恢复「撤销重构(n)」入口（复核 P3）。
+
+        日志挂在 ProjectModel 上、跨 web 页面加载存活，此前重载即丢失撤销入口。
+        """
+        from ..shared.signal_refactor import journal_size
+
+        try:
+            return json.dumps({"ok": True, "size": journal_size(self._model)}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
+            return json.dumps({"ok": False, "size": 0, "reason": str(exc)}, ensure_ascii=False)
+
     # --------------------------------------------------------------------- #
     # 叙事状态机模板（archetype）：编辑器专用，运行时永不加载。
     # --------------------------------------------------------------------- #
@@ -557,11 +664,13 @@ class NarrativeEditorBridge(QObject):
             parsed = json.loads(payload or "{}")
         except Exception as exc:
             return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
-        normalized = normalize_templates_file(parsed)
-        errors = [i for i in validate_templates_file(normalized) if i.get("severity") == "error"]
+        # 先对归一化前的原始输入校验：撞名检测（template.id.duplicate）设计上必须扫原始输入，
+        # 归一化会先去重——旧写法"先归一后校验"使重复模板 id 永远查不出、第二份静默丢失还返回 ok。
+        errors = [i for i in validate_templates_file(parsed) if i.get("severity") == "error"]
         if errors:
             preview = "; ".join(str(e.get("message")) for e in errors[:4])
             return json.dumps({"ok": False, "reason": f"{len(errors)} 条错误：{preview}", "errors": errors}, ensure_ascii=False)
+        normalized = normalize_templates_file(parsed)
         self._model.narrative_templates = normalized
         self._model.mark_dirty("narrative_templates")
         return json.dumps({"ok": True, "templates": normalized}, ensure_ascii=False)
@@ -1128,6 +1237,7 @@ class NarrativeStateEditor(QWidget):
 
         self._view = _NarrativeWebView(self)
         self._view.setContextMenuPolicy(no_menu)
+        self._view.loadFinished.connect(self._on_web_load_finished)
         self._view.setMinimumSize(0, 0)
         self._view.setSizePolicy(
             QSizePolicy.Policy.Ignored,
@@ -1279,9 +1389,29 @@ class NarrativeStateEditor(QWidget):
             f"{_WEB_REBUILD_CMD} 失败（退出码 {code}）：\n\n{detail}",
         )
 
+    def _apply_web_font_tokens(self) -> None:
+        if self._view is None:
+            return
+        payload = json.dumps(theme.web_font_css_tokens(), ensure_ascii=True)
+        self._view.page().runJavaScript(
+            "(function(tokens){const root=document.documentElement;"
+            "if(!root)return false;"
+            "for(const [key,value] of Object.entries(tokens)){root.style.setProperty(key,value);}"
+            f"return true;}})({payload})",
+        )
+
+    def _on_web_load_finished(self, ok: bool) -> None:
+        if ok:
+            self._apply_web_font_tokens()
+
+    def on_editor_theme_changed(self, _theme_id: str) -> None:
+        self._apply_web_font_tokens()
+
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._refresh_staleness_banner()
+        # 切到本页时顺手保鲜:dist 变新且无草稿 → 静默载入最新页面(有草稿只亮黄条)
+        self._auto_reload_if_stale()
 
     def _toolbar_save(self) -> None:
         self.flush_to_model()
@@ -1304,35 +1434,126 @@ class NarrativeStateEditor(QWidget):
             return
         self._load_web_editor()
 
-    def focus_state(self, graph_id: str, state_id: str) -> bool:
-        """外部跳转入口（位面面板 hub 等）：让 web 编辑器切编排并聚焦指定状态。
+    def _auto_reload_if_stale(self) -> bool:
+        """dist 比已加载页面新、且 Web 侧无未保存草稿时,静默重载最新页面。
 
-        经 window.__narrativeEditor.focusState 定位（旧 dist 无此 API 时返回 False）。
-        """
-        gid = str(graph_id or "").strip()
-        sid = str(state_id or "").strip()
-        if not gid or not sid or self._view is None:
+        目的:堵"重建了网页 bundle 但编辑器进程还载着旧页,跳转/新功能落不下去"
+        这族问题。有草稿绝不自动动(交给顶栏黄条和手动「刷新页面」,
+        不在导航路径上弹任何窗)。返回是否触发了重载。"""
+        if self._view is None:
             return False
-        code = (
+        try:
+            if bool(os.environ.get(NARRATIVE_EDITOR_DEV_URL_ENV, "").strip()):
+                return False  # dev server 模式自带热更,不掺和
+            cur = _current_dist_mtime()
+            loaded = self._loaded_dist_mtime
+            if cur is None or loaded is None or cur <= loaded:
+                return False
+            # fail-safe（复核 P2）：只有「确定干净」才自动重载。脏或脏态未知（JS 超时/
+            # 页面未就绪）一律不动——交给顶栏黄条与手动「刷新页面」，绝不在导航路径上
+            # 悄悄丢草稿。
+            if self._web_editor_dirty_state() is not False:
+                return False
+        except Exception:
+            return False
+        self._toolbar_reload_page()
+        self._refresh_staleness_banner()
+        return True
+
+    @staticmethod
+    def _focus_state_js(gid: str, sid: str) -> str:
+        return (
             "window.__narrativeEditor && window.__narrativeEditor.focusState"
             f" ? window.__narrativeEditor.focusState({json.dumps(gid, ensure_ascii=False)},"
             f" {json.dumps(sid, ensure_ascii=False)}) : false"
         )
-        return self._run_editor_js_result(code) is True
+
+    def focus_state(self, graph_id: str, state_id: str) -> bool:
+        """外部跳转入口（全局搜索/位面面板 hub 等）：让 web 编辑器切编排并聚焦指定状态。
+
+        自带两层兜底:dist 过期且无草稿时先自动重载最新页面;页面尚未就绪
+        (刚重载/首次加载中)则转入非阻塞延迟重试,就绪即定位。返回 False 仅当
+        参数无效/视图缺失;已转入重试的返回 True(尽力而为,失败打日志)。"""
+        gid = str(graph_id or "").strip()
+        sid = str(state_id or "").strip()
+        if not gid or not sid or self._view is None:
+            return False
+        reloading = self._auto_reload_if_stale()
+        if not reloading:
+            ready = self._run_editor_js_result(
+                "!!(window.__narrativeEditor && window.__narrativeEditor.focusState)")
+            if ready is True:
+                return self._run_editor_js_result(self._focus_state_js(gid, sid)) is True
+        self._schedule_focus_state_retry(gid, sid, tries=25)
+        return True
+
+    def _schedule_focus_state_retry(self, gid: str, sid: str, tries: int) -> None:
+        """页面加载期间的定位重试(每 400ms,一次成败即止;全程不阻塞 UI)。"""
+        def attempt(left: int) -> None:
+            try:
+                ready = self._run_editor_js_result(
+                    "!!(window.__narrativeEditor && window.__narrativeEditor.focusState)",
+                    timeout_ms=800,
+                )
+                if ready is True:
+                    if self._run_editor_js_result(self._focus_state_js(gid, sid)) is not True:
+                        print(f"[narrative] 页面就绪但未定位 {gid}.{sid}(图/状态不存在?)", flush=True)
+                    return
+            except Exception:
+                pass
+            if left > 0:
+                QTimer.singleShot(400, lambda: attempt(left - 1))
+            else:
+                print(f"[narrative] 定位 {gid}.{sid} 超时:web 页面迟迟未就绪", flush=True)
+
+        QTimer.singleShot(400, lambda: attempt(tries))
 
     def pop_flush_error(self) -> str | None:
         message = self._last_flush_error
         self._last_flush_error = None
         return message
 
-    def _read_pending_editor_json(self, attempts: int = 10, wait_ms: int = 180) -> str | None:
-        code = "(window.__narrativeEditor && window.__narrativeEditor.getCurrentDataJson()) || null"
+    # 一次读回 web 编辑器状态：区分「正常有 API」「页面崩溃/白屏但留有草稿」「未加载」
+    # 三态（复核 P1-07）。崩溃后 __narrativeEditor 被卸载清掉，但 __narrativeEditorLastDraft
+    # 与 __narrativeEditorCrashed 刻意存活，据此不再把崩溃误判为「无内容、保存成功」。
+    _READ_EDITOR_STATE_JS = (
+        "(function(){"
+        "var api=window.__narrativeEditor;"
+        "var draft=window.__narrativeEditorLastDraft;"
+        "var out={"
+        "hasApi:!!(api&&api.getCurrentDataJson),"
+        "crashed:window.__narrativeEditorCrashed===true,"
+        "hasDraft:(typeof draft==='string'&&draft.length>0)"
+        "};"
+        "if(out.hasApi){try{out.json=api.getCurrentDataJson();}catch(e){out.error=String(e);}}"
+        "else if(out.hasDraft){out.draft=draft;}"
+        "return JSON.stringify(out);"
+        "})()"
+    )
+
+    def _read_editor_state(self, attempts: int = 3, wait_ms: int = 150) -> dict[str, Any] | None:
+        """读回 web 编辑器状态。至多 attempts 次短重试（此前 10×2s≈22s 假死，复核 P1-07）。
+
+        返回 dict（含 hasApi/crashed/hasDraft/json/draft）或 None（视图缺失/始终取不到）。
+        """
         for attempt in range(attempts):
-            value = self._run_editor_js_result(code, timeout_ms=2000)
-            if isinstance(value, str) and value.strip():
-                return value
+            raw = self._run_editor_js_result(self._READ_EDITOR_STATE_JS, timeout_ms=800)
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    # 已就绪（有 API 或已崩溃留稿）即返回；否则继续短重试等待首帧。
+                    if parsed.get("hasApi") or parsed.get("crashed") or parsed.get("hasDraft"):
+                        return parsed
+                    last = parsed
+                else:
+                    last = None
+            else:
+                last = None
             if attempt + 1 >= attempts:
-                break
+                return last
             loop = QEventLoop()
             QTimer.singleShot(wait_ms, loop.quit)
             loop.exec()
@@ -1342,8 +1563,36 @@ class NarrativeStateEditor(QWidget):
         self._last_flush_error = None
         if self._view is None:
             return True
-        payload = self._read_pending_editor_json()
+        state = self._read_editor_state()
+        payload = state.get("json") if isinstance(state, dict) else None
         if not isinstance(payload, str) or not payload.strip():
+            # 取不到当前文档：必须区分「页面崩溃/白屏（有草稿或崩溃标志）」与「页面未
+            # 加载/无内容」。前者绝不能返回 True 伪成功——否则 Save All 静默漏掉叙事草稿、
+            # confirm_close 判无脏放行（复核 P1-07）。后者（离屏未渲染/从未编辑）无内容
+            # 可 flush，放行不拦。
+            if state is None:
+                # J 修复（对抗组 V3）：_read_editor_state 整体返回 None——JS 引擎彻底卡死，
+                # 既非 crashed、也无 lastDraft，连一个可判读的状态 dict 都取不回。此前落到
+                # 下方 `return True` 伪成功，Save All 会「成功」却漏掉叙事草稿。这条路径同样
+                # fail-safe：返回 False + 可读原因，让 Save All 记为该面板失败、confirm_close
+                # 按脏询问，绝不静默放行。（区别于「state 能读到、确实无内容」的合法放行路径）
+                self._last_flush_error = (
+                    "叙事编辑器无响应，本次保存未包含叙事改动，请重试。"
+                    "（可到叙事状态机页点顶栏「刷新页面」重载后再保存）"
+                )
+                if not for_save_all:
+                    QMessageBox.warning(self, "叙事保存失败", self._last_flush_error)
+                return False
+            if isinstance(state, dict) and (state.get("crashed") or state.get("hasDraft")):
+                self._last_flush_error = (
+                    "叙事编辑器页面已崩溃或白屏，无法读回当前草稿——本次未写入叙事图数据。"
+                    "请到叙事状态机页查看崩溃页并「复制草稿 JSON」备份，或点顶栏「刷新页面」"
+                    "重载后重试；重载会回到工程模型里的最新暂存内容。"
+                    "（最近草稿也保存在网页 window.__narrativeEditorLastDraft）"
+                )
+                if not for_save_all:
+                    QMessageBox.warning(self, "叙事保存失败", self._last_flush_error)
+                return False
             return True
         try:
             parsed = json.loads(payload)
@@ -1371,18 +1620,31 @@ class NarrativeStateEditor(QWidget):
         )
         return True
 
-    def _web_editor_is_dirty(self) -> bool:
+    def _web_editor_dirty_state(self) -> bool | None:
+        """web 侧脏态三态：True 脏 / False 干净 / None 未知（JS 超时取不到）。
+
+        未知按 fail-safe 处理（复核 P2）：确认关闭当脏询问、自动重载一律不动。
+        """
         if self._view is None:
             return False
-        return self._run_editor_js_result(
+        result = self._run_editor_js_result(
             "window.__narrativeEditor && window.__narrativeEditor.isDirty"
             " ? window.__narrativeEditor.isDirty() : false",
-        ) is True
+        )
+        if result is True:
+            return True
+        if result is False:
+            return False
+        return None
+
+    def _web_editor_is_dirty(self) -> bool:
+        return self._web_editor_dirty_state() is True
 
     def confirm_close(self, parent: QWidget) -> bool:
         if self._view is None:
             return True
-        if not self._web_editor_is_dirty():
+        # fail-safe（复核 P2）：脏态未知（页面刚重载/JS 超时）也按脏询问，不静默放行丢草稿。
+        if self._web_editor_dirty_state() is False:
             return True
         result = QMessageBox.question(
             parent,
@@ -1413,9 +1675,12 @@ class NarrativeStateEditor(QWidget):
             self._loaded_dist_mtime = _current_dist_mtime()
             self._view.load(url)
             return
+        # F5 在纯浏览器里=整页刷新、在主编辑器里=运行游戏，都不会加载新 bundle：文案改中文
+        # 并指向顶栏「重建并刷新」一键路径（复核 P2）。
         message = (
-            "Narrative Web Editor is not built yet. "
-            "Run `npm run build:narrative-editor`, then press F5 in this tab (no editor restart needed)."
+            "叙事编辑器网页尚未构建（dist 缺失）。点顶栏橙色横幅里的「重建并刷新」按钮"
+            "一键构建并载入；或在项目根目录运行 " + _WEB_REBUILD_CMD + " 后点「刷新页面」。"
+            "（无需重启编辑器）"
         )
         self._view.setHtml(_placeholder_html(message))
 
@@ -1748,7 +2013,9 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
             kind = str(el.get("kind", "")).strip()
             if kind == "wrapperGraph" and not str(el.get("ownerId", "")).strip():
                 _issue(issues, "error", "wrapper.unbound", f"{eid}: wrapper 尚未绑定 ownerId", f"compositions[{ci}].elements[{ei}]", eid, el_target)
-            if kind == "wrapperGraph" and str(el.get("ownerType", "")).strip() not in _VALID_WRAPPER_OWNER_TYPES:
+            # 空 ownerType 与 TS 权威同口径跳过（ts 侧 `el.ownerType &&` 短路）——Python 兜底不得多报幻影 warning。
+            _owner_type = str(el.get("ownerType", "")).strip()
+            if kind == "wrapperGraph" and _owner_type and _owner_type not in _VALID_WRAPPER_OWNER_TYPES:
                 _issue(issues, "warning", "wrapper.ownerType.unsupported", f"{eid}: wrapper ownerType 不受运行时 owner 索引支持", f"compositions[{ci}].elements[{ei}].ownerType", eid, _with_field(el_target, "ownerType"))
             if kind == "scenarioSubgraph" and not (str(el.get("refId", "")).strip() or str(el.get("ownerId", "")).strip()):
                 _issue(issues, "warning", "scenario.id.empty", f"{eid}: scenarioId 为空", f"compositions[{ci}].elements[{ei}]", eid, el_target)
@@ -1766,7 +2033,9 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
                         {"compositionId": cid, "graphId": str(graph.get("id", "")).strip(), "elementId": eid},
                         kind,
                     )
-                else:
+                elif kind == "wrapperGraph":
+                    # TS 权威只对 wrapperGraph 报 graph 缺失（wrapper.graph.missing）；
+                    # scenarioSubgraph 缺 graph TS 无 issue——Python 兜底不得更严。
                     _issue(issues, "error", "element.graph.missing", f"{eid}: 子图缺少 graph", f"compositions[{ci}].elements[{ei}].graph", eid, el_target)
             meta = el.get("meta") if isinstance(el.get("meta"), dict) else {}
             for key in ("emits", "reads", "commands"):
@@ -1933,6 +2202,12 @@ def _validate_graph(
             _issue(issues, "warning", "state.id.key.mismatch", f"{gid}.{sid}: state.id differs from record key", f"{path}.states.{sid}.id", str(sid), _with_field(state_target, "id"))
         if str(sid) == initial and isinstance(state.get("onEnterActions"), list) and state.get("onEnterActions"):
             _issue(issues, "error", "initialState.onEnterActions.unsupported", f"{gid}.{sid}: initialState onEnterActions do not run on load", f"{path}.states.{sid}.onEnterActions", str(sid), _with_field(state_target, "onEnterActions"))
+        # activePlane 形状校验与 TS 权威（state.activePlane.invalid，error）对齐；
+        # 位面 id 存在性检查需要 planes.json 目录，见 validate_project_context 的 unknown 检查。
+        if "activePlane" in state:
+            active_plane = state.get("activePlane")
+            if not isinstance(active_plane, str) or not active_plane.strip():
+                _issue(issues, "error", "state.activePlane.invalid", f"{gid}.{sid}: activePlane 必须是非空字符串", f"{path}.states.{sid}.activePlane", str(sid), _with_field(state_target, "activePlane"))
         _validate_actions(state.get("onEnterActions"), f"{path}.states.{sid}.onEnterActions", issues, f"{gid}.{sid}", _with_field(state_target, "onEnterActions"))
         _validate_actions(state.get("onExitActions"), f"{path}.states.{sid}.onExitActions", issues, f"{gid}.{sid}", _with_field(state_target, "onExitActions"))
     transitions = graph.get("transitions")
@@ -1962,7 +2237,11 @@ def _validate_graph(
         if sig.startswith("external:") or sig.startswith("stateEntered:"):
             _issue(issues, "error", "transition.signal.legacyFormat", f"{gid}.{tid}: legacy signal format", f"{tpath}.signal", tid, _with_field(transition_target, "signal"))
         elif sig == DEFAULT_DRAFT_SIGNAL:
-            _issue(issues, "warning", "transition.signal.draft", f"{gid}.{tid}: transition still uses draft signal {DEFAULT_DRAFT_SIGNAL}", f"{tpath}.signal", f"{gid}.{tid}", _with_field(transition_target, "signal"))
+            # reactive* 迁移不消费 signal 字段,__draft__ 是钦定占位——豁免,
+            # 只对信号型迁移报"未完工接线"(与 TS 权威 narrativeGraphValidation 同步,2026-07-13)。
+            _trigger = str(transition.get("trigger", "signal")).strip()
+            if _trigger not in ("reactive", "reactiveAll", "reactiveAny"):
+                _issue(issues, "warning", "transition.signal.draft", f"{gid}.{tid}: transition still uses draft signal {DEFAULT_DRAFT_SIGNAL}", f"{tpath}.signal", f"{gid}.{tid}", _with_field(transition_target, "signal"))
         _validate_lifecycle_signal_scope(gid, tid, sig, tpath, issues, _with_field(transition_target, "signal"))
         _validate_reactive_trigger(transition, tpath, issues, _with_field(transition_target, "trigger"))
         _validate_conditions(transition.get("conditions"), f"{tpath}.conditions", issues, f"{gid}.{tid}", graph_index, _with_field(transition_target, "conditions"))
@@ -2201,33 +2480,49 @@ def _validate_actions(raw: Any, path: str, issues: list[dict[str, Any]], owner: 
 
 def _validate_action_def(action: dict[str, Any], path: str, issues: list[dict[str, Any]], owner: str, target: dict[str, Any] | None = None) -> None:
     try:
-        from ..shared.action_editor import ACTION_TYPES, _PARAM_SCHEMAS
+        from ..shared.action_editor import ACTION_TYPES
         allowed = {str(x) for x in ACTION_TYPES}
-        schemas = {str(k): [(str(n), str(t)) for n, t in v] for k, v in _PARAM_SCHEMAS.items()}
     except Exception:
         allowed = {"emitNarrativeSignal"}
-        schemas = {
-            "emitNarrativeSignal": [("signal", "str"), ("sourceType", "str"), ("sourceId", "str")],
-        }
     action_type = str(action.get("type", "")).strip()
     if action_type not in allowed:
         _issue(issues, "error", "action.type.unknown", f"{owner}: unknown action type {action_type}", f"{path}.type", owner, target)
         return
     params = action.get("params") if isinstance(action.get("params"), dict) else {}
-    required = schemas.get(action_type, [])
+    # 必填集从 TS 权威 actionParamManifest.ts 解析（审查 P1-10 系统修）：历史写法把
+    # _PARAM_SCHEMAS（GUI 控件清单）整表当必填，比 TS 权威严 25 处、拦死合法最小形态。
+    # 红线：Python 兜底 ⊆ TS 权威。解析失败 fail-open——只校验类型存在、不做必填拦截
+    # （validate-data 门与 TS 权威校验兜真错）。parity 由 test_narrative_required_params 锁定。
+    try:
+        from ..shared.narrative_required_params import load_required_params
+        manifest = load_required_params()
+    except Exception:
+        manifest = None
+    entry = manifest.get(action_type) if manifest is not None else None
+    if entry is not None:
+        required, non_empty = entry
+        for name in required:
+            value = params.get(name)
+            missing = name not in params or value is None
+            if not missing and name in non_empty and isinstance(value, str) and not value.strip():
+                missing = True
+            if missing:
+                _issue(issues, "error", "action.param.missing", f"{owner}: {action_type} missing params.{name}", f"{path}.params.{name}", owner, target)
+    # 保留前缀信号不可作为发射参数（与 TS 权威 action.signal.reserved 同码同级）：
+    # state:* 是运行时派生广播、__draft__ 是占位符——内容伪造会直推里程碑/被运行时拒发。
     if action_type == "emitNarrativeSignal":
-        required = [("signal", "str")]
-    elif action_type == "stopSceneAmbient":
-        # actionParamManifest.ts: required=[]——id（留空=清全部环境层）与 fadeMs 均可选，
-        # 不得把 _PARAM_SCHEMAS 的 GUI 参数当必填（TS 权威校验也不拦）。
-        required = []
-    elif action_type == "giveItem":
-        # actionParamManifest.ts: required=['id']——count 与 critical（关键给予绕过槽上限）均可选。
-        required = [("id", "str")]
-    for name, _kind in required:
-        value = params.get(name)
-        if value is None or (isinstance(value, str) and not value.strip()):
-            _issue(issues, "error", "action.param.missing", f"{owner}: {action_type} missing params.{name}", f"{path}.params.{name}", owner, target)
+        sig = params.get("signal")
+        sig_text = sig.strip() if isinstance(sig, str) else ""
+        if sig_text and (sig_text == DEFAULT_DRAFT_SIGNAL or sig_text.startswith(DERIVED_STATE_SIGNAL_PREFIX)):
+            _issue(
+                issues,
+                "error",
+                "action.signal.reserved",
+                f"{owner}: emitNarrativeSignal 不可发射保留信号 {sig_text!r}（state:* 由运行时派生广播；__draft__ 是占位符）",
+                f"{path}.params.signal",
+                owner,
+                target,
+            )
     if action_type in ("runActions", "addDelayedEvent") and "actions" in params:
         _validate_actions(params.get("actions"), f"{path}.params.actions", issues, owner, target)
     elif action_type == "chooseAction":
@@ -2280,12 +2575,17 @@ def _is_condition_shape(expr: Any) -> bool:
         return isinstance(expr.get("state"), str) and bool(str(expr.get("state")).strip())
     if isinstance(expr.get("flag"), str):
         return True
+    # quest/scenario/scenarioLine 缺伴随字段（status 等）时 TS 权威静默容忍（求值 false 但不报 issue）——
+    # Python 兜底不得更严（红线），键存在即认形状；plane 是第 6 类合法叶子（TS 仅拦空串），
+    # 旧实现漏掉它导致 plane 条件保存必被拦（2026-07-17 审查 P-F1）。
     if isinstance(expr.get("quest"), str):
-        return isinstance(expr.get("questStatus"), str) or isinstance(expr.get("status"), str)
+        return True
     if isinstance(expr.get("scenario"), str):
-        return isinstance(expr.get("phase"), str) and isinstance(expr.get("status"), str)
+        return True
     if isinstance(expr.get("scenarioLine"), str):
-        return isinstance(expr.get("lineStatus"), str)
+        return True
+    if isinstance(expr.get("plane"), str):
+        return bool(expr["plane"].strip())
     return False
 
 
@@ -2313,7 +2613,8 @@ def _validate_condition_expr(
             _issue(issues, "error", "condition.shape", f"{owner}: narrative condition requires state", path, owner, target)
             return False
         # 相对 token（@owner / @scene）在运行时解析，跳过静态 graphId/state 存在性检查——
-        # 与权威校验器 narrativeGraphValidation.ts:718 一致。否则 Python 兜底比 TS 更严，
+        # 与权威校验器 narrativeGraphValidation.ts 一致（validateConditionExpr 中
+        # graphId.startsWith('@') 即跳过）。否则 Python 兜底比 TS 更严，
         # 会把运行时/TS 都认可的合法条件拦在保存路径外（saveData / save_all）。
         if graph_id.startswith("@"):
             return True
@@ -2504,10 +2805,13 @@ def _web_editor_load_url() -> QUrl | None:
 
 def _placeholder_html(message: str) -> str:
     safe = html.escape(message)
+    fallback_px = theme.css_font_px(theme.FONT_ROLE_PROMINENT, theme.DEFAULT_FONT_PX)
     return (
         "<!doctype html><html><meta charset='utf-8'><body "
         "style='margin:0;height:100vh;display:flex;align-items:center;justify-content:center;"
-        "background:#191b1f;color:#c9d3dc;font:15px system-ui,sans-serif'>"
+        "background:#191b1f;color:#c9d3dc;"
+        f"font-size:var(--editor-host-font-prominent,{fallback_px});"
+        "font-family:system-ui,sans-serif'>"
         f"<p>{safe}</p></body></html>"
     )
 

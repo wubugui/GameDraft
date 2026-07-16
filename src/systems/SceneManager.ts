@@ -1349,6 +1349,36 @@ export class SceneManager implements IGameSystem {
     }
   }
 
+  /**
+   * 初始进场（游戏启动首场景）：与 switchScene 一致地**在过渡遮罩下**装载首场景，装载完成
+   * （scene:ready、实体就绪）后再揭幕。否则首场景在可见画布上逐个刷出背景/NPC，玩家看着实体
+   * 弹出来（尤其首启贴图未命中缓存时更明显），且后续 onEnter 开场演出接在这堆刷屏之后。
+   *
+   * 与 switchScene 的差异：无前场景可淡出，直接把遮罩 instant 置为全黑起手（省去启动淡出延迟）；
+   * 揭幕仍走 loadScene 的 onReveal（scene:ready 之后、onEnter 之前），使 onEnter 里的开场演出
+   * 落在"已就绪且完整揭幕"的场景上——契约与 switchScene 完全一致（见 scene-onenter-reveal-timing）。
+   */
+  async loadInitialScene(sceneId: string, spawnPointId?: string): Promise<void> {
+    this.ensureTransitionOverlay();
+    this.transitionOverlay!.alpha = 1;
+    const reveal = (): Promise<void> => this.fadeIn(400);
+    try {
+      await this.loadScene(
+        sceneId,
+        spawnPointId,
+        undefined,
+        null,
+        (r, label) => this.setTransitionOverlayProgress(r, label),
+        reveal,
+      );
+    } catch (e) {
+      // 装载失败也必须撤掉全黑遮罩，避免锁死首屏
+      console.error(`SceneManager: 初始场景 "${sceneId}" 加载失败`, e);
+      this.removeTransitionOverlay();
+      throw e;
+    }
+  }
+
   /** 对 **已加载** 的 sceneData 应用 spawn / spawnPoints / cameraPosition（语义与 loadScene 末尾一致） */
   private applyPlayerSpawnAndCamera(
     sceneData: SceneData,

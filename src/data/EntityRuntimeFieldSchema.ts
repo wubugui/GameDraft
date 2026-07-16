@@ -1,5 +1,5 @@
 import type { HotspotDef, HotspotDisplayImage, NpcDef } from './types';
-import runtimeFieldSchemaJson from './runtime_field_schema.json';
+import runtimeFieldSchemaJson from '../../public/assets/data/runtime_field_schema.json';
 
 export type SceneEntityKind = 'npc' | 'hotspot';
 export type RuntimeFieldKind = 'string' | 'number' | 'boolean' | 'object';

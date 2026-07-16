@@ -13,9 +13,18 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from PySide6.QtCore import QRectF
+from PySide6.QtGui import QColor, QFontMetricsF
 from PySide6.QtWidgets import QApplication
 
-from tools.editor.editors.scene_editor import SceneEditor
+from tools.editor import theme
+from tools.editor.editors.scene_editor import (
+    SceneEditor,
+    _EditableZonePolygon,
+    _LightCurvePolyline,
+    _NpcPatrolPolyline,
+)
+from tools.editor.shared.fonts import MONO_FONT_FAMILY
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 
@@ -189,6 +198,80 @@ class SceneEditorDragPersistenceTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertTrue(model.is_dirty)
             self.assertEqual(self._npc(model, "sc_a", "npc1")["name"], "改名后")
+
+    # ---- 纯点选/零位移不写坐标、不标脏、不 int→float 漂移（审查 P1-09） ------
+    def test_item_moved_unchanged_value_is_noop(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p")
+            ed._on_item_selected("npc", "npc1")
+            model._dirty.clear(); model._dirty_scene_ids.clear()
+            model._dirty_scenes_all = False
+            # npc1 原坐标是 int 100/100；以相同值回调（模拟画布点选/微抖归位）
+            ed._on_item_moved("npc", "npc1", 100.0, 100.0)
+            n = self._npc(model, "sc_a", "npc1")
+            self.assertFalse(
+                model.is_dirty, "零位移不得标脏（点一下看属性不应触发保存提示）")
+            self.assertIsInstance(n["x"], int, "零位移不得把 int 坐标漂成 float")
+            self.assertIsInstance(n["y"], int)
+
+    def test_item_moved_real_move_preserves_unchanged_axis_int(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p")
+            ed._on_item_selected("npc", "npc1")
+            # 只动 x 到非整值；y 未变应保持 int 100（不无脑 float 化）
+            ed._on_item_moved("npc", "npc1", 150.5, 100.0)
+            self.assertTrue(model.is_dirty)
+            ed._commit_pending_scene_edits()  # staging → 模型
+            n = self._npc(model, "sc_a", "npc1")
+            self.assertEqual(n["x"], 150.5)
+            self.assertIsInstance(n["y"], int, "未改动的 y 轴应保留原始 int 表示")
+
+    def test_scaled_overlay_text_stays_inside_graphics_bounds(self) -> None:
+        original_theme = theme.current_theme_id()
+        original_font = theme.current_font_px()
+        try:
+            theme.apply_application_theme(self._qt_app, theme.THEME_MODERN, theme.MAX_FONT_PX)
+            secondary_metrics = QFontMetricsF(theme.make_editor_font(
+                theme.FONT_ROLE_CANVAS_SECONDARY,
+                family=MONO_FONT_FAMILY,
+            ))
+
+            zone = _EditableZonePolygon(
+                object(),  # type: ignore[arg-type]
+                [(0, 0), (60, 0), (60, 60), (0, 60)],
+                QColor(60, 120, 180),
+                "long_zone_identifier",
+            )
+            zone_label = QRectF(
+                3,
+                12 - secondary_metrics.ascent(),
+                secondary_metrics.horizontalAdvance(zone.entity_id),
+                secondary_metrics.height(),
+            )
+            self.assertTrue(zone.boundingRect().contains(zone_label))
+
+            patrol_points = [(float(i * 10), 0.0) for i in range(11)]
+            patrol = _NpcPatrolPolyline(object(), "npc", patrol_points)  # type: ignore[arg-type]
+            hrad = patrol.HANDLE_WORLD_R * 0.38
+            patrol_label = QRectF(
+                100 + hrad + 2,
+                4 - secondary_metrics.ascent(),
+                secondary_metrics.horizontalAdvance("10"),
+                secondary_metrics.height(),
+            )
+            self.assertTrue(patrol.boundingRect().contains(patrol_label))
+
+            light = _LightCurvePolyline(object(), [{"x": 0, "y": 0, "env": {}}])  # type: ignore[arg-type]
+            micro_metrics = QFontMetricsF(theme.make_editor_font(
+                theme.FONT_ROLE_CANVAS_MICRO,
+                family=MONO_FONT_FAMILY,
+            ))
+            self.assertGreaterEqual(
+                light.boundingRect().right(),
+                micro_metrics.horizontalAdvance("az360 el90 I9.99 dk1.00"),
+            )
+        finally:
+            theme.apply_application_theme(self._qt_app, original_theme, original_font)
 
 
 if __name__ == "__main__":

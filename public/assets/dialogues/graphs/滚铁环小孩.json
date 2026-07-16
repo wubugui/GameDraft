@@ -61,7 +61,10 @@
           "text": "不理你......"
         }
       ],
-      "text": "勒死麻批娃儿才混哦~好，还给你还给你。"
+      "text": "勒死麻批娃儿才混哦~好，还给你还给你。",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "return_ring_actions": {
       "type": "runActions",

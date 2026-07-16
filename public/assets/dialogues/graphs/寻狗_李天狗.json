@@ -24,7 +24,11 @@
         "name": "李天狗"
       },
       "text": "大半夜在林子头鬼吼鬼叫——你嫌命长迈?",
-      "next": "n_gjg_grope"
+      "next": "n_gjg_grope",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
     },
     "n_gjg_grope": {
       "type": "line",
@@ -44,7 +48,11 @@
         "name": "李天狗"
       },
       "text": "走夜路，听到人喊你、万不能应。你刚才那通折腾——又吃了人家供的、又开口骂人家——它问一声、你回半个字，魂就归它管。",
-      "next": "n_gjg_bluff"
+      "next": "n_gjg_bluff",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
     },
     "n_gjg_bluff": {
       "type": "line",
@@ -75,7 +83,11 @@
         "name": "李天狗"
       },
       "text": "……你身上这股味。你，去过桃溪?",
-      "next": "n_gjg_taoxibrag"
+      "next": "n_gjg_taoxibrag",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
     },
     "n_gjg_taoxibrag": {
       "type": "line",
@@ -115,7 +127,11 @@
         "name": "李天狗"
       },
       "text": "……鬼神可敬。命在你自己手上，莫叫人替你拿了去。——好自为之吧。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
     },
     "end1": {
       "type": "end"

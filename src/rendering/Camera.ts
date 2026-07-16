@@ -18,6 +18,8 @@ export class Camera {
 
   private pixelsPerUnit: number = 1;
   private zoom: number = 1;
+  /** 场景配置基线缩放（scene.camera.zoom），进场景时由装配层记录 */
+  private sceneBaseZoom: number = 1;
   private worldScale: number = 1;
 
   private targetX: number = 0;
@@ -70,6 +72,14 @@ export class Camera {
     this.syncBoundsIntoState();
     this.applyTransform();
   }
+
+  /** 场景配置基线缩放（scene.camera.zoom，缺省 1）。进场景时记录，供过场 cameraZoom
+   *  「恢复场景缩放」语义（scale 缺省/≤0）回读——不入存档，随场景装载重置。 */
+  setSceneBaseZoom(z: number): void {
+    this.sceneBaseZoom = z;
+  }
+
+  getSceneBaseZoom(): number { return this.sceneBaseZoom; }
 
   setWorldScale(s: number): void {
     this.worldScale = s;

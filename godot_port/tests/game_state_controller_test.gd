@@ -1,5 +1,7 @@
 extends SceneTree
 
+const RuntimeDataTypes := preload("res://scripts/data/data_types.gd")
+
 class FakePanel:
 	extends RefCounted
 	var is_open := false
@@ -38,7 +40,12 @@ var prevent_count := 0
 
 
 func _init() -> void:
-	assert(RuntimeGameStateController.STATES == [
+	assert([
+		RuntimeDataTypes.MAIN_MENU, RuntimeDataTypes.EXPLORING,
+		RuntimeDataTypes.ACTION_SEQUENCE, RuntimeDataTypes.DIALOGUE,
+		RuntimeDataTypes.ENCOUNTER, RuntimeDataTypes.CUTSCENE,
+		RuntimeDataTypes.UI_OVERLAY, RuntimeDataTypes.MINIGAME,
+	] == [
 		"MainMenu", "Exploring", "ActionSequence", "Dialogue",
 		"Encounter", "Cutscene", "UIOverlay", "Minigame",
 	])
@@ -49,7 +56,7 @@ func _init() -> void:
 	bus.on("ui:cancel", func(payload: Variant) -> void: events.push_back("cancel:" + payload.name))
 	var controller := RuntimeGameStateController.new(input, bus)
 	controller.set_escape_fallback(func() -> void: fallback_count += 1)
-	assert(controller.set_state(RuntimeGameStateController.DIALOGUE))
+	controller.set_state(RuntimeDataTypes.DIALOGUE)
 	assert(controller.current_state == "Dialogue" and controller.previous_state == "Exploring")
 	controller.restore_previous_state()
 	assert(controller.current_state == "Exploring")
@@ -60,24 +67,24 @@ func _init() -> void:
 	rejected.allow_open = false
 	var guarded := FakePanel.new()
 	var debug := FakePanel.new()
-	assert(controller.register_panel("inventory", inventory, "KeyI"))
-	assert(controller.register_panel("nested", nested, "KeyN", {"alwaysOpenable": true, "additionalKeys": ["KeyO"]}))
-	assert(controller.register_panel("rejected", rejected, "KeyX"))
-	assert(controller.register_panel("guarded", guarded, "KeyG", {"openGuard": func() -> bool: return guard_allows}))
-	assert(controller.register_panel("debug", debug, "F2", {"alwaysOpenable": true, "overlaysGameState": false}))
+	controller.register_panel("inventory", inventory, "KeyI")
+	controller.register_panel("nested", nested, "KeyN", {"alwaysOpenable": true, "additionalKeys": ["KeyO"]})
+	controller.register_panel("rejected", rejected, "KeyX")
+	controller.register_panel("guarded", guarded, "KeyG", {"openGuard": func() -> bool: return guard_allows})
+	controller.register_panel("debug", debug, "F2", {"alwaysOpenable": true, "overlaysGameState": false})
 
 	input.send("KeyI", false, func() -> void: prevent_count += 1)
-	assert(inventory.is_open and controller.current_state == "UIOverlay" and controller.overlay_depth() == 1)
+	assert(inventory.is_open and controller.current_state == "UIOverlay" and controller.get_debug_state().overlayReturnStack.size() == 1)
 	input.send("KeyO")
-	assert(nested.is_open and controller.overlay_depth() == 2)
+	assert(nested.is_open and controller.get_debug_state().overlayReturnStack.size() == 2)
 	controller.trigger_escape_from_touch()
 	assert(not nested.is_open and inventory.is_open and controller.current_state == "UIOverlay")
 	controller.trigger_escape_from_touch()
-	assert(not inventory.is_open and controller.current_state == "Exploring" and controller.overlay_depth() == 0)
+	assert(not inventory.is_open and controller.current_state == "Exploring" and controller.get_debug_state().overlayReturnStack.is_empty())
 	assert(events.slice(-2) == ["cancel:nested", "cancel:inventory"])
 
 	input.send("KeyX")
-	assert(not rejected.is_open and controller.current_state == "Exploring" and controller.overlay_depth() == 0)
+	assert(not rejected.is_open and controller.current_state == "Exploring" and controller.get_debug_state().overlayReturnStack.is_empty())
 	input.send("KeyG")
 	assert(not guarded.is_open)
 	guard_allows = true

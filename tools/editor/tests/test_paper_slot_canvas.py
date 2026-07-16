@@ -194,5 +194,47 @@ class PaperSlotCanvasTests(unittest.TestCase):
             self.assertEqual(slots[2], untouched_2)
 
 
+    # (d) P2：sceneRect 固定为运行时 560×410 工作台，不随槽位外接框漂移。
+    def test_scene_rect_fixed_to_workbench(self) -> None:
+        from tools.editor.editors.paper_craft_canvas import _WORKBENCH_W, _WORKBENCH_H
+
+        with TemporaryDirectory() as td:
+            model = self._build_model(Path(td) / "p")
+            editor = PaperCraftEditor(model)
+            editor.instance_list.setCurrentRow(0)
+            editor.order_combo.setCurrentIndex(0)
+            r = editor.slot_canvas._scene.sceneRect()
+            self.assertEqual((int(r.width()), int(r.height())), (_WORKBENCH_W, _WORKBENCH_H))
+            self.assertEqual((_WORKBENCH_W, _WORKBENCH_H), (560, 410))
+
+    # (e) P2：槽位可拖出旧外接框，只夹在工作台内。
+    def test_slot_draggable_beyond_old_bounding_box(self) -> None:
+        with TemporaryDirectory() as td:
+            model = self._build_model(Path(td) / "p")
+            editor = PaperCraftEditor(model)
+            editor.instance_list.setCurrentRow(0)
+            editor.order_combo.setCurrentIndex(0)
+            editor.slot_combo.setCurrentIndex(0)
+            # 旧实现夹在"槽位外接框+24"内；现在放宽到工作台，可拖到接近 560/410。
+            editor._on_canvas_slot_geometry(0, 520, 380, 30, 24)
+            s = _slots(model)[0]
+            self.assertEqual((s["x"], s["y"], s["width"], s["height"]), (520, 380, 30, 24))
+
+    # (f) P2：越界的既有坐标（模型真值）在载入时不被静默夹紧。
+    def test_out_of_bounds_slot_not_clamped_on_load(self) -> None:
+        with TemporaryDirectory() as td:
+            model = self._build_model(Path(td) / "p")
+            # 把一个槽位改到工作台外（x=600 > 560），构造编辑器加载不应改模型。
+            model.paper_craft_instances[PC_ID]["orders"][0]["slots"][0]["x"] = 600
+            before = copy.deepcopy(model.paper_craft_instances[PC_ID])
+            editor = PaperCraftEditor(model)
+            editor.instance_list.setCurrentRow(0)
+            editor.order_combo.setCurrentIndex(0)
+            self.assertEqual(
+                model.paper_craft_instances[PC_ID], before,
+                "越界坐标是模型真值，载入不得被画布静默夹紧",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,123 +1,223 @@
 class_name RuntimeDocumentRevealManager
 extends RuntimeSystem
 
-const DEFINITIONS_URL := "/assets/data/document_reveals.json"
+const DOCUMENT_REVEALS_URL := "/assets/data/document_reveals.json"
+const RuntimeMicrotaskQueueScript := preload("res://scripts/runtime/microtask_queue.gd")
 
-var _asset_manager: RuntimeAssetManager
-var _event_bus: RuntimeEventBus
-var _flag_store: RuntimeFlagStore
-var _quest_manager: RuntimeQuestManager
-var _scenario_state: RuntimeScenarioStateManager
-var _defs: Dictionary = {}
-var _revealed: Dictionary = {}
-var _revealing: Dictionary = {}
-var _blend := Callable()
-var _resolve_condition_literal := Callable()
-var _condition_context_factory := Callable()
-
-
-func _init(asset_manager: RuntimeAssetManager, event_bus: RuntimeEventBus, flag_store: RuntimeFlagStore, quest_manager: RuntimeQuestManager, scenario_state: RuntimeScenarioStateManager) -> void:
-	_asset_manager = asset_manager; _event_bus = event_bus; _flag_store = flag_store; _quest_manager = quest_manager; _scenario_state = scenario_state
+var asset_manager: RuntimeAssetManager
+var event_bus: RuntimeEventBus
+var flag_store: RuntimeFlagStore
+var quest_manager: RuntimeQuestManager
+var scenario_state: RuntimeScenarioStateManager
+var defs: Dictionary = {}
+var revealed: Dictionary = {}
+var revealing: Dictionary = {}
+var blend := Callable()
+var resolve_condition_literal := Callable()
+var condition_ctx_factory := Callable()
 
 
-func init(_ctx: Dictionary) -> void: return
-func update(_dt: float) -> void: return
-func set_blend_executor(callback: Callable = Callable()) -> void: _blend = callback
-func set_resolve_condition_literal(callback: Callable = Callable()) -> void: _resolve_condition_literal = callback
-func set_condition_eval_context_factory(factory: Callable = Callable()) -> void: _condition_context_factory = factory
+func _init(
+		initial_asset_manager: RuntimeAssetManager,
+		initial_event_bus: RuntimeEventBus,
+		initial_flag_store: RuntimeFlagStore,
+		initial_quest_manager: RuntimeQuestManager,
+		initial_scenario_state: RuntimeScenarioStateManager
+) -> void:
+	asset_manager = initial_asset_manager
+	event_bus = initial_event_bus
+	flag_store = initial_flag_store
+	quest_manager = initial_quest_manager
+	scenario_state = initial_scenario_state
 
 
-func load_definitions() -> bool:
-	var list: Variant = _asset_manager.load_json(DEFINITIONS_URL)
-	return load_definitions_from_data(list) if list is Array else false
+func set_blend_executor(fn: Callable) -> void:
+	blend = fn
 
 
-func load_definitions_from_data(list: Array) -> bool:
-	_defs.clear()
-	for raw: Variant in list:
-		if raw is Dictionary:
-			var id := str(raw.get("id", "")).strip_edges()
-			if not id.is_empty(): _defs[id] = raw
-	return true
+func set_resolve_condition_literal(fn: Callable = Callable()) -> void:
+	resolve_condition_literal = fn
+
+
+func set_condition_eval_context_factory(factory: Callable = Callable()) -> void:
+	condition_ctx_factory = factory
+
+
+func load_definitions() -> void:
+	defs.clear()
+	if asset_manager == null:
+		push_warning("DocumentRevealManager: 无法加载 document_reveals.json")
+		return
+	var list: Variant = asset_manager.load_json(DOCUMENT_REVEALS_URL)
+	# AssetManager.loadJson is a Promise in the source. Local Godot reads are
+	# synchronous, so this is the language-level await continuation boundary.
+	await RuntimeMicrotaskQueueScript.yield_turn()
+	if list == null and not asset_manager.get_last_error().is_empty():
+		push_warning("DocumentRevealManager: 无法加载 document_reveals.json: %s" % asset_manager.get_last_error())
+		return
+	if not list is Array:
+		return
+	for definition: Variant in list:
+		if definition is Dictionary and definition.get("id") is String:
+			var id: String = definition.id.strip_edges()
+			if not id.is_empty():
+				# Map.set stores the source definition object itself; do not clone it.
+				defs[id] = definition
+
+
+func init(_ctx: Dictionary) -> void:
+	return
+
+
+func update(_dt: float) -> void:
+	return
+
+
+func destroy() -> void:
+	defs.clear()
+	revealed.clear()
+	revealing.clear()
+	# These closures retain CutsceneManager/Game-side references in the source.
+	blend = Callable()
+	resolve_condition_literal = Callable()
+	condition_ctx_factory = Callable()
+
+
+func _ctx() -> Dictionary:
+	if condition_ctx_factory.is_valid():
+		var injected: Variant = condition_ctx_factory.call()
+		if injected is Dictionary:
+			return injected
+	var base := {
+		"flagStore": flag_store,
+		"questManager": quest_manager,
+		"scenarioState": scenario_state,
+	}
+	if resolve_condition_literal.is_valid():
+		base.resolveConditionLiteral = resolve_condition_literal
+	return base
+
+
+func _overlay_id_for(definition: Dictionary) -> String:
+	var raw_overlay_id: Variant = definition.get("overlayId")
+	if raw_overlay_id is String:
+		var overlay_id: String = raw_overlay_id.strip_edges()
+		if not overlay_id.is_empty():
+			return overlay_id
+	var id := str(definition.get("id", "")).strip_edges()
+	var regex := RegEx.new()
+	regex.compile("[^a-zA-Z0-9_-]")
+	return "docReveal_%s" % regex.sub(id, "_", true)
 
 
 func get_document_phase(document_id: String) -> String:
 	var id := document_id.strip_edges()
-	if id.is_empty() or not _defs.has(id): return "hidden"
-	if _revealed.has(id): return "revealed"
-	if _revealing.has(id): return "revealing"
+	if id.is_empty() or not defs.has(id):
+		return "hidden"
+	if revealed.has(id):
+		return "revealed"
+	if revealing.has(id):
+		return "revealing"
 	return "blurred"
 
 
 func get_display_image(document_id: String) -> Variant:
-	var id := document_id.strip_edges(); var definition: Variant = _defs.get(id)
-	if not definition is Dictionary: return null
-	return definition.get("clearImagePath") if _revealed.has(id) else definition.get("blurredImagePath")
+	var id := document_id.strip_edges()
+	var definition: Variant = defs.get(id)
+	if not definition is Dictionary:
+		return null
+	return definition.get("clearImagePath") if revealed.has(id) else definition.get("blurredImagePath")
 
 
-func is_revealed(document_id: String) -> bool: return _revealed.has(document_id.strip_edges())
+func is_revealed(document_id: String) -> bool:
+	return revealed.has(document_id.strip_edges())
 
 
 func check_and_reveal(document_id: String) -> void:
-	var id := document_id.strip_edges(); var definition: Variant = _defs.get(id)
-	if not definition is Dictionary or _revealed.has(id) or _revealing.has(id): return
-	var context := _condition_context()
-	var evaluator := RuntimeConditionEvaluator.new()
-	if not evaluator.evaluate(definition.get("revealCondition"), context): return
-	if _blend.is_null() or not _blend.is_valid(): return
-	var overlay_id := str(definition.get("overlayId", "")).strip_edges()
-	if overlay_id.is_empty(): overlay_id = "docReveal_%s" % _safe_id(id)
-	_revealing[id] = true
-	_event_bus.emit("document:revealed", {"documentId": id})
-	await _blend.call(
+	var id := document_id.strip_edges()
+	var definition: Variant = defs.get(id)
+	if not definition is Dictionary:
+		push_warning("DocumentRevealManager: 未知 documentId %s" % id)
+		return
+	if revealed.has(id):
+		return
+	if revealing.has(id):
+		return
+	if not RuntimeConditionEvaluator.evaluate(definition.get("revealCondition"), _ctx()):
+		return
+	var blend_fn := blend
+	if not blend_fn.is_valid():
+		push_warning("DocumentRevealManager: blend 未注入")
+		return
+
+	var overlay_id := _overlay_id_for(definition)
+	var x: Variant = definition.get("xPercent")
+	if x == null:
+		x = 50
+	var y: Variant = definition.get("yPercent")
+	if y == null:
+		y = 50
+	var width: Variant = definition.get("widthPercent")
+	if width == null:
+		width = 40
+	var animation: Variant = definition.get("animation")
+	var duration: Variant = animation.get("durationMs") if animation is Dictionary else null
+	if duration == null:
+		duration = 2000
+	var delay: Variant = animation.get("delayMs") if animation is Dictionary else null
+	if delay == null:
+		delay = 0
+
+	revealing[id] = true
+	event_bus.emit("document:revealed", {"documentId": id})
+	var blend_result: Variant = await blend_fn.call(
 		overlay_id,
-		str(definition.get("blurredImagePath", "")),
-		str(definition.get("clearImagePath", "")),
-		float(definition.get("xPercent", 50.0)),
-		float(definition.get("yPercent", 50.0)),
-		float(definition.get("widthPercent", 40.0)),
-		float(definition.get("animation", {}).get("durationMs", 2000.0)),
-		float(definition.get("animation", {}).get("delayMs", 0.0)),
+		definition.get("blurredImagePath"),
+		definition.get("clearImagePath"),
+		x,
+		y,
+		width,
+		duration,
+		delay,
 	)
-	_revealed[id] = true
-	var revealed_flag := str(definition.get("revealedFlag", "")).strip_edges()
-	if not revealed_flag.is_empty(): _flag_store.set_value(revealed_flag, true)
-	_revealing.erase(id)
+	# `await blendFn(...)` resumes through a Promise reaction even for an already
+	# settled callback; false is the target adapter's rejected-Promise channel.
+	await RuntimeMicrotaskQueueScript.yield_turn()
+	if blend_result is bool and blend_result == false:
+		push_warning("DocumentRevealManager: reveal %s failed" % id)
+	else:
+		revealed[id] = true
+		var revealed_flag: Variant = definition.get("revealedFlag")
+		if revealed_flag is String:
+			var flag_id: String = revealed_flag.strip_edges()
+			if not flag_id.is_empty():
+				flag_store.set_value(flag_id, true)
+	revealing.erase(id)
 
 
 func debug_snapshot() -> Dictionary:
-	var phases := {}
-	for id: String in _defs: phases[id] = get_document_phase(id)
-	return {"revealedInSave": _revealed.keys(), "revealingTransient": _revealing.keys(), "phaseByDefId": phases}
+	var phase_by_def_id := {}
+	for id: String in defs:
+		phase_by_def_id[id] = get_document_phase(id)
+	return {
+		"revealedInSave": revealed.keys(),
+		"revealingTransient": revealing.keys(),
+		"phaseByDefId": phase_by_def_id,
+	}
 
 
-func serialize() -> Dictionary: return {"revealed": _revealed.keys()}
+func serialize() -> Dictionary:
+	return {"revealed": revealed.keys()}
 
 
 func deserialize(data: Dictionary) -> void:
-	_revealed.clear(); _revealing.clear()
-	if data.get("revealed") is Array:
-		for raw: Variant in data.revealed:
-			if raw is String and not raw.strip_edges().is_empty(): _revealed[raw.strip_edges()] = true
-
-
-func destroy() -> void:
-	_defs.clear(); _revealed.clear(); _revealing.clear(); _blend = Callable(); _resolve_condition_literal = Callable(); _condition_context_factory = Callable()
-
-
-func definition_count() -> int: return _defs.size()
-func debug_snapshot_fragment() -> Dictionary: return {"documentReveal": debug_snapshot()}
-
-
-func _condition_context() -> Dictionary:
-	if not _condition_context_factory.is_null() and _condition_context_factory.is_valid():
-		var injected: Variant = _condition_context_factory.call()
-		if injected is Dictionary: return injected
-	var context := {"flagStore": _flag_store, "questManager": _quest_manager, "scenarioState": _scenario_state}
-	if not _resolve_condition_literal.is_null() and _resolve_condition_literal.is_valid(): context["resolveConditionLiteral"] = _resolve_condition_literal
-	return context
-
-
-func _safe_id(id: String) -> String:
-	var regex := RegEx.new(); regex.compile("[^a-zA-Z0-9_-]")
-	return regex.sub(id, "_", true)
+	revealed.clear()
+	revealing.clear()
+	var raw: Variant = data.get("revealed")
+	if not raw is Array:
+		return
+	for value: Variant in raw:
+		if value is String:
+			var id: String = value.strip_edges()
+			if not id.is_empty():
+				revealed[id] = true

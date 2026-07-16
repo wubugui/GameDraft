@@ -6,8 +6,7 @@ var _by_zone: Dictionary = {}
 
 func register(zone_id: String, slots: Array) -> void:
 	var copy: Array = []
-	for raw: Variant in slots:
-		if not raw is Dictionary: continue
+	for raw: Dictionary in slots:
 		var slot := {"ruleId": raw.get("ruleId"), "resultActions": raw.get("resultActions")}
 		if raw.get("requiredLayers") is Array and not raw.requiredLayers.is_empty(): slot["requiredLayers"] = raw.requiredLayers
 		if raw.has("resultText"): slot["resultText"] = raw.resultText
@@ -17,7 +16,6 @@ func register(zone_id: String, slots: Array) -> void:
 
 func unregister(zone_id: String) -> void: _by_zone.erase(zone_id)
 func clear() -> void: _by_zone.clear()
-func destroy() -> void: clear()
 
 
 func get_aggregated_slots() -> Array:

@@ -233,12 +233,19 @@ export class NarrativeStateManager implements IGameSystem {
   private drainStepCount = 0;
   private destroyed = false;
   /**
+   * 时间线代际：deserialize / registerGraphs / destroy 时自增。在飞的迁移（挂起在生命周期
+   * 动作 await 上）恢复后比对代际，不一致即放弃剩余写入（置态/广播/事件）——旧时间线
+   * 不得污染恢复后的状态（norms 不变量 4）。队列项在代际切换时统一 reject，不静默丢。
+   */
+  private generation = 0;
+  /**
    * 被动 flag:changed → reactive 重评的微任务合批标志。一个 action 批内连 setFlag N 次只排一次
    * 微任务、只跑一轮全量 reactive 扫描（与 ArchiveManager 的 queueMicrotask 合批策略一致）。
    * 仅覆盖被动路径；信号/setState/注入/读档等主动重评仍直接同步 kick，不受此合批影响。
    */
   private reactiveEvalScheduled = false;
   private readonly onFlagChangedListener = () => this.handleFlagChanged();
+  private readonly onSaveRestoringListener = () => this.invalidateInFlightTimeline('save restore');
   private recentTransitions: NarrativeTransitionRecord[] = [];
   /** graphId → 到达过的状态集合（含 initialState 与当前状态），随存档持久化 */
   private reachedStates: Map<string, Set<string>> = new Map();
@@ -262,6 +269,10 @@ export class NarrativeStateManager implements IGameSystem {
     // reactive 迁移的条件几乎全是 flag 叶子：flag 变化时唤醒重评，
     // 否则 reactive 只在队列排空后重评，纯 setFlag 驱动的迁移会"沉睡"到下一个信号才醒。
     this.eventBus.on('flag:changed', this.onFlagChangedListener);
+    // 读档统一钩子（与 zone 的 clearActiveZonesForRestore 同一契约层）：旧时间线的
+    // 队列/在飞迁移不得写入恢复后的状态；deserialize 自身也会清（覆盖直接调用/测试路径），
+    // 挂钩子是为老档缺 narrative 条目、deserialize 不被调用的边角兜底。
+    this.eventBus.on('save:restoring', this.onSaveRestoringListener);
   }
 
   static readonly DEFAULT_DRAFT_SIGNAL = '__draft__';
@@ -288,6 +299,34 @@ export class NarrativeStateManager implements IGameSystem {
 
   init(_ctx: GameContext): void {}
   update(_dt: number): void {}
+
+  /**
+   * 叙事编排是否空闲：队列无积压、无在飞排空/生命周期动作。
+   * SaveManager 的 canSave 依赖它——队列与在飞广播不入档，级联中途的存档
+   * 读回后 signal 型迁移无法补发（子图已到末态、主图停在旧里程碑，档即卡死）。
+   */
+  isIdle(): boolean {
+    return !this.draining
+      && this.queue.length === 0
+      && this.runningActionsDepth === 0
+      && this.nestedDrainPromises.size === 0;
+  }
+
+  /**
+   * 时间线失效：代际自增并 reject 全部积压队列项（旧时间线的信号对恢复后的世界无意义，
+   * 静默丢弃会让 await 方永久悬挂——norms 红线）；已处理完仅待落定的项照常 resolve。
+   * 在飞迁移恢复后由 enterState / processTrigger 的代际比对放弃剩余写入。
+   */
+  private invalidateInFlightTimeline(reason: string): void {
+    this.generation += 1;
+    if (this.queue.length > 0) {
+      this.recordTrace('issue', {
+        message: `timeline invalidated (${reason}): ${this.queue.length} queued trigger(s) rejected`,
+      });
+    }
+    this.rejectQueuedItems(new Error(`NarrativeStateManager: timeline invalidated (${reason}); stale queued trigger discarded`));
+    this.resolveCompletedQueueItems();
+  }
 
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
     this.conditionCtxFactory = factory;
@@ -329,11 +368,13 @@ export class NarrativeStateManager implements IGameSystem {
   }
 
   registerGraphs(graphs: NarrativeGraph[]): void {
+    // 换图册=换时间线：积压项 reject（而非旧实现的静默清空——那会让 await 方永久悬挂），
+    // 在飞迁移经代际比对放弃剩余写入。
+    this.invalidateInFlightTimeline('graphs re-registered');
     this.graphs.clear();
     this.activeStates.clear();
     this.reachedStates.clear();
     this.ownerIndex.clear();
-    this.queue.length = 0;
     this.primaryOwnerWarningKeys.clear();
     this.listenedSignalKeysCache = null;
     this.reportedUnlistenedSignalKeys.clear();
@@ -568,6 +609,10 @@ export class NarrativeStateManager implements IGameSystem {
       activeStates?: Record<string, unknown>;
       reachedStates?: Record<string, unknown>;
     };
+    // 恢复前先失效旧时间线（审查 R2）：积压队列项 reject、在飞迁移放弃剩余写入——
+    // 否则旧时间线的广播/信号会打进恢复后的世界（子图回到起点、主图却被幽灵广播推进）。
+    // save:restoring 钩子已清过时此处为幂等重清（直接调用 deserialize 的测试/装配路径靠这里）。
+    this.invalidateInFlightTimeline('deserialize');
     // 先把全部图复位到「注册后初始态」再按存档恢复：restore 只覆盖存档里有的图、只增量标记
     // reached，不复位会把本会话越过的进度残留进更早的档（reached:true 门控提前打开）。
     this.resetStatesToRegisteredBaseline();
@@ -681,9 +726,11 @@ export class NarrativeStateManager implements IGameSystem {
 
   destroy(): void {
     this.destroyed = true;
+    this.generation += 1;
     // 清合批标志：已排入的微任务见 destroyed 早退（下句已断监听，不会再有新 flag:changed 入批）。
     this.reactiveEvalScheduled = false;
     this.eventBus.off('flag:changed', this.onFlagChangedListener);
+    this.eventBus.off('save:restoring', this.onSaveRestoringListener);
     // 挂起项显式 reject（而非静默丢弃），让 await 中的动作链尽快失败退出；
     // 已处理完仅待落定的项照常 resolve。
     this.rejectQueuedItems(new Error('NarrativeStateManager destroyed'));
@@ -884,6 +931,9 @@ export class NarrativeStateManager implements IGameSystem {
       }
     } catch (e) {
       this.rejectQueuedItems(e instanceof Error ? e : new Error(String(e)));
+      // 已处理成功、仅待落定的项必须 resolve：嵌套排空的异常路径若把它们留在
+      // completedQueueItems，外层动作 await 的 promise 永久悬挂 → 整个排空循环死锁（审查 W1）。
+      this.resolveCompletedQueueItems();
       throw e;
     }
   }
@@ -922,10 +972,13 @@ export class NarrativeStateManager implements IGameSystem {
   }
 
   private async processTrigger(triggerKey: NarrativeTriggerKey): Promise<void> {
+    const gen = this.generation;
     const migratedGraphs = new Set<string>();
     const graphEntries = [...this.graphs.entries()];
     const matchedGraphIds: string[] = [];
     for (const [graphId, graph] of graphEntries) {
+      // 逐图 await 之间可能发生读档/换册：本信号属旧时间线，剩余图不再扫。
+      if (gen !== this.generation) break;
       if (migratedGraphs.has(graphId)) continue;
       const active = this.activeStates.get(graphId) ?? graph.initialState;
       const candidates = graph.transitions
@@ -998,7 +1051,17 @@ export class NarrativeStateManager implements IGameSystem {
 
   private conditionsMet(conditions: ConditionExpr[] | undefined): boolean {
     if (!conditions?.length) return true;
-    const ctx = this.conditionCtxFactory?.();
+    let ctx: ConditionEvalContext | undefined;
+    try {
+      ctx = this.conditionCtxFactory?.();
+    } catch (e) {
+      // 工厂抛错若放行到排空循环里，会经嵌套排空异常路径把整个循环拖挂（审查 W1）；
+      // 按"缺上下文"同口径保守拒绝该守卫迁移。
+      const message = `NarrativeStateManager: condition context factory threw; rejecting guarded transition: ${e instanceof Error ? e.message : String(e)}`;
+      this.recordIssue({ severity: 'error', code: 'condition.ctxFactory.threw', message });
+      console.warn(message, e);
+      return false;
+    }
     if (!ctx) {
       console.warn('NarrativeStateManager: missing condition context; rejecting guarded transition');
       return false;
@@ -1147,9 +1210,21 @@ export class NarrativeStateManager implements IGameSystem {
     triggerKey: NarrativeTriggerKey,
     transitionId = '',
   ): Promise<void> {
+    const gen = this.generation;
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
     await this.runActions(fromState?.onExitActions, `${graph.id}.${fromStateId}.onExit`);
+    // onExit 动作 await 期间可能发生读档/换册（代际切换）：旧时间线的迁移不得再写
+    // 恢复后的状态（置态/事件/广播全部放弃）。动作自身的副作用无法撤销，属已知边界。
+    if (gen !== this.generation) {
+      this.recordTrace('signal.ignored', {
+        graphId: graph.id,
+        transitionId,
+        triggerKey,
+        message: `stale timeline: state restored during ${graph.id}.${fromStateId}.onExit; transition aborted`,
+      });
+      return;
+    }
     this.recordTrace('transition.applied', {
       graphId: graph.id,
       transitionId,
@@ -1176,6 +1251,16 @@ export class NarrativeStateManager implements IGameSystem {
       transitionId,
     });
     await this.runActions(toState?.onEnterActions, `${graph.id}.${toStateId}.onEnter`);
+    // onEnter 动作 await 期间发生读档/换册：本次置态已被恢复流程覆盖，广播属旧时间线，放弃。
+    if (gen !== this.generation) {
+      this.recordTrace('signal.ignored', {
+        graphId: graph.id,
+        stateId: toStateId,
+        triggerKey,
+        message: `stale timeline: state restored during ${graph.id}.${toStateId}.onEnter; broadcast suppressed`,
+      });
+      return;
+    }
     if (toState?.broadcastOnEnter === true) {
       this.enqueueGraphStateEntered(graph.id, toStateId);
     }

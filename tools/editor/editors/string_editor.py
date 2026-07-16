@@ -27,6 +27,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 
 from ..project_model import ProjectModel
+from .. import theme
 from ..shared import confirm
 from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextTextEdit
@@ -106,7 +107,8 @@ class StringEditor(QWidget):
         detail = QWidget()
         dl = QVBoxLayout(detail)
         self._path_label = QLabel("")
-        self._path_label.setStyleSheet("color:#888;font-size:12px;")
+        self._path_label.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(self._path_label, theme.FONT_ROLE_SECONDARY)
         dl.addWidget(self._path_label)
         form = compact_form(QFormLayout())
         self._key_edit = QLineEdit()
@@ -437,6 +439,42 @@ class StringEditor(QWidget):
                 self._set_node_kind(node, "leaf")
                 vtype, payload = _json_leaf_pair(val)
                 self._set_leaf_typed(node, vtype, payload)
+
+    def select_by_pointer(self, segments: list[str]) -> bool | str:
+        """全局搜索/跳转落点：按 JSON 指针段（键路径）逐层定位树节点。
+
+        能走多深走多深（中途断了就停在最深命中层）。返回值区分命中深度(审查 P3):
+        - True   → 完整命中(定位到指针最末段);
+        - "partial:<定位到的路径>" → 部分命中(只落到最深可达的上级分类,末段已改名/删除);
+        - False  → 一段都没匹配上(彻底未命中)。"""
+        if self._search.text():
+            self._search.clear()  # 目标节点可能被过滤隐藏
+        item: QTreeWidgetItem | None = None
+        parent = self._tree.invisibleRootItem()
+        matched = 0
+        for seg in segments:
+            found = None
+            for i in range(parent.childCount()):
+                ch = parent.child(i)
+                if ch.text(0) == seg:
+                    found = ch
+                    break
+            if found is None:
+                break
+            item = found
+            parent = found
+            matched += 1
+        if item is None:
+            return False
+        p = item.parent()
+        while p is not None:
+            p.setExpanded(True)
+            p = p.parent()
+        self._tree.setCurrentItem(item)
+        self._tree.scrollToItem(item)
+        if matched >= len(segments):
+            return True
+        return f"partial:{self._item_path(item)}"
 
     def _filter(self, text: str) -> None:
         text = text.lower()

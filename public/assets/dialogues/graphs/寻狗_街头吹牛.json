@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_街头吹牛",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·跟脚夫吹牛"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "二狗，听说书了？又讲李天狗了？",
+      "next": "b1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "那可不！跟你说，说书的讲得不对——飞僵哪是桃木剑砍得动的？",
+      "next": "b2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "上个月阎王岭那具邪尸，老子亲手背下山的！老搭尸的亲口教我的！",
+      "next": "b3",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b3": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "真的假的……",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

@@ -3,12 +3,14 @@ render_mode unshaded;
 
 uniform sampler2D depth_map : filter_nearest, repeat_disable;
 uniform sampler2D collision_map : filter_nearest, repeat_disable;
+uniform sampler2D silhouette_map : filter_linear, repeat_disable;
 uniform float darkness = 0.4;
 uniform float collision_enabled = 0.0;
 uniform float occlusion_enabled = 0.0;
 uniform vec2 scene_size = vec2(1.0);
 uniform vec2 world_to_pixel = vec2(1.0);
-uniform vec2 foot = vec2(0.0);
+uniform float foot_x = 0.0;
+uniform float foot_y = 0.0;
 uniform float depth_invert = 0.0;
 uniform float depth_scale = 1.0;
 uniform float depth_offset = 0.0;
@@ -24,7 +26,6 @@ uniform vec3 matrix_row2 = vec3(0.0);
 uniform vec2 collision_origin = vec2(0.0);
 uniform float collision_cell = 1.0;
 uniform vec2 collision_grid = vec2(0.0);
-uniform float softness = 0.0;
 
 varying vec2 world_position;
 
@@ -46,23 +47,11 @@ bool collision_at(vec2 position) {
 }
 
 void fragment() {
-	float alpha = texture(TEXTURE, UV).a;
-	if (softness > 0.0001) {
-		vec2 delta = TEXTURE_PIXEL_SIZE * max(0.5, softness * 4.0);
-		alpha = 0.0;
-		float weight = 0.0;
-		for (int y = -1; y <= 1; y++) {
-			for (int x = -1; x <= 1; x++) {
-				float w = (x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0);
-				alpha += texture(TEXTURE, UV + vec2(float(x), float(y)) * delta).a * w;
-				weight += w;
-			}
-		}
-		alpha /= weight;
-	}
-	if (alpha < 0.01) discard;
-	alpha *= darkness;
+	float silhouette = texture(silhouette_map, UV).a;
+	if (silhouette < 0.01) discard;
+	float alpha = silhouette * darkness;
 	if (collision_enabled > 0.5) {
+		vec2 foot = vec2(foot_x, foot_y);
 		vec2 direction = world_position - foot;
 		bool blocked = false;
 		for (int index = 1; index <= 24; index++) {

@@ -1,109 +1,173 @@
 class_name RuntimeDeferredEntityShadow
 extends RefCounted
 
+const DEG2RAD := PI / 180.0
 const SHADER := preload("res://scripts/rendering/deferred_shadow.gdshader")
+const ShadowMeshGeometryScript := preload("res://scripts/rendering/shadow_mesh_geometry.gd")
+const ShadowBlurFilterScript := preload("res://scripts/rendering/shadow_blur_filter.gd")
 
-var layer: Node2D
-var context: Dictionary
-var root := Node2D.new()
-var silhouette := Polygon2D.new()
-var material := ShaderMaterial.new()
-var depth_params := {"tolerance": 0.0, "floorOffset": 0.0, "occlusionBlendFactor": 0.28}
-var _matrix_rows: Array = []
+static var _white_texture_cache: Texture2D = null
+
+var _ctx: Dictionary
+var _mesh: Polygon2D
+var _shader: ShaderMaterial
+var _positions: PackedVector2Array
+var _geometry: RuntimeShadowMeshGeometry
+var _blur: RuntimeShadowBlurFilter = null
+var _last_softness := -1.0
+var _bound_silhouette: Texture2D = null
 
 
-func _init(next_layer: Node2D, next_context: Dictionary) -> void:
-	layer = next_layer
-	context = next_context
-	root.name = "DeferredEntityShadow"
-	silhouette.name = "DeferredSilhouette"
-	root.add_child(silhouette)
-	layer.add_child(root)
-	material.shader = SHADER
-	silhouette.material = material
-	_configure_material()
-	root.visible = false
+func _init(layer: Node2D, context: Dictionary) -> void:
+	_ctx = context
+	_positions = PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+	var uvs := PackedVector2Array([
+		Vector2(0.0, 0.0),
+		Vector2(1.0, 0.0),
+		Vector2(1.0, 1.0),
+		Vector2(0.0, 1.0),
+	])
+	_geometry = ShadowMeshGeometryScript.new(
+		_positions,
+		uvs,
+		PackedInt32Array([0, 1, 2, 0, 2, 3]),
+	)
+
+	_shader = ShaderMaterial.new()
+	_shader.shader = SHADER
+	_shader.set_shader_parameter("scene_size", Vector2(float(_ctx.sceneW), float(_ctx.sceneH)))
+	_shader.set_shader_parameter("world_to_pixel", Vector2(float(_ctx.worldToPixelX), float(_ctx.worldToPixelY)))
+	_shader.set_shader_parameter("matrix_ppu", float(_ctx.ppu))
+	_shader.set_shader_parameter("matrix_center", Vector2(float(_ctx.cx), float(_ctx.cy)))
+	_shader.set_shader_parameter("matrix_row0", Vector3(float(_ctx.r00), float(_ctx.r01), float(_ctx.r02)))
+	_shader.set_shader_parameter("matrix_row1", Vector3(float(_ctx.r10), float(_ctx.r11), float(_ctx.r12)))
+	_shader.set_shader_parameter("matrix_row2", Vector3(float(_ctx.r20), float(_ctx.r21), float(_ctx.r22)))
+	_shader.set_shader_parameter("depth_invert", float(_ctx.invert))
+	_shader.set_shader_parameter("depth_scale", float(_ctx.scale))
+	_shader.set_shader_parameter("depth_offset", float(_ctx.offset))
+	_shader.set_shader_parameter("foot", Vector2.ZERO)
+	_shader.set_shader_parameter("height_m", 1.0)
+	_shader.set_shader_parameter("width_m", 1.0)
+	_shader.set_shader_parameter("facing", 1.0)
+	_shader.set_shader_parameter("billboard_mode", 0.0)
+	_shader.set_shader_parameter("light_direction", Vector3(0.0, 1.0, 0.0))
+	_shader.set_shader_parameter("darkness", 0.4)
+	_shader.set_shader_parameter("soft_samples", 1.0)
+	_shader.set_shader_parameter("soft_radius", 0.05)
+	_shader.set_shader_parameter("contact_ao", 0.0)
+	_shader.set_shader_parameter("contact_radius", 1.0)
+	_shader.set_shader_parameter("silhouette_frame", Vector4(0.0, 0.0, 1.0, 1.0))
+	_shader.set_shader_parameter("depth_map", _ctx.depthTexture)
+	_shader.set_shader_parameter("silhouette_map", _white_texture())
+
+	_mesh = Polygon2D.new()
+	_mesh.name = "DeferredEntityShadow"
+	_geometry.bind(_mesh)
+	_mesh.material = _shader
+	_mesh.texture = _white_texture()
+	_mesh.visible = false
+	layer.add_child(_mesh)
 
 
 func update(source: Variant, env: Dictionary, _field: Variant = null) -> void:
-	var texture: Variant = _read(source, "texture", null)
-	var shadow: Variant = env.get("shadow", {})
-	if not texture is Texture2D or not bool(_read(source, "visible", true)) or shadow.get("enabled", true) != true or (float(shadow.get("darkness", 0.0)) <= 0.0 and float(shadow.get("contact", 0.0)) <= 0.0):
-		root.visible = false
+	# Real mode takes its world-convention light vector from env.key; the source
+	# deliberately does not consume the optional planar projection field here.
+	var texture: Variant = source.get_texture()
+	if not texture is Texture2D or not source.is_visible() or env.shadow.enabled != true \
+		or (float(env.shadow.darkness) <= 0.0 and float(env.shadow.contact) <= 0.0):
+		_mesh.visible = false
 		return
-	root.visible = true
-	var foot := Vector2(float(_read(source, "footX", 0.0)), float(_read(source, "footY", 0.0)))
-	var width := maxf(1.0, float(_read(source, "width", 1.0)))
-	var height := maxf(1.0, float(_read(source, "height", 1.0)))
-	var source_texture: Texture2D = texture.atlas if texture is AtlasTexture and texture.atlas != null else texture
-	var frame: Rect2 = texture.region if texture is AtlasTexture else Rect2(0, 0, texture.get_width(), texture.get_height())
-	silhouette.texture = source_texture
-	material.set_shader_parameter("silhouette_map", source_texture)
-	material.set_shader_parameter("silhouette_frame", Vector4(frame.position.x / source_texture.get_width(), frame.position.y / source_texture.get_height(), frame.size.x / source_texture.get_width(), frame.size.y / source_texture.get_height()))
-	material.set_shader_parameter("silhouette_texel_size", Vector2(1.0 / maxf(1.0, source_texture.get_width()), 1.0 / maxf(1.0, source_texture.get_height())))
-	var reach := height * float(shadow.get("length", 0.7))
-	var half := reach + width * 1.5
-	silhouette.polygon = PackedVector2Array([foot + Vector2(-half, -half), foot + Vector2(half, -half), foot + Vector2(half, half), foot + Vector2(-half, half)])
-	silhouette.uv = PackedVector2Array([Vector2.ZERO, Vector2(source_texture.get_width(), 0), Vector2(source_texture.get_width(), source_texture.get_height()), Vector2(0, source_texture.get_height())])
-	var key: Dictionary = env.get("key", {}) if env.get("key") is Dictionary else {}
-	var azimuth := deg_to_rad(float(key.get("azimuthDeg", 125.0)))
-	var elevation := deg_to_rad(float(key.get("elevationDeg", 55.0)))
-	var horizontal := cos(elevation)
-	material.set_shader_parameter("light_direction", Vector3(horizontal * cos(azimuth), sin(elevation), horizontal * sin(azimuth)))
-	material.set_shader_parameter("foot", foot)
-	var matrix: Dictionary = context.get("config", {}).get("M", {}) if context.get("config") is Dictionary and context.config.get("M") is Dictionary else {}
-	var ppu := maxf(0.000001, float(matrix.get("ppu", 1.0)))
-	var row1 := _matrix_row(_matrix_rows, 1)
-	var up_y := absf(row1.y) if absf(row1.y) > 0.001 else 1.0
-	var world_to_pixel: Vector2 = context.get("worldToPixel", Vector2.ONE)
-	material.set_shader_parameter("height_m", height * world_to_pixel.y / (ppu * up_y))
-	material.set_shader_parameter("width_m", width * world_to_pixel.x / ppu)
-	material.set_shader_parameter("facing", float(_read(source, "facing", 1.0)))
-	material.set_shader_parameter("billboard_mode", 1.0 if shadow.get("billboard") == "camera" else 0.0)
-	material.set_shader_parameter("darkness", clampf(float(shadow.get("darkness", 0.4)), 0.0, 1.0))
-	material.set_shader_parameter("soft_samples", float(clampi(int(round(float(shadow.get("softSamples", 1)))), 1, 8)))
-	material.set_shader_parameter("soft_radius", float(shadow.get("softRadius", 0.05)))
-	material.set_shader_parameter("contact_ao", clampf(float(shadow.get("contact", 0.0)), 0.0, 1.0))
-	material.set_shader_parameter("contact_radius", width * maxf(0.1, float(shadow.get("contactSize", 1.0))) * 0.65)
-	material.set_shader_parameter("silhouette_softness", maxf(0.0, float(shadow.get("softness", 0.0))))
+	_mesh.visible = true
 
+	var foot_x := float(source.get_foot_x())
+	var foot_y := float(source.get_foot_y())
+	var world_width := maxf(1.0, float(source.get_world_width()))
+	var world_height := maxf(1.0, float(source.get_world_height()))
 
-func set_depth_params(tolerance: float, floor_offset: float, occlusion_blend_factor: float) -> void:
-	depth_params = {"tolerance": tolerance, "floorOffset": floor_offset, "occlusionBlendFactor": occlusion_blend_factor}
+	var texture_source: Texture2D = texture.atlas if texture is AtlasTexture and texture.atlas != null else texture
+	if not is_same(texture_source, _bound_silhouette):
+		_shader.set_shader_parameter("silhouette_map", texture_source)
+		_mesh.texture = texture
+		_bound_silhouette = texture_source
+	var frame: Rect2 = texture.region if texture is AtlasTexture else Rect2(0.0, 0.0, texture.get_width(), texture.get_height())
+	var source_width := float(texture_source.get_width()) if texture_source.get_width() > 0 else 1.0
+	var source_height := float(texture_source.get_height()) if texture_source.get_height() > 0 else 1.0
+
+	var reach := world_height * float(env.shadow.length)
+	var half := reach + world_width * 1.5
+	var x0 := foot_x - half
+	var x1 := foot_x + half
+	var y0 := foot_y - half
+	var y1 := foot_y + half
+	_positions[0] = Vector2(x0, y0)
+	_positions[1] = Vector2(x1, y0)
+	_positions[2] = Vector2(x1, y1)
+	_positions[3] = Vector2(x0, y1)
+	_geometry.positions = _positions
+	_geometry.update_position_buffer()
+
+	var azimuth := float(env.key.azimuthDeg) * DEG2RAD
+	var elevation := float(env.key.elevationDeg) * DEG2RAD
+	var elevation_cosine := cos(elevation)
+	_shader.set_shader_parameter("light_direction", Vector3(
+		elevation_cosine * cos(azimuth),
+		sin(elevation),
+		elevation_cosine * sin(azimuth),
+	))
+	_shader.set_shader_parameter("foot", Vector2(foot_x, foot_y))
+	var up_y := absf(float(_ctx.r11)) if absf(float(_ctx.r11)) > 0.001 else 1.0
+	_shader.set_shader_parameter("height_m", world_height * float(_ctx.worldToPixelY) / (maxf(float(_ctx.ppu), 0.000001) * up_y))
+	_shader.set_shader_parameter("width_m", world_width * float(_ctx.worldToPixelX) / maxf(float(_ctx.ppu), 0.000001))
+	_shader.set_shader_parameter("facing", float(source.get_facing()))
+	_shader.set_shader_parameter("billboard_mode", 1.0 if env.shadow.billboard == "camera" else 0.0)
+	_shader.set_shader_parameter("darkness", clampf(float(env.shadow.darkness), 0.0, 1.0))
+	_shader.set_shader_parameter("soft_samples", float(clampi(roundi(float(env.shadow.softSamples)), 1, 8)))
+	_shader.set_shader_parameter("soft_radius", float(env.shadow.softRadius))
+	_shader.set_shader_parameter("contact_ao", clampf(float(env.shadow.contact), 0.0, 1.0))
+	_shader.set_shader_parameter("contact_radius", world_width * maxf(0.1, float(env.shadow.contactSize)) * 0.65)
+	_shader.set_shader_parameter("silhouette_frame", Vector4(
+		frame.position.x / source_width,
+		frame.position.y / source_height,
+		frame.size.x / source_width,
+		frame.size.y / source_height,
+	))
+
+	var softness := float(env.shadow.softness)
+	if softness > 0.0:
+		var strength := maxf(0.5, softness * 4.0)
+		if _blur == null:
+			_blur = ShadowBlurFilterScript.new(_mesh, strength, 2)
+			_last_softness = softness
+		elif absf(softness - _last_softness) > 0.001:
+			_blur.strength = strength
+			_last_softness = softness
+	elif _blur != null:
+		_blur.destroy()
+		_blur = null
+		_last_softness = -1.0
 
 
 func destroy() -> void:
-	if root != null and is_instance_valid(root): root.queue_free()
-	root = null
-	silhouette = null
-	layer = null
+	if _blur != null:
+		_blur.destroy()
+		_blur = null
+	if _mesh != null and is_instance_valid(_mesh):
+		if _mesh.get_parent() != null:
+			_mesh.get_parent().remove_child(_mesh)
+		_mesh.material = null
+		_mesh.texture = null
+		_mesh.free()
+	_mesh = null
+	_shader = null
+	if _geometry != null:
+		_geometry.destroy()
+	_geometry = null
+	_bound_silhouette = null
 
 
-func _configure_material() -> void:
-	var cfg: Dictionary = context.get("config", {}) if context.get("config") is Dictionary else {}
-	var mapping: Dictionary = cfg.get("depth_mapping", {}) if cfg.get("depth_mapping") is Dictionary else {}
-	var matrix: Dictionary = cfg.get("M", {}) if cfg.get("M") is Dictionary else {}
-	_matrix_rows = matrix.get("R", []) if matrix.get("R") is Array else []
-	material.set_shader_parameter("depth_map", context.get("depthTexture"))
-	material.set_shader_parameter("scene_size", context.get("sceneSize", Vector2.ONE))
-	material.set_shader_parameter("world_to_pixel", context.get("worldToPixel", Vector2.ONE))
-	material.set_shader_parameter("matrix_ppu", maxf(0.000001, float(matrix.get("ppu", 1.0))))
-	material.set_shader_parameter("matrix_center", Vector2(float(matrix.get("cx", 0.0)), float(matrix.get("cy", 0.0))))
-	material.set_shader_parameter("matrix_row0", _matrix_row(_matrix_rows, 0))
-	material.set_shader_parameter("matrix_row1", _matrix_row(_matrix_rows, 1))
-	material.set_shader_parameter("matrix_row2", _matrix_row(_matrix_rows, 2))
-	material.set_shader_parameter("depth_invert", 1.0 if mapping.get("invert") == true else 0.0)
-	material.set_shader_parameter("depth_scale", float(mapping.get("scale", 1.0)))
-	material.set_shader_parameter("depth_offset", float(mapping.get("offset", 0.0)))
-
-
-func _matrix_row(rows: Array, index: int) -> Vector3:
-	if index >= 0 and index < rows.size() and rows[index] is Array and rows[index].size() >= 3:
-		return Vector3(float(rows[index][0]), float(rows[index][1]), float(rows[index][2]))
-	return Vector3.ZERO
-
-
-func _read(source: Variant, key: String, fallback: Variant) -> Variant:
-	if source is Dictionary: return source.get(key, fallback)
-	var method: String = {"texture": "get_texture", "visible": "is_visible", "footX": "get_foot_x", "footY": "get_foot_y", "width": "get_world_width", "height": "get_world_height", "facing": "get_facing"}.get(key, "")
-	return source.call(method) if source != null and source.has_method(method) else fallback
+static func _white_texture() -> Texture2D:
+	if _white_texture_cache == null:
+		var image := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
+		image.fill(Color.WHITE)
+		_white_texture_cache = ImageTexture.create_from_image(image)
+	return _white_texture_cache

@@ -140,7 +140,8 @@ class TestCutsceneRoundtripFidelity(unittest.TestCase):
             "waitTime": ("duration", 1000),
             "showTitle": ("duration", 2000),
             "showMovieBar": ("heightPercent", 0.1),
-            "cameraZoom": ("scale", 1),
+            # scale 0 = 运行时「恢复场景配置基线缩放」语义（缺键同义），新步默认即回基线
+            "cameraZoom": ("scale", 0),
         }
         for ptype, (pname, expect) in cases.items():
             sw = StepWidget({"kind": "present", "type": "waitClick"})

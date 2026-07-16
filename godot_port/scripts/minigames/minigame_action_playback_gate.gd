@@ -1,32 +1,29 @@
 class_name RuntimeMinigameActionPlaybackGate
 extends RefCounted
 
-var _execute_batch: Callable
-var _on_lock_changed: Callable
-var _restore_minigame_state: Callable
-var _depth := 0
+var depth := 0
+var execute_batch: Callable
+var hooks: Variant = null
 
 
-func _init(execute_batch: Callable, hooks: Dictionary = {}) -> void:
-	_execute_batch = execute_batch
-	_on_lock_changed = hooks.get("onLockChanged", Callable())
-	_restore_minigame_state = hooks.get("restoreMinigameState", Callable())
+func _init(next_execute_batch: Callable, next_hooks: Variant = null) -> void:
+	execute_batch = next_execute_batch
+	hooks = next_hooks
 
 
 func is_locked() -> bool:
-	return _depth > 0
+	return depth > 0
 
 
-func run(actions: Array) -> void:
-	if actions.is_empty():
+func run(actions: Variant) -> void:
+	if actions == null or actions.is_empty():
 		return
-	_depth += 1
-	if _depth == 1 and not _on_lock_changed.is_null() and _on_lock_changed.is_valid():
-		_on_lock_changed.call(true)
-	if not _execute_batch.is_null() and _execute_batch.is_valid():
-		await _execute_batch.call(actions)
-	_depth = maxi(0, _depth - 1)
-	if _depth == 0 and not _on_lock_changed.is_null() and _on_lock_changed.is_valid():
-		_on_lock_changed.call(false)
-	if not _restore_minigame_state.is_null() and _restore_minigame_state.is_valid():
-		_restore_minigame_state.call()
+	depth += 1
+	if depth == 1 and hooks is Dictionary and hooks.get("onLockChanged") is Callable:
+		hooks.onLockChanged.call(true)
+	await execute_batch.call(actions)
+	depth -= 1
+	if depth == 0 and hooks is Dictionary and hooks.get("onLockChanged") is Callable:
+		hooks.onLockChanged.call(false)
+	if hooks is Dictionary and hooks.get("restoreMinigameState") is Callable:
+		hooks.restoreMinigameState.call()

@@ -1,6 +1,9 @@
 extends Node
 
+const RuntimeDataTypes := preload("res://scripts/data/data_types.gd")
+
 const BootstrapScript := preload("res://scripts/bootstrap.gd")
+const SceneQueries := preload("res://tests/support/scene_queries.gd")
 
 var bootstrap: Node
 
@@ -11,21 +14,18 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	assert(bootstrap.scene_manager.get_current_scene_id() == "teahouse")
-	assert(bootstrap.cutscene_manager.is_playing() and bootstrap.state_controller.current_state == RuntimeGameStateController.CUTSCENE)
+	assert(bootstrap.cutscene_manager.is_playing() and bootstrap.state_controller.current_state == RuntimeDataTypes.CUTSCENE)
 	_send_key(KEY_ESCAPE)
-	assert(await _wait_until(func() -> bool: return not bootstrap.cutscene_manager.is_playing() and not bootstrap.scene_manager.is_scene_enter_running(), 120))
-	assert(bootstrap.state_controller.current_state == RuntimeGameStateController.EXPLORING)
+	assert(await _wait_until(func() -> bool:
+		return not bootstrap.cutscene_manager.is_playing() \
+			and bootstrap.state_controller.current_state == RuntimeDataTypes.DIALOGUE \
+			and bootstrap.graph_dialogue_manager.is_active()
+	, 120))
 
-	# Actual player input route: walk up to the storyteller, press E, then use
-	# Enter/digit keys through the shipped dialogue graph. No debugSet/setFlag,
-	# direct scene load, graph entry override, or runtime command is used.
-	var storyteller: RuntimeNpc = bootstrap.scene_manager.get_npc_by_id("storyteller_zhang")
-	assert(storyteller != null)
-	bootstrap.player.set_x(storyteller.get_x())
-	bootstrap.player.set_y(storyteller.get_y())
-	await _press_interact()
-	assert(bootstrap.graph_dialogue_manager.is_active() and bootstrap.graph_dialogue_manager.get_dialogue_view_debug().graphId == "寻狗_说书人")
-	assert(await _drive_active_dialogue(160))
+	# 当前权威场景的 onEnter 会自动启动听书图；其首个 runActions 播放上面的
+	# cutscene，跳过后必须恢复到同一图对话，而不是另行点击说书人。
+	assert(bootstrap.graph_dialogue_manager.get_dialogue_view_debug().graphId == "寻狗_听书开场")
+	assert(await _drive_active_dialogue(240))
 	assert(bootstrap.narrative_state_manager.get_active_state("flow_xungou_main") == "s01_tingshu")
 	assert(bootstrap.quest_manager.get_status("xg01_tingshu") == RuntimeQuestManager.COMPLETED)
 
@@ -37,7 +37,7 @@ func _ready() -> void:
 	assert(await _take_transition("T码头到街巷", "雾津街头"))
 	assert(await _take_transition("T_进茶馆", "teahouse"))
 	assert(bootstrap.scene_manager.serialize().currentSceneId == "teahouse")
-	assert(bootstrap.state_controller.current_state == RuntimeGameStateController.EXPLORING)
+	assert(bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING)
 	assert(not bootstrap.graph_dialogue_manager.is_active() and not bootstrap.cutscene_manager.is_playing())
 
 	bootstrap.audio_manager.stop_all_playback()
@@ -50,13 +50,19 @@ func _ready() -> void:
 
 
 func _take_transition(hotspot_id: String, expected_scene: String) -> bool:
-	var hotspot: RuntimeHotspot = bootstrap.scene_manager.get_hotspot_by_id(hotspot_id)
+	var hotspot: RuntimeHotspot = SceneQueries.hotspot(bootstrap.scene_manager, hotspot_id)
 	if hotspot == null:
 		return false
 	bootstrap.player.set_x(hotspot.get_center_x())
 	bootstrap.player.set_y(hotspot.get_center_y())
 	await _press_interact()
-	return await _wait_until(func() -> bool: return bootstrap.scene_manager.get_current_scene_id() == expected_scene and not bootstrap.scene_manager.is_switching(), 120)
+	# 浏览器里下一次真实按键只能发生在 Promise continuation 释放
+	# ActionSequence 之后；测试直接串行注入按键，也必须等待同一个可交互边界。
+	return await _wait_until(func() -> bool:
+		return bootstrap.scene_manager.get_current_scene_id() == expected_scene \
+			and not bootstrap.scene_manager.is_switching() \
+			and bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING
+	, 120)
 
 
 func _press_interact() -> void:

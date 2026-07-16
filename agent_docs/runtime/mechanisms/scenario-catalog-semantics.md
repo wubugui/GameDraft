@@ -14,6 +14,8 @@ triggers:
 last_governed: 2026-07-11
 ---
 
+> **退役中(2026-07-13 用户拍板,见 [decision 卡](../decisions/2026-07-15-scenario-firstclass-retirement.md))**:一等公民 scenario 系统已数据侧退役——`scenarios.json` 清空为 `{"scenarios": []}`,码头两条遗留线(码头水鬼/外国人捞箱子,25 消费点)已迁入 narrative `scenario_*` 子图。运行时代码(`ScenarioStateManager` / `scenario`+`scenarioLine` 条件叶 / 四个 scenario 动作 / Scenarios 面板)仍在,但**零数据喂养**;代码删除为 stage-2 待办(届时 6→4 条件叶为 approval①)。本卡描述的消费语义仍是代码现实(未删),但已无数据触发;下方"码头两条遗留在用"等案例段落作废。老存档 scenario 进度失联按实体改名先例不做迁移。
+
 ## 是什么(一句话)
 
 `scenarios.json`(ScenarioCatalogEntry)各字段在运行时的真实消费情况——以 `ScenarioStateManager.ts` 为准,不以文档/编辑器表单为准。
@@ -30,7 +32,7 @@ last_governed: 2026-07-11
 
 ## 已知坑
 
-- **scenarios.json ≠ narrative 的 scenario_ 子图**:两套东西、id 无交集。寻狗主线的拍子状态机全是 narrative 子图(见 [narrative-signal-spine](narrative-signal-spine.md)),别把活儿写进 Scenarios 面板;scenarios.json 只剩码头两条遗留在用。
+- **scenarios.json ≠ narrative 的 scenario_ 子图**:两套东西、id 无交集。寻狗主线的拍子状态机全是 narrative 子图(见 [narrative-signal-spine](narrative-signal-spine.md)),别把活儿写进 Scenarios 面板;scenarios.json 现已清空(码头两线 2026-07-13 迁 narrative,一等公民退役),新内容一律走 narrative 子图。
 - narrative 无内建 exposes——要把叙事状态暴露成通用 flag 只能在 state.onEnterActions 里 setFlag;scenario 才有 exposes。
 
 ## 怎么验证

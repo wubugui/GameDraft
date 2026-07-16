@@ -43,6 +43,7 @@
 - [人物档案解锁只走一个动作](runtime/decisions/2026-06-30-archive-unlock-single-action.md) — 人物档案解锁唯一通道=addArchiveEntry;名字匹配、条件自动解锁、unlockConditions 字段全部删除
 - [对话立绘构图定稿](runtime/decisions/2026-07-07-dialogue-portrait-composition.md) — VN 式小半身像(240px)压面板前景、底边伸出画面外、暗幕 opt-in;大立绘/默认压暗/垫面板后/底部渐隐均被否
 - [位面基建 v3 模型拍板](runtime/decisions/2026-07-05-plane-v3-model.md) — 位面=全局一等资产+实体归属+叙事只点名+对账器重派生;v1(绑任务图)/v2(实体变体表)/接管式小游戏均被否
+- [scenarios.json 一等公民系统退役](runtime/decisions/2026-07-15-scenario-firstclass-retirement.md) — 2026-07-13 拍板退役一等公民 scenario 系统;stage-1 数据侧已落地(scenarios.json 清空、码头两线迁 narrative),stage-2 代码删除待做(届时 6→4 条件叶为 approval①)
 - [UI 面板美学方向定稿](runtime/decisions/2026-07-05-ui-panel-skin-direction.md) — 民俗草根·极简——暖近黑底+一条素旧木边+小圆角,纯程序化零素材;繁复雕木/符箓/印章金线云纹全被否
 
 ## editor-tools
@@ -57,6 +58,7 @@
 - [图对话编辑器](editor-tools/mechanisms/dialogue-graph-editor.md) — 独立包内嵌主编辑器的图对话编辑;分层架构 + 表单形状保真回写 + 语义零变化时原样字节回写;往返探针是改 inspector 的必跑门
 - [画布/表单编辑器数据零丢失范式](editor-tools/mechanisms/editor-data-sync-paradigm.md) — 单一真相源 + 即时入脏 + commit-on-leave + 懒回写按身份;门控只认 pending 信号的路径(deselect/新增/点空白)是静默丢编辑的惯性破口
 - [信号发射源权威口径(emitted_signal_ids)](editor-tools/mechanisms/emitted-signal-catalog.md) — 哪些容器算"实发信号":对话图+内容资产动作树+叙事图 onEnter/onExitActions+broadcastOnEnter 派生;blackbox meta.emits 只是声明不算实发;悬垂监听/空声明全 warning
+- [json_lang「JSON=语言」工具链(schema 索引器 + LSP)](editor-tools/mechanisms/json-lang-schema-tooling.md) — 把数据 JSON 当语言:运行时=解释器、编辑器=IDE、JSON=源码;从权威代码现场重算 schema 供 IDE/LSP 补全与查错;方向永远代码→schema,out/ 不入库,只咨询不裁决
 - [主窗口编辑器接入钩子(鸭子协议)](editor-tools/mechanisms/mainwindow-editor-hooks.md) — 主窗门控靠 getattr 鸭子协议调 flush_to_model/confirm_close/reload_refs_from_model——新编辑器缺钩子不报错、静默漏网,接入时必须逐项对齐
 - [叙事状态机编辑器(PySide 壳 + React Flow)](editor-tools/mechanisms/narrative-state-editor.md) — 唯一非原生 PyQt 编辑器;三方校验中 Python 兜底必须是 TS 权威的子集、两步保存、dist 是独立产物(重建≠页面刷新)、落盘字节级幂等
 - [叙事状态机模板系统](editor-tools/mechanisms/narrative-template-system.md) — 填 taskId 一键派生任务;模板文件编辑器专用运行时永不加载、{{taskId}}__ 信号构造性防撞名、盖章三产物全有全无暂存
@@ -81,6 +83,7 @@
 - [内容制作规范(策划模式)](content/norms.md) — 做内容/改JSON 的三红线、机制通道铁律、题材文案铁律、双校验门与红线
 
 ### 工作法
+- [事件流程编排工作法(故事→可落地的信号驱动流程)](content/methods/narrative-flow-authoring.md) — 把任意规模事件(主线/支线/微任务/遭遇/见闻)拆成信号脊椎上一条流程;正交五关(状态→骨架→实体→地图→位面)+三旋钮定类型;进度走信号不堆flag,单拍落地委托 wire-demo-beat
 - [策划模式工作法(做内容/改JSON)](content/methods/production-mode-workflow.md) — 做内容只写 JSON 的工作形状——入口能力判定 L1/L2/L3、数据实施、双校验门收尾;写不出来就升级/上报,不糊弄
 
 ### 机制卡
@@ -116,8 +119,8 @@
 - [角色动画生产工作法](asset-pipeline/methods/character-animation-production.md) — 从"要一个会动的角色"到入库验收的全程形状:源确认→生成→程序产出→agent 裁决→升级阶梯→预览验收
 
 ### 机制卡
-- [动画预览工具(tools/anim_preview)](asset-pipeline/mechanisms/anim-preview-tool.md) — 产完动画在哪验收:复用游戏真 SpriteEntity 逐像素一致渲染 + 运行时实时扫描发现全部动画(不能用构建期 glob)
-- [动画一键产线(tools/animation_pipeline)](asset-pipeline/mechanisms/animation-pipeline.md) — 视频→atlas+anim.json 的确定性产线:程序驱动、QA 三态(程序从不单独判通过)、每个环节的方法都是实测选出的
+- [统一动画资源工作台(tools/anim_preview)](asset-pipeline/mechanisms/anim-preview-tool.md) — 人工审查驱动的 A→H 版本图、R 多动作实时装配、Agent 结构化接口和游戏真实渲染终验
+- [动画/静态阶段适配器与旧一键产线(tools/animation_pipeline)](asset-pipeline/mechanisms/animation-pipeline.md) — 工作台 E/F/G/R/H/H_STATIC 的无覆盖确定性适配器；旧 build_character 产线保留兼容但不定义新人工 R 语义
 - [对话立绘管线](asset-pipeline/mechanisms/dialogue-portrait-pipeline.md) — 立绘 3×3 表情图→切片抠图的契约:flood-fill 灰底结构上无镂空、dehalo 已内建、产物 gitignored 改前必备份
 - [抠图路线与判读铁律](asset-pipeline/mechanisms/matting-toolbox.md) — 仓库四条抠图路线的入口与适用域;halo 根因=无 despill;量化指标不可单独裁决(halo 误报白发、多扣须源级测)
 - [动画产物契约(atlas.png + anim.json)](asset-pipeline/mechanisms/sprite-atlas-anim-contract.md) — 一切动画素材的产出格式硬契约:0基帧、一角色一图集均匀网格、底中脚锚、每边≤2048、animFile 存完整 URL、编辑边界
@@ -125,7 +128,7 @@
 ### 配方
 - [环境动效素材配方(热气/灯光/窗帘/呼吸人物)](asset-pipeline/recipes/ambient-fx-production.md) — LibTV 出黑底/洋红底静图→fx_build.py 程序化循环→网格图集→装饰 NPC 放置(renderRaw/不可交互/脚锚)
 - [纯色底色键抠图配方](asset-pipeline/recipes/colorkey-matting.md) — 洋红/纯色底出图→无 halo 抠图:逐图测键色、YCbCr 色度距离、un-mix、despill、补洞铁坑、三底质检
-- [LibTV 出图项目配方(模型选型与坑)](asset-pipeline/recipes/libtv-image-generation.md) — 本项目用 LibTV CLI 出素材的实测配方:干净 cwd 铁律、三模型选型、悠船 V8.1 三连坑、prompt 换底写法
+- [LibTV 出图项目配方(模型选型与坑)](asset-pipeline/recipes/libtv-image-generation.md) — 本项目用 LibTV CLI 出素材的实测配方:禁生成透明底(灰底优先/洋红可)、干净 cwd 铁律、三模型选型、悠船 V8.1 三连坑、prompt 换底写法
 - [过场视差分层素材装配配方](asset-pipeline/recipes/parallax-layer-assembly.md) — LibTV 分层图→归一 1672×941→zIndex 层序→装配 parallax_scenes.json;方图先裁 16:9 带再缩
 - [音效外采与入库配方](asset-pipeline/recipes/sfx-external-sourcing.md) — OpenGameArt/BigSoundBank/Freesound 三渠道下载法 + 许可署名义务 + ogg 必转码 + 入库三件套
 - [拆配音词级对齐配方](asset-pipeline/recipes/voice-split-whisper-align.md) — 把整段配音按字幕拆条必须用 whisper 词级时间戳定刀位;纯静音检测会被口播偏词骗
@@ -143,3 +146,6 @@
 
 ### 工作法
 - [制作人协作法(先访谈对齐再出稿)](meta/methods/producer-collab-unknowns.md) — 系统设计类工作先访谈补齐 unknowns 再出方案;参照物>描述;禁最佳实践填空
+
+### 配方
+- [异地/新机 DVC 资源还原(勿用裸 dvc pull)](meta/recipes/dvc-oss-restore.md) — 大文件资源还原钦定路径 = ./dev.sh pull(oss2 SDK+多线程+断点续传);裸 dvc pull/fetch 在慢速直连下必挂(dvc-oss 异步栈把 connect_timeout 当总超时且不认代理)

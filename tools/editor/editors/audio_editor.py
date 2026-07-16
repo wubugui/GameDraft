@@ -10,7 +10,7 @@ from typing import Callable
 
 
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QUrl, Qt, Signal
 
 from PySide6.QtGui import QKeyEvent
 
@@ -283,6 +283,8 @@ def _audio_src_cell_picker(container: QWidget | None) -> _AudioSrcRow | None:
 
 class _AudioChannelTab(QWidget):
 
+    applied = Signal()  # Apply 后发出(System SFX 子页据此刷新 sfx id 下拉候选)
+
     def __init__(self, model: ProjectModel, channel: str, parent=None):
 
         super().__init__(parent)
@@ -516,20 +518,15 @@ class _AudioChannelTab(QWidget):
 
 
 
-    def _apply(self) -> None:
-
+    def _build_channel(self) -> dict:
+        """从表格构建本频道的 {id: entry} 字典(不写模型),供 _apply 与 _is_dirty 共用。"""
         old_ch = self._model.audio_config.get(self._channel)
         old_ch = old_ch if isinstance(old_ch, dict) else {}
         ch: dict = {}
-
         for i in range(self._table.rowCount()):
-
             aid_item = self._table.item(i, 0)
-
             row = _audio_src_cell_picker(self._table.cellWidget(i, 1))
-
             if aid_item and aid_item.text().strip():
-
                 aid = aid_item.text().strip()
                 src_txt = row.current_src().strip() if row else ""
                 # 保留同 id 原条目的未知键（volume 等未来字段），只更新 src
@@ -537,13 +534,24 @@ class _AudioChannelTab(QWidget):
                 entry = dict(prev) if isinstance(prev, dict) else {}
                 entry["src"] = src_txt
                 ch[aid] = entry
+        return ch
 
+    def _is_dirty(self) -> bool:
+        ch = self._build_channel()
+        old = self._model.audio_config.get(self._channel)
+        if old is None:
+            return bool(ch)  # 频道键本就缺失:只有真加了条目才算脏(避免打开即脏)
+        return ch != (old if isinstance(old, dict) else {})
+
+    def _apply(self) -> None:
+        ch = self._build_channel()
         # 无实质变化不写不标脏：堵住"每次 Save All 重写 audio_config.json"
-        if ch == old_ch and self._channel in self._model.audio_config:
+        if not self._is_dirty():
             return
         self._model.audio_config[self._channel] = ch
 
         self._model.mark_dirty("audio")
+        self.applied.emit()
 
 
 
@@ -763,25 +771,42 @@ class _SystemSfxTab(QWidget):
         return super().eventFilter(obj, event)
 
 
-    def _apply(self) -> None:
-
+    def _build_mapping(self) -> dict[str, str]:
         out: dict[str, str] = {}
-
         for i in range(self._table.rowCount()):
-
             key = self._key_at(i)
-
             sel = self._table.cellWidget(i, 1)
-
             sfx_id = sel.current_id().strip() if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)) else ""
-
             if key:
-
                 out[key] = sfx_id
+        return out
 
-        # 无实质变化不写不标脏
+    def _is_dirty(self) -> bool:
+        out = self._build_mapping()
         old = self._model.audio_config.get("systemSfx")
-        if out == old:
+        if old is None:
+            return bool(out)  # systemSfx 键本就缺失:只有真加了映射才算脏(避免打开即脏)
+        return out != old
+
+    def refresh_sfx_choices(self) -> None:
+        """SFX 子页新增 sfx id 后,刷新本页每行下拉候选(编辑器内自刷,不必重开工程)。
+        保留各行当前选择(悬垂/未登记值仍前置保值)。"""
+        items = [(sid, sid) for sid in self._model.all_audio_ids("sfx")]
+        for r in range(self._table.rowCount()):
+            sel = self._table.cellWidget(r, 1)
+            if not isinstance(sel, AudioIdPreviewSelector):
+                continue
+            cur = sel.current_id()
+            row_items = list(items)
+            if cur and all(x[0] != cur for x in row_items):
+                row_items = [(cur, cur)] + row_items
+            sel.set_items(row_items)
+            sel.set_current(cur)
+
+    def _apply(self) -> None:
+        out = self._build_mapping()
+        # 无实质变化不写不标脏
+        if not self._is_dirty():
             return
         self._model.audio_config["systemSfx"] = out
 
@@ -814,13 +839,70 @@ class AudioEditor(QWidget):
 
         tabs.addTab(self._sub_tabs[3], "System SFX")
 
+        # SFX 子页 Apply 后,System SFX 子页的 sfx id 下拉候选立即刷新(编辑器内自刷)。
+        self._sub_tabs[2].applied.connect(self._sub_tabs[3].refresh_sfx_choices)
+
+        self._tabs = tabs
         lay.addWidget(tabs)
 
-    def flush_to_model(self) -> bool:
+    def select_by_id(self, audio_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：在四个音频子页的表格里按 id/键定位并切页选中。
+
+        System SFX 子页第 0 列是 cellWidget(IdRefSelector),table.item(r,0) 恒 None——
+        必须走该页的 _key_at(r) 取键,否则匹配恒空、跳转静默失败还谎报已定位(审查 P2)。
+        返回是否命中(导航诚实化:未命中报错不聚光)。"""
+        target = (audio_id or "").strip()
+        if not target:
+            return False
+        for idx, tab in enumerate(self._sub_tabs):
+            table = getattr(tab, "_table", None)
+            if table is None:
+                continue
+            key_at = getattr(tab, "_key_at", None)  # System SFX 用 cellWidget,走 _key_at
+            for r in range(table.rowCount()):
+                if callable(key_at):
+                    cur = key_at(r)
+                else:
+                    it = table.item(r, 0)
+                    cur = it.text().strip() if it is not None else ""
+                if cur == target:
+                    search = getattr(tab, "_search", None)
+                    if search is not None and search.text():
+                        search.clear()  # 目标行可能被子页过滤隐藏
+                    self._tabs.setCurrentIndex(idx)
+                    table.setCurrentCell(r, 0)
+                    table.scrollToItem(table.item(r, 0) or table.currentItem())
+                    return True
+        return False
+
+    def _is_dirty(self) -> bool:
+        return any(tab._is_dirty() for tab in self._sub_tabs)
+
+    def flush_to_model(self, for_save_all: bool = False) -> bool:
         """Save All 钩子：提交各音频子页表格的未应用编辑。表驱动 _apply 无条件提交安全——
         只写当前表状态，未编辑写回等值数据，保存后清脏。"""
         for tab in self._sub_tabs:
             ap = getattr(tab, "_apply", None)
             if callable(ap):
                 ap()
+        return True
+
+    def confirm_close(self, parent=None) -> bool:
+        """关闭/切工程门控：有未应用编辑则 Save/Discard/Cancel(对齐 item/shop 口径)。
+        Discard 按契约把各子页表格回滚到模型值(_refresh),避免关闭路径统一 flush 复活。"""
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "音频配置有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self.flush_to_model()
+        else:
+            for tab in self._sub_tabs:
+                tab._refresh()  # 回滚 UI 到模型值,中和后续统一 flush
         return True

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QLineEdit,
     QLabel,
+    QMessageBox,
     QScrollArea,
     QSizePolicy,
 )
@@ -69,6 +70,10 @@ class ConditionExprNodeEditor(QWidget):
         self._model_getter = model_getter
         self._child_editors: list[ConditionExprNodeEditor] = []
         self._not_child: ConditionExprNodeEditor | None = None
+        # 程序性载入期间抑制 changed（契约：set_dict 是程序性 set，不得外发编辑信号误标脏）。
+        self._loading = False
+        # 当前生效的节点类型（用于换类型时按"旧类型 + 旧控件"判断子树是否非空，据此弹确认）。
+        self._active_kind = "flag"
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 2, 0, 2)
@@ -106,6 +111,7 @@ class ConditionExprNodeEditor(QWidget):
         self._sc_wrap: QWidget | None = None
         self._sl_wrap: QWidget | None = None
         self._not_wrap: QWidget | None = None
+        self._not_empty_hint: QLabel | None = None
 
         self._flag_field: FlagKeyPickField | None = None
         self._flag_op: QComboBox | None = None
@@ -134,6 +140,19 @@ class ConditionExprNodeEditor(QWidget):
         self._kind.blockSignals(False)
         self._rebuild_body("flag")
 
+    def _emit_changed(self) -> None:
+        """统一出口：程序性载入（set_dict）期间不外发 changed，避免误标工程脏。"""
+        if not self._loading:
+            self.changed.emit()
+
+    def _refresh_not_empty_hint(self) -> None:
+        """not 节点：内层未配置时亮红字（恒假警告），配置后隐藏。"""
+        hint = self._not_empty_hint
+        if hint is None:
+            return
+        empty = not (self._not_child and self._not_child._has_content())
+        hint.setVisible(empty)
+
     def set_remove_callback(self, cb: Callable[[ConditionExprNodeEditor], None]) -> None:
         self._remove_callback = cb
 
@@ -144,11 +163,63 @@ class ConditionExprNodeEditor(QWidget):
     def _model(self) -> Any:
         return self._model_getter()
 
+    def _has_content(self, kind: str | None = None) -> bool:
+        """当前节点子树是否已配置（用现存控件按 kind 判断）；换类型/删节点确认据此。"""
+        k = kind if kind is not None else self._active_kind
+
+        def _combo_has(cb: QComboBox | None) -> bool:
+            if cb is None:
+                return False
+            d = cb.currentData()
+            return isinstance(d, str) and bool(d.strip())
+
+        if k in ("all", "any"):
+            return any(c._has_content() for c in self._child_editors)
+        if k == "not":
+            return bool(self._not_child and self._not_child._has_content())
+        if k == "flag":
+            return bool(self._flag_field and self._flag_field.key().strip())
+        if k == "quest":
+            return bool(self._q_id and self._q_id.current_id().strip())
+        if k == "scenario":
+            return _combo_has(self._sc_id)
+        if k == "scenarioLine":
+            return _combo_has(self._sl_id)
+        if k == "narrative":
+            return _combo_has(self._nv_graph)
+        if k == "plane":
+            return bool(self._pl_id and self._pl_id.current_id().strip())
+        return False
+
+    def _confirm_destructive_discard(self, action_label: str) -> bool:
+        """子树非空时的破坏性操作确认；默认 No（不执行）。测试可 monkeypatch。"""
+        if not self._has_content():
+            return True
+        ret = QMessageBox.question(
+            self,
+            action_label,
+            f"{action_label}将丢弃此节点下已配置的条件（不可撤销）。确定？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return ret == QMessageBox.StandardButton.Yes
+
     def _on_kind_changed(self) -> None:
         k = self._kind.currentData()
-        if isinstance(k, str):
-            self._rebuild_body(k)
-        self.changed.emit()
+        if not isinstance(k, str):
+            return
+        prev = self._active_kind
+        if prev and k != prev and self._has_content(prev):
+            if not self._confirm_destructive_discard("切换条件类型"):
+                # 用户放弃：还原下拉到原类型，保留原控件与配置
+                idx = self._kind.findData(prev)
+                if idx >= 0:
+                    self._kind.blockSignals(True)
+                    self._kind.setCurrentIndex(idx)
+                    self._kind.blockSignals(False)
+                return
+        self._rebuild_body(k)
+        self._emit_changed()
 
     def _clear_body(self) -> None:
         while self._body.count():
@@ -164,6 +235,7 @@ class ConditionExprNodeEditor(QWidget):
         self._sc_wrap = None
         self._sl_wrap = None
         self._not_wrap = None
+        self._not_empty_hint = None
         self._child_editors.clear()
         self._not_child = None
         self._flag_field = None
@@ -187,6 +259,7 @@ class ConditionExprNodeEditor(QWidget):
         self._pl_id = None
 
     def _rebuild_body(self, kind: str) -> None:
+        self._active_kind = kind
         self._clear_body()
         if kind in ("all", "any"):
             wrap = QWidget()
@@ -206,6 +279,12 @@ class ConditionExprNodeEditor(QWidget):
             nl = QVBoxLayout(nw)
             nl.setContentsMargins(8, 4, 0, 4)
             self._not_wrap = nw
+            # 裸 not（内层未配置）导出 {"not":{"all":[]}} = 恒假，挂条件上"永远不出现"极难排查：
+            # 行内红字提示（validator 侧另由数据组补）。
+            self._not_empty_hint = QLabel("not 未配置内层 = 恒为假（该条件永不满足）")
+            self._not_empty_hint.setWordWrap(True)
+            self._not_empty_hint.setStyleSheet("color:#c0392b;")
+            nl.addWidget(self._not_empty_hint)
             if self._depth >= _MAX_DEPTH - 1:
                 tip = QLabel(f"嵌套已达上限（{_MAX_DEPTH}），无法添加 not 子节点")
                 tip.setWordWrap(True)
@@ -213,10 +292,12 @@ class ConditionExprNodeEditor(QWidget):
             else:
                 ch = ConditionExprNodeEditor(self._depth + 1, self._model_getter, nw)
                 ch.set_remove_callback(None)
-                ch.changed.connect(self.changed.emit)
+                ch.changed.connect(self._emit_changed)
+                ch.changed.connect(self._refresh_not_empty_hint)
                 self._not_child = ch
                 nl.addWidget(ch)
             self._body.addWidget(nw)
+            self._refresh_not_empty_hint()
         elif kind == "flag":
             fw = QWidget()
             main = QVBoxLayout(fw)
@@ -230,7 +311,7 @@ class ConditionExprNodeEditor(QWidget):
             self._flag_field.valueChanged.connect(self._on_flag_field_value_changed)
             self._flag_op = QComboBox()
             self._flag_op.addItems(["==", "!=", ">", "<", ">=", "<="])
-            self._flag_op.currentTextChanged.connect(lambda _t: self.changed.emit())
+            self._flag_op.currentTextChanged.connect(lambda _t: self._emit_changed())
             self._flag_val_mode = QComboBox()
             self._flag_val_mode.addItem("值：按登记表", "registry")
             self._flag_val_mode.addItem("值：字符串/引用", "string_ref")
@@ -240,19 +321,19 @@ class ConditionExprNodeEditor(QWidget):
             row1.addWidget(self._flag_val_mode)
             main.addLayout(row1)
             self._flag_val_reg = FlagValueEdit(fw, reg)
-            self._flag_val_reg.valueChanged.connect(self.changed.emit)
+            self._flag_val_reg.valueChanged.connect(self._emit_changed)
             pm = self._model()
             if pm is not None:
                 free = RichTextLineEdit(pm, fw)
                 free.setPlaceholderText(
                     "与 Flag 比较：true/数字，或 [tag:…]（运行时 resolve 后再比较）",
                 )
-                free.textChanged.connect(lambda _s: self.changed.emit())
+                free.textChanged.connect(lambda _s: self._emit_changed())
                 self._flag_free_value = free
             else:
                 fe = QLineEdit(fw)
                 fe.setPlaceholderText("纯文本；载入工程后可插入 [tag:…]")
-                fe.textChanged.connect(lambda _s: self.changed.emit())
+                fe.textChanged.connect(lambda _s: self._emit_changed())
                 self._flag_free_value = fe
             main.addWidget(self._flag_val_reg)
             main.addWidget(self._flag_free_value)
@@ -268,11 +349,11 @@ class ConditionExprNodeEditor(QWidget):
             _qm = self._model()
             if _qm is not None and hasattr(_qm, "all_quest_ids"):
                 self._q_id.set_items(list(_qm.all_quest_ids()))
-            self._q_id.value_changed.connect(lambda *_: self.changed.emit())
+            self._q_id.value_changed.connect(lambda *_: self._emit_changed())
             self._q_st = QComboBox()
             for qs in _QUEST_STATUSES:
                 self._q_st.addItem(qs, qs)
-            self._q_st.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._q_st.currentIndexChanged.connect(lambda _i: self._emit_changed())
             qf.addRow("quest", self._q_id)
             qf.addRow("questStatus", self._q_st)
             self._quest_wrap = qw
@@ -285,14 +366,14 @@ class ConditionExprNodeEditor(QWidget):
             self._sc_id.currentIndexChanged.connect(self._on_scenario_combo)
             self._sc_ph = QComboBox()
             self._sc_ph.setEditable(False)
-            self._sc_ph.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._sc_ph.currentIndexChanged.connect(lambda _i: self._emit_changed())
             self._sc_st = QComboBox()
             for s in _SCENARIO_STATUSES:
                 self._sc_st.addItem(s, s)
-            self._sc_st.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._sc_st.currentIndexChanged.connect(lambda _i: self._emit_changed())
             self._sc_out = QLineEdit()
             self._sc_out.setPlaceholderText("可选 outcome（JSON 或字面量）")
-            self._sc_out.textChanged.connect(lambda: self.changed.emit())
+            self._sc_out.textChanged.connect(lambda: self._emit_changed())
             sf.addRow("scenario", self._sc_id)
             sf.addRow("phase", self._sc_ph)
             sf.addRow("status", self._sc_st)
@@ -305,11 +386,11 @@ class ConditionExprNodeEditor(QWidget):
             lf = compact_form(QFormLayout(lw))
             self._sl_id = QComboBox()
             self._sl_id.setEditable(False)
-            self._sl_id.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._sl_id.currentIndexChanged.connect(lambda _i: self._emit_changed())
             self._sl_st = QComboBox()
             for s in _SCENARIO_LINE_STATUSES:
                 self._sl_st.addItem(s, s)
-            self._sl_st.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._sl_st.currentIndexChanged.connect(lambda _i: self._emit_changed())
             lf.addRow("scenarioLine", self._sl_id)
             lf.addRow("lineStatus", self._sl_st)
             self._sl_wrap = lw
@@ -323,9 +404,9 @@ class ConditionExprNodeEditor(QWidget):
             self._nv_graph.currentIndexChanged.connect(self._on_narrative_graph_combo)
             self._nv_state = QComboBox()
             self._nv_state.setEditable(False)
-            self._nv_state.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            self._nv_state.currentIndexChanged.connect(lambda _i: self._emit_changed())
             self._nv_reached = QCheckBox("曾到达过（含当前；用于「X 之后」类门控）")
-            self._nv_reached.stateChanged.connect(lambda _s: self.changed.emit())
+            self._nv_reached.stateChanged.connect(lambda _s: self._emit_changed())
             nf.addRow("叙事图", self._nv_graph)
             nf.addRow("状态", self._nv_state)
             nf.addRow("", self._nv_reached)
@@ -343,7 +424,7 @@ class ConditionExprNodeEditor(QWidget):
             _pm = self._model()
             if _pm is not None and hasattr(_pm, "all_plane_ids"):
                 self._pl_id.set_items(list(_pm.all_plane_ids()))
-            self._pl_id.value_changed.connect(lambda *_: self.changed.emit())
+            self._pl_id.value_changed.connect(lambda *_: self._emit_changed())
             pf.addRow("plane", self._pl_id)
             self._pl_wrap = pw
             self._body.addWidget(pw)
@@ -384,7 +465,7 @@ class ConditionExprNodeEditor(QWidget):
 
     def _on_narrative_graph_combo(self, _i: int) -> None:
         self._fill_narrative_state_combo()
-        self.changed.emit()
+        self._emit_changed()
 
     def _fill_narrative_state_combo(self) -> None:
         if not self._nv_state or not self._nv_graph:
@@ -408,18 +489,28 @@ class ConditionExprNodeEditor(QWidget):
         if not self._sc_id or not self._sc_ph:
             return
         m = self._model()
+        # 刷新保值：clear 前记住当前 scenario，重建后还原；未知值以「（数据）」注入保留，
+        # 绝不静默清成「（选择）」——否则一次清单刷新即静默丢掉整条 scenario 条件。
+        cur = self._sc_id.currentData()
+        cur = cur.strip() if isinstance(cur, str) else ""
         self._sc_id.blockSignals(True)
         self._sc_id.clear()
         self._sc_id.addItem("（选择）", "")
         if m:
             for sid in m.scenario_ids_ordered():
                 self._sc_id.addItem(sid, sid)
+        if cur:
+            idx = self._sc_id.findData(cur)
+            if idx < 0:
+                self._sc_id.addItem(f"（数据）{cur}", cur)
+                idx = self._sc_id.count() - 1
+            self._sc_id.setCurrentIndex(idx)
         self._sc_id.blockSignals(False)
         self._fill_phase_combo()
 
     def _on_scenario_combo(self, _i: int) -> None:
         self._fill_phase_combo()
-        self.changed.emit()
+        self._emit_changed()
 
     def _fill_phase_combo(self) -> None:
         if not self._sc_ph or not self._sc_id:
@@ -427,12 +518,21 @@ class ConditionExprNodeEditor(QWidget):
         m = self._model()
         sid = self._sc_id.currentData()
         sid = sid.strip() if isinstance(sid, str) else ""
+        # 刷新保值：记住当前 phase，重建后还原；未知值以「（数据）」注入保留。
+        cur_ph = self._sc_ph.currentData()
+        cur_ph = cur_ph.strip() if isinstance(cur_ph, str) else ""
         self._sc_ph.blockSignals(True)
         self._sc_ph.clear()
         self._sc_ph.addItem("（选择）", "")
         if m and sid:
             for ph in m.phases_for_scenario(sid):
                 self._sc_ph.addItem(ph, ph)
+        if cur_ph:
+            idx = self._sc_ph.findData(cur_ph)
+            if idx < 0:
+                self._sc_ph.addItem(f"（数据）{cur_ph}", cur_ph)
+                idx = self._sc_ph.count() - 1
+            self._sc_ph.setCurrentIndex(idx)
         self._sc_ph.blockSignals(False)
 
     def _fill_scenario_line_combo(self) -> None:
@@ -468,11 +568,11 @@ class ConditionExprNodeEditor(QWidget):
     def _on_flag_field_value_changed(self) -> None:
         if self._flag_val_reg and self._flag_field:
             self._flag_val_reg.set_flag_key(self._flag_field.key())
-        self.changed.emit()
+        self._emit_changed()
 
     def _on_flag_val_mode_changed(self, _i: int = 0) -> None:
         self._sync_flag_value_widgets_visibility()
-        self.changed.emit()
+        self._emit_changed()
 
     def _sync_flag_value_widgets_visibility(self) -> None:
         if not self._flag_val_mode or not self._flag_val_reg or self._flag_free_value is None:
@@ -496,19 +596,33 @@ class ConditionExprNodeEditor(QWidget):
             return
         ch = ConditionExprNodeEditor(self._depth + 1, self._model_getter)
         ch.set_remove_callback(self._remove_child)
-        ch.changed.connect(self.changed.emit)
+        ch.changed.connect(self._emit_changed)
         self._child_editors.append(ch)
         self._lay_all_any.addWidget(ch)
-        self.changed.emit()
+        self._emit_changed()
 
     def _remove_child(self, editor: ConditionExprNodeEditor) -> None:
         if editor in self._child_editors:
+            # 子树非空时先确认，避免误删整棵已配置子条件（不可撤销）。
+            if not editor._confirm_destructive_discard("移除此节点"):
+                return
             self._child_editors.remove(editor)
             editor.setParent(None)
             editor.deleteLater()
-            self.changed.emit()
+            self._emit_changed()
 
     def set_dict(self, data: dict[str, Any] | None) -> None:
+        """程序性载入：全程抑制 changed（契约——载入 UI 不得外发编辑信号误标工程脏）。"""
+        prev = self._loading
+        self._loading = True
+        try:
+            self._set_dict_impl(data)
+        finally:
+            self._loading = prev
+        # 载入完成后同步一次 not 恒假提示（此期间被抑制的可视状态需要落定）
+        self._refresh_not_empty_hint()
+
+    def _set_dict_impl(self, data: dict[str, Any] | None) -> None:
         # 原始形状快照：UI 未实际编辑时 to_dict 逐字返回原 dict
         #（不注入 questStatus/lineStatus/phase/status 默认键、不丢 reached:false、
         #  不把旧 "status" 键名改写成 "questStatus"、保留未知附加键）。
@@ -557,7 +671,8 @@ class ConditionExprNodeEditor(QWidget):
             if isinstance(inner, dict) and self._not_child:
                 self._not_child.set_dict(inner)
         elif k == "flag" and self._flag_field and self._flag_op and self._flag_val_reg and self._flag_val_mode and self._flag_free_value is not None:
-            self._flag_field.set_key(str(data.get("flag", "")))
+            # 程序性载入：静默设值，不发 valueChanged（_loading 亦已兜底，双重保险）。
+            self._flag_field.set_key_silent(str(data.get("flag", "")))
             self._flag_val_reg.set_flag_key(self._flag_field.key())
             op = str(data.get("op", "=="))
             iop = self._flag_op.findText(op)

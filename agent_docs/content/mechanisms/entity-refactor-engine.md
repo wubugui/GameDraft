@@ -52,6 +52,11 @@ last_governed: 2026-07-13
   暂不管)——上线内容改名前留意。
 - 新增含实体/场景/出生点引用参数的 action,必须登记 `ENTITY_REF_PARAMS`
   (见 [加 Action 四件套](../../runtime/mechanisms/action-registration-quadruple.md))。
+- **speaker 引用通道认 `_SPEAKER_NPCID_KINDS=("sceneNpc","npc")`**:真实数据里显式带
+  `npcId` 的说话人 kind 是 `sceneNpc`(types.ts `DialogueGraphSpeaker`),**不是**裸 `npc`;
+  引擎早期只认 `npc`,整条 speaker 引用通道漏扫/漏改(如 storyteller_zhang 12 处报 0,
+  2026-07-14 修)。新增含 speaker 的图节点形状变化时,同步 `_SPEAKER_NPCID_KINDS` 与
+  parity 探针 `test_scan_counts_scenenpc_speaker`。
 
 ## 怎么验证
 

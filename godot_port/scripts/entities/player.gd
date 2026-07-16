@@ -1,7 +1,29 @@
 class_name RuntimePlayer
 extends RefCounted
 
-signal move_progress
+
+class _MoveCompletion:
+	extends RefCounted
+
+	signal completed
+
+	var settled := false
+
+
+	func resolve() -> void:
+		if settled:
+			return
+		settled = true
+		call_deferred("_emit_completed")
+
+
+	func wait() -> void:
+		if not settled:
+			await completed
+
+
+	func _emit_completed() -> void:
+		completed.emit()
 
 const DEFAULT_WALK_SPEED := 100.0
 const DEFAULT_RUN_SPEED := 180.0
@@ -11,8 +33,6 @@ var _input_manager: RuntimeInputManager
 var _depth_collision := Callable()
 var _movement_modifier := Callable()
 var _move_target: Dictionary = {}
-var _move_token := 0
-var _completed_move_tokens: Dictionary = {}
 var _collisions_enabled := true
 var _walk_speed := DEFAULT_WALK_SPEED
 var _run_speed := DEFAULT_RUN_SPEED
@@ -48,14 +68,16 @@ func play_animation(name: String) -> void: sprite.play_animation(name)
 func is_moving_to_target() -> bool: return not _move_target.is_empty()
 
 
-func move_to(target_x: float, target_y: float, speed: float, move_anim_state: String = "", face_toward_movement: bool = false) -> void:
-	if not _move_target.is_empty(): _complete_move(int(_move_target.token))
-	_move_token += 1; var token := _move_token; var anim := move_anim_state.strip_edges()
-	_move_target = {"token": token, "x": target_x, "y": target_y, "speed": speed, "playIdleOnArrive": not anim.is_empty(), "faceTowardMovement": face_toward_movement}
-	var delta := Vector2(target_x - sprite.x, target_y - sprite.y); sprite.set_direction(delta.x, delta.y if face_toward_movement else 0)
+func move_to(target_x: float, target_y: float, speed: float, move_anim_state: Variant = null, face_toward_movement: Variant = null) -> void:
+	if not _move_target.is_empty():
+		var previous: _MoveCompletion = _move_target.completion
+		previous.resolve()
+	var completion := _MoveCompletion.new()
+	var anim: String = move_anim_state.strip_edges() if move_anim_state is String else ""; var toward: bool = face_toward_movement == true
+	_move_target = {"x": target_x, "y": target_y, "speed": speed, "playIdleOnArrive": not anim.is_empty(), "faceTowardMovement": toward, "completion": completion}
+	var delta := Vector2(target_x - sprite.x, target_y - sprite.y); sprite.set_direction(delta.x, delta.y if toward else 0)
 	if not anim.is_empty(): sprite.play_animation(anim)
-	while not _completed_move_tokens.has(token): await move_progress
-	await Engine.get_main_loop().process_frame
+	await completion.wait()
 
 
 func cutscene_update(dt: float) -> void:
@@ -64,7 +86,9 @@ func cutscene_update(dt: float) -> void:
 		if distance <= step:
 			sprite.x = float(_move_target.x); sprite.y = float(_move_target.y)
 			if _move_target.playIdleOnArrive: sprite.play_animation("idle")
-			var token := int(_move_target.token); _move_target.clear(); _complete_move(token)
+			var completion: _MoveCompletion = _move_target.completion
+			_move_target.clear()
+			completion.resolve()
 		elif distance > 0:
 			if _move_target.faceTowardMovement: set_facing(delta.x, delta.y)
 			sprite.x += delta.x / distance * step; sprite.y += delta.y / distance * step
@@ -92,11 +116,12 @@ func update(dt: float) -> void:
 
 
 func destroy_player() -> void:
-	if not _move_target.is_empty(): _complete_move(int(_move_target.token)); _move_target.clear()
-	_depth_collision = Callable(); _movement_modifier = Callable(); sprite.destroy_entity()
+	if not _move_target.is_empty():
+		var completion: _MoveCompletion = _move_target.completion
+		_move_target.clear()
+		completion.resolve()
+	_depth_collision = Callable(); _movement_modifier = Callable(); sprite.destroy()
 
 
 func _collides_at(x: float, y: float) -> bool: return _collisions_enabled and not _depth_collision.is_null() and _depth_collision.is_valid() and _depth_collision.call(x, y) == true
 func _out_of_bounds(x: float, y: float) -> bool: return _world_width > 0 and _world_height > 0 and (x < 0 or x > _world_width or y < 0 or y > _world_height)
-func _complete_move(token: int) -> void: _completed_move_tokens[token] = true; call_deferred("_emit_move_progress")
-func _emit_move_progress() -> void: move_progress.emit()

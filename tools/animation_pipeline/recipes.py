@@ -28,6 +28,22 @@ ACTIONS: dict[str, dict] = {
     "crouch":    {"anchor": "grounded",     "frameRate": 8,  "loop": True,  "periodic": False, "airborne": False, "feet_stationary": True},
     "jump":      {"anchor": "vertical",     "frameRate": 10, "loop": True,  "periodic": False, "airborne": True,  "feet_stationary": False},
     "lie_down":  {"anchor": "ground_fixed", "frameRate": 8,  "loop": True,  "periodic": False, "airborne": False, "feet_stationary": False},
+    # --- animal action extensions (2026-07-14) ---
+    # One-shot stands that return to rest -> non-periodic bracket, feet planted.
+    "bark":       {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": False, "airborne": False, "feet_stationary": True},
+    "stretch":    {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": False, "airborne": False, "feet_stationary": True},
+    "arch_alert": {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": False, "airborne": False, "feet_stationary": True},
+    "kick":       {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": False, "airborne": False, "feet_stationary": True},
+    "honk_stand": {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": False, "airborne": False, "feet_stationary": True},
+    "strike":     {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": False, "airborne": False, "feet_stationary": True},
+    # Repetitive in-place cycles -> periodic loop, feet planted (peck/flap/rest breathing).
+    "peck":       {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": True,  "airborne": False, "feet_stationary": True},
+    "wing_flap":  {"anchor": "grounded", "frameRate": 10, "loop": True, "periodic": True,  "airborne": False, "feet_stationary": True},
+    "lie_rest":   {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": True,  "airborne": False, "feet_stationary": True},
+    # Locomotion-like cycles -> periodic loop, trunk anchor (stride/slither/charge).
+    "honk_walk":  {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": True,  "airborne": False, "feet_stationary": False},
+    "slither":    {"anchor": "grounded", "frameRate": 8,  "loop": True, "periodic": True,  "airborne": False, "feet_stationary": False},
+    "charge":     {"anchor": "grounded", "frameRate": 12, "loop": True, "periodic": True,  "airborne": True,  "feet_stationary": False},
 }
 
 # Frame budget per state (upper bound; loop finder may pick fewer for periodic).

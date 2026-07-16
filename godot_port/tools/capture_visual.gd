@@ -58,7 +58,7 @@ func _capture() -> void:
 		if dialogue_advance_steps > 0: commands.push_back({"type": "debugAdvanceDialogue", "maxSteps": dialogue_advance_steps})
 		commands.push_back({"type": "debugStepTicks", "ticks": 120, "dtMs": float(options.get("dt-ms", 1000.0 / 60.0))})
 	for command: Dictionary in commands:
-		var result: Dictionary = await bootstrap.apply_parity_runtime_command(command)
+		var result: Dictionary = await bootstrap.apply_runtime_command(command)
 		if result.get("ok") != true:
 			push_error("capture_visual command failed: %s" % result)
 			_teardown(bootstrap)
@@ -69,7 +69,7 @@ func _capture() -> void:
 		if not await _start_minigame(bootstrap, minigame):
 			push_error("capture_visual minigame failed to start: %s" % minigame)
 			_teardown(bootstrap); quit(7); return
-		var minigame_tick: Dictionary = await bootstrap.apply_parity_runtime_command({"type": "debugStepTicks", "ticks": 60, "dtMs": float(options.get("dt-ms", 1000.0 / 60.0))})
+		var minigame_tick: Dictionary = await bootstrap.apply_runtime_command({"type": "debugStepTicks", "ticks": 60, "dtMs": float(options.get("dt-ms", 1000.0 / 60.0))})
 		if minigame_tick.get("ok") != true:
 			push_error("capture_visual minigame fixed ticks failed: %s" % minigame_tick)
 			_teardown(bootstrap); quit(8); return
@@ -145,7 +145,7 @@ func _start_minigame(bootstrap: Node, spec: String) -> bool:
 	for _index: int in 240:
 		await process_frame
 		if manager.active and manager.scene != null:
-			var scene_root: Variant = manager.scene.get_root()
+			var scene_root: Variant = manager.scene.root
 			if scene_root != null and scene_root.get_parent() == bootstrap.renderer.cutscene_overlay: return true
 	return false
 

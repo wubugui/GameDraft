@@ -1,5 +1,5 @@
-"""动画预览工具启动器:起独立 Vite dev(复用游戏 src/rendering,读 public/ 资源,
-带实时扫描+监听插件)+ 开浏览器。与 lightvol / 叙事编辑器同款独立 Web 工具。
+"""统一动画资源工作台启动器:起独立 Vite dev，提供 A→H 版本图、人工 R 装配，
+并复用游戏 src/rendering 对 public/ 已发布资源做真实渲染终验。
 
   ./dev.sh anim-preview                       # 起服 + 开浏览器
   python -m tools.anim_preview --char 官差枪_anim --state run
@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import secrets
 import socket
 import subprocess
 import sys
@@ -45,7 +46,7 @@ def _wait_ready(url: str, timeout: float = 40.0) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="anim-preview", description="游戏一致的精灵动画预览(Web)")
+    ap = argparse.ArgumentParser(prog="anim-preview", description="动画资源版本图、人工装配与游戏一致终验(Web IDE)")
     ap.add_argument("--port", type=int, default=5199)
     ap.add_argument("--char", default="", help="启动即选中的角色 id")
     ap.add_argument("--state", default="", help="启动即播放的状态名")
@@ -58,22 +59,29 @@ def main(argv: list[str] | None = None) -> int:
         "--port", str(port), "--strictPort",
     ]
     env = env_with_node_path()
+    human_token = secrets.token_urlsafe(32)
+    env["ANIMATION_WORKBENCH_HUMAN_TOKEN"] = human_token
     print(f"$ {' '.join(cmd)}", flush=True)
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
 
     base = f"http://127.0.0.1:{port}/"
     query = {k: v for k, v in (("char", args.char), ("state", args.state)) if v}
     url = base + ("?" + urlencode(query) if query else "")
+    human_url = url + "#" + urlencode({"human": human_token})
 
     if not args.no_open:
         def opener() -> None:
             if _wait_ready(base):
-                webbrowser.open(url)
+                webbrowser.open(human_url)
             else:
-                print("Anim Preview: dev server 未就绪,手动打开 " + url, flush=True)
+                print("Animation Workbench: dev server 未就绪；请重新运行 ./dev.sh anim-preview", flush=True)
         threading.Thread(target=opener, daemon=True).start()
 
-    print(f"Anim Preview: {url}", flush=True)
+    print(f"Animation Workbench (只读地址): {url}", flush=True)
+    if args.no_open:
+        print("--no-open 不向浏览器交付人工能力；需要写操作时请不带 --no-open 启动。", flush=True)
+    else:
+        print("人工能力已仅通过一次性 URL fragment 交给新开的浏览器页面。", flush=True)
     print("Ctrl-C 结束。", flush=True)
     try:
         return proc.wait()

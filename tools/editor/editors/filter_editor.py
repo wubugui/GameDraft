@@ -268,6 +268,17 @@ class FilterEditor(QWidget):
         self._search.textChanged.emit(self._search.text())
         self._empty_hint.setVisible(self._list.count() == 0)
 
+    def select_by_id(self, stem: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按滤镜文件名（stem）选中。"""
+        if self._search.text():
+            self._search.clear()  # 目标行可能被过滤隐藏
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            if it is not None and it.text() == stem:
+                self._list.setCurrentRow(i)
+                return True
+        return False
+
     def _on_select(self, row: int) -> None:
         # commit-on-leave：切走前提交上一条的未应用编辑（与其它表单编辑器一致）
         if self._current_stem and self._is_dirty():

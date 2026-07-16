@@ -180,7 +180,9 @@ def model(tmp_path: Path) -> FakeModel:
         "id": "对话_张三", "entry": "n1",
         "nodes": {"n1": {
             "id": "n1",
-            "speaker": {"kind": "npc", "npcId": "npc_张三"},
+            # 真实数据形状：显式带 npcId 的说话人 kind 为 "sceneNpc"（types.ts
+            # DialogueGraphSpeaker）；kind:"npc" 变体根本不带 npcId（跟随说话 NPC）。
+            "speaker": {"kind": "sceneNpc", "npcId": "npc_张三"},
             "runActions": [_act("playNpcAnimation", target="npc_张三", state="wave")],
         }},
     })
@@ -318,6 +320,32 @@ def test_rename_unique_rewrites_all_surfaces(model: FakeModel) -> None:
     assert staged["对话_链尾"]["nodes"]["n1"]["runActions"][0]["params"]["target"] == "npc_张三丰"
 
 
+def test_scan_counts_scenenpc_speaker(model: FakeModel) -> None:
+    """真实数据形状：speaker.kind=='sceneNpc' 的 npcId 必须被扫描计入 dialogues。"""
+    rep = scan_entity_usages(model, "甲村", "npc", "npc_张三")
+    d = next(d for d in rep["dialogues"] if d["graphId"] == "对话_张三")
+    # playNpcAnimation.target(1) + speaker.npcId(1) = 2
+    assert d["count"] == 2
+
+
+def test_rename_rewrites_scenenpc_and_compat_npc_speaker(model: FakeModel, tmp_path: Path) -> None:
+    """改名同时改写 sceneNpc 形状与兼容 kind:'npc'+npcId 形状的 speaker.npcId。"""
+    # 追加一张用兼容形状的对话图，可达集限本场景（挂到甲村某 hotspot）
+    graphs_dir = tmp_path / "graphs"
+    _write_graph(graphs_dir, "对话_兼容", {
+        "id": "对话_兼容", "entry": "n1",
+        "nodes": {"n1": {"id": "n1",
+                         "speaker": {"kind": "npc", "npcId": "npc_张三"}}},
+    })
+    model.scenes["甲村"]["hotspots"].append(
+        {"id": "hs_看板", "type": "inspect", "x": 0, "y": 0,
+         "data": {"graphId": "对话_兼容"}})
+    rename_entity(model, "甲村", "npc", "npc_张三", "npc_张三丰")
+    staged = model.pending_dialogue_graph_edits
+    assert staged["对话_张三"]["nodes"]["n1"]["speaker"]["npcId"] == "npc_张三丰"
+    assert staged["对话_兼容"]["nodes"]["n1"]["speaker"]["npcId"] == "npc_张三丰"
+
+
 def test_rename_ambiguous_id_keeps_global_surfaces(model: FakeModel) -> None:
     """id 在多场景重复：只改写可证明指向本实体的引用，全局面与他场景引用不动。"""
     model.quests[0]["onComplete"].append(
@@ -331,6 +359,30 @@ def test_rename_ambiguous_id_keeps_global_surfaces(model: FakeModel) -> None:
     # 对话_重名 可达集为空（无触发面）→ 不可证明 → 跳过并列入报告
     assert summary["scope"]["skippedDialogues"] == ["对话_重名"]
     assert "对话_重名" not in model.pending_dialogue_graph_edits
+
+
+def test_rename_tag_asymmetry_hard_rejects_then_follows(model: FakeModel) -> None:
+    """非全局唯一 + 本场景是最后一个 npc 实例 + 有 [tag:npc:id]：默认硬拒；
+    follow_tag_refs=True 时跟随改写。与删除路径的硬拒口径对齐。"""
+    # 甲村独有 npc_共名，但乙镇有同 id 的 hotspot → unique_global=False、last_instance=True
+    model.scenes["甲村"]["npcs"].append({"id": "npc_共名", "x": 0, "y": 0})
+    model.scenes["乙镇"]["hotspots"].append(
+        {"id": "npc_共名", "type": "inspect", "x": 0, "y": 0})
+    model.quests[0]["title"] = "找[tag:npc:npc_共名]问话"
+    with pytest.raises(EntityRefactorError, match="tag:npc"):
+        rename_entity(model, "甲村", "npc", "npc_共名", "npc_共名新")
+    # 数据无半改：名字未变
+    assert any(n["id"] == "npc_共名" for n in model.scenes["甲村"]["npcs"])
+    # 确认跟随后：id 改、tag 一起改
+    summary = rename_entity(
+        model, "甲村", "npc", "npc_共名", "npc_共名新", follow_tag_refs=True)
+    assert summary["scope"]["tagFollowForced"] is True
+    assert model.quests[0]["title"] == "找[tag:npc:npc_共名新]问话"
+    assert model.scenes["乙镇"]["hotspots"][-1]["id"] == "npc_共名"  # 他场景同 id 实体不动
+    # 撤销按 scope 回放，tag 还原
+    push_journal(model, summary)
+    assert undo_last(model)["ok"]
+    assert model.quests[0]["title"] == "找[tag:npc:npc_共名]问话"
 
 
 def test_rename_collision_raises_before_mutation(model: FakeModel) -> None:

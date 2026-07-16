@@ -3,8 +3,7 @@
   "id": "码头看板官差",
   "entry": "n_4",
   "meta": {
-    "title": "码头看板官差",
-    "scenarioId": "码头水鬼"
+    "title": "码头看板官差"
   },
   "nodes": {
     "n_sleep": {
@@ -26,9 +25,9 @@
           "next": "n_1",
           "conditions": [
             {
-              "scenario": "码头水鬼",
-              "phase": "看板初读",
-              "status": "done"
+              "narrative": "flow_dock_water_monkey",
+              "state": "board_read",
+              "reached": true
             }
           ]
         }
@@ -274,19 +273,11 @@
           }
         },
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "真相揭示（官差）",
-            "status": "done"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "真相揭示",
-            "status": "done"
+            "sourceType": "dialogue",
+            "sourceId": "码头看板官差",
+            "signal": "dock_truth_revealed"
           }
         }
       ],
@@ -307,26 +298,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "询问官差",
-            "status": "done",
-            "outcome": "scolded"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "官差已套近乎",
-            "status": "pending"
-          }
-        },
-        {
-          "type": "completeScenario",
-          "params": {
-            "scenarioId": "码头水鬼"
+            "sourceType": "dialogue",
+            "sourceId": "码头看板官差",
+            "signal": "dock_guanchai_rapport_reset"
           }
         },
         {
@@ -421,7 +397,10 @@
           }
         }
       ],
-      "text": "官爷......"
+      "text": "官爷......",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_2": {
       "type": "line",
@@ -449,17 +428,20 @@
           }
         }
       ],
-      "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
+      "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_3": {
       "type": "runActions",
       "actions": [
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "官差已套近乎",
-            "status": "done"
+            "sourceType": "dialogue",
+            "sourceId": "码头看板官差",
+            "signal": "dock_guanchai_rapport_done"
           }
         }
       ],

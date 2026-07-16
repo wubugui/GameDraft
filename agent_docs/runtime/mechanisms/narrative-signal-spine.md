@@ -36,7 +36,7 @@ last_governed: 2026-07-13
 
 ## 已知坑
 
-- scenarios.json 与 narrative 的 scenario_* 子图撞名但完全是两套(见 [scenario-catalog-semantics](scenario-catalog-semantics.md))。
+- scenarios.json 与 narrative 的 scenario_* 子图撞名但完全是两套(见 [scenario-catalog-semantics](scenario-catalog-semantics.md));**scenarios.json 一等公民系统已 2026-07-13 退役并清空,拍子一律走 narrative 子图**。
 - 配一个"信号驱动拍子"最少动 5 处:①场景 zone+门闸 ②对话图(演+信号) ③叙事子图(states+末态 broadcastOnEnter) ④主图接一条 transition ⑤补被引用资产,收尾 validate-data+素材审计。少接第④步=支线,不是漏配。
 - "谁在发/谁在听"的权威口径与悬垂告警语义见 [emitted-signal-catalog](../../editor-tools/mechanisms/emitted-signal-catalog.md)(含 flow 状态广播只被条件叶子消费时的已知告警噪声)。
 

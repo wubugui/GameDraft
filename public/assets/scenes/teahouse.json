@@ -15,6 +15,44 @@
       "y": 0
     }
   ],
+  "filterId": "teahouse_evening",
+  "lightEnv": {
+    "key": {
+      "azimuthDeg": 310.0,
+      "elevationDeg": 30.0,
+      "color": [
+        0.95,
+        0.78,
+        0.55
+      ],
+      "intensity": 0.65
+    },
+    "ambient": {
+      "color": [
+        0.32,
+        0.29,
+        0.33
+      ],
+      "intensity": 0.75
+    },
+    "shadow": {
+      "enabled": true,
+      "mode": "planar",
+      "darkness": 0.3,
+      "softness": 1.2,
+      "contact": 0.4,
+      "contactSize": 0.12,
+      "softSamples": 1,
+      "softRadius": 0.05,
+      "billboard": "light"
+    },
+    "toneStrength": 0.5,
+    "toneEnabled": true,
+    "ao": {
+      "contact": 0.45,
+      "form": 0.3
+    }
+  },
   "ambientSounds": [
     "teahouse_roomtone",
     "中文人声闹市"
@@ -128,25 +166,6 @@
       "data": {
         "graphId": "寻狗_向导传闻"
       }
-    },
-    {
-      "id": "茶馆_自动事件",
-      "type": "inspect",
-      "label": "自动剧情点",
-      "x": 66.5,
-      "y": 241.8,
-      "interactionRange": 50.0,
-      "data": {
-        "graphId": "茶馆_自动事件"
-      },
-      "castShadow": false,
-      "autoTrigger": true,
-      "conditions": [
-        {
-          "flag": "picked_up_old_box"
-        }
-      ],
-      "conditionHidesEntity": true
     }
   ],
   "npcs": [
@@ -207,6 +226,111 @@
       "y": 323.4,
       "dialogueGraphId": "茶馆小二",
       "interactionRange": 64.3
+    },
+    {
+      "id": "fx_steam_1",
+      "name": "热气",
+      "x": 191.0,
+      "y": 362.0,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_steam_2",
+      "name": "热气",
+      "x": 420.0,
+      "y": 262.0,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_steam_3",
+      "name": "热气",
+      "x": 505.0,
+      "y": 385.0,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_glow_1",
+      "name": "灯",
+      "x": 244.0,
+      "y": 31.0,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_glow_2",
+      "name": "灯",
+      "x": 137.0,
+      "y": 90.0,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_patron_laugh",
+      "name": "笑客",
+      "x": 147.5,
+      "y": 369.8,
+      "interactionRange": 0.0,
+      "castShadow": false,
+      "renderRaw": true,
+      "animFile": "/resources/runtime/animation/fx_patron_laugh/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_patron_chatA",
+      "name": "茶客甲",
+      "x": 496.8,
+      "y": 332.6,
+      "interactionRange": 0.0,
+      "castShadow": false,
+      "renderRaw": true,
+      "animFile": "/resources/runtime/animation/fx_patron_chatA/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_patron_sage",
+      "name": "老者甲",
+      "x": 298.4,
+      "y": 328.8,
+      "interactionRange": 0.0,
+      "castShadow": false,
+      "renderRaw": true,
+      "animFile": "/resources/runtime/animation/fx_patron_sage/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_patron_drinker",
+      "name": "喝茶客",
+      "x": 236.4,
+      "y": 371.5,
+      "interactionRange": 0.0,
+      "castShadow": false,
+      "renderRaw": true,
+      "animFile": "/resources/runtime/animation/fx_patron_drinker/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_patron_eater",
+      "name": "邻桌客",
+      "x": 598.7,
+      "y": 360.6,
+      "interactionRange": 0.0,
+      "castShadow": false,
+      "renderRaw": true,
+      "animFile": "/resources/runtime/animation/fx_patron_eater/anim.json",
+      "initialAnimState": "idle"
     }
   ],
   "depthConfig": {
@@ -259,9 +383,7 @@
     {
       "type": "startDialogueGraph",
       "params": {
-        "graphId": "茶馆_自动事件",
-        "ownerType": "hotspot",
-        "ownerId": "茶馆_自动事件"
+        "graphId": "寻狗_听书开场"
       }
     }
   ]

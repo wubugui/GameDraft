@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { animScanPlugin } from './animScanPlugin';
+import { animationWorkspacePlugin } from './workspacePlugin';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -16,9 +17,10 @@ export default defineConfig({
     alias: { '@src': path.join(repoRoot, 'src') },
   },
   server: {
+    host: '127.0.0.1',
     port: 5199,
     strictPort: false,
     fs: { allow: [repoRoot] },
   },
-  plugins: [animScanPlugin(repoRoot)],
+  plugins: [animScanPlugin(repoRoot), animationWorkspacePlugin(repoRoot)],
 });

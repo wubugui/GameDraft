@@ -322,9 +322,11 @@ def validate_template(tpl: dict[str, Any]) -> list[dict[str, Any]]:
     used |= iter_placeholders(tpl.get("dialogueStubs") or [])
 
     for name in sorted(used - declared):
+        # error 拦保存：未声明的占位符盖章时永远填不上，字面 {{name}} 会泄漏进运行时数据
+        # ——占位符物理隔离是模板系统硬契约（曾只 warning，2026-07-17 审查 W-E5/P-F9 升级）。
         issues.append(_issue(
-            "warning", "template.param.undeclared",
-            f"模板「{tid}」用了占位符 {{{{{name}}}}} 但没在 params 里声明", tid,
+            "error", "template.param.undeclared",
+            f"模板「{tid}」用了占位符 {{{{{name}}}}} 但没在 params 里声明（盖章会把字面占位符泄漏进运行时数据）", tid,
         ))
     for name in sorted(declared - used):
         issues.append(_issue(
@@ -573,9 +575,11 @@ def stamp_template(
     required_entities, _unknown_r = substitute(req_src, values)
 
     for name in sorted(unknown_c | unknown_s | unknown_q | unknown_d):
-        warnings.append(_issue(
-            "warning", "stamp.placeholder.unknown",
-            f"占位符 {{{{{name}}}}} 没有对应参数值，已原样保留", tid,
+        # error 禁盖章：没有值的占位符会把字面 {{name}} 盖进 narrative/quest/对话桩
+        # （运行时当活数据注册、strict 校验爆红）——物理隔离硬契约（2026-07-17 升级）。
+        errors.append(_issue(
+            "error", "stamp.placeholder.unknown",
+            f"占位符 {{{{{name}}}}} 没有对应参数值，禁止盖章（会把字面占位符泄漏进运行时数据）", tid,
         ))
 
     comp_id = _as_str(composition.get("id")) if isinstance(composition, dict) else ""

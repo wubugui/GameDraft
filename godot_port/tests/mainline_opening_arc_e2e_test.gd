@@ -1,6 +1,9 @@
 extends Node
 
+const RuntimeDataTypes := preload("res://scripts/data/data_types.gd")
+
 const BootstrapScript := preload("res://scripts/bootstrap.gd")
+const SceneQueries := preload("res://tests/support/scene_queries.gd")
 const EXPECTED_PLAYER_SCENES: Array[String] = [
 	"bridge_underpass", "mountain_pass", "teahouse", "temple", "temple_exterior", "test_room_a", "test_room_b",
 	"义庄", "城门口", "城隍庙夜", "婆子家院", "崖墓", "枯井土地庙", "梦_农家院", "梦_夜路", "梦_醒来土路",
@@ -21,11 +24,16 @@ func _ready() -> void:
 	)
 	visited_scenes.push_back(bootstrap.scene_manager.get_current_scene_id())
 	_send_key(KEY_ESCAPE)
-	assert(await _wait_until(func() -> bool: return not bootstrap.cutscene_manager.is_playing() and not bootstrap.scene_manager.is_scene_enter_running(), 180))
+	assert(await _wait_until(func() -> bool:
+		return not bootstrap.cutscene_manager.is_playing() \
+			and bootstrap.state_controller.current_state == RuntimeDataTypes.DIALOGUE \
+			and bootstrap.graph_dialogue_manager.is_active()
+	, 180))
 
-	# Beat 0/1: shipped storyteller dialogue via real E/Enter/Digit input.
-	assert(await _interact_npc("storyteller_zhang"))
-	assert(await _drive_runtime_until_dialogue_closed(360))
+	# Beat 0/1: the authoritative teahouse onEnter graph owns the opening cutscene
+	# and resumes its dialogue after Skip; drive that real graph to completion.
+	assert(bootstrap.graph_dialogue_manager.get_dialogue_view_debug().get("graphId") == "寻狗_听书开场")
+	assert(await _drive_runtime_until_dialogue_closed(600))
 	assert(bootstrap.narrative_state_manager.get_active_state("flow_xungou_main") == "s01_tingshu")
 	assert(await _take_transition("exit_to_street", "雾津街头"))
 
@@ -60,10 +68,11 @@ func _ready() -> void:
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_背尸") in ["hired", "at_yamu"])
 	bootstrap.player.set_x(500.0); bootstrap.player.set_y(500.0)
 	bootstrap.zone_system.update(0.0)
-	await get_tree().process_frame
-	assert(bootstrap.narrative_state_manager.get_active_state("scenario_背尸") == "at_yamu")
+	assert(await _wait_until(func() -> bool:
+		return bootstrap.narrative_state_manager.get_active_state("scenario_背尸") == "at_yamu"
+	, 180))
 	if bootstrap.cutscene_manager.is_playing(): _send_key(KEY_ESCAPE)
-	assert(await _wait_until(func() -> bool: return not bootstrap.cutscene_manager.is_playing() and bootstrap.state_controller.current_state == RuntimeGameStateController.EXPLORING, 240))
+	assert(await _wait_until(func() -> bool: return not bootstrap.cutscene_manager.is_playing() and bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING, 240))
 
 	# Inspect the body and genuinely hold Space through both pressure interrupts.
 	assert(await _interact_hotspot("hs_女尸"))
@@ -123,8 +132,8 @@ func _ready() -> void:
 		assert(await _wait_until(func() -> bool: return bootstrap.dialogue_manager.is_active(), 180))
 	if bootstrap.dialogue_manager.is_active(): assert(await _drive_scripted_dialogue(120))
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_婆子家") == "at_courtyard")
-	var courtyard_exploring := await _wait_until(func() -> bool: return bootstrap.state_controller.current_state == RuntimeGameStateController.EXPLORING, 180)
-	if not courtyard_exploring: print("COURTYARD_STATE_STUCK ", {"state": bootstrap.state_controller.current_state, "graph": bootstrap.graph_dialogue_manager.is_active(), "scripted": bootstrap.dialogue_manager.is_active(), "sceneEnter": bootstrap.scene_manager.is_scene_enter_running(), "switching": bootstrap.scene_manager.is_switching()})
+	var courtyard_exploring := await _wait_until(func() -> bool: return bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING, 180)
+	if not courtyard_exploring: print("COURTYARD_STATE_STUCK ", {"state": bootstrap.state_controller.current_state, "graph": bootstrap.graph_dialogue_manager.is_active(), "scripted": bootstrap.dialogue_manager.is_active(), "switching": bootstrap.scene_manager.is_switching()})
 	assert(courtyard_exploring)
 	assert(await _interact_npc("npc_院中婆子")); assert(await _drive_runtime_until_dialogue_closed(480))
 	assert(await _interact_npc("npc_她儿子")); assert(await _drive_runtime_until_dialogue_closed(480))
@@ -162,19 +171,19 @@ func _ready() -> void:
 	assert(await _drive_world_until_graph("寻狗_码头选择", 3600))
 	assert(await _drive_runtime_until_dialogue_closed(900))
 	assert(bootstrap.narrative_state_manager.get_active_state("flow_xungou_main") == "s06_laoxiang")
-	assert(await _wait_until(func() -> bool: return bootstrap.state_controller.current_state == RuntimeGameStateController.EXPLORING and not bootstrap.cutscene_manager.is_playing(), 300))
-	var dock_zone_drained := await _wait_until(func() -> bool: return bootstrap.zone_system._action_running.is_empty(), 600)
+	assert(await _wait_until(func() -> bool: return bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING and not bootstrap.cutscene_manager.is_playing(), 300))
+	var dock_zone_drained := await _wait_until(Callable(self, "_zone_actions_idle"), 600)
 	assert(dock_zone_drained)
 	assert(await _take_transition("T码头到街巷", "雾津街头"))
 
 	# Optional beat 7 is source-authored only while the main flow is at s06.
 	# Take the commission, enter its well zone, inspect the real overlay sequence,
 	# and let the graph return to town without changing the main milestone.
-	var coins_before_well: int = bootstrap.runtime_root.get_system("inventoryManager").get_coins()
+	var coins_before_well: int = bootstrap.inventory_manager.get_coins()
 	assert(await _interact_npc("npc_枯井街坊")); assert(await _drive_runtime_until_dialogue_closed(720))
 	assert(bootstrap.scene_manager.get_current_scene_id() == "枯井土地庙")
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_枯井") == "hired")
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_coins() == coins_before_well + 15)
+	assert(bootstrap.inventory_manager.get_coins() == coins_before_well + 15)
 	bootstrap.player.set_x(800.0); bootstrap.player.set_y(500.0); bootstrap.zone_system.update(0.0)
 	assert(await _drive_world_until_idle(600))
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_枯井") == "at_well")
@@ -198,10 +207,10 @@ func _ready() -> void:
 	assert(bootstrap.flag_store.get_value("got_xingtou_daopao") == true)
 	assert(bootstrap.flag_store.get_value("got_xingtou_luopan") == true)
 	assert(bootstrap.flag_store.get_value("got_xingtou_taomu") == true)
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_item_count("daopao") == 1)
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_item_count("luopan") == 1)
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_item_count("taomu_sword") == 1)
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_item_count("talisman") == 2)
+	assert(bootstrap.inventory_manager.get_item_count("daopao") == 1)
+	assert(bootstrap.inventory_manager.get_item_count("luopan") == 1)
+	assert(bootstrap.inventory_manager.get_item_count("taomu_sword") == 1)
+	assert(bootstrap.inventory_manager.get_item_count("talisman") == 2)
 	assert(await _interact_hotspot("hs_围观人群")); assert(await _drive_runtime_until_dialogue_closed(480))
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_向导") == "outfitted")
 	assert(bootstrap.narrative_state_manager.get_active_state("flow_xungou_main") == "s08_xiangdao")
@@ -210,11 +219,11 @@ func _ready() -> void:
 	# the authored road/X zones, deliberately choose the first (wrong-name)
 	# option at point two, skip point three by walking past it, deliver the real
 	# inventory item, and survive the return pressure sequence and rescue chain.
-	var coins_before_delivery: int = bootstrap.runtime_root.get_system("inventoryManager").get_coins()
+	var coins_before_delivery: int = bootstrap.inventory_manager.get_coins()
 	assert(await _interact_npc("npc_送货雇主")); assert(await _drive_runtime_until_dialogue_closed(600))
 	assert(bootstrap.scene_manager.get_current_scene_id() == "阎王岭山口")
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_送货") == "bundle_taken")
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_item_count("heavy_bundle") == 1)
+	assert(bootstrap.inventory_manager.get_item_count("heavy_bundle") == 1)
 	bootstrap.player.set_x(700.0); bootstrap.player.set_y(780.0); bootstrap.zone_system.update(0.0)
 	assert(await _wait_until(func() -> bool: return bootstrap.narrative_state_manager.get_active_state("scenario_送货") == "on_road", 240))
 	assert(await _drive_world_until_idle(900))
@@ -231,8 +240,8 @@ func _ready() -> void:
 	assert(bootstrap.narrative_state_manager.get_active_state("wrap_喊名_点三") == "skipped")
 	assert(await _interact_hotspot("hs_歇脚棚")); assert(await _drive_runtime_until_dialogue_closed(600))
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_送货") == "delivered")
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_item_count("heavy_bundle") == 0)
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_coins() == coins_before_delivery + 40)
+	assert(bootstrap.inventory_manager.get_item_count("heavy_bundle") == 0)
+	assert(bootstrap.inventory_manager.get_coins() == coins_before_delivery + 40)
 	assert(await _interact_hotspot("hs_进山的路")); assert(await _drive_runtime_until_dialogue_closed(2400))
 	assert(await _drive_world_until_idle(1200))
 	assert(bootstrap.scene_manager.get_current_scene_id() == "雾津街头")
@@ -243,16 +252,16 @@ func _ready() -> void:
 	# Beats 11-12: accept Clara's real offer, verify the 100-coin advance,
 	# travel through the authored city-gate transition, then finish the shipped
 	# reunion graph and its terminal cutscene with actual dialogue/skip input.
-	var coins_before_recruitment: int = bootstrap.runtime_root.get_system("inventoryManager").get_coins()
+	var coins_before_recruitment: int = bootstrap.inventory_manager.get_coins()
 	assert(await _interact_npc("npc_克拉拉")); assert(await _drive_runtime_until_dialogue_closed(720))
 	assert(bootstrap.narrative_state_manager.get_active_state("scenario_招募") == "recruited")
 	assert(bootstrap.narrative_state_manager.get_active_state("flow_xungou_main") == "s11_zhaomu")
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_coins() == coins_before_recruitment + 100)
+	assert(bootstrap.inventory_manager.get_coins() == coins_before_recruitment + 100)
 
 	# Optional beat 11 is unlocked by that completed recruitment quest. Enter
 	# the night temple, finish its intro, oil and seated-vigil graphs, collect the
 	# authored 20-coin reward, and return before the final city-gate departure.
-	var coins_before_vigil: int = bootstrap.runtime_root.get_system("inventoryManager").get_coins()
+	var coins_before_vigil: int = bootstrap.inventory_manager.get_coins()
 	assert(await _take_transition("T_去城隍庙", "城隍庙夜"))
 	bootstrap.player.set_x(700.0); bootstrap.player.set_y(580.0); bootstrap.zone_system.update(0.0)
 	assert(await _drive_world_until_idle(600))
@@ -263,7 +272,7 @@ func _ready() -> void:
 	assert(await _interact_hotspot("hs_坐下想东西")); assert(await _drive_runtime_until_dialogue_closed(720))
 	assert(await _drive_world_until_idle(480))
 	assert(bootstrap.narrative_state_manager.get_active_state("wrap_守夜") == "done")
-	assert(bootstrap.runtime_root.get_system("inventoryManager").get_coins() == coins_before_vigil + 20)
+	assert(bootstrap.inventory_manager.get_coins() == coins_before_vigil + 20)
 	assert(await _take_transition("T_出庙", "雾津街头"))
 	assert(await _take_transition("T_去城门", "城门口"))
 	assert(await _interact_npc("npc_埃德加")); assert(await _drive_runtime_until_dialogue_closed(720))
@@ -290,6 +299,7 @@ func _ready() -> void:
 
 
 func _interact_npc(id: String) -> bool:
+	if not await _wait_for_interactive_boundary(): return false
 	var npc: RuntimeNpc = bootstrap.scene_manager.get_npc_by_id(id)
 	if npc == null: return false
 	bootstrap.player.set_x(npc.get_x()); bootstrap.player.set_y(npc.get_y())
@@ -298,7 +308,8 @@ func _interact_npc(id: String) -> bool:
 
 
 func _interact_hotspot(id: String) -> bool:
-	var hotspot: RuntimeHotspot = bootstrap.scene_manager.get_hotspot_by_id(id)
+	if not await _wait_for_interactive_boundary(): return false
+	var hotspot: RuntimeHotspot = SceneQueries.hotspot(bootstrap.scene_manager, id)
 	if hotspot == null: print("INTERACT_HOTSPOT_MISSING ", {"id": id, "scene": bootstrap.scene_manager.get_current_scene_id(), "state": bootstrap.state_controller.current_state}); return false
 	bootstrap.player.set_x(hotspot.get_center_x()); bootstrap.player.set_y(hotspot.get_center_y())
 	await _press_interact()
@@ -308,12 +319,13 @@ func _interact_hotspot(id: String) -> bool:
 
 
 func _take_transition(id: String, expected_scene: String) -> bool:
-	var hotspot: RuntimeHotspot = bootstrap.scene_manager.get_hotspot_by_id(id)
+	if not await _wait_for_interactive_boundary(): return false
+	var hotspot: RuntimeHotspot = SceneQueries.hotspot(bootstrap.scene_manager, id)
 	if hotspot == null: return false
 	bootstrap.player.set_x(hotspot.get_center_x()); bootstrap.player.set_y(hotspot.get_center_y())
 	await _press_interact()
-	var arrived := await _wait_until(func() -> bool: return bootstrap.scene_manager.get_current_scene_id() == expected_scene and not bootstrap.scene_manager.is_switching() and not bootstrap.scene_manager.is_scene_enter_running() and bootstrap.state_controller.current_state == RuntimeGameStateController.EXPLORING, 240)
-	if not arrived: print("TRANSITION_NOT_SETTLED ", {"id": id, "expected": expected_scene, "scene": bootstrap.scene_manager.get_current_scene_id(), "state": bootstrap.state_controller.current_state, "entry": bootstrap.scene_manager.is_scene_enter_running()})
+	var arrived := await _wait_until(func() -> bool: return bootstrap.scene_manager.get_current_scene_id() == expected_scene and not bootstrap.scene_manager.is_switching() and bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING, 240)
+	if not arrived: print("TRANSITION_NOT_SETTLED ", {"id": id, "expected": expected_scene, "scene": bootstrap.scene_manager.get_current_scene_id(), "state": bootstrap.state_controller.current_state})
 	return arrived
 
 
@@ -327,6 +339,7 @@ func _press_interact() -> void:
 
 
 func _enter_zone_at(position: Vector2, expected_graph: String) -> bool:
+	if not await _wait_for_interactive_boundary(): return false
 	bootstrap.player.set_x(position.x); bootstrap.player.set_y(position.y)
 	bootstrap.zone_system.update(0.0)
 	return await _wait_for_graph(expected_graph, 180)
@@ -348,13 +361,26 @@ func _enter_zone_by_id(zone_id: String, expected_graph: String) -> bool:
 func _enter_zone_and_wait_scene(position: Vector2, expected_scene: String) -> bool:
 	bootstrap.player.set_x(position.x); bootstrap.player.set_y(position.y)
 	bootstrap.zone_system.update(0.0)
-	return await _wait_until(func() -> bool: return bootstrap.scene_manager.get_current_scene_id() == expected_scene and not bootstrap.scene_manager.is_switching(), 300)
+	# SceneManager.ts 在 scene:ready 时已提交 currentScene，但 switchScene 会继续
+	# await 场景根 onEnter；若 onEnter 打开对话，此处不能反过来等待 switching=false。
+	return await _wait_until_wall(func() -> bool:
+		return bootstrap.scene_manager.get_current_scene_id() == expected_scene
+	, 500)
+
+
+func _wait_for_interactive_boundary() -> bool:
+	# 真人移动/按键只能发生在上一个 Promise 动作批完成、场景提交结束后。
+	# 测试直接串行调用 helper，不能把下一次输入塞进微任务 continuation 中间。
+	return await _wait_until_wall(func() -> bool:
+		return bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING \
+			and not bootstrap.scene_manager.is_switching()
+	, 500)
 
 
 func _wait_for_graph(graph_id: String, frames: int) -> bool:
-	return await _wait_until(func() -> bool:
+	return await _wait_until_wall(func() -> bool:
 		return bootstrap.graph_dialogue_manager.is_active() and bootstrap.graph_dialogue_manager.get_dialogue_view_debug().get("graphId") == graph_id,
-		frames,
+		maxi(frames, 500),
 	)
 
 
@@ -368,9 +394,9 @@ func _drive_runtime_until_dialogue_closed(limit: int) -> bool:
 			_send_key(KEY_ENTER)
 			await get_tree().process_frame
 			continue
-		if bootstrap.pressure_hold_manager.is_running():
+		if bootstrap.pressure_hold_manager.running:
 			_key_event(KEY_SPACE, true)
-			while bootstrap.pressure_hold_manager.is_running() and bootstrap.pressure_hold_ui.get_root() != null and steps < limit:
+			while bootstrap.pressure_hold_manager.running and bootstrap.pressure_hold_ui.get_root() != null and steps < limit:
 				steps += 1
 				# PressureHoldUI deliberately integrates monotonic wall time (matching
 				# browser RAF), so give real key-held time instead of spinning frames.
@@ -403,7 +429,7 @@ func _drive_runtime_until_dialogue_closed(limit: int) -> bool:
 		if view.get("nodeType") == "runActions": await get_tree().create_timer(0.01).timeout
 		else: await get_tree().process_frame
 	if bootstrap.graph_dialogue_manager.is_active():
-		print("MAINLINE_DRIVER_TIMEOUT ", {"view": bootstrap.graph_dialogue_manager.get_dialogue_view_debug(), "pressure": bootstrap.pressure_hold_manager.is_running(), "pressureRatio": bootstrap.pressure_hold_ui.current_ratio, "spaceDown": bootstrap.input_manager.is_key_down("Space"), "scripted": bootstrap.dialogue_manager.is_active(), "dialogueUi": {"open": bootstrap.dialogue_ui.is_open(), "full": bootstrap.dialogue_ui.showing_full_text, "advance": bootstrap.dialogue_ui.waiting_for_advance, "choice": bootstrap.dialogue_ui.waiting_for_choice, "text": bootstrap.dialogue_ui.full_text}, "choice": bootstrap.action_choice_ui.is_open(), "scene": bootstrap.scene_manager.get_current_scene_id(), "steps": steps})
+		print("MAINLINE_DRIVER_TIMEOUT ", {"view": bootstrap.graph_dialogue_manager.get_dialogue_view_debug(), "pressure": bootstrap.pressure_hold_manager.running, "pressureRatio": bootstrap.pressure_hold_ui.current_ratio, "spaceDown": bootstrap.input_manager.is_key_down("Space"), "scripted": bootstrap.dialogue_manager.is_active(), "dialogueUi": {"open": bootstrap.dialogue_ui.is_open(), "full": bootstrap.dialogue_ui.showing_full_text, "advance": bootstrap.dialogue_ui.waiting_for_advance, "choice": bootstrap.dialogue_ui.waiting_for_choice, "text": bootstrap.dialogue_ui.full_text}, "choice": bootstrap.action_choice_ui.is_open(), "scene": bootstrap.scene_manager.get_current_scene_id(), "steps": steps})
 	return not bootstrap.graph_dialogue_manager.is_active()
 
 
@@ -434,9 +460,9 @@ func _drive_world_until_idle(limit: int) -> bool:
 		elif bootstrap.dialogue_manager.is_active(): _send_key(KEY_ENTER)
 		elif bootstrap.cutscene_manager.is_playing(): _send_key(KEY_ESCAPE)
 		elif bootstrap.action_choice_ui.is_open(): _send_key(KEY_1)
-		elif bootstrap.state_controller.current_state == RuntimeGameStateController.EXPLORING \
-			and not bootstrap.scene_manager.is_switching() and not bootstrap.scene_manager.is_scene_enter_running() \
-			and bootstrap.zone_system._action_running.is_empty(): return true
+		elif bootstrap.state_controller.current_state == RuntimeDataTypes.EXPLORING \
+			and not bootstrap.scene_manager.is_switching() \
+			and _zone_actions_idle(): return true
 		else: _send_key(KEY_ENTER)
 		await get_tree().create_timer(0.01).timeout
 	return false
@@ -444,6 +470,18 @@ func _drive_world_until_idle(limit: int) -> bool:
 
 func _send_key(keycode: Key) -> void:
 	_key_event(keycode, true); _key_event(keycode, false)
+
+
+func _zone_actions_idle() -> bool:
+	# ZoneSystem.ts installs the Promise tail synchronously. The Godot language
+	# adapter first stages that same installation in its microtask queue, so that
+	# queued callback is also part of the observable not-yet-idle boundary.
+	if not RuntimeMicrotaskQueue._queue.is_empty():
+		return false
+	for tail: Variant in bootstrap.zone_system.zone_action_tail.values():
+		if tail is RuntimeAsyncTail and (tail._running or not tail._queue.is_empty()):
+			return false
+	return true
 
 
 func _key_event(keycode: Key, pressed: bool) -> void:
@@ -455,4 +493,11 @@ func _wait_until(predicate: Callable, max_frames: int) -> bool:
 	for _frame in max_frames:
 		if predicate.call(): return true
 		await get_tree().process_frame
+	return bool(predicate.call())
+
+
+func _wait_until_wall(predicate: Callable, max_steps: int) -> bool:
+	for _step in max_steps:
+		if predicate.call(): return true
+		await get_tree().create_timer(0.01).timeout
 	return bool(predicate.call())

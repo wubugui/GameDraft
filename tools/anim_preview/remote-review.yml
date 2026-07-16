@@ -1,0 +1,77 @@
+name: Animation Workbench Remote Review
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: animation-workbench-remote-mutation
+  cancel-in-progress: false
+
+jobs:
+  apply-owner-command:
+    if: >-
+      github.event.issue.user.id == 4956289 &&
+      github.event.sender.id == 4956289 &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the serialized state branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Apply the validated workbench command
+        id: mutate
+        run: node engine/remote_mutation.mjs --repo "$GITHUB_WORKSPACE" --site "$GITHUB_WORKSPACE/docs"
+
+      - name: Commit the state and exact receipt
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- docs tmp/原始素材
+          if git diff --cached --quiet; then
+            echo "No new state to commit (idempotent receipt)."
+          else
+            git commit -m "animation workbench: apply issue #${ISSUE_NUMBER}"
+            git push origin "HEAD:${DEFAULT_BRANCH}"
+          fi
+
+      - name: Comment with the processor-authored receipt and close
+        uses: actions/github-script@v7
+        env:
+          RECEIPT_PATH: ${{ steps.mutate.outputs.receipt_path }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const relative = process.env.RECEIPT_PATH || '';
+            if (!/^docs\/data\/receipts\/[0-9a-f-]{36}\.json$/i.test(relative)) {
+              throw new Error(`Invalid receipt output path: ${relative}`);
+            }
+            const receipt = JSON.parse(fs.readFileSync(path.join(process.env.GITHUB_WORKSPACE, relative), 'utf8'));
+            const result = receipt.ok ? '已执行并写入公开快照' : '已安全拒绝（状态未变）';
+            const detail = receipt.ok
+              ? `generation 已由服务端重新校验。`
+              : `${receipt.response?.code || 'BAD_REQUEST'}: ${receipt.response?.error || '请求被拒绝'}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `${result}\n\n${detail}\n\nrequestId: \`${receipt.requestId}\`\nreceipt: \`${relative}\``,
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed',
+            });

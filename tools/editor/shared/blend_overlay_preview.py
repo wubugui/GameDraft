@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from .. import theme
 from .image_path_picker import disk_path_for_runtime_url
 
 # 参考「屏」比例 16:9；预览是辅助查看面板，取较小尺寸（百分比相对 PREVIEW_W，缩放等比）
@@ -82,7 +83,8 @@ class BlendOverlayPreviewWidget(QWidget):
 
         self._status = QLabel("调整参数后自动刷新构图。")
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("color:#888;font-size:11px;")
+        self._status.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(self._status, theme.FONT_ROLE_HINT)
         self._status.setToolTip("「播放过渡」按 delay/duration 预览动画（过长已截断）。")
 
         btn_row = QHBoxLayout()

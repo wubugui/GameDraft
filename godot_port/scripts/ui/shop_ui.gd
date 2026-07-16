@@ -101,7 +101,7 @@ func _build() -> void:
 	_destroy_ui()
 	if current_shop.is_empty():
 		return
-	var screen := Vector2(renderer.get_screen_width(), renderer.get_screen_height())
+	var screen := Vector2(renderer.screen_width, renderer.screen_height)
 	var items: Array = current_shop.get("items", [])
 	var panel_height := 120.0 + items.size() * ITEM_HEIGHT
 	root = Control.new()

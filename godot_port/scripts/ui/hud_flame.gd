@@ -110,7 +110,11 @@ func _draw() -> void:
 		Vector2(tip.x + width * 0.24, -height * 0.84),
 		tip
 	)
-	draw_colored_polygon(outer, _with_alpha(_lerp_color(0x5f746b, 0xb97836, intensity), alpha))
+	_draw_closed_fan(
+		outer,
+		Vector2(0.0, -height * 0.34),
+		_with_alpha(_lerp_color(0x5f746b, 0xb97836, intensity), alpha)
+	)
 
 	var core_height := height * (0.48 + intensity * 0.1)
 	var core_width := width * (0.28 + intensity * 0.08)
@@ -131,8 +135,9 @@ func _draw() -> void:
 		Vector2(core_width * 0.72, -core_height * 0.45),
 		core_tip
 	)
-	draw_colored_polygon(
+	_draw_closed_fan(
 		core,
+		Vector2(0.0, -core_height * 0.32),
 		_with_alpha(_lerp_color(0x9fb7aa, 0xe7c78d, intensity), alpha * (0.72 + intensity * 0.1))
 	)
 
@@ -150,6 +155,19 @@ func _draw_ellipse(center: Vector2, radii: Vector2, color: Color) -> void:
 		var angle := TAU * float(index) / float(ELLIPSE_SEGMENTS)
 		polygon.push_back(center + Vector2(cos(angle) * radii.x, sin(angle) * radii.y))
 	draw_colored_polygon(polygon, color)
+
+
+# Pixi Graphics accepts the occasionally self-crossing sampled flame path and
+# fills it with its path tessellator. Godot's draw_colored_polygon rejects that
+# same boundary before drawing. Submit the identical sampled boundary as an
+# explicit triangle fan, skipping only zero-area triangles at the repeated tip.
+func _draw_closed_fan(points: PackedVector2Array, center: Vector2, color: Color) -> void:
+	for index in range(points.size() - 1):
+		var a := points[index]
+		var b := points[index + 1]
+		if absf((a - center).cross(b - center)) <= 0.000001:
+			continue
+		draw_colored_polygon(PackedVector2Array([center, a, b]), color)
 
 
 func _append_cubic(points: PackedVector2Array, p0: Vector2, p1: Vector2, p2: Vector2, p3: Vector2) -> void:

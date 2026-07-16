@@ -7,9 +7,32 @@ import tempfile
 from pathlib import Path
 
 
+class JsonFileError(json.JSONDecodeError):
+    """坏 JSON 报错必须带文件路径 + 行列 + 修复建议（审查 P1-18）。
+
+    继承 json.JSONDecodeError（⊂ ValueError）：既有的
+    ``except (OSError, ValueError, json.JSONDecodeError)`` 处理路径全部兼容。
+    str() 形如::
+
+        public/assets/data/items.json 解析失败：Expecting ',' delimiter。
+        请检查该文件是否缺逗号/引号/括号，修复后重试（也可用 git 恢复该文件）: line 3 column 5 (char 42)
+    """
+
+    def __init__(self, path: Path, cause: json.JSONDecodeError):
+        msg = (
+            f"{path} 解析失败：{cause.msg}。"
+            "请检查该文件是否缺逗号/引号/括号，修复后重试（也可用 git 恢复该文件）"
+        )
+        super().__init__(msg, cause.doc, cause.pos)
+        self.path = Path(path)
+
+
 def read_json(path: Path) -> dict | list:
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        try:
+            return json.load(f)
+        except json.JSONDecodeError as e:
+            raise JsonFileError(Path(path), e) from e
 
 
 def _json_text(data: dict | list) -> str:
@@ -63,31 +86,49 @@ class StagedJsonWriter:
         self._committed = False
 
     def add(self, path: Path, data: dict | list) -> None:
-        """序列化 data 并写入 path 同目录下的临时文件（不触碰 path 本身）。"""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        blob = _json_text(data).encode("utf-8")
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            dir=path.parent,
-        )
+        """序列化 data 并写入 path 同目录下的临时文件（不触碰 path 本身）。
+
+        磁盘/权限类失败（OSError）包上目标文件与修复建议再抛——裸 errno 弹窗
+        策划无从定位（审查 P3）。序列化失败（TypeError 等）原样抛，语义不变。
+        """
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            blob = _json_text(data).encode("utf-8")
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                dir=path.parent,
+            )
+        except OSError as e:
+            raise OSError(
+                f"写盘失败：{path}：{e}，请检查磁盘空间与文件/目录权限"
+            ) from e
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(blob)
                 fh.flush()
                 os.fsync(fh.fileno())
-        except BaseException:
+        except BaseException as exc:
             try:
                 os.remove(tmp_path)
             except OSError:
                 pass
+            if isinstance(exc, OSError):
+                raise OSError(
+                    f"写盘失败：{path}：{exc}，请检查磁盘空间与文件/目录权限"
+                ) from exc
             raise
         self._staged.append((tmp_path, path))
 
     def commit(self) -> None:
         """把全部暂存文件替换到目标位置（逐个 os.replace，每个替换本身原子）。"""
         for tmp_path, target in self._staged:
-            os.replace(tmp_path, target)
+            try:
+                os.replace(tmp_path, target)
+            except OSError as e:
+                raise OSError(
+                    f"写盘失败：{target}：{e}，请检查磁盘空间与文件/目录权限"
+                ) from e
         self._committed = True
         self._staged.clear()
 

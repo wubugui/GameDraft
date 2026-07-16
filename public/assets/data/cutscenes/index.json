@@ -1874,26 +1874,46 @@
       },
       {
         "kind": "present",
+        "type": "cameraZoom",
+        "scale": 2.2,
+        "duration": 1
+      },
+      {
+        "kind": "present",
         "type": "cameraMove",
-        "x": 285,
-        "y": 195,
+        "x": 485,
+        "y": 431,
         "duration": 1
       },
       {
         "kind": "present",
         "type": "fadeIn",
         "duration": 1500
-      },
+      }
+    ],
+    "targetScene": "teahouse",
+    "restoreState": false
+  },
+  {
+    "id": "说书-收场运镜",
+    "steps": [
       {
-        "kind": "present",
-        "type": "showTitle",
-        "text": "[tag:string:place:wujin]",
-        "duration": 1600
-      },
-      {
-        "kind": "present",
-        "type": "waitTime",
-        "duration": 400
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 115,
+            "y": 228,
+            "duration": 2800
+          },
+          {
+            "kind": "present",
+            "type": "showTitle",
+            "text": "[tag:string:place:wujin]",
+            "duration": 2600
+          }
+        ]
       },
       {
         "kind": "present",
@@ -1902,7 +1922,21 @@
         "duration": 1600
       }
     ],
-    "targetScene": "teahouse"
+    "targetScene": "teahouse",
+    "restoreState": false
+  },
+  {
+    "id": "说书-景别复位",
+    "steps": [
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 0,
+        "duration": 900
+      }
+    ],
+    "targetScene": "teahouse",
+    "restoreState": false
   },
   {
     "id": "cutscene_11",

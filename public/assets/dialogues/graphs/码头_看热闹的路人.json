@@ -3,8 +3,7 @@
   "id": "码头_看热闹的路人",
   "entry": "n_start",
   "meta": {
-    "title": "new_dialogue",
-    "scenarioId": "外国人捞箱子"
+    "title": "new_dialogue"
   },
   "preconditions": [],
   "nodes": {

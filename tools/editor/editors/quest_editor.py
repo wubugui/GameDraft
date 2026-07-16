@@ -1,6 +1,8 @@
 """Quest editor: three-panel layout with group tree, graph view, and property panel."""
 from __future__ import annotations
 
+import json
+
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
     QFormLayout, QLineEdit, QComboBox, QPushButton, QLabel,
@@ -69,7 +71,11 @@ class _QuestGraphView(QGraphicsView):
                 nid = self._item_id(node)
                 self._gscene.highlight_node(nid)
                 self.node_clicked.emit(nid)
-                event.accept()
+                # 审查 P0-1 ①：press 必须继续交给 super()，item 才会进入鼠标
+                # 抓取态、ItemIsMovable 拖动与布局持久化整条链路才可达；
+                # 旧写法 accept()+return 使节点对真实鼠标"根本拖不动"。
+                # 选中高亮语义保留：先 emit node_clicked 再转发。
+                super().mousePressEvent(event)
                 return
             else:
                 self._gscene.highlight_node(None)
@@ -319,6 +325,103 @@ class _NextQuestsEditor(QWidget):
         self.changed.emit()
 
 
+# ---------------------------------------------------------------------------
+# 任务跨文件引用扫描（审查 P1-14）：quest_<id>_status flag 与 updateQuest.id。
+# 只在内存模型上扫/改；对话图文件仅只读列出，绝不在这里写盘。
+# ---------------------------------------------------------------------------
+
+def _count_flag_string_refs(obj: object, target: str) -> int:
+    """统计 JSON 树中「字符串值 == target」的出现次数（不含 dict 键名）。
+    quest_<id>_status 这种高特异全串等值匹配即引用，覆盖条件叶子 flag 字段
+    与 setFlag/appendFlag 等动作的 key 参数。"""
+    n = 0
+    stack: list[object] = [obj]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for v in cur.values():
+                if isinstance(v, str):
+                    if v == target:
+                        n += 1
+                else:
+                    stack.append(v)
+        elif isinstance(cur, list):
+            for v in cur:
+                if isinstance(v, str):
+                    if v == target:
+                        n += 1
+                else:
+                    stack.append(v)
+    return n
+
+
+def _rewrite_flag_string_refs(obj: object, old: str, new: str) -> int:
+    """把 JSON 树中字符串值 == old 就地改为 new，返回改写数。"""
+    n = 0
+    stack: list[object] = [obj]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                if isinstance(v, str):
+                    if v == old:
+                        cur[k] = new
+                        n += 1
+                else:
+                    stack.append(v)
+        elif isinstance(cur, list):
+            for i, v in enumerate(cur):
+                if isinstance(v, str):
+                    if v == old:
+                        cur[i] = new
+                        n += 1
+                else:
+                    stack.append(v)
+    return n
+
+
+def _iter_update_quest_actions(obj: object):
+    """遍历 JSON 树，产出所有 updateQuest 动作 dict（{"type"/"action":"updateQuest"}）。"""
+    stack: list[object] = [obj]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            t = cur.get("type")
+            if not isinstance(t, str):
+                t = cur.get("action")
+            if t == "updateQuest":
+                yield cur
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+
+
+def _count_update_quest_refs(obj: object, quest_id: str) -> int:
+    n = 0
+    for act in _iter_update_quest_actions(obj):
+        params = act.get("params")
+        if isinstance(params, dict):
+            if params.get("id") == quest_id:
+                n += 1
+        elif act.get("id") == quest_id:
+            n += 1
+    return n
+
+
+def _rewrite_update_quest_refs(obj: object, old: str, new: str) -> int:
+    n = 0
+    for act in _iter_update_quest_actions(obj):
+        params = act.get("params")
+        if isinstance(params, dict):
+            if params.get("id") == old:
+                params["id"] = new
+                n += 1
+        elif act.get("id") == old:
+            act["id"] = new
+            n += 1
+    return n
+
+
 class QuestEditor(QWidget):
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -499,8 +602,13 @@ class QuestEditor(QWidget):
         sec_pre.add_body(self._q_pre)
         ql.addWidget(sec_pre)
 
-        self._q_comp = ConditionEditor("Completion Conditions")
+        _comp_hint = (
+            "主线进度由叙事图驱动：本栏 flag 多为叙事图在运行时写入，"
+            "改这里不等于改流程本身。"
+        )
+        self._q_comp = ConditionEditor("Completion Conditions", hint=_comp_hint)
         sec_comp = CollapsibleSection("Completion Conditions", start_open=False)
+        sec_comp.set_header_tool_tip(_comp_hint)
         sec_comp.add_body(self._q_comp)
         ql.addWidget(sec_comp)
 
@@ -941,6 +1049,142 @@ class QuestEditor(QWidget):
             cur = parent_g.get("parentGroup", "") if parent_g else ""
         return False
 
+    # ======== 跨文件引用扫描 / 级联（审查 P1-14） ========
+
+    def _quest_ref_scan_units(self) -> list[tuple[str, object, str, str]]:
+        """内存模型里可扫可改写的 JSON 集合：(展示名, 对象, 脏桶, scene_id)。
+        flag_registry 刻意不在列（quest_ 前缀 pattern 属登记面，非引用面）。"""
+        m = self._model
+        units: list[tuple[str, object, str, str]] = [
+            ("quests.json", m.quests, "quest", ""),
+            ("questGroups.json", m.quest_groups, "questGroup", ""),
+            ("encounters.json", m.encounters, "encounter", ""),
+            ("rules.json", m.rules_data, "rules", ""),
+            ("items.json", m.items, "item", ""),
+            ("shops.json", m.shops, "shop", ""),
+            ("map_config.json", m.map_nodes, "map", ""),
+            ("cutscenes", m.cutscenes, "cutscene", ""),
+            ("narrative_graphs.json", m.narrative_graphs, "narrative_graphs", ""),
+            ("scenarios.json", m.scenarios_catalog, "scenarios", ""),
+            ("document_reveals.json", m.document_reveals, "document_reveals", ""),
+            ("pressure_holds.json", m.pressure_holds, "pressure_holds", ""),
+            ("signal_cues.json", m.signal_cues, "signal_cues", ""),
+            ("planes.json", m.planes, "planes", ""),
+            ("game_config.json", m.game_config, "config", ""),
+            ("archive/characters.json", m.archive_characters, "archive", ""),
+            ("archive/lore.json", m.archive_lore, "archive", ""),
+            ("archive/books.json", m.archive_books, "archive", ""),
+            ("archive/documents.json", m.archive_documents, "archive", ""),
+        ]
+        for sid in sorted(m.scenes.keys()):
+            units.append((f"场景 {sid}", m.scenes[sid], "scene", sid))
+        return units
+
+    def _collect_quest_ref_report(
+        self, qid: str, *, exclude_quest_ids: set[str] | None = None,
+    ) -> dict:
+        """扫 quest_<qid>_status flag 引用与 updateQuest.id 引用。
+
+        rows：内存集合命中 (label, bucket, scene_id, flag数, updateQuest数)——可级联改写。
+        dialogue：磁盘对话图/未保存暂存图命中 (label, flag数, updateQuest数)——只读列出，
+        编辑器不写对话图文件（请策划用「查引用」处理）。"""
+        flag_key = f"quest_{qid}_status"
+        exclude = exclude_quest_ids or set()
+        rows: list[tuple[str, str, str, int, int]] = []
+        for label, obj, bucket, sid in self._quest_ref_scan_units():
+            scan_obj: object = obj
+            if label == "quests.json" and exclude:
+                scan_obj = [q for q in self._model.quests
+                            if q.get("id") not in exclude]
+            fc = _count_flag_string_refs(scan_obj, flag_key)
+            uc = _count_update_quest_refs(scan_obj, qid)
+            if fc or uc:
+                rows.append((label, bucket, sid, fc, uc))
+        return {
+            "flag_key": flag_key,
+            "rows": rows,
+            "dialogue": self._scan_dialogue_graph_refs(flag_key, qid),
+        }
+
+    def _scan_dialogue_graph_refs(
+        self, flag_key: str, quest_id: str,
+    ) -> list[tuple[str, int, int]]:
+        """只读扫描对话图（未保存暂存优先，其余读盘）。任何 IO/解析失败静默跳过。"""
+        out: list[tuple[str, int, int]] = []
+        m = self._model
+        seen: set[str] = set()
+        pending = getattr(m, "pending_dialogue_graph_edits", {}) or {}
+        for gid, doc in pending.items():
+            gid_s = str(gid)
+            seen.add(gid_s)
+            fc = _count_flag_string_refs(doc, flag_key)
+            uc = _count_update_quest_refs(doc, quest_id)
+            if fc or uc:
+                out.append((f"对话图 {gid_s}（未保存暂存）", fc, uc))
+        if m.project_path is None:
+            return out
+        try:
+            graphs_dir = m.dialogues_path / "graphs"
+        except Exception:
+            return out
+        if not graphs_dir.is_dir():
+            return out
+        for p in sorted(graphs_dir.glob("*.json")):
+            if p.stem in seen:
+                continue
+            try:
+                doc = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            fc = _count_flag_string_refs(doc, flag_key)
+            uc = _count_update_quest_refs(doc, quest_id)
+            if fc or uc:
+                out.append((f"对话图 {p.name}", fc, uc))
+        return out
+
+    @staticmethod
+    def _format_quest_ref_lines(report: dict) -> list[str]:
+        """把扫描报告拼成弹窗清单行（空报告返回空列表）。"""
+        lines: list[str] = []
+        rows = report["rows"]
+        flag_total = sum(r[3] for r in rows)
+        uq_total = sum(r[4] for r in rows)
+        if flag_total:
+            parts = "、".join(f"{r[0]} {r[3]} 处" for r in rows if r[3])
+            lines.append(f"· flag「{report['flag_key']}」引用 {flag_total} 处：{parts}")
+        if uq_total:
+            parts = "、".join(f"{r[0]} {r[4]} 处" for r in rows if r[4])
+            lines.append(f"· updateQuest.id 引用 {uq_total} 处：{parts}")
+        for label, fc, uc in report["dialogue"]:
+            seg = []
+            if fc:
+                seg.append(f"flag {fc} 处")
+            if uc:
+                seg.append(f"updateQuest {uc} 处")
+            lines.append(f"· {label}：{'、'.join(seg)}（不自动改写，请用「查引用」处理）")
+        return lines
+
+    def _cascade_quest_rename_refs(self, old_id: str, new_id: str, report: dict) -> None:
+        """按扫描报告把内存集合里的 flag / updateQuest 引用改到新 id，命中处标脏。"""
+        old_flag = f"quest_{old_id}_status"
+        new_flag = f"quest_{new_id}_status"
+        unit_map = {
+            label: (obj, bucket, sid)
+            for label, obj, bucket, sid in self._quest_ref_scan_units()
+        }
+        for label, _bucket, _sid, fc, uc in report["rows"]:
+            entry = unit_map.get(label)
+            if entry is None:
+                continue
+            obj, bucket, sid = entry
+            changed = 0
+            if fc:
+                changed += _rewrite_flag_string_refs(obj, old_flag, new_flag)
+            if uc:
+                changed += _rewrite_update_quest_refs(obj, old_id, new_id)
+            if changed:
+                self._model.mark_dirty(bucket, sid)
+
     # ======== property panels ========
 
     def _show_group_props(self, gid: str) -> None:
@@ -1043,10 +1287,30 @@ class QuestEditor(QWidget):
             QMessageBox.warning(self, "任务 id", f"任务 id 与其它任务重复：{new_id}")
             return False
         if new_id != qid:
+            # 改名级联（审查 P1-14）：nextQuests 之外，quest_<旧id>_status flag 与
+            # updateQuest.id 引用会静默断裂——先扫全工程列清单，确认后跟随改写。
+            report = self._collect_quest_ref_report(qid)
+            ref_lines = self._format_quest_ref_lines(report)
+            if ref_lines:
+                msg = (
+                    f"任务 id 改名：{qid} → {new_id}\n\n发现跨文件引用：\n"
+                    + "\n".join(ref_lines)
+                    + f"\n\n继续将把上述可改写引用一并改为新 id"
+                    f"（flag 改为「quest_{new_id}_status」）；"
+                    "对话图文件不会自动改写。是否继续？"
+                )
+                ret = QMessageBox.question(
+                    self, "任务改名级联", msg,
+                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Ok,
+                )
+                if ret != QMessageBox.StandardButton.Ok:
+                    return False
             for qq in self._model.quests:
                 for edge in qq.get("nextQuests", []):
                     if edge.get("questId") == qid:
                         edge["questId"] = new_id
+            self._cascade_quest_rename_refs(qid, new_id, report)
         q["id"] = new_id
         q["group"] = self._q_group.current_id() or ""
         q["type"] = self._q_type.currentText()
@@ -1137,6 +1401,12 @@ class QuestEditor(QWidget):
         contained_quests = [q for q in self._model.quests if q.get("group") == gid]
         child_groups = [g for g in self._model.quest_groups if g.get("parentGroup") == gid]
 
+        all_gids = self._collect_descendant_groups(gid)
+        all_gids.add(gid)
+        deleted_qids = {
+            q.get("id") for q in self._model.quests if q.get("group") in all_gids
+        }
+
         msg_parts = [f"确认删除分组 '{gid}'?"]
         if contained_quests:
             msg_parts.append(f"包含 {len(contained_quests)} 个任务节点")
@@ -1144,19 +1414,33 @@ class QuestEditor(QWidget):
             msg_parts.append(f"包含 {len(child_groups)} 个子分组")
         msg_parts.append("所有内容将一并删除。")
 
+        # 跨文件引用聚合警告（审查 P1-14）：被删任务的 quest_<id>_status flag /
+        # updateQuest.id 引用不会被清理，先给出总量与涉及任务清单。
+        flag_total = uq_total = 0
+        affected: list[str] = []
+        exclude = {x for x in deleted_qids if x}
+        for dq in sorted(exclude):
+            rep = self._collect_quest_ref_report(dq, exclude_quest_ids=exclude)
+            fc = (sum(r[3] for r in rep["rows"])
+                  + sum(r[1] for r in rep["dialogue"]))
+            uc = (sum(r[4] for r in rep["rows"])
+                  + sum(r[2] for r in rep["dialogue"]))
+            if fc or uc:
+                affected.append(dq)
+                flag_total += fc
+                uq_total += uc
+        if affected:
+            msg_parts.append(
+                f"注意：被删任务的跨文件引用不会被清理（flag 引用 {flag_total} 处、"
+                f"updateQuest 引用 {uq_total} 处；涉及任务：{'、'.join(affected)}），"
+                "删除后悬垂，可先用「查引用」核对。")
+
         ret = QMessageBox.warning(
             self, "删除确认", "\n".join(msg_parts),
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
         )
         if ret != QMessageBox.StandardButton.Ok:
             return
-
-        all_gids = self._collect_descendant_groups(gid)
-        all_gids.add(gid)
-
-        deleted_qids = {
-            q.get("id") for q in self._model.quests if q.get("group") in all_gids
-        }
         self._model.quests = [
             q for q in self._model.quests if q.get("group") not in all_gids
         ]
@@ -1176,6 +1460,9 @@ class QuestEditor(QWidget):
         self._model.mark_dirty("quest")
         self._model.mark_dirty("questGroup")
         self._refresh()
+        # 删除后清空右侧属性面板：残留旧表单=「删了但还在」幽灵（审查 P3）。
+        self._grp_frame.hide()
+        self._quest_frame.hide()
 
     def _collect_descendant_groups(self, gid: str) -> set[str]:
         result: set[str] = set()
@@ -1199,6 +1486,13 @@ class QuestEditor(QWidget):
         msg = f"确认删除任务 '{qid}'?"
         if refs:
             msg += f"\n被以下任务引用: {', '.join(refs)}\n引用将一并清理。"
+        # 跨文件引用警告（审查 P1-14）：flag quest_<id>_status / updateQuest.id
+        # 删除不级联清理，先列清单让策划知道会悬垂（validator 侧检查由别组补）。
+        report = self._collect_quest_ref_report(qid, exclude_quest_ids={qid})
+        ref_lines = self._format_quest_ref_lines(report)
+        if ref_lines:
+            msg += ("\n\n以下跨文件引用不会被清理（删除后悬垂，可先用「查引用」核对）：\n"
+                    + "\n".join(ref_lines))
 
         ret = QMessageBox.warning(
             self, "删除确认", msg,
@@ -1217,13 +1511,23 @@ class QuestEditor(QWidget):
         self._selection_type = ""
         self._model.mark_dirty("quest")
         self._refresh()
+        # 删除后清空右侧属性面板：残留旧表单=「删了但还在」幽灵（审查 P3）。
+        self._grp_frame.hide()
+        self._quest_frame.hide()
 
     # ======== external navigation ========
 
-    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
-        it = self._find_tree_item(self._tree.invisibleRootItem(), "quest", item_id)
-        if it:
-            self._tree.setCurrentItem(it)
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点。返回 True=已选中条目，False=没找到
+        （全编辑器 bool 契约，主窗消费）。兼容任务与分组两种 id。"""
+        if self._tree_search.text():
+            self._tree_search.clear()  # 清过滤器：目标行可能被过滤隐藏（审查 P3）
+        for kind in ("quest", "group"):
+            it = self._find_tree_item(self._tree.invisibleRootItem(), kind, item_id)
+            if it is not None:
+                self._tree.setCurrentItem(it)
+                return True
+        return False
 
     def _find_tree_item(self, parent: QTreeWidgetItem, sel_type: str, sel_id: str):
         for i in range(parent.childCount()):

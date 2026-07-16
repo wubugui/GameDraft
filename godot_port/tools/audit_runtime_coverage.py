@@ -444,7 +444,7 @@ def source_baseline() -> dict[str, object]:
     content_paths = list((REPO_ROOT / "public/assets").rglob("*.json"))
     config_paths = [
         REPO_ROOT / "src/data/types.ts",
-        REPO_ROOT / "src/data/runtime_field_schema.json",
+        REPO_ROOT / "public/assets/data/runtime_field_schema.json",
         REPO_ROOT / "public/resources/runtime.dvc",
     ]
     try:

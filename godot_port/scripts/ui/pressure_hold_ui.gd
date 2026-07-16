@@ -31,7 +31,13 @@ func run_segment(request: Dictionary) -> String:
 		return "invalid"
 	_active_serial += 1
 	var serial := _active_serial
-	current_ratio = clampf(float(request.startRatio), 0.0, 1.0)
+	var progress := RuntimeHoldProgress.new({
+		"startRatio": float(request.startRatio),
+		"stopRatio": float(request.stopRatio),
+		"fillSeconds": float(request.fillSeconds),
+		"decayPerSecond": float(request.decayPerSecond),
+	})
+	current_ratio = progress.current
 	current_request = request.duplicate(true)
 	_build_view(request)
 	_redraw_fill(current_ratio, request.get("barColor"))
@@ -55,14 +61,12 @@ func run_segment(request: Dictionary) -> String:
 				_finish(serial)
 				return "released"
 		previous_holding = holding
-		if holding:
-			current_ratio = minf(float(request.stopRatio), current_ratio + dt / float(request.fillSeconds))
-		else:
-			current_ratio = maxf(0.0, current_ratio - dt * float(request.decayPerSecond))
+		progress.tick(dt, holding)
+		current_ratio = progress.current
 		_redraw_fill(current_ratio, request.get("barColor"))
 		if hint_text != null:
 			hint_text.visible = hint_shown_at > 0 and Time.get_ticks_msec() - hint_shown_at < HINT_FLASH_MS
-		if current_ratio >= float(request.stopRatio):
+		if progress.reached_stop:
 			_finish(serial)
 			return "reached"
 	return "reached"
@@ -149,9 +153,9 @@ func _build_view(request: Dictionary) -> void:
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	renderer.ui_layer.add_child(root)
-	var center_x := renderer.get_screen_width() / 2.0
+	var center_x := renderer.screen_width / 2.0
 	var bar_x := center_x - BAR_WIDTH / 2.0
-	var bar_y := renderer.get_screen_height() - 120.0
+	var bar_y := renderer.screen_height - 120.0
 	var prompt := Label.new()
 	prompt.text = str(request.get("prompt", ""))
 	prompt.position = Vector2(bar_x - 60.0, bar_y - 66.0)

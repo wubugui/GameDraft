@@ -5,6 +5,8 @@ py_compile 只查语法；本测试在 offscreen 下真正 build 每个面板的
 """
 from __future__ import annotations
 
+import ast
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -12,6 +14,7 @@ from tempfile import TemporaryDirectory
 
 from PySide6.QtWidgets import QApplication
 
+from tools.editor import theme
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 
@@ -64,21 +67,93 @@ class TestAllEditorsConstruct(unittest.TestCase):
 
     def test_every_touched_editor_constructs(self) -> None:
         failures: list[str] = []
-        with TemporaryDirectory() as td:
-            root = Path(td) / "p"
-            write_minimal_loadable_project(root)
-            model = ProjectModel()
-            model.load_project(root)
-            for cls in _editor_classes():
-                try:
-                    ed = cls(model)
-                    ed.deleteLater()
-                    QApplication.processEvents()
-                except Exception as e:  # noqa: BLE001
-                    import traceback
-                    failures.append(f"{cls.__name__}: {e}\n{traceback.format_exc()}")
+        original_theme = theme.current_theme_id()
+        original_font = theme.current_font_px()
+        try:
+            theme.apply_application_theme(
+                self._qt_app,
+                theme.THEME_MODERN,
+                theme.MAX_FONT_PX,
+            )
+            with TemporaryDirectory() as td:
+                root = Path(td) / "p"
+                write_minimal_loadable_project(root)
+                model = ProjectModel()
+                model.load_project(root)
+                for cls in _editor_classes():
+                    try:
+                        ed = cls(model)
+                        ed.deleteLater()
+                        QApplication.processEvents()
+                    except Exception as e:  # noqa: BLE001
+                        import traceback
+                        failures.append(f"{cls.__name__}: {e}\n{traceback.format_exc()}")
+        finally:
+            theme.apply_application_theme(self._qt_app, original_theme, original_font)
         if failures:
             self.fail("编辑器构造失败:\n\n" + "\n---\n".join(failures))
+
+    def test_main_editor_has_no_local_fixed_font_sizes(self) -> None:
+        repo = Path(__file__).resolve().parents[3]
+        files = [
+            path
+            for path in (repo / "tools" / "editor").rglob("*.py")
+            if "tests" not in path.parts and path.name != "theme.py"
+        ]
+        files.append(repo / "tools" / "dialogue_graph_editor" / "editor_widget.py")
+        fixed_qss = re.compile(r"font(?:-size)?\s*:\s*\d", re.IGNORECASE)
+        violations: list[str] = []
+
+        def literal_text(node: ast.AST) -> str:
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return node.value
+            if isinstance(node, ast.JoinedStr):
+                return "".join(
+                    part.value
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                    else "0" if isinstance(part, ast.FormattedValue)
+                    else ""
+                    for part in node.values
+                )
+            return ""
+
+        for path in files:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            assigned_strings: dict[str, str] = {}
+            for candidate in ast.walk(tree):
+                if not isinstance(candidate, ast.Assign):
+                    continue
+                value = literal_text(candidate.value)
+                if not value:
+                    continue
+                for target in candidate.targets:
+                    if isinstance(target, ast.Name):
+                        assigned_strings[target.id] = value
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else (
+                    func.attr if isinstance(func, ast.Attribute) else ""
+                )
+                if name == "setStyleSheet" and node.args:
+                    arg = node.args[0]
+                    text = literal_text(arg)
+                    if not text and isinstance(arg, ast.Name):
+                        text = assigned_strings.get(arg.id, "")
+                    if fixed_qss.search(text):
+                        violations.append(f"{path.relative_to(repo)}:{node.lineno}: fixed QSS font")
+                elif name == "QFont" and len(node.args) >= 2:
+                    if isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, (int, float)):
+                        violations.append(f"{path.relative_to(repo)}:{node.lineno}: numeric QFont size")
+                elif name in {"setPointSize", "setPointSizeF", "setPixelSize"} and node.args:
+                    if isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, (int, float)):
+                        violations.append(f"{path.relative_to(repo)}:{node.lineno}: numeric {name}")
+        self.assertEqual(
+            violations,
+            [],
+            "字号必须由 tools/editor/theme.py 派生，发现局部固定字号:\n" + "\n".join(violations),
+        )
 
 
 if __name__ == "__main__":

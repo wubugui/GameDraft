@@ -1,14 +1,24 @@
-"""扎纸（paper_craft）槽位可视化画布：在纸人底图上拖拽 / 缩放槽位矩形。
+"""扎纸（paper_craft）槽位可视化画布：在固定尺寸工作台上拖拽 / 缩放槽位矩形。
 
 设计对齐 ``water_minigame_canvas.py``：一个 QGraphicsView 背景 + 每槽一个可拖动 item，
 item 几何变化 → 回写模型。本画布只提供「看与改 x/y/width/height」的视图能力，
 不改 slots 数组的字段形态或读写映射——未被拖动的槽位导出 JSON 逐字节保持不变。
 
-底图来源：实例级可选字段 ``instance.backgroundImage``（运行时 PaperCraftMinigameScene
-读取它绘制纸人底图）。该字段缺省时，画布用中性底色 + 网格作为背板，尺寸取自所有槽位
-的外接框（不凭空往 JSON 写底图字段）。
+坐标系（对齐运行时 ``src/systems/paperCraft/PaperCraftMinigameScene.ts``）：
+运行时把 slots 全部画在一块 **固定 560×410 的工作台面板**（``drawPanelBase(table,
+0,0,560,410)``）内；slot.x/y/width/height 就是相对这块面板左上角的像素坐标。面板
+**顶部约 80px** 被订单标题（y=12, 字号 20）与描述（y=43, 自动换行）占用，是槽位应
+避让的保留区。故本画布 sceneRect 固定为 560×410，画出工作台框线 + 顶部保留区提示，
+而不再按"槽位外接框 +24"定尺寸（那会随槽位分布漂移，且把边界画在不存在的地方）。
 
-坐标系：scene 坐标 == 运行时屏幕像素坐标（与 slot.x/y/width/height 同义）。回写时按
+底图语义（对齐运行时）：``instance.backgroundImage`` 在运行时是 **整屏 cover 的半透明
+装饰**（``alpha 0.35``，按屏幕尺寸缩放居中，**不**与工作台对齐），并非槽位定位参照。
+故本画布把它作为 cover（等比铺满、可溢出裁切）低透明度垫在工作台下作氛围，
+绝不 IgnoreAspectRatio 拉伸铺满以暗示"照底图摆槽位即对齐"（审查 P2）。缺省时用中性
+底色 + 网格，且不向 JSON 写入该字段。
+
+槽位拖拽范围放宽到整块工作台（可拖出当前所有槽位的外接框），仅夹在 560×410 工作台内；
+越界的既有坐标（模型真值）在载入时不被静默夹紧，只有用户拖拽才夹。回写按
 ``int(round(...))`` 取整，保持与既有 QSpinBox 写回完全一致的整数像素语义。
 """
 from __future__ import annotations
@@ -34,9 +44,12 @@ from ..project_model import ProjectModel
 from ..shared.image_path_picker import disk_path_for_runtime_url
 
 
-# 槽位外接框为空（无槽位或尺寸全 0）时画布的默认逻辑尺寸。
-_DEFAULT_CANVAS_W = 560
-_DEFAULT_CANVAS_H = 410
+# 运行时工作台面板尺寸（PaperCraftMinigameScene: drawPanelBase(table,0,0,560,410)）。
+# slot.x/y/width/height 即相对这块面板的坐标；画布 sceneRect 固定为此。
+_WORKBENCH_W = 560
+_WORKBENCH_H = 410
+# 面板顶部标题+描述占用的保留区高度（运行时 title y=12 / desc y=43+ 自动换行）。
+_TOP_RESERVE = 80
 # 缩放手柄边长（scene 像素）。
 _HANDLE = 9
 # 槽位的最小宽高（与新增槽位的合理下限一致，避免缩成 0）。
@@ -55,23 +68,6 @@ def _load_runtime_pixmap(model: ProjectModel | None, url: str) -> QPixmap | None
     return pm if not pm.isNull() else None
 
 
-def _slots_bounds(slots: list[dict]) -> tuple[int, int]:
-    """所有槽位矩形的右/下外接框（含一点留白），用于无底图时确定画布尺寸。"""
-    max_x = 0
-    max_y = 0
-    for s in slots:
-        if not isinstance(s, dict):
-            continue
-        x = int(s.get("x") or 0)
-        y = int(s.get("y") or 0)
-        w = int(s.get("width") or 0)
-        h = int(s.get("height") or 0)
-        max_x = max(max_x, x + w)
-        max_y = max(max_y, y + h)
-    if max_x <= 0 or max_y <= 0:
-        return (_DEFAULT_CANVAS_W, _DEFAULT_CANVAS_H)
-    # 留 24px 边距，便于贴边槽位也能选中其手柄。
-    return (max_x + 24, max_y + 24)
 
 
 class _ResizeHandle(QGraphicsRectItem):
@@ -131,9 +127,10 @@ class SlotRectItem(QGraphicsRectItem):
         self._row_index = row_index
         self._canvas = canvas
         self._optional = bool(slot.get("optional"))
-        self._syncing = False
+        self._syncing = True  # 程序性初始摆位不夹紧、不回写（越界坐标是模型真值）
 
         self.setPos(QPointF(x, y))
+        self._syncing = False
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
@@ -248,16 +245,24 @@ class _PaperBackdropScene(QGraphicsScene):
         self._has_texture = False
         r = self.sceneRect()
         if pm is not None and not pm.isNull() and r.width() > 0 and r.height() > 0:
+            # 运行时底图是整屏 cover 装饰、不与工作台对齐：这里按 cover（等比铺满、
+            # 可溢出裁切）居中垫在工作台下作氛围，绝不 IgnoreAspectRatio 拉伸铺满
+            # 以暗示"照底图摆槽位即对齐"（审查 P2）。低透明度弱化，不喧宾夺主。
             scaled = pm.scaled(
                 max(1, int(r.width())),
                 max(1, int(r.height())),
-                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation,
             )
             self._texture_item = QGraphicsPixmapItem(scaled)
+            # 居中裁切：溢出部分对称落在工作台外，中心区域对齐工作台中心。
+            self._texture_item.setOffset(
+                (r.width() - scaled.width()) / 2.0,
+                (r.height() - scaled.height()) / 2.0,
+            )
             self._texture_item.setPos(r.left(), r.top())
             self._texture_item.setZValue(-1e9)
-            self._texture_item.setOpacity(0.6)
+            self._texture_item.setOpacity(0.3)  # 对齐运行时 alpha 0.35 的弱化装饰语义
             self._texture_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
             self.addItem(self._texture_item)
             self._has_texture = True
@@ -282,9 +287,25 @@ class _PaperBackdropScene(QGraphicsScene):
 
     def drawForeground(self, painter: QPainter, rect: QRectF) -> None:  # noqa: ARG002
         r = self.sceneRect()
+        # 工作台外框（560×410 面板边界）。
         painter.setPen(QPen(QColor(124, 95, 58), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(r)
+        # 顶部保留区（订单标题+描述占用，槽位应避让）：半透明填充 + 分隔虚线 + 文字提示。
+        reserve_h = min(float(_TOP_RESERVE), r.height())
+        reserve = QRectF(r.left(), r.top(), r.width(), reserve_h)
+        painter.fillRect(reserve, QColor(124, 95, 58, 40))
+        painter.setPen(QPen(QColor(160, 128, 86, 180), 1, Qt.PenStyle.DashLine))
+        painter.drawLine(
+            QPointF(r.left(), r.top() + reserve_h),
+            QPointF(r.right(), r.top() + reserve_h),
+        )
+        painter.setPen(QPen(QColor(200, 170, 120)))
+        painter.drawText(
+            reserve.adjusted(6, 4, -6, -4),
+            int(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft),
+            "标题 / 描述保留区（运行时约 80px，槽位请避让）",
+        )
 
 
 class _PaperCanvasView(QGraphicsView):
@@ -411,8 +432,8 @@ class PaperSlotCanvas(QWidget):
         background_image: str,
         selected_row: int,
     ) -> None:
-        bw, bh = _slots_bounds(slots if isinstance(slots, list) else [])
-        self._scene.setSceneRect(QRectF(0, 0, float(bw), float(bh)))
+        # 固定工作台坐标系（对齐运行时 560×410 面板），不再随槽位外接框漂移。
+        self._scene.setSceneRect(QRectF(0, 0, float(_WORKBENCH_W), float(_WORKBENCH_H)))
 
         pm = _load_runtime_pixmap(self._model, background_image)
         self._scene.set_backdrop(pm)

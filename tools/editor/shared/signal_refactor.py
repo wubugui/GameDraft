@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -39,6 +40,9 @@ EMIT_SOURCE_BUCKETS: dict[str, tuple[str, bool]] = {
     "archive_characters": ("archive", False),
     "archive_books": ("archive", False),
     "archive_documents": ("archive", False),
+    # 见闻 firstViewActions 是运行时真实发射面（LoreBookUI.triggerFirstViewIfNeeded 执行动作树）——
+    # 漏登记会让改名级联漏改发射端、emittedSignals 目录漏源（2026-07-17 审查 P-F3）。
+    "archive_lore": ("archive", False),
     "water_minigames_instances": ("water_minigames", False),
     "sugar_wheel_instances": ("sugar_wheel", False),
     "paper_craft_instances": ("paper_craft", False),
@@ -57,7 +61,6 @@ CONDITION_EXTRA_SOURCES: dict[str, tuple[str, bool]] = {
     "items": ("item", False),
     "rules": ("rules", False),
     "shops": ("shop", False),
-    "archive_lore": ("archive", False),
     "document_reveals": ("document_reveals", False),
     "smell_profiles": ("smell_profiles", False),
     "game_config": ("config", False),
@@ -224,6 +227,69 @@ def _stage_dialogue_doc(model: Any, gid: str, doc: dict[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 事务性（复核 P2）：重构中途异常时回滚受影响容器，且不残留脏标记
+# --------------------------------------------------------------------------- #
+
+# 重构可能改写的全部内存容器属性名（narrative 之外）：发射面 + 条件面。
+_TX_ATTRS = tuple(dict.fromkeys([*EMIT_SOURCE_BUCKETS.keys(), *CONDITION_SOURCES.keys()]))
+
+
+@contextmanager
+def _transactional(model: Any) -> Iterator[None]:
+    """把一次重构包成事务：先深拷贝受影响容器并缓冲 mark_dirty；
+
+    正常结束才把缓冲的脏标记回放到真实模型；中途抛异常则回滚所有容器到快照、
+    **不**标任何脏（复核 P2：此前 ok:False 时模型已半改 + 已标脏 + 无 journal 可撤销，
+    画布与模型劈叉，Save All 写半成品）。
+    """
+    snap_narrative = copy.deepcopy(getattr(model, "narrative_graphs", None))
+    attr_snaps: dict[str, Any] = {}
+    for attr in _TX_ATTRS:
+        root = getattr(model, attr, None)
+        if root is not None:
+            attr_snaps[attr] = copy.deepcopy(root)
+    pend_edits = getattr(model, "pending_dialogue_graph_edits", None)
+    pend_stubs = getattr(model, "pending_dialogue_stubs", None)
+    snap_edits = copy.deepcopy(pend_edits) if isinstance(pend_edits, dict) else None
+    snap_stubs = copy.deepcopy(pend_stubs) if isinstance(pend_stubs, dict) else None
+
+    buffered: list[tuple[str, str]] = []
+    overrode = False
+    try:
+        model.mark_dirty = lambda bucket, item="": buffered.append((bucket, item))  # type: ignore[assignment]
+        overrode = True
+    except Exception:
+        overrode = False  # 无法覆盖（极少）：退化为非缓冲，仍保留数据回滚能力
+
+    def _restore_mark_dirty() -> None:
+        if overrode:
+            try:
+                del model.mark_dirty
+            except Exception:
+                pass
+
+    try:
+        yield
+    except Exception:
+        if snap_narrative is not None:
+            model.narrative_graphs = snap_narrative
+        for attr, snap in attr_snaps.items():
+            setattr(model, attr, snap)
+        if snap_edits is not None and isinstance(pend_edits, dict):
+            pend_edits.clear()
+            pend_edits.update(snap_edits)
+        if snap_stubs is not None and isinstance(pend_stubs, dict):
+            pend_stubs.clear()
+            pend_stubs.update(snap_stubs)
+        _restore_mark_dirty()  # 缓冲的脏标记一律丢弃：回滚后模型未变，不该有脏
+        raise
+    else:
+        _restore_mark_dirty()
+        for bucket, item in buffered:
+            model.mark_dirty(bucket, item)
+
+
+# --------------------------------------------------------------------------- #
 # 扫描（scan）
 # --------------------------------------------------------------------------- #
 
@@ -324,7 +390,11 @@ def rename_signal(model: Any, old_id: str, new_id: str) -> dict[str, Any]:
     old = str(old_id or "").strip()
     new = str(new_id or "").strip()
     _validate_rename_ids(model, old, new)
+    with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
+        return _rename_signal_impl(model, old, new)
 
+
+def _rename_signal_impl(model: Any, old: str, new: str) -> dict[str, Any]:
     narrative = model.narrative_graphs
     summary: dict[str, Any] = {"op": "rename", "oldId": old, "newId": new}
 
@@ -407,7 +477,13 @@ def delete_signal(model: Any, signal_id: str, force: bool = False) -> tuple[dict
     refs = usages["totalRefs"]
     if refs and not force:
         raise SignalRefactorError(f"信号 {sid!r} 仍有 {refs} 处引用；确认走强制清理（force）才可删除")
+    with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
+        return _delete_signal_impl(model, sid, usages, refs)
 
+
+def _delete_signal_impl(
+    model: Any, sid: str, usages: dict[str, Any], refs: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     narrative = model.narrative_graphs
     reverse_ops: list[dict[str, Any]] = []
     summary: dict[str, Any] = {"op": "delete", "signalId": sid, "cleaned": refs}
@@ -548,6 +624,101 @@ def _graph_ref_visitor(gid: str, new_gid: str | None):
     return visit
 
 
+def _iter_element_metas(narrative: Any) -> Iterator[dict[str, Any]]:
+    """编排元素的 meta 字典（meta.commands / meta.emits 引用面所在）。"""
+    if not isinstance(narrative, dict):
+        return
+    for comp in narrative.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        for el in comp.get("elements") or []:
+            if isinstance(el, dict) and isinstance(el.get("meta"), dict):
+                yield el["meta"]
+
+
+def _rewrite_meta_state_refs(narrative: Any, gid: str, old: str, new: str | None) -> tuple[int, int]:
+    """元素 meta 里对 (gid, old) 状态的引用：commands（"图.状态"/"图:状态"精确串）
+    与 emits（派生 state:图:状态）。new=None 只计数。只改无歧义的精确匹配，
+    解析不确定的字符串留给 projection.command.dangling 警告兜底（2026-07-17 审查 W-E4）。"""
+    commands_hits = 0
+    emits_hits = 0
+    old_derived = f"{_DERIVED_PREFIX}{gid}:{old}"
+    for meta in _iter_element_metas(narrative):
+        cmds = meta.get("commands")
+        if isinstance(cmds, list):
+            for i, raw in enumerate(cmds):
+                text = str(raw).strip()
+                for sep in (".", ":"):
+                    if text == f"{gid}{sep}{old}":
+                        if new is not None:
+                            cmds[i] = f"{gid}{sep}{new}"
+                        commands_hits += 1
+                        break
+        emits = meta.get("emits")
+        if isinstance(emits, list):
+            for i, raw in enumerate(emits):
+                if str(raw).strip() == old_derived:
+                    if new is not None:
+                        emits[i] = f"{_DERIVED_PREFIX}{gid}:{new}"
+                    emits_hits += 1
+    return commands_hits, emits_hits
+
+
+def _rewrite_meta_graph_refs(narrative: Any, old: str, new: str | None) -> tuple[int, int]:
+    """元素 meta 里对图 old 的引用：commands（"old.状态"/"old:状态"/裸 "old"）
+    与 emits（派生 state:old:*）。new=None 只计数。"""
+    commands_hits = 0
+    emits_hits = 0
+    derived_prefix_old = f"{_DERIVED_PREFIX}{old}:"
+    for meta in _iter_element_metas(narrative):
+        cmds = meta.get("commands")
+        if isinstance(cmds, list):
+            for i, raw in enumerate(cmds):
+                text = str(raw).strip()
+                replaced: str | None = None
+                if text == old:
+                    replaced = new if new is not None else None
+                    commands_hits += 1
+                else:
+                    for sep in (".", ":"):
+                        if text.startswith(f"{old}{sep}"):
+                            if new is not None:
+                                replaced = f"{new}{sep}{text[len(old) + 1:]}"
+                            commands_hits += 1
+                            break
+                if new is not None and replaced is not None:
+                    cmds[i] = replaced
+        emits = meta.get("emits")
+        if isinstance(emits, list):
+            for i, raw in enumerate(emits):
+                text = str(raw).strip()
+                if text.startswith(derived_prefix_old):
+                    if new is not None:
+                        emits[i] = f"{_DERIVED_PREFIX}{new}:{text[len(derived_prefix_old):]}"
+                    emits_hits += 1
+    return commands_hits, emits_hits
+
+
+def _relative_state_leaf_counter(sid: str):
+    """@owner/@scene 相对 token 的 {narrative, state} 叶子且 state==sid：静态解析不了
+    归属图，只能报"疑点"请人工确认——绝不自动改写（改错=条件运行时永假且全链路无声）。"""
+    def visit(kind: str, obj: dict[str, Any]) -> int:
+        if kind != "leaf":
+            return 0
+        if str(obj.get("narrative") or "").strip().startswith("@") and str(obj.get("state") or "").strip() == sid:
+            return 1
+        return 0
+    return visit
+
+
+def _count_relative_state_suspects(model: Any, narrative: Any, sid: str) -> dict[str, Any]:
+    visitor = _relative_state_leaf_counter(sid)
+    in_narrative = _walk_narrative_refs(narrative, visitor)
+    external = _count_over_sources(model, visitor)
+    total = in_narrative + sum(h["count"] for h in external)
+    return {"narrative": in_narrative, "external": external, "total": total}
+
+
 def _apply_over_sources(model: Any, visitor) -> list[dict[str, Any]]:
     """把 visitor 跑遍 narrative 之外的全部内容集合与对话图（含暂存面），返回命中清单并标脏。"""
     hits: list[dict[str, Any]] = []
@@ -632,13 +803,22 @@ def scan_state_usages(model: Any, graph_id: str, state_id: str) -> dict[str, Any
                 internal += 1
     narrative_conditions = _walk_narrative_refs(narrative, _state_ref_visitor(gid, sid, None))
     external = _count_over_sources(model, _state_ref_visitor(gid, sid, None))
-    total = internal + len(derived_listeners) + narrative_conditions + sum(h["count"] for h in external)
+    meta_commands, meta_emits = _rewrite_meta_state_refs(narrative, gid, sid, None)
+    relative_suspects = _count_relative_state_suspects(model, narrative, sid)
+    total = (
+        internal + len(derived_listeners) + narrative_conditions
+        + sum(h["count"] for h in external) + meta_commands + meta_emits
+    )
     return {
         "graphId": gid, "stateId": sid,
         "internalEndpoints": internal,
         "derivedListeners": derived_listeners,
         "narrativeConditions": narrative_conditions,
         "external": external,
+        "metaCommands": meta_commands,
+        "metaEmits": meta_emits,
+        # @owner/@scene 相对叶子疑点：state 同名但归属图静态不可知——只报不改，须人工确认
+        "relativeTokenSuspects": relative_suspects,
         "totalRefs": total,
     }
 
@@ -661,7 +841,15 @@ def rename_state(
         raise SignalRefactorError("新状态名为空或与旧名相同")
     if new in states:
         raise SignalRefactorError(f"图 {gid!r} 已有状态 {new!r}")
+    with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
+        return _rename_state_impl(model, narrative, target, gid, old, new, update_migrations)
 
+
+def _rename_state_impl(
+    model: Any, narrative: dict[str, Any], target: dict[str, Any],
+    gid: str, old: str, new: str, update_migrations: bool,
+) -> dict[str, Any]:
+    states = target.get("states")
     # 图内：states 键序保真重建 + state.id + initialState/entryState/exitStates + 端点
     rebuilt: dict[str, Any] = {}
     for key, value in states.items():
@@ -701,6 +889,11 @@ def rename_state(
     # 条件叶子 / setNarrativeState（narrative 自身 + 全部内容集合 + 对话图）
     narrative_refs = _walk_narrative_refs(narrative, _state_ref_visitor(gid, old, new))
     external = _apply_over_sources(model, _state_ref_visitor(gid, old, new))
+    # 元素 meta.commands（"图.状态"）与 meta.emits（派生信号声明）跟随改名（2026-07-17 审查 W-E4）
+    meta_commands, meta_emits = _rewrite_meta_state_refs(narrative, gid, old, new)
+    # @owner/@scene 相对叶子只报疑点不改写（归属图静态不可知，改错=无声断）：
+    # 改名后仍写着旧状态名的相对叶子=潜在断链，报出请人工确认
+    relative_suspects = _count_relative_state_suspects(model, narrative, old)
 
     if update_migrations:
         mig = narrative.setdefault("migrations", {}).setdefault("states", {}).setdefault(gid, {})
@@ -714,6 +907,8 @@ def rename_state(
         "op": "renameState", "graphId": gid, "oldStateId": old, "newStateId": new,
         "internalEndpoints": endpoints, "derivedListeners": derived,
         "narrativeConditions": narrative_refs, "external": external,
+        "metaCommands": meta_commands, "metaEmits": meta_emits,
+        "relativeTokenSuspects": relative_suspects,
     }
 
 
@@ -740,10 +935,15 @@ def scan_graph_usages(model: Any, graph_id: str) -> dict[str, Any]:
                 reads += sum(1 for r in meta["reads"] if str(r) == gid)
     narrative_conditions = _walk_narrative_refs(narrative, _graph_ref_visitor(gid, None))
     external = _count_over_sources(model, _graph_ref_visitor(gid, None))
-    total = derived + reads + narrative_conditions + sum(h["count"] for h in external)
+    meta_commands, meta_emits = _rewrite_meta_graph_refs(narrative, gid, None)
+    total = (
+        derived + reads + narrative_conditions
+        + sum(h["count"] for h in external) + meta_commands + meta_emits
+    )
     return {
         "graphId": gid, "derivedListeners": derived, "metaReads": reads,
-        "narrativeConditions": narrative_conditions, "external": external, "totalRefs": total,
+        "narrativeConditions": narrative_conditions, "external": external,
+        "metaCommands": meta_commands, "metaEmits": meta_emits, "totalRefs": total,
     }
 
 
@@ -759,7 +959,14 @@ def rename_graph(model: Any, old_graph_id: str, new_graph_id: str, *, update_mig
         raise SignalRefactorError("新图 id 为空或与旧 id 相同")
     if any(str(g.get("id") or "").strip() == new for g in _iter_graphs(narrative)):
         raise SignalRefactorError(f"叙事图 id {new!r} 已存在")
+    with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
+        return _rename_graph_impl(model, narrative, targets, old, new, update_migrations)
 
+
+def _rename_graph_impl(
+    model: Any, narrative: dict[str, Any], targets: list[dict[str, Any]],
+    old: str, new: str, update_migrations: bool,
+) -> dict[str, Any]:
     for graph in targets:
         graph["id"] = new
         # flow 图常以自身 id 作 owner 绑定；精确等值才跟随，其它 owner 类型（npc/hotspot…）不动
@@ -790,6 +997,8 @@ def rename_graph(model: Any, old_graph_id: str, new_graph_id: str, *, update_mig
 
     narrative_refs = _walk_narrative_refs(narrative, _graph_ref_visitor(old, new))
     external = _apply_over_sources(model, _graph_ref_visitor(old, new))
+    # 元素 meta.commands / meta.emits（派生信号声明）跟随图改名（2026-07-17 审查 W-E4）
+    meta_commands, meta_emits = _rewrite_meta_graph_refs(narrative, old, new)
 
     if update_migrations:
         mig_root = narrative.setdefault("migrations", {})
@@ -807,6 +1016,7 @@ def rename_graph(model: Any, old_graph_id: str, new_graph_id: str, *, update_mig
         "op": "renameGraph", "oldGraphId": old, "newGraphId": new,
         "derivedListeners": derived, "metaReads": reads,
         "narrativeConditions": narrative_refs, "external": external,
+        "metaCommands": meta_commands, "metaEmits": meta_emits,
     }
 
 

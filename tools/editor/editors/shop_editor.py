@@ -119,6 +119,16 @@ class ShopEditor(QWidget):
         self._on_search_changed(self._search.text())
         self._update_empty_hint()
 
+    def select_by_id(self, shop_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按商店 id 选中（行序与 model.shops 一致）。"""
+        for i, s in enumerate(self._model.shops):
+            if s.get("id") == shop_id:
+                if self._search.text():
+                    self._search.clear()  # 目标行可能被过滤隐藏
+                self._list.setCurrentRow(i)
+                return True
+        return False
+
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.shops):
             return

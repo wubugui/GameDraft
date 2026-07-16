@@ -147,7 +147,10 @@
         "kind": "npc"
       },
       "text": "莫挨到我莫挨到我——肩上那位先送到义庄，你再来听。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

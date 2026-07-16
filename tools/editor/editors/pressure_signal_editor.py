@@ -42,7 +42,9 @@ def _ratio_spin(value: float = 0.0) -> QDoubleSpinBox:
     sp = QDoubleSpinBox()
     sp.setRange(0.0, 1.0)
     sp.setSingleStep(0.05)
-    sp.setDecimals(2)
+    # decimals 放宽到 4，与 to_dict 的 round(...,4) 对齐：载入即显示原值，
+    # 不再把 0.333 之类"浏览一下就规整成 0.33"（审查 P3）。
+    sp.setDecimals(4)
     sp.setValue(value)
     return sp
 
@@ -54,6 +56,8 @@ class _InterruptRow(QWidget):
                  on_move_up=None, on_move_down=None, parent: QWidget | None = None):
         super().__init__(parent)
         self._model = model
+        # 未知键透传基线：表格之外/未来新增的字段按身份保留，不静默丢（审查 P3）。
+        self._orig = dict(data) if isinstance(data, dict) else {}
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         head = QHBoxLayout()
@@ -93,10 +97,13 @@ class _InterruptRow(QWidget):
         root.addWidget(self.actions)
 
     def to_dict(self) -> dict:
-        out: dict = {
-            "atRatio": round(self.at_ratio.value(), 4),
-            "actions": self.actions.to_list(),
-        }
+        _managed = {"atRatio", "resetToRatio", "abort", "actions"}
+        out: dict = {"atRatio": round(self.at_ratio.value(), 4)}
+        # 未知键透传（保原始顺序，插在 atRatio 之后、actions 之前）：前向兼容不丢键。
+        for k, v in self._orig.items():
+            if k not in _managed:
+                out[k] = v
+        out["actions"] = self.actions.to_list()
         if self.abort.isChecked():
             out["abort"] = True
         else:
@@ -202,10 +209,11 @@ class PressureHoldEditor(QWidget):
         oc_sec.add_body(self._on_complete)
         rl.addWidget(oc_sec)
 
-        apply_btn = QPushButton("Apply")
-        apply_btn.clicked.connect(self._apply)
-        rl.addWidget(apply_btn)
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.clicked.connect(self._apply)
+        rl.addWidget(self._apply_btn)
         rl.addStretch(1)
+        self._right_host = right_host
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -216,6 +224,8 @@ class PressureHoldEditor(QWidget):
         splitter.setSizes([220, 640])
         root.addWidget(splitter)
         self._refresh()
+        if self._list.count() == 0:
+            self._clear_form()
 
     # ---- helpers -----------------------------------------------------------
 
@@ -223,6 +233,37 @@ class PressureHoldEditor(QWidget):
         self._list.clear()
         for h in self._model.pressure_holds:
             self._list.addItem(f"{h.get('id', '?')}  [{h.get('prompt', '')[:18]}]")
+
+    def _clear_form(self) -> None:
+        """无选中项时清空右侧表单并禁用 Apply，消除"删除后残留已删条目的幽灵表单、
+        Apply 静默无效"（审查 P3）。"""
+        self._current_idx = -1
+        self._f_id.clear()
+        self._f_prompt.setText("")
+        self._f_release.setText("")
+        self._f_fill.setValue(3.0)
+        self._f_decay.setValue(0.6)
+        self._f_color_chk.setChecked(False)
+        self._clear_interrupt_rows()
+        self._on_complete.set_project_context(self._model, None)
+        self._on_complete.set_data([])
+        self._right_host.setEnabled(False)
+        self._apply_btn.setEnabled(False)
+
+    def reload_refs_from_model(self) -> None:
+        """切页激活时重拉动作编辑器候选（item/flag/quest 等别处新增）。当前选中项的
+        中断/onComplete 动作编辑器按原值重建，内容不变。"""
+        for row in self._interrupt_rows:
+            row.actions.set_data(row.actions.to_list())
+        self._on_complete.set_data(self._on_complete.to_list())
+
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按 id 选中（行序与 model.pressure_holds 一致）。"""
+        for i, h in enumerate(self._model.pressure_holds):
+            if h.get("id") == item_id:
+                self._list.setCurrentRow(i)
+                return True
+        return False
 
     def _clear_interrupt_rows(self) -> None:
         for row in self._interrupt_rows:
@@ -283,6 +324,8 @@ class PressureHoldEditor(QWidget):
         if 0 <= self._current_idx < len(self._model.pressure_holds) \
                 and self._current_idx != row and self._is_dirty():
             self._apply()
+        self._right_host.setEnabled(True)
+        self._apply_btn.setEnabled(True)
         self._current_idx = row
         h = self._model.pressure_holds[row]
         self._f_id.setText(h.get("id", ""))
@@ -398,14 +441,21 @@ class PressureHoldEditor(QWidget):
         self._list.setCurrentRow(len(self._model.pressure_holds) - 1)
 
     def _delete(self) -> None:
-        if self._current_idx >= 0:
-            h = self._model.pressure_holds[self._current_idx]
-            if not confirm.confirm_delete(self, f"临场长按「{h.get('id', '')}」"):
-                return
-            self._model.pressure_holds.pop(self._current_idx)
-            self._current_idx = -1
-            self._model.mark_dirty("pressure_holds")
-            self._refresh()
+        if self._current_idx < 0:
+            return
+        h = self._model.pressure_holds[self._current_idx]
+        if not confirm.confirm_delete(self, f"临场长按「{h.get('id', '')}」"):
+            return
+        idx = self._current_idx
+        self._model.pressure_holds.pop(idx)
+        self._current_idx = -1
+        self._model.mark_dirty("pressure_holds")
+        self._refresh()
+        # 删除后选中相邻行（表单跟随实项）；空表则清空表单 + 禁用 Apply，消除幽灵表单。
+        if self._model.pressure_holds:
+            self._list.setCurrentRow(min(idx, len(self._model.pressure_holds) - 1))
+        else:
+            self._clear_form()
 
 
 class SignalCueEditor(QWidget):
@@ -452,10 +502,11 @@ class SignalCueEditor(QWidget):
         rl.addWidget(basic_box)
         self._actions = ActionEditor("Cue 表现序列 (actions)")
         rl.addWidget(self._actions)
-        apply_btn = QPushButton("Apply")
-        apply_btn.clicked.connect(self._apply)
-        rl.addWidget(apply_btn)
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.clicked.connect(self._apply)
+        rl.addWidget(self._apply_btn)
         rl.addStretch(1)
+        self._right_host = right_host
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -466,11 +517,36 @@ class SignalCueEditor(QWidget):
         splitter.setSizes([220, 640])
         root.addWidget(splitter)
         self._refresh()
+        if self._list.count() == 0:
+            self._clear_form()
 
     def _refresh(self) -> None:
         self._list.clear()
         for c in self._model.signal_cues:
             self._list.addItem(f"{c.get('id', '?')}  [{c.get('description', '')[:22]}]")
+
+    def _clear_form(self) -> None:
+        """无选中项时清空右侧表单并禁用 Apply，消除删除后残留幽灵表单（审查 P3）。"""
+        self._current_idx = -1
+        self._f_id.clear()
+        self._f_desc.clear()
+        self._actions.set_project_context(self._model, None)
+        self._actions.set_data([])
+        self._right_host.setEnabled(False)
+        self._apply_btn.setEnabled(False)
+
+    def reload_refs_from_model(self) -> None:
+        """切页激活时重拉动作编辑器候选（item/flag/quest 等别处新增）。当前 Cue 的
+        动作编辑器按原值重建，内容不变。"""
+        self._actions.set_data(self._actions.to_list())
+
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按 id 选中（行序与 model.signal_cues 一致）。"""
+        for i, c in enumerate(self._model.signal_cues):
+            if c.get("id") == item_id:
+                self._list.setCurrentRow(i)
+                return True
+        return False
 
     def _on_select(self, row: int) -> None:
         if row < 0 or row >= len(self._model.signal_cues):
@@ -480,6 +556,8 @@ class SignalCueEditor(QWidget):
         if 0 <= self._current_idx < len(self._model.signal_cues) \
                 and self._current_idx != row and self._is_dirty():
             self._apply()
+        self._right_host.setEnabled(True)
+        self._apply_btn.setEnabled(True)
         self._current_idx = row
         c = self._model.signal_cues[row]
         self._f_id.setText(c.get("id", ""))
@@ -552,11 +630,18 @@ class SignalCueEditor(QWidget):
         self._list.setCurrentRow(len(self._model.signal_cues) - 1)
 
     def _delete(self) -> None:
-        if self._current_idx >= 0:
-            c = self._model.signal_cues[self._current_idx]
-            if not confirm.confirm_delete(self, f"信号 Cue「{c.get('id', '')}」"):
-                return
-            self._model.signal_cues.pop(self._current_idx)
-            self._current_idx = -1
-            self._model.mark_dirty("signal_cues")
-            self._refresh()
+        if self._current_idx < 0:
+            return
+        c = self._model.signal_cues[self._current_idx]
+        if not confirm.confirm_delete(self, f"信号 Cue「{c.get('id', '')}」"):
+            return
+        idx = self._current_idx
+        self._model.signal_cues.pop(idx)
+        self._current_idx = -1
+        self._model.mark_dirty("signal_cues")
+        self._refresh()
+        # 删除后选中相邻行（表单跟随实项）；空表则清空表单 + 禁用 Apply，消除幽灵表单。
+        if self._model.signal_cues:
+            self._list.setCurrentRow(min(idx, len(self._model.signal_cues) - 1))
+        else:
+            self._clear_form()

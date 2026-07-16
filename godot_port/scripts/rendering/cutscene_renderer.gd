@@ -1,7 +1,7 @@
 class_name RuntimeCutsceneRenderer
 extends RefCounted
 
-const ANON_SHOT_ID := "__anonShot"
+const RuntimeDataTypes := preload("res://scripts/data/data_types.gd")
 
 var renderer: RuntimeRenderer
 var camera: RuntimeCamera
@@ -74,13 +74,13 @@ func settle_fade_overlays_before_cleanup(duration_ms: float) -> void:
 
 
 func flash_white(duration_ms: float) -> void:
-	var flash := ColorRect.new(); flash.name = "CutsceneFlash"; flash.position = Vector2.ZERO; flash.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height()); flash.color = Color.WHITE; flash.mouse_filter = Control.MOUSE_FILTER_IGNORE; renderer.ui_layer.add_child(flash); await _animate_alpha(flash, 1.0, 0.0, duration_ms)
+	var flash := ColorRect.new(); flash.name = "CutsceneFlash"; flash.position = Vector2.ZERO; flash.size = Vector2(renderer.screen_width, renderer.screen_height); flash.color = Color.WHITE; flash.mouse_filter = Control.MOUSE_FILTER_IGNORE; renderer.ui_layer.add_child(flash); await _animate_alpha(flash, 1.0, 0.0, duration_ms)
 	_free_node(flash)
 
 
 func show_title(text: String, duration_ms: float) -> void:
 	if title_root != null: _free_node(title_root)
-	title_root = Control.new(); title_root.name = "CutsceneTitle"; title_root.position = Vector2.ZERO; title_root.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height()); title_root.modulate.a = 0.0
+	title_root = Control.new(); title_root.name = "CutsceneTitle"; title_root.position = Vector2.ZERO; title_root.size = Vector2(renderer.screen_width, renderer.screen_height); title_root.modulate.a = 0.0
 	var bg := ColorRect.new(); bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); bg.color = Color(0, 0, 0, 0.8); bg.mouse_filter = Control.MOUSE_FILTER_IGNORE; title_root.add_child(bg)
 	var label := Label.new(); label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); label.text = _r(text); label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER; label.add_theme_font_size_override("font_size", 36); label.add_theme_color_override("font_color", Color("ffeecc")); label.mouse_filter = Control.MOUSE_FILTER_IGNORE; title_root.add_child(label); renderer.ui_layer.add_child(title_root)
 	var fade := minf(300.0, maxf(0.0, duration_ms) / 4.0); await _animate_modulate_alpha(title_root, 0.0, 1.0, fade); await wait_ms(maxf(0.0, duration_ms - fade * 2.0)); await _animate_modulate_alpha(title_root, title_root.modulate.a if title_root != null else 1.0, 0.0, fade)
@@ -89,10 +89,10 @@ func show_title(text: String, duration_ms: float) -> void:
 
 func show_dialogue_box(text: String, speaker: String = "") -> Control:
 	if active_dialogue != null: dismiss_dialogue_box(active_dialogue)
-	var root := Control.new(); root.name = "CutsceneDialogue"; root.position = Vector2.ZERO; root.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height())
-	var panel := Panel.new(); panel.position = Vector2(0, renderer.get_screen_height() - 140); panel.size = Vector2(renderer.get_screen_width(), 140); var style := StyleBoxFlat.new(); style.bg_color = Color(0.03, 0.035, 0.07, 0.94); style.border_color = Color(0.35, 0.35, 0.55); style.set_border_width_all(2); panel.add_theme_stylebox_override("panel", style); root.add_child(panel)
-	if not speaker.strip_edges().is_empty(): var name_label := Label.new(); name_label.position = Vector2(30, renderer.get_screen_height() - 132); name_label.size = Vector2(renderer.get_screen_width() - 60, 28); name_label.text = _r(speaker); name_label.add_theme_font_size_override("font_size", 16); name_label.add_theme_color_override("font_color", Color("ffcc88")); root.add_child(name_label)
-	var body := Label.new(); body.position = Vector2(30, renderer.get_screen_height() - 102); body.size = Vector2(renderer.get_screen_width() - 60, 88); body.text = _r(text); body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; body.clip_text = true; body.add_theme_font_size_override("font_size", 16); body.add_theme_color_override("font_color", Color("dddddd")); root.add_child(body); renderer.ui_layer.add_child(root); active_dialogue = root; return root
+	var root := Control.new(); root.name = "CutsceneDialogue"; root.position = Vector2.ZERO; root.size = Vector2(renderer.screen_width, renderer.screen_height)
+	var panel := Panel.new(); panel.position = Vector2(0, renderer.screen_height - 140); panel.size = Vector2(renderer.screen_width, 140); var style := StyleBoxFlat.new(); style.bg_color = Color(0.03, 0.035, 0.07, 0.94); style.border_color = Color(0.35, 0.35, 0.55); style.set_border_width_all(2); panel.add_theme_stylebox_override("panel", style); root.add_child(panel)
+	if not speaker.strip_edges().is_empty(): var name_label := Label.new(); name_label.position = Vector2(30, renderer.screen_height - 132); name_label.size = Vector2(renderer.screen_width - 60, 28); name_label.text = _r(speaker); name_label.add_theme_font_size_override("font_size", 16); name_label.add_theme_color_override("font_color", Color("ffcc88")); root.add_child(name_label)
+	var body := Label.new(); body.position = Vector2(30, renderer.screen_height - 102); body.size = Vector2(renderer.screen_width - 60, 88); body.text = _r(text); body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; body.clip_text = true; body.add_theme_font_size_override("font_size", 16); body.add_theme_color_override("font_color", Color("dddddd")); root.add_child(body); renderer.ui_layer.add_child(root); active_dialogue = root; return root
 
 
 func dismiss_dialogue_box(root: Control) -> void:
@@ -100,33 +100,39 @@ func dismiss_dialogue_box(root: Control) -> void:
 	_free_node(root)
 
 
-func show_subtitle(text: String, layout: Variant = "bottom") -> Control:
-	var root := Control.new(); root.name = "CutsceneSubtitle"; root.position = Vector2.ZERO; root.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height()); root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+func add_to_entity_layer(child: Node2D) -> void:
+	renderer.entity_layer.add_child(child)
+
+
+func show_subtitle(content: Variant, layout: Variant = "bottom") -> Control:
+	var root := Control.new(); root.name = "CutsceneSubtitle"; root.position = Vector2.ZERO; root.size = Vector2(renderer.screen_width, renderer.screen_height); root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var text := "%s%s%s" % [content.get("speaker", ""), content.get("separator", ""), content.get("body", "")] if content is Dictionary else str(content)
 	var label := Label.new(); label.text = _r(text); label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; label.add_theme_font_size_override("font_size", 18); label.add_theme_color_override("font_color", Color.WHITE); label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER; label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var y := renderer.get_screen_height() * 0.82; var align := "center"
+	var y := renderer.screen_height * 0.82; var align := "center"
 	if layout is Dictionary:
-		y = renderer.get_screen_height() * (0.08 if layout.get("subtitleBand") == "movieTop" else 0.92); align = str(layout.get("subtitleAlign", "center"))
-	elif layout is String: y = renderer.get_screen_height() * (0.18 if layout == "top" else (0.5 if layout == "center" else 0.82))
-	elif layout is int or layout is float: y = renderer.get_screen_height() * (1.0 - clampf(float(layout), 0.0, 1.0))
-	label.position = Vector2(renderer.get_screen_width() * 0.1, y - 40); label.size = Vector2(renderer.get_screen_width() * 0.8, 80); label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if align == "left" else (HORIZONTAL_ALIGNMENT_RIGHT if align == "right" else HORIZONTAL_ALIGNMENT_CENTER); root.add_child(label); renderer.ui_layer.add_child(root); active_subtitles.push_back(root); return root
+		y = renderer.screen_height * (0.08 if layout.get("subtitleBand") == "movieTop" else 0.92); align = str(layout.get("subtitleAlign", "center"))
+	elif layout is String: y = renderer.screen_height * (0.18 if layout == "top" else (0.5 if layout == "center" else 0.82))
+	elif layout is int or layout is float: y = renderer.screen_height * (1.0 - clampf(float(layout), 0.0, 1.0))
+	label.position = Vector2(renderer.screen_width * 0.1, y - 40); label.size = Vector2(renderer.screen_width * 0.8, 80); label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if align == "left" else (HORIZONTAL_ALIGNMENT_RIGHT if align == "right" else HORIZONTAL_ALIGNMENT_CENTER); root.add_child(label); renderer.ui_layer.add_child(root); active_subtitles.push_back(root); return root
 
 
 func dismiss_subtitle(root: Control) -> void: active_subtitles.erase(root); _free_node(root)
 
 
-func show_img(path: String, handle: String = ANON_SHOT_ID, ken_burns: Variant = null, z_index: Variant = null) -> bool:
-	var id := handle.strip_edges() if not handle.strip_edges().is_empty() else ANON_SHOT_ID
-	if id == ANON_SHOT_ID: hide_img(ANON_SHOT_ID)
+func show_img(path: String, handle: String = RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID, ken_burns: Variant = null, z_index: Variant = null) -> bool:
+	var id := handle.strip_edges() if not handle.strip_edges().is_empty() else RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID
 	var texture: Variant = _load_texture_safely(path)
 	if not texture is Texture2D: return false
-	var node := TextureRect.new(); node.name = "CutsceneImage:%s" % id; node.position = Vector2.ZERO; node.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height()); node.texture = texture; node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED; node.mouse_filter = Control.MOUSE_FILTER_IGNORE; node.pivot_offset = node.size / 2.0; node.z_index = int(z_index) if z_index is int or z_index is float else 0; renderer.cutscene_overlay.add_child(node); images[id] = node; _request_seq[id] = int(_request_seq.get(id, 0)) + 1
+	var node := TextureRect.new(); node.name = "CutsceneImage:%s" % id; node.position = Vector2.ZERO; node.size = Vector2(renderer.screen_width, renderer.screen_height); node.texture = texture; node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED; node.mouse_filter = Control.MOUSE_FILTER_IGNORE; node.pivot_offset = node.size / 2.0; node.z_index = int(z_index) if z_index is int or z_index is float else 0
+	hide_img(id)
+	renderer.cutscene_overlay.add_child(node); images[id] = node; _request_seq[id] = int(_request_seq.get(id, 0)) + 1
 	if ken_burns is Dictionary: _run_ken_burns(node.get_instance_id(), id, int(_request_seq[id]), ken_burns)
 	return true
 
 
 func show_percent_img(path: String, handle: String, x_percent: float, y_percent: float, width_percent: float) -> bool:
 	var texture: Variant = _load_texture_safely(path); if not texture is Texture2D: return false
-	hide_img(handle); var node := TextureRect.new(); node.name = "CutscenePercent:%s" % handle; node.texture = texture; node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; var width := renderer.get_screen_width() * width_percent / 100.0; var height := width * float(texture.get_height()) / maxf(1.0, texture.get_width()); node.size = Vector2(width, height); node.position = Vector2(renderer.get_screen_width() * x_percent / 100.0 - width / 2.0, renderer.get_screen_height() * y_percent / 100.0 - height / 2.0); node.mouse_filter = Control.MOUSE_FILTER_IGNORE; renderer.cutscene_overlay.add_child(node); images[handle] = node; return true
+	hide_img(handle); var node := TextureRect.new(); node.name = "CutscenePercent:%s" % handle; node.texture = texture; node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; var width := renderer.screen_width * width_percent / 100.0; var height := width * float(texture.get_height()) / maxf(1.0, texture.get_width()); node.size = Vector2(width, height); node.position = Vector2(renderer.screen_width * x_percent / 100.0 - width / 2.0, renderer.screen_height * y_percent / 100.0 - height / 2.0); node.mouse_filter = Control.MOUSE_FILTER_IGNORE; renderer.cutscene_overlay.add_child(node); images[handle] = node; return true
 
 
 func show_overlay_image(handle: String, image: String, x_percent: float, y_percent: float, width_percent: float) -> bool:
@@ -137,7 +143,7 @@ func show_overlay_image(handle: String, image: String, x_percent: float, y_perce
 func blend_overlay_image(handle: String, from_image: String, to_image: String, x_percent: float, y_percent: float, width_percent: float, duration_ms: float, delay_ms: float = 0.0) -> bool:
 	var from_path := from_image if from_image.begins_with("/") else str(overlay_images.get(from_image, "")); var to_path := to_image if to_image.begins_with("/") else str(overlay_images.get(to_image, "")); var from_texture: Variant = _load_texture_safely(from_path); var to_texture: Variant = _load_texture_safely(to_path)
 	if not from_texture is Texture2D or not to_texture is Texture2D: return false
-	hide_img(handle); var root := Node2D.new(); root.name = "CutsceneBlend:%s" % handle; var width := renderer.get_screen_width() * width_percent / 100.0; var height := width * float(to_texture.get_height()) / maxf(1.0, to_texture.get_width()); root.position = Vector2(renderer.get_screen_width() * x_percent / 100.0 - width / 2.0, renderer.get_screen_height() * y_percent / 100.0 - height / 2.0); var from_node := TextureRect.new(); from_node.texture = from_texture; from_node.size = Vector2(width, height); from_node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; from_node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; var to_node := TextureRect.new(); to_node.texture = to_texture; to_node.size = Vector2(width, height); to_node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; to_node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; to_node.modulate.a = 0.0; root.add_child(from_node); root.add_child(to_node); renderer.cutscene_overlay.add_child(root); images[handle] = root
+	hide_img(handle); var root := Node2D.new(); root.name = "CutsceneBlend:%s" % handle; var width := renderer.screen_width * width_percent / 100.0; var height := width * float(to_texture.get_height()) / maxf(1.0, to_texture.get_width()); root.position = Vector2(renderer.screen_width * x_percent / 100.0 - width / 2.0, renderer.screen_height * y_percent / 100.0 - height / 2.0); var from_node := TextureRect.new(); from_node.texture = from_texture; from_node.size = Vector2(width, height); from_node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; from_node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; var to_node := TextureRect.new(); to_node.texture = to_texture; to_node.size = Vector2(width, height); to_node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; to_node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; to_node.modulate.a = 0.0; root.add_child(from_node); root.add_child(to_node); renderer.cutscene_overlay.add_child(root); images[handle] = root
 	await wait_ms(maxf(0.0, delay_ms)); var root_id := root.get_instance_id(); var from_id := from_node.get_instance_id(); var to_id := to_node.get_instance_id(); root = null; from_node = null; to_node = null; await _animate(maxf(0.0, duration_ms), func(t: float) -> void:
 		var current_root: Variant = instance_from_id(root_id); var a: Variant = instance_from_id(from_id); var b: Variant = instance_from_id(to_id)
 		if not current_root is Node2D or not a is TextureRect or not b is TextureRect or images.get(handle) != current_root: return
@@ -148,14 +154,44 @@ func blend_overlay_image(handle: String, from_image: String, to_image: String, x
 
 
 func show_anim_layer(anim_file: String, handle: String, options: Dictionary) -> bool:
-	hide_img(handle); var sprite := RuntimeSpriteEntity.new(); if not sprite.load_from_paths(anim_file, asset_manager): sprite.free(); return false
-	sprite.play_animation(str(options.get("state", "idle"))); var x := renderer.get_screen_width() * float(options.get("xPercent", 50.0)) / 100.0; var y := renderer.get_screen_height() * float(options.get("yPercent", 50.0)) / 100.0; sprite.position = Vector2(x, y); var wanted_width := renderer.get_screen_width() * float(options.get("widthPercent", 100.0)) / 100.0; var world := sprite.get_world_size(); var scale_value := wanted_width / maxf(1.0, float(world.width)); sprite.scale = Vector2(scale_value, scale_value); sprite.modulate.a = clampf(float(options.get("alpha", 1.0)), 0.0, 1.0); sprite.z_index = int(options.get("zIndex", 0)); renderer.cutscene_overlay.add_child(sprite); images[handle] = sprite; anim_layers[handle] = {"sprite": sprite}; return true
+	var animation_definition: Variant = asset_manager.load_json(anim_file)
+	if not animation_definition is Dictionary:
+		return false
+	var atlas_path := "%s/%s" % [anim_file.get_base_dir(), str(animation_definition.get("spritesheet", ""))]
+	var atlas: Variant = asset_manager.load_texture(atlas_path)
+	if not atlas is Texture2D:
+		return false
+	var states: Variant = animation_definition.get("states")
+	if not states is Dictionary:
+		return false
+	var requested_state: Variant = options.get("state")
+	var state_name := str(requested_state) if requested_state is String and states.has(requested_state) else ("idle" if states.has("idle") else (str(states.keys()[0]) if not states.is_empty() else ""))
+	var state_definition: Variant = states.get(state_name)
+	if not state_definition is Dictionary or not state_definition.get("frames") is Array or state_definition.frames.is_empty():
+		return false
+	hide_img(handle)
+	var sprite := RuntimeSpriteEntity.new()
+	sprite.load_from_def(atlas, animation_definition)
+	sprite.play_animation(state_name)
+	var x := renderer.screen_width * float(options.get("xPercent", 50.0)) / 100.0
+	var y := renderer.screen_height * float(options.get("yPercent", 50.0)) / 100.0
+	sprite.position = Vector2(x, y)
+	var wanted_width := renderer.screen_width * float(options.get("widthPercent", 100.0)) / 100.0
+	var world := sprite.get_world_size()
+	var scale_value := wanted_width / maxf(1.0, float(world.width))
+	sprite.scale = Vector2(scale_value, scale_value)
+	sprite.modulate.a = clampf(float(options.get("alpha", 1.0)), 0.0, 1.0)
+	sprite.z_index = int(options.get("zIndex", 0))
+	renderer.cutscene_overlay.add_child(sprite)
+	images[handle] = sprite
+	anim_layers[handle] = {"sprite": sprite}
+	return true
 
 
-func show_parallax_scene(definition: Dictionary, handle: String = ANON_SHOT_ID) -> bool:
-	var id := handle.strip_edges() if not handle.strip_edges().is_empty() else ANON_SHOT_ID
-	hide_img(ANON_SHOT_ID); if id != ANON_SHOT_ID: hide_img(id)
-	var container := Node2D.new(); container.name = "ParallaxScene:%s" % id; renderer.cutscene_overlay.add_child(container); images[id] = container; _request_seq[id] = int(_request_seq.get(id, 0)) + 1; var seq := int(_request_seq[id]); var width_ref := maxf(1.0, float(definition.get("widthRef", renderer.get_screen_width()))); var height_ref := maxf(1.0, float(definition.get("heightRef", renderer.get_screen_height()))); var cover := maxf(renderer.get_screen_width() / width_ref, renderer.get_screen_height() / height_ref); var origin := Vector2((renderer.get_screen_width() - width_ref * cover) / 2.0, (renderer.get_screen_height() - height_ref * cover) / 2.0); var loaded := 0
+func show_parallax_scene(definition: Dictionary, handle: String = RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID) -> bool:
+	var id := handle.strip_edges() if not handle.strip_edges().is_empty() else RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID
+	hide_img(RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID); if id != RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID: hide_img(id)
+	var container := Node2D.new(); container.name = "ParallaxScene:%s" % id; renderer.cutscene_overlay.add_child(container); images[id] = container; _request_seq[id] = int(_request_seq.get(id, 0)) + 1; var seq := int(_request_seq[id]); var width_ref := maxf(1.0, float(definition.get("widthRef", renderer.screen_width))); var height_ref := maxf(1.0, float(definition.get("heightRef", renderer.screen_height))); var cover := maxf(renderer.screen_width / width_ref, renderer.screen_height / height_ref); var origin := Vector2((renderer.screen_width - width_ref * cover) / 2.0, (renderer.screen_height - height_ref * cover) / 2.0); var loaded := 0
 	for raw: Variant in definition.get("layers", []):
 		if not raw is Dictionary: continue
 		var texture: Variant = _load_texture_safely(str(raw.get("image", ""))); if not texture is Texture2D: continue
@@ -165,14 +201,14 @@ func show_parallax_scene(definition: Dictionary, handle: String = ANON_SHOT_ID) 
 	return true
 
 
-func hide_img(handle: String = ANON_SHOT_ID) -> void:
-	var id := handle.strip_edges() if not handle.strip_edges().is_empty() else ANON_SHOT_ID; _request_seq[id] = int(_request_seq.get(id, 0)) + 1; var node: Variant = images.get(id); images.erase(id); anim_layers.erase(id)
-	if node is RuntimeSpriteEntity: node.destroy_entity()
+func hide_img(handle: String = RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID) -> void:
+	var id := handle.strip_edges() if not handle.strip_edges().is_empty() else RuntimeDataTypes.CUTSCENE_ANON_SHOT_ID; _request_seq[id] = int(_request_seq.get(id, 0)) + 1; var node: Variant = images.get(id); images.erase(id); anim_layers.erase(id)
+	if node is RuntimeSpriteEntity: node.destroy()
 	if node is Node: _free_node(node)
 
 
 func show_movie_bar(height_percent: float = 0.1) -> void:
-	hide_movie_bar(); movie_bars = Control.new(); movie_bars.name = "CutsceneMovieBars"; movie_bars.position = Vector2.ZERO; movie_bars.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height()); movie_bars.z_index = 4095; var h := renderer.get_screen_height() * clampf(height_percent, 0.0, 0.45); var top := ColorRect.new(); top.position = Vector2.ZERO; top.size = Vector2(renderer.get_screen_width(), h); top.color = Color.BLACK; var bottom := ColorRect.new(); bottom.position = Vector2(0, renderer.get_screen_height() - h); bottom.size = Vector2(renderer.get_screen_width(), h); bottom.color = Color.BLACK; movie_bars.add_child(top); movie_bars.add_child(bottom); renderer.cutscene_overlay.add_child(movie_bars)
+	hide_movie_bar(); movie_bars = Control.new(); movie_bars.name = "CutsceneMovieBars"; movie_bars.position = Vector2.ZERO; movie_bars.size = Vector2(renderer.screen_width, renderer.screen_height); movie_bars.z_index = 4095; var h := renderer.screen_height * clampf(height_percent, 0.0, 0.45); var top := ColorRect.new(); top.position = Vector2.ZERO; top.size = Vector2(renderer.screen_width, h); top.color = Color.BLACK; var bottom := ColorRect.new(); bottom.position = Vector2(0, renderer.screen_height - h); bottom.size = Vector2(renderer.screen_width, h); bottom.color = Color.BLACK; movie_bars.add_child(top); movie_bars.add_child(bottom); renderer.cutscene_overlay.add_child(movie_bars)
 func hide_movie_bar() -> void:
 	if movie_bars != null: _free_node(movie_bars); movie_bars = null
 
@@ -198,10 +234,10 @@ func destroy() -> void: cleanup(); overlay_images.clear(); _resolve_display = Ca
 
 
 func _ensure_fade_overlay() -> ColorRect:
-	if fade_overlay == null: fade_overlay = ColorRect.new(); fade_overlay.name = "CutsceneFade"; fade_overlay.position = Vector2.ZERO; fade_overlay.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height()); fade_overlay.color = Color(0, 0, 0, 0); fade_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE; fade_overlay.z_index = 4096; renderer.ui_layer.add_child(fade_overlay)
+	if fade_overlay == null: fade_overlay = ColorRect.new(); fade_overlay.name = "CutsceneFade"; fade_overlay.position = Vector2.ZERO; fade_overlay.size = Vector2(renderer.screen_width, renderer.screen_height); fade_overlay.color = Color(0, 0, 0, 0); fade_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE; fade_overlay.z_index = 4096; renderer.ui_layer.add_child(fade_overlay)
 	return fade_overlay
 func _ensure_world_fade_overlay() -> ColorRect:
-	if world_fade_overlay == null: world_fade_overlay = ColorRect.new(); world_fade_overlay.name = "WorldFade"; world_fade_overlay.position = Vector2.ZERO; world_fade_overlay.size = Vector2(renderer.get_screen_width(), renderer.get_screen_height()); world_fade_overlay.color = Color(0, 0, 0, 0); world_fade_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE; world_fade_overlay.z_index = 4096; renderer.cutscene_overlay.add_child(world_fade_overlay)
+	if world_fade_overlay == null: world_fade_overlay = ColorRect.new(); world_fade_overlay.name = "WorldFade"; world_fade_overlay.position = Vector2.ZERO; world_fade_overlay.size = Vector2(renderer.screen_width, renderer.screen_height); world_fade_overlay.color = Color(0, 0, 0, 0); world_fade_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE; world_fade_overlay.z_index = 4096; renderer.cutscene_overlay.add_child(world_fade_overlay)
 	return world_fade_overlay
 func _animate_alpha(node: ColorRect, from: float, to: float, duration: float) -> void: await _animate(duration, func(t: float) -> void: if is_instance_valid(node): var c := node.color; c.a = lerpf(from, to, t); node.color = c)
 func _animate_modulate_alpha(node: CanvasItem, from: float, to: float, duration: float) -> void: await _animate(duration, func(t: float) -> void: if is_instance_valid(node): var c := node.modulate; c.a = lerpf(from, to, t); node.modulate = c)
@@ -215,7 +251,7 @@ func _animate(duration_ms: float, callback: Callable) -> void:
 		await Engine.get_main_loop().process_frame
 func _scaled_ms(value: float) -> float: return maxf(0.0, value) * _time_scale
 func _load_texture_safely(path: String) -> Variant:
-	var resolved := asset_manager.locator.resolve_url(path, RuntimeResourceLocator.MEDIA); return asset_manager.load_texture(path) if FileAccess.file_exists(resolved) else null
+	var resolved := RuntimeResourceLocator.get_default().resolve_url(path, RuntimeResourceLocator.MEDIA); return asset_manager.load_texture(path) if FileAccess.file_exists(resolved) else null
 func _free_node(node: Node) -> void:
 	if node == null or not is_instance_valid(node): return
 	if node.get_parent() != null: node.get_parent().remove_child(node)
@@ -224,11 +260,11 @@ func _r(text: String) -> String: return str(_resolve_display.call(text)) if not 
 
 
 func _run_ken_burns(node_instance_id: int, id: String, seq: int, config: Dictionary) -> void:
-	var from_scale := maxf(1.0, float(config.get("fromScale", 1.0))); var to_scale := maxf(1.0, float(config.get("toScale", from_scale))); var from_pos := Vector2(float(config.get("fromX", 0)), float(config.get("fromY", 0))); var to_pos := Vector2(float(config.get("toX", from_pos.x)), float(config.get("toY", from_pos.y))); var center := Vector2(renderer.get_screen_width(), renderer.get_screen_height()) / 2.0
+	var from_scale := maxf(1.0, float(config.get("fromScale", 1.0))); var to_scale := maxf(1.0, float(config.get("toScale", from_scale))); var from_pos := Vector2(float(config.get("fromX", 0)), float(config.get("fromY", 0))); var to_pos := Vector2(float(config.get("toX", from_pos.x)), float(config.get("toY", from_pos.y))); var center := Vector2(renderer.screen_width, renderer.screen_height) / 2.0
 	await _animate(float(config.get("durationMs", 12000)), func(t: float) -> void:
 		var current: Variant = instance_from_id(node_instance_id)
 		if not current is TextureRect or images.get(id) != current or int(_request_seq.get(id, -1)) != seq: return
-		var scale_value := lerpf(from_scale, to_scale, t); current.scale = Vector2(scale_value, scale_value); var percent := from_pos.lerp(to_pos, t); var texture: Texture2D = current.texture as Texture2D; var tex_width: float = float(texture.get_width()) if texture != null else current.size.x; var tex_height: float = float(texture.get_height()) if texture != null else current.size.y; var cover := maxf(renderer.get_screen_width() / maxf(1.0, tex_width), renderer.get_screen_height() / maxf(1.0, tex_height)); var max_offset := Vector2(maxf(0.0, (tex_width * cover * scale_value - renderer.get_screen_width()) / 2.0), maxf(0.0, (tex_height * cover * scale_value - renderer.get_screen_height()) / 2.0)); var wanted := Vector2(renderer.get_screen_width() * percent.x / 100.0, renderer.get_screen_height() * percent.y / 100.0); var offset := Vector2(clampf(wanted.x, -max_offset.x, max_offset.x), clampf(wanted.y, -max_offset.y, max_offset.y)); current.position = center - current.size * scale_value / 2.0 + offset
+		var scale_value := lerpf(from_scale, to_scale, t); current.scale = Vector2(scale_value, scale_value); var percent := from_pos.lerp(to_pos, t); var texture: Texture2D = current.texture as Texture2D; var tex_width: float = float(texture.get_width()) if texture != null else current.size.x; var tex_height: float = float(texture.get_height()) if texture != null else current.size.y; var cover := maxf(renderer.screen_width / maxf(1.0, tex_width), renderer.screen_height / maxf(1.0, tex_height)); var max_offset := Vector2(maxf(0.0, (tex_width * cover * scale_value - renderer.screen_width) / 2.0), maxf(0.0, (tex_height * cover * scale_value - renderer.screen_height) / 2.0)); var wanted := Vector2(renderer.screen_width * percent.x / 100.0, renderer.screen_height * percent.y / 100.0); var offset := Vector2(clampf(wanted.x, -max_offset.x, max_offset.x), clampf(wanted.y, -max_offset.y, max_offset.y)); current.position = center - current.size * scale_value / 2.0 + offset
 	)
 func _apply_parallax_key(sprite: Sprite2D, key: Dictionary, cover: float, origin: Vector2) -> void: sprite.position = origin + Vector2(float(key.get("x", 0)), float(key.get("y", 0))) * cover; var scale_value := cover * float(key.get("scale", 1.0)); sprite.scale = Vector2(scale_value, scale_value); sprite.rotation_degrees = float(key.get("rotation", 0)); sprite.modulate.a = clampf(float(key.get("alpha", 1.0)), 0.0, 1.0)
 func _run_parallax_layer(sprite_instance_id: int, id: String, seq: int, raw_keys: Array, cover: float, origin: Vector2, easing: String, loop: bool) -> void:

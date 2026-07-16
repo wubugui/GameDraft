@@ -10,7 +10,6 @@ import {
   isDerivedStateSignal,
   isReservedAuthorSignalId,
   NARRATIVE_SCHEMA_VERSION,
-  parseDerivedStateSignal,
   stateEnteredSignalKey,
 } from './signalConstants';
 import { migrateNarrativeSignalsV3 } from './signalMigration';
@@ -113,25 +112,13 @@ export function normalizeFile(data: NarrativeGraphsFileDef | unknown): Narrative
       if (!Array.isArray(el.meta.commands)) el.meta.commands = [];
     }
   }
-  applyDerivedBroadcastAutoMark(next);
   return next;
 }
 
-function applyDerivedBroadcastAutoMark(data: NarrativeGraphsFileDef): void {
-  const graphById = new Map<string, NarrativeGraphDef>();
-  for (const { graph } of compileGraphs(data)) {
-    graphById.set(graph.id, graph);
-  }
-  for (const { graph } of compileGraphs(data)) {
-    for (const transition of graph.transitions ?? []) {
-      const parsed = parseDerivedStateSignal(String(transition.signal ?? '').trim());
-      if (!parsed) continue;
-      const sourceGraph = graphById.get(parsed.graphId);
-      const state = sourceGraph?.states?.[parsed.stateId];
-      if (state) state.broadcastOnEnter = true;
-    }
-  }
-}
+// broadcastOnEnter 只由用户在状态面板勾选，normalize 不代写数据（曾有 auto-mark：
+// 发现监听 state:<g>:<s> 就静默给源状态标广播——只加不减，监听删除后留下孤儿空播，
+// 且用户从未授权这次写入）。监听了未广播状态由校验器报 state.broadcast.missing（error，
+// 定位到 states.<id>.broadcastOnEnter），用户自己决定勾不勾。
 
 export function normalizeProjection<T extends { triggerEdges?: unknown; readEdges?: unknown; stateCommandEdges?: unknown; warnings?: unknown }>(
   raw: T,
@@ -167,17 +154,13 @@ function normalizeGraph(graph: NarrativeGraphDef): void {
 }
 
 function normalizeAuthorSignals(signals: NarrativeAuthorSignalDef[]): void {
-  // 只做无争议归一化：清 id/label/notes 两端空白、剔除空 id / 保留字前缀等无效项。
-  // 重复 id 不再静默丢弃——保留交给校验器报 signal.id.duplicate（JS 与 Python 两侧都报此码）。
-  // 否则会在校验前就把重复项抹掉：既丢了策划的数据、又让重复校验永远不触发，且与 Python
-  // _normalize_file（v3 不去重）行为不一致。当前文件无重复信号，故导出字节不变。
-  for (let i = signals.length - 1; i >= 0; i -= 1) {
-    const row = signals[i]!;
+  // 只做无争议归一化：清 id/label/notes 两端空白。空 id / 保留字前缀 / 重复 id 一律**保留**，
+  // 交给校验器报 signal.id.empty / signal.id.reserved / signal.id.duplicate（均 error 拦保存）。
+  // 旧实现静默删行：既丢用户数据，又让前两个校验码在 web 侧永不可达，还与 Python
+  // _normalize_file（保留并报错）分歧（2026-07-17 审查 W-E9 收敛为"保留+校验报"）。
+  // 目录/选择器侧对保留字已有独立过滤与创建守卫（signalCatalog），不受影响。
+  for (const row of signals) {
     row.id = String(row.id ?? '').trim();
-    if (!row.id || isReservedAuthorSignalId(row.id)) {
-      signals.splice(i, 1);
-      continue;
-    }
     if (row.label) row.label = String(row.label).trim();
     if (row.notes) row.notes = String(row.notes).trim();
   }
@@ -259,9 +242,9 @@ export function setStateEditorPosition(state: NarrativeStateNodeDef, x: number, 
 
 export function createState(graph: NarrativeGraphDef): string {
   const id = uniqueId('state', Object.keys(graph.states ?? {}));
+  // 不播 label=id（显示名回退到 id；磁盘 182 个状态 0 个 label==id——默认键注入是字节噪音）
   graph.states[id] = {
     id,
-    label: id,
     meta: { editor: { x: 120, y: 260 } },
   };
   if (!graph.initialState) graph.initialState = id;
@@ -270,7 +253,8 @@ export function createState(graph: NarrativeGraphDef): string {
 
 export function createTransition(graph: NarrativeGraphDef, from: string, to: string, trigger?: 'signal' | 'reactive' | 'reactiveAll' | 'reactiveAny'): NarrativeTransitionDef {
   const id = uniqueId('t', graph.transitions.map((t) => t.id));
-  const transition: NarrativeTransitionDef = { id, from, to, signal: DEFAULT_DRAFT_SIGNAL, priority: 0 };
+  // 不播 priority:0（运行时/排序按 `?? 0` 兜底；磁盘 137 条迁移全部无该键）
+  const transition: NarrativeTransitionDef = { id, from, to, signal: DEFAULT_DRAFT_SIGNAL };
   if (trigger && trigger !== 'signal') transition.trigger = trigger;
   graph.transitions.push(transition);
   return transition;
@@ -280,15 +264,14 @@ export function createComposition(data: NarrativeGraphsFileDef): NarrativeCompos
   const comps = data.compositions ??= [];
   const id = uniqueId('composition', comps.map((c) => c.id));
   const graphId = uniqueGraphId(data, 'flow');
+  // 不播 label==id 类默认键（显示层一律回退 id；避免默认键注入进 JSON）
   const comp: NarrativeCompositionDef = {
     id,
-    label: id,
     mainGraph: {
       id: graphId,
-      label: id,
       ownerType: 'flow',
       initialState: 'initial',
-      states: { initial: { id: 'initial', label: 'initial', meta: { editor: { x: 120, y: 160 } } } },
+      states: { initial: { id: 'initial', meta: { editor: { x: 120, y: 160 } } } },
       transitions: [],
     },
     elements: [],
@@ -318,6 +301,7 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, 
     if (kind === 'scenarioSubgraph') element.refId = '';
     element.x = kind === 'wrapperGraph' ? 320 : 440;
     element.y = kind === 'wrapperGraph' ? 380 : 60;
+    // 状态不播 label==id、wrapper 不播 category:''（默认键注入；显示层回退 id）
     element.graph = kind === 'scenarioSubgraph'
       ? {
           id: data ? uniqueGraphId(data, graphPrefix) : uniqueId(graphPrefix, [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
@@ -327,9 +311,9 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, 
           entryState: 'entry',
           exitStates: ['exit'],
           states: {
-            inactive: { id: 'inactive', label: 'inactive', meta: { editor: { x: 60, y: 160 } } },
-            entry: { id: 'entry', label: 'entry', meta: { editor: { x: 280, y: 120 } } },
-            exit: { id: 'exit', label: 'exit', meta: { editor: { x: 520, y: 120 } } },
+            inactive: { id: 'inactive', meta: { editor: { x: 60, y: 160 } } },
+            entry: { id: 'entry', meta: { editor: { x: 280, y: 120 } } },
+            exit: { id: 'exit', meta: { editor: { x: 520, y: 120 } } },
           },
           transitions: [],
         }
@@ -337,9 +321,8 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, 
           id: data ? uniqueGraphId(data, graphPrefix) : uniqueId(graphPrefix, [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
           label: element.label,
           ownerType,
-          category: '',
           initialState: 'initial',
-          states: { initial: { id: 'initial', label: 'initial', meta: { editor: { x: 120, y: 160 } } } },
+          states: { initial: { id: 'initial', meta: { editor: { x: 120, y: 160 } } } },
           transitions: [],
         };
   }

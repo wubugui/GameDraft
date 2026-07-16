@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, Signal
+from .. import theme
 from ..shared import confirm
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -214,10 +215,14 @@ class _AtmosStepRow(QFrame):
         cb.setMaximumWidth(150)
         return cb
 
-    def _make_pooltext_combo(self, pool: str, text: str) -> QComboBox:
-        """「〔池〕xxx」=引用文案池随机抽；自由输入=固定台词。读回靠文本是否等于某〔池〕项判定。"""
+    def _make_pooltext_combo(self, pool: str, text: str, *, select_only: bool = False) -> QComboBox:
+        """「〔池〕xxx」=引用文案池随机抽；自由输入=固定台词。读回靠文本是否等于某〔池〕项判定。
+
+        select_only=True（pick 用）：只能从已定义文案池里选，禁止手打——否则自由文本会
+        被当成池名产生悬垂池引用（审查 P3）。悬垂的既有池值仍保值展示。
+        """
         cb = QComboBox()
-        cb.setEditable(True)
+        cb.setEditable(not select_only)
         cb.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         cb.addItem("", None)
         for pn in (self._pools_getter() if self._pools_getter else []):
@@ -289,8 +294,9 @@ class _AtmosStepRow(QFrame):
             self._slot.textChanged.connect(self._emit_changed)
             self._dur.valueChanged.connect(self._emit_changed)
         elif op == "pick":
-            self._pooltext = self._make_pooltext_combo(str(d.get("pool") or ""), "")
-            self._pooltext.setToolTip("从该文案池随机抽一句存入槽位，供后续 say 引用")
+            # pick 的池必须是已定义文案池：select-only，禁手打（防悬垂池引用，审查 P3）。
+            self._pooltext = self._make_pooltext_combo(str(d.get("pool") or ""), "", select_only=True)
+            self._pooltext.setToolTip("从该文案池随机抽一句存入槽位，供后续 say 引用（仅可选已定义的池）")
             self._slot = QLineEdit(str(d.get("slot") or ""))
             self._slot.setPlaceholderText("槽位名（默认 _line）")
             self._slot.setMaximumWidth(160)
@@ -476,13 +482,15 @@ class AtmosphereScriptEditor(QWidget):
         root.setSpacing(3)
         if title:
             lab = QLabel(title)
-            lab.setStyleSheet("color:#8aa; font-size:11px;")
+            lab.setStyleSheet("color:#8aa;")
+            theme.set_editor_font_role(lab, theme.FONT_ROLE_HINT)
             root.addWidget(lab)
         self._rows_lay = QVBoxLayout()
         self._rows_lay.setSpacing(3)
         root.addLayout(self._rows_lay)
         self._empty = QLabel("（空——点下方 + 指令 添加）")
-        self._empty.setStyleSheet("color:#777; font-size:11px;")
+        self._empty.setStyleSheet("color:#777;")
+        theme.set_editor_font_role(self._empty, theme.FONT_ROLE_HINT)
         root.addWidget(self._empty)
         self._btn_add = QPushButton("+ 指令")
         self._btn_add.setMaximumWidth(90)

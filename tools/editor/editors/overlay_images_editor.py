@@ -1,7 +1,8 @@
 """对话叠图短 id：overlay_images.json，供 showOverlayImage / blendOverlayImage 等动作的 image 参数使用。"""
 from __future__ import annotations
 
-from typing import Callable
+from copy import deepcopy
+from typing import Any, Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -134,6 +135,16 @@ class OverlayImagesEditor(QWidget):
         self._status.setWordWrap(True)
         root.addWidget(self._status)
 
+        # 非字符串值条目（agent 手写/未来 schema）：本页不显示、不 str() 摧毁，
+        # Apply / 保存时按原键序原样透传。
+        self._passthrough_values: dict[str, Any] = {}
+        self._model_key_order: list[str] = []
+        self._passthrough_note = QLabel("")
+        self._passthrough_note.setStyleSheet("color:#888;")
+        self._passthrough_note.setWordWrap(True)
+        self._passthrough_note.setVisible(False)
+        root.addWidget(self._passthrough_note)
+
         self._search = QLineEdit()
         self._search.setPlaceholderText("搜索…")
         self._search.setClearButtonEnabled(True)
@@ -153,6 +164,7 @@ class OverlayImagesEditor(QWidget):
         self._rows_layout = QVBoxLayout(self._rows_host)
         self._rows_layout.addStretch()
         scroll.setWidget(self._rows_host)
+        self._scroll = scroll
         root.addWidget(scroll, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -174,6 +186,20 @@ class OverlayImagesEditor(QWidget):
         self._row_widgets: list[_OneRow] = []
         self._reload_from_model()
 
+    def select_by_id(self, short_id: str, _scene_id: str = "") -> None:
+        """全局搜索/跳转落点：滚动到指定短 id 的行并聚焦其 id 输入框。"""
+        target = (short_id or "").strip()
+        if not target:
+            return
+        if self._search.text():
+            self._search.clear()  # 过滤可能把目标行隐藏
+        for row in self._row_widgets:
+            edit = getattr(row, "_id_edit", None)
+            if edit is not None and edit.text().strip() == target:
+                self._scroll.ensureWidgetVisible(row)
+                edit.setFocus()
+                return
+
     def _clear_rows(self) -> None:
         for w in list(self._row_widgets):
             self._rows_layout.removeWidget(w)
@@ -187,9 +213,26 @@ class OverlayImagesEditor(QWidget):
         if not isinstance(ov, dict):
             ov = {}
         # 保留模型(=磁盘文件)的既有键序，避免「打开即重排」改动导出 JSON 的键顺序。
+        # 非字符串值不铺行（str() 会把 dict/list/数值/null 摧毁成字符串再写回），
+        # 记入透传表，Apply / flush 时按原键序原样并回。
+        self._passthrough_values = {}
+        self._model_key_order = []
         for k in ov.keys():
             v = ov.get(k)
-            self._append_row(str(k), str(v) if v is not None else "")
+            self._model_key_order.append(str(k))
+            if isinstance(v, str):
+                self._append_row(str(k), v)
+            else:
+                self._passthrough_values[str(k)] = deepcopy(v)
+        if self._passthrough_values:
+            names = "、".join(list(self._passthrough_values)[:8])
+            more = "…" if len(self._passthrough_values) > 8 else ""
+            self._passthrough_note.setText(
+                f"{len(self._passthrough_values)} 条非字符串值条目未在本页显示"
+                f"（{names}{more}），Apply / 保存时按原样保留。")
+            self._passthrough_note.setVisible(True)
+        else:
+            self._passthrough_note.setVisible(False)
         self._check_duplicate_hint()
         self._apply_filter()
         self._update_empty_hint()
@@ -252,12 +295,33 @@ class OverlayImagesEditor(QWidget):
                 continue
             ids.append(a)
         non_empty = [x for x in ids if x]
-        if len(non_empty) != len(set(non_empty)):
-            dup_ids = sorted({x for x in non_empty if non_empty.count(x) > 1})
+        pt_keys = set(getattr(self, "_passthrough_values", None) or {})
+        dup_ids = sorted(
+            {x for x in non_empty if non_empty.count(x) > 1}
+            | (set(non_empty) & pt_keys)  # 与本页未显示的透传条目撞 id 也算重复
+        )
+        if dup_ids:
             self._status.setStyleSheet("color:#c44;")
             self._status.setText("短 id 重复：" + "、".join(dup_ids) + "（无法 Apply）")
             return
         self._status.setText("")
+
+    def _merged_with_passthrough(self, data: dict[str, str]) -> dict:
+        """把非字符串值条目按模型原键序原样并回（本页只编辑字符串条目）。"""
+        if not self._passthrough_values:
+            return data
+        rest = dict(data)
+        out: dict = {}
+        for k in self._model_key_order:
+            if k in self._passthrough_values:
+                out[k] = deepcopy(self._passthrough_values[k])
+            elif k in rest:
+                out[k] = rest.pop(k)
+        out.update(rest)  # 新增/改名的行按行序补在末尾
+        return out
+
+    def _passthrough_clash(self, data: dict[str, str]) -> list[str]:
+        return sorted(set(data) & set(self._passthrough_values))
 
     def _apply(self) -> None:
         rows = self._collect_rows()
@@ -265,7 +329,13 @@ class OverlayImagesEditor(QWidget):
         if err:
             QMessageBox.warning(self, "overlay_images", err)
             return
-        self._model.overlay_images = data
+        clash = self._passthrough_clash(data)
+        if clash:
+            QMessageBox.warning(
+                self, "overlay_images",
+                "短 id 与本页未显示的非字符串条目重复：" + "、".join(clash))
+            return
+        self._model.overlay_images = self._merged_with_passthrough(data)
         self._model.mark_dirty("overlay_images")
         self._status.setStyleSheet("color:#484;")
         self._status.setText("已写入内存；请 Ctrl+S 保存工程写入磁盘。")
@@ -277,6 +347,11 @@ class OverlayImagesEditor(QWidget):
         data, err = _rows_to_dict(rows, tolerant=True)
         if err:
             raise ValueError(f"overlay_images: {err}")
-        if data != (self._model.overlay_images or {}):
-            self._model.overlay_images = data
+        clash = self._passthrough_clash(data)
+        if clash:
+            raise ValueError(
+                "overlay_images: 短 id 与非字符串条目重复：" + "、".join(clash))
+        merged = self._merged_with_passthrough(data)
+        if merged != (self._model.overlay_images or {}):
+            self._model.overlay_images = merged
             self._model.mark_dirty("overlay_images")

@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_叫花子斗嘴",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·叫花子斗嘴（贫两句/走开·孤立flavor·对白待审）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "小哥……行行好，赏两个钱，积个德嘛。",
+      "next": "q",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "q": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "墙根蹲着个老叫花子，挂着个豁口破碗。"
+      },
+      "options": [
+        {
+          "id": "banter",
+          "text": "〔凑过去贫两句〕",
+          "next": "b1"
+        },
+        {
+          "id": "grab",
+          "text": "〔抢他半个饼〕",
+          "next": "grab"
+        },
+        {
+          "id": "leave",
+          "text": "〔走开〕",
+          "next": "leave"
+        }
+      ]
+    },
+    "grab": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "banbing",
+            "count": 1
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_叫花子斗嘴",
+            "signal": "qiangbing_done"
+          }
+        }
+      ],
+      "next": "g1"
+    },
+    "g1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗一把夺过老叫花子手里那半个饼，撒腿就跑，跑出老远还听见后头在骂。",
+      "next": "g2"
+    },
+    "g2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "遭雷劈的！抢老子的饼——你个背尸的不得好死！",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "赏钱？老子比你还穷。你这破碗，还是我上回丢的呢。",
+      "next": "b2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "呸——你个背尸的，一身晦气比钱多。离远点儿。",
+      "next": "b3",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "背尸咋个了？好歹是门手艺。你这要饭的，才是祖传的。",
+      "next": "b4",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b4": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "俩人你一句我一句斗了半天嘴，谁也没占着便宜，倒都乐呵。",
+      "next": "end1"
+    },
+    "leave": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗摆摆手，绕开了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

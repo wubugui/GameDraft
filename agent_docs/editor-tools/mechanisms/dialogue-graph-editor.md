@@ -40,6 +40,8 @@ last_governed: 2026-07-11
 
 - 构造 NodeInspector 必须传 `project_model_getter`,否则 ActionEditor 的 id 选择器回填不了,探针误报"丢参数"。
 - error 强制保存弹窗保留默认 No(不硬拦)——用户工作流拍板(2026-07-11),别"顺手"改成阻断。
+- **条件原子吃叶子**:node_inspector 的条件原子模式对**未识别叶子**(plane/scenarioLine/未来新叶)必须**原样透传只读**,禁止兜底强转 `{"flag":""}`——曾吃掉带 `{"plane":…}` 的图(婆子/庄家来人/枯井街坊等,161df2b 引入、2026-07-13 修,义庄管事 root_gate 空 flag 即历史受害者)。**新增条件叶子必须检查本控件的透传分支**(对齐 L2 阶梯的编辑器面)。
+- 文件列表 QListWidget→QTreeWidget 改造类的信号回调,单参 `it.data(role)` 调用要带列号,否则删除入口炸(同批 161df2b 溜入的虫)。
 - 头像/说话人语义见 runtime 域对应机制卡(对话头像系统)。
 
 ## 怎么验证

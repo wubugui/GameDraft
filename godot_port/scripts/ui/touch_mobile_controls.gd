@@ -1,10 +1,12 @@
 class_name RuntimeTouchMobileControls
 extends RefCounted
 
+const RuntimeDataTypes := preload("res://scripts/data/data_types.gd")
+
 const PANEL_DEFS := [
 	["quest", "quest"], ["inventory", "inventory"], ["rules", "rules"],
 	["dialogueLog", "dialogueLog"], ["bookshelf", "bookshelf"], ["map", "map"],
-	["ruleUse", "ruleUse"], ["shop", "shop"], ["menu", "menu"], ["debug", "debug"],
+	["ruleUse", "ruleUse"], ["shop", "shop"], ["menu", "menu"],
 ]
 
 var renderer: RuntimeRenderer
@@ -18,18 +20,19 @@ var active_dirs: Dictionary = {}
 var run_held := false
 var destroyed := false
 var force_mobile: Variant = null
+var include_debug := false
 
 
-func _init(next_renderer: RuntimeRenderer, input: RuntimeInputManager, state: RuntimeGameStateController, next_strings: RuntimeStringsProvider, mobile_override: Variant = null) -> void:
-	renderer = next_renderer; input_manager = input; state_controller = state; strings = next_strings; force_mobile = mobile_override
+func _init(next_renderer: RuntimeRenderer, input: RuntimeInputManager, state: RuntimeGameStateController, next_strings: RuntimeStringsProvider, mobile_override: Variant = null, debug_controls: bool = OS.is_debug_build()) -> void:
+	renderer = next_renderer; input_manager = input; state_controller = state; strings = next_strings; force_mobile = mobile_override; include_debug = debug_controls
 	_build()
 
 
 func update() -> void:
 	if destroyed or root == null: return
 	var mobile := bool(force_mobile) if force_mobile is bool else DisplayServer.is_touchscreen_available()
-	var explore := mobile and state_controller.current_state == RuntimeGameStateController.EXPLORING
-	var overlay := mobile and state_controller.current_state == RuntimeGameStateController.UI_OVERLAY
+	var explore := mobile and state_controller.current_state == RuntimeDataTypes.EXPLORING
+	var overlay := mobile and state_controller.current_state == RuntimeDataTypes.UI_OVERLAY
 	root.visible = explore or overlay; explore_group.visible = explore; overlay_group.visible = overlay
 	if not explore: clear_explore_input()
 
@@ -66,17 +69,19 @@ func _build() -> void:
 	explore_group = Control.new(); explore_group.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.add_child(explore_group)
 	overlay_group = Control.new(); overlay_group.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.add_child(overlay_group)
 	var menu := HBoxContainer.new(); menu.position = Vector2(12, 12); explore_group.add_child(menu)
-	for pair: Array in PANEL_DEFS:
+	var panel_defs: Array = PANEL_DEFS.duplicate(true)
+	if include_debug: panel_defs.push_back(["debug", "debug"])
+	for pair: Array in panel_defs:
 		var id := str(pair[0]); var button := Button.new(); button.text = _label(str(pair[1]), id); button.pressed.connect(func() -> void: debug_toggle_panel(id)); menu.add_child(button)
-	var dpad := GridContainer.new(); dpad.columns = 3; dpad.position = Vector2(24, renderer.get_screen_height() - 190); explore_group.add_child(dpad)
+	var dpad := GridContainer.new(); dpad.columns = 3; dpad.position = Vector2(24, renderer.screen_height - 190); explore_group.add_child(dpad)
 	for definition: Array in [["", ""], ["u", "↑"], ["", ""], ["l", "←"], ["", ""], ["r", "→"], ["", ""], ["d", "↓"], ["", ""]]:
 		if str(definition[0]).is_empty(): var spacer := Control.new(); spacer.custom_minimum_size = Vector2(54, 54); dpad.add_child(spacer)
 		else:
 			var dir := str(definition[0]); var button := Button.new(); button.text = str(definition[1]); button.custom_minimum_size = Vector2(54, 54); button.button_down.connect(func() -> void: debug_direction(dir, true)); button.button_up.connect(func() -> void: debug_direction(dir, false)); dpad.add_child(button)
-	var actions := VBoxContainer.new(); actions.position = Vector2(renderer.get_screen_width() - 120, renderer.get_screen_height() - 150); explore_group.add_child(actions)
+	var actions := VBoxContainer.new(); actions.position = Vector2(renderer.screen_width - 120, renderer.screen_height - 150); explore_group.add_child(actions)
 	var run := Button.new(); run.text = _label("run", "Run"); run.button_down.connect(func() -> void: debug_run(true)); run.button_up.connect(func() -> void: debug_run(false)); actions.add_child(run)
 	var interact := Button.new(); interact.text = _label("interact", "Use"); interact.button_down.connect(debug_interact); actions.add_child(interact)
-	var back := Button.new(); back.text = _label("back", "Back"); back.position = Vector2(18, renderer.get_screen_height() - 70); back.pressed.connect(debug_back); overlay_group.add_child(back)
+	var back := Button.new(); back.text = _label("back", "Back"); back.position = Vector2(18, renderer.screen_height - 70); back.pressed.connect(debug_back); overlay_group.add_child(back)
 	renderer.ui_layer.add_child(root); update()
 
 

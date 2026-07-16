@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QObject, QEvent
 
 from ..project_model import ProjectModel
+from .. import theme
 from ..shared import confirm
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.condition_editor import ConditionEditor
@@ -224,6 +225,7 @@ class ArchiveEditor(QWidget):
 
         root = QVBoxLayout(self)
         tabs = QTabWidget()
+        self._tabs = tabs
         root.addWidget(tabs)
 
         tabs.addTab(self._build_characters_tab(), "Characters")
@@ -237,6 +239,93 @@ class ArchiveEditor(QWidget):
         it = listw.item(idx)
         if it is not None:
             it.setText(text)
+
+    def select_entry(self, book: str, entry_id: str) -> bool:
+        """全局搜索/跳转落点：book 为 archive 下的文件名
+        (characters/lore/documents/books)；切到对应子页并选中条目。
+
+        lore.json 是 dict(categories+entries),必须走 _lore_entries() 归一化——
+        直接遍历 archive_lore(dict)只会得到字符串键,isinstance(e,dict) 恒假、恒返
+        False(审查 P1-16)。定位前清对应过滤框,否则目标行可能被过滤隐藏(审查 P2)。"""
+        spec = {
+            "characters": (0, self._char_list, self._char_search,
+                           lambda: self._model.archive_characters),
+            "lore": (1, self._lore_list, self._lore_search, self._lore_entries),
+            "documents": (2, self._doc_list, self._doc_search,
+                          lambda: self._model.archive_documents),
+            "books": (3, self._book_list, self._book_search,
+                      lambda: self._model.archive_books),
+        }.get(book)
+        if spec is None:
+            return False
+        tab_idx, listw, search_box, entries_getter = spec
+        entries = entries_getter()
+        for i, e in enumerate(entries):
+            if isinstance(e, dict) and e.get("id") == entry_id:
+                self._tabs.setCurrentIndex(tab_idx)
+                if search_box is not None and search_box.text():
+                    search_box.clear()  # 目标行可能被过滤隐藏,先清过滤再定位
+                listw.setCurrentRow(i)
+                return True
+        return False
+
+    def _reload_all_forms(self) -> None:
+        """把四个档案区的表单/列表回滚到模型当前值(Discard 中和用)。"""
+        self._refresh_chars()
+        if self._char_idx >= 0:
+            self._on_char_select(self._char_idx)
+        self._refresh_lore()
+        if self._lore_idx >= 0:
+            self._on_lore_select(self._lore_idx)
+        self._refresh_docs()
+        if self._doc_idx >= 0:
+            self._on_doc_select(self._doc_idx)
+        self._refresh_books()
+        if self._book_idx >= 0:
+            self._on_book_select(self._book_idx)
+
+    def confirm_close(self, parent=None) -> bool:
+        """关闭/切工程门控：有未应用编辑则 Save/Discard/Cancel(对齐 item/shop 口径)。
+
+        archive 的 _apply_* 就地改模型、无独立非破坏脏检查——这里用 快照→干跑 flush→
+        比对→(放弃时)回滚 的方式实现:Discard/Cancel 恢复模型内容与 archive 脏标记,
+        并把表单回滚到模型值,避免关闭路径随后的统一 flush 复活被放弃的编辑(契约:
+        Discard 必须中和)。"""
+        chars_b = copy.deepcopy(self._model.archive_characters)
+        lore_b = copy.deepcopy(self._model.archive_lore)
+        docs_b = copy.deepcopy(self._model.archive_documents)
+        books_b = copy.deepcopy(self._model.archive_books)
+        dirty_before = "archive" in getattr(self._model, "_dirty", set())
+
+        self.flush_to_model()
+        changed = (
+            self._model.archive_characters != chars_b
+            or self._model.archive_lore != lore_b
+            or self._model.archive_documents != docs_b
+            or self._model.archive_books != books_b
+        )
+        if not changed:
+            return True
+
+        r = QMessageBox.question(
+            self, "未应用的修改", "档案有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Save:
+            return True
+        # Discard / Cancel:回滚模型内容(保持列表对象身份)+ 恢复 archive 脏标记
+        self._model.archive_characters[:] = chars_b
+        self._model.archive_documents[:] = docs_b
+        self._model.archive_books[:] = books_b
+        self._model.archive_lore = lore_b  # lore 读取处均即时读属性,重新赋值安全
+        if not dirty_before and hasattr(self._model, "_dirty"):
+            self._model._dirty.discard("archive")
+            if not self._model.is_dirty:
+                self._model.dirty_changed.emit(False)
+        self._reload_all_forms()
+        return r == QMessageBox.StandardButton.Discard
 
     def flush_to_model(self, for_save_all: bool = False) -> bool:
         """Save All 钩子：提交四个档案区当前选中项的未应用编辑（跨页编辑也一并提交）。
@@ -269,7 +358,8 @@ class ArchiveEditor(QWidget):
         btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
         self._char_list = QListWidget()
-        ll.addWidget(_make_list_search_box(self._char_list))
+        self._char_search = _make_list_search_box(self._char_list)
+        ll.addWidget(self._char_search)
         self._char_list.currentRowChanged.connect(self._on_char_select)
         _wire_list_affordances(self._char_list, self._del_char, delete_label="删除角色档案")
         ll.addWidget(self._char_list)
@@ -294,7 +384,8 @@ class ArchiveEditor(QWidget):
             "人物档案的解锁唯一入口是 addArchiveEntry 动作"
             "（在对话图/过场里 addArchiveEntry: bookType=character, entryId=本档案 id）。")
         ch_unlock_hint.setWordWrap(True)
-        ch_unlock_hint.setStyleSheet("color:#888; font-size:11px;")
+        ch_unlock_hint.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(ch_unlock_hint, theme.FONT_ROLE_HINT)
         dl.addWidget(ch_unlock_hint)
         ch_fv_box = QGroupBox("首次阅览动作 firstViewActions")
         ch_fv_box.setToolTip("玩家第一次点开该人物档案时执行一次。")
@@ -515,7 +606,8 @@ class ArchiveEditor(QWidget):
         btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
         self._lore_list = QListWidget()
-        ll.addWidget(_make_list_search_box(self._lore_list))
+        self._lore_search = _make_list_search_box(self._lore_list)
+        ll.addWidget(self._lore_search)
         self._lore_list.currentRowChanged.connect(self._on_lore_select)
         _wire_list_affordances(self._lore_list, self._del_lore, delete_label="删除传说条目")
         ll.addWidget(self._lore_list)
@@ -721,7 +813,8 @@ class ArchiveEditor(QWidget):
         btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
         self._doc_list = QListWidget()
-        ll.addWidget(_make_list_search_box(self._doc_list))
+        self._doc_search = _make_list_search_box(self._doc_list)
+        ll.addWidget(self._doc_search)
         self._doc_list.currentRowChanged.connect(self._on_doc_select)
         _wire_list_affordances(self._doc_list, self._del_doc, delete_label="删除文档档案")
         ll.addWidget(self._doc_list)
@@ -857,7 +950,8 @@ class ArchiveEditor(QWidget):
         btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
         self._book_list = QListWidget()
-        ll.addWidget(_make_list_search_box(self._book_list))
+        self._book_search = _make_list_search_box(self._book_list)
+        ll.addWidget(self._book_search)
         self._book_list.currentRowChanged.connect(self._on_book_select)
         _wire_list_affordances(self._book_list, self._del_book, delete_label="删除书籍")
         ll.addWidget(self._book_list)

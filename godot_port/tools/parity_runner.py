@@ -289,7 +289,7 @@ def godot_capture(godot_binary: Path, timeout: float) -> Capture:
             [
                 str(godot_binary), "--headless", "--path", str(PORT_ROOT),
                 "--", f"--parity-request={request_path}", f"--parity-response={response_path}",
-                "--parity-start-scene=dev_room", "--parity-quit",
+                "--dev-mode=true", "--parity-start-scene=dev_room", "--parity-quit",
             ],
             cwd=REPO_ROOT,
             text=True,

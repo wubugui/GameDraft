@@ -18,5 +18,5 @@ func _init() -> void:
 	assert(registry.get_aggregated_slots().map(func(slot: Dictionary) -> Variant: return slot.ruleId) == ["replacement", "r3"])
 	registry.unregister("zone_a")
 	assert(registry.get_aggregated_slots().map(func(slot: Dictionary) -> Variant: return slot.ruleId) == ["r3"])
-	registry.destroy(); assert(registry.get_aggregated_slots().is_empty())
+	registry.clear(); assert(registry.get_aggregated_slots().is_empty())
 	print("RuleOfferRegistry contract test: PASS"); quit(0)

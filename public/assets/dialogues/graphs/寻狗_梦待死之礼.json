@@ -135,22 +135,13 @@
             "options": [
               {
                 "text": "【吃】",
-                "actions": [
-                  {
-                    "type": "emitNarrativeSignal",
-                    "params": {
-                      "sourceType": "dialogue",
-                      "sourceId": "寻狗_梦待死之礼",
-                      "signal": "meng_ate"
-                    }
-                  }
-                ]
+                "actions": []
               }
             ]
           }
         }
       ],
-      "next": "n9"
+      "next": "n_eat_sig"
     },
     "n9": {
       "type": "line",
@@ -435,6 +426,20 @@
     },
     "end1": {
       "type": "end"
+    },
+    "n_eat_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_ate"
+          }
+        }
+      ],
+      "next": "n9"
     }
   }
 }

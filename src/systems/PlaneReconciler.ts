@@ -477,9 +477,10 @@ export class PlaneReconciler implements IGameSystem {
       named.push({ graphId: g.id, stateId: sid, planeId: plane });
       this.lastNaming.set(g.id, plane);
     }
-    if (named.length > 1) {
+    // 同一位面被多图同时点名合法（archetype 共用位面，2026-07-10 拍板）；不同位面才有歧义。
+    if (new Set(named.map((n) => n.planeId)).size > 1) {
       console.error(
-        'PlaneReconciler: 多个叙事图同时点名位面（校验应保证互斥），任取其一：',
+        'PlaneReconciler: 多个叙事图同时点名了不同位面（后进者胜，请确认这些图互斥）：',
         named,
       );
     }

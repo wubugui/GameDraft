@@ -79,7 +79,7 @@ func _clear_content() -> void:
 
 
 func _make_panel(height: float) -> Panel:
-	var panel := Panel.new(); panel.position = Vector2(20, renderer.get_screen_height() - height - 20); panel.size = Vector2(renderer.get_screen_width() - 40, height); panel.mouse_filter = Control.MOUSE_FILTER_IGNORE; var style := StyleBoxFlat.new(); style.bg_color = Color(0.09, 0.045, 0.055, 0.97); style.border_color = Color(0.82, 0.43, 0.34); style.set_border_width_all(2); style.set_corner_radius_all(7); panel.add_theme_stylebox_override("panel", style); root.add_child(panel); return panel
+	var panel := Panel.new(); panel.position = Vector2(20, renderer.screen_height - height - 20); panel.size = Vector2(renderer.screen_width - 40, height); panel.mouse_filter = Control.MOUSE_FILTER_IGNORE; var style := StyleBoxFlat.new(); style.bg_color = Color(0.09, 0.045, 0.055, 0.97); style.border_color = Color(0.82, 0.43, 0.34); style.set_border_width_all(2); style.set_corner_radius_all(7); panel.add_theme_stylebox_override("panel", style); root.add_child(panel); return panel
 
 
 func _show_narrative(payload: Variant) -> void:
@@ -95,13 +95,13 @@ func _show_result(payload: Variant) -> void:
 
 
 func _make_text_label(height: float) -> Label:
-	var label := Label.new(); label.position = Vector2(40, renderer.get_screen_height() - height); label.size = Vector2(renderer.get_screen_width() - 80, height - 40); label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; label.clip_text = true; label.add_theme_font_size_override("font_size", 16); label.add_theme_color_override("font_color", Color("e4d8d4")); label.mouse_filter = Control.MOUSE_FILTER_IGNORE; root.add_child(label); return label
+	var label := Label.new(); label.position = Vector2(40, renderer.screen_height - height); label.size = Vector2(renderer.screen_width - 80, height - 40); label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; label.clip_text = true; label.add_theme_font_size_override("font_size", 16); label.add_theme_color_override("font_color", Color("e4d8d4")); label.mouse_filter = Control.MOUSE_FILTER_IGNORE; root.add_child(label); return label
 
 
 func _show_options(payload: Variant) -> void:
 	if not payload is Dictionary or not payload.get("options") is Array: return
 	_ensure_root(); _clear_content(); phase = OPTIONS; current_options = payload.options.duplicate(true); choice_locked = false
-	var height := current_options.size() * 40.0 + 20.0; _make_panel(height); options_box = VBoxContainer.new(); options_box.position = Vector2(30, renderer.get_screen_height() - height - 10); options_box.size = Vector2(renderer.get_screen_width() - 60, height - 20); root.add_child(options_box)
+	var height := current_options.size() * 40.0 + 20.0; _make_panel(height); options_box = VBoxContainer.new(); options_box.position = Vector2(30, renderer.screen_height - height - 10); options_box.size = Vector2(renderer.screen_width - 60, height - 20); root.add_child(options_box)
 	for option: Variant in current_options:
 		if not option is Dictionary: continue
 		var row := Label.new(); row.custom_minimum_size = Vector2(options_box.size.x, 35); row.vertical_alignment = VERTICAL_ALIGNMENT_CENTER; row.add_theme_font_size_override("font_size", 14); row.mouse_filter = Control.MOUSE_FILTER_STOP; var tag := strings.get_text("encounter", "ruleTag") if option.get("type") == "rule" else (strings.get_text("encounter", "specialTag") if option.get("type") == "special" else ""); var suffix := " (%s)" % option.disableReason if option.get("enabled") != true and not str(option.get("disableReason", "")).is_empty() else ""; row.text = "  %s. %s%s%s" % [int(option.get("index", 0)) + 1, (tag + " ") if not tag.is_empty() else "", str(option.get("text", "")), suffix]; row.add_theme_color_override("font_color", Color("e5ddd4") if option.get("enabled") == true else Color("8d8784")); var style := StyleBoxFlat.new(); style.bg_color = Color(0.16, 0.08, 0.09, 0.94); style.set_corner_radius_all(4); row.add_theme_stylebox_override("normal", style); row.gui_input.connect(Callable(self, "_on_option_gui_input").bind(option)); options_box.add_child(row)

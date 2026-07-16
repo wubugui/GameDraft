@@ -312,3 +312,138 @@ def test_save_all_writes_dialogue_graph_edits(tmp_path: Path, monkeypatch: pytes
     written = json.loads(target.read_text(encoding="utf-8"))
     assert written["nodes"]["n1"]["runActions"][0]["params"]["signal"] == "new_sig"
     assert not (tmp_path / "逃逸.json").exists() and not (graphs_dir.parent / "逃逸.json").exists()
+
+
+# --------------------------------------------------------------------------- #
+# parity：EMIT_SOURCE_BUCKETS ↔ narrative_catalog._EMIT_SOURCE_ATTRS（复核 P2）
+# --------------------------------------------------------------------------- #
+
+def test_emit_source_buckets_parity_with_catalog() -> None:
+    """signal_refactor.EMIT_SOURCE_BUCKETS 与 narrative_catalog._EMIT_SOURCE_ATTRS 同源。
+
+    注释宣称"有 parity 测试锁定"却一直不存在（审查 P2）：两表今天一致但零护栏，
+    正是历史整族镜像清单 bug 的前兆。此测试把宣称变成真护栏——发射源集合任一处漂移即失败。
+    """
+    from tools.editor.shared.signal_refactor import EMIT_SOURCE_BUCKETS
+    from tools.editor.shared.narrative_catalog import _EMIT_SOURCE_ATTRS
+
+    assert set(EMIT_SOURCE_BUCKETS.keys()) == set(_EMIT_SOURCE_ATTRS), (
+        "EMIT_SOURCE_BUCKETS 与 narrative_catalog._EMIT_SOURCE_ATTRS 的发射源集合漂移："
+        f"仅在重构表 {set(EMIT_SOURCE_BUCKETS) - set(_EMIT_SOURCE_ATTRS)}，"
+        f"仅在目录表 {set(_EMIT_SOURCE_ATTRS) - set(EMIT_SOURCE_BUCKETS)}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 事务性：重构中途异常回滚 + 不留脏（复核 P2）
+# --------------------------------------------------------------------------- #
+
+def test_rename_rolls_back_and_leaves_no_dirty_on_midway_error(disk_model: FakeModel) -> None:
+    """rename 级联到内容资产途中抛异常：模型必须整体回滚、且不残留任何脏标记。"""
+    before = json.dumps(disk_model.narrative_graphs, ensure_ascii=False, sort_keys=True)
+    before_scene = json.dumps(disk_model.scenes, ensure_ascii=False, sort_keys=True)
+
+    # 注入异常：把某个内容集合换成会在遍历中炸的对象，模拟级联中途失败。
+    class _Boom(dict):
+        def items(self):  # 触发 _iter_collection 时抛
+            raise RuntimeError("注入的级联异常")
+
+    disk_model.scenes = _Boom()
+    with pytest.raises(RuntimeError):
+        rename_signal(disk_model, "sig_a", "sig_new")
+
+    # narrative 已回滚（sig_a 未变名）
+    disk_model.scenes = {}  # 换回可序列化对象再断言 narrative
+    assert scan_signal_usages(disk_model, "sig_a")["registryIndex"] == 0
+    main = disk_model.narrative_graphs["compositions"][0]["mainGraph"]
+    assert main["transitions"][0]["signal"] == "sig_a", "narrative 未回滚：改名半落地"
+    # 事务失败绝不留脏（缓冲的 mark_dirty 全丢弃）
+    assert disk_model.dirty == [], f"回滚后仍残留脏标记：{disk_model.dirty}"
+
+
+def test_rename_state_rolls_back_on_midway_error(disk_model: FakeModel) -> None:
+    _wire_state_refs(disk_model)
+    before = json.dumps(disk_model.narrative_graphs, ensure_ascii=False, sort_keys=True)
+
+    class _Boom(dict):
+        def items(self):
+            raise RuntimeError("注入的级联异常")
+
+    disk_model.scenes = _Boom()
+    with pytest.raises(RuntimeError):
+        rename_state(disk_model, "flow_main", "s1", "s1_done")
+
+    disk_model.scenes = {}
+    assert json.dumps(disk_model.narrative_graphs, ensure_ascii=False, sort_keys=True) == before, (
+        "rename_state 中途失败未整体回滚"
+    )
+    assert disk_model.dirty == []
+
+
+# --------------------------------------------------------------------------- #
+# 2026-07-17 审查修复回归（W-E4/P-F3）：meta.commands / meta.emits 派生声明级联、
+# @token 疑点报告、archive_lore 发射面登记
+# --------------------------------------------------------------------------- #
+
+def _wire_meta_refs(model: FakeModel) -> dict:
+    """给 comp1 挂一个带 meta.commands / meta.emits 派生声明的黑盒元素。"""
+    el = {
+        "id": "bb_meta",
+        "kind": "zoneBlackbox",
+        "refId": "z9",
+        "meta": {
+            "commands": ["flow_main.s1", "flow_main:s1", "flow_main"],
+            "emits": ["state:flow_main:s1", "sig_b"],
+            "reads": ["flow_main"],
+        },
+    }
+    model.narrative_graphs["compositions"][0]["elements"].append(el)
+    return el
+
+
+def test_rename_state_cascades_meta_commands_and_emits(disk_model: FakeModel) -> None:
+    el = _wire_meta_refs(disk_model)
+    scan = scan_state_usages(disk_model, "flow_main", "s1")
+    assert scan["metaCommands"] == 2  # "flow_main.s1" + "flow_main:s1"（裸 "flow_main" 不算状态引用）
+    assert scan["metaEmits"] == 1     # "state:flow_main:s1"
+    result = rename_state(disk_model, "flow_main", "s1", "s1_done")
+    assert result["metaCommands"] == 2 and result["metaEmits"] == 1
+    assert el["meta"]["commands"] == ["flow_main.s1_done", "flow_main:s1_done", "flow_main"]
+    assert el["meta"]["emits"] == ["state:flow_main:s1_done", "sig_b"]
+
+
+def test_rename_graph_cascades_meta_commands_and_emits(disk_model: FakeModel) -> None:
+    el = _wire_meta_refs(disk_model)
+    scan = scan_graph_usages(disk_model, "flow_main")
+    assert scan["metaCommands"] == 3  # 两个带状态 + 一个裸图引用
+    assert scan["metaEmits"] == 1
+    result = rename_graph(disk_model, "flow_main", "flow_renamed")
+    assert result["metaCommands"] == 3 and result["metaEmits"] == 1
+    assert el["meta"]["commands"] == ["flow_renamed.s1", "flow_renamed:s1", "flow_renamed"]
+    assert el["meta"]["emits"] == ["state:flow_renamed:s1", "sig_b"]
+    assert el["meta"]["reads"] == ["flow_renamed"]  # 既有 metaReads 级联不回归
+
+
+def test_rename_state_reports_relative_token_suspects(disk_model: FakeModel) -> None:
+    """@owner/@scene 叶子：state 同名即疑点，只报不改（自动改写=可能改错别家图）。"""
+    disk_model.scenes["场景1"]["zones"].append(
+        {"id": "z_rel", "conditions": [{"narrative": "@owner", "state": "s1"}]}
+    )
+    scan = scan_state_usages(disk_model, "flow_main", "s1")
+    assert scan["relativeTokenSuspects"]["total"] == 1
+    result = rename_state(disk_model, "flow_main", "s1", "s1_done")
+    assert result["relativeTokenSuspects"]["total"] == 1
+    # 相对叶子保持原样（不被改写）
+    leaf = disk_model.scenes["场景1"]["zones"][1]["conditions"][0]
+    assert leaf == {"narrative": "@owner", "state": "s1"}
+
+
+def test_archive_lore_is_registered_emit_source(disk_model: FakeModel) -> None:
+    """P-F3：见闻 firstViewActions 是真实发射面——改名级联必须扫到（曾漏登记）。"""
+    disk_model.archive_lore = [
+        {"id": "lore_1", "firstViewActions": [_emit("sig_a")]},
+    ]
+    scan = scan_signal_usages(disk_model, "sig_a")
+    assert {"bucket": "archive", "attr": "archive_lore", "itemId": "lore_1", "count": 1} in scan["assets"]
+    rename_signal(disk_model, "sig_a", "sig_a2")
+    assert disk_model.archive_lore[0]["firstViewActions"][0]["params"]["signal"] == "sig_a2"

@@ -84,6 +84,22 @@ _FIXTURES: list[tuple[str, dict]] = [
         "cases": [{"state": "", "next": ""}],
         "defaultNext": "d",
     }),
+    # P3: portrait 缺 emotion（表单表达不了）→ 原样透传，不吃键、不补首表情
+    ("ln_portrait_no_emotion", {
+        "type": "line",
+        "speaker": {"kind": "npc"},
+        "text": "hi",
+        "portrait": {"slug": "someset"},
+        "next": "n1",
+    }),
+    # P3: portrait 为空对象 → 原样透传（不被归零成无头像）
+    ("ln_portrait_empty_dict", {
+        "type": "line",
+        "speaker": {"kind": "npc"},
+        "text": "hi",
+        "portrait": {},
+        "next": "n1",
+    }),
 ]
 
 

@@ -178,5 +178,46 @@ class WaterEntityListTests(unittest.TestCase):
                 )
 
 
+    # ---- 实体 id 即时查重/非空（P2）------------------------------------------
+
+    def test_entity_id_duplicate_rolls_back_on_commit(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p")
+            ed._ent_list_w.setCurrentRow(0)  # e0
+            # 逐键即时写（不丢字、不逐键回滚）：键入与 e1 重复的 id。
+            ed._ent_id.setText("e1")
+            self.assertEqual(self._ents(model)[0]["id"], "e1", "textChanged 应逐键即时写")
+            # 提交时（editingFinished）查重回滚到上一个有效 id。
+            with patch("tools.editor.editors.water_minigame_editor.QMessageBox.warning"):
+                ed._on_ent_id_commit()
+            self.assertEqual(self._ents(model)[0]["id"], "e0", "重复 id 提交应回滚")
+
+    def test_entity_id_empty_rolls_back_on_commit(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p")
+            ed._ent_list_w.setCurrentRow(1)  # e1
+            ed._ent_id.setText("")
+            with patch("tools.editor.editors.water_minigame_editor.QMessageBox.warning"):
+                ed._on_ent_id_commit()
+            self.assertEqual(self._ents(model)[1]["id"], "e1", "空 id 提交应回滚")
+
+    def test_entity_id_unique_commits(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p")
+            ed._ent_list_w.setCurrentRow(0)
+            ed._ent_id.setText("e_new")
+            ed._on_ent_id_commit()
+            self.assertEqual(self._ents(model)[0]["id"], "e_new", "唯一非空 id 应提交")
+
+    def test_reload_refs_preserves_entity_actions(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p")
+            ed._ent_list_w.setCurrentRow(0)
+            before = copy.deepcopy(self._ents(model))
+            ed.reload_refs_from_model()  # 重拉候选，内容不得变
+            ed.flush_to_model()
+            self.assertEqual(self._ents(model), before)
+
+
 if __name__ == "__main__":
     unittest.main()

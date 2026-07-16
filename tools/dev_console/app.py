@@ -99,7 +99,7 @@ TOOLS: tuple[ToolAction, ...] = (
     ToolAction("图片缩放", "image-resizer", "等比缩放、水平/垂直对称、导出副本"),
     ToolAction("滤镜工具", "filter-tool", "ColorMatrix 预制和导出"),
     ToolAction("LightVolume 实验室", "lightvol", "深度图烘焙辐照度体积 / quad 预览(Web)"),
-    ToolAction("动画预览", "anim-preview", "游戏一致的精灵动画预览 / 实时发现全部动画(Web)"),
+    ToolAction("动画资源工作台", "anim-preview", "A→H 版本图 / 人工 R 装配 / 游戏真实渲染终验(Web IDE)"),
     ToolAction("Parallax 编辑器", "parallax-editor", "过场视差场景可视化编辑：图层/关键帧/轨迹，存 parallax_scenes.json(Web)"),
     ToolAction("Skill/Workflow 治理", "skill-governance", "扫描 skill、workflow 和 agent 入口，生成报告并打开 dashboard"),
     ToolAction("Agent Canvas OS", "agent-canvas-os", "AI 人机共创画布:tldraw + 任意 agent 经 MCP 感知/操作/生成/连线(独立,点开即起)"),

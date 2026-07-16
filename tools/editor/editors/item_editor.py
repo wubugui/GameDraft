@@ -155,6 +155,16 @@ class ItemEditor(QWidget):
             item = self._list.item(i)
             item.setHidden(bool(query) and query not in item.text().lower())
 
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按物品 id 选中（行序与 model.items 一致）。"""
+        for i, it in enumerate(self._model.items):
+            if it.get("id") == item_id:
+                if self._search.text():
+                    self._search.clear()  # 目标行可能被过滤隐藏
+                self._list.setCurrentRow(i)
+                return True
+        return False
+
     def _is_dirty(self) -> bool:
         """当前 UI 是否与模型里的该物品有差异（用于切换/保存/关闭时判断是否需提交）。"""
         if self._current_idx < 0 or self._current_idx >= len(self._model.items):

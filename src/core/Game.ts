@@ -197,6 +197,10 @@ type DevNarrativeWarp = {
   set?: Array<{ graph: string; state: string }>;
 };
 
+/** runtime-debug-snapshot 客户端兜底字节上限。服务端硬限 2_000_000（vite.config.ts），
+ *  此处留边界余量，超限即丢弃最重的 eventTrace 后再上报，防 413 与主线程卡顿。 */
+const RUNTIME_DEBUG_SNAPSHOT_MAX_BYTES = 1_900_000;
+
 export class Game {
   private eventBus: EventBus;
   private flagStore: FlagStore;
@@ -325,6 +329,7 @@ export class Game {
   /** 本次页面会话的实例 id；快照携带，命令可用 targetBootId 指向特定实例（多开页签时避免互抢） */
   private readonly runtimeBootId = Math.random().toString(36).slice(2, 10);
   private runtimeDebugSnapshotErrorLogged = false;
+  private runtimeDebugSnapshotOversizeLogged = false;
   private fixedTickMode = false;
   /** 主 ticker 与启动直达路由均已落地后才开放自动化命令，防启动场景覆盖测试场景。 */
   private runtimeReady = false;
@@ -633,6 +638,11 @@ export class Game {
 
   async start(options: GameStartOptions = {}): Promise<void> {
     this.isDevMode = !!options.devMode;
+    /** DEV 构建暴露实例句柄供页内诊断直读（运行时命令通道配方：严肃断言直读 __game 私有字段，
+     *  不经共享快照通道）。prod 构建不挂。 */
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      (window as unknown as Record<string, unknown>).__game = this;
+    }
     await this.renderer.init(options.visualCapture ? { resolution: 1 } : undefined);
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
@@ -782,9 +792,13 @@ export class Game {
     );
     // 仅在探索 / UI 覆盖层（暂停菜单打开）可存档；对话/遭遇/演出/小游戏等在途态拒绝存档，
     // 避免半态存档（这些系统不持久化在途状态，读档会丢失或半执行）。
+    // 叙事编排排空在飞时同样拒绝：队列/在飞广播不入档，级联中途的档读回后
+    // signal 型迁移无法补发（子图到末态、主图停旧里程碑=该档永久卡死，审查 R3）。
+    // 该窗口只在长时生命周期动作（waitMs/waitClickContinue/moveEntityTo 等）期间存在，瞬时即逝。
     this.saveManager.setCanSavePredicate(() => {
       const s = this.stateController.currentState;
-      return s === GameState.Exploring || s === GameState.UIOverlay;
+      if (s !== GameState.Exploring && s !== GameState.UIOverlay) return false;
+      return this.narrativeStateManager.isIdle();
     });
     this.menuUI = new MenuUI(this.renderer, this.eventBus, this.saveManager, this.audioManager, this.stringsProvider);
     this.ruleUseUI = new RuleUseUI(this.renderer, this.eventBus, this.zoneSystem, this.rulesManager, this.stringsProvider);
@@ -1365,24 +1379,11 @@ export class Game {
       w.__smellSource = () => this.smellSystem.getDebugState();
     }
 
-    if (this.isDevMode) {
-      await this.startDevMode(
-        options.playCutscene,
-        options.waterPreview,
-        options.sugarWheelPreview,
-        options.paperCraftPreview,
-        options.devScene,
-        options.narrativeWarp,
-        options.visualCapture === true,
-      );
-    } else {
-      if (this.gameConfig.initialQuest) {
-        this.questManager.acceptQuest(this.gameConfig.initialQuest);
-      }
-      await this.sceneManager.loadScene(this.gameConfig.initialScene);
-      await this.tryStartInitialPrologue();
-    }
-
+    /** 主 tick 必须在任何场景装载**之前**挂载：场景根 onEnter 可能直接起长演出
+     *  （图对话→startCutscene 一路 await 到播完），演出期间世界侧实体全靠 tick 驱动
+     *  （玩家容器坐标同步、NPC 动画帧推进）。晚挂 = 开场演出期间世界冻结：玩家滞留
+     *  世界原点(0,0)、NPC 定格实例化首帧。与下方 dev 直达路由「主 tick 已挂载才安全
+     *  执行」同一原则。tick 各分支对"场景未装载"均安全（空实体表 / currentSceneData?.）。 */
     if (this.tearDownComplete || !this.renderer.isInitialized()) {
       return;
     }
@@ -1398,6 +1399,30 @@ export class Game {
       if (!this.fixedTickMode) this.tick(dt);
     };
     ticker.add(this.mainTick);
+
+    if (this.isDevMode) {
+      await this.startDevMode(
+        options.playCutscene,
+        options.waterPreview,
+        options.sugarWheelPreview,
+        options.paperCraftPreview,
+        options.devScene,
+        options.narrativeWarp,
+        options.visualCapture === true,
+      );
+    } else {
+      if (this.gameConfig.initialQuest) {
+        this.questManager.acceptQuest(this.gameConfig.initialQuest);
+      }
+      // 首场景在过渡遮罩下装载、就绪后再揭幕：避免玩家看着背景/NPC 逐个刷出，
+      // 也让 onEnter 开场演出落在"已完整揭幕"的场景上（见 scene-onenter-reveal-timing）。
+      await this.sceneManager.loadInitialScene(this.gameConfig.initialScene);
+      await this.tryStartInitialPrologue();
+    }
+
+    if (this.tearDownComplete || !this.renderer.isInitialized()) {
+      return;
+    }
     this.setupWebGlPanelDiagnostics();
 
     // dev 启动直达路由：主 tick 已挂载（过场位移/小游戏 update 有驱动），此刻才安全执行
@@ -1899,6 +1924,8 @@ export class Game {
       if (cameraConfig?.zoom) {
         this.camera.setZoom(cameraConfig.zoom);
       }
+      // 场景基线缩放：过场 cameraZoom「恢复场景缩放」语义（scale 缺省/≤0）的回读源
+      this.camera.setSceneBaseZoom(cameraConfig?.zoom ?? 1);
       if (worldScale !== undefined) {
         this.camera.setWorldScale(worldScale);
       }
@@ -3617,10 +3644,27 @@ export class Game {
   private async publishRuntimeDebugSnapshot(reason: string): Promise<void> {
     if (!import.meta.env.DEV) return;
     try {
+      const snapshot = this.buildRuntimeDebugSnapshot(reason);
+      let body = JSON.stringify(snapshot);
+      // 服务端硬上限 2MB：单条 trace 已在 EventBus 侧限幅，此处兜底防任何调试字段（活对象泄漏
+      // 等）撑爆 payload 导致 413 + 主线程卡顿。失败可观测：丢掉最重的 eventTrace 并留痕，
+      // 不静默重复上报大包。body.length 是 UTF-16 近似，仅在可疑时才精确测字节。
+      let bytes = body.length;
+      if (bytes > 500_000) bytes = new TextEncoder().encode(body).length;
+      if (bytes > RUNTIME_DEBUG_SNAPSHOT_MAX_BYTES) {
+        snapshot.eventTrace = `<omitted: snapshot ${bytes} bytes exceeded ${RUNTIME_DEBUG_SNAPSHOT_MAX_BYTES} cap>`;
+        body = JSON.stringify(snapshot);
+        if (!this.runtimeDebugSnapshotOversizeLogged) {
+          this.runtimeDebugSnapshotOversizeLogged = true;
+          console.warn(
+            `[GameDraft runtime-debug] snapshot ${bytes} bytes exceeded cap; dropped eventTrace to avoid 413`,
+          );
+        }
+      }
       await fetch('/__gamedraft-api/runtime-debug-snapshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.buildRuntimeDebugSnapshot(reason)),
+        body,
       });
     } catch (error) {
       if (!this.runtimeDebugSnapshotErrorLogged) {

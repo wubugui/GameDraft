@@ -497,6 +497,36 @@ def _count_tag_refs(node: Any, entity_id: str) -> int:
     return count
 
 
+def _collect_tag_refs(model: Any, entity_id: str) -> list[dict[str, Any]]:
+    """全项目 [tag:npc:id] 文本引用清单（scan 与 rename 的悬垂预判共同消费）。"""
+    tag_hits: list[dict[str, Any]] = []
+    for other_sid, other in (getattr(model, "scenes", None) or {}).items():
+        count = _count_tag_refs(other, entity_id)
+        if count:
+            tag_hits.append({"bucket": "scene", "itemId": str(other_sid), "count": count})
+    for attr, (bucket, _per_item) in _sig.CONDITION_SOURCES.items():
+        if attr == "scenes":
+            continue
+        root = getattr(model, attr, None)
+        if root is None:
+            continue
+        count = _count_tag_refs(root, entity_id)
+        if count:
+            tag_hits.append({"bucket": bucket, "itemId": "", "count": count})
+    for coll_attr, bucket in (("strings", "strings"), ("narrative_graphs", "narrative_graphs")):
+        root = getattr(model, coll_attr, None)
+        count = _count_tag_refs(root, entity_id) if root is not None else 0
+        if count:
+            tag_hits.append({"bucket": bucket, "itemId": "", "count": count})
+    for gid in _sig._dialogue_graph_ids(model):
+        doc = _sig._load_dialogue_doc(model, gid)
+        if doc is not None:
+            count = _count_tag_refs(doc, entity_id)
+            if count:
+                tag_hits.append({"bucket": "dialogue", "itemId": gid, "count": count})
+    return tag_hits
+
+
 def _owner_binding_hits(model: Any, kind: str, entity_id: str) -> list[dict[str, str]]:
     """叙事图 graph 级 ownerType/ownerId 绑定（@owner wrapper 解析用）。"""
     hits: list[dict[str, str]] = []
@@ -617,33 +647,8 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
 
     report["ownerBindings"] = _owner_binding_hits(model, kind, eid)
 
-    tag_hits: list[dict[str, Any]] = []
-    if kind == "npc":
-        for other_sid, other in (getattr(model, "scenes", None) or {}).items():
-            count = _count_tag_refs(other, eid)
-            if count:
-                tag_hits.append({"bucket": "scene", "itemId": str(other_sid), "count": count})
-        for attr, (bucket, _per_item) in _sig.CONDITION_SOURCES.items():
-            if attr == "scenes":
-                continue
-            root = getattr(model, attr, None)
-            if root is None:
-                continue
-            count = _count_tag_refs(root, eid)
-            if count:
-                tag_hits.append({"bucket": bucket, "itemId": "", "count": count})
-        for coll_attr, bucket in (("strings", "strings"), ("narrative_graphs", "narrative_graphs")):
-            root = getattr(model, coll_attr, None)
-            count = _count_tag_refs(root, eid) if root is not None else 0
-            if count:
-                tag_hits.append({"bucket": bucket, "itemId": "", "count": count})
-        for gid in _sig._dialogue_graph_ids(model):
-            doc = _sig._load_dialogue_doc(model, gid)
-            if doc is not None:
-                count = _count_tag_refs(doc, eid)
-                if count:
-                    tag_hits.append({"bucket": "dialogue", "itemId": gid, "count": count})
-    report["tagRefs"] = tag_hits
+    report["tagRefs"] = _collect_tag_refs(model, eid) if kind == "npc" else []
+    tag_hits = report["tagRefs"]
 
     report["totalRefs"] = (
         self_refs
@@ -700,12 +705,17 @@ def _scan_spawn_usages(model: Any, sid: str, key: str) -> dict[str, Any]:
     }
 
 
+# 显式带 npcId 的说话人 kind：真实数据形状为 "sceneNpc"（types.ts DialogueGraphSpeaker，
+# kind:'npc' 变体不带 npcId）；历史/宽松写法 kind:"npc"+npcId 保留兼容。
+_SPEAKER_NPCID_KINDS = ("sceneNpc", "npc")
+
+
 def _count_speaker_refs(doc: Any, entity_id: str) -> int:
-    """对话图 speaker.npcId 软引用（kind=='npc' 且显式带 npcId 的节点）。"""
+    """对话图 speaker.npcId 软引用（kind=='sceneNpc'（含兼容 'npc'）且显式带 npcId）。"""
     count = 0
     if isinstance(doc, dict):
         speaker = doc.get("speaker")
-        if isinstance(speaker, dict) and str(speaker.get("kind") or "") == "npc" \
+        if isinstance(speaker, dict) and str(speaker.get("kind") or "") in _SPEAKER_NPCID_KINDS \
                 and str(speaker.get("npcId") or "").strip() == entity_id:
             count += 1
         for value in doc.values():
@@ -874,9 +884,15 @@ def _rewrite_qualified_scene_refs(
 
 def rename_entity(
     model: Any, scene_id: str, kind: str, old_id: str, new_id: str,
-    *, _scope_override: dict[str, Any] | None = None,
+    *, follow_tag_refs: bool = False,
+    _scope_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """场景内改实体 id，并按歧义分级策略改写引用（见模块 docstring）。
+
+    ``follow_tag_refs``：与删除路径的硬拒口径对齐——非全局唯一的 npc id，若本次改名
+    会移走全项目最后一个该 id 的 npc 实例且存在 [tag:npc:old] 文本引用，默认抛错
+    （否则 tag 悬垂、保存门 validate_refs_for_save 卡整工程）；传 True 表示确认让
+    tag 引用跟随改写（记入 scope，撤销按同一作用域反向回放）。
 
     ``_scope_override`` 仅供撤销：按上次执行记录的作用域反向改写，不重新判定。
     """
@@ -925,10 +941,27 @@ def rename_entity(
                 dialogue_ids.append(gid)
             else:
                 skipped_dialogues.append(gid)
+        # 非全局唯一（如与他场景热区/NPC 重名）时 tag 不随改名跟随；若本场景是唯一
+        # 定义处（改名后旧 id 全项目再无 npc 实例）且存在 [tag:npc:old]，改完即卡保存
+        # 门——与删除路径的硬拒口径对齐：默认拒绝，除非调用方确认 follow_tag_refs。
+        tag_follow_forced = False
+        if kind == "npc" and not unique_global and defined == [sid]:
+            tag_hits = _collect_tag_refs(model, old)
+            if tag_hits:
+                if not follow_tag_refs:
+                    spots = ", ".join(
+                        f"{h['bucket']}:{h['itemId']}" for h in tag_hits[:5])
+                    raise EntityRefactorError(
+                        f"文本中存在 [tag:npc:{old}] 引用（{spots} 等），且本场景是全项目"
+                        f"最后一个 npc {old!r}——该 id 因多场景/跨类重名不做全局改写，"
+                        "直接改名会让这些 tag 悬垂并卡住整工程保存。"
+                        "请选择「跟随改写 tag」（follow_tag_refs=True）或取消。")
+                tag_follow_forced = True
         scope = {
             "uniqueGlobal": unique_global,
             "dialogueIds": dialogue_ids,
             "skippedDialogues": skipped_dialogues,
+            "tagFollowForced": tag_follow_forced,
         }
 
     row = found[1]
@@ -971,50 +1004,70 @@ def rename_entity(
             global_hits.append({"bucket": "narrative_graphs", "itemId": "",
                                 "count": count + owner_count})
             model.mark_dirty("narrative_graphs")
-        # [tag:npc:old] 文本引用（全局解析,唯一时安全跟随）
-        tag_count = 0
-        if kind == "npc":
-            tag_count += _rewrite_tag_refs(scene, old, new)
-            for attr, (bucket, per_item) in _sig.CONDITION_SOURCES.items():
-                if attr == "scenes":
-                    continue
-                root = getattr(model, attr, None)
-                if root is None:
-                    continue
-                for item_id, node in _sig._iter_collection(root):
-                    hit = _rewrite_tag_refs(node, old, new)
-                    if hit:
-                        tag_count += hit
-                        model.mark_dirty(bucket, item_id if per_item else "")
-            for extra_attr, extra_bucket in (("strings", "strings"),):
-                root = getattr(model, extra_attr, None)
-                if root is not None:
-                    hit = _rewrite_tag_refs(root, old, new)
-                    if hit:
-                        tag_count += hit
-                        model.mark_dirty(extra_bucket)
-            hit = _rewrite_tag_refs(narrative, old, new)
-            if hit:
-                tag_count += hit
-                model.mark_dirty("narrative_graphs")
         counts["global"] = global_hits
-        counts["tags"] = tag_count
     else:
         counts["global"] = []
-        counts["tags"] = 0
 
-    # 4) 对话图（作用域内的）
+    # [tag:npc:old] 文本引用（全局解析）：全局唯一时安全跟随；非唯一但调用方确认
+    # 跟随（tagFollowForced，见上）时也改写——撤销按 scope 反向回放同一作用域。
+    tag_follow = kind == "npc" and (
+        bool(scope.get("uniqueGlobal")) or bool(scope.get("tagFollowForced")))
+    tag_count = 0
+    if tag_follow:
+        # 全部场景（含本场景；他场景 [tag:npc:] 亦是全局解析面）
+        for other_sid, other_scene in (getattr(model, "scenes", None) or {}).items():
+            if other_scene is scene:
+                continue
+            hit = _rewrite_tag_refs(other_scene, old, new)
+            if hit:
+                tag_count += hit
+                model.mark_dirty("scene", str(other_sid))
+        tag_count += _rewrite_tag_refs(scene, old, new)
+        for attr, (bucket, per_item) in _sig.CONDITION_SOURCES.items():
+            if attr == "scenes":
+                continue
+            root = getattr(model, attr, None)
+            if root is None:
+                continue
+            for item_id, node in _sig._iter_collection(root):
+                hit = _rewrite_tag_refs(node, old, new)
+                if hit:
+                    tag_count += hit
+                    model.mark_dirty(bucket, item_id if per_item else "")
+        for extra_attr, extra_bucket in (("strings", "strings"),):
+            root = getattr(model, extra_attr, None)
+            if root is not None:
+                hit = _rewrite_tag_refs(root, old, new)
+                if hit:
+                    tag_count += hit
+                    model.mark_dirty(extra_bucket)
+        narrative_root = getattr(model, "narrative_graphs", None) or {}
+        hit = _rewrite_tag_refs(narrative_root, old, new)
+        if hit:
+            tag_count += hit
+            model.mark_dirty("narrative_graphs")
+    counts["tags"] = tag_count
+
+    # 4) 对话图：作用域内的裸/speaker 引用；tag 跟随时全部图的 [tag:npc:] 一并改写
+    #    （tag 是全局解析面，只改 dialogueIds 内的会留悬垂卡保存门）。
     dialogue_hits: list[dict[str, Any]] = []
-    for gid in scope["dialogueIds"]:
+    scoped_ids = list(scope["dialogueIds"])
+    scoped_set = set(scoped_ids)
+    gid_order = list(scoped_ids)
+    if tag_follow:
+        gid_order += [g for g in _sig._dialogue_graph_ids(model) if g not in scoped_set]
+    for gid in gid_order:
         doc = _sig._load_dialogue_doc(model, gid)
         if doc is None:
             continue
         working = copy.deepcopy(doc)
-        count = _rewrite_bare_in_tree(working, sid, kind, old, new, include_soft=True)
-        if kind == "npc":
-            count += _rewrite_speaker_refs(working, old, new)
-            if scope["uniqueGlobal"]:
-                count += _rewrite_tag_refs(working, old, new)
+        count = 0
+        if gid in scoped_set:
+            count += _rewrite_bare_in_tree(working, sid, kind, old, new, include_soft=True)
+            if kind == "npc":
+                count += _rewrite_speaker_refs(working, old, new)
+        if tag_follow:
+            count += _rewrite_tag_refs(working, old, new)
         if count:
             bucket = _sig._stage_dialogue_doc(model, gid, working)
             dialogue_hits.append({"graphId": gid, "count": count, "bucket": bucket})
@@ -1152,7 +1205,7 @@ def _rewrite_speaker_refs(doc: Any, old: str, new: str) -> int:
     count = 0
     if isinstance(doc, dict):
         speaker = doc.get("speaker")
-        if isinstance(speaker, dict) and str(speaker.get("kind") or "") == "npc" \
+        if isinstance(speaker, dict) and str(speaker.get("kind") or "") in _SPEAKER_NPCID_KINDS \
                 and str(speaker.get("npcId") or "").strip() == old:
             speaker["npcId"] = new
             count += 1
@@ -1272,7 +1325,7 @@ def undo_last(model: Any) -> dict[str, Any]:
                 model, entry["sceneId"], entry["kind"], entry["newId"], entry["oldId"],
                 _scope_override=entry["scope"],
             )
-            desc = f"已撤销改名 {entry['oldId']} → {entry['newId']}"
+            desc = f"已撤销改名：{entry['newId']} 改回 {entry['oldId']}"
         elif op == "deleteEntity":
             for rec in reversed(entry.get("reverseOps") or []):
                 scene = model.scenes.get(rec.get("sceneId"))
@@ -1310,6 +1363,10 @@ def _undo_move(model: Any, entry: dict[str, Any]) -> None:
         found = _find_spawn(dst_scene, eid)
         if found is None:
             raise EntityRefactorError(f"目标场景 {dst!r} 里已找不到出生点 {eid!r}")
+        # 撤销目标撞名检查（与正向 move 的闸对称）：src 场景可能在迁移后又新建了同名出生点
+        if _find_spawn(src_scene, eid) is not None:
+            raise EntityRefactorError(
+                f"撤销目标场景 {src!r} 已有出生点 {eid!r}；请先处理重名再撤销")
         _idx, value = found
         dst_scene["spawnPoints"].pop(eid)
         _dict_insert_at(src_scene.setdefault("spawnPoints", {}),
@@ -1321,6 +1378,11 @@ def _undo_move(model: Any, entry: dict[str, Any]) -> None:
     found = _find_entity(dst_scene, kind, eid)
     if found is None:
         raise EntityRefactorError(f"目标场景 {dst!r} 里已找不到 {kind} {eid!r}")
+    # 撤销目标撞名检查（与正向 move 的闸对称）：src 场景可能在迁移后又建了同 id 实体
+    for other_kind in _COLLISION_KINDS[kind]:
+        if _find_entity(src_scene, other_kind, eid) is not None:
+            raise EntityRefactorError(
+                f"撤销目标场景 {src!r} 已有同 id 实体（{other_kind} {eid!r}）；请先处理重名再撤销")
     idx, row = found
     dst_scene[_entity_list_key(kind)].pop(idx)
     rows = src_scene.setdefault(_entity_list_key(kind), [])

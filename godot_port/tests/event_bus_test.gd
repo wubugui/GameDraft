@@ -10,7 +10,7 @@ func _init() -> void:
 	bus.on("event", first)
 	bus.on("event", first)
 	bus.on("event", second)
-	assert(bus.listener_count("event") == 2)
+	assert(EventBusProbe.listener_count(bus, "event") == 2)
 	bus.emit("event", "one")
 	assert(calls == ["first:one", "second:one"])
 	bus.emit("event", "two")
@@ -33,7 +33,7 @@ func _init() -> void:
 	bus.clear_debug_trace(); bus.emit("after-clear", {"nested": {"value": "x"}})
 	assert(bus.get_debug_trace() == [{"seq": 1, "event": "after-clear", "payload": {"nested": {"value": "x"}}}])
 	bus.clear()
-	assert(bus.listener_count() == 0)
+	assert(EventBusProbe.listener_count(bus) == 0)
 	print("RuntimeEventBus semantics test: PASS")
 	quit(0)
 

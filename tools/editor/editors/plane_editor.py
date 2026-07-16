@@ -62,6 +62,41 @@ INHERITED_SLOT_KEYS = (
 )
 
 
+def plane_extends_problems(planes: list, plane_id: str) -> list[str]:
+    """给定 planes 与 plane_id，返回该位面自身 extends 链的问题（缺父 / 成环）。
+
+    与运行时 PlaneReconciler.expandExtends / validator.plane_extends_errors 同口径：
+    这两类问题运行时只 warn 并静默中断继承（数据意义被改），编辑器要即时红字，
+    而非等到 Save All 被整体连坐拦下才发现（复核 P2）。
+    """
+    by_id: dict[str, dict] = {}
+    for p in planes or []:
+        if isinstance(p, dict):
+            pid = str(p.get("id") or "").strip()
+            if pid:
+                by_id[pid] = p
+    problems: list[str] = []
+    trail: list[str] = []
+    seen: set[str] = set()
+    cur = str(plane_id or "").strip()
+    while cur:
+        node = by_id.get(cur)
+        if node is None:
+            problems.append(f"extends 的父位面 {cur!r} 不在 planes.json 中（继承将被运行时忽略）")
+            break
+        ext = node.get("extends")
+        nxt = ext.strip() if isinstance(ext, str) else ""
+        if not nxt:
+            break
+        if nxt in seen or nxt == cur:
+            problems.append(f"extends 链存在环（经 {nxt!r}），运行时将忽略继承")
+            break
+        seen.add(cur)
+        trail.append(cur)
+        cur = nxt
+    return problems
+
+
 def resolve_effective_slots(planes: list, plane_id: str) -> tuple[dict, dict]:
     """按运行时 expandExtends 口径解析 plane_id 各槽的生效值（复核 P1-05）。
 
@@ -409,6 +444,49 @@ class PlaneEditor(QWidget):
             return str(self._model.planes[self._current_idx].get("id") or "").strip()
         return ""
 
+    def _plane_reference_counts(self, pid: str) -> tuple[list[str], list[str], list[str]]:
+        """按自家反向索引口径统计对 pid 的引用（复核 P2 ②）：
+        返回 (点名状态机, 归属实体, 子位面 extends) 三类可读明细。
+        与「点名状态机」「归属实体」页同口径，改 id / 删除前据此确认悬垂。
+        """
+        naming: list[str] = []
+        for g in self._iter_all_narrative_graphs():
+            gid = str(g.get("id") or "")
+            states = g.get("states")
+            if not isinstance(states, dict):
+                continue
+            for sid, st in states.items():
+                if isinstance(st, dict) and str(st.get("activePlane") or "").strip() == pid:
+                    naming.append(f"{gid}:{sid}")
+        members: list[str] = []
+        scenes = getattr(self._model, "scenes", None)
+        if isinstance(scenes, dict):
+            for scene_id, scene in scenes.items():
+                if not isinstance(scene, dict):
+                    continue
+                for field in ("npcs", "hotspots", "zones"):
+                    for entity in scene.get(field) or []:
+                        if not isinstance(entity, dict):
+                            continue
+                        planes = entity.get("planes")
+                        if isinstance(planes, list) and pid in [str(x).strip() for x in planes]:
+                            eid = str(entity.get("id") or "").strip()
+                            if eid:
+                                members.append(f"{scene_id}/{eid}")
+        children: list[str] = []
+        for i, row in enumerate(self._model.planes):
+            if i == self._current_idx or not isinstance(row, dict):
+                continue
+            if str(row.get("extends") or "").strip() == pid:
+                children.append(str(row.get("id") or "?"))
+        return naming, members, children
+
+    @staticmethod
+    def _fmt_ref_group(label: str, items: list[str], limit: int = 6) -> str:
+        head = items[:limit]
+        more = f" …等 {len(items)} 处" if len(items) > limit else ""
+        return f"{label} {len(items)} 处（{', '.join(head)}{more}）"
+
     def _on_tab_changed(self, idx: int) -> None:
         if idx == 1:
             self._refresh_naming_tab()
@@ -556,22 +634,25 @@ class PlaneEditor(QWidget):
         for p in self._model.planes:
             self._list.addItem(self._row_text(p))
 
-    def select_by_id(self, plane_id: str, _scene_id: str = "") -> None:
-        """外部跳转入口：按 plane id 选中对应行（行序 == model.planes 序）。"""
+    def select_by_id(self, plane_id: str, _scene_id: str = "") -> bool:
+        """外部跳转入口：按 plane id 选中对应行（行序 == model.planes 序）。
+        返回 True=真选中，False=没找到（主窗按此提示"未定位"）。"""
         pid = str(plane_id or "").strip()
         if not pid:
-            return
+            return False
         for i, p in enumerate(self._model.planes):
             if str(p.get("id") or "") == pid:
                 self._list.setCurrentRow(i)  # 触发 _on_select（commit-on-leave 安全）
-                return
+                return True
+        return False
 
     def reload_refs_from_model(self) -> None:
         """主窗口切页/开工程后调用：重建列表（保持当前选中 id）。"""
         # commit-on-leave：重建会经 clear→_on_select(-1) 清索引，绕过切行提交路径，
-        # 不先提交会静默丢当前未应用编辑。
+        # 不先提交会静默丢当前未应用编辑。id 非法/改名被拒时留在本页，不重建（保住编辑）。
         if 0 <= self._current_idx < len(self._model.planes) and self._is_dirty():
-            self._apply()
+            if not self._apply():
+                return
         cur_id = ""
         if 0 <= self._current_idx < len(self._model.planes):
             cur_id = str(self._model.planes[self._current_idx].get("id") or "")
@@ -657,7 +738,15 @@ class PlaneEditor(QWidget):
         # commit-on-leave：切到别的位面前提交上一项未应用编辑，避免静默丢弃。
         if 0 <= self._current_idx < len(self._model.planes) \
                 and self._current_idx != row and self._is_dirty():
-            self._apply()
+            if not self._apply():
+                # id 非法/改名被取消：留在原行让用户改，不切换、不丢该行其余编辑（P3）。
+                old = self._current_idx
+                self._list.blockSignals(True)
+                try:
+                    self._list.setCurrentRow(old)
+                finally:
+                    self._list.blockSignals(False)
+                return
         self._current_idx = row
         p = self._model.planes[row]
         pid = str(p.get("id", "") or "")
@@ -741,7 +830,10 @@ class PlaneEditor(QWidget):
         self._f_lighting_preview.setText(
             self._lighting_preview_text(self._pending_lighting, effective, source, pid),
         )
-        self._refresh_inherit_summary(pid, effective, source)
+        self._refresh_inherit_summary(
+            pid, effective, source,
+            plane_extends_problems(self._model.planes, pid),
+        )
         self._refresh_hub_tabs_for_selection()
 
     # ---- 槽级继承感知辅助（复核 P1-05）--------------------------------------
@@ -827,7 +919,9 @@ class PlaneEditor(QWidget):
             probe.pop("extends", None)
         planes = [probe if q is p else q for q in self._model.planes]
         effective, source = resolve_effective_slots(planes, pid)
-        self._refresh_inherit_summary(pid, effective, source)
+        self._refresh_inherit_summary(
+            pid, effective, source, plane_extends_problems(planes, pid),
+        )
         for slot, gate in (
             ("movement", self._f_mv_gate),
             ("interaction", self._f_it_gate),
@@ -850,9 +944,35 @@ class PlaneEditor(QWidget):
                 self._f_drain.setValue(0.0)
             finally:
                 self._f_drain.blockSignals(False)
+        # camera.zoom 灰显回显（P3）：未勾自定义时，extends 变更后跟随继承生效值。
+        if not self._f_zoom_chk.isChecked():
+            cam_eff = effective.get("camera")
+            cam_eff = cam_eff if isinstance(cam_eff, dict) else {}
+            self._f_zoom.blockSignals(True)
+            try:
+                self._f_zoom.setValue(float(cam_eff.get("zoom", 1.0)))
+            except (TypeError, ValueError):
+                self._f_zoom.setValue(1.0)
+            finally:
+                self._f_zoom.blockSignals(False)
+        # lighting 预览来源回显（P3）：本位面未显式配 lighting 时，跟随继承来源提示。
+        if self._pending_lighting is None:
+            self._f_lighting_preview.setText(
+                self._lighting_preview_text(None, effective, source, pid),
+            )
 
-    def _refresh_inherit_summary(self, pid: str, effective: dict, source: dict) -> None:
-        """extends 链继承摘要：只列来自祖先的槽（本位面显式写的不列）。"""
+    def _refresh_inherit_summary(
+        self, pid: str, effective: dict, source: dict,
+        problems: list[str] | None = None,
+    ) -> None:
+        """extends 链继承摘要：只列来自祖先的槽（本位面显式写的不列）。
+        缺父 / 成环即时红字（P2 ①），不必等 Save All 被整体连坐拦下。"""
+        if problems:
+            self._f_inherit_summary.setText("⚠ " + "；".join(problems))
+            self._f_inherit_summary.setStyleSheet("color:#d33;")
+            self._f_inherit_summary.setVisible(True)
+            return
+        self._f_inherit_summary.setStyleSheet("")
         parts: list[str] = []
         for k in INHERITED_SLOT_KEYS:
             src = source.get(k)
@@ -879,9 +999,9 @@ class PlaneEditor(QWidget):
         return test != p
 
     def flush_to_model(self) -> bool:
-        """Save All 钩子：未应用编辑在保存前提交，避免静默丢弃。"""
+        """Save All 钩子：未应用编辑在保存前提交，避免静默丢弃；被拒时阻断保存（复核 P3）。"""
         if self._current_idx >= 0 and self._is_dirty():
-            self._apply()
+            return self._apply()
         return True
 
     def confirm_close(self, parent: QWidget | None = None) -> bool:
@@ -896,11 +1016,11 @@ class PlaneEditor(QWidget):
         if r == QMessageBox.StandardButton.Cancel:
             return False
         if r == QMessageBox.StandardButton.Save:
-            self._apply()
-        else:
-            # Discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
-            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
-            self._on_select(self._current_idx)
+            # id 非法/改名被拒 → 不放行关闭，留在编辑器里修（与 flush 门控一致）。
+            return self._apply()
+        # Discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+        # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+        self._on_select(self._current_idx)
         return True
 
     def _write_plane_into(self, p: dict) -> None:
@@ -1016,9 +1136,11 @@ class PlaneEditor(QWidget):
         else:
             p.pop("lighting", None)
 
-    def _apply(self) -> None:
+    def _apply(self) -> bool:
+        """提交当前位面到模型。返回 True=已提交/无需提交，False=被拒（id 非法或用户取消）。
+        commit-on-leave / flush / 切行路径据返回值决定是否放行（复核 P3）。"""
         if self._current_idx < 0:
-            return
+            return True
         p = self._model.planes[self._current_idx]
         # id 门禁：空 id / 与他行重复 / 非 normal 行改名 normal（normal 是契约保留 id）
         # 一律拒绝提交并回显原 id，防止把引用它的实体归属/叙事点名悄悄打断。
@@ -1027,7 +1149,7 @@ class PlaneEditor(QWidget):
         if not new_id:
             QMessageBox.warning(self, "id 无效", "位面 id 不能为空，已还原。")
             self._f_id.setText(old_id)
-            return
+            return False
         if new_id != old_id:
             taken = {
                 str(row.get("id", "") or "")
@@ -1037,25 +1159,52 @@ class PlaneEditor(QWidget):
             if new_id in taken:
                 QMessageBox.warning(self, "id 冲突", f"位面 id {new_id!r} 已存在，已还原。")
                 self._f_id.setText(old_id)
-                return
+                return False
             if new_id == "normal":
                 QMessageBox.warning(
                     self, "id 保留",
                     "normal 是契约保留 id（开局默认激活位面），不能把其它位面改名为 normal。",
                 )
                 self._f_id.setText(old_id)
-                return
+                return False
+            # 引用防护（P2 ②）：改 id 会让点名/归属/子位面 extends 悬垂——按反向索引计数确认。
+            naming, members, children = self._plane_reference_counts(old_id)
+            if naming or members or children:
+                lines = []
+                if naming:
+                    lines.append(self._fmt_ref_group("叙事点名 activePlane", naming))
+                if members:
+                    lines.append(self._fmt_ref_group("归属实体 planes", members))
+                if children:
+                    lines.append(self._fmt_ref_group("子位面 extends", children))
+                r = QMessageBox.question(
+                    self, "位面改 id 会留下悬垂引用",
+                    f"位面「{old_id}」仍被以下位置引用：\n" + "\n".join(lines)
+                    + "\n\n改 id 后这些引用不会自动更新（子位面 extends 悬垂会让 Save All "
+                      "整体连坐失败；点名/归属悬垂运行时静默变义）。仍改名为 "
+                    + f"「{new_id}」？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if r != QMessageBox.StandardButton.Yes:
+                    self._f_id.setText(old_id)
+                    return False
         self._write_plane_into(p)
         self._model.mark_dirty("planes")
         lw = self._list.item(self._current_idx)
         if lw is not None:
             lw.setText(self._row_text(p))
+        return True
+
+    def pop_flush_error(self) -> str:
+        return "位面的未应用编辑校验未通过（id 为空/重复/被拒），请先在「位面」页修正。"
 
     def _add(self) -> None:
         # commit-on-leave：_refresh 的 clear 会把 _current_idx 清成 -1，绕过切行提交，
-        # 先提交当前未应用编辑再动列表（否则静默丢弃）。
+        # 先提交当前未应用编辑再动列表（否则静默丢弃）。被拒（id 非法）时不新增。
         if 0 <= self._current_idx < len(self._model.planes) and self._is_dirty():
-            self._apply()
+            if not self._apply():
+                return
         taken = {str(p.get("id", "")) for p in self._model.planes}
         if not self._model.planes and "normal" not in taken:
             # 契约：planes.json 首条为 normal（常态）。列表为空时先补齐再加新位面。
@@ -1080,7 +1229,27 @@ class PlaneEditor(QWidget):
                 "normal 是开局默认激活位面（契约：planes.json 首条），不能删除。",
             )
             return
-        if not confirm.confirm_delete(self, f"位面「{pid}」"):
+        # 引用防护（P2 ②）：删除前按反向索引统计悬垂引用，命中则如实警告再确认。
+        naming, members, children = self._plane_reference_counts(pid)
+        if naming or members or children:
+            lines = []
+            if naming:
+                lines.append(self._fmt_ref_group("叙事点名 activePlane", naming))
+            if members:
+                lines.append(self._fmt_ref_group("归属实体 planes", members))
+            if children:
+                lines.append(self._fmt_ref_group("子位面 extends", children))
+            r = QMessageBox.question(
+                self, "位面仍被引用",
+                f"位面「{pid}」仍被以下位置引用：\n" + "\n".join(lines)
+                + "\n\n删除后这些引用将悬垂（子位面 extends 悬垂会让 Save All 整体连坐失败；"
+                  "点名/归属悬垂运行时静默变义）。仍要删除？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if r != QMessageBox.StandardButton.Yes:
+                return
+        elif not confirm.confirm_delete(self, f"位面「{pid}」"):
             return
         self._model.planes.pop(self._current_idx)
         self._current_idx = -1

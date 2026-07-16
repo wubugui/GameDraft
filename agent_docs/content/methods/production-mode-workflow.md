@@ -55,6 +55,7 @@ last_used: 2026-07-04
 
 ## 向下指针
 
+- **做叙事/事件内容的 full 能力(涉及事件必载)**:[narrative-flow-authoring](narrative-flow-authoring.md)——事件=叙事、三旋钮定类型、正交五关(状态→骨架→实体→地图→位面)、进度走信号不堆 flag。
 - 表达通道与权威清单:[content-expression-channels](../mechanisms/content-expression-channels.md)
 - 编辑器可往返硬契约:[editor-roundtrip-contract](../mechanisms/editor-roundtrip-contract.md)
 - L2 登记面三件套:[l2-action-primitive-registration](../mechanisms/l2-action-primitive-registration.md)

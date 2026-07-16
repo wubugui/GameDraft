@@ -494,6 +494,43 @@ class ScenariosCatalogEditorPersistenceTests(unittest.TestCase):
                              "phases 无列编辑的 outcome 不得被 Apply/flush 抹掉")
             self.assertEqual(p1.get("status"), "done")
 
+    def test_phase_without_status_not_forced_status_key(self) -> None:
+        # 审查 P3：原 phase 无 status 键且仍是默认 pending 时，Apply/flush 后不得
+        # 凭空注入 "status":"pending"（伪脏 + 格式漂移）。
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(
+                Path(td) / "p",
+                [{"id": "s_ns", "phases": {"p0": {"status": "done"}, "p_bare": {}}}],
+            )
+            ed._sc_list.setCurrentRow(0)
+            self.assertFalse(
+                ed._is_dirty(),
+                "无 status 键的极简 phase 纯加载不应判脏（否则每次保存都伪重写）",
+            )
+            ed._f_desc.setText("触发 sync")  # 任意编辑触发 phases 重建
+            self.assertTrue(ed.flush_to_model())
+            phases = model.scenarios_catalog["scenarios"][0]["phases"]
+            self.assertNotIn(
+                "status", phases["p_bare"],
+                "原无 status 键的 phase 序列化后不得被注入 status",
+            )
+            self.assertEqual(phases["p0"].get("status"), "done",
+                             "有 status 键的 phase 不受影响")
+
+    def test_phase_explicit_pending_status_preserved(self) -> None:
+        # 反向：原本就有 status 键（含 "pending"）必须保留，不得被门控误删。
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(
+                Path(td) / "p",
+                [{"id": "s_ep", "phases": {"p1": {"status": "pending"}}}],
+            )
+            ed._sc_list.setCurrentRow(0)
+            ed._f_desc.setText("触发 sync")
+            self.assertTrue(ed.flush_to_model())
+            p1 = model.scenarios_catalog["scenarios"][0]["phases"]["p1"]
+            self.assertEqual(p1.get("status"), "pending",
+                             "原有的显式 status 键必须原样保留")
+
     def test_exposes_without_expose_after_phase_rejected(self) -> None:
         with TemporaryDirectory() as td:
             ed, _model = self._editor(

@@ -55,7 +55,10 @@
         "kind": "player"
       },
       "text": "捞起没两天，还算新鲜，就是水腥冲得很。……腰杆上那个包，官面验过都没解走？",
-      "next": "c_main"
+      "next": "c_main",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "c_main": {
       "type": "choice",
@@ -139,7 +142,10 @@
         "kind": "player"
       },
       "text": "……财是小财，就是打手上过了一道凉。莫想，莫想。",
-      "next": "c_carry"
+      "next": "c_carry",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "h_1": {
       "type": "line",
@@ -156,7 +162,10 @@
         "kind": "player"
       },
       "text": "你的就是你的。到了义庄，自有人经管。",
-      "next": "c_carry"
+      "next": "c_carry",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "c_carry": {
       "type": "choice",
@@ -191,7 +200,10 @@
         "kind": "player"
       },
       "text": "日头毒了要出味……缓归缓，莫缓过头。",
-      "next": "end_n"
+      "next": "end_n",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "end_n": {
       "type": "end"

@@ -150,5 +150,26 @@
     "type": "key",
     "description": "逃命路上贪财捡的一个旧帕子包，破帕子裹着几样没用的小物——铜亮纽子、半张洋烟盒纸、一个空香粉盒、几缕零线。对世人是垃圾，没舍得扔。揣上它，总有一缕散不掉的廉价香粉味跟着；夜里隐隐还有半句跑调的小调。每回他快没命，那味就陡然浓起来，像有什么盲目地不让他撒手。",
     "maxStack": 1
+  },
+  {
+    "id": "juzi",
+    "name": "橘子",
+    "type": "consumable",
+    "description": "顺手摸来的一个橘子，饿了能垫一垫。",
+    "maxStack": 5
+  },
+  {
+    "id": "banbing",
+    "name": "半个粗粮饼",
+    "type": "consumable",
+    "description": "从叫花子那儿抢来的半个饼，有点脏，好歹能咬两口。",
+    "maxStack": 5
+  },
+  {
+    "id": "feiji",
+    "name": "肥鸡",
+    "type": "consumable",
+    "description": "偷来的一只肥鸡，扑腾得厉害。烤了顶饱，卖了换钱。",
+    "maxStack": 3
   }
 ]

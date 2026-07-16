@@ -29,6 +29,8 @@ _EMIT_SOURCE_ATTRS = (
     "archive_characters",
     "archive_books",
     "archive_documents",
+    # 见闻 firstViewActions = 真实发射面（LoreBookUI 执行动作树；与 signal_refactor.EMIT_SOURCE_BUCKETS 同源）
+    "archive_lore",
     "water_minigames_instances",
     "sugar_wheel_instances",
     "paper_craft_instances",

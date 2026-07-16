@@ -1,0 +1,254 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_听书开场",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·听书开场（进茶馆自动·只播一次·说书cutscene→掐架→被赶）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_听书",
+              "state": "kicked_out",
+              "reached": true
+            }
+          ],
+          "next": "done"
+        }
+      ],
+      "defaultNext": "fire_cutscene"
+    },
+    "fire_cutscene": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "说书-李天狗大战旱魃"
+          }
+        },
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "说书-收场运镜"
+          }
+        }
+      ],
+      "next": "k2_1"
+    },
+    "k2_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "扯把子。飞僵哪是桃木剑砍得动的？",
+      "next": "k2_2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k2_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "脚夫甲"
+      },
+      "text": "你个蹲地上蹭听的，晓得个锤子。",
+      "next": "k2_3",
+      "portrait": {
+        "slug": "npc_coolie_a_anim",
+        "emotion": "calm"
+      }
+    },
+    "k2_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "我晓得？上个月阎王岭那具邪尸，老子帮人背下山的！老搭尸的亲口跟我说的——",
+      "next": "k2_4",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k2_4": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "飞僵颈子硬得很，刀都砍不进，得先用墨斗线钉死手脚！",
+      "next": "k3_1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k3_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "脚夫甲"
+      },
+      "text": "吹嘛你就！背尸的也来听书？不怕把晦气带进来？",
+      "next": "k3_2",
+      "portrait": {
+        "slug": "npc_coolie_a_anim",
+        "emotion": "calm"
+      }
+    },
+    "k3_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "背尸咋个了？正经手艺！给钱就干！",
+      "next": "k3_amb",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k3_amb": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "「背尸」两个字，清清楚楚飘进四下耳朵里。茶馆的人声一下矮了半截，两侧椅脚拖地刺啦响——邻桌一个茶客端起碗，往远处挪了挪。关二狗周围，莫名空了一圈。",
+      "next": "k4_amb"
+    },
+    "k4_amb": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "茶馆小二拎着抹布颠颠儿跑过来，站在关二狗面前，叉着腰，手挥得像赶苍蝇。",
+      "next": "k4_1"
+    },
+    "k4_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "waiter_xiaoer"
+      },
+      "text": "走走走！背过死人的也往茶馆里钻？沾了一身晦气，熏到其他客人咋个办？赶紧走赶紧走！",
+      "next": "k4_2",
+      "portrait": {
+        "emotion": "angry"
+      }
+    },
+    "k4_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "哎哎哎，别动手！我给钱还不行吗？",
+      "next": "k4_3",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k4_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "waiter_xiaoer"
+      },
+      "text": "谁要你的钱？你坐过的地方谁还敢坐？快走快走，别逼我喊人！",
+      "next": "k5_amb",
+      "portrait": {
+        "emotion": "angry"
+      }
+    },
+    "k5_amb": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗慢吞吞爬起来，拍了拍屁股上的灰，抓起脚边的扁担，被小二搡着，一步一步往门口退。",
+      "next": "k5_1"
+    },
+    "k5_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "走就走！你们这破书讲的就不对！",
+      "next": "k5_2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k5_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "等你们哪天屋头撞了煞、遇上真僵了——",
+      "next": "k5_3",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k5_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "莫来求老子！",
+      "next": "k_kick",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "k_kick": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "addArchiveEntry",
+          "params": {
+            "bookType": "character",
+            "entryId": "storyteller_zhang"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_听书开场",
+            "signal": "tingshu_kicked"
+          }
+        }
+      ],
+      "next": "k_out"
+    },
+    "k_out": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "门里，李天狗的故事还在往下讲。门外，是他的位置。——出门去吧。",
+      "next": "k_zoom_back"
+    },
+    "done": {
+      "type": "end"
+    },
+    "k_zoom_back": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "说书-景别复位"
+          }
+        }
+      ],
+      "next": "done"
+    }
+  }
+}

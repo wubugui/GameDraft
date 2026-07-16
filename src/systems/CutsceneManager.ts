@@ -485,6 +485,8 @@ export class CutsceneManager implements IGameSystem {
         if (wasCrossScene) {
           if (!this.destroyed && def.restoreState !== false) {
             await this.restoreSnapshot();
+          } else if (!this.destroyed && wasSkipping) {
+            this.applyFinalCameraPoseForSkip(def);
           }
           this.sceneManagerAPI?.endCutsceneStaging();
         } else {
@@ -496,6 +498,8 @@ export class CutsceneManager implements IGameSystem {
           // restoreState:false 时跳过。否则同场景过场里的 cameraZoom / 移动玩家会在结束后残留。
           if (!this.destroyed && def.restoreState !== false) {
             await this.restoreSnapshot();
+          } else if (!this.destroyed && wasSkipping) {
+            this.applyFinalCameraPoseForSkip(def);
           }
         }
       } catch (e) {
@@ -602,6 +606,47 @@ export class CutsceneManager implements IGameSystem {
     this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
     this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
     this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+  }
+
+  /**
+   * `restoreState:false` 的过场被**跳过**时，把相机落到编排的最终位姿（steps 里最后一个
+   * cameraMove / cameraZoom 的目标值），与自然播完的终态一致。
+   *
+   * 为什么必须有：restoreState:false 意味着「过场自己拥有结束状态」，但 skip 用
+   * abortCutsceneOps 掐断在途补间（定格中值）、且未执行的后续步骤整体丢弃——没有这一步，
+   * 跳过者会永久带走半途镜头（如 zoom 卡在 1.4），探索态只跟随位置、不会自愈缩放
+   * （规范·不变量 6：拒绝/取消路径也要恢复一致性）。restoreState 默认(true)路径由
+   * restoreSnapshot 兜底，不经此处。
+   */
+  private applyFinalCameraPoseForSkip(def: NewCutsceneDef): void {
+    if (!Array.isArray(def.steps)) return;
+    let move: { x: number; y: number } | null = null;
+    let zoom: number | null = null;
+    const walk = (steps: CutsceneStep[]): void => {
+      for (const s of steps) {
+        if (s.kind === 'parallel') {
+          walk(s.tracks);
+          continue;
+        }
+        if (s.kind !== 'present') continue;
+        if (s.type === 'cameraMove' && typeof s.x === 'number' && typeof s.y === 'number') {
+          move = { x: s.x, y: s.y };
+        } else if (s.type === 'cameraZoom') {
+          // 与 executePresent 同一语义：scale 缺省/≤0 = 场景基线缩放
+          const raw = s.scale;
+          zoom = typeof raw === 'number' && raw > 0
+            ? raw
+            : this.cameraAccessor?.getSceneBaseZoom() ?? 1;
+        }
+      }
+    };
+    walk(def.steps);
+    // 先 zoom 后 snap：snapTo 按当前 zoom 的视口夹紧世界边界，顺序反了会以旧视口尺寸夹出错误中心
+    if (zoom !== null) this.cameraAccessor?.setZoom(zoom);
+    if (move !== null) {
+      const m = move as { x: number; y: number };
+      this.cameraAccessor?.snapTo(m.x, m.y);
+    }
   }
 
   // ================================================================
@@ -838,9 +883,16 @@ export class CutsceneManager implements IGameSystem {
       case 'cameraMove':
         await this.cutsceneRenderer.cameraMove(step.x as number, step.y as number, step.duration as number ?? 1000);
         break;
-      case 'cameraZoom':
-        await this.cutsceneRenderer.cameraZoom(step.scale as number, step.duration as number ?? 500);
+      case 'cameraZoom': {
+        // scale 缺省/≤0 = 恢复场景配置基线缩放（scene.camera.zoom）。内容侧不写字面量，
+        // 场景改配置过场自动跟随；编辑器泛型 float 对缺键写 0，两种形态语义一致。
+        const rawScale = step.scale;
+        const scale = typeof rawScale === 'number' && rawScale > 0
+          ? rawScale
+          : this.cameraAccessor?.getSceneBaseZoom() ?? 1;
+        await this.cutsceneRenderer.cameraZoom(scale, step.duration as number ?? 500);
         break;
+      }
       case 'showCharacter':
         this.entitySetVisible('player', step.visible as boolean ?? true);
         break;

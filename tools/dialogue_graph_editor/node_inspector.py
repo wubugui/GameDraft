@@ -240,6 +240,22 @@ class NodeInspector(QWidget):
         try:
             self._node_id = node_id
             self._clear_body()
+            # 畸形节点值（agent 误写成字符串/列表等非对象）：过去 data.get 直接崩（审查 P2-③）。
+            # 降级为只读展示 + 原样透传：getter 返回原值，不被改写、round-trip 无损。
+            if not isinstance(data, dict):
+                self._type_label.setText(
+                    f"节点 id：<b>{node_id}</b>　　类型：<b>畸形（非对象）</b>"
+                )
+                self._body_layout.addWidget(
+                    QLabel(
+                        f"该节点的值不是对象（实际为 {type(data).__name__}），无法用表单编辑。\n"
+                        "校验面板会将其列为错误；请在数据文件中修正为合法节点对象。",
+                        self._body,
+                    )
+                )
+                snap = copy.deepcopy(data)
+                self._getter = lambda s=snap: copy.deepcopy(s)
+                return
             t = data.get("type", "?")
             self._type_label.setText(f"节点 id：<b>{node_id}</b>　　类型：<b>{t}</b>")
 
@@ -899,11 +915,16 @@ class NodeInspector(QWidget):
         # —— 节点级头像（可选）：写 node.portrait；多拍模式下作各拍默认（拍级自带的覆盖之）。
         # 立绘集三态：（无头像）/ 跟随说话NPC（只写 emotion，运行时按 NPC.portraitSlug 解析）/ 显式集。
         FOLLOW_NPC = "@npc"
+        POR_RAW = "@raw"  # 畸形 portrait（缺 emotion 等）走只读透传，不自动补首表情（审查 P3）
         por0 = data.get("portrait")
         por0 = por0 if isinstance(por0, dict) else None
         por_slug0 = str(por0.get("slug") or "").strip() if por0 else ""
         por_emo0 = str(por0.get("emotion") or "").strip() if por0 else ""
-        if por0 is not None and not por_slug0:
+        # 数据里是 dict 但缺 emotion（表单表达不了）：原样透传，不吃键、不补值。
+        por_raw_passthrough: dict[str, Any] | None = (
+            copy.deepcopy(por0) if (por0 is not None and not por_emo0) else None
+        )
+        if por0 is not None and por_emo0 and not por_slug0:
             por_slug0 = FOLLOW_NPC  # 数据里 emotion-only = 跟随说话NPC
 
         por_wrap = QWidget(self._body)
@@ -914,10 +935,15 @@ class NodeInspector(QWidget):
         slug_cb.addItem("跟随说话人", FOLLOW_NPC)
         for s in load_portrait_sets(self._project_root):
             slug_cb.addItem(s, s)
-        if por_slug0 and slug_cb.findData(por_slug0) < 0:
-            # 数据里带了未知立绘集：保留可见可选，不静默清掉
-            slug_cb.addItem(f"{por_slug0}（缺集）", por_slug0)
-        slug_cb.setCurrentIndex(max(0, slug_cb.findData(por_slug0)))
+        if por_raw_passthrough is not None:
+            _raw_lbl = por_slug0 if por_slug0 else "…"
+            slug_cb.addItem(f"(数据) {_raw_lbl}", POR_RAW)
+            slug_cb.setCurrentIndex(slug_cb.findData(POR_RAW))
+        else:
+            if por_slug0 and slug_cb.findData(por_slug0) < 0:
+                # 数据里带了未知立绘集：保留可见可选，不静默清掉
+                slug_cb.addItem(f"{por_slug0}（缺集）", por_slug0)
+            slug_cb.setCurrentIndex(max(0, slug_cb.findData(por_slug0)))
         slug_cb.setToolTip(
             "立绘集（resources/runtime/images/dialogue_portraits/<slug>/）\n"
             "「跟随说话人」= 只存表情，运行时按说话人当前生效的装扮配置解析：\n"
@@ -955,7 +981,8 @@ class NodeInspector(QWidget):
             want = str(emo_cb.currentData() or "") or por_emo0
             emo_cb.blockSignals(True)
             emo_cb.clear()
-            if not picked:
+            if not picked or picked == POR_RAW:
+                # 无头像 / 畸形透传：表情不可选，不自动补首表情（透传保原值）。
                 emo_cb.setEnabled(False)
             else:
                 emo_cb.setEnabled(True)
@@ -976,6 +1003,14 @@ class NodeInspector(QWidget):
             picked = str(slug_cb.currentData() or "")
             eff = _por_effective_slug()
             emo = str(emo_cb.currentData() or "")
+            if picked == POR_RAW:
+                por_preview.setStyleSheet("color: #999;")
+                por_preview.setText("(数据) 透传")
+                por_preview.setToolTip(
+                    "该头像数据缺 emotion 等字段、表单无法编辑，已原样保留。\n"
+                    "改选立绘集即可切回正常编辑。"
+                )
+                return
             if not picked or not emo:
                 por_preview.clear()
                 por_preview.setToolTip("")
@@ -1032,6 +1067,9 @@ class NodeInspector(QWidget):
 
         def collect_portrait() -> dict[str, Any] | None:
             slug = str(slug_cb.currentData() or "").strip()
+            if slug == POR_RAW:
+                # 畸形形状原样透传（不吃键、不补首表情，审查 P3）
+                return copy.deepcopy(por_raw_passthrough) if por_raw_passthrough is not None else None
             emo = str(emo_cb.currentData() or "").strip()
             if not slug or not emo:
                 return None
@@ -2569,8 +2607,14 @@ class NodeInspector(QWidget):
             narr_id_e.setText(str(raw_c.get("narrative", "")))
             narr_state_e.setText(str(raw_c.get("state", "")))
             narr_reached.setChecked(raw_c.get("reached") is True)
-        elif any(k in raw_c for k in ("scenarioLine", "not", "all", "any")):
-            # 结构化模式无法逐行表达：整条原样保留（只读），编辑请切「结构化」
+        elif (
+            any(k in raw_c for k in ("scenarioLine", "plane", "not", "all", "any"))
+            or "flag" not in raw_c
+        ):
+            # 结构化/未识别叶子无法逐行表达：整条原样保留（只读），编辑请切「结构化」。
+            # plane/scenarioLine 为后加条件叶(2026-07-13 修:此前 plane 落进下面的
+            # flag 兜底被改写成 {"flag":""},打开即吃数据);任何未来新叶同样从这里
+            # 透传——只有真正带 "flag" 键的原子才进 flag 编辑分支。
             raw_passthrough["v"] = copy.deepcopy(raw_c)
             try:
                 raw_lbl.setText(json.dumps(raw_c, ensure_ascii=False, indent=2))

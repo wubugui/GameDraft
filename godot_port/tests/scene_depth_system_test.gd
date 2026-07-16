@@ -10,9 +10,9 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var depth: RuntimeSceneDepthSystem = bootstrap.scene_depth_system
-	assert(depth.enabled and depth.scene_id == "teahouse" and depth.depth_texture != null and depth.collision_image != null)
-	assert(depth.config.get("depth_map") == "raw_depth_rg.png" and depth.scene_size.x == 700.0 and depth.world_to_pixel.x > 0.0)
-	assert(depth.get_material_count() >= 1 and depth.get_shadow_count() >= 1 and bootstrap.player.sprite.sprite.material is ShaderMaterial)
+	assert(depth.is_enabled and depth.current_scene_id == "teahouse" and depth.current_depth_texture != null and depth.collision_data != null)
+	assert(depth.current_config.get("depth_map") == "raw_depth_rg.png" and depth.scene_w == 700.0 and depth.world_to_pixel_x > 0.0)
+	assert(depth.filters.size() >= 1 and bootstrap.entity_shadows.size() >= 1 and bootstrap.player.sprite.sprite.material is ShaderMaterial)
 	var material: ShaderMaterial = bootstrap.player.sprite.sprite.material
 	assert(material.shader == RuntimeEntityLightingFilter.SHADER and material.get_shader_parameter("depth_map") == depth.depth_texture and float(material.get_shader_parameter("depth_enabled")) == 1.0)
 	await bootstrap.action_executor.execute_await({"type": "setSceneDepthFloorOffset", "params": {"floor_offset": "-0.45"}})
@@ -24,23 +24,23 @@ func _ready() -> void:
 		{"zoneKind": "depth_floor", "floorOffsetBoost": -0.8, "polygon": _box(5, 5, 15, 15)},
 		{"zoneKind": "standard", "floorOffsetBoost": 9.0, "polygon": _box(0, 0, 20, 20)},
 	]
-	assert(is_equal_approx(depth.resolve_floor_offset_boost(zones, 10, 10), -0.8))
-	assert(is_equal_approx(depth.resolve_floor_offset_boost(zones, 2, 2), 0.2))
-	assert(is_equal_approx(depth.resolve_floor_offset_boost(zones, 30, 30), 0.0))
+	assert(is_equal_approx(RuntimeDepthFloorZones.resolve(zones, 10, 10, bootstrap.flag_store), -0.8))
+	assert(is_equal_approx(RuntimeDepthFloorZones.resolve(zones, 2, 2, bootstrap.flag_store), 0.2))
+	assert(is_equal_approx(RuntimeDepthFloorZones.resolve(zones, 30, 30, bootstrap.flag_store), 0.0))
 	var found_collision := false
-	for y: int in range(0, int(depth.scene_size.y) + 1, 12):
-		for x: int in range(0, int(depth.scene_size.x) + 1, 12):
+	for y: int in range(0, int(depth.scene_h) + 1, 12):
+		for x: int in range(0, int(depth.scene_w) + 1, 12):
 			if depth.is_collision(x, y):
 				found_collision = true
 				break
 		if found_collision:
 			break
 	assert(found_collision and not depth.is_collision(-10000, -10000))
-	assert(bootstrap.scene_manager.load_scene("test_room_b", "", null, null, false))
+	assert(await bootstrap.scene_manager.switch_scene("test_room_b"))
 	await get_tree().process_frame
-	assert(not depth.enabled and depth.is_lighting_enabled())
+	assert(not depth.is_enabled and depth.is_lighting_enabled)
 	await get_tree().process_frame
-	assert(depth.get_material_count() >= 1 and bootstrap.player.sprite.sprite.material is ShaderMaterial and float(bootstrap.player.sprite.sprite.material.get_shader_parameter("depth_enabled")) == 0.0)
+	assert(depth.filters.size() >= 1 and bootstrap.player.sprite.sprite.material is ShaderMaterial and float(bootstrap.player.sprite.sprite.material.get_shader_parameter("depth_enabled")) == 0.0)
 	assert(bootstrap.action_executor.has_handler("setSceneDepthFloorOffset") and bootstrap.action_executor.has_handler("resetSceneDepthFloorOffset"))
 	bootstrap.audio_manager.stop_all_playback()
 	bootstrap.asset_manager.clear_cache()

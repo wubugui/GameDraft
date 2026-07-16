@@ -23,6 +23,8 @@ EXPECTED_NON_PLAYER_SCENES = {
     "test_scene",
     "深潭水下",
     "深潭绝地",
+    "破屋",
+    "野道",
 }
 
 
@@ -129,8 +131,8 @@ def main() -> int:
             "source non-player scene set changed: "
             f"expected={sorted(EXPECTED_NON_PLAYER_SCENES)}, actual={sorted(non_player)}"
         )
-    if len(scenes) != 27:
-        errors.append(f"expected 27 scenes, found {len(scenes)}")
+    if len(scenes) != 29:
+        errors.append(f"expected 29 scenes, found {len(scenes)}")
 
     print(f"scenes={len(scenes)} player-addressable={len(reachable)} source-non-player={len(non_player)}")
     print("player-addressable:", ", ".join(sorted(reachable)))

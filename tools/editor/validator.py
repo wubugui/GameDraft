@@ -82,6 +82,22 @@ def validate(model: ProjectModel) -> list[Issue]:
     shop_ids = _ids(model.shops)
     filter_ids = set(model.all_filter_ids())
 
+    # 过场 index 重复 id（照 planes 样板）：运行时按 id 建表 first-wins，同名两条会
+    # 静默遮蔽后者；改名亦无查重护栏（timeline_editor _add 已防撞、改名裸奔）。
+    _cut_seen: set[str] = set()
+    for c in model.cutscenes:
+        if not isinstance(c, dict):
+            continue
+        _cid = str(c.get("id", "") or "").strip()
+        if not _cid:
+            continue
+        if _cid in _cut_seen:
+            issues.append(Issue(
+                "error", "cutscene", _cid,
+                f"过场 id 重复: {_cid!r}（cutscenes/index.json 内同名两条，运行时后者被遮蔽）",
+            ))
+        _cut_seen.add(_cid)
+
     _validate_scenarios_catalog(model, issues)
 
     # --- scenes ---
@@ -201,7 +217,7 @@ def validate(model: ProjectModel) -> list[Issue]:
                 ts = data.get("targetScene", "")
                 if ts and ts not in scene_ids:
                     issues.append(Issue("error", "scene", sid,
-                                        f"Hotspot '{hs.get('id')}' targetScene '{ts}' not found"))
+                                        f"Hotspot '{hs.get('id')}' 的 targetScene '{ts}' 不存在"))
                 tsp = str(data.get("targetSpawnPoint") or "").strip()
                 if ts and ts in scene_ids and tsp \
                         and tsp not in set(model.spawn_point_keys_for_scene(ts)):
@@ -214,7 +230,7 @@ def validate(model: ProjectModel) -> list[Issue]:
                 eid = data.get("encounterId", "")
                 if eid and eid not in encounter_ids:
                     issues.append(Issue("error", "scene", sid,
-                                        f"Hotspot '{hs.get('id')}' encounterId '{eid}' not found"))
+                                        f"Hotspot '{hs.get('id')}' 的 encounterId '{eid}' 不存在"))
             if hs.get("type") == "inspect":
                 idata = hs.get("data") or {}
                 if isinstance(idata, dict):
@@ -261,7 +277,7 @@ def validate(model: ProjectModel) -> list[Issue]:
                 iid = data.get("itemId", "")
                 if iid and iid not in item_ids:
                     issues.append(Issue("warning", "scene", sid,
-                                        f"Hotspot '{hs.get('id')}' itemId '{iid}' not found"))
+                                        f"Hotspot '{hs.get('id')}' 的 itemId '{iid}' 不存在"))
         for npc in sc.get("npcs", []):
             nid = str(npc.get("id", "") or "?")
             bindings = _entity_cutscene_bindings(npc)
@@ -560,7 +576,7 @@ def validate(model: ProjectModel) -> list[Issue]:
         pg = g.get("parentGroup")
         if pg and pg not in quest_group_ids:
             issues.append(Issue("error", "questGroup", g["id"],
-                                f"parentGroup '{pg}' not found"))
+                                f"parentGroup '{pg}' 不存在"))
     # parentGroup circular reference detection
     for g in model.quest_groups:
         visited: set[str] = set()
@@ -568,7 +584,7 @@ def validate(model: ProjectModel) -> list[Issue]:
         while cur:
             if cur in visited:
                 issues.append(Issue("error", "questGroup", g["id"],
-                                    f"parentGroup circular reference detected"))
+                                    f"parentGroup 存在循环引用"))
                 break
             visited.add(cur)
             parent_g = next((x for x in model.quest_groups if x["id"] == cur), None)
@@ -579,16 +595,16 @@ def validate(model: ProjectModel) -> list[Issue]:
         grp = q.get("group", "")
         if grp and grp not in quest_group_ids:
             issues.append(Issue("error", "quest", q["id"],
-                                f"group '{grp}' not found in questGroups"))
+                                f"group '{grp}' 不在 questGroups 中"))
         for edge in q.get("nextQuests", []):
             eid = edge.get("questId", "")
             if eid and eid not in quest_ids:
                 issues.append(Issue("error", "quest", q["id"],
-                                    f"nextQuests questId '{eid}' not found"))
+                                    f"nextQuests 的 questId '{eid}' 不存在"))
         nxt = q.get("nextQuestId")
         if nxt and not q.get("nextQuests") and nxt not in quest_ids:
             issues.append(Issue("error", "quest", q["id"],
-                                f"nextQuestId '{nxt}' not found"))
+                                f"nextQuestId '{nxt}' 不存在"))
 
     # --- encounters ---
     for enc in model.encounters:
@@ -596,7 +612,7 @@ def validate(model: ProjectModel) -> list[Issue]:
             rid = opt.get("requiredRuleId")
             if rid and rid not in rule_ids:
                 issues.append(Issue("error", "encounter", enc["id"],
-                                    f"requiredRuleId '{rid}' not found"))
+                                    f"requiredRuleId '{rid}' 不存在"))
             rl = opt.get("requiredRuleLayers")
             if rid and isinstance(rl, list) and rl:
                 rule = next(
@@ -620,7 +636,7 @@ def validate(model: ProjectModel) -> list[Issue]:
             for ci in opt.get("consumeItems", []):
                 if ci.get("id") and ci["id"] not in item_ids:
                     issues.append(Issue("error", "encounter", enc["id"],
-                                        f"consumeItem '{ci['id']}' not found"))
+                                        f"consumeItem '{ci['id']}' 不存在"))
 
     # --- rules definitions ---
     _layer_keys = ("xiang", "li", "shu")
@@ -654,7 +670,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     for frag in model.rules_data.get("fragments", []):
         if frag.get("ruleId") and frag["ruleId"] not in rule_ids:
             issues.append(Issue("error", "rule", frag["id"],
-                                f"Fragment ruleId '{frag['ruleId']}' not found"))
+                                f"Fragment 的 ruleId '{frag['ruleId']}' 不存在"))
         lay = frag.get("layer", "xiang")
         if lay not in _layer_keys:
             issues.append(Issue(
@@ -672,7 +688,7 @@ def validate(model: ProjectModel) -> list[Issue]:
         for si in shop.get("items", []):
             if si.get("itemId") and si["itemId"] not in item_ids:
                 issues.append(Issue("error", "shop", shop["id"],
-                                    f"shopItem '{si['itemId']}' not found"))
+                                    f"shopItem '{si['itemId']}' 不存在"))
 
     # --- book page entries (unique ids across all books) ---
     book_entry_first_book: dict[str, str] = {}
@@ -702,23 +718,23 @@ def validate(model: ProjectModel) -> list[Issue]:
     for node in model.map_nodes:
         if node.get("sceneId") and node["sceneId"] not in scene_ids:
             issues.append(Issue("error", "map", node.get("sceneId", "?"),
-                                f"Map node sceneId '{node['sceneId']}' not found"))
+                                f"地图节点 sceneId '{node['sceneId']}' 不存在"))
 
     # --- game config ---
     cfg = model.game_config
     if cfg.get("initialScene") and cfg["initialScene"] not in scene_ids:
         issues.append(Issue("error", "config", "game_config",
-                            f"initialScene '{cfg['initialScene']}' not found"))
+                            f"initialScene '{cfg['initialScene']}' 不存在"))
     if cfg.get("initialQuest") and cfg["initialQuest"] not in quest_ids:
         issues.append(Issue("error", "config", "game_config",
-                            f"initialQuest '{cfg['initialQuest']}' not found"))
+                            f"initialQuest '{cfg['initialQuest']}' 不存在"))
     if cfg.get("initialCutscene") and cfg["initialCutscene"] not in cutscene_ids:
         issues.append(Issue("warning", "config", "game_config",
-                            f"initialCutscene '{cfg['initialCutscene']}' not found"))
+                            f"initialCutscene '{cfg['initialCutscene']}' 不存在"))
     # fallbackScene：目标场景缺失时的兜底场景（SaveManager 恢复存档用），悬垂同样致命。
     if cfg.get("fallbackScene") and cfg["fallbackScene"] not in scene_ids:
         issues.append(Issue("error", "config", "game_config",
-                            f"fallbackScene '{cfg['fallbackScene']}' not found"))
+                            f"fallbackScene '{cfg['fallbackScene']}' 不存在"))
 
     _validate_overlay_images(model, issues)
     _validate_parallax_scenes(model, issues)
@@ -864,6 +880,31 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
         return
     registered = _narrative_registered_signal_ids(model)
     graphs = _narrative_graph_index(model)
+
+    # 0. 叙事图状态动作树里的 updateQuest.id 必须存在于 quests.json（承接审查新增）：
+    # 运行时对未知任务 id 无声跳过，画布上「盖章推进任务」实际不生效。
+    _quest_ids = {str(q.get("id", "")) for q in model.quests if isinstance(q, dict) and q.get("id")}
+
+    def _scan_update_quest(obj: Any, gid: str) -> None:
+        if isinstance(obj, dict):
+            if obj.get("type") == "updateQuest":
+                qid = str((obj.get("params") or {}).get("id") or "").strip()
+                if qid and qid not in _quest_ids:
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"updateQuest 目标任务 {qid!r} 不在 quests.json（运行时静默跳过，任务不会推进）",
+                    ))
+            for v in obj.values():
+                _scan_update_quest(v, gid)
+        elif isinstance(obj, list):
+            for v in obj:
+                _scan_update_quest(v, gid)
+
+    for g in _iter_narrative_graphs(model):
+        gid = str(g.get("id") or "?")
+        states = g.get("states")
+        if isinstance(states, dict):
+            _scan_update_quest(states, gid)
     # 悬垂监听检查的两个「有人发」集合（口径对齐网页 TaskBusPanel 的 danglingSignalNoEmit）：
     # 实发 = emitted_signal_ids（对话图 + 内容资产 + 叙事图 action 树 + 派生广播）；
     # 声明 = 全项目 blackbox meta.emits 并集（声明未真发的漂移由下方第 3 段单独报）。
@@ -1783,7 +1824,10 @@ def _flag_issue(model: ProjectModel, issues: list[Issue], key: str,
                 data_type: str, item_id: str, scene_id: str | None) -> None:
     from .flag_registry import validate_flag_key
     reg = model.flag_registry
-    if not reg:
+    # 登记表为空（新工程 / 未维护登记表）时不逐个 flag 报「未登记」——否则满屏噪声；
+    # 结构性校验（未知 action、空 setFlag key、过场白名单、未知条件叶子等）不受此影响，
+    # 它们不经过本函数（审查 P2-①）。
+    if not reg or (not reg.get("static") and not reg.get("patterns")):
         return
     ok, msg = validate_flag_key(key, reg, model, scene_id=scene_id, severity="warning")
     if ok or not msg:
@@ -1935,7 +1979,15 @@ def _append_action_param_ref_issues(
         sig = str(p.get("signal") or "").strip()
         if not sig:
             issues.append(Issue("error", data_type, item_id, "emitNarrativeSignal 缺少 signal"))
-        elif not sig.startswith("state:"):
+        elif sig == "__draft__" or sig.startswith("state:"):
+            # 保留前缀不可发射（旧逻辑对 state:* 直接跳过=静默放行伪造派生广播的盲区，
+            # 2026-07-17 审查 W5）：state:* 由运行时在 broadcastOnEnter 状态自动派生广播，
+            # 内容伪造可直推主线里程碑；__draft__ 是占位符，运行时 emitNarrativeSignal 拒发。
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"emitNarrativeSignal 不可发射保留信号 {sig!r}（state:* 由运行时派生广播；__draft__ 是占位符）",
+            ))
+        else:
             registered = _narrative_registered_signal_ids(model)
             listened = _narrative_listened_signals(model)
             if registered and sig not in registered:
@@ -2539,10 +2591,9 @@ def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> Non
         ))
         return
 
-    err = validate_scenarios_list(
+    for err in validate_scenarios_list(
         raw, flag_registry=model.flag_registry, model=model,
-    )
-    if err:
+    ):
         issues.append(Issue("error", "scenarios", "", err))
 
 
@@ -2591,8 +2642,21 @@ def _scan_condition_expr(
             )
         return
     if "not" in expr:
+        inner = expr.get("not")
+        # 空内层：not{} / not{all:[]} 恒为「非(真)」= 恒假，挂它的分支永不出现，
+        # 常是误配（审查新增）。all/any 空数组按恒真处理，故 not 包空 all/any = 恒假。
+        _empty_not = (
+            (isinstance(inner, dict) and not inner)
+            or (isinstance(inner, dict) and isinstance(inner.get("all"), list) and not inner["all"])
+            or (isinstance(inner, dict) and isinstance(inner.get("any"), list) and not inner["any"])
+        )
+        if _empty_not:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "not 内层为空（恒为假）：挂此条件的分支永远不出现，请检查是否漏配",
+            ))
         _scan_condition_expr(
-            model, issues, expr.get("not"), scen, quest_ids, data_type, item_id, depth + 1,
+            model, issues, inner, scen, quest_ids, data_type, item_id, depth + 1,
             scene_id_flag=scene_id_flag,
         )
         return
@@ -3047,10 +3111,11 @@ def _walk_action_defs(
 
 
 def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
+    # 结构性内容校验（未知 action / 空 setFlag key / 过场白名单 / 未知条件叶子 /
+    # scenario·narrative·plane 引用等）从这里发起，必须独立于登记表是否为空运行——
+    # 旧实现空登记表直接 return，导致假 action、坏过场步骤 0 报告（审查 P2-①）。
+    # 逐 flag 的「未登记」告警由 _flag_issue 在登记表为空时自行跳过。
     reg = model.flag_registry
-    if not reg.get("static") and not reg.get("patterns"):
-        return
-
     from .flag_registry import flag_registry_static_format_issues
     for msg in flag_registry_static_format_issues(reg):
         issues.append(Issue("warning", "flag_registry", "flag_registry", msg))

@@ -15,16 +15,18 @@ var map_name := Label.new()
 var rule_hint_bg := Panel.new()
 var rule_hint := Label.new()
 var flames: Array[Node2D] = []
-var smell: RuntimeSmellIndicatorRenderer
+var smell: RuntimeSmellIndicatorRenderer = null
+var smell_last := {"scent": "", "intensity": 0.0, "dir": 0.0, "flicker": false}
 var tracked: Array[Dictionary] = []
 var health_ratio := 1.0
 var flame_display_ratio := 1.0
 var flame_time := 0.0
+var fixed_tick_mode := false
 var _resolve_display := Callable()
 var _resize_unsubscribe := Callable()
 
 
-func _init(next_renderer: RuntimeRenderer, event_bus: RuntimeEventBus, next_strings: RuntimeStringsProvider, smell_data: Dictionary) -> void:
+func _init(next_renderer: RuntimeRenderer, event_bus: RuntimeEventBus, next_strings: RuntimeStringsProvider) -> void:
 	renderer = next_renderer
 	events = event_bus
 	strings = next_strings
@@ -51,7 +53,7 @@ func _init(next_renderer: RuntimeRenderer, event_bus: RuntimeEventBus, next_stri
 	quest.add_theme_color_override("font_color", Color("aaaacc"))
 	root.add_child(quest)
 
-	map_name.size = Vector2(renderer.get_screen_width(), 30)
+	map_name.size = Vector2(renderer.screen_width, 30)
 	map_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	map_name.position.y = 10
 	map_name.add_theme_font_size_override("font_size", 12)
@@ -75,7 +77,6 @@ func _init(next_renderer: RuntimeRenderer, event_bus: RuntimeEventBus, next_stri
 		root.add_child(flame)
 		flames.push_back(flame)
 
-	smell = RuntimeSmellIndicatorRenderer.new(root, smell_data, Vector2(34, 160))
 	_layout()
 	_resize_unsubscribe = renderer.subscribe_after_resize(Callable(self, "_layout"))
 	_listen()
@@ -91,26 +92,37 @@ func set_coins(value: Variant) -> void:
 	coin_bg.size = Vector2(_text_width(coin) + 20, 28)
 
 
-func set_active_quests(entries: Array) -> void:
-	tracked.clear()
-	for entry: Variant in entries:
-		if not entry is Dictionary: continue
-		var definition: Variant = entry.get("def", entry)
-		if not definition is Dictionary: continue
-		tracked.push_back({"id": str(definition.get("id", "")), "title": str(definition.get("title", ""))})
-	_refresh_quest_hint()
-
-
 func update(dt: float) -> void:
+	if fixed_tick_mode:
+		return
+	_step_visuals(dt)
+
+
+func _step_visuals(dt: float) -> void:
 	flame_time += dt
 	var difference := health_ratio - flame_display_ratio
 	flame_display_ratio += difference * (1.0 - exp(-dt * 12.0))
 	if absf(health_ratio - flame_display_ratio) < 0.001:
 		flame_display_ratio = health_ratio
-	smell.update(dt)
+	if smell != null:
+		smell.update(dt)
 	for index in flames.size():
 		var intensity := clampf(flame_display_ratio * 3.0 - index, 0.0, 1.0)
 		flames[index].set_flame_state(intensity, index * 2.1 + 0.7, flame_display_ratio, flame_time)
+
+
+func set_fixed_tick_mode(enabled: bool) -> void:
+	if fixed_tick_mode == enabled:
+		return
+	fixed_tick_mode = enabled
+	if enabled:
+		reset_animation_clock()
+
+
+func step_fixed_tick(dt: float) -> void:
+	if not fixed_tick_mode:
+		return
+	_step_visuals(dt)
 
 
 func reset_animation_clock() -> void:
@@ -118,7 +130,7 @@ func reset_animation_clock() -> void:
 	flame_display_ratio = health_ratio
 	if smell != null:
 		smell.reset_animation_clock()
-	update(0.0)
+	_step_visuals(0.0)
 
 
 func get_debug_visual_state() -> Dictionary:
@@ -132,6 +144,22 @@ func get_debug_visual_state() -> Dictionary:
 		"flames": flame_states,
 		"smell": smell.get_debug_state() if smell != null else null,
 	}
+
+
+func set_smell_profiles(data: Dictionary) -> void:
+	if smell != null:
+		smell.destroy()
+	smell = RuntimeSmellIndicatorRenderer.new(root, data, Vector2(34, 160))
+	smell.set_state(smell_last)
+
+
+func get_smell_form() -> Variant:
+	return smell.get_form() if smell != null else null
+
+
+func set_smell_form_param(key: String, value: float) -> void:
+	if smell != null:
+		smell.set_form_param(key, value)
 
 
 func destroy() -> void:
@@ -154,8 +182,8 @@ func _configure_panel(panel: Panel) -> void:
 
 
 func _layout() -> void:
-	var width := renderer.get_screen_width()
-	var height := renderer.get_screen_height()
+	var width := renderer.screen_width
+	var height := renderer.screen_height
 	map_name.size.x = width
 	quest_bg.position = Vector2(width - quest_bg.size.x - 10, 10)
 	quest.position = Vector2(width - quest_bg.size.x, 15)
@@ -237,8 +265,20 @@ func _health_debug(payload: Variant) -> void:
 
 
 func _smell(payload: Variant) -> void:
-	if payload is Dictionary: smell.set_state(payload)
+	if not payload is Dictionary:
+		return
+	var raw_intensity: Variant = payload.get("intensity")
+	var raw_direction: Variant = payload.get("dir")
+	smell_last = {
+		"scent": str(payload.get("scent")) if payload.get("scent") else "",
+		"intensity": float(raw_intensity) if (raw_intensity is int or raw_intensity is float) and is_finite(float(raw_intensity)) else 0.0,
+		"dir": float(raw_direction) if (raw_direction is int or raw_direction is float) and is_finite(float(raw_direction)) else 0.0,
+		"flicker": payload.get("flicker") == true,
+	}
+	if smell != null:
+		smell.set_state(smell_last)
 
 
 func _sniff(_payload: Variant = null) -> void:
-	smell.pulse_boost()
+	if smell != null:
+		smell.pulse_boost()

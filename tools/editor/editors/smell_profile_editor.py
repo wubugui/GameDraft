@@ -121,9 +121,11 @@ class SmellProfileEditor(QWidget):
         self._spins: dict[str, QDoubleSpinBox] = {}
         for key, label in NUMERIC:
             sp = QDoubleSpinBox()
-            sp.setRange(0.0, 10.0)
+            # 数值往返卡：decimals/上限须宽到"载入即显示原值"，否则越界/多位小数值
+            # 载入即被夹取/舍入，纯浏览后 _on_change 把走样值写回（P3）。
+            sp.setRange(0.0, 1000000.0)
             sp.setSingleStep(0.05)
-            sp.setDecimals(2)
+            sp.setDecimals(3)
             sp.valueChanged.connect(self._on_change)
             self._spins[key] = sp
             f.addRow(label, sp)
@@ -159,9 +161,10 @@ class SmellProfileEditor(QWidget):
             self._env[key] = sp
             sg.addRow(label, sp)
         pk = QDoubleSpinBox()
-        pk.setRange(0.0, 2.0)
+        # 载入即显示原值：放宽上限/小数位，避免越界值被夹取后写回走样（P3）。
+        pk.setRange(0.0, 1000000.0)
         pk.setSingleStep(0.05)
-        pk.setDecimals(2)
+        pk.setDecimals(3)
         pk.valueChanged.connect(self._on_change)
         self._env["peak"] = pk
         sg.addRow("峰值 peak", pk)
@@ -203,6 +206,10 @@ class SmellProfileEditor(QWidget):
         sniff.setToolTip("预览需游戏 dev server 在跑（5173）")
         sniff.clicked.connect(self._preview_sniff)
         pv.addWidget(sniff)
+        reload_prev = QPushButton("重载预览")
+        reload_prev.setToolTip("5173 未起 / 起晚了导致预览白屏时，点此重新加载预览页并重推当前 profile（P3）。")
+        reload_prev.clicked.connect(self._reload_preview)
+        pv.addWidget(reload_prev)
         pv.addStretch(1)
         root.addWidget(prev_host)
 
@@ -223,6 +230,16 @@ class SmellProfileEditor(QWidget):
         self._cur_id = None
         if self._list.count():
             self._list.setCurrentRow(0)
+
+    def select_by_id(self, profile_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按 profile id 选中（行文本即 pid）。
+        返回 True=真选中，False=没找到（主窗按此提示"未定位"）。"""
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            if it is not None and it.text() == profile_id:
+                self._list.setCurrentRow(i)
+                return True
+        return False
 
     def _on_select(self, cur, _prev) -> None:
         if cur is None:
@@ -397,3 +414,12 @@ class SmellProfileEditor(QWidget):
     def _preview_sniff(self) -> None:
         if self._view is not None:
             self._view.page().runJavaScript("window.__sniff && window.__sniff();")
+
+    def _reload_preview(self) -> None:
+        """重载预览页（5173 未起/起晚导致白屏时的重试入口，P3）。
+        loadFinished 已绑定 _push_preview，重载成功后自动重推当前 profile。"""
+        if self._view is None:
+            QMessageBox.information(
+                self, "重载预览", "QtWebEngine 不可用，预览无法重载（以游戏内为准）。")
+            return
+        self._view.load(QUrl(PREVIEW_URL))

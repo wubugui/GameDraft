@@ -1,14 +1,17 @@
 class_name RuntimeUniformShadowField
 extends RefCounted
 
-var environment: Dictionary
+const DEG2RAD := PI / 180.0
+
+var env: Dictionary
 
 
-func _init(env: Dictionary) -> void: environment = env
+func _init(next_env: Dictionary) -> void:
+	env = next_env
+
+
 func sample(_world_x: float = 0.0, _world_y: float = 0.0) -> Dictionary:
-	var key: Variant = environment.get("key", {})
-	var shadow: Variant = environment.get("shadow", {})
 	return {
-		"angleRad": deg_to_rad(float(key.get("azimuthDeg", 125.0)) + 180.0),
-		"length": float(shadow.get("length", 0.7)),
+		"angleRad": (float(env.key.azimuthDeg) + 180.0) * DEG2RAD,
+		"length": env.shadow.length,
 	}

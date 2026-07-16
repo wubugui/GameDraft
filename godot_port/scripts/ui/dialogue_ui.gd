@@ -84,7 +84,7 @@ func destroy() -> void:
 func _ensure_root() -> void:
 	if root != null: return
 	root = Control.new(); root.name = "DialogueUI"; root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.mouse_filter = Control.MOUSE_FILTER_PASS
-	var width := renderer.get_screen_width(); var height := renderer.get_screen_height(); var box_width := width - BOX_MARGIN * 2.0; var box_y := height - BOX_HEIGHT - BOX_MARGIN
+	var width := renderer.screen_width; var height := renderer.screen_height; var box_width := width - BOX_MARGIN * 2.0; var box_y := height - BOX_HEIGHT - BOX_MARGIN
 	scene_dim = ColorRect.new(); scene_dim.position = Vector2.ZERO; scene_dim.size = Vector2(width, height); scene_dim.color = Color(0, 0, 0, 0.25); scene_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE; scene_dim.visible = false; root.add_child(scene_dim)
 	var panel := Panel.new(); panel.position = Vector2(BOX_MARGIN, box_y); panel.size = Vector2(box_width, BOX_HEIGHT); panel.mouse_filter = Control.MOUSE_FILTER_IGNORE; panel.add_theme_stylebox_override("panel", _panel_style(Color("130f0a", 0.92), Color("6b5a3e"), 1.5, 4)); root.add_child(panel)
 	portrait = TextureRect.new(); portrait.position = Vector2(BOX_MARGIN, height - PORTRAIT_SIZE + 4.0); portrait.size = Vector2(PORTRAIT_SIZE, PORTRAIT_SIZE); portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE; portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED; portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE; portrait.visible = false; root.add_child(portrait)
@@ -103,7 +103,7 @@ func _show_line(payload: Variant) -> void:
 	speaker.text = str(payload.get("speaker", "")); full_text = str(payload.get("text", "")); body.text = ""; displayed_chars = 0; typewriter_time = 0.0; showing_full_text = full_text.is_empty(); waiting_for_advance = full_text.is_empty(); waiting_for_choice = false; scene_dim.visible = payload.get("dim") == true
 	current_inset = 0.0; var ref: Variant = payload.get("portrait")
 	if ref is Dictionary and not str(ref.get("slug", "")).is_empty() and not str(ref.get("emotion", "")).is_empty():
-		var path := "/resources/runtime/images/dialogue_portraits/%s/%s_%s.png" % [ref.slug, ref.slug, ref.emotion]; var resolved_path := asset_manager.locator.resolve_url(path, RuntimeResourceLocator.MEDIA); var texture: Variant = asset_manager.load_texture(path) if FileAccess.file_exists(resolved_path) else null
+		var path := "/resources/runtime/images/dialogue_portraits/%s/%s_%s.png" % [ref.slug, ref.slug, ref.emotion]; var resolved_path := RuntimeResourceLocator.get_default().resolve_url(path, RuntimeResourceLocator.MEDIA); var texture: Variant = asset_manager.load_texture(path) if FileAccess.file_exists(resolved_path) else null
 		if texture is Texture2D: portrait.texture = texture; portrait.visible = true; current_inset = PORTRAIT_INSET
 		else: portrait.visible = false
 	else: portrait.visible = false
@@ -113,7 +113,7 @@ func _show_line(payload: Variant) -> void:
 func _show_choices(payload: Variant) -> void:
 	if not payload is Array: return
 	_ensure_root(); _clear_choices(); waiting_for_choice = true; waiting_for_advance = false; current_choices = payload.duplicate(true)
-	var box_width := renderer.get_screen_width() - BOX_MARGIN * 2.0; var row_width := box_width - current_inset; var box_y := renderer.get_screen_height() - BOX_HEIGHT - BOX_MARGIN
+	var box_width := renderer.screen_width - BOX_MARGIN * 2.0; var row_width := box_width - current_inset; var box_y := renderer.screen_height - BOX_HEIGHT - BOX_MARGIN
 	choices_box = Control.new(); choices_box.name = "DialogueChoices"; choices_box.position = Vector2(BOX_MARGIN + current_inset, box_y - payload.size() * 36.0 - 10.0); choices_box.size = Vector2(row_width, payload.size() * 36.0); root.add_child(choices_box)
 	for display_index: int in range(current_choices.size()):
 		var choice_value: Variant = current_choices[display_index]
@@ -173,9 +173,9 @@ func _on_prepare_beat(_payload: Variant = null) -> void:
 func _layout_speaker() -> void:
 	if speaker == null or speaker_plate == null: return
 	if speaker.text.is_empty(): speaker.visible = false; speaker_plate.visible = false; return
-	var box_y := renderer.get_screen_height() - BOX_HEIGHT - BOX_MARGIN
+	var box_y := renderer.screen_height - BOX_HEIGHT - BOX_MARGIN
 	var plate_x := BOX_MARGIN + 12.0 + current_inset; var plate_y := box_y + 8.0
-	var max_width := renderer.get_screen_width() - BOX_MARGIN * 2.0 - 24.0 - current_inset
+	var max_width := renderer.screen_width - BOX_MARGIN * 2.0 - 24.0 - current_inset
 	var plate_width := minf(speaker.get_minimum_size().x + 24.0, max_width)
 	speaker_plate.position = Vector2(plate_x, plate_y); speaker_plate.size = Vector2(plate_width, 26.0); speaker_plate.visible = true
 	speaker.position = Vector2(plate_x + 12.0, plate_y + 5.0); speaker.size = Vector2(maxf(0.0, plate_width - 24.0), 21.0); speaker.visible = true
@@ -183,7 +183,7 @@ func _layout_speaker() -> void:
 
 func _relayout_text() -> void:
 	if body == null: return
-	var box_width := renderer.get_screen_width() - BOX_MARGIN * 2.0; var box_y := renderer.get_screen_height() - BOX_HEIGHT - BOX_MARGIN
+	var box_width := renderer.screen_width - BOX_MARGIN * 2.0; var box_y := renderer.screen_height - BOX_HEIGHT - BOX_MARGIN
 	var left := BOX_MARGIN + 20.0 + current_inset; var wrap_width := maxf(80.0, box_width - 40.0 - current_inset)
 	body.position = Vector2(left, box_y + 46.0); body.size = Vector2(wrap_width, BOX_HEIGHT - 58.0)
 

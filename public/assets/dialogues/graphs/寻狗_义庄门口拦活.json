@@ -105,7 +105,10 @@
         "kind": "npc"
       },
       "text": "还没去嗦？巷口墙根，苇席底下。手脚麻利点。",
-      "next": "end_n"
+      "next": "end_n",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "lg_carrying": {
       "type": "line",
@@ -113,7 +116,10 @@
         "kind": "npc"
       },
       "text": "背都背起了还杵到门口做啥子？搁凳上切！",
-      "next": "end_n"
+      "next": "end_n",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "lg_placed": {
       "type": "line",
@@ -121,7 +127,10 @@
         "kind": "npc"
       },
       "text": "放下了就找管事结钱，钱在他手头。",
-      "next": "end_n"
+      "next": "end_n",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "end_n": {
       "type": "end"

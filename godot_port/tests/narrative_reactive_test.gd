@@ -14,7 +14,7 @@ func _run() -> void:
 	var narrative := RuntimeNarrativeStateManager.new(bus, flags, executor)
 	narrative.init({"eventBus": bus, "flagStore": flags, "strings": null, "assetManager": null})
 	narrative.set_condition_eval_context_factory(func() -> Dictionary:
-		return {"evaluateList": Callable(self, "_evaluate_list")}
+		return {"flagStore": flags, "narrativeState": narrative}
 	)
 	narrative.register_graphs([
 		_graph("plain", [{"id": "plain_go", "from": "a", "to": "b", "trigger": "reactive", "conditions": [{"flag": "r_plain"}]}]),
@@ -64,22 +64,3 @@ func _run() -> void:
 
 func _graph(id: String, transitions: Array) -> Dictionary:
 	return {"id": id, "ownerType": "flow", "initialState": "a", "states": {"a": {"id": "a"}, "b": {"id": "b"}, "c": {"id": "c"}}, "transitions": transitions}
-
-
-func _evaluate_list(conditions: Array) -> bool:
-	for condition: Variant in conditions:
-		if not _evaluate(condition):
-			return false
-	return true
-
-
-func _evaluate(condition: Variant) -> bool:
-	if not condition is Dictionary:
-		return false
-	if condition.get("all") is Array:
-		return condition.all.all(func(child: Variant) -> bool: return _evaluate(child))
-	if condition.get("any") is Array:
-		return condition.any.any(func(child: Variant) -> bool: return _evaluate(child))
-	if condition.get("not") is Dictionary:
-		return not _evaluate(condition.not)
-	return flags.eval_pure_flag_conjunction([condition])

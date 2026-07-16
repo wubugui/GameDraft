@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import QSettings
-from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QGraphicsView
+from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtWidgets import QApplication, QGraphicsView, QWidget
 
 THEME_LIGHT: Final[str] = "light"
 THEME_DARK: Final[str] = "dark"
@@ -22,6 +22,36 @@ DEFAULT_FONT_PX: Final[int] = 13
 MIN_FONT_PX: Final[int] = 9
 MAX_FONT_PX: Final[int] = 20
 
+FONT_ROLE_BASE: Final[str] = "base"
+FONT_ROLE_SECONDARY: Final[str] = "secondary"
+FONT_ROLE_HINT: Final[str] = "hint"
+FONT_ROLE_PROMINENT: Final[str] = "prominent"
+FONT_ROLE_CANVAS_PROMINENT: Final[str] = "canvas-prominent"
+FONT_ROLE_CANVAS_PRIMARY: Final[str] = "canvas-primary"
+FONT_ROLE_CANVAS_SECONDARY: Final[str] = "canvas-secondary"
+FONT_ROLE_CANVAS_MICRO: Final[str] = "canvas-micro"
+
+_FONT_ROLE_SPECS: Final[dict[str, tuple[int, int]]] = {
+    FONT_ROLE_BASE: (0, MIN_FONT_PX),
+    FONT_ROLE_SECONDARY: (-1, 8),
+    FONT_ROLE_HINT: (-2, 8),
+    FONT_ROLE_PROMINENT: (2, MIN_FONT_PX + 2),
+    FONT_ROLE_CANVAS_PROMINENT: (7, 16),
+    FONT_ROLE_CANVAS_PRIMARY: (-1, 9),
+    FONT_ROLE_CANVAS_SECONDARY: (-3, 8),
+    FONT_ROLE_CANVAS_MICRO: (-5, 7),
+}
+
+_WEB_FONT_STEPS: Final[tuple[float, ...]] = (
+    9.0, 10.0, 10.5, 11.0, 11.5, 12.0, 13.0, 14.0, 15.0, 18.0,
+)
+
+_EDITOR_FONT_ROLE_PROP = "editorFontRole"
+_GRAPHICS_FONT_ROLE_ATTR = "_game_draft_font_role"
+_GRAPHICS_FONT_FAMILY_ATTR = "_game_draft_font_family"
+_GRAPHICS_FONT_WEIGHT_ATTR = "_game_draft_font_weight"
+_GRAPHICS_FONT_STYLE_HINT_ATTR = "_game_draft_font_style_hint"
+
 
 def _clamp_font_px(px: object) -> int:
     try:
@@ -29,6 +59,122 @@ def _clamp_font_px(px: object) -> int:
     except (TypeError, ValueError):
         return DEFAULT_FONT_PX
     return max(MIN_FONT_PX, min(MAX_FONT_PX, v))
+
+
+def font_px_for_role(role: str, base_px: int | None = None) -> int:
+    """Resolve an editor typography role from the current global pixel size."""
+    base = current_font_px() if base_px is None else _clamp_font_px(base_px)
+    offset, floor = _FONT_ROLE_SPECS.get(role, _FONT_ROLE_SPECS[FONT_ROLE_BASE])
+    return max(floor, base + offset)
+
+
+def font_role_tokens(base_px: int | None = None) -> dict[str, int]:
+    return {role: font_px_for_role(role, base_px) for role in _FONT_ROLE_SPECS}
+
+
+def make_editor_font(
+    role: str = FONT_ROLE_BASE,
+    *,
+    family: str | None = None,
+    weight: QFont.Weight | None = None,
+    style_hint: QFont.StyleHint | None = None,
+    base_px: int | None = None,
+) -> QFont:
+    app = QApplication.instance()
+    font = QFont(app.font()) if app is not None else QFont()
+    if family:
+        font.setFamily(family)
+    if weight is not None:
+        font.setWeight(weight)
+    if style_hint is not None:
+        font.setStyleHint(style_hint)
+    font.setPixelSize(font_px_for_role(role, base_px))
+    return font
+
+
+def set_editor_font_role(widget: QWidget, role: str) -> None:
+    """Assign a QSS typography role without freezing the widget's current font."""
+    widget.setProperty(_EDITOR_FONT_ROLE_PROP, role)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
+
+
+def set_graphics_text_font(
+    item,
+    role: str,
+    *,
+    family: str | None = None,
+    weight: QFont.Weight | None = None,
+    style_hint: QFont.StyleHint | None = None,
+) -> None:
+    """Tag graphics text so live theme changes can reapply its pixel font."""
+    setattr(item, _GRAPHICS_FONT_ROLE_ATTR, role)
+    setattr(item, _GRAPHICS_FONT_FAMILY_ATTR, family)
+    setattr(item, _GRAPHICS_FONT_WEIGHT_ATTR, weight)
+    setattr(item, _GRAPHICS_FONT_STYLE_HINT_ATTR, style_hint)
+    item.setFont(make_editor_font(
+        role,
+        family=family,
+        weight=weight,
+        style_hint=style_hint,
+    ))
+
+
+def refresh_graphics_scene_fonts(scene) -> None:
+    items = list(scene.items())
+    font_cache: dict[tuple[object, ...], QFont] = {}
+    for item in items:
+        role = getattr(item, _GRAPHICS_FONT_ROLE_ATTR, None)
+        if role:
+            family = getattr(item, _GRAPHICS_FONT_FAMILY_ATTR, None)
+            weight = getattr(item, _GRAPHICS_FONT_WEIGHT_ATTR, None)
+            style_hint = getattr(item, _GRAPHICS_FONT_STYLE_HINT_ATTR, None)
+            key = (role, family, weight, style_hint)
+            font = font_cache.get(key)
+            if font is None:
+                font = make_editor_font(
+                    role,
+                    family=family,
+                    weight=weight,
+                    style_hint=style_hint,
+                )
+                font_cache[key] = font
+            item.setFont(font)
+    for item in items:
+        refresh = getattr(item, "refresh_editor_font", None)
+        if callable(refresh):
+            refresh()
+
+
+def css_font_px(role: str = FONT_ROLE_BASE, base_px: int | None = None) -> str:
+    return f"{font_px_for_role(role, base_px)}px"
+
+
+def web_font_css_tokens(base_px: int | None = None) -> dict[str, str]:
+    """CSS variables that scale Web authoring text without zooming page geometry."""
+    base = current_font_px() if base_px is None else _clamp_font_px(base_px)
+    delta = base - DEFAULT_FONT_PX
+    tokens = {
+        "--editor-host-font-delta": f"{delta}px",
+        "--editor-host-font-prominent": css_font_px(FONT_ROLE_PROMINENT, base),
+    }
+    for step in _WEB_FONT_STEPS:
+        key = f"{step:g}".replace(".", "-")
+        value = max(7.0, step + delta)
+        tokens[f"--editor-host-font-{key}"] = f"{value:g}px"
+    return tokens
+
+
+def font_role_stylesheet(base_px: int = DEFAULT_FONT_PX) -> str:
+    tokens = font_role_tokens(base_px)
+    return "\n".join(
+        f'QWidget[{_EDITOR_FONT_ROLE_PROP}="{role}"] {{ font-size: {px}px; }}'
+        for role, px in tokens.items()
+        if role != FONT_ROLE_BASE
+    )
+
 
 # 与 QSS 主区域一致，减少 Fusion 回退绘制色差（近黑主题，非中性灰）
 _DARK_WINDOW = "#0f0f0f"
@@ -122,10 +268,12 @@ def _stylesheet_flat_dark(base_px: int = DEFAULT_FONT_PX) -> str:
     br, brm = _DARK_BORDER, _DARK_BORDER_MUTED
     tx, ac = _DARK_TEXT, _DARK_ACCENT
     base_px = _clamp_font_px(base_px)
-    sec_px = max(8, base_px - 1)
+    sec_px = font_px_for_role(FONT_ROLE_SECONDARY, base_px)
+    role_qss = font_role_stylesheet(base_px)
     return f"""
         QMainWindow {{ background-color: {w}; }}
         QWidget {{ color: {tx}; font-size: {base_px}px; }}
+        {role_qss}
         QMenuBar {{
             background-color: {w};
             border-bottom: 1px solid {brm};
@@ -369,7 +517,8 @@ def _stylesheet_flat_modern(base_px: int = DEFAULT_FONT_PX) -> str:
     hov = _MODERN_LIST_HOVER
     tbar = _MODERN_TOOLBAR
     base_px = _clamp_font_px(base_px)
-    sec_px = max(8, base_px - 1)
+    sec_px = font_px_for_role(FONT_ROLE_SECONDARY, base_px)
+    role_qss = font_role_stylesheet(base_px)
     return f"""
         QMainWindow {{ background-color: {w}; }}
         QWidget {{
@@ -377,6 +526,7 @@ def _stylesheet_flat_modern(base_px: int = DEFAULT_FONT_PX) -> str:
             font-size: {base_px}px;
             font-family: "PingFang SC", "Helvetica Neue";
         }}
+        {role_qss}
         QMenuBar {{
             background-color: {w};
             border-bottom: 1px solid {brm};
@@ -620,10 +770,12 @@ def _stylesheet_flat_light(base_px: int = DEFAULT_FONT_PX) -> str:
     br, brm = _LIGHT_BORDER, _LIGHT_BORDER_MUTED
     tx, ac = _LIGHT_TEXT, _LIGHT_ACCENT
     base_px = _clamp_font_px(base_px)
-    sec_px = max(8, base_px - 1)
+    sec_px = font_px_for_role(FONT_ROLE_SECONDARY, base_px)
+    role_qss = font_role_stylesheet(base_px)
     return f"""
         QMainWindow {{ background-color: {w}; }}
         QWidget {{ color: {tx}; font-size: {base_px}px; }}
+        {role_qss}
         QMenuBar {{
             background-color: {w};
             border-bottom: 1px solid {brm};
@@ -904,8 +1056,14 @@ def apply_graphics_view_background(view: QGraphicsView, theme_id: str) -> None:
 
 
 def refresh_all_graphics_views(root, theme_id: str) -> None:
-    for v in root.findChildren(QGraphicsView):
-        apply_graphics_view_background(v, theme_id)
+    seen_scenes: set[int] = set()
+    for view in root.findChildren(QGraphicsView):
+        apply_graphics_view_background(view, theme_id)
+        scene = view.scene()
+        if scene is not None and id(scene) not in seen_scenes:
+            seen_scenes.add(id(scene))
+            refresh_graphics_scene_fonts(scene)
+        view.viewport().update()
 
 
 def settings_load_theme() -> str:

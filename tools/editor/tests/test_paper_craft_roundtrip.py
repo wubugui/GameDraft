@@ -216,6 +216,53 @@ class PaperCraftRoundtripTests(unittest.TestCase):
                 ["红白相冲", "纸色不合"],
             )
 
+    def test_line_edit_writes_on_typing_without_focus_loss(self) -> None:
+        # P1-05：行内 QLineEdit 改 textChanged 即时写模型。模拟"打完字不失焦直接
+        # flush（=Ctrl+S/关窗）"——setText 发 textChanged（等价键入），无失焦事件；
+        # flush_to_model 后模型必须已含新值（旧 editingFinished 接法此处会丢字）。
+        with TemporaryDirectory() as td:
+            model = self._build_model(Path(td) / "p")
+            editor = PaperCraftEditor(model)
+            editor.instance_list.setCurrentRow(0)
+            editor.order_combo.setCurrentIndex(0)
+
+            # 每个行内 QLineEdit：键入 → 不失焦 → 立即断言模型已更新。
+            editor.order_title.setText("现改的标题")
+            editor.part_combo.setCurrentIndex(0)
+            editor.part_label.setText("现改的部件名")
+            editor.slot_combo.setCurrentIndex(0)
+            editor.slot_label.setText("现改的槽名")
+            editor.paper_combo.setCurrentIndex(0)
+            editor.paper_label.setText("现改的纸名")
+            editor.finish_combo.setCurrentIndex(0)
+            editor.finish_label.setText("现改的收尾名")
+            editor.instance_label_edit.setText("现改的实例名")
+
+            # flush_to_model 是 Save All / 关窗前的统一钩子：这里必须无损通过。
+            self.assertTrue(editor.flush_to_model())
+            self.assertTrue(editor.confirm_close())
+
+            order0 = model.paper_craft_instances[PC_ID]["orders"][0]
+            self.assertEqual(order0["title"], "现改的标题",
+                             "textChanged 应即时写回，不失焦也不丢字")
+            self.assertEqual(order0["parts"][0]["label"], "现改的部件名")
+            self.assertEqual(order0["slots"][0]["label"], "现改的槽名")
+            self.assertEqual(order0["paperOptions"][0]["label"], "现改的纸名")
+            self.assertEqual(order0["finishOptions"][0]["label"], "现改的收尾名")
+            self.assertEqual(model.paper_craft_instances[PC_ID]["label"], "现改的实例名")
+
+    def test_reload_refs_preserves_action_content(self) -> None:
+        # reload_refs_from_model（切页激活重拉动作编辑器引用候选）不得改动作内容。
+        with TemporaryDirectory() as td:
+            model = self._build_model(Path(td) / "p")
+            editor = PaperCraftEditor(model)
+            editor.instance_list.setCurrentRow(0)
+            editor.order_combo.setCurrentIndex(0)
+            before = copy.deepcopy(model.paper_craft_instances[PC_ID])
+            editor.reload_refs_from_model()
+            self.assertEqual(model.paper_craft_instances[PC_ID], before,
+                             "reload_refs 只重拉候选，不得改任何字段")
+
     def test_instance_label_edit_syncs_index_and_instance(self) -> None:
         # 实例显示名写回须同步 index 行 + 实例文件 label；backgroundImage 守门。
         with TemporaryDirectory() as td:

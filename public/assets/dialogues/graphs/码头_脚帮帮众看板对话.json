@@ -3,8 +3,7 @@
   "id": "码头_脚帮帮众看板对话",
   "entry": "n_17",
   "meta": {
-    "title": "码头_脚帮帮众看板对话",
-    "scenarioId": "码头水鬼"
+    "title": "码头_脚帮帮众看板对话"
   },
   "preconditions": [],
   "nodes": {
@@ -43,7 +42,10 @@
           }
         }
       ],
-      "text": "师傅，这上面写的啥？"
+      "text": "师傅，这上面写的啥？",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_1": {
       "type": "end"
@@ -55,9 +57,8 @@
           "next": "n_start",
           "conditions": [
             {
-              "scenario": "码头水鬼",
-              "phase": "官差已套近乎",
-              "status": "done"
+              "narrative": "scenario_码头官差套近乎",
+              "state": "done"
             }
           ]
         }
@@ -108,7 +109,10 @@
           }
         }
       ],
-      "text": "我前几天还下水洗过澡也，我咋没见过有水猴子？"
+      "text": "我前几天还下水洗过澡也，我咋没见过有水猴子？",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_5": {
       "type": "runActions",
@@ -152,25 +156,20 @@
           }
         }
       ],
-      "text": "你看哈，这上面写的——"
+      "text": "你看哈，这上面写的——",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_7": {
       "type": "runActions",
       "actions": [
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "询问脚帮",
-            "status": "done"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "真相揭示",
-            "status": "done"
+            "sourceType": "dialogue",
+            "sourceId": "码头_脚帮帮众看板对话",
+            "signal": "dock_truth_revealed"
           }
         },
         {
@@ -198,25 +197,11 @@
           }
         },
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "真相揭示（脚帮）",
-            "status": "done"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "真相揭示",
-            "status": "done"
-          }
-        },
-        {
-          "type": "completeScenario",
-          "params": {
-            "scenarioId": "码头水鬼"
+            "sourceType": "dialogue",
+            "sourceId": "码头_脚帮帮众看板对话",
+            "signal": "dock_truth_jiaobang"
           }
         },
         {
@@ -290,7 +275,10 @@
           }
         }
       ],
-      "text": "真的呀？！"
+      "text": "真的呀？！",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_10": {
       "type": "line",
@@ -309,7 +297,10 @@
           }
         }
       ],
-      "text": "关二狗，去不得哟！你摸想钱想疯了。"
+      "text": "关二狗，去不得哟！你摸想钱想疯了。",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_11": {
       "type": "end"
@@ -344,9 +335,9 @@
           "next": "n_2",
           "conditions": [
             {
-              "scenario": "码头水鬼",
-              "phase": "看板初读",
-              "status": "done"
+              "narrative": "flow_dock_water_monkey",
+              "state": "board_read",
+              "reached": true
             }
           ]
         }
@@ -360,9 +351,9 @@
           "next": "n_18",
           "conditions": [
             {
-              "scenario": "码头水鬼",
-              "phase": "真相揭示",
-              "status": "done"
+              "narrative": "scenario_码头真相",
+              "state": "revealed",
+              "reached": true
             }
           ]
         }
@@ -376,9 +367,11 @@
           "next": "n_10",
           "conditions": [
             {
-              "scenario": "码头水鬼",
-              "phase": "真相揭示（脚帮）",
-              "status": "pending"
+              "not": {
+                "narrative": "scenario_码头真相",
+                "state": "revealed_jiaobang",
+                "reached": true
+              }
             }
           ]
         }

@@ -162,7 +162,10 @@
         "kind": "npc"
       },
       "text": "哎哟你背个死人子站到我跟前做啥子嘛！快送切快送切，回头再说！",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

@@ -5,6 +5,28 @@ import { EntityLightingFilter } from '@src/rendering/EntityLightingFilter';
 import { PlanarEntityShadow } from '@src/rendering/EntityShadow';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const escapeHtml = (value: unknown): string => String(value ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+interface WorkbenchPreviewCandidateDetail {
+  id: string;
+  label: string;
+  folderName: string;
+  revisionId: string;
+  animUrl: string;
+  atlasUrl: string;
+  animVersion: string;
+  atlasVersion: string;
+}
+
+function versionedUrl(rawUrl: string, version: unknown): string {
+  const url = new URL(rawUrl, window.location.href);
+  if (version !== undefined && version !== null && String(version)) {
+    url.searchParams.set('v', String(version));
+  }
+  return url.href;
+}
 
 let app: Application;
 let world: Container;          // scaled by zoom; anchor at (0,0)
@@ -17,6 +39,8 @@ let entity: SpriteEntity | null = null;
 let atlasTex: Texture | null = null;
 
 let bundles: any[] = [];
+let candidateBundle: any = null;
+let previewRuntimeReady = false;
 let current: any = null;
 let curDef: any = null;
 let curRaw: any = null;
@@ -27,6 +51,19 @@ let speed = 1;
 let facing: 1 | -1 = 1;
 let zoom = 1;
 let scrubbing = false;
+let selectionGeneration = 0;
+let onionRenderKey = '';
+let previewPageActive = false;
+let previewNeedsFit = true;
+
+function setPreviewZoom(next: number): void {
+  const safe = Math.max(0.001, Math.min(100000, Number(next) || 1));
+  const control = $('zoom') as HTMLInputElement;
+  if (safe > Number(control.max)) control.max = String(Math.ceil(safe * 1.2));
+  if (safe < Number(control.min)) control.min = String(safe);
+  zoom = safe;
+  control.value = String(safe);
+}
 
 // lighting
 let lightFilter: EntityLightingFilter | null = null;
@@ -55,6 +92,30 @@ async function initPixi() {
   app.ticker.add(() => tick(app.ticker.deltaMS / 1000));
   new ResizeObserver(() => layout()).observe($('stageWrap'));
   layout();
+  syncPreviewPageActivity(document.getElementById('previewPage')?.classList.contains('active') === true);
+}
+
+function syncPreviewPageActivity(active: boolean) {
+  previewPageActive = active;
+  if (!app) return;
+  if (!active) {
+    app.ticker.stop();
+    return;
+  }
+  app.ticker.start();
+  requestAnimationFrame(() => {
+    if (!previewPageActive || !app) return;
+    layout();
+    if (previewNeedsFit && curDef) {
+      if (($('bg') as HTMLSelectElement).value === 'scene' && curScene) {
+        setPreviewZoom(sceneComfortZoom());
+        layout();
+      } else {
+        fitZoom();
+      }
+      previewNeedsFit = false;
+    }
+  });
 }
 function layout() {
   if (!app) return;
@@ -105,7 +166,7 @@ async function loadScene(sc: any) {
   if (!sceneBgSprite || !sc) return;
   try {
     sceneBgSprite.texture = await Assets.load(sc.bgUrl); curScene = sc;
-    zoom = sceneComfortZoom(); ($('zoom') as HTMLInputElement).value = String(zoom);
+    setPreviewZoom(sceneComfortZoom());
     layout();
   } catch { toast('场景加载失败'); }
 }
@@ -114,7 +175,12 @@ async function loadScenes() {
     const r = await fetch('/api/anim/scenes').then((x) => x.json());
     sceneList = r.scenes || [];
     const sel = $('sceneBg') as HTMLSelectElement;
-    sel.innerHTML = sceneList.map((s: any, i: number) => `<option value="${i}">${s.name} · ${s.id}</option>`).join('');
+    sel.replaceChildren(...sceneList.map((s: any, i: number) => {
+      const option = document.createElement('option');
+      option.value = String(i);
+      option.textContent = `${s.name} · ${s.id}`;
+      return option;
+    }));
   } catch { /* none */ }
 }
 
@@ -158,7 +224,8 @@ function updateTransport() {
   const i = entity.getFrameIndex(), n = entity.getFrameCount();
   $('frameLabel').textContent = `${i + 1}/${n}`;
   if (!scrubbing) ($('timeline') as HTMLInputElement).value = String(i);
-  $('stageInfo').innerHTML = `${current?.id ?? ''} · <b>${curState}</b> · 帧 ${i + 1}/${n} · 世界 ${curDef.worldWidth}×${curDef.worldHeight} · zoom ${zoom.toFixed(2)}`;
+  const source = current?.isWorkbenchCandidate ? '工作台 H 候选（未发布）' : '已发布资源';
+  $('stageInfo').textContent = `${source} · ${current?.label || current?.id || ''} · ${curState} · 帧 ${i + 1}/${n} · 世界 ${curDef.worldWidth}×${curDef.worldHeight} · zoom ${zoom.toFixed(2)}`;
 }
 
 // ---------- lighting (game modules) ----------
@@ -236,8 +303,14 @@ function makeGhost(slot: number, def: any, tex: Texture, f: 1 | -1): Sprite {
   return s;
 }
 function drawOnion() {
-  onionLayer.removeChildren().forEach((c) => c.destroy());
-  if (!entity || !curDef || !atlasTex || !($('onion') as HTMLInputElement).checked) return;
+  const enabled = ($('onion') as HTMLInputElement).checked;
+  const key = entity && curDef && atlasTex && enabled
+    ? `${current?.id}|${curState}|${entity.getFrameIndex()}|${facing}|${($('onionN') as HTMLInputElement).value}`
+    : 'off';
+  if (key === onionRenderKey) return;
+  onionRenderKey = key;
+  onionLayer.removeChildren().forEach((child) => child.destroy({ children: true, texture: true }));
+  if (!entity || !curDef || !atlasTex || !enabled) return;
   const seq = curDef.states[curState].frames;
   const n = seq.length, i = entity.getFrameIndex();
   const k = Math.max(1, Math.min(6, +($('onionN') as HTMLInputElement).value || 2));
@@ -258,6 +331,7 @@ async function loadIndex() {
   renderCharList(); fillCompareChars();
 }
 function renderCharList() {
+  renderCandidatePreview();
   const q = ($('search') as HTMLInputElement).value.trim().toLowerCase();
   const list = $('charList'); list.innerHTML = '';
   const shown = bundles.filter((b) => !q || b.id.toLowerCase().includes(q));
@@ -266,17 +340,91 @@ function renderCharList() {
     const el = document.createElement('div');
     el.className = 'char' + (current?.id === b.id ? ' sel' : '') + (b.summary?.valid ? '' : ' bad');
     const st = b.summary?.valid ? `${b.summary.stateCount} 状态 · ${b.summary.frameCount ?? '?'} 帧` : '无效 anim.json';
-    el.innerHTML = `<div>${b.id}</div><div class="sub">${st}${b.atlasExists ? '' : ' · 缺图'}</div>`;
+    const title = document.createElement('div'); title.textContent = b.id;
+    const sub = document.createElement('div'); sub.className = 'sub'; sub.textContent = `${st}${b.atlasExists ? '' : ' · 缺图'}`;
+    el.append(title, sub);
     el.onclick = () => selectChar(b);
     list.appendChild(el);
   }
 }
+
+function renderCandidatePreview() {
+  const root = $('candidatePreview');
+  root.replaceChildren();
+  if (!candidateBundle) return;
+  const heading = document.createElement('h2');
+  heading.textContent = '工作台 H 候选 · 未发布';
+  const row = document.createElement('div');
+  row.className = `char candidate${current?.id === candidateBundle.id ? ' sel' : ''}${candidateBundle.summary?.valid === false ? ' bad' : ''}`;
+  row.title = `${candidateBundle.folderName} · ${candidateBundle.revisionId}`;
+  const title = document.createElement('div');
+  title.textContent = candidateBundle.label;
+  const sub = document.createElement('div');
+  sub.className = 'sub';
+  sub.textContent = candidateBundle.summary?.valid === false
+    ? '真实渲染器加载失败 · 未发布'
+    : candidateBundle.summary?.valid
+      ? `${candidateBundle.summary.stateCount} 状态 · ${candidateBundle.summary.frameCount ?? '?'} 帧 · 未发布`
+      : '点击后直接用 SpriteEntity 校验 · 不会发布';
+  row.append(title, sub);
+  row.onclick = () => void selectChar(candidateBundle);
+  root.append(heading, row);
+}
+
+function installWorkbenchPreviewBridge() {
+  window.addEventListener('workbench-preview-candidate', (event) => {
+    const detail = (event as CustomEvent<WorkbenchPreviewCandidateDetail>).detail;
+    if (!detail
+      || !detail.id
+      || !detail.label
+      || !detail.animUrl
+      || !detail.atlasUrl
+      || !detail.revisionId) {
+      toast('H 候选预览参数不完整');
+      return;
+    }
+    candidateBundle = {
+      id: detail.id,
+      label: detail.label,
+      folderName: detail.folderName,
+      revisionId: detail.revisionId,
+      animUrl: detail.animUrl,
+      atlasUrl: detail.atlasUrl,
+      animMtime: detail.animVersion,
+      atlasMtime: detail.atlasVersion,
+      atlasExists: true,
+      summary: null,
+      isWorkbenchCandidate: true,
+    };
+    renderCharList();
+    if (previewRuntimeReady) void selectChar(candidateBundle);
+  });
+}
+
 async function selectChar(b: any) {
+  const generation = ++selectionGeneration;
   try {
     current = b; renderCharList();
-    curRaw = await fetch(b.animUrl + '?v=' + b.animMtime).then((r) => r.json());
-    atlasTex = await Assets.load(b.atlasUrl + '?v=' + b.atlasMtime);
+    const [nextRaw, nextAtlas] = await Promise.all([
+      fetch(versionedUrl(b.animUrl, b.animMtime)).then((response) => {
+        if (!response.ok) throw new Error(`anim.json HTTP ${response.status}`);
+        return response.json();
+      }),
+      Assets.load(versionedUrl(b.atlasUrl, b.atlasMtime)),
+    ]);
+    if (generation !== selectionGeneration) return;
+    curRaw = nextRaw;
+    atlasTex = nextAtlas;
     curDef = normalizeAnimationSetDef(curRaw, atlasTex!.width, atlasTex!.height);
+    if (b.isWorkbenchCandidate) {
+      b.summary = {
+        valid: true,
+        stateCount: Object.keys(curDef.states).length,
+        frameCount: curDef.atlasFrames?.length,
+      };
+      b.atlasExists = true;
+      renderCharList();
+    }
     if (entity) { world.removeChild(entity.container); entity.destroy(); }
     entity = new SpriteEntity();
     entity.loadFromDef(atlasTex!, curDef);
@@ -287,17 +435,32 @@ async function selectChar(b: any) {
     shadow = new PlanarEntityShadow(shadowLayer, null);
     rebuildLighting();
     renderStates(); renderInfo(b, atlasTex!);
-    if (($('bg') as HTMLSelectElement).value === 'scene' && curScene) {
-      zoom = sceneComfortZoom(); ($('zoom') as HTMLInputElement).value = String(zoom); layout();
-    } else fitZoom();
+    if (!previewPageActive) {
+      previewNeedsFit = true;
+    } else if (($('bg') as HTMLSelectElement).value === 'scene' && curScene) {
+      setPreviewZoom(sceneComfortZoom()); layout();
+      previewNeedsFit = false;
+    } else {
+      fitZoom();
+      previewNeedsFit = false;
+    }
     const want = new URLSearchParams(location.search).get('state');
     const states = Object.keys(curDef.states);
     selectState(want && states.includes(want) ? want : states[0]);
-  } catch (e: any) { toast('加载失败: ' + (e?.message || e)); }
+  } catch (e: any) {
+    if (generation === selectionGeneration) {
+      if (b.isWorkbenchCandidate) {
+        b.summary = { valid: false };
+        renderCharList();
+      }
+      toast('加载失败: ' + (e?.message || e));
+    }
+  }
 }
 function selectState(name: string) {
   if (!entity || !name || !curDef.states[name]) return;
   curState = name;
+  onionRenderKey = '';
   entity.playAnimation(name); entity.setDirection(facing, 0); setPlaying(true);
   const n = entity.getFrameCount();
   const tl = $('timeline') as HTMLInputElement; tl.max = String(Math.max(0, n - 1)); tl.value = '0';
@@ -313,15 +476,25 @@ function renderStates() {
     el.textContent = name; el.onclick = () => selectState(name); box.appendChild(el);
   }
   const sel = $('stateSel') as HTMLSelectElement;
-  sel.innerHTML = Object.keys(curDef.states).map((n) => `<option>${n}</option>`).join('');
+  sel.replaceChildren(...Object.keys(curDef.states).map((name) => {
+    const option = document.createElement('option'); option.value = name; option.textContent = name; return option;
+  }));
   sel.value = curState;
 }
 function renderInfo(b: any, tex: Texture) {
   const d = curDef;
   const atlasOk = tex.width <= 2048 && tex.height <= 2048;
   const gridOk = d.cols * d.cellWidth === tex.width && d.rows * d.cellHeight === tex.height;
+  const previewLabel = b.label || b.id;
+  const sourceBadge = b.isWorkbenchCandidate
+    ? '<span class="pill under_review">工作台 H 候选 · 未发布</span>'
+    : '<span class="pill published">已发布</span>';
+  const candidateOrigin = b.isWorkbenchCandidate
+    ? `<div class="kv"><span class="k">工作区版本</span><span class="v mono">${escapeHtml(b.revisionId)}</span></div>`
+    : '';
   $('info').innerHTML = `
-    <div class="card"><h2 style="margin:0 0 6px">${b.id}</h2>
+    <div class="card"><h2 style="margin:0 0 6px">${escapeHtml(previewLabel)} ${sourceBadge}</h2>
+      ${candidateOrigin}
       <div class="kv"><span class="k">图集</span><span class="v mono">${tex.width}×${tex.height} <span class="pill ${atlasOk ? 'ok' : 'no'}">${atlasOk ? '≤2K' : '>2K!'}</span></span></div>
       <div class="kv"><span class="k">网格</span><span class="v mono">${d.cols}×${d.rows} <span class="pill ${gridOk ? 'ok' : 'no'}">${gridOk ? '匹配' : '不匹配'}</span></span></div>
       <div class="kv"><span class="k">单格 cell</span><span class="v mono">${d.cellWidth}×${d.cellHeight}</span></div>
@@ -339,7 +512,7 @@ function renderStateInfo() {
     const box = curDef.atlasFrames?.[slot];
     return `<tr><td>${i}</td><td class="mono">${slot}</td><td class="mono">${slot % curDef.cols},${Math.floor(slot / curDef.cols)}</td><td class="mono">${box ? box.contentWidth + '×' + box.contentHeight : '—'}</td></tr>`;
   }).join('');
-  el.innerHTML = `<div class="card"><h2 style="margin:0 0 6px">状态 · ${curState}</h2>
+  el.innerHTML = `<div class="card"><h2 style="margin:0 0 6px">状态 · ${escapeHtml(curState)}</h2>
       <div class="kv"><span class="k">帧率</span><span class="v mono">${s.frameRate} fps</span></div>
       <div class="kv"><span class="k">循环</span><span class="v"><span class="pill ${s.loop ? 'ok' : 'no'}">${s.loop}</span></span></div>
       <div class="kv"><span class="k">帧数</span><span class="v mono">${s.frames.length}</span></div>
@@ -350,7 +523,9 @@ function renderStateInfo() {
 // ---------- compare ----------
 function fillCompareChars() {
   const sel = $('cmpChar') as HTMLSelectElement; const prev = sel.value;
-  sel.innerHTML = bundles.filter((b) => b.summary?.valid).map((b) => `<option value="${b.id}">${b.id}</option>`).join('');
+  sel.replaceChildren(...bundles.filter((b) => b.summary?.valid).map((bundle) => {
+    const option = document.createElement('option'); option.value = bundle.id; option.textContent = bundle.id; return option;
+  }));
   if (prev) sel.value = prev;
 }
 async function loadCompareB() {
@@ -360,12 +535,14 @@ async function loadCompareB() {
   if (entityB) { world.removeChild(entityB.container); entityB.destroy(); entityB = null; }
   if (!on) { if (entity) entity.x = 0; return; }
   const id = ($('cmpChar') as HTMLSelectElement).value; const b = bundles.find((x) => x.id === id); if (!b) return;
-  const raw = await fetch(b.animUrl + '?v=' + b.animMtime).then((r) => r.json());
-  atlasTexB = await Assets.load(b.atlasUrl + '?v=' + b.atlasMtime);
+  const raw = await fetch(versionedUrl(b.animUrl, b.animMtime)).then((r) => r.json());
+  atlasTexB = await Assets.load(versionedUrl(b.atlasUrl, b.atlasMtime));
   curDefB = normalizeAnimationSetDef(raw, atlasTexB!.width, atlasTexB!.height);
   entityB = new SpriteEntity(); entityB.loadFromDef(atlasTexB!, curDefB);
   const sel = $('cmpState') as HTMLSelectElement;
-  sel.innerHTML = Object.keys(curDefB.states).map((s) => `<option>${s}</option>`).join('');
+  sel.replaceChildren(...Object.keys(curDefB.states).map((state) => {
+    const option = document.createElement('option'); option.value = state; option.textContent = state; return option;
+  }));
   const st = curDefB.states[curState] ? curState : Object.keys(curDefB.states)[0];
   sel.value = st; entityB.playAnimation(st); entityB.setDirection(facing, 0);
   const off = (curDef.worldWidth + curDefB.worldWidth) * 0.6;
@@ -397,38 +574,50 @@ function openAtlas() {
 async function exportGif() {
   if (!entity || !curState) return;
   toast('导出 GIF 中…');
-  const { GIFEncoder, quantize, applyPalette } = await import('gifenc');
-  const seq = curDef.states[curState].frames;
-  const fps = curDef.states[curState].frameRate || 8;
-  const wasPlaying = playing; setPlaying(false);
-  const W = app.renderer.width, H = app.renderer.height;
-  const off = document.createElement('canvas'); off.width = W; off.height = H;
-  const octx = off.getContext('2d')!;
-  const gif = GIFEncoder();
-  const ovVisible = overlay.visible; overlay.visible = false;
-  for (let i = 0; i < seq.length; i++) {
-    entity.setFrameIndex(i); driveLighting(); drawOnion(); world.scale.set(zoom);
-    app.renderer.render(app.stage);
-    const c: HTMLCanvasElement = (app.renderer.extract as any).canvas(app.stage);
-    octx.clearRect(0, 0, W, H); octx.drawImage(c, 0, 0);
-    const { data } = octx.getImageData(0, 0, W, H);
-    const palette = quantize(data, 256);
-    const index = applyPalette(data, palette);
-    gif.writeFrame(index, W, H, { palette, delay: Math.round(1000 / fps) });
+  const wasPlaying = playing;
+  const previousFrame = entity.getFrameIndex();
+  const overlayWasVisible = overlay.visible;
+  try {
+    const { GIFEncoder, quantize, applyPalette } = await import('gifenc');
+    const seq = curDef.states[curState].frames;
+    const fps = curDef.states[curState].frameRate || 8;
+    setPlaying(false);
+    const W = app.renderer.width, H = app.renderer.height;
+    const off = document.createElement('canvas'); off.width = W; off.height = H;
+    const octx = off.getContext('2d')!;
+    const gif = GIFEncoder();
+    overlay.visible = false;
+    for (let i = 0; i < seq.length; i++) {
+      entity.setFrameIndex(i); driveLighting(); drawOnion(); world.scale.set(zoom);
+      app.renderer.render(app.stage);
+      const canvas: HTMLCanvasElement = (app.renderer.extract as any).canvas(app.stage);
+      octx.clearRect(0, 0, W, H); octx.drawImage(canvas, 0, 0);
+      const { data } = octx.getImageData(0, 0, W, H);
+      const palette = quantize(data, 256);
+      const index = applyPalette(data, palette);
+      gif.writeFrame(index, W, H, { palette, delay: Math.round(1000 / fps) });
+    }
+    gif.finish();
+    const blob = new Blob([gif.bytes()], { type: 'image/gif' });
+    const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob);
+    anchor.download = `${current.id}_${curState}.gif`; anchor.click(); URL.revokeObjectURL(anchor.href);
+    toast('GIF 已导出');
+  } catch (error: any) {
+    toast(`GIF 导出失败: ${error?.message || error}`);
+  } finally {
+    overlay.visible = overlayWasVisible;
+    entity.setFrameIndex(previousFrame);
+    onionRenderKey = '';
+    setPlaying(wasPlaying);
   }
-  gif.finish(); overlay.visible = ovVisible; setPlaying(wasPlaying);
-  const blob = new Blob([gif.bytes()], { type: 'image/gif' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = `${current.id}_${curState}.gif`; a.click(); URL.revokeObjectURL(a.href);
-  toast('GIF 已导出');
 }
 
 // ---------- controls ----------
 function setPlaying(p: boolean) { playing = p; $('btnPlay').textContent = p ? '⏸ 暂停' : '▶ 播放'; entity?.setPlaying(p); }
 function fitZoom() {
   if (!curDef || !app) return;
-  zoom = Math.max(0.05, Math.min(6, (app.renderer.height * 0.55) / curDef.worldHeight));
-  ($('zoom') as HTMLInputElement).value = String(zoom); world.scale.set(zoom); applyPlacement();
+  setPreviewZoom((app.renderer.height * 0.55) / curDef.worldHeight);
+  world.scale.set(zoom); applyPlacement();
 }
 function bindControls() {
   $('btnPlay').onclick = () => setPlaying(!playing);
@@ -466,8 +655,14 @@ function bindControls() {
   ($('cmp') as HTMLInputElement).onchange = () => loadCompareB();
   ($('cmpChar') as HTMLSelectElement).onchange = () => loadCompareB();
   ($('cmpState') as HTMLSelectElement).onchange = () => { const s = ($('cmpState') as HTMLSelectElement).value; entityB?.playAnimation(s); };
+  window.addEventListener('workbench-page-change', (event) => {
+    const pageId = (event as CustomEvent<{ pageId?: string }>).detail?.pageId;
+    syncPreviewPageActivity(pageId === 'previewPage');
+  });
   window.addEventListener('keydown', (e) => {
-    if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'SELECT') return;
+    if (!document.getElementById('previewPage')?.classList.contains('active')) return;
+    const target = e.target instanceof HTMLElement ? e.target : null;
+    if (target && (target.matches('input,select,textarea,button') || target.isContentEditable || target.closest('[contenteditable="true"]'))) return;
     if (e.key === ' ') { e.preventDefault(); setPlaying(!playing); }
     else if (e.key === 'ArrowLeft') { setPlaying(false); entity?.setFrameIndex(entity.getFrameIndex() - 1); }
     else if (e.key === 'ArrowRight') { setPlaying(false); entity?.setFrameIndex(entity.getFrameIndex() + 1); }
@@ -486,8 +681,14 @@ function toast(msg: string) { const t = $('toast'); t.textContent = msg; t.class
 
 async function main() {
   await initPixi(); bindControls(); bindLiveRefresh(); await loadIndex(); await loadScenes();
+  previewRuntimeReady = true;
+  if (candidateBundle) {
+    await selectChar(candidateBundle);
+    return;
+  }
   const want = new URLSearchParams(location.search).get('char');
   const b = bundles.find((x) => x.id === want) || bundles.find((x) => x.summary?.valid);
   if (b) await selectChar(b);
 }
+installWorkbenchPreviewBridge();
 main();

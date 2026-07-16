@@ -60,7 +60,13 @@ class CanvasIncrementalUpdateTests(unittest.TestCase):
 
     def _edge_count(self, w) -> int:
         g = w._oden._graph
-        return sum(len(p.connected_ports()) for n in g.all_nodes() for p in n.output_ports())
+        # 分组框 BackdropNode 无端口:数边只看带 output_ports 的真节点
+        return sum(
+            len(p.connected_ports())
+            for n in g.all_nodes()
+            if hasattr(n, "output_ports")
+            for p in n.output_ports()
+        )
 
     def test_text_edit_updates_in_place_without_rebuild_and_keeps_edges(self) -> None:
         w = DialogueGraphEditorWidget(str(_PROJECT_ROOT), project_model=self._pm)

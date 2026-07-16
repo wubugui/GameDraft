@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_偷鸡",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·偷鸡（概率·一次性·失败结仇）"
+  },
+  "nodes": {
+    "root": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "背街这户人家后院，篱笆里一只肥鸡踱来踱去。"
+      },
+      "options": [
+        {
+          "id": "steal",
+          "text": "偷一把",
+          "next": "steal"
+        },
+        {
+          "id": "leave",
+          "text": "算了",
+          "next": "leave"
+        }
+      ]
+    },
+    "steal": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗蹑手蹑脚凑到篱笆边，猛地伸手抓向那只肥鸡——",
+      "next": "roll"
+    },
+    "roll": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "randomBranch",
+          "params": {
+            "probability": 0.45,
+            "aboveActions": [
+              {
+                "type": "giveItem",
+                "params": {
+                  "id": "feiji",
+                  "count": 1
+                }
+              },
+              {
+                "type": "emitNarrativeSignal",
+                "params": {
+                  "sourceType": "dialogue",
+                  "sourceId": "寻狗_偷鸡",
+                  "signal": "touji_win"
+                }
+              }
+            ],
+            "belowActions": [
+              {
+                "type": "decHealth",
+                "params": {
+                  "amount": 1
+                }
+              },
+              {
+                "type": "emitNarrativeSignal",
+                "params": {
+                  "sourceType": "dialogue",
+                  "sourceId": "寻狗_偷鸡",
+                  "signal": "touji_lose"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "next": "chk"
+    },
+    "chk": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_偷鸡",
+              "state": "win",
+              "reached": true
+            }
+          ],
+          "next": "win_line"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_偷鸡",
+              "state": "lose",
+              "reached": true
+            }
+          ],
+          "next": "lose_line"
+        }
+      ],
+      "defaultNext": "end1"
+    },
+    "win_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "鸡到手！扑腾着塞进怀里，关二狗撒腿就溜。",
+      "next": "end1"
+    },
+    "lose_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "鸡扑腾着乱叫，主人家听见动静抄起棍子冲出来——关二狗抱头鼠窜，还是挨了两下。",
+      "next": "end1"
+    },
+    "leave": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗掂量了下——这鸡瞅着精，算了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

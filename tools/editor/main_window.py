@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import time
+import inspect
+import functools
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +22,9 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QStackedWidget, QToolButton, QMenu,
 )
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QSize, QSettings
+from PySide6.QtCore import (
+    Qt, QProcess, QProcessEnvironment, QTimer, QSize, QSettings, Signal,
+)
 
 from . import theme
 from .project_model import ProjectModel
@@ -187,7 +191,40 @@ class _StackPageHost(QWidget):
         return self._MIN
 
 
+@functools.cache
+def _flush_accepts_save_all(func: Any) -> bool:
+    """按签名判定某 flush 是否接受 for_save_all 关键字参数(结果缓存)。
+
+    E 修复(对抗组 V5):旧写法
+        try: flush(for_save_all=True)
+        except TypeError: flush()
+    把「flush **函数体内**自己抛的 TypeError」(如坏数据 int(None))也当成
+    「旧签名不认识该 kwarg」,回退再调一次 flush——累加型 flush 被静默执行两次。
+    改成先按签名判定该不该带 kwarg:只在**真·旧签名**(既无 for_save_all 形参、也
+    无 **kwargs)时走无参调用;其余一律带 kwarg。这样体内 TypeError 会正常向上抛,
+    被 _flush_editors_to_model 的 except Exception 记为该面板失败,绝不二次执行。
+    """
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):
+        # 无法内省(极罕见的 C 实现等):按新签名带 kwarg 尝试,不做无参回退。
+        return True
+    for p in sig.parameters.values():
+        if p.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if p.name == "for_save_all" and p.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+    return False
+
+
 class MainWindow(QMainWindow):
+    # LSP 客户端状态回调来自后台线程——经 Qt Signal 自动排队回主线程再动 UI。
+    _lsp_state_signal = Signal(str)
+    _lsp_info_signal = Signal(dict)
+
     def _stack_index_of_page(self, page: QWidget | None) -> int:
         """页都包在 _StackPageHost 里，QStackedWidget.indexOf 对孙子控件恒返 -1——
         必须逐页解包比较（审查 P1-29：F5 不再自动切「运行与预览」页的根因）。"""
@@ -259,13 +296,48 @@ class MainWindow(QMainWindow):
         self._nav_cursor: int = -1
         self._nav_replaying: bool = False
 
+        # json_lang LSP(「JSON=语言」大脑):overlay 发布 + 查引用/全局搜索。缺席即降级。
+        self._lsp_client = None
+        self._lsp_disabled_reason = ""
+        self._lsp_info: dict = {}
+        self._lsp_pending_overlays: set[tuple[str, str]] = set()
+        self._lsp_overlay_timer = QTimer(self)
+        self._lsp_overlay_timer.setSingleShot(True)
+        self._lsp_overlay_timer.timeout.connect(self._flush_lsp_overlays)
+        self._model.data_changed.connect(self._on_lsp_overlay_dirty)
+        self._lsp_state_signal.connect(self._on_lsp_state_changed)
+        self._lsp_info_signal.connect(self._on_lsp_info_fetched)
+        self._global_search_dialog = None
+        self._lsp_refs_dialog = None
+        # 全局搜索超时报告的"进程活着却不应答"嫌疑标记(状态芯片如实降级提示)。
+        self._lsp_suspect_hung = False
+        # 面板自管脏态(如图对话 tab 的 dirty_state_changed 信号):stack 索引 → 页签名。
+        # 芯片汇总与页签 ● 前缀消费;信号缺席时该表恒空,行为不变。
+        self._panel_dirty_labels: dict[int, str] = {}
+
         self._build_menus()
         self._build_menu_bar_corner()
         self._status = QStatusBar()
         self.setStatusBar(self._status)
+        self._build_status_chips()
+
+        # 状态芯片刷新:数据变更走 200ms 防抖(批量编辑不抖动);
+        # 2.5s 看门狗兜底捕获无信号可挂的迁移(游戏预热就绪、LSP 进程静默死亡等)。
+        self._chips_refresh_timer = QTimer(self)
+        self._chips_refresh_timer.setSingleShot(True)
+        self._chips_refresh_timer.timeout.connect(self._refresh_status_chips)
+        self._model.data_changed.connect(
+            lambda *_: self._chips_refresh_timer.start(200))
+        self._model.dirty_changed.connect(
+            lambda *_: self._refresh_status_chips())
+        self._chips_watchdog = QTimer(self)
+        self._chips_watchdog.setInterval(2500)
+        self._chips_watchdog.timeout.connect(self._refresh_status_chips)
+        self._chips_watchdog.start()
 
         self._model.dirty_changed.connect(self._on_dirty)
         self._refresh_window_title()
+        self._refresh_status_chips()
 
     # ---- menu / toolbar ---------------------------------------------------
 
@@ -317,6 +389,9 @@ class MainWindow(QMainWindow):
 
         tools_menu = mb.addMenu("Tools")
         self._act(tools_menu, "Validate Data", self._validate)
+        self._act(tools_menu, "全局搜索(任意字符串)…", self._open_global_search_dialog,
+                  QKeySequence("Ctrl+Shift+F"))
+        self._act(tools_menu, "查引用(JSON 语言)…", self._open_lsp_refs_dialog)
         tools_menu.addSeparator()
         ext = tools_menu.addMenu("External tools (new process)")
         self._act(ext, "Graph Editor", self._launch_graph_editor_external)
@@ -348,6 +423,8 @@ class MainWindow(QMainWindow):
             fn = getattr(inst, "on_editor_theme_changed", None)
             if callable(fn):
                 fn(tid)
+        if self._game_browser is not None:
+            self._game_browser.on_editor_theme_changed(tid)
 
     def _build_menu_bar_corner(self) -> None:
         """导航后退/前进 + Save/Validate/运行控制并入菜单栏右侧，避免单独工具栏占垂直空间。"""
@@ -407,6 +484,7 @@ class MainWindow(QMainWindow):
 
         text_btn("Save All", "全部保存 (Ctrl+Shift+S)", self._save_all)
         text_btn("Validate", "校验工程数据", self._validate)
+        text_btn("搜索", "全局搜索任意字符串 (Ctrl+Shift+F)", self._open_global_search_dialog)
 
         layout.addSpacing(8)
 
@@ -438,6 +516,178 @@ class MainWindow(QMainWindow):
 
         self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
         self._update_nav_buttons()
+
+    # ---- 状态栏常驻芯片(脏态 / LSP / overlay 同步 / 游戏) -------------------
+    # 全部只读消费既有状态,不产生任何数据副作用;颜色仅用局部 color 样式
+    # (字号/主题一律归 theme.py 管,这里不碰)。
+
+    _LSP_STATE_LABELS = {
+        "idle": "未启动", "starting": "启动中…", "running": "运行中",
+        "failed": "启动失败", "dead": "已退出", "stopped": "已停止",
+    }
+    _CHIP_COLORS = {
+        "ok": "#4caf50", "busy": "#e6a817", "bad": "#e05a4e", "off": "#8a8a8a",
+    }
+
+    def _build_status_chips(self) -> None:
+        def chip_btn(tip: str) -> QToolButton:
+            btn = QToolButton(self._status)
+            btn.setAutoRaise(True)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            btn.setToolTip(tip)
+            return btn
+
+        # 脏态:点击=全部保存
+        self._chip_dirty = chip_btn("未保存变更概览;点击=全部保存 (Ctrl+Shift+S)")
+        self._chip_dirty.clicked.connect(self._save_all)
+
+        # overlay 同步:纯指示(编辑器内存态 → JSON 语言服务)
+        self._chip_sync = QLabel(self._status)
+        self._chip_sync.setToolTip(
+            "编辑器未保存的内存态会自动推送给 json_lang 语言服务,\n"
+            "让全局搜索/查引用实时看到未保存内容;保存后以磁盘为准。")
+
+        # LSP:点击弹操作菜单(搜索/查引用/详情/重启)
+        self._chip_lsp = chip_btn("json_lang LSP(全局搜索/查引用的语言大脑);点击看操作")
+        self._chip_lsp.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        lsp_menu = QMenu(self._chip_lsp)
+        lsp_menu.aboutToShow.connect(lambda: self._rebuild_lsp_chip_menu(lsp_menu))
+        self._chip_lsp.setMenu(lsp_menu)
+
+        # 游戏 dev server:点击弹运行控制
+        self._chip_game = chip_btn("游戏开发服务器状态;点击看操作")
+        self._chip_game.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        game_menu = QMenu(self._chip_game)
+        game_menu.aboutToShow.connect(lambda: self._rebuild_game_chip_menu(game_menu))
+        self._chip_game.setMenu(game_menu)
+
+        for w in (self._chip_dirty, self._chip_sync, self._chip_lsp, self._chip_game):
+            self._status.addPermanentWidget(w)
+
+    def _rebuild_lsp_chip_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        menu.addAction("全局搜索…\tCtrl+Shift+F", self._open_global_search_dialog)
+        menu.addAction("查引用(精确 id)…", self._open_lsp_refs_dialog)
+        menu.addSeparator()
+        menu.addAction("LSP 详情…", self._show_lsp_details)
+        client = self._lsp_client
+        state = client.state if client is not None else "idle"
+        act = menu.addAction("重启 LSP", self._restart_lsp)
+        act.setEnabled(self._model.project_path is not None and not self._lsp_disabled_reason)
+        if state in ("failed", "dead"):
+            act.setText("重启 LSP(当前" + self._LSP_STATE_LABELS.get(state, state) + ")")
+
+    def _rebuild_game_chip_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        running = (self._game_proc is not None
+                   and self._game_proc.state() != QProcess.ProcessState.NotRunning)
+        a = menu.addAction("运行游戏\tF5", self._run_game)
+        a.setEnabled(not running)
+        a = menu.addAction("运行游戏(开发模式)\tCtrl+F5", self._run_game_dev)
+        a.setEnabled(not running)
+        a = menu.addAction("停止游戏\tShift+F5", self._stop_game)
+        a.setEnabled(running)
+        menu.addSeparator()
+        menu.addAction("打开「运行与预览」页", self._show_game_page)
+
+    def _show_game_page(self) -> None:
+        for idx, item in self._stack_index_to_item.items():
+            if item.text(0) == "Game":
+                self._show_stack_page(idx)
+                self._record_nav(_NavLocation("page", (idx,)))
+                return
+
+    def _set_chip(self, widget, text: str, color_key: str, tooltip: str | None = None) -> None:
+        if widget.text() != text:
+            widget.setText(text)
+        style = f"color: {self._CHIP_COLORS[color_key]};"
+        if widget.styleSheet() != style:  # 看门狗每 2.5s 来一趟,不变就别重触发 re-polish
+            widget.setStyleSheet(style)
+        if tooltip is not None and widget.toolTip() != tooltip:
+            widget.setToolTip(tooltip)
+
+    def _refresh_status_chips(self) -> None:
+        """按当前真实状态重画四枚芯片;幂等、只读、异常不外泄。"""
+        try:
+            self._refresh_status_chips_inner()
+        except Exception as e:  # 状态栏是咨询层,绝不拖垮编辑器
+            print(f"[status] 芯片刷新失败: {e!r}", flush=True)
+
+    def _refresh_status_chips_inner(self) -> None:
+        # ---- 脏态(模型脏桶 + 面板自管脏态,如图对话) ----
+        dirty: set = set(getattr(self._model, "_dirty", set()) or set())
+        panel_dirty = sorted(set(self._panel_dirty_labels.values()))
+        if self._model.project_path is None:
+            self._set_chip(self._chip_dirty, "未打开工程", "off",
+                           "File → Open Project 打开包含 public/assets 的仓库根目录")
+        elif dirty or panel_dirty:
+            names = sorted(dirty) + [f"{lbl}(面板内未保存)" for lbl in panel_dirty]
+            shown = "、".join(names[:5]) + ("…" if len(names) > 5 else "")
+            scene_ids = getattr(self._model, "_dirty_scene_ids", set())
+            extra = f"(场景 {len(scene_ids)} 个)" if "scene" in dirty and scene_ids else ""
+            self._set_chip(self._chip_dirty, f"● 未保存 ×{len(names)}", "busy",
+                           f"未保存的数据域: {shown}{extra}\n点击=全部保存 (Ctrl+Shift+S)")
+        else:
+            self._set_chip(self._chip_dirty, "✓ 已保存", "off",
+                           "全部改动已写盘;点击=全部保存 (Ctrl+Shift+S)")
+
+        # ---- LSP ----
+        client = self._lsp_client
+        state = client.state if client is not None else "idle"
+        if self._lsp_disabled_reason:
+            self._set_chip(self._chip_lsp, "LSP 已禁用", "off",
+                           f"json_lang LSP 被禁用: {self._lsp_disabled_reason}")
+        elif self._model.project_path is None or (client is None and state == "idle"):
+            self._set_chip(self._chip_lsp, "LSP —", "off",
+                           "打开工程后自动启动 json_lang 语言服务")
+        elif state == "starting":
+            self._set_chip(self._chip_lsp, "LSP 启动中…", "busy",
+                           "正在拉起 json_lang server 并握手")
+        elif state == "running" and self._lsp_suspect_hung:
+            self._set_chip(self._chip_lsp, "LSP ? 疑似无响应", "bad",
+                           "全局搜索请求超时未响应——server 进程活着但可能假死。\n"
+                           "点击菜单「重启 LSP」可恢复;编辑功能不受影响,搜索已退化为读盘")
+        elif state == "running":
+            info = self._lsp_info
+            tip = "json_lang LSP 运行中——全局搜索/查引用实时可用(含未保存内容)"
+            if info:
+                tip += (f"\n索引 {info.get('files', '?')} 个内容文件,"
+                        f"{len(info.get('universes') or {})} 个 id 宇宙,"
+                        f"overlay {info.get('overlays', 0)} 个")
+            tip += "\n点击可打开搜索/查引用/详情"
+            self._set_chip(self._chip_lsp, "LSP ✓", "ok", tip)
+        elif state == "failed":
+            err = client.last_error if client else ""
+            self._set_chip(self._chip_lsp, "LSP ✗ 启动失败", "bad",
+                           f"{err}\n点击菜单可重启;编辑功能不受影响,搜索退化为读盘")
+        elif state == "dead":
+            self._set_chip(self._chip_lsp, "LSP ✗ 已退出", "bad",
+                           "server 进程意外退出;点击菜单可重启,搜索退化为读盘")
+        else:  # stopped / 其它
+            self._set_chip(self._chip_lsp, "LSP 已停止", "off",
+                           "语言服务已停止;点击菜单可重启")
+
+        # ---- overlay 同步 ----
+        if state != "running":
+            self._set_chip(self._chip_sync, "同步 —", "off")
+        elif self._lsp_pending_overlays or self._lsp_overlay_timer.isActive():
+            self._set_chip(self._chip_sync, "⟳ 同步中…", "busy")
+        else:
+            self._set_chip(self._chip_sync, "✓ 已同步", "ok")
+
+        # ---- 游戏 dev server ----
+        proc = self._game_proc
+        proc_running = proc is not None and proc.state() != QProcess.ProcessState.NotRunning
+        if not proc_running:
+            self._set_chip(self._chip_game, "游戏: 停", "off",
+                           "开发服务器未运行;F5 运行游戏(点击看操作)")
+        elif self._game_server_ready:
+            url = self._last_vite_dev_url or GAME_DEV_URL
+            self._set_chip(self._chip_game, "游戏: 运行中", "ok",
+                           f"开发服务器已就绪: {url}\n点击看操作")
+        else:
+            self._set_chip(self._chip_game, "游戏: 启动中…", "busy",
+                           "开发服务器正在启动,就绪后自动可预览")
 
     # ---- navigation history (后退 / 前进) ---------------------------------
 
@@ -580,6 +830,224 @@ class MainWindow(QMainWindow):
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
         QTimer.singleShot(500, self._prewarm_game_backend)
+        # 换工程/重开工程一律重启 LSP:旧 client 的 root/overlay 都是上一工程的,
+        # 复用会让搜索/查引用继续搜旧工程、丢新工程 overlay(对抗审查确认项)。
+        QTimer.singleShot(800, self._restart_lsp)
+
+    # ------------------------------------------------------------------ #
+    # json_lang LSP 接入(「JSON=语言」大脑):编辑器作 overlay 发布者 +
+    # 查引用/全局搜索消费者。server 缺席/启动失败一律静默降级,不影响任何
+    # 编辑功能;生命周期状态实时反映在状态栏芯片上(可从那里重启)。
+    # ------------------------------------------------------------------ #
+
+    def _start_lsp_client(self) -> None:
+        # 铁律:LSP 是纯附加的咨询层,它的任何故障都不允许影响编辑器/数据——
+        # 本函数与下面的 overlay 回调全部包死,异常只打日志。
+        try:
+            if self._model.project_path is None:
+                return
+            # 竞态守卫(审查 P3):STARTING 状态在工作线程里才置上,主线程连点两次会各建
+            # 一个 client、孤儿化一个 server 进程——这里只认"主线程可见的 client 引用":
+            # 已有存活 client(idle/starting/running)一律不再新建;failed/dead/stopped 才替换。
+            old = self._lsp_client
+            if old is not None:
+                if old.state not in ("failed", "dead", "stopped"):
+                    return
+                old.on_state_changed = None  # 被替换的死客户端不再驱动 UI
+            import os
+            # 测试环境不拉子进程(防每个用例孤儿 server/拖慢);显式关闭开关同理。
+            if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("GAMEDRAFT_EDITOR_NO_LSP"):
+                self._lsp_disabled_reason = (
+                    "GAMEDRAFT_EDITOR_NO_LSP 环境变量" if os.environ.get("GAMEDRAFT_EDITOR_NO_LSP")
+                    else "pytest 测试环境")
+                self._refresh_status_chips()
+                return
+            from .shared.lsp_client import JsonLangLspClient
+
+            client = JsonLangLspClient(self._model.project_path)
+            # 回调可能来自任意线程;Signal.emit 自动排队回主线程后再动 UI。
+            client.on_state_changed = self._lsp_state_signal.emit
+            self._lsp_client = client
+
+            import threading
+            threading.Thread(target=client.start, daemon=True).start()
+            self._refresh_status_chips()
+        except Exception as e:
+            print(f"[lsp] 初始化失败(编辑器功能不受影响): {e!r}", flush=True)
+
+    def _restart_lsp(self) -> None:
+        """状态栏芯片菜单入口:丢弃旧客户端(后台停),起新客户端。"""
+        old, self._lsp_client = self._lsp_client, None
+        self._lsp_pending_overlays.clear()
+        self._lsp_suspect_hung = False
+        if old is not None:
+            old.on_state_changed = None  # 旧客户端后续流转不再驱动 UI
+            import threading
+            threading.Thread(target=old.stop, daemon=True).start()
+        self._lsp_info = {}
+        self._start_lsp_client()
+
+    def _on_lsp_state_changed(self, state: str) -> None:
+        """LSP 生命周期流转(主线程)。running 时把当前内存态整体补推——
+        覆盖「LSP 启动前就有编辑」与「重启后 server 无 overlay」两个缺口。"""
+        self._lsp_suspect_hung = False  # 状态真实流转,"疑似假死"嫌疑作废,按新状态重画
+        if state == "running":
+            for dt in sorted(getattr(self._model, "_dirty", set())):
+                self._lsp_pending_overlays.add((dt, ""))
+            if self._lsp_pending_overlays:
+                self._lsp_overlay_timer.start(100)
+            self._fetch_lsp_info_async()
+        elif state == "dead":
+            self._status.showMessage(
+                "json_lang LSP 进程意外退出——查引用/全局搜索退化为读盘;可在状态栏「LSP」菜单重启。",
+                8000,
+            )
+        elif state == "failed":
+            client = self._lsp_client
+            err = getattr(client, "last_error", "") if client else ""
+            self._status.showMessage(f"json_lang LSP 启动失败:{err}(编辑功能不受影响)", 8000)
+        self._refresh_status_chips()
+
+    def _fetch_lsp_info_async(self) -> None:
+        """后台取 server 自述(文件数/overlay 数/宇宙规模),回填芯片 tooltip。"""
+        client = self._lsp_client
+        if client is None or not client.available:
+            return
+        import threading
+
+        def _work() -> None:
+            try:
+                info = client.request("gamedraft/status", timeout=6.0)
+                if isinstance(info, dict) and "files" in info:
+                    self._lsp_info_signal.emit(info)
+            except Exception:
+                pass
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_lsp_info_fetched(self, info: dict) -> None:
+        self._lsp_info = info
+        self._refresh_status_chips()
+
+    def _open_lsp_refs_dialog(self, initial_id: str = "") -> None:
+        """查引用(非模态、单实例):再次打开只是唤起并聚焦输入框(照全局搜索样板)。"""
+        if not isinstance(initial_id, str):  # QAction.triggered 会传 checked 布尔
+            initial_id = ""
+        if self._lsp_client is None and self._model.project_path is not None:
+            self._start_lsp_client()
+        dlg = self._lsp_refs_dialog
+        if dlg is None:
+            from .shared.lsp_refs_dialog import LspRefsDialog
+
+            dlg = LspRefsDialog(
+                lambda: self._lsp_client,
+                parent=self,
+                navigate_cb=self.navigate_to_search_hit,
+            )
+            dlg.setModal(False)
+            self._lsp_refs_dialog = dlg
+        dlg.open_with_id(initial_id or "")
+
+    def _on_lsp_search_health(self, healthy: bool) -> None:
+        """全局搜索 worker 汇报的 server 响应健康度(超时=疑似假死,芯片如实降级)。"""
+        suspect = not healthy
+        if suspect != self._lsp_suspect_hung:
+            self._lsp_suspect_hung = suspect
+            self._refresh_status_chips()
+
+    def _open_global_search_dialog(self, initial_query: str = "") -> None:
+        """全局搜索(非模态、单实例):再次打开只是唤起并聚焦输入框。"""
+        if not isinstance(initial_query, str):  # QAction.triggered 会传 checked 布尔
+            initial_query = ""
+        if self._lsp_client is None and self._model.project_path is not None:
+            self._start_lsp_client()
+        dlg = self._global_search_dialog
+        if dlg is None:
+            from .shared.global_search_dialog import GlobalSearchDialog
+
+            dlg = GlobalSearchDialog(
+                client_getter=lambda: self._lsp_client,
+                root_getter=lambda: self._model.project_path,
+                navigate_cb=self.navigate_to_search_hit,
+                refs_cb=self._open_lsp_refs_dialog,
+                parent=self,
+            )
+            sig = getattr(dlg, "lsp_health", None)
+            if sig is not None and hasattr(sig, "connect"):
+                sig.connect(self._on_lsp_search_health)
+            self._global_search_dialog = dlg
+        dlg.open_with_query(initial_query)
+
+    def _show_lsp_details(self) -> None:
+        """状态栏「LSP 详情」:状态/错误/索引规模/宇宙清单,纯只读。"""
+        client = self._lsp_client
+        state = client.state if client is not None else "idle"
+        lines = [f"状态: {self._LSP_STATE_LABELS.get(state, state)}"]
+        if self._lsp_disabled_reason:
+            lines.append(f"禁用原因: {self._lsp_disabled_reason}")
+        if client is not None and client.last_error:
+            lines.append(f"最近错误: {client.last_error}")
+        info = self._lsp_info
+        if info:
+            lines.append(f"索引文件: {info.get('files', '?')} 个(data/scenes/dialogues)")
+            lines.append(f"未保存 overlay: {info.get('overlays', 0)} 个文件")
+            universes = info.get("universes") or {}
+            lines.append(f"id 宇宙: {len(universes)} 个,共 {sum(universes.values())} 条")
+            lines.append("")
+            for name, n in sorted(universes.items()):
+                lines.append(f"  {name}: {n}")
+        elif state == "running":
+            lines.append("(索引详情拉取中…关闭重开可刷新)")
+            self._fetch_lsp_info_async()
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("json_lang LSP 详情")
+        dlg.resize(420, 480)
+        lay = QVBoxLayout(dlg)
+        te = QTextEdit()
+        te.setReadOnly(True)
+        te.setPlainText("\n".join(lines))
+        lay.addWidget(te)
+        dlg.exec()
+
+    def _on_lsp_overlay_dirty(self, data_type: str, item_id: str) -> None:
+        """model.data_changed → 防抖聚合后把内存态推成 LSP overlay(不写盘)。"""
+        if self._lsp_client is None:
+            return
+        self._lsp_pending_overlays.add((data_type, item_id or ""))
+        self._lsp_overlay_timer.start(800)
+
+    def _flush_lsp_overlays(self) -> None:
+        pending: set[tuple[str, str]] = set()
+        try:
+            client = self._lsp_client
+            if client is None or client.state in ("failed", "dead", "stopped"):
+                self._lsp_pending_overlays.clear()
+                return
+            if not client.available:
+                # 启动握手中:保留 pending,稍后重试(running 回调也会补推)
+                if self._lsp_pending_overlays:
+                    self._lsp_overlay_timer.start(800)
+                return
+            from .shared.lsp_client import overlay_payloads
+
+            pending, self._lsp_pending_overlays = self._lsp_pending_overlays, set()
+            seen: set = set()
+            for data_type, item_id in pending:
+                for path, data in overlay_payloads(self._model, data_type, item_id):
+                    if path in seen:
+                        continue
+                    seen.add(path)
+                    client.push_overlay(path, data)
+        except Exception as e:
+            # 失败桶保留并放慢重试——绝不清了 pending 还让芯片假绿"✓ 已同步"
+            # (审查 P3:异常路径清空 pending 后失败桶不再重试)。
+            self._lsp_pending_overlays |= pending
+            if self._lsp_pending_overlays:
+                self._lsp_overlay_timer.start(3000)
+            print(f"[lsp] overlay 推送失败(将稍后重试;编辑器功能不受影响): {e!r}", flush=True)
+        finally:
+            self._refresh_status_chips()
 
     def _confirm_pending_editor_changes(self) -> bool:
         from .editors.timeline_editor import TimelineEditor
@@ -823,6 +1291,7 @@ class MainWindow(QMainWindow):
         self._stack_index_to_item.clear()
         self._editor_instances.clear()
         self._editor_labels.clear()
+        self._panel_dirty_labels.clear()
         # 换工程/重建页面栈 → 旧导航历史失效，清空重开。
         self._nav_history.clear()
         self._nav_cursor = -1
@@ -925,6 +1394,17 @@ class MainWindow(QMainWindow):
                         preview_sig.connect(self._on_paper_craft_preview_requested)
                     else:
                         preview_sig.connect(self._on_water_minigame_preview_requested)
+                # 面板自管脏态桥接(getattr 防御式:图对话 tab 将提供
+                # dirty_state_changed(bool);接口缺席时行为不变)。脏态进导航树
+                # 页签(● 前缀)与状态芯片汇总——面板内未保存不再"无处可看"。
+                dirty_sig = getattr(ed, "dirty_state_changed", None)
+                if dirty_sig is not None and hasattr(dirty_sig, "connect"):
+                    try:
+                        dirty_sig.connect(
+                            lambda dirty, _i=stack_idx, _lbl=label:
+                            self._on_panel_dirty_state(_i, _lbl, bool(dirty)))
+                    except Exception as e:
+                        print(f"[panel-dirty] 连接 {label} 脏态信号失败: {e!r}", flush=True)
 
             self._stack.addWidget(_StackPageHost(widget, self))
             parent_item = self._ensure_nav_path(self._nav_tree, path)
@@ -973,6 +1453,17 @@ class MainWindow(QMainWindow):
 
     # ---- save / dirty -----------------------------------------------------
 
+    def _on_panel_dirty_state(self, idx: int, label: str, dirty: bool) -> None:
+        """面板自管脏态变化(如图对话):更新导航树页签 ● 前缀 + 汇总进脏态芯片。"""
+        if dirty:
+            self._panel_dirty_labels[idx] = label
+        else:
+            self._panel_dirty_labels.pop(idx, None)
+        item = self._stack_index_to_item.get(idx)
+        if item is not None:
+            item.setText(0, f"● {label}" if dirty else label)
+        self._refresh_status_chips()
+
     def _save_current_editor(self) -> None:
         idx = self._stack.currentIndex()
         if 0 <= idx < len(self._editor_instances):
@@ -985,33 +1476,58 @@ class MainWindow(QMainWindow):
                 return
         self._save_all()
 
-    def _flush_editors_to_model(self) -> bool:
+    def _flush_editors_to_model(self) -> tuple[bool, list[tuple[str, str]]]:
+        """逐面板 flush 到模型。返回 (是否继续, 被跳过面板清单 [(页签名, 原因)])。
+
+        P1-11「Save All 不连坐」:单面板 flush 失败(返回 False 或抛异常)不再 raise
+        中断全局——记录后继续 flush 其余面板;调用方负责把跳过清单如实告知用户
+        (保存后弹警告 / 关闭前问是否丢弃)。仅 Timeline 前置确认选「取消」时返回
+        (False, []),整个操作中止(保留既有语义)。
+        """
         from .editors.timeline_editor import TimelineEditor
 
         for inst in self._editor_instances:
             if isinstance(inst, TimelineEditor) and inst.has_pending_changes():
                 if inst.confirm_apply_or_discard(self) == "cancel":
-                    return False
+                    return False, []
         from .editor_perf import PerfClock, maybe_stamp, perf_log_enabled
 
         flush_clk = PerfClock(label="SaveAll.flush") if perf_log_enabled() else None
         maybe_stamp(PerfClock(label="SaveAll.flush.begin"), "开始 flush 编辑器")
-        for inst in self._editor_instances:
+        skipped: list[tuple[str, str]] = []
+        for i, inst in enumerate(self._editor_instances):
             flush = getattr(inst, "flush_to_model", None)
-            if callable(flush):
-                name = type(inst).__name__
-                t0 = time.perf_counter()
-                try:
+            if not callable(flush):
+                continue
+            name = (self._editor_labels[i]
+                    if 0 <= i < len(self._editor_labels) else type(inst).__name__)
+            t0 = time.perf_counter()
+            try:
+                # E 修复(V5):按签名决定是否带 for_save_all,绝不「抓 TypeError 重试」——
+                # 否则 flush 体内自抛的 TypeError 会触发第二次调用(累加型 flush 静默重写)。
+                if _flush_accepts_save_all(getattr(flush, "__func__", flush)):
                     result = flush(for_save_all=True)
-                except TypeError:
+                else:
                     result = flush()
-                dt = time.perf_counter() - t0
-                maybe_stamp(flush_clk, f"{name} ok {dt*1000:.1f}ms")
-                if result is False:
-                    pop_error = getattr(inst, "pop_flush_error", None)
-                    detail = pop_error() if callable(pop_error) else None
-                    raise RuntimeError(detail or f"{name} 无法写入待保存的编辑内容")
-        return True
+            except Exception as e:  # 单面板异常同样不连坐:记录后继续
+                skipped.append((name, f"flush 异常:{e}"))
+                continue
+            dt = time.perf_counter() - t0
+            maybe_stamp(flush_clk, f"{name} ok {dt*1000:.1f}ms")
+            if result is False:
+                pop_error = getattr(inst, "pop_flush_error", None)
+                detail = None
+                if callable(pop_error):
+                    try:
+                        detail = pop_error()
+                    except Exception:
+                        detail = None
+                skipped.append((name, str(detail or "无法写入待保存的编辑内容")))
+        return True, skipped
+
+    @staticmethod
+    def _format_skipped_panels(skipped: list[tuple[str, str]]) -> str:
+        return "\n".join(f"· {name}:{reason}" for name, reason in skipped)
 
     def _save_all(self) -> bool:
         if self._model.project_path is None:
@@ -1028,18 +1544,54 @@ class MainWindow(QMainWindow):
 
         try:
             maybe_stamp(clk, "开始 flush 编辑器")
-            if not self._flush_editors_to_model():
+            ok, skipped = self._flush_editors_to_model()
+            if not ok:
                 return False
+            # 外部修改检测(跨组预留,getattr 防御式):数据组将提供
+            # ProjectModel.detect_external_changes()——磁盘比打开时新的文件清单。
+            # 接口缺席/异常时行为不变(维持既有 last-writer-wins)。
+            detect = getattr(self._model, "detect_external_changes", None)
+            if callable(detect):
+                try:
+                    changed = list(detect() or [])
+                except Exception as e:
+                    print(f"[SaveAll] 外部修改检测失败(按无变化继续): {e!r}", flush=True)
+                    changed = []
+                if changed:
+                    names = "\n".join(str(c) for c in changed[:20])
+                    more = f"\n…共 {len(changed)} 个文件" if len(changed) > 20 else ""
+                    r = QMessageBox.question(
+                        self, "检测到外部修改",
+                        "磁盘上这些文件比打开时新，继续保存将覆盖外部修改：\n\n"
+                        f"{names}{more}\n\n继续保存吗？",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    )
+                    if r != QMessageBox.StandardButton.Yes:
+                        return False
             maybe_stamp(clk, "全部 flush 完成，调用 model.save_all")
             _saved_types = sorted(getattr(self._model, "_dirty", set()))
             self._model.save_all()
             maybe_stamp(clk, "model.save_all 完成")
+            # 磁盘已是真相:撤掉 LSP overlay,查询回落到刚写盘的内容
+            if self._lsp_client is not None:
+                self._lsp_pending_overlays.clear()
+                self._lsp_client.clear_overlays()
             if _saved_types:
                 _shown = "、".join(_saved_types[:6]) + ("…" if len(_saved_types) > 6 else "")
                 self._status.showMessage(
                     f"已保存 {len(_saved_types)} 类数据：{_shown}", 4000)
             else:
                 self._status.showMessage("无改动需保存。", 3000)
+            if skipped:
+                # P1-11:被跳过的面板保存后如实告知,绝不静默(其余数据已正常落盘)。
+                QMessageBox.warning(
+                    self, "部分面板未纳入本次保存",
+                    "以下编辑页的待提交修改无法写入模型，本次保存不包含它们"
+                    "（其余数据已正常保存）：\n\n"
+                    f"{self._format_skipped_panels(skipped)}\n\n"
+                    "这些页的修改未包含在本次保存，仍在编辑器中——"
+                    "请到对应页面处理后再次保存。",
+                )
             return True
         except Exception as e:
             print(f"[SaveAll] 失败: {e!r}", flush=True)
@@ -1163,6 +1715,7 @@ class MainWindow(QMainWindow):
             if idx >= 0:
                 self._show_stack_page(idx)
         self._game_ready_timer.start(60_000)
+        self._refresh_status_chips()
 
     def _run_game_dev(self) -> None:
         """与 F5 相同流程，但加载 URL 带 mode=dev（开发模式 UI）。"""
@@ -1245,6 +1798,7 @@ class MainWindow(QMainWindow):
         self._game_server_ready = True
         self._last_vite_dev_url = url
         self._game_ready_timer.stop()
+        self._refresh_status_chips()
         if self._game_open_when_ready:
             params = self._pending_launch_params or ""
             self._pending_launch_params = None
@@ -1289,6 +1843,7 @@ class MainWindow(QMainWindow):
         if self._game_proc.state() == QProcess.ProcessState.NotRunning:
             return
         self._game_server_ready = True
+        self._refresh_status_chips()
         url = _vite_dev_url_from_log(self._game_proc_log) or self._last_vite_dev_url or GAME_DEV_URL
         if self._game_open_when_ready:
             params = self._pending_launch_params or ""
@@ -1335,6 +1890,7 @@ class MainWindow(QMainWindow):
             self._game_proc = None
         user_stop = self._game_user_stopped
         self._game_user_stopped = False
+        self._refresh_status_chips()
 
         if user_stop:
             if self._game_browser is not None and self._game_browser.is_webengine_available():
@@ -1439,6 +1995,7 @@ class MainWindow(QMainWindow):
             )
         if show_status:
             self._status.showMessage("Game stopped.", 3000)
+        self._refresh_status_chips()
 
     def _build_game(self) -> None:
         """异步 QProcess 构建：不再同步 subprocess.run 冻结整个编辑器；
@@ -1494,12 +2051,15 @@ class MainWindow(QMainWindow):
         if self._model.project_path is None:
             QMessageBox.warning(self, "校验", "未打开工程目录，无法校验数据。")
             return
-        try:
-            if not self._flush_editors_to_model():
-                return
-        except Exception as e:
-            QMessageBox.critical(self, "Validate", f"Cannot validate pending edits:\n{e}")
+        ok, skipped = self._flush_editors_to_model()
+        if not ok:
             return
+        if skipped:
+            QMessageBox.warning(
+                self, "校验",
+                "以下编辑页的待提交修改无法写入模型，本次校验不包含它们：\n\n"
+                f"{self._format_skipped_panels(skipped)}",
+            )
         issues = validate(self._model)
         if not issues:
             QMessageBox.information(self, "Validate", "No issues found.")
@@ -1534,10 +2094,10 @@ class MainWindow(QMainWindow):
         gid = (graph_id or "").strip()
         if not gid:
             return
-        self._record_nav(_NavLocation("dialogue_graph", (gid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, DialogueGraphEditorTab):
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation("dialogue_graph", (gid,)))
                 ed.open_graph_by_id(gid)
                 return
 
@@ -1548,10 +2108,10 @@ class MainWindow(QMainWindow):
         sid = (scenario_id or "").strip()
         if not sid:
             return
-        self._record_nav(_NavLocation("scenario", (sid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, ScenariosCatalogEditor):
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation("scenario", (sid,)))
                 ed.select_scenario_by_id(sid)
                 return
 
@@ -1563,7 +2123,6 @@ class MainWindow(QMainWindow):
         iid = (instance_id or "").strip()
         if not iid:
             return
-        self._record_nav(_NavLocation("minigame", (iid,)))
         candidates: list[type] = []
         if iid in getattr(self._model, "water_minigames_instances", {}):
             candidates.append(WaterMinigameEditor)
@@ -1576,6 +2135,7 @@ class MainWindow(QMainWindow):
                 if not isinstance(ed, cls):
                     continue
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation("minigame", (iid,)))
                 select = getattr(ed, "select_by_id", None)
                 if callable(select):
                     select(iid)
@@ -1587,10 +2147,10 @@ class MainWindow(QMainWindow):
         cid = (cutscene_id or "").strip()
         if not cid:
             return
-        self._record_nav(_NavLocation("cutscene", (cid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, TimelineEditor):
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation("cutscene", (cid,)))
                 select = getattr(ed, "select_by_id", None)
                 if callable(select):
                     select(cid)
@@ -1604,10 +2164,10 @@ class MainWindow(QMainWindow):
         sid = (state_id or "").strip()
         if not gid or not sid:
             return
-        self._record_nav(_NavLocation("narrative_state", (gid, sid)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, NarrativeStateEditor):
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation("narrative_state", (gid, sid)))
                 if not ed.focus_state(gid, sid):
                     self._status.showMessage(
                         f"未能在叙事编辑器中定位 {gid}.{sid}（图不存在或 web 编辑器未就绪）", 5000,
@@ -1629,13 +2189,14 @@ class MainWindow(QMainWindow):
         }.get(kind)
         if not selector_name:
             return
-        self._record_nav(_NavLocation(
-            "scene_entity",
-            (kind, (entity_id or "").strip(), (scene_id or "").strip(), (plane_view or "").strip()),
-        ))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, SceneEditor):
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation(
+                    "scene_entity",
+                    (kind, (entity_id or "").strip(), (scene_id or "").strip(),
+                     (plane_view or "").strip()),
+                ))
                 pv = (plane_view or "").strip()
                 if pv:
                     activate = getattr(ed, "activate_plane_view", None)
@@ -1653,10 +2214,10 @@ class MainWindow(QMainWindow):
         pid = (plane_id or "").strip()
         if not pid:
             return
-        self._record_nav(_NavLocation("plane", (pid,)))
         for i, ed in enumerate(self._editor_instances):
             if isinstance(ed, PlaneEditor):
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation("plane", (pid,)))
                 select = getattr(ed, "select_by_id", None)
                 if callable(select):
                     select(pid)
@@ -1671,14 +2232,277 @@ class MainWindow(QMainWindow):
             return
         for i, label in enumerate(self._editor_labels):
             if label == target_label:
-                self._record_nav(_NavLocation("source", (source_type, source_id, scene_id)))
                 self._show_stack_page(i)
+                self._record_nav(_NavLocation("source", (source_type, source_id, scene_id)))
                 ed = self._editor_instances[i]
                 selector_name = SOURCE_NAVIGATION_SELECTORS.get(source_type, "select_by_id")
                 select = getattr(ed, selector_name, None)
                 if callable(select):
                     select(source_id, scene_id)
                 break
+
+    # ---- 全局搜索结果跳转(file + JSON pointer + anchors → 编辑器落点) ------
+    # anchors 是搜索后端(json_lang/search.py)扫描时顺手算好的
+    # 「(容器键, 最近祖先 id)」链,由外到内;这里只做"文件模式 → 编辑页 + 深选"的
+    # 薄映射,不重新解析 JSON。永远返回 (是否落位, 一句话说明),绝不抛异常。
+
+    @staticmethod
+    def _pointer_segments(pointer: str) -> list[str]:
+        if not pointer:
+            return []
+        return [s.replace("~1", "/").replace("~0", "~") for s in pointer.split("/")[1:]]
+
+    def _page_index_by_label(self, label: str) -> int:
+        for i, lbl in enumerate(self._editor_labels):
+            if lbl == label:
+                return i
+        return -1
+
+    def _show_page_by_label(self, label: str):
+        idx = self._page_index_by_label(label)
+        if idx < 0:
+            return None
+        self._show_stack_page(idx)
+        self._record_nav(_NavLocation("page", (idx,)))
+        return self._editor_instances[idx]
+
+    def _nav_hit_generic(self, label: str, select_id: str = "",
+                         method: str = "select_by_id") -> tuple[bool | None, str]:
+        """切到某编辑页;有 id 且该页有对应深选方法则逐条定位。
+
+        导航诚实化契约(全局):消费 select_* 的返回值——
+        - True  → 报"已定位"(调用方随后聚光),
+        - False → 报"未找到该条目(可能已改名或删除),请重新搜索",不聚光,
+        - None(旧接口未返回布尔)→ 报"已打开「X」页"(不确定是否逐条定位,不聚光)。
+        """
+        ed = self._show_page_by_label(label)
+        if ed is None:
+            return False, f"编辑页「{label}」不可用"
+        sid = (select_id or "").strip()
+        if sid:
+            fn = getattr(ed, method, None)
+            if callable(fn):
+                located = fn(sid)
+                if located is True:
+                    return True, f"已定位「{label}」· {sid}"
+                if located is False:
+                    return False, f"在「{label}」页未找到「{sid}」(可能已改名或删除)，请重新搜索"
+                # None(旧接口):已切页,但无法确认是否逐条定位——不聚光
+                return None, f"已打开「{label}」页"
+        return None, f"已打开「{label}」页(未逐条定位)"
+
+    def navigate_to_search_hit(self, file: str, pointer: str,
+                               anchors: list | None = None,
+                               matched_text: str = "",
+                               context_text: str = "") -> tuple[bool | None, str]:
+        try:
+            ok, note = self._navigate_to_search_hit_inner(file, pointer, anchors or [])
+        except Exception as e:  # 咨询层:任何失败退化为"没跳",不打断编辑器
+            print(f"[search-nav] 跳转失败 {file} @ {pointer}: {e!r}", flush=True)
+            return False, f"跳转失败:{e}"
+        if ok and matched_text:
+            # 字段级聚光:选中条目后表单才填充(可能隔一拍),延后跑并允许一次重试。
+            self._schedule_search_spotlight(matched_text, context_text)
+        return ok, note
+
+    def _schedule_search_spotlight(self, matched_text: str, context_text: str = "") -> None:
+        from .shared.search_spotlight import spotlight_match
+
+        def attempt(retry_left: int) -> None:
+            try:
+                page = self._stack.currentWidget()
+                if page is not None and spotlight_match(page, matched_text, context_text):
+                    return
+            except Exception as e:  # 聚光是锦上添花,失败绝不打扰定位本身
+                print(f"[search-nav] 聚光失败(条目级定位不受影响): {e!r}", flush=True)
+                return
+            if retry_left > 0:
+                QTimer.singleShot(350, lambda: attempt(retry_left - 1))
+
+        QTimer.singleShot(80, lambda: attempt(1))
+
+    def _navigate_to_search_hit_inner(self, file: str, pointer: str,
+                                      anchors: list) -> tuple[bool | None, str]:
+        f = (file or "").replace("\\", "/")
+        segs = self._pointer_segments(pointer)
+        pairs: list[tuple[str, str]] = [
+            (str(a[0]), str(a[1])) for a in anchors
+            if isinstance(a, (list, tuple)) and len(a) == 2 and str(a[1]).strip()
+        ]
+        outer_id = pairs[0][1] if pairs else ""
+
+        # ---- 图对话:graphs/<graphId>.json(指针 /nodes/<nid>/… → 直落节点) ----
+        if f.startswith("public/assets/dialogues/graphs/") and f.endswith(".json"):
+            from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+
+            gid = Path(f).stem
+            self.navigate_to_dialogue_graph(gid)
+            nid = segs[1] if len(segs) >= 2 and segs[0] == "nodes" else ""
+            if nid:
+                for ed in self._editor_instances:
+                    if isinstance(ed, DialogueGraphEditorTab):
+                        fn = getattr(ed, "focus_node", None)
+                        if callable(fn) and fn(nid, gid):
+                            return True, f"已定位图「{gid}」节点「{nid}」"
+                        break
+            return None, f"已打开图对话「{gid}」"
+
+        # ---- 场景:scenes/<sceneId>.json(实体级深选,否则场景级) ----
+        if f.startswith("public/assets/scenes/") and f.endswith(".json"):
+            sid = Path(f).stem
+            kind_map = {"npcs": "npc", "hotspots": "hotspot", "zones": "zone"}
+            for container, aid in pairs:
+                kind = kind_map.get(container)
+                if kind:
+                    self.navigate_to_scene_entity(kind, aid, sid)
+                    return True, f"已定位场景「{sid}」{kind}「{aid}」"
+            return self._nav_hit_generic("Scene", sid, method="select_scene_by_id")
+
+        if not f.startswith("public/assets/data/"):
+            return False, "该文件不在编辑器管理范围内"
+        rel = f[len("public/assets/data/"):]
+
+        # ---- data 下多文件目录 ----
+        if rel.startswith("archive/"):
+            ed = self._show_page_by_label("Archive")
+            if ed is None:
+                return False, "编辑页「Archive」不可用"
+            book = Path(rel).stem  # characters / lore / books / documents
+            fn = getattr(ed, "select_entry", None)
+            if callable(fn) and outer_id:
+                if fn(book, outer_id):
+                    return True, f"已定位档案「{book}」· {outer_id}"
+                return False, f"在「Archive」页未找到「{outer_id}」(可能已改名或删除)，请重新搜索"
+            return None, "已打开「Archive」页(未逐条定位)"
+        if rel.startswith("filters/"):
+            return self._nav_hit_generic("Filters", Path(rel).stem)
+        if rel.startswith(("water_minigames/", "sugar_wheel/", "paper_craft/")):
+            tab = {"water_minigames": "水域小游戏", "sugar_wheel": "转盘小游戏",
+                   "paper_craft": "扎纸小游戏"}[rel.split("/", 1)[0]]
+            iid = Path(rel).stem
+            if iid != "index" and any(
+                iid in (getattr(self._model, attr, {}) or {})
+                for attr in ("water_minigames_instances", "sugar_wheel_instances",
+                             "paper_craft_instances")):
+                self.navigate_to_minigame(iid)
+                return True, f"已定位小游戏「{iid}」"
+            return self._nav_hit_generic(tab)
+        if rel == "cutscenes/index.json":
+            # /<i>/steps/<k>/… → 展开到具体步骤(懒详情就地构造,聚光才摸得到正文)
+            step_idx = int(segs[2]) if (
+                len(segs) >= 3 and segs[1] == "steps" and segs[2].isdigit()) else -1
+            if outer_id and step_idx >= 0:
+                ed = self._show_page_by_label("过场")
+                if ed is None:
+                    return False, "编辑页「过场」不可用"
+                fn = getattr(ed, "focus_step", None)
+                if callable(fn) and fn(outer_id, step_idx):
+                    return True, f"已定位过场「{outer_id}」第 {step_idx + 1} 步"
+                sel = getattr(ed, "select_by_id", None)
+                if callable(sel):
+                    sel(outer_id)
+                return True, f"已定位「过场」· {outer_id}(步骤号超界,未展开)"
+            return self._nav_hit_generic("过场", outer_id)
+
+        # ---- data 下单文件 ----
+        if rel == "quests.json":
+            return self._nav_hit_generic("Quest", outer_id)
+        if rel == "questGroups.json":
+            return self._nav_hit_generic("Quest")
+        if rel == "encounters.json":
+            return self._nav_hit_generic("Encounter", outer_id)
+        if rel == "items.json":
+            return self._nav_hit_generic("Item", outer_id)
+        if rel == "rules.json":
+            return self._nav_hit_generic("Rule", outer_id)
+        if rel == "shops.json":
+            return self._nav_hit_generic("Shop", outer_id)
+        if rel == "audio_config.json":
+            aid = segs[1] if len(segs) >= 2 else ""
+            return self._nav_hit_generic("Audio", aid)
+        if rel == "strings.json":
+            ed = self._show_page_by_label("Strings")
+            if ed is None:
+                return False, "编辑页「Strings」不可用"
+            fn = getattr(ed, "select_by_pointer", None)
+            if callable(fn) and segs:
+                res = fn(segs)
+                if res is True:
+                    return True, "已定位字符串 " + ".".join(segs)
+                if isinstance(res, str) and res.startswith("partial:"):
+                    # 部分命中:只落到最深可达的上级分类(末段已改名/删除)——不聚光,如实播报
+                    return None, f"已定位到 {res[len('partial:'):]}(上级分类;末级键可能已改名或删除)"
+                # False:一段都没匹配
+                return False, "在「Strings」页未找到该键(可能已改名或删除)，请重新搜索"
+            return None, "已打开「Strings」页(未逐条定位)"
+        if rel == "overlay_images.json":
+            return self._nav_hit_generic("叠图 ID", segs[0] if segs else "")
+        if rel == "scenarios.json":
+            sid = outer_id
+            if not sid and len(segs) >= 2 and segs[0] == "scenarios" and segs[1].isdigit():
+                cat = (self._model.scenarios_catalog or {}).get("scenarios") or []
+                i = int(segs[1])
+                if 0 <= i < len(cat) and isinstance(cat[i], dict):
+                    sid = str(cat[i].get("scenarioId") or cat[i].get("id") or "")
+            return self._nav_hit_generic("Scenarios", sid, method="select_scenario_by_id")
+        if rel == "narrative_graphs.json":
+            # /compositions/<i>/mainGraph/states/<sid>/… 与
+            # /compositions/<i>/elements/<j>/graph/states/<sid>/… → 直落叙事图状态
+            gid = sid = ""
+            comps = (self._model.narrative_graphs or {}).get("compositions") or []
+            if (len(segs) >= 5 and segs[0] == "compositions" and segs[1].isdigit()
+                    and segs[2] == "mainGraph" and segs[3] == "states"):
+                i = int(segs[1])
+                if 0 <= i < len(comps) and isinstance(comps[i], dict):
+                    gid = str(((comps[i].get("mainGraph") or {}).get("id")) or "")
+                    sid = segs[4]
+            elif (len(segs) >= 7 and segs[0] == "compositions" and segs[1].isdigit()
+                    and segs[2] == "elements" and segs[3].isdigit()
+                    and segs[4] == "graph" and segs[5] == "states"):
+                i, j = int(segs[1]), int(segs[3])
+                if 0 <= i < len(comps) and isinstance(comps[i], dict):
+                    els = comps[i].get("elements") or []
+                    if 0 <= j < len(els) and isinstance(els[j], dict):
+                        gid = str(((els[j].get("graph") or {}).get("id")) or "")
+                        sid = segs[6]
+            if gid and sid:
+                self.navigate_to_narrative_state(gid, sid)
+                return True, f"已定位叙事图「{gid}」状态「{sid}」"
+            return self._nav_hit_generic("叙事状态机")
+        if rel == "document_reveals.json":
+            return self._nav_hit_generic("文档揭示", outer_id)
+        if rel == "smell_profiles.json":
+            pid = segs[1] if len(segs) >= 2 and segs[0] == "profiles" else ""
+            return self._nav_hit_generic("气味Profile", pid)
+        if rel == "pressure_holds.json":
+            return self._nav_hit_generic("临场长按", outer_id)
+        if rel == "signal_cues.json":
+            return self._nav_hit_generic("信号Cue", outer_id)
+        if rel == "planes.json":
+            if outer_id:
+                self.navigate_to_plane(outer_id)
+                return True, f"已定位位面「{outer_id}」"
+            return self._nav_hit_generic("位面")
+        if rel == "game_config.json":
+            return self._nav_hit_generic("Config")
+        if rel == "map_config.json":
+            return self._nav_hit_generic("Map")
+        if rel == "character_registry.json":
+            # character_registry.json 是 {"characters":[{id:…}]}——segs[0] 恒为
+            # 容器键 "characters",角色 id 在 anchors 里(对抗审查确认项)。
+            return self._nav_hit_generic("角色", outer_id)
+        if rel == "flag_registry.json":
+            key = ""
+            if len(segs) >= 2 and segs[0] == "static" and segs[1].isdigit():
+                statics = (self._model.flag_registry or {}).get("static") or []
+                i = int(segs[1])
+                if 0 <= i < len(statics):
+                    e = statics[i]
+                    key = str(e.get("key") or "") if isinstance(e, dict) else str(e or "")
+            return self._nav_hit_generic("Flags", key)
+        if rel == "parallax_scenes.json":
+            return False, "视差场景由外部 Parallax 编辑器维护,无内嵌编辑页"
+        return False, "该文件没有对应的编辑页"
 
     # ---- close ------------------------------------------------------------
 
@@ -1688,14 +2512,15 @@ class MainWindow(QMainWindow):
             return
         # 先把各面板未应用的编辑 flush 进模型再判 dirty——否则"改了字段没 Ctrl+S 直接关窗"
         # 会绕过下面的保存询问被静默丢弃（审查 P1-5）。各 flush 均已条件化：零编辑时不产生伪脏。
-        try:
-            if not self._flush_editors_to_model():
-                event.ignore()
-                return
-        except Exception as e:
+        ok, skipped = self._flush_editors_to_model()
+        if not ok:
+            event.ignore()
+            return
+        if skipped:
             r = QMessageBox.question(
                 self, "未保存的编辑无法提交",
-                f"{e}\n\n仍要关闭并丢弃这些编辑吗？",
+                "以下编辑页的待提交修改无法写入模型：\n\n"
+                f"{self._format_skipped_panels(skipped)}\n\n仍要关闭并丢弃这些编辑吗？",
                 QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             )
             if r != QMessageBox.StandardButton.Discard:
@@ -1720,5 +2545,11 @@ class MainWindow(QMainWindow):
             self._settings.setValue("mainWindowGeometry", self.saveGeometry())
         except Exception:
             pass
+        if self._lsp_client is not None:
+            try:
+                self._lsp_client.stop()
+            except Exception:
+                pass
+            self._lsp_client = None
         self._stop_game()
         super().closeEvent(event)

@@ -16,6 +16,7 @@ from tempfile import TemporaryDirectory
 
 from PySide6.QtWidgets import QApplication
 
+from tools.editor import theme
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 from tools.editor.tests.test_all_editors_construct import _editor_classes
@@ -31,6 +32,22 @@ class SmallScreenLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self) -> None:
+        self._original_theme = theme.current_theme_id()
+        self._original_font = theme.current_font_px()
+        theme.apply_application_theme(
+            self._app,
+            theme.THEME_MODERN,
+            theme.DEFAULT_FONT_PX,
+        )
+
+    def tearDown(self) -> None:
+        theme.apply_application_theme(
+            self._app,
+            self._original_theme,
+            self._original_font,
+        )
 
     def test_no_editor_panel_exceeds_13in_width_budget(self) -> None:
         over: list[str] = []

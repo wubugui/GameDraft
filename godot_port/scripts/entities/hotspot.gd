@@ -1,6 +1,8 @@
 class_name RuntimeHotspot
 extends RefCounted
 
+const RuntimeHotspotCollisionScript := preload("res://scripts/utils/hotspot_collision.gd")
+
 const TYPE_COLORS := {"inspect": Color("44aaff"), "pickup": Color("ffcc44"), "transition": Color("44ff88")}
 
 var def: Dictionary
@@ -44,16 +46,6 @@ static func apply_runtime_override(definition: Dictionary, override: Variant) ->
 	return output
 
 
-static func collision_polygon_to_world(definition: Dictionary) -> Variant:
-	var polygon: Variant = definition.get("collisionPolygon")
-	if not _is_valid_polygon(polygon): return null
-	var output: Array = []
-	var is_local: bool = definition.get("collisionPolygonLocal") == true; var anchor := Vector2(float(definition.get("x", 0)), float(definition.get("y", 0)))
-	for point: Dictionary in polygon:
-		output.push_back({"x": float(point.x) + (anchor.x if is_local else 0.0), "y": float(point.y) + (anchor.y if is_local else 0.0)})
-	return output
-
-
 func load_display_image(asset_manager: RuntimeAssetManager) -> bool:
 	var image_def: Variant = def.get("displayImage")
 	if not is_valid_display_image(image_def): set_display_texture(null, 0, 0); return false
@@ -64,7 +56,9 @@ func load_display_image(asset_manager: RuntimeAssetManager) -> bool:
 
 func set_display_texture(texture: Variant, world_width: float, world_height: float) -> void:
 	if display_sprite != null:
+		RuntimeSceneEntityFilterBinding.detach(display_sprite)
 		container.remove_child(display_sprite); display_sprite.free(); display_sprite = null
+	_pixel_density_match_active = false
 	_display_world_height = 0.0
 	if not texture is Texture2D or world_width <= 0 or world_height <= 0:
 		marker.visible = true; _sync_entity_sort_band(); return
@@ -88,6 +82,9 @@ func get_center_y() -> float: return float(def.get("y", 0.0))
 func get_id() -> String: return str(def.get("id", ""))
 func get_interaction_range() -> float: return float(def.get("interactionRange", 0.0))
 func get_active() -> bool: return _active
+## EventBus 调试 trace 投影：只吐关键数据，绝不暴露 container（活节点树）或 def 全量。
+## 与 src/entities/Hotspot.ts#toTraceJSON 对齐。
+func to_trace_json() -> Dictionary: return {"id": str(def.get("id", "")), "type": str(def.get("type", "")), "active": _active}
 func get_picked_up() -> bool: return _picked_up
 func get_display_object() -> Node2D: return container
 func get_display_texture() -> Variant: return display_sprite.texture if display_sprite != null else null
@@ -109,8 +106,16 @@ func set_condition_enabled(value: bool) -> void: _condition_enabled = value; _ap
 func mark_picked_up() -> void: _picked_up = true; _apply_effective_active()
 
 
-func attach_depth_occlusion_filter(filter: Variant) -> void: _depth_occlusion_filter = filter
-func detach_depth_occlusion_filter() -> Variant: var result: Variant = _depth_occlusion_filter; _depth_occlusion_filter = null; return result
+func attach_depth_occlusion_filter(filter: Variant) -> void:
+	_depth_occlusion_filter = filter
+	_rebuild_display_sprite_filter()
+
+
+func detach_depth_occlusion_filter() -> Variant:
+	var result: Variant = _depth_occlusion_filter
+	_depth_occlusion_filter = null
+	_rebuild_display_sprite_filter()
+	return result
 
 
 func apply_entity_pixel_density_match(enabled: bool, background_density: Variant = null, _strength_scale := 1.0) -> void:
@@ -160,7 +165,7 @@ func _sync_entity_sort_band() -> void:
 	container.remove_meta("entitySortBand"); container.remove_meta("entityOcclusionPolygon")
 	var image_def: Variant = def.get("displayImage")
 	if display_sprite != null and is_valid_display_image(image_def) and image_def.get("spriteSort") in ["back", "front"]: container.set_meta("entitySortBand", image_def.spriteSort)
-	var polygon: Variant = collision_polygon_to_world(def)
+	var polygon: Variant = RuntimeHotspotCollisionScript.hotspot_collision_polygon_to_world(def)
 	if polygon is Array: container.set_meta("entityOcclusionPolygon", polygon)
 
 
@@ -169,11 +174,11 @@ func _apply_display_image_facing() -> void:
 	display_sprite.scale.x = (-1.0 if get_effective_display_facing() == "left" else 1.0) * absf(display_sprite.scale.x)
 
 
-static func _is_valid_polygon(polygon: Variant) -> bool:
-	if not polygon is Array or polygon.size() < 3: return false
-	for point: Variant in polygon:
-		if not point is Dictionary or not (point.get("x") is int or point.get("x") is float) or not (point.get("y") is int or point.get("y") is float) or not is_finite(float(point.x)) or not is_finite(float(point.y)): return false
-	return true
+func _rebuild_display_sprite_filter() -> void:
+	if display_sprite == null: return
+	RuntimeSceneEntityFilterBinding.detach(display_sprite)
+	if _depth_occlusion_filter != null:
+		RuntimeSceneEntityFilterBinding.attach(display_sprite, _depth_occlusion_filter)
 
 
 func _circle_polygon(radius: float, segments: int) -> PackedVector2Array:

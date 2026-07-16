@@ -135,7 +135,10 @@
         "kind": "npc"
       },
       "text": "又是你嗦。正好——河头今早捞起个泡涨的，官面验过，没得人认。拉切义庄，八文。整不整？",
-      "next": "yan_choice"
+      "next": "yan_choice",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "yan_choice": {
       "type": "choice",
@@ -172,7 +175,10 @@
         "kind": "npc"
       },
       "text": "死人子在码头巷口，苇席底下撂起。莫拖——日头毒了要出味。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "yan_no": {
       "type": "line",
@@ -180,7 +186,10 @@
         "kind": "npc"
       },
       "text": "要得，想通了再来。死人子又跑不脱。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "yan_remind": {
       "type": "line",
@@ -188,7 +197,10 @@
         "kind": "npc"
       },
       "text": "还没去嗦？码头巷口，苇席底下。手脚麻利点。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "yan_carrying": {
       "type": "line",
@@ -196,7 +208,10 @@
         "kind": "npc"
       },
       "text": "背都背起了还杵到这做啥子？义庄，快切！",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "yan_done": {
       "type": "line",
@@ -204,7 +219,10 @@
         "kind": "npc"
       },
       "text": "淹的那个交了嗦？要得。回头再有活路喊你。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "c_jie_line": {
       "type": "line",
@@ -223,7 +241,10 @@
         "kind": "npc"
       },
       "text": "还没去嗦？巷口墙根，苇席底下。手脚麻利点。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "lg_carrying": {
       "type": "line",
@@ -231,7 +252,10 @@
         "kind": "npc"
       },
       "text": "背都背起了还杵到这做啥子？义庄，快切！",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "lg_placed": {
       "type": "line",
@@ -239,7 +263,10 @@
         "kind": "npc"
       },
       "text": "放下了就找管事结钱切，钱在他手头，莫来找我。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

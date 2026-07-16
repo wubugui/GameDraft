@@ -144,6 +144,10 @@ _OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
     "flicker": False,
     # giveItem critical（关键给予绕过槽上限）为可选：原本没有且未勾选时不写出
     "critical": False,
+    # enableRuleOffers.slots / chooseAction.options：原本没有该键且列表仍为空时不写出，
+    # 配合"载入空列表不再自动注入空行"，保证 slots:[] / options:[] 与缺键两种旧形状均往返不漂移。
+    "slots": [],
+    "options": [],
 }
 
 def _coerce_bool_param(val: object) -> bool:
@@ -224,6 +228,39 @@ DEBUG_ONLY_ACTION_TYPES = {"setNarrativeState"}
 # 仍保留在 ACTION_TYPES（兼容历史数据、校验通过、运行时可用），但从编辑器内容下拉中移除。
 LEGACY_ACTION_TYPES = {"damagePlayer", "healPlayer"}
 CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TYPES and t not in LEGACY_ACTION_TYPES]
+
+# _make_selector 的 kind → schema_build.CONTENT_ID_PARAMS 宇宙名。
+# 用途：为每个 id 引用参数所建的选择器打上"这是哪个内容宇宙的选择器"标记
+# （widget._content_id_universe），供 test_shared_widget_selectors 做「宇宙级」parity——
+# 断言 giveItem.id 建出的确是 items 选择器，而不仅仅是"某个非裸 QLineEdit 选择器"。
+# 新增 _make_selector kind 且用于某内容 id 参数时，必须在此登记对应宇宙（parity 测试会拦）。
+_SELECTOR_KIND_UNIVERSE: dict[str, str] = {
+    "item": "items",
+    "rule": "rules",
+    "fragment": "fragments",
+    "quest": "quests",
+    "encounter": "encounters",
+    "cutscene": "cutscenes",
+    "shop": "shops",
+    "audio_bgm": "bgm",
+    "audio_sfx": "sfx",
+    "audio_ambient": "ambient",
+    "smell": "smells",
+    "plane": "planes",
+    "water_minigame": "water_minigames",
+    "sugar_wheel_minigame": "sugar_wheel_minigames",
+    "paper_craft_minigame": "paper_craft_minigames",
+    "pressure_hold": "pressure_holds",
+    "signal_cue": "signal_cues",
+}
+
+
+def _tag_content_universe(widget, universe: str | None) -> None:
+    """给 id 引用选择器打上其服务的内容宇宙标记（宇宙级 parity 用，见 _SELECTOR_KIND_UNIVERSE）。"""
+    try:
+        widget._content_id_universe = universe
+    except (AttributeError, TypeError):
+        pass
 
 # 编辑器用：会改动存档/可持久化数据 vs 以运行时演出与瞬时状态为主（与实现细节若有出入以策划理解为准，见文档注释）。
 # "save" = 常关联存档、任务、背包、flag、持久化 override 等；"memory" = 多为镜头、UI、过场、等待、切场景、音效等
@@ -538,6 +575,23 @@ def _id_ref_rows_with_orphan(
     out = list(pairs)
     out.append((c, f"{c} · 仅数据引用"))
     return out
+
+
+def _refill_scoped_combo_preserve(
+    combo: "FilterableTypeCombo",
+    rows: list[tuple[str, str]],
+) -> None:
+    """按父项刷新 select_only 子选择器候选，且**保留当前值**：
+
+    旧 hotspotId/zoneId 不在新场景候选时以「(数据) 」前缀注入保留，绝不静默顶替第一项。
+    当前值为空时交由 FilterableTypeCombo 落到首个候选（占位或首项，与首帧构造一致）。
+    """
+    cur = combo.committed_type()
+    values = {v for _d, v in rows}
+    if cur and cur not in values:
+        rows = [(f"(数据) {cur}", cur), *rows]
+    combo.set_entries(rows)
+    combo.set_committed_type(cur)
 
 
 class EmoteBubbleParamWidget(QWidget):
@@ -1858,12 +1912,11 @@ class RuleSlotsParamEditor(QWidget):
         btn_add.clicked.connect(self._add_empty_slot)
         root.addWidget(btn_add)
         raw = slots if isinstance(slots, list) else []
-        if raw:
-            for s in raw:
-                if isinstance(s, dict):
-                    self._append_slot_ui(s)
-        else:
-            self._append_slot_ui({})
+        # 空列表不自动注入空槽：载入 slots:[] 保存仍是 slots:[]（往返不漂移），
+        # 需要新槽时用「+ 规矩槽位」按钮显式添加。
+        for s in raw:
+            if isinstance(s, dict):
+                self._append_slot_ui(s)
 
     def _add_empty_slot(self) -> None:
         self._append_slot_ui({})
@@ -2028,10 +2081,10 @@ class ActionChoiceOptionsEditor(QWidget):
         add_btn.clicked.connect(lambda: self._add_option({}))
         top.addWidget(add_btn)
         self._root.addLayout(top)
+        # 空列表不自动注入空选项：载入 options:[] 保存仍是 options:[]（往返不漂移），
+        # 需要新选项时用「+ 选项」按钮显式添加。
         for opt in options if isinstance(options, list) else []:
             self._add_option(opt if isinstance(opt, dict) else {})
-        if not self._rows:
-            self._add_option({})
 
     def set_wheel_speech_role_rows_getter(
         self,
@@ -2235,6 +2288,8 @@ class ActionRow(QWidget):
         # 空/默认占位键，避免"打开即保存"漂移（1000->1000.0、新增 direction:""/anchorOffset:0 等）。
         self._original_params = deepcopy(self._data["params"])
         self.type_combo.set_committed_type(self._data.get("type", "setFlag"))
+        # 记录当前类型：用户切换类型时据此弹确认/回退（程序性 set 不经 typeCommitted，不受影响）
+        self._last_committed_type: str = self.type_combo.committed_type()
         self._rebuild_params()
 
         self.type_combo.typeCommitted.connect(self._on_type_committed)
@@ -2393,7 +2448,55 @@ class ActionRow(QWidget):
         self._rebuild_params()
         maybe_stamp(_pct, f'rebuild done type={self.type_combo.committed_type()!s}')
 
+    @staticmethod
+    def _meaningful_param_count(params: dict) -> int:
+        """"已配置"参数计数：非空字符串 / 非空列表 / 非空 dict 才算。
+
+        bool / 数字不计——它们多为控件自动默认（fresh 行的 value:true、seed 的时长等），
+        计入会让"新加一行随手换类型"也弹确认。真正会被蒸发且难以重建的是
+        id/文本与嵌套 action 列表，这里全都覆盖。
+        """
+        n = 0
+        for v in (params or {}).values():
+            if isinstance(v, str):
+                if v.strip():
+                    n += 1
+            elif isinstance(v, (list, dict)):
+                if v:
+                    n += 1
+        return n
+
+    def _confirm_type_switch_clear(self, prev_type: str, new_type: str, count: int) -> bool:
+        """切换类型将清空已配置参数时的确认；测试可 monkeypatch。默认 No（不清空）。"""
+        ret = QMessageBox.question(
+            self,
+            "切换 Action 类型",
+            f"从 {prev_type} 切换到 {new_type} 将清空已配置的 {count} 项参数"
+            "（含嵌套子动作，切回不会还原）。确定切换？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return ret == QMessageBox.StandardButton.Yes
+
     def _on_type_committed(self, _text: str) -> None:
+        new_type = self.type_combo.committed_type()
+        prev_type = getattr(self, "_last_committed_type", "")
+        if prev_type and new_type != prev_type:
+            # typeCommitted 时 committed 已是新类型；临时回位用旧类型序列化旧控件，
+            # 得到"即将被清空"的真实参数（含嵌套 action 列表）。set_committed_type 程序性不发信号。
+            self.type_combo.set_committed_type(prev_type)
+            try:
+                old_params = (self.to_dict() or {}).get("params") or {}
+            except Exception:
+                old_params = {}
+            finally:
+                self.type_combo.set_committed_type(new_type)
+            n = self._meaningful_param_count(old_params)
+            if n > 0 and not self._confirm_type_switch_clear(prev_type, new_type, n):
+                # 用户放弃：类型回退，控件与参数原样保留
+                self.type_combo.set_committed_type(prev_type)
+                return
+        self._last_committed_type = new_type
         self._data["params"] = {}
         # 切换 action 类型即换了一套参数语义：旧类型的原始快照不再适用，清空以免误保真/误剔除。
         self._original_params = {}
@@ -2427,7 +2530,9 @@ class ActionRow(QWidget):
                 if self._ctx_model
                 else [""]
             )
-            items: list[tuple[str, str]] = [(k, k if k else "(default)") for k in keys]
+            # 空键不入候选：allow_empty 的 "(none)" 行已是唯一空值（语义 = 不写该键，进场用默认
+            # 出生点）。此前 "(none)" 与 "(default)" 双空值同列，语义重复且易误解。
+            items: list[tuple[str, str]] = [(k, k) for k in keys if k]
             if initial["v"] is not None:
                 cur = initial["v"]
                 initial["v"] = None
@@ -2741,7 +2846,7 @@ class ActionRow(QWidget):
         strict_pick = kind in (
             "actor", "emote_target", "npc_only",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
-            "smell", "plane",
+            "smell", "plane", "pressure_hold", "signal_cue",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -2768,9 +2873,14 @@ class ActionRow(QWidget):
         elif kind == "audio_ambient":
             pairs = [(a, a) for a in (m.all_audio_ids("ambient") if m else [])]
         elif kind == "spawn":
-            pairs = [("", "(default)")]
+            # 空值只保留 allow_empty 的 "(none)" 行（= 不写该键，默认出生点），
+            # 不再注入 ("", "(default)") 同义空值行。
+            pairs = []
         elif kind == "emote_target":
             if m:
+                # 与 actor kind 的候选源对齐（project_model.actor_id_items_for_scene）：
+                # 运行时 resolveEmoteTarget 支持过场临时演员 _cut_*，strict 下拉必须给得出。
+                pairs.extend(m.collect_cutscene_temp_actor_ids())
                 pairs.extend(m.npc_ids_for_scene(self._ctx_scene_id))
                 pairs.extend(m.hotspot_ids_for_scene(self._ctx_scene_id))
             pairs.append(("player", "player"))
@@ -2788,6 +2898,20 @@ class ActionRow(QWidget):
             pairs = m.all_smell_profile_ids() if m else []
         elif kind == "plane":
             pairs = m.all_plane_ids() if m else []
+        elif kind == "pressure_hold":
+            # project_model 暂无专用 id-provider，这里只读其 pressure_holds 列表（数据同源）
+            pairs = [
+                (str(p.get("id", "")).strip(), str(p.get("prompt") or p.get("id", "")).strip()[:32])
+                for p in ((m.pressure_holds if m else None) or [])
+                if isinstance(p, dict) and str(p.get("id", "")).strip()
+            ]
+        elif kind == "signal_cue":
+            # project_model 暂无专用 id-provider，这里只读其 signal_cues 列表（数据同源）
+            pairs = [
+                (str(c.get("id", "")).strip(), str(c.get("description") or c.get("id", "")).strip()[:32])
+                for c in ((m.signal_cues if m else None) or [])
+                if isinstance(c, dict) and str(c.get("id", "")).strip()
+            ]
         else:
             pairs = []
 
@@ -2808,6 +2932,7 @@ class ActionRow(QWidget):
             w_audio.set_current(committed)
             w_audio.value_changed.connect(self.changed)
             w_audio.setToolTip("选择 audio_config 中的音频 id；右侧按钮可直接试听当前选择。")
+            _tag_content_universe(w_audio, _SELECTOR_KIND_UNIVERSE.get(kind))
             return w_audio
 
         w = IdRefSelector(
@@ -2832,9 +2957,13 @@ class ActionRow(QWidget):
             "plane": "仅下拉选择；列表来自 planes.json（位面面板维护）。\n"
                      "activatePlane 作用域：过场内激活随过场结束自动清除；"
                      "过场外持续至 deactivatePlane / 读档，且压过叙事点名。",
+            "spawn": "选目标场景的出生点；(none) = 不指定（进场用默认出生点）。",
+            "pressure_hold": "仅下拉选择；列表来自 pressure_holds.json（按压蓄力配置）。",
+            "signal_cue": "仅下拉选择；列表来自 signal_cues.json（信号演出配置）。",
         }.get(kind)
         if tip:
             w.setToolTip(tip)
+        _tag_content_universe(w, _SELECTOR_KIND_UNIVERSE.get(kind))
         return w
 
     def _rebuild_params(self) -> None:
@@ -3280,10 +3409,7 @@ class ActionRow(QWidget):
                 rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
                 if not rows:
                     rows = [("（当前场景无热点）", "")]
-                cur = id_combo.committed_type()
-                id_combo.set_entries(rows)
-                values = {v for _d, v in rows}
-                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                _refill_scoped_combo_preserve(id_combo, rows)
                 self.changed.emit()
 
             scene_combo.typeCommitted.connect(_refill_hotspots)
@@ -3387,10 +3513,7 @@ class ActionRow(QWidget):
                 rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
                 if not rows:
                     rows = [("（当前场景无热点）", "")]
-                cur = id_combo.committed_type()
-                id_combo.set_entries(rows)
-                values = {v for _d, v in rows}
-                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                _refill_scoped_combo_preserve(id_combo, rows)
                 self.changed.emit()
 
             scene_combo.typeCommitted.connect(_refill_hotspots_fac)
@@ -3450,10 +3573,7 @@ class ActionRow(QWidget):
                 rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
                 if not rows:
                     rows = [("（当前场景无热点）", "")]
-                cur = id_combo.committed_type()
-                id_combo.set_entries(rows)
-                values = {v for _d, v in rows}
-                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                _refill_scoped_combo_preserve(id_combo, rows)
                 self.changed.emit()
 
             scene_combo.typeCommitted.connect(_refill_hotspots_pe)
@@ -3541,6 +3661,7 @@ class ActionRow(QWidget):
                 sid_combo.set_committed_type(cur_sid)
             elif scen_ids:
                 sid_combo.set_committed_type(scen_ids[0])
+            _tag_content_universe(sid_combo, "scenarios")
             self._param_widgets["scenarioId"] = sid_combo
             self._params_layout.addRow("scenarioId", sid_combo)
 
@@ -3654,6 +3775,7 @@ class ActionRow(QWidget):
             elif scen_ids:
                 sid_combo.set_committed_type(scen_ids[0])
             sid_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            _tag_content_universe(sid_combo, "scenarios")
             self._param_widgets["scenarioId"] = sid_combo
             self._params_layout.addRow("scenarioId", sid_combo)
             self._sync_foldable_visibility()
@@ -3683,6 +3805,7 @@ class ActionRow(QWidget):
             elif doc_ids:
                 doc_combo.set_committed_type(doc_ids[0])
             doc_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            _tag_content_universe(doc_combo, "documents")
             self._param_widgets["documentId"] = doc_combo
             self._params_layout.addRow("documentId", doc_combo)
             self._sync_foldable_visibility()
@@ -3796,6 +3919,7 @@ class ActionRow(QWidget):
             elif gids:
                 gid_combo.set_committed_type(gids[0])
             gid_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            _tag_content_universe(gid_combo, "dialogue_graphs")
             self._param_widgets["graphId"] = gid_combo
             self._params_layout.addRow("graphId", gid_combo)
 
@@ -4289,10 +4413,17 @@ class ActionRow(QWidget):
                 if act_type not in ("setFlag",):
                     w.set_value(val if val != "" else True)
                 w.valueChanged.connect(self.changed)
-            elif act_type in ("setFlag", "appendFlag") and pname == "key":
+            elif act_type in ("setFlag", "appendFlag", "addFlagValue") and pname == "key":
+                # addFlagValue.key 与 setFlag/appendFlag 同为 flag 键引用（CONTENT_ID_PARAMS 登记）：
+                # 手打错=运行时静默在错误 flag 上加数值，validator 抓不到。统一走登记表选择器。
                 cur = str(val) if val is not None else ""
                 w = FlagKeyPickField(self._ctx_model, self._ctx_scene_id, cur, self)
                 w.setMinimumWidth(96)
+                _tag_content_universe(w, "__flag__")
+            elif act_type == "startPressureHold" and pname == "id":
+                w = self._make_selector("pressure_hold", str(val) if val is not None else "")
+            elif act_type == "playSignalCue" and pname == "id":
+                w = self._make_selector("signal_cue", str(val) if val is not None else "")
             elif act_type in ("switchScene", "changeScene") and pname == "targetScene":
                 w = self._make_selector("scene", str(val) if val is not None else "")
             elif act_type in ("switchScene", "changeScene") and pname == "targetSpawnPoint":
@@ -4372,6 +4503,7 @@ class ActionRow(QWidget):
                 w.set_items(items)
                 w.set_current(str(val) if val is not None else "")
                 w.value_changed.connect(self.changed)
+                _tag_content_universe(w, "archive_entries")
             elif act_type == "showNotification" and pname == "type":
                 w = QComboBox(self)
                 # 非 editable：notification type 是固定枚举，不需要手写；同时避免顶层弹窗闪烁。
@@ -4394,6 +4526,7 @@ class ActionRow(QWidget):
                     "只能通过信号管理器填写；管理器直接维护 narrative_graphs.signals。"
                 )
                 w.valueChanged.connect(lambda _t: self.changed.emit())
+                _tag_content_universe(w, "narrative_signals")
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
                 w.setToolTip(
@@ -4671,10 +4804,7 @@ class ActionRow(QWidget):
             rows = [(f"{zid}（zone）", zid) for zid, _ in raw_rows]
             if not rows:
                 rows = [("（当前场景无普通 Zone）", "")]
-            cur = id_combo.committed_type()
-            id_combo.set_entries(rows)
-            values = {v for _d, v in rows}
-            id_combo.set_committed_type(cur if cur in values else rows[0][1])
+            _refill_scoped_combo_preserve(id_combo, rows)
             self.changed.emit()
 
         scene_combo.typeCommitted.connect(_refill_zones_ze)
@@ -5072,7 +5202,7 @@ class ActionRow(QWidget):
             elif ptype == "flag_val" and isinstance(w, FlagValueEdit):
                 # 不做 float() 强转：FlagValueEdit 原值保留（int 保 int、raw 保原类型）
                 params[pname] = w.get_value()
-            elif act_type in ("setFlag", "appendFlag") and pname == "key" and isinstance(w, FlagKeyPickField):
+            elif act_type in ("setFlag", "appendFlag", "addFlagValue") and pname == "key" and isinstance(w, FlagKeyPickField):
                 params[pname] = w.key()
             elif isinstance(w, EmoteBubbleParamWidget):
                 params[pname] = w.emote_text()

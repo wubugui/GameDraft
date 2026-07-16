@@ -13,10 +13,16 @@
 - didOpen/didChange/didClose overlay:**未保存的编辑器内容参与一切查询**——
   这是"编辑器可依赖"的地基(编辑器内存态≠磁盘态,大脑必须能看见前者)
 
-自定义方法(gamedraft/* 命名空间,给未来的编辑器接入与 agent 脚本用):
+自定义方法(gamedraft/* 命名空间,给编辑器接入与 agent 脚本用):
 - gamedraft/universes                → {宇宙名: 条数}
 - gamedraft/candidates {universe}    → [{id, label}](id 选择器候选源)
 - gamedraft/refs {id}                → 结构化引用清单(含精确位置)
+- gamedraft/search {query, ignoreCase?, limit?, scope?}
+                                     → 全文子串搜索(值/键/数字,含 overlay;
+                                       每条命中带 pointer/context/excerpt/anchors/line,
+                                       编辑器「全局搜索」对话框的后端)
+- gamedraft/status                   → {root, files, overlays, universes}
+                                       (编辑器状态栏「LSP 详情」用)
 
 索引口径全部复用既有模块(id_universes/refs/extract),不另立权威。
 """
@@ -36,13 +42,21 @@ if __package__ in (None, ""):
     from id_universes import UniverseData, collect_id_universes
     from json_locator import JsonLocator
     from refs import CONTENT_GLOBS, find_refs
+    from rename import RENAMEABLE_UNIVERSES, plan_rename
+    from search import find_text
 else:
     from .extract import extract_language_spec
     from .id_universes import UniverseData, collect_id_universes
     from .json_locator import JsonLocator
     from .refs import CONTENT_GLOBS, find_refs
+    from .rename import RENAMEABLE_UNIVERSES, plan_rename
+    from .search import find_text
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _UserError(Exception):
+    """面向用户的拒绝理由(LSP error message,编辑器原样弹出)。"""
 
 
 def _uri_to_path(uri: str) -> Path | None:
@@ -291,6 +305,51 @@ class Server:
             return None
         return {"contents": {"kind": "markdown", "value": "\n".join(lines)}}
 
+    def prepare_rename(self, params: dict):
+        tok, _ = self._token_at(params["textDocument"]["uri"], params["position"])
+        if tok is None or not tok.text.strip():
+            raise _UserError("光标下没有可改名的字符串")
+        universes = {n for n, ids in self.ud().ids.items() if tok.text in ids}
+        if not universes:
+            raise _UserError(f"「{tok.text}」不属于任何已知 id 宇宙")
+        # 预检交给 plan_rename 的白名单逻辑(用一个必不撞车的占位新名)
+        probe = plan_rename(self.root, self.ud(), tok.text, tok.text + "__probe__",
+                            read_text=self.read_text, locator_of=self.locator)
+        if not probe.ok:
+            raise _UserError(probe.message)
+        loc = self.locator(_uri_to_path(params["textDocument"]["uri"]))
+        (sl, sc), (el, ec) = loc.pos(tok.start), loc.pos(tok.end)
+        return {"range": {"start": {"line": sl, "character": sc},
+                          "end": {"line": el, "character": ec}},
+                "placeholder": tok.text}
+
+    def rename(self, params: dict):
+        tok, _ = self._token_at(params["textDocument"]["uri"], params["position"])
+        if tok is None or not tok.text.strip():
+            raise _UserError("光标下没有可改名的字符串")
+        outcome = plan_rename(self.root, self.ud(), tok.text, params.get("newName", ""),
+                              read_text=self.read_text, locator_of=self.locator)
+        if not outcome.ok:
+            raise _UserError(outcome.message)
+        changes: dict[str, list] = {}
+        for file, edits in outcome.edits.items():
+            path = self.root / file
+            loc = self.locator(path)
+            if loc is None:
+                raise _UserError(f"{file} 定位失败,整体放弃")
+            text_edits = []
+            for start, end, new_text in edits:
+                (sl, sc), (el, ec) = loc.pos(start), loc.pos(end)
+                text_edits.append({
+                    "range": {"start": {"line": sl, "character": sc},
+                              "end": {"line": el, "character": ec}},
+                    "newText": new_text,
+                })
+            changes[_path_to_uri(path)] = text_edits
+        print(f"[lsp] rename 「{tok.text}」→「{params.get('newName')}」: {outcome.message}",
+              file=sys.stderr, flush=True)
+        return {"changes": changes}
+
     # ---------- gamedraft/* ----------
 
     def gd_universes(self, _params):
@@ -304,6 +363,46 @@ class Server:
             return {"error": f"未知宇宙 {name!r}", "known": sorted(ud.ids)}
         labels = ud.labels.get(name, {})
         return [{"id": i, "label": labels.get(i)} for i in sorted(set(ids))]
+
+    def gd_search(self, params: dict):
+        """全文子串搜索(编辑器全局搜索的后端);overlay 优先,故实时反映未保存编辑。"""
+        query = str((params or {}).get("query", "") or "")
+        if not query:
+            return {"query": "", "total": 0, "truncated": False,
+                    "filesScanned": 0, "failedFiles": [], "hits": []}
+        ignore_case = (params or {}).get("ignoreCase", True) is not False
+        try:
+            limit = max(1, min(int((params or {}).get("limit", 500)), 2000))
+        except (TypeError, ValueError):
+            limit = 500
+        scope = str((params or {}).get("scope", "") or "")
+        res = find_text(self.root, query, read_text=self.read_text,
+                        ignore_case=ignore_case, limit=limit, scope=scope)
+        hits = []
+        for h in res.hits:
+            entry = {"file": h.file, "pointer": h.pointer, "kind": h.kind,
+                     "context": h.context, "excerpt": h.excerpt,
+                     "matchStart": h.match_start, "matchLen": h.match_len,
+                     "anchors": h.anchors}
+            loc = self.locator(self.root / h.file)
+            rng = loc.range_of_pointer(h.pointer) if loc else None
+            if rng:
+                entry["line"] = rng[0][0] + 1  # 1 基,给人看
+            hits.append(entry)
+        return {"query": query, "total": res.total,
+                "truncated": res.total > len(res.hits),
+                "filesScanned": res.files_scanned,
+                "failedFiles": res.failed_files, "hits": hits}
+
+    def gd_status(self, _params):
+        """server 自述(编辑器状态栏「LSP 详情」用):索引范围与 overlay 规模。"""
+        ud = self.ud()
+        files = 0
+        for pattern in CONTENT_GLOBS:
+            files += sum(1 for _ in self.root.glob(pattern))
+        return {"root": str(self.root), "files": files,
+                "overlays": len(self.overlays),
+                "universes": {n: len(ids) for n, ids in sorted(ud.ids.items())}}
 
     def gd_refs(self, params: dict):
         target = (params or {}).get("id", "")
@@ -416,6 +515,7 @@ def main() -> int:
                         "referencesProvider": True,
                         "hoverProvider": True,
                         "workspaceSymbolProvider": True,
+                        "renameProvider": {"prepareProvider": True},
                     },
                     "serverInfo": {"name": "gamedraft-json-lang", "version": "0.1"},
                 })
@@ -452,14 +552,25 @@ def main() -> int:
                 respond(msg_id, server.hover(params))
             elif method == "workspace/symbol":
                 respond(msg_id, server.workspace_symbol(params))
+            elif method == "textDocument/prepareRename":
+                respond(msg_id, server.prepare_rename(params))
+            elif method == "textDocument/rename":
+                respond(msg_id, server.rename(params))
             elif method == "gamedraft/universes":
                 respond(msg_id, server.gd_universes(params))
             elif method == "gamedraft/candidates":
                 respond(msg_id, server.gd_candidates(params))
             elif method == "gamedraft/refs":
                 respond(msg_id, server.gd_refs(params))
+            elif method == "gamedraft/search":
+                respond(msg_id, server.gd_search(params))
+            elif method == "gamedraft/status":
+                respond(msg_id, server.gd_status(params))
             elif msg_id is not None:
                 respond(msg_id, error={"code": -32601, "message": f"未实现: {method}"})
+        except _UserError as e:  # 面向用户的拒绝理由,编辑器弹出原文
+            if msg_id is not None:
+                respond(msg_id, error={"code": -32803, "message": str(e)})  # RequestFailed
         except Exception as e:  # 单请求失败不拖垮 server
             if msg_id is not None:
                 respond(msg_id, error={"code": -32603, "message": f"{type(e).__name__}: {e}"})

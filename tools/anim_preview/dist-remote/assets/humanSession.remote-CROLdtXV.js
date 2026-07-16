@@ -1,0 +1,1 @@
+var e=`远程公开验收：正式操作会打开 GitHub Issue，且仅在仓库 Owner 确认并生成回执后生效`,t=`remote-github-issue-confirmation-v1`;function n(){return t}export{n,e as t};

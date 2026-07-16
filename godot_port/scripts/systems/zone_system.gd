@@ -1,146 +1,200 @@
 class_name RuntimeZoneSystem
 extends RuntimeSystem
 
+const RuntimeMicrotaskQueueScript := preload("res://scripts/runtime/microtask_queue.gd")
+const RuntimeConditionEvalBridgeScript := preload("res://scripts/runtime/condition_eval_bridge.gd")
 const STAY_INTERVAL_SEC := 0.25
 
 var event_bus: RuntimeEventBus
 var flag_store: RuntimeFlagStore
 var action_executor: RuntimeActionExecutor
 var rule_offer_registry: RuntimeRuleOfferRegistry
+var condition_ctx_factory: Variant = null
 var zones: Array = []
-var _active_zone_ids: Dictionary = {}
-var _stay_next_at: Dictionary = {}
-var _action_queues: Dictionary = {}
-var _action_running: Dictionary = {}
-var _condition_context_factory := Callable()
-var _player_position_getter := Callable()
-var _update_enabled_getter := Callable()
-var _clock := Callable()
-var _epoch := 0
+var active_zone_ids: Dictionary = {}
+var player_pos_getter: Variant = null
+var zone_stay_next_at: Dictionary = {}
+var zone_action_tail: Dictionary = {}
 
 
-func _init(events: RuntimeEventBus, flags: RuntimeFlagStore, actions: RuntimeActionExecutor, offers: RuntimeRuleOfferRegistry) -> void:
-	event_bus = events; flag_store = flags; action_executor = actions; rule_offer_registry = offers; _clock = func() -> float: return Time.get_ticks_msec() / 1000.0
+func _init(next_event_bus: RuntimeEventBus, next_flag_store: RuntimeFlagStore, next_action_executor: RuntimeActionExecutor, next_rule_offer_registry: RuntimeRuleOfferRegistry) -> void:
+	event_bus = next_event_bus
+	flag_store = next_flag_store
+	action_executor = next_action_executor
+	rule_offer_registry = next_rule_offer_registry
 
 
-func set_condition_eval_context_factory(factory: Callable = Callable()) -> void: _condition_context_factory = factory
-func set_player_position_getter(getter: Callable = Callable()) -> void: _player_position_getter = getter
-func set_update_enabled_getter(getter: Callable = Callable()) -> void: _update_enabled_getter = getter
-func set_clock_for_test(clock: Callable) -> void: _clock = clock
+func init(_ctx: Dictionary) -> void:
+	return
+
+
+func set_condition_eval_context_factory(factory: Variant) -> void:
+	condition_ctx_factory = factory
+
+
+func _eval_zone_conditions(conditions: Variant, context: Variant) -> bool:
+	if not conditions is Array or conditions.is_empty():
+		return true
+	if context is Dictionary:
+		return RuntimeConditionEvalBridgeScript.evaluate_condition_expr_list(conditions, context)
+	return flag_store.check_conditions(conditions)
+
+
+func set_player_position_getter(getter: Callable) -> void:
+	player_pos_getter = getter
+
+
+func serialize() -> Dictionary:
+	return {}
+
+
+func deserialize(_data: Dictionary) -> void:
+	return
 
 
 func set_zones(next_zones: Array) -> void:
 	var next_ids: Dictionary = {}
-	for zone: Variant in next_zones:
-		if zone is Dictionary: next_ids[str(zone.get("id", ""))] = true
-	for id: String in _active_zone_ids.keys():
-		if next_ids.has(id): continue
-		var old: Variant = _find_zone(id)
-		if old is Dictionary: _exit_zone(old)
-		else: _active_zone_ids.erase(id)
-	var had_offers := not rule_offer_registry.get_aggregated_slots().is_empty()
-	for old: Variant in zones:
-		if old is Dictionary and not next_ids.has(str(old.get("id", ""))): rule_offer_registry.unregister(str(old.get("id", "")))
-	if had_offers != (not rule_offer_registry.get_aggregated_slots().is_empty()): _emit_rule_availability()
-	zones = next_zones.duplicate(true)
-	for id: String in _stay_next_at.keys():
-		if not next_ids.has(id): _stay_next_at.erase(id)
+	for zone: Dictionary in next_zones:
+		next_ids[zone.id] = true
 
-
-func update(_dt: float) -> void:
-	if not _update_enabled_getter.is_null() and _update_enabled_getter.is_valid() and not bool(_update_enabled_getter.call()): return
-	if _player_position_getter.is_null() or not _player_position_getter.is_valid(): return
-	var position: Variant = _player_position_getter.call()
-	if not position is Dictionary: return
-	var context: Variant = _condition_context_factory.call() if not _condition_context_factory.is_null() and _condition_context_factory.is_valid() else null; var now := float(_clock.call())
-	for zone: Variant in zones:
-		if not zone is Dictionary or zone.get("zoneKind") == "depth_floor": continue
-		var id := str(zone.get("id", "")); var conditions_ok := _eval_conditions(zone.get("conditions"), context)
-		if not conditions_ok:
-			if _active_zone_ids.has(id): _exit_zone(zone)
+	for id: String in active_zone_ids.keys():
+		if next_ids.has(id):
 			continue
-		var inside := is_valid_polygon(zone.get("polygon")) and is_point_in_polygon(zone.polygon, float(position.get("x", 0)), float(position.get("y", 0)))
-		if inside and not _active_zone_ids.has(id): _enter_zone(zone)
-		if not inside and _active_zone_ids.has(id): _exit_zone(zone)
-		if inside and _active_zone_ids.has(id) and zone.get("onStay") is Array and not zone.onStay.is_empty() and now >= float(_stay_next_at.get(id, 0.0)): _stay_next_at[id] = now + STAY_INTERVAL_SEC; _enqueue_actions(id, zone.onStay)
+		var old_zone: Variant = null
+		for zone: Dictionary in zones:
+			if zone.id == id:
+				old_zone = zone
+				break
+		if old_zone is Dictionary:
+			_exit_zone(old_zone)
+		else:
+			active_zone_ids.erase(id)
+
+	var slots_before := rule_offer_registry.get_aggregated_slots().size()
+	for old_zone: Dictionary in zones:
+		if not next_ids.has(old_zone.id):
+			rule_offer_registry.unregister(old_zone.id)
+	var slots_after := rule_offer_registry.get_aggregated_slots().size()
+	if (slots_before > 0) != (slots_after > 0):
+		_emit_rule_availability()
+
+	zones = next_zones
+	for id: String in zone_stay_next_at.keys():
+		if not next_ids.has(id):
+			zone_stay_next_at.erase(id)
 
 
-static func is_valid_polygon(polygon: Variant) -> bool:
-	if not polygon is Array or polygon.size() < 3: return false
-	for point: Variant in polygon:
-		if not point is Dictionary or not (point.get("x") is int or point.get("x") is float) or not (point.get("y") is int or point.get("y") is float) or not is_finite(float(point.x)) or not is_finite(float(point.y)): return false
-	return true
+func get_active_zones() -> Array:
+	return zones.filter(func(zone: Dictionary) -> bool: return active_zone_ids.has(zone.id))
 
 
-static func is_point_in_polygon(polygon: Array, px: float, py: float) -> bool:
-	if polygon.size() < 3: return false
-	var inside := false; var previous := polygon.size() - 1
-	for index in polygon.size():
-		var a: Dictionary = polygon[index]; var b: Dictionary = polygon[previous]; var dy := float(b.y) - float(a.y)
-		if absf(dy) >= 0.000000000001:
-			var x_intersection := float(a.x) + (float(b.x) - float(a.x)) * (py - float(a.y)) / dy
-			if (float(a.y) > py) != (float(b.y) > py) and px < x_intersection: inside = not inside
-		previous = index
-	return inside
-
-
-func get_active_zones() -> Array: return zones.filter(func(zone: Variant) -> bool: return zone is Dictionary and _active_zone_ids.has(str(zone.get("id", ""))))
-func get_active_zone_ids() -> Array: return _active_zone_ids.keys()
-func get_current_rule_slots() -> Array: return rule_offer_registry.get_aggregated_slots()
-func is_in_any_zone() -> bool: return not _active_zone_ids.is_empty()
-func clear_active_zones_for_restore() -> void: _active_zone_ids.clear(); _stay_next_at.clear()
+func clear_active_zones_for_restore() -> void:
+	active_zone_ids.clear()
+	zone_stay_next_at.clear()
 
 
 func clear_zones() -> void:
-	for id: String in _active_zone_ids.keys():
-		var zone: Variant = _find_zone(id)
-		if zone is Dictionary: _exit_zone(zone)
-	rule_offer_registry.clear(); zones.clear(); _active_zone_ids.clear(); _stay_next_at.clear(); _action_queues.clear(); _action_running.clear(); _epoch += 1
+	for id: String in active_zone_ids.keys():
+		var zone_to_exit: Variant = null
+		for zone: Dictionary in zones:
+			if zone.id == id:
+				zone_to_exit = zone
+				break
+		if zone_to_exit is Dictionary:
+			_exit_zone(zone_to_exit)
+	rule_offer_registry.clear()
+	zones = []
+	active_zone_ids.clear()
+	zone_stay_next_at.clear()
+	zone_action_tail.clear()
 
 
-func destroy() -> void: clear_zones(); _condition_context_factory = Callable(); _player_position_getter = Callable(); _update_enabled_getter = Callable(); _clock = Callable()
+func update(_dt: float) -> void:
+	if not player_pos_getter is Callable or not player_pos_getter.is_valid():
+		return
+	var position: Dictionary = player_pos_getter.call()
+	var player_x := float(position.x)
+	var player_y := float(position.y)
+	var context: Variant = condition_ctx_factory.call() if condition_ctx_factory is Callable and condition_ctx_factory.is_valid() else null
+	var now := float(Time.get_ticks_usec()) / 1000000.0
+
+	for zone: Dictionary in zones:
+		if zone.get("zoneKind") == "depth_floor":
+			continue
+		var conditions: Variant = zone.get("conditions")
+		if conditions is Array and not conditions.is_empty() and not _eval_zone_conditions(conditions, context):
+			if active_zone_ids.has(zone.id):
+				_exit_zone(zone)
+			continue
+		var inside := RuntimeZoneGeometry.is_valid_zone_polygon(zone.get("polygon")) and RuntimeZoneGeometry.is_point_in_polygon(zone.polygon, player_x, player_y)
+		if inside and not active_zone_ids.has(zone.id):
+			_enter_zone(zone)
+		if not inside and active_zone_ids.has(zone.id):
+			_exit_zone(zone)
+
+		if inside and active_zone_ids.has(zone.id):
+			var stay: Variant = zone.get("onStay")
+			if stay is Array and not stay.is_empty():
+				var next := float(zone_stay_next_at.get(zone.id, 0.0))
+				if now >= next:
+					zone_stay_next_at[zone.id] = now + STAY_INTERVAL_SEC
+					_enqueue_zone_actions(zone.id, Callable(action_executor, "execute_batch_in_zone_context").bind(stay, {"zoneId": zone.id}))
 
 
-func _eval_conditions(conditions: Variant, context: Variant) -> bool:
-	if not conditions is Array or conditions.is_empty(): return true
-	if context is Dictionary and context.get("evaluateList") is Callable: return bool(context.evaluateList.call(conditions))
-	return flag_store.check_conditions(conditions)
-func _find_zone(id: String) -> Variant:
-	for zone: Variant in zones:
-		if zone is Dictionary and str(zone.get("id", "")) == id: return zone
-	return null
+func _enqueue_zone_actions(zone_id: String, task: Callable) -> void:
+	var tail: RuntimeAsyncTail = zone_action_tail.get(zone_id)
+	if tail == null:
+		tail = RuntimeAsyncTail.new()
+		zone_action_tail[zone_id] = tail
+	RuntimeMicrotaskQueueScript.queue_microtask(
+		Callable(tail, "then").bind(task, "ZoneSystem: zone \"%s\" actions failed" % zone_id),
+		false,
+	)
+
+
 func _enter_zone(zone: Dictionary) -> void:
-	var id := str(zone.get("id", "")); _active_zone_ids[id] = true; _stay_next_at.erase(id)
-	if zone.get("onEnter") is Array and not zone.onEnter.is_empty(): _enqueue_actions(id, zone.onEnter)
-	event_bus.emit("zone:enter", {"zoneId": id, "zone": zone}); _emit_rule_availability()
+	active_zone_ids[zone.id] = true
+	zone_stay_next_at.erase(zone.id)
+	var enter: Variant = zone.get("onEnter")
+	if enter is Array and not enter.is_empty():
+		_enqueue_zone_actions(zone.id, Callable(action_executor, "execute_batch_in_zone_context").bind(enter, {"zoneId": zone.id}))
+	event_bus.emit("zone:enter", {"zoneId": zone.id, "zone": zone})
+	_emit_rule_availability()
+
+
 func _exit_zone(zone: Dictionary) -> void:
-	var id := str(zone.get("id", "")); _active_zone_ids.erase(id); _stay_next_at.erase(id)
-	if zone.get("onExit") is Array and not zone.onExit.is_empty(): _enqueue_actions(id, zone.onExit)
-	event_bus.emit("zone:exit", {"zoneId": id, "zone": zone}); _emit_rule_availability()
-func _emit_rule_availability() -> void: event_bus.emit("zone:ruleAvailable" if not get_current_rule_slots().is_empty() else "zone:ruleUnavailable", {})
+	active_zone_ids.erase(zone.id)
+	zone_stay_next_at.erase(zone.id)
+	var exit: Variant = zone.get("onExit")
+	if exit is Array and not exit.is_empty():
+		_enqueue_zone_actions(zone.id, Callable(action_executor, "execute_batch_in_zone_context").bind(exit, {"zoneId": zone.id}))
+	event_bus.emit("zone:exit", {"zoneId": zone.id, "zone": zone})
+	_emit_rule_availability()
 
 
-func _enqueue_actions(zone_id: String, actions: Array) -> void:
-	var queue: Array = _action_queues.get(zone_id, []); queue.push_back(actions.duplicate(true)); _action_queues[zone_id] = queue
-	if not _action_running.has(zone_id):
-		_action_running[zone_id] = true
-		call_deferred("_drain_actions", zone_id, _epoch)
-func _drain_actions(zone_id: String, epoch: int) -> void:
-	while epoch == _epoch and _action_queues.get(zone_id, []).size() > 0:
-		var batch: Array = _action_queues[zone_id].pop_front(); await action_executor.execute_batch_in_zone_context(batch, {"zoneId": zone_id})
-	_action_running.erase(zone_id)
-	if _action_queues.get(zone_id, []).is_empty(): _action_queues.erase(zone_id)
+func _emit_rule_availability() -> void:
+	var slots := get_current_rule_slots()
+	if not slots.is_empty():
+		event_bus.emit("zone:ruleAvailable", {})
+	else:
+		event_bus.emit("zone:ruleUnavailable", {})
 
 
-func wait_for_actions_idle(max_frames: int = 120) -> bool:
-	var frames := 0
-	while (not _action_running.is_empty() or _has_queued_actions()) and frames < maxi(1, max_frames):
-		frames += 1
-		await get_tree().process_frame
-	return _action_running.is_empty() and not _has_queued_actions()
+func get_current_rule_slots() -> Array:
+	return rule_offer_registry.get_aggregated_slots()
 
 
-func _has_queued_actions() -> bool:
-	for queue: Variant in _action_queues.values():
-		if queue is Array and not queue.is_empty(): return true
-	return false
+func is_in_any_zone() -> bool:
+	return not active_zone_ids.is_empty()
+
+
+func get_active_zone_ids() -> Dictionary:
+	return active_zone_ids
+
+
+func destroy() -> void:
+	rule_offer_registry.clear()
+	zones = []
+	active_zone_ids.clear()
+	zone_stay_next_at.clear()
+	zone_action_tail.clear()

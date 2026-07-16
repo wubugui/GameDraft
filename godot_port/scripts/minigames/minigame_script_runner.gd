@@ -3,88 +3,142 @@ extends RefCounted
 
 var registry: Dictionary
 var context: Dictionary
-var unknown_ops: Array[String] = []
-var _stack: Array[Dictionary] = []
-var _wait_remaining := 0.0
+var stack: Array[Dictionary] = []
+var wait_remain := 0.0
 
 
-func _init(next_registry: Dictionary = {}, next_context: Dictionary = {}) -> void:
-	registry = next_registry.duplicate()
+static func _pick_from_pool(ctx: Dictionary, pool_name: String) -> String:
+	var values: Variant = ctx.vars.get(pool_name)
+	if not values is Array or values.is_empty():
+		return ""
+	var rng: Callable = ctx.rng
+	return str(values[int(floor(float(rng.call()) * values.size()))])
+
+
+static func _field(step: Dictionary, key: String) -> Variant:
+	return step.get(key)
+
+
+static func core_opcodes() -> Dictionary:
+	return {
+		"pick": func(step: Dictionary, ctx: Dictionary, _run_children: Callable) -> void:
+			var pool := _js_string(_field(step, "pool") if _field(step, "pool") != null else "")
+			var slot := _js_string(_field(step, "slot") if _field(step, "slot") != null else "_line")
+			ctx.slots[slot] = _pick_from_pool(ctx, pool) if not pool.is_empty() else "",
+		"wait": func(step: Dictionary, _ctx: Dictionary, _run_children: Callable) -> float:
+			var raw: Variant = _field(step, "sec")
+			var seconds := _js_number(raw if raw != null else 0)
+			return maxf(0.0, seconds),
+		"chance": func(step: Dictionary, ctx: Dictionary, run_children: Callable) -> Variant:
+			var raw: Variant = _field(step, "p")
+			var probability := _js_number(raw if raw != null else 0)
+			var rng: Callable = ctx.rng
+			if float(rng.call()) < probability:
+				var then_steps: Variant = _field(step, "then")
+				if then_steps is Array and not then_steps.is_empty():
+					return run_children.call(then_steps)
+			else:
+				var else_steps: Variant = _field(step, "else")
+				if else_steps is Array and not else_steps.is_empty():
+					return run_children.call(else_steps)
+			return null,
+	}
+
+
+func _init(next_registry: Dictionary, next_context: Dictionary) -> void:
+	registry = next_registry
 	context = next_context
-	if not context.get("vars") is Dictionary: context.vars = {}
-	if not context.get("slots") is Dictionary: context.slots = {}
-	if not context.get("rng") is Callable: context.rng = func() -> float: return randf()
 
 
 func run_phase(steps: Array) -> void:
-	cancel()
-	_stack.push_back({"steps": steps.duplicate(true), "index": 0})
+	stack.clear()
+	wait_remain = 0.0
+	stack.push_back({"steps": steps, "index": 0})
 	_pump()
 
 
 func tick(dt: float) -> void:
-	if _stack.is_empty(): return
-	_wait_remaining -= dt
-	if _wait_remaining <= 0: _pump()
+	if stack.is_empty():
+		return
+	wait_remain -= dt
+	while not stack.is_empty() and wait_remain <= 0.0:
+		_pump()
 
 
 func cancel() -> void:
-	_stack.clear(); _wait_remaining = 0.0
+	stack.clear()
+	wait_remain = 0.0
 
 
 func is_running() -> bool:
-	return not _stack.is_empty()
+	return not stack.is_empty()
 
 
 func _pump() -> void:
-	while not _stack.is_empty() and _wait_remaining <= 0:
-		var frame: Dictionary = _stack[-1]
+	while not stack.is_empty() and wait_remain <= 0.0:
+		var frame: Dictionary = stack[-1]
 		var steps: Array = frame.steps
 		var index := int(frame.index)
 		if index >= steps.size():
-			_stack.pop_back()
+			stack.pop_back()
 			continue
-		_stack[-1].index = index + 1
-		var raw: Variant = steps[index]
-		if not raw is Dictionary: continue
-		var step: Dictionary = raw
-		var op := str(step.get("op", ""))
-		var result: Variant
-		var handler: Variant = registry.get(op)
-		if handler is Callable and handler.is_valid():
-			result = handler.call(step, context, Callable(self, "_child_block"))
-		else:
-			result = _run_core_opcode(op, step)
-			if result is Dictionary and result.get("__unknown") == true:
-				if not unknown_ops.has(op): unknown_ops.push_back(op)
-				continue
-		if result is Dictionary and result.get("__children") is Array:
-			_stack.push_back({"steps": result.__children.duplicate(true), "index": 0})
+		stack[-1].index = index + 1
+		var step: Dictionary = steps[index]
+		var handler: Variant = registry.get(step.op)
+		if not handler is Callable or not handler.is_valid():
+			push_warning("[minigameScript] unknown op: %s" % step.op)
+			continue
+		var result: Variant = handler.call(step, context, Callable(self, "_child_block"))
+		if result is Dictionary and result.has("__children"):
+			stack.push_back({"steps": result.__children, "index": 0})
 		elif result is int or result is float:
-			var wait := float(result)
-			if wait > 0: _wait_remaining += wait
+			if float(result) > 0.0:
+				wait_remain += float(result)
 
 
-func _run_core_opcode(op: String, step: Dictionary) -> Variant:
-	match op:
-		"pick":
-			var pool := str(step.get("pool", "")); var slot := str(step.get("slot", "_line")); var values: Variant = context.vars.get(pool)
-			context.slots[slot] = _pick(values)
-			return null
-		"wait":
-			return maxf(0.0, float(step.get("sec", 0)))
-		"chance":
-			var rng: Callable = context.rng; var branch: Variant = step.get("then") if float(rng.call()) < float(step.get("p", 0)) else step.get("else")
-			return _child_block(branch) if branch is Array and not branch.is_empty() else null
-	return {"__unknown": true}
+func _child_block(steps: Array) -> Dictionary:
+	return {"__children": steps.duplicate(false)}
 
 
-func _pick(values: Variant) -> String:
-	if not values is Array or values.is_empty(): return ""
-	var rng: Callable = context.rng
-	var index := clampi(int(floor(float(rng.call()) * values.size())), 0, values.size() - 1)
-	return str(values[index])
+static func _js_string(value: Variant) -> String:
+	if value is bool:
+		return "true" if value else "false"
+	if value is float and is_finite(value) and value == floorf(value):
+		return str(int(value))
+	return str(value)
 
 
-func _child_block(steps: Variant) -> Dictionary:
-	return {"__children": steps if steps is Array else []}
+static func _js_number(value: Variant) -> float:
+	if value == null:
+		return 0.0
+	if value is bool:
+		return 1.0 if value else 0.0
+	if value is int or value is float:
+		return float(value)
+	var text := str(value).strip_edges()
+	if text.is_empty():
+		return 0.0
+	var lower := text.to_lower()
+	if lower == "infinity" or lower == "+infinity":
+		return INF
+	if lower == "-infinity":
+		return -INF
+	if lower.begins_with("0x") and lower.substr(2).is_valid_hex_number():
+		return float(lower.substr(2).hex_to_int())
+	if lower.begins_with("0b"):
+		return _parse_radix(lower.substr(2), 2)
+	if lower.begins_with("0o"):
+		return _parse_radix(lower.substr(2), 8)
+	return text.to_float() if text.is_valid_float() else NAN
+
+
+static func _parse_radix(text: String, radix: int) -> float:
+	if text.is_empty():
+		return NAN
+	var result := 0.0
+	for character: String in text:
+		var digit := character.unicode_at(0) - 48
+		if digit < 0 or digit >= radix:
+			return NAN
+		result = result * radix + digit
+	return result

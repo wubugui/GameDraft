@@ -9,6 +9,8 @@ const ANY := "any"
 const ASSETS_PREFIX := "/assets/"
 const RUNTIME_PREFIX := "/resources/runtime/"
 
+static var _default_instance: Variant = null
+
 var mode: String
 var repository_root: String
 var export_public_root: String
@@ -19,6 +21,12 @@ func _init(next_mode: String = "", next_repository_root: String = "", next_expor
 	var default_repository := ProjectSettings.globalize_path("res://").trim_suffix("/").get_base_dir()
 	repository_root = next_repository_root.trim_suffix("/") if not next_repository_root.is_empty() else default_repository
 	export_public_root = next_export_public_root.trim_suffix("/") if not next_export_public_root.is_empty() else _default_export_public_root()
+
+
+static func get_default() -> RuntimeResourceLocator:
+	if _default_instance == null:
+		_default_instance = RuntimeResourceLocator.new()
+	return _default_instance
 
 
 func is_media_url(url: String) -> bool:
@@ -106,11 +114,21 @@ func media_url_for_root(root_kind: String, ref: String) -> String:
 
 func resolve_anim_relative(manifest_url: String, ref: String) -> String:
 	var value := ref.strip_edges()
-	if value.is_empty() or _is_remote(value) or value.begins_with("/assets/") or value.begins_with("/resources/"):
+	if value.is_empty():
 		return value
-	var base := manifest_url.replace("\\", "/").get_base_dir()
-	var relative := _normalize_relative(value.trim_prefix("./"))
-	return "" if relative.is_empty() else base.path_join(relative).simplify_path()
+	if value.begins_with("http://") or value.begins_with("https://"):
+		return value
+	if value.begins_with("/assets/") or value.begins_with("/resources/"):
+		return value
+	var base := manifest_url
+	var last_slash := base.rfind("/")
+	if last_slash >= 0 and last_slash < base.length() - 1:
+		base = base.substr(0, last_slash)
+	var part := value.substr(2) if value.begins_with("./") else value
+	var joined := "%s/%s" % [base, part]
+	while joined.contains("//"):
+		joined = joined.replace("//", "/")
+	return joined if joined.begins_with("/") else "/%s" % joined
 
 
 func resolve_url(url: String, kind: String = ANY) -> String:

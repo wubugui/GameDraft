@@ -38,7 +38,7 @@ func _run() -> void:
 	day.add_delayed_event(4, [{"type": "delayDayTest", "params": {"seconds": 0.01}}, {"type": "recordDayTest", "params": {"label": "day4"}}])
 	day.end_day()
 	day.end_day()
-	await day.wait_until_idle()
+	await preload("res://tests/support/day_manager_probe.gd").wait_until_idle(day)
 	assert(day.get_current_day() == 5)
 	assert(order.has("action:day4"))
 	assert(order[-3] == "start:4" and order[-2] == "end:4" and order[-1] == "start:5")

@@ -61,7 +61,7 @@ func get_rich_image_count() -> int: return rich_image_count
 func set_rich_content(raw: String, asset_manager: RuntimeAssetManager) -> void:
 	if content == null: return
 	content.clear(); rich_image_count = 0
-	var segments := RuntimeTextResolver.new().parse_rich_segments(raw, asset_manager.locator)
+	var segments := RuntimeRichContent.parse_segments(raw)
 	var has_image := false
 	for segment: Variant in segments:
 		if segment is Dictionary and segment.get("type") == "image": has_image = true; break
@@ -71,7 +71,8 @@ func set_rich_content(raw: String, asset_manager: RuntimeAssetManager) -> void:
 		if segment.get("type") == "text":
 			content.add_text(str(segment.get("text", "")))
 		else:
-			var texture: Variant = asset_manager.load_texture(str(segment.get("url", "")))
+			var url := RuntimeRichContent.resolve_content_image_url(str(segment.get("path", "")), RuntimeResourceLocator.get_default())
+			var texture: Variant = asset_manager.load_texture(url)
 			if texture is Texture2D:
 				var scale := minf(minf(content.size.x / maxf(1.0, texture.get_width()), 200.0 / maxf(1.0, texture.get_height())), 1.0)
 				content.add_image(texture, maxi(1, int(round(texture.get_width() * scale))), maxi(1, int(round(texture.get_height() * scale))))
@@ -81,7 +82,7 @@ func set_rich_content(raw: String, asset_manager: RuntimeAssetManager) -> void:
 
 
 func _build_shell() -> void:
-	var screen := Vector2(renderer.get_screen_width(), renderer.get_screen_height()); var width := minf(640, screen.x - 40); var height := minf(620, screen.y - 40); var origin := (screen - Vector2(width, height)) / 2.0
+	var screen := Vector2(renderer.screen_width, renderer.screen_height); var width := minf(640, screen.x - 40); var height := minf(620, screen.y - 40); var origin := (screen - Vector2(width, height)) / 2.0
 	root = Control.new(); root.name = get_script().get_global_name(); root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.mouse_filter = Control.MOUSE_FILTER_STOP
 	var shade := ColorRect.new(); shade.color = Color(0, 0, 0, 0.68); shade.size = screen; shade.mouse_filter = Control.MOUSE_FILTER_STOP; root.add_child(shade)
 	panel = Panel.new(); panel.position = origin; panel.size = Vector2(width, height); var style := StyleBoxFlat.new(); style.bg_color = Color("121823"); style.border_color = Color("78633d"); style.set_border_width_all(2); style.set_corner_radius_all(7); panel.add_theme_stylebox_override("panel", style); root.add_child(panel)

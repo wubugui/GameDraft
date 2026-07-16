@@ -13,8 +13,18 @@
           "widthPercent": 26
         }
       },
-      { "type": "waitMs", "params": { "durationMs": 1400 } },
-      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+      {
+        "type": "waitMs",
+        "params": {
+          "durationMs": 1400
+        }
+      },
+      {
+        "type": "hideOverlayImage",
+        "params": {
+          "id": "axiu_cue"
+        }
+      }
     ]
   },
   {
@@ -31,16 +41,36 @@
           "widthPercent": 34
         }
       },
-      { "type": "playSfx", "params": { "id": "sfx_axiu_tiny_signal" } },
-      { "type": "waitMs", "params": { "durationMs": 1800 } },
-      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+      {
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_axiu_tiny_signal"
+        }
+      },
+      {
+        "type": "waitMs",
+        "params": {
+          "durationMs": 1800
+        }
+      },
+      {
+        "type": "hideOverlayImage",
+        "params": {
+          "id": "axiu_cue"
+        }
+      }
     ]
   },
   {
     "id": "axiu_tune_far",
     "description": "Axiu 信号·小调首现（①.5 梦·待死之礼，纸停之后）：极远处飘来半句跑调的小调。与 ⑩ 同旋律的远场残缺版。刻意无画面叠加——梦里的暖是布光的暖，绝不可用暖光微尘 VFX，否则信号体系被农家院污染。",
     "actions": [
-      { "type": "playSfx", "params": { "id": "sfx_axiu_faint_hum" } }
+      {
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_axiu_faint_hum"
+        }
+      }
     ]
   },
   {
@@ -57,9 +87,24 @@
           "widthPercent": 52
         }
       },
-      { "type": "playSfx", "params": { "id": "sfx_axiu_faint_hum" } },
-      { "type": "waitMs", "params": { "durationMs": 3200 } },
-      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+      {
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_axiu_faint_hum"
+        }
+      },
+      {
+        "type": "waitMs",
+        "params": {
+          "durationMs": 3200
+        }
+      },
+      {
+        "type": "hideOverlayImage",
+        "params": {
+          "id": "axiu_cue"
+        }
+      }
     ]
   },
   {
@@ -76,9 +121,24 @@
           "widthPercent": 22
         }
       },
-      { "type": "playSfx", "params": { "id": "sfx_lamp_oil_flame" } },
-      { "type": "waitMs", "params": { "durationMs": 2200 } },
-      { "type": "hideOverlayImage", "params": { "id": "axiu_lamp_cue" } }
+      {
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_lamp_oil_flame"
+        }
+      },
+      {
+        "type": "waitMs",
+        "params": {
+          "durationMs": 2200
+        }
+      },
+      {
+        "type": "hideOverlayImage",
+        "params": {
+          "id": "axiu_lamp_cue"
+        }
+      }
     ]
   },
   {
@@ -95,9 +155,24 @@
           "widthPercent": 100
         }
       },
-      { "type": "playSfx", "params": { "id": "sfx_axiu_faint_hum" } },
-      { "type": "waitMs", "params": { "durationMs": 2600 } },
-      { "type": "hideOverlayImage", "params": { "id": "axiu_cue" } }
+      {
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_axiu_faint_hum"
+        }
+      },
+      {
+        "type": "waitMs",
+        "params": {
+          "durationMs": 2600
+        }
+      },
+      {
+        "type": "hideOverlayImage",
+        "params": {
+          "id": "axiu_cue"
+        }
+      }
     ]
   }
 ]

@@ -10,9 +10,15 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QApplication
 
-from tools.editor.editors.sugar_wheel_editor import SugarWheelEditor
+from tools.editor import theme
+from tools.editor.editors.sugar_wheel_editor import (
+    SugarWheelEditor,
+    _CenteredGraphicsSimpleTextItem,
+    _SugarWheelChargeButtonItem,
+)
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 
@@ -60,6 +66,29 @@ class SugarWheelFlushTests(unittest.TestCase):
             types = [a.get("type") for a in sec0.get("actionsOnPointerDrag") or []]
             self.assertEqual(types, ["playSfx"],
                              "Save All 前必须 flush 当前 sector 动作，否则静默丢失")
+
+    def test_scaled_canvas_labels_remain_centered(self) -> None:
+        original_theme = theme.current_theme_id()
+        original_font = theme.current_font_px()
+        try:
+            theme.apply_application_theme(self._qt_app, theme.THEME_MODERN, theme.MAX_FONT_PX)
+            centered = _CenteredGraphicsSimpleTextItem("扇区标签", QPointF(100, 50))
+            theme.set_graphics_text_font(centered, theme.FONT_ROLE_CANVAS_PROMINENT)
+            centered.refresh_editor_font()
+            center = centered.mapRectToParent(centered.boundingRect()).center()
+            self.assertAlmostEqual(center.x(), 100.0)
+            self.assertAlmostEqual(center.y(), 50.0)
+
+            class FakeCanvas:
+                _move_silent = True
+
+            charge = _SugarWheelChargeButtonItem(FakeCanvas())  # type: ignore[arg-type]
+            charge.set_diameter(160, silent=True)
+            charge_center = charge._label.mapRectToParent(charge._label.boundingRect()).center()
+            self.assertAlmostEqual(charge_center.x(), 0.0)
+            self.assertAlmostEqual(charge_center.y(), 0.0)
+        finally:
+            theme.apply_application_theme(self._qt_app, original_theme, original_font)
 
 
 if __name__ == "__main__":

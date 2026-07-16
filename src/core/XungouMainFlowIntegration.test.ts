@@ -45,12 +45,8 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
 
     flowAt('initial');
 
-    // 0/① 听书 → 被赶
-    await emit('dialogue', '寻狗_说书人', 'tingshu_words');
-    beatAt('scenario_听书', 'words_collected');
-    await emit('dialogue', '寻狗_说书人', 'face_ceng');
-    beatAt('wrap_脸皮基调', 'ceng');
-    await emit('dialogue', '寻狗_说书人', 'tingshu_kicked');
+    // 0/① 听书开场（说书cutscene→掐架）→ 被赶
+    await emit('dialogue', '寻狗_听书开场', 'tingshu_kicked');
     beatAt('scenario_听书', 'kicked_out');
     flowAt('s01_tingshu');
 

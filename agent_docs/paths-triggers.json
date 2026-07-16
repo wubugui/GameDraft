@@ -54,8 +54,15 @@
       ]
     },
     {
+      "glob": "public/assets/data/encounters.json",
+      "docs": [
+        "narrative-flow-authoring"
+      ]
+    },
+    {
       "glob": "public/assets/data/narrative_graphs.json",
       "docs": [
+        "narrative-flow-authoring",
         "narrative-signal-spine",
         "narrative-state-editor",
         "wire-demo-beat"
@@ -90,6 +97,7 @@
     {
       "glob": "public/assets/data/quests.json",
       "docs": [
+        "narrative-flow-authoring",
         "narrative-signal-spine",
         "wire-demo-beat"
       ]
@@ -155,6 +163,7 @@
         "content-expression-channels",
         "content-validation-gate",
         "editor-roundtrip-contract",
+        "narrative-flow-authoring",
         "production-mode-workflow"
       ]
     },
@@ -605,6 +614,12 @@
       ]
     },
     {
+      "glob": "tools/editor/shared/lsp_client.py",
+      "docs": [
+        "json-lang-schema-tooling"
+      ]
+    },
+    {
       "glob": "tools/editor/shared/narrative_catalog.py",
       "docs": [
         "emitted-signal-catalog"
@@ -632,6 +647,12 @@
       "glob": "tools/editor/shared/rich_text_field.py",
       "docs": [
         "text-ref-tag-system"
+      ]
+    },
+    {
+      "glob": "tools/json_lang/**",
+      "docs": [
+        "json-lang-schema-tooling"
       ]
     },
     {

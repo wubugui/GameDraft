@@ -3,16 +3,19 @@ extends Node
 
 const REQUIRED_METHODS := ["init", "update", "serialize", "deserialize", "destroy"]
 
-var event_bus := RuntimeEventBus.new()
+var event_bus: RuntimeEventBus
 var _registrations: Array[Dictionary] = []
 var _systems: Array[Dictionary] = []
-var _system_by_name: Dictionary = {}
 var _initialized := false
 var _destroying := false
 var _automatic_updates_enabled := true
 
 
-func register_system(name: String, factory: Callable) -> bool:
+func _init(source_event_bus: RuntimeEventBus = null) -> void:
+	event_bus = source_event_bus if source_event_bus != null else RuntimeEventBus.new()
+
+
+func register_system(name: String, system: Variant = null) -> bool:
 	var normalized := name.strip_edges()
 	if _initialized or _destroying:
 		push_error("RuntimeRoot: cannot register systems while runtime is active")
@@ -20,11 +23,61 @@ func register_system(name: String, factory: Callable) -> bool:
 	if normalized.is_empty() or _registrations.any(func(item: Dictionary) -> bool: return item.name == normalized):
 		push_error("RuntimeRoot: system name must be non-empty and unique: %s" % normalized)
 		return false
-	if not factory.is_valid():
-		push_error("RuntimeRoot: invalid factory for %s" % normalized)
+	if system != null and (not system is Node or not _implements_game_system(system)):
+		push_error("RuntimeRoot: %s does not implement IGameSystem" % normalized)
 		return false
-	_registrations.push_back({"name": normalized, "factory": factory})
+	if system != null and system.get_parent() != null:
+		push_error("RuntimeRoot: %s is already owned by another node" % normalized)
+		return false
+	# Match Game.ts: Game explicitly constructs concrete systems first, then puts
+	# those same instances into one ordered registeredSystems list.  RuntimeRoot
+	# is only the Godot lifecycle adapter for that list; it is not a factory or
+	# service-locator framework.
+	_registrations.push_back({"name": normalized, "system": system})
 	return true
+
+
+func replace_registered_system(name: String, system: Node) -> bool:
+	if system == null or not _implements_game_system(system) or system.get_parent() != null:
+		return false
+	for index in _registrations.size():
+		var registration: Dictionary = _registrations[index]
+		if str(registration.name) != name:
+			continue
+		if registration.system != null:
+			return registration.system == system
+		registration.system = system
+		_registrations[index] = registration
+		if _initialized:
+			system.name = name
+			add_child(system)
+			_systems[index].system = system
+		return true
+	return false
+
+
+## Godot-only parenting adapter. Game/bootstrap retains the source-owned ordered
+## registered_systems array and calls init/serialize/deserialize/destroy itself.
+func attach_system_slots(source_slots: Array[Dictionary]) -> bool:
+	if _initialized or _destroying or not _registrations.is_empty() or not _systems.is_empty():
+		return false
+	for source_entry: Dictionary in source_slots:
+		if not register_system(str(source_entry.get("name", "")), source_entry.get("system")):
+			return false
+	for registration: Dictionary in _registrations:
+		var node: Variant = registration.system
+		_systems.push_back({"name": str(registration.name), "system": node})
+		if node != null:
+			node.name = str(registration.name)
+			add_child(node)
+	_initialized = true
+	return true
+
+
+func release_system_nodes() -> void:
+	_destroy_constructed_systems(false)
+	_registrations.clear()
+	_initialized = false
 
 
 func init_runtime(context_values: Dictionary = {}) -> bool:
@@ -44,18 +97,13 @@ func init_runtime(context_values: Dictionary = {}) -> bool:
 				push_error("RuntimeRoot: GameContext missing %s" % required)
 				return false
 	for registration in _registrations:
-		var system: Variant = registration.factory.call()
-		if not system is Node or not _implements_game_system(system):
-			push_error("RuntimeRoot: factory for %s did not return IGameSystem Node" % registration.name)
-			_destroy_constructed_systems()
-			return false
-		var node: Node = system
-		node.name = str(registration.name)
-		add_child(node)
+		var node: Variant = registration.system
 		var entry := {"name": str(registration.name), "system": node}
 		_systems.push_back(entry)
-		_system_by_name[entry.name] = node
-		node.call("init", context)
+		if node != null:
+			node.name = str(registration.name)
+			add_child(node)
+			node.call("init", context)
 	_initialized = true
 	return true
 
@@ -64,7 +112,7 @@ func update_runtime(dt: float) -> void:
 	if not _initialized or _destroying:
 		return
 	for entry in _systems:
-		entry.system.call("update", dt)
+		if entry.system != null: entry.system.call("update", dt)
 
 
 func set_automatic_updates_enabled(enabled: bool) -> void:
@@ -81,8 +129,9 @@ func serialize_systems() -> Dictionary:
 	if not _initialized:
 		return result
 	for entry in _systems:
-		var value: Variant = entry.system.call("serialize")
-		result[entry.name] = value if value is Dictionary else {}
+		if entry.system != null:
+			var value: Variant = entry.system.call("serialize")
+			result[entry.name] = value if value is Dictionary else {}
 	return result
 
 
@@ -90,7 +139,7 @@ func deserialize_systems(data: Dictionary) -> void:
 	if not _initialized or _destroying:
 		return
 	for entry in _systems:
-		if data.get(entry.name) is Dictionary:
+		if entry.system != null and data.get(entry.name) is Dictionary:
 			entry.system.call("deserialize", data[entry.name])
 
 
@@ -101,15 +150,12 @@ func destroy_runtime() -> void:
 	# Match Game.ts: registered systems destroy in registration order.  EventBus
 	# clears only after every owner has had the chance to off its listeners.
 	for entry in _systems:
-		entry.system.call("destroy")
+		if entry.system != null: entry.system.call("destroy")
 	_destroy_constructed_systems(false)
+	_registrations.clear()
 	event_bus.clear()
 	_initialized = false
 	_destroying = false
-
-
-func get_system(name: String) -> Variant:
-	return _system_by_name.get(name)
 
 
 func is_initialized() -> bool:
@@ -119,7 +165,7 @@ func is_initialized() -> bool:
 func debug_snapshot_fragments() -> Dictionary:
 	var result := {}
 	for entry in _systems:
-		if entry.system.has_method("debug_snapshot_fragment"):
+		if entry.system != null and entry.system.has_method("debug_snapshot_fragment"):
 			var fragment: Variant = entry.system.call("debug_snapshot_fragment")
 			if fragment is Dictionary:
 				for key: Variant in fragment:
@@ -145,11 +191,12 @@ func _implements_game_system(system: Node) -> bool:
 func _destroy_constructed_systems(call_destroy: bool = true) -> void:
 	if call_destroy:
 		for entry in _systems:
-			entry.system.call("destroy")
+			if entry.system != null: entry.system.call("destroy")
 	for entry in _systems:
-		var node: Node = entry.system
+		var node: Variant = entry.system
+		if node == null:
+			continue
 		if node.get_parent() == self:
 			remove_child(node)
 		node.free()
 	_systems.clear()
-	_system_by_name.clear()

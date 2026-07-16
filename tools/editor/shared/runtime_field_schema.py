@@ -1,6 +1,6 @@
 """NPC / Hotspot persistent runtime-field schema for editor UI and validation.
 
-The shared schema lives at ``src/data/runtime_field_schema.json`` and is also
+The shared schema lives at ``public/assets/data/runtime_field_schema.json`` and is also
 used by the TypeScript runtime. Keep Python behavior here limited to loading
 that schema and validating values against it.
 """
@@ -13,7 +13,7 @@ from typing import Any
 
 
 def _schema_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "src" / "data" / "runtime_field_schema.json"
+    return Path(__file__).resolve().parents[3] / "public" / "assets" / "data" / "runtime_field_schema.json"
 
 
 def _load_schema() -> dict[str, dict[str, dict[str, Any]]]:

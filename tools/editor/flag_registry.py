@@ -222,7 +222,7 @@ def validate_flag_key(
 ) -> tuple[bool, str | None]:
     """Return (ok, message_if_bad)."""
     if not key or not isinstance(key, str):
-        return False, "empty flag key"
+        return False, "flag 键为空"
     static = static_key_set(registry)
     if key in static:
         return True, None
@@ -251,20 +251,20 @@ def validate_flag_key(
                 return True, None
             if not scene_id and rid in all_hotspots:
                 return True, None
-            last_fail = f"flag '{key}' hotspot id not in scene"
+            last_fail = f"flag '{key}' 的热点 id 不在该场景中"
         elif src == "hotspot_any_scene":
             if rid in all_hotspots:
                 return True, None
-            last_fail = f"flag '{key}' hotspot id not found in any scene"
+            last_fail = f"flag '{key}' 的热点 id 不在任何场景中"
         elif src in ids:
             if rid in ids[src]:
                 return True, None
-            last_fail = f"flag '{key}' unknown {src} id '{rid}'"
+            last_fail = f"flag '{key}' 引用的 {src} id '{rid}' 不存在"
         elif src:
-            last_fail = f"flag '{key}' unknown idSource '{src}' in registry"
+            last_fail = f"flag '{key}' 的登记表 idSource '{src}' 未知"
     if last_fail is not None:
         return False, last_fail
-    return False, f"flag '{key}' not in registry static/patterns ({severity})"
+    return False, f"flag '{key}' 不在登记表 static/patterns 中（{severity}）"
 
 
 def _scenario_expose_value_type_error(vt: str | None, val: object) -> str | None:

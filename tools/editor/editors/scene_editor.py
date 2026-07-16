@@ -28,10 +28,10 @@ from PySide6.QtWidgets import (
     QToolButton, QMessageBox, QInputDialog, QFileDialog, QDialog, QDialogButtonBox, QAbstractItemView,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
     QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
-    QRadioButton, QButtonGroup,
+    QRadioButton, QButtonGroup, QCompleter,
 )
 from PySide6.QtGui import (
-    QPixmap, QImage, QPen, QBrush, QColor, QFont, QPainter, QWheelEvent,
+    QPixmap, QImage, QPen, QBrush, QColor, QFontMetricsF, QPainter, QWheelEvent,
     QImageReader,
     QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
     QShortcut, QKeySequence, QPainterPath,
@@ -49,6 +49,7 @@ from PySide6.QtCore import (
 )
 
 from ..project_model import ProjectModel
+from .. import theme
 from ..shared import confirm
 from ..shared.list_affordances import make_list_search_box
 from ..shared.rich_text_field import RichTextLineEdit
@@ -116,6 +117,8 @@ _NPC_COLLISION_ZONE_COLOR = QColor(80, 200, 140, 95)
 # 画布「禁止点选 Zone」时使用的填充与线色（与实体原色解耦，仅作冻结提示）
 _ZONE_PICK_FROZEN_FILL = QColor(150, 150, 150, 88)
 _ZONE_PICK_FROZEN_PEN = QColor(95, 95, 95, 220)
+# 叠放实体循环点选「同一落点」的视口像素容差（见 SceneCanvas.mousePressEvent）
+_PICK_CYCLE_PX_TOL = 4
 
 
 def _entity_cutscene_ids_from_data(ent: dict) -> list[str]:
@@ -521,14 +524,35 @@ class _DraggableCircle(QGraphicsEllipseItem):
         self._range_outline: QGraphicsEllipseItem | None = None
         self.set_interaction_range(range_radius)
 
-        self._label = QGraphicsTextItem(entity_id, self)
+        self._label = QGraphicsTextItem(self)
         self._label.setDefaultTextColor(Qt.GlobalColor.white)
-        self._label.setFont(QFont(MONO_FONT_FAMILY, 8))
+        theme.set_graphics_text_font(
+            self._label,
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY,
+        )
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._label.setPos(radius * 0.5, -radius * 0.5)
+        self._label_text = entity_id
+        self._apply_label_html(entity_id)
+        self.setAcceptHoverEvents(True)
+        self._refresh_tooltip()
+
+    @staticmethod
+    def _esc_html(s: str) -> str:
+        return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+    def _apply_label_html(self, text: str) -> None:
+        """给标签套半透明黑底，避免白字画在亮背景图上不可读（审查 P3）。"""
+        self._label.setHtml(
+            f'<span style="background-color: rgba(0,0,0,150); color: #ffffff;">'
+            f'&nbsp;{self._esc_html(text)}&nbsp;</span>')
+
+    def _refresh_tooltip(self) -> None:
+        self.setToolTip(f"{self.entity_kind}: {self.entity_id}")
 
     def set_interaction_range(self, range_radius: float) -> None:
         """Update dashed outline for hotspot/NPC interaction range (world units)."""
@@ -557,11 +581,15 @@ class _DraggableCircle(QGraphicsEllipseItem):
         self.setPen(QPen(c.darker(140), pen_width))
 
     def set_label(self, text: str) -> None:
-        self._label.setPlainText(text)
+        self._label_text = str(text)
+        self._apply_label_html(self._label_text)
+        self._refresh_tooltip()
 
     def set_entity_id(self, eid: str) -> None:
         self.entity_id = str(eid)
-        self._label.setPlainText(self.entity_id)
+        self._label_text = self.entity_id
+        self._apply_label_html(self.entity_id)
+        self._refresh_tooltip()
 
     def itemChange(
         self,
@@ -596,7 +624,11 @@ class _DraggableRect(QGraphicsRectItem):
 
         self._label = QGraphicsTextItem(entity_id, self)
         self._label.setDefaultTextColor(Qt.GlobalColor.white)
-        self._label.setFont(QFont(MONO_FONT_FAMILY, 8))
+        theme.set_graphics_text_font(
+            self._label,
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY,
+        )
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label.setFlag(
@@ -642,6 +674,7 @@ class _EditableZonePolygon(QGraphicsObject):
         self._drag_body = False
         self._last_scene: QPointF | None = None
         self._hover_vertex: int | None = None
+        self.setToolTip(f"{self.entity_kind}: {entity_id}")
 
     def set_points_from_model(self, poly: list) -> None:
         self._points = []
@@ -702,6 +735,7 @@ class _EditableZonePolygon(QGraphicsObject):
 
     def set_entity_id(self, eid: str) -> None:
         self.entity_id = str(eid)
+        self.setToolTip(f"{self.entity_kind}: {self.entity_id}")
         self.update()
 
     def _emit_polygon_committed(self) -> None:
@@ -722,10 +756,25 @@ class _EditableZonePolygon(QGraphicsObject):
         xs = [p[0] for p in self._points]
         ys = [p[1] for p in self._points]
         m = self.HANDLE_WORLD_R + 2
-        return QRectF(
+        rect = QRectF(
             min(xs) - m, min(ys) - m,
             max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m,
         )
+        metrics = QFontMetricsF(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY,
+        ))
+        label_rect = QRectF(
+            min(xs) + 3,
+            min(ys) + 12 - metrics.ascent(),
+            metrics.horizontalAdvance(self.entity_id),
+            metrics.height(),
+        )
+        return rect.united(label_rect)
+
+    def refresh_editor_font(self) -> None:
+        self.prepareGeometryChange()
+        self.update()
 
     def shape(self) -> QPainterPath:
         path = QPainterPath()
@@ -763,9 +812,22 @@ class _EditableZonePolygon(QGraphicsObject):
         if self._points:
             xs = [p[0] for p in self._points]
             ys = [p[1] for p in self._points]
+            font = theme.make_editor_font(
+                theme.FONT_ROLE_CANVAS_SECONDARY,
+                family=MONO_FONT_FAMILY,
+            )
+            painter.setFont(font)
+            # 半透明黑底垫在 id 文字下，避免白字画在亮背景图上不可读（审查 P3）。
+            metrics = QFontMetricsF(font)
+            tx, ty = min(xs) + 3, min(ys) + 12
+            trect = QRectF(
+                tx - 1, ty - metrics.ascent() - 1,
+                metrics.horizontalAdvance(self.entity_id) + 2, metrics.height() + 2)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(0, 0, 0, 150)))
+            painter.drawRect(trect)
             painter.setPen(QPen(Qt.GlobalColor.white))
-            painter.setFont(QFont(MONO_FONT_FAMILY, 8))
-            painter.drawText(QPointF(min(xs) + 3, min(ys) + 12), self.entity_id)
+            painter.drawText(QPointF(tx, ty), self.entity_id)
         painter.restore()
 
     def _vertex_at_scene(self, scene_pos: QPointF) -> int | None:
@@ -1018,10 +1080,28 @@ class _NpcPatrolPolyline(QGraphicsObject):
         xs = [p[0] for p in self._points]
         ys = [p[1] for p in self._points]
         m = self.HANDLE_WORLD_R + 4
-        return QRectF(
+        rect = QRectF(
             min(xs) - m, min(ys) - m,
             max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m,
         )
+        metrics = QFontMetricsF(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY,
+        ))
+        hrad = self.HANDLE_WORLD_R * 0.38
+        for i, (px, py) in enumerate(self._points):
+            label_rect = QRectF(
+                px + hrad + 2,
+                py + 4 - metrics.ascent(),
+                metrics.horizontalAdvance(str(i)),
+                metrics.height(),
+            )
+            rect = rect.united(label_rect)
+        return rect
+
+    def refresh_editor_font(self) -> None:
+        self.prepareGeometryChange()
+        self.update()
 
     def shape(self) -> QPainterPath:
         path = QPainterPath()
@@ -1043,6 +1123,10 @@ class _NpcPatrolPolyline(QGraphicsObject):
                 b = self._points[i + 1]
                 painter.drawLine(QPointF(a[0], a[1]), QPointF(b[0], b[1]))
         hrad = self.HANDLE_WORLD_R * 0.38
+        painter.setFont(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY,
+        ))
         for i, (px, py) in enumerate(self._points):
             c = QColor(180, 250, 255)
             if self._hover_vertex == i or self._drag_vertex == i:
@@ -1051,7 +1135,6 @@ class _NpcPatrolPolyline(QGraphicsObject):
             painter.setPen(QPen(QColor(0, 120, 140), 0))
             painter.drawEllipse(QPointF(px, py), hrad, hrad)
             painter.setPen(QPen(Qt.GlobalColor.white))
-            painter.setFont(QFont(MONO_FONT_FAMILY, 8))
             painter.drawText(QPointF(px + hrad + 2, py + 4), str(i))
         painter.restore()
 
@@ -1248,11 +1331,20 @@ class _LightCurvePolyline(QGraphicsObject):
             shd = e.get("shadow") if isinstance(e.get("shadow"), dict) else {}
             cs = float(shd.get("contactSize", 1.0) or 1.0)
             m = max(m, self._ref_width * 0.65 * cs)
+        metrics = QFontMetricsF(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_MICRO,
+            family=MONO_FONT_FAMILY,
+        ))
+        m = max(m, metrics.horizontalAdvance("az360 el90 I9.99 dk1.00") + self.HANDLE_WORLD_R * 1.5)
         m += 4
         return QRectF(
             min(xs) - m, min(ys) - m,
             max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m,
         )
+
+    def refresh_editor_font(self) -> None:
+        self.prepareGeometryChange()
+        self.update()
 
     def shape(self) -> QPainterPath:
         path = QPainterPath()
@@ -1271,11 +1363,35 @@ class _LightCurvePolyline(QGraphicsObject):
             for i in range(n - 1):
                 a, b = self._points[i], self._points[i + 1]
                 painter.drawLine(QPointF(a["x"], a["y"]), QPointF(b["x"], b["y"]))
+        primary_font = theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_PRIMARY,
+            family=MONO_FONT_FAMILY,
+        )
+        micro_font = theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_MICRO,
+            family=MONO_FONT_FAMILY,
+        )
         for i, p in enumerate(self._points):
-            self._paint_light_gizmo(painter, i, p, selected=(i == self._selected))
+            self._paint_light_gizmo(
+                painter,
+                i,
+                p,
+                selected=(i == self._selected),
+                primary_font=primary_font,
+                micro_font=micro_font,
+            )
         painter.restore()
 
-    def _paint_light_gizmo(self, painter: QPainter, i: int, p: dict, *, selected: bool) -> None:
+    def _paint_light_gizmo(
+        self,
+        painter: QPainter,
+        i: int,
+        p: dict,
+        *,
+        selected: bool,
+        primary_font,
+        micro_font,
+    ) -> None:
         """在控制点处画该关键帧光照的可视化:主光方向箭头+颜色、环境光环、影迹(方向/长度/暗度)。"""
         e = p.get("env") if isinstance(p.get("env"), dict) else {}
         key = e.get("key", {}) if isinstance(e.get("key"), dict) else {}
@@ -1346,10 +1462,10 @@ class _LightCurvePolyline(QGraphicsObject):
             painter.drawEllipse(QPointF(px, py), rr + R * 0.3, rr + R * 0.3)
         # 编号 + (选中时)读数
         painter.setPen(QPen(Qt.GlobalColor.white))
-        painter.setFont(QFont(MONO_FONT_FAMILY, 9 if selected else 7))
+        painter.setFont(primary_font if selected else micro_font)
         painter.drawText(QPointF(px + rr + 3, py + 4), str(i))
         if selected:
-            painter.setFont(QFont(MONO_FONT_FAMILY, 7))
+            painter.setFont(micro_font)
             painter.setPen(QPen(QColor(255, 230, 170)))
             painter.drawText(
                 QPointF(px + rr + 3, py + 16),
@@ -1486,6 +1602,8 @@ class SceneCanvas(QGraphicsView):
     item_lightcurve_committed = Signal(object)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
     context_add_entity = Signal(str, float, float)
+    # 拖拽中按 Esc 取消：把该实体恢复到按下前坐标（kind, id, orig_x, orig_y）
+    drag_cancelled = Signal(str, str, float, float)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1500,6 +1618,10 @@ class SceneCanvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._middle_panning = False
         self._pan_last_pos = QPoint()
+        # 纯点选（零位移）防伪脏：press 时快照被抓取图元的位置，release 比对；
+        # 位置未变则只发 item_selected，不发 item_moved（不写坐标、不标脏）。
+        self._press_item_pos: dict[int, tuple[float, float]] = {}
+        self._drag_cancelled: bool = False
         self._pick_cycle_key: tuple[float, float] | None = None
         self._pick_cycle_i: int = 0
         self._saved_item_z: list[tuple[QGraphicsItem, float]] | None = None
@@ -1586,13 +1708,28 @@ class SceneCanvas(QGraphicsView):
         self._world_h = world_h
         self._gfx.setSceneRect(QRectF(0, 0, world_w, world_h))
 
+    def _add_bg_placeholder(self, world_w: float, world_h: float, msg: str) -> None:
+        """背景图缺失/加载失败时画占位提示，避免对着纯色空画布盲点坐标（审查 P3）。"""
+        txt = QGraphicsTextItem(msg)
+        txt.setDefaultTextColor(QColor(180, 180, 190))
+        theme.set_graphics_text_font(
+            txt, theme.FONT_ROLE_CANVAS_SECONDARY, family=MONO_FONT_FAMILY)
+        txt.setZValue(-90)
+        br = txt.boundingRect()
+        txt.setPos(max(0.0, world_w / 2 - br.width() / 2),
+                   max(0.0, world_h / 2 - br.height() / 2))
+        txt.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self._gfx.addItem(txt)
+
     def load_background(self, img_path: Path,
                         world_w: float, world_h: float) -> None:
         """Load image and scale it to fill the (world_w x world_h) quad."""
         if not img_path.exists():
+            self._add_bg_placeholder(world_w, world_h, "（背景图缺失：仍可点选坐标，但无底图参照）")
             return
         pm = QPixmap(str(img_path))
         if pm.isNull():
+            self._add_bg_placeholder(world_w, world_h, "（背景图加载失败：仍可点选坐标，但无底图参照）")
             return
         self._bg_item = QGraphicsPixmapItem(pm)
         self._bg_item.setZValue(-100)
@@ -2130,7 +2267,11 @@ class SceneCanvas(QGraphicsView):
             self._npc_ref_items.append(rect)
             tag = QGraphicsTextItem(f"{corner}\n{label_txt}")
             tag.setDefaultTextColor(QColor(200, 240, 210))
-            tag.setFont(QFont(MONO_FONT_FAMILY, 8))
+            theme.set_graphics_text_font(
+                tag,
+                theme.FONT_ROLE_CANVAS_SECONDARY,
+                family=MONO_FONT_FAMILY,
+            )
             tag.setFlag(QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
             tag.setPos(x + 3, y + 3)
             tag.setZValue(_NPC_REF_Z + 0.1)
@@ -2191,12 +2332,48 @@ class SceneCanvas(QGraphicsView):
             QTimer.singleShot(0, lambda t=tok: self._fit_stabilize_step(t))
 
     def wheelEvent(self, event: QWheelEvent) -> None:
+        # 触控板：无修饰双指滚动 = 平移；Ctrl+滚轮 = 缩放（与 map/picker 三处画布统一）。
+        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            d = event.angleDelta()
+            if d.x() != 0 or d.y() != 0:
+                self.horizontalScrollBar().setValue(
+                    self.horizontalScrollBar().value() - d.x())
+                self.verticalScrollBar().setValue(
+                    self.verticalScrollBar().value() - d.y())
+            event.accept()
+            return
         self._auto_fit_after_layout = False
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+        self._zoom_by(factor)
+
+    def _zoom_by(self, factor: float) -> None:
+        """缩放并钳制在 0.1~10 倍之间（照 map_editor._ZoomableView），避免缩到天文倍数丢场景。"""
+        cur = self.transform().m11()
+        new = cur * factor
+        if new < 0.1 or new > 10.0:
+            return
         self.scale(factor, factor)
+
+    def _vertex_menu_item_at(self, scene_pt: QPointF) -> QGraphicsItem | None:
+        """落点是否命中某个可删顶点的折线/多边形顶点（Zone/巡逻/光曲线）。
+        命中则右键应交给该 item 弹「删除此顶点」，而非弹「添加实体」。"""
+        for it in self._gfx.items(scene_pt):
+            if isinstance(it, _EditableZonePolygon):
+                if not it._pick_frozen and it._vertex_at_scene(scene_pt) is not None:
+                    return it
+            elif isinstance(it, (_NpcPatrolPolyline, _LightCurvePolyline)):
+                if it._vertex_at_scene(scene_pt) is not None:
+                    return it
+        return None
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         scene_pt = self.mapToScene(event.pos())
+        # 命中折线/多边形顶点时：把右键转发给场景，让 item 弹「删除此顶点」并处理；
+        # 此前 view 覆写从不调 super，这些承诺的删顶点菜单整体不可达，右键还误弹
+        # 「添加实体」甚至误加野实体（审查 P2 ①）。仅空白/非顶点处才弹添加菜单。
+        if self._vertex_menu_item_at(scene_pt) is not None:
+            super().contextMenuEvent(event)
+            return
         r = self._gfx.sceneRect()
         wx = float(max(r.left(), min(r.right(), scene_pt.x())))
         wy = float(max(r.top(), min(r.bottom(), scene_pt.y())))
@@ -2231,10 +2408,20 @@ class SceneCanvas(QGraphicsView):
             if len(stack) < 2:
                 self._pick_cycle_key = None
             else:
-                key = (round(sp.x(), 1), round(sp.y(), 1))
+                # 叠放循环点选的「同一落点」判定用视口像素 + 容差：世界坐标 round(0.1)
+                # 在 fit 缩放下 1 屏幕像素≈数世界单位，鼠标 1px 抖动即被判为新落点、
+                # 循环重置（审查 P2 ⑥）。像素容差保留「按下移动一点不重置」语义。
+                vp = event.pos()
+                prev = self._pick_cycle_key
+                same_spot = (
+                    prev is not None
+                    and abs(vp.x() - prev[0]) <= _PICK_CYCLE_PX_TOL
+                    and abs(vp.y() - prev[1]) <= _PICK_CYCLE_PX_TOL
+                )
+                key = (vp.x(), vp.y())
                 sel = self._gfx.selectedItems()
                 sel0 = sel[0] if sel else None
-                if key != self._pick_cycle_key:
+                if not same_spot:
                     self._pick_cycle_key = key
                     # 新落点：已选中图元若在叠放栈内则保持为本次操作目标，避免
                     # 「按下移动一丁点」就重置为 stack[0] 导致 Zone 抢走拖动。
@@ -2253,6 +2440,13 @@ class SceneCanvas(QGraphicsView):
                 z_top = max(z for _, z in self._saved_item_z)
                 target.setZValue(z_top + 1.0)
         super().mousePressEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            # 快照当前选中图元位置，供 release 判定「是否真的移动过」。
+            self._press_item_pos = {}
+            for it in self._gfx.selectedItems():
+                if hasattr(it, "entity_kind") and hasattr(it, "entity_id"):
+                    p = it.pos()
+                    self._press_item_pos[id(it)] = (p.x(), p.y())
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._middle_panning:
@@ -2270,6 +2464,32 @@ class SceneCanvas(QGraphicsView):
                 return
         super().mouseMoveEvent(event)
 
+    def keyPressEvent(self, event) -> None:
+        # 拖拽中按 Esc 取消：把被抓取实体恢复到按下前坐标，且不写模型/不标脏（审查 P3）。
+        # 仅覆盖可移动实体图元（hotspot/npc/spawn 圆点）；折线/多边形顶点拖拽自有内部处理。
+        if event.key() == Qt.Key.Key_Escape and self._press_item_pos:
+            flag = QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+            for it in list(self._gfx.selectedItems()):
+                snap = self._press_item_pos.get(id(it))
+                if snap is None or not hasattr(it, "entity_kind"):
+                    continue
+                had = bool(it.flags() & flag)
+                if had:
+                    it.setFlag(flag, False)
+                try:
+                    it.setPos(snap[0], snap[1])
+                finally:
+                    if had:
+                        it.setFlag(flag, True)
+                self.drag_cancelled.emit(
+                    it.entity_kind, it.entity_id, float(snap[0]), float(snap[1]))
+            self._press_item_pos = {}
+            self._drag_cancelled = True
+            self._restore_pick_z_order()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.MiddleButton:
             if self._middle_panning:
@@ -2279,6 +2499,13 @@ class SceneCanvas(QGraphicsView):
             return
         super().mouseReleaseEvent(event)
         self._restore_pick_z_order()
+        if self._drag_cancelled:
+            # 本次拖拽已被 Esc 取消：吞掉 release，不发 item_moved（否则把恢复位当新位写回）。
+            self._drag_cancelled = False
+            self._press_item_pos = {}
+            return
+        press_pos = self._press_item_pos
+        self._press_item_pos = {}
         sel = self._gfx.selectedItems()
         if sel:
             it = sel[0]
@@ -2287,9 +2514,16 @@ class SceneCanvas(QGraphicsView):
                 # property panel. If item_selected runs before item_moved, the
                 # spin boxes are filled with stale x/y and stay wrong until the
                 # next gesture.
+                # 纯点选（release 位置 == press 位置）不发 item_moved：否则「点一下看
+                # 属性」就写坐标+标脏，且 int 坐标漂成 float（审查 P1-09）。
                 emit_move = it.entity_kind not in (
                     "zone", "hotspot_collision", "npc_collision",
                 )
+                if emit_move:
+                    p0 = press_pos.get(id(it))
+                    cur = (it.pos().x(), it.pos().y())
+                    if p0 is not None and p0 == cur:
+                        emit_move = False
                 if emit_move:
                     self.item_moved.emit(
                         it.entity_kind, it.entity_id,
@@ -2358,6 +2592,9 @@ class TargetSpawnPickerDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bbox.accepted.connect(self.accept)
         bbox.rejected.connect(self.reject)
+        _fit_btn = bbox.addButton("适配", QDialogButtonBox.ButtonRole.ActionRole)
+        _fit_btn.setToolTip("把整张场景适配回视口（缩放到全览）")
+        _fit_btn.clicked.connect(lambda: self._canvas.fit_all())
         root.addWidget(bbox)
 
         self._list.currentRowChanged.connect(self._on_list_row)
@@ -2456,11 +2693,15 @@ class TargetSpawnPickerDialog(QDialog):
         if sc is None:
             return
         rx, ry = round(x, 1), round(y, 1)
+        # 去所有权化:拖点只更新坐标,出生点 dict 里 AI 写的未知键透传保留。
+        from ..shared.rebuild_merge import merge_preserving_unknown
         if eid == "default":
-            sc["spawnPoint"] = {"x": rx, "y": ry}
+            sc["spawnPoint"] = merge_preserving_unknown(
+                sc.get("spawnPoint"), {"x": rx, "y": ry}, {"x", "y"})
         else:
             sps = sc.setdefault("spawnPoints", {})
-            sps[eid] = {"x": rx, "y": ry}
+            sps[eid] = merge_preserving_unknown(
+                sps.get(eid), {"x": rx, "y": ry}, {"x", "y"})
         self._model.mark_dirty("scene", self._scene_id)
 
     def _on_new_spawn(self) -> None:
@@ -2516,7 +2757,8 @@ class CutsceneCameraPointPickerDialog(QDialog):
         root.addWidget(hint)
 
         self._coord_lbl = QLabel()
-        self._coord_lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY}; font-size: 12px;")
+        self._coord_lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY};")
+        theme.set_editor_font_role(self._coord_lbl, theme.FONT_ROLE_SECONDARY)
         root.addWidget(self._coord_lbl)
 
         self._view = WorldPointPickView(self)
@@ -2529,6 +2771,9 @@ class CutsceneCameraPointPickerDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bbox.accepted.connect(self.accept)
         bbox.rejected.connect(self.reject)
+        _fit_btn = bbox.addButton("适配", QDialogButtonBox.ButtonRole.ActionRole)
+        _fit_btn.setToolTip("把整张地图适配回视口（缩放到全览）")
+        _fit_btn.clicked.connect(lambda: self._view.fit_scene())
         root.addWidget(bbox)
 
         self._view.setup_from_scene_json(model, scene_id)
@@ -2610,7 +2855,8 @@ class SceneEntityPositionPickerDialog(QDialog):
         root.addWidget(hint)
 
         self._coord_lbl = QLabel()
-        self._coord_lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY}; font-size: 12px;")
+        self._coord_lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY};")
+        theme.set_editor_font_role(self._coord_lbl, theme.FONT_ROLE_SECONDARY)
         root.addWidget(self._coord_lbl)
 
         self._view = WorldPointPickView(self)
@@ -2624,6 +2870,9 @@ class SceneEntityPositionPickerDialog(QDialog):
         )
         bbox.accepted.connect(self.accept)
         bbox.rejected.connect(self.reject)
+        _fit_btn = bbox.addButton("适配", QDialogButtonBox.ButtonRole.ActionRole)
+        _fit_btn.setToolTip("把整张地图适配回视口（缩放到全览）")
+        _fit_btn.clicked.connect(lambda: self._view.fit_scene())
         root.addWidget(bbox)
 
         self._view.setup_from_scene_json(model, scene_id)
@@ -3416,6 +3665,48 @@ class ScenePropertyPanel(QScrollArea):
         sc = self._model.scenes.get(sid)
         if isinstance(sc, dict):
             self._source_scene = sc
+
+    def _warn_bare_id_change(self, kind: str, field: QLineEdit, source: object) -> None:
+        """面板裸改实体 id 完全绕过重构引擎：若旧 id 有外部引用，改完会静默悬垂。
+        editingFinished 触发（仅交互编辑；程序化 setText/flush 不触发），检测到外部
+        引用时给「撤销 / 仍然裸改」二选一，引导走重构菜单（审查 P2 ③）。"""
+        # 程序化填充期（load_*_props 在 _suppress_props_changed_emits 内）不打扰。
+        if self._props_changed_suppressed:
+            return
+        if not isinstance(source, dict):
+            return
+        old_id = str(source.get("id", "") or "").strip()
+        new_id = field.text().strip()
+        if not old_id or not new_id or new_id == old_id:
+            return
+        sid = self._editing_scene_id or ""
+        if not sid:
+            return
+        try:
+            from ..shared.entity_refactor import scan_entity_usages
+            report = scan_entity_usages(self._model, sid, kind, old_id)
+        except Exception:
+            return  # 扫描失败不阻断编辑（advisory）
+        ext = int(report.get("totalRefs", 0)) - int(report.get("selfRefs", 0))
+        if ext <= 0:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("实体 id 裸改")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(
+            f"检测到「{old_id}」有 {ext} 处外部引用。\n"
+            "在此直接改 id 不会改写这些引用，运行时会静默悬垂、数据校验才报。\n"
+            "建议改用工具栏「重构 → 重命名 id」（全项目引用跟随 + 可撤销）。")
+        revert_btn = box.addButton("撤销改名", QMessageBox.ButtonRole.RejectRole)
+        box.addButton("仍然裸改", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        if box.clickedButton() is revert_btn:
+            field.blockSignals(True)
+            try:
+                field.setText(old_id)
+            finally:
+                field.blockSignals(False)
+            self._emit_props_changed()
 
     def load_scene_props(
         self, sc: dict, *, clear_pending_edits: bool = False,
@@ -4327,6 +4618,8 @@ class ScenePropertyPanel(QScrollArea):
         form = compact_form(QFormLayout(basic_inner))
         self._hs_id = QLineEdit(); form.addRow("id", self._hs_id)
         self._hs_id.textChanged.connect(lambda *_: self._emit_props_changed())
+        self._hs_id.editingFinished.connect(
+            lambda: self._warn_bare_id_change("hotspot", self._hs_id, self._source_hotspot))
         self._hs_type = QComboBox()
         self._hs_type.addItems(["inspect", "pickup", "transition", "npc", "encounter"])
         self._hs_type.currentIndexChanged.connect(lambda _i: self._emit_props_changed())
@@ -5338,9 +5631,10 @@ class ScenePropertyPanel(QScrollArea):
         hs["id"] = self._hs_id.text().strip()
         hs["type"] = self._hs_type.currentText()
         hs["label"] = self._hs_label.text()
-        hs["x"] = self._hs_x.value()
-        hs["y"] = self._hs_y.value()
-        hs["interactionRange"] = self._hs_range.value()
+        # 数值保真：值未变按原始 int/float 表示回写（int 1000 不漂成 1000.0；审查 P1-09）。
+        hs["x"] = self._keep_num(self._hs_x.value(), hs.get("x"))
+        hs["y"] = self._keep_num(self._hs_y.value(), hs.get("y"))
+        hs["interactionRange"] = self._keep_num(self._hs_range.value(), hs.get("interactionRange"))
         if self._hs_auto.isChecked():
             hs["autoTrigger"] = True
         elif "autoTrigger" in hs:
@@ -5402,6 +5696,16 @@ class ScenePropertyPanel(QScrollArea):
             hs.pop("collisionPolygonLocal", None)
 
         ht = hs["type"]
+        # 去所有权化(2026-07-13):data 重建时不再抹未知键——managed 取全类型已知键
+        # 并集(换类型时旧类型的键必须被清理,不能当"未知"保留);inspect 的 data.text
+        # 等 AI 写入、面板不编辑的键自此在人类 Apply 后存活。
+        from ..shared.rebuild_merge import merge_preserving_unknown
+        _managed_data_keys = {
+            "graphId", "entry", "actions",
+            "itemId", "itemName", "count", "isCurrency",
+            "targetScene", "targetSpawnPoint", "npcId", "encounterId",
+        }
+        old_data = hs.get("data")
         if ht == "inspect":
             acts = self._hs_inspect_actions.to_list()
             if self._hs_inspect_mode_graph.isChecked():
@@ -5414,30 +5718,34 @@ class ScenePropertyPanel(QScrollArea):
                     new_data["entry"] = ent
                 if acts:
                     new_data["actions"] = acts
-                hs["data"] = new_data
+                hs["data"] = merge_preserving_unknown(old_data, new_data, _managed_data_keys)
             else:
                 new_data = {}
                 if acts:
                     new_data["actions"] = acts
-                hs["data"] = new_data
+                hs["data"] = merge_preserving_unknown(old_data, new_data, _managed_data_keys)
         elif ht == "pickup":
-            hs["data"] = {
+            new_data = {
                 "itemId": self._hs_pickup_item.current_id(),
                 "itemName": self._hs_pickup_name.text(),
                 "count": self._hs_pickup_count.value(),
             }
             if self._hs_pickup_currency.isChecked():
-                hs["data"]["isCurrency"] = True
+                new_data["isCurrency"] = True
+            hs["data"] = merge_preserving_unknown(old_data, new_data, _managed_data_keys)
         elif ht == "transition":
             tid = self._hs_trans_scene.current_id()
-            hs["data"] = {"targetScene": tid}
+            new_data = {"targetScene": tid}
             sp = self._hs_trans_spawn_key.strip()
             if sp:
-                hs["data"]["targetSpawnPoint"] = sp
+                new_data["targetSpawnPoint"] = sp
+            hs["data"] = merge_preserving_unknown(old_data, new_data, _managed_data_keys)
         elif ht == "npc":
-            hs["data"] = {"npcId": self._hs_npc_id.current_id()}
+            hs["data"] = merge_preserving_unknown(
+                old_data, {"npcId": self._hs_npc_id.current_id()}, _managed_data_keys)
         elif ht == "encounter":
-            hs["data"] = {"encounterId": self._hs_enc_id.current_id()}
+            hs["data"] = merge_preserving_unknown(
+                old_data, {"encounterId": self._hs_enc_id.current_id()}, _managed_data_keys)
         self._emit_props_changed()
 
     def save_hotspot_props(self) -> dict | None:
@@ -5458,6 +5766,8 @@ class ScenePropertyPanel(QScrollArea):
         form = compact_form(QFormLayout(base_inner))
         self._npc_id = QLineEdit(); form.addRow("id", self._npc_id)
         self._npc_id.textChanged.connect(lambda *_: self._emit_props_changed())
+        self._npc_id.editingFinished.connect(
+            lambda: self._warn_bare_id_change("npc", self._npc_id, self._source_npc))
         self._npc_character = QComboBox()
         self._npc_character.setMinimumWidth(180)
         self._npc_character.setToolTip(
@@ -6368,8 +6678,9 @@ class ScenePropertyPanel(QScrollArea):
         else:
             npc.pop("characterId", None)
             npc["name"] = self._npc_name.text()
-        npc["x"] = self._npc_x.value()
-        npc["y"] = self._npc_y.value()
+        # 数值保真：值未变按原始 int/float 表示回写（审查 P1-09）。
+        npc["x"] = self._keep_num(self._npc_x.value(), npc.get("x"))
+        npc["y"] = self._keep_num(self._npc_y.value(), npc.get("y"))
         fv = self._npc_facing.currentData()
         if fv == "left":
             npc["initialFacing"] = "left"
@@ -6491,6 +6802,8 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_id = QLineEdit()
         form.addRow("id", self._zn_id)
         self._zn_id.textChanged.connect(lambda *_: self._emit_props_changed())
+        self._zn_id.editingFinished.connect(
+            lambda: self._warn_bare_id_change("zone", self._zn_id, self._source_zone))
         self._zn_kind = QComboBox()
         self._zn_kind.addItem("普通（进出/停留）", "standard")
         self._zn_kind.addItem("深度 floor 修正（仅遮挡，脚底中心判点）", "depth_floor")
@@ -6629,8 +6942,62 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_smell_fold.setEnabled(not is_depth)
 
     def _on_zone_kind_changed(self, _idx: int) -> None:
+        new_kind = self._zn_kind.currentData() or "standard"
+        # 程序化载入（load_zone_props 在 suppress 内）不弹确认，只同步 UI 与基线。
+        if self._props_changed_suppressed:
+            self._zn_kind_last = new_kind
+            self._apply_zone_kind_ui()
+            return
+        prev = getattr(self, "_zn_kind_last", "standard")
+        if new_kind != prev and not self._confirm_zone_kind_switch(prev, new_kind):
+            # 用户取消：退回原类型（阻断信号避免递归）。
+            self._zn_kind.blockSignals(True)
+            try:
+                idx = self._zn_kind.findData(prev)
+                self._zn_kind.setCurrentIndex(idx if idx >= 0 else 0)
+            finally:
+                self._zn_kind.blockSignals(False)
+            self._apply_zone_kind_ui()
+            return
+        self._zn_kind_last = new_kind
         self._apply_zone_kind_ui()
         self._emit_props_changed()
+
+    def _confirm_zone_kind_switch(self, prev: str, new_kind: str) -> bool:
+        """切换区域类型会丢字段时先确认（审查 P3）。
+        → depth_floor：清空 onEnter/onStay/onExit/smell；← depth_floor：丢 floorOffsetBoost。"""
+        if new_kind == "depth_floor":
+            has_actions = bool(
+                self._zn_enter.to_list() or self._zn_stay.to_list() or self._zn_exit.to_list())
+            has_smell = bool(self._zn_smell_scent.committed_type().strip())
+            if not (has_actions or has_smell):
+                return True
+            lost = []
+            if has_actions:
+                lost.append("onEnter / onStay / onExit 动作")
+            if has_smell:
+                lost.append("区域气味 smell")
+            return QMessageBox.question(
+                self, "切换区域类型",
+                "切到「深度 floor 修正」会清空本区的：\n· " + "\n· ".join(lost)
+                + "\n\n确定切换？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) == QMessageBox.StandardButton.Yes
+        if prev == "depth_floor":
+            try:
+                boost = float(self._zn_boost.value())
+            except (TypeError, ValueError):
+                boost = 0.0
+            if boost == 0.0:
+                return True
+            return QMessageBox.question(
+                self, "切换区域类型",
+                f"切回普通区域会丢弃 floorOffsetBoost（当前 {boost:g}）。\n确定切换？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) == QMessageBox.StandardButton.Yes
+        return True
 
     def _parse_float_cell(self, it: QTableWidgetItem | None, default: float = 0.0) -> float:
         if it is None:
@@ -6803,6 +7170,8 @@ class ScenePropertyPanel(QScrollArea):
             self._zn_exit.set_data(st.get("onExit", []))
             idx = self._zn_kind.findData(st.get("zoneKind") or "standard")
             self._zn_kind.setCurrentIndex(idx if idx >= 0 else 0)
+            # 基线：切换类型确认对话框以此判「从哪切到哪」（setCurrentIndex 未变时不触发信号）。
+            self._zn_kind_last = str(st.get("zoneKind") or "standard")
             try:
                 self._zn_boost.setValue(float(st.get("floorOffsetBoost", 0)))
             except (TypeError, ValueError):
@@ -6984,14 +7353,33 @@ class ScenePropertyPanel(QScrollArea):
         x = round(float(self._sp_x.value()), 1)
         y = round(float(self._sp_y.value()), 1)
         orig = self._spawn_name_original
+        from ..shared.rebuild_merge import merge_preserving_unknown
+        keep = self._keep_num
         if orig == "default":
-            sc["spawnPoint"] = {"x": x, "y": y}
+            old = sc.get("spawnPoint") if isinstance(sc.get("spawnPoint"), dict) else {}
+            sc["spawnPoint"] = merge_preserving_unknown(
+                old, {"x": keep(x, old.get("x")), "y": keep(y, old.get("y"))}, {"x", "y"})
         else:
             new_key = self._sp_key.text().strip() or orig
             sps = sc.setdefault("spawnPoints", {})
+            # 改名撞名：目标键已存在且非本键 → 拒绝改名，退回原键（避免静默吞掉另一出生点）。
+            # 面板裸改 key 也绕过重构引擎的入站引用改写，故此处仅保守拒绝并提示走重构菜单。
+            if new_key != orig and new_key in sps:
+                QMessageBox.warning(
+                    self, "出生点",
+                    f"出生点 key「{new_key}」已存在，改名会覆盖它。已退回原名「{orig}」。\n"
+                    "如需改名并让入站 transition/切场景引用跟随，请用工具栏「重构 → 重命名 id」。")
+                new_key = orig
+                self._sp_key.blockSignals(True)
+                try:
+                    self._sp_key.setText(orig)
+                finally:
+                    self._sp_key.blockSignals(False)
+            old = sps.get(orig) if isinstance(sps.get(orig), dict) else {}
             if new_key != orig:
                 sps.pop(orig, None)
-            sps[new_key] = {"x": x, "y": y}
+            sps[new_key] = merge_preserving_unknown(
+                old, {"x": keep(x, old.get("x")), "y": keep(y, old.get("y"))}, {"x", "y"})
             self._spawn_name_original = new_key
         self._emit_props_changed()
 
@@ -7056,7 +7444,10 @@ class SceneEditor(QWidget):
         add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         tb.addWidget(add_btn)
         save_btn = QPushButton("Apply")
-        save_btn.setToolTip("提交右侧属性面板的修改到当前场景；不点则切换其它实体或场景时丢弃这些修改。")
+        save_btn.setToolTip(
+            "立即把右侧属性面板的修改提交到当前场景（仅内存，仍需 Save All 落盘）。"
+            "即使不点 Apply，切换其它实体 / 场景 / 关闭时也会自动提交这些修改"
+            "（commit-on-leave），不会丢弃；想放弃误改请用主窗口的撤销 / 不保存。")
         save_btn.clicked.connect(self._apply_props)
         tb.addWidget(save_btn)
         # 红色"未应用"提示：当前面板有未点 Apply 的 staging 修改时显示；
@@ -7066,7 +7457,8 @@ class SceneEditor(QWidget):
             "color:#ff5555;font-weight:600;padding:0 6px;",
         )
         self._pending_dirty_label.setToolTip(
-            "右侧属性面板有未 Apply 的修改；切换其它实体或场景会丢弃这些修改。",
+            "右侧属性面板有未 Apply 的修改。切换其它实体 / 场景 / 关闭时会自动提交"
+            "（commit-on-leave），不会丢弃；点 Apply 只是立即提交。",
         )
         self._pending_dirty_label.setVisible(False)
         tb.addWidget(self._pending_dirty_label)
@@ -7185,6 +7577,7 @@ class SceneEditor(QWidget):
         self._canvas.item_npc_collision_polygon_committed.connect(
             self._on_item_npc_collision_polygon_committed)
         self._canvas.context_add_entity.connect(self._on_canvas_context_add_entity)
+        self._canvas.drag_cancelled.connect(self._on_drag_cancelled)
 
         # right: property panel
         self._props = ScenePropertyPanel(model)
@@ -7222,7 +7615,35 @@ class SceneEditor(QWidget):
             self._on_lightcurve_committed)
 
         splitter.addWidget(left)
-        splitter.addWidget(self._canvas)
+        # 画布列：顶部一行轻量「实体查找」入口 + 画布本体（小屏纪律：单行紧凑，不加大面板）。
+        center = QWidget()
+        cl = QVBoxLayout(center)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(2)
+        find_row = QHBoxLayout()
+        find_row.setContentsMargins(0, 0, 0, 0)
+        _find_lab = QLabel("查找")
+        find_row.addWidget(_find_lab)
+        self._entity_find = QLineEdit()
+        self._entity_find.setPlaceholderText("按 类型:id 查找实体（回车定位）")
+        self._entity_find.setClearButtonEnabled(True)
+        self._entity_find.setMaximumWidth(320)
+        self._entity_find.setToolTip(
+            "在当前场景内查找并定位实体：输入 id 片段从下拉选，回车或选中即在画布居中并选中该实体。")
+        self._entity_find_completer = QCompleter([], self)
+        self._entity_find_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._entity_find_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self._entity_find_completer.setCompletionMode(
+            QCompleter.CompletionMode.PopupCompletion)
+        self._entity_find.setCompleter(self._entity_find_completer)
+        self._entity_find_completer.activated.connect(self._on_entity_find_chosen)
+        self._entity_find.returnPressed.connect(
+            lambda: self._on_entity_find_chosen(self._entity_find.text()))
+        find_row.addWidget(self._entity_find)
+        find_row.addStretch(1)
+        cl.addLayout(find_row)
+        cl.addWidget(self._canvas, 1)
+        splitter.addWidget(center)
         splitter.addWidget(self._props)
         splitter.setSizes([160, 740, 300])  # 合计 1200，13"(1240) 可容；仍可拖动
         root.addWidget(splitter)
@@ -7804,6 +8225,45 @@ class SceneEditor(QWidget):
         self._props.load_scene_props(sc, clear_pending_edits=True)
         self._rebuild_scene_npc_anim_layers()
         self._canvas.set_zone_pick_frozen(self._chk_block_zone_pick.isChecked())
+        self._refresh_entity_find_completer(sc)
+
+    def _refresh_entity_find_completer(self, sc: dict) -> None:
+        """按当前场景实体刷新「实体查找」下拉候选（类型:id）。"""
+        if not hasattr(self, "_entity_find_completer"):
+            return
+        entries: list[str] = []
+        for hs in sc.get("hotspots", []):
+            if isinstance(hs, dict) and str(hs.get("id", "")).strip():
+                entries.append(f"hotspot:{hs['id']}")
+        for npc in sc.get("npcs", []):
+            if isinstance(npc, dict) and str(npc.get("id", "")).strip():
+                entries.append(f"npc:{npc['id']}")
+        for zone in sc.get("zones", []):
+            if isinstance(zone, dict) and str(zone.get("id", "")).strip():
+                entries.append(f"zone:{zone['id']}")
+        sp = sc.get("spawnPoint")
+        if isinstance(sp, dict):
+            entries.append("spawn:default")
+        for name in (sc.get("spawnPoints") or {}):
+            entries.append(f"spawn:{name}")
+        from PySide6.QtCore import QStringListModel
+        self._entity_find_completer.setModel(QStringListModel(entries, self))
+
+    def _on_entity_find_chosen(self, text: str) -> None:
+        """解析「类型:id」并在画布定位 + 选中该实体（遵守 _focus_canvas_on_entity 落点语义）。"""
+        raw = (text or "").strip()
+        if not raw or ":" not in raw:
+            return
+        kind, _, eid = raw.partition(":")
+        kind = kind.strip().lower()
+        eid = eid.strip()
+        if not eid:
+            return
+        if kind == "spawn":
+            self._restore_canvas_selection("spawn", eid)
+            self._focus_canvas_on_entity("spawn", eid)
+        elif kind in ("hotspot", "npc", "zone"):
+            self._select_scene_entity_by_kind(kind, eid, self._current_scene_id or "")
 
     def _on_npc_ref_toggled(self, checked: bool) -> None:
         self._canvas.set_npc_reference_visible(checked)
@@ -7823,11 +8283,11 @@ class SceneEditor(QWidget):
     def _on_canvas_zoom_in(self) -> None:
         # mirror wheelEvent zoom factor; pure view transform, no data change
         self._canvas._auto_fit_after_layout = False
-        self._canvas.scale(1.15, 1.15)
+        self._canvas._zoom_by(1.15)
 
     def _on_canvas_zoom_out(self) -> None:
         self._canvas._auto_fit_after_layout = False
-        self._canvas.scale(1 / 1.15, 1 / 1.15)
+        self._canvas._zoom_by(1 / 1.15)
 
     def _on_canvas_zoom_fit(self) -> None:
         self._canvas.fit_all()
@@ -8075,22 +8535,48 @@ class SceneEditor(QWidget):
             scw = self._spawn_scene_write_dict()
             if scw is None:
                 return
+            # 去所有权化：主画布拖动只更新坐标，AI 写的未知键透传保留（与
+            # TargetSpawnPickerDialog 同修法；审查 P2 主画布路径漏改）。
+            from ..shared.rebuild_merge import merge_preserving_unknown
             if eid == "default":
-                scw["spawnPoint"] = {"x": rx, "y": ry}
+                old = scw.get("spawnPoint") if isinstance(scw.get("spawnPoint"), dict) else {}
+                scw["spawnPoint"] = merge_preserving_unknown(old, {"x": rx, "y": ry}, {"x", "y"})
             else:
                 sps = scw.setdefault("spawnPoints", {})
-                sps[eid] = {"x": rx, "y": ry}
+                old = sps.get(eid) if isinstance(sps.get(eid), dict) else {}
+                sps[eid] = merge_preserving_unknown(old, {"x": rx, "y": ry}, {"x", "y"})
             self._props.sync_spawn_xy_widgets(eid, rx, ry)
+
+    @staticmethod
+    def _xy_unchanged(d: dict, rx: float, ry: float) -> bool:
+        try:
+            return (
+                isinstance(d.get("x"), (int, float)) and not isinstance(d.get("x"), bool)
+                and isinstance(d.get("y"), (int, float)) and not isinstance(d.get("y"), bool)
+                and float(d["x"]) == float(rx) and float(d["y"]) == float(ry)
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def _on_drag_cancelled(self, kind: str, eid: str, ox: float, oy: float) -> None:
+        """Esc 取消拖拽：把 live 拖拽期间写进 staging 的坐标恢复到按下前值。
+        走 _on_item_position_live（写 staging + 刷新视觉/数值框，但不 mark_dirty），
+        因 mark_dirty 只在 release 的 _on_item_moved 发生，取消后 release 被吞，故无脏。"""
+        self._on_item_position_live(kind, eid, ox, oy)
 
     def _on_item_moved(self, kind: str, eid: str, x: float, y: float) -> None:
         rx = round(x, 1)
         ry = round(y, 1)
+        keep = self._props._keep_num
         if kind == "hotspot":
             hs = self._staging_hotspot_for_canvas_drag(eid)
             if hs is None:
                 return
-            hs["x"] = rx
-            hs["y"] = ry
+            # 值未变（画布拾取/微抖后归位）跳过：不写坐标、不标脏，且保留 int/高精度原值。
+            if self._xy_unchanged(hs, rx, ry):
+                return
+            hs["x"] = keep(rx, hs.get("x"))
+            hs["y"] = keep(ry, hs.get("y"))
             self._canvas.refresh_hotspot_visuals(hs)
             self._props.sync_hotspot_xy_widgets(eid, rx, ry)
             self._mark_canvas_edit()
@@ -8099,8 +8585,10 @@ class SceneEditor(QWidget):
             npc = self._staging_npc_for_canvas_drag(eid)
             if npc is None:
                 return
-            npc["x"] = rx
-            npc["y"] = ry
+            if self._xy_unchanged(npc, rx, ry):
+                return
+            npc["x"] = keep(rx, npc.get("x"))
+            npc["y"] = keep(ry, npc.get("y"))
             self._patrol_preview_state.pop(eid, None)
             rt = self._scene_npc_runtimes.get(eid)
             if rt is not None:
@@ -8115,10 +8603,20 @@ class SceneEditor(QWidget):
             if scw is None:
                 return
             if eid == "default":
-                scw["spawnPoint"] = {"x": rx, "y": ry}
+                old = scw.get("spawnPoint") if isinstance(scw.get("spawnPoint"), dict) else {}
+                if self._xy_unchanged(old, rx, ry):
+                    return
+                from ..shared.rebuild_merge import merge_preserving_unknown
+                scw["spawnPoint"] = merge_preserving_unknown(
+                    old, {"x": keep(rx, old.get("x")), "y": keep(ry, old.get("y"))}, {"x", "y"})
             else:
                 sps = scw.setdefault("spawnPoints", {})
-                sps[eid] = {"x": rx, "y": ry}
+                old = sps.get(eid) if isinstance(sps.get(eid), dict) else {}
+                if self._xy_unchanged(old, rx, ry):
+                    return
+                from ..shared.rebuild_merge import merge_preserving_unknown
+                sps[eid] = merge_preserving_unknown(
+                    old, {"x": keep(rx, old.get("x")), "y": keep(ry, old.get("y"))}, {"x", "y"})
             self._props.sync_spawn_xy_widgets(eid, rx, ry)
             self._mark_canvas_edit()
 
@@ -8603,6 +9101,10 @@ class SceneEditor(QWidget):
         sc = self._require_scene()
         if sc is None:
             return
+        # 直写源前先把未应用编辑提交进模型：否则随后 _load_scene 里的 commit-on-leave
+        # 用打开场景时的旧 staging 快照整体覆盖 spawnPoints，新增出生点被静默抹掉
+        # （审查 P1-01，与 _delete_selected 同族；P1-25 第二次复发）。
+        self._commit_pending_scene_edits()
         wx = round(float(wx), 1)
         wy = round(float(wy), 1)
         sps = sc.setdefault("spawnPoints", {})
@@ -8694,6 +9196,9 @@ class SceneEditor(QWidget):
                    + (f"\n源场景仍有 {dangling} 处裸引用悬垂（见 Validate Data）。" if dangling else ""))
         elif summary.get("op") == "renameEntity":
             skipped = summary.get("scope", {}).get("skippedDialogues") or []
+            # 改名后画布/属性回选到新 id 实体（审查 P3：原实现不回选）。
+            if kind in ("npc", "hotspot", "zone"):
+                self._select_scene_entity_by_kind(kind, summary["newId"], self._current_scene_id or "")
             msg = (f"已改名为「{summary['newId']}」。"
                    + (f"\n未自动改写（指向歧义）的对话图：{'、'.join(skipped)}" if skipped else ""))
         else:
@@ -8702,6 +9207,10 @@ class SceneEditor(QWidget):
         QMessageBox.information(self, "实体重构", msg)
 
     def _undo_entity_refactor(self) -> None:
+        # commit-on-leave：先把未应用的画布/面板 staging 落进模型，否则迟到的
+        # commit-on-leave 会用旧 id 的 staging 覆盖引擎撤销后的实体 def，引用网静默
+        # 劈叉且不可再撤销（审查 P1-02，对照 _refactor_selected 正确样板）。
+        self._commit_pending_scene_edits()
         from ..shared import entity_refactor as er
         result = er.undo_last(self._model)
         if result.get("ok"):
@@ -8729,6 +9238,11 @@ class SceneEditor(QWidget):
         }.get(kind, "实体")
         if not confirm.confirm_delete(self, f"{_label}「{eid}」及其全部配置"):
             return
+        # 直写源前先提交未应用编辑：否则随后 _load_scene 的 commit-on-leave 用旧 staging
+        # 快照整体覆盖 spawnPoints，刚删的出生点「复活」（审查 P1-01；P1-25 同族复发）。
+        # 实体三列表与 model 共享引用不受此害，spawnPoints 是 deepcopy 快照才中招——
+        # 统一先 commit 保各删除路径一致。
+        self._commit_pending_scene_edits()
         if kind == "hotspot":
             sc["hotspots"] = [h for h in sc.get("hotspots", []) if h.get("id") != eid]
         elif kind == "hotspot_collision":
@@ -8778,8 +9292,30 @@ class SceneEditor(QWidget):
         for entity in sc.get(collection, []):
             if isinstance(entity, dict) and str(entity.get("id", "")).strip() == item_id:
                 self._restore_canvas_selection(kind, item_id)
+                self._focus_canvas_on_entity(kind, item_id)
                 return True
         return False
+
+    def _focus_canvas_on_entity(self, kind: str, eid: str) -> None:
+        """外部跳转(全局搜索/引用导航/位面面板)的视口落点:把画布滚到实体处并
+        短暂描边。只在 select_*_by_id 族入口调用——_restore_canvas_selection 还被
+        普通 reload 复用,日常编辑不能被拽视口。场景加载/适配有延后步骤
+        (_fit_stabilize_step),补一拍再断言一次。"""
+        def _go() -> None:
+            try:
+                it = self._canvas._entity_items.get(f"{kind}:{eid}")
+                if it is None:
+                    return
+                # centerOn:实体拉到视口正中(整景已适配时无滚动余地,自然无操作),
+                # 场景实体多时靠居中+描边直接锁定,不必肉眼扫全图。
+                self._canvas.centerOn(it)
+                from ..shared.search_spotlight import flash_canvas_item
+                flash_canvas_item(self._canvas, it)
+            except Exception:
+                pass  # 视口聚焦是锦上添花,失败不影响选中本身
+
+        _go()
+        QTimer.singleShot(320, _go)
 
     def select_npc_by_id(self, item_id: str, scene_id: str = "") -> None:
         self._select_scene_entity_by_kind("npc", item_id, scene_id)
@@ -8801,7 +9337,8 @@ class SceneEditor(QWidget):
                 self._scene_list.setCurrentItem(it)
                 return
 
-    def select_by_id(self, item_id: str, scene_id: str = "") -> None:
+    def select_by_id(self, item_id: str, scene_id: str = "") -> bool:
         for kind in ("npc", "hotspot", "zone"):
             if self._select_scene_entity_by_kind(kind, item_id, scene_id):
-                return
+                return True
+        return False

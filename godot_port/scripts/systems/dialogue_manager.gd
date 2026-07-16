@@ -1,65 +1,104 @@
 class_name RuntimeDialogueManager
 extends RuntimeSystem
 
-signal scripted_finished
-
-var event_bus: RuntimeEventBus
-var scripted_remaining: Array = []
-var active := false
-var current_npc_name := ""
-var nested_in_graph := false
+var _event_bus: RuntimeEventBus
+var _scripted_remaining: Variant = null
+var _active := false
+var _current_npc_name := ""
+var _nested_in_graph := false
 
 
-func _init(events: RuntimeEventBus) -> void: event_bus = events
-func is_active() -> bool: return active
+func _init(event_bus: RuntimeEventBus) -> void:
+	_event_bus = event_bus
 
 
-func start_scripted_dialogue(lines: Array, nested: bool = false) -> bool:
-	if lines.is_empty(): return false
-	var first: Variant = lines[0]
-	if not first is Dictionary: return false
-	scripted_remaining = lines.slice(1).duplicate(true); active = true; nested_in_graph = nested; current_npc_name = str(first.get("speaker", "")).strip_edges()
-	event_bus.emit("dialogue:start", {"npcName": current_npc_name, "source": "scripted"})
-	var payload: Dictionary = first.duplicate(true); if not payload.get("tags") is Array: payload.tags = []
-	event_bus.emit("dialogue:line", payload)
-	if lines.size() == 1: event_bus.emit("dialogue:willEnd", {})
-	return true
+func init(_ctx: Dictionary) -> void:
+	return
 
 
-func play_and_wait(lines: Array, nested: bool = false) -> bool:
-	if not start_scripted_dialogue(lines, nested): return false
-	while active: await scripted_finished
-	return true
-
-
-func advance() -> void:
-	if not active: return
-	event_bus.emit("dialogue:prepareBeat", {})
-	if scripted_remaining.is_empty(): end_dialogue(); return
-	var line: Variant = scripted_remaining.pop_front()
-	if line is Dictionary:
-		var payload: Dictionary = line.duplicate(true); if not payload.get("tags") is Array: payload.tags = []
-		event_bus.emit("dialogue:line", payload)
-	if scripted_remaining.is_empty(): event_bus.emit("dialogue:willEnd", {})
-
-
-func choose_option(_index: int) -> bool: return false
-
-
-func end_dialogue() -> void:
-	if not active: return
-	var nested := nested_in_graph; active = false; scripted_remaining.clear(); current_npc_name = ""; nested_in_graph = false
-	event_bus.emit("dialogue:end", {"source": "scripted", "nestedInGraph": nested}); scripted_finished.emit()
+func update(_dt: float) -> void:
+	return
 
 
 func serialize() -> Dictionary:
-	return {"active": true, "npcName": current_npc_name, "scripted": true} if active else {"active": false}
+	if not _active:
+		return {"active": false}
+	return {"active": true, "npcName": _current_npc_name, "scripted": true}
 
 
-func deserialize(_data: Dictionary) -> void:
-	if active: end_dialogue()
-	active = false; scripted_remaining.clear(); current_npc_name = ""; nested_in_graph = false
+func deserialize(_data: Variant) -> void:
+	if _active:
+		end_dialogue()
+	_active = false
+	_scripted_remaining = null
+	_current_npc_name = ""
+
+
+func start_scripted_dialogue(lines: Array, nested_in_graph: bool = false) -> void:
+	if lines.is_empty():
+		return
+	var first: Dictionary = lines[0]
+	_scripted_remaining = lines.slice(1)
+	_active = true
+	_nested_in_graph = nested_in_graph
+	_current_npc_name = str(first.get("speaker", "")).strip_edges()
+	_event_bus.emit("dialogue:start", {
+		"npcName": _current_npc_name,
+		"source": "scripted",
+	})
+	var payload := first.duplicate()
+	if not payload.has("tags") or payload.tags == null:
+		payload.tags = []
+	_event_bus.emit("dialogue:line", payload)
+	if lines.size() == 1:
+		_schedule_end()
+
+
+func advance() -> void:
+	if not _active:
+		return
+	_event_bus.emit("dialogue:prepareBeat", {})
+	if _scripted_remaining == null:
+		end_dialogue()
+		return
+	if _scripted_remaining.is_empty():
+		_scripted_remaining = null
+		end_dialogue()
+		return
+	var line: Variant = _scripted_remaining.pop_front()
+	_event_bus.emit("dialogue:line", line)
+	if _scripted_remaining.is_empty():
+		_schedule_end()
+
+
+func choose_option(_index: int) -> void:
+	return
+
+
+func _schedule_end() -> void:
+	_event_bus.emit("dialogue:willEnd", {})
+
+
+func end_dialogue() -> void:
+	if not _active:
+		return
+	var nested := _nested_in_graph
+	_active = false
+	_scripted_remaining = null
+	_current_npc_name = ""
+	_nested_in_graph = false
+	_event_bus.emit("dialogue:end", {
+		"source": "scripted",
+		"nestedInGraph": nested,
+	})
+
+
+func is_active() -> bool:
+	return _active
 
 
 func destroy() -> void:
-	active = false; scripted_remaining.clear(); current_npc_name = ""; nested_in_graph = false
+	_scripted_remaining = null
+	_active = false
+	_current_npc_name = ""
+	_nested_in_graph = false

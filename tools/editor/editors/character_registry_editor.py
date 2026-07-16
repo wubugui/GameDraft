@@ -88,6 +88,11 @@ class CharacterRegistryEditor(QWidget):
 
     # 跨面板刷新约定：切到本页时重建列表（角色可能被场景侧新增引用不影响，这里只读注册表本身）
     def reload_refs_from_model(self) -> None:
+        # commit-on-leave（P1-04）：重建列表会经 _select_id → _on_select，而重选同一行时
+        # cur_id==cid 会跳过切行提交、用模型旧值覆盖表单，静默丢弃未 Apply 的编辑。
+        # 照 plane_editor.py 样板，先把未应用编辑提交进模型再重建。
+        if self._is_dirty():
+            self._apply_to_model()
         keep = self._cur_id
         self._reload_list()
         if keep:
@@ -103,11 +108,16 @@ class CharacterRegistryEditor(QWidget):
             self._list.addItem(it)
         self._list.blockSignals(False)
 
-    def _select_id(self, cid: str) -> None:
+    def _select_id(self, cid: str) -> bool:
         for i in range(self._list.count()):
             if self._list.item(i).data(_ROLE) == cid:
                 self._list.setCurrentRow(i)
-                return
+                return True
+        return False
+
+    def select_by_id(self, character_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点。返回 True=真选中，False=没找到（主窗按此提示"未定位"）。"""
+        return self._select_id(character_id)
 
     def _on_select(self, cur: QListWidgetItem | None, _prev: QListWidgetItem | None) -> None:
         if cur is None:
@@ -117,8 +127,23 @@ class CharacterRegistryEditor(QWidget):
         # commit-on-leave：切到别的角色前提交上一项未应用编辑，避免表单被覆盖静默丢失。
         # 此处不重建列表（currentItemChanged 处理中重建会重入），标签文本下次刷新对齐。
         if self._cur_id and self._cur_id != cid and self._is_dirty():
-            self._apply_to_model()
+            if not self._apply_to_model():
+                # id 非法（空/重复）被拒：留在原行让用户改，不切换、不丢弃该行其余编辑（P3）。
+                # 警告说的是 id，丢的却是全部——所以拒绝提交时也必须拒绝切行。
+                self._reselect_row(self._cur_id)
+                return
         self._load_entry_into_form(cid)
+
+    def _reselect_row(self, cid: str) -> None:
+        """把列表选中还原到 cid 对应行（屏蔽信号，避免递归回 _on_select）。"""
+        self._list.blockSignals(True)
+        try:
+            for i in range(self._list.count()):
+                if self._list.item(i).data(_ROLE) == cid:
+                    self._list.setCurrentRow(i)
+                    return
+        finally:
+            self._list.blockSignals(False)
 
     def _load_entry_into_form(self, cid: str) -> None:
         ch = self._model.character_registry.get(cid) or {}

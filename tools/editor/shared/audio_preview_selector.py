@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Signal
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QWidget
 
 from ..project_model import ProjectModel
 from .id_ref_selector import IdRefSelector
@@ -79,6 +79,15 @@ class AudioPreviewControls(QWidget):
         lay.addWidget(self._play)
         lay.addWidget(self._stop)
 
+        # 试听失败必须说话（审查 P2）：id 无法解析成文件 / 播放器报错都提示在按钮旁。
+        self._hint = QLabel("", self)
+        self._hint.setStyleSheet("color:#e8590c;")
+        self._hint.setVisible(False)
+        lay.addWidget(self._hint)
+        # errorOccurred 每个失败源只弹一次窗，避免同一坏文件反复打断。
+        self._error_notified_keys: set[str] = set()
+        self._active_source_key: str = ""
+
         if QMediaPlayer is None or QAudioOutput is None:
             self._play.setEnabled(False)
             self._stop.setEnabled(False)
@@ -90,17 +99,42 @@ class AudioPreviewControls(QWidget):
             self._player.setAudioOutput(self._audio_out)
             self._play.clicked.connect(self.preview_current)
             self._stop.clicked.connect(self.stop)
+            self._player.errorOccurred.connect(self._on_player_error)
+
+    def _set_hint(self, text: str) -> None:
+        self._hint.setText(text)
+        self._hint.setToolTip(text)
+        self._hint.setVisible(bool(text))
 
     def preview_current(self) -> None:
-        if self._player is None:
-            return
+        self._set_hint("")
         audio_id = (self._current_id_fn() or "").strip()
         path = audio_config_file_for_id(self._model, self._channel, audio_id)
         if path is None:
+            # id 未选 / src 缺失 / 文件被移走全落到这里——旧实现裸 return 全静默。
+            self._set_hint("该 id 无有效音频文件")
             return
+        if self._player is None:
+            return
+        self._active_source_key = str(path)
         self._player.stop()
         self._player.setSource(QUrl.fromLocalFile(str(path)))
         self._player.play()
+
+    def _on_player_error(self, error: object = None, error_string: str = "") -> None:
+        """播放失败（格式不支持 / 解码器缺失 / 文件损坏…）：
+        按钮旁常驻提示 + 每个失败文件只弹一次警告框。"""
+        if QMediaPlayer is not None and error == getattr(
+            getattr(QMediaPlayer, "Error", None), "NoError", None,
+        ):
+            return
+        self._set_hint("试听失败：文件无法播放")
+        key = self._active_source_key or "<unknown>"
+        if key in self._error_notified_keys:
+            return
+        self._error_notified_keys.add(key)
+        msg = (error_string or "").strip() or "无法播放该音频文件"
+        QMessageBox.warning(self, "音频试听", f"无法播放：\n{key}\n\n{msg}")
 
     def stop(self) -> None:
         if self._player is not None:

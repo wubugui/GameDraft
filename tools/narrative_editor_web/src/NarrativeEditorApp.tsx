@@ -21,6 +21,7 @@ import {
   validationTargetSummary,
 } from './focusIssueResolution';
 import { buildCanvasEdges, buildCanvasNodes, stateEndpointFromNodeIdForView } from './canvas/buildCanvasModel';
+import { deriveGraphInterface } from './graphInterface';
 import { resolveActiveGraphView } from './canvas/activeGraphView';
 import { flowEdgeTypes } from './canvas/flowEdges';
 import { flowNodeTypes } from './canvas/flowNodes';
@@ -105,6 +106,7 @@ import {
   loadTaskIndex,
   loadTemplates,
   navigateTo,
+  refactorJournalSizeRemote,
   saveCategoriesRemote,
   saveNarrativeData,
   setRuntimeNarrativeState,
@@ -322,6 +324,10 @@ function NarrativeEditorInner() {
       next.compositions = narrative.compositions ?? [];
       next.signals = narrative.signals ?? [];
     });
+    // 与 adoptRefactoredNarrative 同款保护：盖章是跨文件三产物（narrative+镜像 quest+对话桩）
+    // 一体暂存，画布 Ctrl+Z 只回退 narrative 会击穿「全有全无」——Save All 落盘出劈叉三件套
+    // （有 quest/桩、没对应作曲）。整体放弃 = 主编辑器放弃暂存，不走画布撤销（审查 W-E2）。
+    resetHistory();
     setSavedDataHash(stableHash(JSON.stringify(normalizeFile(narrative))));
     setDirty(false);
     setCompositionId(summary.compositionId);
@@ -333,7 +339,7 @@ function NarrativeEditorInner() {
     if (summary.questStaged) bits.push(`任务 ${summary.questId}`);
     if (summary.stubsStaged.length) bits.push(`对话桩 ${summary.stubsStaged.length} 个`);
     setStatus(`已盖章暂存：${bits.join('，')}——主编辑器 Save All 一次性落盘全部（放弃则全都不写盘）。`);
-  }, [updateData]);
+  }, [resetHistory, updateData]);
 
   // ---- 叙事重构（信号/状态/图id）：宿主引擎全项目级联，采纳返回数据并清画布撤销栈 ----
   const [signalRefactor, setSignalRefactor] = useState<NarrativeRefactorRequest | null>(null);
@@ -365,7 +371,23 @@ function NarrativeEditorInner() {
     );
   }, [adoptRefactoredNarrative]);
 
+  const compositions = data.compositions ?? [];
+  const currentDataJson = useMemo(() => JSON.stringify(normalizeFile(data)), [data]);
+  const currentDataHash = useMemo(() => stableHash(currentDataJson), [currentDataJson]);
+  const editorDirty = dirty || (savedDataHash !== '' && currentDataHash !== savedDataHash);
+
+  // 撤销重构（P1-08）：画布有未暂存编辑时先确认——adoptRefactoredNarrative 会整体覆盖
+  // 画布并清空撤销栈，不问就等于把重构之后的手工编辑静默扔掉（正向重构路径会先把画布
+  // data 交宿主暂存，撤销路径没有对应机会，只能显式询问）。
   const undoRefactor = useCallback(() => {
+    if (editorDirty) {
+      const ok = window.confirm(
+        '画布上有未暂存的修改（未按 Ctrl+S 暂存进工程模型）。\n'
+        + '撤销重构会用回退后的全项目数据整体覆盖当前画布，这些修改将丢失且无法找回。\n\n'
+        + '仍要撤销重构吗？（可先取消，Ctrl+S 暂存后再撤销）',
+      );
+      if (!ok) return;
+    }
     void undoSignalRefactorRemote().then((result) => {
       if (!result.ok || !result.narrative) {
         setStatus(`撤销重构失败：${result.reason ?? '未知错误'}`);
@@ -377,12 +399,35 @@ function NarrativeEditorInner() {
         `${result.description ?? '已撤销重构'}（全项目一体回退，仍未落盘）。`,
       );
     });
-  }, [adoptRefactoredNarrative]);
+  }, [adoptRefactoredNarrative, editorDirty]);
 
-  const compositions = data.compositions ?? [];
-  const currentDataJson = useMemo(() => JSON.stringify(normalizeFile(data)), [data]);
-  const currentDataHash = useMemo(() => stableHash(currentDataJson), [currentDataJson]);
-  const editorDirty = dirty || (savedDataHash !== '' && currentDataHash !== savedDataHash);
+  // 重载页面统一入口（P0-2）：有未暂存草稿必须先确认（明说丢什么），确认后临时旁路
+  // beforeunload 兜底守卫避免二次弹窗。菜单「重载页面」与 F5 都走这里。
+  const bypassUnloadGuardRef = useRef(false);
+  const confirmDiscardAndReload = useCallback(() => {
+    if (editorDirty) {
+      const ok = window.confirm(
+        '画布上有未暂存的修改（未按 Ctrl+S 暂存进工程模型）。\n'
+        + '重载页面会永久丢弃这些修改，且无法恢复。\n\n'
+        + '仍要重载吗？（可先取消，Ctrl+S 暂存后再重载）',
+      );
+      if (!ok) return;
+    }
+    bypassUnloadGuardRef.current = true;
+    reloadNarrativeEditorPage();
+  }, [editorDirty]);
+
+  // beforeunload 兜底（P0-2）：任何未经确认的整页卸载（脚本 reload、宿主导航等）在
+  // 有脏草稿时都拦一道；经 confirmDiscardAndReload 确认过的重载不重复打扰。
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!editorDirty || bypassUnloadGuardRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [editorDirty]);
   const composition = useMemo(() => getComposition(data, compositionId), [data, compositionId]);
   const toggleCatGroup = useCallback((key: string) => {
     setCollapsedCatGroups((prev) => {
@@ -525,6 +570,8 @@ function NarrativeEditorInner() {
       setSavedDataHash(stableHash(JSON.stringify(next)));
       setDirty(false);
       resetHistory();
+      // 撤销日志挂在宿主 ProjectModel 上、跨页面加载存活：重载后恢复「撤销重构(n)」入口（P3）。
+      setRefactorJournalSize(await refactorJournalSizeRemote());
       setStatus(`已加载：${loaded.source}`);
     });
   }, []);
@@ -574,6 +621,9 @@ function NarrativeEditorInner() {
       },
     };
     window.__narrativeEditor = api;
+    // 崩溃兜底快照（P1-07）：卸载/崩溃后 __narrativeEditor 会被清掉，此变量刻意**不清除**，
+    // 供顶层 ErrorBoundary 崩溃页导出草稿、宿主壳兜底读取。
+    window.__narrativeEditorLastDraft = currentDataJson;
     return () => {
       if (window.__narrativeEditor === api) {
         delete window.__narrativeEditor;
@@ -1585,8 +1635,8 @@ function NarrativeEditorInner() {
       label: '刷新投影',
       onSelect: () => { void refreshProjectionAndValidation(data); },
     },
-    { id: 'reload', label: '重载页面  F5', onSelect: reloadNarrativeEditorPage },
-  ], [data, refreshProjectionAndValidation, save]);
+    { id: 'reload', label: '重载页面  F5', onSelect: confirmDiscardAndReload },
+  ], [confirmDiscardAndReload, data, refreshProjectionAndValidation, save]);
 
   const canvasMenuItems = useMemo((): ToolbarMenuItem[] => [
     {
@@ -1667,14 +1717,17 @@ function NarrativeEditorInner() {
         return;
       }
       if (key === 'f5') {
+        // P0-2：始终拦下默认行为（纯浏览器里 F5 默认=整页刷新，正是要堵的口子）；
+        // 焦点在文本框时不触发重载（主编辑器全局 F5=运行游戏的肌肉记忆误伤区），
+        // 其余情况走带脏确认的统一重载入口。
         e.preventDefault();
         e.stopPropagation();
-        reloadNarrativeEditorPage();
+        if (!inTextField) confirmDiscardAndReload();
       }
     };
     document.addEventListener('keydown', onKey, { capture: true });
     return () => document.removeEventListener('keydown', onKey, { capture: true });
-  }, [deleteSelected, redo, save, selectionDeletable, undo]);
+  }, [confirmDiscardAndReload, deleteSelected, redo, save, selectionDeletable, undo]);
 
   return (
     <NarrativeCanvasActionsProvider value={canvasActions}>
@@ -2355,7 +2408,7 @@ function StructuredInspector(props: {
   }
   if (selectedId.startsWith('element:') && graphRef === 'main') {
     const element = getElementByNodeId(composition, selectedId);
-    return element ? <ElementInspector {...props} element={element} knownSignals={props.knownSignals} /> : <p className="muted">找不到元素。</p>;
+    return element ? <ElementInspector {...props} element={element} knownSignals={props.knownSignals} graphIds={Object.keys(statesByGraph)} /> : <p className="muted">找不到元素。</p>;
   }
   if (selectedId.startsWith('projection:')) {
     const edge = findProjectionEdge(props.projection, selectedId.replace('projection:', ''));
@@ -2503,7 +2556,16 @@ function GraphInspector(props: {
       <PropertySummary rows={[['状态', String(Object.keys(graph.states).length)], ['迁移', String(graph.transitions.length)]]} />
       <AdvancedInspectorSection title="高级">
         <TextField label="Owner Type" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
-        <TextField label="Owner ID" value={graph.ownerId ?? ''} datalistValues={ownerChoices} flagUnknown onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
+        <TextField
+          label="Owner ID"
+          value={graph.ownerId ?? ''}
+          datalistValues={ownerChoices}
+          flagUnknown
+          readOnlyNote={graph.ownerType?.trim() === 'flow'
+            ? 'flow 主图的 ownerId 无任何机制消费（运行时/目录/校验都不读它），历史值仅当注释保留——2026-07-13 拍板判死，不再邀请填写'
+            : undefined}
+          onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })}
+        />
         {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
           <div className="property-line note">Scenario 只有入口/出口状态可以和外部图直接连线；内部状态在展开后编辑。</div>
         )}
@@ -2550,7 +2612,7 @@ function StateInspector(props: {
           )}
         </div>
       </div>
-      <TextAreaField label="策划备注" value={state.description ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.states[stateId].description = value; })} />
+      <TextAreaField label="策划备注" value={state.description ?? ''} onChange={(value) => updateCurrentGraph((g) => { if (value.trim()) g.states[stateId].description = value; else delete g.states[stateId].description; })} />
       <label className="toggle single-line-toggle">
         <input type="checkbox" checked={graph.initialState === stateId} onChange={(e) => e.target.checked && updateCurrentGraph((g) => { g.initialState = stateId; })} />
         设为初始状态
@@ -2559,7 +2621,11 @@ function StateInspector(props: {
         <input
           type="checkbox"
           checked={state.broadcastOnEnter === true}
-          onChange={(e) => updateCurrentGraph((g) => { g.states[stateId].broadcastOnEnter = e.target.checked; })}
+          onChange={(e) => updateCurrentGraph((g) => {
+            // 取消勾选=删键而非写 false（默认键注入会成为 agent 维护 JSON 的字节噪音）
+            if (e.target.checked) g.states[stateId].broadcastOnEnter = true;
+            else delete g.states[stateId].broadcastOnEnter;
+          })}
         />
         进入时广播派生信号
       </label>
@@ -2755,12 +2821,23 @@ function ElementInspector(props: {
   setStatus: (status: string) => void;
   expandedElementIds: string[];
   toggleExpandedElement: (elementId: string) => void;
+  graphIds: string[];
   categories?: NarrativeCategoriesFileDef;
   onSetSubgraphCategory?: (compId: string, elId: string, name: string) => void;
 }) {
   const { composition, element, catalog, updateData } = props;
   const ownerChoices = ownerChoicesFor(element, catalog);
   const isSubgraph = isSubgraphElement(element);
+  // 子图元素的信号接口从内容自动推导（只读展示）；黑盒元素才保留手工登记。
+  const derivedInterface = useMemo(() => deriveGraphInterface(element.graph), [element.graph]);
+  const legacyMetaCount = element.graph
+    ? (element.meta?.emits?.length ?? 0) + (element.meta?.reads?.length ?? 0)
+    : 0;
+  // 黑盒登记的是"将来实现会发的作者信号"，派生广播（state:…）由图自动产生，不作候选
+  const authorSignalOptions = useMemo(
+    () => props.knownSignals.filter((sig) => !sig.startsWith('state:')),
+    [props.knownSignals],
+  );
   const expanded = props.expandedElementIds.includes(element.id);
   const displayName = isSubgraph ? (String(element.graph?.label ?? element.label ?? '').trim() || element.graph?.id || element.id) : (element.label ?? '');
   return (
@@ -2841,18 +2918,57 @@ function ElementInspector(props: {
       )}
       <AdvancedInspectorSection title="高级">
         <ReadOnlyField label="Element ID" value={element.id} />
-        <SignalChipsField
-          label="发出信号"
-          value={element.meta?.emits ?? []}
-          options={props.knownSignals}
-          onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })}
-        />
-        <SignalChipsField
-          label="读取状态"
-          value={element.meta?.reads ?? []}
-          options={props.knownSignals}
-          onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })}
-        />
+        {element.graph ? (
+          <>
+            <SignalChipsField
+              label="发出信号（自动推导）"
+              value={derivedInterface.emits}
+              note="这张子图实际会发出的信号——从子图内容自动算出，改子图这里就跟着变，不用手填。"
+              emptyText="（不发出任何信号）"
+            />
+            <SignalChipsField
+              label="监听信号（自动推导）"
+              value={derivedInterface.listens}
+              note="子图的迁移在等待哪些信号。"
+              emptyText="（不监听信号）"
+            />
+            <SignalChipsField
+              label="读取状态（自动推导）"
+              value={derivedInterface.readsStates}
+              note="子图条件里读取的别的图状态（图.状态）。"
+              emptyText="（不读取其它图状态）"
+            />
+            {legacyMetaCount > 0 && (
+              <div className="property-line note">
+                这个元素还留着 {legacyMetaCount} 条旧的手填登记（子图内容就在本文件里，现已改为自动推导，手填登记不再需要）。
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = []; el.meta.reads = []; })}
+                >清空旧登记</button>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <SignalChipsField
+              label="发出信号（登记）"
+              value={element.meta?.emits ?? []}
+              options={authorSignalOptions}
+              onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })}
+              note="登记这个黑盒（对话等）将来会发出的信号：实现还没写时，先登记就能接线、校验也不误报。写好后校验会核对登记与实际是否一致。"
+              emptyText="（未登记）"
+            />
+            <SignalChipsField
+              label="读取状态（登记）"
+              value={element.meta?.reads ?? []}
+              options={props.graphIds}
+              onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })}
+              note="登记这个黑盒会读取哪些叙事图的状态，供画布接线展示和改名时自动跟踪。"
+              emptyText="（未登记）"
+            />
+          </>
+        )}
         {element.kind === 'wrapperGraph' && (
           <div className="property-line note">绑定后 DialogueGraph 的 OwnerStateNode 才能读取该 wrapper 的 activeState；ContextStateNode 应读取 flow/scenario 图，不能选 npc wrapper。</div>
         )}
@@ -3623,7 +3739,7 @@ function actionArray(value: unknown): ActionDef[] {
   return Array.isArray(value) ? value as ActionDef[] : [];
 }
 
-function TextField({ label, value, onChange, commitOnBlur, datalistId, datalistValues, flagUnknown }: {
+function TextField({ label, value, onChange, commitOnBlur, datalistId, datalistValues, flagUnknown, readOnlyNote }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -3631,6 +3747,8 @@ function TextField({ label, value, onChange, commitOnBlur, datalistId, datalistV
   datalistId?: string;
   datalistValues?: string[];
   flagUnknown?: boolean;
+  /** 判死字段：只读展示 + 说明徽标（如 flow 主图 ownerId——无任何机制消费，不邀请填写）。 */
+  readOnlyNote?: string;
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
@@ -3639,17 +3757,24 @@ function TextField({ label, value, onChange, commitOnBlur, datalistId, datalistV
   // 引用字段：仍允许自由输入（网页内无法内嵌 PyQt 原生选择器，策划照常键入即可），
   // 但当值不在「已知候选」里时给温和提示，便于当场发现拼错/失效的引用。仅在候选非空时判定，
   // 候选为空（未加载 / 该 owner 类型无候选，如 system）不误标；纯提示不阻断保存（校验面板仍兜底）。
-  const unknownRef = !!flagUnknown && !!datalistValues && datalistValues.length > 0
+  const unknownRef = !readOnlyNote && !!flagUnknown && !!datalistValues && datalistValues.length > 0
     && current.trim().length > 0 && !datalistValues.includes(current.trim());
-  const hint = unknownRef ? '该 id 不在已知候选中，请确认引用是否有效（仅提示，不阻断保存）' : undefined;
+  const hint = readOnlyNote || (unknownRef ? '该 id 不在已知候选中，请确认引用是否有效（仅提示，不阻断保存）' : undefined);
   return (
     <div className="field">
-      <label>{label}{unknownRef && <span title={hint} style={{ color: '#d9a441', marginLeft: 4 }}>⚠ 未知引用</span>}</label>
+      <label>
+        {label}
+        {unknownRef && <span title={hint} style={{ color: '#d9a441', marginLeft: 4 }}>⚠ 未知引用</span>}
+        {readOnlyNote && <span title={readOnlyNote} style={{ color: '#8a8f98', marginLeft: 4 }}>（仅注释·无机制效力）</span>}
+      </label>
       <input
         list={listId}
         value={current}
         title={hint}
-        style={unknownRef ? { borderColor: '#d9a441', background: 'rgba(217,164,65,0.08)' } : undefined}
+        readOnly={!!readOnlyNote}
+        style={unknownRef
+          ? { borderColor: '#d9a441', background: 'rgba(217,164,65,0.08)' }
+          : readOnlyNote ? { opacity: 0.6 } : undefined}
         onChange={(e) => commitOnBlur ? setDraft(e.target.value) : onChange(e.target.value)}
         onBlur={() => commitOnBlur && onChange(draft)}
       />

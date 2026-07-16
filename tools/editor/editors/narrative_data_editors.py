@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from .. import theme
 from ..scenarios_catalog_validate import validate_scenarios_list
 from ..shared import confirm
 from ..shared.collapsible_section import CollapsibleSection
@@ -207,10 +208,28 @@ class ScenarioRequiresExprEdit(QWidget):
         )
         te.setPlainText(self._json_doc)
         root.addWidget(te)
+        err_lbl = QLabel("")
+        err_lbl.setStyleSheet("color:#c44;")
+        err_lbl.setWordWrap(True)
+        root.addWidget(err_lbl)
         bb = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
         )
-        bb.accepted.connect(dlg.accept)
+
+        def _try_accept() -> None:
+            # 就地校验 JSON：坏 JSON 时 OK 不关闭，红字提示（审查 P3，参照
+            # DocumentReveals 红字样板）——否则坏 JSON 静默搁置，直到 Apply 才报，
+            # 造成「看似改了实则没改」。
+            raw = te.toPlainText().strip()
+            if raw:
+                try:
+                    json.loads(raw)
+                except json.JSONDecodeError as e:
+                    err_lbl.setText(f"JSON 无法解析：{e}")
+                    return
+            dlg.accept()
+
+        bb.accepted.connect(_try_accept)
         bb.rejected.connect(dlg.reject)
         root.addWidget(bb)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -493,7 +512,8 @@ class ScenariosCatalogEditor(QWidget):
         )
         ph_hint = QLabel("提示：拖行号排序，Delete / 右键删除（详见悬停提示）")
         ph_hint.setWordWrap(True)
-        ph_hint.setStyleSheet("color: #666; font-size: 12px;")
+        ph_hint.setStyleSheet("color: #666;")
+        theme.set_editor_font_role(ph_hint, theme.FONT_ROLE_SECONDARY)
         ph_l.addWidget(self._tbl_phases)
         _ph_del_sc = QShortcut(QKeySequence(Qt.Key.Key_Delete), self._tbl_phases)
         _ph_del_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -537,15 +557,18 @@ class ScenariosCatalogEditor(QWidget):
         self._model.data_changed.connect(self._on_project_data_changed)
         self.reload_from_model()
 
-    def select_scenario_by_id(self, scenario_id: str) -> None:
+    def select_scenario_by_id(self, scenario_id: str) -> bool:
+        """全局搜索/跳转落点。返回 True=已选中条目，False=没找到
+        （全编辑器 bool 契约，主窗消费）。"""
         sid = (scenario_id or "").strip()
         if not sid:
-            return
+            return False
         for i, e in enumerate(self._scenarios_data):
             if str(e.get("id", "")).strip() == sid:
                 self._sc_list.setCurrentRow(i)
-                return
+                return True
         QMessageBox.information(self, "Scenarios", f"未找到 scenario：{sid}")
+        return False
 
     def _on_project_data_changed(self, data_type: str, _item_id: str) -> None:
         if data_type != "scenarios":
@@ -1020,7 +1043,14 @@ class ScenariosCatalogEditor(QWidget):
                 dv = sw.currentData()
                 if isinstance(dv, str):
                     st = dv
-            entry: dict = {"status": st}
+            # 同名 phase 改前的条目（用于判断原是否有 status 键 + 保留非托管字段）。
+            prev_entry = prev_phases.get(name)
+            prev_had_status = isinstance(prev_entry, dict) and "status" in prev_entry
+            # 不强制注入 status 键（审查 P3）：原数据无 status 且当前仍是默认 pending
+            # 时不写，消除伪脏+格式漂移；原本就有 status 键则一律保留（含 "pending"）。
+            entry: dict = {}
+            if prev_had_status or st != "pending":
+                entry["status"] = st
             if isinstance(rw, ScenarioRequiresExprEdit):
                 try:
                     prq = rw.get_requires_value()
@@ -1035,7 +1065,6 @@ class ScenariosCatalogEditor(QWidget):
                 ]
             # 同名 phase 的非托管字段（status/requires 之外，如 outcome）原样保留；
             # 改名的 phase 视为新阶段不继承。无此类字段时输出与改前完全一致。
-            prev_entry = prev_phases.get(name)
             if isinstance(prev_entry, dict):
                 for k, v in prev_entry.items():
                     if k not in ("status", "requires"):
@@ -1165,11 +1194,12 @@ class ScenariosCatalogEditor(QWidget):
         ui_err = self._requires_ui_parse_errors()
         if ui_err:
             return ui_err
-        return validate_scenarios_list(
+        errs = validate_scenarios_list(
             self._scenarios_data,
             flag_registry=getattr(self._model, "flag_registry", None) or {},
             model=self._model,
         )
+        return "\n".join(errs) if errs else None
 
     def _build_catalog_dict(self) -> dict:
         self._sync_current_row_from_ui()
@@ -1743,6 +1773,15 @@ class DocumentRevealsEditor(QWidget):
         finally:
             self._loading_ui = False
         self._dr_refresh_right()
+
+    def select_by_id(self, reveal_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按揭示 id 选中（行序与 _reveals 一致）。
+        返回 True=已选中条目，False=没找到（全编辑器 bool 契约，主窗消费）。"""
+        for i, e in enumerate(self._reveals):
+            if str(e.get("id", "")).strip() == reveal_id:
+                self._dr_list.setCurrentRow(i)
+                return True
+        return False
 
     def _dr_refresh_right(self) -> None:
         row = self._dr_list.currentRow()

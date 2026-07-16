@@ -167,6 +167,12 @@ class PlayerAvatarEditor(QWidget):
     def _flush_player_avatar_model_sync(self) -> None:
         if not self._sync_player_avatar_deferred:
             return
+        # 脏保护（P2 ⑥，照 anim_editor 样板）：有未 Apply 的选择时，别用模型值重载覆盖
+        # 正在编辑的表单（否则「别页动过 config 后切回」= 静默丢当前编辑）。
+        # 候选（动画包列表）仍刷新，只是不回填字段。
+        if self._is_dirty():
+            self._rebuild_bundle_combo()
+            return
         self._sync_player_avatar_deferred = False
         self._rebuild_bundle_combo()
         self._load_from_model()
@@ -174,6 +180,32 @@ class PlayerAvatarEditor(QWidget):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._flush_player_avatar_model_sync()
+
+    def _compose_player_avatar(self) -> tuple[dict, dict | None]:
+        """把当前 UI 组成 playerAvatar dict，并返回 (新值, 模型旧值)。_apply 与脏判断共用。"""
+        man = self._manifest_edit.text().strip() or _DEFAULT_MANIFEST
+        state_map: dict[str, str] = {}
+        for logical, cb in self._clip_combos.items():
+            clip = str(cb.currentData() or "").strip()
+            if clip and clip != _IDENTITY_DATA:
+                state_map[logical] = clip
+        old = self._model.game_config.get("playerAvatar")
+        pa: dict[str, Any] = dict(old) if isinstance(old, dict) else {}
+        pa["animManifest"] = man
+        if state_map:
+            pa["stateMap"] = state_map
+        else:
+            pa.pop("stateMap", None)
+        slug = str(self._portrait_combo.currentData() or "").strip()
+        if slug:
+            pa["portraitSlug"] = slug
+        else:
+            pa.pop("portraitSlug", None)
+        return pa, (old if isinstance(old, dict) else None)
+
+    def _is_dirty(self) -> bool:
+        pa, old = self._compose_player_avatar()
+        return pa != (old or {})
 
     def _reload_anims(self) -> None:
         self._model.reload_animations_from_disk()
@@ -301,26 +333,8 @@ class PlayerAvatarEditor(QWidget):
         self._populate_portrait_combo()
 
     def _apply(self) -> None:
-        man = self._manifest_edit.text().strip() or _DEFAULT_MANIFEST
-        state_map: dict[str, str] = {}
-        for logical, cb in self._clip_combos.items():
-            clip = str(cb.currentData() or "").strip()
-            if clip and clip != _IDENTITY_DATA:
-                state_map[logical] = clip
-
-        old = self._model.game_config.get("playerAvatar")
-        # 保留未知子键（未来字段），只更新本面板管理的两个键
-        pa: dict[str, Any] = dict(old) if isinstance(old, dict) else {}
-        pa["animManifest"] = man
-        if state_map:
-            pa["stateMap"] = state_map
-        else:
-            pa.pop("stateMap", None)
-        slug = str(self._portrait_combo.currentData() or "").strip()
-        if slug:
-            pa["portraitSlug"] = slug
-        else:
-            pa.pop("portraitSlug", None)
+        # 保留未知子键（未来字段），只更新本面板管理的键（compose 与脏判断共用）。
+        pa, old = self._compose_player_avatar()
         if pa == old:
             return  # 无实质变化：不写不标脏（否则每次 Save All 都重写 game_config）
         self._model.game_config["playerAvatar"] = pa

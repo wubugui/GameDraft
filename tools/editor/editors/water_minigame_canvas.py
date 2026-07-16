@@ -62,12 +62,32 @@ def _parse_tint_hex(raw: str | None, fallback: int = 0x18324A) -> int:
     return n if 0 <= n <= 0xFFFFFF else fallback
 
 
+# 品类默认显示尺寸（贴图最长边缩放目标，bounds 像素）——必须与运行时
+# src/systems/waterMinigame/WaterEntity.ts 的 DEFAULT_DISPLAY_SIZE 逐值一致，
+# 否则预览尺寸撒谎（工具栏标称"与游戏中一致"）。改动配 parity 测试
+# test_water_sprite_size_parity.py 从 WaterEntity.ts 解析常量对账，防再漂移。
+_DEFAULT_DISPLAY_SIZE = {
+    "grass": 70,
+    "sunken": 62,
+    "floating": 46,
+    "swimming": 52,
+}
+_DISPLAY_SIZE_FALLBACK = 52  # 运行时 `?? 52`：未知品类的兜底
+
+
 def _target_edge_for_category(cat: str) -> int:
-    if cat == "grass":
-        return 56
-    if cat == "floating":
-        return 48
-    return 44
+    return _DEFAULT_DISPLAY_SIZE.get(cat, _DISPLAY_SIZE_FALLBACK)
+
+
+def _target_edge_for_entity(ent: dict[str, Any]) -> float:
+    """实体显示尺寸：displaySize（>0 有限）优先，否则按品类默认——
+    与 WaterEntity 构造里 `def.displaySize > 0 ? def.displaySize : DEFAULT[cat]` 同规。"""
+    ds = ent.get("displaySize")
+    if isinstance(ds, (int, float)) and not isinstance(ds, bool):
+        f = float(ds)
+        if f > 0 and f == f and f not in (float("inf"), float("-inf")):
+            return f
+    return float(_target_edge_for_category(str(ent.get("category") or "sunken")))
 
 
 def _depth_offset_y(ent: dict[str, Any]) -> float:
@@ -228,7 +248,7 @@ class EntitySpriteItem(QGraphicsPixmapItem):
         tw = max(1, pm.width())
         th = max(1, pm.height())
         base = max(tw, th)
-        target = _target_edge_for_category(cat)
+        target = _target_edge_for_entity(ent)  # displaySize 优先，否则品类默认
         sc = target / base if base > 0 else 1.0
         sw = max(1, int(round(tw * sc)))
         sh = max(1, int(round(th * sc)))
@@ -277,7 +297,7 @@ class EntitySpriteItem(QGraphicsPixmapItem):
         tw = max(1, pm.width())
         th = max(1, pm.height())
         base = max(tw, th)
-        target = _target_edge_for_category(cat)
+        target = _target_edge_for_entity(ent)  # displaySize 优先，否则品类默认
         sc = target / base if base > 0 else 1.0
         sw = max(1, int(round(tw * sc)))
         sh = max(1, int(round(th * sc)))

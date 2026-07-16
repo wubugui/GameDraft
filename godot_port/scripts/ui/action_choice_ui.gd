@@ -32,7 +32,7 @@ func close(result: Variant = null) -> void:
 	if was_waiting: choice_progress.emit()
 func destroy() -> void: close(null)
 func _build(prompt: String, options: Array[String]) -> void:
-	root = Control.new(); root.name = "ActionChoiceUI"; root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.mouse_filter = Control.MOUSE_FILTER_STOP; var box := VBoxContainer.new(); box.position = Vector2(24, renderer.get_screen_height() - 90 - options.size() * 42); box.size = Vector2(renderer.get_screen_width() - 48, 70 + options.size() * 42); root.add_child(box)
+	root = Control.new(); root.name = "ActionChoiceUI"; root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.mouse_filter = Control.MOUSE_FILTER_STOP; var box := VBoxContainer.new(); box.position = Vector2(24, renderer.screen_height - 90 - options.size() * 42); box.size = Vector2(renderer.screen_width - 48, 70 + options.size() * 42); root.add_child(box)
 	if not prompt.strip_edges().is_empty(): var title := Label.new(); title.text = prompt; title.add_theme_font_size_override("font_size", 16); box.add_child(title)
 	for index in options.size(): var button := Button.new(); button.text = "%s. %s" % [index + 1, options[index]]; button.custom_minimum_size.y = 36; button.pressed.connect(Callable(self, "debug_select").bind(index)); box.add_child(button)
 	if _allow_cancel: var hint := Label.new(); hint.text = strings.get_text("actionChoice", "cancelHint"); box.add_child(hint)

@@ -11,7 +11,7 @@ func _ready() -> void:
 
 func _run() -> void:
 	var repository := ProjectSettings.globalize_path("res://").trim_suffix("/").get_base_dir()
-	var assets := RuntimeAssetManager.new(RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository))
+	var assets := RuntimeAssetManager.new({}, RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository))
 	var bus := RuntimeEventBus.new()
 	bus.on("narrative:stateChanged", Callable(self, "_state_changed"))
 	flags = RuntimeFlagStore.new(bus)
@@ -22,7 +22,7 @@ func _run() -> void:
 	narrative = RuntimeNarrativeStateManager.new(bus, flags, executor)
 	narrative.init({"eventBus": bus, "flagStore": flags, "strings": null, "assetManager": assets})
 	narrative.set_condition_eval_context_factory(func() -> Dictionary:
-		return {"evaluateList": Callable(self, "_evaluate_conditions")}
+		return {"flagStore": flags, "narrativeState": narrative}
 	)
 	var graphs: Array = [
 		{"id": "g1", "ownerType": "flow", "initialState": "a", "states": {
@@ -53,7 +53,7 @@ func _run() -> void:
 		]},
 	]
 	narrative.register_graphs(graphs)
-	assert(narrative.graph_count() == 5 and narrative.has_reached_state("g1", "a"))
+	assert(narrative.get_graphs().size() == 5 and narrative.has_reached_state("g1", "a"))
 	await narrative.emit_narrative_signal({"signal": " go ", "sourceType": "dialogue", "sourceId": "d"})
 	assert(narrative.get_active_state("g1") == "b")
 	assert(narrative.get_active_state("g2") == "z")
@@ -78,7 +78,7 @@ func _run() -> void:
 
 	var actual := RuntimeNarrativeStateManager.new(bus, flags, executor)
 	actual.init({"eventBus": bus, "flagStore": flags, "strings": null, "assetManager": assets})
-	assert(actual.load_from_asset() and actual.graph_count() == 35)
+	assert(actual.load_from_asset(assets) and actual.get_graphs().size() == 51)
 	assert(actual.get_graph("flow_xungou_main") is Dictionary)
 	actual.destroy(); actual.free()
 	narrative.destroy(); narrative.free()
@@ -97,7 +97,3 @@ func _emit_nested(params: Dictionary, _zone: Variant) -> void:
 
 func _state_changed(payload: Dictionary) -> void:
 	order.push_back("state:%s:%s>%s" % [payload.graphId, payload.from, payload.to])
-
-
-func _evaluate_conditions(conditions: Array) -> bool:
-	return flags.eval_pure_flag_conjunction(conditions)

@@ -15,11 +15,14 @@ func bind(snapshot_builder: Callable, boot_id: String, command_executor: Callabl
 	_command_executor = command_executor
 
 
-func _ready() -> void:
-	call_deferred("_consume_parity_request")
+func unbind() -> void:
+	_snapshot_builder = Callable()
+	_command_executor = Callable()
+	_boot_id = ""
+	_last_results.clear()
 
 
-func _consume_parity_request() -> void:
+func poll_once() -> void:
 	var options := _user_options()
 	var request_path := str(options.get("parity-request", ""))
 	var response_path := str(options.get("parity-response", ""))
@@ -69,8 +72,12 @@ func _runtime_command_operation(operation: Dictionary) -> Dictionary:
 	if not command is Dictionary or not _command_executor.is_valid(): return _control_result("runtimeCommand", false, "runtime command executor is not bound")
 	var result: Variant = await _command_executor.call(command)
 	if not result is Dictionary: return _control_result("runtimeCommand", false, "runtime command returned non-object")
+	var snapshot_reason := str(result.get("_snapshotReason", "")).strip_edges()
+	result.erase("_snapshotReason")
 	_last_results = [result.duplicate(true)]
-	if result.get("ok") == true and _snapshot_builder.is_valid(): result["snapshot"] = _snapshot_builder.call(str(command.get("reason", "runtime-command:%s" % command.get("type", "unknown"))), _last_results)
+	if _snapshot_builder.is_valid() and (result.get("ok") == true or not snapshot_reason.is_empty()):
+		if snapshot_reason.is_empty(): snapshot_reason = str(command.get("reason", "runtime-command:%s" % command.get("type", "unknown")))
+		result["snapshot"] = _snapshot_builder.call(snapshot_reason, _last_results)
 	return result
 
 

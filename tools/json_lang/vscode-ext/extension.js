@@ -40,6 +40,18 @@ function request(method, params) {
   });
 }
 
+// 与 request 相同,但把 server 的 error.message 抛出(VS Code 会把改名拒绝理由弹给用户)
+function requestOrThrow(method, params) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject, raw: true });
+    send({ jsonrpc: '2.0', id, method, params });
+    setTimeout(() => {
+      if (pending.delete(id)) reject(new Error('LSP 请求超时'));
+    }, 15000);
+  });
+}
+
 function notify(method, params) {
   send({ jsonrpc: '2.0', method, params });
 }
@@ -59,9 +71,15 @@ function onData(chunk) {
     let msg;
     try { msg = JSON.parse(body); } catch { continue; }
     if (msg.id !== undefined && pending.has(msg.id)) {
-      const resolve = pending.get(msg.id);
+      const entry = pending.get(msg.id);
       pending.delete(msg.id);
-      resolve(msg.error ? null : msg.result);
+      if (typeof entry === 'function') {
+        entry(msg.error ? null : msg.result);
+      } else if (msg.error) {
+        entry.reject(new Error(msg.error.message || 'LSP 请求失败'));
+      } else {
+        entry.resolve(msg.result);
+      }
     }
   }
 }
@@ -159,6 +177,31 @@ function activate(context) {
         if (!r || !r.contents) return null;
         const md = new vscode.MarkdownString(r.contents.value);
         return new vscode.Hover(md);
+      },
+    }),
+    vscode.languages.registerRenameProvider(selector, {
+      async prepareRename(document, position) {
+        const r = await requestOrThrow('textDocument/prepareRename', docParams(document, position));
+        if (!r) return null;
+        return {
+          range: new vscode.Range(r.range.start.line, r.range.start.character,
+            r.range.end.line, r.range.end.character),
+          placeholder: r.placeholder,
+        };
+      },
+      async provideRenameEdits(document, position, newName) {
+        const r = await requestOrThrow('textDocument/rename',
+          Object.assign(docParams(document, position), { newName }));
+        if (!r || !r.changes) return null;
+        const we = new vscode.WorkspaceEdit();
+        for (const [uri, edits] of Object.entries(r.changes)) {
+          for (const e of edits) {
+            we.replace(vscode.Uri.parse(uri), new vscode.Range(
+              e.range.start.line, e.range.start.character,
+              e.range.end.line, e.range.end.character), e.newText);
+          }
+        }
+        return we;
       },
     }),
     vscode.languages.registerWorkspaceSymbolProvider({

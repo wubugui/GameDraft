@@ -65,6 +65,20 @@ CATEGORIES: list[dict[str, object]] = [
         "authoringActionRequired": True,
     },
     {
+        "id": "unlistened_narrative_signal_emit",
+        "pattern": r"emitNarrativeSignal 信号 '.+' 没有任何 Transition 监听（发出后不会推动任何迁移）",
+        "fallback": "信号仍进入统一叙事队列并完成处理，但没有 transition 可选，因此两端都不改变活动状态，只记录 signal.unlistened 诊断。",
+        "evidence": ["src/core/NarrativeStateManager.test.ts", "godot_port/tests/narrative_owner_save_test.tscn"],
+        "authoringActionRequired": True,
+    },
+    {
+        "id": "unemitted_narrative_signal_listener",
+        "pattern": r"Transition '.+' 监听信号 '.+'，但全项目没有任何对话/资产/叙事图发出它，也无画布黑盒声明（悬垂监听，永远不会触发）",
+        "fallback": "transition 只由收到的同名信号驱动；没有任何生产发射方时，两端都不会合成信号或自行迁移状态。",
+        "evidence": ["src/core/NarrativeStateManager.test.ts", "godot_port/tests/narrative_state_manager_direct_test.tscn"],
+        "authoringActionRequired": True,
+    },
+    {
         "id": "narrative_canvas_emit_drift",
         "pattern": r"画布黑盒 '.+' 声明发出 '.+'，但对话图里没有对应 emitNarrativeSignal",
         "fallback": "运行时以真实对话图为权威；两端均不会依据编辑器画布声明虚构信号。",

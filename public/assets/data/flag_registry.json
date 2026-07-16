@@ -13,6 +13,10 @@
       "valueType": "string"
     },
     {
+      "key": "current_smell_source",
+      "valueType": "string"
+    },
+    {
       "key": "smell_intensity",
       "valueType": "float"
     },

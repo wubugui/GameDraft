@@ -1,48 +1,90 @@
 class_name RuntimeWorldFilterPipeline
 extends RefCounted
 
-const COLOR_MATRIX_SHADER := preload("res://scripts/rendering/color_matrix_filter.gdshader")
-const IDENTITY_MATRIX := [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+var target: CanvasGroup
+var filters: Array = []
 
-var target: CanvasItem
-var filters: Array[Material] = []
+# Pixi executes Container.filters as an ordered render-texture chain. Godot has
+# one Material slot per CanvasItem, so the engine boundary represents every
+# additional pass as an enclosing CanvasGroup. The translated state and public
+# methods below retain WorldFilterPipeline.ts semantics; only this private
+# adapter owns the different rendering primitive.
+var _pass_groups: Array[CanvasGroup] = []
 
 
-func _init(next_target: CanvasItem) -> void: target = next_target
+func _init(next_target: CanvasGroup) -> void:
+	target = next_target
+
+
 func set_filters(next_filters: Array) -> void:
-	filters.clear()
-	for value: Variant in next_filters:
-		if value is Material:
-			filters.push_back(value)
-		elif value is Dictionary:
-			var material := _material_from_definition(value)
-			if material != null: filters.push_back(material)
+	filters = next_filters
 	_apply()
-func push_filter(filter: Material) -> void: if filter != null: filters.push_back(filter); _apply()
+
+
+func push_filter(filter: Material) -> void:
+	filters = filters + [filter]
+	_apply()
+
+
 func pop_filter() -> Variant:
 	var removed: Variant = filters.pop_back() if not filters.is_empty() else null
-	_apply(); return removed
-func clear() -> void: filters.clear(); _apply()
-func get_filters() -> Array: return filters.duplicate()
-func has_filters() -> bool: return not filters.is_empty()
-func _apply() -> void: if target != null: target.material = filters.back() if not filters.is_empty() else null
+	_apply()
+	return removed
 
 
-func _material_from_definition(definition: Dictionary) -> ShaderMaterial:
-	var raw: Variant = definition.get("matrix", IDENTITY_MATRIX)
-	var matrix: Array = raw if raw is Array and raw.size() == 20 else IDENTITY_MATRIX
-	var values: Array[float] = []
-	for index in 20:
-		values.push_back(float(matrix[index]))
-	var columns := Projection(
-		Vector4(values[0], values[5], values[10], values[15]),
-		Vector4(values[1], values[6], values[11], values[16]),
-		Vector4(values[2], values[7], values[12], values[17]),
-		Vector4(values[3], values[8], values[13], values[18])
-	)
-	var material := ShaderMaterial.new()
-	material.shader = COLOR_MATRIX_SHADER
-	material.set_shader_parameter("color_matrix", columns)
-	material.set_shader_parameter("color_offset", Vector4(values[4], values[9], values[14], values[19]))
-	material.set_shader_parameter("filter_alpha", float(definition.get("alpha", 1.0)))
-	return material
+func clear() -> void:
+	filters = []
+	_apply()
+
+
+func get_filters() -> Array:
+	return filters
+
+
+func has_filters() -> bool:
+	return not filters.is_empty()
+
+
+func _apply() -> void:
+	_unwrap_target()
+	if target == null:
+		return
+	target.material = filters[0] if not filters.is_empty() else null
+	if filters.size() < 2:
+		return
+	var host_parent: Node = target.get_parent()
+	if host_parent == null:
+		if not target.tree_entered.is_connected(_apply):
+			target.tree_entered.connect(_apply, CONNECT_ONE_SHOT)
+		return
+	var host_index: int = target.get_index()
+	host_parent.remove_child(target)
+	var current: CanvasItem = target
+	for index in range(1, filters.size()):
+		var pass_group := CanvasGroup.new()
+		pass_group.name = "WorldFilterPass:%d" % index
+		pass_group.material = filters[index]
+		pass_group.add_child(current)
+		_pass_groups.push_back(pass_group)
+		current = pass_group
+	host_parent.add_child(current)
+	host_parent.move_child(current, mini(host_index, host_parent.get_child_count() - 1))
+
+
+func _unwrap_target() -> void:
+	if _pass_groups.is_empty() or target == null:
+		return
+	var outermost: CanvasGroup = _pass_groups.back()
+	var host_parent: Node = outermost.get_parent()
+	if host_parent == null:
+		_pass_groups.clear()
+		return
+	var host_index: int = outermost.get_index()
+	var target_parent: Node = target.get_parent()
+	if target_parent != null:
+		target_parent.remove_child(target)
+	host_parent.remove_child(outermost)
+	outermost.free()
+	_pass_groups.clear()
+	host_parent.add_child(target)
+	host_parent.move_child(target, mini(host_index, host_parent.get_child_count() - 1))

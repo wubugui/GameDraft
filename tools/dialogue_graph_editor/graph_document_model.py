@@ -82,6 +82,17 @@ class GraphDocumentModel(QObject):
         self._data = {}
         self._set_dirty(False)
 
+    def replace_data(self, data: dict[str, Any]) -> None:
+        """整体替换图数据（节点级撤销/重做用）。
+
+        与 ``load`` 不同：**保持/标记脏态**（撤销回到与磁盘相同的内容也按脏处理，
+        保存时字节基线比对仍会原样回写、不产生格式漂移），并且**就地更新** ``_data``
+        以维持 ``mutable_data`` 活引用不失联。不逐节点发增删信号，调用方负责整体刷新 UI。
+        """
+        self._data.clear()
+        self._data.update(copy.deepcopy(data))
+        self.mark_dirty()
+
     # -- dirty tracking -----------------------------------------------------
 
     def mark_dirty(self) -> None:

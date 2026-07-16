@@ -440,13 +440,28 @@ class RuleEditor(QWidget):
 
     def _del_rule(self) -> None:
         rules = self._model.rules_data.get("rules", [])
-        if 0 <= self._rule_idx < len(rules):
-            if not confirm.confirm_delete(self, f"规矩「{rules[self._rule_idx].get('id', '')}」"):
-                return
-            rules.pop(self._rule_idx)
-            self._rule_idx = -1
-            self._model.mark_dirty("rules")
-            self._refresh()
+        if not (0 <= self._rule_idx < len(rules)):
+            return
+        rid = str(rules[self._rule_idx].get("id", "")).strip()
+        frags = self._model.rules_data.get("fragments", [])
+        linked = ([f for f in frags if str(f.get("ruleId", "")).strip() == rid]
+                  if rid else [])
+        # 删除规矩连带其碎片（审查 P3，参照 quest 分组删除样板）：先列数量再连带删，
+        # 不再静默留下 ruleId 悬垂的孤儿碎片。
+        detail = f"关联碎片 {len(linked)} 条将一并删除。" if linked else ""
+        if not confirm.confirm_delete(
+                self, f"规矩「{rules[self._rule_idx].get('id', '')}」", detail):
+            return
+        rules.pop(self._rule_idx)
+        if linked:
+            self._model.rules_data["fragments"] = [
+                f for f in frags if str(f.get("ruleId", "")).strip() != rid
+            ]
+            self._frag_idx = -1
+            self._frag_snapshot = None
+        self._rule_idx = -1
+        self._model.mark_dirty("rules")
+        self._refresh()
 
     # ---- fragments tab ----------------------------------------------------
 
@@ -636,7 +651,24 @@ class RuleEditor(QWidget):
         if self._frag_idx < 0 or self._frag_idx >= len(frags):
             return
         fr = frags[self._frag_idx]
-        fr["id"] = self._f_id.text().strip()
+        # 碎片 id 校验（审查 P2，对齐 _apply_rule 口径）：空 id 保留原值；
+        # 与其它碎片重复时警告并保留原值，不写入坏 id。
+        prev_id = str(fr.get("id", "")).strip()
+        new_fid = self._f_id.text().strip()
+        if not new_fid:
+            new_fid = prev_id
+        elif new_fid != prev_id and any(
+            str(o.get("id", "")).strip() == new_fid
+            for j, o in enumerate(frags) if j != self._frag_idx
+        ):
+            QMessageBox.warning(
+                self, "碎片 id",
+                f"id「{new_fid}」与其它碎片重复，已保留原 id「{prev_id}」。")
+            new_fid = prev_id
+        fr["id"] = new_fid
+        self._f_id.blockSignals(True)
+        self._f_id.setText(new_fid)
+        self._f_id.blockSignals(False)
         fr["text"] = self._f_text.toPlainText()
         fr["layer"] = self._f_layer.currentText()
         fr.pop("index", None)
@@ -783,3 +815,26 @@ class RuleEditor(QWidget):
             self._frag_idx = -1
 
         self._refresh_rule_fragments_sidebar()
+
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：先按规矩 id 找（行序与 rules 一致），再按碎片 id 找。
+        返回 True=已选中条目，False=没找到（全编辑器 bool 契约，主窗消费）。"""
+        rules = self._model.rules_data.get("rules", [])
+        for i, r in enumerate(rules):
+            if r.get("id") == item_id:
+                if getattr(self, "_rule_search", None) is not None and self._rule_search.text():
+                    self._rule_search.clear()  # 目标行可能被过滤隐藏
+                self._tabs.setCurrentIndex(0)  # 命中规矩时补切页（审查 P2）
+                self._rule_list.setCurrentRow(i)
+                return True
+        frags = self._model.rules_data.get("fragments", [])
+        for i, fr in enumerate(frags):
+            if fr.get("id") == item_id:
+                # 清碎片搜索：命中行可能被搜索过滤隐藏（审查 P2）。
+                if getattr(self, "_frag_search", None) is not None and self._frag_search.text():
+                    self._frag_search.clear()
+                # 复用正确跳转路径（审查 P2）：对齐 ruleId 筛选器 + 刷新列表 +
+                # 切到 Fragments 页 + 按全局索引选行；不再在被遮住的页里静默选择。
+                self._jump_to_fragments_tab(frag_index=i)
+                return True
+        return False

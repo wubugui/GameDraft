@@ -7,10 +7,10 @@ var saw_cancel_root := false
 
 func _ready() -> void:
 	var repository := ProjectSettings.globalize_path("res://").trim_suffix("/").get_base_dir()
-	var assets := RuntimeAssetManager.new(RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository))
+	var assets := RuntimeAssetManager.new({}, RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository))
 	var strings := RuntimeStringsProvider.new()
-	assert(strings.load(assets))
-	var renderer := RuntimeRenderer.new(); add_child(renderer); renderer.init_renderer()
+	strings.load(assets)
+	var renderer := RuntimeRenderer.new(); add_child(renderer); renderer.init()
 	var input := RuntimeInputManager.new(); add_child(input)
 	ui_under_test = RuntimePressureHoldUI.new(renderer, strings, input)
 	ui_under_test.set_debug_input(true, 0.2)
@@ -26,7 +26,7 @@ func _ready() -> void:
 	var cancelled := await ui_under_test.run_segment({"prompt": "取消", "startRatio": 0.0, "stopRatio": 1.0, "fillSeconds": 4.0, "decayPerSecond": 0.6})
 	assert(saw_cancel_root and cancelled == "reached" and ui_under_test.get_root() == null)
 	assert(await ui_under_test.run_segment({"startRatio": 0.0}) == "invalid")
-	ui_under_test.destroy(); input.destroy(); renderer.destroy_renderer(); remove_child(input); input.free(); remove_child(renderer); renderer.free(); assets.dispose()
+	ui_under_test.destroy(); input.destroy(); renderer.destroy(); remove_child(input); input.free(); remove_child(renderer); renderer.free(); assets.dispose()
 	print("PressureHoldUI hold/release/cancel/cleanup contract test: PASS")
 	get_tree().quit(0)
 

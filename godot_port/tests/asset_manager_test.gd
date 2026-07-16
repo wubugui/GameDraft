@@ -5,7 +5,7 @@ func _init() -> void:
 	var project_dir := ProjectSettings.globalize_path("res://").trim_suffix("/")
 	var repository_root := project_dir.get_base_dir()
 	var locator := RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository_root)
-	var assets := RuntimeAssetManager.new(locator)
+	var assets := RuntimeAssetManager.new({}, locator)
 
 	assert(assets.get_json("/assets/data/game_config.json") == null)
 	var config: Variant = assets.load_json("/assets/data/game_config.json")
@@ -33,7 +33,7 @@ func _init() -> void:
 	assert(odd_pcm8 is AudioStreamWAV and odd_pcm8.format == AudioStreamWAV.FORMAT_8_BITS and not odd_pcm8.stereo and odd_pcm8.mix_rate == 8000 and odd_pcm8.data.size() == 240065 and odd_pcm8.loop_mode == AudioStreamWAV.LOOP_FORWARD)
 	assert(assets.get_stats().audio.loads == 11 and assets.get_stats().audio.errors == 0)
 	var filter: Variant = assets.load_filter("night")
-	assert(filter is Dictionary and filter.matrix.size() == 20 and filter.alpha == 1.0)
+	assert(filter is ShaderMaterial and filter.get_shader_parameter("color_matrix") is Projection and filter.get_shader_parameter("filter_alpha") == 1.0)
 
 	var scene_a := assets.load_scene_data("temple")
 	assert(not scene_a.is_empty() and scene_a.backgrounds[0].image == "/resources/runtime/scenes/temple/background.png")
@@ -42,7 +42,7 @@ func _init() -> void:
 	var scene_b := assets.load_scene_data("temple")
 	assert(float(scene_b.spawnPoint.x) == original_x)
 
-	var limited := RuntimeAssetManager.new(locator, {"json": {"entries": 1}})
+	var limited := RuntimeAssetManager.new({"json": {"entries": 1}}, locator)
 	assert(limited.load_json("/assets/data/game_config.json") is Dictionary)
 	limited.pin_scope("scope:a", [{"type": "json", "path": "/assets/data/game_config.json"}])
 	assert(limited.load_json("/assets/data/strings.json") is Dictionary)
@@ -65,7 +65,8 @@ func _init() -> void:
 	assets.dispose()
 	for type: String in RuntimeAssetManager.ASSET_TYPES:
 		assert(assets.get_stats()[type].entries == 0)
-	assert(assets.load_json("/assets/data/game_config.json") == null)
+	assert(assets.load_json("/assets/data/game_config.json") is Dictionary)
+	assert(assets.get_json("/assets/data/game_config.json") == null)
 	limited.dispose()
 	print("AssetManager contract test: PASS")
 	quit(0)

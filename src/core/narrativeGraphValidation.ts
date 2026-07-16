@@ -434,6 +434,12 @@ function validateTransitionSignal(
     return;
   }
   if (sig === DEFAULT_NARRATIVE_DRAFT_SIGNAL) {
+    // reactive* 迁移不消费 signal 字段,__draft__ 是其钦定占位(非未完工接线)——
+    // 不豁免会让每条 reactive 线终身挂假警告,真草稿被淹没(2026-07-13 修)。
+    const trigger = String((transition as { trigger?: unknown }).trigger ?? 'signal').trim();
+    if (trigger === 'reactive' || trigger === 'reactiveAll' || trigger === 'reactiveAny') {
+      return;
+    }
     addIssue(
       issues,
       'warning',
@@ -662,28 +668,46 @@ function validateBroadcastStateSignals(data: NarrativeGraphsFileLike, issues: Na
 }
 
 /**
- * 位面点名互斥（照 validateOwnerBindings 聚合范式）：同图多状态点名合法（一图一激活态），
- * 跨图出现多于一个声明 activePlane 的图 = error（决议：位面点名全局唯一归属一图，
- * 组合需求走位面 extends 组合条目；运行时兜底仍为「后进者胜」+ error 日志）。
+ * 位面点名口径（2026-07-10 制作人拍板，与 tools/editor/validator.py::_validate_planes 对齐）：
+ * 同一位面被多张图点名 = 完全合法不报——模板从 archetype 盖出的每单任务各是一图、
+ * 共用同一位面（如多单背尸活），运行时按「最后进入的点名态」逐态派生，毫无歧义。
+ * 只有全项目点名了**不同**位面时才逐声明处报 warning：静态无法证明这些图不会同时
+ * 处于点名态，运行时兜底为「后进者胜」——请人工确认互斥。
+ * （旧决议「点名全局唯一归属一图」已废，勿回退成 error。）
  */
 function validateActivePlanes(data: NarrativeGraphsFileLike, issues: NarrativeValidationIssue[]): void {
-  const declaring: string[] = [];
-  for (const { graph } of compileGraphs(data)) {
+  const declarations: Array<{ ctx: GraphValidationContext; stateId: string; planeId: string }> = [];
+  for (const { graph, compositionId, elementId } of compileGraphs(data)) {
     const gid = String(graph.id ?? '').trim();
     if (!gid) continue;
-    const has = Object.values(graph.states ?? {}).some(
-      (state) => typeof state.activePlane === 'string' && state.activePlane.trim() !== '',
-    );
-    if (has) declaring.push(gid);
+    for (const [stateId, state] of Object.entries(graph.states ?? {})) {
+      const planeId = typeof state.activePlane === 'string' ? state.activePlane.trim() : '';
+      if (!planeId) continue;
+      declarations.push({ ctx: { compositionId, elementId, graphId: gid }, stateId, planeId });
+    }
   }
-  if (declaring.length > 1) {
+  const graphsByPlane = new Map<string, Set<string>>();
+  for (const d of declarations) {
+    const set = graphsByPlane.get(d.planeId) ?? new Set<string>();
+    set.add(d.ctx.graphId);
+    graphsByPlane.set(d.planeId, set);
+  }
+  if (graphsByPlane.size <= 1) return;
+  const detail = [...graphsByPlane.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([planeId, gids]) => `${planeId} ← ${[...gids].sort().join(', ')}`)
+    .join('；');
+  for (const d of declarations) {
     addIssue(
       issues,
-      'error',
-      'plane.activePlane.multiGraph',
-      `multiple graphs declare activePlane (naming must be owned by a single graph; compose planes via extends instead): ${declaring.join(', ')}`,
-      undefined,
-      declaring.join(','),
+      'warning',
+      'plane.activePlane.multiPlane',
+      `${d.ctx.graphId}.${d.stateId} 点名位面「${d.planeId}」，而全项目点名了多个不同位面（${detail}）；` +
+        '若这些图可能同时处于点名状态，运行时按后进者胜——请确认互斥。' +
+        '（同一位面被多张图点名完全合法，不在此列）',
+      `${d.ctx.graphId}.states.${d.stateId}.activePlane`,
+      d.stateId,
+      stateTargetFromCtx(d.ctx, d.stateId, 'activePlane'),
     );
   }
 }
@@ -894,6 +918,22 @@ function validateActionDef(action: ActionLike, path: string, issues: NarrativeVa
     // 其余必填参数允许合法空串/空数组/false/0，只判 undefined/null。
     if (manifest.nonEmpty?.includes(name) && typeof value === 'string' && value.trim() === '') {
       addIssue(issues, 'error', 'action.param.missing', `${owner}: ${type} params.${name} is empty`, `${path}.params.${name}`, owner, target);
+    }
+  }
+  // 保留前缀信号不可作为发射参数：`state:`（派生广播由运行时在 broadcastOnEnter 状态自动发，
+  // 内容伪造=直推里程碑）；`__draft__`（占位符，运行时 emitNarrativeSignal 直接拒发）。
+  if (type === 'emitNarrativeSignal') {
+    const sig = typeof params.signal === 'string' ? params.signal.trim() : '';
+    if (sig && isReservedNarrativeAuthorSignalId(sig)) {
+      addIssue(
+        issues,
+        'error',
+        'action.signal.reserved',
+        `${owner}: emitNarrativeSignal cannot emit reserved signal "${sig}" (state:* broadcasts are runtime-derived; __draft__ is a placeholder)`,
+        `${path}.params.signal`,
+        owner,
+        target,
+      );
     }
   }
   if (type === 'runActions' || type === 'addDelayedEvent') {

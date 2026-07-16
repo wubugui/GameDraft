@@ -1,6 +1,7 @@
 class_name RuntimeSaveManager
 extends RefCounted
 
+const RuntimeLocalStorageScript := preload("res://scripts/runtime/local_storage.gd")
 const STORAGE_PREFIX := "gamedraft_save_"
 const MAX_SLOTS := 3
 const SAVE_VERSION := 1
@@ -8,13 +9,9 @@ const SAVE_VERSION := 1
 var _collector: Callable
 var _distributor: Callable
 var _scene_reloader: Callable
-var _strings: RuntimeStringsProvider
 var _fallback_scene: String
-var _storage_root: String
-var _can_save := Callable()
-var _destroyed := false
-var _operation_epoch := 0
-var last_error := ""
+var _strings: RuntimeStringsProvider
+var _can_save: Variant = null
 
 
 func _init(
@@ -23,14 +20,12 @@ func _init(
 	scene_reloader: Callable,
 	strings: RuntimeStringsProvider,
 	fallback_scene: String,
-	storage_root: String = "user://saves",
 ) -> void:
 	_collector = collector
 	_distributor = distributor
 	_scene_reloader = scene_reloader
 	_strings = strings
 	_fallback_scene = fallback_scene
-	_storage_root = storage_root.trim_suffix("/")
 
 
 func set_fallback_scene(scene: String) -> void:
@@ -42,9 +37,9 @@ func set_can_save_predicate(callback: Callable) -> void:
 
 
 func save(slot: int) -> bool:
-	if _destroyed or not _valid_slot(slot):
+	if slot < 0 or slot >= MAX_SLOTS:
 		return false
-	if not _can_save.is_null() and _can_save.is_valid() and not bool(_can_save.call()):
+	if _can_save is Callable and _can_save.is_valid() and not bool(_can_save.call()):
 		return false
 	var systems: Variant = _collector.call()
 	if not systems is Dictionary:
@@ -54,153 +49,119 @@ func save(slot: int) -> bool:
 		"timestamp": int(Time.get_unix_time_from_system() * 1000.0),
 		"systems": systems,
 	}
-	return _write_payload_atomic(_slot_path(slot), payload)
+	return RuntimeLocalStorageScript.set_item(STORAGE_PREFIX + str(slot), JSON.stringify(payload))
 
 
 func load(slot: int) -> bool:
-	if _destroyed or not _valid_slot(slot):
+	if slot < 0 or slot >= MAX_SLOTS:
 		return false
-	var payload := _read_payload(_slot_path(slot))
-	if payload.is_empty():
+	var raw: Variant = RuntimeLocalStorageScript.get_item(STORAGE_PREFIX + str(slot))
+	if not raw is String or raw.is_empty():
 		return false
-	_operation_epoch += 1
-	var epoch := _operation_epoch
+	var parser := JSON.new()
+	if parser.parse(raw) != OK:
+		return false
+	var payload: Variant = parser.data
+	if not payload is Dictionary or not payload.get("systems") is Dictionary:
+		return false
+	if payload.get("version") is float and float(payload.version) > SAVE_VERSION:
+		push_warning("SaveManager: 存档版本 %s 高于当前支持的 %s，将尽力加载，部分数据可能缺失" % [payload.version, SAVE_VERSION])
 	var snapshot: Variant = _collector.call()
 	if not snapshot is Dictionary:
 		return false
-	var snapshot_scene := _scene_id(snapshot)
+	var snapshot_scene_data: Variant = snapshot.get("sceneManager")
+	var snapshot_scene_value: Variant = snapshot_scene_data.get("currentSceneId") if snapshot_scene_data is Dictionary else null
+	var snapshot_scene_id := str(snapshot_scene_value) if snapshot_scene_value != null else _fallback_scene
 	var distribute_result: Variant = _distributor.call(payload.systems)
 	if distribute_result == false:
-		await _rollback(snapshot, snapshot_scene, epoch)
+		_distributor.call(snapshot)
+		await _scene_reloader.call(snapshot_scene_id)
 		return false
-	if _destroyed or epoch != _operation_epoch:
-		return false
-	var target_scene := _scene_id(payload.systems)
-	var reload_result: Variant = await _scene_reloader.call(target_scene)
-	if reload_result == false or _destroyed or epoch != _operation_epoch:
-		if not _destroyed and epoch == _operation_epoch:
-			await _rollback(snapshot, snapshot_scene, epoch)
+	var scene_data: Variant = payload.systems.get("sceneManager")
+	var scene_value: Variant = scene_data.get("currentSceneId") if scene_data is Dictionary else null
+	var scene_id := str(scene_value) if scene_value != null else _fallback_scene
+	var reload_result: Variant = await _scene_reloader.call(scene_id)
+	if reload_result == false:
+		_distributor.call(snapshot)
+		await _scene_reloader.call(snapshot_scene_id)
 		return false
 	return true
 
 
 func get_slot_meta(slot: int) -> Variant:
-	if not _valid_slot(slot):
+	if slot < 0 or slot >= MAX_SLOTS:
 		return null
-	var payload := _read_payload(_slot_path(slot))
-	if payload.is_empty():
+	var raw: Variant = RuntimeLocalStorageScript.get_item(STORAGE_PREFIX + str(slot))
+	if not raw is String or raw.is_empty():
+		return null
+	var parser := JSON.new()
+	if parser.parse(raw) != OK:
+		return null
+	var payload: Variant = parser.data
+	if not payload is Dictionary or not payload.get("systems") is Dictionary:
 		return null
 	var systems: Dictionary = payload.systems
-	var scene: Dictionary = systems.get("sceneManager", {}) if systems.get("sceneManager") is Dictionary else {}
-	var day: Dictionary = systems.get("dayManager", {}) if systems.get("dayManager") is Dictionary else {}
-	var game: Dictionary = systems.get("game", {}) if systems.get("game") is Dictionary else {}
-	var scene_id := str(scene.get("currentSceneId", "unknown"))
-	if scene_id.is_empty(): scene_id = "unknown"
+	var scene: Variant = systems.get("sceneManager")
+	var day: Variant = systems.get("dayManager")
+	var game: Variant = systems.get("game")
+	var scene_value: Variant = scene.get("currentSceneId") if scene is Dictionary else null
+	var scene_id := str(scene_value) if scene_value != null else "unknown"
+	var scene_name_value: Variant = game.get("sceneName") if game is Dictionary else null
+	var scene_name: String
+	if scene_name_value != null:
+		scene_name = str(scene_name_value)
+	elif scene_value != null:
+		scene_name = str(scene_value)
+	else:
+		scene_name = _strings.get_text("menu", "unknownScene")
+	var timestamp: Variant = payload.get("timestamp")
+	var day_number: Variant = day.get("currentDay") if day is Dictionary else null
+	var play_time: Variant = game.get("playTimeMs") if game is Dictionary else null
 	return {
 		"slot": slot,
-		"timestamp": int(payload.get("timestamp", 0)),
+		"timestamp": timestamp if timestamp != null else 0,
 		"sceneId": scene_id,
-		"sceneName": str(game.get("sceneName", scene_id if scene_id != "unknown" else _strings.get_text("menu", "unknownScene"))),
-		"dayNumber": int(day.get("currentDay", 1)),
-		"playTimeMs": int(game.get("playTimeMs", 0)),
+		"sceneName": scene_name,
+		"dayNumber": day_number if day_number != null else 1,
+		"playTimeMs": play_time if play_time != null else 0,
 	}
 
 
 func has_save(slot: int) -> bool:
-	return _valid_slot(slot) and FileAccess.file_exists(_slot_path(slot))
+	return RuntimeLocalStorageScript.get_item(STORAGE_PREFIX + str(slot)) != null
 
 
 func delete_slot(slot: int) -> void:
-	if _valid_slot(slot) and FileAccess.file_exists(_slot_path(slot)):
-		DirAccess.remove_absolute(_slot_path(slot))
+	RuntimeLocalStorageScript.remove_item(STORAGE_PREFIX + str(slot))
 
 
 func has_any_save() -> bool:
 	for slot in MAX_SLOTS:
-		if has_save(slot): return true
+		if has_save(slot):
+			return true
 	return false
 
 
-func export_slot_payload(slot: int, destination: String) -> bool:
-	if not _valid_slot(slot): return false
-	var payload := _read_payload(_slot_path(slot))
-	return not payload.is_empty() and _write_payload_atomic(destination, payload)
-
-
-func import_slot_payload(slot: int, source: String) -> bool:
-	if not _valid_slot(slot): return false
-	var payload := _read_payload(source)
-	return not payload.is_empty() and _write_payload_atomic(_slot_path(slot), payload)
-
-
-func read_slot_payload(slot: int) -> Dictionary:
-	return {} if not _valid_slot(slot) else _read_payload(_slot_path(slot))
-
-
-func destroy() -> void:
-	_destroyed = true
-	_operation_epoch += 1
-	_collector = Callable()
-	_distributor = Callable()
-	_scene_reloader = Callable()
-	_can_save = Callable()
-
-
-func _rollback(snapshot: Dictionary, scene_id: String, epoch: int) -> void:
-	if _destroyed or epoch != _operation_epoch:
-		return
-	_distributor.call(snapshot)
-	if _destroyed or epoch != _operation_epoch:
-		return
-	await _scene_reloader.call(scene_id)
-
-
-func _read_payload(path: String) -> Dictionary:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return {}
+func export_slot_payload(slot: int) -> Variant:
+	if slot < 0 or slot >= MAX_SLOTS:
+		return null
+	var raw: Variant = RuntimeLocalStorageScript.get_item(STORAGE_PREFIX + str(slot))
+	if not raw is String or raw.is_empty():
+		return null
 	var parser := JSON.new()
-	if parser.parse(file.get_as_text()) != OK:
-		last_error = "save JSON parse failed: %s" % parser.get_error_message()
-		return {}
+	if parser.parse(raw) != OK:
+		return null
+	var parsed: Variant = parser.data
+	return raw if parsed is Dictionary and parsed.get("systems") is Dictionary else null
+
+
+func import_slot_payload(slot: int, raw: String) -> bool:
+	if slot < 0 or slot >= MAX_SLOTS or raw.strip_edges().is_empty():
+		return false
+	var parser := JSON.new()
+	if parser.parse(raw) != OK:
+		return false
 	var parsed: Variant = parser.data
 	if not parsed is Dictionary or not parsed.get("systems") is Dictionary:
-		last_error = "save payload missing systems object"
-		return {}
-	return parsed
-
-
-func _write_payload_atomic(path: String, payload: Dictionary) -> bool:
-	var directory := path.get_base_dir()
-	if not directory.is_empty() and DirAccess.make_dir_recursive_absolute(directory) not in [OK, ERR_ALREADY_EXISTS]:
 		return false
-	var temporary := path + ".tmp"
-	var file := FileAccess.open(temporary, FileAccess.WRITE)
-	if file == null:
-		return false
-	file.store_string(JSON.stringify(payload, "  ") + "\n")
-	file.close()
-	if FileAccess.file_exists(path):
-		if DirAccess.remove_absolute(path) != OK:
-			DirAccess.remove_absolute(temporary)
-			return false
-	if DirAccess.rename_absolute(temporary, path) != OK:
-		DirAccess.remove_absolute(temporary)
-		return false
-	return true
-
-
-func _slot_path(slot: int) -> String:
-	return _storage_root.path_join("%s%s.json" % [STORAGE_PREFIX, slot])
-
-
-func _scene_id(systems: Dictionary) -> String:
-	var scene: Variant = systems.get("sceneManager")
-	if scene is Dictionary:
-		var id := str(scene.get("currentSceneId", ""))
-		if not id.is_empty(): return id
-	return _fallback_scene
-
-
-func _valid_slot(slot: int) -> bool:
-	return slot >= 0 and slot < MAX_SLOTS
+	return RuntimeLocalStorageScript.set_item(STORAGE_PREFIX + str(slot), JSON.stringify(parsed))

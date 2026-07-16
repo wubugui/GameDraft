@@ -290,7 +290,10 @@ class ConditionEditor(QWidget):
         if rest:
             expr: object = rest[0] if len(rest) == 1 else {"all": rest}
             self._tree_root.set_expr(expr if isinstance(expr, dict) else None)
+            # 程序性载入清空专家框：屏蔽 textChanged，避免载入即外发 changed 误标脏。
+            self._extra_json.blockSignals(True)
             self._extra_json.clear()
+            self._extra_json.blockSignals(False)
         else:
             self._tree_root.set_expr(None)
         self._sync_expert_gate()

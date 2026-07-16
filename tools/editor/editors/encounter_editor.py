@@ -900,8 +900,14 @@ class EncounterEditor(QWidget):
                     return True
         return super().eventFilter(obj, event)
 
-    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点。返回 True=已选中条目，False=没找到
+        （全编辑器 bool 契约，主窗消费）。"""
         for i, enc in enumerate(self._model.encounters):
             if enc.get("id") == item_id:
+                # 清列表搜索过滤器：目标行可能被隐藏，选中却看不见（审查 P3）。
+                if getattr(self, "_search", None) is not None and self._search.text():
+                    self._search.clear()
                 self._list.setCurrentRow(i)
-                return
+                return True
+        return False

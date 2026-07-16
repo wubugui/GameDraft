@@ -43,6 +43,7 @@ last_governed: 2026-07-11
 - 实体 `conditions` 默认只锁交互,要隐藏必须 `conditionHidesEntity:true`(见 [entity-visibility-channels](entity-visibility-channels.md))。
 - `extends` 环:PlaneReconciler 预剥环处理 + validator 拦环;别依赖"忽略继承"的旧注释。
 - 任务逻辑禁裸 setFlag,走信号→叙事图(进度真相源见 [narrative-signal-spine](narrative-signal-spine.md))。
+- **位面被多图点名的校验口径 = 合法不报**(同位面多图共用 archetype 是设计常态,后进者胜;见 [2026-07-10 决策卡](../../editor-tools/decisions/2026-07-10-plane-multi-graph-declaration-warning.md))。该口径由**双校验器**执行——TS 权威 `src/core/narrativeGraphValidation.ts::validateActivePlanes`(按位面分组:同位面不报、异位面逐声明处 warning)与 Python `tools/editor/validator.py`;两者口径**必须同轮改齐**,改一处漏另一处会让 web 叙事编辑器持续误报(2026-07-13 踩过:TS 侧仍按旧"全局唯一归属一图"报 error)。
 
 ## 怎么验证
 

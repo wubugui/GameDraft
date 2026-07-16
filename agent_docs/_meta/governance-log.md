@@ -155,3 +155,32 @@
 - inbox 两条待批记录(2026-07-12-beishi-lingong-yizhuang-intake、
   2026-07-13-editor-sidecar-vs-unified-save-exit)蒸馏收编后删除,inbox 清零。
 - 本轮待批清单余项:③character-animation-production 组合层骨架重构、④CLAUDE.md 路由器化,仍待批。
+
+- 2026-07-14 intake:收0/改1/降0/拒0 —— libtv-image-generation 配方补「生成底色铁律」(禁止让模型直接生成透明底;必须纯色实底,灰底优先/洋红可,透明交本地抠图管线);frontmatter topics 同步加 灰底/透明底/生成底色。用户三次强调固化。
+
+## 2026-07-15 治理 run(周期性深度对账,用户在场)
+
+- **定界**:主证据面 = inbox 12 条偏差积压(editor-tools 6 / content 2 / runtime 2 / asset-pipeline 1 / meta 1);用户泛点 `governance` 未点名域。管线 A 盲重建(asset-pipeline/meta 欠账)本轮**用户决定留下轮**,未跑。
+- **管线 B 蒸馏(12 条全清)**——10 条自动落地删除、2 条升审批级落地删除:
+  - #1 位面多图点名双校验器同步坑 → plane-system 已知坑(TS `narrativeGraphValidation.ts` + Python `validator.py` 口径必须同轮改齐;2026-07-10 决策卡已存在,补交叉指针)。
+  - #2 对话图条件原子吃 plane 叶 → dialogue-graph-editor 已知坑(未识别叶原样透传只读、新叶必查本控件)+ 删除入口列号坑。
+  - #3 裸 `dvc pull` 慢速直连必挂 → **新建** meta/recipes/dvc-oss-restore.md(钦定 `./dev.sh pull`,已核实 tools/dev sync.pull + oss2 SDK)。
+  - #4 flow 主图 ownerId 纯注释(拍板方案 B) → narrative-state-editor 已知坑(禁再让校验/候选消费)+ 纯 web 可加载真实数据。
+  - #5 json_lang「JSON=语言」工具链 → **新建** editor-tools/mechanisms/json-lang-schema-tooling.md(记忆升格入库;方向代码→schema、只咨询不裁决、CONTENT_ID_PARAMS 登记面)。
+  - #6 重建区清单收缩 → editor-roundtrip-contract 改为四项(hotspot.data/spawnPoint 已改未知键透传;npc.patrol/音频本就保留;CLAUDE.md §2 与 docs/editor-authoring-surface.md 八项清单未同步,已在卡内注明前者冻结)。
+  - #8 validate-data 并入 json_lang → content-validation-gate 补第三入口 `./dev.sh json-lang`、next 连边盲区消解、schema 违例 warning 语义。
+  - #9 wrapper/scenario meta.emits/reads 改只读自动派生 → narrative-state-editor 已知坑。
+  - #11 speaker 显式 npcId=sceneNpc → entity-refactor-engine 已知坑(`_SPEAKER_NPCID_KINDS`,已核实代码)。
+  - #12 libtv 并行槽=1/僵尸任务/Seedream 5.0 Pro 支持 1K → libtv-image-generation 补「生成并发铁律」+ 模型表订正。
+  - #7(审批④/①,**已批**)scenario 一等公民退役 → **新建** runtime/decisions/2026-07-15-scenario-firstclass-retirement.md;scenario-catalog-semantics + narrative-signal-spine 注记、卡保持 active(代码 stage-2 未删);6→4 条件叶留 stage-2 approval①。
+  - #10(审批①,**已批**)editor-tools norms 补四硬规则:强化不变量8(镜像语义级 parity + 宁可消灭 + 声称护栏须可 grep)、新增不变量9(fail-safe 不 fail-open)、过程义务3(护栏从最外层用户入口进/QMouseEvent)、新增过程义务4(rename/delete 三问)。gate 门升级(流程探针门 + 镜像 parity 门)自动落地进 editor-change-verification-gate recipe。
+- **人拍板三项**:①#7 建 decision 卡 + 卡 active 带注记;②#10 四硬规则全部补入;③本轮范围=收尾,char-anim 组合层重构与 asset-pipeline/meta 盲重建留下轮。
+- **收尾**:audit 0 error / 0 warn / 0 info;inbox 清零(仅 README);文档 89→92(+json-lang 卡 +dvc recipe +scenario decision 卡);索引重生成。**CLAUDE.md 一字未动**。
+- **下轮建议(承前 + 新增)**:①asset-pipeline/meta 盲重建仍欠(管线 A,三轮未做);②character-animation-production 组合层骨架重构(approval②,三次遗留);③scenario stage-2 代码删除落地时 6→4 条件叶为 approval① + 同步 content norms 不变量4 与 CLAUDE.md §2(冻结);④.ink 全面废弃正式 decision 卡仍未建(dialogue-graph-editor 卡已注);⑤编辑器侧小卡候选(光环境曲线画布/archive 键序/立绘选择器/parallax Web 编辑器)仍挂;⑥docs/editor-authoring-surface.md 重建区八项清单与已收缩四项漂移(docs/ 非库,未改,建议人工同步 docs 与 CLAUDE.md §2)。
+
+- 2026-07-16 intake:改1 —— asset-pipeline/norms.md 新增不变量⑥「原始素材归档与同步」+对应红线+triggers关键词(原始素材/归档/素材同步);规矩:定稿原始源按「一角色一文件夹」归 `tmp/原始素材/<key>/`(setup.png+`<状态>.mp4`,只放定稿),必须与 `<key>_anim` 上线动画同步。用户当场拍板固化;已建归档(10动物+39志怪=49文件夹,126M)。
+- 2026-07-16 intake:改1 —— asset-pipeline/norms.md 不变量⑥订正:归档文件夹改**中文角色名**(如 土狗/画皮),中↔英key↔bundle 对应移交根 README 维护(承上条,用户拍板)。归档已 49 文件夹全部改中文名。
+- 2026-07-16 intake:收1 —— 新建 content/methods/narrative-flow-authoring.md「事件流程编排工作法」:核心公理(事件=叙事/三旋钮定类型/进度走信号不堆flag)+正交五关(状态→骨架→实体→地图→位面,委托 wire-demo-beat 落单拍)+适用边界(甜区=中型开放世界;两堵墙=线性主图+读取侧反查工具;跨flow查询=一等能力含模板化flow)+码头正反标本(两轨脱节/对话层setFlag死路)。用户拍板"内化为agent能力"。挂 content 域,统摄 wire-demo-beat 单拍配方。
+- 2026-07-16 intake:改2 —— 把 narrative-flow-authoring 绑进"进入策划模式即载入":①.cursor/skills/production-mode/SKILL.md 开头新增「进入本模式即载入 core 能力」节(涉及事件必载该卡);②content/methods/production-mode-workflow.md 向下指针置顶该卡。新卡补触发词(策划模式/production mode/做内容)。用户拍板"任何 agent 进策划模式获得 full 能力"。
+- 2026-07-16 intake:改1 —— cutscene-step-semantics 补"任何过场按 Esc 整段跳过"(GameStateController.handleEscape→CutsceneManager.skip,加该 authority 锚点);附验证含义:长过场走命令通道跳过后状态断言,computer-use 的 key 事件未必送达 canvas(实测浏览器 Esc 不生效)——再证"测试走命令通道不点像素"。用户拍板 intake。
+- 2026-07-16 intake:改1 —— narrative-flow-authoring 核心公理①收紧:判据从"大小"改为「事件关联」——有事件关联(预埋伏笔/有后果/被门闸/被别处读)不论多小必须上脊椎;纯孤立flavor(不预埋无后果没人读)才可孤立对话;补坑"世界观闲话若预埋后事件即有关联、非纯flavor"(①.5散落闲话踩过并已改回脊椎)。用户拍板"任何具事件关联的叙事必须走状态机"。

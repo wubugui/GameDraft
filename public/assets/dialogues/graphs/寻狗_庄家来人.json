@@ -185,7 +185,10 @@
         "kind": "npc"
       },
       "text": "你肩上驮个死人子，来谈我庄上的事？先送了，再来。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

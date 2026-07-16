@@ -136,7 +136,10 @@
         "kind": "npc"
       },
       "text": "行内人做事有个先来后到。肩上这位先送进来，别的再讲。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "root_gate": {
       "type": "switch",
@@ -145,16 +148,7 @@
           "next": "beishi_busy",
           "conditions": [
             {
-              "any": [
-                {
-                  "narrative": "flow_背尸_淹尸活",
-                  "state": "carrying"
-                },
-                {
-                  "narrative": "flow_背尸_零工活",
-                  "state": "carrying"
-                }
-              ]
+              "plane": "背尸"
             }
           ]
         }

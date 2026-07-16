@@ -38,13 +38,30 @@ func _slot_action(slot: int) -> void:
 func _adjust_volume(channel: String, delta: float) -> void: debug_set_volume(channel, clampf(audio.get_volume(channel) + delta, 0.0, 1.0))
 func _open_export_dialog(slot: int) -> void:
 	if root == null: return
+	var raw: Variant = saves.export_slot_payload(slot)
+	if not raw is String or raw.is_empty(): events.emit("notification:show", {"text": strings.get_text("menu", "saveFailed"), "type": "error"}); return
 	var dialog := FileDialog.new(); dialog.title = "JSON ↓"; dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE; dialog.access = FileDialog.ACCESS_FILESYSTEM; dialog.use_native_dialog = true; dialog.filters = PackedStringArray(["*.json ; JSON"]); dialog.current_file = "gamedraft_save_%s.json" % (slot + 1); root.add_child(dialog)
-	dialog.file_selected.connect(func(path: String) -> void: var ok := saves.export_slot_payload(slot, path); events.emit("notification:show", {"text": strings.get_text("menu", "saveSlot", {"slot": slot + 1}) if ok else strings.get_text("menu", "saveFailed"), "type": "info" if ok else "error"}); dialog.queue_free())
+	dialog.file_selected.connect(func(path: String) -> void:
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		var ok := file != null
+		if ok:
+			file.store_string(raw if raw.ends_with("\n") else raw + "\n")
+			file.close()
+		events.emit("notification:show", {"text": strings.get_text("menu", "saveSlot", {"slot": slot + 1}) if ok else strings.get_text("menu", "saveFailed"), "type": "info" if ok else "error"})
+		dialog.queue_free()
+	)
 	dialog.popup_centered_ratio(0.75)
 func _open_import_dialog(slot: int) -> void:
 	if root == null: return
 	var dialog := FileDialog.new(); dialog.title = "JSON ↑"; dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE; dialog.access = FileDialog.ACCESS_FILESYSTEM; dialog.use_native_dialog = true; dialog.filters = PackedStringArray(["*.json ; JSON"]); root.add_child(dialog)
-	dialog.file_selected.connect(func(path: String) -> void: var ok := saves.import_slot_payload(slot, path); events.emit("notification:show", {"text": strings.get_text("menu", "loadSlot", {"slot": slot + 1}) if ok else strings.get_text("menu", "loadFailed"), "type": "info" if ok else "error"}); dialog.queue_free(); if ok: refresh())
+	dialog.file_selected.connect(func(path: String) -> void:
+		var file := FileAccess.open(path, FileAccess.READ)
+		var ok := file != null and saves.import_slot_payload(slot, file.get_as_text())
+		events.emit("notification:show", {"text": strings.get_text("menu", "loadSlot", {"slot": slot + 1}) if ok else strings.get_text("menu", "loadFailed"), "type": "info" if ok else "error"})
+		dialog.queue_free()
+		if ok:
+			refresh()
+	)
 	dialog.popup_centered_ratio(0.75)
 func debug_save(slot: int) -> bool: var ok := saves.save(slot); refresh(); return ok
 func debug_load(slot: int) -> bool:

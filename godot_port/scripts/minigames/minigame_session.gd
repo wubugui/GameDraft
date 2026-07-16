@@ -1,215 +1,53 @@
 class_name RuntimeMinigameSessionManagerBase
 extends RuntimeSystem
 
-var asset_manager: RuntimeAssetManager
-var renderer: RuntimeRenderer
-var input_manager: RuntimeInputManager
-var state_controller: RuntimeGameStateController
-var index: Array = []
-var scene: Variant = null
-var active := false
-var previous_state := RuntimeGameStateController.EXPLORING
-var last_result: Variant = null
+const RuntimeDataTypes := preload("res://scripts/data/data_types.gd")
 
-var _instance_cache: Dictionary = {}
-var _active_scope_id := ""
-var _unsubscribe_key := Callable()
-var _on_session_end := Callable()
-var _start_in_flight := false
-var _session_waiting := false
-var _session_epoch := 0
-var _destroyed := false
+const RuntimeMicrotaskQueueScript := preload("res://scripts/runtime/microtask_queue.gd")
+
+var asset_manager: RuntimeAssetManager
+var renderer: RuntimeRenderer = null
+var input_manager: RuntimeInputManager = null
+var state_controller: RuntimeGameStateController = null
+var index: Array = []
+var instance_cache: Dictionary = {}
+var scene: Variant = null
+var active_scope_id: Variant = null
+var active := false
+var prev_state := RuntimeDataTypes.EXPLORING
+var unsub_key: Variant = null
+var session_resolve: Variant = null
+var last_result: Variant = null
+var on_session_end: Variant = null
+var start_in_flight := false
+var session_epoch := 0
+
+# GDScript has no abstract fields. Subclass _init methods assign these four
+# source-declared abstract readonly properties before any public API is called.
+var index_url := ""
+var data_subdir := ""
+var scope_prefix := ""
+var system_label := ""
 
 
 func is_active() -> bool:
 	return active
 
 
-func init(ctx: Dictionary) -> void:
-	asset_manager = ctx.get("assetManager")
+func build_instance_manifest_refs(_instance: Dictionary) -> Array:
+	return []
 
 
-func bind_session_runtime(deps: Dictionary) -> void:
-	renderer = deps.get("renderer")
-	input_manager = deps.get("inputManager")
-	state_controller = deps.get("stateController")
-
-
-func update(dt: float) -> void:
-	if active and scene != null:
-		tick_scene(scene, dt)
-
-
-func set_on_session_end(callback: Callable = Callable()) -> void:
-	_on_session_end = callback
-
-
-func load_index() -> bool:
-	var raw: Variant = asset_manager.load_json(get_index_url()) if asset_manager != null else null
-	index = raw.duplicate(true) if raw is Array else []
-	return raw is Array
-
-
-func get_instance_list() -> Array[Dictionary]:
-	var result: Array[Dictionary] = []
-	for value: Variant in index:
-		if value is Dictionary:
-			result.push_back({"id": str(value.get("id", "")), "label": str(value.get("label", ""))})
-	return result
-
-
-func run_until_done(id: String) -> Variant:
-	if active or _start_in_flight or _session_waiting or _destroyed:
-		return null
-	_session_waiting = true
-	last_result = null
-	await start(id)
-	_session_waiting = false
-	return last_result
-
-
-func start(id: String) -> void:
-	if not runtime_ready() or active or _start_in_flight or _destroyed:
-		return
-	_start_in_flight = true
-	var epoch := _session_epoch
-	var instance: Variant = load_instance(id)
-	if epoch != _session_epoch or _destroyed:
-		_start_in_flight = false
-		return
-	if not instance is Dictionary or not validate_instance(instance):
-		_start_in_flight = false
-		return
-	instance = prepare_instance(instance)
-	if not instance is Dictionary:
-		_start_in_flight = false
-		return
-	_active_scope_id = "%s:%s" % [get_scope_prefix(), str(instance.get("id", ""))]
-	asset_manager.preload_manifest({"scopeId": _active_scope_id, "refs": build_instance_manifest_refs(instance)}, {"mode": "stage", "tolerateErrors": true})
-	if epoch != _session_epoch or _destroyed:
-		_release_active_scope()
-		_start_in_flight = false
-		return
-	previous_state = state_controller.current_state
-	state_controller.set_state(RuntimeGameStateController.MINIGAME)
-	input_manager.set_game_keyboard_blocked(true)
-	active = true
-	last_result = null
-	on_session_active(instance)
-	_unsubscribe_key = input_manager.subscribe_key_down(Callable(self, "_handle_session_key_down"))
-	scene = create_scene(instance)
-	if scene == null:
-		_start_in_flight = false
-		teardown_session()
-		return
-	await load_scene_content(scene, instance)
-	if epoch != _session_epoch or not active or scene == null or _destroyed:
-		_start_in_flight = false
-		return
-	var root := _scene_root(scene)
-	if root == null:
-		_start_in_flight = false
-		teardown_session()
-		return
-	renderer.cutscene_overlay.add_child(root)
-	on_scene_loaded(instance)
-	_start_in_flight = false
-	while active and epoch == _session_epoch and not _destroyed:
-		await Engine.get_main_loop().process_frame
-
-
-func load_instance(id: String) -> Variant:
-	var key := id.strip_edges()
-	if _instance_cache.has(key):
-		return _instance_cache[key]
-	var entry: Variant = null
-	for value: Variant in index:
-		if value is Dictionary and str(value.get("id", "")).strip_edges() == key:
-			entry = value
-			break
-	if not entry is Dictionary:
-		return null
-	var path := asset_manager.locator.data_subdir_json_url(get_data_subdir(), str(entry.get("file", "")))
-	var loaded: Variant = asset_manager.load_json(path)
-	if loaded is Dictionary:
-		_instance_cache[key] = loaded
-		return loaded
+func create_scene(_instance: Dictionary) -> Variant:
 	return null
 
 
-func teardown_session() -> void:
-	if not active:
-		return
-	_session_epoch += 1
-	active = false
-	on_teardown()
-	_unsubscribe_input()
-	if input_manager != null:
-		input_manager.set_game_keyboard_blocked(false)
-	_release_active_scope()
-	_remove_scene()
-	if state_controller != null:
-		state_controller.set_state(previous_state)
-	if not _on_session_end.is_null() and _on_session_end.is_valid():
-		_on_session_end.call()
+func load_scene_content(_next_scene: Variant, _instance: Dictionary) -> Variant:
+	return true
 
 
-func restore_minigame_state_after_action() -> void:
-	if active and state_controller != null and state_controller.current_state != RuntimeGameStateController.MINIGAME:
-		state_controller.set_state(RuntimeGameStateController.MINIGAME)
-
-
-func publish_result(result: Variant) -> void:
-	last_result = result
-
-
-func serialize() -> Dictionary:
-	return {}
-
-
-func deserialize(_data: Dictionary) -> void:
-	if active:
-		teardown_session()
-
-
-func destroy() -> void:
-	if _destroyed:
-		return
-	_destroyed = true
-	_session_epoch += 1
-	if active:
-		teardown_session()
-	else:
-		_unsubscribe_input()
-		if input_manager != null:
-			input_manager.set_game_keyboard_blocked(false)
-		_release_active_scope()
-		_remove_scene()
-	_instance_cache.clear()
-	index.clear()
-	_start_in_flight = false
-	_session_waiting = false
-	_on_session_end = Callable()
-
-
-func runtime_ready() -> bool:
-	return renderer != null and input_manager != null and state_controller != null and asset_manager != null
-
-
-func get_index_url() -> String:
-	return ""
-
-
-func get_data_subdir() -> String:
-	return ""
-
-
-func get_scope_prefix() -> String:
-	return "minigame"
-
-
-func build_instance_manifest_refs(_instance: Dictionary) -> Array:
-	return []
+func tick_scene(_next_scene: Variant, _dt: float) -> void:
+	return
 
 
 func validate_instance(_instance: Dictionary) -> bool:
@@ -218,18 +56,6 @@ func validate_instance(_instance: Dictionary) -> bool:
 
 func prepare_instance(instance: Dictionary) -> Dictionary:
 	return instance
-
-
-func create_scene(_instance: Dictionary) -> Variant:
-	return null
-
-
-func load_scene_content(_next_scene: Variant, _instance: Dictionary) -> void:
-	return
-
-
-func tick_scene(_next_scene: Variant, _dt: float) -> void:
-	return
 
 
 func on_session_active(_instance: Dictionary) -> void:
@@ -248,48 +74,241 @@ func on_session_key_down(_record: Dictionary) -> void:
 	return
 
 
+func runtime_ready() -> bool:
+	return renderer != null and input_manager != null and state_controller != null
+
+
+func warn_session(message: String, detail: Variant = null) -> void:
+	if detail != null:
+		push_warning("%s: %s %s" % [system_label, message, str(detail)])
+	else:
+		push_warning("%s: %s" % [system_label, message])
+
+
+func init(ctx: Dictionary) -> void:
+	asset_manager = ctx.get("assetManager")
+
+
+func update(dt: float) -> void:
+	if scene == null or not active:
+		return
+	tick_scene(scene, dt)
+
+
+func serialize() -> Dictionary:
+	return {}
+
+
+func deserialize(_data: Dictionary) -> void:
+	return
+
+
+func destroy() -> void:
+	session_epoch += 1
+	if active:
+		teardown_session()
+	else:
+		if unsub_key is Callable and unsub_key.is_valid():
+			unsub_key.call()
+		unsub_key = null
+		if input_manager != null:
+			input_manager.set_game_keyboard_blocked(false)
+		_release_active_scope()
+		_remove_scene()
+		resolve_session()
+	instance_cache.clear()
+	index = []
+
+
+func set_on_session_end(callback: Variant) -> void:
+	on_session_end = callback
+
+
+func load_index() -> void:
+	var raw: Variant = asset_manager.load_json(index_url)
+	await RuntimeMicrotaskQueueScript.yield_turn()
+	if raw is Array:
+		index = raw
+		return
+	warn_session("failed to load index", asset_manager.get_last_error())
+	index = []
+
+
+func get_instance_list() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for entry: Variant in index:
+		if entry is Dictionary:
+			result.push_back({"id": entry.get("id"), "label": entry.get("label")})
+	return result
+
+
+func run_until_done(id: String) -> Variant:
+	if active or start_in_flight or session_resolve != null:
+		warn_session("已有小游戏会话进行中，忽略重复启动 \"%s\"" % id)
+		return null
+	var latch := RuntimeAsyncLatch.new()
+	session_resolve = latch
+	start(id)
+	await latch.wait()
+	return last_result
+
+
+func start(id: String) -> void:
+	if not runtime_ready():
+		warn_session("runtime not bound")
+		resolve_session()
+		return
+	if active or start_in_flight:
+		return
+	start_in_flight = true
+	var epoch := session_epoch
+	var instance_zero: Variant = await load_instance(id)
+	if epoch != session_epoch:
+		resolve_session()
+		start_in_flight = false
+		return
+	if instance_zero == null:
+		warn_session("unknown instance \"%s\"" % id)
+		resolve_session()
+		start_in_flight = false
+		return
+	if not instance_zero is Dictionary or not validate_instance(instance_zero):
+		resolve_session()
+		start_in_flight = false
+		return
+	var instance := prepare_instance(instance_zero)
+
+	var scope_id := "%s:%s" % [scope_prefix, instance.id]
+	active_scope_id = scope_id
+	asset_manager.preload_manifest(
+		{"scopeId": scope_id, "refs": build_instance_manifest_refs(instance)},
+		{"mode": "stage", "tolerateErrors": true}
+	)
+	await RuntimeMicrotaskQueueScript.yield_turn()
+	if epoch != session_epoch:
+		_release_active_scope()
+		resolve_session()
+		start_in_flight = false
+		return
+
+	prev_state = state_controller.current_state
+	state_controller.set_state(RuntimeDataTypes.MINIGAME)
+	input_manager.set_game_keyboard_blocked(true)
+	active = true
+	last_result = null
+	on_session_active(instance)
+
+	unsub_key = input_manager.subscribe_key_down(Callable(self, "_handle_session_key_down"))
+	var next_scene: Variant = create_scene(instance)
+	scene = next_scene
+	if next_scene == null:
+		warn_session("start \"%s\" failed" % id)
+		teardown_session()
+		start_in_flight = false
+		return
+	var loaded: Variant = await load_scene_content(next_scene, instance)
+	if loaded == false:
+		warn_session("scene load failed")
+		teardown_session()
+		start_in_flight = false
+		return
+	if epoch != session_epoch or not active or scene != next_scene:
+		start_in_flight = false
+		return
+	var root: Variant = next_scene.root
+	if not root is Node:
+		warn_session("start \"%s\" failed" % id)
+		teardown_session()
+		start_in_flight = false
+		return
+	renderer.cutscene_overlay.add_child(root)
+	on_scene_loaded(instance)
+	start_in_flight = false
+
+
 func _handle_session_key_down(record: Dictionary) -> void:
 	if not active or record.get("repeat") == true:
 		return
 	if scene != null and scene.has_method("is_actions_playback_locked") and scene.call("is_actions_playback_locked") == true:
 		return
 	if str(record.get("code", "")) == "Escape":
-		var prevent: Variant = record.get("preventDefault")
-		if prevent is Callable and not prevent.is_null() and prevent.is_valid():
-			prevent.call()
-		if scene != null and scene.has_method("abort"):
-			scene.call("abort")
+		var prevent_default: Variant = record.get("preventDefault")
+		if prevent_default is Callable and prevent_default.is_valid():
+			prevent_default.call()
+		if scene != null:
+			scene.abort()
 		return
 	on_session_key_down(record)
 
 
-func _scene_root(target: Variant) -> Node:
-	if target != null and target.has_method("get_root"):
-		var value: Variant = target.call("get_root")
-		return value if value is Node else null
+func load_instance(id: String) -> Variant:
+	var cached: Variant = instance_cache.get(id)
+	if cached != null:
+		return cached
+	var entry: Variant = null
+	for candidate: Variant in index:
+		if candidate is Dictionary and candidate.get("id") == id:
+			entry = candidate
+			break
+	if entry == null:
+		return null
+	var path := RuntimeResourceLocator.get_default().data_subdir_json_url(data_subdir, str(entry.file))
+	var data: Variant = asset_manager.load_json(path)
+	await RuntimeMicrotaskQueueScript.yield_turn()
+	if data != null:
+		instance_cache[id] = data
+		return data
+	warn_session("load instance failed (%s)" % id, asset_manager.get_last_error())
 	return null
+
+
+func teardown_session() -> void:
+	if not active:
+		return
+	session_epoch += 1
+	active = false
+	on_teardown()
+
+	if unsub_key is Callable and unsub_key.is_valid():
+		unsub_key.call()
+	unsub_key = null
+	if input_manager != null:
+		input_manager.set_game_keyboard_blocked(false)
+	_release_active_scope()
+	_remove_scene()
+	if state_controller != null:
+		state_controller.set_state(prev_state)
+	resolve_session()
+	if on_session_end is Callable and on_session_end.is_valid():
+		on_session_end.call()
+
+
+func restore_minigame_state_after_action() -> void:
+	if not active or state_controller == null:
+		return
+	if state_controller.current_state != RuntimeDataTypes.MINIGAME:
+		state_controller.set_state(RuntimeDataTypes.MINIGAME)
+
+
+func _release_active_scope() -> void:
+	if active_scope_id == null:
+		return
+	asset_manager.release_scope(str(active_scope_id))
+	active_scope_id = null
 
 
 func _remove_scene() -> void:
 	if scene == null:
 		return
-	var root := _scene_root(scene)
-	if root != null and is_instance_valid(root) and root.get_parent() != null:
+	var root: Variant = scene.root
+	if root is Node and is_instance_valid(root) and root.get_parent() != null:
 		root.get_parent().remove_child(root)
-	if scene.has_method("destroy"):
-		scene.call("destroy")
+	scene.destroy()
 	scene = null
 
 
-func _release_active_scope() -> void:
-	if _active_scope_id.is_empty():
-		return
-	if asset_manager != null:
-		asset_manager.release_scope(_active_scope_id)
-	_active_scope_id = ""
-
-
-func _unsubscribe_input() -> void:
-	if not _unsubscribe_key.is_null() and _unsubscribe_key.is_valid():
-		_unsubscribe_key.call()
-	_unsubscribe_key = Callable()
+func resolve_session() -> void:
+	var resolver: Variant = session_resolve
+	session_resolve = null
+	if resolver is RuntimeAsyncLatch:
+		RuntimeMicrotaskQueueScript.queue_microtask(Callable(resolver, "resolve"))

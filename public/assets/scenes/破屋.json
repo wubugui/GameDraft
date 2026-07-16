@@ -1,0 +1,76 @@
+{
+  "id": "破屋",
+  "name": "破屋",
+  "worldWidth": 2000,
+  "camera": {
+    "zoom": 0.9,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "bgm": "bgm_placeholder_low_tension",
+  "ambientSounds": [
+    "amb_night_forest_loop"
+  ],
+  "spawnPoint": {
+    "x": 1010.0,
+    "y": 905.0
+  },
+  "spawnPoints": {
+    "from_jie": {
+      "x": 1010.0,
+      "y": 905.0
+    }
+  },
+  "npcs": [],
+  "hotspots": [
+    {
+      "id": "hs_验缢死尸",
+      "type": "inspect",
+      "label": "割下来的缢死尸",
+      "x": 840.0,
+      "y": 720.0,
+      "interactionRange": 120.0,
+      "conditions": [
+        {
+          "not": {
+            "flag": "beishi_carrying"
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_验缢死尸"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/corpses/back_carry/final/hanging_mark_corpse.png",
+        "worldWidth": 160.0,
+        "worldHeight": 82.0,
+        "spriteSort": "back"
+      }
+    },
+    {
+      "id": "T_出破屋",
+      "type": "transition",
+      "label": "扛尸出门·绕小路",
+      "x": 250.0,
+      "y": 470.0,
+      "interactionRange": 95.0,
+      "conditions": [
+        {
+          "flag": "beishi_carrying"
+        }
+      ],
+      "data": {
+        "targetScene": "野道",
+        "targetSpawnPoint": "from_powu"
+      }
+    }
+  ],
+  "zones": []
+}

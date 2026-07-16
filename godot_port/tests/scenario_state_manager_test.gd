@@ -5,14 +5,26 @@ var events: Array = []
 
 func _init() -> void:
 	var repository := ProjectSettings.globalize_path("res://").trim_suffix("/").get_base_dir()
-	var assets := RuntimeAssetManager.new(RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository))
+	var assets := RuntimeAssetManager.new({}, RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository))
 	var bus := RuntimeEventBus.new()
 	bus.on("notification:show", Callable(self, "_record"))
 	var flags := RuntimeFlagStore.new(bus)
 	flags.configure_registry(assets.load_json("/assets/data/flag_registry.json"))
-	var scenarios := RuntimeScenarioStateManager.new(bus, flags)
+	var scenarios := RuntimeScenarioStateManager.new()
 	scenarios.init({"eventBus": bus, "flagStore": flags, "strings": null, "assetManager": assets})
-	assert(scenarios.load_catalog() and scenarios.catalog_count() == 2)
+	# Catalog contents are project data, not the ScenarioStateManager contract.
+	# Use an explicit fixture so this lifecycle test does not depend on mutable data.
+	scenarios.configure_runtime(flags, {"scenarios": [
+		{"id": "码头水鬼", "exposeAfterPhase": "真相揭示", "exposes": {"码头水鬼真相已揭示": true}, "manualLineLifecycle": true, "phases": {
+			"看板初读": {}, "官差已套近乎": {"requires": ["看板初读"]},
+			"询问官差": {"requires": ["看板初读"]}, "询问脚帮": {"requires": ["官差已套近乎"]},
+			"真相揭示": {}, "真相揭示（脚帮）": {}, "真相揭示（官差）": {},
+		}},
+		{"id": "外国人捞箱子", "exposeAfterPhase": "初识洋人", "manualLineLifecycle": true, "phases": {
+			"查看水猴子": {}, "主角下水捞箱子": {}, "箱子捞起来": {}, "初识洋人": {},
+		}},
+	]}, bus)
+	assert(scenarios.get_catalog_scenario_ids().size() == 2)
 	assert(scenarios.get_catalog_scenario_ids() == ["码头水鬼", "外国人捞箱子"])
 	assert(scenarios.has_manual_line_lifecycle("码头水鬼"))
 	assert(scenarios.get_line_lifecycle_state("码头水鬼") == "inactive")
@@ -56,7 +68,7 @@ func _init() -> void:
 	assert(scenarios.get_scenario_phase("blocked", "gate") == null)
 
 	var snapshot := scenarios.serialize()
-	var restored := RuntimeScenarioStateManager.new(bus, flags)
+	var restored := RuntimeScenarioStateManager.new()
 	restored.configure_runtime(flags, synthetic, bus)
 	restored.deserialize(snapshot)
 	assert(restored.serialize() == snapshot)

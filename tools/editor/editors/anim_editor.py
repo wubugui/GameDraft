@@ -368,6 +368,18 @@ class AnimEditor(QWidget):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._flush_anim_list_from_model()
+        # 面板重新可见：恢复预览播放（离开时被 hideEvent 停掉，避免后台空转，P3）。
+        self._restart_preview_animation()
+
+    def hideEvent(self, event) -> None:  # type: ignore[override]
+        # 面板不可见时停预览定时器：4~16ms tick 在后台空转纯耗 CPU（P3）。
+        self._stop_preview_timer()
+        super().hideEvent(event)
+
+    def has_unsaved_changes(self) -> bool:
+        """供主窗 Save All 成功提示追加动画包未保存提醒（anim 直写 anim.json，不进
+        ProjectModel dirty 桶，Save All 不含它——见集成钩子说明，P3）。"""
+        return bool(self._dirty and self._current_key)
 
     def _open_video_atlas_detached(self) -> None:
         if self._model.project_path is None:

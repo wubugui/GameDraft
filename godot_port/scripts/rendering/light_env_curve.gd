@@ -8,45 +8,111 @@ static func prepare(definition: Variant) -> Variant:
 		return null
 	var cumulative: Array = [0.0]
 	for index in range(1, points.size()):
-		if not points[index - 1] is Dictionary or not points[index] is Dictionary:
-			return null
-		var dx := float(points[index].get("x", 0.0)) - float(points[index - 1].get("x", 0.0))
-		var dy := float(points[index].get("y", 0.0)) - float(points[index - 1].get("y", 0.0))
-		cumulative.push_back(float(cumulative[-1]) + Vector2(dx, dy).length())
-	var total := float(cumulative[-1])
+		var delta_x := float(points[index].x) - float(points[index - 1].x)
+		var delta_y := float(points[index].y) - float(points[index - 1].y)
+		cumulative.push_back(float(cumulative[index - 1]) + sqrt(delta_x * delta_x + delta_y * delta_y))
+	var total := float(cumulative[cumulative.size() - 1])
 	if not total > 0.000001:
 		return null
-	return {"points": points.duplicate(true), "cum": cumulative, "total": total}
+	return {"points": points, "cum": cumulative, "total": total}
 
 
-static func project_to_t(curve: Dictionary, px: float, py: float) -> float:
-	var points: Array = curve.get("points", [])
-	var cumulative: Array = curve.get("cum", [])
-	var total := float(curve.get("total", 0.0))
-	if points.size() < 2 or cumulative.size() != points.size() or total <= 0.000001:
-		return 0.0
+static func project_to_t(curve: Dictionary, point_x: float, point_y: float) -> float:
+	var points: Array = curve.points
+	var cumulative: Array = curve.cum
+	var total := float(curve.total)
 	var best_distance_squared := INF
 	var best_arc := 0.0
 	for index in range(points.size() - 1):
-		var a: Dictionary = points[index]
-		var b: Dictionary = points[index + 1]
-		var ab := Vector2(float(b.get("x", 0.0)) - float(a.get("x", 0.0)), float(b.get("y", 0.0)) - float(a.get("y", 0.0)))
-		var relative := Vector2(px - float(a.get("x", 0.0)), py - float(a.get("y", 0.0)))
-		var segment_t := clampf(relative.dot(ab) / ab.length_squared(), 0.0, 1.0) if ab.length_squared() > 0.000000001 else 0.0
-		var closest := Vector2(float(a.get("x", 0.0)), float(a.get("y", 0.0))) + ab * segment_t
-		var distance_squared := closest.distance_squared_to(Vector2(px, py))
+		var anchor_x := float(points[index].x)
+		var anchor_y := float(points[index].y)
+		var end_x := float(points[index + 1].x)
+		var end_y := float(points[index + 1].y)
+		var segment_x := end_x - anchor_x
+		var segment_y := end_y - anchor_y
+		var length_squared := segment_x * segment_x + segment_y * segment_y
+		var segment_t := ((point_x - anchor_x) * segment_x + (point_y - anchor_y) * segment_y) / length_squared if length_squared > 0.000000001 else 0.0
+		if segment_t < 0.0:
+			segment_t = 0.0
+		elif segment_t > 1.0:
+			segment_t = 1.0
+		var closest_x := anchor_x + segment_x * segment_t
+		var closest_y := anchor_y + segment_y * segment_t
+		var delta_x := point_x - closest_x
+		var delta_y := point_y - closest_y
+		var distance_squared := delta_x * delta_x + delta_y * delta_y
 		if distance_squared < best_distance_squared:
 			best_distance_squared = distance_squared
 			best_arc = float(cumulative[index]) + segment_t * (float(cumulative[index + 1]) - float(cumulative[index]))
 	return clampf(best_arc / total, 0.0, 1.0)
 
 
+static func _lerp(a: float, b: float, u: float) -> float:
+	return a + (b - a) * u
+
+
+static func _lerp_rgb(a: Array, b: Array, u: float) -> Array:
+	return [_lerp(a[0], b[0], u), _lerp(a[1], b[1], u), _lerp(a[2], b[2], u)]
+
+
+static func _lerp_angle_degrees(a: float, b: float, u: float) -> float:
+	var delta := fmod(fmod(b - a, 360.0) + 540.0, 360.0) - 180.0
+	var result := a + delta * u
+	result = fmod(fmod(result, 360.0) + 360.0, 360.0)
+	return result
+
+
+static func _pair(a: Variant, b: Variant) -> Variant:
+	if a == null and b == null:
+		return null
+	if a == null:
+		return [b]
+	if b == null:
+		return [a]
+	return [a, b]
+
+
+static func _blend_number(a: Variant, b: Variant, u: float) -> Variant:
+	var pair: Variant = _pair(a, b)
+	if pair == null:
+		return null
+	return pair[0] if pair.size() == 1 else _lerp(pair[0], pair[1], u)
+
+
+static func _blend_angle(a: Variant, b: Variant, u: float) -> Variant:
+	var pair: Variant = _pair(a, b)
+	if pair == null:
+		return null
+	return pair[0] if pair.size() == 1 else _lerp_angle_degrees(pair[0], pair[1], u)
+
+
+static func _blend_color(a: Variant, b: Variant, u: float) -> Variant:
+	var pair: Variant = _pair(a, b)
+	if pair == null:
+		return null
+	return pair[0] if pair.size() == 1 else _lerp_rgb(pair[0], pair[1], u)
+
+
+static func _pick(a: Variant, b: Variant, u: float) -> Variant:
+	var pair: Variant = _pair(a, b)
+	if pair == null:
+		return null
+	if pair.size() == 1:
+		return pair[0]
+	return pair[0] if u < 0.5 else pair[1]
+
+
+static func _compact(object: Dictionary) -> Dictionary:
+	for key: Variant in object.keys():
+		if object[key] == null:
+			object.erase(key)
+	return object
+
+
 static func interpolate(curve: Dictionary, t01: float) -> Dictionary:
-	var points: Array = curve.get("points", [])
-	var cumulative: Array = curve.get("cum", [])
-	var total := float(curve.get("total", 0.0))
-	if points.size() < 2 or cumulative.size() != points.size() or total <= 0.000001:
-		return {}
+	var points: Array = curve.points
+	var cumulative: Array = curve.cum
+	var total := float(curve.total)
 	var arc := clampf(t01, 0.0, 1.0) * total
 	var segment := 0
 	while segment < points.size() - 2 and float(cumulative[segment + 1]) < arc:
@@ -54,83 +120,78 @@ static func interpolate(curve: Dictionary, t01: float) -> Dictionary:
 	var segment_length := float(cumulative[segment + 1]) - float(cumulative[segment])
 	var raw_u := (arc - float(cumulative[segment])) / segment_length if segment_length > 0.000000001 else 0.0
 	var u := raw_u * raw_u * (3.0 - 2.0 * raw_u)
-	var a: Dictionary = points[segment].get("env", {}) if points[segment].get("env") is Dictionary else {}
-	var b: Dictionary = points[segment + 1].get("env", {}) if points[segment + 1].get("env") is Dictionary else {}
+	var a: Dictionary = points[segment].env if points[segment].get("env") is Dictionary else {}
+	var b: Dictionary = points[segment + 1].env if points[segment + 1].get("env") is Dictionary else {}
+	var a_key: Dictionary = a.key if a.get("key") is Dictionary else {}
+	var b_key: Dictionary = b.key if b.get("key") is Dictionary else {}
+	var key := _compact({
+		"azimuthDeg": _blend_angle(a_key.get("azimuthDeg"), b_key.get("azimuthDeg"), u),
+		"elevationDeg": _blend_number(a_key.get("elevationDeg"), b_key.get("elevationDeg"), u),
+		"color": _blend_color(a_key.get("color"), b_key.get("color"), u),
+		"intensity": _blend_number(a_key.get("intensity"), b_key.get("intensity"), u),
+	})
+	var a_ambient: Dictionary = a.ambient if a.get("ambient") is Dictionary else {}
+	var b_ambient: Dictionary = b.ambient if b.get("ambient") is Dictionary else {}
+	var ambient := _compact({
+		"color": _blend_color(a_ambient.get("color"), b_ambient.get("color"), u),
+		"intensity": _blend_number(a_ambient.get("intensity"), b_ambient.get("intensity"), u),
+	})
+	var a_shadow: Dictionary = a.shadow if a.get("shadow") is Dictionary else {}
+	var b_shadow: Dictionary = b.shadow if b.get("shadow") is Dictionary else {}
+	var shadow := _compact({
+		"mode": _pick(a_shadow.get("mode"), b_shadow.get("mode"), u),
+		"enabled": _pick(a_shadow.get("enabled"), b_shadow.get("enabled"), u),
+		"darkness": _blend_number(a_shadow.get("darkness"), b_shadow.get("darkness"), u),
+		"softness": _blend_number(a_shadow.get("softness"), b_shadow.get("softness"), u),
+		"length": _blend_number(a_shadow.get("length"), b_shadow.get("length"), u),
+		"contact": _blend_number(a_shadow.get("contact"), b_shadow.get("contact"), u),
+		"contactSize": _blend_number(a_shadow.get("contactSize"), b_shadow.get("contactSize"), u),
+		"softSamples": _blend_number(a_shadow.get("softSamples"), b_shadow.get("softSamples"), u),
+		"softRadius": _blend_number(a_shadow.get("softRadius"), b_shadow.get("softRadius"), u),
+		"billboard": _pick(a_shadow.get("billboard"), b_shadow.get("billboard"), u),
+	})
 	var output: Dictionary = {}
-	var key := _blend_group(a.get("key"), b.get("key"), u, ["elevationDeg", "intensity"], ["azimuthDeg"], ["color"], [])
-	var ambient := _blend_group(a.get("ambient"), b.get("ambient"), u, ["intensity"], [], ["color"], [])
-	var shadow := _blend_group(a.get("shadow"), b.get("shadow"), u, ["darkness", "softness", "length", "contact", "contactSize", "softSamples", "softRadius"], [], [], ["mode", "enabled", "billboard"])
-	var ao := _blend_group(a.get("ao"), b.get("ao"), u, ["contact", "form"], [], [], [])
-	if not key.is_empty(): output.key = key
-	if not ambient.is_empty(): output.ambient = ambient
-	if not shadow.is_empty(): output.shadow = shadow
-	if not ao.is_empty(): output.ao = ao
-	var tone: Variant = _blend_number(_read(a, "toneStrength"), _read(b, "toneStrength"), u)
-	if tone != null: output.toneStrength = tone
-	var tone_enabled: Variant = _pick(_read(a, "toneEnabled"), _read(b, "toneEnabled"), u)
-	if tone_enabled != null: output.toneEnabled = tone_enabled
+	if not key.is_empty():
+		output.key = key
+	if not ambient.is_empty():
+		output.ambient = ambient
+	if not shadow.is_empty():
+		output.shadow = shadow
+	var tone: Variant = _blend_number(a.get("toneStrength"), b.get("toneStrength"), u)
+	if tone != null:
+		output.toneStrength = tone
+	var tone_enabled: Variant = _pick(a.get("toneEnabled"), b.get("toneEnabled"), u)
+	if tone_enabled != null:
+		output.toneEnabled = tone_enabled
+	var a_ao: Dictionary = a.ao if a.get("ao") is Dictionary else {}
+	var b_ao: Dictionary = b.ao if b.get("ao") is Dictionary else {}
+	var ao := _compact({
+		"contact": _blend_number(a_ao.get("contact"), b_ao.get("contact"), u),
+		"form": _blend_number(a_ao.get("form"), b_ao.get("form"), u),
+	})
+	if not ao.is_empty():
+		output.ao = ao
 	return output
 
 
 static func copy_resolved_into(destination: Dictionary, source: Dictionary) -> void:
-	for group: String in ["key", "ambient", "shadow", "ao"]:
-		if not destination.get(group) is Dictionary: destination[group] = {}
-		var source_group: Variant = source.get(group)
-		if source_group is Dictionary:
-			destination[group].clear()
-			for field: Variant in source_group: destination[group][field] = source_group[field]
-	for field: String in ["toneStrength", "toneEnabled"]:
-		if source.has(field): destination[field] = source[field]
-
-
-static func _blend_group(a_value: Variant, b_value: Variant, u: float, number_fields: Array, angle_fields: Array, color_fields: Array, discrete_fields: Array) -> Dictionary:
-	var a: Dictionary = a_value if a_value is Dictionary else {}
-	var b: Dictionary = b_value if b_value is Dictionary else {}
-	var output: Dictionary = {}
-	for field: String in number_fields:
-		var result: Variant = _blend_number(_read(a, field), _read(b, field), u)
-		if result != null: output[field] = result
-	for field: String in angle_fields:
-		var result: Variant = _blend_angle(_read(a, field), _read(b, field), u)
-		if result != null: output[field] = result
-	for field: String in color_fields:
-		var result: Variant = _blend_color(_read(a, field), _read(b, field), u)
-		if result != null: output[field] = result
-	for field: String in discrete_fields:
-		var result: Variant = _pick(_read(a, field), _read(b, field), u)
-		if result != null: output[field] = result
-	return output
-
-
-static func _read(value: Dictionary, key: String) -> Variant:
-	return value[key] if value.has(key) else null
-
-
-static func _blend_number(a: Variant, b: Variant, u: float) -> Variant:
-	if a == null and b == null: return null
-	if a == null: return b
-	if b == null: return a
-	return lerpf(float(a), float(b), u)
-
-
-static func _blend_angle(a: Variant, b: Variant, u: float) -> Variant:
-	if a == null and b == null: return null
-	if a == null: return b
-	if b == null: return a
-	var delta := fposmod(float(b) - float(a) + 540.0, 360.0) - 180.0
-	return fposmod(float(a) + delta * u, 360.0)
-
-
-static func _blend_color(a: Variant, b: Variant, u: float) -> Variant:
-	if a == null and b == null: return null
-	if a == null: return b
-	if b == null: return a
-	if not a is Array or not b is Array or a.size() < 3 or b.size() < 3: return a
-	return [lerpf(float(a[0]), float(b[0]), u), lerpf(float(a[1]), float(b[1]), u), lerpf(float(a[2]), float(b[2]), u)]
-
-
-static func _pick(a: Variant, b: Variant, u: float) -> Variant:
-	if a == null and b == null: return null
-	if a == null: return b
-	if b == null: return a
-	return a if u < 0.5 else b
+	destination.key.azimuthDeg = source.key.azimuthDeg
+	destination.key.elevationDeg = source.key.elevationDeg
+	destination.key.color = source.key.color
+	destination.key.intensity = source.key.intensity
+	destination.ambient.color = source.ambient.color
+	destination.ambient.intensity = source.ambient.intensity
+	destination.shadow.mode = source.shadow.mode
+	destination.shadow.enabled = source.shadow.enabled
+	destination.shadow.darkness = source.shadow.darkness
+	destination.shadow.softness = source.shadow.softness
+	destination.shadow.length = source.shadow.length
+	destination.shadow.contact = source.shadow.contact
+	destination.shadow.contactSize = source.shadow.contactSize
+	destination.shadow.softSamples = source.shadow.softSamples
+	destination.shadow.softRadius = source.shadow.softRadius
+	destination.shadow.billboard = source.shadow.billboard
+	destination.toneStrength = source.toneStrength
+	destination.toneEnabled = source.toneEnabled
+	destination.ao.contact = source.ao.contact
+	destination.ao.form = source.ao.form

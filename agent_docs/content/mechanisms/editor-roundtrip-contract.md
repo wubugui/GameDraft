@@ -30,10 +30,10 @@ AI 直接改 JSON、人类只经编辑器维护——所以每处 JSON 都必须
 - **只改编辑器管理的文件**:`public/assets/data/**`、`public/assets/scenes/*.json`、
   `public/assets/dialogues/graphs/*.json`、`narrative_graphs.json`。**不碰**:`anim.json`
   (编辑器只读)、`.ink`、`public/resources/runtime/**` 媒体。
-- **重建区**(编辑器 Apply 整体重建的子结构,只能写它认识的字段,塞自定义键会被抹):
-  `hotspot.data`(inspect 的 `data.text` 会被丢——"看一眼弹正文"必须用 actions 或 graphId)、
-  `npc.patrol`、`spawnPoint`(只留 x,y)、被编辑过的对话节点、`scenario.phase.outcome`、
-  已知 cutscene present 步、音频条目(只留 src)、`item.dynamicDescriptions`。
+- **重建区**(编辑器 Apply 整体重建的子结构,塞自定义键会被抹)——2026-07-13 收缩为**四项**:
+  被编辑过的对话节点、已知 cutscene present 步、`item.dynamicDescriptions`(条目无稳定身份不可安全合并)、`scenario.phase`。
+  **已改为"未知键透传"、不再是重建区**:`hotspot.data`(含著名的 inspect `data.text` 丢失)、`spawnPoint`——见 `tools/editor/shared/rebuild_merge.py`(managed=面板编辑键并集;清空的字段不复活、换类型旧键仍清理);`npc.patrol` 与音频条目**本就保留**未知键(旧契约"只留 src/只 route+speed"表述过时)。
+  注意:CLAUDE.md §2 与 `docs/editor-authoring-surface.md` 仍列旧的八项重建区清单尚未同步(前者为冻结路由文件)——以本条为准。
 - **deprecated 字段别写**(编辑器主动删):`quest.nextQuestId`、rule 旧 `verified/description/source`、
   `zone.x/y/width/height/ruleSlots`、`npc.dialogueFile/dialogueKnot`、cutscene 旧 `commands`。
 - **引用必须有效(最硬闸门)**:`[tag:…]` 目标与跨文件 ID(targetScene/encounterId/

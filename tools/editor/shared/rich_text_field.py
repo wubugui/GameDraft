@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from .. import theme
 from .ref_validator import scan_refs
 from .tag_catalog import TagCatalog, TagItem
 
@@ -164,7 +165,8 @@ class RichTextTextEdit(QWidget):
         lay.addLayout(row)
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
-        self._hint.setStyleSheet("font-size:11px;color:#888;")
+        self._hint.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(self._hint, theme.FONT_ROLE_HINT)
         lay.addWidget(self._hint)
         self._hint_timer = QTimer(self)
         self._hint_timer.setSingleShot(True)
@@ -189,10 +191,18 @@ class RichTextTextEdit(QWidget):
         return self._edit
 
     def _schedule_hint(self) -> None:
+        # 无 [tag:…] 引用时不显示提示行（避免常驻"（引用校验通过）"占位噪声）；
+        # 与 RichTextLineEdit 一致：有 tag 才校验，通过才提示、失败才标红。
+        if "[tag:" not in self._edit.toPlainText():
+            self._hint.setText("")
+            return
         self._hint_timer.start()
 
     def _flush_hint(self) -> None:
         t = self._edit.toPlainText()
+        if "[tag:" not in t:
+            self._hint.setText("")
+            return
         errs = scan_refs(t, "预览", self._model)
         self._hint.setText(_format_errs(errs))
 
@@ -248,7 +258,8 @@ class RichTextLineEdit(QWidget):
         outer.addLayout(row)
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
-        self._hint.setStyleSheet("font-size:11px;color:#888;")
+        self._hint.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(self._hint, theme.FONT_ROLE_HINT)
         outer.addWidget(self._hint)
         self._hint_timer = QTimer(self)
         self._hint_timer.setSingleShot(True)

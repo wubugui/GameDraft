@@ -230,8 +230,8 @@
       "cutsceneOnly": false,
       "conditions": [
         {
-          "scenarioLine": "外国人捞箱子",
-          "lineStatus": "active"
+          "narrative": "scenario_外国人捞箱子",
+          "state": "active"
         }
       ],
       "conditionHidesEntity": true
@@ -326,8 +326,8 @@
       "cutsceneOnly": false,
       "conditions": [
         {
-          "scenarioLine": "外国人捞箱子",
-          "lineStatus": "active"
+          "narrative": "scenario_外国人捞箱子",
+          "state": "active"
         }
       ],
       "conditionHidesEntity": true
@@ -454,8 +454,8 @@
       "cutsceneOnly": false,
       "conditions": [
         {
-          "scenarioLine": "外国人捞箱子",
-          "lineStatus": "active"
+          "narrative": "scenario_外国人捞箱子",
+          "state": "active"
         }
       ],
       "conditionHidesEntity": true
@@ -496,8 +496,8 @@
       "cutsceneOnly": false,
       "conditions": [
         {
-          "scenarioLine": "外国人捞箱子",
-          "lineStatus": "active"
+          "narrative": "scenario_外国人捞箱子",
+          "state": "active"
         }
       ],
       "conditionHidesEntity": true
@@ -556,8 +556,8 @@
       },
       "conditions": [
         {
-          "scenarioLine": "外国人捞箱子",
-          "lineStatus": "active"
+          "narrative": "scenario_外国人捞箱子",
+          "state": "active"
         }
       ],
       "conditionHidesEntity": true
@@ -817,9 +817,11 @@
           }
         },
         {
-          "type": "activateScenario",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "外国人捞箱子"
+            "sourceType": "scene",
+            "sourceId": "码头白天",
+            "signal": "dock_foreigner_line_active"
           }
         },
         {

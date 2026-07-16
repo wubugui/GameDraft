@@ -3,8 +3,7 @@
   "id": "码头看板",
   "entry": "n_1",
   "meta": {
-    "title": "码头看板",
-    "scenarioId": "码头水鬼"
+    "title": "码头看板"
   },
   "preconditions": [],
   "nodes": {
@@ -72,20 +71,6 @@
           "type": "hideOverlayImage",
           "params": {
             "id": "水猴子告示X"
-          }
-        },
-        {
-          "type": "activateScenario",
-          "params": {
-            "scenarioId": "码头水鬼"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "看板初读",
-            "status": "done"
           }
         },
         {

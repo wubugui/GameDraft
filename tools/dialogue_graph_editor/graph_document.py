@@ -73,6 +73,8 @@ def write_bytes_atomic(path: Path, data: bytes) -> None:
 def extract_flow_edges(nodes: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Return canvas edges as (source id, target id, label)."""
     edges: list[tuple[str, str, str]] = []
+    if not isinstance(nodes, dict):  # nodes 容器畸形（agent/手写成 list/str）→ 空图，不崩
+        return edges
     for nid, raw in nodes.items():
         if not isinstance(raw, dict):
             continue
@@ -87,6 +89,8 @@ def extract_flow_edges_detailed(
 ) -> list[tuple[str, str, str, str, int]]:
     """Return canvas edges with output kind and index metadata."""
     edges: list[tuple[str, str, str, str, int]] = []
+    if not isinstance(nodes, dict):  # nodes 容器畸形 → 空图，不崩
+        return edges
     for nid, raw in nodes.items():
         if not isinstance(raw, dict):
             continue
@@ -98,6 +102,8 @@ def extract_flow_edges_detailed(
 
 def nodes_reachable_from_entry(nodes: dict[str, Any], entry: str) -> set[str]:
     """从 entry 沿 next / choice / switch 边 BFS，返回可达节点集（与画布、analyze_node_tags 一致）。"""
+    if not isinstance(nodes, dict):  # nodes 容器畸形 → 无可达节点，不崩
+        return set()
     ent = str(entry or "").strip()
     if ent not in nodes:
         return set()
@@ -172,7 +178,7 @@ def auto_layout_node_positions(
     **按节点真实宽高分配层间/层内间距**（node_sizes 给出画布实测尺寸；否则按内容估算），
     避免宽节点（长对白）在窄层距下横向重叠。grandalf 缺库/异常时回退简单 BFS 分层。
     """
-    if not nodes:
+    if not isinstance(nodes, dict) or not nodes:  # nodes 容器畸形/空 → 空布局，不崩
         return {}
     pos = _sugiyama_layout(nodes, entry, node_sizes)
     if pos is None:
@@ -519,6 +525,8 @@ def validate_owner_context_state(
     """
     errors: list[str] = []
     warnings: list[str] = []
+    if not isinstance(data, dict):  # 顶层文档畸形（写成 list/str）→ 安全跳过，不崩
+        return (errors, warnings)
     nodes = data.get("nodes")
     if not isinstance(nodes, dict):
         return (errors, warnings)
@@ -533,6 +541,70 @@ def validate_owner_context_state(
     return (errors, warnings)
 
 
+def scan_graph_embedded_tag_refs(data: dict[str, Any], project_model: Any) -> list[str]:
+    """扫描单张图内玩家可见文本的 ``[tag:…]`` 嵌入引用，返回坏引用消息列表。
+
+    与全量校验 ``ref_validator._walk_dialogue_graphs`` 覆盖同一批字段（line 正文/多拍正文、
+    choice 提示与选项文案、runActions 内嵌台词等），让坏 tag 在图对话自己的保存门/校验面板
+    就可见——过去只有 240ms 灰字提示，坏 tag 落盘后到主编辑器 Save All 才硬报错（审查 P2）。
+    无 project_model（独立模式加载失败等）时返回空列表，不拦保存。
+    """
+    if project_model is None:
+        return []
+    if not isinstance(data, dict):  # 顶层文档畸形 → 无可扫字段，不崩
+        return []
+    nodes = data.get("nodes")
+    if not isinstance(nodes, dict):
+        return []
+    try:
+        from tools.editor.shared.ref_validator import (
+            scan_refs,
+            walk_action_defs_embedded_refs,
+        )
+    except Exception:
+        return []
+    errs: list[str] = []
+    try:
+        for nid, node in nodes.items():
+            if not isinstance(node, dict):
+                continue
+            ctx = f"节点 {nid}"
+            ntype = node.get("type")
+            if ntype == "line":
+                errs.extend(scan_refs(node.get("text"), f"{ctx}.text", project_model))
+                for li, pl in enumerate(node.get("lines") or []):
+                    if isinstance(pl, dict):
+                        errs.extend(
+                            scan_refs(pl.get("text"), f"{ctx}.lines[{li}].text", project_model)
+                        )
+            elif ntype == "choice":
+                pl = node.get("promptLine")
+                if isinstance(pl, dict):
+                    errs.extend(
+                        scan_refs(pl.get("text"), f"{ctx}.promptLine.text", project_model)
+                    )
+                for oi, opt in enumerate(node.get("options") or []):
+                    if isinstance(opt, dict):
+                        errs.extend(
+                            scan_refs(opt.get("text"), f"{ctx}.options[{oi}].text", project_model)
+                        )
+                        errs.extend(
+                            scan_refs(
+                                opt.get("disabledClickHint"),
+                                f"{ctx}.options[{oi}].disabledClickHint",
+                                project_model,
+                            )
+                        )
+            elif ntype == "runActions":
+                walk_action_defs_embedded_refs(
+                    node.get("actions"), f"{ctx}.actions", project_model, errs
+                )
+    except Exception:
+        # 校验扫描不允许把编辑器带崩：返回已收集到的部分结果
+        return errs
+    return errs
+
+
 def validate_graph_tiered(
     data: dict[str, Any],
     *,
@@ -542,6 +614,8 @@ def validate_graph_tiered(
     """(errors, warnings)：编辑器保存时两者都会提示；errors 更严重，warnings 可确认后仍保存。"""
     errors: list[str] = []
     warnings: list[str] = []
+    if not isinstance(data, dict):  # 顶层文档畸形（写成 list/str）→ 报 error，不崩
+        return (["顶层文档必须是对象（应为 { id, entry, nodes }）"], [])
     nodes: dict[str, Any] = data.get("nodes") or {}
     if not isinstance(nodes, dict):
         return (["nodes 必须是对象"], [])
@@ -657,6 +731,11 @@ def validate_graph_tiered(
         project_root=project_root,
         project_model=project_model,
     )
+
+    # [tag:…] 嵌入引用进图自己的校验门（warnings：底部校验面板 + 保存询问可见）。
+    # 过去坏 tag 只有输入框 240ms 灰字提示，图正常落盘，下次主编辑器 Save All 才硬报错
+    # 反锁整仓保存（时机倒挂，审查 P2）。
+    warnings.extend(scan_graph_embedded_tag_refs(data, project_model))
 
     if ent in nodes:
         reachable = nodes_reachable_from_entry(nodes, ent)

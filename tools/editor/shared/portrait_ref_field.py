@@ -10,6 +10,7 @@ portrait dict 语义（与运行时 ``DialoguePortraitRef`` 一致）：
 """
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -22,6 +23,8 @@ from .portrait_catalog import (
 )
 
 _FOLLOW = "@follow"
+# 畸形 portrait（缺 emotion 等表单表达不了的形状）走只读透传：不吃键、不补值、原样回写。
+_RAW = "@raw"
 
 
 class PortraitRefField(QWidget):
@@ -58,7 +61,16 @@ class PortraitRefField(QWidget):
         ref = initial if isinstance(initial, dict) else None
         slug = str((ref or {}).get("slug") or "").strip()
         emo = str((ref or {}).get("emotion") or "").strip()
-        if ref is None or not emo:
+        # 畸形形状保值（审查 P3）：数据里是 dict 但缺 emotion（表单无法表达）——
+        # 过去 `not emo` 直接归零成「无头像」，to_ref 返回 None，静默吃掉整条 portrait。
+        # 改为只读透传：存原值，slug 下拉显示「(数据) <slug/…>」，to_ref 原样回写。
+        self._raw_passthrough: dict | None = None
+        if ref is not None and not emo:
+            self._raw_passthrough = copy.deepcopy(ref)
+            _lbl = slug if slug else "…"
+            self._slug.addItem(f"(数据) {_lbl}", _RAW)
+            self._set_slug_key(_RAW)
+        elif ref is None:
             self._set_slug_key("")
         elif slug:
             if self._slug.findData(slug) < 0:
@@ -81,7 +93,8 @@ class PortraitRefField(QWidget):
         self._emo.blockSignals(True)
         self._emo.clear()
         key = self._current_slug_key()
-        if key == "":
+        if key in ("", _RAW):
+            # 无头像 / 畸形透传：表情不可选（透传保原值，不自动补首表情）。
             self._emo.setEnabled(False)
             self._emo.blockSignals(False)
             return
@@ -98,11 +111,17 @@ class PortraitRefField(QWidget):
         self._emo.blockSignals(False)
 
     def _on_slug_changed(self, *_) -> None:
+        # 用户主动改选立绘集 = 放弃畸形透传，回到正常表单编辑。
+        if self._current_slug_key() != _RAW:
+            self._raw_passthrough = None
         self._reload_emotions()
         self.changed.emit()
 
     def to_ref(self) -> dict | None:
         key = self._current_slug_key()
+        if key == _RAW:
+            # 畸形形状：原样透传载入时的原始 dict（保值，不改写）。
+            return copy.deepcopy(self._raw_passthrough) if self._raw_passthrough is not None else None
         if key == "":
             return None
         emo = str(self._emo.currentData() or "").strip()

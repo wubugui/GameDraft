@@ -11,12 +11,13 @@ from PySide6.QtWidgets import (
     QMenu, QComboBox, QLabel,
 )
 from PySide6.QtGui import (
-    QPen, QBrush, QColor, QFont, QPainter, QWheelEvent, QPolygonF,
+    QPen, QBrush, QColor, QPainter, QWheelEvent, QPolygonF,
     QMouseEvent, QKeyEvent, QPixmap, QTransform,
 )
-from PySide6.QtCore import Qt, QPoint, QPointF
+from PySide6.QtCore import Qt, QPoint, QPointF, QTimer
 
 from ..project_model import ProjectModel
+from .. import theme
 from ..shared import confirm
 from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
@@ -41,6 +42,16 @@ class _ZoomableView(QGraphicsView):
         self._pan_last_pos = QPoint()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # type: ignore[override]
+        # 触控板：无修饰双指滚动 = 平移；Ctrl+滚轮 = 缩放（三处画布统一）。
+        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            d = event.angleDelta()
+            if d.x() != 0 or d.y() != 0:
+                self.horizontalScrollBar().setValue(
+                    self.horizontalScrollBar().value() - d.x())
+                self.verticalScrollBar().setValue(
+                    self.verticalScrollBar().value() - d.y())
+            event.accept()
+            return
         factor = 1.25 if event.angleDelta().y() > 0 else 1 / 1.25
         new_zoom = self._zoom * factor
         if 0.1 < new_zoom < 10.0:
@@ -106,6 +117,17 @@ _BG_MAP_HEIGHT_RATIO = 0.78
 _DEFAULT_BG_SCENE_WIDTH = 720.0
 
 
+def _keep_num(new_val: float, old_val: object) -> object:
+    """未改动的数值按原始 int/float 表示回写（100 不漂成 100.0）。与场景侧 _keep_num 同规则。"""
+    if (
+        isinstance(old_val, (int, float))
+        and not isinstance(old_val, bool)
+        and float(old_val) == float(new_val)
+    ):
+        return old_val
+    return new_val
+
+
 def _arrow_head(tip: QPointF, angle: float, size: float) -> QPolygonF:
     """Build a small triangle pointing at *tip* along *angle* (radians)."""
     left = QPointF(
@@ -117,6 +139,26 @@ def _arrow_head(tip: QPointF, angle: float, size: float) -> QPolygonF:
         tip.y() - size * math.sin(angle + 0.4),
     )
     return QPolygonF([tip, left, right])
+
+
+class _MapEdgeLabel(QGraphicsTextItem):
+    def __init__(self, text: str, anchor: QPointF, normal: QPointF) -> None:
+        super().__init__(text)
+        self._anchor = QPointF(anchor)
+        self._normal = QPointF(normal)
+
+    def refresh_editor_font(self) -> None:
+        rect = self.boundingRect()
+        nx, ny = self._normal.x(), self._normal.y()
+        clearance = abs(nx) * rect.width() / 2 + abs(ny) * rect.height() / 2 + 3
+        center = QPointF(
+            self._anchor.x() + nx * clearance,
+            self._anchor.y() + ny * clearance,
+        )
+        self.setPos(
+            center.x() - rect.width() / 2,
+            center.y() - rect.height() / 2,
+        )
 
 
 class MapNodeGraphicsItem(QGraphicsEllipseItem):
@@ -146,7 +188,11 @@ class MapNodeGraphicsItem(QGraphicsEllipseItem):
         self.setFlags(fl)
         self._label_item = QGraphicsTextItem(label, self)
         self._label_item.setDefaultTextColor(Qt.GlobalColor.white)
-        self._label_item.setFont(QFont(MONO_FONT_FAMILY, 7))
+        theme.set_graphics_text_font(
+            self._label_item,
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY,
+        )
         self._label_item.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self._label_item.setPos(radius + 2, -8)
@@ -190,6 +236,13 @@ class MapEditor(QWidget):
         self._loading_ui = False
         # 别处改了场景/过渡后，地图连线会过期；标记待刷新，下次显示该页时重建。
         self._needs_refresh = False
+        # 首次载入才自动 Fit；之后 _refresh 保留用户当前视口（缩放/平移），不强制弹回全览。
+        self._did_initial_fit = False
+        # 拖拽中连线重建节流：itemChange 每 tick 都触发全量重建太涩，合并到下一轮事件循环。
+        self._edge_redraw_timer = QTimer(self)
+        self._edge_redraw_timer.setSingleShot(True)
+        self._edge_redraw_timer.setInterval(16)
+        self._edge_redraw_timer.timeout.connect(self._redraw_edges)
         model.data_changed.connect(self._on_model_data_changed)
 
         root = QHBoxLayout(self)
@@ -280,12 +333,12 @@ class MapEditor(QWidget):
         f.addRow("name", self._m_name)
         self._m_x = QDoubleSpinBox()
         self._m_x.setRange(-9999, 9999)
-        self._m_x.setDecimals(4)
+        self._m_x.setDecimals(1)  # 与场景侧一致 round 到 0.1，避免写全精度 float（337.4816…）
         self._m_x.setToolTip("节点在地图上的逻辑 X 坐标（地图单位）；也可直接在画布上拖动节点")
         f.addRow("x", self._m_x)
         self._m_y = QDoubleSpinBox()
         self._m_y.setRange(-9999, 9999)
-        self._m_y.setDecimals(4)
+        self._m_y.setDecimals(1)
         self._m_y.setToolTip("节点在地图上的逻辑 Y 坐标（地图单位）；也可直接在画布上拖动节点")
         f.addRow("y", self._m_y)
         self._m_cond = ConditionEditor("unlockConditions")
@@ -477,17 +530,20 @@ class MapEditor(QWidget):
         if idx < 0 or idx >= len(self._model.map_nodes):
             return
         n = self._model.map_nodes[idx]
-        n["x"] = float(pos.x())
-        n["y"] = float(pos.y())
+        nx = round(float(pos.x()), 1)
+        ny = round(float(pos.y()), 1)
+        n["x"] = _keep_num(nx, n.get("x"))
+        n["y"] = _keep_num(ny, n.get("y"))
         self._model.mark_dirty("map")
         if idx == self._current_idx:
             self._updating_from_spin = True
             try:
-                self._m_x.setValue(pos.x())
-                self._m_y.setValue(pos.y())
+                self._m_x.setValue(nx)
+                self._m_y.setValue(ny)
             finally:
                 self._updating_from_spin = False
-        self._redraw_edges()
+        # 拖拽中每 tick 全量重建连线太涩：节流合并到下一轮事件循环。
+        self._edge_redraw_timer.start()
 
     def _on_node_item_selected(self, idx: int) -> None:
         if self._syncing_selection:
@@ -524,10 +580,10 @@ class MapEditor(QWidget):
         idx = self._current_idx
         if idx >= len(self._node_graphics):
             return
-        x, y = self._m_x.value(), self._m_y.value()
+        x, y = round(float(self._m_x.value()), 1), round(float(self._m_y.value()), 1)
         n = self._model.map_nodes[idx]
-        n["x"] = float(x)
-        n["y"] = float(y)
+        n["x"] = _keep_num(x, n.get("x"))
+        n["y"] = _keep_num(y, n.get("y"))
         self._model.mark_dirty("map")
         self._updating_from_spin = True
         try:
@@ -565,7 +621,11 @@ class MapEditor(QWidget):
             self._map_scene.addItem(item)
             self._node_graphics.append(item)
 
-        self._map_view.fit_all()
+        # 仅首次（有节点可 fit 时）自动 Fit；之后重建（别处改场景触发的连线刷新）保留
+        # 用户当前视口，不强制弹回全览（审查 P3）。显式「Fit」按钮仍可随时全览。
+        if not self._did_initial_fit and self._model.map_nodes:
+            self._map_view.fit_all()
+            self._did_initial_fit = True
         self._m_scene.set_items([(s, s) for s in self._model.all_scene_ids()])
 
         if 0 <= target < len(self._model.map_nodes):
@@ -683,11 +743,20 @@ class MapEditor(QWidget):
         if show_label and label:
             mx = (sx + ex) / 2
             my = (sy + ey) / 2
-            lbl = self._map_scene.addText(label, QFont(MONO_FONT_FAMILY, 6))
+            nx, ny = -uy, ux
+            if ny > 0:
+                nx, ny = -nx, -ny
+            lbl = _MapEdgeLabel(label, QPointF(mx, my), QPointF(nx, ny))
+            theme.set_graphics_text_font(
+                lbl,
+                theme.FONT_ROLE_CANVAS_MICRO,
+                family=MONO_FONT_FAMILY,
+            )
             lbl.setDefaultTextColor(
                 QColor(255, 170, 50) if conditional else QColor(140, 200, 255))
-            lbl.setPos(mx + 4, my - 10)
+            lbl.refresh_editor_font()
             lbl.setZValue(3)
+            self._map_scene.addItem(lbl)
             lbl.setToolTip(f"{label} ({'conditional' if conditional else 'always'})")
             self._edge_items.append(lbl)
 
@@ -800,6 +869,12 @@ class MapEditor(QWidget):
             self._refresh()
 
     def _show_node_menu(self, pos) -> None:
+        # 右键按鼠标所在行定位，而非当前选中行（审查 P3：原实现删的是选中行）。
+        item = self._list.itemAt(pos)
+        if item is not None:
+            row = self._list.row(item)
+            if row != self._current_idx:
+                self._list.setCurrentRow(row)
         if self._current_idx < 0:
             return
         menu = QMenu(self._list)
